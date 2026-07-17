@@ -670,7 +670,7 @@ class TestStartMonitorLiveSessionWiring:
         suite = _make_suite(tmp_path)
 
         with patch.object(MetricCollector, "run", _fake_collector_run):
-            url = await suite.start_monitor(
+            await suite.start_monitor(
                 hosts=[_make_unconnected_host("router1")],
                 interval=1.0,
             )
@@ -682,7 +682,9 @@ class TestStartMonitorLiveSessionWiring:
                 )
 
                 resp = await asyncio.to_thread(
-                    urllib.request.urlopen, f"{url}/api/monitor_sessions", timeout=10
+                    urllib.request.urlopen,
+                    f"{suite._monitor_server.origin}/api/monitor_sessions?key={suite._monitor_server.key}",
+                    timeout=10,
                 )
                 with contextlib.closing(resp) as opened:
                     payload = json.loads(opened.read())

@@ -405,21 +405,32 @@ def test_deep_link_back_forward(page, shell_dash):
 
 def test_not_found_routes(page, shell_dash):
     """Both not-found render sites (Task 5 ledger: there are two) keep the
-    shell chrome. Same-document hash navigations, so the import survives."""
+    shell chrome. Same-document hash navigations, so the import survives.
+
+    ``shell_dash.url`` now carries ``?key=…`` (access-key gate, spec
+    2026-07-16); appending a *leading*-slash fragment (``"/#/bogus"``, the
+    original form here) lands that slash inside the query value itself
+    (``?key=XXXX/``), which differs from the just-navigated URL and so
+    defeats the browser's same-document hash optimization — the page does a
+    full reload instead, wiping the just-imported client-side state, and
+    neither locator below ever appears. The fragment-only form used
+    everywhere else in this file (``f"{shell_dash.url}#/topology"``) is the
+    correct idiom: no characters between the query and ``#``.
+    """
     page.goto(shell_dash.url)
     _import_fixture(page, "minimal.json")
 
     # Site 1: no route matches at all -> the router-level fallback
     # (App.tsx's Switch catch-all Route). The review bar staying visible
     # proves this render site keeps the chrome too.
-    page.goto(shell_dash.url + "/#/bogus")
+    page.goto(f"{shell_dash.url}#/bogus")
     page.locator('[data-testid="not-found"]').wait_for()
     assert page.locator('[data-testid="review-bar"]').is_visible()
 
     # Site 2: /host/:id matches but the id is unknown in this session ->
     # SubjectPage's own unknown-subject branch. The review bar staying
     # visible proves this render site keeps the chrome too.
-    page.goto(shell_dash.url + "/#/host/ghost")
+    page.goto(f"{shell_dash.url}#/host/ghost")
     page.locator('[data-testid="not-found"]').wait_for()
     assert page.locator('[data-testid="review-bar"]').is_visible()
 

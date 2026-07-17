@@ -198,6 +198,13 @@ otto for a team:
 5. **Set per-product preferences** — optional `[host_preferences]` /
    `[os_profiles]` (this page, above, and {doc}`lab-config` / {doc}`../hosts/os-profiles`).
 6. **Enable tab completion** — see {doc}`../../getting-started`.
+7. **(Optional) Add TLS to the dashboard** — plain HTTP plus a per-run
+   access key is the default and needs no setup; add TLS only if a lab
+   needs it. A team owner creates a CA once and distributes trust to
+   viewers; each machine that runs `otto monitor` then gets its own leaf
+   cert, and the repo's `settings.toml` gains a `[monitor]` table pointing
+   at it. See {doc}`../monitor`'s [Securing the
+   dashboard](../monitor.md#securing-the-dashboard) section for the steps.
 
 Each backend choice is verifiable: otto ships conformance helpers
 (`otto.testing.assert_lab_repository_conforms` /

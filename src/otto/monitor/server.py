@@ -18,6 +18,7 @@ GET  /api/export/json  Download the current data as a ``format:1`` document
 import asyncio
 import json
 import logging
+import secrets
 from collections.abc import AsyncGenerator
 from datetime import datetime, timezone
 from logging import Filter, LogRecord, getLogger
@@ -29,7 +30,9 @@ from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from sse_starlette.sse import EventSourceResponse
+from starlette.datastructures import MutableHeaders
 from starlette.requests import Request
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from typing_extensions import override
 
 from ..models import LabSnapshot, MonitorExport
@@ -76,6 +79,43 @@ class SuppressASGIWarning(Filter):
 getLogger("uvicorn.error").addFilter(SuppressASGIWarning())
 
 
+_ACCESS_LOG_PATH_ARG_INDEX = 2  # position of the path+query string in uvicorn's access-log args
+
+
+class _RedactAccessLogQueryString(Filter):
+    """``logging.Filter`` that drops the query string from uvicorn's access log.
+
+    Every route now carries ``?key=<token>`` (see ``_AccessKeyMiddleware``
+    below), and uvicorn's access logger logs the *full* request line
+    including the query string (``get_path_with_query_string``) whenever
+    ``uvicorn.access`` has any handler in its propagation chain — which is
+    exactly what otto's own CLI logging setup gives it, console or file. The
+    ``log_config=None`` passed to ``uvicorn.Config`` in ``serve()`` only
+    skips uvicorn's *own* ``logging.config.dictConfig()`` call; it does not
+    disable this logger or stop it from inheriting the root logger's
+    handlers. Without this filter, the per-run access key — meant to appear
+    exactly once, in the printed URL — would be written to the log on every
+    single request. The access-log call site passes the path+query string as
+    the third positional arg (``'%s - "%s %s HTTP/%s" %d'``), so mutating
+    ``record.args`` here strips it before formatting while keeping method,
+    client address, and status intact.
+    """
+
+    @override
+    def filter(self, record: LogRecord) -> bool:
+        args = record.args
+        if isinstance(args, tuple) and len(args) > _ACCESS_LOG_PATH_ARG_INDEX:
+            path = args[_ACCESS_LOG_PATH_ARG_INDEX]
+            if isinstance(path, str) and "?" in path:
+                new_args = list(args)
+                new_args[_ACCESS_LOG_PATH_ARG_INDEX] = path.split("?", 1)[0]
+                record.args = tuple(new_args)
+        return True
+
+
+getLogger("uvicorn.access").addFilter(_RedactAccessLogQueryString())
+
+
 class _EventBody(OttoModel):
     label: str
     color: str = "#888888"
@@ -88,9 +128,103 @@ class _EventUpdateBody(OttoModel):
     dash: str | None = None
 
 
+def _cookie_name(port: int | None) -> str:
+    """Auth-cookie name, scoped by port.
+
+    Cookies are host- but NOT port-scoped, so two monitor servers on one
+    machine would clobber a fixed-name cookie; suffixing the request's own
+    port keeps them independent (the same trick Jupyter uses).
+    """
+    return f"otto_monitor_{port if port is not None else 80}"
+
+
+_FORBIDDEN_HTML = """<!doctype html>
+<html><head><title>otto monitor — access key required</title></head>
+<body style="font-family: system-ui; max-width: 40rem; margin: 4rem auto;">
+<h1>Access key required</h1>
+<p>This dashboard is protected by a per-run access key. Open the full URL
+printed in the console by <code>otto monitor</code> — it ends in
+<code>?key=…</code>. The bare address will not work.</p>
+</body></html>"""
+
+
+class _AccessKeyMiddleware:
+    """Pure-ASGI gate for every route: valid ``?key=`` or auth cookie, else 403.
+
+    Deliberately NOT ``BaseHTTPMiddleware``: the wrapped-response machinery
+    there interferes with streaming responses/disconnect detection, and
+    ``/api/stream`` (SSE) must be gated by the same code path as everything
+    else. A correctly-keyed request of ANY path gets the cookie minted on its
+    response, so keyed deep links work, and the browser then authenticates
+    every follow-up (assets, fetches, EventSource) via the cookie alone.
+    """
+
+    def __init__(self, app: ASGIApp, *, key: str, secure_cookie: bool) -> None:
+        self._app = app
+        self._key = key
+        self._secure = secure_cookie
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] == "lifespan":
+            await self._app(scope, receive, send)
+            return
+        if scope["type"] != "http":
+            # No websocket routes exist anywhere in this app today. Fail
+            # CLOSED rather than passing an ungated scope through to the
+            # wrapped app: a bare `!= "http"` passthrough here would let a
+            # future websocket route silently bypass the access-key gate
+            # entirely (it would never hit the checks below, which only run
+            # for scope["type"] == "http"). Drain the connect event first —
+            # ASGI servers expect it to be consumed — then close with 1008
+            # (policy violation), the standard code for "you weren't allowed
+            # to be here."
+            await receive()
+            await send({"type": "websocket.close", "code": 1008})
+            return
+        request = Request(scope)
+        cookie_name = _cookie_name(request.url.port)
+        key_bytes = self._key.encode("ascii")
+        supplied = request.query_params.get("key")
+        # secrets.compare_digest(str, str) raises TypeError on non-ASCII input
+        # (it refuses to guess an encoding) — an adversarial or fat-fingered
+        # ?key=/cookie containing e.g. a UTF-8-only char must still fall
+        # through to an ordinary 403 below, never an unhandled 500. Comparing
+        # as bytes sidesteps the restriction entirely: supplied/from_cookie
+        # are always str here (decoded by Starlette), so .encode("utf-8")
+        # never raises.
+        if supplied is not None and secrets.compare_digest(supplied.encode("utf-8"), key_bytes):
+            cookie = f"{cookie_name}={self._key}; Path=/; HttpOnly; SameSite=Lax"
+            if self._secure:
+                cookie += "; Secure"
+
+            async def send_with_cookie(message: Message) -> None:
+                if message["type"] == "http.response.start":
+                    headers = MutableHeaders(scope=message)
+                    headers.append("set-cookie", cookie)
+                await send(message)
+
+            await self._app(scope, receive, send_with_cookie)
+            return
+        from_cookie = request.cookies.get(cookie_name)
+        if from_cookie is not None and secrets.compare_digest(
+            from_cookie.encode("utf-8"), key_bytes
+        ):
+            await self._app(scope, receive, send)
+            return
+        if request.url.path.startswith("/api/"):
+            response: Response = JSONResponse(
+                {"error": "missing or invalid access key"}, status_code=403
+            )
+        else:
+            response = HTMLResponse(_FORBIDDEN_HTML, status_code=403)
+        await response(scope, receive, send)
+
+
 def _build_app(  # noqa: C901 — FastAPI route-factory; complexity is route count, not branching
     collector: MetricCollector,
     *,
+    key: str,
+    secure_cookie: bool = False,
     mode: Literal["live", "review"] = "live",
     document: MonitorExport | None = None,
     source_name: str | None = None,
@@ -100,6 +234,7 @@ def _build_app(  # noqa: C901 — FastAPI route-factory; complexity is route cou
     dist_index = _dist_index_path()
 
     app = FastAPI(title="Otto Monitor")
+    app.add_middleware(_AccessKeyMiddleware, key=key, secure_cookie=secure_cookie)
 
     app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
 
@@ -358,6 +493,8 @@ class MonitorServer:
         source_name: str | None = None,
         frame: SessionFrame | None = None,
         lab: LabSnapshot | None = None,
+        tls_cert: Path | None = None,
+        tls_key: Path | None = None,
     ) -> None:
         self._collector = collector
         self._bind_host = host
@@ -367,12 +504,17 @@ class MonitorServer:
         self._source_name = source_name
         self._frame = frame
         self._lab = lab
+        self._tls_cert = tls_cert
+        self._tls_key = tls_key
+        self._key = secrets.token_urlsafe(16)
         # The collector has no notion of sessions; the server holds the frame, so
         # it stamps the id here — one place, so no construction site can forget.
         if frame is not None:
             collector.session_id = frame.id
         self._app = _build_app(
             collector,
+            key=self._key,
+            secure_cookie=tls_cert is not None,
             mode=mode,
             document=document,
             source_name=source_name,
@@ -383,22 +525,34 @@ class MonitorServer:
         self._loop: asyncio.AbstractEventLoop | None = None
 
     @property
-    def url(self) -> str:
-        """Primary URL using the first detected non-loopback IP (or the bind address)."""
+    def key(self) -> str:
+        """The per-run access key (printed once in the URLs, required by every request)."""
+        return self._key
+
+    @property
+    def origin(self) -> str:
+        """Scheme+host+port with NO key — for callers composing their own paths."""
+        scheme = "https" if self._tls_cert is not None else "http"
         host = self._bind_host
         if host in ("0.0.0.0", "::"):  # noqa: S104 — intentional all-interface bind
             ips = _get_all_ips()
             host = ips[0] if ips else self._bind_host
-        return f"http://{host}:{self._port}"
+        return f"{scheme}://{host}:{self._port}"
+
+    @property
+    def url(self) -> str:
+        """Primary self-authenticating URL (first non-loopback IP, ``?key=`` appended)."""
+        return f"{self.origin}/?key={self._key}"
 
     @property
     def urls(self) -> list[str]:
-        """All URLs the server is reachable on (one per non-loopback interface)."""
+        """All reachable URLs (one per non-loopback interface), each ``?key=``-keyed."""
+        scheme = "https" if self._tls_cert is not None else "http"
         if self._bind_host in ("0.0.0.0", "::"):  # noqa: S104 — intentional all-interface bind
             ips = _get_all_ips()
             if ips:
-                return [f"http://{ip}:{self._port}" for ip in ips]
-        return [f"http://{self._bind_host}:{self._port}"]
+                return [f"{scheme}://{ip}:{self._port}/?key={self._key}" for ip in ips]
+        return [f"{scheme}://{self._bind_host}:{self._port}/?key={self._key}"]
 
     @property
     def started(self) -> bool:
@@ -413,6 +567,8 @@ class MonitorServer:
             host=self._bind_host,
             port=self._port,
             log_config=None,
+            ssl_certfile=str(self._tls_cert) if self._tls_cert else None,
+            ssl_keyfile=str(self._tls_key) if self._tls_key else None,
         )
         server = uvicorn.Server(config)
 
@@ -421,7 +577,15 @@ class MonitorServer:
         task = asyncio.create_task(server.serve())
 
         # wait until uvicorn signals it's started
-        while not server.started:  # noqa: ASYNC110 — polling external uvicorn state; no event source available
+        while not server.started:
+            if task.done():
+                # The serve task died before signalling startup (e.g. a bad
+                # TLS cert/key raises ssl.SSLError out of Config.load()) — left
+                # unchecked, this loop would poll `server.started` forever
+                # since nothing will ever flip it. task.result() re-raises
+                # whatever killed it, surfacing the real cause instead of a
+                # silent hang.
+                task.result()
             await asyncio.sleep(0.05)
 
         # extract the port from the socket

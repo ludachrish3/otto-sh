@@ -36,6 +36,9 @@ from .repo import (
     DockerSettings as DockerSettings,
 )
 from .repo import (
+    MonitorSettings as MonitorSettings,
+)
+from .repo import (
     Repo,
 )
 from .version import (

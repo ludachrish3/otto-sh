@@ -31,6 +31,20 @@ def test_settings_scaffold_parses_via_settings_model(tmp_path: Path) -> None:
     assert data["init"] == ["widget_instructions"]
 
 
+def test_settings_scaffold_has_commented_monitor_tls_block(tmp_path: Path) -> None:
+    """The commented example sections include a `[monitor]` sibling to `[docker]`.
+
+    Pins the raw template text (commented out, so it never reaches the parsed
+    dict above) alongside the two TLS keys `MonitorSettingsSpec` accepts, so a
+    user uncommenting the block gets a working starting point.
+    """
+    BY_NAME["settings"].scaffold(tmp_path, CFG)
+    text = (tmp_path / ".otto" / "settings.toml").read_text()
+    assert "# [monitor]" in text
+    assert '# tls_cert = "~/.config/otto/tls/monitor-cert.pem"' in text
+    assert '# tls_key = "~/.config/otto/tls/monitor-key.pem"' in text
+
+
 def test_lab_scaffold_passes_hostspec_ingest(tmp_path: Path) -> None:
     BY_NAME["lab"].scaffold(tmp_path, CFG)
     lab_file = tmp_path / "lab_data" / "lab.json"

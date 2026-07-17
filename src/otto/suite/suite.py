@@ -444,7 +444,8 @@ class OttoSuite(Generic[TOptions]):
                 are ignored. Use this to assign different parsers to different hosts.
 
         Returns:
-            Dashboard URL, e.g. 'http://127.0.0.1:8080'.
+            Dashboard URL, keyed with the per-run access key, e.g.
+            'http://127.0.0.1:8080/?key=abc123...'.
         """
         from otto.models import validate_interval
         from otto.monitor.collector import MetricCollector

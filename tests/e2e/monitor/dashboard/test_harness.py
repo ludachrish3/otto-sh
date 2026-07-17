@@ -157,7 +157,11 @@ def test_sse_stream_delivers_batched_log_events(
     assert port is not None
     conn = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
     try:
-        conn.request("GET", "/api/stream", headers={"Accept": "text/event-stream"})
+        conn.request(
+            "GET",
+            f"/api/stream?key={live_dash.server.key}",
+            headers={"Accept": "text/event-stream"},
+        )
         resp = conn.getresponse()
         ts = datetime(2026, 7, 4, 12, 0, tzinfo=timezone.utc)
         live_dash.run(
@@ -194,7 +198,11 @@ def test_sse_stream_delivers_metric_messages(
     assert port is not None
     conn = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
     try:
-        conn.request("GET", "/api/stream", headers={"Accept": "text/event-stream"})
+        conn.request(
+            "GET",
+            f"/api/stream?key={live_dash.server.key}",
+            headers={"Accept": "text/event-stream"},
+        )
         resp = conn.getresponse()  # subscribe() has run once headers arrive
         live_dash.run(live_dash.collector.push("host1", "Overall CPU", 42.0))
         payload: dict[str, Any] | None = None
@@ -223,7 +231,11 @@ def test_sse_stream_delivers_metric_messages_with_meta(
     assert port is not None
     conn = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
     try:
-        conn.request("GET", "/api/stream", headers={"Accept": "text/event-stream"})
+        conn.request(
+            "GET",
+            f"/api/stream?key={live_dash.server.key}",
+            headers={"Accept": "text/event-stream"},
+        )
         resp = conn.getresponse()  # subscribe() has run once headers arrive
         live_dash.run(live_dash.collector.push("host1", "Overall CPU", 42.0, meta={"Used": "1 G"}))
         payload: dict[str, Any] | None = None
@@ -242,7 +254,7 @@ def test_sse_stream_delivers_metric_messages_with_meta(
 
 
 def test_mode_wire_contract_live(live_dash: DashboardHarness[FakeCollector]) -> None:
-    payload = _get_json(live_dash.url + "/api/mode")
+    payload = _get_json(live_dash.api_url("/api/mode"))
     assert set(payload) == MODE_KEYS
     assert payload["mode"] == "live"
     assert payload["source"] is None
@@ -258,7 +270,7 @@ def test_monitor_sessions_serves_a_live_snapshot(
     /api/export/json — so this uses ``live_export_dash`` instead, same as
     ``test_export_json_emits_format_1`` below.
     """
-    payload = _get_json(live_export_dash.url + "/api/monitor_sessions")
+    payload = _get_json(live_export_dash.api_url("/api/monitor_sessions"))
     assert payload["format"] == 1
     assert len(payload["sessions"]) == 1
     session = payload["sessions"][0]
@@ -268,7 +280,7 @@ def test_monitor_sessions_serves_a_live_snapshot(
 def test_export_json_emits_format_1(
     live_export_dash: DashboardHarness[FakeCollector],
 ) -> None:
-    payload = _get_json(live_export_dash.url + "/api/export/json")
+    payload = _get_json(live_export_dash.api_url("/api/export/json"))
     assert payload["format"] == 1
     assert isinstance(payload["sessions"], list)
     assert len(payload["sessions"]) == 1
@@ -277,7 +289,7 @@ def test_export_json_emits_format_1(
 
 
 def test_mode_wire_contract_review(review_dash: DashboardHarness[MetricCollector]) -> None:
-    payload = _get_json(review_dash.url + "/api/mode")
+    payload = _get_json(review_dash.api_url("/api/mode"))
     assert set(payload) == MODE_KEYS
     assert payload["mode"] == "review"
     assert payload["source"] == "x.db"
@@ -291,7 +303,7 @@ def test_monitor_sessions_round_trips_in_review_mode(
     Same endpoint as the live snapshot above — review and live hydrate
     through the one route (see the module docstring).
     """
-    payload = _get_json(review_dash.url + "/api/monitor_sessions")
+    payload = _get_json(review_dash.api_url("/api/monitor_sessions"))
     assert MonitorExport.model_validate(payload) == _two_session_document()
 
 
@@ -300,12 +312,16 @@ def test_stop_joins_server_thread(live_dash: DashboardHarness[FakeCollector]) ->
     assert not live_dash.thread_alive
 
 
-def _open_held_sse(port: int) -> socket.socket | None:
+def _open_held_sse(port: int, key: str) -> socket.socket | None:
     """Open a raw /api/stream SSE and return the socket *without* closing it.
 
     Held open, it stands in for a live browser EventSource. Returns ``None`` if
     the connect is refused — i.e. the server has already stopped accepting,
-    which is exactly the state force_stop should reach.
+    which is exactly the state force_stop should reach. ``key`` must be the
+    harness's real access key: an unkeyed request now 403s and closes
+    immediately (Task 2's per-run gate), which would make every "held" socket
+    here a fast-closing rejection instead of a genuinely open SSE connection —
+    quietly defeating the race this test hammers for.
     """
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.settimeout(2.0)
@@ -316,7 +332,8 @@ def _open_held_sse(port: int) -> socket.socket | None:
         return None
     with contextlib.suppress(OSError):
         sock.sendall(
-            b"GET /api/stream HTTP/1.1\r\nHost: 127.0.0.1\r\nAccept: text/event-stream\r\n\r\n"
+            f"GET /api/stream?key={key} HTTP/1.1\r\n"
+            "Host: 127.0.0.1\r\nAccept: text/event-stream\r\n\r\n".encode()
         )
     return sock
 
@@ -352,7 +369,7 @@ def test_force_stop_survives_sse_opened_during_shutdown(
         # stop() below, some land in the shutdown window; a refused connect
         # (None) just means the sockets have closed — the state we want.
         while keep_opening.is_set():
-            sock = _open_held_sse(port)
+            sock = _open_held_sse(port, live_dash.server.key)
             if sock is not None:
                 held.append(sock)
             time.sleep(0.004)
@@ -394,7 +411,11 @@ def test_sse_event_lifecycle_wire_contract(
     assert port is not None
     conn = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
     try:
-        conn.request("GET", "/api/stream", headers={"Accept": "text/event-stream"})
+        conn.request(
+            "GET",
+            f"/api/stream?key={live_dash.server.key}",
+            headers={"Accept": "text/event-stream"},
+        )
         resp = conn.getresponse()
 
         ev = live_dash.run(live_dash.collector.add_event(label="pin", color="#112233", dash="dot"))

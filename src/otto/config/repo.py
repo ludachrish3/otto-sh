@@ -102,6 +102,21 @@ class DockerSettings:
 
 
 @dataclass(frozen=True)
+class MonitorSettings:
+    """Per-repo monitor configuration parsed from `[monitor]` in `settings.toml`.
+
+    ``tls_cert``/``tls_key`` point at a PEM certificate/key on the machine that
+    runs ``otto monitor`` (conventionally under ``~/.config/otto/tls/`` — the
+    committed settings value is shared team-wide, so it must not name a
+    machine-local absolute path). ``tls_key`` may stay ``None`` when the cert
+    PEM bundles the private key.
+    """
+
+    tls_cert: Path | None = None
+    tls_key: Path | None = None
+
+
+@dataclass(frozen=True)
 class CollectedTest:
     """A single test item collected from a SUT repo's test directories.
 
@@ -211,6 +226,12 @@ class Repo:
     """Parsed `[docker]` table — image build definitions, compose files, and
     registry URL. Defaults to an empty :class:`DockerSettings` when the
     section is absent."""
+
+    monitor_settings: MonitorSettings = field(
+        default_factory=MonitorSettings,
+        init=False,
+    )
+    """Parsed `[monitor]` table — optional TLS cert/key for the dashboard server."""
 
     def __post_init__(self) -> None:
         self.parse_settings()
@@ -559,6 +580,7 @@ class Repo:
         self.logging_capture = list(model.logging.capture)
         self.os_profiles = self._register_os_profiles(model.os_profiles)
         self.docker_settings = model.docker.to_runtime()
+        self.monitor_settings = model.monitor.to_runtime()
 
     def product_log_prefixes(self) -> set[str]:
         """Top-level package names whose ``getLogger(__name__)`` records otto captures.

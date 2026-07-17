@@ -35,6 +35,9 @@ init = ["{init_module}"]           # modules imported at startup (register instr
 # [reservations]           # reservation gate configuration
 # [coverage]               # remote gcov collection settings
 # [docker]                 # image builds + compose stacks
+# [monitor]                # dashboard TLS (optional) — see the monitor guide
+# tls_cert = "~/.config/otto/tls/monitor-cert.pem"
+# tls_key = "~/.config/otto/tls/monitor-key.pem"
 """
 
 EXAMPLE_HOST_ENTRY = {

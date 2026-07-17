@@ -563,3 +563,48 @@ def test_settings_model_accepts_lab_block():
 def test_settings_model_lab_defaults_when_absent():
     m = SettingsModel.model_validate({"name": "demo", "version": "1.0.0"})
     assert m.lab.backend == "json"
+
+
+class TestMonitorSettings:
+    """The [monitor] table: TLS cert/key paths (spec section 'settings.toml surface')."""
+
+    def test_defaults_to_no_tls(self):
+        model = SettingsModel.model_validate({"name": "r", "version": "1.0.0"})
+        runtime = model.monitor.to_runtime()
+        assert runtime.tls_cert is None
+        assert runtime.tls_key is None
+
+    def test_paths_are_expanduser_expanded(self):
+        model = SettingsModel.model_validate(
+            {
+                "name": "r",
+                "version": "1.0.0",
+                "monitor": {
+                    "tls_cert": "~/.config/otto/tls/monitor-cert.pem",
+                    "tls_key": "~/.config/otto/tls/monitor-key.pem",
+                },
+            }
+        )
+        runtime = model.monitor.to_runtime()
+        assert runtime.tls_cert == Path.home() / ".config/otto/tls/monitor-cert.pem"
+        assert runtime.tls_key == Path.home() / ".config/otto/tls/monitor-key.pem"
+
+    def test_cert_without_key_is_allowed(self):
+        """A single PEM may bundle cert+key — tls_key stays optional."""
+        model = SettingsModel.model_validate(
+            {"name": "r", "version": "1.0.0", "monitor": {"tls_cert": "/x/cert.pem"}}
+        )
+        assert model.monitor.to_runtime().tls_key is None
+
+    def test_key_without_cert_is_rejected(self):
+        with pytest.raises(ValidationError, match="tls_key"):
+            SettingsModel.model_validate(
+                {"name": "r", "version": "1.0.0", "monitor": {"tls_key": "/x/key.pem"}}
+            )
+
+    def test_unknown_monitor_key_is_rejected(self):
+        """extra='forbid' inherited from OttoModel must cover the new table."""
+        with pytest.raises(ValidationError, match="tls_cret"):
+            SettingsModel.model_validate(
+                {"name": "r", "version": "1.0.0", "monitor": {"tls_cret": "/typo.pem"}}
+            )

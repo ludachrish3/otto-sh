@@ -28,6 +28,7 @@ the principles are the recurring design rules.
    subsystems/execution
    subsystems/network
    subsystems/monitoring
+   subsystems/security
    subsystems/coverage
    subsystems/reservations
    subsystems/bootstrap

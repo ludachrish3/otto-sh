@@ -31,7 +31,7 @@ from .options import (
 )
 
 if TYPE_CHECKING:
-    from ..config.repo import DockerCompose, DockerImage, DockerSettings
+    from ..config.repo import DockerCompose, DockerImage, DockerSettings, MonitorSettings
 
 
 class DockerImageSpec(OttoModel):
@@ -112,6 +112,40 @@ class DockerSettingsSpec(OttoModel):
             images=tuple(i.to_runtime() for i in self.images),
             composes=tuple(c.to_runtime() for c in self.composes),
         )
+
+
+class MonitorSettingsSpec(OttoModel):
+    """Boundary spec for the ``[monitor]`` section of ``settings.toml``.
+
+    TLS for the dashboard server. Paths are ``expanduser()``-expanded here
+    (settings expansion only handles ``${sut_dir}``): the committed value is
+    shared by the whole team, so it conventionally points under
+    ``~/.config/otto/tls/`` — identical text, per-user resolution. ``tls_key``
+    without ``tls_cert`` is rejected; ``tls_cert`` alone is fine (bundled PEM).
+    """
+
+    tls_cert: Path | None = None
+    tls_key: Path | None = None
+
+    @field_validator("tls_cert", "tls_key")
+    @classmethod
+    def _expand_user(cls, v: Path | None) -> Path | None:
+        return v.expanduser() if v is not None else v
+
+    @model_validator(mode="after")
+    def _key_requires_cert(self) -> "MonitorSettingsSpec":
+        if self.tls_key is not None and self.tls_cert is None:
+            raise ValueError(
+                "[monitor] tls_key is set but tls_cert is not — set tls_cert "
+                "(it may be a combined PEM, making tls_key unnecessary)."
+            )
+        return self
+
+    def to_runtime(self) -> "MonitorSettings":
+        """Build the ``MonitorSettings`` runtime dataclass from the validated spec fields."""
+        from ..config.repo import MonitorSettings
+
+        return MonitorSettings(tls_cert=self.tls_cert, tls_key=self.tls_key)
 
 
 class OsProfileSpec(OttoModel):
@@ -314,6 +348,7 @@ class SettingsModel(OttoModel):
     host_preferences: dict[str, dict[str, Any]] = Field(default_factory=dict)
     os_profiles: dict[str, OsProfileSpec] = Field(default_factory=dict)
     docker: DockerSettingsSpec = DockerSettingsSpec()
+    monitor: MonitorSettingsSpec = MonitorSettingsSpec()
     lab: LabConfigSpec = LabConfigSpec()
     logging: LoggingConfigSpec = LoggingConfigSpec()
     reservations: ReservationConfigSpec = ReservationConfigSpec()

@@ -62,6 +62,15 @@ class DashboardHarness(Generic[C]):
         """Base URL (valid once start() has returned)."""
         return self.server.url
 
+    def api_url(self, path: str) -> str:
+        """Absolute, self-authenticating URL for a direct API hit (no browser cookie).
+
+        ``url`` is the user-facing page URL (``/?key=…``); appending a path to
+        it would corrupt the query string, so API-poking tests compose from
+        ``origin`` + path and re-attach the key explicitly.
+        """
+        return f"{self.server.origin}{path}?key={self.server.key}"
+
     @property
     def thread_alive(self) -> bool:
         return self._thread is not None and self._thread.is_alive()

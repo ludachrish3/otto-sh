@@ -109,7 +109,7 @@ class TestDeleteEndpoint:
         collector = _empty_collector()
         event = await collector.add_event(label="test-event")
 
-        app = _build_app(collector)
+        app = _build_app(collector, key="k")
 
         status_code = None
         body_chunks: list[bytes] = []
@@ -130,7 +130,7 @@ class TestDeleteEndpoint:
             "http_version": "1.1",
             "method": "DELETE",
             "path": f"/api/event/{event.id}",
-            "query_string": b"",
+            "query_string": b"key=k",
             "headers": [],
             "root_path": "",
             "server": ("127.0.0.1", 8000),
@@ -156,7 +156,7 @@ class TestDeleteEndpoint:
             await asyncio.sleep(0.05)
 
         try:
-            url = f"http://127.0.0.1:{server._port}/api/event/9999"
+            url = f"http://127.0.0.1:{server._port}/api/event/9999?key={server.key}"
             req = urllib.request.Request(url, method="DELETE")
             with pytest.raises(urllib.error.HTTPError) as exc_info:
                 await asyncio.to_thread(urllib.request.urlopen, req)
@@ -293,7 +293,7 @@ class TestDashboardRoute:
         while not server.started:  # noqa: ASYNC110 — polling external uvicorn state; no event source available
             await asyncio.sleep(0.05)
         try:
-            url = f"http://127.0.0.1:{server._port}/"
+            url = f"http://127.0.0.1:{server._port}/?key={server.key}"
             resp = await asyncio.to_thread(urllib.request.urlopen, url)
             with contextlib.closing(resp):
                 assert b"DIST_MARKER" in resp.read()
@@ -330,7 +330,7 @@ class TestMonitorSessionsEndpoint:
             await asyncio.sleep(0.05)
         try:
             await collector.push("r1", "cpu", 1.0)
-            url = f"http://127.0.0.1:{server._port}/api/monitor_sessions"
+            url = f"http://127.0.0.1:{server._port}/api/monitor_sessions?key={server.key}"
             resp = await asyncio.to_thread(urllib.request.urlopen, url)
             with contextlib.closing(resp):
                 payload = json.loads(resp.read())
@@ -366,7 +366,7 @@ class TestMonitorSessionsEndpoint:
         while not server.started:  # noqa: ASYNC110 — polling external uvicorn state; no event source available
             await asyncio.sleep(0.05)
         try:
-            url = f"http://127.0.0.1:{server._port}/api/monitor_sessions"
+            url = f"http://127.0.0.1:{server._port}/api/monitor_sessions?key={server.key}"
             with pytest.raises(urllib.error.HTTPError) as exc_info:
                 await asyncio.to_thread(urllib.request.urlopen, url)
             with contextlib.closing(exc_info.value) as err:
@@ -393,7 +393,7 @@ class TestMonitorSessionsEndpoint:
             await asyncio.sleep(0.05)
         try:
             for path in ("/api/document", "/api/meta", "/api/data"):
-                url = f"http://127.0.0.1:{server._port}{path}"
+                url = f"http://127.0.0.1:{server._port}{path}?key={server.key}"
                 with pytest.raises(urllib.error.HTTPError) as exc_info:
                     await asyncio.to_thread(urllib.request.urlopen, url)
                 with contextlib.closing(exc_info.value) as err:

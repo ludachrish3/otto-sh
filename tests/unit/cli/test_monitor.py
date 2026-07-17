@@ -18,8 +18,10 @@ coverage.
 
 import json
 import sqlite3
+import subprocess
 from contextlib import closing
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import click
@@ -55,6 +57,43 @@ def _make_host(name: str = "box") -> UnixHost:
         creds=[Cred(login="admin", password="secret")],
         log=LogMode.NORMAL,
     )
+
+
+def _make_cert(tmp_path: Path) -> Path:
+    """Mint a throwaway self-signed PEM (cert+key bundled into one file) via openssl.
+
+    Same approach as ``tests/unit/monitor/test_server_tls.py``: universally
+    present on the Linux targets this repo supports, no extra dev-dep needed.
+    Cert and key are generated to separate files (openssl can't safely write
+    both to one ``-out``/``-keyout`` path — the second write clobbers the
+    first) then concatenated, exercising the ``tls_key is None`` "cert
+    bundles the key" path documented on ``MonitorSettings``.
+    """
+    key, crt = tmp_path / "key.pem", tmp_path / "crt.pem"
+    subprocess.run(
+        [
+            "openssl",
+            "req",
+            "-x509",
+            "-newkey",
+            "rsa:2048",
+            "-nodes",
+            "-sha256",
+            "-days",
+            "2",
+            "-keyout",
+            str(key),
+            "-out",
+            str(crt),
+            "-subj",
+            "/CN=127.0.0.1",
+        ],
+        check=True,
+        capture_output=True,
+    )
+    bundle = tmp_path / "cert.pem"
+    bundle.write_text(crt.read_text() + key.read_text())
+    return bundle
 
 
 def _close_coro(coro):
@@ -236,6 +275,29 @@ class TestDbOption:
         assert [h.id for h in session.lab.hosts] == ["router1"]
 
 
+class TestTlsResolvedBeforeDbCreation:
+    """A doomed [monitor] TLS config must exit BEFORE a ``--db`` archive is built.
+
+    ``_resolve_monitor_tls()`` used to run after ``build_session_metric_db()``
+    in the ``--live`` branch, so a bad TLS declaration left a half-created
+    ``--db`` file on disk even though the run never actually served anything.
+    """
+
+    def test_doomed_tls_config_exits_before_build_session_metric_db(
+        self, live_mode_mocks, tmp_path
+    ):
+        db_file = tmp_path / "metrics.db"
+        ctx = _make_ctx({"_otto_root_options": object(), "_otto_lab_ready": True})
+        with (
+            patch("otto.cli.monitor._resolve_monitor_tls", side_effect=typer.Exit(1)),
+            patch("otto.cli.monitor.build_session_metric_db") as mock_build_db,
+            pytest.raises(typer.Exit),
+        ):
+            monitor(ctx, live=True, db=db_file)
+        mock_build_db.assert_not_called()
+        assert not db_file.exists()
+
+
 # ── <source> positional (review mode) ────────────────────────────────────────
 #
 # Rejection-path coverage (unknown suffix, legacy-flat JSON, missing file,
@@ -349,6 +411,103 @@ class TestGatePerBranch:
 
 
 # ── build_monitor_collector() unit tests ──────────────────────────────────────
+
+
+class TestResolveMonitorTls:
+    """[monitor] TLS resolution: single source of truth, fail-loud (spec 'Runtime behavior')."""
+
+    @staticmethod
+    def _repo(name: str, cert=None, key=None):
+        from types import SimpleNamespace
+
+        from otto.config import MonitorSettings
+
+        return SimpleNamespace(
+            name=name, monitor_settings=MonitorSettings(tls_cert=cert, tls_key=key)
+        )
+
+    def test_no_repo_declares_tls_returns_none(self, monkeypatch):
+        import otto.config
+        from otto.cli.monitor import _resolve_monitor_tls
+
+        monkeypatch.setattr(otto.config, "get_repos", lambda: [self._repo("a"), self._repo("b")])
+        assert _resolve_monitor_tls() is None
+
+    def test_single_declaration_with_real_files_applies(self, monkeypatch, tmp_path):
+        import otto.config
+        from otto.cli.monitor import _resolve_monitor_tls
+
+        cert = _make_cert(tmp_path)
+        monkeypatch.setattr(otto.config, "get_repos", lambda: [self._repo("a", cert=cert)])
+        resolved = _resolve_monitor_tls()
+        assert resolved is not None
+        assert resolved.tls_cert == cert
+
+    def test_identical_declarations_apply(self, monkeypatch, tmp_path):
+        import otto.config
+        from otto.cli.monitor import _resolve_monitor_tls
+
+        cert = _make_cert(tmp_path)
+        monkeypatch.setattr(
+            otto.config,
+            "get_repos",
+            lambda: [self._repo("a", cert=cert), self._repo("b", cert=cert)],
+        )
+        assert _resolve_monitor_tls() is not None
+
+    def test_disagreeing_declarations_exit_1_naming_repos(self, monkeypatch, tmp_path, capsys):
+        import typer
+
+        import otto.config
+        from otto.cli.monitor import _resolve_monitor_tls
+
+        c1, c2 = tmp_path / "c1.pem", tmp_path / "c2.pem"
+        c1.write_text("x"), c2.write_text("y")
+        monkeypatch.setattr(
+            otto.config,
+            "get_repos",
+            lambda: [self._repo("alpha", cert=c1), self._repo("beta", cert=c2)],
+        )
+        with pytest.raises(typer.Exit) as excinfo:
+            _resolve_monitor_tls()
+        assert excinfo.value.exit_code == 1
+        err = capsys.readouterr().err
+        assert "alpha" in err
+        assert "beta" in err
+
+    def test_missing_cert_file_exits_1_naming_path(self, monkeypatch, tmp_path, capsys):
+        import typer
+
+        import otto.config
+        from otto.cli.monitor import _resolve_monitor_tls
+
+        ghost = tmp_path / "nope.pem"
+        monkeypatch.setattr(otto.config, "get_repos", lambda: [self._repo("a", cert=ghost)])
+        with pytest.raises(typer.Exit) as excinfo:
+            _resolve_monitor_tls()
+        assert excinfo.value.exit_code == 1
+        assert str(ghost) in capsys.readouterr().err
+
+    def test_unparseable_cert_file_exits_1_naming_path(self, monkeypatch, tmp_path, capsys):
+        """A cert file that exists (passes ``is_file()``) but isn't a real PEM
+
+        must still fail loud at CLI startup, never silently proceed into
+        uvicorn only to die later inside ``MonitorServer.serve()``'s
+        background task (see ``test_serve_raises_instead_of_hanging_on_bad_cert``
+        in ``tests/unit/monitor/test_server_tls.py`` for that failure mode).
+        """
+        import typer
+
+        import otto.config
+        from otto.cli.monitor import _resolve_monitor_tls
+
+        garbage = tmp_path / "cert.pem"
+        garbage.write_text("this is not a certificate")
+        monkeypatch.setattr(otto.config, "get_repos", lambda: [self._repo("a", cert=garbage)])
+        with pytest.raises(typer.Exit) as excinfo:
+            _resolve_monitor_tls()
+        assert excinfo.value.exit_code == 1
+        assert str(garbage) in capsys.readouterr().err
 
 
 class TestBuildCollector:

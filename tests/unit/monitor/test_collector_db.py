@@ -398,5 +398,6 @@ class TestDisplayHost:
         from otto.monitor.server import MonitorServer
 
         server = MonitorServer(MetricCollector(hosts=[]), host="10.0.0.1", port=9999)
-        assert server.urls == ["http://10.0.0.1:9999"]
-        assert server.url == "http://10.0.0.1:9999"
+        assert server.origin == "http://10.0.0.1:9999"
+        assert server.urls == [f"http://10.0.0.1:9999/?key={server.key}"]
+        assert server.url == f"http://10.0.0.1:9999/?key={server.key}"

@@ -15,6 +15,7 @@ Review mode (serves a previously saved export; no live collection):
 import asyncio
 import logging
 import re
+import ssl
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
@@ -31,6 +32,7 @@ from ..monitor.factory import build_monitor_collector
 from ..monitor.session import new_frame, snapshot_lab
 
 if TYPE_CHECKING:
+    from ..config import MonitorSettings
     from ..monitor.server import MonitorServer
 
 logger = logging.getLogger(__name__)
@@ -141,8 +143,11 @@ def monitor(
 
         if ctx.meta.get("_otto_root_options") is not None:
             ensure_cli_session(ctx)
+            tls = _resolve_monitor_tls()
+        else:
+            tls = None
 
-        asyncio.run(_serve_review(export, source.name))
+        asyncio.run(_serve_review(export, source.name, tls))
         return
 
     # ── Live mode ────────────────────────────────────────────────────────
@@ -189,6 +194,13 @@ def monitor(
     # derived fresh by snapshot_lab itself from `selected`.
     lab = snapshot_lab(selected, get_lab().links)
 
+    # Resolved before build_session_metric_db() below: a doomed TLS config
+    # (disagreeing repos, missing/unparseable cert or key) must exit before a
+    # --db archive file is created on disk, not after — otherwise a run that
+    # never actually served anything still leaves a half-created database
+    # behind.
+    tls = _resolve_monitor_tls() if ctx.meta.get("_otto_root_options") is not None else None
+
     monitor_db: MetricDB | None = None
     if db is not None:
         # build_monitor_collector(hosts=selected) here is a throwaway collector
@@ -227,7 +239,14 @@ def monitor(
     asyncio.run(
         _run_monitor(
             collector=collector,
-            server=MonitorServer(collector, mode="live", frame=frame, lab=lab),
+            server=MonitorServer(
+                collector,
+                mode="live",
+                frame=frame,
+                lab=lab,
+                tls_cert=tls.tls_cert if tls else None,
+                tls_key=tls.tls_key if tls else None,
+            ),
             interval=timedelta(seconds=interval),
             db=monitor_db,
         )
@@ -259,7 +278,71 @@ def _load_review_document(path: Path) -> MonitorExport:
     raise typer.Exit(1)
 
 
-async def _serve_review(export: MonitorExport, source_name: str) -> None:
+def _resolve_monitor_tls() -> "MonitorSettings | None":
+    """Resolve the [monitor] TLS declaration across all configured repos.
+
+    Fail-loud rules from the spec: more than one repo declaring *different*
+    values is a configuration error (name the repos, exit 1); a declared
+    cert/key path whose file is missing is an error (never a silent fall-back
+    to HTTP — a quiet security downgrade); no declaration at all means plain
+    HTTP, which is simply "not configured".
+    """
+    import otto.config
+
+    declaring = [
+        (r.name, r.monitor_settings)
+        for r in otto.config.get_repos()
+        if r.monitor_settings.tls_cert is not None
+    ]
+    if not declaring:
+        return None
+    if len({(ms.tls_cert, ms.tls_key) for _, ms in declaring}) > 1:
+        names = ", ".join(sorted(name for name, _ in declaring))
+        typer.echo(
+            f"[monitor] TLS settings disagree across repos ({names}); "
+            "make them identical or declare TLS in only one settings.toml.",
+            err=True,
+        )
+        raise typer.Exit(1)
+    settings = declaring[0][1]
+    for field_name, path in (("tls_cert", settings.tls_cert), ("tls_key", settings.tls_key)):
+        if path is not None and not path.is_file():
+            typer.echo(
+                f"[monitor] {field_name} {path} does not exist or is not a file — "
+                "fix .otto/settings.toml or create the certificate "
+                "(see the monitor guide's 'Securing the dashboard' section).",
+                err=True,
+            )
+            raise typer.Exit(1)
+
+    # Both files exist, but existence doesn't mean valid: a corrupted/
+    # truncated/wrong-format PEM passes is_file() cleanly and then kills
+    # uvicorn's serve task deep inside MonitorServer.serve() (ssl.SSLError
+    # out of Config.load()) — which used to hang the startup poll loop
+    # forever rather than surface anything (see MonitorServer.serve()'s
+    # task.done() check). Load the pair here, at the point we can still
+    # typer.echo + exit 1 cleanly, instead of ever falling back to HTTP.
+    try:
+        ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER).load_cert_chain(
+            str(settings.tls_cert),
+            str(settings.tls_key) if settings.tls_key is not None else None,
+        )
+    except (ssl.SSLError, OSError) as err:
+        key_desc = (
+            str(settings.tls_key) if settings.tls_key is not None else "(none; bundled in tls_cert)"
+        )
+        typer.echo(
+            f"[monitor] tls_cert {settings.tls_cert} / tls_key {key_desc} "
+            f"could not be loaded as a TLS certificate/key pair: {err}",
+            err=True,
+        )
+        raise typer.Exit(1) from err
+    return settings
+
+
+async def _serve_review(
+    export: MonitorExport, source_name: str, tls: "MonitorSettings | None" = None
+) -> None:
     """Serve a previously saved format:1 export (no live collection)."""
     from ..monitor.server import MonitorServer
 
@@ -268,6 +351,8 @@ async def _serve_review(export: MonitorExport, source_name: str) -> None:
         mode="review",
         document=export,
         source_name=source_name,
+        tls_cert=tls.tls_cert if tls else None,
+        tls_key=tls.tls_key if tls else None,
     )
     await server.serve()
 
