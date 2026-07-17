@@ -257,24 +257,31 @@ otto init
 ```
 
 `--all` scaffolds every missing area with no prompts. To scaffold only
-specific areas, pass one or more of `--lab`, `--tests`, `--instructions`
-(`settings` is always included automatically whenever it's missing, since
-every other area depends on it):
+specific areas, pass one or more of `--schemas`, `--lab`, `--tests`,
+`--instructions` (`settings` is always included automatically whenever it's
+missing, since every other area depends on it):
 
 ```bash
 otto init --tests --instructions
 ```
 
-Areas that already exist are never modified — otto validates them instead
-(using the same ingestion code it uses everywhere else) and reports each one
-✓ or ✗ in a summary table. The command exits with code 1 if any *existing*
-area fails validation.
+Areas that already exist are never modified — except the otto-owned schemas
+area, which `otto init --schemas` refreshes (e.g. after upgrading otto) —
+otto validates them instead (using the same ingestion code it uses
+everywhere else) and reports each one ✓ or ✗ in a summary table. The command
+exits with code 1 if any *existing* area fails validation.
 
-The four areas `otto init` manages:
+The five areas `otto init` manages:
 
 settings
-: `.otto/settings.toml`, pre-wired with `labs`/`tests`/`libs` paths pointing
-  at the other three areas.
+: `.otto/settings.toml`, pre-wired with `labs`/`tests`/`libs` paths and a
+  `#:schema` editor directive, pointing at the other four areas.
+
+schemas
+: `.otto/schemas/*.schema.json` — generated editor schemas for `lab.json`,
+  `settings.toml`, and each host type — plus `.vscode` wiring. Otto-owned
+  and kept fresh by a staleness doctor; `otto init --schemas` regenerates
+  it even when already present.
 
 lab
 : `lab_data/lab.json` with one example host (`example-device`, in lab
@@ -300,6 +307,7 @@ Next steps
   4. otto test --list-suites
   5. otto test TestExample
   6. otto test --tests test_example_function
+  7. otto run smoke
 ```
 
 See {doc}`guide/cli-reference` for the full `otto init` flag reference, and

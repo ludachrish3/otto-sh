@@ -70,3 +70,38 @@ def test_interface_object_form_validates(lab_validator):
     lab = {"hosts": [{**_VALID_HOST, "interfaces": {"eth0": {"ip": "10.0.0.5"}}}]}
     errors = list(lab_validator.iter_errors(lab))
     assert errors == [], [e.message for e in errors]
+
+
+def test_lab_schema_accepts_scaffolded_lab_json(lab_validator, tmp_path):
+    """The very file `otto init` writes must validate against the emitted schema."""
+    from otto.cli.init import AREAS, InitConfig
+
+    lab_area = next(a for a in AREAS if a.name == "lab")
+    lab_area.scaffold(tmp_path, InitConfig(name="widget", version="0.1.0"))
+    doc = json.loads((tmp_path / "lab_data" / "lab.json").read_text())
+    lab_validator.validate(doc)  # $schema + top-level/_ and host-level _comment
+
+
+def test_lab_schema_accepts_comment_keys_in_host_and_link(lab_validator):
+    doc = {
+        "$schema": "../.otto/schemas/lab.schema.json",
+        "hosts": [{**_VALID_HOST, "_note": "runtime strips me"}],
+        "links": [{**_VALID_LINK, "_note": "and me"}],
+    }
+    lab_validator.validate(doc)
+
+
+def test_lab_schema_still_rejects_unknown_top_level_key(lab_validator):
+    from jsonschema.exceptions import ValidationError
+
+    doc = {"hosts": [], "links": [], "routes": []}
+    with pytest.raises(ValidationError):
+        lab_validator.validate(doc)
+
+
+def test_standalone_host_and_link_schemas_accept_comment_keys():
+    from jsonschema import Draft202012Validator
+
+    docs = build_schemas()
+    Draft202012Validator(docs["unix-host"]).validate({**_VALID_HOST, "_note": "x"})
+    Draft202012Validator(docs["link"]).validate({**_VALID_LINK, "_note": "x"})

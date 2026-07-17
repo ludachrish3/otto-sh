@@ -42,9 +42,10 @@ def parse_lab_sections(data: object, source: str) -> dict[str, list[Any]]:
     to drift). *data* is the already-parsed JSON value; *source* names its
     origin (a file path) for error messages.
 
-    Top-level ``_``-prefixed keys are comment space (same idiom as host
-    entries); unknown sections fail loud. Returns a dict carrying every known
-    section as a (possibly empty) list.
+    Top-level ``_``-prefixed keys and the ``$schema`` key (standard
+    editor-wiring idiom for VS Code / jsonls) are treated as comment space;
+    unknown sections fail loud. Returns a dict carrying every known section as
+    a (possibly empty) list.
 
     Raises
     ------
@@ -57,7 +58,11 @@ def parse_lab_sections(data: object, source: str) -> dict[str, list[Any]]:
             f"Lab file '{source}' must contain a JSON object with "
             f"'hosts'/'links' sections, got {type(data).__name__}"
         )
-    unknown = {k for k in data if not (isinstance(k, str) and k.startswith("_"))} - _LAB_SECTIONS
+    # `$schema` is the standard editor-wiring key (VS Code / jsonls) — treated
+    # as comment space alongside `_`-prefixed keys.
+    unknown = {
+        k for k in data if not (isinstance(k, str) and (k.startswith("_") or k == "$schema"))
+    } - _LAB_SECTIONS
     if unknown:
         raise LabRepositoryError(
             f"Lab file '{source}' has unknown section(s) {sorted(unknown)}; "
@@ -247,7 +252,8 @@ class JsonFileLabRepository:
         """Load one ``lab.json``: an object with ``hosts`` / ``links`` array sections.
 
         Reads the file, then delegates the section-shape contract (object guard,
-        ``_``-comment allowance, unknown-section rejection, per-section array
+        ``_``-comment allowance — also tolerating a top-level ``$schema`` key,
+        the editor-wiring idiom — unknown-section rejection, per-section array
         check) to :func:`parse_lab_sections` — the same helper the ``otto init``
         doctor uses, so the two can never diverge. Adding a future section (e.g.
         ``elements``) means extending ``_LAB_SECTIONS``.

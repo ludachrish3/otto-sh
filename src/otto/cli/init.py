@@ -1,14 +1,17 @@
 """``otto init`` — scaffold a new otto repo or validate an existing one.
 
-Each *area* (settings, lab, tests, instructions) can be detected, validated
-(existing artifacts are checked via the SAME ingestion code bootstrap uses —
-never modified), or scaffolded. Interactive by default; ``--all`` or per-area
-flags skip prompts. See docs/guide/setup/repo-setup.md.
+Each *area* (settings, schemas, lab, tests, instructions) can be detected,
+validated (existing artifacts are checked via the SAME ingestion code
+bootstrap uses — never modified, except the otto-owned schemas area, which
+``--schemas`` refreshes even when already present), or scaffolded.
+Interactive by default; ``--all`` or per-area flags skip prompts. See
+docs/guide/setup/repo-setup.md.
 """
 
 import dataclasses
 import json
 import os
+import re
 from collections.abc import Callable
 from pathlib import Path
 from typing import Annotated, Any, cast
@@ -16,197 +19,17 @@ from typing import Annotated, Any, cast
 import tomli
 import typer
 
-SETTINGS_TEMPLATE = """\
-name = "{name}"
-version = "{version}"
-
-# Where otto looks for things, relative to this repo's root (${{sut_dir}}).
-# These conventional paths are pre-wired so `otto init --lab` etc. can add
-# areas later without editing this file.
-labs = ["${{sut_dir}}/lab_data"]   # directories searched for lab.json
-tests = ["${{sut_dir}}/tests"]     # defines where test discovery happens
-libs = ["${{sut_dir}}/pylib"]      # added to sys.path at startup
-init = ["{init_module}"]           # modules imported at startup (register instructions)
-
-# --- optional sections (uncomment to use; see docs/guide/setup/repo-setup.md) ---
-# [lab]                    # host-source backend selection (default: json)
-# [host_preferences."*"]   # selector-scoped term/transfer preferences
-# [os_profiles."my-os"]    # named OS-profile bundles for host entries
-# [reservations]           # reservation gate configuration
-# [coverage]               # remote gcov collection settings
-# [docker]                 # image builds + compose stacks
-# [monitor]                # dashboard TLS (optional) — see the monitor guide
-# tls_cert = "~/.config/otto/tls/monitor-cert.pem"
-# tls_key = "~/.config/otto/tls/monitor-key.pem"
-"""
-
-EXAMPLE_HOST_ENTRY = {
-    "_comment": (
-        "Example host — replace these values. Full host schema: "
-        "docs/guide/setup/lab-config.md or `otto schema export`. The `labs` list "
-        "names the labs this host belongs to (select with --lab/OTTO_LAB)."
-    ),
-    "ip": "192.0.2.1",
-    "element": "example-device",
-    "os_type": "unix",
-    "valid_terms": ["ssh"],
-    "valid_transfers": ["scp", "sftp"],
-    "creds": [{"login": "admin", "password": "CHANGE_ME"}],
-    "resources": ["example-device"],
-    "labs": ["example_lab"],
-}
-
-LAB_JSON_TEMPLATE: dict[str, Any] = {
-    "_comment": (
-        "otto lab database: 'hosts' lists every lab host; 'links' declares "
-        "data-plane routes between them (see docs/guide/setup/lab-config.md). "
-        "Keys starting with _ are comments."
-    ),
-    "hosts": [EXAMPLE_HOST_ENTRY],
-    "links": [],
-}
-
-LAB_README_TEMPLATE = """\
-# lab_data/
-
-This directory holds `lab.json` — otto's lab database for this repo. It is a
-JSON object with two array sections:
-
-- **`hosts`** — every lab host. Each entry is validated against a pydantic spec
-  before otto will use it (`UnixHostSpec` / `EmbeddedHostSpec`, see
-  `docs/guide/setup/lab-config.md`). The scaffolded `lab.json` has one example
-  host; edit or replace it, and add as many more as your lab needs.
-- **`links`** — declared data-plane routes between hosts (routes not used for
-  ssh/telnet access, carrying UDP/HTTP/RTP/etc.). Empty by default; see the
-  `links` section below.
-
-## Fields in the example host entry
-
-- **`ip`** — the host's IP address (or hostname), used to open term/transfer
-  sessions.
-- **`element`** — the host's unique id within this repo's host database. This
-  is the name you pass to `--lab`-scoped commands and `get_host()`.
-- **`os_type`** — `"unix"` for a UnixHost-backed entry (SSH/telnet-capable
-  Linux/BSD-like systems) or `"embedded"` for an EmbeddedHost-backed entry
-  (Zephyr and similar). Determines which spec class validates the rest of
-  the entry.
-- **`valid_terms`** — the ordered menu of term backends this host supports
-  (e.g. `"ssh"`, `"telnet"`). The first entry is the default unless a
-  `[host_preferences]` selector in `settings.toml` overrides it.
-- **`valid_transfers`** — the ordered menu of file-transfer backends this
-  host supports (e.g. `"scp"`, `"sftp"`, `"ftp"`, `"nc"`). Same
-  first-entry-is-default rule as `valid_terms`.
-- **`creds`** — an ordered list of `{"login": ..., "password": ...}` objects;
-  the first entry is the default login unless `user` pins another one.
-  Replace `"CHANGE_ME"` with a real credential (or point it at your secrets
-  manager per your repo's convention) before connecting to a real host.
-- **`resources`** — a set of resource names this host claims, used by
-  reservations to prevent two sessions from using the same physical device
-  at once. Usually just the host's own name.
-- **`labs`** — the list of lab names this host belongs to. A host can belong
-  to more than one lab; select which lab is active with `--lab`/`OTTO_LAB`.
-
-Interfaces (when present) are keyed by their network-device name (`eth0`,
-`eth1`, …), so impairment/capture can read the device straight off the key.
-
-## Fields in a `links` entry
-
-Each `links` entry describes one data-plane route between two hosts:
-
-- **`endpoints`** — exactly two, each `{"host": <id>, "interface": <netdev>}`.
-  `interface` is required only when the host defines more than one interface;
-  with one (or none) otto assumes it and its IP.
-- **`protocol`** — optional, defaults to `"tcp"`. Informational for declared
-  links (documents what the route carries: udp/http/rtp/…).
-- **`name`** — optional friendly handle; the id is otherwise derived from the
-  endpoints.
-
-A link belongs to every lab either endpoint belongs to, so it may span labs.
-
-## Keys starting with `_`
-
-`lab.json` is plain JSON, which has no comment syntax. Any key beginning
-with `_` (like `_comment` above) is stripped before validation, so it is
-otto's sanctioned way to leave a note inline — both at the top level and
-inside host/link entries. Use it freely.
-
-## Where to go next
-
-- Full host schema reference: `docs/guide/setup/lab-config.md`
-- Machine-readable schema (for editor validation or codegen):
-  `otto schema export`
-- Confirm otto sees your hosts once you've edited this file:
-  `otto --lab example_lab --list-hosts`
-"""
-
-TEST_EXAMPLE_TEMPLATE = '''\
-"""Example otto test suite — runs hostless so it passes out of the box."""
-
-from typing import Annotated
-
-import typer
-
-from otto import options
-from otto.suite import OttoSuite
-
-
-@options
-class _Options:
-    greeting: Annotated[str, typer.Option(help="Greeting the example test logs.")] = "hello"
-
-
-class TestExample(OttoSuite[_Options]):
-    """A minimal suite: `otto test TestExample` (auto-registered by its Test* name)."""
-
-    Options = _Options
-
-    async def test_greeting_has_a_default(self, suite_options: _Options, repo_marker: str) -> None:
-        assert suite_options.greeting == "hello"
-        assert repo_marker == "from-conftest"
-
-
-def test_example_function() -> None:
-    """Plain pytest functions run too: `otto test --tests test_example_function`."""
-    assert True
-'''
-
-CONFTEST_TEMPLATE = '''\
-"""Repo-wide fixtures — available to every test under tests/ (any depth)."""
-
-import pytest
-
-
-@pytest.fixture
-def repo_marker() -> str:
-    """Trivial example fixture the scaffolded suite consumes."""
-    return "from-conftest"
-
-
-# Fixtures can hand tests live lab hosts; uncomment once your lab_data/ is real:
-# @pytest.fixture
-# async def primary_host():
-#     from otto.config import get_host
-#
-#     host = get_host("example-device")
-#     yield host
-#     await host.close()
-'''
-
-INSTRUCTIONS_TEMPLATE = '''\
-"""{name} instructions — functions exposed as `otto run` subcommands."""
-
-import logging
-
-from otto.cli.run import instruction
-
-logger = logging.getLogger(__name__)
-
-
-@instruction()
-async def smoke() -> None:
-    """Log a greeting — replace with your first real instruction."""
-    logger.info("hello from {name}")
-'''
+from .init_templates import (
+    CONFTEST_TEMPLATE,
+    INSTRUCTIONS_TEMPLATE,
+    LAB_JSON_TEMPLATE,
+    LAB_README_TEMPLATE,
+    OPTIONS_TEMPLATE,
+    SETTINGS_TEMPLATE,
+    TEST_EXAMPLE_TEMPLATE,
+    VSCODE_EXTENSIONS_TEMPLATE,
+    VSCODE_SETTINGS_TEMPLATE,
+)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -215,6 +38,12 @@ class InitConfig:
 
     name: str
     version: str
+
+    @property
+    def module_base(self) -> str:
+        """``name`` sanitized into a valid module-name base (``my-repo`` -> ``my_repo``)."""
+        base = re.sub(r"\W", "_", self.name)
+        return f"_{base}" if base[:1].isdigit() else base
 
 
 @dataclasses.dataclass(frozen=True)
@@ -252,12 +81,115 @@ def _settings_paths(root: Path) -> dict[str, list[Path]] | None:
     return resolved
 
 
+def _ensure_options_module(root: Path, cfg: InitConfig) -> list[Path]:
+    """Create ``pylib/<module_base>_options.py`` if absent; never overwrite.
+
+    Shared plumbing between the tests and instructions areas: both samples
+    inherit ``RepoOptions``, so whichever scaffold runs first creates it and
+    the other reuses it (idempotent — the module is user-owned once written).
+    """
+    pylib = root / "pylib"
+    pylib.mkdir(parents=True, exist_ok=True)
+    target = pylib / f"{cfg.module_base}_options.py"
+    if target.exists():
+        return []
+    target.write_text(OPTIONS_TEMPLATE.format(name=cfg.name))
+    return [target]
+
+
+def _schemas_dir(root: Path) -> Path:
+    return root / ".otto" / "schemas"
+
+
+def _detect_schemas(root: Path) -> bool:
+    return next(_schemas_dir(root).glob("*.schema.json"), None) is not None
+
+
+def _scaffold_schemas(root: Path, cfg: InitConfig) -> list[Path]:  # noqa: ARG001 — cfg unused, uniform Area signature
+    """Write the generated editor schemas — same product as ``otto schema export``."""
+    from ..models.jsonschema import build_schemas
+
+    out = _schemas_dir(root)
+    out.mkdir(parents=True, exist_ok=True)
+    created: list[Path] = []
+    for stem, doc in build_schemas().items():
+        target = out / f"{stem}.schema.json"
+        target.write_text(json.dumps(doc, indent=2) + "\n")
+        created.append(target)
+    created.extend(_scaffold_editor_wiring(root))
+    return created
+
+
+def _scaffold_editor_wiring(root: Path) -> list[Path]:
+    """Write ``.vscode`` schema wiring, strictly only-if-absent.
+
+    VS Code settings are JSONC (comments, trailing commas) — merging
+    programmatically risks corrupting a user file, so an existing
+    ``settings.json`` is never touched; the docs snippet covers manual
+    wiring. These files are scaffold-only: `_validate_schemas` must never
+    look at them (user-owned editor config once created).
+    """
+    created: list[Path] = []
+    vscode = root / ".vscode"
+    targets = [
+        (vscode / "settings.json", VSCODE_SETTINGS_TEMPLATE),
+        (vscode / "extensions.json", VSCODE_EXTENSIONS_TEMPLATE),
+    ]
+    for target, content in targets:
+        if target.exists():
+            if target.name == "settings.json":
+                typer.echo(
+                    "existing .vscode/settings.json left untouched — see "
+                    "docs/guide/setup/editor-schemas.md for the schema associations"
+                )
+            continue
+        vscode.mkdir(exist_ok=True)
+        target.write_text(content)
+        created.append(target)
+    return created
+
+
+def _validate_schemas(root: Path) -> list[str]:
+    """Staleness doctor: regenerate in-memory and diff structurally against disk.
+
+    Parsed-JSON comparison (never bytes) so a reformatted-but-equal file stays
+    green. Missing, differing, orphaned, and unparsable ``*.schema.json`` files
+    each get a problem naming both remedies. Mirrors the docs' "regenerate
+    after upgrading otto" note, mechanically.
+    """
+    from ..models.jsonschema import build_schemas
+
+    out = _schemas_dir(root)
+    remedy = "re-run `otto init --schemas` or `otto schema export`"
+    expected = build_schemas()
+    on_disk = {p.name: p for p in out.glob("*.schema.json")}
+    problems: list[str] = []
+    for stem, doc in expected.items():
+        name = f"{stem}.schema.json"
+        path = on_disk.pop(name, None)
+        if path is None:
+            problems.append(f"{out / name}: missing — {remedy}")
+            continue
+        try:
+            data = json.loads(path.read_text())
+        except (OSError, json.JSONDecodeError) as e:  # per-file resilience
+            problems.append(f"{path}: unparsable ({e}) — {remedy}")
+            continue
+        if data != doc:
+            problems.append(f"{path}: stale (differs from installed otto's models) — {remedy}")
+    problems.extend(
+        f"{path}: orphaned (installed otto emits no such schema) — {remedy}"
+        for _, path in sorted(on_disk.items())
+    )
+    return problems
+
+
 def _scaffold_settings(root: Path, cfg: InitConfig) -> list[Path]:
     target = root / ".otto" / "settings.toml"
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(
         SETTINGS_TEMPLATE.format(
-            name=cfg.name, version=cfg.version, init_module=f"{cfg.name}_instructions"
+            name=cfg.name, version=cfg.version, init_module=f"{cfg.module_base}_instructions"
         )
     )
     # Pre-wired paths must exist so later area scaffolds (and bootstrap) never
@@ -277,22 +209,26 @@ def _scaffold_lab(root: Path, cfg: InitConfig) -> list[Path]:  # noqa: ARG001 �
     return [lab_file, readme]
 
 
-def _scaffold_tests(root: Path, cfg: InitConfig) -> list[Path]:  # noqa: ARG001 — cfg unused, uniform Area signature
+def _scaffold_tests(root: Path, cfg: InitConfig) -> list[Path]:
+    created = _ensure_options_module(root, cfg)
     tests_dir = root / "tests"
     tests_dir.mkdir(parents=True, exist_ok=True)
     example = tests_dir / "test_example.py"
-    example.write_text(TEST_EXAMPLE_TEMPLATE)
+    example.write_text(TEST_EXAMPLE_TEMPLATE.format(options_module=f"{cfg.module_base}_options"))
     conftest = tests_dir / "conftest.py"
     conftest.write_text(CONFTEST_TEMPLATE)
-    return [example, conftest]
+    return [*created, example, conftest]
 
 
 def _scaffold_instructions(root: Path, cfg: InitConfig) -> list[Path]:
-    module_dir = root / "pylib" / f"{cfg.name}_instructions"
+    created = _ensure_options_module(root, cfg)
+    module_dir = root / "pylib" / f"{cfg.module_base}_instructions"
     module_dir.mkdir(parents=True, exist_ok=True)
     init_file = module_dir / "__init__.py"
-    init_file.write_text(INSTRUCTIONS_TEMPLATE.format(name=cfg.name))
-    return [init_file]
+    init_file.write_text(
+        INSTRUCTIONS_TEMPLATE.format(name=cfg.name, options_module=f"{cfg.module_base}_options")
+    )
+    return [*created, init_file]
 
 
 def _existing_settings_name(root: Path) -> str | None:
@@ -377,7 +313,8 @@ def _validate_settings(root: Path) -> list[str]:
 def _validate_lab(root: Path) -> list[str]:
     """Validate every ``lab.json`` under the settings' ``labs`` dirs via the real specs.
 
-    The top-level section shape (object guard, ``_``-comment allowance,
+    The top-level section shape (object guard, ``_``-comment allowance — also
+    tolerating a top-level ``$schema`` key, the editor-wiring idiom —
     unknown-section rejection, per-section array check) is delegated to
     :func:`otto.labs.json_repository.parse_lab_sections` — the SAME helper the
     runtime loader uses — so the doctor cannot drift from what otto actually
@@ -499,6 +436,7 @@ def _validate_instructions(root: Path) -> list[str]:
 
 AREAS: list[Area] = [
     Area("settings", _detect_settings, _validate_settings, _scaffold_settings),
+    Area("schemas", _detect_schemas, _validate_schemas, _scaffold_schemas),
     Area("lab", _detect_lab, _validate_lab, _scaffold_lab),
     Area("tests", _detect_tests, _validate_tests, _scaffold_tests),
     Area("instructions", _detect_instructions, _validate_instructions, _scaffold_instructions),
@@ -508,6 +446,15 @@ AREAS: list[Area] = [
 async def init_command(
     all_areas: Annotated[
         bool, typer.Option("--all", help="Scaffold every missing area without prompting.")
+    ] = False,
+    schemas: Annotated[
+        bool,
+        typer.Option(
+            "--schemas",
+            help=(
+                "Scaffold (or refresh, if present) the schemas area: .otto/schemas + editor wiring."
+            ),
+        ),
     ] = False,
     lab: Annotated[
         bool, typer.Option("--lab", help="Scaffold the lab area (lab_data/lab.json).")
@@ -539,12 +486,16 @@ async def init_command(
     if not root.is_dir():
         raise typer.BadParameter(f"{root} is not a directory", param_hint="--path")
 
-    requested = {"lab": lab, "tests": tests, "instructions": instructions}
+    requested = {"schemas": schemas, "lab": lab, "tests": tests, "instructions": instructions}
     explicit = any(requested.values())
     interactive = not (all_areas or explicit)
 
     missing = [a for a in AREAS if not a.detect(root)]
     missing_names = {a.name for a in missing}
+    # Generated artifacts are otto-owned, so the explicit flag REFRESHES a
+    # detected schemas area (the doctor's "re-run `otto init --schemas`"
+    # remedy). --all / interactive keep missing-only semantics.
+    refresh_names: set[str] = {"schemas"} if schemas else set()
 
     if "settings" in missing_names and (all_areas or explicit):
         typer.echo("settings.toml is the repo marker — scaffolding it first.")
@@ -556,7 +507,7 @@ async def init_command(
 
     scaffolded: list[str] = []
     for area in AREAS:
-        if area.name not in missing_names:
+        if area.name not in missing_names and area.name not in refresh_names:
             continue
         if interactive:
             wanted = typer.confirm(f"Scaffold the {area.name} area?", default=True)
@@ -569,8 +520,6 @@ async def init_command(
         for created in area.scaffold(root, cfg):
             typer.echo(f"created {created.relative_to(root)}")
         scaffolded.append(area.name)
-
-    import re
 
     from rich import print as rprint
     from rich.table import Table
@@ -590,6 +539,7 @@ async def init_command(
     steps.append("otto test --list-suites")
     steps.append("otto test TestExample")
     steps.append("otto test --tests test_example_function")
+    steps.append("otto run smoke")
     rprint("\n[bold]Next steps[/bold]")
     for i, step in enumerate(steps, 1):
         rprint(f"  {i}. {step}")

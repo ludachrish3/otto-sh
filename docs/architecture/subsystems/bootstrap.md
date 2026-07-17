@@ -14,19 +14,21 @@ the shape bootstrap expects to compose.
 
 ## Areas, not a monolith
 
-The command is organized around four **areas** — `settings`
-(`.otto/settings.toml`), `lab` (`lab_data/lab.json`), `tests`, and
-`instructions` — each a small value object with three operations:
+The command is organized around five **areas** — `settings`
+(`.otto/settings.toml`), `schemas` (`.otto/schemas/`), `lab`
+(`lab_data/lab.json`), `tests`, and `instructions` — each a small value
+object with three operations:
 
 - `detect` — does this area already exist here?
 - `validate` — is what exists actually loadable?
 - `scaffold` — write a minimal, working starting point.
 
 Interactively it walks the areas and prompts; `--all` or per-area flags
-(`--lab`, `--tests`, `--instructions`) run non-interactively. Existing files
-are never mutated — an area that exists is validated, not overwritten — and
-the run ends with a status table plus a "next steps" list, exiting `1` if
-any validation failed.
+(`--schemas`, `--lab`, `--tests`, `--instructions`) run non-interactively.
+Existing files are never mutated — except the otto-owned schemas area,
+which `otto init --schemas` refreshes — an area that exists is validated,
+not overwritten — and the run ends with a status table plus a "next steps"
+list, exiting `1` if any validation failed.
 
 ## The doctor is the ingest code
 
@@ -42,6 +44,6 @@ accepts, because there is no second validator to drift. A repo that passes
 - {mod}`otto.bootstrap` — the two-phase composition root: discovery (env +
   every repo's `settings.toml`) and contained registration (each repo's
   `libs`, `init` modules, and test files)
-- `otto.cli.init` — the `otto init` areas (settings, lab, tests,
+- `otto.cli.init` — the `otto init` areas (settings, schemas, lab, tests,
   instructions): detect / validate / scaffold, reusing bootstrap's own
   ingestion code

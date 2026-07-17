@@ -4,9 +4,11 @@ Commands:
     otto schema export [--out DIR] [--builtins-only]
 
 The schemas are generated from the installed otto's pydantic models, so they
-always match the running version. Point your editor at the emitted files for
-autocomplete + typo-catching on ``lab.json``, ``settings.toml``, and the
-reservations JSON. See the "Editor schemas" user guide.
+always match the running version. By default, schemas land in ``.otto/schemas/``,
+the same location that ``otto init`` scaffolds and where the doctor checks for
+staleness. Point your editor at the emitted files for autocomplete + typo-catching
+on ``lab.json``, ``settings.toml``, and the reservations JSON. See the
+"Editor schemas" user guide.
 """
 
 import json
@@ -36,7 +38,7 @@ def export(
     out: Annotated[
         Path,
         typer.Option("--out", "-o", help="Directory to write *.schema.json into."),
-    ] = Path("schemas"),
+    ] = Path(".otto/schemas"),
     builtins_only: Annotated[
         bool,
         typer.Option(

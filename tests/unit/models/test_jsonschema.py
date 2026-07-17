@@ -51,7 +51,7 @@ def test_lab_schema_emitted():
     assert "hosts" not in docs  # hard cutover: array-only schema retired
     lab = docs["lab"]
     assert lab["type"] == "object"
-    assert set(lab["properties"]) == {"hosts", "links"}
+    assert set(lab["properties"]) == {"$schema", "hosts", "links"}
     assert lab["properties"]["hosts"]["type"] == "array"
     assert lab["properties"]["links"]["type"] == "array"
     assert lab["additionalProperties"] is False

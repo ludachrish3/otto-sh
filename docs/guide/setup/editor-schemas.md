@@ -6,6 +6,14 @@ editor offers field autocomplete and flags typos. The schemas are generated from
 the pydantic models inside the otto you have installed, so they always match your
 version. There is nothing to download and nothing that can go stale.
 
+New repos get all of this automatically: `otto init` exports the schemas to
+`.otto/schemas/`, stamps the scaffolded `settings.toml` (`#:schema` directive)
+and `lab.json` (`$schema` key) so single files self-wire, and writes
+`.vscode/settings.json` + `.vscode/extensions.json` when they don't already
+exist (an existing file is never modified — add the snippets below by hand).
+The `otto init` doctor also flags stale schemas after an upgrade. The manual
+steps below are for existing repos or other editors.
+
 ## `otto schema --help`
 
 ```{raw} html
@@ -15,10 +23,10 @@ version. There is nothing to download and nothing that can go stale.
 ## Generate the schemas
 
 ```bash
-otto schema export --out schemas
+otto schema export
 ```
 
-This writes (into `schemas/`):
+This defaults to `.otto/schemas/` (pass `--out` to write elsewhere) and writes:
 
 | File | Describes |
 | --- | --- |
@@ -43,8 +51,8 @@ language server. Add to your workspace `.vscode/settings.json`:
 ```json
 {
   "json.schemas": [
-    { "fileMatch": ["**/lab.json"], "url": "./schemas/lab.schema.json" },
-    { "fileMatch": ["**/reservations.json"], "url": "./schemas/reservations.schema.json" }
+    { "fileMatch": ["**/lab.json"], "url": "./.otto/schemas/lab.schema.json" },
+    { "fileMatch": ["**/reservations.json"], "url": "./.otto/schemas/reservations.schema.json" }
   ]
 }
 ```
@@ -56,7 +64,7 @@ extension and add:
 ```json
 {
   "evenBetterToml.schema.associations": {
-    ".*/settings\\.toml$": "./schemas/settings.schema.json"
+    ".*/settings\\.toml$": "./.otto/schemas/settings.schema.json"
   }
 }
 ```
@@ -71,8 +79,8 @@ require('lspconfig').jsonls.setup({
   settings = {
     json = {
       schemas = {
-        { fileMatch = { 'lab.json' }, url = './schemas/lab.schema.json' },
-        { fileMatch = { 'reservations.json' }, url = './schemas/reservations.schema.json' },
+        { fileMatch = { 'lab.json' }, url = './.otto/schemas/lab.schema.json' },
+        { fileMatch = { 'reservations.json' }, url = './.otto/schemas/reservations.schema.json' },
       },
     },
   },
@@ -86,17 +94,22 @@ honours schema directives. Either add a directive at the top of the file:
 #:schema ./schemas/settings.schema.json
 ```
 
-or associate it in the taplo config (`.taplo.toml`):
+This path is relative to `.otto/settings.toml` itself, not the repo root — so
+`./schemas/` here means `.otto/schemas/`. (`otto init` stamps this line for
+you.)
+
+Or associate it in the taplo config (`.taplo.toml`):
 
 ```toml
 [[rule]]
 include = ["settings.toml"]
 [rule.schema]
-path = "schemas/settings.schema.json"
+path = ".otto/schemas/settings.schema.json"
 ```
 
 ## Note on drift
 
-The schemas reflect the otto version that generated them. There is no committed
-copy in the otto repo — regenerate with `otto schema export` whenever you
-upgrade so the fields stay in sync with your installed models.
+The schemas reflect the otto version that generated them. There is no
+committed copy in the otto repo — the `otto init` doctor flags a stale
+`.otto/schemas/` after an upgrade; refresh with `otto init --schemas` or
+`otto schema export`.

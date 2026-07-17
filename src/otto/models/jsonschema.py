@@ -82,6 +82,17 @@ def _decorate(doc: dict[str, Any], stem: str, title: str) -> dict[str, Any]:
     }
 
 
+def _allow_comment_keys(schema: dict[str, Any]) -> None:
+    """Allow ``_``-prefixed keys on an entry schema, mirroring the runtime strip.
+
+    ``HostSpec._strip_comment_keys`` / ``LinkSpec._strip_comment_keys`` drop
+    ``_``-prefixed keys before validation (the JSON comment idiom), so the
+    emitted schema must not squiggle them — `otto init` itself scaffolds a
+    host-level ``_comment``.
+    """
+    schema.setdefault("patternProperties", {})["^_"] = {}
+
+
 def _scalar_or_list_with_enum(prop: dict[str, Any], names: list[str]) -> dict[str, Any]:
     """Rebuild a menu property's schema to accept a scalar **or** an array of registry enum names.
 
@@ -165,6 +176,7 @@ def _hosts_array_schema(
         if key in top["$defs"]:
             _inject_selector_enums(top["$defs"][key], s)
             _inject_interface_shorthand(top["$defs"][key])
+            _allow_comment_keys(top["$defs"][key])
     return {
         "type": "array",
         "items": {
@@ -249,12 +261,18 @@ def _monitor_export_schema() -> dict[str, Any]:
 
 
 def _lab_schema(hosts_array: dict[str, Any]) -> dict[str, Any]:
-    """Build the ``lab.json`` object schema: ``hosts``/``links`` sections + ``_`` comments."""
+    """Build the ``lab.json`` object schema.
+
+    Assembles the ``hosts``/``links`` sections, a top-level ``$schema`` string
+    property (editor wiring), and the ``_`` comment-key escape.
+    """
     link_doc = LinkSpec.model_json_schema(ref_template="#/$defs/{model}")
+    _allow_comment_keys(link_doc)
     defs = {**hosts_array.pop("$defs", {}), **link_doc.pop("$defs", {})}
     return {
         "type": "object",
         "properties": {
+            "$schema": {"type": "string"},
             "hosts": hosts_array,
             "links": {"type": "array", "items": link_doc},
         },
@@ -280,12 +298,15 @@ def build_schemas(*, builtins_only: bool = False) -> dict[str, dict[str, Any]]:
         doc = spec.model_json_schema()
         _inject_selector_enums(doc, spec)
         _inject_interface_shorthand(doc)
+        _allow_comment_keys(doc)
         docs[stem] = _decorate(doc, stem, f"otto {stem}")
 
     docs["lab"] = _decorate(
         _lab_schema(_hosts_array_schema(distinct, names)), "lab", "otto lab.json"
     )
-    docs["link"] = _decorate(LinkSpec.model_json_schema(), "link", "otto link")
+    link_doc = LinkSpec.model_json_schema()
+    _allow_comment_keys(link_doc)
+    docs["link"] = _decorate(link_doc, "link", "otto link")
     docs["settings"] = _decorate(
         SettingsModel.model_json_schema(), "settings", "otto settings.toml"
     )

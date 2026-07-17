@@ -1,5 +1,6 @@
 """otto init prompt/flag semantics."""
 
+import json
 import os
 from pathlib import Path
 
@@ -25,10 +26,13 @@ def _app() -> typer.Typer:
 
 
 def test_interactive_prompts_per_missing_area(tmp_path: Path) -> None:
-    # name, version, then y/n per area: settings=y, lab=y, tests=n, instructions=n
-    result = runner.invoke(_app(), ["--path", str(tmp_path)], input="widget\n0.1.0\ny\ny\nn\nn\n")
+    # name, version, then y/n per area: settings=y, schemas=y, lab=y, tests=n, instructions=n
+    result = runner.invoke(
+        _app(), ["--path", str(tmp_path)], input="widget\n0.1.0\ny\ny\ny\nn\nn\n"
+    )
     assert result.exit_code == 0, result.output
     assert (tmp_path / ".otto" / "settings.toml").is_file()
+    assert (tmp_path / ".otto" / "schemas" / "settings.schema.json").is_file()
     assert (tmp_path / "lab_data" / "lab.json").is_file()
     assert not (tmp_path / "tests" / "test_example.py").exists()
 
@@ -38,11 +42,16 @@ def test_all_flag_scaffolds_everything_without_prompts(tmp_path: Path) -> None:
     assert result.exit_code == 0, result.output
     for artifact in (
         ".otto/settings.toml",
+        ".otto/schemas/settings.schema.json",
+        ".otto/schemas/lab.schema.json",
         "lab_data/lab.json",
         "lab_data/README.md",
         "tests/test_example.py",
         "tests/conftest.py",
         "pylib/widget_instructions/__init__.py",
+        "pylib/widget_options.py",
+        ".vscode/settings.json",
+        ".vscode/extensions.json",
     ):
         assert (tmp_path / artifact).exists(), artifact
 
@@ -111,3 +120,13 @@ def test_epilogue_skips_sut_dirs_when_comma_space_separated(tmp_path: Path, monk
     monkeypatch.setenv("OTTO_SUT_DIRS", f"/somewhere/else, {tmp_path}")
     result = runner.invoke(_app(), ["--all", "--name", "widget", "--path", str(tmp_path)])
     assert "export OTTO_SUT_DIRS" not in result.output
+
+
+def test_schemas_flag_refreshes_stale_files(tmp_path: Path) -> None:
+    result = runner.invoke(_app(), ["--all", "--name", "widget", "--path", str(tmp_path)])
+    assert result.exit_code == 0, result.output
+    lab_schema = tmp_path / ".otto" / "schemas" / "lab.schema.json"
+    lab_schema.write_text("{}")  # simulate stale/tampered
+    result = runner.invoke(_app(), ["--schemas", "--path", str(tmp_path)])
+    assert result.exit_code == 0, result.output
+    assert json.loads(lab_schema.read_text()).get("title") == "otto lab.json"

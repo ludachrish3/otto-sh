@@ -60,3 +60,33 @@ def test_init_then_full_verification_flow(tmp_path: Path) -> None:
     r = run_otto(["run", "smoke"], xdir=xdir, sut_dirs=repo, lab="example_lab")
     assert r.returncode == 0, r.stdout + r.stderr
     assert "hello from widget" in (r.stdout + r.stderr)
+
+    # The repo-wide RepoOptions flag rides BOTH surfaces (the whole point of
+    # the scaffolded plumbing): an unknown flag would exit 2 at parse time.
+    r = run_otto(
+        ["test", "TestExample", "--message", "hi-from-e2e", "--greeting", "yo"],
+        xdir=xdir,
+        sut_dirs=repo,
+        lab="example_lab",
+    )
+    assert r.returncode == 0, r.stdout + r.stderr
+
+    r = run_otto(
+        ["run", "smoke", "--message", "hi-from-e2e"], xdir=xdir, sut_dirs=repo, lab="example_lab"
+    )
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "hi-from-e2e" in (r.stdout + r.stderr)
+
+    r = run_otto(["run", "smoke", "--loud"], xdir=xdir, sut_dirs=repo, lab="example_lab")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "HELLO FROM WIDGET" in (r.stdout + r.stderr)
+
+    # Second init run: everything detected, doctor green (exit 0) — including
+    # schema freshness, since the same otto generated them moments ago.
+    r = run_otto(["init", "--all", "--name", "widget", "--path", str(repo)], xdir=xdir)
+    assert r.returncode == 0, r.stdout + r.stderr
+
+    # The scaffolded lab.json carries $schema and still loads (tolerance is
+    # in the runtime loader, proven by --list-hosts above; sanity-check disk).
+    assert (repo / ".otto" / "schemas" / "lab.schema.json").is_file()
+    assert (repo / ".vscode" / "settings.json").is_file()

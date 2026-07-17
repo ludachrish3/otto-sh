@@ -151,6 +151,14 @@ Use the `@options` decorator — otto's name for a pydantic dataclass — so the
 flags are validated. See {doc}`../run/options` for the full treatment, and
 `otto.examples.options` for a copyable example.
 
+`otto init` scaffolds exactly this shape: a `pylib/<name>_options.py` with a
+repo-wide `RepoOptions` that the example suite and instruction both inherit.
+Listing the options module in `init` — as the hand-written example under
+"The settings file" above does with `my_shared_options` — is optional: it
+only needs to be importable from a `libs` dir, since suites and instructions
+import it directly rather than relying on startup registration. `otto
+init`'s scaffold leaves it out of `init` for exactly that reason.
+
 ## Multiple repos
 
 Otto supports multiple repos simultaneously.  Set `OTTO_SUT_DIRS` to a
@@ -179,11 +187,15 @@ contributors then just clone and run. Work through this map once when adopting
 otto for a team:
 
 1. **Run `otto init`** — scaffolds `.otto/settings.toml` (`name`, `version`, and
-   the `labs` / `libs` / `tests` / `init` paths — this page, above), an example
-   lab host, an example test suite, and an example instructions module in one
-   step. `otto init --all` scaffolds everything with no prompts; bare `otto
-   init` asks per missing area. See {doc}`../../getting-started` and
-   {doc}`../cli-reference`.
+   the `labs` / `libs` / `tests` / `init` paths — this page, above) with every
+   optional section present but commented out, the generated editor schemas
+   (`.otto/schemas/` + `.vscode` wiring, see {doc}`editor-schemas`), an example
+   lab host, and a shared `RepoOptions` class inherited by both an example test
+   suite and an example instructions module — so `otto test TestExample` and
+   `otto run smoke` share a `--message` flag out of the box. `otto init --all`
+   scaffolds everything with no prompts; bare `otto init` asks per missing
+   area; `otto init --schemas` also *refreshes* the generated schemas after an
+   otto upgrade. See {doc}`../../getting-started` and {doc}`../cli-reference`.
 2. **Choose a host source** — the built-in `json` source (commit `lab.json`
    under a `labs` directory) is the default; point `[lab] backend` at a CMDB or
    inventory API if you have one. See {doc}`host-database`.

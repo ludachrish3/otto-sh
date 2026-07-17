@@ -7,7 +7,7 @@ import pytest
 import typer
 from typer.testing import CliRunner
 
-from otto.cli.init import init_command
+from otto.cli.init import AREAS, InitConfig, init_command
 from otto.utils import async_typer_command
 
 runner = CliRunner()
@@ -134,3 +134,54 @@ def test_missing_libs_dir_reported(tmp_path: Path) -> None:
     result = runner.invoke(_app(), ["--all", "--path", str(tmp_path)])
     assert result.exit_code == 1
     assert "pylib" in result.output
+
+
+def test_parse_lab_sections_tolerates_dollar_schema() -> None:
+    from otto.labs.errors import LabRepositoryError
+    from otto.labs.json_repository import parse_lab_sections
+
+    data = {"$schema": "../.otto/schemas/lab.schema.json", "hosts": [], "links": []}
+    assert parse_lab_sections(data, "lab.json")["hosts"] == []
+    with pytest.raises(LabRepositoryError, match="unknown section"):
+        parse_lab_sections({"routes": []}, "lab.json")
+
+
+def test_schemas_validate_green_after_scaffold_and_reformat(tmp_path: Path) -> None:
+    by_name = {a.name: a for a in AREAS}
+    by_name["schemas"].scaffold(tmp_path, InitConfig(name="widget", version="0.1.0"))
+    assert by_name["schemas"].validate(tmp_path) == []
+    # reformat-only change stays green: comparison is structural, not bytes
+    lab = tmp_path / ".otto" / "schemas" / "lab.schema.json"
+    lab.write_text(json.dumps(json.loads(lab.read_text()), indent=4, sort_keys=True))
+    assert by_name["schemas"].validate(tmp_path) == []
+
+
+def test_schemas_validate_flags_stale_missing_orphaned(tmp_path: Path) -> None:
+    by_name = {a.name: a for a in AREAS}
+    by_name["schemas"].scaffold(tmp_path, InitConfig(name="widget", version="0.1.0"))
+    out = tmp_path / ".otto" / "schemas"
+    stale = json.loads((out / "lab.schema.json").read_text())
+    stale["title"] = "tampered"
+    (out / "lab.schema.json").write_text(json.dumps(stale))
+    (out / "settings.schema.json").unlink()
+    (out / "ghost.schema.json").write_text("{}")
+    problems = "\n".join(by_name["schemas"].validate(tmp_path))
+    assert "lab.schema.json" in problems
+    assert "stale" in problems
+    assert "settings.schema.json" in problems
+    assert "missing" in problems
+    assert "ghost.schema.json" in problems
+    assert "orphaned" in problems
+    assert "otto schema export" in problems  # remedy named
+
+
+def test_schemas_validate_flags_unparsable(tmp_path: Path) -> None:
+    by_name = {a.name: a for a in AREAS}
+    by_name["schemas"].scaffold(tmp_path, InitConfig(name="widget", version="0.1.0"))
+    out = tmp_path / ".otto" / "schemas"
+    # Corrupt an expected schema file with invalid JSON
+    (out / "lab.schema.json").write_text("{not json")
+    problems = "\n".join(by_name["schemas"].validate(tmp_path))
+    assert "lab.schema.json" in problems
+    assert "unparsable" in problems
+    assert "otto schema export" in problems  # remedy named

@@ -35,3 +35,20 @@ def test_export_reports_what_it_wrote(tmp_path):
     result = runner.invoke(schema_app, ["export", "--out", str(out), "--builtins-only"])
     assert result.exit_code == 0
     assert "lab.schema.json" in result.output
+
+
+def test_export_defaults_to_dot_otto_schemas(tmp_path, monkeypatch):
+    """Without --out, otto schema export writes to .otto/schemas (shared with otto init)."""
+    monkeypatch.chdir(tmp_path)
+    result = runner.invoke(schema_app, ["export"])
+    assert result.exit_code == 0, result.output
+    assert (tmp_path / ".otto" / "schemas" / "settings.schema.json").is_file()
+    assert (tmp_path / ".otto" / "schemas" / "lab.schema.json").is_file()
+
+
+def test_export_out_flag_still_honored(tmp_path):
+    """The --out flag continues to work when explicitly provided."""
+    out = tmp_path / "elsewhere"
+    result = runner.invoke(schema_app, ["export", "--out", str(out)])
+    assert result.exit_code == 0, result.output
+    assert (out / "settings.schema.json").is_file()
