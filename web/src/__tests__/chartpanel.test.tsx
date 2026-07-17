@@ -13,9 +13,14 @@ class FakeChart {
   group = "";
   disposed = false;
   options: unknown[] = [];
+  /** Full (option, opts) pairs — `options` above keeps only the option arg for
+   * the legacy lifecycle assertions; this also captures the setOption opts so
+   * tests can pin notMerge/lazyUpdate. */
+  calls: { opt: unknown; opts: Record<string, unknown> | undefined }[] = [];
   handlers = new Map<string, (e: unknown) => void>();
-  setOption(opt: unknown) {
+  setOption(opt: unknown, opts?: Record<string, unknown>) {
     this.options.push(opt);
+    this.calls.push({ opt, opts });
   }
   on(event: string, cb: (e: unknown) => void) {
     this.handlers.set(event, cb);
@@ -62,6 +67,29 @@ describe("ChartPanel lifecycle", () => {
     expect(instances[0].options).toEqual([{ a: 1 }, { a: 2 }]);
     unmount();
     expect(instances[0].disposed).toBe(true);
+  });
+
+  it("applies the full-replace option synchronously — no lazyUpdate", () => {
+    // The [option]-effect's setOption is a notMerge (whole-model rebuild) full
+    // replace. It MUST NOT pass lazyUpdate: with lazyUpdate:true, ECharts
+    // installs the new, still data-less GlobalModel and defers the
+    // data-processing pipeline to the next zr frame — leaving a window where
+    // getSeriesByIndex(i).getData() is undefined. An axis-trigger tooltip
+    // mousemove landing in that window crashes in getDataParams reading
+    // getRawIndex of undefined (apache/echarts#9402). A synchronous setOption
+    // runs the pipeline + flush before returning, so no mousemove handler can
+    // ever observe a data-less series. See ChartPanel.tsx.
+    render(
+      <ChartPanel
+        option={{ series: [{ id: "s", data: [] }] }}
+        groupId="g"
+        window={WINDOW}
+        testId="chart-panel-x"
+      />,
+    );
+    const replace = instances[0].calls.find((c) => c.opts?.notMerge === true);
+    expect(replace, "expected a notMerge full-replace setOption call").toBeDefined();
+    expect(replace?.opts?.lazyUpdate).not.toBe(true);
   });
 
   it("debounces datazoom into an onZoom range", () => {

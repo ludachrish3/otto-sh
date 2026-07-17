@@ -76,7 +76,19 @@ export function ChartPanel(props: {
   }, [groupId]);
 
   useEffect(() => {
-    chart.current?.setOption(option, { notMerge: true, lazyUpdate: true });
+    // notMerge (whole-model rebuild) MUST be synchronous — no lazyUpdate. With
+    // lazyUpdate:true, ECharts installs the new GlobalModel immediately but
+    // defers the data-processing pipeline to the next zr frame, so every
+    // series' getData() is undefined until then. During that window an
+    // axis-trigger tooltip mousemove (this is a live, hover-tracked chart)
+    // reaches getDataParams → data.getRawIndex(idx) on undefined data and
+    // crashes (apache/echarts#9402). A synchronous setOption runs the pipeline
+    // and flushes before returning, so — JS being single-threaded — no
+    // mousemove handler can ever observe a data-less series. The cheap
+    // incremental patch below stays lazy: it's a notMerge:false merge that
+    // reuses the live models and never touches series data, so it opens no
+    // such window.
+    chart.current?.setOption(option, { notMerge: true });
     // data-echarts-point-count: stamped HERE, inside the effect that actually
     // makes the imperative setOption() call above — same reasoning as
     // data-echarts-window-to below (see its comment). SubjectPage's
