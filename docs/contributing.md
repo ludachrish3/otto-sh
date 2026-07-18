@@ -173,7 +173,7 @@ The umbrella targets `make validate`, `lint`, `format`, `typecheck`, and
 (so `make validate` == `make validate-python` + `make validate-ts`). Bare
 `make coverage` is the same shape: `coverage-python` (full pytest, 95 floor)
 + `coverage-ts` (merged vitest+e2e, its own floor). CI's browserless
-web-quality job runs the reduced slice `check-ts coverage-ts-unit` — the
+`check-ts` job runs the reduced slice `check-ts coverage-ts-unit` — the
 vitest-only floor, since it has no browsers to run the merged e2e leg.
 Biome config lives in `web/biome.json`; the vitest coverage floor lives in
 `web/vite.config.ts` (raise it as component test coverage grows). Install

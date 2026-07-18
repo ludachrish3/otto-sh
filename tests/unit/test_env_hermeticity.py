@@ -23,7 +23,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 # Harness opt-ins legitimately read from the ambient environment; everything
 # else OTTO_-prefixed is otto *product* configuration and must not leak in.
-ALLOWED_AMBIENT = {"OTTO_DETECT_ASYNCIO_LEAKS"}
+ALLOWED_AMBIENT = {"OTTO_DETECT_ASYNCIO_LEAKS", "OTTO_TS_COVERAGE"}
 
 # Deliberately NOT OTTO_-prefixed: the guard under test would strip it.
 PROBE_FLAG = "_TEST_OTTO_HERMETICITY_PROBE"
@@ -40,6 +40,14 @@ def test_probe_ambient_otto_env_is_stripped():
     assert leaked == [], (
         f"ambient otto configuration leaked into the test process: {leaked} "
         "(tests/conftest.py should have stripped these at import time)"
+    )
+    # Positive pin (the subprocess below sets it): an allowlisted harness
+    # opt-in must SURVIVE the strip, or `make dashboard`'s OTTO_TS_COVERAGE gate
+    # silently collects nothing and `make coverage-ts` fails with an opaque
+    # empty-coverage error far downstream.
+    assert os.environ.get("OTTO_TS_COVERAGE") == "1", (
+        "allowlisted OTTO_TS_COVERAGE was stripped from the ambient env — the "
+        "browser TS-coverage gate would no-op"
     )
 
 
@@ -62,6 +70,7 @@ def test_ambient_otto_env_cannot_leak_into_a_pytest_run():
             PROBE_FLAG: "1",
             "OTTO_SUT_DIRS": "/somewhere/else/tests/repo1",
             "OTTO_XDIR": "/somewhere/else/xdir",
+            "OTTO_TS_COVERAGE": "1",
         },
         cwd=str(PROJECT_ROOT),
         capture_output=True,

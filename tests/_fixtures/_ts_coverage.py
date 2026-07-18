@@ -18,8 +18,10 @@ do not add per-navigation flushing complexity for it.
 import json
 import os
 import uuid
+from collections.abc import Iterator
 from pathlib import Path
 
+import pytest
 from playwright.sync_api import CDPSession, Page
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -51,3 +53,39 @@ def write_ts_coverage(sink: list[dict]) -> None:
     RAW_DIR.mkdir(parents=True, exist_ok=True)
     out = RAW_DIR / f"cdp-{os.getpid()}-{uuid.uuid4().hex[:8]}.json"
     out.write_text(json.dumps({"result": sink}))
+
+
+# Shared body of the browser suites' autouse `_ts_coverage` fixture. It is a
+# plain generator, NOT a fixture: pytest honors `autouse` only for fixtures
+# DEFINED in a conftest/plugin, not ones imported into one. Each browser
+# conftest therefore keeps thin, local `_ts_coverage_sink` + autouse
+# `_ts_coverage` fixtures (the unavoidable pytest boilerplate) that delegate the
+# actual work here, so this logic lives once.
+def ts_coverage(request: pytest.FixtureRequest, sink: list[dict]) -> Iterator[None]:
+    """Per-test V8 coverage; suite-wide accumulation. See the module docstring.
+
+    Collection is gated on ``OTTO_TS_COVERAGE`` (set only by the ``make
+    dashboard`` recipe, and allowlisted in tests/conftest.py's ambient-env
+    strip). Ad-hoc or ``nox`` runs of these suites therefore do NOT append
+    dumps to ``reports/ts-e2e-cov/raw/`` outside make's rm-and-stamp protocol —
+    otherwise ``make coverage-ts`` could merge in a browser run make never
+    scheduled.
+
+    Guarded on the ``browser`` marker BEFORE touching any Playwright fixture:
+    a bare ``page`` parameter would force browser parametrization onto a
+    conftest's non-browser tests and pull sync Playwright's event loop into
+    the shared hostless process.
+    """
+    if (
+        not os.environ.get("OTTO_TS_COVERAGE")
+        or request.node.get_closest_marker("browser") is None
+        or request.node.get_closest_marker("soak") is not None
+    ):
+        yield
+        return
+    if request.getfixturevalue("browser_name") != "chromium":
+        yield
+        return
+    client = start_ts_coverage(request.getfixturevalue("page"))
+    yield
+    collect_ts_coverage(client, sink)

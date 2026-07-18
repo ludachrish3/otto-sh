@@ -116,7 +116,11 @@ for _var in ("FORCE_COLOR", "CLICOLOR_FORCE", "PY_COLORS", "CLICOLOR"):
 # dicts), which happens after this and is unaffected. Harness opt-ins
 # legitimately read from the ambient environment are exempt. Pinned by
 # tests/unit/test_env_hermeticity.py.
-_OTTO_AMBIENT_ALLOWED = {"OTTO_DETECT_ASYNCIO_LEAKS"}
+# OTTO_TS_COVERAGE is a harness opt-in like OTTO_DETECT_ASYNCIO_LEAKS: `make
+# dashboard` sets it to arm the browser suites' CDP coverage collection
+# (tests/_fixtures/_ts_coverage.py), so it must survive this strip to reach the
+# fixture. Keep in sync with tests/unit/test_env_hermeticity.py's ALLOWED_AMBIENT.
+_OTTO_AMBIENT_ALLOWED = {"OTTO_DETECT_ASYNCIO_LEAKS", "OTTO_TS_COVERAGE"}
 for _var in [k for k in os.environ if k.startswith("OTTO_") and k not in _OTTO_AMBIENT_ALLOWED]:
     os.environ.pop(_var, None)
 

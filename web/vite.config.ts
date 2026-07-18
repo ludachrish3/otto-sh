@@ -70,6 +70,7 @@ export default defineConfig({
         "src/__tests__/**",
         "src/**/*.d.ts",
         "src/api/types.gen.ts",
+        "src/api/export.gen.ts",
         "src/main.tsx",
         "src/covreport/main.ts",
         // Vendored Untitled UI source — not ours to test. web/src/ui/** (our
@@ -84,7 +85,7 @@ export default defineConfig({
         "src/hooks/use-breakpoint.ts",
         "src/hooks/use-resize-observer.ts",
       ],
-      // UNIT-TIER floor (browserless; what CI's web-quality job gates via
+      // UNIT-TIER floor (browserless; what CI's check-ts job gates via
       // `make coverage-ts-unit`). The FULL floor lives in the merged gate
       // (`make coverage-ts`, web/package.json's coverage:merged): it folds in
       // the Playwright e2e leg, which is where TopologyPage.tsx and the

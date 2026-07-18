@@ -107,7 +107,7 @@ jobs:
       # on its own via the node_modules stamp — no separate install step.
       - name: Build the React dashboard (npm ci + type-drift + air-gap gates)
         run: make web
-      # Unit tests + coverage run in the dedicated web-quality job; this job
+      # Unit tests + coverage run in the dedicated check-ts job; this job
       # builds the dashboard purely for the browser e2e that follows. Install
       # only this leg's engine (+ its system libs). --with-deps runs apt-get
       # update, which refreshes every source on the runner image — including a
@@ -120,10 +120,12 @@ jobs:
       - name: Run dashboard browser e2e (${{ matrix.browser }})
         run: uv run nox -k ${{ matrix.browser }}
 
-  # web/ TypeScript quality gates — the TS analogue of the lint/typecheck jobs.
-  # Node-only: no Python, no browsers, no dashboard build, so it runs fast and
-  # in parallel. Both targets take the node_modules stamp as a prerequisite, so
-  # they run npm ci themselves — no explicit install step.
+  # web/ TypeScript quality gates — the TS analogue of the lint-python /
+  # typecheck-python jobs (those run Python-only nox sessions; this is where
+  # Biome/knip/tsc live). Node-only: no Python, no browsers, no dashboard
+  # build, so it runs fast and in parallel. Both targets take the node_modules
+  # stamp as a prerequisite, so they run npm ci themselves — no explicit
+  # install step.
   #
   # TWO GATES, NOT A RE-LISTED UMBRELLA: this job invokes `check-ts` (Biome +
   # knip + tsc) and `coverage-ts-unit` (vitest unit floor) — the two TS gates
@@ -133,9 +135,10 @@ jobs:
   # The third TS gate — the merged e2e coverage report (`coverage-ts`) — needs
   # the Playwright browser lane and runs locally via `make coverage`/release,
   # mirroring how the Python 95-gate is local-only while CI gates hostless.
-  # `tests/unit/test_ci_web_gate.py` pins this.
-  web-quality:
-    name: web-quality
+  # `tests/unit/test_ci_web_gate.py` pins this. (The job is named `check-ts`
+  # after its headline gate; it also runs the vitest unit floor.)
+  check-ts:
+    name: check-ts
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.0
@@ -146,7 +149,9 @@ jobs:
       - name: web/ static gates (Biome check + tsc) + vitest unit coverage floor
         run: make check-ts coverage-ts-unit
 
-  lint:
+  # Python static gates. Named -python because they run Python-only nox
+  # sessions (ruff / ty); the TS analogues live in the `check-ts` job above.
+  lint-python:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.0
@@ -156,7 +161,7 @@ jobs:
       - run: uv python install 3.10
       - run: uv run nox -s lint
 
-  typecheck:
+  typecheck-python:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.0
@@ -212,7 +217,7 @@ jobs:
   # to the PR author in the checks UI.
   report-failure:
     name: Open issue on failure
-    needs: [lint, tests, unit-repeat, dashboard, web-quality, typecheck, docs]
+    needs: [lint-python, tests, unit-repeat, dashboard, check-ts, typecheck-python, docs]
     if: failure() && github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
@@ -226,7 +231,7 @@ jobs:
             echo "- Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
             echo "- Commit: ${{ github.sha }}"
             echo
-            echo "Check the job logs to see which of lint / tests / unit-repeat / dashboard / web-quality / typecheck / docs failed."
+            echo "Check the job logs to see which of lint-python / tests / unit-repeat / dashboard / check-ts / typecheck-python / docs failed."
           } > issue-body.md
 
       - name: Create issue from file

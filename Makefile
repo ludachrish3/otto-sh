@@ -1,5 +1,14 @@
 .DEFAULT_GOAL := all
 
+# Not -j safe: several recipes share scratch dirs under reports/ — `dashboard`
+# does `rm -rf reports/ts-e2e-cov/raw` while `coverage-ts` reads it, and
+# coverage-python/coverage-ts both write reports/junit/ — and parallelism here
+# lives INSIDE recipes (pytest -n, npm), not in `make -j`. Force serial so
+# `make -j coverage` can't race the rm against the read. Global because GNU
+# Make 4.3 has no target-scoped .NOTPARALLEL; harmless, as no target relies
+# on -j.
+.NOTPARALLEL:
+
 .PHONY: help all ci nox nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-python coverage-unit coverage-integration coverage-unix coverage-embedded coverage-hostless coverage-ts coverage-ts-unit docs docs-lint docs-html docs-inventories docs-media doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts check check-python check-ts format format-python format-ts schema monitor-fixtures clean changelog release stability stability-unit stability-unix stability-tunnel stability-embedded repeat vm-health qemu-restart import-snapshot hyperfine profile browsers dashboard dashboard-all dashboard-soak web-install web web-dev test-ts web-clean wheel-check
 
 # Bump component for `make release`. Override on the command line:
@@ -432,7 +441,16 @@ $(DASHBOARD_DIST) $(COVREPORT_DIST) &: $(WEB_SRCS) $(WEB_NODE_MODULES)
 # warning above is the cautionary tale), and do not run this under `make -j`.
 TS_E2E_RAW_STAMP := reports/ts-e2e-cov/raw/.stamp
 TS_E2E_COV := reports/ts-e2e-cov/istanbul/coverage-final.json
-BROWSER_TEST_SRCS := $(shell find tests/e2e/monitor/dashboard tests/e2e/cov/report_browser -name '*.py') tests/_fixtures/_ts_coverage.py
+# The two browser suites' own files, plus the shared tests/_fixtures/ modules
+# they import (the harness, guard, fake collector, fixture-report builder, and
+# the CDP-coverage collector) — editing any of these changes what the browser
+# lane exercises, so the raw-coverage stamp must depend on them too.
+BROWSER_TEST_SRCS := $(shell find tests/e2e/monitor/dashboard tests/e2e/cov/report_browser -name '*.py') \
+                     tests/_fixtures/_ts_coverage.py       \
+                     tests/_fixtures/_browser_guard.py      \
+                     tests/_fixtures/_dashboard_harness.py  \
+                     tests/_fixtures/_fake_collector.py     \
+                     tests/_fixtures/_report_fixture.py
 
 $(TS_E2E_RAW_STAMP): $(WEB_SRCS) $(BROWSER_TEST_SRCS)
 	$(MAKE) dashboard
@@ -450,7 +468,12 @@ $(TS_E2E_COV): $(TS_E2E_RAW_STAMP) $(WEB_NODE_MODULES) web/scripts/e2e_coverage_
 # expression changes, change noxfile.py's too.
 dashboard: $(DASHBOARD_DIST) $(COVREPORT_DIST) ## Run the browser e2e suites (monitor dashboard + coverage report) on DASHBOARD_BROWSERS (default: chromium — feeds `coverage`). Full matrix: `make dashboard-all`. Needs `make browsers` once; (re)builds web/'s dist bundles when missing or older than web/src/ (see `make web`). Excludes `soak` (see `dashboard-soak`) — minutes of pushing, not a per-task gate.
 	@rm -rf reports/ts-e2e-cov/raw
-	$(TIMEOUT_CMD) uv run pytest tests/e2e/monitor/dashboard tests/e2e/cov/report_browser -m "browser and not soak" $(foreach b,$(DASHBOARD_BROWSERS),--browser $(b)) -n 1 --cov-report= --screenshot only-on-failure --output reports/playwright $(call junitxml,dashboard)
+# OTTO_TS_COVERAGE arms the browser suites' CDP V8-coverage collection
+# (tests/_fixtures/_ts_coverage.py). Only make sets it, so ad-hoc or `nox`
+# runs of these suites don't append raw dumps outside this recipe's rm+stamp
+# protocol — which would let `make coverage-ts` merge in a browser run make
+# never scheduled.
+	OTTO_TS_COVERAGE=1 $(TIMEOUT_CMD) uv run pytest tests/e2e/monitor/dashboard tests/e2e/cov/report_browser -m "browser and not soak" $(foreach b,$(DASHBOARD_BROWSERS),--browser $(b)) -n 1 --cov-report= --screenshot only-on-failure --output reports/playwright $(call junitxml,dashboard)
 	@mkdir -p reports/ts-e2e-cov/raw && touch $(TS_E2E_RAW_STAMP)
 
 dashboard-all: ## Run the dashboard e2e on ALL engines (Chromium + Firefox + WebKit); invoked by `make release`. Needs `make browsers` once.

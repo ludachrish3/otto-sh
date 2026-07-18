@@ -1,4 +1,4 @@
-"""CI's web-quality job must invoke the TS gates, not re-list their internals.
+"""CI's check-ts job must invoke the TS gates, not re-list their internals.
 
 The job used to hand-list `web-check`'s sub-targets and the list silently
 drifted from the gate it was copying: `biome lint` + `biome format` do NOT
@@ -20,16 +20,16 @@ _REPO = Path(__file__).resolve().parent.parent.parent
 _MAKEFILE = (_REPO / "Makefile").read_text()
 
 
-def _web_quality_runs() -> list[str]:
+def _check_ts_job_runs() -> list[str]:
     ci = yaml.safe_load((_REPO / ".github" / "workflows" / "ci.yml").read_text())
-    steps = ci["jobs"]["web-quality"]["steps"]
+    steps = ci["jobs"]["check-ts"]["steps"]
     return [step["run"] for step in steps if "run" in step]
 
 
 def test_ci_invokes_the_ts_gates_not_their_internals() -> None:
-    runs = _web_quality_runs()
+    runs = _check_ts_job_runs()
     assert runs == ["make check-ts coverage-ts-unit"], (
-        "CI's web-quality job must invoke `make check-ts coverage-ts-unit` — "
+        "CI's check-ts job must invoke `make check-ts coverage-ts-unit` — "
         "the browserless TS gates — in ONE step, not re-list any gate's "
         f"internals (drift risk). Got: {runs!r}"
     )

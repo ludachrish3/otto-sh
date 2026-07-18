@@ -364,7 +364,7 @@ Vagrant.configure("2") do |config|
         # Node.js 24 (matches .nvmrc) for the web/ toolchain: dashboard/covreport
         # builds (make web*, CI dashboard job) AND the TS quality gates
         # (make check-ts / validate-ts -> Biome lint+format, tsc, vitest v8
-        # coverage; CI web-quality job). Biome and vitest are npm devDependencies
+        # coverage; CI check-ts job). Biome and vitest are npm devDependencies
         # pulled in by `make web-install` (Biome's native binary rides in as an
         # npm optionalDependency), so no extra system package is needed here.
         # Python gates never need Node. Install from NodeSource for LTS support.

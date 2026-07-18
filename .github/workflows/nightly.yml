@@ -1,13 +1,16 @@
 name: Nightly
 
-# Nightly stability run: executes the SessionManager concurrency tests
-# and the existing telnet deadlock regression at high iteration count to
-# catch timing-only races. Tier 1 only — no Vagrant VMs in GHA, so this
-# exercises the manager-level interleaving via FakeSession (transports are
-# mocked).
+# Nightly flake-flush: re-runs otto's NON-DETERMINISTIC lanes at high
+# iteration count to catch timing/order races a single push run can miss —
+# the SessionManager concurrency + telnet-deadlock stability tests, the
+# hostless unit matrix under pytest-repeat, and the 3-engine browser e2e.
+# Tier 1 only: no Vagrant VMs in GHA, so the manager interleaving runs via
+# FakeSession (mocked transports) and the VM-dependent Python tiers are out.
 #
-# Also re-runs the full nox unit matrix under pytest-repeat (5 iterations by
-# default) to flush flakes anywhere in the suite, not just the stability tests.
+# Deterministic gates (lint-python, typecheck-python, check-ts, docs) are
+# deliberately NOT duplicated here — they run on every push in ci.yml and
+# produce the same result each time, so a nightly rerun adds no signal. Only
+# lanes that can actually flake belong in this workflow.
 on:
   schedule:
     # Nightly at 06:00 UTC. cron is in UTC regardless of repo timezone.
@@ -19,7 +22,7 @@ on:
         required: false
         default: '100'
       nox_count:
-        description: 'pytest-repeat iteration count (nox unit matrix)'
+        description: 'pytest-repeat iteration count (nox unit matrix + dashboard e2e)'
         required: false
         default: '5'
 
@@ -36,22 +39,6 @@ env:
   CLICOLOR: ""
 
 jobs:
-  lint:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7.0.0
-
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v8.3.2
-        with:
-          enable-cache: true
-
-      - name: Set up Python 3.10
-        run: uv python install 3.10
-
-      - name: Run lint
-        run: uv run nox -s lint
-
   stability-matrix:
     runs-on: ubuntu-latest
     strategy:
@@ -104,11 +91,45 @@ jobs:
           uv run nox -s tests_hostless-${{ matrix.python-version }} --
           --count=${{ inputs.nox_count || '5' }} --repeat-scope=session
 
+  # Browser e2e is the flakiest lane — real Playwright engines, timing-
+  # sensitive DOM — so nightly re-runs the full 3-engine matrix under
+  # pytest-repeat, the same flake-flush unit-matrix does for the hostless
+  # suite. Mirrors ci.yml's per-push `dashboard` job (build the dist with
+  # `make web`, install just this engine's system libs), then loops the
+  # session with --count.
+  dashboard:
+    name: dashboard-e2e (${{ matrix.browser }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, firefox, webkit]
+    steps:
+      - uses: actions/checkout@v7.0.0
+      - name: Set up Node
+        uses: actions/setup-node@v6.4.0
+        with:
+          node-version-file: .nvmrc
+      - uses: astral-sh/setup-uv@v8.3.2
+        with:
+          enable-cache: true
+      - run: uv python install 3.12
+      - name: Build the React dashboard (npm ci + type-drift + air-gap gates)
+        run: make web
+      - name: Install ${{ matrix.browser }} with system dependencies
+        run: |
+          scripts/ci_drop_unused_apt_sources.sh
+          uv run --group dev playwright install --with-deps ${{ matrix.browser }}
+      - name: Run dashboard browser e2e (${{ matrix.browser }}) ${{ inputs.nox_count || '5' }}x
+        run: >-
+          uv run nox -k ${{ matrix.browser }} --
+          --count=${{ inputs.nox_count || '5' }} --repeat-scope=session
+
   # If any matrix cell fails, open (or update) a tracking issue so a flaky
   # nightly surfaces without anyone having to watch the Actions tab.
   report-failure:
     name: Open issue on failure
-    needs: [lint, stability-matrix, unit-matrix]
+    needs: [stability-matrix, unit-matrix, dashboard]
     if: failure()
     runs-on: ubuntu-latest
     permissions:
@@ -117,14 +138,14 @@ jobs:
       - name: Write issue body
         run: |
           {
-            echo "The nightly run failed (lint, stability, and/or nox unit matrix)."
+            echo "The nightly run failed (stability, unit matrix, and/or dashboard browser e2e)."
             echo
             echo "- Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
             echo "- Commit: ${{ github.sha }}"
             echo
-            echo "Check the matrix logs for the failing job (stability vs."
-            echo "unit-matrix), the Python version, and the pytest-repeat"
-            echo "iteration that tripped the failure."
+            echo "Check the matrix logs for the failing job (stability /"
+            echo "unit-matrix / dashboard), the Python version or browser, and"
+            echo "the pytest-repeat iteration that tripped the failure."
           } > issue-body.md
 
       - name: Create issue from file

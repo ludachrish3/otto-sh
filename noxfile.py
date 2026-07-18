@@ -37,9 +37,14 @@ nox.options.default_venv_backend = "uv"
 # that the strict config (select=ALL minus the deny-list) is green.
 nox.options.sessions = ["lint", "tests_hostless", "typecheck", "docs"]
 
-# Coverage floors mirror the Makefile: the no-testbed CI gate (tests_hostless)
-# gates at 85 (CI_COVERAGE_THRESHOLD); every full-suite path at 92
-# (COVERAGE_THRESHOLD). Keep these in sync with the Makefile if either moves.
+# Coverage floors. tests_hostless gates at 90 — the Makefile's
+# CI_COVERAGE_THRESHOLD, and the floor `make coverage-hostless` enforces on the
+# same test selection, so it's the same number. tests_all gates at 92, BELOW
+# `make coverage`'s 95 (COVERAGE_THRESHOLD): `make coverage` folds the
+# dashboard browser process's Python coverage in via --cov-append, which these
+# browser-excluded nox sessions don't, so their achievable number is lower.
+# Keep tests_hostless in step with CI_COVERAGE_THRESHOLD; revisit tests_all if
+# COVERAGE_THRESHOLD or that fold-in changes.
 
 # browser (Playwright) tests always run as their own pytest process — sync
 # Playwright keeps an event loop running in the worker main thread for the
@@ -52,7 +57,7 @@ HOSTLESS_TEST_ARGS = (
     "tests/e2e",
     "-m",
     "not integration and not embedded and not stability and not browser",
-    "--cov-fail-under=85",
+    "--cov-fail-under=90",
 )
 
 # The per-push browser lane's marker expression. MUST match the Makefile's
@@ -194,7 +199,9 @@ def tests_all(session: nox.Session) -> None:
     default ``testpaths`` (from pyproject.toml) covers the full tree, so no
     path filter is passed here. `browser` is excluded (see module-level
     comment above) — run it via `nox -s dashboard` / `make dashboard`
-    instead. Coverage threshold matches ``make coverage`` (92%).
+    instead. Coverage threshold is 92% — below ``make coverage``'s 95%
+    because this browser-excluded session omits the dashboard --cov-append
+    fold-in (see the module-level coverage-floor note).
     """
     session.run(
         "pytest",
