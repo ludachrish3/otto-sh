@@ -121,19 +121,19 @@ jobs:
         run: uv run nox -k ${{ matrix.browser }}
 
   # web/ TypeScript quality gates — the TS analogue of the lint/typecheck jobs.
-  # Node-only: no Python, no browsers, no dashboard build, so it runs fast and in
-  # parallel. `web-check` takes the node_modules stamp as a prerequisite, so it
-  # runs npm ci itself — no explicit install step.
+  # Node-only: no Python, no browsers, no dashboard build, so it runs fast and
+  # in parallel. Both targets take the node_modules stamp as a prerequisite, so
+  # they run npm ci themselves — no explicit install step.
   #
-  # ONE STEP, AND IT MUST STAY ONE STEP: this job invokes the `web-check` UMBRELLA
-  # rather than re-listing its sub-targets. It used to hand-list them
-  # (`web-lint` + `web-format-check` + `web-typecheck` + `web-coverage`), and that
-  # list silently drifted from the gate it was copying: `biome lint` and
-  # `biome format` do NOT report Biome's ASSIST actions (organize-imports), so
-  # unsorted imports passed both while failing `biome check` — the command
-  # developers actually run. Ten such errors sat on main with this job green.
-  # A CI job that re-enumerates a gate's steps is a second copy of that gate, and
-  # it will drift. Call the gate. `tests/unit/test_ci_web_gate.py` pins this.
+  # TWO GATES, NOT A RE-LISTED UMBRELLA: this job invokes `check-ts` (Biome +
+  # knip + tsc) and `coverage-ts-unit` (vitest unit floor) — the two TS gates
+  # that can run without browsers. It deliberately does NOT re-enumerate any
+  # gate's INTERNALS: a CI job that copies a gate's steps is a second copy of
+  # that gate, and it will drift (unsorted imports once sat on main this way).
+  # The third TS gate — the merged e2e coverage report (`coverage-ts`) — needs
+  # the Playwright browser lane and runs locally via `make coverage`/release,
+  # mirroring how the Python 95-gate is local-only while CI gates hostless.
+  # `tests/unit/test_ci_web_gate.py` pins this.
   web-quality:
     name: web-quality
     runs-on: ubuntu-latest
@@ -143,8 +143,8 @@ jobs:
         uses: actions/setup-node@v6.4.0
         with:
           node-version-file: .nvmrc
-      - name: web/ gates (Biome lint+format+assists, tsc, vitest coverage floor)
-        run: make web-check
+      - name: web/ static gates (Biome check + tsc) + vitest unit coverage floor
+        run: make check-ts coverage-ts-unit
 
   lint:
     runs-on: ubuntu-latest

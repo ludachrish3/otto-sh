@@ -20,7 +20,7 @@
     "autoDocstring.startOnNewLine": true,
     // Biome is the formatter + organize-imports source for the web/ dashboard.
     // Scoped to TS/TSX/JS (which live only under web/) so it never touches the
-    // repo's other JSON/CSS. web/ CSS + JSON format via `make web-format`. The
+    // repo's other JSON/CSS. web/ CSS + JSON format via `make format-ts`. The
     // Biome extension auto-resolves web/biome.json per file.
     "[typescript]": {
         "editor.defaultFormatter": "biomejs.biome",

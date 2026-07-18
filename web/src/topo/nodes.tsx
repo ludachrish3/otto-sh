@@ -14,7 +14,7 @@ export const STATUS_DOT: Record<EffectiveStatus, string> = {
   unknown: "bg-quaternary",
 };
 
-export const STATUS_SEGMENT: Record<EffectiveStatus, string> = {
+const STATUS_SEGMENT: Record<EffectiveStatus, string> = {
   ok: "bg-status-ok",
   down: "bg-status-error",
   unreachable: "bg-status-error/25",

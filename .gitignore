@@ -54,5 +54,5 @@ docs/_static/generated/
 src/otto/monitor/static/dist/
 src/otto/coverage/renderer/static/dist/
 web/node_modules/
-# vitest v8 coverage output (text + HTML), from `make web-coverage`.
+# vitest v8 coverage output (text + HTML), from `make coverage-ts-unit`.
 web/coverage/

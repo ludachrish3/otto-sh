@@ -154,7 +154,7 @@ export function pairKey(a: string, b: string): string {
  *
  * An explicit `management`/`tier` field is a later phase that merely
  * overrides this inference -- it does not replace it. */
-export function deriveManagementIds(session: NormalizedSession): Set<string> {
+function deriveManagementIds(session: NormalizedSession): Set<string> {
   const elementOf = new Map<string, string>();
   for (const el of session.elements) {
     for (const id of el.hostIds) elementOf.set(id, el.id);

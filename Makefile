@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := all
 
-.PHONY: help all ci nox nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-unit coverage-integration coverage-unix coverage-embedded coverage-hostless coverage-ts docs docs-lint docs-html docs-inventories docs-media doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts format format-python format-ts schema monitor-fixtures clean changelog release stability stability-unit stability-unix stability-tunnel stability-embedded repeat vm-health qemu-restart import-snapshot hyperfine profile browsers dashboard dashboard-all dashboard-soak web-install web web-dev web-test web-clean web-lint web-format web-format-check web-biome web-typecheck web-coverage web-check wheel-check
+.PHONY: help all ci nox nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-python coverage-unit coverage-integration coverage-unix coverage-embedded coverage-hostless coverage-ts coverage-ts-unit docs docs-lint docs-html docs-inventories docs-media doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts check check-python check-ts format format-python format-ts schema monitor-fixtures clean changelog release stability stability-unit stability-unix stability-tunnel stability-embedded repeat vm-health qemu-restart import-snapshot hyperfine profile browsers dashboard dashboard-all dashboard-soak web-install web web-dev test-ts web-clean wheel-check
 
 # Bump component for `make release`. Override on the command line:
 #   make release BUMP=minor
@@ -18,10 +18,12 @@ HYPERFINE_VERSION := 1.20.0
 # an already-active venv ($VIRTUAL_ENV); otherwise fall back to ./.venv.
 VENV_BIN := $(if $(VIRTUAL_ENV),$(VIRTUAL_ENV)/bin,$(CURDIR)/.venv/bin)
 
-# Coverage target invoked by `validate`. `ci` overrides this to
-# `coverage-unit` because GitHub Actions doesn't have the Vagrant VMs
-# that integration/hops tests require.
-COVERAGE_TARGET ?= coverage
+# Coverage target invoked by `validate-python`. Defaults to the full Python
+# gate (coverage-python); `ci` overrides this to `coverage-hostless` because
+# GitHub Actions doesn't have the Vagrant VMs that integration/hops tests
+# require. TS coverage (coverage-ts) is validated separately by validate-ts,
+# so this variable is Python-only.
+COVERAGE_TARGET ?= coverage-python
 
 COVERAGE_THRESHOLD := 95
 # CI runs unit tests only (integration/hops markers need Vagrant VMs that
@@ -110,6 +112,8 @@ TIMEOUT_CMD := timeout --foreground --kill-after=10s $(PYTEST_TIMEOUT)
 JUNIT_DIR := reports/junit
 junitxml = --junitxml=$(JUNIT_DIR)/$(1)/$(1).xml
 
+# ═══ Build & Release pipeline ═══════════════════════════════════════════════
+
 all: ## (Build & Release) Run full pipeline against the dev VM (includes integration tests)
 	@$(MAKE) web-install \
 		&& $(MAKE) validate \
@@ -130,16 +134,15 @@ changelog: ## (Build & Release) Regenerate CHANGELOG.md from conventional commit
 # git-cliff/git-add/bump-my-version commands run for real (version bump +
 # CHANGELOG staged). Never dry-run this target.
 release: export PATH := $(VENV_BIN):$(PATH)
-release: ## (Build & Release) npm ci web/, Python lint+typecheck, docs, full TS gate (web-check), nox, build web dist, all-browser dashboard e2e, profile, then changelog, bump, build dist (BUMP=patch|minor|major, default patch; or NEW_VERSION=X.Y.Z[rcN] for prereleases)
+release: ## (Build & Release) npm ci web/, Python static checks (check-python), docs, nox, build web dist, all-browser dashboard e2e, full TS gate (validate-ts, incl. merged coverage), profile, then changelog, bump, build dist (BUMP=patch|minor|major, default patch; or NEW_VERSION=X.Y.Z[rcN] for prereleases)
 	@$(MAKE) clean-dist \
 		&& $(MAKE) web-install \
-		&& $(MAKE) lint-python \
-		&& $(MAKE) typecheck-python \
+		&& $(MAKE) check-python \
 		&& $(MAKE) docs \
-		&& $(MAKE) web-check \
 		&& OTTO_DETECT_ASYNCIO_LEAKS=1 $(MAKE) nox \
 		&& $(MAKE) web \
 		&& $(MAKE) dashboard-all \
+		&& $(MAKE) validate-ts \
 		&& $(MAKE) profile \
 		&& NEW_VERSION="$${NEW_VERSION:-$$(bump-my-version show new_version --increment $(BUMP))}" \
 		&& echo "Targeting v$$NEW_VERSION" \
@@ -181,17 +184,18 @@ nox: ## Run the FULL test suite (all environments) across all supported Pythons.
 
 validate: validate-python validate-ts ## (Build & Release) Validate ALL code (Python + TS): sub-targets validate-python + validate-ts
 
-validate-python: ## (Build & Release) Python validation (clean-dist, lint, typecheck, coverage, docs) without building dist
+validate-python: ## (Build & Release) Python validation (clean-dist, static checks, coverage, docs) without building dist
 	@$(MAKE) clean-dist \
-		&& $(MAKE) lint-python \
-		&& $(MAKE) typecheck-python \
+		&& $(MAKE) check-python \
 		&& $(MAKE) $(COVERAGE_TARGET) \
 		&& $(MAKE) docs
 
-validate-ts: web-check ## (Build & Release) TypeScript validation: Biome (lint+format+assists), tsc, vitest coverage (see web-check)
+validate-ts: check-ts coverage-ts ## (Build & Release) TypeScript validation: Biome+knip, tsc, merged coverage gate (unit floor runs inside it via test:coverage; CI's browserless slice is check-ts + coverage-ts-unit)
 
 clean-dist:
 	@rm -rf dist
+
+# ═══ Dev environment ════════════════════════════════════════════════════════
 
 dev: ## (Dev) Set up the dev environment (uv sync, git hooks, hyperfine, Chromium, web/ deps)
 	uv sync
@@ -267,48 +271,13 @@ web: $(WEB_NODE_MODULES) ## (Build & Release) Build the web/ React dashboard + t
 web-dev: $(WEB_NODE_MODULES) ## (Dev) Run the web/ Vite dev server with hot reload; proxies /api to a running otto monitor (default target http://127.0.0.1:8080, override with VITE_OTTO_TARGET=http://host:port)
 	cd web && npm run dev
 
-web-test: $(WEB_NODE_MODULES) ## (Dev) Run the web/ vitest suite once (store reducers, etc.) — no watch mode
+# web/ quality lanes moved to the language-parity family (lint-ts /
+# typecheck-ts / coverage-ts-unit / test-ts) in the Quality section below —
+# one name per aspect, no web-* aliases. web-install/web/web-dev/web-clean
+# stay here: they are artifact/dev targets, not language-parity gates.
+
+test-ts: $(WEB_NODE_MODULES) ## (Dev) Run the web/ vitest suite once — no coverage, the fast TS loop. (Deliberately no test-python twin and no bare `test`: the fast Python lane is `coverage-unit`.)
 	cd web && npm run test
-
-# web/ quality lanes (Biome + tsc + vitest coverage) — the TS analogue of the
-# ruff/ty/pytest-cov Python gates. `web-check` is the umbrella the CI web-quality
-# job and `make validate-ts` run.
-#
-# Every target here shells into `npm run`, so each takes the node_modules stamp
-# as a prerequisite rather than *assuming* someone ran `make web-install` first.
-# That assumption is what a caller forgets (and what a checkout predating a new
-# dependency violates silently); with the stamp, a lockfile change re-runs
-# `npm ci` exactly once and an unchanged tree pays nothing. It also means CI's
-# web-quality job no longer needs its own npm-ci step — the gate it invokes
-# brings its own dependencies.
-web-lint: $(WEB_NODE_MODULES) ## (Quality) Lint web/ (TS + CSS) with Biome — RULES ONLY, see web-biome
-	cd web && npm run lint
-
-web-format: $(WEB_NODE_MODULES) ## (Quality) Apply the Biome formatter to web/ (writes changes)
-	cd web && npm run format
-
-web-format-check: $(WEB_NODE_MODULES) ## (Quality) Check web/ formatting with Biome (no writes)
-	cd web && npm run format:check
-
-# `biome check` = lint rules + formatting + ASSIST actions (organize-imports).
-# `web-lint` + `web-format-check` together are STRICTLY WEAKER: neither reports an
-# assist action, so unsorted imports pass both and fail `biome check`. That gap sat
-# on main undetected — CI hand-listed the sub-targets instead of invoking the
-# umbrella, so the two drifted. This target is the single authoritative Biome gate
-# and is what `web-check` (and therefore CI) runs; web-lint/web-format-check remain
-# only as narrower dev conveniences.
-web-biome: $(WEB_NODE_MODULES) ## (Quality) The authoritative Biome gate for web/: lint + format + assists (`biome check`)
-	cd web && npm run check
-
-web-typecheck: $(WEB_NODE_MODULES) ## (Quality) Type-check web/ with tsc --noEmit (no build)
-	cd web && npm run typecheck
-
-web-coverage: $(WEB_NODE_MODULES) ## (Quality) Run the web/ vitest suite with v8 coverage and enforce the floor
-	cd web && npm run test:coverage
-
-web-check: web-biome web-typecheck web-coverage ## (Quality) All web/ gates: Biome (lint+format+assists) + typecheck + coverage (= validate-ts)
-
-coverage-ts: web-coverage ## (Quality) Alias of web-coverage (TS coverage; the Python `coverage` gate stays separate)
 
 web-clean: ## (Dev) Remove the built web/ dist outputs (monitor dashboard + covreport)
 	rm -rf src/otto/monitor/static/dist
@@ -357,40 +326,25 @@ profile: hyperfine ## (Dev) Enforce the import budget (module-count caps + snaps
 build: ## (Build & Release) Build the project with uv
 	uv build
 
-coverage: dashboard ## Run the full suite (all tiers, pinned Python) and enforce the coverage gate (excludes heavy `stability`; browser (Playwright) suite runs first, as its own process, via the `dashboard` prerequisite — its coverage data is folded in via --cov-append), then the TS vitest coverage floor (web-coverage) for Python/TS parity. Requires lab VMs (+ `make browsers` once) and web/ node_modules (populated by `make dev`/`make web-install`). JUnit XML lands in reports/junit/coverage/ and reports/junit/dashboard/.
-	$(TIMEOUT_CMD) uv run pytest -m "not stability and not browser" --cov-append --cov-fail-under=$(COVERAGE_THRESHOLD) $(call junitxml,coverage)
-	$(MAKE) web-coverage
+# ═══ Test & Coverage (Python tiers + TS legs) ═══════════════════════════════
 
-coverage-unit: ## Run the unit level tier (tests/unit only; no testbed) with a coverage report (no gate — one tier can't meet the whole-repo floor). JUnit XML lands in reports/junit/coverage-unit/.
-	$(TIMEOUT_CMD) uv run pytest tests/unit -m "not stability" $(call junitxml,coverage-unit)
-
-coverage-integration: ## Run the unit + integration level tiers (tests/unit + tests/integration) with a coverage report (no gate). Requires the full lab. JUnit XML in reports/junit/coverage-integration/.
-	$(TIMEOUT_CMD) uv run pytest tests/unit tests/integration -m "not stability" $(call junitxml,coverage-integration)
-
-coverage-hostless: ## Run the no-testbed CI gate suite (tests/unit + no-VM e2e) and enforce the CI coverage gate. No VMs. JUnit XML lands in reports/junit/coverage-hostless/.
-	$(TIMEOUT_CMD) uv run pytest tests/unit tests/e2e -m "$(M_HOSTLESS)" --cov-fail-under=$(CI_COVERAGE_THRESHOLD) $(call junitxml,coverage-hostless)
-
-coverage-unix: ## Run the Unix-VM resource slice (incl. multi-hop) with a coverage report (no gate). Requires lab VMs. JUnit XML in reports/junit/coverage-unix/.
-	$(TIMEOUT_CMD) uv run pytest -m "$(M_UNIX)" $(call junitxml,coverage-unix)
-
-coverage-embedded: ## Run the embedded (Zephyr) resource slice with a coverage report (no gate). Requires Vagrant lab up. JUnit XML in reports/junit/coverage-embedded/.
-	$(TIMEOUT_CMD) uv run pytest -m "$(M_EMBEDDED)" $(call junitxml,coverage-embedded)
-
-# The dashboard lane feeds `coverage` (its browser-driven server/collector
-# lines) and by default runs on Chromium ONLY: the coverage numbers are
-# engine-independent, so one engine keeps the per-task `make coverage` gate
-# fast — mirroring how `make coverage` pins a single Python while `make nox`
-# spans them all. The full cross-engine run is `make dashboard-all` (Chromium
-# + Firefox + WebKit), which `make release` invokes; CI runs the three engines
-# as a parallel matrix (see the `dashboard` job / noxfile's parametrized
-# session). Override ad hoc with DASHBOARD_BROWSERS="chromium firefox webkit".
+# The dashboard lane feeds `coverage-python` (its browser-driven server/
+# collector lines) and by default runs on Chromium ONLY: the coverage numbers
+# are engine-independent, so one engine keeps the per-task `make coverage`
+# gate fast — mirroring how `make coverage-python` pins a single Python while
+# `make nox` spans them all. The full cross-engine run is `make dashboard-all`
+# (Chromium + Firefox + WebKit), which `make release` invokes; CI runs the
+# three engines as a parallel matrix (see the `dashboard` job / noxfile's
+# parametrized session). Override ad hoc with
+# DASHBOARD_BROWSERS="chromium firefox webkit".
 # The one Safari-specific test is `@pytest.mark.only_browser("webkit")`, so it
 # only runs when webkit is in the set (a skip, not silently absent, otherwise).
 # Runs -n 1 (all browser tests share one xdist_group anyway; extra workers
 # would sit idle and emit "No data was collected" coverage warnings) and writes
 # coverage DATA only: --cov-report= suppresses the report so a standalone run
-# never stomps reports/coverage/html. Running first as `coverage`'s
-# prerequisite, its fresh data file is then extended by the main run's
+# never stomps reports/coverage/html. Running first as `coverage-python`'s
+# direct prerequisite (bare `coverage`'s only transitively, via
+# coverage-python), its fresh data file is then extended by the main run's
 # --cov-append, folding the browser-driven server/collector lines (e.g. the
 # dashboard HTML route, UI event round-trips) into the gated report.
 #
@@ -423,6 +377,26 @@ coverage-embedded: ## Run the embedded (Zephyr) resource slice with a coverage r
 # because the recipe line names `$(MAKE)` literally, GNU Make always runs it
 # for real even under `make -n`, so a dry run against a checkout with no dist
 # yet will actually build it.
+coverage-python: dashboard ## Run the full Python suite (all tiers, pinned Python) and enforce the 95 gate; the browser (Playwright) suite runs first as its own process via the `dashboard` prerequisite — its coverage data is folded in via --cov-append. Requires lab VMs (+ `make browsers` once). JUnit XML lands in reports/junit/coverage-python/.
+	$(TIMEOUT_CMD) uv run pytest -m "not stability and not browser" --cov-append --cov-fail-under=$(COVERAGE_THRESHOLD) $(call junitxml,coverage-python)
+
+coverage: coverage-python coverage-ts ## Run BOTH language coverage gates: coverage-python (full pytest, 95 floor) + coverage-ts (merged vitest+e2e floor). The dashboard browser lane runs exactly once — coverage-python triggers it, and coverage-ts's artifact stamp sees it fresh.
+
+coverage-unit: ## Run the unit level tier (tests/unit only; no testbed) with a coverage report (no gate — one tier can't meet the whole-repo floor). JUnit XML lands in reports/junit/coverage-unit/.
+	$(TIMEOUT_CMD) uv run pytest tests/unit -m "not stability" $(call junitxml,coverage-unit)
+
+coverage-integration: ## Run the unit + integration level tiers (tests/unit + tests/integration) with a coverage report (no gate). Requires the full lab. JUnit XML in reports/junit/coverage-integration/.
+	$(TIMEOUT_CMD) uv run pytest tests/unit tests/integration -m "not stability" $(call junitxml,coverage-integration)
+
+coverage-hostless: ## Run the no-testbed CI gate suite (tests/unit + no-VM e2e) and enforce the CI coverage gate. No VMs. JUnit XML lands in reports/junit/coverage-hostless/.
+	$(TIMEOUT_CMD) uv run pytest tests/unit tests/e2e -m "$(M_HOSTLESS)" --cov-fail-under=$(CI_COVERAGE_THRESHOLD) $(call junitxml,coverage-hostless)
+
+coverage-unix: ## Run the Unix-VM resource slice (incl. multi-hop) with a coverage report (no gate). Requires lab VMs. JUnit XML in reports/junit/coverage-unix/.
+	$(TIMEOUT_CMD) uv run pytest -m "$(M_UNIX)" $(call junitxml,coverage-unix)
+
+coverage-embedded: ## Run the embedded (Zephyr) resource slice with a coverage report (no gate). Requires Vagrant lab up. JUnit XML in reports/junit/coverage-embedded/.
+	$(TIMEOUT_CMD) uv run pytest -m "$(M_EMBEDDED)" $(call junitxml,coverage-embedded)
+
 DASHBOARD_BROWSERS ?= chromium
 DASHBOARD_DIST := src/otto/monitor/static/dist/index.html
 COVREPORT_DIST := src/otto/coverage/renderer/static/dist/covreport.js
@@ -443,6 +417,29 @@ WEB_SRCS := $(shell find web/src -type f) \
 $(DASHBOARD_DIST) $(COVREPORT_DIST) &: $(WEB_SRCS) $(WEB_NODE_MODULES)
 	$(MAKE) web
 
+# Merged-TS-coverage inputs. The browser lane (dashboard) dumps raw Chromium
+# V8 coverage (tests/_fixtures/_ts_coverage.py); its recipe touches the raw
+# stamp. The istanbul artifact is source-stamped like DASHBOARD_DIST: a cold
+# or stale `make coverage-ts` re-runs the (chromium) browser lane itself —
+# honest, if heavy; the fast no-coverage loop is `make test-ts`. The stamp rule
+# calls `$(MAKE) dashboard` for the same reason DASHBOARD_DIST calls
+# `$(MAKE) web` (see its note above): `dashboard` is a .PHONY orchestrator, so
+# it cannot be a plain freshness-gated prerequisite without re-running on every
+# invocation. Same `make -n` caveat as DASHBOARD_DIST — the `$(MAKE)` line runs
+# even under -n, but -n rides through MAKEFLAGS so the child `dashboard` also
+# dry-runs and executes nothing. That safety holds only while this recipe stays
+# a lone `$(MAKE)` line: do NOT chain another shell command onto it (the release
+# warning above is the cautionary tale), and do not run this under `make -j`.
+TS_E2E_RAW_STAMP := reports/ts-e2e-cov/raw/.stamp
+TS_E2E_COV := reports/ts-e2e-cov/istanbul/coverage-final.json
+BROWSER_TEST_SRCS := $(shell find tests/e2e/monitor/dashboard tests/e2e/cov/report_browser -name '*.py') tests/_fixtures/_ts_coverage.py
+
+$(TS_E2E_RAW_STAMP): $(WEB_SRCS) $(BROWSER_TEST_SRCS)
+	$(MAKE) dashboard
+
+$(TS_E2E_COV): $(TS_E2E_RAW_STAMP) $(WEB_NODE_MODULES) web/scripts/e2e_coverage_report.mjs
+	cd web && npm run e2e:coverage-report
+
 # The `-m "browser and not soak"` below MUST match noxfile.py's
 # DASHBOARD_MARKER_EXPR (the `dashboard` session's marker, which is what
 # CI's `dashboard-e2e` job actually runs via `uv run nox -k <browser>` — NOT
@@ -452,7 +449,9 @@ $(DASHBOARD_DIST) $(COVREPORT_DIST) &: $(WEB_SRCS) $(WEB_NODE_MODULES)
 # one) that makes keeping them in step worth a standing comment. If this
 # expression changes, change noxfile.py's too.
 dashboard: $(DASHBOARD_DIST) $(COVREPORT_DIST) ## Run the browser e2e suites (monitor dashboard + coverage report) on DASHBOARD_BROWSERS (default: chromium — feeds `coverage`). Full matrix: `make dashboard-all`. Needs `make browsers` once; (re)builds web/'s dist bundles when missing or older than web/src/ (see `make web`). Excludes `soak` (see `dashboard-soak`) — minutes of pushing, not a per-task gate.
+	@rm -rf reports/ts-e2e-cov/raw
 	$(TIMEOUT_CMD) uv run pytest tests/e2e/monitor/dashboard tests/e2e/cov/report_browser -m "browser and not soak" $(foreach b,$(DASHBOARD_BROWSERS),--browser $(b)) -n 1 --cov-report= --screenshot only-on-failure --output reports/playwright $(call junitxml,dashboard)
+	@mkdir -p reports/ts-e2e-cov/raw && touch $(TS_E2E_RAW_STAMP)
 
 dashboard-all: ## Run the dashboard e2e on ALL engines (Chromium + Firefox + WebKit); invoked by `make release`. Needs `make browsers` once.
 	$(MAKE) dashboard DASHBOARD_BROWSERS="chromium firefox webkit"
@@ -542,33 +541,78 @@ repeat: ## Run the full local suite (unit + integration + e2e) under pytest-repe
 	    --no-cov \
 	    $(call junitxml,repeat)
 
+# ═══ Lab ════════════════════════════════════════════════════════════════════
+
 vm-health: ## (Lab) Probe every lab VM + Zephyr QEMU instance; prints per-host timestamps + clock drift. Requires the Vagrant lab up.
 	uv run python scripts/lab_health.py
 
 qemu-restart: ## (Lab) Restart the Zephyr QEMU + SNMP-relay units on the hop VM(s), then health-check. Use to recover a wedged embedded bed.
 	uv run python scripts/lab_health.py --restart-qemu
 
+# ═══ Quality: static analysis + autofix ═════════════════════════════════════
+
 lint: lint-python lint-ts ## (Quality) Lint ALL code (Python + TS): sub-targets lint-python + lint-ts
 
-lint-python: ## (Quality) Run ruff lint + format checks (part of validate/ci/all)
+lint-python: ## (Quality) Run ruff lint + format checks (part of check-python)
 	uv run ruff check .
 	uv run ruff format --check .
 
-lint-ts: web-lint ## (Quality) Lint web/ (TS + CSS) with Biome (alias of web-lint)
+# `biome check` = lint rules + formatting + ASSIST actions (organize-imports).
+# `biome lint` + `biome format` together are STRICTLY WEAKER: neither reports
+# an assist action, so unsorted imports pass both and fail `biome check`. That
+# gap sat on main undetected while CI hand-listed sub-targets — see
+# tests/unit/test_ci_web_gate.py, which pins this chain. This target is the
+# single authoritative Biome gate; there is deliberately NO weaker TS lint.
+# knip is the project-scope parity for what ruff's dead-code rules do on the
+# Python side: unused exports/files/deps across web/src, scoped by
+# web/knip.json (vendored Untitled UI source + generated wire types excluded,
+# mirroring biome.json's files.includes).
+lint-ts: $(WEB_NODE_MODULES) ## (Quality) Lint web/: the authoritative Biome gate (rules + format + assists) + knip (unused exports/files/deps)
+	cd web && npm run check
+	cd web && npm run knip
 
-format: format-python format-ts ## (Quality) Autoformat ALL code (Python + TS): sub-targets format-python + format-ts
+format: format-python format-ts ## (Quality) Apply ALL safe autofixes (Python + TS): sub-targets format-python + format-ts
 
-format-python: ## (Quality) Apply ruff autoformat to the tree
+# "format" means: after this, everything auto-fixable that `make lint` gates
+# is fixed — not merely reformatted. That is why the Python leg runs ruff's
+# safe lint fixes before the formatter (fixes can need reformatting), and the
+# TS leg runs `biome check --write` (biome format alone cannot apply assist
+# actions like organize-imports, which lint-ts gates).
+format-python: ## (Quality) Apply ruff safe lint autofixes + autoformat
+	uv run ruff check --fix .
 	uv run ruff format .
 
-format-ts: web-format ## (Quality) Apply the Biome formatter to web/ (alias of web-format)
+format-ts: $(WEB_NODE_MODULES) ## (Quality) Apply Biome fixes to web/: rules + format + assists (`biome check --write`)
+	cd web && npm run check:fix
 
 typecheck: typecheck-python typecheck-ts ## (Quality) Type-check ALL code (Python + TS): sub-targets typecheck-python + typecheck-ts
 
-typecheck-python: ## (Quality) Run ty type checker (advisory during trial; not wired into all)
+typecheck-python: ## (Quality) Run ty type checker
 	uv run ty check
 
-typecheck-ts: web-typecheck ## (Quality) Type-check web/ with tsc --noEmit (alias of web-typecheck)
+typecheck-ts: $(WEB_NODE_MODULES) ## (Quality) Type-check web/ with tsc --noEmit (no build)
+	cd web && npm run typecheck
+
+check: check-python check-ts ## (Quality) ALL static analysis (Python + TS): sub-targets check-python + check-ts
+
+check-python: lint-python typecheck-python ## (Quality) All Python static analysis: ruff (lint+format) + ty
+
+check-ts: lint-ts typecheck-ts ## (Quality) All TS static analysis: Biome + knip (lint-ts) + tsc
+
+coverage-ts-unit: $(WEB_NODE_MODULES) ## (Quality) Run the web/ vitest suite with v8 coverage and enforce the UNIT-tier floor (the TS analogue of coverage-hostless's reduced CI gate; the full merged gate is coverage-ts)
+	cd web && npm run test:coverage
+
+# The FULL TS coverage gate: vitest (unit) + the Playwright e2e leg, merged
+# into ONE istanbul report and gated at the merged floor. The vitest-only
+# floor (coverage-ts-unit, enforced inside vite.config.ts) is the reduced
+# browserless tier CI runs — the exact analogue of coverage-hostless's 90 vs
+# the full gate's 95 on the Python side.
+coverage-ts: $(TS_E2E_COV) ## (Quality) Merged TS coverage gate: vitest + browser-e2e legs, one report, one floor (see also coverage-ts-unit)
+	cd web && npm run test:coverage
+	rm -rf reports/ts-cov/final && mkdir -p reports/ts-cov/final
+	cp web/coverage/coverage-final.json reports/ts-cov/final/vitest.json
+	cp $(TS_E2E_COV) reports/ts-cov/final/e2e.json
+	cd web && npm run coverage:merged
 
 schema: ## (Dev) Generate JSON Schema for lab.json / settings.toml / reservations into schemas/ (git-ignored; for editor autocomplete)
 	uv run otto schema export --out schemas
@@ -578,6 +622,8 @@ monitor-fixtures: ## (Dev) Regenerate the committed monitor dummy-data fixtures 
 
 import-snapshot: ## (Dev) Regenerate import-budget golden snapshots + print per-surface counts (run after an intentional import change, then review the diff and update caps)
 	uv run python scripts/import_budget.py --update
+
+# ═══ Docs ═══════════════════════════════════════════════════════════════════
 
 SPHINX_SRCS :=  docs/conf.py                        \
                 $(shell find docs -name '*.rst')    \
@@ -642,7 +688,7 @@ clean: web-clean ## (Dev) Remove all generated artifacts
 help: ## Show this help message
 	@printf '\n\033[1mTesting\033[0m  (COUNT=N overrides iterations; omit the suffix to run all tiers)\n'
 	@printf '  scope:  unit < integration < (all)   ·   unix · embedded   ·   hostless = no-VM CI gate\n'
-	@printf '  \033[36m%-30s\033[0m %s\n' 'coverage-*'   'pinned Python + coverage    (bare coverage = all tiers, gated 94; hostless gated 90)'
+	@printf '  \033[36m%-30s\033[0m %s\n' 'coverage-*'   'pinned Python + coverage    (bare coverage = BOTH languages: coverage-python, gated 95, + coverage-ts merged; hostless gated 90)'
 	@printf '  \033[36m%-30s\033[0m %s\n' 'nox-*'        'every suffix, all Pythons   (bare nox = full matrix)'
 	@printf '  \033[36m%-30s\033[0m %s\n' 'stability-*'  'pytest-repeat soak          (unit · unix · tunnel · embedded; bare stability = all tiers)'
 	@printf '  \033[36m%-30s\033[0m %s\n' 'repeat'       'soak the full unit suite (pytest-repeat)'

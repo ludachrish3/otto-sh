@@ -154,24 +154,29 @@ See {doc}`guide/monitor` for the frontend dev workflow.
 
 `web/` carries the same lint / format / type-check / coverage discipline as
 the Python side, via [Biome](https://biomejs.dev/) (lint + format), `tsc`,
-and [vitest](https://vitest.dev/) with v8 coverage:
+and [vitest](https://vitest.dev/) with v8 coverage. Every quality aspect
+follows the same language-parity shape: a `-python` sub-target, a `-ts`
+sub-target, and a bare umbrella that runs both:
 
-| Task | web/ lane | combined (Python + TS) |
-|------|-----------|------------------------|
-| Lint | `make web-lint` | `make lint` |
-| Format (write) | `make web-format` | `make format` |
-| Format check | `make web-format-check` | — (run by `web-check`) |
-| Type-check | `make web-typecheck` | `make typecheck` |
-| Unit tests + coverage floor | `make web-coverage` (alias `make coverage-ts`) | — |
-| All web gates | `make web-check` | `make validate-ts` |
+| Aspect       | Python                    | TS                          | Both              |
+| ------------ | ------------------------- | ---------------------------- | ----------------- |
+| Lint         | `make lint-python`        | `make lint-ts` (Biome check + knip) | `make lint`       |
+| Type-check   | `make typecheck-python`   | `make typecheck-ts`         | `make typecheck`  |
+| All static   | `make check-python`       | `make check-ts`             | `make check`      |
+| Autofix      | `make format-python`      | `make format-ts`            | `make format`     |
+| Fast tests   | `make coverage-unit`      | `make test-ts`              | —                 |
+| Coverage gate| `make coverage-python`    | `make coverage-ts` (merged vitest+e2e; unit floor: `coverage-ts-unit`) | `make coverage` |
+| Everything   | `make validate-python`    | `make validate-ts`          | `make validate`   |
 
-The umbrella targets `make validate`, `lint`, `format`, and `typecheck` each
-run **both** languages via their `-python` / `-ts` sub-targets (so `make
-validate` == `make validate-python` + `make validate-ts`). The Python
-coverage gate (`make coverage`) stays separate; `make coverage-ts` is the
-TypeScript counterpart. CI runs the web gates in a dedicated `web-quality`
-job. Biome config lives in `web/biome.json`; the vitest coverage floor lives
-in `web/vite.config.ts` (raise it as component test coverage grows). Install
+The umbrella targets `make validate`, `lint`, `format`, `typecheck`, and
+`check` each run **both** languages via their `-python` / `-ts` sub-targets
+(so `make validate` == `make validate-python` + `make validate-ts`). Bare
+`make coverage` is the same shape: `coverage-python` (full pytest, 95 floor)
++ `coverage-ts` (merged vitest+e2e, its own floor). CI's browserless
+web-quality job runs the reduced slice `check-ts coverage-ts-unit` — the
+vitest-only floor, since it has no browsers to run the merged e2e leg.
+Biome config lives in `web/biome.json`; the vitest coverage floor lives in
+`web/vite.config.ts` (raise it as component test coverage grows). Install
 the recommended "Biome" and "Vitest" VS Code extensions (see
 `.vscode/extensions.json`) for format-on-save and an inline test runner.
 

@@ -9,7 +9,7 @@ import type { DerivedElement, NormalizedSession, TimeRange } from "./exportDoc";
 /** Down when the gap past the last sample exceeds K x the host's cadence. */
 export const HEALTH_K = 3;
 
-export type HealthStatus = "ok" | "down" | "no-data" | "unknown";
+type HealthStatus = "ok" | "down" | "no-data" | "unknown";
 
 export interface SubjectHealth {
   status: HealthStatus;

@@ -16,5 +16,11 @@ export default defineConfig({
       formats: ["iife"],
       fileName: () => "covreport.js",
     },
+    // Hidden sourcemaps: emitted for the merged TS coverage gate
+    // (make coverage-ts maps Chromium V8 coverage of THIS shipped bundle back
+    // to web/src), never referenced from the bundle. They ride along in dist
+    // and the wheel — that is the price of certifying the real artifact
+    // instead of an instrumented second build.
+    sourcemap: "hidden",
   },
 });

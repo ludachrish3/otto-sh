@@ -1,0 +1,20 @@
+{
+  "$schema": "./node_modules/knip/schema.json",
+  "project": ["src/**/*.{ts,tsx}"],
+  "ignore": [
+    "src/components/**",
+    "src/utils/is-react-component.ts",
+    "src/hooks/use-resize-observer.ts",
+    "src/api/types.gen.ts",
+    "src/api/export.gen.ts"
+  ],
+  "ignoreDependencies": [
+    "tailwindcss",
+    "@fontsource-variable/inter",
+    "tailwindcss-animate",
+    "tailwindcss-react-aria-components",
+    "@react-stately/utils",
+    "input-otp",
+    "json-schema-to-typescript"
+  ]
+}

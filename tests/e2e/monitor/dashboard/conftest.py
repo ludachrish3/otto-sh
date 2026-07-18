@@ -34,6 +34,11 @@ from otto.monitor.session import new_frame
 from tests._fixtures._browser_guard import browser_tests_could_run
 from tests._fixtures._dashboard_harness import DashboardHarness
 from tests._fixtures._fake_collector import FakeCollector
+from tests._fixtures._ts_coverage import (
+    collect_ts_coverage,
+    start_ts_coverage,
+    write_ts_coverage,
+)
 
 _FIXTURES = Path(__file__).resolve().parents[4] / "web" / "fixtures"
 
@@ -298,3 +303,34 @@ def review_dash() -> Iterator[DashboardHarness[MetricCollector]]:
     harness.start()
     yield harness
     harness.stop()
+
+
+@pytest.fixture(scope="session")
+def _ts_coverage_sink():
+    entries: list[dict] = []
+    yield entries
+    write_ts_coverage(entries)
+
+
+@pytest.fixture(autouse=True)
+def _ts_coverage(request, _ts_coverage_sink):
+    """Per-test V8 coverage; suite-wide accumulation. See _ts_coverage.py.
+
+    Guarded on the `browser` marker BEFORE touching any Playwright fixture:
+    a bare `page` parameter would force browser parametrization onto this
+    conftest's non-browser tests (test_harness.py) and pull sync
+    Playwright's event loop into the shared hostless CI process (same trap
+    _generous_playwright_timeout documents above).
+    """
+    if (
+        request.node.get_closest_marker("browser") is None
+        or request.node.get_closest_marker("soak") is not None
+    ):
+        yield
+        return
+    if request.getfixturevalue("browser_name") != "chromium":
+        yield
+        return
+    client = start_ts_coverage(request.getfixturevalue("page"))
+    yield
+    collect_ts_coverage(client, _ts_coverage_sink)

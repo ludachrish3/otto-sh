@@ -9,7 +9,7 @@ import { type ReactNode, useCallback, useEffect, useRef } from "react";
 import { documentFromSessions } from "../data/exportDoc";
 import { useReviewStore } from "../data/reviewStore";
 
-export function useImportFile(): (file: File) => void {
+function useImportFile(): (file: File) => void {
   const importMonitorSessions = useReviewStore((s) => s.actions.importMonitorSessions);
   return useCallback(
     (file: File) => {

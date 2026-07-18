@@ -337,7 +337,7 @@ make web           # production build: regenerates + diffs the generated
                     # wire types against the live pydantic models, builds,
                     # then gates the output against absolute http(s) URLs
                     # (labs are air-gapped)
-make web-test      # vitest — store reducers, SSE handling, chart-series
+make test-ts       # vitest — store reducers, SSE handling, chart-series
                     # grouping, PID-trace retirement, etc.
 ```
 

@@ -1,85 +1,68 @@
-"""CI's web gate must INVOKE the gate, not re-enumerate it.
+"""CI's web-quality job must invoke the TS gates, not re-list their internals.
 
-The `web-quality` job used to hand-list `web-check`'s sub-targets
-(``web-lint`` + ``web-format-check`` + ``web-typecheck`` + ``web-coverage``)
-instead of calling the umbrella. That list is a second copy of the gate, and it
-drifted: ``biome lint`` and ``biome format`` do **not** report Biome's *assist*
-actions (organize-imports), so unsorted imports passed both while failing
-``biome check`` — the command developers actually run via ``npm run check``. Ten
-such errors sat on main with the job green.
-
-The failure is structural, not incidental: any gate a CI job re-lists can lose a
-step without anything noticing. So these tests pin the two halves of the repair —
-CI calls the umbrella, and the umbrella runs the authoritative Biome command.
+The job used to hand-list `web-check`'s sub-targets and the list silently
+drifted from the gate it was copying: `biome lint` + `biome format` do NOT
+report Biome's ASSIST actions (organize-imports), so unsorted imports passed
+CI while failing `biome check`. The web-check umbrella was later folded into
+the language-parity family (spec 2026-07-17-makefile-quality-parity): the
+job now calls `check-ts` (whose lint leg IS `biome check`) plus the vitest
+unit floor `coverage-ts-unit`. These pins keep both the CI invocation and
+the Makefile chain from drifting back to something weaker.
 """
 
+import json
 import re
 from pathlib import Path
 
-import pytest
+import yaml
 
-_ROOT = Path(__file__).resolve().parents[2]
-_CI = _ROOT / ".github" / "workflows" / "ci.yml"
-_MAKEFILE = _ROOT / "Makefile"
-_PACKAGE_JSON = _ROOT / "web" / "package.json"
-
-# The narrower Biome lanes. Useful at a dev's fingertips, but neither reports
-# assist actions, so CI must never gate on them *instead of* `biome check`.
-_WEAKER_THAN_BIOME_CHECK = ("web-lint", "web-format-check")
+_REPO = Path(__file__).resolve().parent.parent.parent
+_MAKEFILE = (_REPO / "Makefile").read_text()
 
 
-def _web_quality_run_lines() -> list[str]:
-    """Every `run:` command inside ci.yml's `web-quality` job."""
-    text = _CI.read_text(encoding="utf-8")
-    start = text.index("\n  web-quality:")
-    # The next top-level job (two-space indent, a name, a colon) ends this one.
-    rest = text[start + 1 :]
-    end = re.search(r"\n  [a-z][a-z0-9-]*:\n", rest)
-    body = rest[: end.start()] if end else rest
-    return [m.group(1).strip() for m in re.finditer(r"^\s*run:\s*(.+)$", body, re.MULTILINE)]
+def _web_quality_runs() -> list[str]:
+    ci = yaml.safe_load((_REPO / ".github" / "workflows" / "ci.yml").read_text())
+    steps = ci["jobs"]["web-quality"]["steps"]
+    return [step["run"] for step in steps if "run" in step]
 
 
-def test_ci_web_quality_invokes_the_umbrella_target():
-    runs = _web_quality_run_lines()
-    assert runs, "web-quality job has no `run:` steps — did the job get renamed?"
-    assert runs == ["make web-check"], (
-        "CI's web-quality job must invoke the `web-check` UMBRELLA, not re-list its "
-        f"sub-targets. Found: {runs}. A job that re-enumerates a gate is a second copy "
-        "of it, and it will drift — that is exactly how `biome check`'s assist actions "
-        "(organize-imports) stopped being checked on main."
+def test_ci_invokes_the_ts_gates_not_their_internals() -> None:
+    runs = _web_quality_runs()
+    assert runs == ["make check-ts coverage-ts-unit"], (
+        "CI's web-quality job must invoke `make check-ts coverage-ts-unit` — "
+        "the browserless TS gates — in ONE step, not re-list any gate's "
+        f"internals (drift risk). Got: {runs!r}"
     )
 
 
-@pytest.mark.parametrize("target", _WEAKER_THAN_BIOME_CHECK)
-def test_ci_does_not_gate_on_the_narrower_biome_lanes(target: str):
-    """`biome lint` / `biome format` each miss assist actions. Neither is the gate."""
-    assert target not in " ".join(_web_quality_run_lines()), (
-        f"CI's web-quality job gates on `{target}`, which does NOT report Biome's "
-        "assist actions (organize-imports). Gate on `make web-check`, which runs "
-        "`biome check`."
+def test_check_ts_chain_reaches_biome_check() -> None:
+    """Pins the chain: check-ts -> lint-ts -> `npm run check` (biome check)."""
+    check_ts = re.search(r"^check-ts:([^\n#]*)", _MAKEFILE, re.MULTILINE)
+    assert check_ts, "no `check-ts` target in the Makefile"
+    assert "lint-ts" in check_ts.group(1), (
+        "`check-ts` no longer depends on `lint-ts`, so CI is not running the "
+        "authoritative Biome gate"
+    )
+    lint_ts = re.search(r"^lint-ts:.*(?:\n\t.+)+", _MAKEFILE, re.MULTILINE)
+    assert lint_ts, "no `lint-ts` target in the Makefile"
+    assert "npm run check" in lint_ts.group(0), (
+        "`lint-ts` must run `npm run check` (biome check = rules + format + "
+        "assists); anything weaker reopens the organize-imports gap"
+    )
+    assert "npm run knip" in lint_ts.group(0), (
+        "`lint-ts` must also run knip — the project-scope unused-code parity "
+        "for what ruff already does on the Python side"
+    )
+    package_json = json.loads((_REPO / "web" / "package.json").read_text())
+    assert package_json["scripts"]["check"].startswith("biome check"), (
+        "web/package.json's `check` script no longer runs `biome check` — "
+        "the Makefile chain now bottoms out in something weaker"
     )
 
 
-def test_web_check_runs_the_authoritative_biome_command():
-    """The umbrella is only worth invoking if it runs `biome check`.
-
-    Pins the whole chain: `web-check` -> `web-biome` -> `npm run check` ->
-    `biome check`. Break any link and unsorted imports go unreported again.
-    """
-    makefile = _MAKEFILE.read_text(encoding="utf-8")
-    web_check = re.search(r"^web-check:([^\n#]*)", makefile, re.MULTILINE)
-    assert web_check, "no `web-check` target in the Makefile"
-    assert "web-biome" in web_check.group(1), (
-        "`web-check` no longer depends on `web-biome`, so CI is not running "
-        f"`biome check`. Prerequisites are: {web_check.group(1).strip()!r}"
-    )
-
-    web_biome = re.search(r"^web-biome:.*\n\t(.+)$", makefile, re.MULTILINE)
-    assert web_biome, "no `web-biome` target in the Makefile"
-    assert "npm run check" in web_biome.group(1)
-
-    scripts = _PACKAGE_JSON.read_text(encoding="utf-8")
-    assert re.search(r'"check"\s*:\s*"biome check', scripts), (
-        'web/package.json\'s "check" script must run `biome check` — it is the only '
-        "Biome invocation that reports lint rules, formatting AND assist actions."
+def test_coverage_ts_unit_runs_the_vitest_floor() -> None:
+    cov = re.search(r"^coverage-ts-unit:.*\n\t(.+)$", _MAKEFILE, re.MULTILINE)
+    assert cov, "no `coverage-ts-unit` target in the Makefile"
+    assert "npm run test:coverage" in cov.group(1), (
+        "`coverage-ts-unit` must enforce the vitest unit-tier coverage floor"
     )

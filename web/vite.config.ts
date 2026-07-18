@@ -28,6 +28,12 @@ export default defineConfig({
   build: {
     outDir: "../src/otto/monitor/static/dist",
     emptyOutDir: true,
+    // Hidden sourcemaps: emitted for the merged TS coverage gate
+    // (make coverage-ts maps Chromium V8 coverage of THIS shipped bundle back
+    // to web/src), never referenced from the bundle. They ride along in dist
+    // and the wheel — that is the price of certifying the real artifact
+    // instead of an instrumented second build.
+    sourcemap: "hidden",
   },
   server: {
     proxy: {
@@ -53,7 +59,7 @@ export default defineConfig({
       // v8 provider (matches @vitest/coverage-v8); parity with the Python
       // pytest-cov gate. Report term-missing + html like pyproject's addopts.
       provider: "v8",
-      reporter: ["text", "html"],
+      reporter: ["text", "html", "json"], // json feeds the merged gate (make coverage-ts)
       include: ["src/**"],
       exclude: [
         // Tests, generated wire types (owned by scripts/gen_web_types.sh and
@@ -78,21 +84,13 @@ export default defineConfig({
         "src/hooks/use-breakpoint.ts",
         "src/hooks/use-resize-observer.ts",
       ],
-      // Ratchet floor: ~2-3% below the current measured baseline
-      // (stmts 83.63 / branch 75.49 / funcs 82.73 / lines 84.78), mirroring the
-      // Python gate's headroom (CI floor 90 vs ~93.25 actual). Catches
-      // regressions without breaking on trivial refactors; raise it as
-      // component test coverage grows (see the tooling follow-ups).
-      // raised after the shell rebuild: stmts +16.2, branches +24.5, funcs +13.4, lines +15.8.
-      // raised after the views phase (Plan 3): stmts +4.89, branches +0.57, funcs +4.10, lines +5.38.
-      // lowered after the topology phase (Plan 4): stmts 85->81 (measured 83.63),
-      // branches 78->73 (measured 75.49), funcs 83->80 (measured 82.73),
-      // lines 86->82 (measured 84.78). Deliberate drop: TopologyPage.tsx wires
-      // @xyflow/react to a live ResizeObserver/canvas and is exercised by the
-      // Playwright dashboard e2e instead of jsdom RTL (3.57% stmts / 0% funcs
-      // here by design), and the topo/ node+edge components carry only
-      // structural RTL coverage — both pull the global average down even
-      // though behavior is fully covered end-to-end.
+      // UNIT-TIER floor (browserless; what CI's web-quality job gates via
+      // `make coverage-ts-unit`). The FULL floor lives in the merged gate
+      // (`make coverage-ts`, web/package.json's coverage:merged): it folds in
+      // the Playwright e2e leg, which is where TopologyPage.tsx and the
+      // bootstrap entrypoints are exercised — the reason these numbers sit
+      // below the merged gate's (the vitest leg alone cannot see e2e-only
+      // coverage). Raise these only from measured vitest-only output.
       thresholds: {
         statements: 81,
         branches: 73,

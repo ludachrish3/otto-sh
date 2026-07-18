@@ -19,7 +19,7 @@ import { EDGE_STYLES, edgeClass, edgeStyle, tunnelEdgeStyle } from "./edgeStyles
 import { ImpairPill } from "./ImpairPill";
 import { type Rect, routeEdge } from "./routing";
 
-export interface LinkEdgeData {
+interface LinkEdgeData {
   edge: TopoEdge;
   groupSize: number;
   hovered?: boolean;

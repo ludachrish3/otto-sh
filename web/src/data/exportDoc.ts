@@ -36,7 +36,7 @@ export interface DerivedElement {
 
 /** Dense presentation meta: normalized ONCE at the boundary (follow-up #1) —
  * downstream code iterates charts/tabs unconditionally, never `?? []`. */
-export interface NormalizedMeta {
+interface NormalizedMeta {
   interval: number | null;
   charts: ChartSpecRecord[];
   tabs: TabSpecRecord[];
@@ -252,7 +252,7 @@ function normalizeSession(raw: SessionRecord, warnings: string[]): NormalizedSes
  * chart_map/meta whenever a new `proc/<pid>` series first reports. Rebuilding
  * from `sessions[]` (the state every live tick actually keeps current) makes
  * a live export truthful structurally, not by relying on that aliasing. */
-export function sessionToRecord(session: NormalizedSession): SessionRecord {
+function sessionToRecord(session: NormalizedSession): SessionRecord {
   return {
     id: session.id,
     label: session.label,
