@@ -57,7 +57,7 @@
     "monocart-coverage-reports": "2.12.12",
     "nyc": "18.0.0",
     "typescript": "7.0.2",
-    "vite": "8.1.4",
+    "vite": "8.1.5",
     "vitest": "4.1.9"
   }
 }
