@@ -31,8 +31,15 @@ def zephyr_sdk_install(toolchain, versions)
         # Toolchain layout differs by SDK release: 0.16.x is flat
         # (<sdk>/<toolchain>); 1.0+ nests it under <sdk>/gnu/<toolchain>. Locate
         # it either way so the "already present" skip works across both (else a
-        # 1.0+ SDK re-downloads its toolchain on every provision).
-        TC_DIR="$(find "${SDK_DIR}" -maxdepth 2 -type d -name "#{toolchain}" 2>/dev/null | head -1)"
+        # 1.0+ SDK re-downloads its toolchain on every provision). Guarded on
+        # the SDK dir existing: `find` on a missing path exits 1, which under
+        # `set -euo pipefail` aborts the provisioner outright — on a fresh VM
+        # that killed this script here, before the install branch below could
+        # ever run, and with no output at all (stderr was swallowed).
+        TC_DIR=""
+        if [ -d "${SDK_DIR}" ]; then
+            TC_DIR="$(find "${SDK_DIR}" -maxdepth 2 -type d -name "#{toolchain}" | head -1)"
+        fi
         if [ -n "${TC_DIR}" ]; then
             echo "Zephyr SDK ${ZSDK} #{toolchain} already present (${TC_DIR})."
         elif [ ! -d "${SDK_DIR}" ]; then
