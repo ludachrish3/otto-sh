@@ -5,6 +5,44 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.1] - 2026-07-18
+
+### Added
+
+- Untitled UI command layer + topology landing view (#specs 2026-07-17)
+- add a lightweight playground VM for user-perspective otto testing
+- otto init sample plumbing, full settings.toml, schemas area (#spec 2026-07-17)
+- gate the dashboard behind a per-run access key; optional TLS
+- stability suite (make stability-tunnel) + fix racing add_tunnel
+- move the 192.168.1.x data plane to a dedicated eth2 NIC; tunnel stability suite spec + plan
+- render live tunnels as overlays in the topology view
+- show the banner only on help screens, never during execution (#140)
+
+
+### Changed
+
+- Python↔TS quality/test parity (language-axis targets + merged TS coverage gate)
+
+
+### Documentation
+
+- post-merge follow-ups — host-schema refs to lab-config, complete seam digest
+- restructure the toctree by functional area; make architecture design-only
+
+
+### Fixed
+
+- stop the live-chart tooltip crashing mid-zoom (getRawIndex of undefined)
+- open the --db session archive eagerly and atomically
+- lab-scope host-id tab completion everywhere, not just otto host
+- docker never required or started at endpoints; Rich-table list; real 192.168.1.x data plane (#139)
+
+
+### Maintenance
+
+- post-merge follow-ups to the Makefile Python↔TS parity work
+
+
 ## [0.7.0] - 2026-07-15
 
 ### Added
@@ -871,7 +909,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - added GitHub templates
 - set up release management
 
-[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.7.1...HEAD
+[0.7.1]: https://github.com/ludachrish3/otto-sh/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/ludachrish3/otto-sh/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/ludachrish3/otto-sh/compare/v0.5.4...v0.6.0
 [0.5.4]: https://github.com/ludachrish3/otto-sh/compare/v0.5.3...v0.5.4
