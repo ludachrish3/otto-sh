@@ -14,7 +14,6 @@ parser catalog so ``get_meta_model()`` remains well-formed.
 """
 
 import asyncio
-import contextlib
 import copy
 import json
 import logging
@@ -24,6 +23,7 @@ from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Protocol
 
 from ..models import ChartSpec, MetricPoint, MonitorMeta, TabSpec, TunnelRecord
+from ..models.monitor import DEFAULT_MAX_SERIES_PER_CHART
 from ..result import CommandResult, Results
 from .broadcast import Broadcaster
 from .db import MetricDB
@@ -119,7 +119,6 @@ class MonitorTarget:
 
     host: "RemoteHost"
     parsers: dict[str, MetricParser] = field(default_factory=lambda: copy.deepcopy(DEFAULT_PARSERS))
-    core_count: int = field(default=1)
     snmp: SnmpSource | None = field(default=None)
 
 
@@ -205,7 +204,7 @@ class MetricCollector:
         self._pending_db = db
 
         # All series keyed by "hostname/label" — e.g. "router1/CPU %" for regular
-        # metrics or "router1/proc/python" for per-process CPU.  Each point is a
+        # metrics or "router1/core 3" for a per-core CPU series.  Each point is a
         # ``MetricPoint`` so that every series shares exactly one data structure
         # regardless of its type.
         # Series are created lazily in _process_host_results() as data arrives,
@@ -352,7 +351,7 @@ class MetricCollector:
                         ts,
                         list(res),
                         target.parsers,
-                        ctx=ParseContext(core_count=target.core_count, ts=ts),
+                        ctx=ParseContext(ts=ts),
                     )
                 case dict() as values:
                     await self._process_snmp_results(target, ts, values)
@@ -395,28 +394,6 @@ class MetricCollector:
             raise RuntimeError("Cannot start live collection: no hosts provided")
 
         await self.init_db()
-
-        # One-time setup: determine core count for each shell host. It is threaded
-        # into ParseContext at each collection call site below (e.g. TopCpuParser
-        # uses it to normalize per-process CPU%).
-        # grep -c ^processor /proc/cpuinfo is universally available on Linux but
-        # meaningless for SNMP targets (no shell), so they are skipped — their
-        # core_count stays 1 and the SNMP descriptors don't use it.
-        shell_targets = [t for t in self._targets if t.snmp is None]
-        setup_results = await asyncio.gather(
-            *[target.host.run(["grep -c ^processor /proc/cpuinfo"]) for target in shell_targets],
-            return_exceptions=True,
-        )
-        for target, result in zip(shell_targets, setup_results, strict=True):
-            match result:
-                case Results() as res if len(res) == 1:
-                    with contextlib.suppress(ValueError):  # keep default of 1
-                        target.core_count = int(res.only.value.strip())
-                case BaseException():
-                    logger.warning(
-                        "Monitor: could not determine core count for %s, defaulting to 1",
-                        target.host.name,
-                    )
 
         secs = interval.total_seconds()
         self._global_interval = secs
@@ -833,6 +810,7 @@ class MetricCollector:
                 command=getattr(v, "command", None) or getattr(v, "oid", ""),
                 chart=v.chart,
                 interval=getattr(v, "interval", None),
+                max_series=getattr(v, "max_series", DEFAULT_MAX_SERIES_PER_CHART),
             )
             for v in self._views
             if getattr(v, "table_columns", None) is None

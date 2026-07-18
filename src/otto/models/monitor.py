@@ -41,7 +41,15 @@ module). Keeping the floor in this already-leaf module gives every caller
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    ConfigDict,
+    Field,
+    SerializationInfo,
+    SerializerFunctionWrapHandler,
+    model_serializer,
+)
 
 from .base import OttoModel
 
@@ -81,6 +89,12 @@ class MetricPoint(OttoModel):
     meta: dict[str, Any] | None = None
 
 
+DEFAULT_MAX_SERIES_PER_CHART = 8
+"""Default per-chart series cap. A chart shows at most this many series (the
+frontend truncates the rest with an overflow note). A parser sets
+``max_series = None`` to opt its chart out of the cap entirely."""
+
+
 class ChartSpec(OttoModel):
     """One dashboard chart descriptor: otto's typed, internal parser-catalog view.
 
@@ -97,6 +111,31 @@ class ChartSpec(OttoModel):
     command: str
     chart: str
     interval: float | None = None
+    max_series: int | None = DEFAULT_MAX_SERIES_PER_CHART
+
+    @model_serializer(mode="wrap")
+    def _serialize_max_series(
+        self, handler: SerializerFunctionWrapHandler, info: SerializationInfo
+    ) -> dict[str, Any]:
+        """Make an explicit ``max_series=None`` (uncapped) survive ``exclude_none``.
+
+        ``document_json`` (see :func:`otto.monitor.export.document_json`) dumps
+        with ``exclude_none=True`` so absent-optional fields stay absent on the
+        wire; that same flag would otherwise drop a *meaningful* ``None`` here
+        (uncapped chart) indistinguishably from a field that was never set, and
+        the read side refills the pydantic default (``DEFAULT_MAX_SERIES_PER_CHART``)
+        on the next load — silently re-capping an uncapped chart (e.g.
+        PerCoreCpuParser's "CPU" chart) every time a saved export round-trips.
+        Re-inserting the key after the handler runs keeps "missing" meaning
+        "default-capped" (old exports predating this field) while an explicit
+        ``None`` — this model's actual uncapped-chart state — comes back as
+        ``None`` too. Applies to every dump site (``ChartSpecRecord`` inherits
+        it) since the fix is model-level, not per call site.
+        """
+        data = handler(self)
+        if self.max_series is None and info.exclude_none:
+            data["max_series"] = None
+        return data
 
 
 class TabSpec(OttoModel):

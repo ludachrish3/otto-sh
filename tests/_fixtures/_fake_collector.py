@@ -19,7 +19,7 @@ from otto.monitor.parsers import LogEvent, MetricDataPoint, MetricParser, defaul
 
 # Friendly chart name → DEFAULT_PARSERS key (the dict key IS the shell command).
 CHART_COMMANDS: dict[str, str] = {
-    "cpu": "top -d 0.5 -bn2",
+    "cpu": "cat /proc/stat",
     "memory": "free -b",
     "disk": "df -h",
     "load": "cat /proc/loadavg",

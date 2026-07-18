@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from otto.logger.mode import LogMode
-from otto.models.monitor import ChartSpec, MonitorMeta, TabSpec
+from otto.models.monitor import DEFAULT_MAX_SERIES_PER_CHART, ChartSpec, MonitorMeta, TabSpec
 from otto.monitor.collector import MetricCollector, MonitorTarget
 from otto.monitor.log_sourced import RegexLogEventParser
 from otto.monitor.parsers import MetricDataPoint, MetricParser, ParseContext
@@ -33,8 +33,10 @@ def test_chart_spec_wire_shape() -> None:
         "command",
         "chart",
         "interval",
+        "max_series",
     }
     assert spec.interval is None
+    assert spec.max_series == DEFAULT_MAX_SERIES_PER_CHART
 
 
 def test_tab_spec_wire_shape() -> None:

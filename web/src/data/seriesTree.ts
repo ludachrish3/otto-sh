@@ -2,6 +2,8 @@
 // chart, with the subject x source axes as node metadata. Slots are
 // assigned HERE, once, from the unfiltered tree — the palette follows the
 // entity, so search/chips/checkbox filtering never recolors survivors.
+
+import { MAX_SERIES_PER_CHART } from "../charts/palette";
 import type { NormalizedSession, TimeRange } from "./exportDoc";
 import { seriesKey, sliceSeries } from "./seriesIndex";
 import { parseTs } from "./time";
@@ -19,6 +21,7 @@ export interface ChartNode {
   chartLabel: string;
   unit: string;
   yTitle: string;
+  maxSeries: number | null;
   series: SeriesNode[];
 }
 
@@ -102,6 +105,7 @@ export function buildSeriesTree(session: NormalizedSession, subjectId: string): 
       chartLabel,
       unit: spec?.unit ?? "",
       yTitle: spec?.y_title ?? chartLabel,
+      maxSeries: spec?.max_series === undefined ? MAX_SERIES_PER_CHART : spec.max_series,
       series: nodes.map((n, i) => ({
         key: n.key,
         label: n.label,

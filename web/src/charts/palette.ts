@@ -31,4 +31,10 @@ export const SERIES_DARK = [
   "#d95926",
 ] as const;
 
+// Single low-emphasis color for "band" series (e.g. per-core CPU past the
+// palette size): many faint lines behind one bold aggregate. Not part of the
+// CVD-ordered categorical palette — it is deliberately non-distinct.
+export const MUTED_SERIES_LIGHT = "#9ca3af"; // gray-400
+export const MUTED_SERIES_DARK = "#4b5563"; // gray-600
+
 export const MAX_SERIES_PER_CHART = 8;

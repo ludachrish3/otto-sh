@@ -352,7 +352,7 @@ make web           # production build: regenerates + diffs the generated
                     # then gates the output against absolute http(s) URLs
                     # (labs are air-gapped)
 make test-ts       # vitest — store reducers, SSE handling, chart-series
-                    # grouping, PID-trace retirement, etc.
+                    # grouping, per-chart series capping, etc.
 ```
 
 `make web-dev`'s proxy target is a running server process — an `otto
@@ -529,18 +529,21 @@ changes with test actions.
 ## Built-in metrics
 
 Every Unix host in the monitored set runs `DEFAULT_PARSERS` unless a custom
-registration says otherwise (see [Custom parsers](#custom-parsers) below):
+registration says otherwise (see [Custom parsers](#custom-parsers) below).
+Each chart draws at most `MetricParser.max_series` series at once — 8 by
+default — beyond which the dashboard shows the first `max_series` and notes
+how many were hidden; a parser can raise that cap or set `max_series = None`
+to opt out entirely, as the CPU chart below does:
 
 | Command | Series | Chart | Tab | Notes |
 | --- | --- | --- | --- | --- |
-| `top -d 0.5 -bn2` | Overall CPU; `proc/<pid>` for the top 5 processes by CPU% | CPU | CPU | Runs two `top` iterations per tick and discards the first, so %CPU reflects the tick interval rather than the process's lifetime average. |
+| `cat /proc/stat` | Overall CPU; `core <N>` (%) per CPU core | CPU | CPU | One read yields both: the aggregate `cpu` line becomes `Overall CPU`, each `cpuN` line becomes `core N`. Every core is charted, however many the host has — the CPU chart opts out of the series cap other charts respect. |
 | `free -b` | Memory Usage; Swap | Memory Usage | Memory | The Swap series only appears when the host has swap configured — it is omitted, not charted as a flat 0. |
 | `df -h` | one series per mounted filesystem, labelled by mount point | Disk Usage | Disk | |
 | `cat /proc/loadavg` | Load (1m), Load (5m), Load (15m) | Load | CPU | |
 | `cat /proc/net/dev` | `rx <iface>`, `tx <iface>` (B/s) per interface | Network I/O | Network | Loopback (`lo`) is skipped. Packet counts and error/drop rates ride along in each series' hover meta rather than charting separately. |
 | `ss -s` | Established, Time-wait | Sockets | Network | A host without `ss` simply has no Sockets series — see [Parser health](#parser-health). |
 | `cat /proc/diskstats` | `read <device>`, `write <device>` (B/s) per device | Disk I/O | Disk | Whole devices only — partitions (`sda1`, `nvme0n1p2`, …) and virtual/noise devices (`loop*`, `ram*`, `dm-*`, `zram*`, `sr*`) are skipped. |
-| `cat /proc/stat` | `core <N>` (%) per CPU core | Per-core CPU | CPU | The aggregate line is skipped; overall CPU is already charted by the top-CPU parser above. |
 | `cat /proc/loadavg /proc/stat` | Runnable, Total procs, Blocked | Processes | CPU | |
 
 Network I/O and Disk I/O are rate metrics: computed from monotonic counter
@@ -592,7 +595,7 @@ MonitorTarget(
 ```
 
 `ctx` (a {class}`~otto.monitor.parsers.ParseContext`) carries tick-local
-input such as the target host's core count; most parsers ignore it.  See
+input such as the current collection timestamp; most parsers ignore it.  See
 {mod}`otto.monitor.parsers` for the built-in parsers and the
 {class}`~otto.monitor.parsers.MetricParser` protocol.
 

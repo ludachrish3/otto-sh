@@ -5,8 +5,7 @@
 import { describe, expect, it } from "vitest";
 import type { MetricRecord } from "../api/export.gen";
 import { healthForHosts } from "../data/health";
-import { retireStaleSeries } from "../data/retirement";
-import { appendToIndex, buildIndex, seriesKey } from "../data/seriesIndex";
+import { appendToIndex, buildIndex } from "../data/seriesIndex";
 import { synthSession } from "./_synth";
 
 const HOSTS = 7;
@@ -101,51 +100,4 @@ describe("tier-1 scaling budget: cost must be flat in run length", () => {
 
     expect(tBig).toBeLessThan(Math.max(tSmall * 4, 2));
   });
-
-  // Plan 5b final review, Finding I1: retireStaleSeries used to union EVERY
-  // timestamp of EVERY proc/* candidate into a Set, sort all of them, then
-  // `.some()`-scan each series from its OLDEST sample — O(total proc
-  // samples), called from SubjectPage's render body for every chart with
-  // proc candidates, on every live tick. The fix reads only each series'
-  // tail (its own last `k` distinct ticks), bounding the cost to
-  // O(procKeys x k) regardless of how long the run has grown.
-  it("retireStaleSeries does not get slower as the run gets longer", () => {
-    const RETIRE_HOSTS = 1;
-    const RETIRE_PROC_KEYS = 30; // one busy chart's worth of proc/* PIDs
-    const RETIRE_SHORT_TICKS = 720; // 1h at 5s cadence
-    const RETIRE_LONG_TICKS = 8640; // 12h — 12x RETIRE_SHORT_TICKS
-
-    function procIndex(ticks: number) {
-      const metrics: MetricRecord[] = [];
-      const t0 = Date.parse("2026-07-01T00:00:00Z");
-      for (let t = 0; t < ticks; t++) {
-        const iso = new Date(t0 + t * INTERVAL_S * 1000).toISOString();
-        for (let h = 0; h < RETIRE_HOSTS; h++) {
-          for (let p = 0; p < RETIRE_PROC_KEYS; p++) {
-            metrics.push({ host: `h${h}`, label: `proc/${p}`, timestamp: iso, value: p });
-          }
-        }
-      }
-      const index = buildIndex(metrics);
-      const keys = Array.from({ length: RETIRE_HOSTS }, (_, h) =>
-        Array.from({ length: RETIRE_PROC_KEYS }, (_, p) => seriesKey(`h${h}`, `proc/${p}`)),
-      ).flat();
-      return { index, keys };
-    }
-
-    const short = procIndex(RETIRE_SHORT_TICKS);
-    const long = procIndex(RETIRE_LONG_TICKS);
-    expect(long.index.recs.get(long.keys[0])?.length).toBe(RETIRE_LONG_TICKS);
-
-    // Warm up the JIT before the timed reps.
-    void retireStaleSeries(short.keys, short.index);
-    void retireStaleSeries(long.keys, long.index);
-    const tShort = timeIt(() => void retireStaleSeries(short.keys, short.index), 20);
-    const tLong = timeIt(() => void retireStaleSeries(long.keys, long.index), 20);
-
-    // 12x the data must NOT cost meaningfully more. Generous ratio so CI noise
-    // cannot flake it, but an O(total-proc-samples) regression is ~12x and
-    // blows through (benchmarked on the pre-fix implementation: ~13.2x).
-    expect(tLong).toBeLessThan(Math.max(tShort * 4, 2));
-  }, 20_000);
 });

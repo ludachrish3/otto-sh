@@ -5,7 +5,7 @@
 // one y-axis per chart, crosshair tooltip on by default.
 import type { NormalizedSession, TimeRange } from "../data/exportDoc";
 import { parseTs } from "../data/time";
-import { SERIES_DARK, SERIES_LIGHT } from "./palette";
+import { MUTED_SERIES_DARK, MUTED_SERIES_LIGHT, SERIES_DARK, SERIES_LIGHT } from "./palette";
 
 export interface ChartTheme {
   ink: string;
@@ -14,6 +14,7 @@ export interface ChartTheme {
   axis: string;
   surface: string;
   series: readonly string[];
+  mutedSeries: string;
 }
 
 /** Tailwind gray scale values, inlined: charts render to canvas and
@@ -27,6 +28,7 @@ export function chartTheme(dark: boolean): ChartTheme {
         axis: "#374151",
         surface: "#030712",
         series: SERIES_DARK,
+        mutedSeries: MUTED_SERIES_DARK,
       }
     : {
         ink: "#111827",
@@ -35,6 +37,7 @@ export function chartTheme(dark: boolean): ChartTheme {
         axis: "#d1d5db",
         surface: "#ffffff",
         series: SERIES_LIGHT,
+        mutedSeries: MUTED_SERIES_LIGHT,
       };
 }
 
@@ -44,6 +47,10 @@ export interface SeriesInput {
   /** Entity-bound palette slot from the UNFILTERED tree — color follows
    * the entity; filtering must never repaint survivors. */
   slot: number;
+  /** When true, render as a low-emphasis band member (single muted color,
+   * thin line) rather than a distinct palette slot. Used for per-core CPU on
+   * high-core hosts. */
+  muted?: boolean;
   points: [number, number][];
 }
 
@@ -254,8 +261,10 @@ export function buildStackOption(args: {
       showSymbol: false,
       sampling: "lttb",
       emphasis: { focus: "series", itemStyle: { borderWidth: 2 } },
-      lineStyle: { width: 2 },
-      itemStyle: { color: theme.series[s.slot % theme.series.length] },
+      lineStyle: { width: s.muted ? 1 : 2, opacity: s.muted ? 0.5 : 1 },
+      itemStyle: {
+        color: s.muted ? theme.mutedSeries : theme.series[s.slot % theme.series.length],
+      },
       data: s.points,
       ...(i === 0 && (markLine.data.length || markArea.data.length) ? { markLine, markArea } : {}),
     })),

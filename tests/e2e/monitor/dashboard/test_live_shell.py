@@ -40,7 +40,7 @@ def _push_tick(
     dash: DashboardHarness[FakeCollector], host: str, ts: datetime, value: float
 ) -> None:
     """Push one CPU-chart point for *host* -- ``push()``'s default ``chart="cpu"``
-    resolves to :class:`~otto.monitor.parsers.TopCpuParser`, whose ``chart``
+    resolves to :class:`~otto.monitor.parsers.PerCoreCpuParser`, whose ``chart``
     attribute is ``"CPU"`` (capitalized) -- that's the ``chartKey`` the
     ``chart-${chartKey}`` testid actually carries (see ``chart-CPU`` below),
     not the lowercase ``chart="cpu"`` friendly-name parameter.

@@ -20,7 +20,7 @@ import { useReviewStore } from "../data/reviewStore";
 import { buildIndex } from "../data/seriesIndex";
 
 // jsdom has no ResizeObserver, which @xyflow/react needs at mount — same
-// shim as topolegend.test.tsx / subjectpage.retirement.test.tsx.
+// shim as topolegend.test.tsx.
 globalThis.ResizeObserver ??= class {
   observe() {}
   unobserve() {}

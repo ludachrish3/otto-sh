@@ -73,11 +73,11 @@ describe("live export truthfulness", () => {
       events: [{ id: 1, timestamp: "2026-07-12T00:05:00Z", label: "boot" }] as never,
       log_events: [],
       deleted_event_ids: [],
-      chart_map: { "proc/999": "CPU" },
+      chart_map: { "net/eth0": "CPU" },
       meta: {
         interval: 5,
         charts: [
-          { label: "proc/999", y_title: "%", unit: "%", command: "top", chart: "CPU" },
+          { label: "net/eth0", y_title: "%", unit: "%", command: "top", chart: "CPU" },
         ] as never,
         tabs: [],
       },
@@ -91,8 +91,8 @@ describe("live export truthfulness", () => {
     expect(doc.format).toBe(1);
     const exported = doc.sessions.find((s) => s.id === "s");
     expect(exported).toBeDefined();
-    expect(exported?.chart_map?.["proc/999"]).toBe("CPU");
-    expect(exported?.meta?.charts?.some((c) => c.label === "proc/999")).toBe(true);
+    expect(exported?.chart_map?.["net/eth0"]).toBe("CPU");
+    expect(exported?.meta?.charts?.some((c) => c.label === "net/eth0")).toBe(true);
     expect(exported?.events?.some((e) => e.label === "boot")).toBe(true);
   });
 });

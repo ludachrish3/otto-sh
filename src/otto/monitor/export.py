@@ -249,8 +249,8 @@ def _session_record(row: SessionRow) -> SessionRecord:
     ``chart_map`` comes straight off its own persisted column: it is not
     derivable from anything else in the archive (``SessionMeta.charts`` holds
     one entry per rendered CHART, while metric rows carry per-SERIES labels,
-    and the two rarely match — ``TopCpuParser`` emits ``"Overall CPU"`` and
-    ``"proc/<pid>"`` into chart ``"CPU"``). Emitting an empty map instead
+    and the two rarely match — ``PerCoreCpuParser`` emits ``"Overall CPU"`` and
+    ``"core <N>"`` into chart ``"CPU"``). Emitting an empty map instead
     would not merely lose grouping: the frontend falls back to
     ``chartMap[label] ?? label`` (``web/src/data/seriesTree.ts``), so every
     series would become its own ungrouped, unit-less chart.

@@ -12,10 +12,11 @@ from otto.models import (
     MetricPoint,
     MetricRecord,
     MonitorExport,
+    SessionMeta,
     TabSpec,
     TabSpecRecord,
 )
-from otto.models.monitor import RowModel
+from otto.models.monitor import DEFAULT_MAX_SERIES_PER_CHART, RowModel
 
 _UTC = timezone.utc
 
@@ -153,6 +154,53 @@ class TestMetricRecordSource:
         )
         assert rec.source == "mgmt-01"
         assert rec.model_dump(mode="json", exclude_none=True)["source"] == "mgmt-01"
+
+
+class TestChartSpecMaxSeries:
+    """``max_series=None`` (an uncapped chart) must survive ``exclude_none`` dumps.
+
+    ``document_json`` (see :func:`otto.monitor.export.document_json`) dumps
+    with ``exclude_none=True`` for frontend-fixture parity. Without
+    ``ChartSpec``'s ``model_serializer(mode="wrap")``, that flag drops a
+    meaningful ``max_series=None`` exactly like an absent field, and read-back
+    refills the pydantic default (``DEFAULT_MAX_SERIES_PER_CHART``) — silently
+    re-capping an uncapped chart (e.g. ``PerCoreCpuParser``'s "CPU" chart)
+    every time a saved export round-trips. "Missing" must keep meaning
+    "default-capped" (old exports written before this field existed) while an
+    explicit ``None`` keeps meaning "uncapped".
+    """
+
+    def _spec(self, **overrides) -> ChartSpec:
+        fields = {
+            "label": "CPU",
+            "y_title": "Usage %",
+            "unit": "%",
+            "command": "cat /proc/stat",
+            "chart": "CPU",
+            "max_series": None,
+        }
+        fields.update(overrides)
+        return ChartSpec(**fields)
+
+    def test_none_survives_exclude_none_round_trip(self):
+        dumped = self._spec().model_dump(mode="json", exclude_none=True)
+        assert dumped["max_series"] is None
+        assert ChartSpec.model_validate(dumped).max_series is None
+
+    def test_none_survives_when_nested_in_the_export_document(self):
+        # The crux: document_json dumps a MonitorExport, not a bare ChartSpec —
+        # the wrap serializer must fire from a nested model_dump too.
+        record = ChartSpecRecord(**self._spec().model_dump())
+        meta = SessionMeta(charts=[record], tabs=[])
+        dumped = meta.model_dump(mode="json", exclude_none=True)
+        assert dumped["charts"][0]["max_series"] is None
+        assert SessionMeta.model_validate(dumped).charts[0].max_series is None
+
+    def test_missing_key_still_defaults_to_capped(self):
+        # A spec dict predating this field (no "max_series" key at all) must
+        # keep validating to the default cap, not to uncapped.
+        spec = ChartSpec.model_validate(self._spec().model_dump(exclude={"max_series"}))
+        assert spec.max_series == DEFAULT_MAX_SERIES_PER_CHART
 
 
 class TestExportDocument:

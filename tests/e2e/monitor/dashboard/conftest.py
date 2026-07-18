@@ -165,26 +165,16 @@ def _generous_playwright_timeout(request: pytest.FixtureRequest) -> None:
     page.set_default_navigation_timeout(60_000)
 
 
-_PROC_META = {
-    "Command": "stress",
-    "User": "root",
-    "Mem": "1.0%",
-    "RSS": "10 M",
-    "Stat": "R",
-    "CPU Time": "0:01.00",
-}
-
-
 def _preload(harness: DashboardHarness[FakeCollector]) -> None:
-    """Three 5s-spaced ticks for two hosts: overall CPU, two procs, memory, load."""
+    """Three 5s-spaced ticks for two hosts: overall + per-core CPU, memory, load."""
     t0 = datetime.now(tz=timezone.utc) - timedelta(seconds=15)
     push = harness.collector.push
     for tick in range(3):
         ts = t0 + timedelta(seconds=5 * tick)
         for host in ("host1", "host2"):
             harness.run(push(host, "Overall CPU", 20.0 + tick, ts=ts))
-            harness.run(push(host, "proc/101", 5.0 + tick, meta=_PROC_META, ts=ts))
-            harness.run(push(host, "proc/202", 3.0 + tick, meta=_PROC_META, ts=ts))
+            harness.run(push(host, "core 0", 15.0 + tick, ts=ts))
+            harness.run(push(host, "core 1", 25.0 + tick, ts=ts))
             harness.run(push(host, "Memory Usage", 40.0 + tick, chart="memory", ts=ts))
             harness.run(push(host, "Load (1m)", 0.5 + tick, chart="load", ts=ts))
 

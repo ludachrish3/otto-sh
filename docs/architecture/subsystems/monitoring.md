@@ -12,11 +12,13 @@ The monitor backend was reworked behind a stable
 {class}`~otto.monitor.collector.MetricCollector` facade: the collector
 decomposes into `store`/`db`/`broadcast` modules — joined by `session` (a
 run's identity and lab snapshot) and `export` (the `format:1` producer) —
-dashboard metadata is typed `TabSpec`/`ChartSpec` models, reshaped into each
-session's `SessionMeta` for the `GET /api/monitor_sessions`/`GET
-/api/stream` wire (spec 2026-07-12 monitor-live-streaming), and a
-project-level `register_parsers()` joins the per-host registry. The
-dashboard itself was ported from a single vanilla-JS file to a React + Vite
+dashboard metadata is typed `TabSpec`/`ChartSpec` models — each chart
+carrying an optional `max_series` cap (default 8 series; `None` uncaps it,
+as the CPU chart does) — reshaped into each session's `SessionMeta` for the
+`GET /api/monitor_sessions`/`GET /api/stream` wire (spec 2026-07-12
+monitor-live-streaming), and a project-level `register_parsers()` joins the
+per-host registry. The dashboard itself was ported from a single vanilla-JS
+file to a React + Vite
 + TypeScript single-page app (`web/`, built to `static/dist/`) behind the
 same observable surface, and later gained a real live producer: both live
 and review boot through the same `/api/monitor_sessions` endpoint, and a
@@ -52,8 +54,12 @@ host list into `MonitorTarget`s and picks each host's collection mode:
 
 - **Shell mode** — the target pairs the host with a dict of
   {class}`~otto.monitor.parsers.MetricParser` objects, each keyed by the
-  command whose output it parses (`/proc/stat`, `/proc/meminfo`, …).
-  Per-host parser sets are pluggable via the `HOST_PARSERS` registry.
+  command whose output it parses (`/proc/stat`, `/proc/meminfo`, …). One
+  command can feed more than one series: the built-in
+  {class}`~otto.monitor.parsers.PerCoreCpuParser` (`cat /proc/stat`) emits
+  `Overall CPU` from the aggregate line plus `core <N>` per CPU core, all
+  onto one `"CPU"` chart. Per-host parser sets are pluggable via the
+  `HOST_PARSERS` registry.
 - **SNMP mode** — hosts with an `snmp` table in lab data are polled by OID
   instead; SNMP metric descriptors have their own registry. This is how
   non-shell targets (and embedded targets that can't afford console polling)

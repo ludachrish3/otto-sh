@@ -37,9 +37,11 @@ async def test_meta_serves_production_catalog_with_forced_live() -> None:
         if p.tab not in expected_tabs:
             expected_tabs.append(p.tab)
     assert [t["id"] for t in meta["tabs"]] == expected_tabs
+    # PerCoreCpuParser leads DEFAULT_PARSERS (CPU consolidation onto /proc/stat
+    # restored cpu-first ordering), so "cpu" is the first-encountered tab.
     assert [t["id"] for t in meta["tabs"]] == ["cpu", "memory", "disk", "network"]
-    # Load, Per-core CPU, and Processes share the cpu tab
-    assert meta["tabs"][0]["metrics"] == ["CPU", "Load", "Per-core CPU", "Processes"]
+    # CPU (overall + per-core), Load, and Processes share the cpu tab
+    assert meta["tabs"][0]["metrics"] == ["CPU", "Load", "Processes"]
 
 
 @pytest.mark.asyncio

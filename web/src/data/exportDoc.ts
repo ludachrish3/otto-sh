@@ -249,7 +249,7 @@ function normalizeSession(raw: SessionRecord, warnings: string[]): NormalizedSes
  * pushes into it in place). A live export re-serializing the stale raw
  * document would silently drop every post-boot chart_map/meta update and
  * every post-boot event — routine mid-run, since the producer ships
- * chart_map/meta whenever a new `proc/<pid>` series first reports. Rebuilding
+ * chart_map/meta whenever a new series label first reports. Rebuilding
  * from `sessions[]` (the state every live tick actually keeps current) makes
  * a live export truthful structurally, not by relying on that aliasing. */
 function sessionToRecord(session: NormalizedSession): SessionRecord {

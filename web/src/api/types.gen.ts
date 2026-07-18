@@ -8,6 +8,7 @@ export type Unit = string;
 export type Command = string;
 export type Chart = string;
 export type Interval = number | null;
+export type MaxSeries = number | null;
 export type Metrics = ChartSpec[];
 export type Id = string;
 export type Label1 = string;
@@ -55,6 +56,7 @@ export interface ChartSpec {
   command: Command;
   chart: Chart;
   interval?: Interval;
+  max_series?: MaxSeries;
 }
 /**
  * One dashboard tab descriptor: otto's typed, internal parser-catalog view.

@@ -10,7 +10,7 @@ from otto.models import HostSnapshot, LabSnapshot, MetricPoint, MonitorExport, S
 from otto.monitor.collector import MetricCollector
 from otto.monitor.db import MetricDB
 from otto.monitor.export import build_db_export, build_live_export, document_json, session_meta
-from otto.monitor.parsers import MetricDataPoint, MetricParser, ParseContext, TopCpuParser
+from otto.monitor.parsers import MetricDataPoint, MetricParser, ParseContext, PerCoreCpuParser
 from otto.monitor.session import new_frame
 from otto.result import CommandResult, Status
 
@@ -21,7 +21,7 @@ T0 = datetime(2026, 7, 12, 8, 0, 0, tzinfo=UTC)
 class _MultiSeriesParser(MetricParser):
     """A parser whose SERIES labels differ from its CHART key — the real shape.
 
-    ``TopCpuParser`` behaves exactly like this ("Overall CPU"/"proc/<pid>"
+    ``PerCoreCpuParser`` behaves exactly like this ("Overall CPU"/"core <N>"
     both land in chart "CPU"), and it is why chart_map cannot be derived
     statically: the labels only exist once ``parse()`` has run.
     """
@@ -35,7 +35,7 @@ class _MultiSeriesParser(MetricParser):
 
     @override
     def parse(self, output: str, *, ctx: ParseContext) -> dict[str, MetricDataPoint]:
-        return {"Overall CPU": MetricDataPoint(12.5), "proc/1234": MetricDataPoint(3.5)}
+        return {"Overall CPU": MetricDataPoint(12.5), "core 0": MetricDataPoint(3.5)}
 
 
 async def _write_session(
@@ -77,6 +77,16 @@ def test_live_export_wraps_one_open_session():
     assert session.end is None
 
     round_tripped = MonitorExport.model_validate_json(document_json(export))
+    # document_json's exclude_none=True (frontend-fixture parity, see its
+    # docstring) would drop a literal max_series=None on write — indistinguishable
+    # from a field that was never set — and ChartSpec's pydantic default would
+    # then refill it as DEFAULT_MAX_SERIES_PER_CHART on read, silently re-capping
+    # an uncapped chart every time a saved export round-trips. ChartSpec's
+    # model_serializer(mode="wrap") re-inserts the key when max_series is None,
+    # so the round trip is lossless: PerCoreCpuParser's uncapped "CPU" chart
+    # (max_series=None) comes back as None, not DEFAULT_MAX_SERIES_PER_CHART.
+    cpu_chart = next(c for c in round_tripped.sessions[0].meta.charts if c.chart == "CPU")
+    assert cpu_chart.max_series is None
     assert round_tripped == export
 
 
@@ -101,7 +111,7 @@ def test_live_export_splits_series_keys_on_first_slash_only():
 
 @pytest.mark.asyncio
 async def test_live_export_carries_meta_and_chart_map():
-    collector = MetricCollector(hosts=[], parsers=[TopCpuParser()])
+    collector = MetricCollector(hosts=[], parsers=[PerCoreCpuParser()])
     collector._store.series["h1/Overall CPU"] = deque([MetricPoint(ts=T0, value=10.0)])
     collector._store.chart_map["Overall CPU"] = "CPU"
     await collector.add_event(label="marker", timestamp=T0)
@@ -132,7 +142,7 @@ def test_session_meta_is_the_only_safe_way_to_build_meta_json():
     ``session_meta(collector).model_dump_json()``. This pins the trap so a
     third call site can't quietly reintroduce the raw dump.
     """
-    collector = MetricCollector(hosts=[], parsers=[TopCpuParser()])
+    collector = MetricCollector(hosts=[], parsers=[PerCoreCpuParser()])
 
     assert [c.chart for c in session_meta(collector).charts] == ["CPU"]
 
@@ -191,7 +201,7 @@ async def test_db_export_chart_map_survives_a_real_collector_run(tmp_path):
 
     (session,) = build_db_export(str(path)).sessions
 
-    assert session.chart_map == {"Overall CPU": "CPU", "proc/1234": "CPU"}
+    assert session.chart_map == {"Overall CPU": "CPU", "core 0": "CPU"}
     # Never finalized, so the DB's `end` is NULL and the producer's crash
     # fallback stands in the last sample's ts — and the map survived anyway,
     # which is the whole point of writing it per-label instead of at finalize.

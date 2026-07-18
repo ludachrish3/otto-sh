@@ -32,7 +32,7 @@ import pytest
 from otto.models import MetricPoint
 from otto.monitor.collector import MetricCollector
 from otto.monitor.db import MetricDB, read_sessions
-from otto.monitor.parsers import MemParser, TopCpuParser
+from otto.monitor.parsers import MemParser, PerCoreCpuParser
 from otto.monitor.session import new_frame
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -73,7 +73,7 @@ def _empty_collector(db_path: str | None = None) -> MetricCollector:
         if db_path is not None
         else None
     )
-    return MetricCollector(hosts=[], parsers=[TopCpuParser(), MemParser()], db=db)
+    return MetricCollector(hosts=[], parsers=[PerCoreCpuParser(), MemParser()], db=db)
 
 
 async def _empty_collector_with_db(db_path: str) -> MetricCollector:

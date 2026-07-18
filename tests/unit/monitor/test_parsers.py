@@ -4,6 +4,7 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
+from otto.monitor.collector import MetricCollector
 from otto.monitor.parsers import (
     DEFAULT_PARSERS,
     DiskIoParser,
@@ -18,7 +19,6 @@ from otto.monitor.parsers import (
     ProcCountParser,
     SocketsParser,
     TickResult,
-    TopCpuParser,
     default_catalog,
     get_host_parsers,
     human_readable,
@@ -29,40 +29,6 @@ from otto.monitor.parsers import (
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-
-def _top_output(
-    idle1: float,
-    idle2: float,
-    procs1: list[tuple],
-    procs2: list[tuple],
-) -> str:
-    """Build a two-block top -bn2 output string.
-
-    Each proc tuple: (pid, user, res_kib, stat, cpu, mem, time_plus, command)
-    cpu values are raw (per-core scale); the parser divides by ctx.core_count.
-    """
-    header = (
-        "top - 12:00:00 up 1 day,  2:00,  2 users,  load average: 0.5, 0.4, 0.3\n"
-        "Tasks: 200 total,   1 running, 199 sleeping,   0 stopped,   0 zombie\n"
-        "%Cpu(s):  5.0 us,  2.0 sy,  0.0 ni, {idle:.1f} id,  0.3 wa,  0.0 hi,  0.1 si\n"
-        "MiB Mem :  16000.0 total,   8000.0 free,   4000.0 used,   4000.0 buff/cache\n"
-        "MiB Swap:   2048.0 total,   2048.0 free,      0.0 used.   8000.0 avail Mem\n"
-        "\n"
-        "    PID USER      PR  NI    VIRT    RES    SHR S  %CPU  %MEM     TIME+ COMMAND\n"
-    )
-    proc_fmt = "{pid:>7} {user:<9}  20   0  123456 {res:>6}   4096 {stat}  {cpu:>5.1f}  {mem:>5.1f}  {time} {cmd}\n"  # noqa: E501 — format string with alignment codes
-
-    def block(idle: float, procs: list[tuple]) -> str:
-        rows = "".join(
-            proc_fmt.format(
-                pid=p[0], user=p[1], res=p[2], stat=p[3], cpu=p[4], mem=p[5], time=p[6], cmd=p[7]
-            )
-            for p in procs
-        )
-        return header.format(idle=idle) + rows
-
-    return block(idle1, procs1) + block(idle2, procs2)
 
 
 def _net_dev_output(eth0: tuple, wlan0: tuple | None = None) -> str:
@@ -102,13 +68,25 @@ def _diskstats_output(sda_sectors: tuple[int, int], with_noise: bool = True) -> 
     return "\n".join(rows) + "\n"
 
 
-def _proc_stat_output(cores: list[tuple[int, int]]) -> str:
+def _proc_stat_output(
+    cores: list[tuple[int, int]], aggregate: tuple[int, int] | None = None
+) -> str:
     """cores = [(busy_jiffies_excluding_idle, idle_plus_iowait_jiffies), ...].
 
-    Emits the aggregate 'cpu' line (skipped by the parser) plus one cpuN line
-    per core: user nice system idle iowait irq softirq steal.
+    Emits the aggregate 'cpu' line plus one cpuN line per core:
+    user nice system idle iowait irq softirq steal. When *aggregate* is given
+    as (busy, idle) the 'cpu' line reflects it (so a two-tick call drives
+    Overall CPU); otherwise a constant placeholder aggregate is emitted (zero
+    delta -> no Overall CPU point).
     """
-    lines = ["cpu  99999 0 99999 999999 9999 0 0 0 0 0"]
+    if aggregate is None:
+        agg_line = "cpu  99999 0 99999 999999 9999 0 0 0 0 0"
+    else:
+        busy, idle = aggregate
+        user, system = busy // 2, busy - busy // 2
+        idle_j, iowait = idle // 2, idle - idle // 2
+        agg_line = f"cpu {user} 0 {system} {idle_j} {iowait} 0 0 0 0 0"
+    lines = [agg_line]
     for n, (busy, idle) in enumerate(cores):
         user, system = busy // 2, busy - busy // 2
         idle_j, iowait = idle // 2, idle - idle // 2
@@ -149,148 +127,12 @@ class TestHumanReadable:
         assert human_readable(64 * 1024**2, precision=0) == "64 M"
 
 
-# ---------------------------------------------------------------------------
-# TopCpuParser
-# ---------------------------------------------------------------------------
-
-
-class TestTopCpuParser:
-    parser = TopCpuParser(top_n=3)
-
-    def test_command_includes_bn2_and_delay(self):
-        assert "-bn2" in self.parser.command
-        assert "-d" in self.parser.command
-        assert "-1" not in self.parser.command
-
-    def test_delay_is_configurable(self):
-        p = TopCpuParser(delay=1.0)
-        assert "1.0" in p.command
-
-    def test_chart(self):
-        assert self.parser.chart == "CPU"
-
-    def test_unit(self):
-        assert self.parser.unit == "%"
-
-    def test_typical_output_overall_cpu(self):
-        output = _top_output(
-            idle1=90.0,
-            idle2=85.0,  # second block: 100 - 85 = 15%
-            procs1=[(1, "root", 4096, "S", 99.0, 0.1, "0:01.00", "fake")],
-            procs2=[(1234, "root", 65536, "S", 8.0, 0.8, "1:23.45", "python3")],
-        )
-        result = self.parser.parse(output, ctx=ParseContext())
-        assert "Overall CPU" in result
-        assert result["Overall CPU"].value == pytest.approx(15.0)
-
-    def test_second_block_is_used_not_first(self):
-        # First block has idle=90 (cpu=10), second has idle=80 (cpu=20).
-        # Parser must return 20, not 10.
-        output = _top_output(
-            idle1=90.0,
-            idle2=80.0,
-            procs1=[],
-            procs2=[],
-        )
-        result = self.parser.parse(output, ctx=ParseContext())
-        assert result["Overall CPU"].value == pytest.approx(20.0)
-
-    def test_per_process_entries(self):
-        procs = [
-            (1234, "root", 65536, "S", 8.0, 0.8, "1:23.45", "python3"),
-            (5678, "www-data", 32768, "S", 2.0, 0.4, "0:45.67", "nginx"),
-        ]
-        output = _top_output(idle1=90.0, idle2=88.0, procs1=procs, procs2=procs)
-        p = TopCpuParser(top_n=3)
-        result = p.parse(output, ctx=ParseContext(core_count=2))
-        assert "proc/1234" in result
-        assert "proc/5678" in result
-        assert result["proc/1234"].value == pytest.approx(4.0)  # 8.0 / 2 cores
-        assert result["proc/5678"].value == pytest.approx(1.0)  # 2.0 / 2 cores
-
-    def test_per_process_meta_fields(self):
-        procs = [(1234, "root", 65536, "S", 8.0, 0.8, "1:23.45", "python3")]
-        output = _top_output(idle1=90.0, idle2=88.0, procs1=procs, procs2=procs)
-        meta = self.parser.parse(output, ctx=ParseContext())["proc/1234"].meta
-        assert meta is not None
-        assert meta["Command"] == "python3"
-        assert meta["User"] == "root"
-        assert meta["Stat"] == "S"
-        assert meta["CPU Time"] == "1:23.45"
-        assert "RSS" in meta
-        assert "Mem" in meta
-
-    def test_per_process_rss_is_human_readable(self):
-        # 65536 KiB * 1024 = 67108864 B = 64 MiB
-        procs = [(1234, "root", 65536, "S", 8.0, 0.8, "1:23.45", "python3")]
-        output = _top_output(idle1=90.0, idle2=88.0, procs1=procs, procs2=procs)
-        meta = self.parser.parse(output, ctx=ParseContext())["proc/1234"].meta
-        assert meta is not None
-        assert meta["RSS"] == "64 M"
-
-    def test_per_process_normalized_by_core_count(self):
-        # Raw %CPU from top is per-core; with 2 cores, 8.0 raw → 4.0 normalized
-        procs = [(1234, "root", 65536, "S", 8.0, 0.8, "1:23.45", "python3")]
-        output = _top_output(idle1=90.0, idle2=88.0, procs1=procs, procs2=procs)
-        p = TopCpuParser(top_n=3)
-        assert p.parse(output, ctx=ParseContext(core_count=2))["proc/1234"].value == pytest.approx(
-            4.0
-        )
-
-    def test_core_count_isolation_between_hosts(self):
-        # Two parser instances simulate two hosts with different core counts.
-        # The same raw top output (8.0% per-core) should normalize differently.
-        procs = [(1234, "root", 65536, "S", 8.0, 0.8, "1:23.45", "python3")]
-        output = _top_output(idle1=90.0, idle2=88.0, procs1=procs, procs2=procs)
-
-        p2 = TopCpuParser(top_n=3)
-        p4 = TopCpuParser(top_n=3)
-
-        assert p2.parse(output, ctx=ParseContext(core_count=2))["proc/1234"].value == pytest.approx(
-            4.0
-        )  # 8.0 / 2
-        assert p4.parse(output, ctx=ParseContext(core_count=4))["proc/1234"].value == pytest.approx(
-            2.0
-        )  # 8.0 / 4
-
-    def test_top_n_limits_processes(self):
-        procs = [
-            (i, "root", 1024, "S", float(10 - i), 0.1, "0:00.01", f"proc{i}") for i in range(1, 6)
-        ]
-        output = _top_output(idle1=90.0, idle2=88.0, procs1=procs, procs2=procs)
-        result = self.parser.parse(output, ctx=ParseContext())
-        proc_keys = [k for k in result if k.startswith("proc/")]
-        assert len(proc_keys) == 3  # top_n=3
-
-    def test_empty_output_returns_empty_dict(self):
-        assert self.parser.parse("", ctx=ParseContext()) == {}
-
-    def test_missing_cpu_line_returns_empty_dict(self):
-        assert self.parser.parse("no cpu info here\n", ctx=ParseContext()) == {}
-
-    def test_overall_cpu_absent_when_only_one_block(self):
-        # Single-block output: only one "Tasks:" line, so block never reaches 2
-        output = (
-            "Tasks: 200 total,   1 running, 199 sleeping\n"
-            "%Cpu(s):  5.0 us,  2.0 sy,  0.0 ni, 90.0 id,  0.3 wa\n"
-            "    PID USER      PR  NI    VIRT    RES    SHR S  %CPU  %MEM     TIME+ COMMAND\n"
-        )
-        assert self.parser.parse(output, ctx=ParseContext()) == {}
-
-    def test_normalizes_by_ctx_core_count(self):
-        procs = [(1234, "root", 65536, "S", 8.0, 0.8, "1:23.45", "python3")]
-        output = _top_output(idle1=90.0, idle2=88.0, procs1=procs, procs2=procs)
-        parser = TopCpuParser(top_n=5)
-        two = parser.parse(output, ctx=ParseContext(core_count=2))
-        one = parser.parse(output, ctx=ParseContext(core_count=1))
-        proc_key = next(k for k in one if k.startswith("proc/"))
-        assert two[proc_key].value == pytest.approx(one[proc_key].value / 2)
-
-
 def test_parse_context_is_frozen():
-    ctx = ParseContext(core_count=4)
+    from datetime import datetime, timezone
+
+    ctx = ParseContext(ts=datetime(2026, 7, 3, tzinfo=timezone.utc))
     with pytest.raises(FrozenInstanceError):
-        ctx.core_count = 8  # type: ignore[misc]
+        ctx.ts = None  # type: ignore[misc]
 
 
 def test_parse_context_carries_optional_ts():
@@ -298,7 +140,7 @@ def test_parse_context_carries_optional_ts():
 
     assert ParseContext().ts is None
     ts = datetime(2026, 7, 3, tzinfo=timezone.utc)
-    assert ParseContext(core_count=2, ts=ts).ts == ts
+    assert ParseContext(ts=ts).ts == ts
 
 
 # ---------------------------------------------------------------------------
@@ -595,12 +437,6 @@ class TestPerCoreCpuParser:
         assert points["core 0"].value == 30.0
         assert points["core 1"].value == 80.0
 
-    def test_aggregate_cpu_line_skipped(self):
-        parser = PerCoreCpuParser()
-        parser.parse(_proc_stat_output([(100, 900)]), ctx=ParseContext())
-        points = parser.parse(_proc_stat_output([(150, 950)]), ctx=ParseContext())
-        assert set(points) == {"core 0"}
-
     def test_counter_reset_rebaselines(self):
         parser = PerCoreCpuParser()
         parser.parse(_proc_stat_output([(10000, 90000)]), ctx=ParseContext())
@@ -610,6 +446,29 @@ class TestPerCoreCpuParser:
 
     def test_in_default_parsers(self):
         assert "cat /proc/stat" in DEFAULT_PARSERS
+
+    def test_chart_is_cpu(self):
+        assert PerCoreCpuParser().chart == "CPU"
+
+    def test_uncapped(self):
+        assert PerCoreCpuParser().max_series is None
+
+    def test_overall_cpu_from_aggregate_deltas(self):
+        parser = PerCoreCpuParser()
+        parser.parse(_proc_stat_output([(100, 900)], aggregate=(100, 900)), ctx=ParseContext())
+        points = parser.parse(
+            _proc_stat_output([(130, 970)], aggregate=(150, 950)), ctx=ParseContext()
+        )
+        # aggregate delta: Δtotal=100, Δidle=50 -> 100*(1-50/100) = 50%
+        assert points["Overall CPU"].value == 50.0
+        assert points["core 0"].value == 30.0
+
+    def test_overall_cpu_absent_when_aggregate_is_flat(self):
+        parser = PerCoreCpuParser()
+        parser.parse(_proc_stat_output([(100, 900), (100, 900)]), ctx=ParseContext())
+        points = parser.parse(_proc_stat_output([(130, 970), (180, 920)]), ctx=ParseContext())
+        assert "Overall CPU" not in points  # constant placeholder aggregate -> zero delta
+        assert set(points) == {"core 0", "core 1"}
 
 
 # ---------------------------------------------------------------------------
@@ -673,6 +532,35 @@ class TestMetricParserExtensibility:
         p = UptimeParser()
         assert p.parse("up 3 days, 4 hours", ctx=ParseContext())["Uptime"].value == 3.0
         assert p.parse("up 5 hours", ctx=ParseContext()) == {}
+
+    def test_default_max_series_is_the_numeric_default(self):
+        from otto.models.monitor import DEFAULT_MAX_SERIES_PER_CHART
+
+        class Plain(MetricParser):
+            y_title = "x"
+            unit = ""
+            command = "echo x"
+            chart = "x"
+
+            def parse(self, output, *, ctx):
+                return {}
+
+        assert Plain().max_series == DEFAULT_MAX_SERIES_PER_CHART
+
+    def test_parser_can_opt_out_of_the_cap(self):
+        class Uncapped(MetricParser):
+            y_title = "x"
+            unit = ""
+            command = "echo y"
+            chart = "y"
+            max_series = None
+
+            def parse(self, output, *, ctx):
+                return {}
+
+        collector = MetricCollector(hosts=[], parsers=[Uncapped()])
+        spec = next(c for c in collector.get_meta_model().metrics if c.chart == "y")
+        assert spec.max_series is None
 
 
 class TestHostParserRegistry:

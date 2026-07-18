@@ -4,9 +4,9 @@
 // memo's key: it must move on the drawn series' own revisions (bumped only
 // when that series gets new points — seriesIndex.ts), not on `session`
 // identity (which changes on every non-empty append, for every chart).
-// Idiom follows subjectpage.retirement.test.tsx: mock ../charts/options to
-// spy on buildStackOption, mock ../charts/echarts so ChartPanel doesn't
-// touch a real canvas, and drive wouter's useParams directly.
+// Harness: mock ../charts/options to spy on buildStackOption, mock
+// ../charts/echarts so ChartPanel doesn't touch a real canvas, and drive
+// wouter's useParams directly.
 import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { act } from "react";

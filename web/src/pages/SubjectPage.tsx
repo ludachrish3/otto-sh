@@ -30,15 +30,9 @@ import {
   type TimeRange,
 } from "../data/exportDoc";
 import { groupRowsFromData, type LogEventRow, logKey, visibleRows } from "../data/logevents";
-import { retireStaleSeries } from "../data/retirement";
 import { useActiveSession, useReviewStore } from "../data/reviewStore";
 import { seriesKey } from "../data/seriesIndex";
-import {
-  buildSeriesTree,
-  collectSeriesPoints,
-  filterTree,
-  type SeriesNode,
-} from "../data/seriesTree";
+import { buildSeriesTree, collectSeriesPoints, filterTree } from "../data/seriesTree";
 import { liveRange } from "../data/time";
 import { EventsPanel } from "../shell/EventsPanel";
 import { SubjectHealthBanner } from "../shell/SubjectHealthBanner";
@@ -267,21 +261,17 @@ export function SubjectPage() {
         <SubjectHealthBanner subjectId={id}>
           <div data-testid="chart-stack" className="flex min-w-0 grow flex-col gap-4">
             {filtered.map((chart) => {
-              const activeAll = chart.series.filter((s) => checked.has(s.key));
-              if (activeAll.length === 0) return null;
-              // Retirement (Task 10): drop dead proc/* traces before they're
-              // built, styled, or drawn — a long ARCHIVE has the same
-              // unbounded-legend problem a long live run does, so this runs in
-              // both review and live. session.index is the same SeriesIndex
-              // both modes already read from (see seriesIndex.ts).
-              const byIndexKey = new Map(
-                activeAll.map((s) => [seriesKey(s.host, s.label), s] as const),
-              );
-              const active = retireStaleSeries([...byIndexKey.keys()], session.index)
-                .map((k) => byIndexKey.get(k))
-                .filter((s): s is SeriesNode => s !== undefined);
+              const active = chart.series.filter((s) => checked.has(s.key));
               if (active.length === 0) return null;
-              const shown = active.slice(0, MAX_SERIES_PER_CHART);
+              const cap = chart.maxSeries; // number = cap, null = uncapped
+              const shown = cap == null ? active : active.slice(0, cap);
+              const muteCores = chart.chartKey === "CPU" && shown.length > MAX_SERIES_PER_CHART;
+              // Slot 0 is only forced for a single "Overall CPU" series: a
+              // multi-host element view can show one "Overall CPU" per host,
+              // and collapsing all of them onto slot 0 would render N bold
+              // identical-color lines instead of each host keeping its own
+              // entity color.
+              const overallCount = shown.filter((s) => s.label === "Overall CPU").length;
               // Pair each SeriesInput with its seriesIndex key (`seriesKey(host,
               // label)`) WHILE host/label are both still in scope: a host subject's
               // own series has a bare-label SeriesNode.key ("m0"), which is NOT the
@@ -294,7 +284,8 @@ export function SubjectPage() {
                   input: {
                     key: s.key,
                     name: s.key === s.label ? s.label : s.host,
-                    slot: s.slot,
+                    slot: muteCores && overallCount === 1 && s.label === "Overall CPU" ? 0 : s.slot,
+                    muted: muteCores && s.label.startsWith("core "),
                     points: points.get(s.key) ?? [],
                   } satisfies SeriesInput,
                   idxKey: seriesKey(s.host, s.label),
@@ -324,7 +315,7 @@ export function SubjectPage() {
                   checked={checked}
                   groupId={`subject-${id}`}
                   onZoom={(r) => setRange(clampRange(r, bounds))}
-                  overflowCount={active.length > MAX_SERIES_PER_CHART ? active.length : null}
+                  overflowCount={cap != null && active.length > cap ? active.length : null}
                 />
               );
             })}
@@ -365,12 +356,11 @@ export function SubjectPage() {
 
 // Owns the one useMemo that gates buildStackOption — pulled out of
 // SubjectPage's `.map()` because a hook can't be called a variable number
-// of times per render (the chart list's length changes with retirement,
-// search, and checkbox state). Memoizing here, once per chart, is also what
-// makes the memo's SKIP actually pay off: buildStackOption builds the full
-// ECharts option (series styling, markLine/markArea, axis config) — the
-// expensive part this task exists to avoid redoing for a chart that didn't
-// change.
+// of times per render (the chart list's length changes with search and
+// checkbox state). Memoizing here, once per chart, is also what makes the
+// memo's SKIP actually pay off: buildStackOption builds the full ECharts
+// option (series styling, markLine/markArea, axis config) — the expensive
+// part this task exists to avoid redoing for a chart that didn't change.
 function ChartSection(props: {
   chartKey: string;
   chartLabel: string;
@@ -505,6 +495,7 @@ function ChartSection(props: {
       />
       {overflowCount !== null && (
         <p data-testid={`series-overflow-${chartKey}`} className="mt-1 text-xs text-quaternary">
+          {/* Every capped chart in practice uses the default cap; non-default caps wouldn't be reflected here. */}
           showing {MAX_SERIES_PER_CHART} of {overflowCount} — narrow the selection
         </p>
       )}

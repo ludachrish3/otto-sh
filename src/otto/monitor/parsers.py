@@ -14,7 +14,7 @@ custom command, subclass MetricParser and override parse()::
 To associate custom parsers with a specific host, call register_host_parsers()
 from an init module listed in .otto/settings.toml::
 
-    from otto.monitor.parsers import DEFAULT_PARSERS, TopCpuParser, register_host_parsers
+    from otto.monitor.parsers import DEFAULT_PARSERS, register_host_parsers
     from my_repo.parsers import NvidiaGpuParser
 
     register_host_parsers(
@@ -51,6 +51,7 @@ from typing import Any, NamedTuple
 
 from typing_extensions import override
 
+from ..models.monitor import DEFAULT_MAX_SERIES_PER_CHART
 from ..registry import Registry, caller_module
 from .rates import RateTracker
 
@@ -73,10 +74,6 @@ class MetricDataPoint(NamedTuple):
 @dataclass(frozen=True)
 class ParseContext:
     """Tick-local input to MetricParser.parse — extensible without signature breaks."""
-
-    core_count: int = 1
-    """Number of CPU cores on the target host for this tick. Most parsers ignore
-    this; :class:`TopCpuParser` uses it to normalize per-process CPU%."""
 
     ts: datetime | None = None
     """Collection timestamp for this tick. Rate parsers feed it to their
@@ -183,6 +180,10 @@ class MetricParser(ABC):
     Honored by :meth:`~otto.monitor.collector.MetricCollector.run`'s per-interval
     scheduling."""
 
+    max_series: int | None = DEFAULT_MAX_SERIES_PER_CHART
+    """Per-chart series cap for this parser's chart; ``None`` = uncapped. See
+    :data:`otto.models.monitor.DEFAULT_MAX_SERIES_PER_CHART`."""
+
     table_columns: list[str] | None = None
     """Table columns for log-event parsers — their tab renders as a table
     (``TabSpec.kind == "table"``) instead of charts. ``None`` (the default)
@@ -228,88 +229,6 @@ class MetricParser(ABC):
 # ---------------------------------------------------------------------------
 # Built-in parsers
 # ---------------------------------------------------------------------------
-
-
-class TopCpuParser(MetricParser):
-    """
-    Parse overall and per-process CPU usage from ``top -d{delay} -bn2`` output.
-
-    Runs two top iterations separated by *delay* seconds so that per-process %CPU
-    values reflect activity during that interval (the first iteration has no baseline
-    and is discarded).  Overall CPU usage and per-process traces share one chart.
-
-    Args:
-        top_n: Maximum number of processes to include per collection tick.
-        delay: Seconds between top iterations (controls accuracy vs latency trade-off).
-    """
-
-    y_title = "Usage %"
-    unit = "%"
-    tab = "cpu"
-    tab_label = "CPU"
-    chart = "CPU"
-
-    def __init__(self, top_n: int = 5, delay: float = 0.5) -> None:
-        self.top_n = top_n
-        self._delay = delay
-
-    @override
-    @property  # type: ignore[override]
-    def command(self) -> str:  # type: ignore[override]
-        return f"top -d {self._delay} -bn2"
-
-    @override
-    def parse(self, output: str, *, ctx: ParseContext) -> dict[str, MetricDataPoint]:
-        result: dict[str, MetricDataPoint] = {}
-        block = 0
-        in_table = False
-        proc_count = 0
-
-        for line in output.splitlines():
-            # Block boundary — "Tasks:" appears once per top iteration
-            if line.lstrip().startswith("Tasks:"):
-                block += 1
-                in_table = False
-                proc_count = 0
-                continue
-
-            # Aggregate CPU line (no -1): "%Cpu(s):  2.5 us, ..., 95.8 id, ..."
-            if line.startswith("%Cpu(s)") and block == 2:  # noqa: PLR2004 — top CPU aggregate appears in block 2 of top -b output
-                m = re.search(r"(\d+\.?\d*)\s*id", line)
-                if m:
-                    result["Overall CPU"] = MetricDataPoint(
-                        value=round(100.0 - float(m.group(1)), 2)
-                    )
-                continue
-
-            # Process table header
-            if "PID" in line and "%CPU" in line:
-                in_table = True
-                continue
-
-            # Parse process rows from the second block only
-            # Columns: PID USER PR NI VIRT RES SHR S %CPU %MEM TIME+ COMMAND
-            if in_table and block == 2 and proc_count < self.top_n:  # noqa: PLR2004 — top process rows appear in block 2 of top -b output
-                parts = line.split(None, 11)
-                if len(parts) < 12:  # noqa: PLR2004 — top process row has 12 columns: PID USER PR NI VIRT RES SHR S %CPU %MEM TIME+ COMMAND
-                    continue
-                try:
-                    result[f"proc/{parts[0]}"] = MetricDataPoint(
-                        value=round(float(parts[8]) / ctx.core_count, 2),
-                        meta={
-                            "Command": parts[11],
-                            "User": parts[1],
-                            "Mem": f"{float(parts[9]):.1f}%",
-                            "RSS": human_readable(int(parts[5]) * 1024, precision=0),
-                            "Stat": parts[7],
-                            "CPU Time": parts[10],
-                        },
-                    )
-                    proc_count += 1
-                except (ValueError, IndexError):
-                    continue
-
-        return result
 
 
 class MemParser(MetricParser):
@@ -569,12 +488,17 @@ class DiskIoParser(MetricParser):
 
 
 class PerCoreCpuParser(MetricParser):
-    """Per-core busy % from ``/proc/stat`` jiffies deltas.
+    """Overall + per-core busy % from ``/proc/stat`` jiffies deltas.
 
-    Far cheaper than a second ``top`` run: busy% = 100 x (1 - Δ(idle+iowait)
-    / Δtotal) per ``cpuN`` line. The aggregate ``cpu`` line is skipped —
-    :class:`TopCpuParser` already charts overall CPU. Jiffies ratios need no
-    wall clock (time cancels), so state is plain previous counters.
+    One cheap ``cat /proc/stat`` read yields both the aggregate ``cpu`` line
+    (charted as ``Overall CPU``) and each ``cpuN`` line (``core N``); all land
+    on one ``"CPU"`` chart. busy% = 100 x (1 - Δ(idle+iowait)/Δtotal) per line.
+    Jiffies ratios need no wall clock (time cancels), so state is plain previous
+    counters, keyed by the numeric core suffix (the aggregate keys under "").
+
+    ``max_series = None`` uncaps the CPU chart so every core shows regardless of
+    core count (the frontend mutes the per-core lines into one band past the
+    palette size).
     """
 
     y_title = "Usage %"
@@ -582,7 +506,8 @@ class PerCoreCpuParser(MetricParser):
     command = "cat /proc/stat"
     tab = "cpu"
     tab_label = "CPU"
-    chart = "Per-core CPU"
+    chart = "CPU"
+    max_series = None
 
     def __init__(self) -> None:
         self._prev: dict[str, tuple[float, float]] = {}  # core -> (total, idle_all)
@@ -592,7 +517,7 @@ class PerCoreCpuParser(MetricParser):
         result: dict[str, MetricDataPoint] = {}
         for line in output.splitlines():
             fields = line.split()
-            if not fields or not re.fullmatch(r"cpu\d+", fields[0]) or len(fields) < 9:  # noqa: PLR2004 — cpuN rows carry 8 jiffies fields
+            if not fields or not re.fullmatch(r"cpu\d*", fields[0]) or len(fields) < 9:  # noqa: PLR2004 — cpu/cpuN rows carry 8 jiffies fields
                 continue
             try:
                 jiffies = [float(f) for f in fields[1:9]]
@@ -607,7 +532,8 @@ class PerCoreCpuParser(MetricParser):
             d_total, d_idle = total - prev[0], idle_all - prev[1]
             if d_total <= 0 or d_idle < 0:
                 continue  # counter reset — re-baseline, skip the tick
-            result[f"core {core}"] = MetricDataPoint(round(100.0 * (1 - d_idle / d_total), 2))
+            label = "Overall CPU" if core == "" else f"core {core}"
+            result[label] = MetricDataPoint(round(100.0 * (1 - d_idle / d_total), 2))
         return result
 
 
@@ -650,14 +576,13 @@ class ProcCountParser(MetricParser):
 DEFAULT_PARSERS: dict[str, MetricParser] = {
     p.command: p
     for p in [
-        TopCpuParser(),
+        PerCoreCpuParser(),
         MemParser(),
         DiskParser(),
         LoadParser(),
         NetDevParser(),
         SocketsParser(),
         DiskIoParser(),
-        PerCoreCpuParser(),
         ProcCountParser(),
     ]
 }

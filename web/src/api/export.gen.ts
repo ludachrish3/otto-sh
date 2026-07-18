@@ -45,6 +45,7 @@ export type Unit = string;
 export type Command = string;
 export type Chart = string;
 export type Interval1 = number | null;
+export type MaxSeries = number | null;
 export type Charts = ChartSpecRecord[];
 export type Id4 = string;
 export type Label2 = string;
@@ -262,6 +263,7 @@ export interface ChartSpecRecord {
   command: Command;
   chart: Chart;
   interval?: Interval1;
+  max_series?: MaxSeries;
   [k: string]: unknown;
 }
 /**
