@@ -124,16 +124,22 @@ describe("dataPlaneColumns — isp-core", () => {
   });
 
   it("docks true pendant leaf services into their attachment's column, not their own", () => {
-    // mme-01/sgw-01/hss-01 each have exactly ONE declared link (to a core
+    // mme-01/sgw-01/hss-01 each had exactly ONE declared link (to a core
     // router) -- true degree-1 pendants, not a tier anything passes
     // through. If they got their own column, every agg<->core link would
     // have to leap over it -- exactly where the prototype's 9 swallowed
     // edges came from.
+    //
+    // PIN ADJUSTED (topology-default-view spec, isp-core fixture touch-up):
+    // sgw-01 is now fused into the "mme-01" chassis element (same host id,
+    // ip, and single core-01 link -- only `element` changed) and hss-01 into
+    // "pgw-01", so neither exists as its own node any more. The merge is
+    // degree-preserving (still ONE distinct neighbour each: mme-01->core-01,
+    // pgw-01->{core-02,pe-01} exactly as pgw-01 alone had), so mme-01 is
+    // still the true pendant this test is about; only the list shrinks.
     const cols = dataPlaneColumns(g.nodes, g.edges, g.managementIds);
     const coreCol = cols.get("core-01");
-    for (const svc of ["mme-01", "sgw-01", "hss-01"]) {
-      expect(cols.get(svc), `${svc} should dock into core's column`).toBe(coreCol);
-    }
+    expect(cols.get("mme-01"), "mme-01 should dock into core's column").toBe(coreCol);
   });
 
   it("keeps pgw-01 with pe-01, NOT docked into core's column -- it has a real second link", () => {
@@ -274,15 +280,22 @@ describe("coordinateAssignment — isp-core", () => {
   });
 
   it("keeps a docked leaf beside the node it hangs off", () => {
-    // `hss-01`'s only declared link is to `core-02`, and Task 4 docks it into
+    // `mme-01`'s only declared link is to `core-01`, and Task 4 docks it into
     // core's own column -- so it has NO neighbour in an adjacent column and
     // the median rule gives it no target at all. A naive port leaves it at its
     // stale grid y while every node around it is pulled away: measured, that
-    // put hss-01 at y=0 with core-02 at y=1320, twelve rows from the node it
-    // hangs off, its link bowing the whole height of the column. A leaf with
-    // no cross-column opinion has to follow the node it is docked to.
+    // put the docked leaf at y=0 with its anchor twelve rows away, its link
+    // bowing the whole height of the column. A leaf with no cross-column
+    // opinion has to follow the node it is docked to.
+    //
+    // PIN ADJUSTED (topology-default-view spec, isp-core fixture touch-up):
+    // this originally checked `hss-01` beside `core-02`. hss-01 is now fused
+    // into the "pgw-01" chassis element (degree-2, never peeled -- see the
+    // fixture touch-up comment on `isp_core()`), so it no longer docks
+    // anywhere; `mme-01` (fused with sgw-01, still a true degree-1 pendant
+    // docking to core-01) is the surviving example of this behaviour.
     const pos = layoutTopo(g.nodes, g.edges, g.managementIds);
-    const dy = Math.abs((pos.get("hss-01")?.y ?? 0) - (pos.get("core-02")?.y ?? 0));
+    const dy = Math.abs((pos.get("mme-01")?.y ?? 0) - (pos.get("core-01")?.y ?? 0));
     expect(dy).toBeLessThanOrEqual(ROW_H);
   });
 

@@ -3,13 +3,14 @@
 `otto monitor` collects CPU, memory, disk, and network metrics from remote
 hosts, and serves a web dashboard for reviewing what it collected.
 
-![The review dashboard's fleet grid: element-grouped host tiles with a
-status dot, a health-rollup bar per element, and a labeled headline
-metric](../_static/generated/dashboard-review.png)
+![The topology map, otto monitor's landing view: a dense lab laid out by
+data-plane structure, with element-grouped chassis nodes and a tunnel
+overlay showing all three health states — ok, degraded, and
+uncertain](../_static/generated/dashboard-topology.png)
 
 <!-- Generated AT BUILD TIME by scripts/capture_docs_media.py (hooked from
 docs/conf.py): the real review shell, fed the committed
-web/fixtures/kitchen-sink.json export document through the Import front
+web/fixtures/isp-core.json export document through the Import front
 door, captured with headless Chromium. Do not commit media into
 docs/_static/generated/. -->
 
@@ -194,8 +195,9 @@ On load, the dashboard shell asks that same server one question — `GET
 Import yourself: no click needed. Live and review servers hydrate through
 that *same* endpoint and the *same* `format:1` shape — a live monitor
 session is simply one whose `end` is still open, exactly like a crashed
-session found on disk — so the fleet grid and charts populate immediately
-either way, not just in review mode. In live mode, once that initial
+session found on disk — so the topology map populates immediately either
+way (as do the fleet grid and charts once you switch to Hosts), not just
+in review mode. In live mode, once that initial
 hydrate succeeds the shell also opens `GET /api/stream` (Server-Sent
 Events) and *grows* the loaded session in place by appending each fragment
 as it arrives — the wire fragments carry the same field names as the
@@ -214,6 +216,11 @@ session:
 - **Fleet grid.** Element-grouped host tiles, each with a status dot, an
   element-level health-rollup bar, and a labeled headline metric; a down
   tile shows its outage duration instead.
+
+  ![The review dashboard's fleet grid: element-grouped host tiles with a
+  status dot, a health-rollup bar per element, and a labeled headline
+  metric](../_static/generated/dashboard-review.png)
+
 - **Health, scoped to the viewed range.** Every status, rollup, and
   headline reflects whichever time window the review bar is currently
   showing — narrow the range and a host that's healthy across the full
@@ -250,13 +257,16 @@ contract](#frontend-development) below).
 
 ### Topology view
 
-The topology map (`/topology`, with an intra-element drill-down at
-`/topology/<element>`) lays the lab out by its data-plane structure rather
-than the management hop chain — see
+The topology map is the dashboard's landing view (`/`) — `/topology` remains
+a working alias, so existing bookmarks and links keep resolving — with an
+intra-element drill-down at `/topology/<element>`. It lays the lab out by its
+data-plane structure rather than the management hop chain — see
 {doc}`../architecture/subsystems/network` for the underlay/overlay model it
 draws from. The inter-element map aggregates each element into one node;
 opening an element expands it into its individual hosts, alongside the
-`local` node for otto's own management path.
+`local` node for otto's own management path. The fleet grid — the other
+view, reachable from the same switcher — lives at `/hosts`; see [Web
+dashboard](#web-dashboard) above.
 
 The bottom-left **Key** panel documents the canvas's two axes — link class
 and health status — from the same style tables the canvas itself draws from,
@@ -290,11 +300,15 @@ cadence as every other metric tick.
 
 ### Live status, pause, and reconnect
 
-While `--live`, the app bar's status dot and text track the SSE connection:
-**`Live`** while the stream is open and receiving fragments, **`Reconnecting…`**
-while a dropped connection is retrying with backoff, and **`Reviewing`** for
-a review-mode server. (A client-side Import with no backing server keeps the
-pre-existing "Historical"/"No data" wording, unaffected by any of this.)
+While `--live`, a healthy session shows no connection chrome at all — the
+app bar stays quiet as long as the stream is open and receiving fragments.
+If the SSE connection drops, a slim amber **Reconnecting…** banner appears
+directly under the app bar for as long as the retry-with-backoff loop is
+unresolved, and disappears the moment the stream reconnects. **Pause/Resume**
+is the icon button in the app bar's right-hand cluster (its `aria-label`
+reads "Pause" or "Resume" to match); review/historical context — including a
+client-side Import with no backing server — is carried entirely by the
+review bar's **HISTORICAL** badge, never by the app bar.
 
 **Pause is a view control, not a data control.** Clicking **Pause** freezes
 the visible time window; it does not stop ingestion — fragments keep

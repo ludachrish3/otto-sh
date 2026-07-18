@@ -103,6 +103,58 @@ describe("SubjectPage chart stack", () => {
   });
 });
 
+// Task 7 (spec decision 10): the live-window ButtonGroup moved here from
+// AppBar (Task 6, Plan 5b follow-ups) — 5m/15m/1h, live-only, selection
+// derived from `windowMs` rather than stored (same "derive, don't store"
+// lesson as reviewStore's `useIsPaused`). Moved verbatim from
+// livechrome.test.tsx, now driving <SubjectPage /> instead of <AppBar />.
+describe("SubjectPage live window control", () => {
+  afterEach(() => {
+    // `mode`/`windowMs` aren't part of the top-level afterEach's reset
+    // above — these tests are the only ones in this file that touch them,
+    // so they're restored here rather than leaking "live" mode (which
+    // changes window_'s derivation to liveRange, not session bounds) into
+    // every other test in this file.
+    useReviewStore.setState({ mode: null, windowMs: 900_000 });
+  });
+
+  it("renders only in live mode", () => {
+    load("chassis-a_lc1");
+    expect(screen.queryByTestId("live-window")).toBeNull();
+    cleanup();
+    useReviewStore.setState({ mode: "live" });
+    load("chassis-a_lc1");
+    expect(screen.getByTestId("live-window")).toBeTruthy();
+  });
+
+  it("the selected item reflects windowMs, not a separately stored choice", () => {
+    useReviewStore.setState({ mode: "live" });
+    load("chassis-a_lc1");
+    // Default windowMs (900_000, the store's own default) -> "15m" selected.
+    expect(screen.getByTestId("live-window-15m").getAttribute("data-selected")).not.toBeNull();
+    expect(screen.getByTestId("live-window-5m").getAttribute("data-selected")).toBeNull();
+    expect(screen.getByTestId("live-window-1h").getAttribute("data-selected")).toBeNull();
+
+    cleanup();
+    useReviewStore.setState({ windowMs: 3_600_000 });
+    load("chassis-a_lc1");
+    expect(screen.getByTestId("live-window-1h").getAttribute("data-selected")).not.toBeNull();
+    expect(screen.getByTestId("live-window-15m").getAttribute("data-selected")).toBeNull();
+  });
+
+  it("clicking a preset calls setWindow with that preset's width", async () => {
+    // usePress (react-aria) listens for pointer events, not the single
+    // synthetic `click` fireEvent dispatches — userEvent synthesizes the
+    // full pointerdown/pointerup/click sequence (same reasoning as
+    // overview.test.tsx's session-picker helper).
+    const user = userEvent.setup();
+    useReviewStore.setState({ mode: "live" });
+    load("chassis-a_lc1");
+    await user.click(screen.getByTestId("live-window-5m"));
+    expect(useReviewStore.getState().windowMs).toBe(300_000);
+  });
+});
+
 describe("SubjectPage log tables", () => {
   it("renders the kernel table for a host with rows and filters it", () => {
     load("db-01");

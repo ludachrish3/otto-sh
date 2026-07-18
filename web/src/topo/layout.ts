@@ -6,16 +6,23 @@ import { isManagementElement, type TopoEdge, type TopoNode } from "../data/topol
 /** Column pitch. The gutter it leaves (COL_W minus the 208px element node) has
  * to hold TWO things at once: a bow wide enough to carry a same-column edge
  * clear of the boxes between its endpoints, AND enough spread between parallel
- * edges that each one keeps its own pointer target. React Flow gives every edge
- * a 20px-wide invisible hit path, so two parallel edges whose centrelines are
- * less than ~10px apart share a single hit target — the inner one becomes
- * unclickable, its inspector unreachable.
+ * edges that each one keeps its own pointer target. LinkEdge.tsx renders every
+ * edge with a `routing.INTERACTION_WIDTH`-wide invisible hit path (28px — see
+ * that constant's own comment for why it's 28 and not React Flow's 20px
+ * default), so two parallel edges whose centrelines are less than half of it
+ * (14px) apart share a single hit target — the inner one becomes unclickable,
+ * its inspector unreachable.
  *
  * At 280 the gutter was 72px, which fits the bow but leaves only ~4px of spread:
  * `app-db` was literally unreachable under `metrics-udp` (0 of 19 sampled points
- * on its own stroke resolved back to it). 320 leaves 112px, which carries both,
- * and holds up to FOUR parallel links between one pair. See routing.ts. */
-export const COL_W = 320;
+ * on its own stroke resolved back to it). 320 leaves 112px, which carried both
+ * at the old 20px interaction width, but a bare four-way fan (rowSpan 6) fell to
+ * ZERO reachable points once INTERACTION_WIDTH widened to 28 — same failure
+ * mode, new trigger. 336 leaves 128px: re-measured via `toporouting.test.ts`'s
+ * own clickability scan, this restores every worst-case fan (up to FOUR
+ * parallel links) to the same 9-of-19-reachable margin the two-and three-way
+ * cases already enjoy, not just a bare pass. See routing.ts. */
+export const COL_W = 336;
 export const ROW_H = 110;
 
 function rowOrder(a: TopoNode, b: TopoNode): number {

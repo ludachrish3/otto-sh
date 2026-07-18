@@ -102,8 +102,8 @@ describe("bootstrapFromServer", () => {
   // actually hydrated a live session, never before — setting mode="live"
   // regardless (the pre-fix behavior) made a shell that got no data claim
   // it was live anyway, which broke every shell_dash-backed dashboard spec
-  // (ReviewBar hides itself once mode==="live"; status-text reads
-  // "Reconnecting…" instead of "No data").
+  // (ReviewBar hides itself once mode==="live"; the Reconnecting banner
+  // would render instead of the shell staying on its "No data" EmptyState).
   it('mode "live": a 404 hydrate starts NO stream and leaves mode null', async () => {
     const EventSourceCtor = vi.fn(function (this: unknown, url: string) {
       throw new Error(`must not construct EventSource(${url}) after a failed hydrate`);

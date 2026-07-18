@@ -198,10 +198,16 @@ describe("management partition", () => {
   it("does NOT treat a network element as management, however few links it has", () => {
     const { effective } = effectiveOf(ispCore);
     const g = buildTopoGraph(ispCore, effective, { sources: true });
-    // hss-01 has exactly ONE declared link. One is not zero.
-    const hss = g.nodes.find((n) => n.id === "hss-01");
-    if (!hss) throw new Error("isp-core fixture is missing hss-01");
-    expect(isManagementElement(hss, g.managementIds)).toBe(false);
+    // mme-01 has real declared links (mme01-core01, plus sgw01-core01 since
+    // the topology-default-view spec's fixture touch-up fused sgw-01 into
+    // this chassis element). Some is not zero.
+    //
+    // PIN ADJUSTED: originally checked hss-01, which the same touch-up fused
+    // into the "pgw-01" chassis element -- hss-01 no longer exists as its
+    // own node, so this now exercises the equivalent mme-01 case instead.
+    const mme = g.nodes.find((n) => n.id === "mme-01");
+    if (!mme) throw new Error("isp-core fixture is missing mme-01");
+    expect(isManagementElement(mme, g.managementIds)).toBe(false);
   });
 
   it("does NOT treat a genuinely under-described leaf as management (zephyr-02)", () => {

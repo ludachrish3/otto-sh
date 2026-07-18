@@ -6,10 +6,11 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import App from "../App";
 import { useReviewStore } from "../data/reviewStore";
+import { useUiStore } from "../ui/uiStore";
 
 // `new URL(relative, import.meta.url)` (the brief's original form) throws
 // "The URL must be of scheme file" under this project's vitest/jsdom setup;
@@ -45,6 +46,16 @@ function resetStore() {
   });
 }
 
+beforeEach(() => {
+  // Topology is the "/" landing now (route swap); none of this file's tests
+  // are about topology (they exercise AppBar chrome/import/menus), and one
+  // ("surfaces an import error and keeps prior data") explicitly asserts
+  // grid content (overview-page, subject-link-solo) — start every test at
+  // the grid's new home so importMinimal's "review-bar" wait doesn't hang
+  // behind an unmounted TopologyPage (jsdom has no ResizeObserver, which
+  // @xyflow/react needs on mount).
+  window.location.hash = "#/hosts";
+});
 afterEach(() => {
   // vitest's config doesn't set `test.globals: true`, so
   // @testing-library/react's automatic afterEach(cleanup) registration
@@ -52,6 +63,7 @@ afterEach(() => {
   // lingers in the document for the next test's queries.
   cleanup();
   resetStore();
+  useUiStore.setState({ paletteOpen: false, theme: "light" });
   localStorage.clear();
   document.documentElement.classList.remove("dark", "dark-mode");
 });
@@ -59,14 +71,25 @@ afterEach(() => {
 async function importMinimal() {
   const file = new File([MINIMAL], "minimal.json", { type: "application/json" });
   fireEvent.change(screen.getByTestId("import-input"), { target: { files: [file] } });
-  await waitFor(() => expect(screen.getByTestId("status-text").textContent).toBe("Historical"));
+  // status-text is gone (spec decision 9) — loaded-historical chrome is the
+  // ReviewBar, which renders only once a session with bounds exists.
+  await waitFor(() => expect(screen.getByTestId("review-bar")).toBeTruthy());
 }
 
 describe("App shell", () => {
   it("boots to the empty review state with no backend fetches", () => {
     render(<App />);
     expect(screen.getByTestId("empty-review")).toBeTruthy();
-    expect(screen.getByTestId("status-text").textContent).toBe("No data");
+    expect(screen.queryByTestId("status-text")).toBeNull();
+  });
+
+  it("renders no status text or dot in any mode (spec decision 9)", async () => {
+    render(<App />);
+    expect(screen.queryByTestId("status-text")).toBeNull();
+    expect(screen.queryByTestId("status-dot")).toBeNull();
+    await importMinimal();
+    expect(screen.queryByTestId("status-text")).toBeNull();
+    expect(screen.queryByTestId("status-dot")).toBeNull();
   });
 
   it("imports a fixture through the hidden input", async () => {
@@ -82,7 +105,7 @@ describe("App shell", () => {
     fireEvent.change(screen.getByTestId("import-input"), { target: { files: [bad] } });
     const banner = await screen.findByTestId("import-error");
     expect(banner.textContent).toContain(useReviewStore.getState().importError);
-    expect(screen.getByTestId("status-text").textContent).toBe("Historical");
+    expect(screen.getByTestId("review-bar")).toBeTruthy();
     // Prior data is still rendered underneath the banner, not replaced by it.
     expect(screen.getByTestId("overview-page")).toBeTruthy();
     expect(screen.getByTestId("subject-link-solo")).toBeTruthy();
@@ -131,7 +154,7 @@ describe("App shell", () => {
     render(<App />);
     const file = new File([withBadRow], "warn-fixture.json", { type: "application/json" });
     fireEvent.change(screen.getByTestId("import-input"), { target: { files: [file] } });
-    await waitFor(() => expect(screen.getByTestId("status-text").textContent).toBe("Historical"));
+    await waitFor(() => expect(screen.getByTestId("review-bar")).toBeTruthy());
 
     const banner = await screen.findByTestId("data-warnings-banner");
     expect(banner.textContent).toContain("dropped 1 metric with invalid timestamp");
@@ -187,14 +210,54 @@ describe("App shell", () => {
 
   // AppBar's `Dropdown.Item` for export sets `isDisabled={!hasData}` — no
   // data has been imported yet at boot, so the item must render disabled.
-  // (Live mode omits this item entirely in favor of ExportButton — see
-  // AppBar.tsx — so this is a review/import-mode-only assertion, exercised
-  // here at boot before any import.)
+  // (Task 7 decision 8: the overflow's Export entry is now ALWAYS present,
+  // regardless of mode — the old live-only <ExportButton /> is gone, and
+  // live mode's own dedicated export glyph is a separate `export-button`
+  // control, not this menu item — so this assertion holds in every mode.)
   it("Export overflow item is disabled with no data loaded (menu-export -> isDisabled)", async () => {
     const user = userEvent.setup();
     render(<App />);
     await user.click(screen.getByTestId("overflow-menu"));
     const exportItem = await screen.findByTestId("menu-export");
     expect(exportItem.getAttribute("aria-disabled")).toBe("true");
+  });
+
+  it("overflow menu is icon-advanced: chord addons on every action row", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    // menu-shortcuts only renders once data is loaded (Finding [1]).
+    await importMinimal();
+    await user.click(screen.getByTestId("overflow-menu"));
+    // jsdom is non-mac -> Ctrl-form labels (shortcuts.ts formatBinding).
+    expect((await screen.findByTestId("menu-import")).textContent).toContain("Ctrl I");
+    expect(screen.getByTestId("menu-export").textContent).toContain("Ctrl S");
+    expect(screen.getByTestId("menu-theme").textContent).toContain("Ctrl L");
+    expect(screen.getByTestId("menu-shortcuts").textContent).toContain("Ctrl K");
+  });
+
+  it("Keyboard shortcuts… menu item opens the command palette", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await importMinimal();
+    await user.click(screen.getByTestId("overflow-menu"));
+    await user.click(await screen.findByTestId("menu-shortcuts"));
+    expect(useUiStore.getState().paletteOpen).toBe(true);
+  });
+
+  // Finding [1]: CommandLayer mounts only inside App's hasData Router
+  // branch (no shortcuts on the EmptyState screen, per spec) — the
+  // AppBar's palette triggers (SearchTrigger, the overflow menu's
+  // "Keyboard shortcuts…" row) must not render before data exists, or an
+  // openPalette() call queues against nothing and the palette springs
+  // open the instant data loads.
+  it("palette triggers are absent on the empty state and appear once data loads", async () => {
+    render(<App />);
+    expect(screen.queryByTestId("search-trigger")).toBeNull();
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId("overflow-menu"));
+    expect(screen.queryByTestId("menu-shortcuts")).toBeNull();
+    await user.keyboard("{Escape}");
+    await importMinimal();
+    expect(screen.getByTestId("search-trigger")).toBeTruthy();
   });
 });

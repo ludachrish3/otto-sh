@@ -2,13 +2,13 @@
 // host status tiles — status dot · name · board·slot · labeled headline
 // metric; down tiles show the outage duration instead. All health is
 // derived, range-scoped (data/health.ts) — nothing here is stored state.
-import { Link, useLocation } from "wouter";
+import { Link } from "wouter";
 
-import { ButtonGroup, ButtonGroupItem } from "@/components/base/button-group/button-group";
 import { useNow } from "../data/clock";
 import { elementRollup, headlineFor, healthForHosts, type SubjectHealth } from "../data/health";
 import { useActiveSession, useReviewStore } from "../data/reviewStore";
 import { formatOutage } from "../data/time";
+import { ViewSwitcher } from "../ui/ViewSwitcher";
 
 const DOT_CLASS: Record<SubjectHealth["status"], string> = {
   ok: "bg-status-ok",
@@ -25,7 +25,6 @@ const SEGMENT_CLASS: Record<SubjectHealth["status"], string> = {
 };
 
 export function OverviewPage() {
-  const [, navigate] = useLocation();
   const session = useActiveSession();
   const range = useReviewStore((s) => s.range);
   const mode = useReviewStore((s) => s.mode);
@@ -50,18 +49,7 @@ export function OverviewPage() {
   return (
     <main data-testid="overview-page" className="flex flex-col gap-6 p-4">
       <div className="flex items-center gap-3">
-        <ButtonGroup
-          aria-label="View"
-          data-testid="view-toggle"
-          selectedKeys={new Set(["grid"])}
-          disallowEmptySelection
-          onSelectionChange={(keys) => {
-            if ([...keys][0] === "topology") navigate("/topology");
-          }}
-        >
-          <ButtonGroupItem id="grid">Grid</ButtonGroupItem>
-          <ButtonGroupItem id="topology">Topology</ButtonGroupItem>
-        </ButtonGroup>
+        <ViewSwitcher active="hosts" />
       </div>
       {session.elements.map((el) => {
         const rollup = elementRollup(el, healths, session);

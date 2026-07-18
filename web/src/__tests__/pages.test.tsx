@@ -50,7 +50,12 @@ function resetStore() {
 }
 
 beforeEach(() => {
-  window.location.hash = "#/";
+  // Topology is the "/" landing now (route swap); these tests exercise the
+  // fleet grid (importKitchen waits on "overview-page") and drill into
+  // subject pages from it, so they start at the grid's new home. The
+  // Topology describe block below navigates to "#/topology" explicitly
+  // after import, same as before.
+  window.location.hash = "#/hosts";
 });
 afterEach(() => {
   // Same rationale as reviewbar.test.tsx: cleanup() is needed because
@@ -130,16 +135,22 @@ describe("Topology page", () => {
     // React Flow's fitView `padding` treats a bare number as a FRACTION of the
     // viewport, even inside this per-side object -- only the "NNpx" string
     // form is an absolute reserve (verified against
-    // node_modules/@xyflow/system's parsePadding). A regression back to the
-    // bare number 260 reads deceptively close to correct at Playwright's
-    // default 1280x720 viewport (~298px) and is why this needs pinning here
-    // too, not just behaviorally: jsdom does no real box layout, so this
-    // can't observe the actual squeeze the way a browser can -- see
+    // node_modules/@xyflow/system's parsePadding). A regression back to a
+    // bare number reads deceptively close to correct at Playwright's default
+    // 1280x720 viewport and is why this needs pinning here too, not just
+    // behaviorally: jsdom does no real box layout, so this can't observe the
+    // actual squeeze the way a browser can -- see
     // `test_fit_padding_bottom_is_an_absolute_reserve_at_a_tall_viewport` in
     // tests/e2e/monitor/dashboard/test_review_shell.py for the behavioral
     // proof (measured ~0.50 fitted-content-depth with the bare number,
     // ~0.80 with the string, at a 1400px-tall canvas). This test exists so
     // the type-level mistake itself fails fast, in vitest, without a browser.
-    expect(FIT_PADDING.bottom).toBe("260px");
+    //
+    // 256, not 260: shaved 4px to compensate for the button-border
+    // `ViewSwitcher` row (commit 1045210) sitting 4px taller than the plain
+    // button row it replaced, restoring the exact pre-regression effective
+    // canvas height and fit scale (see TopologyPage.tsx's FIT_PADDING
+    // comment for the full derivation).
+    expect(FIT_PADDING.bottom).toBe("256px");
   });
 });

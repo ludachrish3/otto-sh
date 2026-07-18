@@ -733,6 +733,26 @@ def isp_core() -> MonitorExport:
     pe/core/mobile-core, ``ems-02`` for agg/acc: two disjoint reports-for
     stars. ``core-02`` goes dark for the back half of the session — a plain
     "down", not a cascade, since nothing hops through it.
+
+    Docs-hero touch-up (topology-default-view spec, fixture section):
+    ``mme-01``/``sgw-01`` and ``pgw-01``/``hss-01`` are each folded into one
+    physical chassis (``mme-01``, ``pgw-01`` survive as the shared element
+    id; the fused host keeps its own id, ip, and links, only its `element`
+    changes) — the same "one physical box, several line cards" shape as
+    ``agg-01``'s three boards, giving the topology shot two more chassis
+    without inventing new hosts. Both fused hosts were degree-1 pendants
+    docking into the SAME neighbour they always did (``mme-01``/``sgw-01``
+    -> ``core-01``; ``pgw-01``/``hss-01`` -> ``core-02`` +
+    ``pgw-01``'s existing ``pe-01`` link), so this is additive to the
+    rendered graph, not a rewire: `dataPlaneColumns`'s branch-size math
+    (see layout.ts's ``DECISIVE_RATIO`` docstring) is unaffected — verified,
+    not assumed (see task-A-report.md). Two more tunnels join the existing
+    uncertain one so the topology shot genuinely carries all three tri-state
+    badges in one frame, each actually riding declared links rather than
+    falling back to a bare/dynamic chord: ``pe-02``-``core-02``-``agg-03``
+    (degraded, 3/6 carriers, riding pe02-core02 + agg03-core02) and
+    ``pe-01``-``core-01``-``agg-01`` (ok, 6/6 carriers, riding pe01-core01 +
+    agg01-core01).
     """
     rng = random.Random(20260713)  # noqa: S311 — deterministic dummy data, not cryptography
     hosts = [
@@ -743,10 +763,15 @@ def isp_core() -> MonitorExport:
         _host("pe-02", "pe-02", "10.70.1.2"),
         _host("core-01", "core-01", "10.70.1.11"),
         _host("core-02", "core-02", "10.70.1.12"),
-        _host("mme-01", "mme-01", "10.70.1.21"),
-        _host("sgw-01", "sgw-01", "10.70.1.22"),
-        _host("pgw-01", "pgw-01", "10.70.1.23"),
-        _host("hss-01", "hss-01", "10.70.1.24"),
+        # mme-01/sgw-01 share the "mme-01" chassis element (fixture touch-up,
+        # topology-default-view spec): board+slot make the grouping physical
+        # without needing an explicit ElementRecord, matching agg-01's
+        # existing lc1/lc2/lc3 pattern. host id/ip/links unchanged.
+        _host("mme-01", "mme-01", "10.70.1.21", board="lc1", slot=1),
+        _host("sgw-01", "mme-01", "10.70.1.22", board="lc2", slot=2),
+        # pgw-01/hss-01 share the "pgw-01" chassis element, same pattern.
+        _host("pgw-01", "pgw-01", "10.70.1.23", board="lc1", slot=1),
+        _host("hss-01", "pgw-01", "10.70.1.24", board="lc2", slot=2),
         _host("agg-01_lc1", "agg-01", "10.70.2.11", board="lc1", slot=1, hop="jump-01"),
         _host("agg-01_lc2", "agg-01", "10.70.2.12", board="lc2", slot=2, hop="jump-01"),
         _host("agg-01_lc3", "agg-01", "10.70.2.13", board="lc3", slot=3, hop="jump-01"),
@@ -920,13 +945,22 @@ def isp_core() -> MonitorExport:
         ],
         tables=False,
     )
+    # Explicit metadata for the two fused chassis (board+slot on their member
+    # hosts already makes them physical; these entries just name/describe
+    # them, matching kitchen-sink's "workers"/"spare-chassis" pattern).
+    elements = [
+        ElementRecord(
+            id="mme-01", type="physical", description="Combined MME/SGW control-plane blade chassis"
+        ),
+        ElementRecord(id="pgw-01", type="physical", description="Combined PGW/HSS blade chassis"),
+    ]
     session = SessionRecord(
         id="2026-07-01T08-00-00-isp-core",
         label="isp-core",
         note="Short management paths (0-1 hops); deep, richly meshed data plane.",
         start=BASE,
         end=BASE + timedelta(seconds=_SPARSE_DURATION_S),
-        lab=LabSnapshot(hosts=hosts, links=links),
+        lab=LabSnapshot(elements=elements, hosts=hosts, links=links),
         meta=meta,
         metrics=metrics,
         chart_map=_chart_map(meta),
@@ -941,6 +975,35 @@ def isp_core() -> MonitorExport:
                 carriers_present=2,
                 carriers_expected=4,
                 age_seconds=300.0,
+            ),
+            # Degraded: partial carrier loss on a 3-hop tunnel riding two
+            # DECLARED links (pe02-core02, agg03-core02) — the same
+            # riding-overlay vector as sprawl's tor-sw-a/app-01/db-01 tunnel
+            # above, not a bare/dynamic fallback chord. Added for the
+            # docs-hero shot (topology-default-view spec).
+            TunnelRecord(
+                id="tun-0000pe02agg3-15005",
+                protocol="udp",
+                service_port=15005,
+                hops=["pe-02", "core-02", "agg-03"],
+                status="degraded",
+                carriers_present=3,
+                carriers_expected=6,
+                age_seconds=450.0,
+            ),
+            # Ok: healthy 3-hop tunnel riding two more DECLARED links
+            # (pe01-core01, agg01-core01), added alongside the degraded and
+            # uncertain tunnels above so the docs-hero frame genuinely shows
+            # all three tri-state badges at once, each actually riding.
+            TunnelRecord(
+                id="tun-0000pe01agg1-15006",
+                protocol="udp",
+                service_port=15006,
+                hops=["pe-01", "core-01", "agg-01_lc1"],
+                status="ok",
+                carriers_present=6,
+                carriers_expected=6,
+                age_seconds=1800.0,
             ),
         ],
     )

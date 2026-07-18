@@ -17,7 +17,7 @@ import type { TopoEdge } from "../data/topology";
 import { EdgeHoverCard } from "./EdgeHoverCard";
 import { EDGE_STYLES, edgeClass, edgeStyle, tunnelEdgeStyle } from "./edgeStyles";
 import { ImpairPill } from "./ImpairPill";
-import { type Rect, routeEdge } from "./routing";
+import { INTERACTION_WIDTH, type Rect, routeEdge } from "./routing";
 
 interface LinkEdgeData {
   edge: TopoEdge;
@@ -90,7 +90,27 @@ export function LinkEdge(props: EdgeProps) {
           strokeOpacity={casing.opacity}
         />
       )}
-      <BaseEdge id={id} path={geom.path} style={style} />
+      {/* This is the ONE authoritative site for edge hit-test width: React
+          Flow only reads a per-edge `interactionWidth` prop when the custom
+          edge component itself forwards it to BaseEdge (see EdgeWrapper in
+          @xyflow/react) -- this component never destructures
+          `props.interactionWidth`, so setting it on the Edge objects built in
+          TopologyPage's `flow` useMemo would be a silent no-op. Widened from
+          the library default (20px, "a 20px invisible path" per this repo's
+          own docs) to INTERACTION_WIDTH (28px) as margin hardening: commit
+          b486272 (see FIT_PADDING in TopologyPage.tsx and
+          task-12b-report.md) proved the fitted zoom sits close enough to a
+          deterministic Firefox/WebKit hit-test threshold that a ~4px
+          chrome-height change above the canvas -- well within the range
+          future toolbar/tab tweaks could plausibly introduce -- was enough
+          to flip it, via the FIT_PADDING/fit-scale coupling documented
+          there. Imported from routing.ts rather than a second literal here
+          so this render prop and the fan-separation guards it must clear
+          (toporouting.test.ts) can never disagree again. This only widens
+          BaseEdge's separate `react-flow__edge-interaction` path (rendered
+          with strokeOpacity 0); it does not touch the visible
+          `react-flow__edge-path` stroke this file styles above and below. */}
+      <BaseEdge id={id} path={geom.path} style={style} interactionWidth={INTERACTION_WIDTH} />
       <EdgeLabelRenderer>
         {hovered ? (
           // The card replaces the pill rather than stacking on it — both want

@@ -50,7 +50,7 @@ OUT_DIR = REPO_ROOT / "docs" / "_static" / "generated"
 STAMP = OUT_DIR / ".stamp"
 
 # Inputs whose change invalidates the media: this script, the harness
-# fixtures it drives, the fixture document it imports, and the whole monitor
+# fixtures it drives, the fixture documents it imports, and the whole monitor
 # subsystem (server, collector, static frontend assets).
 _STAMP_INPUTS = [
     Path(__file__).resolve(),
@@ -58,12 +58,18 @@ _STAMP_INPUTS = [
     REPO_ROOT / "tests" / "_fixtures" / "_fake_collector.py",
     REPO_ROOT / "tests" / "_fixtures" / "_report_fixture.py",
     REPO_ROOT / "web" / "fixtures" / "kitchen-sink.json",
+    REPO_ROOT / "web" / "fixtures" / "isp-core.json",
     REPO_ROOT / "src" / "otto" / "monitor",
     REPO_ROOT / "src" / "otto" / "coverage" / "renderer",
 ]
 
 # The files this script promises to produce (docs pages reference them).
-ARTIFACTS = ["dashboard-review.png", "dashboard-review-charts.png", "coverage-report.png"]
+ARTIFACTS = [
+    "dashboard-topology.png",
+    "dashboard-review.png",
+    "dashboard-review-charts.png",
+    "coverage-report.png",
+]
 
 _VIEWPORT = {"width": 1280, "height": 720}
 
@@ -124,6 +130,74 @@ def _capture_coverage_report(browser) -> None:  # noqa: ANN001 — playwright im
         page.close()
 
 
+def _wait_for_edges_settled(
+    page,  # noqa: ANN001 — playwright import is deferred
+    selector: str,
+    *,
+    interval_s: float = 0.1,
+    stable_reads: int = 3,
+    timeout_s: float = 10.0,
+) -> None:
+    """Poll ``selector``'s match count until it holds steady, not a flat sleep.
+
+    React Flow commits an edge batch in more than one paint (issue #130), so
+    "at least one edge exists" (the caller's own prior wait) is not "the
+    canvas is done growing" — a fixed sleep either races a slow/loaded host
+    (screenshots an incomplete batch) or wastes time on a fast one. Polling
+    for the count to stop changing is a real completion signal either way,
+    the same idea ``tests/e2e/monitor/dashboard/test_topology_budget.py``'s
+    ``_wait_for_links`` uses (there, waiting for a known EXACT total derived
+    from the fixture; here, no such total is threaded through, so waiting for
+    the count to settle is the equivalent bounded-poll signal).
+    """
+    deadline = time.monotonic() + timeout_s
+    last = -1
+    steady = 0
+    while time.monotonic() < deadline:
+        count = page.locator(selector).count()
+        steady = steady + 1 if count == last else 0
+        if steady >= stable_reads:
+            return
+        last = count
+        time.sleep(interval_s)
+    raise TimeoutError(f"{selector!r} count never settled (last read: {last})")
+
+
+def _capture_topology(browser, harness) -> None:  # noqa: ANN001 — deferred imports
+    """Photograph the topology map — the dashboard's landing view.
+
+    Fed through the Import front door with the densest fixture.
+    ``web/fixtures/isp-core.json`` (25 hosts / 44 links) carries, since the
+    fixture touch-up landed for this shot (spec 2026-07-17
+    topology-default-view) and the addendum review's honesty fix, a degraded
+    AND an ok tunnel — each actually riding declared links — alongside its
+    existing uncertain one, plus two chassis ``elements`` — one frame shows
+    the whole tri-state health story (ok / degraded / uncertain) and element
+    grouping. ``/`` is the current landing route, so importing there needs no
+    follow-up navigation, unlike the grid capture below.
+
+    React Flow withholds an edge until BOTH its endpoint nodes have been
+    measured (see ``tests/e2e/monitor/dashboard/test_review_shell.py``'s
+    ``_wait_for_links`` docstring, issue #130): ``topology-page`` — and even
+    the node cards — mount a beat before any edge path exists, so waiting on
+    node presence alone would screenshot an edgeless canvas. Wait on an
+    actually-rendered edge path element, then poll until the rendered count
+    stops growing (see ``_wait_for_edges_settled``) instead of guessing a
+    flat delay, before the shot.
+    """
+    fixture = REPO_ROOT / "web" / "fixtures" / "isp-core.json"
+    edge_selector = '[data-testid^="topo-link-"] path.react-flow__edge-path'
+    page = browser.new_page(viewport=_VIEWPORT)
+    page.set_default_timeout(_CAPTURE_TIMEOUT_MS)
+    page.goto(harness.url)
+    page.locator('[data-testid="import-input"]').set_input_files(fixture)
+    page.locator('[data-testid="topology-page"]').wait_for()
+    page.locator(edge_selector).first.wait_for()
+    _wait_for_edges_settled(page, edge_selector)
+    page.screenshot(path=OUT_DIR / "dashboard-topology.png", full_page=True)
+    page.close()
+
+
 def _capture_dashboard(browser, harness) -> None:  # noqa: ANN001 — deferred imports
     """Photograph the review shell fed through the Import front door.
 
@@ -136,6 +210,9 @@ def _capture_dashboard(browser, harness) -> None:  # noqa: ANN001 — deferred i
 
     Two stills: the fleet grid overview, then a subject page's synced chart
     stack (a same-document hash navigation, so the imported data survives).
+    ``/`` is the topology landing now (spec 2026-07-17 topology-default-view),
+    so the grid needs an explicit ``#/hosts`` hop after import — it no longer
+    follows for free from a bare import the way it used to.
     """
     fixture = REPO_ROOT / "web" / "fixtures" / "kitchen-sink.json"
     page = browser.new_page(viewport=_VIEWPORT)
@@ -143,6 +220,7 @@ def _capture_dashboard(browser, harness) -> None:  # noqa: ANN001 — deferred i
     page.goto(harness.url)
     page.locator('[data-testid="import-input"]').set_input_files(fixture)
     page.locator('[data-testid="review-bar"]').wait_for()
+    page.goto(f"{harness.url}#/hosts")
     page.locator('[data-testid="host-tile-chassis-a_lc1"]').wait_for()
     page.screenshot(path=OUT_DIR / "dashboard-review.png", full_page=True)
 
@@ -168,6 +246,7 @@ def _capture(harness) -> None:  # noqa: ANN001 — DashboardHarness import is de
                 "set OTTO_DOCS_MEDIA=placeholder."
             ) from e
         try:
+            _capture_topology(browser, harness)
             _capture_dashboard(browser, harness)
 
             # Still shot of the coverage HTML report (same fixture the

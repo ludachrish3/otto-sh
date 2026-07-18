@@ -190,34 +190,50 @@ def test_sprawl_tunnels_pinned():
 
 
 def test_isp_core_tunnels_pinned():
-    """isp-core carries exactly the one uncertain tunnel."""
+    """isp-core carries the uncertain tunnel plus a degraded AND an ok tunnel
+    added for the docs-hero shot (topology-default-view spec addendum): one
+    frame now genuinely shows all three tri-state badges (ok/degraded/
+    uncertain), each riding real declared links rather than falling back to
+    a bare/dynamic chord (see test_multihop_tunnels_ride_declared_links)."""
     doc = build_all()["isp-core"]
     (s,) = doc.sessions
     got = {t.id: (t.status, t.hops) for t in s.tunnels}
     assert got == {
         "tun-0000jumpacc7-15003": ("uncertain", ["jump-01", "acc-07"]),
+        "tun-0000pe02agg3-15005": ("degraded", ["pe-02", "core-02", "agg-03"]),
+        "tun-0000pe01agg1-15006": ("ok", ["pe-01", "core-01", "agg-01_lc1"]),
     }
 
 
-def test_sprawl_multihop_tunnel_rides_declared_links():
+def test_multihop_tunnels_ride_declared_links():
     """The riding-overlay invariant: every consecutive hop pair of a >=3-hop
     tunnel must be joined by an actual link (declared or implicit) in the
     SAME fixture's lab -- otherwise the tunnel can't ride the data plane it
     claims to overlay (spec 2026-07-16, the riding vector).
 
-    Deliberately general: this walks ``tunnel.hops`` pairwise and checks
-    link endpoint SETS, so renaming a link (e.g. ``app01-db``) still passes
-    as long as a link between the pair exists, while deleting the link with
-    no replacement fails.
+    Deliberately general across ALL fixtures, not just sprawl: this walks
+    ``tunnel.hops`` pairwise and checks link endpoint SETS, so renaming a
+    link (e.g. ``app01-db``) still passes as long as a link between the pair
+    exists, while deleting the link with no replacement fails. Was scoped to
+    sprawl only until the addendum review caught isp-core's degraded tunnel
+    silently NOT riding despite its own docstring/comment claiming it did
+    (a 2-hop tunnel at the time, so even a sprawl-only >=3-hop check would
+    not have caught it) -- widening this to every fixture is the permanent
+    guard against that recurring.
     """
-    doc = build_all()["sprawl"]
-    (s,) = doc.sessions
-    link_pairs = {frozenset(e.host for e in ln.endpoints) for ln in s.lab.links}
-    multihop = [t for t in s.tunnels if len(t.hops) >= 3]
-    assert multihop, "sprawl must carry at least one >=3-hop tunnel to exercise riding"
-    for tunnel in multihop:
-        for a, b in zip(tunnel.hops, tunnel.hops[1:], strict=False):
-            assert frozenset((a, b)) in link_pairs, (tunnel.id, a, b)
+    multihop_fixtures: set[str] = set()
+    for stem, doc in build_all().items():
+        for s in doc.sessions:
+            link_pairs = {frozenset(e.host for e in ln.endpoints) for ln in s.lab.links}
+            multihop = [t for t in s.tunnels if len(t.hops) >= 3]
+            if multihop:
+                multihop_fixtures.add(stem)
+            for tunnel in multihop:
+                for a, b in zip(tunnel.hops, tunnel.hops[1:], strict=False):
+                    assert frozenset((a, b)) in link_pairs, (stem, tunnel.id, a, b)
+    assert {"sprawl", "isp-core"} <= multihop_fixtures, (
+        "sprawl and isp-core must each carry at least one >=3-hop tunnel to exercise riding"
+    )
 
 
 def test_tunnel_statuses_cover_all_values():

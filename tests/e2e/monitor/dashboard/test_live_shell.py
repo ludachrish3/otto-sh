@@ -69,7 +69,10 @@ def test_live_boots_hydrated_without_an_import_step(
     page.goto(live_stream_dash.url)
     # No Import front door: live hydrates from /api/monitor_sessions on boot
     # (data/bootstrap.ts's bootstrapFromServer), then opens the SSE stream.
-    expect(_tid(page, "status-text")).to_have_text("Live", ignore_case=True)
+    # status-text/status-dot are gone (AppBar rework, spec 2026-07-17 decision
+    # 9); the pause glyph only renders in live mode (AppBar.tsx), so its mere
+    # presence is now the shell-level "is live" signal.
+    expect(_tid(page, "pause-toggle")).to_be_visible()
     expect(_tid(page, "empty-review")).to_have_count(0)
 
 
@@ -81,7 +84,9 @@ def test_no_historical_badge_in_live_mode(
     "Live"/pause chrome in AppBar instead (ReviewBar.tsx)."""
     _push_tick(live_stream_dash, "r1", NOW, 10.0)
     page.goto(live_stream_dash.url)
-    expect(_tid(page, "status-text")).to_have_text("Live", ignore_case=True)
+    # status-text is gone; the pause glyph (live-mode-only) is the AppBar's
+    # live signal now.
+    expect(_tid(page, "pause-toggle")).to_be_visible()
     expect(_tid(page, "review-bar")).to_have_count(0)
     expect(_tid(page, "historical-tag")).to_have_count(0)
 
@@ -91,6 +96,9 @@ def test_streamed_points_grow_the_chart(
 ) -> None:
     _push_tick(live_stream_dash, "r1", NOW, 10.0)
     page.goto(live_stream_dash.url)
+    # "/" is the topology landing now (route swap); subject-link-* lives on
+    # the grid (#/hosts).
+    page.goto(f"{live_stream_dash.url}#/hosts")
     _tid(page, "subject-link-r1").click()
     chart = _tid(page, "chart-CPU")  # chart-${chartKey}
     expect(chart).to_be_visible()
@@ -108,6 +116,9 @@ def test_pause_freezes_the_view_and_resume_follows_again(
 ) -> None:
     _push_tick(live_stream_dash, "r1", NOW, 10.0)
     page.goto(live_stream_dash.url)
+    # "/" is the topology landing now (route swap); subject-link-* lives on
+    # the grid (#/hosts).
+    page.goto(f"{live_stream_dash.url}#/hosts")
     _tid(page, "subject-link-r1").click()
 
     _tid(page, "pause-toggle").click()
@@ -134,6 +145,9 @@ def test_a_silent_host_dims(page: Page, live_stream_dash: DashboardHarness[FakeC
     # past that the instant the page loads -- no clock tick needs to fire.
     _push_tick(live_stream_dash, "r1", stale, 10.0)
     page.goto(live_stream_dash.url)
+    # "/" is the topology landing now (route swap); host-tile-* lives on the
+    # grid (#/hosts).
+    page.goto(f"{live_stream_dash.url}#/hosts")
     expect(_tid(page, "host-tile-r1")).to_have_attribute("data-health", "down")
 
 
@@ -175,6 +189,9 @@ def test_a_silent_hosts_drillin_shows_a_growing_unreachable_banner(
 
     page.clock.install(time=ref)
     page.goto(live_stream_dash.url)
+    # "/" is the topology landing now (route swap); subject-link-* lives on
+    # the grid (#/hosts).
+    page.goto(f"{live_stream_dash.url}#/hosts")
     _tid(page, "subject-link-r1").click()
 
     chart = _tid(page, "chart-CPU")  # chart-${chartKey}
@@ -219,7 +236,8 @@ def test_a_silent_hosts_drillin_shows_a_growing_unreachable_banner(
     # The fleet grid agrees -- this is the SAME derived health
     # (healthForHost/healthForHosts share one rule, data/health.ts), not a
     # parallel read that could drift from what the drill-in just showed.
-    page.goto(live_stream_dash.url)
+    # (Route swap: the grid lives at #/hosts, not the topology landing.)
+    page.goto(f"{live_stream_dash.url}#/hosts")
     expect(_tid(page, "host-tile-r1")).to_have_attribute("data-health", "down")
 
 
@@ -265,6 +283,10 @@ def test_choosing_a_wider_live_window_widens_the_chart_while_still_following(
     _push_tick(live_stream_dash, "r1", NOW - timedelta(minutes=10), 2.0)
     _push_tick(live_stream_dash, "r1", NOW, 3.0)
     page.goto(live_stream_dash.url)
+    # "/" is the topology landing now (route swap); subject-link-* lives on
+    # the grid (#/hosts). live-window-* itself lives in SubjectPage's title
+    # row (spec 2026-07-17 decision 10), reached once we're there.
+    page.goto(f"{live_stream_dash.url}#/hosts")
     _tid(page, "subject-link-r1").click()
 
     chart = _tid(page, "chart-CPU")  # chart-${chartKey}
@@ -276,7 +298,9 @@ def test_choosing_a_wider_live_window_widens_the_chart_while_still_following(
     # ...and ECharts itself was actually handed those same 2 points, not
     # just the render-body prop that claims so.
     expect(panel).to_have_attribute("data-echarts-point-count", "2")
-    expect(_tid(page, "pause-toggle")).to_have_text("Pause")
+    # pause-toggle is a glyph now (AppBar rework); its aria-label carries
+    # the Pause/Resume state, not its text content.
+    expect(_tid(page, "pause-toggle")).to_have_attribute("aria-label", "Pause")
 
     _tid(page, "live-window-1h").click()
 
@@ -288,7 +312,7 @@ def test_choosing_a_wider_live_window_widens_the_chart_while_still_following(
     # the one that fails (stuck at "2") while the one above still passes.
     expect(panel).to_have_attribute("data-echarts-point-count", "3")
     # ...while the view keeps following -- never pinned to a range.
-    expect(_tid(page, "pause-toggle")).to_have_text("Pause")
+    expect(_tid(page, "pause-toggle")).to_have_attribute("aria-label", "Pause")
 
 
 def test_a_quiet_hosts_chart_window_advances_when_only_another_host_ticks(
@@ -328,6 +352,9 @@ def test_a_quiet_hosts_chart_window_advances_when_only_another_host_ticks(
     _push_tick(live_stream_dash, "r1", NOW, 10.0)  # host A: the one we view
     _push_tick(live_stream_dash, "r2", NOW, 20.0)  # host B: keeps ticking
     page.goto(live_stream_dash.url)
+    # "/" is the topology landing now (route swap); subject-link-* lives on
+    # the grid (#/hosts).
+    page.goto(f"{live_stream_dash.url}#/hosts")
     _tid(page, "subject-link-r1").click()
     chart = _tid(page, "chart-CPU")  # chart-${chartKey}: host A's own chart
     panel = _tid(page, "chart-panel-CPU")  # chart-panel-${chartKey}: ChartPanel's own div

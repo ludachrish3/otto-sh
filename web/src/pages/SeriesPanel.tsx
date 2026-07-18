@@ -29,6 +29,8 @@ import { Badge } from "@/components/base/badges/badges";
 import { Checkbox } from "@/components/base/checkbox/checkbox";
 import { Tag, TagGroup, TagList } from "@/components/base/tags/tags";
 import { type ChartNode, sourcesIn } from "../data/seriesTree";
+import { registerSearchInput } from "../ui/searchFocus";
+import { formatBinding, SEARCH_BINDING } from "../ui/shortcuts";
 import { TextInput } from "../ui/TextInput";
 
 export function SeriesPanel(props: {
@@ -50,7 +52,14 @@ export function SeriesPanel(props: {
       data-testid="series-panel"
       className="flex w-64 shrink-0 flex-col gap-3 border-r border-secondary pr-4"
     >
-      <TextInput label="Search" value={search} onChange={onSearch} testId="series-search" />
+      <TextInput
+        label="Search"
+        value={search}
+        onChange={onSearch}
+        testId="series-search"
+        shortcut={formatBinding(SEARCH_BINDING)}
+        inputRef={registerSearchInput}
+      />
       <div className="flex flex-col gap-2">
         {tree.length > 0 && (
           <TagGroup

@@ -105,6 +105,9 @@ def test_browser_stays_responsive_under_a_full_runs_data(
             "see module docstring); invoke via `make dashboard-soak`"
         )
     page.goto(live_stream_dash.url)
+    # "/" is the topology landing now (route swap, spec 2026-07-17); subject-link-*
+    # lives on the grid (#/hosts).
+    page.goto(f"{live_stream_dash.url}#/hosts")
     page.locator('[data-testid="subject-link-h0"]').click()
     h0_chart = page.locator('[data-testid="chart-CPU"]')  # chart-${chartKey}; no data pushed yet
 

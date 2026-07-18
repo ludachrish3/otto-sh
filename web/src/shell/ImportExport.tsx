@@ -32,31 +32,6 @@ export function exportLoadedDocument(): void {
   URL.revokeObjectURL(url);
 }
 
-/** Live gains a directly-clickable Export (spec: "Live also gains the
- * Export affordance Plan 5a deferred") — the same client-side
- * `exportLoadedDocument` the ⋯ menu's `menu-export` item calls outside live
- * mode (no extra fetch: `rawMonitorSessions` is already in memory), just
- * reachable without opening the overflow menu first. AppBar omits the
- * overflow's `menu-export` entry while this button is showing, so live mode
- * never ships two visible controls for the identical action; review mode
- * keeps the ⋯ menu entry point unchanged. */
-export function ExportButton() {
-  const hasData = useReviewStore((s) => s.rawMonitorSessions !== null);
-  return (
-    <button
-      type="button"
-      data-testid="export-button"
-      disabled={!hasData}
-      onClick={exportLoadedDocument}
-      aria-label="Export"
-      className="cursor-pointer rounded-md px-2 py-1 text-sm text-tertiary hover:bg-primary_hover
-        disabled:cursor-not-allowed disabled:opacity-50"
-    >
-      Export
-    </button>
-  );
-}
-
 /** Mounts the hidden input + drag-drop handlers; children get the picker via context-free ref registration. */
 export function ImportProvider({ children }: { children: ReactNode }) {
   const inputRef = useRef<HTMLInputElement>(null);

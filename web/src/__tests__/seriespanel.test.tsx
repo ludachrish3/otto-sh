@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { parseExportDocument } from "../data/exportDoc";
 import { buildSeriesTree } from "../data/seriesTree";
 import { SeriesPanel } from "../pages/SeriesPanel";
+import { focusSearchInput, registerSearchInput } from "../ui/searchFocus";
 
 // jsdom (pinned here) doesn't implement `CSS.escape`
 // (https://github.com/jsdom/jsdom/issues/3363), which react-aria's
@@ -27,6 +28,7 @@ const kitchen = parseExportDocument(
 ).sessions[0];
 
 afterEach(cleanup);
+afterEach(() => registerSearchInput(null));
 
 function renderPanel(overrides: Partial<Parameters<typeof SeriesPanel>[0]> = {}) {
   const tree = buildSeriesTree(kitchen, "chassis-a_lc1");
@@ -122,5 +124,18 @@ describe("SeriesPanel", () => {
     expect(allChartKeys.length).toBeGreaterThan(1);
     const lastCall = onChips.mock.calls.at(-1);
     expect(lastCall?.[0]).toEqual(new Set(allChartKeys));
+  });
+
+  it("series search shows the / keycap and registers itself for the / shortcut", () => {
+    renderPanel(); // the file's existing render helper — reuse it
+    const input = screen.getByTestId("series-search") as HTMLInputElement;
+    // The keycap is aria-hidden decoration NEXT to the input, inside the
+    // same InputBase wrapper group.
+    const wrapper = input.closest("div[class*='ring-1']");
+    expect(wrapper?.textContent).toContain("/");
+    // Registration: the / shortcut focuses this exact input.
+    expect(document.activeElement).not.toBe(input);
+    expect(focusSearchInput()).toBe(true);
+    expect(document.activeElement).toBe(input);
   });
 });

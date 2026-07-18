@@ -243,12 +243,21 @@ def _mean_channel(color: str) -> float:
 
 
 def test_empty_state_then_import(page, shell_dash):
+    """Before/after of an import: empty-review -> review-bar (the "No
+    data"/"Historical" status-text pair was deleted with the status cluster
+    -- AppBar.tsx's header comment -- the empty-state -> review-bar
+    transition already proves the same before/after without it, and both
+    are already asserted below: the ``wait_for`` on line 2 for "before",
+    ``_import_fixture``'s own ``review-bar`` wait for "after"). Route swap
+    (spec 2026-07-17 topology-default-view): "/" is now the topology
+    landing, so the grid-only ``element-section-*`` proof needs an explicit
+    ``#/hosts`` hop -- it no longer follows for free from a bare import.
+    """
     page.goto(shell_dash.url)
     page.locator('[data-testid="empty-review"]').wait_for()
-    assert page.locator('[data-testid="status-text"]').inner_text() == "No data"
     _import_fixture(page, "kitchen-sink.json")
-    assert page.locator('[data-testid="status-text"]').inner_text() == "Historical"
     assert page.locator('[data-testid="historical-tag"]').inner_text() == "HISTORICAL"
+    page.goto(f"{shell_dash.url}#/hosts")
     page.locator('[data-testid="element-section-chassis-a"]').wait_for()
     page.locator('[data-testid="element-section-spare-chassis"]').wait_for()
 
@@ -271,6 +280,9 @@ def test_renders_fully_offline(page, shell_dash):
     page.route_web_socket("**/*", lambda ws: blocked.append(ws.url))
     page.goto(shell_dash.url)
     _import_fixture(page, "kitchen-sink.json")
+    # "/" is the topology landing now (route swap); the grid lives at
+    # #/hosts -- a same-document hash hop, so this stays a zero-network proof.
+    page.goto(f"{shell_dash.url}#/hosts")
     page.locator('[data-testid="subject-link-chassis-a_lc1"]').wait_for()
     assert blocked == []
 
@@ -280,6 +292,10 @@ def test_drift_session_picker_rerenders_lab(page, shell_dash):
     renders under the lab config as it was at run time."""
     page.goto(shell_dash.url)
     _import_fixture(page, "drift.json")
+    # session-picker/RangePicker are shell-level (ReviewBar), but
+    # subject-link-* is grid-only -- route to #/hosts so the below is a real
+    # claim about presence/absence, not a page that can never show it either way.
+    page.goto(f"{shell_dash.url}#/hosts")
     picker = page.locator('[data-testid="session-picker"]')
     picker.wait_for()
     assert page.locator('[data-testid="subject-link-workers_w2"]').count() == 0
@@ -307,6 +323,7 @@ def test_single_session_hides_picker(page, shell_dash):
 def test_range_presets_change_subject_summary(page, shell_dash):
     page.goto(shell_dash.url)
     _import_fixture(page, "kitchen-sink.json")
+    page.goto(f"{shell_dash.url}#/hosts")  # subject-link-* is grid-only, not the topology landing
     page.locator('[data-testid="subject-link-workers_w1"]').click()
     page.locator('[data-testid="subject-page"]').wait_for()
     full = page.locator('[data-testid="series-summary"]').inner_text()
@@ -336,6 +353,7 @@ def test_custom_range_apply_and_reset(page, shell_dash):
     range-scoped selection; the Full preset restores the full range."""
     page.goto(shell_dash.url)
     _import_fixture(page, "kitchen-sink.json")
+    page.goto(f"{shell_dash.url}#/hosts")  # subject-link-* is grid-only, not the topology landing
     page.locator('[data-testid="subject-link-workers_w1"]').click()
     page.locator('[data-testid="subject-page"]').wait_for()
     full = page.locator('[data-testid="series-summary"]').inner_text()
@@ -375,6 +393,7 @@ def test_custom_range_apply_and_reset(page, shell_dash):
 def test_deep_link_and_reload(page, shell_dash):
     page.goto(shell_dash.url)
     _import_fixture(page, "kitchen-sink.json")
+    page.goto(f"{shell_dash.url}#/hosts")  # subject-link-* is grid-only, not the topology landing
     page.locator('[data-testid="subject-link-db-01"]').click()
     page.locator('[data-testid="subject-page"]').wait_for()
     assert page.url.endswith("#/host/db-01")
@@ -391,6 +410,9 @@ def test_deep_link_back_forward(page, shell_dash):
     and the in-memory import survives since these are same-document navs."""
     page.goto(shell_dash.url)
     _import_fixture(page, "kitchen-sink.json")
+    # "/" is the topology landing now; hop to #/hosts first so it's a real
+    # history entry for go_back() to return to (route swap fallout).
+    page.goto(f"{shell_dash.url}#/hosts")
     page.locator('[data-testid="subject-link-db-01"]').click()
     page.locator('[data-testid="subject-page"]').wait_for()
     assert "db-01" in page.locator('[data-testid="subject-title"]').inner_text()
@@ -441,6 +463,7 @@ def test_import_error_banner_in_loaded_state(page, shell_dash, tmp_path):
     EmptyState's import-error surface has a loaded-shell counterpart too."""
     page.goto(shell_dash.url)
     _import_fixture(page, "minimal.json")
+    page.goto(f"{shell_dash.url}#/hosts")  # overview-page is grid-only, not the topology landing
     page.locator('[data-testid="overview-page"]').wait_for()
 
     bogus = tmp_path / "bogus.json"
@@ -566,6 +589,7 @@ def test_grid_health_tiles_and_headline(shell_dash, page):
     last-known-within-range, so narrowing re-evaluates it)."""
     page.goto(shell_dash.url)
     _import_fixture(page, "kitchen-sink.json")
+    page.goto(f"{shell_dash.url}#/hosts")  # host-tile-* is grid-only, not the topology landing
     tile = page.locator('[data-testid="host-tile-chassis-a_lc1"]')
     tile.wait_for()
     assert re.search(r"% cpu", page.locator('[data-testid="headline-chassis-a_lc1"]').inner_text())
@@ -593,6 +617,7 @@ def test_subject_charts_render_and_filter(shell_dash, page):
     series tree checkbox and chip filters narrow the stack."""
     page.goto(shell_dash.url)
     _import_fixture(page, "kitchen-sink.json")
+    page.goto(f"{shell_dash.url}#/hosts")  # subject-link-* is grid-only, not the topology landing
     page.locator('[data-testid="subject-link-chassis-a_lc1"]').click()
     page.locator('[data-testid="chart-panel-cpu"] canvas').wait_for()
     assert page.locator('[data-testid="chart-stack"] canvas').count() >= 4
@@ -610,6 +635,7 @@ def test_source_badges_and_source_filter(shell_dash, page):
     chip filters the tree to externally-sourced series only."""
     page.goto(shell_dash.url)
     _import_fixture(page, "kitchen-sink.json")
+    page.goto(f"{shell_dash.url}#/hosts")  # subject-link-* is grid-only, not the topology landing
     page.locator('[data-testid="subject-link-chassis-a_lc1"]').click()
     panel = page.locator('[data-testid="series-panel"]')
     panel.wait_for()
@@ -625,9 +651,19 @@ def test_source_badges_and_source_filter(shell_dash, page):
 
 def test_events_slide_over_jumps_range(shell_dash, page):
     """Events (UX §11 review subset): reverse-chron slide-over; a row jump
-    re-scopes the shared range (the range picker's trigger label follows)."""
+    re-scopes the shared range (the range picker's trigger label follows).
+
+    ``events-button``/``events-count`` moved to SubjectPage's title row
+    (spec 2026-07-17 decision 11) -- events are session-scoped, not
+    per-host, so any subject page carries the same badge; the entry point
+    below hops through the grid to reach one, but every assertion past that
+    is unchanged.
+    """
     page.goto(shell_dash.url)
     _import_fixture(page, "kitchen-sink.json")
+    page.goto(f"{shell_dash.url}#/hosts")
+    page.locator('[data-testid^="subject-link-"]').first.click()
+    page.locator('[data-testid="subject-page"]').wait_for()
     assert page.locator('[data-testid="events-count"]').inner_text() == "4"
     before = _range_picker_label(page)
     page.locator('[data-testid="events-button"]').click()
@@ -647,6 +683,7 @@ def test_log_table_renders_and_filters(shell_dash, page):
     """Table tabs: kernel log rows render for db-01 and filter down."""
     page.goto(shell_dash.url)
     _import_fixture(page, "kitchen-sink.json")
+    page.goto(f"{shell_dash.url}#/hosts")  # subject-link-* is grid-only, not the topology landing
     page.locator('[data-testid="subject-link-db-01"]').click()
     table = page.locator('[data-testid="log-table-kernel"]')
     table.wait_for()
@@ -684,6 +721,7 @@ def test_theme_toggle_with_charts_open(shell_dash, page):
     which is always true and asserts nothing)."""
     page.goto(shell_dash.url)
     _import_fixture(page, "kitchen-sink.json")
+    page.goto(f"{shell_dash.url}#/hosts")  # subject-link-* is grid-only, not the topology landing
     page.locator('[data-testid="subject-link-db-01"]').click()
     page.locator('[data-testid="chart-panel-cpu"] canvas').wait_for()
     page.locator('[data-testid="overflow-menu"]').click()
@@ -697,18 +735,27 @@ def test_theme_toggle_with_charts_open(shell_dash, page):
 
 
 def test_topology_toggle_and_map(shell_dash, page):
-    """Grid <-> Topology toggle (UX §6); map renders elements at hop depths
-    rooted at local (UX §10)."""
+    """Topology <-> Hosts toggle (UX §6, ViewSwitcher tab labels per the
+    button-border tabs rework); map renders elements at hop depths rooted at
+    local (UX §10).
+
+    "/" is the topology landing now (route swap, spec 2026-07-17), so the
+    import already lands here -- the round trip below still proves the
+    switcher works both ways, just starting from the other end. The
+    switcher's second tab is labeled "Hosts" (ViewSwitcher.tsx), not the
+    retired "Grid" label.
+    """
     page.goto(shell_dash.url)
     _import_fixture(page, "kitchen-sink.json")
-    page.get_by_text("Topology", exact=True).click()
     page.locator('[data-testid="topology-page"]').wait_for()
     for node in ("local", "edge-gw", "chassis-a", "workers", "db-01", "mgmt-01"):
         assert page.locator(f'[data-testid="topo-node-{node}"]').count() == 1
     # Rollup segments on the chassis element node (3 members: lc1, lc2, sup).
     assert page.locator('[data-testid="topo-node-chassis-a"] [data-status-segment]').count() == 3
-    page.get_by_text("Grid", exact=True).click()
+    page.get_by_text("Hosts", exact=True).click()
     page.locator('[data-testid="overview-page"]').wait_for()
+    page.get_by_text("Topology", exact=True).click()
+    page.locator('[data-testid="topology-page"]').wait_for()
 
 
 def test_topology_zoom_controls_follow_theme(shell_dash, page):
@@ -977,18 +1024,18 @@ def test_topology_pan_zoom_fit(shell_dash, page):
 
 
 def test_fit_padding_bottom_is_an_absolute_reserve_at_a_tall_viewport(shell_dash, page):
-    """``TopologyPage``'s ``FIT_PADDING.bottom`` must be the STRING ``"260px"``,
-    not the bare number ``260``.
+    """``TopologyPage``'s ``FIT_PADDING.bottom`` must be the STRING ``"256px"``,
+    not a bare number.
 
     React Flow's ``parsePadding`` (``@xyflow/system``) treats a bare number as
     a FRACTION of the viewport dimension, even inside the per-side padding
     object — only the ``"NNpx"`` string form is an absolute reserve. At
-    Playwright's default 1280x720 viewport the fraction happens to evaluate to
-    ~298px, close enough to the intended 260px that every existing gate
-    (vitest, tsc, Biome, all three browser engines) stayed green with the bug
-    in place. At a genuinely tall canvas the fraction saturates toward HALF
-    the canvas height, so this only shows up away from the default size —
-    which is the whole reason it shipped unnoticed.
+    Playwright's default 1280x720 viewport the fraction happens to evaluate
+    close enough to the intended reserve that every existing gate (vitest,
+    tsc, Biome, all three browser engines) stayed green with the bug in
+    place, the one time it shipped. At a genuinely tall canvas the fraction
+    saturates toward HALF the canvas height, so this only shows up away from
+    the default size — which is the whole reason it shipped unnoticed.
 
     ``sprawl.json`` is deliberately tall relative to its width in MODEL space
     (~1168 x ~1887, verified via ``layoutTopo`` — its longest chain is
@@ -998,10 +1045,10 @@ def test_fit_padding_bottom_is_an_absolute_reserve_at_a_tall_viewport(shell_dash
     wide/short fixture would hide.
 
     Hand-computed at width=1280/height=1400 (this test's viewport):
-    buggy fractional 260 reserves ~647px of the 1400px canvas, leaving the
-    fitted graph's lowest edge at almost exactly the vertical midpoint
-    (~0.50); the fixed ``"260px"`` reserves a flat 260px regardless of
-    canvas height, leaving the graph extending to ~0.80. 0.65 sits with a
+    a buggy bare-number 256 reserves well over half of the 1400px canvas,
+    leaving the fitted graph's lowest edge at almost exactly the vertical
+    midpoint (~0.50); the fixed ``"256px"`` reserves a flat 256px regardless
+    of canvas height, leaving the graph extending to ~0.80. 0.65 sits with a
     wide margin on both sides of that split.
     """
     page.set_viewport_size({"width": 1280, "height": 1400})
@@ -1023,8 +1070,8 @@ def test_fit_padding_bottom_is_an_absolute_reserve_at_a_tall_viewport(shell_dash
     assert lowest_frac > 0.65, (
         f"the fitted map's lowest node bottom sits at only {lowest_frac:.2f} of "
         "the canvas height down -- the graph looks squeezed into the top half. "
-        'FIT_PADDING.bottom likely regressed from "260px" to a bare number '
-        "260, which React Flow's parsePadding treats as a FRACTION, not an "
+        'FIT_PADDING.bottom likely regressed from "256px" to a bare number '
+        "256, which React Flow's parsePadding treats as a FRACTION, not an "
         "absolute px reserve (see TopologyPage.tsx)."
     )
 
@@ -1190,6 +1237,12 @@ def test_review_mode_boots_hydrated(review_dash, page):
     # Smoke that the hydrated data drives the whole shell, not just the
     # review bar: the topology page renders off the same session, and the
     # chrome (review bar) survives the round trip back to the overview.
+    #
+    # Route swap (spec 2026-07-17 topology-default-view): "/" is now the
+    # topology landing itself, so a bare boot no longer leaves an #/hosts
+    # history entry for go_back() to land on -- visit it explicitly first.
+    page.goto(f"{review_dash.url}#/hosts")
+    page.locator('[data-testid="overview-page"]').wait_for()
     page.goto(f"{review_dash.url}#/topology")
     page.locator('[data-testid="topo-node-local"]').wait_for()
     page.go_back()

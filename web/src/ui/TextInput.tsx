@@ -22,17 +22,30 @@ export function TextInput({
   value,
   onChange,
   testId,
+  shortcut,
+  inputRef,
 }: {
   label: string;
   type?: string;
   value: string;
   onChange: (value: string) => void;
   testId?: string;
+  /** Keycap hint rendered by the vendored InputBase (e.g. "/"). */
+  shortcut?: string;
+  /** Ref callback to the real <input> (searchFocus registration). */
+  inputRef?: (el: HTMLInputElement | null) => void;
 }) {
   return (
     <TextField value={value} onChange={onChange} className="inline-flex items-center gap-1.5">
       <Label className="text-xs text-tertiary">{label}</Label>
-      <InputBase type={type} size="sm" data-testid={testId} wrapperClassName="w-auto" />
+      <InputBase
+        type={type}
+        size="sm"
+        data-testid={testId}
+        wrapperClassName="w-auto"
+        shortcut={shortcut}
+        ref={inputRef}
+      />
     </TextField>
   );
 }

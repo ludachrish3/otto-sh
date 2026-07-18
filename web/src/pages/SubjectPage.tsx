@@ -9,6 +9,7 @@ import { Link, useParams } from "wouter";
 
 import { Table } from "@/components/application/table/table";
 import { Tabs } from "@/components/application/tabs/tabs";
+import { ButtonGroup, ButtonGroupItem } from "@/components/base/button-group/button-group";
 import { Input } from "@/components/base/input/input";
 import { ChartPanel } from "../charts/ChartPanel";
 import {
@@ -39,8 +40,17 @@ import {
   type SeriesNode,
 } from "../data/seriesTree";
 import { liveRange } from "../data/time";
+import { EventsPanel } from "../shell/EventsPanel";
 import { SubjectHealthBanner } from "../shell/SubjectHealthBanner";
+import { LIVE_WINDOW_PRESETS } from "../ui/commands";
 import { SeriesPanel } from "./SeriesPanel";
+
+// The selected live-window preset is DERIVED from `windowMs`, never stored
+// separately (Task 6/7: same "derive, don't store" lesson as
+// reviewStore's `useIsPaused` — a stored copy of a derived value drifts).
+function selectedWindowId(windowMs: number): string {
+  return LIVE_WINDOW_PRESETS.find((p) => p.ms === windowMs)?.id ?? "15m";
+}
 
 export function SubjectPage() {
   const params = useParams<{ id: string }>();
@@ -49,6 +59,7 @@ export function SubjectPage() {
   const mode = useReviewStore((s) => s.mode);
   const windowMs = useReviewStore((s) => s.windowMs);
   const setRange = useReviewStore((s) => s.actions.setRange);
+  const setWindow = useReviewStore((s) => s.actions.setWindow);
   const dark = useIsDark();
 
   const id = params.id;
@@ -56,6 +67,7 @@ export function SubjectPage() {
   const [chips, setChips] = useState<Set<string> | null>(null);
   const [source, setSource] = useState<string | null>(null);
   const [checked, setChecked] = useState<Set<string>>(new Set());
+  const [eventsOpen, setEventsOpen] = useState(false);
 
   const tree = useMemo(() => (session ? buildSeriesTree(session, id) : []), [session, id]);
   const allKeys = tree.flatMap((c) => c.series.map((s) => s.key));
@@ -131,7 +143,7 @@ export function SubjectPage() {
   if (kind === null) {
     return (
       <main data-testid="not-found" className="p-4 text-sm text-tertiary">
-        Unknown subject "{id}" in this session. <Link href="/">Back to overview</Link>
+        Unknown subject "{id}" in this session. <Link href="/hosts">Back to hosts</Link>
       </main>
     );
   }
@@ -189,7 +201,7 @@ export function SubjectPage() {
   return (
     <main data-testid="subject-page" className="flex flex-col gap-4 p-4">
       <nav className="text-sm text-quaternary">
-        <Link href="/">Fleet</Link> / {id}
+        <Link href="/hosts">Fleet</Link> / {id}
       </nav>
       <h1 data-testid="subject-title" className="flex items-center gap-2 text-lg font-semibold">
         {id}
@@ -199,7 +211,44 @@ export function SubjectPage() {
           {host?.slot != null ? ` · slot ${host.slot}` : ""}
           {host?.hop ? ` · via ${host.hop}` : ""}
         </span>
+        <span className="ml-auto flex items-center gap-2 text-sm font-normal">
+          {mode === "live" && (
+            <ButtonGroup
+              aria-label="Live window"
+              data-testid="live-window"
+              size="sm"
+              selectedKeys={new Set([selectedWindowId(windowMs)])}
+              disallowEmptySelection
+              onSelectionChange={(keys) => {
+                const selected = [...keys][0];
+                const preset = LIVE_WINDOW_PRESETS.find((p) => p.id === selected);
+                if (preset) setWindow(preset.ms);
+              }}
+            >
+              {LIVE_WINDOW_PRESETS.map((p) => (
+                <ButtonGroupItem key={p.id} id={p.id} data-testid={`live-window-${p.id}`}>
+                  {p.label}
+                </ButtonGroupItem>
+              ))}
+            </ButtonGroup>
+          )}
+          {session.events.length > 0 && (
+            <button
+              type="button"
+              data-testid="events-button"
+              onClick={() => setEventsOpen(true)}
+              className="cursor-pointer rounded-md px-2 py-1 text-sm text-tertiary
+                hover:bg-primary_hover"
+            >
+              Events{" "}
+              <span data-testid="events-count" className="rounded-full bg-tertiary px-1.5 text-xs">
+                {session.events.length}
+              </span>
+            </button>
+          )}
+        </span>
       </h1>
+      <EventsPanel isOpen={eventsOpen} onClose={() => setEventsOpen(false)} />
       <p data-testid="series-summary" className="text-sm text-tertiary">
         {labels.length} series · {metrics.length} samples in range
       </p>
@@ -408,8 +457,8 @@ function ChartSection(props: {
   // every live tick — a pure SLIDE, harmless to skip here, because points
   // that age out of view were already excluded and new ones for THIS
   // chart's own series arrive via `revKey`; and (b) the user picking a
-  // wider/narrower preset (AppBar's ButtonGroup -> reviewStore's
-  // `setWindow`) — a WIDTH change, which pulls previously-excluded points
+  // wider/narrower preset (the presets ButtonGroup in this page's title
+  // row -> reviewStore's `setWindow`) — a WIDTH change, which pulls previously-excluded points
   // back into `series` (collectSeriesPoints re-slices against the new
   // window in SubjectPage's render body) that this memo must actually bake
   // in, not just widen the axis around. `revKey` doesn't move for that

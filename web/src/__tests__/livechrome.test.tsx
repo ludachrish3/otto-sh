@@ -1,5 +1,4 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
 import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { useReviewStore } from "../data/reviewStore";
@@ -19,33 +18,30 @@ afterEach(() => {
 });
 
 describe("live chrome", () => {
-  it("shows Live when connected and Reconnecting when not", () => {
-    render(<AppBar />);
-    // `toHaveTextContent` is a jest-dom matcher; this project doesn't depend
-    // on @testing-library/jest-dom (every other test file matches raw
-    // `.textContent` instead — see shell.test.tsx, overview.test.tsx), so
-    // this follows the same established pattern rather than adding a new
-    // dependency for two assertions.
-    expect(screen.getByTestId("status-text").textContent).toMatch(/live/i);
-    act(() => {
-      useReviewStore.setState({ connection: "disconnected" });
-    });
-    expect(screen.getByTestId("status-text").textContent).toMatch(/reconnect/i);
-  });
+  // The Live/Reconnecting distinction moved off `status-text` (deleted here,
+  // Task 7, spec decision 9 — the status cluster is gone entirely, with no
+  // replacement in THIS task) onto a dedicated Reconnecting banner (Task 9's
+  // ReconnectingBanner.tsx, `reconnecting-banner` testid), which becomes the
+  // `connection` state's one render site — see that task's
+  // reconnectingbanner.test.tsx for the equivalent live/reconnecting
+  // coverage this test used to provide.
 
   it("pause pins the view and resume returns to following", () => {
     render(<AppBar />);
     // `paused` is derived (mode === "live" && range !== null — see
     // reviewStore.ts's useIsPaused), not a stored field, so this asserts
     // through the toggle's own label/range effect rather than a `.paused`
-    // property that no longer exists.
-    expect(screen.getByTestId("pause-toggle").textContent).toBe("Pause");
+    // property that no longer exists. Task 7 turned this into an icon-only
+    // ButtonUtility glyph — the label now lives in `aria-label` (also the
+    // tooltip text), not `.textContent` (there is no text node anymore, just
+    // the icon).
+    expect(screen.getByTestId("pause-toggle").getAttribute("aria-label")).toBe("Pause");
     fireEvent.click(screen.getByTestId("pause-toggle"));
     expect(useReviewStore.getState().range).not.toBeNull(); // frozen at an absolute window
-    expect(screen.getByTestId("pause-toggle").textContent).toBe("Resume");
+    expect(screen.getByTestId("pause-toggle").getAttribute("aria-label")).toBe("Resume");
     fireEvent.click(screen.getByTestId("pause-toggle"));
     expect(useReviewStore.getState().range).toBeNull(); // following again
-    expect(screen.getByTestId("pause-toggle").textContent).toBe("Pause");
+    expect(screen.getByTestId("pause-toggle").getAttribute("aria-label")).toBe("Pause");
   });
 
   // Finding 2 (Plan 5b Task 9 review): pause/resume and "the user picked a
@@ -62,7 +58,7 @@ describe("live chrome", () => {
     act(() => {
       useReviewStore.getState().actions.setRange({ from: 1_000, to: 2_000 });
     });
-    expect(screen.getByTestId("pause-toggle").textContent).toBe("Resume");
+    expect(screen.getByTestId("pause-toggle").getAttribute("aria-label")).toBe("Resume");
     fireEvent.click(screen.getByTestId("pause-toggle"));
     // The resume branch only ever does `set({ range: null })` — if toggling
     // instead froze a NEW window (the pause branch), `range` would come back
@@ -77,45 +73,7 @@ describe("live chrome", () => {
   });
 });
 
-// Task 6 (Plan 5b follow-ups): the live-window ButtonGroup beside Pause —
-// 5m/15m/1h, live-only, selection derived from `windowMs` rather than
-// stored (same "derive, don't store" lesson as `useIsPaused` above).
-describe("live window control", () => {
-  it("renders only in live mode", () => {
-    render(<AppBar />);
-    expect(screen.getByTestId("live-window")).toBeTruthy();
-    cleanup();
-    useReviewStore.setState({ mode: "review" });
-    render(<AppBar />);
-    expect(screen.queryByTestId("live-window")).toBeNull();
-    cleanup();
-    useReviewStore.setState({ mode: null });
-    render(<AppBar />);
-    expect(screen.queryByTestId("live-window")).toBeNull();
-  });
-
-  it("the selected item reflects windowMs, not a separately stored choice", () => {
-    render(<AppBar />);
-    // Default windowMs (900_000, the store's own default) -> "15m" selected.
-    expect(screen.getByTestId("live-window-15m").getAttribute("data-selected")).not.toBeNull();
-    expect(screen.getByTestId("live-window-5m").getAttribute("data-selected")).toBeNull();
-    expect(screen.getByTestId("live-window-1h").getAttribute("data-selected")).toBeNull();
-
-    cleanup();
-    useReviewStore.setState({ windowMs: 3_600_000 });
-    render(<AppBar />);
-    expect(screen.getByTestId("live-window-1h").getAttribute("data-selected")).not.toBeNull();
-    expect(screen.getByTestId("live-window-15m").getAttribute("data-selected")).toBeNull();
-  });
-
-  it("clicking a preset calls setWindow with that preset's width", async () => {
-    // usePress (react-aria) listens for pointer events, not the single
-    // synthetic `click` fireEvent dispatches — userEvent synthesizes the
-    // full pointerdown/pointerup/click sequence (same reasoning as
-    // overview.test.tsx's session-picker helper).
-    const user = userEvent.setup();
-    render(<AppBar />);
-    await user.click(screen.getByTestId("live-window-5m"));
-    expect(useReviewStore.getState().windowMs).toBe(300_000);
-  });
-});
+// The live-window ButtonGroup moved to SubjectPage's title row (Task 7,
+// spec decision 10 — the presets only affect that page's chart windows) —
+// its coverage moved with it, see subjectpage.test.tsx's
+// "live window control" describe block.

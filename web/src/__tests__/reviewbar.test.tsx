@@ -63,7 +63,10 @@ function resetStore() {
 }
 
 beforeEach(() => {
-  window.location.hash = "#/";
+  // Topology is the "/" landing now (route swap); these tests assert
+  // grid content (subject-link-* appearing/disappearing on session switch),
+  // so they start at the grid's new home rather than the topology landing.
+  window.location.hash = "#/hosts";
 });
 afterEach(() => {
   // vitest's config doesn't set `test.globals: true`, so

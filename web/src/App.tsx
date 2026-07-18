@@ -24,8 +24,10 @@ import { AppBar } from "./shell/AppBar";
 import { DataWarningsBanner } from "./shell/DataWarningsBanner";
 import { EmptyState } from "./shell/EmptyState";
 import { ImportProvider } from "./shell/ImportExport";
+import { ReconnectingBanner } from "./shell/ReconnectingBanner";
 import { ReviewBar } from "./shell/ReviewBar";
 import { TopologyPage } from "./topo/TopologyPage";
+import { CommandLayer } from "./ui/CommandLayer";
 
 function App() {
   const hasData = useReviewStore((s) => s.sessions.length > 0);
@@ -40,8 +42,10 @@ function App() {
     <ImportProvider>
       <div className="flex min-h-screen flex-col">
         <AppBar />
+        <ReconnectingBanner />
         {hasData ? (
           <Router hook={useHashLocation}>
+            <CommandLayer />
             <ReviewBar />
             {importError !== null && (
               <div
@@ -63,7 +67,8 @@ function App() {
             )}
             <DataWarningsBanner />
             <Switch>
-              <Route path="/" component={OverviewPage} />
+              <Route path="/" component={TopologyPage} />
+              <Route path="/hosts" component={OverviewPage} />
               <Route path="/host/:id" component={SubjectPage} />
               <Route path="/topology" component={TopologyPage} />
               <Route path="/topology/:elementId" component={TopologyPage} />

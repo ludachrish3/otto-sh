@@ -25,8 +25,9 @@ export interface EdgeGeometry {
  * from the bottom *centre* instead would mean travelling half the box width
  * sideways before clearing it, and the gap to the next row is only 38px — the
  * curve physically cannot turn that fast. Leaning the anchor is what makes the
- * bow fit the EXISTING 112px gutter (COL_W minus the 208px element node —
- * see layout.ts's own COL_W comment), with no layout change. */
+ * bow fit the column gutter (COL_W minus the 208px element node — see
+ * layout.ts's own COL_W comment, which sizes that gutter for edge
+ * clickability). */
 const LEAN_INSET = 20;
 
 /** Cap on how far down (in px) the control points sit below their anchors.
@@ -59,13 +60,16 @@ const BOW_BASE = 112;
  * (below): fall under it and the inner edge loses its pointer target entirely. */
 const FAN_STEP = 28;
 
-/** React Flow gives every edge a 20px-wide invisible `react-flow__edge-interaction`
- * path — that, not the 2px visible stroke, is what the pointer actually hits.
- * Two parallel edges whose centrelines are closer than half of it share one hit
- * target: the one painted last wins, and the other becomes unclickable, its
- * inspector and hover card unreachable. This is not a cosmetic threshold, and
- * `toporouting.test.ts` pins it. */
-export const INTERACTION_WIDTH = 20;
+/** The width of the invisible `react-flow__edge-interaction` path — that, not
+ * the 2px visible stroke, is what the pointer actually hits. React Flow's own
+ * default is 20px, but LinkEdge.tsx widens it to 28px (margin hardening for
+ * Firefox/WebKit hit-testing near the fitted zoom threshold — see LinkEdge.tsx
+ * and task-12b-report.md), passing this constant through so the two can never
+ * drift apart again. Two parallel edges whose centrelines are closer than half
+ * of it share one hit target: the one painted last wins, and the other becomes
+ * unclickable, its inspector and hover card unreachable. This is not a
+ * cosmetic threshold, and `toporouting.test.ts` pins it. */
+export const INTERACTION_WIDTH = 28;
 
 /** How much of the gutter to leave unused on the far side when clamping the
  * bow — keeps the curve's apex from touching the next column's boxes. */

@@ -91,9 +91,34 @@ CROSSING_MARGIN = 2
 # the wrong edge set.
 BUDGETS = {
     "isp-core.json": {
+        # PINS ADJUSTED (topology-default-view spec, isp-core fixture
+        # touch-up): sgw-01 was fused into the "mme-01" chassis element and
+        # hss-01 into "pgw-01" (docs-hero shot -- two more physical chassis,
+        # no new hosts). dp_count is UNCHANGED at 30: declared links are
+        # never collapsed by element pair (kept individual, even parallel),
+        # so the raw link count doesn't move. management_count drops 23 -> 21:
+        # each fused pair used to contribute TWO `local:<element>` edges (one
+        # per singleton element) and now contributes only one (one physical
+        # element, still hop-less) -- a -2, not a -1, because BOTH chassis
+        # lost a duplicate. PIN ADJUSTED AGAIN (addendum review, findings
+        # 2+3): tunnel_count goes 2 -> 5. The addendum caught the degraded
+        # tunnel NOT actually riding (its 2-hop pe-02/agg-03 hop pair had no
+        # underlying link, so it rendered as a bare/dynamic fallback chord
+        # despite the comment above claiming otherwise) and the frame
+        # falling short of "all three tri-state badges" (only degraded +
+        # uncertain were present, no ok tunnel). Fixed by re-routing the
+        # degraded tunnel over its real 2-link path (pe-02-core-02-agg-03,
+        # riding pe02-core02 + agg03-core02: 2 segments) and adding a new ok
+        # tunnel over another real 2-link path (pe-01-core-01-agg-01,
+        # riding pe01-core01 + agg01-core01: 2 segments), alongside the
+        # unchanged 1-segment uncertain tunnel: 1 + 2 + 2 = 5. dp_count/
+        # management_count/dp_crossings/dp_swallowed are unaffected --
+        # riding tunnel segments reuse an existing declared link's slot
+        # rather than adding a new one, and no host/link/element changed --
+        # measured directly against the live DOM (probe run, reverted).
         "dp_count": 30,
-        "management_count": 23,
-        "tunnel_count": 1,
+        "management_count": 21,
+        "tunnel_count": 5,
         "dp_crossings": 5,  # 75 -> 15 (Task 4) -> 4 (Task 5) -> 5 (Task 6, see above)
         "dp_swallowed": 0,  # 0 throughout
     },

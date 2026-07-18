@@ -17,12 +17,12 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useParams } from "wouter";
 
-import { ButtonGroup, ButtonGroupItem } from "@/components/base/button-group/button-group";
 import { useIsDark } from "../charts/useIsDark";
 import { useNow } from "../data/clock";
 import { healthForHosts } from "../data/health";
 import { useActiveSession, useReviewStore } from "../data/reviewStore";
 import { buildTopoGraph, deriveReachability, pairKey, type TopoEdge } from "../data/topology";
+import { ViewSwitcher } from "../ui/ViewSwitcher";
 import { LinkEdge } from "./LinkEdge";
 import { LinkInspector } from "./LinkInspector";
 import { layoutTopo } from "./layout";
@@ -49,25 +49,43 @@ const edgeTypes = { link: LinkEdge };
 // rows, several columns -- exactly what a management-band reclassification
 // can produce, since column 0's row count directly sets the tallest
 // column's height) gets barely any bottom margin and its leftmost column
-// can end up rendered UNDER the legend. 260px comfortably clears both
+// can end up rendered UNDER the legend. 256px comfortably clears both
 // panels' measured height (~169px/~150px) with margin for engine-to-engine
 // font-metric differences, independent of the graph's own aspect ratio.
 //
-// MUST be the STRING "260px", not the bare number 260. React Flow's
-// `parsePadding` (`@xyflow/system`) treats a bare number as a FRACTION of the
-// viewport dimension -- even inside this per-side object, where every OTHER
-// field genuinely is meant as a 0.2 fraction. A bare 260 is parsed as
-// "260x the viewport", which `parsePadding` clamps down via
-// `viewport - viewport/(1+260)`, saturating toward HALF the canvas height
-// on a tall canvas (~647px reserve out of 1400) while reading deceptively
-// close to the intended 260px on a short one (~298px out of 600, e.g.
-// Playwright's default viewport) -- which is exactly why this shipped and
-// stayed green everywhere: vitest, tsc, Biome, and all three browser
+// MUST be the STRING "256px", not a bare number. React Flow's `parsePadding`
+// (`@xyflow/system`) treats a bare number as a FRACTION of the viewport
+// dimension -- even inside this per-side object, where every OTHER field
+// genuinely is meant as a 0.2 fraction. A bare number N is parsed as "Nx the
+// viewport", which `parsePadding` clamps down via `viewport - viewport/(1+N)`,
+// saturating toward HALF the canvas height on a tall canvas while reading
+// deceptively close to the intended reserve on a short one (e.g. Playwright's
+// default viewport) -- which is exactly why a bare-number regression here
+// shipped unnoticed once before: vitest, tsc, Biome, and all three browser
 // engines all ran at sizes where the bug was nearly invisible. See
 // `test_fit_padding_bottom_is_an_absolute_reserve_at_a_tall_viewport` in
 // tests/e2e/monitor/dashboard/test_review_shell.py for the regression guard,
-// proven to fail against a bare 260 and pass against "260px".
-export const FIT_PADDING = { top: 0.2, left: 0.2, right: 0.2, bottom: "260px" } as const;
+// proven to fail against a bare number and pass against the "NNpx" string form.
+//
+// 256, not 260: the button-border `ViewSwitcher` tab row (commit 1045210)
+// sits 4px taller than the plain button row it replaced, so the canvas box
+// `fitView` measures shrank from 533px to 529px even though every other
+// input (container width, node sizes) is unchanged. `top`'s 0.2-fraction
+// share doesn't move (both floor to the same 44px), so the fitted zoom drops
+// by that same 4px's worth once yZoom = (height - top - bottom) / boundsHeight
+// -- confirmed by hand: at height=529 this dropped zoom from 0.368167 to
+// 0.361736. That's a small shift, but it was enough to flip Firefox's and
+// WebKit's edge-hit-testing in `_point_on_edge` from reliable to a
+// deterministic miss on two of this file's topology-edge specs (Chromium's
+// hit-testing tolerated it; see issue #134's history in this same file for
+// this engine gap being a recurring theme) -- proven by exact arithmetic
+// reconstruction of the observed post-1045210 fit transforms across all
+// three engines, and by a clean bisection to that one commit. Shaving 4px off
+// the bottom reserve restores the exact pre-regression effective canvas
+// height (529 - 256 = 273, matching 533 - 260 = 273) and therefore the exact
+// zoom (0.368167) that was already proven reliable on Chromium, Firefox, and
+// WebKit alike, without touching the tab row's height or visual design.
+export const FIT_PADDING = { top: 0.2, left: 0.2, right: 0.2, bottom: "256px" } as const;
 
 function FitButton() {
   const { fitView } = useReactFlow();
@@ -271,18 +289,7 @@ export function TopologyPage() {
     <ReactFlowProvider>
       <main data-testid="topology-page" className="flex min-h-0 flex-1 flex-col gap-3 p-4">
         <div className="flex items-center gap-3">
-          <ButtonGroup
-            aria-label="View"
-            data-testid="view-toggle"
-            selectedKeys={new Set(["topology"])}
-            disallowEmptySelection
-            onSelectionChange={(keys) => {
-              if ([...keys][0] === "grid") navigate("/");
-            }}
-          >
-            <ButtonGroupItem id="grid">Grid</ButtonGroupItem>
-            <ButtonGroupItem id="topology">Topology</ButtonGroupItem>
-          </ButtonGroup>
+          <ViewSwitcher active="topology" />
           {expand && (
             <nav data-testid="topo-breadcrumb" className="text-sm text-quaternary">
               <Link href="/topology">Topology</Link> / {expand}
