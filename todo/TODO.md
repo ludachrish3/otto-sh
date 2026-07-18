@@ -2,6 +2,12 @@
 
 ## General
 
+- Backpsace doesn't work when typing in the action pop-over
+- Add an icon with each tab
+  - change "Topology" to "Topology View" with the same topology icon used in action pop-over
+  - Change "Hosts" to "List View" with the same icon as used in the "Informational page examples" Grid/List tab selector of this page: <https://www.untitledui.com/react/components/informational-pages>
+- Breadcrumb should adopt an Untitled UI component (<https://www.untitledui.com/react/components/breadcrumbs#breadcrumbs-button>) I also would like the breadcrumbs to have similar hover functionality and borders to the tab button styling to give the breadcrumbs a bit more depth. Otherwise, the breadcrumbs blend in too much.
+- The 5m/15m/1h buttons should be tab buttons just like the topology/hosts toggle is on the main page.
 - `otto tunnel list` should print "No active tunnels when there are no results.
   - Also, the rich table should use rounded corners and more horizontal padding (let's start with 1 on the left and right and see where to go from there.)
 - Turn off scrolling in graphs to zoom in. It makes scrolling on the page impossible
