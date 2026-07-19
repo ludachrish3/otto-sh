@@ -19,7 +19,7 @@
     "coverage:merged": "nyc report --temp-dir ../reports/ts-cov/final --report-dir ../reports/ts-cov/html --reporter text --reporter html --check-coverage --statements 91 --branches 78 --functions 94 --lines 95"
   },
   "dependencies": {
-    "@fontsource-variable/inter": "5.2.8",
+    "@fontsource-variable/inter": "5.3.0",
     "@internationalized/date": "3.12.2",
     "@react-stately/utils": "3.12.1",
     "@tailwindcss/vite": "4.3.3",
