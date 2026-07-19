@@ -764,9 +764,26 @@ class MonitorServer:
         )
         server = uvicorn.Server(config)
 
+        async def run_uvicorn() -> None:
+            # uvicorn answers a failed startup (e.g. the requested port is
+            # already bound) with sys.exit(STARTUP_FAILURE). A SystemExit
+            # raised inside a Task is NOT stored on the task like a normal
+            # exception — Task.__step re-raises it into the event loop
+            # itself, so it detonates out of the embedding application's
+            # asyncio.run() where no except around serve() (and no
+            # task.result() below) can ever catch it. Translate it here,
+            # inside the coroutine, while it still unwinds normally.
+            try:
+                await server.serve()
+            except SystemExit as exc:
+                raise RuntimeError(
+                    f"monitor server failed to start on "
+                    f"{self._bind_host}:{self._port} — is the port already in use?"
+                ) from exc
+
         # start the server in a background task
         self._loop = asyncio.get_running_loop()
-        task = asyncio.create_task(server.serve())
+        task = asyncio.create_task(run_uvicorn())
 
         # wait until uvicorn signals it's started
         while not server.started:

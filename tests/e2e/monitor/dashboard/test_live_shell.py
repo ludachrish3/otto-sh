@@ -179,7 +179,11 @@ def test_a_silent_hosts_drillin_shows_a_growing_unreachable_banner(
     an artifact of whatever real time navigation happened to take. Neither
     tick below trusts a GUESSED "now": each reads the browser's own
     ``Date.now()`` immediately before its jump, so the expected banner text
-    is computed exactly, never polled for.
+    is computed exactly, never polled for. Auto-advance is only needed up
+    through navigation/hydration, so once the banner is visible the clock
+    is PAUSED -- otherwise it keeps drifting between each ``Date.now()``
+    read and its jump, and on a slow round-trip (firefox in CI) that drift
+    crosses a second boundary and fails the exact-text assertion by 1s.
     """
     ref = datetime.now(tz=timezone.utc)
     stale = ref - timedelta(seconds=20)
@@ -210,12 +214,25 @@ def test_a_silent_hosts_drillin_shows_a_growing_unreachable_banner(
     # it, so the expected text is computed, never guessed or waited for.
     expect(banner).to_be_visible()
 
+    # Freeze the clock before computing any expected text. install() leaves
+    # the virtual clock auto-advancing with real time (navigation/hydration
+    # above need their own timers), so it KEEPS advancing between each
+    # Date.now() read below and its fast_forward() jump -- on a slow browser
+    # round-trip (firefox in CI) that drift crosses a second boundary and
+    # the banner renders N+1s where the test computed Ns. pause_at() stops
+    # the clock dead, making every later read and jump exact by
+    # construction. The 10s margin keeps the target strictly ahead of
+    # wherever auto-advance has gotten to (pause_at refuses a past target);
+    # the one due 5s tick it fires on the way just refreshes `now` with a
+    # value nothing asserts on -- the banner text is still unpinned here.
+    page.clock.pause_at(page.evaluate("() => Date.now()") + 10_000)
+
     # One full collection tick (session.meta.interval == 5s, matching
     # live_stream_dash's FakeCollector(interval=5.0)) -- fast_forward fires
     # the due setInterval exactly once, deterministically, instead of
     # waiting on a real 5s wall-clock tick. Reading Date.now() immediately
-    # before the jump (rather than assuming it) is what makes the expected
-    # text exact regardless of how long navigation/hydration actually took.
+    # before the jump (exact now that the clock is paused) is what makes the
+    # expected text exact regardless of how long navigation actually took.
     pre_tick1_ms = page.evaluate("() => Date.now()")
     page.clock.fast_forward(5_000)
     outage1 = _format_outage(pre_tick1_ms + 5_000 - stale_ms)

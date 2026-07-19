@@ -27,3 +27,16 @@ updates:
     labels:
       - "dependencies"
       - "javascript"
+    groups:
+      # vitest and @vitest/coverage-v8 pin each other with an EXACT peer
+      # version, so a lone bump of either can never pass npm ci (PRs
+      # #114/#119 both died on ERESOLVE). Tailwind's core + vite plugin
+      # move in lockstep releases the same way (#150/#152).
+      vitest:
+        patterns:
+          - "vitest"
+          - "@vitest/*"
+      tailwindcss:
+        patterns:
+          - "tailwindcss"
+          - "@tailwindcss/*"
