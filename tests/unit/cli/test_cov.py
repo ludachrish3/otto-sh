@@ -64,7 +64,9 @@ class TestCovHelp:
     def test_report_help(self):
         result = runner.invoke(cov_app, ["report", "--help"])
         assert result.exit_code == 0
-        assert "OUTPUT_DIRS" in result.output
+        # typer 0.27 renders the positional's metavar as the param name
+        # (`output_dirs`); 0.26 upcased it — compare case-insensitively.
+        assert "output_dirs" in result.output.lower()
 
     def test_get_listed_in_help(self):
         result = runner.invoke(cov_app, ["--help"])
