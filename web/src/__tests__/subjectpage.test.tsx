@@ -11,6 +11,16 @@ globalThis.ResizeObserver ??= class {
   disconnect() {}
 } as unknown as typeof ResizeObserver;
 
+// jsdom lacks CSS.escape; react-aria's tab selection calls it on click (the
+// live-window presets are button-border tabs now) — same polyfill as
+// viewswitcher.test.tsx / shell.test.tsx.
+if (typeof globalThis.CSS === "undefined") {
+  Object.defineProperty(globalThis, "CSS", {
+    value: { escape: (value: string) => value.replace(/[^a-zA-Z0-9_-]/g, (ch) => `\\${ch}`) },
+    writable: true,
+  });
+}
+
 const setOptions: Record<string, unknown>[] = [];
 vi.mock("../charts/echarts", () => ({
   echarts: {
@@ -104,7 +114,7 @@ describe("SubjectPage chart stack", () => {
   });
 });
 
-// Task 7 (spec decision 10): the live-window ButtonGroup moved here from
+// Task 7 (spec decision 10): the live-window presets (button-border tabs) moved here from
 // AppBar (Task 6, Plan 5b follow-ups) — 5m/15m/1h, live-only, selection
 // derived from `windowMs` rather than stored (same "derive, don't store"
 // lesson as reviewStore's `useIsPaused`). Moved verbatim from

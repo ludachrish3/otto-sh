@@ -260,7 +260,7 @@ def test_a_silent_hosts_drillin_shows_a_growing_unreachable_banner(
 def test_choosing_a_wider_live_window_widens_the_chart_while_still_following(
     page: Page, live_stream_dash: DashboardHarness[FakeCollector]
 ) -> None:
-    """Task 6 (Plan 5b follow-ups): AppBar's live-window ButtonGroup
+    """Task 6 (Plan 5b follow-ups): AppBar's live-window preset tabs
     (5m/15m/1h, beside Pause) drives reviewStore.ts's ``setWindow``. Choosing
     a wider preset must both (a) actually widen what the chart shows -- an
     older point that was outside the default 15m follow window comes into

@@ -10,7 +10,6 @@ import { Link, useParams } from "wouter";
 
 import { Table } from "@/components/application/table/table";
 import { Tabs } from "@/components/application/tabs/tabs";
-import { ButtonGroup, ButtonGroupItem } from "@/components/base/button-group/button-group";
 import { ButtonUtility } from "@/components/base/buttons/button-utility";
 import { Input } from "@/components/base/input/input";
 import { ChartPanel } from "../charts/ChartPanel";
@@ -39,6 +38,7 @@ import { buildSeriesTree, collectSeriesPoints, filterTree } from "../data/series
 import { liveRange } from "../data/time";
 import { EventsPanel } from "../shell/EventsPanel";
 import { SubjectHealthBanner } from "../shell/SubjectHealthBanner";
+import { Breadcrumbs } from "../ui/Breadcrumbs";
 import { LIVE_WINDOW_PRESETS } from "../ui/commands";
 import { useUiStore } from "../ui/uiStore";
 import { SeriesPanel } from "./SeriesPanel";
@@ -222,9 +222,7 @@ export function SubjectPage() {
 
   return (
     <main data-testid="subject-page" className="flex flex-col gap-4 p-4">
-      <nav className="text-sm text-quaternary">
-        <Link href="/hosts">Fleet</Link> / {id}
-      </nav>
+      <Breadcrumbs items={[{ label: "Fleet", href: "#/hosts" }, { label: id }]} />
       <h1 data-testid="subject-title" className="flex items-center gap-2 text-lg font-semibold">
         {id}
         <span className="text-sm font-normal text-quaternary">
@@ -244,24 +242,22 @@ export function SubjectPage() {
             </span>
           )}
           {mode === "live" && (
-            <ButtonGroup
-              aria-label="Live window"
+            <Tabs
               data-testid="live-window"
-              size="sm"
-              selectedKeys={new Set([selectedWindowId(windowMs)])}
-              disallowEmptySelection
-              onSelectionChange={(keys) => {
-                const selected = [...keys][0];
-                const preset = LIVE_WINDOW_PRESETS.find((p) => p.id === selected);
+              selectedKey={selectedWindowId(windowMs)}
+              onSelectionChange={(key) => {
+                const preset = LIVE_WINDOW_PRESETS.find((p) => p.id === key);
                 if (preset) setWindow(preset.ms);
               }}
             >
-              {LIVE_WINDOW_PRESETS.map((p) => (
-                <ButtonGroupItem key={p.id} id={p.id} data-testid={`live-window-${p.id}`}>
-                  {p.label}
-                </ButtonGroupItem>
-              ))}
-            </ButtonGroup>
+              <Tabs.List aria-label="Live window" type="button-border" size="sm">
+                {LIVE_WINDOW_PRESETS.map((p) => (
+                  <Tabs.Item key={p.id} id={p.id} data-testid={`live-window-${p.id}`}>
+                    {p.label}
+                  </Tabs.Item>
+                ))}
+              </Tabs.List>
+            </Tabs>
           )}
           {(session.events.length > 0 || editable) && (
             <button
@@ -499,7 +495,7 @@ function ChartSection(props: {
   // every live tick — a pure SLIDE, harmless to skip here, because points
   // that age out of view were already excluded and new ones for THIS
   // chart's own series arrive via `revKey`; and (b) the user picking a
-  // wider/narrower preset (the presets ButtonGroup in this page's title
+  // wider/narrower preset (the presets tab row in this page's title
   // row -> reviewStore's `setWindow`) — a WIDTH change, which pulls previously-excluded points
   // back into `series` (collectSeriesPoints re-slices against the new
   // window in SubjectPage's render body) that this memo must actually bake

@@ -24,7 +24,7 @@ describe("ViewSwitcher", () => {
   it("renders button-border tabs with the active view selected", () => {
     render(<ViewSwitcher active="topology" />);
     const tabs = screen.getAllByRole("tab");
-    expect(tabs.map((t) => t.textContent)).toEqual(["Topology", "Hosts"]);
+    expect(tabs.map((t) => t.textContent)).toEqual(["Topology View", "List View"]);
     expect(tabs[0].getAttribute("aria-selected")).toBe("true");
     expect(tabs[1].getAttribute("aria-selected")).toBe("false");
   });
@@ -32,7 +32,7 @@ describe("ViewSwitcher", () => {
   it("selecting the other tab navigates the hash route", async () => {
     const user = userEvent.setup();
     render(<ViewSwitcher active="topology" />);
-    await user.click(screen.getByRole("tab", { name: "Hosts" }));
+    await user.click(screen.getByRole("tab", { name: "List View" }));
     expect(window.location.hash).toBe("#/hosts");
   });
 
@@ -40,7 +40,7 @@ describe("ViewSwitcher", () => {
     const user = userEvent.setup();
     window.location.hash = "#/hosts";
     render(<ViewSwitcher active="hosts" />);
-    await user.click(screen.getByRole("tab", { name: "Topology" }));
+    await user.click(screen.getByRole("tab", { name: "Topology View" }));
     expect(window.location.hash).toBe("#/");
   });
 });

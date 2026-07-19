@@ -741,8 +741,8 @@ def test_topology_toggle_and_map(shell_dash, page):
     "/" is the topology landing now (route swap, spec 2026-07-17), so the
     import already lands here -- the round trip below still proves the
     switcher works both ways, just starting from the other end. The
-    switcher's second tab is labeled "Hosts" (ViewSwitcher.tsx), not the
-    retired "Grid" label.
+    switcher's second tab is labeled "List View" (ViewSwitcher.tsx), not the
+    retired "Grid"/"Hosts" labels.
     """
     page.goto(shell_dash.url)
     _import_fixture(page, "kitchen-sink.json")
@@ -751,9 +751,9 @@ def test_topology_toggle_and_map(shell_dash, page):
         assert page.locator(f'[data-testid="topo-node-{node}"]').count() == 1
     # Rollup segments on the chassis element node (3 members: lc1, lc2, sup).
     assert page.locator('[data-testid="topo-node-chassis-a"] [data-status-segment]').count() == 3
-    page.get_by_text("Hosts", exact=True).click()
+    page.get_by_text("List View", exact=True).click()
     page.locator('[data-testid="overview-page"]').wait_for()
-    page.get_by_text("Topology", exact=True).click()
+    page.get_by_text("Topology View", exact=True).click()
     page.locator('[data-testid="topology-page"]').wait_for()
 
 

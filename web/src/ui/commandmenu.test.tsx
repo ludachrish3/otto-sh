@@ -2,6 +2,9 @@
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import minimal from "../../fixtures/minimal.json";
+import { useReviewStore } from "../data/reviewStore";
+import { TopologyPage } from "../topo/TopologyPage";
 import { CommandMenu } from "./CommandMenu";
 import type { Command } from "./commands";
 import { useUiStore } from "./uiStore";
@@ -14,6 +17,19 @@ if (typeof globalThis.CSS === "undefined") {
     writable: true,
   });
 }
+
+// xyflow's documented jsdom mocks — the Backspace regression test below
+// mounts the real TopologyPage next to the palette.
+class RO {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+globalThis.ResizeObserver ??= RO as unknown as typeof ResizeObserver;
+// @ts-expect-error jsdom lacks DOMMatrixReadOnly
+globalThis.DOMMatrixReadOnly ??= class {
+  m22 = 1;
+};
 
 function cmd(overrides: Partial<Command>): Command {
   return {
@@ -42,6 +58,7 @@ const COMMANDS: Command[] = [
 afterEach(() => {
   cleanup();
   useUiStore.setState({ paletteOpen: false, theme: "light" });
+  useReviewStore.setState({ sessions: [], rawMonitorSessions: null, activeSessionId: null });
 });
 
 describe("CommandMenu", () => {
@@ -108,6 +125,30 @@ describe("CommandMenu", () => {
     await user.click(row);
     expect(run).not.toHaveBeenCalled();
     expect(useUiStore.getState().paletteOpen).toBe(true);
+  });
+
+  it("backspace deletes in the palette input while the topology page is mounted", async () => {
+    // Regression (proven red pre-fix): React Flow's default deleteKeyCode
+    // ("Backspace") preventDefaulted the keystroke the palette's Autocomplete
+    // re-dispatches on the virtually-focused row, and react-aria then
+    // suppressed the REAL Backspace in the input — Backspace typed characters
+    // fine but never deleted. TopologyPage now passes deleteKeyCode={null};
+    // this mounts the real page (not a bare ReactFlow) so the guard lives
+    // with the ReactFlow instance that owns the document-level listener.
+    useReviewStore.getState().actions.importMonitorSessions(JSON.stringify(minimal), "test");
+    const user = userEvent.setup();
+    useUiStore.setState({ paletteOpen: true });
+    render(
+      <div>
+        <TopologyPage />
+        <CommandMenu commands={COMMANDS} />
+      </div>,
+    );
+    const input = (await screen.findByTestId("command-input")) as HTMLInputElement;
+    await user.type(input, "topo");
+    await user.keyboard("{ArrowDown}");
+    await user.keyboard("{Backspace}");
+    expect(input.value).toBe("top");
   });
 
   it("Escape closes the palette", async () => {

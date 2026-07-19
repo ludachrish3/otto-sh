@@ -9,7 +9,7 @@ import {
   Dataflow03,
   Download01,
   Flag01,
-  Grid01,
+  List,
   Monitor01,
   Moon01,
   PauseCircle,
@@ -83,7 +83,7 @@ export function useCommands(): Command[] {
     const commands: Command[] = [
       {
         id: "nav-topology",
-        label: "Topology",
+        label: "Topology View",
         section: "Navigation",
         icon: Dataflow03,
         enabled: true,
@@ -91,9 +91,9 @@ export function useCommands(): Command[] {
       },
       {
         id: "nav-hosts",
-        label: "Hosts",
+        label: "List View",
         section: "Navigation",
-        icon: Grid01,
+        icon: List,
         enabled: true,
         run: () => navigate("/hosts"),
       },

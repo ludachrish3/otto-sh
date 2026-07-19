@@ -340,6 +340,16 @@ export function TopologyPage() {
               fitViewOptions={{ padding: FIT_PADDING }}
               minZoom={0.2}
               proOptions={{ hideAttribution: true }}
+              // Nothing on this canvas is deletable, but React Flow's default
+              // deleteKeyCode ("Backspace") still preventDefaults every
+              // document-level Backspace whose target isn't an input. The
+              // command palette's Autocomplete re-dispatches input keystrokes
+              // on the virtually-focused menu item, so with a topology mounted
+              // that re-dispatch got cancelled and react-aria then suppressed
+              // the REAL Backspace in the palette input (letters and forward
+              // Delete were unaffected — only "Backspace" matched). See
+              // ui/commandmenu.test.tsx's ReactFlow regression test.
+              deleteKeyCode={null}
               onNodeClick={(_evt, node) => {
                 const target = (node.data as { enterTarget?: string }).enterTarget;
                 if (target) navigate(target);

@@ -1,6 +1,9 @@
-// The Topology|Hosts switcher (spec §View switcher): vendored button-border
+// The Topology|List switcher (spec §View switcher): vendored button-border
 // tabs. `active` comes from the HOSTING page, not internal state — the
 // selectedWindowId lesson: a stored copy of a route-derived value drifts.
+// Icons: Dataflow03 matches the palette's Topology command (commands.ts);
+// List matches Untitled UI's informational-page Grid/List selector.
+import { Dataflow03, List } from "@untitledui/icons";
 import { useHashLocation } from "wouter/use-hash-location";
 
 import { Tab, TabList, Tabs } from "@/components/application/tabs/tabs";
@@ -18,8 +21,12 @@ export function ViewSwitcher({ active }: { active: keyof typeof ROUTES }) {
       }}
     >
       <TabList aria-label="View" type="button-border" size="sm">
-        <Tab id="topology">Topology</Tab>
-        <Tab id="hosts">Hosts</Tab>
+        <Tab id="topology" icon={Dataflow03}>
+          Topology View
+        </Tab>
+        <Tab id="hosts" icon={List}>
+          List View
+        </Tab>
       </TabList>
     </Tabs>
   );
