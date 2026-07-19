@@ -39,12 +39,15 @@ _PRIMARY = {"hostless", "integration", "embedded"}
 # The two Playwright suites are parallel-safe BY CONSTRUCTION: every test
 # binds its MonitorServer to port=0 (tests/_fixtures/_dashboard_harness.py)
 # and CDP coverage dumps are keyed pid+uuid (tests/_fixtures/_ts_coverage.py).
-# Their single-worker pinning is a resource POLICY — never parallel browsers
-# on the 3GB dev VM (plan 2026-07-02) — not a correctness constraint, so it
-# is stamped here instead of hard-coded per module. OTTO_BROWSER_SHARD=1
-# (set only by CI's dashboard jobs, whose runners have the RAM) relaxes the
-# pin to per-FILE groups: `--dist loadgroup` then spreads modules across
-# workers while any module-scoped fixture still instantiates on one worker.
+# Their single-worker pinning is a resource POLICY — originally "never
+# parallel browsers on the 3GB dev VM" (plan 2026-07-02) — not a correctness
+# constraint, so it is stamped here instead of hard-coded per module.
+# OTTO_BROWSER_SHARD=1 relaxes the pin to per-FILE groups: `--dist loadgroup`
+# then spreads modules across workers while any module-scoped fixture still
+# instantiates on one worker. CI's dashboard jobs set the env explicitly;
+# the Makefile's browser lane sets it whenever the host passes its cores+RAM
+# gate (see BROWSER_WORKERS there — the serial pin remains the fallback for
+# small hosts and for ad-hoc pytest runs, which leave the env unset).
 # Suites not in the map stay serial in both modes — sharding is opt-in per
 # suite, after auditing it for parallel safety. An explicit xdist_group mark
 # on a test/module always wins (e.g. dashboard/test_harness.py's non-browser

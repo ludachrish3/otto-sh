@@ -377,11 +377,12 @@ build: ## (Build & Release) Build the project with uv
 # DASHBOARD_BROWSERS="chromium firefox webkit".
 # The one Safari-specific test is `@pytest.mark.only_browser("webkit")`, so it
 # only runs when webkit is in the set (a skip, not silently absent, otherwise).
-# Runs -n 1: on the dev VM the browser suites are pinned serial by the e2e
-# conftest's grouping policy (OTTO_BROWSER_SHARD unset — see
-# tests/e2e/conftest.py; CI's dashboard jobs set it to shard per-file), so
-# extra workers would sit idle and emit "No data was collected" coverage
-# warnings. Writes
+# Runs -n $(BROWSER_WORKERS): 2 (with OTTO_BROWSER_SHARD=1 for per-file
+# groups) when the host passes the cores+RAM gate at the variable's
+# definition, else the historical -n 1 serial pin — where the shard env
+# stays unset so the e2e conftest's grouping policy keeps one group and
+# extra workers would only sit idle emitting "No data was collected"
+# coverage warnings. CI's dashboard jobs set the env themselves. Writes
 # coverage DATA only: --cov-report= suppresses the report so a standalone run
 # never stomps reports/coverage/html. Running first as `coverage-python`'s
 # direct prerequisite (bare `coverage`'s only transitively, via
@@ -439,6 +440,19 @@ coverage-embedded: ## Run the embedded (Zephyr) resource slice with a coverage r
 	$(TIMEOUT_CMD) uv run pytest -m "$(M_EMBEDDED)" $(call junitxml,coverage-embedded)
 
 DASHBOARD_BROWSERS ?= chromium
+# Browser-lane worker count. The suites are parallel-safe by construction
+# (port=0 servers, pid+uuid coverage dumps — see the policy block in
+# tests/e2e/conftest.py); the historical -n 1 pin was a RAM policy from the
+# 3GB-dev-VM era, so the gate keys on the actual scarce resources: 2 workers
+# when the host has >=2 CPUs AND >=6GiB physical RAM, else the serial
+# fallback. Measured on the 8GB dev VM: 75 tests 51.5s -> 28.9s (1.8x);
+# -n 3 adds nothing because test_review_shell alone is the wall-clock floor
+# (per-FILE groups cannot split a module). Override with BROWSER_WORKERS=N.
+BROWSER_WORKERS ?= $(shell if [ "$$(nproc)" -ge 2 ] && [ "$$(awk '/MemTotal/ {print $$2}' /proc/meminfo)" -ge 6291456 ]; then echo 2; else echo 1; fi)
+# Sharding env must accompany >1 worker: without OTTO_BROWSER_SHARD=1 the
+# suites share one serial xdist group and extra workers would sit idle.
+# Recursive (=), not :=, so a command-line BROWSER_WORKERS override flows in.
+BROWSER_SHARD_ENV = $(if $(filter-out 1,$(BROWSER_WORKERS)),OTTO_BROWSER_SHARD=1,)
 DASHBOARD_DIST := src/otto/monitor/static/dist/index.html
 COVREPORT_DIST := src/otto/coverage/renderer/static/dist/covreport.js
 
@@ -505,7 +519,7 @@ dashboard: $(DASHBOARD_DIST) $(COVREPORT_DIST) ## Run the browser e2e suites (mo
 # runs of these suites don't append raw dumps outside this recipe's rm+stamp
 # protocol — which would let `make coverage-ts` merge in a browser run make
 # never scheduled.
-	OTTO_TS_COVERAGE=1 $(TIMEOUT_CMD) uv run pytest tests/e2e/monitor/dashboard tests/e2e/cov/report_browser -m "browser and not soak" $(foreach b,$(DASHBOARD_BROWSERS),--browser $(b)) -n 1 --cov-report= --screenshot only-on-failure --output reports/playwright $(call junitxml,dashboard)
+	$(BROWSER_SHARD_ENV) OTTO_TS_COVERAGE=1 $(TIMEOUT_CMD) uv run pytest tests/e2e/monitor/dashboard tests/e2e/cov/report_browser -m "browser and not soak" $(foreach b,$(DASHBOARD_BROWSERS),--browser $(b)) -n $(BROWSER_WORKERS) --cov-report= --screenshot only-on-failure --output reports/playwright $(call junitxml,dashboard)
 	@mkdir -p reports/ts-e2e-cov/raw && touch $(TS_E2E_RAW_STAMP)
 
 dashboard-all: ## Run the dashboard e2e on ALL engines (Chromium + Firefox + WebKit); invoked by `make release`. Needs `make browsers` once.
