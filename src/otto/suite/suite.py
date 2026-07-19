@@ -540,7 +540,11 @@ class OttoSuite(Generic[TOptions]):
             await asyncio.sleep(0.05)
 
         url = self._monitor_server.url
-        logger.info(f"Monitor dashboard: {url}")
+        # SECURITY: `url` carries the per-run ?key=<token> access credential, so
+        # log only the keyless origin — `serve()` already prints the full keyed
+        # URL straight to the terminal. Writing the key here would persist a live
+        # credential to the suite run's console.log / verbose.log.
+        logger.info(f"Monitor dashboard: {self._monitor_server.origin}")
         return url
 
     async def stop_monitor(self) -> None:

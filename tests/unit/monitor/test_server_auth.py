@@ -12,6 +12,8 @@ import urllib.request
 
 import pytest
 
+from otto.console import CONSOLE
+from otto.logger import management
 from otto.monitor.collector import MetricCollector
 from otto.monitor.server import MonitorServer, _build_app
 
@@ -242,3 +244,63 @@ class TestAccessKeyNeverLogged:
         assert access_records, "expected uvicorn to emit an access-log record for the request"
         for record in access_records:
             assert server.key not in record.getMessage()
+
+
+class TestAccessKeyNeverWrittenToLogFiles:
+    """The per-run access key is a live credential: it must be shown to the
+    user (the printed URL) but never persisted to otto's on-disk log sinks.
+
+    ``MonitorServer.serve()`` announces the dashboard URL, which carries
+    ``?key=<token>``. Routing that announcement through ``logger.info`` would
+    fan it into ``console.log`` / ``verbose.log`` -- the file sinks wired by
+    ``otto.logger.management`` -- writing the credential to disk on every run.
+    The keyed URL must instead go straight to the terminal via ``CONSOLE``
+    (which bypasses the file-backed logger, exactly like management's
+    output-dir print), leaving only a keyless origin in the log files.
+    """
+
+    def test_serve_keeps_the_key_off_disk_but_on_the_console(self, tmp_path, monkeypatch):
+        # Wire the real three-sink logging pipeline against a temp output dir,
+        # so console.log / verbose.log are the actual files serve() would write.
+        management.reset()
+        management.init_cli_logging(xdir=tmp_path, log_level="INFO", keep_days=7)
+        out = management.create_output_dir("monitor")
+
+        server = MonitorServer(_collector(), host="127.0.0.1", port=0)
+
+        # Stub uvicorn's socket loop: flip ``started`` and fabricate a bound
+        # socket so serve() reaches (and returns from) its URL announcement
+        # without ever opening a real listener.
+        class _FakeSocket:
+            def getsockname(self):
+                return ("127.0.0.1", 54321)
+
+        class _FakeBound:
+            def __init__(self):
+                self.sockets = [_FakeSocket()]
+
+        async def _fake_uvicorn_serve(inner_self, sockets=None):
+            inner_self.started = True
+            inner_self.servers = [_FakeBound()]
+
+        monkeypatch.setattr("uvicorn.Server.serve", _fake_uvicorn_serve)
+
+        with CONSOLE.capture() as cap:
+            asyncio.run(server.serve())
+        console_text = cap.get()
+
+        management._state.listener.stop()  # drain the async queue into the files
+
+        # The console (terminal) is the ONE place the key may appear -- the user
+        # has no other way to read it.
+        assert "Server running at" in console_text, console_text
+        assert f"?key={server.key}" in console_text, console_text
+
+        # ...it must never reach the log files on disk.
+        for name in ("console.log", "verbose.log"):
+            text = (out / name).read_text()
+            assert server.key not in text, f"access key leaked into {name}:\n{text}"
+            assert "?key=" not in text, f"keyed URL leaked into {name}:\n{text}"
+
+        # The keyless server-start line is still recorded for the audit trail.
+        assert "Monitor dashboard started on" in (out / "verbose.log").read_text()

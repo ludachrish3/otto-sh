@@ -38,6 +38,7 @@ from starlette.requests import Request
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from typing_extensions import override
 
+from ..console import CONSOLE
 from ..models import LabSnapshot, MonitorExport
 from ..models.monitor import EventCreateBody, EventRecord, EventUpdateBody, SessionRecord
 from . import archive_edit
@@ -799,14 +800,21 @@ class MonitorServer:
 
         # extract the port from the socket
         self._port = server.servers[0].sockets[0].getsockname()[1]
-        all_urls = self.urls
+        all_urls = self.urls  # each carries the per-run ?key=<token> credential
+        # SECURITY: the access key must never be written to the on-disk log
+        # sinks. Print the keyed URL straight to the terminal via CONSOLE, which
+        # bypasses the file-backed 'otto' logger entirely (the same way
+        # management._print_output_dir emits the output dir) — logging it would
+        # persist a live credential to console.log / verbose.log on every run.
+        # Only a keyless origin goes to the logger for the on-disk audit trail.
         if len(all_urls) == 1:
-            logger.info(f"Server running at {all_urls[0]}")
+            CONSOLE.print(f"Server running at {all_urls[0]}", highlight=False)
         else:
-            logger.info("Server running at:")
+            CONSOLE.print("Server running at:", highlight=False)
             for u in all_urls:
-                logger.info(f"  {u}")
-        logger.info("Press Ctrl+C to stop")
+                CONSOLE.print(f"  {u}", highlight=False)
+        CONSOLE.print("Press Ctrl+C to stop", highlight=False)
+        logger.info(f"Monitor dashboard started on {self.origin} (access key omitted from logs)")
 
         self._server = server
 

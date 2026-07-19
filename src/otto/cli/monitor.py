@@ -125,11 +125,15 @@ def monitor(
         # monitor's spec is lab_free, so the shared command_preamble
         # early-returns entirely for BOTH branches — including
         # ensure_cli_session (init_cli_logging), not just the lab
-        # load. Without it the `'otto'` logger has no handler, so
-        # MonitorServer.serve()'s `logger.info(f"Server running at {url}")`
-        # silently vanishes into Python's lastResort (WARNING+ only)
-        # handler: review mode printed nothing at all, not even the URL a
-        # user needs to open. Pull in just the session/logging slice here —
+        # load. Without it the `'otto'` logger has no handler, so every
+        # otto.* record during review (warnings, errors, serve()'s keyless
+        # "Monitor dashboard started" line, "Server exiting") silently
+        # vanishes into Python's lastResort (WARNING+ only) handler. The
+        # keyed dashboard URL itself is printed straight to the terminal by
+        # MonitorServer.serve() via CONSOLE — never the logger, so the access
+        # key stays out of the log files — and thus survives regardless; this
+        # call is what gives the rest of review mode's log trail somewhere to
+        # go. Pull in just the session/logging slice here —
         # NOT ensure_lab_session, which would also load a lab (review reads
         # a local file only) and create a per-invocation output dir. A
         # console-only log trail is Chris's accepted tradeoff for review

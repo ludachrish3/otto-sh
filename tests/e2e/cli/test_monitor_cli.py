@@ -257,12 +257,13 @@ def test_live_without_lab_reports_missing_option(tmp_path: Path) -> None:
 # fix #7 above) makes `command_preamble` early-return entirely for BOTH of
 # monitor's branches, skipping `ensure_cli_session` (`init_cli_logging`)
 # for review mode too — not just the lab load. With no handler attached to the
-# `'otto'` logger, `MonitorServer.serve()`'s `logger.info(f"Server running at
-# {url}")` (otto/monitor/server.py) vanished into Python's `lastResort`
-# handler (WARNING+ only): `otto monitor <source>` printed NOTHING, not even
-# the URL a review-mode user needs to open. Fixed by having monitor's review
-# branch call `ensure_cli_session` itself, the same way its `--live` branch
-# already calls `ensure_lab_session` for the lab-requiring piece.
+# `'otto'` logger, every `MonitorServer.serve()` record vanished into Python's
+# `lastResort` handler (WARNING+ only): review mode's logged output was lost.
+# Fixed by having monitor's review branch call `ensure_cli_session` itself, the
+# same way its `--live` branch calls `ensure_lab_session` for the lab piece.
+# (The keyed URL itself now prints via CONSOLE — terminal only, key kept out of
+# the log files — so the guard rests on the keyless `Monitor dashboard started`
+# line, which still travels through the `'otto'` logger this fix wires up.)
 
 
 def test_review_mode_logs_server_url_to_console(
@@ -273,8 +274,11 @@ def test_review_mode_logs_server_url_to_console(
     Real end-to-end: dispatches through the full ``otto.cli.main.app`` (the
     real ``CommandSpec``/``command_preamble`` dispatch) against a real
     schema-v2 ``.db`` export, and lets the real ``MonitorServer.serve()``
-    method run unmodified — including its actual ``logger.info`` calls that
-    the fix depends on reaching the console. The only stub is uvicorn's own
+    method run unmodified. serve() prints the keyed URL straight to the
+    terminal via ``CONSOLE`` (so the access key never reaches the log files)
+    and logs a keyless ``Monitor dashboard started`` line through the ``'otto'``
+    logger — the latter is what still needs ``ensure_cli_session`` to have run,
+    so this test asserts on both. The only stub is uvicorn's own
     internal socket/request loop (``uvicorn.Server.serve``): replaced with a
     fake that flips ``started`` and fabricates a bound socket, so no real TCP
     listener opens and the invocation returns promptly (matching this
@@ -322,4 +326,8 @@ def test_review_mode_logs_server_url_to_console(
         )
 
     assert result.exit_code == 0, result.output
+    # The keyed URL reaches the console via CONSOLE.print (terminal only)...
     assert "Server running at" in result.output, result.output
+    # ...and the keyless audit line reaches it via the 'otto' logger, which is
+    # live only because review mode called ensure_cli_session (the guarded bug).
+    assert "Monitor dashboard started on" in result.output, result.output
