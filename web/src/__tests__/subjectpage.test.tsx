@@ -18,6 +18,7 @@ vi.mock("../charts/echarts", () => ({
       group: "",
       setOption: (o: Record<string, unknown>) => setOptions.push(o),
       on: () => {},
+      dispatchAction: () => {},
       resize: () => {},
       dispose: () => {},
     }),

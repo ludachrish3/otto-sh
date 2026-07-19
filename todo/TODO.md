@@ -10,9 +10,7 @@
 - The 5m/15m/1h buttons should be tab buttons just like the topology/hosts toggle is on the main page.
 - `otto tunnel list` should print "No active tunnels when there are no results.
   - Also, the rich table should use rounded corners and more horizontal padding (let's start with 1 on the left and right and see where to go from there.)
-- Turn off scrolling in graphs to zoom in. It makes scrolling on the page impossible
-  - Replace scroll-to-zoom with explicit `+`/`-` zoom buttons on the left side of each chart (drop `zoomOnMouseWheel` on the inside dataZoom in `web/src/charts/options.ts`; the zoom range already round-trips through the review store, so the buttons just call the same `onZoom`/`setRange` path). I'd like to click and drag to select a specific zoom range, and I'd like Ctrl/Cmd + clicking and dragging to pan. If there's another common way to invoke panning in an application, I'd like to support that too.
-  - Add a "fullscreen" icon per chart that expands that single chart to fill the whole chart-canvas area (collapse the rest of the stack; ESC / click to restore). Relates to the existing "fully collapse graphs" item below.
+- Add a "fullscreen" icon per chart that expands that single chart to fill the whole chart-canvas area (collapse the rest of the stack; ESC / click to restore). Relates to the existing "fully collapse graphs" item below.
 - Change `otto monitor` to not log the key value in the log files. Log mode should be SILENT or whatever.
 
 - Add profiling for tab completion. If tab complete takes more than 50 ms, let's look at ways to refactor and keep that to as small of a time as possible.

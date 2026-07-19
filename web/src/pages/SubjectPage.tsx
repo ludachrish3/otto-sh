@@ -4,12 +4,14 @@
 // review bar owns. Events overlay every chart (markLine/markArea). Table
 // tabs render log-event tables below the stack. Review is display-only;
 // marking/editing arrives with the live hookup.
+import { Minus, Plus } from "@untitledui/icons";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "wouter";
 
 import { Table } from "@/components/application/table/table";
 import { Tabs } from "@/components/application/tabs/tabs";
 import { ButtonGroup, ButtonGroupItem } from "@/components/base/button-group/button-group";
+import { ButtonUtility } from "@/components/base/buttons/button-utility";
 import { Input } from "@/components/base/input/input";
 import { ChartPanel } from "../charts/ChartPanel";
 import {
@@ -18,6 +20,7 @@ import {
   type EventMarker,
   eventMarkers,
   type SeriesInput,
+  zoomAbout,
 } from "../charts/options";
 import { MAX_SERIES_PER_CHART } from "../charts/palette";
 import { useIsDark } from "../charts/useIsDark";
@@ -37,6 +40,7 @@ import { liveRange } from "../data/time";
 import { EventsPanel } from "../shell/EventsPanel";
 import { SubjectHealthBanner } from "../shell/SubjectHealthBanner";
 import { LIVE_WINDOW_PRESETS } from "../ui/commands";
+import { useUiStore } from "../ui/uiStore";
 import { SeriesPanel } from "./SeriesPanel";
 
 // The selected live-window preset is DERIVED from `windowMs`, never stored
@@ -54,7 +58,13 @@ export function SubjectPage() {
   const windowMs = useReviewStore((s) => s.windowMs);
   const setRange = useReviewStore((s) => s.actions.setRange);
   const setWindow = useReviewStore((s) => s.actions.setWindow);
+  const editable = useReviewStore((s) => s.editable);
   const dark = useIsDark();
+  // Plan 5c marking (Task 12): "Sweep span on chart" — armed via MarkControl/
+  // the palette (uiStore's armSweep), consumed here so a brush drag on ANY
+  // chart opens the event editor instead of zooming.
+  const sweepArmed = useUiStore((s) => s.sweepArmed);
+  const { disarmSweep, openEventEditor } = useUiStore((s) => s.actions);
 
   const id = params.id;
   const [search, setSearch] = useState("");
@@ -176,6 +186,24 @@ export function SubjectPage() {
   const metrics = metricsForSubject(session, id, window_);
   const labels = [...new Set(metrics.map((m) => m.label))].sort();
 
+  // Brush-select sweep (Task 12): the chart hands back the raw dragged
+  // range, unclamped — a brush drag can only ever select within the axis
+  // bounds it's drawn against, unlike a +/- zoom button's derived range.
+  const onSweep = (r: TimeRange) => {
+    disarmSweep();
+    openEventEditor({
+      kind: "draft",
+      draft: {
+        sessionId: session.id,
+        timestampMs: r.from,
+        endTimestampMs: r.to,
+        label: "",
+        color: "#888888",
+        dash: "dash",
+      },
+    });
+  };
+
   const toggle = (key: string) => {
     setChecked((prev) => {
       const next = new Set(prev);
@@ -206,6 +234,15 @@ export function SubjectPage() {
           {host?.hop ? ` · via ${host.hop}` : ""}
         </span>
         <span className="ml-auto flex items-center gap-2 text-sm font-normal">
+          {sweepArmed && (
+            <span
+              data-testid="sweep-chip"
+              className="rounded-full bg-brand-50 px-2 py-0.5 text-xs text-brand-700
+                dark:bg-brand-500/15 dark:text-brand-300"
+            >
+              Marking span — drag across a chart · Esc cancels
+            </span>
+          )}
           {mode === "live" && (
             <ButtonGroup
               aria-label="Live window"
@@ -226,7 +263,7 @@ export function SubjectPage() {
               ))}
             </ButtonGroup>
           )}
-          {session.events.length > 0 && (
+          {(session.events.length > 0 || editable) && (
             <button
               type="button"
               data-testid="events-button"
@@ -314,7 +351,10 @@ export function SubjectPage() {
                   revKey={revKey}
                   checked={checked}
                   groupId={`subject-${id}`}
+                  bounds={bounds}
                   onZoom={(r) => setRange(clampRange(r, bounds))}
+                  sweepArmed={sweepArmed}
+                  onSweep={onSweep}
                   overflowCount={cap != null && active.length > cap ? active.length : null}
                 />
               );
@@ -393,7 +433,16 @@ function ChartSection(props: {
    * charts are what the test observes re-applying an option). */
   checked: Set<string>;
   groupId: string;
+  /** The session's own bounds (sessionBounds) — the +/- zoom buttons clamp
+   * against this before handing the result to `onZoom`, same as a drag-zoom
+   * (see the call site's onZoom, which clamps again; clampRange is
+   * idempotent so the double-clamp is harmless). */
+  bounds: TimeRange;
   onZoom: (range: TimeRange) => void;
+  /** Plan 5c marking (Task 12): forwarded straight through to ChartPanel — see
+   * SubjectPage's own `sweepArmed`/`onSweep` for the wiring. */
+  sweepArmed: boolean;
+  onSweep: (range: TimeRange) => void;
   overflowCount: number | null;
 }) {
   const {
@@ -412,7 +461,10 @@ function ChartSection(props: {
     revKey,
     checked,
     groupId,
+    bounds,
     onZoom,
+    sweepArmed,
+    onSweep,
     overflowCount,
   } = props;
   // Keying on `session` identity instead would bust every chart's memo on
@@ -483,16 +535,49 @@ function ChartSection(props: {
       data-window-to={window_.to}
     >
       <h2 className="mb-1 text-sm font-medium text-secondary">{chartLabel}</h2>
-      <ChartPanel
-        option={option}
-        groupId={groupId}
-        window={window_}
-        markers={markers}
-        theme={theme}
-        anchorSeriesId={series[0]?.key ?? null}
-        onZoom={onZoom}
-        testId={`chart-panel-${chartKey}`}
-      />
+      <div className="relative">
+        {/* Left-edge overlay column (Task 11): wheel no longer zooms (it
+            scrolls the page again), so +/- buttons are the click-driven zoom
+            gesture. Same math as a drag-zoom — zoomAbout about the window's
+            center, then clampRange to the session's bounds — skipped
+            entirely once zoomAbout hits the 1000ms floor and returns null. */}
+        <div className="absolute top-1 left-1 z-10 flex flex-col gap-1">
+          <ButtonUtility
+            aria-label="Zoom in"
+            tooltip="Zoom in"
+            data-testid={`zoom-in-${chartKey}`}
+            icon={Plus}
+            size="xs"
+            onClick={() => {
+              const zoomed = zoomAbout(window_, 0.5);
+              if (zoomed) onZoom(clampRange(zoomed, bounds));
+            }}
+          />
+          <ButtonUtility
+            aria-label="Zoom out"
+            tooltip="Zoom out"
+            data-testid={`zoom-out-${chartKey}`}
+            icon={Minus}
+            size="xs"
+            onClick={() => {
+              const zoomed = zoomAbout(window_, 2);
+              if (zoomed) onZoom(clampRange(zoomed, bounds));
+            }}
+          />
+        </div>
+        <ChartPanel
+          option={option}
+          groupId={groupId}
+          window={window_}
+          markers={markers}
+          theme={theme}
+          anchorSeriesId={series[0]?.key ?? null}
+          onZoom={onZoom}
+          sweepArmed={sweepArmed}
+          onSweep={onSweep}
+          testId={`chart-panel-${chartKey}`}
+        />
+      </div>
       {overflowCount !== null && (
         <p data-testid={`series-overflow-${chartKey}`} className="mt-1 text-xs text-quaternary">
           {/* Every capped chart in practice uses the default cap; non-default caps wouldn't be reflected here. */}

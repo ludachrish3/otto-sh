@@ -1,10 +1,16 @@
 # Untitled UI adoption — ship-and-note follow-ups
 
 Recorded while adopting Untitled UI as the dashboard's component foundation
-(`worktree-monitor-5b-followups`). Nothing here blocks the merge; item 1 is a
-real, pre-existing bug, left in place on purpose.
+(`worktree-monitor-5b-followups`). Nothing here blocks the merge; item 1 was a
+real, pre-existing bug, left in place on purpose at the time — since resolved
+(see below).
 
-1. **A real, pre-existing dark-mode chart bug — found by the visual gate,
+1. **RESOLVED — Monitor Plan 5c, Task 11** (`docs/superpowers/plans/2026-07-18-monitor-event-marking.md`):
+   `eventOverlay`'s markArea label now carries an explicit `color: theme.ink`,
+   so span labels are themed/legible in dark mode. See that task's report for
+   the regression pin. Original note kept below for context.
+
+   **A real, pre-existing dark-mode chart bug — found by the visual gate,
    deliberately NOT fixed here.** A SPAN event's ECharts `markArea` label
    renders illegible (white-on-white) in dark mode — worst where two spans
    overlap: the `kitchen-sink.json` fixture's "stress run" (09:25–09:35) and
@@ -60,7 +66,11 @@ real, pre-existing bug, left in place on purpose.
   degrade together. The fix belongs in **wire validation**, not in this guard.
   Pre-existing; neither introduced nor worsened by the range work.
 
-- **`EventsPanel.jump()` closes the panel even when the store refuses the jump.**
+- **RESOLVED — Monitor Plan 5c, Task 10** (`docs/superpowers/plans/2026-07-18-monitor-event-marking.md`):
+  `jump()` now shows a "Outside the session's time range" notice and stays
+  open instead of closing on the no-op. Original note kept below for context.
+
+  **`EventsPanel.jump()` closes the panel even when the store refuses the jump.**
   Now that `setRange` rejects an inverted range, a jump whose ±15min padding
   falls entirely outside the session bounds silently no-ops: the panel closes and
   nothing moves. Requires an event timestamp outside `[startMs, endMs]`, which

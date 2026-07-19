@@ -40,8 +40,9 @@ cookies are scoped by host but not by port — two `otto monitor` processes
 running on the same machine at different ports would otherwise clobber each
 other's cookie. It is `HttpOnly` (the SPA never needs to read it) and
 `SameSite=Lax`, which gives the mutating endpoints (`POST`/`PATCH`/`DELETE
-/api/event`, and whatever the roadmap adds) CSRF coverage for free — a
-cross-site request simply doesn't carry the cookie.
+/api/session/{id}/event[/{id}]`, `POST /api/session/{id}/event/{id}/end`,
+and whatever the roadmap adds) CSRF coverage for free — a cross-site
+request simply doesn't carry the cookie.
 
 An unkeyed, uncookied request gets a 403 shaped for its consumer rather
 than one generic error page: `/api/*` gets a small JSON body, because the

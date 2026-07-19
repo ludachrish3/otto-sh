@@ -147,7 +147,8 @@ def monitor(
         else:
             tls = None
 
-        asyncio.run(_serve_review(export, source.name, tls))
+        archive_path = source if source.suffix.lower() == ".db" else None
+        asyncio.run(_serve_review(export, source.name, tls, archive_path))
         return
 
     # ── Live mode ────────────────────────────────────────────────────────
@@ -341,9 +342,17 @@ def _resolve_monitor_tls() -> "MonitorSettings | None":
 
 
 async def _serve_review(
-    export: MonitorExport, source_name: str, tls: "MonitorSettings | None" = None
+    export: MonitorExport,
+    source_name: str,
+    tls: "MonitorSettings | None" = None,
+    archive_path: Path | None = None,
 ) -> None:
-    """Serve a previously saved format:1 export (no live collection)."""
+    """Serve a previously saved format:1 export (no live collection).
+
+    ``archive_path`` (Task 5) is the ``.db`` file event mutations persist to
+    when the review source is a SQLite archive; ``None`` for a ``.json``
+    source, which stays permanently read-only.
+    """
     from ..monitor.server import MonitorServer
 
     server = MonitorServer(
@@ -353,6 +362,7 @@ async def _serve_review(
         source_name=source_name,
         tls_cert=tls.tls_cert if tls else None,
         tls_key=tls.tls_key if tls else None,
+        archive_path=archive_path,
     )
     await server.serve()
 

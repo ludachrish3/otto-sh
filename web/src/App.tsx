@@ -23,6 +23,7 @@ import { SubjectPage } from "./pages/SubjectPage";
 import { AppBar } from "./shell/AppBar";
 import { DataWarningsBanner } from "./shell/DataWarningsBanner";
 import { EmptyState } from "./shell/EmptyState";
+import { EventEditor } from "./shell/EventEditor";
 import { ImportProvider } from "./shell/ImportExport";
 import { ReconnectingBanner } from "./shell/ReconnectingBanner";
 import { ReviewBar } from "./shell/ReviewBar";
@@ -46,6 +47,7 @@ function App() {
         {hasData ? (
           <Router hook={useHashLocation}>
             <CommandLayer />
+            <EventEditor />
             <ReviewBar />
             {importError !== null && (
               <div

@@ -10,6 +10,7 @@ import gc
 import threading
 import time
 from collections.abc import Coroutine
+from pathlib import Path
 from typing import Any, Generic, Literal, TypeVar
 
 from otto.models import LabSnapshot, MonitorExport
@@ -26,11 +27,11 @@ _STARTUP_TIMEOUT = 15.0
 class DashboardHarness(Generic[C]):
     """Serve *collector*'s dashboard on ``127.0.0.1:<ephemeral>``.
 
-    The ``mode``/``document``/``source_name``/``frame``/``lab`` keywords pass
-    straight through to :class:`~otto.monitor.server.MonitorServer` (defaults
-    match its own: an unadorned live server) — kept explicit and typed here,
-    rather than a generic ``**kwargs``, so ``ty`` still catches a caller
-    passing the wrong shape.
+    The ``mode``/``document``/``source_name``/``frame``/``lab``/``archive_path``
+    keywords pass straight through to :class:`~otto.monitor.server.MonitorServer`
+    (defaults match its own: an unadorned live server) — kept explicit and
+    typed here, rather than a generic ``**kwargs``, so ``ty`` still catches a
+    caller passing the wrong shape.
     """
 
     def __init__(
@@ -42,6 +43,7 @@ class DashboardHarness(Generic[C]):
         source_name: str | None = None,
         frame: SessionFrame | None = None,
         lab: LabSnapshot | None = None,
+        archive_path: Path | None = None,
     ) -> None:
         self.collector: C = collector
         self.server = MonitorServer(
@@ -53,6 +55,7 @@ class DashboardHarness(Generic[C]):
             source_name=source_name,
             frame=frame,
             lab=lab,
+            archive_path=archive_path,
         )
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None

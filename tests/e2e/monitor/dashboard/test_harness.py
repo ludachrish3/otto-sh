@@ -64,7 +64,7 @@ def _tolerate_missing_dist(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setattr(server_module, "_STATIC_DIR", static_dir)
 
 
-MODE_KEYS = {"mode", "source"}
+MODE_KEYS = {"mode", "source", "editable"}
 LOG_EVENT_ROW_KEYS = {"timestamp", "host", "tab", "fields"}
 EVENT_KEYS = {"id", "timestamp", "label", "source", "color", "dash", "end_timestamp"}
 # The SSE stream speaks format:1 (plan 5b, Task 2): every message is a
@@ -427,7 +427,9 @@ def test_sse_event_lifecycle_wire_contract(
         datetime.fromisoformat(created["events"][0]["timestamp"])
 
         live_dash.run(
-            live_dash.collector.update_event(ev.id, label="pin2", color="#445566", dash="dash")
+            live_dash.collector.update_event(
+                ev.id, label="pin2", color="#445566", dash="dash", timestamp=ev.timestamp
+            )
         )
         updated = _next_sse_payload(resp)
         assert set(updated) == SSE_EVENT_KEYS

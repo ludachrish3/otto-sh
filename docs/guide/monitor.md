@@ -183,6 +183,12 @@ interval — it looks like a valid archive but the dashboard renders it as
 one ungrouped, unit-less chart per series. That has no migration either;
 re-capture.
 
+**Editing.** A `.db` session archive opened this way is editable — the
+dashboard's marking controls write mutations straight back into the same
+file. A `.json` export has nowhere to persist a mutation, so it stays
+permanently read-only and those controls simply don't render for it; see
+[Marking events](#marking-events) below.
+
 ## Web dashboard
 
 In both modes, `otto monitor` serves a web server: it binds an OS-assigned
@@ -228,7 +234,8 @@ session:
   window actually contains.
 - **Per-subject charts.** Drilling into a host (or an element) stacks its
   metrics as synced chart panels — panning or zooming one follows the
-  rest of the stack, so a spike is easy to correlate across series.
+  rest of the stack, so a spike is easy to correlate across series. See
+  [Chart gestures](#chart-gestures) below for how to drive them.
 
   ![A subject page's synced chart stack: one panel per metric group and a
   kernel log table, all sharing one time axis with event
@@ -240,7 +247,11 @@ session:
   externally-sourced series carry a provenance badge).
 - **Events.** A reverse-chronological slide-over lists every event in the
   loaded document; clicking a row re-scopes the review bar's range to
-  that event's span.
+  that event's span (padded ±15 minutes) — or, if that padded range falls
+  entirely outside the session, shows a notice and stays open rather than
+  closing on a silent no-op. An editable session (see [Marking
+  events](#marking-events) below) adds marking controls to this same
+  panel.
 - **Multiple sessions.** A document spanning more than one session (a
   config change captured mid-run, or a `--db` archive several `--live --db`
   runs appended into, for example) exposes a session picker; each entry's
@@ -297,6 +308,78 @@ Tunnel discovery runs on the collector's own collection interval and scans
 the *whole lab*, independent of which hosts are actually monitored — a
 tunnel between two otherwise-unpolled hosts still appears, on the same
 cadence as every other metric tick.
+
+### Chart gestures
+
+Every per-subject chart (see [Per-subject charts](#web-dashboard) above)
+shares one gesture set, synced across the whole stack the same way panning
+and zooming already are:
+
+- **Drag** across a chart's plot area to zoom-select that range — release
+  and the whole stack re-windows to exactly what you dragged.
+- **Ctrl-drag** pans the current window instead of zooming, keeping its
+  width fixed. This is **Ctrl** on every platform, not the app's usual
+  per-platform modifier (⌘ on Mac, elsewhere Ctrl — see [Marking
+  events](#marking-events) below) — ECharts' own drag-modifier vocabulary
+  has no meta key, so Ctrl is the one pan gesture available on every
+  platform, and the guide follows the same choice rather than disagreeing
+  with itself across platforms.
+- **`+`/`-` buttons**, one pair per chart, step the zoom in or out around
+  the window's current center — the same path a drag-select feeds, so a
+  button click and a drag can never disagree about what "the current
+  window" means.
+- The **mouse wheel scrolls the page**, not the chart — it is never
+  hijacked for zooming.
+
+"Sweep span on chart" (see [Marking events](#marking-events) below) reuses
+the same drag gesture for a different purpose: while armed, the next drag
+opens the event editor pre-filled with the dragged range instead of
+zooming.
+
+### Marking events
+
+Any **editable** session — a live run, or a review opened from a `.db`
+session archive (see [Reviewing a capture](#reviewing-a-capture) above) —
+can mark events directly from the dashboard; a `.json` export has no
+marking controls at all.
+
+**From the app bar.** The **Mark now…** button (**⌘E** / **Ctrl E**) opens
+a small popover for a label and stamps a point event at the current time.
+Its dropdown adds:
+
+- **Start span…** / **End span** — opens the same label popover to open a
+  span, then closes it (server clock) once you choose **End span**; only
+  one span can be open at a time.
+- **Sweep span on chart** — arms a one-shot drag on the *next* chart you
+  drag across: instead of zoom-selecting, that drag becomes the span's
+  start and end and opens the full event editor pre-filled with it. Esc
+  cancels the armed gesture before you drag.
+- **Add event…** — opens the same editor with a blank draft, for typing
+  exact times instead of dragging or marking "now".
+
+The **Events** slide-over carries the same flows inline, so you never have
+to leave it: a live session's compose row has **Mark**/**Start**/**Stop**
+buttons; a review session (there's no "now" to stamp against) gets a
+single **Add event…** button instead. Each row also grows **Edit** and
+**End now** controls once the session is editable — **End now** stamps an
+open span's end without opening the editor. Both disappear entirely (not
+just disabled) on a read-only source, since there's nothing on the server
+for them to persist to.
+
+**The event editor**, opened from any of the flows above, has a **Label**,
+second-granularity **Start**/**End** date-time fields (clearing **End**
+turns a span back into a point event), a row of color swatches, and a
+**Dash** style select (`solid`, `dot`, `dash`, `longdash`, `dashdot`,
+`longdashdot`) that only affects a span's chart overlay. Editing or
+deleting an existing event reuses the same panel; deleting requires
+pressing **Delete** twice ("Really delete?") before it takes effect.
+
+**Live during a test run.** When a test uses `start_monitor()` (see
+[Monitoring from test suites](#monitoring-from-test-suites) below), both
+the automatic per-test start/pass/fail marks and any `add_monitor_event`
+call appear on that run's open dashboard the moment they're recorded —
+the same live `/api/stream` feed the metrics ride — so there's no reload
+needed to watch a test's marks land while it runs.
 
 ### Live status, pause, and reconnect
 
@@ -513,18 +596,28 @@ class TestPerformance(OttoSuite[_Options]):
 
     async def test_load(self, suite_options: _Options) -> None:
         await self.start_monitor(hosts=[host1, host2])
-        await self.add_monitor_event("Load started", color="green")
+        await self.add_monitor_event("Load started", color="#2ca02c")
 
         # ... run workload ...
 
-        await self.add_monitor_event("Load complete", color="red")
+        await self.add_monitor_event("Load complete", color="#d62728")
         await self.stop_monitor()
 ```
 
+`add_monitor_event` validates through the same seam every other marking
+surface uses (see [Marking events](#marking-events) below): `label` can't
+be blank, `color` must be a `#rrggbb` hex string (not a CSS color name),
+and `dash` must be one of the six styles the event editor offers — a
+violation raises a validation error immediately, before the collector is
+ever touched.
+
 When both per-suite and `--monitor`-driven session collectors are active,
-the per-suite collector takes precedence for that test.  Events appear as
-markers on the dashboard timeline, making it easy to correlate metric
-changes with test actions.
+the per-suite collector takes precedence for that test.  Events — the
+automatic per-test start/pass/fail marks and any `add_monitor_event` call
+— appear live on the dashboard timeline the moment they're recorded, making
+it easy to correlate metric changes with test actions; see [Marking
+events](#marking-events) for what the dashboard does with a mark once it's
+there.
 
 ## Built-in metrics
 

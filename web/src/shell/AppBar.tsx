@@ -30,6 +30,7 @@ import {
 } from "../ui/shortcuts";
 import { useUiStore } from "../ui/uiStore";
 import { exportLoadedDocument, openImportPicker } from "./ImportExport";
+import { MarkControl } from "./MarkControl";
 
 export function AppBar() {
   const hasData = useReviewStore((s) => s.rawMonitorSessions !== null);
@@ -58,6 +59,7 @@ export function AppBar() {
         {hasData && <SearchTrigger />}
       </div>
       <div className="flex items-center gap-2">
+        {mode === "live" && hasData && <MarkControl />}
         {mode === "live" && (
           <ButtonUtility
             aria-label={paused ? "Resume" : "Pause"}

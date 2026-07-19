@@ -8,7 +8,9 @@ import type { NormalizedSession, TimeRange } from "./exportDoc";
 import { seriesKey, sliceSeries } from "./seriesIndex";
 import { parseTs } from "./time";
 
-export interface SeriesNode {
+// Not exported: reachable through ChartNode.series; no external importer
+// exists, and knip enforces that (same rule as EVENT_COLOR_SWATCHES).
+interface SeriesNode {
   key: string;
   label: string;
   host: string;

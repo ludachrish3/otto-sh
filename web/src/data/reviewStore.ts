@@ -81,6 +81,13 @@ interface ReviewActions {
   clearImportError: () => void;
   /** Which server mode the shell booted against — set once from `/api/mode`. */
   setMode: (mode: "live" | "review" | null) => void;
+  /** From /api/mode (Plan 5c): whether this server accepts event mutations
+   * (live, or a .db-sourced review). Gates every marking affordance. */
+  setEditable: (editable: boolean) => void;
+  /** Append one message to the warnings channel (rendered by
+   * DataWarningsBanner) — the surface for mutation failures issued from
+   * chrome with no inline error slot of its own (palette commands). */
+  addWarning: (message: string) => void;
   /** SSE connection lifecycle (see data/stream.ts); irrelevant in review mode. */
   setConnection: (connection: "connecting" | "live" | "disconnected") => void;
   /** Live-only view control. Pause and "the user picked a custom range" are
@@ -119,6 +126,9 @@ export interface ReviewState {
   activeSessionId: string | null;
   range: TimeRange | null;
   mode: "live" | "review" | null;
+  /** From `/api/mode` (Plan 5c): whether this server accepts event
+   * mutations. Default false until the boot fetch resolves. */
+  editable: boolean;
   connection: "connecting" | "live" | "disconnected";
   /** The follow-the-tail window width in live mode, applied whenever
    * `range === null` (see `liveRange` in data/time.ts). Default 15 min. */
@@ -135,6 +145,7 @@ export const useReviewStore = create<ReviewState>()((set, get) => ({
   activeSessionId: null,
   range: null,
   mode: null,
+  editable: false,
   connection: "connecting",
   windowMs: 900_000,
   actions: {
@@ -255,6 +266,8 @@ export const useReviewStore = create<ReviewState>()((set, get) => ({
     },
     clearImportError: () => set({ importError: null }),
     setMode: (mode) => set({ mode }),
+    setEditable: (editable) => set({ editable }),
+    addWarning: (message) => set({ warnings: [...get().warnings, message] }),
     setConnection: (connection) => set({ connection }),
     togglePause: () => {
       const { mode, range, sessions, activeSessionId, windowMs } = get();

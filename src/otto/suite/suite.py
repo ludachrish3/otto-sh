@@ -4,11 +4,11 @@ import asyncio
 import contextlib
 import inspect
 import re
-from collections.abc import AsyncGenerator, Generator
+from collections.abc import AsyncGenerator, Coroutine, Generator
 from datetime import datetime, timedelta, timezone
 from logging import getLogger
 from pathlib import Path
-from typing import TYPE_CHECKING, Generic, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Generic, TypeVar, cast
 
 import pytest
 import pytest_asyncio
@@ -569,19 +569,40 @@ class OttoSuite(Generic[TOptions]):
         self._monitor_collector = None
         self._monitor_db = None
 
-    async def add_monitor_event(
+    def add_monitor_event(
         self,
         label: str,
         color: str = "#888888",
         dash: str = "dash",
-    ) -> None:
+    ) -> Coroutine[Any, Any, None]:
         """
         Record a labeled event on the live dashboard at the current time.
 
         Has no effect if monitoring is not active.  Honors a per-suite
         collector created by :meth:`start_monitor` first, then falls back to
         the session-wide collector started by ``otto test --monitor``.
+
+        Validates through the same seam as every other marking surface
+        (:class:`~otto.models.monitor.EventCreateBody`, Plan 5c) — a blank
+        label, a non-``#rrggbb`` color, or an unknown dash style raises
+        ``pydantic.ValidationError`` (a ``ValueError`` subclass) synchronously,
+        at the call site, before the collector is ever touched. Call sites
+        still ``await`` the result (``await self.add_monitor_event(...)``) —
+        this is a plain (non-``async``) method only so that raise happens
+        immediately even if the caller forgets to await it, rather than
+        silently vanishing into an unawaited coroutine.
         """
+        # Same rules as every other marking surface (Plan 5c, one seam):
+        # constructing the body IS the validation — pydantic.ValidationError
+        # (a ValueError) surfaces bad input at the call site instead of
+        # persisting a style the dashboard cannot render.
+        from ..models.monitor import EventCreateBody
+
+        EventCreateBody(label=label, color=color, dash=dash)
+        return self._record_monitor_event(label, color, dash)
+
+    async def _record_monitor_event(self, label: str, color: str, dash: str) -> None:
+        """Do the actual write; split out so validation above stays synchronous."""
         collector = self._active_monitor_collector()
         if collector is not None:
             await collector.add_event(

@@ -12,8 +12,17 @@ import { useUiStore } from "./uiStore";
 
 export function useGlobalShortcuts(commands: Command[]): void {
   const actions = useUiStore((s) => s.actions);
+  const sweepArmed = useUiStore((s) => s.sweepArmed);
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
+      // Plan 5c marking: Escape disarming an armed chart-sweep gesture takes
+      // priority over everything else below — including the palette/search
+      // chords — so it's checked first and unconditionally returns.
+      if (e.key === "Escape" && sweepArmed) {
+        e.preventDefault();
+        actions.disarmSweep();
+        return;
+      }
       if (matchesBinding(e, PALETTE_BINDING)) {
         e.preventDefault();
         actions.togglePalette();
@@ -41,5 +50,5 @@ export function useGlobalShortcuts(commands: Command[]): void {
     };
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [commands, actions]);
+  }, [commands, actions, sweepArmed]);
 }

@@ -5,13 +5,16 @@ Endpoints
 ---------
 GET  /              Serves the React dashboard's built index.html (``web/``, via ``make web``)
 GET  /static/...    Serves the built dist/ assets (JS/CSS bundles, etc.)
-GET  /api/mode      JSON ``{"mode": "live"|"review", "source": str|None}``
+GET  /api/mode      JSON ``{"mode": "live"|"review", "source": str|None, "editable": bool}``
 GET  /api/monitor_sessions  The ``format:1`` payload: the loaded archive in
 review mode, or a snapshot of the running session in live mode (a live
 session is just one whose ``end`` is still open). Both modes hydrate
 through this one endpoint.
 GET  /api/stream    SSE stream — pushes metric updates and events in real time
-POST /api/event     Record a manual event from the dashboard UI
+POST /api/session/{session_id}/event          Record a manual event
+POST /api/session/{session_id}/event/{id}/end Stamp a span event's end (server clock)
+PATCH /api/session/{session_id}/event/{id}    Edit an event's fields
+DELETE /api/session/{session_id}/event/{id}   Remove an event
 GET  /api/export/json  Download the current data as a ``format:1`` document
 """
 
@@ -36,9 +39,11 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from typing_extensions import override
 
 from ..models import LabSnapshot, MonitorExport
-from ..models.base import OttoModel
+from ..models.monitor import EventCreateBody, EventRecord, EventUpdateBody, SessionRecord
+from . import archive_edit
 from .collector import MetricCollector
-from .events import VALID_DASH_STYLES
+from .event_ops import EventValidationError, merge_update, resolve_create
+from .events import MonitorEvent
 from .export import build_live_export, document_json
 from .session import SessionFrame
 
@@ -114,18 +119,6 @@ class _RedactAccessLogQueryString(Filter):
 
 
 getLogger("uvicorn.access").addFilter(_RedactAccessLogQueryString())
-
-
-class _EventBody(OttoModel):
-    label: str
-    color: str = "#888888"
-    dash: str = "dash"
-
-
-class _EventUpdateBody(OttoModel):
-    label: str | None = None
-    color: str | None = None
-    dash: str | None = None
 
 
 def _cookie_name(port: int | None) -> str:
@@ -230,6 +223,7 @@ def _build_app(  # noqa: C901 — FastAPI route-factory; complexity is route cou
     source_name: str | None = None,
     frame: SessionFrame | None = None,
     lab: LabSnapshot | None = None,
+    archive_path: Path | None = None,
 ) -> FastAPI:
     dist_index = _dist_index_path()
 
@@ -238,27 +232,55 @@ def _build_app(  # noqa: C901 — FastAPI route-factory; complexity is route cou
 
     app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
 
-    # *document* never changes after construction, so serialize it once here
-    # rather than on every /api/monitor_sessions and /api/export/json hit —
-    # a --db archive's document can hold many sessions, and re-running
-    # model_dump_json() per request is pure waste for data that's already
-    # fixed.
-    _document_body = document_json(document) if document is not None else None
+    # The served review body is cached (a --db archive's document can hold many
+    # sessions; re-serializing per request is waste) but no longer immutable:
+    # a review-mode event mutation (Plan 5c) patches `document` in place and
+    # refreshes this cache. A dict holder rather than a bare nonlocal keeps the
+    # closure reads/writes obvious.
+    _document_state: dict[str, str | None] = {
+        "body": document_json(document) if document is not None else None
+    }
 
     def _require_document_body() -> str:
-        """Return the precomputed document body, or fail loud.
-
-        A ``mode="review"`` server with no document is a caller bug (the CLI
-        always builds and passes one before construction), not a runtime
-        condition to degrade gracefully for.
-        """
-        if _document_body is None:
+        body = _document_state["body"]
+        if body is None:
             raise RuntimeError(
                 "MonitorServer built with mode='review' but no document — this "
                 "is a programming error: the CLI always supplies one for "
                 "review mode."
             )
-        return _document_body
+        return body
+
+    def _document_session(session_id: str) -> "SessionRecord | None":
+        if document is None:
+            return None
+        return next((s for s in document.sessions if s.id == session_id), None)
+
+    def _find_document_event(session_id: str, event_id: int) -> EventRecord | None:
+        session = _document_session(session_id)
+        if session is None:
+            return None
+        return next((e for e in session.events if e.id == event_id), None)
+
+    def _patch_document_event(session_id: str, record: EventRecord) -> None:
+        """Upsert *record* into the served document and refresh the cached body."""
+        session = _document_session(session_id)
+        assert session is not None  # noqa: S101 — guard ran before any write
+        assert document is not None  # noqa: S101 — a session was found on it above
+        for i, existing in enumerate(session.events):
+            if existing.id == record.id:
+                session.events[i] = record
+                break
+        else:
+            session.events.append(record)
+        _document_state["body"] = document_json(document)
+
+    def _drop_document_event(session_id: str, event_id: int) -> None:
+        session = _document_session(session_id)
+        assert session is not None  # noqa: S101 — guard ran before any write
+        assert document is not None  # noqa: S101 — a session was found on it above
+        session.events = [e for e in session.events if e.id != event_id]
+        _document_state["body"] = document_json(document)
 
     def _require_live_snapshot_body() -> str:
         """Build the current live-session document body, or fail loud.
@@ -288,8 +310,21 @@ def _build_app(  # noqa: C901 — FastAPI route-factory; complexity is route cou
 
     @app.get("/api/mode")
     async def get_mode() -> JSONResponse:  # type: ignore[reportUnusedFunction]
-        """Report whether this server serves live data or a loaded review document."""
-        return JSONResponse({"mode": mode, "source": source_name})
+        """Report whether this server serves live data or a loaded review document.
+
+        ``editable`` tells the UI whether marking is possible at all: live
+        mode always is, and a review document is only if it was loaded from a
+        ``--db`` archive (Task 5) — an ``archive_path`` is set so a mutation
+        has somewhere to persist. A ``.json`` review has no such target and
+        stays permanently read-only.
+        """
+        return JSONResponse(
+            {
+                "mode": mode,
+                "source": source_name,
+                "editable": mode == "live" or archive_path is not None,
+            }
+        )
 
     @app.get("/api/monitor_sessions")
     async def monitor_sessions() -> Response:  # type: ignore[reportUnusedFunction]
@@ -346,37 +381,215 @@ def _build_app(  # noqa: C901 — FastAPI route-factory; complexity is route cou
 
         return EventSourceResponse(generator())
 
-    @app.post("/api/event")
-    async def add_event(body: _EventBody) -> JSONResponse:  # type: ignore[reportUnusedFunction]
-        if body.dash not in VALID_DASH_STYLES:
-            return JSONResponse(
-                {"error": f"Invalid dash style. Choose from: {sorted(VALID_DASH_STYLES)}"},
-                status_code=422,
+    def _event_response(event_dict: dict[str, object], status_code: int = 200) -> JSONResponse:
+        """Serialize a MonitorEvent.to_dict() as a format:1 EventRecord.
+
+        One reshape, exclude_none like every other format:1 surface — a point
+        event omits end_timestamp instead of carrying null (document_json's
+        contract, so the SSE echo and the HTTP response are field-identical).
+        """
+        record = EventRecord.model_validate(event_dict)
+        return JSONResponse(
+            record.model_dump(mode="json", exclude_none=True), status_code=status_code
+        )
+
+    def _mutation_guard(session_id: str) -> JSONResponse | None:
+        """404 for a session this server doesn't hold; 403 where editing is impossible."""
+        if mode == "live":
+            if frame is None or session_id != collector.session_id:
+                return JSONResponse({"error": "unknown session"}, status_code=404)
+            return None
+        if archive_path is None:
+            # A .json source has no persistence target (spec: .json review is
+            # read-only); the UI hides marking via /api/mode's editable flag.
+            return JSONResponse({"error": "this monitor source is read-only"}, status_code=403)
+        if _document_session(session_id) is None:
+            return JSONResponse({"error": "unknown session"}, status_code=404)
+        return None
+
+    @app.post("/api/session/{session_id}/event")
+    async def create_event(session_id: str, body: EventCreateBody) -> JSONResponse:  # type: ignore[reportUnusedFunction]
+        refused = _mutation_guard(session_id)
+        if refused is not None:
+            return refused
+        try:
+            timestamp, end_timestamp = resolve_create(body)
+        except EventValidationError as err:
+            return JSONResponse({"error": str(err)}, status_code=422)
+        if mode == "review":
+            assert archive_path is not None  # noqa: S101 — guard enforced this
+            try:
+                rowid = await asyncio.to_thread(
+                    archive_edit.insert_event,
+                    str(archive_path),
+                    session_id,
+                    timestamp=timestamp,
+                    end_timestamp=end_timestamp,
+                    label=body.label,
+                    source="manual",
+                    color=body.color,
+                    dash=body.dash,
+                )
+            except archive_edit.ArchiveLockedError as err:
+                return JSONResponse({"error": str(err)}, status_code=409)
+            record = EventRecord(
+                id=rowid,
+                timestamp=timestamp,
+                end_timestamp=end_timestamp,
+                label=body.label,
+                source="manual",
+                color=body.color,
+                dash=body.dash,
             )
+            _patch_document_event(session_id, record)
+            return JSONResponse(record.model_dump(mode="json", exclude_none=True), status_code=201)
         event = await collector.add_event(
             label=body.label,
+            timestamp=timestamp,
             color=body.color,
             dash=body.dash,
             source="manual",
+            end_timestamp=end_timestamp,
         )
-        return JSONResponse(event.to_dict(), status_code=201)
+        return _event_response(event.to_dict(), status_code=201)
 
-    @app.post("/api/event/{event_id}/end")
-    async def end_event(event_id: int) -> JSONResponse:  # type: ignore[reportUnusedFunction]
-        """Record the end time of a span event (uses server clock)."""
-        existing = next((e for e in collector.get_events() if e.id == event_id), None)
-        if existing is None:
-            return JSONResponse({"error": "Event not found"}, status_code=404)
+    async def _apply_live_update(
+        event_id: int, existing: "MonitorEvent", body: EventUpdateBody
+    ) -> JSONResponse:
+        """One merge rule for PATCH and /end — event_ops resolves, collector writes."""
+        try:
+            fields = merge_update(
+                body,
+                existing_label=existing.label,
+                existing_color=existing.color,
+                existing_dash=existing.dash,
+                existing_timestamp=existing.timestamp,
+                existing_end=existing.end_timestamp,
+            )
+        except EventValidationError as err:
+            return JSONResponse({"error": str(err)}, status_code=422)
         updated = await collector.update_event(
-            event_id=event_id,
-            label=existing.label,
-            color=existing.color,
-            dash=existing.dash,
-            end_timestamp=datetime.now(tz=timezone.utc),
+            event_id,
+            label=fields.label,
+            color=fields.color,
+            dash=fields.dash,
+            timestamp=fields.timestamp,
+            end_timestamp=fields.end_timestamp,
         )
         if updated is None:
             return JSONResponse({"error": "Event not found"}, status_code=404)
-        return JSONResponse(updated.to_dict())
+        return _event_response(updated.to_dict())
+
+    async def _apply_review_update(
+        session_id: str, event_id: int, existing: EventRecord, body: EventUpdateBody
+    ) -> JSONResponse:
+        """Review-mode mirror of ``_apply_live_update`` — same merge rule, archive write.
+
+        The SAME ``event_ops.merge_update`` Task 3 wired into the live path
+        (Chris's dedup directive): only the write target (archive_edit vs. the
+        collector) and the "existing event" source (the document's
+        ``EventRecord`` vs. a live ``MonitorEvent``) differ.
+        """
+        assert archive_path is not None  # noqa: S101 — guard enforced this
+        try:
+            fields = merge_update(
+                body,
+                existing_label=existing.label,
+                existing_color=existing.color,
+                existing_dash=existing.dash,
+                existing_timestamp=existing.timestamp,
+                existing_end=existing.end_timestamp,
+            )
+        except EventValidationError as err:
+            return JSONResponse({"error": str(err)}, status_code=422)
+        try:
+            updated = await asyncio.to_thread(
+                archive_edit.update_event,
+                str(archive_path),
+                session_id,
+                event_id,
+                timestamp=fields.timestamp,
+                end_timestamp=fields.end_timestamp,
+                label=fields.label,
+                color=fields.color,
+                dash=fields.dash,
+            )
+        except archive_edit.ArchiveLockedError as err:
+            return JSONResponse({"error": str(err)}, status_code=409)
+        if not updated:
+            return JSONResponse({"error": "Event not found"}, status_code=404)
+        record = EventRecord(
+            id=event_id,
+            timestamp=fields.timestamp,
+            end_timestamp=fields.end_timestamp,
+            label=fields.label,
+            source=existing.source,
+            color=fields.color,
+            dash=fields.dash,
+        )
+        _patch_document_event(session_id, record)
+        return JSONResponse(record.model_dump(mode="json", exclude_none=True))
+
+    @app.post("/api/session/{session_id}/event/{event_id}/end")
+    async def end_event(session_id: str, event_id: int) -> JSONResponse:  # type: ignore[reportUnusedFunction]
+        """Stamp a span's end with the server clock (the live Stop button)."""
+        refused = _mutation_guard(session_id)
+        if refused is not None:
+            return refused
+        # Ending IS a partial update (end_timestamp only) — same seam, not a
+        # second resolution path, in either mode.
+        stamp_end = EventUpdateBody(end_timestamp=datetime.now(tz=timezone.utc))
+        if mode == "review":
+            doc_existing = _find_document_event(session_id, event_id)
+            if doc_existing is None:
+                return JSONResponse({"error": "Event not found"}, status_code=404)
+            if doc_existing.end_timestamp is not None:
+                return JSONResponse({"error": "Event already ended"}, status_code=409)
+            return await _apply_review_update(session_id, event_id, doc_existing, stamp_end)
+        existing = next((e for e in collector.get_events() if e.id == event_id), None)
+        if existing is None:
+            return JSONResponse({"error": "Event not found"}, status_code=404)
+        if existing.end_timestamp is not None:
+            return JSONResponse({"error": "Event already ended"}, status_code=409)
+        return await _apply_live_update(event_id, existing, stamp_end)
+
+    @app.patch("/api/session/{session_id}/event/{event_id}")
+    async def update_event(  # type: ignore[reportUnusedFunction]
+        session_id: str, event_id: int, body: EventUpdateBody
+    ) -> JSONResponse:
+        refused = _mutation_guard(session_id)
+        if refused is not None:
+            return refused
+        if mode == "review":
+            doc_existing = _find_document_event(session_id, event_id)
+            if doc_existing is None:
+                return JSONResponse({"error": "Event not found"}, status_code=404)
+            return await _apply_review_update(session_id, event_id, doc_existing, body)
+        existing = next((e for e in collector.get_events() if e.id == event_id), None)
+        if existing is None:
+            return JSONResponse({"error": "Event not found"}, status_code=404)
+        return await _apply_live_update(event_id, existing, body)
+
+    @app.delete("/api/session/{session_id}/event/{event_id}")
+    async def delete_event(session_id: str, event_id: int) -> Response:  # type: ignore[reportUnusedFunction]
+        refused = _mutation_guard(session_id)
+        if refused is not None:
+            return refused
+        if mode == "review":
+            assert archive_path is not None  # noqa: S101 — guard enforced this
+            try:
+                deleted = await asyncio.to_thread(
+                    archive_edit.delete_event, str(archive_path), session_id, event_id
+                )
+            except archive_edit.ArchiveLockedError as err:
+                return JSONResponse({"error": str(err)}, status_code=409)
+            if not deleted:
+                return JSONResponse({"error": "Event not found"}, status_code=404)
+            _drop_document_event(session_id, event_id)
+            return Response(status_code=204)
+        if await collector.delete_event(event_id):
+            return Response(status_code=204)
+        return JSONResponse({"error": "Event not found"}, status_code=404)
 
     @app.get("/api/export/json")
     async def export_json() -> Response:  # type: ignore[reportUnusedFunction]
@@ -391,33 +604,6 @@ def _build_app(  # noqa: C901 — FastAPI route-factory; complexity is route cou
             media_type="application/json",
             headers={"Content-Disposition": 'attachment; filename="monitor-export.json"'},
         )
-
-    @app.delete("/api/event/{event_id}")
-    async def delete_event(event_id: int) -> Response:  # type: ignore[reportUnusedFunction]
-        if await collector.delete_event(event_id):
-            return Response(status_code=204)
-        return JSONResponse({"error": "Event not found"}, status_code=404)
-
-    @app.patch("/api/event/{event_id}")
-    async def update_event(event_id: int, body: _EventUpdateBody) -> JSONResponse:  # type: ignore[reportUnusedFunction]
-        if body.dash is not None and body.dash not in VALID_DASH_STYLES:
-            return JSONResponse(
-                {"error": f"Invalid dash style. Choose from: {sorted(VALID_DASH_STYLES)}"},
-                status_code=422,
-            )
-        # Fetch existing event to fill in unchanged fields
-        existing = next((e for e in collector.get_events() if e.id == event_id), None)
-        if existing is None:
-            return JSONResponse({"error": "Event not found"}, status_code=404)
-        updated = await collector.update_event(
-            event_id=event_id,
-            label=body.label if body.label is not None else existing.label,
-            color=body.color if body.color is not None else existing.color,
-            dash=body.dash if body.dash is not None else existing.dash,
-        )
-        if updated is None:
-            return JSONResponse({"error": "Event not found"}, status_code=404)
-        return JSONResponse(updated.to_dict())
 
     return app
 
@@ -474,7 +660,10 @@ class MonitorServer:
     * ``mode="review"`` — serves a pre-built ``document`` (a
       ``format:1`` :class:`~otto.models.monitor.MonitorExport`, e.g. read back
       from a ``--db`` session archive). ``source_name`` is the human-facing
-      origin (a file path) reported by ``/api/mode``.
+      origin (a file path) reported by ``/api/mode``. ``archive_path`` (Task
+      5), when given, is a ``.db`` archive event mutations persist to and
+      patch ``document`` in place for; omitted (the ``.json`` case) leaves
+      review mode permanently read-only.
 
     Call ``await serve()`` from an async context to run the server.
     Call ``stop()`` from any thread to trigger a graceful shutdown, or
@@ -482,7 +671,7 @@ class MonitorServer:
     waiting for them to drain.
     """
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 — two construction modes (live/review) share one wide API
         self,
         collector: MetricCollector,
         host: str = "0.0.0.0",  # noqa: S104 — intentional all-interface bind
@@ -495,6 +684,7 @@ class MonitorServer:
         lab: LabSnapshot | None = None,
         tls_cert: Path | None = None,
         tls_key: Path | None = None,
+        archive_path: Path | None = None,
     ) -> None:
         self._collector = collector
         self._bind_host = host
@@ -506,6 +696,7 @@ class MonitorServer:
         self._lab = lab
         self._tls_cert = tls_cert
         self._tls_key = tls_key
+        self._archive_path = archive_path
         self._key = secrets.token_urlsafe(16)
         # The collector has no notion of sessions; the server holds the frame, so
         # it stamps the id here — one place, so no construction site can forget.
@@ -520,6 +711,7 @@ class MonitorServer:
             source_name=source_name,
             frame=frame,
             lab=lab,
+            archive_path=archive_path,
         )
         self._server: uvicorn.Server | None = None
         self._loop: asyncio.AbstractEventLoop | None = None

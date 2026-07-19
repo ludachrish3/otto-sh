@@ -57,6 +57,7 @@ function resetStore() {
     activeSessionId: null,
     range: null,
     mode: null,
+    editable: false,
     connection: "connecting",
   });
 }
@@ -80,7 +81,7 @@ describe("bootstrapFromServer's resync (Finding I3)", () => {
     const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
       const url = String(input);
       if (url === "/api/mode") {
-        return Promise.resolve(jsonResponse({ mode: "live", source: null }));
+        return Promise.resolve(jsonResponse({ mode: "live", source: null, editable: true }));
       }
       if (url === "/api/monitor_sessions") {
         calls += 1;

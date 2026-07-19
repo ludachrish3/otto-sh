@@ -25,6 +25,7 @@ function resetStore() {
     activeSessionId: null,
     range: null,
     mode: null,
+    editable: false,
     connection: "connecting",
   });
 }
@@ -77,7 +78,7 @@ describe("bootstrapFromServer", () => {
     const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
       const url = String(input);
       if (url === "/api/mode") {
-        return Promise.resolve(jsonResponse({ mode: "live", source: null }));
+        return Promise.resolve(jsonResponse({ mode: "live", source: null, editable: true }));
       }
       if (url === "/api/monitor_sessions") {
         return Promise.resolve(new Response(MINIMAL, { status: 200 }));
@@ -90,6 +91,8 @@ describe("bootstrapFromServer", () => {
     const state = useReviewStore.getState();
     expect(state.mode).toBe("live");
     expect(state.sessions).toHaveLength(1);
+    // Plan 5c: /api/mode's `editable` must reach the store, not just parse.
+    expect(state.editable).toBe(true);
   });
 
   // Finding 1 (Plan 5b Task 9 review): a live server with nothing recording
@@ -112,7 +115,7 @@ describe("bootstrapFromServer", () => {
     const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
       const url = String(input);
       if (url === "/api/mode") {
-        return Promise.resolve(jsonResponse({ mode: "live", source: null }));
+        return Promise.resolve(jsonResponse({ mode: "live", source: null, editable: true }));
       }
       if (url === "/api/monitor_sessions") {
         return Promise.resolve(new Response(null, { status: 404 }));
@@ -131,7 +134,12 @@ describe("bootstrapFromServer", () => {
     const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
       const url = String(input);
       if (url === "/api/mode") {
-        return Promise.resolve(jsonResponse({ mode: "review", source: "run.sqlite" }));
+        // editable:true here (not the store's own false default) so the
+        // assertion below actually proves setEditable ran, rather than
+        // trivially matching the initial state.
+        return Promise.resolve(
+          jsonResponse({ mode: "review", source: "run.sqlite", editable: true }),
+        );
       }
       if (url === "/api/monitor_sessions") {
         return Promise.resolve(new Response(MINIMAL, { status: 200 }));
@@ -143,6 +151,8 @@ describe("bootstrapFromServer", () => {
     const state = useReviewStore.getState();
     expect(state.sessions).toHaveLength(1);
     expect(state.sourceName).toBe("run.sqlite");
+    // Plan 5c: a review-mode .db archive can be editable too (Task 5).
+    expect(state.editable).toBe(true);
   });
 
   // The crux of the soft-fail contract, stated as its NEGATIVE half: a 200
@@ -156,7 +166,7 @@ describe("bootstrapFromServer", () => {
     const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
       const url = String(input);
       if (url === "/api/mode") {
-        return Promise.resolve(jsonResponse({ mode: "review", source: "run.db" }));
+        return Promise.resolve(jsonResponse({ mode: "review", source: "run.db", editable: false }));
       }
       // 200, valid JSON, but not a format:1 document — parseExportDocument
       // rejects it (unsupported format), exactly as it would for a bad file.
@@ -173,7 +183,9 @@ describe("bootstrapFromServer", () => {
     const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
       const url = String(input);
       if (url === "/api/mode") {
-        return Promise.resolve(jsonResponse({ mode: "review", source: "run.sqlite" }));
+        return Promise.resolve(
+          jsonResponse({ mode: "review", source: "run.sqlite", editable: false }),
+        );
       }
       return Promise.resolve(new Response(null, { status: 500 }));
     });

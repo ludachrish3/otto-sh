@@ -1,3 +1,4 @@
+import type { KeyboardEvent } from "react";
 import { Label, TextField } from "react-aria-components";
 
 import { InputBase } from "@/components/base/input/input";
@@ -16,6 +17,12 @@ import { InputBase } from "@/components/base/input/input";
 // web/README.md's never-hand-edit rule — see Task 3's report. (The review
 // range's own from/to fields moved off this component entirely in Task 7 —
 // RangePicker.tsx uses vendored `InputDateBase` at minute granularity.)
+//
+// `onKeyDown` (Plan 5c Task 8): MarkControl's label field submits on Enter —
+// InputBase already accepts (and spreads) arbitrary native input props
+// including onKeyDown; this wrapper just needed to expose it in its own
+// whitelist. Extending rather than hand-rolling a second input here per this
+// task's brief (TextInput is authored, not vendored).
 export function TextInput({
   label,
   type = "text",
@@ -24,6 +31,7 @@ export function TextInput({
   testId,
   shortcut,
   inputRef,
+  onKeyDown,
 }: {
   label: string;
   type?: string;
@@ -34,6 +42,7 @@ export function TextInput({
   shortcut?: string;
   /** Ref callback to the real <input> (searchFocus registration). */
   inputRef?: (el: HTMLInputElement | null) => void;
+  onKeyDown?: (e: KeyboardEvent<HTMLInputElement>) => void;
 }) {
   return (
     <TextField value={value} onChange={onChange} className="inline-flex items-center gap-1.5">
@@ -45,6 +54,7 @@ export function TextInput({
         wrapperClassName="w-auto"
         shortcut={shortcut}
         ref={inputRef}
+        onKeyDown={onKeyDown}
       />
     </TextField>
   );

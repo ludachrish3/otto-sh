@@ -143,15 +143,19 @@ async def test_performance_under_load(self, suite_options) -> None:
     hosts = [get_host("server1"), get_host("server2")]
     await self.start_monitor(hosts=hosts)
 
-    await self.add_monitor_event("load started", color="green")
+    await self.add_monitor_event("load started", color="#2ca02c")
     # ... run workload ...
-    await self.add_monitor_event("load complete", color="red")
+    await self.add_monitor_event("load complete", color="#d62728")
 
     await self.stop_monitor()
 ```
 
 Events appear as vertical markers on the dashboard timeline, making it
-easy to correlate metric spikes with specific test actions.
+easy to correlate metric spikes with specific test actions. `label` can't
+be blank, `color` must be a `#rrggbb` hex string (not a CSS color name),
+and `dash` must be one of the six styles the dashboard's event editor
+offers — `add_monitor_event` validates all three immediately and raises
+rather than persisting an unrenderable event.
 
 ## Per-test artifact directories
 

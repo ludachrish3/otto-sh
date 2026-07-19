@@ -1,9 +1,10 @@
 // web/src/ui/commands.test.tsx
-import { renderHook } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { renderHook, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { useReviewStore } from "../data/reviewStore";
 import { useCommands } from "./commands";
+import { MARK_NOW_BINDING } from "./shortcuts";
 import { useUiStore } from "./uiStore";
 
 // Minimal session shape the registry reads: lab.hosts (id/board/slot),
@@ -44,8 +45,18 @@ afterEach(() => {
     mode: null,
     range: null,
     windowMs: 900_000,
+    editable: false,
+    warnings: [],
   });
-  useUiStore.setState({ paletteOpen: false, theme: "light" });
+  useUiStore.setState({
+    paletteOpen: false,
+    theme: "light",
+    eventEditor: null,
+    sweepArmed: false,
+    openSpan: null,
+    markPopover: null,
+  });
+  vi.unstubAllGlobals();
   window.location.hash = "";
 });
 
@@ -109,5 +120,151 @@ describe("useCommands — live mode", () => {
     const { result } = renderHook(() => useCommands());
     result.current.find((c) => c.id === "nav-host-test1")?.run();
     expect(window.location.hash).toBe("#/host/test1");
+  });
+});
+
+const MARKING_IDS = [
+  "action-add-event",
+  "action-sweep-span",
+  "action-mark-now",
+  "action-start-span",
+  "action-end-span",
+];
+
+describe("useCommands — marking rows (Plan 5c)", () => {
+  it("live + editable: all five marking rows exist with the stated ids/labels/enabled states", () => {
+    seedStore("live");
+    useReviewStore.setState({ editable: true });
+    const { result } = renderHook(() => useCommands());
+    const byId = (id: string) => result.current.find((c) => c.id === id);
+    expect(byId("action-add-event")).toMatchObject({ label: "Add event…", enabled: true });
+    expect(byId("action-sweep-span")).toMatchObject({
+      label: "Sweep span on chart",
+      enabled: true,
+    });
+    expect(byId("action-mark-now")).toMatchObject({
+      label: "Mark now…",
+      enabled: true,
+      binding: MARK_NOW_BINDING,
+    });
+    expect(byId("action-start-span")).toMatchObject({ label: "Start span…", enabled: true });
+    // No open span yet -> End span is listed but disabled.
+    expect(byId("action-end-span")).toMatchObject({ label: "End span", enabled: false });
+  });
+
+  it("action-end-span is enabled only while openSpan matches the active session", () => {
+    seedStore("live");
+    useReviewStore.setState({ editable: true });
+    useUiStore.setState({ openSpan: { sessionId: "s1", eventId: 3 } });
+    const { result } = renderHook(() => useCommands());
+    expect(result.current.find((c) => c.id === "action-end-span")?.enabled).toBe(true);
+
+    useUiStore.setState({ openSpan: { sessionId: "other-session", eventId: 3 } });
+    const { result: r2 } = renderHook(() => useCommands());
+    expect(r2.current.find((c) => c.id === "action-end-span")?.enabled).toBe(false);
+  });
+
+  it("editable + review mode: only action-add-event/action-sweep-span appear", () => {
+    seedStore(null);
+    useReviewStore.setState({ editable: true, mode: "review" });
+    const { result } = renderHook(() => useCommands());
+    const ids = result.current.map((c) => c.id);
+    expect(ids).toContain("action-add-event");
+    expect(ids).toContain("action-sweep-span");
+    expect(ids).not.toContain("action-mark-now");
+    expect(ids).not.toContain("action-start-span");
+    expect(ids).not.toContain("action-end-span");
+  });
+
+  it("not editable: none of the marking rows appear, in any mode", () => {
+    seedStore("live");
+    useReviewStore.setState({ editable: false });
+    const { result } = renderHook(() => useCommands());
+    const ids = result.current.map((c) => c.id);
+    for (const id of MARKING_IDS) expect(ids).not.toContain(id);
+  });
+
+  it("action-add-event opens the event editor with a blank draft anchored to the session", () => {
+    seedStore("live");
+    useReviewStore.setState({ editable: true });
+    const { result } = renderHook(() => useCommands());
+    result.current.find((c) => c.id === "action-add-event")?.run();
+    expect(useUiStore.getState().eventEditor).toEqual({
+      kind: "draft",
+      draft: {
+        sessionId: "s1",
+        timestampMs: 60_000,
+        endTimestampMs: null,
+        label: "",
+        color: "#888888",
+        dash: "dash",
+      },
+    });
+  });
+
+  it("action-sweep-span arms the sweep", () => {
+    seedStore("live");
+    useReviewStore.setState({ editable: true });
+    const { result } = renderHook(() => useCommands());
+    result.current.find((c) => c.id === "action-sweep-span")?.run();
+    expect(useUiStore.getState().sweepArmed).toBe(true);
+  });
+
+  it("action-mark-now and action-start-span each open the mark popover in their own mode", () => {
+    seedStore("live");
+    useReviewStore.setState({ editable: true });
+    const { result } = renderHook(() => useCommands());
+    result.current.find((c) => c.id === "action-mark-now")?.run();
+    expect(useUiStore.getState().markPopover).toBe("mark");
+    result.current.find((c) => c.id === "action-start-span")?.run();
+    expect(useUiStore.getState().markPopover).toBe("start");
+  });
+
+  it("action-end-span ends the open span through the API and clears it on success", async () => {
+    seedStore("live");
+    useReviewStore.setState({ editable: true });
+    useUiStore.setState({ openSpan: { sessionId: "s1", eventId: 3 } });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            id: 3,
+            timestamp: "2026-07-18T12:00:00+00:00",
+            label: "span",
+            source: "manual",
+            color: "#888888",
+            dash: "dash",
+            end_timestamp: "2026-07-18T12:05:00+00:00",
+          }),
+          { status: 200 },
+        ),
+      ),
+    );
+    const { result } = renderHook(() => useCommands());
+    result.current.find((c) => c.id === "action-end-span")?.run();
+    await waitFor(() => expect(useUiStore.getState().openSpan).toBeNull());
+    expect(useReviewStore.getState().warnings).toEqual([]);
+  });
+
+  it("a failed action-end-span surfaces a warning via addWarning rather than throwing", async () => {
+    seedStore("live");
+    useReviewStore.setState({ editable: true });
+    useUiStore.setState({ openSpan: { sessionId: "s1", eventId: 3 } });
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValue(
+          new Response(JSON.stringify({ error: "archive is locked" }), { status: 409 }),
+        ),
+    );
+    const { result } = renderHook(() => useCommands());
+    result.current.find((c) => c.id === "action-end-span")?.run();
+    await waitFor(() => expect(useReviewStore.getState().warnings.length).toBe(1));
+    expect(useReviewStore.getState().warnings[0]).toContain("End span failed");
+    expect(useReviewStore.getState().warnings[0]).toContain("archive is locked");
+    // The failure does not clear the still-open span.
+    expect(useUiStore.getState().openSpan).toEqual({ sessionId: "s1", eventId: 3 });
   });
 });

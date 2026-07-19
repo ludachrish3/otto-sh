@@ -96,6 +96,17 @@ export function zoomToRange(startPct: number, endPct: number, window: TimeRange)
   };
 }
 
+/** `+`/`-` zoom buttons (Task 11): new span = span×factor about the window's
+ * own center — factor 0.5 zooms in, 2 zooms out. Returns null (skip) once the
+ * zoomed-in span would fall below the same 1000ms floor ChartPanel's drag-zoom
+ * debounce already treats as noise (MIN_ZOOM_DELTA_MS). */
+export function zoomAbout(window: TimeRange, factor: number): TimeRange | null {
+  const span = (window.to - window.from) * factor;
+  if (span < 1000) return null; // MIN_ZOOM_DELTA_MS: below this a zoom is noise
+  const center = (window.from + window.to) / 2;
+  return { from: Math.round(center - span / 2), to: Math.round(center + span / 2) };
+}
+
 /** Vertical pixel step between stacked markArea labels — see `assignLanes`. */
 const LANE_LABEL_STEP_PX = 14;
 
@@ -149,7 +160,7 @@ export interface EventOverlay {
 
 export function eventOverlay(
   events: EventMarker[],
-  theme: Pick<ChartTheme, "muted">,
+  theme: Pick<ChartTheme, "muted" | "ink">,
 ): EventOverlay {
   const markLine = {
     symbol: "none",
@@ -179,9 +190,15 @@ export function eventOverlay(
         itemStyle: { color: e.color, opacity: 0.12 },
         // Stack overlapping events' labels instead of colliding: each lane
         // sits LANE_LABEL_STEP_PX further down from the region's top edge.
-        // Position-only — text, colour and the markLine path above are
-        // untouched (a layout fix, not a restyle).
-        label: { position: ["50%", lanes[i] * LANE_LABEL_STEP_PX] },
+        // color/fontSize (Task 11): markArea labels used to inherit
+        // ECharts' default label color regardless of theme — illegible
+        // against a dark surface. theme.ink is the same token buildStackOption's
+        // tooltip textStyle already uses for dark-mode-safe text.
+        label: {
+          position: ["50%", lanes[i] * LANE_LABEL_STEP_PX],
+          color: theme.ink,
+          fontSize: 10,
+        },
       },
       { xAxis: e.toMs as number },
     ]),
@@ -201,7 +218,7 @@ export function eventOverlay(
 export function windowPatch(args: {
   window: TimeRange;
   events: EventMarker[];
-  theme: Pick<ChartTheme, "muted">;
+  theme: Pick<ChartTheme, "muted" | "ink">;
   anchorSeriesId: string | null;
 }): Record<string, unknown> {
   const { window, events, theme, anchorSeriesId } = args;
@@ -251,9 +268,65 @@ export function buildStackOption(args: {
       axisLabel: { color: theme.muted, fontSize: 10 },
       splitLine: { lineStyle: { color: theme.grid, width: 1 } },
     },
+    // Task 11: the wheel is freed for page scroll (it used to fight it —
+    // zoomOnMouseWheel/moveOnMouseWheel both false), and pan is Ctrl-drag —
+    // ECharts' modifier set has no meta key, so Ctrl is the one pan gesture
+    // available on every platform (documented in Task 14). +/- buttons
+    // (SubjectPage) cover zoom instead of the wheel.
+    //
+    // `zoomLock: true` (Task 13, found only by driving a REAL browser — the
+    // vitest suite mocks ECharts entirely and can't see this): an "inside"
+    // dataZoom's `zoomOnMouseWheel`/`moveOnMouseWheel` flags only gate
+    // whether it actually DISPATCHES a zoom/pan action on wheel — they do
+    // NOT stop it from claiming the wheel event in the first place.
+    // ECharts' RoamController (helper/RoamController.js) enables its
+    // mousewheel listener with a HARDCODED `{zoomOnMouseWheel: true, ...}`
+    // whenever a dataZoom's own `controlType` resolves to `true` (full
+    // roam) — our per-model `false`s are consulted only deep inside that
+    // listener, by which point it has already called `preventDefault()` +
+    // `stopPropagation()` on the wheel event (RoamController's own code
+    // comment even warns "if 'zoom' is not needed, 'zoom' should not be
+    // enabled, otherwise default mousewheel behaviour (scroll page) will be
+    // disabled" — but nothing here disables it without this flag). Setting
+    // `zoomLock` makes `controlType` resolve to `'move'` instead, which
+    // installs ONLY the drag-pan (mousedown/mousemove/mouseup) listeners,
+    // never the wheel one — the wheel then never leaves the browser's
+    // native scroll at all. Dropping the roam controller's OWN drag-zoom
+    // capability costs nothing: a global-armed brush cursor (below) already
+    // intercepts every plain drag before dataZoom's roam controller would
+    // ever see it.
+    //
+    // `moveOnMouseMove: "ctrl"` below is now DECLARATIVE only, not the
+    // actual pan mechanism — a second Task 13 finding: this dataZoom's own
+    // percent-range pan is structurally a no-op here regardless (its
+    // `[0, 100]` always equals `xAxis.min`/`max`'s current window, so there
+    // is never room within its own extent to shift). ChartPanel.tsx
+    // implements the real Ctrl-drag pan by hand (see its init effect); this
+    // flag is left in place as the still-accurate statement of intent/
+    // config surface, not as working code — removing it would not change
+    // any observed behavior.
     dataZoom: [
-      { type: "inside", filterMode: "none", zoomOnMouseWheel: true, moveOnMouseMove: false },
+      {
+        type: "inside",
+        filterMode: "none",
+        zoomOnMouseWheel: false,
+        moveOnMouseMove: "ctrl",
+        moveOnMouseWheel: false,
+        zoomLock: true,
+      },
     ],
+    // Task 12 (Monitor Plan 5c): a `lineX` brush select, armed by ChartPanel
+    // via takeGlobalCursor — dragging across the plot draws this ghost
+    // rectangle, and brushEnd routes the selected range to either a
+    // zoom-select or a sweep-to-mark, depending on whether marking is armed.
+    brush: {
+      xAxisIndex: 0,
+      // Ghost styling for the in-flight sweep; series stay fully painted
+      // (outOfBrush colorAlpha 1 — brushing here SELECTS a range, it never
+      // filters data).
+      brushStyle: { borderWidth: 1, color: "rgba(124, 92, 255, 0.08)", borderColor: "#7c5cff" },
+      outOfBrush: { colorAlpha: 1 },
+    },
     series: series.map((s, i) => ({
       id: s.key,
       name: s.name,

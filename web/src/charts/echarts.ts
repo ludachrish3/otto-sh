@@ -3,6 +3,7 @@
 // management (the spec's confirmed choice) — no echarts-for-react.
 import { LineChart } from "echarts/charts";
 import {
+  BrushComponent,
   DataZoomInsideComponent,
   GridComponent,
   MarkAreaComponent,
@@ -19,6 +20,7 @@ echartsCore.use([
   DataZoomInsideComponent,
   MarkLineComponent,
   MarkAreaComponent,
+  BrushComponent,
   CanvasRenderer,
 ]);
 

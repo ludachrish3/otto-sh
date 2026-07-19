@@ -21,7 +21,7 @@ import sys
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -30,6 +30,7 @@ from otto.context import OttoContext, reset_context, set_context
 from otto.host.login_proxy import Cred
 from otto.host.unix_host import UnixHost
 from otto.models import MonitorExport
+from otto.models.monitor import MonitorSessionFragment
 from otto.monitor.collector import MetricCollector
 from otto.monitor.db import MetricDB, read_sessions
 from otto.monitor.export import build_db_export
@@ -463,28 +464,32 @@ class TestReset(OttoSuite):
 # ── _active_monitor_collector accessor ─────────────────────────────────────────
 
 
+def _make_suite(tmp_path: Path):
+    """A bare, otherwise-unconfigured ``OttoSuite`` — the shared arrangement for
+    every test below that needs a suite instance with a settable
+    ``_monitor_collector`` but no other otto machinery (lab, host pool, ...).
+    """
+    from otto.suite.suite import OttoSuite
+
+    class _Suite(OttoSuite):
+        pass
+
+    ctx = OttoContext(lab=Lab(name="_test_stub"), output_dir=tmp_path)
+    token = set_context(ctx)
+    try:
+        s = _Suite()
+        s.setup_method()
+    finally:
+        reset_context(token)
+    return s
+
+
 class TestActiveMonitorCollector:
     """Per-suite ``_monitor_collector`` takes precedence; falls back to the
     class-level session collector set by ``OttoPlugin._otto_session_monitor``."""
 
-    @staticmethod
-    def _make_suite(tmp_path: Path):
-        from otto.suite.suite import OttoSuite
-
-        class _Suite(OttoSuite):
-            pass
-
-        ctx = OttoContext(lab=Lab(name="_test_stub"), output_dir=tmp_path)
-        token = set_context(ctx)
-        try:
-            s = _Suite()
-            s.setup_method()
-        finally:
-            reset_context(token)
-        return s
-
     def test_returns_none_when_no_monitor_active(self, tmp_path: Path):
-        s = self._make_suite(tmp_path)
+        s = _make_suite(tmp_path)
         assert s._active_monitor_collector() is None
 
     def test_per_suite_collector_takes_precedence(self, tmp_path: Path):
@@ -494,7 +499,7 @@ class TestActiveMonitorCollector:
         session = MagicMock(name="session")
         try:
             OttoSuite._session_monitor_collector = session
-            s = self._make_suite(tmp_path)
+            s = _make_suite(tmp_path)
             s._monitor_collector = per_suite
             assert s._active_monitor_collector() is per_suite
         finally:
@@ -506,10 +511,89 @@ class TestActiveMonitorCollector:
         session = MagicMock(name="session")
         try:
             OttoSuite._session_monitor_collector = session
-            s = self._make_suite(tmp_path)
+            s = _make_suite(tmp_path)
             assert s._active_monitor_collector() is session
         finally:
             OttoSuite._session_monitor_collector = None
+
+
+# ── add_monitor_event: validates through the shared event seam (Plan 5c Task 5b) ──
+
+
+class TestAddMonitorEvent:
+    """Library marks (``suite.add_monitor_event``) obey the same validation as
+    web marks — ``EventCreateBody`` is the one seam (Chris's dedup directive).
+
+    Validation must fire synchronously, at the call site, before the
+    collector is ever touched: ``add_monitor_event`` is normally awaited
+    (``await self.add_monitor_event(...)``, see ``docs/guide/monitor.md``),
+    but a bad label/color/dash must raise even for a caller that never gets
+    that far — calling it and discarding the result without awaiting is
+    exactly what a fire-and-forget mistake looks like, and it must still be
+    loud.
+    """
+
+    def test_add_monitor_event_rejects_invalid_dash_loud(self, tmp_path: Path) -> None:
+        """Library marks obey the same validation as web marks (one seam)."""
+        s = _make_suite(tmp_path)
+        collector = MagicMock(name="collector")
+        s._monitor_collector = collector
+        with pytest.raises(ValueError, match="dash"):
+            s.add_monitor_event("checkpoint", dash="wavy")
+        collector.add_event.assert_not_called()
+
+    def test_add_monitor_event_rejects_non_hex_color(self, tmp_path: Path) -> None:
+        s = _make_suite(tmp_path)
+        collector = MagicMock(name="collector")
+        s._monitor_collector = collector
+        with pytest.raises(ValueError, match="color"):
+            s.add_monitor_event("checkpoint", color="red")
+        collector.add_event.assert_not_called()
+
+    def test_add_monitor_event_rejects_blank_label(self, tmp_path: Path) -> None:
+        s = _make_suite(tmp_path)
+        collector = MagicMock(name="collector")
+        s._monitor_collector = collector
+        with pytest.raises(ValueError, match="label"):
+            s.add_monitor_event("   ")
+        collector.add_event.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_add_monitor_event_valid_call_still_records(self, tmp_path: Path) -> None:
+        """Behaviorally unchanged for valid input: the collector still records it."""
+        s = _make_suite(tmp_path)
+        collector = MagicMock(name="collector")
+        collector.add_event = AsyncMock(return_value=None)
+        s._monitor_collector = collector
+        await s.add_monitor_event("checkpoint", color="#112233", dash="dot")
+        collector.add_event.assert_awaited_once_with(
+            label="checkpoint", color="#112233", dash="dot", source="user_code"
+        )
+
+    @pytest.mark.asyncio
+    async def test_suite_monitor_event_reaches_stream_subscribers(self, tmp_path: Path) -> None:
+        """A suite-emitted event must arrive as a format:1 fragment in real time
+        -- the acceptance criterion behind "events appear while otto test
+        --monitor runs" (spec 2026-07-18 Real-time suite events).
+
+        Unlike the MagicMock arrangement above (which only proves
+        ``add_event`` was *called* the right way), this uses a REAL
+        ``MetricCollector`` so the assertion runs through its actual
+        ``subscribe()``/``_publish()`` plumbing -- the same path a real
+        dashboard SSE client reads from.
+        """
+        s = _make_suite(tmp_path)
+        collector = MetricCollector(hosts=[])
+        collector.session_id = "s-suite-live"
+        s._monitor_collector = collector
+
+        q = collector.subscribe()
+        await s.add_monitor_event("checkpoint", color="#112233", dash="dot")
+        payload = q.get_nowait()
+        frag = MonitorSessionFragment.model_validate(payload)
+        assert frag.events
+        assert frag.events[0].label == "checkpoint"
+        assert frag.session == collector.session_id
 
 
 # ── start_monitor(db_path=...) / stop_monitor(): real archive shape ─────────

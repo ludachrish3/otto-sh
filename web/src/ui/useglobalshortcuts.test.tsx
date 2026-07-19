@@ -30,7 +30,7 @@ afterEach(() => {
   // never kicks in — without this, hook state and DOM fragments from one
   // test can leak into the next.
   cleanup();
-  useUiStore.setState({ paletteOpen: false, theme: "light" });
+  useUiStore.setState({ paletteOpen: false, theme: "light", sweepArmed: false });
   registerSearchInput(null);
   document.body.innerHTML = "";
 });
@@ -119,6 +119,28 @@ describe("useGlobalShortcuts — bare slash", () => {
     const e = press({ key: "/" });
     expect(e.defaultPrevented).toBe(false);
     expect(useUiStore.getState().paletteOpen).toBe(true);
+  });
+});
+
+describe("useGlobalShortcuts — sweep disarm (Plan 5c)", () => {
+  it("Escape disarms an armed sweep before any other handling, and no command runs", () => {
+    useUiStore.setState({ sweepArmed: true });
+    const run = vi.fn();
+    // A command bound to bare Escape would otherwise match too — proving it
+    // does NOT run is what shows the disarm branch returns before the
+    // command-matching loop, not merely that disarmSweep got called.
+    renderHook(() => useGlobalShortcuts([makeCommand({ binding: { key: "escape" }, run })]));
+    const e = press({ key: "Escape" });
+    expect(useUiStore.getState().sweepArmed).toBe(false);
+    expect(e.defaultPrevented).toBe(true);
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("Escape is inert (no preventDefault, sweepArmed stays false) when no sweep is armed", () => {
+    renderHook(() => useGlobalShortcuts([]));
+    const e = press({ key: "Escape" });
+    expect(e.defaultPrevented).toBe(false);
+    expect(useUiStore.getState().sweepArmed).toBe(false);
   });
 });
 

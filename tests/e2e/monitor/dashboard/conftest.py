@@ -20,15 +20,20 @@ web/fixtures/minimal.json) for driving the real built page through
 Playwright, matching this file's own dist-serving ``shell_dash`` idiom.
 """
 
+import asyncio
 import json
-from collections.abc import Iterator
+import threading
+from collections.abc import Callable, Coroutine, Iterator
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from otto.models import HostSnapshot, LabSnapshot, MonitorExport
 from otto.monitor.collector import MetricCollector
+from otto.monitor.export import build_db_export, build_session_metric_db
 from otto.monitor.server import _dist_index_path
 from otto.monitor.session import new_frame
 from tests._fixtures._browser_guard import browser_tests_could_run
@@ -289,6 +294,120 @@ def review_dash() -> Iterator[DashboardHarness[MetricCollector]]:
     harness.start()
     yield harness
     harness.stop()
+
+
+def _run_on_fresh_loop(coro_fn: "Callable[[], Coroutine[Any, Any, None]]") -> None:
+    """Run *coro_fn*'s coroutine to completion on a dedicated thread with its
+    own fresh event loop.
+
+    A plain ``asyncio.run(...)`` here would raise "cannot be called from a
+    running event loop": this fixture executes as ordinary (non-async)
+    pytest fixture setup, but the browser lane's ``page``/Playwright
+    machinery keeps an asyncio loop genuinely running on this same worker
+    thread for the whole session. ``tests/unit/monitor/test_server.py``
+    hits the identical constraint from the *async* side, calling
+    ``_make_archive`` (this module's Task 4 analog) via
+    ``await asyncio.to_thread(...)`` for exactly this reason; a sync
+    fixture has no coroutine to await, so it runs the loop on a thread it
+    owns directly instead.
+    """
+    exc: list[BaseException] = []
+
+    def _target() -> None:
+        try:
+            asyncio.run(coro_fn())
+        except BaseException as e:  # noqa: BLE001 — re-raised on the calling thread below
+            exc.append(e)
+
+    thread = threading.Thread(target=_target)
+    thread.start()
+    thread.join()
+    if exc:
+        raise exc[0]
+
+
+def _make_marking_archive(tmp_path: Path) -> str:
+    """A real, finalized v2 archive with one host and a couple of metric
+    points — the Task 4 ``_make_archive`` shape (``tests/unit/monitor/_archive.py``)
+    plus the ``write_point`` calls that shape deliberately omits (it only
+    needs *a* session to exist; Task 13's db-review spec needs a real subject
+    page reachable, which requires ``lab.hosts`` populated — see
+    ``deriveElements()``, ``web/src/data/exportDoc.ts``) and real series data
+    for the events panel on that subject's title row to attach to.
+    """
+    path = str(tmp_path / "marking.db")
+    frame = new_frame(label=None, note=None)
+    lab = LabSnapshot(hosts=[HostSnapshot(id="dbhost", element="dbhost")])
+    db = build_session_metric_db(path, frame, lab, MetricCollector(hosts=[]), interval=5.0)
+
+    async def _build() -> None:
+        await db.open()
+        t0 = datetime(2026, 7, 18, 12, 0, tzinfo=timezone.utc)
+        await db.write_point(t0, "dbhost", "cpu", 10.0)
+        await db.write_point(t0 + timedelta(seconds=5), "dbhost", "cpu", 12.0)
+        await db.finalize(t0 + timedelta(minutes=10))
+        await db.close()
+
+    _run_on_fresh_loop(_build)
+    return path
+
+
+def _boot_db_review(path: str) -> DashboardHarness[MetricCollector]:
+    """Boot a fresh review-mode harness re-reading *path*'s document from disk.
+
+    A separate helper (not just fixture setup) because
+    :class:`DbReviewHandle`'s ``restart()`` needs the exact same construction
+    a second time, against a brand-new :class:`MetricCollector`/
+    :class:`DashboardHarness` — never the same in-memory ``document`` object,
+    which would prove nothing about persistence.
+    """
+    harness = DashboardHarness(
+        MetricCollector(targets=[]),
+        mode="review",
+        document=build_db_export(path),
+        source_name=path,
+        archive_path=Path(path),
+    )
+    return harness.start()
+
+
+@dataclass
+class DbReviewHandle:
+    """A review-mode :class:`DashboardHarness` serving a real ``.db`` archive,
+    restartable against the same file.
+
+    Task 13 Step 8 needs a genuine restart to prove an edit persisted: a
+    fresh :class:`~otto.monitor.server.MonitorServer` that re-reads the
+    archive from disk, not the same process's in-memory state (which would
+    "prove" persistence even if nothing had actually been written through).
+    Each boot picks a fresh ephemeral port, so ``restart()`` returns the new
+    harness for the caller to re-navigate to (``.url`` changes).
+    """
+
+    archive_path: str
+    harness: DashboardHarness[MetricCollector]
+
+    def restart(self) -> DashboardHarness[MetricCollector]:
+        self.harness.stop()
+        self.harness = _boot_db_review(self.archive_path)
+        return self.harness
+
+
+@pytest.fixture
+def db_review_dash(tmp_path: Path) -> Iterator[DbReviewHandle]:
+    """A ``--db`` archive review server, event-editable (Task 5c) and
+    restartable against the same file (see :class:`DbReviewHandle`).
+
+    Deliberately named distinctly from ``review_dash`` above (a ``.json``
+    review, permanently read-only) — the 5a follow-up shadowing note: a
+    same-named fixture defined directly in a test module wins over one from
+    this conftest.py, so reusing ``review_dash`` here would silently shadow
+    the wrong thing for any module that also wants the ``.json`` variant.
+    """
+    path = _make_marking_archive(tmp_path)
+    handle = DbReviewHandle(archive_path=path, harness=_boot_db_review(path))
+    yield handle
+    handle.harness.stop()
 
 
 @pytest.fixture(scope="session")

@@ -79,3 +79,6 @@ export const IMPORT_BINDING: Binding = { key: "i", mod: true };
 export const EXPORT_BINDING: Binding = { key: "s", mod: true };
 export const THEME_BINDING: Binding = { key: "l", mod: true };
 export const PAUSE_BINDING: Binding = { key: ".", mod: true };
+// Plan 5c marking: clears the reserved-key rule above — E is not
+// browser/macOS-owned (unlike the ⌘M this otherwise reads like).
+export const MARK_NOW_BINDING: Binding = { key: "e", mod: true };

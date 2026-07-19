@@ -20,6 +20,7 @@ function reset() {
     activeSessionId: null,
     range: null,
     windowMs: 900_000,
+    editable: false,
   });
 }
 
@@ -339,6 +340,28 @@ describe("reviewStore", () => {
       // — a stored `paused` flag would have to be checked separately and
       // could drift; deriving it from `range` makes that impossible.
       expect(s.range).not.toBeNull();
+    });
+  });
+
+  // Plan 5c: /api/mode's editable flag and the mutation-failure warnings
+  // channel both land directly on the store (bootstrap.ts and eventApi.ts
+  // are the real callers; this is the store-level unit case for each).
+  describe("setEditable / addWarning (Plan 5c)", () => {
+    it("setEditable stores the flag verbatim", () => {
+      expect(useReviewStore.getState().editable).toBe(false); // reset()'s default
+      useReviewStore.getState().actions.setEditable(true);
+      expect(useReviewStore.getState().editable).toBe(true);
+      useReviewStore.getState().actions.setEditable(false);
+      expect(useReviewStore.getState().editable).toBe(false);
+    });
+
+    it("addWarning appends to the existing warnings channel without clobbering it", () => {
+      useReviewStore.setState({ warnings: ["earlier warning"] });
+      useReviewStore.getState().actions.addWarning("mutation failed: archive is locked");
+      expect(useReviewStore.getState().warnings).toEqual([
+        "earlier warning",
+        "mutation failed: archive is locked",
+      ]);
     });
   });
 });

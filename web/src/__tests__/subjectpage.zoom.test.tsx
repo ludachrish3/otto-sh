@@ -15,7 +15,7 @@
 // debounce/no-op logic, by capturing the mocked ECharts instance's
 // "datazoom" handler and driving it directly (see chartpanel.test.tsx for
 // the same FakeChart pattern).
-import { act, cleanup, render } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { HostSnapshot, MetricRecord } from "../api/export.gen";
@@ -33,6 +33,7 @@ class FakeChart {
   on(event: string, cb: (e: unknown) => void) {
     this.handlers.set(event, cb);
   }
+  dispatchAction() {}
   resize() {}
   dispose() {}
 }
@@ -173,5 +174,38 @@ describe("SubjectPage drag-zoom", () => {
     });
 
     expect(useReviewStore.getState().range).toEqual({ from: T0 - 120_000, to: T0 - 45_000 });
+  });
+});
+
+// Task 11 (Monitor Plan 5c): the +/- zoom buttons call zoomAbout(window_,
+// factor) then clampRange, same as the drag-zoom path. A frozen `range`
+// (rather than live-follow's derived window) keeps the math exercised here
+// independent of the live-follow inversion trap the tests above pin —
+// window_ here IS the store's range, fully inside the session's bounds, so
+// the zoomed-in result needs no clamping and isolates zoomAbout's own
+// center-preserving math.
+describe("SubjectPage zoom buttons", () => {
+  it("clicking zoom-in-* pins a range half the current window about its center", () => {
+    const session = liveSession();
+    const range = { from: T0 - 100_000, to: T0 - 20_000 }; // inside bounds [T0-120_000, T0]
+    useReviewStore.setState({
+      sessions: [session],
+      activeSessionId: "s",
+      mode: "live",
+      range,
+      windowMs: WINDOW_MS,
+    });
+
+    render(<SubjectPage />);
+    expect(instances.length).toBeGreaterThan(0);
+
+    // zoomAbout(range, 0.5): span 80_000 -> 40_000, center T0-60_000 ->
+    // [T0-80_000, T0-40_000] -- already inside bounds, so clampRange is a
+    // no-op here.
+    act(() => {
+      fireEvent.click(screen.getByTestId("zoom-in-CPU"));
+    });
+
+    expect(useReviewStore.getState().range).toEqual({ from: T0 - 80_000, to: T0 - 40_000 });
   });
 });

@@ -10,7 +10,9 @@ Events appear as vertical lines on all metric charts. They can be created by:
 from dataclasses import dataclass
 from datetime import datetime
 
-VALID_DASH_STYLES = frozenset({"solid", "dot", "dash", "longdash", "dashdot", "longdashdot"})
+from ..models.monitor import VALID_DASH_STYLES
+
+__all__ = ["AUTO_EVENT_COLORS", "VALID_DASH_STYLES", "MonitorEvent"]
 
 # Default colors for automatic test lifecycle events
 AUTO_EVENT_COLORS = {

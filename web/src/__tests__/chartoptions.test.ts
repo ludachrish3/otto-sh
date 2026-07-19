@@ -5,6 +5,7 @@ import {
   chartTheme,
   eventMarkers,
   eventOverlay,
+  zoomAbout,
   zoomToRange,
 } from "../charts/options";
 import { MAX_SERIES_PER_CHART, SERIES_DARK, SERIES_LIGHT } from "../charts/palette";
@@ -93,6 +94,66 @@ describe("buildStackOption", () => {
     }) as { xAxis: { axisLabel: { color: string } } };
     expect(opt.xAxis.axisLabel.color).toBe(theme.muted);
     expect(SERIES_LIGHT).not.toContain(opt.xAxis.axisLabel.color);
+  });
+
+  // Task 11 (Monitor Plan 5c): the wheel used to be captured for zoom (the
+  // TODO complaint — it fought the page's own scroll); ECharts' modifier set
+  // has no meta key, so Ctrl-drag is the one pan gesture available on every
+  // platform (documented in Task 14). `zoomLock: true` (Task 13 review
+  // fix) is load-bearing, not cosmetic: without it, ECharts' RoamController
+  // installs its mousewheel listener with a HARDCODED zoomOnMouseWheel:true
+  // at the roam-controller level regardless of this model's own `false`
+  // above, and the wheel never reaches the browser's native scroll (see
+  // ChartPanel.tsx/options.ts's comments for the full story) — a real
+  // regression the vitest mocked-ECharts suite otherwise can't see at all,
+  // so it must at least fail loud here if the flag is ever removed.
+  it("frees the wheel for page scroll and pans only via Ctrl-drag", () => {
+    const opt = buildStackOption({
+      unit: "",
+      yTitle: "y",
+      series: [series(0)],
+      window: WINDOW,
+      events: [],
+      theme,
+    }) as { dataZoom: Record<string, unknown>[] };
+    expect(opt.dataZoom[0]).toMatchObject({
+      type: "inside",
+      filterMode: "none",
+      zoomOnMouseWheel: false,
+      moveOnMouseMove: "ctrl",
+      moveOnMouseWheel: false,
+      zoomLock: true,
+    });
+  });
+
+  // Task 12 (Monitor Plan 5c): brush-based drag zoom-select + sweep-to-mark.
+  // outOfBrush.colorAlpha must stay 1 — brushing here SELECTS a range for
+  // zoom or marking, it never filters/dims the series it crosses.
+  it("configures a lineX-ready brush that never dims the series it crosses", () => {
+    const opt = buildStackOption({
+      unit: "",
+      yTitle: "y",
+      series: [series(0)],
+      window: WINDOW,
+      events: [],
+      theme,
+    }) as { brush: { xAxisIndex: number; outOfBrush: { colorAlpha: number } } };
+    expect(opt.brush.xAxisIndex).toBe(0);
+    expect(opt.brush.outOfBrush.colorAlpha).toBe(1);
+  });
+});
+
+describe("zoomAbout (Task 11 +/- zoom buttons)", () => {
+  it("halves the span about the window's center", () => {
+    expect(zoomAbout({ from: 0, to: 10_000 }, 0.5)).toEqual({ from: 2500, to: 7500 });
+  });
+
+  it("doubles the span about the window's center", () => {
+    expect(zoomAbout({ from: 0, to: 10_000 }, 2)).toEqual({ from: -5000, to: 15_000 });
+  });
+
+  it("returns null when the zoomed-in span would fall below the 1000ms floor", () => {
+    expect(zoomAbout({ from: 0, to: 1500 }, 0.5)).toBeNull();
   });
 });
 
@@ -219,7 +280,7 @@ describe("assignLanes", () => {
 });
 
 describe("eventOverlay markArea lanes", () => {
-  const theme = { muted: "#999" };
+  const theme = { muted: "#999", ink: "#eee" };
 
   it("gives two overlapping span events distinct label positions", () => {
     const events = [
@@ -268,5 +329,21 @@ describe("eventOverlay markArea lanes", () => {
     };
     expect(markLine.data).toHaveLength(1);
     expect(markLine.data[0].xAxis).toBe(1_000);
+  });
+});
+
+// Task 11 (Monitor Plan 5c) dark-mode regression pin: today's markArea label
+// inherits ECharts' default label color regardless of theme — illegible
+// against a dark surface. This must fail against the CURRENT eventOverlay
+// (no `color` key on the label at all) before the fix lands.
+describe("eventOverlay markArea label color (Task 11 dark-mode fix)", () => {
+  it("colors the label with theme.ink so it reads against dark surfaces", () => {
+    const events = [{ id: 1, label: "stress run", color: "#ff6b6b", fromMs: 1_000, toMs: 2_000 }];
+    const theme = { muted: "#999", ink: "#f3f4f6" };
+    const { markArea } = eventOverlay(events, theme) as {
+      markArea: { data: [{ label: { color: string; fontSize: number } }, unknown][] };
+    };
+    expect(markArea.data[0][0].label.color).toBe(theme.ink);
+    expect(markArea.data[0][0].label.fontSize).toBe(10);
   });
 });

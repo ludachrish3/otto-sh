@@ -697,18 +697,28 @@ class MetricCollector:
     async def update_event(
         self,
         event_id: int,
+        *,
         label: str,
         color: str,
         dash: str,
+        timestamp: datetime,
         end_timestamp: datetime | None = None,
     ) -> "MonitorEvent | None":
-        """Update an existing event's label, color, dash, and end_timestamp. Returns the updated event or None."""  # noqa: E501 — long one-liner docstring
+        """Overwrite an event's editable fields. Returns the updated event or None.
+
+        Full-set semantics: the caller (the HTTP route) resolves unchanged
+        fields from the existing event first — this method never guesses.
+        ``timestamp`` is REQUIRED so a call site cannot silently keep passing
+        the old start while believing it edited it (the 5a `interval=None`
+        trap, made structural).
+        """
         ev = self._store.find_event(event_id)
         if ev is None:
             return None
         ev.label = label
         ev.color = color
         ev.dash = dash
+        ev.timestamp = timestamp
         ev.end_timestamp = end_timestamp
         if self._db:
             await self._db.update_event(ev)

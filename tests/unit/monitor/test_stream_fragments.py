@@ -50,7 +50,9 @@ class TestPublishedPayloadsAreFragments:
         added = MonitorSessionFragment.model_validate(q.get_nowait())
         assert [e.id for e in added.events] == [ev.id]
 
-        await collector.update_event(ev.id, label="boot2", color="#111111", dash="solid")
+        await collector.update_event(
+            ev.id, label="boot2", color="#111111", dash="solid", timestamp=ev.timestamp
+        )
         updated = MonitorSessionFragment.model_validate(q.get_nowait())
         # No separate "updated" kind — the client upserts by id, so an edited
         # event is just an event.

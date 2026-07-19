@@ -38,6 +38,7 @@ module). Keeping the floor in this already-leaf module gives every caller
 (CLI, library, pytest plugin) one definition without paying that cost.
 """
 
+import re
 from datetime import datetime
 from typing import Any, Literal
 
@@ -48,7 +49,9 @@ from pydantic import (
     Field,
     SerializationInfo,
     SerializerFunctionWrapHandler,
+    field_validator,
     model_serializer,
+    model_validator,
 )
 
 from .base import OttoModel
@@ -234,6 +237,106 @@ class EventRecord(RowModel):
     source: str = "manual"
     color: str = "#888888"
     dash: str = "dash"
+
+
+VALID_DASH_STYLES = frozenset({"solid", "dot", "dash", "longdash", "dashdot", "longdashdot"})
+"""Legal event dash styles. Lives in this leaf module (not otto.monitor.events,
+which re-imports it) so the HTTP body models below can validate against it
+without this module growing an otto.monitor edge — the same leaf-isolation
+rule that keeps MIN_INTERVAL_SECONDS here (see module docstring)."""
+
+_HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
+
+
+def _checked_label(value: str) -> str:
+    if not value.strip():
+        raise ValueError("label must not be empty")
+    return value
+
+
+def _checked_color(value: str) -> str:
+    if not _HEX_COLOR_RE.match(value):
+        raise ValueError(f"color must be #rrggbb, got {value!r}")
+    return value
+
+
+def _checked_dash(value: str) -> str:
+    if value not in VALID_DASH_STYLES:
+        raise ValueError(f"dash must be one of {sorted(VALID_DASH_STYLES)}, got {value!r}")
+    return value
+
+
+class EventCreateBody(OttoModel):
+    """``POST /api/session/{sid}/event`` request body (spec 2026-07-18).
+
+    ``timestamp=None`` means "server-now" (the Mark-now flow). When both
+    timestamps are present the span must be forward; the server re-checks the
+    pair after resolving a ``None`` timestamp to now.
+    """
+
+    label: str
+    timestamp: datetime | None = None
+    end_timestamp: datetime | None = None
+    color: str = "#888888"
+    dash: str = "dash"
+
+    @field_validator("label")
+    @classmethod
+    def _label(cls, value: str) -> str:
+        return _checked_label(value)
+
+    @field_validator("color")
+    @classmethod
+    def _color(cls, value: str) -> str:
+        return _checked_color(value)
+
+    @field_validator("dash")
+    @classmethod
+    def _dash(cls, value: str) -> str:
+        return _checked_dash(value)
+
+    @model_validator(mode="after")
+    def _span_forward(self) -> "EventCreateBody":
+        if (
+            self.timestamp is not None
+            and self.end_timestamp is not None
+            and self.end_timestamp <= self.timestamp
+        ):
+            raise ValueError("end_timestamp must be after timestamp")
+        return self
+
+
+class EventUpdateBody(OttoModel):
+    """``PATCH /api/session/{sid}/event/{id}`` request body (spec 2026-07-18).
+
+    Every field optional; ``model_fields_set`` distinguishes "absent"
+    (unchanged) from an explicit JSON ``null``. Only ``end_timestamp`` uses
+    that distinction — an explicit null CLEARS the end (span → point); for the
+    other fields null means unchanged, same as absent. The merged
+    start/end ordering check happens in the route, where the existing event's
+    values are known.
+    """
+
+    label: str | None = None
+    timestamp: datetime | None = None
+    end_timestamp: datetime | None = None
+    color: str | None = None
+    dash: str | None = None
+
+    @field_validator("label")
+    @classmethod
+    def _label(cls, value: str | None) -> str | None:
+        return None if value is None else _checked_label(value)
+
+    @field_validator("color")
+    @classmethod
+    def _color(cls, value: str | None) -> str | None:
+        return None if value is None else _checked_color(value)
+
+    @field_validator("dash")
+    @classmethod
+    def _dash(cls, value: str | None) -> str | None:
+        return None if value is None else _checked_dash(value)
 
 
 class LogEventRecord(RowModel):

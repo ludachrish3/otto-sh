@@ -35,6 +35,9 @@ import { startStream } from "./stream";
 interface ModePayload {
   mode: "live" | "review";
   source: string | null;
+  /** Plan 5c: whether this server accepts event mutations (live, or a
+   * .db-sourced review) — gates every marking affordance in the shell. */
+  editable: boolean;
 }
 
 function isModePayload(value: unknown): value is ModePayload {
@@ -42,7 +45,8 @@ function isModePayload(value: unknown): value is ModePayload {
   const rec = value as Record<string, unknown>;
   return (
     (rec.mode === "live" || rec.mode === "review") &&
-    (typeof rec.source === "string" || rec.source === null)
+    (typeof rec.source === "string" || rec.source === null) &&
+    typeof rec.editable === "boolean"
   );
 }
 
@@ -121,6 +125,7 @@ export async function bootstrapFromServer(): Promise<void> {
   if (modeBody.mode === "live") {
     if (hydrated) {
       useReviewStore.getState().actions.setMode("live");
+      useReviewStore.getState().actions.setEditable(modeBody.editable);
       // Known, undocumented-no-longer gap (Plan 5b follow-ups #4): any point
       // the server publishes strictly between `hydrate()`'s response above
       // and this `startStream` call's `new EventSource(url)` actually
@@ -139,5 +144,6 @@ export async function bootstrapFromServer(): Promise<void> {
     }
   } else {
     useReviewStore.getState().actions.setMode(modeBody.mode);
+    useReviewStore.getState().actions.setEditable(modeBody.editable);
   }
 }

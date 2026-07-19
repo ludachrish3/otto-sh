@@ -42,6 +42,7 @@ class FakeChart {
     this.calls.push({ opt, opts });
   }
   on() {}
+  dispatchAction() {}
   resize() {}
   dispose() {}
 }

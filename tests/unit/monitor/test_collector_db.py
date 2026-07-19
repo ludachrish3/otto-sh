@@ -342,7 +342,13 @@ class TestEventPersistence:
         db_path = str(tmp_path / "test.db")
         collector = await _empty_collector_with_db(db_path)
         event = await collector.add_event(label="old label", color="#888888", dash="dash")
-        await collector.update_event(event.id, label="new label", color="#ff0000", dash="solid")
+        await collector.update_event(
+            event.id,
+            label="new label",
+            color="#ff0000",
+            dash="solid",
+            timestamp=event.timestamp,
+        )
         await collector.close_db()
         with closing(sqlite3.connect(db_path)) as conn, conn:
             row = conn.execute(

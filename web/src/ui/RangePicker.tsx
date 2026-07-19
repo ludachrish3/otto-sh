@@ -12,16 +12,10 @@
 // necessity, not a preference, and it is still composition (their pieces,
 // unmodified), not a fork (no hand-written Tailwind imitating what they ship).
 
-import {
-  type CalendarDateTime,
-  fromDate,
-  getLocalTimeZone,
-  toCalendarDateTime,
-} from "@internationalized/date";
+import type { CalendarDateTime } from "@internationalized/date";
 import { Calendar as CalendarIcon } from "@untitledui/icons";
 import { useState } from "react";
 import { useDateFormatter } from "react-aria";
-import type { DateValue } from "react-aria-components";
 import {
   DateRangePicker as AriaDateRangePicker,
   Dialog as AriaDialog,
@@ -37,6 +31,7 @@ import { Button } from "@/components/base/buttons/button";
 import { InputDateBase } from "@/components/base/input/input-date";
 import { cx } from "@/utils/cx";
 import { clampRange, presetRange, type TimeRange } from "../data/exportDoc";
+import { calendarDateTimeToMs, msToCalendarDateTime } from "./calendarTime";
 
 // Session-relative — computed from `bounds` at click time, never from
 // wall-clock `today()`. Full ("no range") subsumes the old Reset: applying
@@ -52,14 +47,6 @@ const RELATIVE_PRESETS = [
 ] as const;
 
 type PendingRange = { start: CalendarDateTime; end: CalendarDateTime } | null;
-
-function msToCalendarDateTime(ms: number): CalendarDateTime {
-  return toCalendarDateTime(fromDate(new Date(ms), getLocalTimeZone()));
-}
-
-function calendarDateTimeToMs(value: DateValue): number {
-  return value.toDate(getLocalTimeZone()).getTime();
-}
 
 // Never returns null (unlike `PendingRange`) -- every call site passes a
 // concrete `TimeRange`. RangePresetButton's `value` prop needs that

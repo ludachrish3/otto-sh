@@ -94,6 +94,16 @@ export type Events1 = EventRecord[];
 export type LogEvents1 = LogEventRecord[];
 export type DeletedEventIds = number[];
 export type Tunnels1 = TunnelRecord[] | null;
+export type Label5 = string;
+export type Timestamp3 = string | null;
+export type EndTimestamp1 = string | null;
+export type Color1 = string;
+export type Dash1 = string;
+export type Label6 = string | null;
+export type Timestamp4 = string | null;
+export type EndTimestamp2 = string | null;
+export type Color2 = string | null;
+export type Dash2 = string | null;
 
 /**
  * The versioned historical-export document (spec 2026-07-10 §3).
@@ -413,4 +423,41 @@ export interface MonitorSessionFragment {
   meta?: SessionMeta | null;
   tunnels?: Tunnels1;
   [k: string]: unknown;
+}
+/**
+ * ``POST /api/session/{sid}/event`` request body (spec 2026-07-18).
+ *
+ * ``timestamp=None`` means "server-now" (the Mark-now flow). When both
+ * timestamps are present the span must be forward; the server re-checks the
+ * pair after resolving a ``None`` timestamp to now.
+ *
+ * This interface was referenced by `MonitorHistoricalExportDocument`'s JSON-Schema
+ * via the `definition` "EventCreateBody".
+ */
+export interface EventCreateBody {
+  label: Label5;
+  timestamp?: Timestamp3;
+  end_timestamp?: EndTimestamp1;
+  color?: Color1;
+  dash?: Dash1;
+}
+/**
+ * ``PATCH /api/session/{sid}/event/{id}`` request body (spec 2026-07-18).
+ *
+ * Every field optional; ``model_fields_set`` distinguishes "absent"
+ * (unchanged) from an explicit JSON ``null``. Only ``end_timestamp`` uses
+ * that distinction — an explicit null CLEARS the end (span → point); for the
+ * other fields null means unchanged, same as absent. The merged
+ * start/end ordering check happens in the route, where the existing event's
+ * values are known.
+ *
+ * This interface was referenced by `MonitorHistoricalExportDocument`'s JSON-Schema
+ * via the `definition` "EventUpdateBody".
+ */
+export interface EventUpdateBody {
+  label?: Label6;
+  timestamp?: Timestamp4;
+  end_timestamp?: EndTimestamp2;
+  color?: Color2;
+  dash?: Dash2;
 }

@@ -96,6 +96,40 @@ CREATE TABLE IF NOT EXISTS log_events (
 
 SCHEMA_VERSION = 2
 
+# One definition of the events table's INSERT, shared between the live writer
+# (MetricDB) and the review-mode archive editor (archive_edit), so the column
+# list cannot drift between the two.
+EVENT_INSERT_SQL = (
+    "INSERT INTO events (session_id, ts, end_ts, label, source, color, dash) "
+    "VALUES (?, ?, ?, ?, ?, ?, ?)"
+)
+
+
+def event_insert_params(
+    session_id: str,
+    *,
+    timestamp: datetime,
+    end_timestamp: datetime | None,
+    label: str,
+    source: str,
+    color: str,
+    dash: str,
+) -> tuple[str, str, str | None, str, str, str, str]:
+    """Positional params matching EVENT_INSERT_SQL.
+
+    Shared by the live MetricDB and the review-mode archive editor (archive_edit.py)
+    so the column list cannot drift between the two writers.
+    """
+    return (
+        session_id,
+        timestamp.isoformat(),
+        end_timestamp.isoformat() if end_timestamp else None,
+        label,
+        source,
+        color,
+        dash,
+    )
+
 
 class UnsupportedDBError(RuntimeError):
     """Raised for any monitor database that is not schema v2.
@@ -394,16 +428,15 @@ class MetricDB:
         if not self._conn:
             return 0
         cursor = await self._conn.execute(
-            "INSERT INTO events (session_id, ts, end_ts, label, source, color, dash) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (
+            EVENT_INSERT_SQL,
+            event_insert_params(
                 self._frame.id,
-                event.timestamp.isoformat(),
-                event.end_timestamp.isoformat() if event.end_timestamp else None,
-                event.label,
-                event.source,
-                event.color,
-                event.dash,
+                timestamp=event.timestamp,
+                end_timestamp=event.end_timestamp,
+                label=event.label,
+                source=event.source,
+                color=event.color,
+                dash=event.dash,
             ),
         )
         await self._conn.commit()
@@ -418,15 +451,16 @@ class MetricDB:
         await self._conn.commit()
 
     async def update_event(self, event: MonitorEvent) -> None:
-        """Update an existing event's label, color, dash, and end_ts. No-op if not open."""
+        """Update an existing event's label, color, dash, ts, and end_ts. No-op if not open."""
         if not self._conn:
             return
         await self._conn.execute(
-            "UPDATE events SET label = ?, color = ?, dash = ?, end_ts = ? WHERE id = ?",
+            "UPDATE events SET label = ?, color = ?, dash = ?, ts = ?, end_ts = ? WHERE id = ?",
             (
                 event.label,
                 event.color,
                 event.dash,
+                event.timestamp.isoformat(),
                 event.end_timestamp.isoformat() if event.end_timestamp else None,
                 event.id,
             ),

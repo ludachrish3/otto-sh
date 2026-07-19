@@ -8,11 +8,13 @@ import {
   Clock,
   Dataflow03,
   Download01,
+  Flag01,
   Grid01,
   Monitor01,
   Moon01,
   PauseCircle,
   Play,
+  Scissors01,
   Sun,
   Upload01,
 } from "@untitledui/icons";
@@ -22,14 +24,16 @@ import { useHashLocation } from "wouter/use-hash-location";
 
 import { useActiveSession, useIsPaused, useReviewStore } from "../data/reviewStore";
 import { exportLoadedDocument, openImportPicker } from "../shell/ImportExport";
+import { blankDraft, endOpenSpan } from "../shell/marking";
 import {
   type Binding,
   EXPORT_BINDING,
   IMPORT_BINDING,
+  MARK_NOW_BINDING,
   PAUSE_BINDING,
   THEME_BINDING,
 } from "./shortcuts";
-import { useUiStore } from "./uiStore";
+import { type EventEditorTarget, useUiStore } from "./uiStore";
 
 export type CommandSection = "Navigation" | "Actions" | "Live window";
 
@@ -63,11 +67,17 @@ export function useCommands(): Command[] {
   const mode = useReviewStore((s) => s.mode);
   const windowMs = useReviewStore((s) => s.windowMs);
   const hasData = useReviewStore((s) => s.rawMonitorSessions !== null);
+  const editable = useReviewStore((s) => s.editable);
   const togglePause = useReviewStore((s) => s.actions.togglePause);
   const setWindow = useReviewStore((s) => s.actions.setWindow);
+  const addWarning = useReviewStore((s) => s.actions.addWarning);
   const paused = useIsPaused();
   const theme = useUiStore((s) => s.theme);
   const toggleTheme = useUiStore((s) => s.actions.toggleTheme);
+  const openSpan = useUiStore((s) => s.openSpan);
+  const openEventEditor = useUiStore((s) => s.actions.openEventEditor);
+  const armSweep = useUiStore((s) => s.actions.armSweep);
+  const openMarkPopover = useUiStore((s) => s.actions.openMarkPopover);
 
   return useMemo(() => {
     const commands: Command[] = [
@@ -142,6 +152,71 @@ export function useCommands(): Command[] {
         run: toggleTheme,
       },
     );
+    // Plan 5c marking rows: add-event/sweep-span are available in either
+    // mode (both just prep a draft/gesture); mark-now/start-span/end-span
+    // are live-only (a review session has no "now" to mark and no in-flight
+    // span to start/end). Every row is gated on `editable` (spec §Marking) —
+    // a read-only server (or a review session opened from a plain export,
+    // not a .db) must not offer affordances it cannot fulfil.
+    if (editable && session) {
+      commands.push(
+        {
+          id: "action-add-event",
+          label: "Add event…",
+          section: "Actions",
+          icon: Flag01,
+          enabled: true,
+          run: () => {
+            const target: EventEditorTarget = { kind: "draft", draft: blankDraft(session) };
+            openEventEditor(target);
+          },
+        },
+        {
+          id: "action-sweep-span",
+          label: "Sweep span on chart",
+          section: "Actions",
+          icon: Scissors01,
+          enabled: true,
+          run: armSweep,
+        },
+      );
+      if (mode === "live") {
+        commands.push(
+          {
+            id: "action-mark-now",
+            label: "Mark now…",
+            section: "Actions",
+            icon: Flag01,
+            binding: MARK_NOW_BINDING,
+            enabled: true,
+            run: () => openMarkPopover("mark"),
+          },
+          {
+            id: "action-start-span",
+            label: "Start span…",
+            section: "Actions",
+            icon: Flag01,
+            enabled: true,
+            run: () => openMarkPopover("start"),
+          },
+          {
+            id: "action-end-span",
+            label: "End span",
+            section: "Actions",
+            icon: Flag01,
+            // Only meaningful while the open span belongs to the session
+            // currently being viewed — switching sessions with a span still
+            // running elsewhere must not offer to end the wrong one.
+            enabled: openSpan?.sessionId === session.id,
+            run: () => {
+              void endOpenSpan().catch((err) =>
+                addWarning(`End span failed: ${err instanceof Error ? err.message : String(err)}`),
+              );
+            },
+          },
+        );
+      }
+    }
     if (mode === "live") {
       commands.push({
         id: "action-pause",
@@ -176,5 +251,11 @@ export function useCommands(): Command[] {
     togglePause,
     setWindow,
     toggleTheme,
+    editable,
+    openSpan,
+    openEventEditor,
+    armSweep,
+    openMarkPopover,
+    addWarning,
   ]);
 }
