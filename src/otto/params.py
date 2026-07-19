@@ -6,11 +6,14 @@ Used by both ``otto.suite.register`` (suite options) and ``otto.cli.run``
 
 import dataclasses
 import inspect
-from typing import Any, get_type_hints
+from typing import TYPE_CHECKING, Any, get_type_hints
 
 import pydantic
 import typer
 from pydantic.fields import FieldInfo
+
+if TYPE_CHECKING:
+    from _typeshed import DataclassInstance
 
 
 def build_options(opts_cls: type, kwargs: dict[str, Any]) -> Any:
@@ -35,7 +38,7 @@ def build_options(opts_cls: type, kwargs: dict[str, Any]) -> Any:
         raise typer.BadParameter(problems) from exc
 
 
-def options_params(opts_cls: type) -> list[inspect.Parameter]:
+def options_params(opts_cls: "type[DataclassInstance]") -> list[inspect.Parameter]:
     """Convert an Options dataclass into inspect.Parameters for Typer.
 
     Each field must be annotated as ``Annotated[T, typer.Option(...)]`` so that
