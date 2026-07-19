@@ -5,6 +5,43 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.2] - 2026-07-19
+
+### Added
+
+- browser lane defaults to 2 workers behind a cores+RAM gate
+- tier `make nox`, env-gate browser sharding, exclude stability from parallel runs (#plan 2026-07-18)
+- dashboard event marking + chart gesture rework (#spec 2026-07-18)
+- collapse CPU into one chart, drop per-PID tracking
+
+
+### Dependencies
+
+- bump @fontsource-variable/inter from 5.2.8 to 5.3.0 in /web
+- bump hypothesis from 6.156.6 to 6.157.0
+- bump the tailwindcss group in /web with 2 updates
+- bump @vitest/coverage-v8 to 4.1.10 alongside vitest
+- bump vitest from 4.1.9 to 4.1.10 in /web
+- bump @biomejs/biome from 2.5.3 to 2.5.4 in /web
+- bump tailwindcss from 4.3.2 to 4.3.3 in /web
+- bump nox from 2026.4.10 to 2026.7.11
+- bump typer from 0.26.8 to 0.27.0
+- bump ty from 0.0.58 to 0.0.61
+- bump fastapi from 0.139.0 to 0.139.2
+- bump vite from 8.1.4 to 8.1.5 in /web
+- bump ruff from 0.15.21 to 0.15.22
+- bump actions/setup-node from 6.4.0 to 7.0.0
+
+
+### Fixed
+
+- banner spec fed epoch-ms to pause_at, which takes seconds (#161)
+- catchable startup failures, CI deflakes, palette Backspace, UI polish
+- catchable server startup failures; deflake banner + port tests
+- declare options helpers take a dataclass type
+- don't let the SDK toolchain probe abort a fresh provision
+
+
 ## [0.7.1] - 2026-07-18
 
 ### Added
@@ -909,7 +946,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - added GitHub templates
 - set up release management
 
-[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.7.1...HEAD
+[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.7.2...HEAD
+[0.7.2]: https://github.com/ludachrish3/otto-sh/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/ludachrish3/otto-sh/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/ludachrish3/otto-sh/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/ludachrish3/otto-sh/compare/v0.5.4...v0.6.0
