@@ -164,23 +164,24 @@ describe("routeEdge — occlusion invariant across row spans", () => {
     return col;
   }
 
-  it.each(
-    Array.from({ length: 19 }, (_, i) => i + 2),
-  )("clears every intervening node at row span %i", (rowSpan) => {
-    const col = syntheticColumn(rowSpan);
-    const top = col[0];
-    const bottom = col[rowSpan];
-    const between = col.slice(1, rowSpan);
-    for (const parallelIndex of [0, 1]) {
-      const { path } = routeEdge(top, bottom, parallelIndex, 2);
-      for (const [x, y] of samplePath(path)) {
-        for (const r of between) {
-          const inside = x >= r.x && x <= r.x + r.width && y >= r.y && y <= r.y + r.height;
-          expect(inside).toBe(false);
+  it.each(Array.from({ length: 19 }, (_, i) => i + 2))(
+    "clears every intervening node at row span %i",
+    (rowSpan) => {
+      const col = syntheticColumn(rowSpan);
+      const top = col[0];
+      const bottom = col[rowSpan];
+      const between = col.slice(1, rowSpan);
+      for (const parallelIndex of [0, 1]) {
+        const { path } = routeEdge(top, bottom, parallelIndex, 2);
+        for (const [x, y] of samplePath(path)) {
+          for (const r of between) {
+            const inside = x >= r.x && x <= r.x + r.width && y >= r.y && y <= r.y + r.height;
+            expect(inside).toBe(false);
+          }
         }
       }
-    }
-  });
+    },
+  );
 });
 
 describe("routeEdge — parallel edges stay independently clickable", () => {
@@ -224,20 +225,23 @@ describe("routeEdge — parallel edges stay independently clickable", () => {
     [2, 3],
     [3, 4],
     [4, 6],
-  ])("leaves %i parallel links each with a reachable stretch (row span %i)", (groupSize, rowSpan) => {
-    const bottom: Rect = { x: COL_W, y: rowSpan * ROW_H, width: W, height: H };
-    const paths = Array.from(
-      { length: groupSize },
-      (_, i) => routeEdge(top, bottom, i, groupSize).path,
-    );
-    for (let i = 1; i < groupSize; i++) {
-      // The inner sibling is the one that gets buried (the outer paints later),
-      // so it is the one that must survive. 5 of 19 is roughly the middle
-      // quarter of the curve — enough to hit, and far more than the ZERO the
-      // shipped constants left it with.
-      expect(clickablePoints(paths[i - 1], paths[i])).toBeGreaterThanOrEqual(5);
-    }
-  });
+  ])(
+    "leaves %i parallel links each with a reachable stretch (row span %i)",
+    (groupSize, rowSpan) => {
+      const bottom: Rect = { x: COL_W, y: rowSpan * ROW_H, width: W, height: H };
+      const paths = Array.from(
+        { length: groupSize },
+        (_, i) => routeEdge(top, bottom, i, groupSize).path,
+      );
+      for (let i = 1; i < groupSize; i++) {
+        // The inner sibling is the one that gets buried (the outer paints later),
+        // so it is the one that must survive. 5 of 19 is roughly the middle
+        // quarter of the curve — enough to hit, and far more than the ZERO the
+        // shipped constants left it with.
+        expect(clickablePoints(paths[i - 1], paths[i])).toBeGreaterThanOrEqual(5);
+      }
+    },
+  );
 
   it("never emits two identical paths for one parallel group", () => {
     const bottom: Rect = { x: COL_W, y: 4 * ROW_H, width: W, height: H };
