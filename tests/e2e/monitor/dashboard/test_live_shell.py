@@ -26,7 +26,6 @@ from tests._fixtures._fake_collector import FakeCollector
 pytestmark = [
     pytest.mark.hostless,
     pytest.mark.browser,
-    pytest.mark.xdist_group("dashboard"),
 ]
 
 NOW = datetime(2026, 7, 12, 10, 0, 0, tzinfo=timezone.utc)

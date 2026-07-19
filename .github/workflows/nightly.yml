@@ -113,7 +113,7 @@ jobs:
       - uses: astral-sh/setup-uv@v8.3.2
         with:
           enable-cache: true
-      - run: uv python install 3.12
+      - run: uv python install 3.10
       - name: Build the React dashboard (npm ci + type-drift + air-gap gates)
         run: make web
       - name: Install ${{ matrix.browser }} with system dependencies
@@ -121,6 +121,9 @@ jobs:
           scripts/ci_drop_unused_apt_sources.sh
           uv run --group dev playwright install --with-deps ${{ matrix.browser }}
       - name: Run dashboard browser e2e (${{ matrix.browser }}) ${{ inputs.nox_count || '5' }}x
+        env:
+          # Per-file browser-suite shard groups — see ci.yml's dashboard job.
+          OTTO_BROWSER_SHARD: "1"
         run: >-
           uv run nox -k ${{ matrix.browser }} --
           --count=${{ inputs.nox_count || '5' }} --repeat-scope=session

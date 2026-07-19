@@ -21,7 +21,6 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 pytestmark = [
     pytest.mark.hostless,
     pytest.mark.browser,
-    pytest.mark.xdist_group("dashboard"),
 ]
 
 FIXTURES = Path(__file__).resolve().parents[4] / "web" / "fixtures"

@@ -23,7 +23,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 # Harness opt-ins legitimately read from the ambient environment; everything
 # else OTTO_-prefixed is otto *product* configuration and must not leak in.
-ALLOWED_AMBIENT = {"OTTO_DETECT_ASYNCIO_LEAKS", "OTTO_TS_COVERAGE"}
+ALLOWED_AMBIENT = {"OTTO_DETECT_ASYNCIO_LEAKS", "OTTO_TS_COVERAGE", "OTTO_BROWSER_SHARD"}
 
 # Deliberately NOT OTTO_-prefixed: the guard under test would strip it.
 PROBE_FLAG = "_TEST_OTTO_HERMETICITY_PROBE"

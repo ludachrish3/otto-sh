@@ -84,6 +84,16 @@ def pytest_collection_modifyitems(config, items) -> None:  # type: ignore[no-unt
     Runs *after* the deeper ``tests/integration/host/conftest.py`` hook that
     stamps embedded xdist_group markers, so all markers are applied before the
     reorder (LIFO conftest registration guarantees this).
+
+    NOTE: this ROOT hook cannot stamp xdist_group markers of its own — the
+    root conftest registers at config load, so under LIFO it runs *after*
+    pytest-xdist's worker plugin has already read the markers and annotated
+    the test ids with their ``@group`` suffixes (a stamp landing here is
+    silently invisible to the loadgroup scheduler). Group-stamping policies
+    live in deeper conftests, which register during collection and therefore
+    run before xdist's annotation — see tests/e2e/conftest.py's browser-suite
+    grouping policy and tests/integration/host/conftest.py's per-device
+    embedded groups.
     """
 
     def _group_of(item):
@@ -119,8 +129,12 @@ for _var in ("FORCE_COLOR", "CLICOLOR_FORCE", "PY_COLORS", "CLICOLOR"):
 # OTTO_TS_COVERAGE is a harness opt-in like OTTO_DETECT_ASYNCIO_LEAKS: `make
 # dashboard` sets it to arm the browser suites' CDP coverage collection
 # (tests/_fixtures/_ts_coverage.py), so it must survive this strip to reach the
-# fixture. Keep in sync with tests/unit/test_env_hermeticity.py's ALLOWED_AMBIENT.
-_OTTO_AMBIENT_ALLOWED = {"OTTO_DETECT_ASYNCIO_LEAKS", "OTTO_TS_COVERAGE"}
+# fixture. OTTO_BROWSER_SHARD is the same kind of opt-in: CI's dashboard jobs
+# set it to relax the browser suites' single-worker pin to per-file xdist
+# groups (tests/e2e/conftest.py's grouping policy reads it at collection,
+# which happens after this strip). Keep in sync with
+# tests/unit/test_env_hermeticity.py's ALLOWED_AMBIENT.
+_OTTO_AMBIENT_ALLOWED = {"OTTO_DETECT_ASYNCIO_LEAKS", "OTTO_TS_COVERAGE", "OTTO_BROWSER_SHARD"}
 for _var in [k for k in os.environ if k.startswith("OTTO_") and k not in _OTTO_AMBIENT_ALLOWED]:
     os.environ.pop(_var, None)
 

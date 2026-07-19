@@ -45,7 +45,6 @@ pytestmark = [
     pytest.mark.hostless,
     pytest.mark.browser,
     pytest.mark.soak,
-    pytest.mark.xdist_group("dashboard"),
 ]
 
 # live_stream_dash (conftest.py) declares exactly these host ids in its lab

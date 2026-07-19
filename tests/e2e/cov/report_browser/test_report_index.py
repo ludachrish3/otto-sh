@@ -11,7 +11,6 @@ from playwright.sync_api import Page, expect
 pytestmark = [
     pytest.mark.hostless,
     pytest.mark.browser,
-    pytest.mark.xdist_group("covreport"),
 ]
 
 

@@ -314,7 +314,7 @@ what you want to exercise:
 | Multi-hop only | `uv run pytest -m hops` | three VMs |
 | Stability / soak | `make stability` (or `stability-unit` / `stability-unix` / `stability-tunnel` / `stability-embedded`) | lab VMs (`-unit` needs none) |
 | Everything (the dev-VM contract) | `make all` | lab VMs |
-| Cross-Python matrix | `make nox-unit` (quick, no VMs) / `make nox` (full) | `nox` needs VMs |
+| Cross-Python matrix | `make nox-unit` (quick, no VMs) / `make nox` (full on 3.10 + 3.14, hostless on the middle versions) / `make nox-full` (full, all Pythons) | `nox`/`nox-full` need VMs |
 
 `make stability-tunnel` soaks the tunnel machinery against the live bed:
 add/remove churn (2- and 3-hop), concurrent populations, racing adds,
@@ -360,8 +360,9 @@ through 3.14 — use `nox`:
 ```bash
 make nox-unit                      # unit level tier across all Pythons (no VMs)
 make nox-integration               # unit + integration tiers across all Pythons (full lab)
-make nox                           # full matrix: all environments, all Pythons (needs VMs)
-uv run nox -s tests_hostless-3.12  # the no-testbed CI gate under one Python
+make nox                           # tiered matrix: full suite on 3.10 (floor) + 3.14 (warning canary), hostless on 3.11-3.13 (needs VMs)
+make nox-full                      # complete full-suite matrix, all Pythons (needs VMs; ~2.5x nox)
+uv run nox -s tests_hostless-3.10  # the no-testbed CI gate under one Python
 uv run nox -s tests_unit-3.14 -- -k test_session   # forward args to pytest
 uv run nox --list                  # show every available session
 ```

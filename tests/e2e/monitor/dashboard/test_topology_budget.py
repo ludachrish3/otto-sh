@@ -42,7 +42,6 @@ import pytest
 pytestmark = [
     pytest.mark.hostless,
     pytest.mark.browser,
-    pytest.mark.xdist_group("dashboard"),
 ]
 
 FIXTURES = Path(__file__).resolve().parents[4] / "web" / "fixtures"

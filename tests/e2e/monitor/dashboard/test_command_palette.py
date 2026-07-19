@@ -18,7 +18,6 @@ from playwright.sync_api import Locator, Page, expect
 pytestmark = [
     pytest.mark.hostless,
     pytest.mark.browser,
-    pytest.mark.xdist_group("dashboard"),
 ]
 
 FIXTURES = Path(__file__).resolve().parents[4] / "web" / "fixtures"

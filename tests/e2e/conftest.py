@@ -1,6 +1,6 @@
-"""End-to-end tier conftest — two path-keyed responsibilities.
+"""End-to-end tier conftest — three path-keyed responsibilities.
 
-Both key off membership in the ``tests/e2e/`` tree:
+All key off membership in the ``tests/e2e/`` tree:
 
 1. **Auto-stamp the ``e2e`` level marker** on every test here (mirrors
    ``tests/integration/conftest.py``; additive and idempotent — explicit
@@ -12,11 +12,22 @@ Both key off membership in the ``tests/e2e/`` tree:
    other axes (``e2e`` level, ``xdist_group``, ``browser``, ``stability``,
    ``timeout``, ``retry``) are ignored. This keeps the tier deliberately sorted — nothing
    slips into the no-testbed gate untagged.
+3. **Stamp the browser-suite xdist grouping policy** (see the block comment
+   at ``_BROWSER_SUITE_GROUPS``).
 
 Runs ``tryfirst`` so the guard sees every collected item before ``-m``
-deselection, and the ``e2e`` stamp lands before any marker-based filtering.
+deselection, the ``e2e`` stamp lands before any marker-based filtering — and
+the browser groups land before pytest-xdist's worker plugin reads them to
+annotate test ids for the ``loadgroup`` scheduler. That ordering is why the
+policy lives HERE and not in the root conftest: the root conftest registers
+at config load and its hook therefore runs *after* xdist's (LIFO), where a
+stamp is silently invisible to the scheduler (proven empirically: same-file
+tests landed on different workers). Deeper conftests register during
+collection and run first — same reason the per-device embedded groups are
+stamped in ``tests/integration/host/conftest.py``.
 """
 
+import os
 from pathlib import Path
 
 import pytest
@@ -24,15 +35,55 @@ import pytest
 _E2E_ROOT = Path(__file__).parent
 _PRIMARY = {"hostless", "integration", "embedded"}
 
+# ── Browser-suite xdist grouping policy ────────────────────────────────────
+# The two Playwright suites are parallel-safe BY CONSTRUCTION: every test
+# binds its MonitorServer to port=0 (tests/_fixtures/_dashboard_harness.py)
+# and CDP coverage dumps are keyed pid+uuid (tests/_fixtures/_ts_coverage.py).
+# Their single-worker pinning is a resource POLICY — never parallel browsers
+# on the 3GB dev VM (plan 2026-07-02) — not a correctness constraint, so it
+# is stamped here instead of hard-coded per module. OTTO_BROWSER_SHARD=1
+# (set only by CI's dashboard jobs, whose runners have the RAM) relaxes the
+# pin to per-FILE groups: `--dist loadgroup` then spreads modules across
+# workers while any module-scoped fixture still instantiates on one worker.
+# Suites not in the map stay serial in both modes — sharding is opt-in per
+# suite, after auditing it for parallel safety. An explicit xdist_group mark
+# on a test/module always wins (e.g. dashboard/test_harness.py's non-browser
+# wire-contract pins keep their historical group).
+_BROWSER_SUITE_GROUPS: dict[str, str] = {
+    "tests/e2e/monitor/dashboard/": "dashboard",
+    "tests/e2e/cov/report_browser/": "covreport",
+}
+
+
+def _browser_group_key(nodeid: str, *, shard: bool) -> str:
+    """Return the xdist_group name for a browser-marked item.
+
+    Pure helper — no pytest dependency — so it can be imported and tested
+    directly in ``tests/unit/test_browser_group_policy.py``.
+    """
+    path = nodeid.split("::", 1)[0]
+    for prefix, group in _BROWSER_SUITE_GROUPS.items():
+        if path.startswith(prefix):
+            return f"{group}::{path}" if shard else group
+    return "browser-serial"
+
 
 @pytest.hookimpl(tryfirst=True)
 def pytest_collection_modifyitems(config, items):  # type: ignore[no-untyped-def]
+    shard = os.environ.get("OTTO_BROWSER_SHARD") == "1"
     offenders: list[str] = []
     for item in items:
         if _E2E_ROOT not in item.path.parents:
             continue
         # (1) Auto-stamp the e2e level marker (additive, idempotent).
         item.add_marker("e2e")
+        # (3) Browser-suite grouping policy (explicit xdist_group pins win).
+        if (
+            hasattr(item, "get_closest_marker")
+            and item.get_closest_marker("browser") is not None
+            and item.get_closest_marker("xdist_group") is None
+        ):
+            item.add_marker(pytest.mark.xdist_group(_browser_group_key(item.nodeid, shard=shard)))
         # (2) Enforce exactly one primary resource marker on real collected items.
         # Minimal/synthetic items (e.g. the unit test that exercises only the
         # stamp) may not expose the marker API — stamp them and move on.

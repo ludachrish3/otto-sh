@@ -36,7 +36,13 @@ from otto.monitor.session import new_frame
 from tests._fixtures._dashboard_harness import DashboardHarness
 from tests._fixtures._fake_collector import FakeCollector
 
-pytestmark = [pytest.mark.hostless, pytest.mark.xdist_group("dashboard")]
+pytestmark = [
+    pytest.mark.hostless,
+    # Explicit pin, kept deliberately: these are NOT browser tests, so the
+    # root conftest's browser-group policy skips them; the historical group
+    # keeps their distribution identical in the hostless/coverage lanes.
+    pytest.mark.xdist_group("dashboard"),
+]
 
 
 @pytest.fixture(autouse=True)

@@ -9,7 +9,7 @@
 # on -j.
 .NOTPARALLEL:
 
-.PHONY: help all ci nox nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-python coverage-unit coverage-integration coverage-unix coverage-embedded coverage-hostless coverage-ts coverage-ts-unit docs docs-lint docs-html docs-inventories docs-media doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts check check-python check-ts format format-python format-ts schema monitor-fixtures clean changelog release stability stability-unit stability-unix stability-tunnel stability-embedded repeat vm-health qemu-restart import-snapshot hyperfine profile browsers dashboard dashboard-all dashboard-soak web-install web web-dev test-ts web-clean wheel-check
+.PHONY: help all ci nox nox-full nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-python coverage-unit coverage-integration coverage-unix coverage-embedded coverage-hostless coverage-ts coverage-ts-unit docs docs-lint docs-html docs-inventories docs-media doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts check check-python check-ts format format-python format-ts schema monitor-fixtures clean changelog release stability stability-unit stability-unix stability-tunnel stability-embedded repeat vm-health qemu-restart import-snapshot hyperfine profile browsers dashboard dashboard-all dashboard-soak web-install web web-dev test-ts web-clean wheel-check
 
 # Bump component for `make release`. Override on the command line:
 #   make release BUMP=minor
@@ -188,7 +188,36 @@ nox-hostless: ## Run the no-testbed CI gate (tests/unit + no-VM e2e) across all 
 nox-unit-repeat: ## Repeat the whole tests/unit tree twice in one process — the test-isolation leak guard (registry/tmp-import/module-identity) that also runs in CI. No VMs. JUnit XML lands in reports/junit/nox-unit-repeat/. (Count is fixed at 2; the check is pass/fail, not a soak.)
 	uv run nox -s tests_unit_repeat
 
-nox: ## Run the FULL test suite (all environments) across all supported Pythons. Requires dev VM with Vagrant hosts up. Not used by CI. Override COUNT=N (default 1); JUnit XML in reports/junit/nox/.
+# Interpreters for the tiered `nox` lane. PRIMARY (mirrors noxfile.py's
+# PRIMARY_PYTHON — hand-kept pair) is the floor: the oldest supported
+# interpreter, which the dev venv and release/build jobs run — its FULL-suite
+# leg catches "requires newer Python" breaks everywhere. CANARY is the
+# NEWEST interpreter, and also runs the FULL suite: with pytest's
+# filterwarnings=error, a warning only fails on versions that actually RUN
+# the affected tier. Import-time DeprecationWarnings are already caught by
+# every version's unit/hostless legs; the canary exists for RUNTIME warnings
+# in VM-backed code paths, which are version-specific and surface on the
+# newest interpreter first (for a while only 3.14 emitted the asyncio
+# resource-leak warnings) — so the newest keeps full VM-backed coverage as
+# the early-warning leg. The MIDDLE versions run the hostless
+# selection (the exact slice CI gates on, per push, on all five versions
+# already): interpreter-sensitive regressions live overwhelmingly in the
+# unit/hostless code paths, while the VM-backed tiers exercise otto↔testbed
+# behavior that does not vary across interior versions — and cross-version
+# parallelism is not an option here because xdist_group pins are
+# process-local while the lab testbed is machine-global (two concurrent
+# sessions would race the fixed tunnel/impair topologies). The complete
+# cross-version matrix stays available as `make nox-full`; nightly cannot
+# absorb it (hostless-only, no lab VMs), so run nox-full on demand when a
+# release touches interpreter-sensitive integration surface.
+NOX_PRIMARY := 3.10
+NOX_CANARY := 3.14
+NOX_MIDDLE := 3.11 3.12 3.13
+
+nox: ## Run the full suite on the PRIMARY (3.10, floor) + CANARY (3.14, newest — version-specific warnings) Pythons, and the hostless CI-gate slice on the middle versions. Requires dev VM with Vagrant hosts up. Not used by CI. Full cross-version matrix: `make nox-full`. Override COUNT=N (default 1); JUnit XML in reports/junit/nox/ + reports/junit/nox-hostless/.
+	uv run nox -s tests_all-$(NOX_PRIMARY) tests_all-$(NOX_CANARY) $(foreach v,$(NOX_MIDDLE),tests_hostless-$(v)) -- --count=$(NOX_COUNT) --repeat-scope=session
+
+nox-full: ## Run the FULL test suite (all environments) across ALL supported Pythons — the pre-tiering `make nox` (~5× its wall-clock). Requires dev VM with Vagrant hosts up. Override COUNT=N (default 1); JUnit XML in reports/junit/nox/.
 	uv run nox -s tests_all -- --count=$(NOX_COUNT) --repeat-scope=session
 
 validate: validate-python validate-ts ## (Build & Release) Validate ALL code (Python + TS): sub-targets validate-python + validate-ts
@@ -348,8 +377,11 @@ build: ## (Build & Release) Build the project with uv
 # DASHBOARD_BROWSERS="chromium firefox webkit".
 # The one Safari-specific test is `@pytest.mark.only_browser("webkit")`, so it
 # only runs when webkit is in the set (a skip, not silently absent, otherwise).
-# Runs -n 1 (all browser tests share one xdist_group anyway; extra workers
-# would sit idle and emit "No data was collected" coverage warnings) and writes
+# Runs -n 1: on the dev VM the browser suites are pinned serial by the e2e
+# conftest's grouping policy (OTTO_BROWSER_SHARD unset — see
+# tests/e2e/conftest.py; CI's dashboard jobs set it to shard per-file), so
+# extra workers would sit idle and emit "No data was collected" coverage
+# warnings. Writes
 # coverage DATA only: --cov-report= suppresses the report so a standalone run
 # never stomps reports/coverage/html. Running first as `coverage-python`'s
 # direct prerequisite (bare `coverage`'s only transitively, via
@@ -712,7 +744,7 @@ help: ## Show this help message
 	@printf '\n\033[1mTesting\033[0m  (COUNT=N overrides iterations; omit the suffix to run all tiers)\n'
 	@printf '  scope:  unit < integration < (all)   ·   unix · embedded   ·   hostless = no-VM CI gate\n'
 	@printf '  \033[36m%-30s\033[0m %s\n' 'coverage-*'   'pinned Python + coverage    (bare coverage = BOTH languages: coverage-python, gated 95, + coverage-ts merged; hostless gated 90)'
-	@printf '  \033[36m%-30s\033[0m %s\n' 'nox-*'        'every suffix, all Pythons   (bare nox = full matrix)'
+	@printf '  \033[36m%-30s\033[0m %s\n' 'nox-*'        'every suffix, all Pythons   (bare nox = full on primary + hostless on rest; nox-full = full matrix)'
 	@printf '  \033[36m%-30s\033[0m %s\n' 'stability-*'  'pytest-repeat soak          (unit · unix · tunnel · embedded; bare stability = all tiers)'
 	@printf '  \033[36m%-30s\033[0m %s\n' 'repeat'       'soak the full unit suite (pytest-repeat)'
 	@awk 'BEGIN { FS=":.*?## "; n=split("Build & Release|Quality|Docs|Lab|Dev",order,"|") } /^[a-zA-Z_-]+:.*## \(/ { d=$$2; s=d; sub(/\).*/,"",s); sub(/^\(/,"",s); sub(/^\([^)]*\) */,"",d); items[s]=items[s] sprintf("  \033[36m%-16s\033[0m %s\n",$$1,d) } END { for(i=1;i<=n;i++) if(order[i] in items) printf "\n\033[1m%s\033[0m\n%s",order[i],items[order[i]] }' \

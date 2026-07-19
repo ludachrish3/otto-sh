@@ -1,14 +1,18 @@
 """Drift guards for the tier<->marker contract (Spec §5.3).
 
 Run in the no-VM unit gate. G1 proves the integration/ auto-stamp hook fires;
-G2 proves no VM-only marker leaks into the unit tier.
+G2 proves no VM-only marker leaks into the unit tier. G3 proves the e2e/
+auto-stamp mirror. G4 proves no catch-all nox session sweeps the bed-hostile
+stability tier into a parallel run.
 """
 
 import ast
+from itertools import pairwise
 from pathlib import Path
 
 _TESTS = Path(__file__).resolve().parents[1]  # tests/
 _UNIT = _TESTS / "unit"
+_NOXFILE = _TESTS.parent / "noxfile.py"
 
 # Markers that mean "needs a VM" — must never appear on a unit-tier test.
 _VM_MARKERS = {"integration", "embedded", "hops"}
@@ -56,6 +60,66 @@ def test_unit_tier_has_no_vm_markers():
         if _VM_MARKERS & _module_and_decorator_markers(path)
     ]
     assert not offenders, f"VM markers found under tests/unit/: {offenders}"
+
+
+def _nox_marker_expressions() -> list[str]:
+    """Every marker expression passed via ``-m`` anywhere in noxfile.py.
+
+    Scans argument sequences (call args, tuple/list literals — the latter
+    catches shared arg bundles like ``HOSTLESS_TEST_ARGS``) for a ``"-m"``
+    constant and takes the string that follows it; a name reference is
+    resolved from module-level assignments (``DASHBOARD_MARKER_EXPR``).
+    """
+    tree = ast.parse(_NOXFILE.read_text())
+    assigns: dict[str, str] = {
+        node.targets[0].id: node.value.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Name)
+        and isinstance(node.value, ast.Constant)
+        and isinstance(node.value.value, str)
+    }
+    exprs: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            seq = node.args
+        elif isinstance(node, (ast.Tuple, ast.List)):
+            seq = node.elts
+        else:
+            continue
+        for flag, value in pairwise(seq):
+            if not (isinstance(flag, ast.Constant) and flag.value == "-m"):
+                continue
+            if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                exprs.append(value.value)
+            elif isinstance(value, ast.Name) and value.id in assigns:
+                exprs.append(assigns[value.id])
+    return exprs
+
+
+def test_catchall_nox_sessions_exclude_stability():
+    """G4: negation-only nox selections must exclude the stability tier.
+
+    The stability tests are bed-HOSTILE by design (e.g. the SIGSTOP-wedge
+    test stops tomato's sshd listener for tens of seconds), so they may only
+    run where they own the bed: the dedicated `make stability-tunnel` lane
+    (which selects nothing else, and whose single xdist_group serializes
+    them). A catch-all session expression — one built purely from negations,
+    which selects *everything else* — sweeps them into a parallel run where
+    another worker's concurrent ssh to the wedged host times out (the
+    2026-07-19 hop-test failures: 5 of 6 tests_all sessions across two
+    checkouts). Expressions with a positive selector (e.g. "browser and not
+    soak") can't co-select stability and are exempt.
+    """
+    catchall = [
+        expr
+        for expr in _nox_marker_expressions()
+        if all(clause.strip().startswith("not ") for clause in expr.split(" and "))
+    ]
+    assert catchall, "no catch-all -m expressions found in noxfile.py (guard misparse?)"
+    offenders = [expr for expr in catchall if "not stability" not in expr]
+    assert not offenders, f"catch-all nox marker expressions missing 'not stability': {offenders}"
 
 
 def test_e2e_conftest_autostamps_e2e():

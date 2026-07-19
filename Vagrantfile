@@ -218,8 +218,9 @@ Vagrant.configure("2") do |config|
 
         dev.vm.provider "virtualbox" do |vb|
             # The full test/coverage + Zephyr-build workload was thrashing swap
-            # at the default size.
-            vb.memory = 4096
+            # at smaller sizes; this is the heaviest VM in the fleet, so it gets
+            # the largest share.
+            vb.memory = 8192
             vb.cpus = 4
         end
 
@@ -468,13 +469,18 @@ Vagrant.configure("2") do |config|
         # need more headroom, and one QEMU process runs per built config.
         # Sized for the multi-LTS matrix: three workspaces (2.7 / 3.7 / 4.4)
         # across two SDKs (0.16.8 for 2.7+3.7, 1.0.1 for 4.4; ~1 GB each on
-        # disk, ~1.5 GB resident peak during `west build`), and 9 concurrent
-        # QEMU instances (3 LTSes x 3 configs) at 256 MB apiece. 8 GB / 4 vCPU
-        # gives comfortable headroom and keeps the build phase parallelizable.
-        # Specified AFTER provision_test_vm so
-        # the later provider block wins.
+        # disk, ~1.5 GB resident peak during `west build`). The builds run
+        # strictly sequentially — one version, one config at a time (see the
+        # zephyr-workspace loop below) — so only a single build's ~1.5 GB peak
+        # is ever live at once. Steady state is the seven autostarted QEMU
+        # instances: four qemu_x86 at 256 MB (v3_7 fat/lfs, v2_7 fat, v4_4 lfs)
+        # plus three tiny mps2_an385 ARM serial instances (cov, cov44,
+        # no_fs_arm) running on the machine's ~16 MB default — ~1.5-2 GB
+        # resident all told. 4 GB / 4 vCPU comfortably covers both the
+        # sequential build peak and the running instances. Specified AFTER
+        # provision_test_vm so the later provider block wins.
         zephyr.vm.provider "virtualbox" do |vb|
-            vb.memory = 8192
+            vb.memory = 4096
             vb.cpus = 4
         end
 

@@ -4,7 +4,7 @@ Run all default sessions:
     uv run nox
 
 Run a single Python version's tests:
-    uv run nox -s tests_unit-3.12
+    uv run nox -s tests_unit-3.10
 
 List available sessions:
     uv run nox --list
@@ -17,11 +17,19 @@ import nox_uv
 
 PYTHON_VERSIONS = ["3.10", "3.11", "3.12", "3.13", "3.14"]
 
+# The single-interpreter ("pinned") Python for sessions that don't span the
+# matrix. 3.10 — the oldest supported interpreter — deliberately: it is what
+# the dev venv and the release/build CI jobs run, so single-version lanes
+# exercise the floor rather than silently requiring something newer. The
+# Makefile's NOX_PRIMARY mirrors this value (hand-kept pair — see
+# DASHBOARD_MARKER_EXPR below for why Make can't read a Python constant).
+PRIMARY_PYTHON = "3.10"
+
 # JUnit XML is written into a per-target subdirectory of reports/junit/ named
 # after the `make` target that drives the session (nox-unit, nox-unix,
 # nox-embedded, nox), matching the layout the standalone Makefile test targets
 # use. Each Python version is a separate pytest process, so the file inside the
-# subdir keeps the full session name (e.g. reports/junit/nox-unit/tests_unit-3.12.xml)
+# subdir keeps the full session name (e.g. reports/junit/nox-unit/tests_unit-3.10.xml)
 # to avoid clobbering. With `--count=N` the repeats land in the same file, so a
 # multi-run stability pass collects every failure for a given Python in one place.
 JUNIT_DIR = Path("reports/junit")
@@ -119,7 +127,7 @@ def tests_hostless(session: nox.Session) -> None:
     session.run("pytest", *HOSTLESS_TEST_ARGS, _junitxml(session, "nox-hostless"), *session.posargs)
 
 
-@nox_uv.session(python=["3.12"], uv_groups=["dev"])
+@nox_uv.session(python=[PRIMARY_PYTHON], uv_groups=["dev"])
 def tests_unit_repeat(session: nox.Session) -> None:
     """Repeat the whole ``tests/unit`` tree in one process to catch state leaks.
 
@@ -141,7 +149,8 @@ def tests_unit_repeat(session: nox.Session) -> None:
     cross-module leaks (a later test broken by an earlier one) are masked
     entirely — exactly how the nightly missed the ``test_root_group`` →
     ``test_listing`` desync. One Python is sufficient (isolation leakage is
-    interpreter-version-independent); clearing ``addopts`` drops the repo-wide
+    interpreter-version-independent — the primary, 3.10); clearing ``addopts``
+    drops the repo-wide
     ``-n auto`` / coverage / ``--doctest-modules`` so the repeat is single-process
     (strictest accumulation) and quick. Supersedes the former
     ``tests_suite_repeat`` (``tests/unit/suite`` ⊂ ``tests/unit``).
@@ -199,21 +208,25 @@ def tests_all(session: nox.Session) -> None:
     default ``testpaths`` (from pyproject.toml) covers the full tree, so no
     path filter is passed here. `browser` is excluded (see module-level
     comment above) — run it via `nox -s dashboard` / `make dashboard`
-    instead. Coverage threshold is 92% — below ``make coverage``'s 95%
-    because this browser-excluded session omits the dashboard --cov-append
-    fold-in (see the module-level coverage-floor note).
+    instead. `stability` is excluded because those tests are bed-hostile
+    (the SIGSTOP-wedge test stops tomato's sshd; any other worker's fresh
+    ssh to tomato then times out) — they own the bed only in the dedicated
+    `make stability-tunnel` lane. Coverage threshold is 92% — below
+    ``make coverage``'s 95% because this browser-excluded session omits the
+    dashboard --cov-append fold-in (see the module-level coverage-floor
+    note).
     """
     session.run(
         "pytest",
         "-m",
-        "not browser",
+        "not browser and not stability",
         "--cov-fail-under=92",
         _junitxml(session, "nox"),
         *session.posargs,
     )
 
 
-@nox_uv.session(python=["3.12"], uv_groups=["dev"])
+@nox_uv.session(python=[PRIMARY_PYTHON], uv_groups=["dev"])
 @nox.parametrize("browser", ["chromium", "firefox", "webkit"])
 def dashboard(session: nox.Session, browser: str) -> None:
     """Run the monitor-dashboard browser e2e suite for one engine.
