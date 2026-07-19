@@ -16,12 +16,15 @@ core is pulled only when a suite command actually runs, not at registration
 
 import dataclasses
 import inspect
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import typer
 
 from ..params import build_options, options_params
 from ..registry import Registry
+
+if TYPE_CHECKING:
+    from _typeshed import DataclassInstance
 
 
 @dataclasses.dataclass(frozen=True)
@@ -50,7 +53,7 @@ SUITES: Registry[SuiteEntry] = Registry(
 # ---------------------------------------------------------------------------
 
 
-def _options_params(opts_cls: type) -> list[inspect.Parameter]:
+def _options_params(opts_cls: "type[DataclassInstance]") -> list[inspect.Parameter]:
     """Convert an Options dataclass into inspect.Parameters for Typer.
 
     Thin wrapper around :func:`otto.params.options_params` kept for

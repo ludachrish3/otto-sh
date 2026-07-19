@@ -22,6 +22,7 @@ from typing_extensions import override
 from ..params import build_options, options_params
 
 if TYPE_CHECKING:
+    from _typeshed import DataclassInstance
     from typer.core import TyperGroup
 
     from ..context import OttoContext
@@ -64,7 +65,7 @@ def _inject_ctx(func: Callable[..., Any], ctx_name: str) -> Callable[..., Any]:
 
 def _wrap_with_options(
     func: Callable[..., Any],
-    opts_cls: type,
+    opts_cls: "type[DataclassInstance]",
 ) -> Callable[..., Any]:
     """Build a wrapper that expands an options dataclass into CLI parameters.
 
