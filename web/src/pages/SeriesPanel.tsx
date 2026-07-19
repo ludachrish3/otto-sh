@@ -24,7 +24,9 @@
 // non-string children triggers a harmless dev-only console warning
 // ("A `textValue` prop is required..."). Accepted as the least-bad option
 // short of forking Tag's className/layout logic to reach the raw
-// react-aria-components primitive directly.
+// react-aria-components primitive directly. (The vitest console guard
+// elevates warnings to failures; this one is on its reviewed ACCEPTED list
+// — see web/vitest.setup.ts.)
 import { Badge } from "@/components/base/badges/badges";
 import { Checkbox } from "@/components/base/checkbox/checkbox";
 import { Tag, TagGroup, TagList } from "@/components/base/tags/tags";

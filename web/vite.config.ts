@@ -34,6 +34,18 @@ export default defineConfig({
     // and the wheel — that is the price of certifying the real artifact
     // instead of an instrumented second build.
     sourcemap: "hidden",
+    // Explicit bundle budget, not a warning mute. The default 500 kB limit
+    // warns on every build: this dashboard ships ECharts + React Flow in one
+    // bundle ON PURPOSE — MonitorServer serves it off disk over
+    // localhost/LAN in air-gapped labs (see `base` above), so the CDN-era
+    // rationale for aggressive code-splitting doesn't apply, and a single
+    // artifact keeps the air-gap gate (scripts/check_airgap.sh) trivially
+    // auditable. 2 300 kB = the 2026-07 bundle (~2 110 kB) plus headroom;
+    // `make web` runs vite through scripts/build_web_no_warnings.sh, which
+    // turns any (!) warning into a BUILD FAILURE — so growth past this
+    // number stops the build, and raising it is a reviewed edit here, same
+    // deal as the Python import-budget guard.
+    chunkSizeWarningLimit: 2_300,
   },
   server: {
     proxy: {
@@ -55,6 +67,9 @@ export default defineConfig({
     // whole web/ vitest project is simpler than per-file overrides.
     environment: "jsdom",
     include: ["src/**/*.test.ts", "src/**/*.test.tsx"],
+    // Console warnings are test failures (see vitest.setup.ts) — a warning
+    // that only scrolls past in coverage output is a warning nobody fixes.
+    setupFiles: ["./vitest.setup.ts"],
     coverage: {
       // v8 provider (matches @vitest/coverage-v8); parity with the Python
       // pytest-cov gate. Report term-missing + html like pyproject's addopts.

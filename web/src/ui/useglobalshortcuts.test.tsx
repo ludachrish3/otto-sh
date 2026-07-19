@@ -1,4 +1,4 @@
-import { cleanup, renderHook } from "@testing-library/react";
+import { act, cleanup, renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { Command } from "./commands";
@@ -130,7 +130,11 @@ describe("useGlobalShortcuts — sweep disarm (Plan 5c)", () => {
     // does NOT run is what shows the disarm branch returns before the
     // command-matching loop, not merely that disarmSweep got called.
     renderHook(() => useGlobalShortcuts([makeCommand({ binding: { key: "escape" }, run })]));
-    const e = press({ key: "Escape" });
+    // The disarm writes to a store the hook subscribes to — act-wrap the press.
+    let e!: KeyboardEvent;
+    act(() => {
+      e = press({ key: "Escape" });
+    });
     expect(useUiStore.getState().sweepArmed).toBe(false);
     expect(e.defaultPrevented).toBe(true);
     expect(run).not.toHaveBeenCalled();

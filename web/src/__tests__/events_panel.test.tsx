@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -79,17 +79,19 @@ describe("EventsPanel", () => {
     // that, so its ±15m pad ([10:45, 11:15]) clamps to a DEGENERATE range
     // ([10:45, 10:00], from >= to) — the exact case setRange's inverted-
     // range guard refuses silently (reviewStore.ts).
-    useReviewStore.getState().actions.appendFragment({
-      format: 1,
-      session: session.id,
-      events: [
-        {
-          id: 99,
-          timestamp: "2026-07-01T11:00:00Z",
-          label: "post-session",
-          source: "manual",
-        },
-      ],
+    act(() => {
+      useReviewStore.getState().actions.appendFragment({
+        format: 1,
+        session: session.id,
+        events: [
+          {
+            id: 99,
+            timestamp: "2026-07-01T11:00:00Z",
+            label: "post-session",
+            source: "manual",
+          },
+        ],
+      });
     });
     const row = await screen.findByTestId("event-row-99");
     const rangeBefore = useReviewStore.getState().range;
@@ -102,12 +104,14 @@ describe("EventsPanel", () => {
 
   it("a subsequent successful jump clears a lingering refused-jump notice", async () => {
     const { onClose, session } = load();
-    useReviewStore.getState().actions.appendFragment({
-      format: 1,
-      session: session.id,
-      events: [
-        { id: 99, timestamp: "2026-07-01T11:00:00Z", label: "post-session", source: "manual" },
-      ],
+    act(() => {
+      useReviewStore.getState().actions.appendFragment({
+        format: 1,
+        session: session.id,
+        events: [
+          { id: 99, timestamp: "2026-07-01T11:00:00Z", label: "post-session", source: "manual" },
+        ],
+      });
     });
     fireEvent.click(await screen.findByTestId("event-row-99"));
     expect(screen.getByTestId("jump-notice")).toBeTruthy();
@@ -183,7 +187,9 @@ describe("EventsPanel compose row", () => {
     load();
     await screen.findByTestId("events-panel");
     expect(screen.queryByTestId("events-compose")).toBeNull();
-    useReviewStore.setState({ mode: "review" }); // still not editable
+    act(() => {
+      useReviewStore.setState({ mode: "review" }); // still not editable
+    });
     expect(screen.queryByTestId("events-compose")).toBeNull();
   });
 
@@ -213,12 +219,16 @@ describe("EventsPanel compose row", () => {
     useReviewStore.setState({ mode: "live", editable: true });
     const { session } = load();
     expect(screen.getByTestId("events-compose-stop").hasAttribute("disabled")).toBe(true);
-    useUiStore.getState().actions.setOpenSpan({ sessionId: session.id, eventId: 77 });
+    act(() => {
+      useUiStore.getState().actions.setOpenSpan({ sessionId: session.id, eventId: 77 });
+    });
     await waitFor(() =>
       expect(screen.getByTestId("events-compose-stop").hasAttribute("disabled")).toBe(false),
     );
     // A span open on a DIFFERENT session must not enable this one's Stop.
-    useUiStore.getState().actions.setOpenSpan({ sessionId: "some-other-session", eventId: 77 });
+    act(() => {
+      useUiStore.getState().actions.setOpenSpan({ sessionId: "some-other-session", eventId: 77 });
+    });
     await waitFor(() =>
       expect(screen.getByTestId("events-compose-stop").hasAttribute("disabled")).toBe(true),
     );

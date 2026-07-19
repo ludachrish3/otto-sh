@@ -1,5 +1,5 @@
 // web/src/ui/commands.test.tsx
-import { renderHook, waitFor } from "@testing-library/react";
+import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { useReviewStore } from "../data/reviewStore";
@@ -38,6 +38,9 @@ function seedStore(mode: "live" | null): void {
 }
 
 afterEach(() => {
+  // Unmount before resetting: this hook runs before RTL's auto-cleanup, so a
+  // bare setState here would land on still-mounted hooks outside act.
+  cleanup();
   useReviewStore.setState({
     sessions: [],
     activeSessionId: null,
@@ -91,7 +94,9 @@ describe("useCommands — review/import mode", () => {
     useUiStore.setState({ theme: "light" });
     const { result } = renderHook(() => useCommands());
     expect(result.current.find((c) => c.id === "action-theme")?.label).toBe("Switch to dark mode");
-    useUiStore.setState({ theme: "dark" });
+    act(() => {
+      useUiStore.setState({ theme: "dark" });
+    });
     const { result: r2 } = renderHook(() => useCommands());
     expect(r2.current.find((c) => c.id === "action-theme")?.label).toBe("Switch to light mode");
   });
@@ -118,7 +123,9 @@ describe("useCommands — live mode", () => {
   it("running a navigation command changes the hash route", () => {
     seedStore(null);
     const { result } = renderHook(() => useCommands());
-    result.current.find((c) => c.id === "nav-host-test1")?.run();
+    act(() => {
+      result.current.find((c) => c.id === "nav-host-test1")?.run();
+    });
     expect(window.location.hash).toBe("#/host/test1");
   });
 });
@@ -159,7 +166,9 @@ describe("useCommands — marking rows (Plan 5c)", () => {
     const { result } = renderHook(() => useCommands());
     expect(result.current.find((c) => c.id === "action-end-span")?.enabled).toBe(true);
 
-    useUiStore.setState({ openSpan: { sessionId: "other-session", eventId: 3 } });
+    act(() => {
+      useUiStore.setState({ openSpan: { sessionId: "other-session", eventId: 3 } });
+    });
     const { result: r2 } = renderHook(() => useCommands());
     expect(r2.current.find((c) => c.id === "action-end-span")?.enabled).toBe(false);
   });

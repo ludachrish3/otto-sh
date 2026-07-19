@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -125,8 +125,11 @@ describe("SubjectPage live window control", () => {
     // above — these tests are the only ones in this file that touch them,
     // so they're restored here rather than leaking "live" mode (which
     // changes window_'s derivation to liveRange, not session bounds) into
-    // every other test in this file.
-    useReviewStore.setState({ mode: null, windowMs: 900_000 });
+    // every other test in this file. This afterEach runs before the outer
+    // one's cleanup(), so the component is still mounted -> act.
+    act(() => {
+      useReviewStore.setState({ mode: null, windowMs: 900_000 });
+    });
   });
 
   it("renders only in live mode", () => {

@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // jsdom has no ResizeObserver, and (without the optional "canvas" npm
@@ -92,7 +92,9 @@ describe("Subject page", () => {
     const fullText = screen.getByTestId("series-summary").textContent ?? "";
 
     const session = useReviewStore.getState().sessions[0];
-    useReviewStore.getState().actions.setRange(presetRange(sessionBounds(session), 15));
+    act(() => {
+      useReviewStore.getState().actions.setRange(presetRange(sessionBounds(session), 15));
+    });
     await waitFor(() => {
       expect(screen.getByTestId("series-summary").textContent).not.toBe(fullText);
     });

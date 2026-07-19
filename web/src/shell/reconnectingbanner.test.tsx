@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { useReviewStore } from "../data/reviewStore";
@@ -26,7 +26,9 @@ describe("ReconnectingBanner", () => {
     useReviewStore.setState({ mode: null, connection: "disconnected" });
     const { rerender } = render(<ReconnectingBanner />);
     expect(screen.queryByTestId("reconnecting-banner")).toBeNull();
-    useReviewStore.setState({ mode: "review", connection: "connecting" });
+    act(() => {
+      useReviewStore.setState({ mode: "review", connection: "connecting" });
+    });
     rerender(<ReconnectingBanner />);
     expect(screen.queryByTestId("reconnecting-banner")).toBeNull();
   });

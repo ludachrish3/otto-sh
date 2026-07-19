@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -135,7 +135,10 @@ describe("SeriesPanel", () => {
     expect(wrapper?.textContent).toContain("/");
     // Registration: the / shortcut focuses this exact input.
     expect(document.activeElement).not.toBe(input);
-    expect(focusSearchInput()).toBe(true);
+    // Focusing flips react-aria's Input/Group focus state — a React update.
+    act(() => {
+      expect(focusSearchInput()).toBe(true);
+    });
     expect(document.activeElement).toBe(input);
   });
 });

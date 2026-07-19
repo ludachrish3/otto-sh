@@ -5,7 +5,7 @@
 // everything else. Renders <EventEditor /> directly (not the whole <App />)
 // -- opening/closing is driven straight through uiStore's actions, exactly
 // how MarkControl/EventsPanel trigger it in production.
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import kitchenSink from "../../fixtures/kitchen-sink.json";
@@ -301,7 +301,9 @@ describe("EventEditor", () => {
     await user.clear(label);
     await user.type(label, "abandoned edit");
     // Reopen on a DIFFERENT event -- a fresh target identity.
-    useUiStore.getState().actions.openEventEditor({ kind: "edit", sessionId: sid, eventId: 3 });
+    act(() => {
+      useUiStore.getState().actions.openEventEditor({ kind: "edit", sessionId: sid, eventId: 3 });
+    });
     rerender(<EventEditor />);
     expect((screen.getByTestId("editor-label") as HTMLInputElement).value).toBe("log capture");
     expect(screen.getByTestId("editor-delete").textContent).toBe("Delete");

@@ -14,15 +14,16 @@ web/src/data/exportDoc.ts) -- pushing a point for an undeclared host records
 it server-side but never surfaces a clickable element.
 """
 
-import math
 import re
 from datetime import datetime, timedelta, timezone
 
 import pytest
 from playwright.sync_api import Locator, Page, expect
 
+from tests._fixtures._clock import install_clock, pause_clock_at_ms
 from tests._fixtures._dashboard_harness import DashboardHarness
 from tests._fixtures._fake_collector import FakeCollector
+from tests._fixtures._time_mirror import format_outage
 
 pytestmark = [
     pytest.mark.hostless,
@@ -46,35 +47,6 @@ def _push_tick(
     not the lowercase ``chart="cpu"`` friendly-name parameter.
     """
     dash.run(dash.collector.push(host, "cpu", value, ts=ts))
-
-
-def _js_round(x: float) -> int:
-    """``Math.round`` (round half toward +inf) -- Python's ``round()`` is
-    banker's rounding, so a mirror that used it would diverge from the app
-    on exact .5 boundaries (24.5s -> JS 25, Python 24)."""
-    return math.floor(x + 0.5)
-
-
-def _format_outage(ms: float) -> str:
-    """Python mirror of ``data/time.ts``'s ``formatOutage`` -- lets a spec that
-    drives the browser's clock deterministically (``page.clock``) compute the
-    EXACT banner text a given, fully-known outage gap should produce, instead
-    of polling and waiting for a real-time value to show up.
-
-    Mirror EXACTLY, including formatting: issue #161 was this helper printing
-    a whole-hours count as ``f"{hours}h"`` with ``hours`` a float --
-    ``495192148.0h`` -- where JS's template of an integer-valued number gives
-    ``495192148h``. (That absurd magnitude came from the ``pause_at`` units
-    bug fixed in the test below; the sane-clock guard there keeps hour-scale
-    values out of this spec entirely now, but the mirror should not have a
-    branch that CANNOT match the app.)"""
-    if ms < 60_000:
-        return f"{_js_round(ms / 1000)}s"
-    mins = _js_round(ms / 60_000)
-    if mins < 60:
-        return f"{mins}m"
-    hours = mins / 60
-    return f"{int(hours)}h" if hours == int(hours) else f"{hours:.1f}h"
 
 
 def test_live_boots_hydrated_without_an_import_step(
@@ -206,7 +178,7 @@ def test_a_silent_hosts_drillin_shows_a_growing_unreachable_banner(
     stale_ms = stale.timestamp() * 1000
     _push_tick(live_stream_dash, "r1", stale, 10.0)
 
-    page.clock.install(time=ref)
+    install_clock(page, ref)
     page.goto(live_stream_dash.url)
     # "/" is the topology landing now (route swap); subject-link-* lives on
     # the grid (#/hosts).
@@ -241,28 +213,12 @@ def test_a_silent_hosts_drillin_shows_a_growing_unreachable_banner(
     # wherever auto-advance has gotten to (pause_at refuses a past target);
     # the one due 5s tick it fires on the way just refreshes `now` with a
     # value nothing asserts on -- the banner text is still unpinned here.
-    # A datetime, NOT the bare ms number: playwright-python's parse_time
-    # multiplies numeric time by 1000 (numbers are epoch-SECONDS to it, wire
-    # format is ms). Passing Date.now()+10_000 raw was issue #161: the
-    # virtual clock silently jumped x1000 (epoch-us scale, year ~58,000),
-    # the app and this test then computed the same absurd ~495-million-hour
-    # outage from that same clock, and the exact-text assertion still PASSED
-    # whenever the two formatters happened to agree -- flaking only when the
-    # rounded hour count landed on a whole number (the mirror's float-print
-    # divergence, fixed in _format_outage above).
-    pause_target_ms = page.evaluate("() => Date.now()") + 10_000
-    page.clock.pause_at(datetime.fromtimestamp(pause_target_ms / 1000, tz=timezone.utc))
-    # Guard the clock's SCALE, not just the flow: a units mistake anywhere in
-    # this recipe makes app and test agree on nonsense (both read the same
-    # virtual clock), so no downstream assertion can catch it -- the only
-    # honest check is against the host's real wall clock. A day of margin is
-    # orders of magnitude above any legitimate drift and orders below any
-    # ms/s/us confusion (x1000 = ~56 years off).
-    virtual_now_ms = page.evaluate("() => Date.now()")
-    assert abs(virtual_now_ms - datetime.now(tz=timezone.utc).timestamp() * 1000) < 86_400_000, (
-        f"virtual clock at {virtual_now_ms} is not wall-clock-scale -- "
-        "a page.clock call mixed up ms vs seconds (see issue #161)"
-    )
+    # pause_clock_at_ms (not page.clock.pause_at directly): playwright-python
+    # treats bare numbers as epoch-SECONDS, so feeding it this ms value raw
+    # jumped the clock x1000 and the app + this test agreed on the same
+    # nonsense (issue #161). The helper converts unambiguously and
+    # reality-checks the paused clock against the wall clock.
+    pause_clock_at_ms(page, page.evaluate("() => Date.now()") + 10_000)
 
     # One full collection tick (session.meta.interval == 5s, matching
     # live_stream_dash's FakeCollector(interval=5.0)) -- fast_forward fires
@@ -272,14 +228,14 @@ def test_a_silent_hosts_drillin_shows_a_growing_unreachable_banner(
     # expected text exact regardless of how long navigation actually took.
     pre_tick1_ms = page.evaluate("() => Date.now()")
     page.clock.fast_forward(5_000)
-    outage1 = _format_outage(pre_tick1_ms + 5_000 - stale_ms)
+    outage1 = format_outage(pre_tick1_ms + 5_000 - stale_ms)
     expect(banner).to_have_text(f"Unreachable for {outage1} — showing last-known data")
 
     # A second tick, same recipe -- pins that the outage keeps GROWING (not
     # just changing once), the actual property this spec exists to cover.
     pre_tick2_ms = page.evaluate("() => Date.now()")
     page.clock.fast_forward(5_000)
-    outage2 = _format_outage(pre_tick2_ms + 5_000 - stale_ms)
+    outage2 = format_outage(pre_tick2_ms + 5_000 - stale_ms)
     expect(banner).to_have_text(f"Unreachable for {outage2} — showing last-known data")
 
     # The chart never lost or gained a point across all of this: it is

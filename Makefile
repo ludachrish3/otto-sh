@@ -300,8 +300,12 @@ web: $(WEB_NODE_MODULES) ## (Build & Release) Build the web/ React dashboard + t
 	# no clue which model changed.
 	scripts/gen_web_types.sh
 	git diff --exit-code web/src/api/types.gen.ts web/src/api/export.gen.ts
-	cd web && npm run build
-	cd web && npm run build:covreport
+	# build_web_no_warnings.sh = vite with warnings-as-errors: any "(!)"
+	# build warning (chunk budget overrun, rollup notices) fails the build
+	# instead of scrolling past. The chunk budget itself lives in
+	# web/vite.config.ts (chunkSizeWarningLimit).
+	scripts/build_web_no_warnings.sh build
+	scripts/build_web_no_warnings.sh build:covreport
 	scripts/check_airgap.sh
 	scripts/check_airgap.sh src/otto/coverage/renderer/static/dist
 	scripts/check_brand_tokens.sh

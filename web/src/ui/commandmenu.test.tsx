@@ -1,5 +1,5 @@
 // web/src/ui/commandmenu.test.tsx
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import minimal from "../../fixtures/minimal.json";
@@ -65,7 +65,9 @@ describe("CommandMenu", () => {
   it("renders nothing while closed, the dialog when open", async () => {
     render(<CommandMenu commands={COMMANDS} />);
     expect(screen.queryByTestId("command-menu")).toBeNull();
-    useUiStore.setState({ paletteOpen: true });
+    act(() => {
+      useUiStore.setState({ paletteOpen: true });
+    });
     expect(await screen.findByTestId("command-menu")).toBeTruthy();
     expect(screen.getByTestId("command-item-nav-topology")).toBeTruthy();
   });
