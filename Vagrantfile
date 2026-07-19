@@ -1315,6 +1315,9 @@ EOF
         # Private network (shared with test VMs)
         playground.vm.network "private_network", ip: "10.10.200.101"
 
+        # Disable the default SSH forwarding rule and enable a unique one
+        playground.vm.network "forwarded_port", guest: 22, host: 5679
+
         grow_root_disk(playground, "playground-grow-disk")
 
         # Compiler + Zephyr `west build` deps. Deliberately not the dev VM's
