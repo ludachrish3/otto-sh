@@ -183,6 +183,15 @@ Vagrant.configure("2") do |config|
   config.vm.box = "bento/ubuntu-24.04"
   config.hostmanager.enabled = true
   config.hostmanager.manage_host = true
+  # Keep halted machines in the generated /etc/hosts block. hostmanager drops
+  # offline machines by default, so `playground` (autostart: false, and so
+  # halted most of the time) would vanish from the *host's* /etc/hosts on the
+  # next rewrite — any `vagrant up`/`reload`/`provision` of another VM triggers
+  # one. That breaks host-side tooling that addresses the VM by name while it's
+  # down: an SSH config entry (VSCode Remote-SSH reads ~/.ssh/config on the
+  # host) then fails to resolve rather than failing to connect, which is a much
+  # more confusing error. The entry pointing at a powered-off VM is harmless.
+  config.hostmanager.include_offline = true
 
     config.vm.provision "shell", name: "global", keep_color: true, inline: <<-SHELL
 
@@ -1310,7 +1319,13 @@ EOF
             vb.cpus = 2
         end
 
-        set_hostname(playground, "playground")
+        # Set directly (not via set_hostname) to match the dev VM above: both
+        # workstation-style VMs are addressed from the host by name, so they
+        # share an `otto.<role>` namespace. set_hostname stays for the lab
+        # peers, whose names come from the loop variable. The bare
+        # `playground` this replaced was too generic to sit in the host's
+        # /etc/hosts, which hostmanager writes (manage_host, above).
+        playground.vm.hostname = "otto.playground"
 
         # Private network (shared with test VMs)
         playground.vm.network "private_network", ip: "10.10.200.101"
