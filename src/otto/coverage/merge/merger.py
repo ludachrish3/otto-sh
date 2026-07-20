@@ -6,6 +6,7 @@ they are fully async with proper logging and timeout handling.
 """
 
 import logging
+import struct
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -32,6 +33,45 @@ def _gcov_header(path: Path) -> bytes | None:
     with path.open("rb") as f:
         header = f.read(_GCOV_HEADER_LEN)
     return header if len(header) == _GCOV_HEADER_LEN else None
+
+
+_GCOV_TAG_FUNCTION = 0x01000000
+_GCOV_FUNCTION_ANNOUNCE_WORDS = 3  # ident, lineno_checksum, cfg_checksum
+
+
+def _clang_function_records(path: Path) -> set[tuple[int, int, int]] | None:
+    """Parse (ident, lineno_checksum, cfg_checksum) triplets from a clang-dialect gcov file.
+
+    clang emits the GCC 4.8-era layout: the 12-byte header followed by
+    tag/length records with the length counted in 32-bit words. These
+    per-function triplets are exactly what llvm-cov verifies at load — and
+    silently zeroes on disagreement — so they are the only place a
+    shifted-lines stale deploy is visible (clang's file stamp is a
+    structure hash and does not move for such edits).
+
+    Returns ``None`` when the file does not walk cleanly as this dialect.
+    GNU gcc-12+ files never do (16-byte headers, byte-unit lengths), which
+    is deliberate: GCC restamps every compile, so the header check above
+    already catches its stale deploys, and GNU gcov refuses loudly as the
+    backstop — no deep check needed, no false-positive risk taken.
+    """
+    data = path.read_bytes()
+    pos = _GCOV_HEADER_LEN
+    functions: set[tuple[int, int, int]] = set()
+    while pos + 8 <= len(data):
+        tag, length = struct.unpack_from("<II", data, pos)
+        pos += 8
+        if tag == 0:  # zero padding at EOF
+            break
+        nbytes = length * 4
+        if pos + nbytes > len(data):
+            return None
+        if tag == _GCOV_TAG_FUNCTION:
+            if length < _GCOV_FUNCTION_ANNOUNCE_WORDS:
+                return None
+            functions.add(struct.unpack_from("<III", data, pos))
+        pos += nbytes
+    return functions
 
 
 def _stamp_mismatches(gcda_dir: Path, build_dirs: list[Path]) -> list[str]:
@@ -61,7 +101,13 @@ def _stamp_mismatches(gcda_dir: Path, build_dirs: list[Path]) -> list[str]:
             for gcno in [d / f"{gcda.stem}.gcno"]
             if gcno.is_file() and (header := _gcov_header(gcno)) is not None
         ]
-        if not candidates or any(header[4:12] == data_header[4:12] for _, header in candidates):
+        if not candidates:
+            continue
+        matching = [(g, h) for g, h in candidates if h[4:12] == data_header[4:12]]
+        if matching:
+            line = _function_checksum_mismatch(gcda, [g for g, _ in matching])
+            if line:
+                mismatches.append(line)
             continue
         gcno, notes_header = candidates[0]
         if notes_header[4:8] != data_header[4:8]:
@@ -79,6 +125,40 @@ def _stamp_mismatches(gcda_dir: Path, build_dirs: list[Path]) -> list[str]:
                 f"(data {data_stamp:#010x} vs notes {notes_stamp:#010x})"
             )
     return mismatches
+
+
+def _function_checksum_mismatch(gcda: Path, matching_gcnos: list[Path]) -> str | None:
+    """Run the deep, clang-dialect half of the pairing check.
+
+    Called for a ``.gcda`` whose header already agrees with *matching_gcnos*
+    — which for clang proves nothing about line positions, since its stamp
+    is a structure hash. The pairing passes if any candidate's notes carry
+    every function triplet the data references, or if either side is not
+    verifiable as the clang dialect (GNU files, empty record sets) — the
+    check never guesses. Returns the mismatch line, or ``None`` when the
+    pairing stands.
+    """
+    data_funcs = _clang_function_records(gcda)
+    if not data_funcs:
+        return None
+    first_missing: tuple[Path, set[tuple[int, int, int]]] | None = None
+    for gcno in matching_gcnos:
+        notes_funcs = _clang_function_records(gcno)
+        if not notes_funcs:
+            return None
+        missing = data_funcs - notes_funcs
+        if not missing:
+            return None
+        first_missing = first_missing or (gcno, missing)
+    if first_missing is None:  # unreachable with a non-empty candidate list
+        return None
+    gcno, missing = first_missing
+    return (
+        f"{gcda}: function checksums do not match notes file {gcno} "
+        f"({len(missing)} of {len(data_funcs)} functions differ) — source "
+        f"lines changed since the shipped binary was built; llvm-cov would "
+        f"silently record zero hits for this file"
+    )
 
 
 def _find_gcno_dirs(gcda_dir: Path, search_root: Path) -> list[Path]:

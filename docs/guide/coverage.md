@@ -583,7 +583,8 @@ the build itself, before any test time is spent: see the
 {ref}`.gcno stamp guard <coverage-gcc-stamp-guard>` for GCC products,
 its {ref}`embedded flavor <coverage-embedded-stamp-guard>`, and the
 {ref}`clang differences <coverage-clang-stale-deploys>` (clang's
-stale-deploy failure is *silent* — no stamp-mismatch error fires).
+stale-deploy failure is silent at the toolchain level, so otto verifies
+the file pairing structurally at collection instead).
 
 A capture carries its own, git-based guard instead: its recorded
 `base_commit` must equal the tree's current `HEAD`.  A capture taken at a different

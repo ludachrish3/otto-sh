@@ -84,6 +84,19 @@ Common ways to land here:
 
 ## Third variant (found 2026-07-20): clang mismatch is completely silent
 
+> **Status 2026-07-20 — the clang variants are now caught.** `LcovMerger`
+> verifies the `.gcda`↔`.gcno` pairing structurally before invoking lcov
+> (`merge/merger.py`): header stamps (catches GCC rebuilds and clang
+> structural drift) plus, for clang-dialect files, the per-function
+> (ident, lineno_checksum, cfg_checksum) triplets llvm-cov itself
+> verifies (catches line-shifting edits, which keep clang's structure
+> stamp). Both raise `CoverageDataMismatchError` pre-lcov, proven e2e
+> against real clang 18 stale deploys. Still open: the GNU
+> **function-count** variant above (raw lcov error today, wants the
+> friendly typing); in-place constant-only clang drift is undetectable
+> from the files (llvm-cov accepts it) — only the base_commit guard
+> covers that.
+
 Verified on clang 18 / llvm-cov 18 / lcov 2.0: when a `.gcda` from a stale
 clang binary meets a fresh `.gcno` (source changed *structurally* — clang's
 stamp is a structure hash, so constant-only edits keep it and llvm-cov

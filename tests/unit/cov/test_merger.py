@@ -324,6 +324,131 @@ class TestLcovMergerStampGuard:
         await localhost.close()
 
 
+def _clang_gcov_file(
+    magic: bytes, stamp: int, functions: list[tuple[int, int, int]], *, trailer: bytes = b""
+) -> bytes:
+    """A minimal clang-dialect gcov file: 12-byte header + function records.
+
+    clang emits the GCC 4.8-era layout — record lengths in 32-bit words —
+    and each function record carries (ident, lineno_checksum,
+    cfg_checksum), the triplet llvm-cov itself verifies at load.
+    """
+    blob = _gcov_header(magic, b"*804", stamp)
+    for ident, lineno_checksum, cfg_checksum in functions:
+        blob += struct.pack("<II", 0x01000000, 3)
+        blob += struct.pack("<III", ident, lineno_checksum, cfg_checksum)
+    return blob + trailer
+
+
+class TestLcovMergerFunctionChecksumGuard:
+    """Function-level .gcda↔.gcno verification for clang-dialect files.
+
+    clang's file stamp is a structure hash, so an edit that only shifts
+    lines keeps it — the header check passes — yet llvm-cov rejects every
+    function whose line-number checksum moved, silently (exit 0, all-zero
+    hits, nothing in lcov output). The per-function (ident,
+    lineno_checksum, cfg_checksum) records in both files are the
+    detectable difference.
+    """
+
+    @pytest.mark.asyncio
+    async def test_capture_clang_function_checksum_mismatch_raises(self, tmp_path):
+        """Same file stamp, drifted lineno_checksum (the shifted-lines stale
+        deploy): raise before lcov, naming the function-checksum cause."""
+        localhost = LocalHost()
+        merger = LcovMerger(localhost)
+        gcda_dir, gcno_dir = tmp_path / "gcda", tmp_path / "gcno"
+        gcda_dir.mkdir()
+        gcno_dir.mkdir()
+        (gcno_dir / "prod.gcno").write_bytes(
+            _clang_gcov_file(b"oncg", 0xD00D, [(0, 0x99FB9F22, 0xAB), (1, 0x3B3C1786, 0xCD)])
+        )
+        (gcda_dir / "prod.gcda").write_bytes(
+            _clang_gcov_file(b"adcg", 0xD00D, [(0, 0xEA5C67C7, 0xAB), (1, 0x3B3C1786, 0xCD)])
+        )
+
+        with patch.object(localhost, "exec", new_callable=AsyncMock) as mock_exec:
+            with pytest.raises(CoverageDataMismatchError) as ei:
+                await merger.capture(gcda_dir, gcno_dir, tmp_path / "out.info")
+            mock_exec.assert_not_called()
+        msg = str(ei.value)
+        assert "function checksum" in msg
+        assert "prod.gcda" in msg
+        assert "rebuilt" in msg  # framing still names cause + remedy
+        await localhost.close()
+
+    @pytest.mark.asyncio
+    async def test_capture_clang_matching_function_records_proceed(self, tmp_path):
+        """Identical function triplets (plus unrelated records to walk over)
+        pair fine and reach lcov."""
+        localhost = LocalHost()
+        merger = LcovMerger(localhost)
+        gcda_dir, gcno_dir = tmp_path / "gcda", tmp_path / "gcno"
+        gcda_dir.mkdir()
+        gcno_dir.mkdir()
+        funcs = [(0, 0x99FB9F22, 0xAB), (1, 0x3B3C1786, 0xCD)]
+        (gcno_dir / "prod.gcno").write_bytes(_clang_gcov_file(b"oncg", 0xD00D, funcs))
+        counters = struct.pack("<II", 0x01A10000, 2) + struct.pack("<Q", 1)
+        (gcda_dir / "prod.gcda").write_bytes(
+            _clang_gcov_file(b"adcg", 0xD00D, funcs, trailer=counters)
+        )
+
+        with patch.object(localhost, "exec", new_callable=AsyncMock) as mock_exec:
+            mock_exec.return_value = CommandResult(
+                Status.Success, value="", command="lcov --capture ...", retcode=0
+            )
+            result = await merger.capture(gcda_dir, gcno_dir, tmp_path / "out.info")
+            assert result == tmp_path / "out.info"
+            mock_exec.assert_called_once()
+        await localhost.close()
+
+    @pytest.mark.asyncio
+    async def test_capture_clang_missing_function_raises(self, tmp_path):
+        """A .gcda function absent from the notes entirely (the
+        function-count flavor of staleness) is just as undecodable."""
+        localhost = LocalHost()
+        merger = LcovMerger(localhost)
+        gcda_dir, gcno_dir = tmp_path / "gcda", tmp_path / "gcno"
+        gcda_dir.mkdir()
+        gcno_dir.mkdir()
+        (gcno_dir / "prod.gcno").write_bytes(_clang_gcov_file(b"oncg", 0xD00D, [(0, 0x11, 0xAB)]))
+        (gcda_dir / "prod.gcda").write_bytes(
+            _clang_gcov_file(b"adcg", 0xD00D, [(0, 0x11, 0xAB), (7, 0x22, 0xCD)])
+        )
+
+        with patch.object(localhost, "exec", new_callable=AsyncMock) as mock_exec:
+            with pytest.raises(CoverageDataMismatchError):
+                await merger.capture(gcda_dir, gcno_dir, tmp_path / "out.info")
+            mock_exec.assert_not_called()
+        await localhost.close()
+
+    @pytest.mark.asyncio
+    async def test_capture_gnu_record_stream_skips_function_check(self, tmp_path):
+        """GNU gcc-12+ files (16-byte header, byte-unit lengths) do not walk
+        as the clang dialect — the deep check must skip them rather than
+        false-positive; GCC's per-compile restamp covers them at the header
+        level anyway."""
+        localhost = LocalHost()
+        merger = LcovMerger(localhost)
+        gcda_dir, gcno_dir = tmp_path / "gcda", tmp_path / "gcno"
+        gcda_dir.mkdir()
+        gcno_dir.mkdir()
+        # 4th header word (gcc12+ checksum), then records with BYTE lengths —
+        # read as the clang dialect this is a bogus tag with a huge length.
+        gnu_tail = struct.pack("<I", 0x732C642B) + struct.pack("<II", 0xA1000000, 8)
+        (gcno_dir / "prod.gcno").write_bytes(_gcov_header(b"oncg", b"*33B", 0xBEEF) + gnu_tail)
+        (gcda_dir / "prod.gcda").write_bytes(_gcov_header(b"adcg", b"*33B", 0xBEEF) + gnu_tail)
+
+        with patch.object(localhost, "exec", new_callable=AsyncMock) as mock_exec:
+            mock_exec.return_value = CommandResult(
+                Status.Success, value="", command="lcov --capture ...", retcode=0
+            )
+            result = await merger.capture(gcda_dir, gcno_dir, tmp_path / "out.info")
+            assert result == tmp_path / "out.info"
+            mock_exec.assert_called_once()
+        await localhost.close()
+
+
 class TestLcovMergerToolchain:
     """Tests for per-host toolchain support in LcovMerger."""
 

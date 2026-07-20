@@ -50,9 +50,10 @@ class CoverageDataMismatchError(RuntimeError):
 
     gcov embeds a build stamp in both files; a (partial) rebuild of the
     product between ``otto test --cov`` and ``otto cov report`` changes the
-    stamps and breaks the pairing. Raised by the merger's structural header
-    check before lcov runs (the only detection possible for clang builds,
-    where llvm-cov zeroes the data silently), or from GNU gcov's own
+    stamps and breaks the pairing. Raised by the merger's structural
+    pairing check before lcov runs — header stamps, plus clang-dialect
+    per-function checksums (the only detection possible for clang builds,
+    where llvm-cov zeroes the data silently) — or from GNU gcov's own
     ``stamp mismatch with notes file`` refusal as the backstop.
     """
 

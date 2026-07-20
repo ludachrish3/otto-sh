@@ -39,33 +39,37 @@ to the `lcov` prerequisite from the main {doc}`coverage` page.
 ## Stale deploys: why the GCC stamp guard doesn't transfer
 
 The {ref}`.gcno stamp guard <coverage-gcc-stamp-guard>` from the GCC
-page neither works nor is usually needed under clang, because clang's
-stamp behaves differently:
+page does not transfer to clang, because clang's stamp behaves
+differently — so otto verifies the pairing itself, at collection:
 
 - **The stamp is a hash of the program's structure, not a
   per-compilation value.**  Rebuilding unchanged code reproduces the
   identical stamp, so a rebuild between deploy and collection is
   harmless — under GCC the same rebuild invalidates every previously
-  shipped binary.  It also survives edits that leave the control-flow
-  structure alone (observed on clang 18: changing only constants kept
-  the stamp, adding a function changed it), in which case `llvm-cov`
-  accepts a stale binary's counters as valid — no gcov-level check can
-  see that drift; in otto's e2e flow the
+  shipped binary.
+- **A stale deploy fails silently at the toolchain level — so otto
+  checks the files directly.**  When the shipped binary's code differs
+  from the current `.gcno`, `llvm-cov gcov` rejects the counters
+  (*"file checksums do not match"* / *"Invalid .gcda File!"*) but still
+  exits 0, and through `lcov` the affected files come back with
+  all-zero hit counts and no error text at all — nothing to parse.
+  otto therefore verifies the pairing structurally before invoking
+  `lcov`: the 12-byte header stamps must agree, and — because clang's
+  structure stamp survives edits that merely *shift* lines (a comment
+  or `#include` added above the code) — every function record in the
+  `.gcda` (ident plus line-number and control-flow checksums, the same
+  triplet `llvm-cov` verifies) must appear in the `.gcno`.  Either
+  disagreement fails collection with the same friendly
+  stamp-mismatch error GCC products get, naming the files; the remedy
+  is the usual one — redeploy the current build and re-collect.
+- **One drift stays invisible to any gcov-level check**: an in-place
+  edit that changes neither control flow nor line positions (tweaking
+  a constant).  `llvm-cov` accepts the stale binary's counters as
+  valid, and the files genuinely carry nothing to tell the difference;
+  in otto's e2e flow the
   {ref}`base_commit guard <coverage-report-stale-builds>` is what
-  covers it.
-- **A structurally stale deploy fails *silently*.** When the shipped
-  binary's code structure differs from the current `.gcno`,
-  `llvm-cov gcov` rejects the counters (*"file checksums do not
-  match"* / *"Invalid .gcda File!"*) but still exits 0 — and through
-  `lcov` the affected files come back with all-zero hit counts and no
-  error at all.  otto's typed stamp-mismatch error recognizes only the
-  GNU gcov wording, so it does not fire here.  An unexplained 0% file
-  in a clang report is the signature; the remedy is the usual one —
-  redeploy the current build and re-collect.
-- **There is nothing to scan for in the binary.** clang does not lay
+  covers that class.
+- **There is no ship-step binary scan for clang.** clang does not lay
   out a `gcov_info` struct; the stamp is an inline constant in
-  generated code, so the ship-step binary scan has no anchor.  For a
-  pre-report check, compare the 32-bit word at byte offset 8 of a
-  fetched `.gcda` against the same word of its `.gcno` — the two file
-  formats agree on that header slot (magic, version, stamp), under
-  both GCC and clang.
+  generated code, so the GCC page's build-time scan has no anchor —
+  the collection-time check above is the guard.
