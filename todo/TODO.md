@@ -77,7 +77,6 @@
 - Look into using the `@cache` decorator. Could it help with making the host database accesses faster?
 - Bug: Safari overdraws to the right side of the screen. It's the hovering toolbar that overhangs. Claude is quite confused by this and kept coming up with more and more ways to make it all line up. If this is fixed by Claude, it needs to be made very clear just what is overhanging so that it can be fixed.
 - Add a `compress` argument to get/put, which is False by default.
-- Make coverage a prominent feature in the main README — other teams/agents did not notice otto supports coverage data retrieval and report generation (surfaced by the basecamp testbed request, 2026-07-20). Cover the embedded/LLEXT story too, and consider promoting the self-contained embedded-gcov recipe (tests/repo3/product + todo/testbed-request-reply.md §4) into the user guide.
 
 ## Big Picture
 

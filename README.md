@@ -16,8 +16,8 @@ data.
 
 ## Two ways to use otto
 
-- **CLI users** — interact with otto through the `otto run`, `otto test`, and
-  `otto monitor` commands.
+- **CLI users** — interact with otto through the `otto run`, `otto test`,
+  `otto monitor`, and `otto cov` commands.
 - **API builders** — import otto's Python packages to build higher-level
   automation on top of hosts, suites, and the monitor.
 
@@ -179,6 +179,24 @@ otto monitor --file metrics.db             # replay saved data
 Monitoring can also be started from within a test suite using
 `await self.startMonitor(hosts=...)` and `await self.stopMonitor()`.
 
+### Coverage (`otto cov`)
+
+Otto retrieves gcov code-coverage data from the systems under test and
+renders multi-tier HTML reports — e2e, unit, and manual coverage merged
+into a single per-line view:
+
+```bash
+otto -l my_lab test TestDevice --cov   # collect coverage during a test run
+otto cov report                        # render the multi-tier HTML report
+```
+
+This works for GCC- and clang-built products on Unix hosts (`.gcda`
+counters fetched over the network, cross-toolchains supported) — and for
+embedded RTOS targets, where otto pulls coverage over the serial console
+from an instrumented LLEXT extension. See
+[docs/guide/coverage.md](docs/guide/coverage.md) and its per-build-type
+subpages (GCC, clang, embedded).
+
 ## Quick-start example
 
 1. **Set the environment** — point otto at your repo and lab:
@@ -216,6 +234,7 @@ The same content lives under `docs/` and can be built locally with `make docs`
 - `docs/getting-started.md` — installation and first steps
 - `docs/guide/` — detailed guides for each CLI command
 - `docs/guide/setup/lab-config.md` — full lab/host schema
+- `docs/guide/coverage.md` — coverage collection & reports (GCC, clang, embedded)
 - `docs/guide/hosts/embedded.md` — embedded (firmware/RTOS) hosts
 - `docs/guide/hosts/os-profiles.md` — OS profiles & custom host classes
 - `docs/library/` — using otto as a Python library + recipes

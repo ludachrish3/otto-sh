@@ -32,6 +32,20 @@ validity, and why only manual captures are committed.
 :file: ../_static/generated/termynal/help-cov.html
 ```
 
+## Setting up your product
+
+The collection workflow on this page is the same for every product; what
+differs is how the product itself is built and instrumented. Each build
+type has its own setup page:
+
+```{toctree}
+:maxdepth: 1
+
+coverage-gcc
+coverage-clang
+coverage-embedded
+```
+
 ## Prerequisites
 
 The following system packages must be installed on the **otto host**
@@ -49,7 +63,7 @@ On **remote hosts** (the machines running the instrumented product):
 - `.gcda` files must be written to a known directory.
 
 For clang-built products the otto host additionally needs `llvm-cov`
-(the `llvm` package) — see {ref}`coverage-clang` below.
+(the `llvm` package) — see {doc}`coverage-clang`.
 
 Install on Debian/Ubuntu:
 
@@ -66,6 +80,7 @@ sudo yum install lcov
 `gcov` is included with GCC.  Ensure the `gcov` version matches the GCC
 version used to compile the product.
 
+(coverage-configuration)=
 ## Configuration
 
 Add a `[coverage]` section to your repo's `.otto/settings.toml`:
@@ -162,39 +177,11 @@ classically a clang build captured with GNU ``gcov`` — the capture
 stops with a typed error naming both versions and the fix, instead of
 producing an empty or wrong report.
 
-(coverage-clang)=
 ### Clang Builds
 
-Products compiled with ``clang --coverage`` emit gcov-*compatible*
-counters in the GCC 4.8-era file format (clang stamps ``408*``), which
-modern GNU ``gcov`` refuses.  They must be read by ``llvm-cov gcov``:
-
-- **Auto-discovery**: with ``llvm-cov`` (or a versioned
-  ``llvm-cov-<N>``) on ``PATH``, otto detects the clang stamp and uses
-  it automatically — no configuration needed.
-- **Explicit config**: point the host toolchain's ``gcov`` at an
-  ``llvm-cov`` binary; otto substitutes the required one-word
-  ``llvm-cov gcov`` wrapper for ``lcov --gcov-tool`` at capture time.
-
-```json
-{
-  "toolchain": {
-    "sysroot": "/usr/lib/llvm-18",
-    "gcov": "bin/llvm-cov"
-  }
-}
-```
-
-```{warning}
-Do not force clang to imitate a GCC version stamp
-(``-Xclang -coverage-version=…``): clang still writes its own record
-layout, and GNU gcov trusts the stamp — it crashes or silently emits
-empty data. Let otto route clang counters through ``llvm-cov`` instead.
-```
-
-Branch coverage (`BRDA` records) flows through the llvm path as well;
-note that ``llvm-cov``'s branch *counts* are coarser than GNU gcov's
-(hit/not-hit is reliable, exact execution counts may differ).
+Clang-compiled products emit counters in a format GNU ``gcov`` cannot
+read; otto routes them through ``llvm-cov`` instead — setup and caveats
+on the {doc}`coverage-clang` page.
 
 ## Retrieving Coverage: `otto cov get`
 
@@ -737,68 +724,8 @@ a report (e.g. a future frontend) without touching the pipeline.
 
 ## Embedded (console) coverage
 
-Embedded RTOS targets (Zephyr) have no filesystem that otto can `scp` or
-`sftp` from, so the standard `.gcda`-over-SSH path does not apply.  Instead,
-otto uses a separate embedded fetcher that pulls coverage data over the
-console.
-
-### How it works
-
-A coverage-instrumented LLEXT extension built against NASA's embedded-gcov
-library dumps its counters as an ASCII hexdump over the serial console when the
-`cov_dump` function is called (via `llext call_fn <extension> cov_dump` →
-`__gcov_exit`).  Otto captures that output, decodes the hexdump blocks back to
-binary `.gcda` files, and stages them under the same per-host directory
-structure used by the remote fetcher:
-
-```text
-<staging_root>/
-    <host_id>/
-        *.gcda
-```
-
-This means the downstream merge and report pipeline (`lcov --capture`, path
-mapping, HTML render) is reused without modification — the embedded and Unix
-code paths converge at the same `.gcda` file tree, and `otto cov get` produces
-a `capture.json` for an embedded board exactly as it does for a Unix one.
-`otto cov clean` does not reach embedded boards — see
-{ref}`coverage-tier-kinds` above.
-
-### Embedded coverage configuration
-
-Declare the extension name in `.otto/settings.toml` under `[coverage.embedded]`:
-
-```toml
-[coverage.embedded]
-extension = "my_product_cov"
-```
-
-When `extension` is set, otto issues `llext call_fn my_product_cov cov_dump` on
-every embedded host in the lab that matches the optional `[coverage].hosts`
-selector.  Non-embedded hosts (Unix, Docker) are skipped automatically.
-
-The `dump_command` timeout is generous (120 s) because the hexdump is emitted
-one `printk` character at a time and can take several seconds for large binaries.
-
-### Toolchain for embedded coverage
-
-Embedded hosts that need a cross-`gcov` binary for the report step can declare
-a `toolchain` block in `lab.json` pointing to the cross toolchain's `gcov`:
-
-```json
-{
-    "element": "sprout_cov",
-    "toolchain": {
-        "sysroot": "/home/vagrant/zephyr-sdk-0.16.8/arm-zephyr-eabi",
-        "gcov": "bin/arm-zephyr-eabi-gcov",
-        "lcov": "/usr/bin/lcov"
-    }
-}
-```
-
-Note that `lcov` is a host-side Perl orchestrator and is **not** part of the
-cross toolchain — point it at the host's `lcov` binary (e.g. `/usr/bin/lcov`),
-not a path under the sysroot.
-
-See {doc}`hosts/embedded` for embedded host setup and {doc}`setup/lab-config` for the full
-`lab.json` schema.
+Embedded RTOS targets (Zephyr) have no filesystem otto can fetch `.gcda`
+files from; coverage rides the serial console instead, via an
+instrumented LLEXT extension. Product setup (embedded-gcov, the
+modern-GCC patch, the `.gcno` stamp guard), configuration, and the
+cross-toolchain block are covered on the {doc}`coverage-embedded` page.
