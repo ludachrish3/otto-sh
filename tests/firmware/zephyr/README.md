@@ -4,10 +4,13 @@ Stock Zephyr shell sample (`samples/subsys/shell/shell_module`) built for
 `qemu_x86`, with otto's Kconfig + devicetree overlays layered on. Used to
 validate otto's `EmbeddedHost` support against real RTOS targets.
 
-**There is no otto-authored firmware here** — not even an empty `main.c`. The
-only thing this directory ships is configuration that has to be in place for
-otto to talk to the target, not code we inject into it. Any sentinel/marker
-behavior otto relies on comes from what the stock Zephyr shell already does.
+**The samples stay stock** — otto ships no `main.c` and patches no sample.
+What this directory adds beyond configuration is limited to two deliberate,
+Kconfig-gated out-of-tree modules: `snmp_agent/` (monitoring channel for the
+x86 beds) and `ext_svc/` (base-owned service-thread helper for LLEXT
+extensions on the ARM cov beds; see its README for what it deliberately does
+NOT include). Any sentinel/marker behavior otto relies on comes from what the
+stock Zephyr shell already does.
 
 ## Layout
 

@@ -219,8 +219,14 @@ def test_embedded_coverage_cli_e2e(clean_sprout_cov, tmp_path):
     assert (report_dir / "index.html").exists(), "no HTML report rendered"
 
     # The product file is covered (the cross-gcov processed the .gcda + .gcno).
-    info = report_dir / "_work" / "host_0.info"
-    assert info.exists(), f"no lcov .info produced\n{result.stdout[-2000:]}"
+    # The collection model stages the per-host lcov capture next to the decoded
+    # .gcda at collect time (board.info, plus a path-resolved variant); the
+    # report's _work/ dir only holds cross-host lcov merge products, which a
+    # store-loaded run like this one never writes.
+    info = cov_dir / "sprout-cov" / "board.resolved.info"
+    if not info.exists():
+        info = cov_dir / "sprout-cov" / "board.info"
+    assert info.exists(), f"no lcov .info staged for sprout-cov\n{result.stdout[-2000:]}"
     lh, lf = _product_line_coverage(info)
     assert lf > 0, f"cov_ext.c shows no covered lines ({lh}/{lf})"
     assert lh > 0, f"cov_ext.c shows no covered lines ({lh}/{lf})"

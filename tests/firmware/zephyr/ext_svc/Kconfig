@@ -1,0 +1,35 @@
+# otto LLEXT extension-service helpers — Kconfig gate + knobs.
+#
+# Base-side plumbing that loadable extensions cannot provide for themselves:
+# a base-owned thread stack (K_THREAD_STACK_DEFINE has section/alignment
+# requirements an extension's sections can't satisfy). Added for the basecamp
+# product request (todo/testbed-request.md). Deliberately NOT here: any gcov
+# runtime — otto applications that want coverage ship their own
+# instrumentation and emission in the extension (Approach A,
+# tests/repo3/docs/feasibility.md), keeping the base product-agnostic.
+
+menuconfig OTTO_EXT_SVC
+	bool "otto LLEXT extension-service helpers"
+	depends on LLEXT
+	help
+	  Export a small service surface to LLEXT extensions: ext_svc_spawn() /
+	  ext_svc_abort() run an extension-provided entry point on a base-owned
+	  stack (single-flight — one service thread at a time), and
+	  ext_svc_uart_pipe() hands out the zephyr,uart-pipe chosen device (the
+	  protocol UART, kept off the console/shell UART).
+
+if OTTO_EXT_SVC
+
+config OTTO_EXT_SVC_STACK_SIZE
+	int "Service thread stack size (bytes)"
+	default 2048
+
+config OTTO_EXT_SVC_THREAD_PRIO
+	int "Service thread preemptible priority"
+	default 5
+	help
+	  Passed through K_PRIO_PREEMPT(); keep it below (numerically above)
+	  the shell thread's priority so a busy service loop cannot starve the
+	  console that has to load/unload it.
+
+endif # OTTO_EXT_SVC

@@ -1,0 +1,13 @@
+# otto out-of-tree Zephyr module: base-side service helpers for LLEXT
+# extensions on the coverage/loader bases (cov / cov44).
+#
+# Pulled into the ARM loader builds via
+#   -DEXTRA_ZEPHYR_MODULES=/vagrant/tests/firmware/zephyr/ext_svc
+# (see the zephyr-qemu-cov-build step in the repo Vagrantfile). The module
+# contributes its own Kconfig (the CONFIG_OTTO_EXT_SVC gate) and CMake sources;
+# nothing is compiled unless that symbol is set, so listing the module is
+# harmless on configs that leave it off (no_fs_arm).
+name: otto_ext_svc
+build:
+  cmake: .
+  kconfig: Kconfig

@@ -1087,7 +1087,12 @@ EOF
         # builds + runs the stock *base image* the extension loads into. The split
         # mirrors the x86 beds (this VM runs images; the dev VM builds + reports).
         #
-        # ARM_INSTANCES columns: id | zver | zsdk | zephyr-board | build-dir | telnet-addr | port | sample | overlay-config
+        # ARM_INSTANCES columns: id | zver | zsdk | zephyr-board | build-dir | telnet-addr | port | pport | sample | overlay-config
+        # `pport` is the raw-TCP *protocol* serial port (QEMU's second -serial,
+        # which lands on uart1 = the zephyr,uart-pipe device); `-` = console
+        # only. Raw tcp:, not telnet:, because protocol frames are binary and
+        # telnet IAC-escapes 0xFF. Added for the basecamp LLEXT product
+        # (todo/testbed-request.md); ports mirror the console's (23xx -> 24xx).
         # NB: telnet-addr must be a *host* address — not the network/broadcast of a
         # /30 owned by a zeth-* TAP. Those route to the (linkdown) TAP rather than
         # the /32 the unit adds to lo, so TCP connects fail "Network unreachable".
@@ -1115,7 +1120,13 @@ EOF
             # (HWMv2 renamed it): 3.7 is `mps2_an385`, 4.4 is `mps2/an385`.
             # `-p always` for the same reason the x86 loop uses it (overlay
             # *content* edits don't move cmake args).
-            while IFS='|' read -r id zver zsdk board build_dir addr port sample overlay; do
+            # EXTRA_ZEPHYR_MODULES registers otto's ext_svc module (base-owned
+            # service-thread helper for LLEXT extensions — see its README).
+            # Both ARM versions are 3.x+, so no ZEPHYR_EXTRA_MODULES fallback
+            # dance is needed here (unlike the x86 loop). Registering defines
+            # the CONFIG_OTTO_EXT_SVC symbol on every row; only overlays that
+            # set it =y (cov_an385) compile any of it.
+            while IFS='|' read -r id zver zsdk board build_dir addr port pport sample overlay; do
                 [ -z "$id" ] && continue
                 echo "=== cov base: ${id} (zephyr ${zver}, sdk ${zsdk}, ${board}) ==="
                 (
@@ -1128,12 +1139,13 @@ EOF
                     west build -p always -b "${board}" \
                         "zephyr/${sample}" \
                         -d "${build_dir}" \
-                        -- -DEXTRA_CONF_FILE=/vagrant/tests/firmware/zephyr/configs/${overlay}/overlay.conf
+                        -- -DEXTRA_CONF_FILE=/vagrant/tests/firmware/zephyr/configs/${overlay}/overlay.conf \
+                           -DEXTRA_ZEPHYR_MODULES=/vagrant/tests/firmware/zephyr/ext_svc
                 )
             done <<'ARM_INSTANCES'
-cov|v3_7|0.16.8|mps2_an385|/home/vagrant/build/cov_base|192.0.2.33|2323|samples/subsys/llext/shell_loader|cov_an385
-cov44|v4_4|1.0.1|mps2/an385|/home/vagrant/build/cov_base_v4_4|192.0.2.34|2324|samples/subsys/llext/shell_loader|cov_an385
-no_fs_arm|v3_7|0.16.8|mps2_an385|/home/vagrant/build/no_fs_arm|192.0.2.37|2325|samples/subsys/shell/shell_module|v3_7_no_fs_arm
+cov|v3_7|0.16.8|mps2_an385|/home/vagrant/build/cov_base|192.0.2.33|2323|2423|samples/subsys/llext/shell_loader|cov_an385
+cov44|v4_4|1.0.1|mps2/an385|/home/vagrant/build/cov_base_v4_4|192.0.2.34|2324|2424|samples/subsys/llext/shell_loader|cov_an385
+no_fs_arm|v3_7|0.16.8|mps2_an385|/home/vagrant/build/no_fs_arm|192.0.2.37|2325|-|samples/subsys/shell/shell_module|v3_7_no_fs_arm
 ARM_INSTANCES
         SHELL
 
@@ -1157,21 +1169,34 @@ ARM_INSTANCES
             # because 23 is privileged + already taken). Each listen address lives
             # on this VM's loopback (added by ExecStartPre) so the hop's in-VM
             # telnet resolves it; nothing outside this VM needs the address.
-            while IFS='|' read -r id zver zsdk board build_dir addr port sample overlay; do
+            while IFS='|' read -r id zver zsdk board build_dir addr port pport sample overlay; do
                 [ -z "$id" ] && continue
+
+                # Rows with a pport get a second -serial: QEMU hands -serial
+                # args to the machine's CMSDK UARTs in order, so it lands on
+                # uart1 — the zephyr,uart-pipe device the ext_svc accessor
+                # returns. Raw tcp:, NOT telnet: — extension protocols carry
+                # arbitrary binary and telnet would IAC-escape 0xFF bytes.
+                proto_serial=""
+                if [ "${pport}" != "-" ]; then
+                    proto_serial="-serial tcp:${addr}:${pport},server=on,wait=off "
+                fi
+
                 cat > /home/vagrant/run-zephyr-qemu-${id}.sh <<EOF
 #!/usr/bin/env bash
 # Launch the ${id} instance (zephyr ${zver}, ${board}) under QEMU, bridging UART
 # to a telnet listener on ${addr}:${port}. Serial-telnet (no NIC): the mps2
 # LAN9118 can't receive a multi-frame load_hex line, and a serial console needs
 # no in-guest networking anyway. See tests/repo3/docs/feasibility.md
-# ("pivot to serial-telnet").
+# ("pivot to serial-telnet"). A second -serial (raw tcp, binary-safe) bridges
+# uart1 for extension protocols where the instance table defines a pport.
 set -euo pipefail
 exec ${QEMU_ARM} \\
     -machine mps2-an385 \\
     -display none \\
     -monitor none \\
     -serial telnet:${addr}:${port},server,nowait \\
+    ${proto_serial}\\
     -kernel ${build_dir}/zephyr/zephyr.elf
 EOF
                 chown vagrant:vagrant /home/vagrant/run-zephyr-qemu-${id}.sh
@@ -1196,9 +1221,9 @@ WantedBy=multi-user.target
 EOF
                 systemctl enable zephyr-qemu-${id}.service
             done <<'ARM_INSTANCES'
-cov|v3_7|0.16.8|mps2_an385|/home/vagrant/build/cov_base|192.0.2.33|2323|samples/subsys/llext/shell_loader|cov_an385
-cov44|v4_4|1.0.1|mps2/an385|/home/vagrant/build/cov_base_v4_4|192.0.2.34|2324|samples/subsys/llext/shell_loader|cov_an385
-no_fs_arm|v3_7|0.16.8|mps2_an385|/home/vagrant/build/no_fs_arm|192.0.2.37|2325|samples/subsys/shell/shell_module|v3_7_no_fs_arm
+cov|v3_7|0.16.8|mps2_an385|/home/vagrant/build/cov_base|192.0.2.33|2323|2423|samples/subsys/llext/shell_loader|cov_an385
+cov44|v4_4|1.0.1|mps2/an385|/home/vagrant/build/cov_base_v4_4|192.0.2.34|2324|2424|samples/subsys/llext/shell_loader|cov_an385
+no_fs_arm|v3_7|0.16.8|mps2_an385|/home/vagrant/build/no_fs_arm|192.0.2.37|2325|-|samples/subsys/shell/shell_module|v3_7_no_fs_arm
 ARM_INSTANCES
 
             systemctl daemon-reload
