@@ -183,6 +183,12 @@ if stamp not in stamps:
 it. It converts a silent wrong-coverage report into an immediate,
 actionable build failure.
 
+The same guard exists for Unix targets, where the ship step is a deploy
+rather than `llext load_hex` — see the
+{ref}`GCC page <coverage-gcc-stamp-guard>` (note the stamp offset inside
+`gcov_info` differs with pointer width: +8 here on 32-bit Cortex-M, +16
+on 64-bit Unix hosts).
+
 ## Embedded coverage configuration
 
 Declare the extension name in `.otto/settings.toml` under `[coverage.embedded]`:

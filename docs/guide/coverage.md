@@ -577,6 +577,14 @@ The same rebuild against a *pre-capture* run directory (an older otto's
 output, loaded via the legacy `.gcda`-merge fallback) still re-pairs
 raw counters at report time and fails with the error above.
 
+The ship-step variant of this mistake — deploying a binary, then
+rebuilding the local tree it will be decoded against — can be caught in
+the build itself, before any test time is spent: see the
+{ref}`.gcno stamp guard <coverage-gcc-stamp-guard>` for GCC products,
+its {ref}`embedded flavor <coverage-embedded-stamp-guard>`, and the
+{ref}`clang differences <coverage-clang-stale-deploys>` (clang's
+stale-deploy failure is *silent* — no stamp-mismatch error fires).
+
 A capture carries its own, git-based guard instead: its recorded
 `base_commit` must equal the tree's current `HEAD`.  A capture taken at a different
 commit — the tree moved on since collection — fails the report with a

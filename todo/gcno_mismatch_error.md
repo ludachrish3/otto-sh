@@ -82,6 +82,28 @@ Common ways to land here:
   and caught in [src/otto/cli/cov.py](../src/otto/cli/cov.py) to print the
   friendly message and exit with a distinct code.
 
+## Third variant (found 2026-07-20): clang mismatch is completely silent
+
+Verified on clang 18 / llvm-cov 18 / lcov 2.0: when a `.gcda` from a stale
+clang binary meets a fresh `.gcno` (source changed, deploy not refreshed),
+`llvm-cov gcov` prints *"file checksums do not match: X != Y"* and
+*"Invalid .gcda File!"* **but exits 0**, and `lcov --capture` via the
+gcov-tool wrapper succeeds with the affected file recorded at **all-zero
+hit counts — no error text in lcov output at all**. So neither the
+`"stamp mismatch"` substring check (`merge/merger.py:108`) nor the
+function-count signature above can ever fire for clang; the user just
+gets a silently zeroed file.
+
+Detection can't come from lcov output. A pre-merge structural check
+works for **both** compilers: the 32-bit word at byte offset 8 is the
+stamp in `.gcno` and `.gcda` alike (magic, version, stamp — GNU and
+clang agree on that header slot; confirmed by direct read on both).
+Comparing each fetched `.gcda`'s stamp against its `.gcno` before
+invoking lcov would catch the GNU *and* clang variants early, with the
+implicated file paths in hand for the friendly message. Documented for
+users at `docs/guide/coverage-clang.md` (`coverage-clang-stale-deploys`)
+meanwhile.
+
 ## Not in scope
 
 - Auto-recovery / auto-rebuild. Too much magic; the user should know why
