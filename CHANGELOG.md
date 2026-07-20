@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.3] - 2026-07-20
+
+### Added
+
+- catch line-shifted clang stale deploys via function checksums
+- structural .gcda/.gcno stamp check before lcov capture
+- basecamp LLEXT enablement — ext_svc helper, uart1 protocol serial, 32 KB+ sizing
+
+
+### Documentation
+
+- extend the .gcno stamp guard to GCC and clang Unix builds
+- per-build-type coverage subpages (GCC/clang/embedded) + README feature mention
+
+
+### Fixed
+
+- keep the per-run access key out of the log files
+
+
+### Maintenance
+
+- updated playground host definition for easier addressing
+- set playground VM's SSH forward port
+
+
 ## [0.7.2] - 2026-07-19
 
 ### Added
@@ -946,7 +972,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - added GitHub templates
 - set up release management
 
-[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.7.2...HEAD
+[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.7.3...HEAD
+[0.7.3]: https://github.com/ludachrish3/otto-sh/compare/v0.7.2...v0.7.3
 [0.7.2]: https://github.com/ludachrish3/otto-sh/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/ludachrish3/otto-sh/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/ludachrish3/otto-sh/compare/v0.6.0...v0.7.0
