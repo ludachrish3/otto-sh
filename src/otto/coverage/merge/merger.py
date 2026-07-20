@@ -19,6 +19,68 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+_GCOV_HEADER_LEN = 12
+"""Magic word, format-version word, build stamp — 4 bytes each.
+
+GNU gcov and clang's gcov-compatible mode agree on this layout for
+``.gcno`` and ``.gcda`` files alike.
+"""
+
+
+def _gcov_header(path: Path) -> bytes | None:
+    """Read the gcov file header, or ``None`` for files too short to carry it."""
+    with path.open("rb") as f:
+        header = f.read(_GCOV_HEADER_LEN)
+    return header if len(header) == _GCOV_HEADER_LEN else None
+
+
+def _stamp_mismatches(gcda_dir: Path, build_dirs: list[Path]) -> list[str]:
+    """Verify each ``.gcda`` pairs with a same-stem ``.gcno`` in *build_dirs*.
+
+    A ``.gcda`` decodes only against the notes of the exact compilation
+    that produced its binary. GNU gcov refuses a bad pairing loudly, but
+    llvm-cov (clang builds) prints its complaint and exits 0 — lcov then
+    "succeeds" with the file recorded at all-zero hits and nothing in its
+    output to detect. So the pairing is verified structurally, before lcov
+    runs: bytes 4:12 of both headers (format version + build stamp) must
+    agree, as raw bytes so endianness never enters into it. A ``.gcda``
+    with several same-stem candidates passes if any one matches, mirroring
+    lcov's own resolution across ``--build-directory`` args; one with no
+    candidate at all is left for lcov's own diagnostics.
+
+    Returns one human-readable line per mismatched ``.gcda``.
+    """
+    mismatches: list[str] = []
+    for gcda in sorted(gcda_dir.glob("*.gcda")):
+        data_header = _gcov_header(gcda)
+        if data_header is None:
+            continue
+        candidates = [
+            (gcno, header)
+            for d in build_dirs
+            for gcno in [d / f"{gcda.stem}.gcno"]
+            if gcno.is_file() and (header := _gcov_header(gcno)) is not None
+        ]
+        if not candidates or any(header[4:12] == data_header[4:12] for _, header in candidates):
+            continue
+        gcno, notes_header = candidates[0]
+        if notes_header[4:8] != data_header[4:8]:
+            mismatches.append(
+                f"{gcda}: format version {data_header[4:8]!r} does not match "
+                f"notes file {gcno} ({notes_header[4:8]!r}) — written by "
+                f"different compiler generations"
+            )
+        else:
+            data_stamp, notes_stamp = (
+                int.from_bytes(h[8:12], "little") for h in (data_header, notes_header)
+            )
+            mismatches.append(
+                f"{gcda}: stamp mismatch with notes file {gcno} "
+                f"(data {data_stamp:#010x} vs notes {notes_stamp:#010x})"
+            )
+    return mismatches
+
+
 def _find_gcno_dirs(gcda_dir: Path, search_root: Path) -> list[Path]:
     """Find ``.gcno``-containing directories under *search_root* that match ``.gcda`` basenames.
 
@@ -92,6 +154,18 @@ class LcovMerger:
         gcov = ensure_gcov_tool(gcov, output.parent)
 
         build_dirs = _find_gcno_dirs(gcda_dir, gcno_dir)
+
+        # Structural pre-check, not output parsing: for clang builds a stamp
+        # mismatch never surfaces in lcov's output (llvm-cov exits 0 and the
+        # file is recorded at all-zero hits), so this is the only reliable
+        # detection point. The post-run substring checks below stay as the
+        # backstop for whatever this cannot see.
+        mismatches = _stamp_mismatches(gcda_dir, build_dirs)
+        if mismatches:
+            from ..errors import CoverageDataMismatchError
+
+            raise CoverageDataMismatchError("\n".join(mismatches))
+
         build_args = " ".join(f"--build-directory {d}" for d in build_dirs)
 
         cmd = (

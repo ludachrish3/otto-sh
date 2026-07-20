@@ -85,7 +85,9 @@ Common ways to land here:
 ## Third variant (found 2026-07-20): clang mismatch is completely silent
 
 Verified on clang 18 / llvm-cov 18 / lcov 2.0: when a `.gcda` from a stale
-clang binary meets a fresh `.gcno` (source changed, deploy not refreshed),
+clang binary meets a fresh `.gcno` (source changed *structurally* — clang's
+stamp is a structure hash, so constant-only edits keep it and llvm-cov
+accepts the old counters as valid; only the base_commit guard sees that),
 `llvm-cov gcov` prints *"file checksums do not match: X != Y"* and
 *"Invalid .gcda File!"* **but exits 0**, and `lcov --capture` via the
 gcov-tool wrapper succeeds with the affected file recorded at **all-zero

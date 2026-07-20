@@ -42,12 +42,19 @@ The {ref}`.gcno stamp guard <coverage-gcc-stamp-guard>` from the GCC
 page neither works nor is usually needed under clang, because clang's
 stamp behaves differently:
 
-- **The stamp is a hash of the source, not a per-compilation value.**
-  Rebuilding unchanged code reproduces the identical stamp, so a
-  rebuild between deploy and collection is harmless — under GCC the
-  same rebuild invalidates every previously shipped binary.
-- **A genuinely stale deploy fails *silently*.** When the shipped
-  binary was built from *different* code than the current `.gcno`,
+- **The stamp is a hash of the program's structure, not a
+  per-compilation value.**  Rebuilding unchanged code reproduces the
+  identical stamp, so a rebuild between deploy and collection is
+  harmless — under GCC the same rebuild invalidates every previously
+  shipped binary.  It also survives edits that leave the control-flow
+  structure alone (observed on clang 18: changing only constants kept
+  the stamp, adding a function changed it), in which case `llvm-cov`
+  accepts a stale binary's counters as valid — no gcov-level check can
+  see that drift; in otto's e2e flow the
+  {ref}`base_commit guard <coverage-report-stale-builds>` is what
+  covers it.
+- **A structurally stale deploy fails *silently*.** When the shipped
+  binary's code structure differs from the current `.gcno`,
   `llvm-cov gcov` rejects the counters (*"file checksums do not
   match"* / *"Invalid .gcda File!"*) but still exits 0 — and through
   `lcov` the affected files come back with all-zero hit counts and no

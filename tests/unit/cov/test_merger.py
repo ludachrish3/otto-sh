@@ -1,15 +1,43 @@
 """Tests for the lcov merger."""
 
+import struct
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from otto.coverage.errors import CoverageDataMismatchError
 from otto.coverage.merge.merger import LcovMerger
 from otto.host.local_host import LocalHost
 from otto.host.toolchain import Toolchain
 from otto.result import CommandResult
 from otto.utils import Status
+
+
+def _gcov_header(magic: bytes, version: bytes, stamp: int) -> bytes:
+    """A minimal 12-byte gcov file header: magic, format version, build stamp.
+
+    GNU gcov and clang's gcov-compatible mode agree on this layout for both
+    ``.gcno`` and ``.gcda`` files; the merger's structural stamp check reads
+    nothing beyond it.
+    """
+    return magic + version + struct.pack("<I", stamp)
+
+
+def _write_pair(
+    gcda_dir: Path,
+    gcno_dir: Path,
+    stem: str,
+    *,
+    gcno_stamp: int,
+    gcda_stamp: int,
+    gcno_version: bytes = b"B33*",
+    gcda_version: bytes = b"B33*",
+) -> None:
+    gcda_dir.mkdir(parents=True, exist_ok=True)
+    gcno_dir.mkdir(parents=True, exist_ok=True)
+    (gcno_dir / f"{stem}.gcno").write_bytes(_gcov_header(b"oncg", gcno_version, gcno_stamp))
+    (gcda_dir / f"{stem}.gcda").write_bytes(_gcov_header(b"adcg", gcda_version, gcda_stamp))
 
 
 class TestLcovMerger:
@@ -152,6 +180,147 @@ class TestLcovMerger:
             # Single host = no merge step, returns the captured info directly
             assert result == work_dir / "host_0.info"
             assert mock_exec.call_count == 1
+        await localhost.close()
+
+
+class TestLcovMergerStampGuard:
+    """Structural .gcda↔.gcno stamp verification, run before lcov.
+
+    GNU gcov refuses a stamp mismatch loudly, but llvm-cov (clang builds)
+    prints its complaint and exits 0 — lcov then succeeds with the file
+    recorded at all-zero hits and nothing in its output to parse. The only
+    reliable detection is comparing the file headers directly, before lcov
+    is invoked at all.
+    """
+
+    @pytest.mark.asyncio
+    async def test_capture_detects_stamp_mismatch_before_lcov(self, tmp_path):
+        """Mismatched stamps raise CoverageDataMismatchError without running
+        lcov — even when lcov WOULD succeed (the silent clang mode)."""
+        localhost = LocalHost()
+        merger = LcovMerger(localhost)
+        gcda_dir, gcno_dir = tmp_path / "gcda", tmp_path / "gcno"
+        _write_pair(gcda_dir, gcno_dir, "prod", gcno_stamp=0x1111AAAA, gcda_stamp=0x2222BBBB)
+
+        with patch.object(localhost, "exec", new_callable=AsyncMock) as mock_exec:
+            mock_exec.return_value = CommandResult(
+                Status.Success, value="", command="lcov --capture ...", retcode=0
+            )
+            with pytest.raises(CoverageDataMismatchError) as ei:
+                await merger.capture(gcda_dir, gcno_dir, tmp_path / "out.info")
+            mock_exec.assert_not_called()
+        msg = str(ei.value)
+        assert "prod.gcda" in msg  # names the implicated data file
+        assert "prod.gcno" in msg  # names the notes file it fails against
+        assert "0x2222bbbb" in msg  # the data stamp, inspectable
+        assert "0x1111aaaa" in msg  # the notes stamp, inspectable
+        assert "rebuilt" in msg  # the framing still names cause + remedy
+        await localhost.close()
+
+    @pytest.mark.asyncio
+    async def test_capture_matching_stamps_proceed_to_lcov(self, tmp_path):
+        localhost = LocalHost()
+        merger = LcovMerger(localhost)
+        gcda_dir, gcno_dir = tmp_path / "gcda", tmp_path / "gcno"
+        _write_pair(gcda_dir, gcno_dir, "prod", gcno_stamp=0x1111AAAA, gcda_stamp=0x1111AAAA)
+
+        with patch.object(localhost, "exec", new_callable=AsyncMock) as mock_exec:
+            mock_exec.return_value = CommandResult(
+                Status.Success, value="", command="lcov --capture ...", retcode=0
+            )
+            result = await merger.capture(gcda_dir, gcno_dir, tmp_path / "out.info")
+            assert result == tmp_path / "out.info"
+            mock_exec.assert_called_once()
+        await localhost.close()
+
+    @pytest.mark.asyncio
+    async def test_capture_any_matching_candidate_notes_file_passes(self, tmp_path):
+        """Several same-stem .gcno under the search root (e.g. two build
+        variants): the pairing is fine if ANY of them matches, mirroring how
+        lcov resolves multiple --build-directory args."""
+        localhost = LocalHost()
+        merger = LcovMerger(localhost)
+        gcda_dir, gcno_root = tmp_path / "gcda", tmp_path / "gcno"
+        _write_pair(
+            gcda_dir, gcno_root / "stale_variant", "prod", gcno_stamp=0xDEAD, gcda_stamp=0xF00D
+        )
+        (gcno_root / "live_variant").mkdir(parents=True)
+        (gcno_root / "live_variant" / "prod.gcno").write_bytes(
+            _gcov_header(b"oncg", b"B33*", 0xF00D)
+        )
+
+        with patch.object(localhost, "exec", new_callable=AsyncMock) as mock_exec:
+            mock_exec.return_value = CommandResult(
+                Status.Success, value="", command="lcov --capture ...", retcode=0
+            )
+            result = await merger.capture(gcda_dir, gcno_root, tmp_path / "out.info")
+            assert result == tmp_path / "out.info"
+        await localhost.close()
+
+    @pytest.mark.asyncio
+    async def test_capture_version_word_mismatch_raises(self, tmp_path):
+        """Equal stamps but different format-version words (a .gcda written by
+        a different compiler generation than the .gcno) is just as fatal."""
+        localhost = LocalHost()
+        merger = LcovMerger(localhost)
+        gcda_dir, gcno_dir = tmp_path / "gcda", tmp_path / "gcno"
+        _write_pair(
+            gcda_dir,
+            gcno_dir,
+            "prod",
+            gcno_stamp=0x1111AAAA,
+            gcda_stamp=0x1111AAAA,
+            gcno_version=b"B33*",
+            gcda_version=b"408*",
+        )
+
+        with patch.object(localhost, "exec", new_callable=AsyncMock) as mock_exec:
+            with pytest.raises(CoverageDataMismatchError) as ei:
+                await merger.capture(gcda_dir, gcno_dir, tmp_path / "out.info")
+            mock_exec.assert_not_called()
+        assert "version" in str(ei.value)
+        await localhost.close()
+
+    @pytest.mark.asyncio
+    async def test_capture_gcda_without_notes_falls_through_to_lcov(self, tmp_path):
+        """A .gcda with no same-stem .gcno anywhere is not the guard's call —
+        today's lcov behavior (its own warning/error) is preserved."""
+        localhost = LocalHost()
+        merger = LcovMerger(localhost)
+        gcda_dir = tmp_path / "gcda"
+        gcda_dir.mkdir()
+        (gcda_dir / "orphan.gcda").write_bytes(_gcov_header(b"adcg", b"B33*", 0x1234))
+        gcno_dir = tmp_path / "gcno"
+        gcno_dir.mkdir()
+
+        with patch.object(localhost, "exec", new_callable=AsyncMock) as mock_exec:
+            mock_exec.return_value = CommandResult(
+                Status.Success, value="", command="lcov --capture ...", retcode=0
+            )
+            result = await merger.capture(gcda_dir, gcno_dir, tmp_path / "out.info")
+            assert result == tmp_path / "out.info"
+            mock_exec.assert_called_once()
+        await localhost.close()
+
+    @pytest.mark.asyncio
+    async def test_capture_truncated_header_falls_through_to_lcov(self, tmp_path):
+        """Files too short to carry the 12-byte header are left for lcov to
+        reject with its own diagnostics."""
+        localhost = LocalHost()
+        merger = LcovMerger(localhost)
+        gcda_dir, gcno_dir = tmp_path / "gcda", tmp_path / "gcno"
+        gcda_dir.mkdir()
+        gcno_dir.mkdir()
+        (gcda_dir / "prod.gcda").write_bytes(b"adcg")  # truncated
+        (gcno_dir / "prod.gcno").write_bytes(_gcov_header(b"oncg", b"B33*", 0x1234))
+
+        with patch.object(localhost, "exec", new_callable=AsyncMock) as mock_exec:
+            mock_exec.return_value = CommandResult(
+                Status.Success, value="", command="lcov --capture ...", retcode=0
+            )
+            result = await merger.capture(gcda_dir, gcno_dir, tmp_path / "out.info")
+            assert result == tmp_path / "out.info"
+            mock_exec.assert_called_once()
         await localhost.close()
 
 
