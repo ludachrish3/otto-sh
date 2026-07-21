@@ -21,13 +21,7 @@ import { ButtonUtility } from "@/components/base/buttons/button-utility";
 import { Dropdown } from "@/components/base/dropdown/dropdown";
 import { useIsPaused, useReviewStore } from "../data/reviewStore";
 import { SearchTrigger } from "../ui/SearchTrigger";
-import {
-  EXPORT_BINDING,
-  formatBinding,
-  IMPORT_BINDING,
-  PALETTE_BINDING,
-  THEME_BINDING,
-} from "../ui/shortcuts";
+import { EXPORT_BINDING, formatBinding, IMPORT_BINDING, PALETTE_BINDING } from "../ui/shortcuts";
 import { useUiStore } from "../ui/uiStore";
 import { exportLoadedDocument, openImportPicker } from "./ImportExport";
 import { MarkControl } from "./MarkControl";
@@ -117,7 +111,6 @@ export function AppBar() {
                   id="theme"
                   label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
                   icon={theme === "dark" ? Sun : Moon01}
-                  addon={formatBinding(THEME_BINDING)}
                   onAction={toggleTheme}
                   data-testid="menu-theme"
                 />

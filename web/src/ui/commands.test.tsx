@@ -101,6 +101,15 @@ describe("useCommands — review/import mode", () => {
     expect(r2.current.find((c) => c.id === "action-theme")?.label).toBe("Switch to light mode");
   });
 
+  it("binds no keyboard shortcut to the theme toggle (Cmd+L removed)", () => {
+    // ⌘L is captured by macOS (focus-address-bar) so the toggle can't be
+    // triggered by keyboard there; the row stays in the palette/overflow menu
+    // as a click-only action, like the chord-less Navigation rows.
+    seedStore(null);
+    const { result } = renderHook(() => useCommands());
+    expect(result.current.find((c) => c.id === "action-theme")?.binding).toBeUndefined();
+  });
+
   it("disables Export with no data loaded", () => {
     useReviewStore.setState({ rawMonitorSessions: null });
     const { result } = renderHook(() => useCommands());

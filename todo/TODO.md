@@ -2,24 +2,16 @@
 
 ## General
 
-- Backpsace doesn't work when typing in the action pop-over
-- Add an icon with each tab
-  - change "Topology" to "Topology View" with the same topology icon used in action pop-over
-  - Change "Hosts" to "List View" with the same icon as used in the "Informational page examples" Grid/List tab selector of this page: <https://www.untitledui.com/react/components/informational-pages>
-- Breadcrumb should adopt an Untitled UI component (<https://www.untitledui.com/react/components/breadcrumbs#breadcrumbs-button>) I also would like the breadcrumbs to have similar hover functionality and borders to the tab button styling to give the breadcrumbs a bit more depth. Otherwise, the breadcrumbs blend in too much.
-- The 5m/15m/1h buttons should be tab buttons just like the topology/hosts toggle is on the main page.
+- What are the long green bars between each element title and its card? It seems like it should either be in the element card or not there at all.
+- The "Mark now..." should say "Mark event"
+  - This button should also change to a dropdown element similar to this: <https://www.untitledui.com/react/components/dropdowns#search-advanced>. It wouldn't exactly be a search function, but it has similar needs (a text box, the current options in the dropdown). If we need to create a custom element, that's okay. We can brainstorm exactly how this should work.
+- Is the mini-map supposed to show anything from the bigger view? It looks like a blank rectangle.
 - `otto tunnel list` should print "No active tunnels when there are no results.
   - Also, the rich table should use rounded corners and more horizontal padding (let's start with 1 on the left and right and see where to go from there.)
 - Add a "fullscreen" icon per chart that expands that single chart to fill the whole chart-canvas area (collapse the rest of the stack; ESC / click to restore). Relates to the existing "fully collapse graphs" item below.
-- Change `otto monitor` to not log the key value in the log files. Log mode should be SILENT or whatever.
 
 - Add profiling for tab completion. If tab complete takes more than 50 ms, let's look at ways to refactor and keep that to as small of a time as possible.
 - Make sure we're up-to-date for Untitled component versions: <https://www.untitledui.com/react/docs/upgrade>
-- Update components to use Untitled UI components.
-  - The time/date picker should be the Untitled `Range calendar card` (<https://www.untitledui.com/react/components/date-pickers>)
-  - The options dropdown should be an `Icon Advanced` instead of the ellipses (<https://www.untitledui.com/react/components/dropdowns>)
-    - Dark/light mode should have the appropriate icon next to the text
-    - Import and export should be in a separate option group
 - Add a topology screenshot to the guide — trivially rides the rewritten capture now.
 - Retire the fixture-stem enumeration class (three near-misses this phase; derive all lists from one source).
 - Slot ≥ 8 palette policy (top of the Plan-3 follow-ups): what a 9th series does — design decision, not code yet.

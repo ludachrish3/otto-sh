@@ -31,9 +31,13 @@ afterEach(cleanup);
 afterEach(() => registerSearchInput(null));
 
 function renderPanel(overrides: Partial<Parameters<typeof SeriesPanel>[0]> = {}) {
-  const tree = buildSeriesTree(kitchen, "chassis-a_lc1");
+  // Resolve `tree` from the overrides first so the derived defaults (allCharts,
+  // checked) follow the caller's tree — tests that pass a different subject's
+  // tree (e.g. a source-less host) must not inherit the default host's sources.
+  const tree = overrides.tree ?? buildSeriesTree(kitchen, "chassis-a_lc1");
   const props = {
     tree,
+    allCharts: tree,
     checked: new Set(tree.flatMap((c) => c.series.map((s) => s.key))),
     onToggle: vi.fn(),
     search: "",
@@ -53,6 +57,28 @@ describe("SeriesPanel", () => {
     renderPanel();
     expect(screen.getByTestId("chip-cpu")).toBeTruthy();
     expect(screen.getByTestId("chip-source-mgmt-01")).toBeTruthy();
+  });
+
+  it("keeps every chart's chip while the filtered tree is narrowed to one", () => {
+    // TODO item 3: selecting a chart chip must NOT make the other chips
+    // vanish — you can't click a second chip to compare charts if it's gone.
+    // The chips render off the full chart list (allCharts), while the
+    // checkbox list below them uses the narrowed `tree`. So filtering to one
+    // chart keeps every chip present but shows only that chart's series.
+    const all = buildSeriesTree(kitchen, "chassis-a_lc1");
+    const onlyCpu = all.filter((c) => c.chartKey === "cpu");
+    const other = all.find((c) => c.chartKey !== "cpu");
+    expect(all.length).toBeGreaterThan(1);
+    expect(other).toBeDefined();
+
+    renderPanel({ tree: onlyCpu, allCharts: all, chips: new Set(["cpu"]) });
+
+    // Every chart still has a chip, even the ones filtered out of `tree`.
+    for (const chart of all) {
+      expect(screen.getByTestId(`chip-${chart.chartKey}`)).toBeTruthy();
+    }
+    // ...but the checkbox list (driven by the narrowed tree) omits the others.
+    expect(screen.queryByTestId(`series-node-${other?.series[0]?.key}`)).toBeNull();
   });
 
   it("shows the series label for host-subject series", () => {

@@ -60,6 +60,41 @@ export interface EventMarker {
   color: string;
   fromMs: number;
   toMs: number | null;
+  /** plotly-style dash name (VALID_DASH_STYLES). eventMarkers always sets it
+   * (defaulting to "dash"); optional so callers building a marker by hand need
+   * not restate the default. */
+  dash?: string;
+}
+
+/** Maps a plotly-style dash name (otto/models/monitor.py VALID_DASH_STYLES,
+ * mirrored in EventEditor's DASH_STYLES) onto the value ECharts' lineStyle.type
+ * / itemStyle.borderType accepts: the three named types, or a numeric
+ * dash-pattern array for the names ECharts has no word for (longdash etc.).
+ * Unknown/absent names fall back to "dashed" — the style markLines always used
+ * before the dash field was honored (TODO item 5). */
+const DASH_TO_ECHARTS: Record<string, "solid" | "dashed" | "dotted" | number[]> = {
+  solid: "solid",
+  dot: "dotted",
+  dash: "dashed",
+  longdash: [12, 6],
+  dashdot: [8, 4, 2, 4],
+  longdashdot: [14, 4, 2, 4],
+};
+
+function dashType(dash: string | undefined): "solid" | "dashed" | "dotted" | number[] {
+  return DASH_TO_ECHARTS[dash ?? "dash"] ?? "dashed";
+}
+
+/** A #rrggbb hex with an alpha byte appended (#rrggbbaa). Used for a span's
+ * faint fill so its dashed border can stay full-strength — itemStyle.opacity
+ * would fade the border too, leaving the dash unreadable. Non-6-digit-hex
+ * colors (never produced by the palette) pass through unchanged. */
+function withAlpha(color: string, alpha: number): string {
+  if (!/^#[0-9a-fA-F]{6}$/.test(color)) return color;
+  const byte = Math.round(alpha * 255)
+    .toString(16)
+    .padStart(2, "0");
+  return `${color}${byte}`;
 }
 
 /** Window-overlap filter over the session's wire event rows. */
@@ -83,6 +118,7 @@ export function eventMarkers(
       color: ev.color ?? "#7c5cff",
       fromMs,
       toMs,
+      dash: ev.dash ?? "dash",
     });
   }
   return out;
@@ -171,7 +207,7 @@ export function eventOverlay(
       .map((e) => ({
         xAxis: e.fromMs,
         name: e.label,
-        lineStyle: { color: e.color, type: "dashed", width: 1 },
+        lineStyle: { color: e.color, type: dashType(e.dash), width: 1 },
       })),
   };
   // Span events only (instant events use markLine above, untouched). Lanes
@@ -187,7 +223,18 @@ export function eventOverlay(
       {
         xAxis: e.fromMs,
         name: e.label,
-        itemStyle: { color: e.color, opacity: 0.12 },
+        // Faint fill (alpha baked into the colour, NOT itemStyle.opacity, which
+        // would fade the border too) + a full-strength dashed border in the
+        // event's dash style, so a span reads with the same dash as a point
+        // marker (TODO item 5). borderType rings all four edges — ECharts has no
+        // per-side border and the span is full-height, so the top/bottom lines
+        // land on the plot edges; accepted (the chosen dash on every edge).
+        itemStyle: {
+          color: withAlpha(e.color, 0.12),
+          borderColor: e.color,
+          borderType: dashType(e.dash),
+          borderWidth: 1,
+        },
         // Stack overlapping events' labels instead of colliding: each lane
         // sits LANE_LABEL_STEP_PX further down from the region's top edge.
         // color/fontSize (Task 11): markArea labels used to inherit
@@ -231,6 +278,18 @@ export function windowPatch(args: {
   return patch;
 }
 
+/** Merge patch toggling this instance's y-axis pointer between the resting
+ * suppressed state (`show:false`, see buildStackOption's yAxis.axisPointer)
+ * and the ECharts default `"auto"` ("show when the tooltip cross asks"),
+ * which restores the full x+y crosshair and the floating y-value label while
+ * the cursor is inside this chart. Meant for
+ * `chart.setOption(yAxisPointerPatch(...), { notMerge: false })` — ChartPanel
+ * applies it on mouseenter/mouseleave and re-asserts it after every notMerge
+ * rebuild (which installs a fresh model carrying the resting state). */
+export function yAxisPointerPatch(hovered: boolean): Record<string, unknown> {
+  return { yAxis: { axisPointer: { show: hovered ? "auto" : false } } };
+}
+
 export function buildStackOption(args: {
   unit: string;
   yTitle: string;
@@ -243,7 +302,12 @@ export function buildStackOption(args: {
   const { markLine, markArea } = eventOverlay(events, theme);
   return {
     animation: false,
-    grid: { left: 56, right: 16, top: 28, bottom: 28 },
+    // left: 88 (not the ~56 the y-axis labels alone need) reserves a gutter for
+    // the per-chart +/- zoom button column (SubjectPage), which is pinned
+    // top-left over this margin — the extra width keeps the buttons clear of the
+    // y-axis name, tick labels, and the hover crosshair y-value label (TODO
+    // item 2).
+    grid: { left: 88, right: 16, top: 28, bottom: 28 },
     tooltip: {
       trigger: "axis",
       axisPointer: { type: "cross", label: { backgroundColor: theme.axis } },
@@ -267,6 +331,19 @@ export function buildStackOption(args: {
       nameTextStyle: { color: theme.muted, fontSize: 10, align: "left" },
       axisLabel: { color: theme.muted, fontSize: 10 },
       splitLine: { lineStyle: { color: theme.grid, width: 1 } },
+      // Resting state of the hover-scoped y crosshair (TODO item 4): the
+      // charts are echarts.connect-ed (the synced-crosshair feature), and a
+      // connected group broadcasts the axisPointer to every instance — which
+      // mirrored the hovered chart's y crosshair + label onto all the others
+      // at a height meaningless against their y-scales. An explicit
+      // show:false is the strict cure on the receiving side: ECharts'
+      // collectAxesInfo (component/axisPointer/modelHelper) drops such an
+      // axis from axesInfo BEFORE any trigger logic, so neither the tooltip
+      // "cross" above nor a connect broadcast can ever draw a y line/label
+      // here. ChartPanel flips it to "auto" (yAxisPointerPatch) on the one
+      // chart under the cursor, which keeps the full cross — and the floating
+      // y-value label — on exactly that chart.
+      axisPointer: { show: false },
     },
     // Task 11: the wheel is freed for page scroll (it used to fight it —
     // zoomOnMouseWheel/moveOnMouseWheel both false), and pan is Ctrl-drag —

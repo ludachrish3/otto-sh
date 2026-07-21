@@ -5,10 +5,11 @@
 // ever stored twice, so a hint cannot drift from its handler.
 //
 // Reserved-key rule for future bindings (spec decision 4): never ⌘T/⌘N/⌘W/
-// ⌘⇧T (browser-owned, uninterceptable) or ⌘H/⌘M/⌘Q (macOS-owned); avoid
-// ⌘D/⌘P (bookmark/print — interceptable but sacred). ⌘S and ⌘L below
-// intentionally shadow save-page and focus-address-bar while the dashboard
-// has focus.
+// ⌘⇧T (browser-owned, uninterceptable), ⌘L (macOS captures focus-address-bar
+// even while the dashboard has focus — the theme toggle's old ⌘L binding was
+// removed for exactly this), or ⌘H/⌘M/⌘Q (macOS-owned); avoid ⌘D/⌘P
+// (bookmark/print — interceptable but sacred). ⌘S below intentionally shadows
+// save-page while the dashboard has focus.
 
 export interface Binding {
   /** KeyboardEvent.key, lowercase. */
@@ -77,7 +78,6 @@ export const PALETTE_BINDING: Binding = { key: "k", mod: true };
 export const SEARCH_BINDING: Binding = { key: "/" };
 export const IMPORT_BINDING: Binding = { key: "i", mod: true };
 export const EXPORT_BINDING: Binding = { key: "s", mod: true };
-export const THEME_BINDING: Binding = { key: "l", mod: true };
 export const PAUSE_BINDING: Binding = { key: ".", mod: true };
 // Plan 5c marking: clears the reserved-key rule above — E is not
 // browser/macOS-owned (unlike the ⌘M this otherwise reads like).

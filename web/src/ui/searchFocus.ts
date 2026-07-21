@@ -7,8 +7,9 @@ export function registerSearchInput(el: HTMLInputElement | null): void {
   target = el;
 }
 
-/** Focus the registered search input. False = nothing usable registered
- * (caller falls back to opening the palette — the palette IS a search). */
+/** Focus the registered search input. Returns false when nothing usable is
+ * registered — "/" is then a no-op (the command palette is a separate
+ * affordance, opened with ⌘K, not by "/"). */
 export function focusSearchInput(): boolean {
   if (target === null || !target.isConnected) return false;
   target.focus();

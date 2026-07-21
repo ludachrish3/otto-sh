@@ -98,10 +98,14 @@ describe("useGlobalShortcuts — bare slash", () => {
     expect(useUiStore.getState().paletteOpen).toBe(false);
   });
 
-  it("opens the palette when no search input is registered", () => {
+  it("does nothing when no search input is registered (does NOT open the palette)", () => {
+    // "/" is the in-page search affordance only; the global palette is ⌘K.
+    // With no chart/host search box present, "/" must be a no-op — not a
+    // second way into the palette (that would re-conflate the two searches).
     renderHook(() => useGlobalShortcuts([]));
-    press({ key: "/" });
-    expect(useUiStore.getState().paletteOpen).toBe(true);
+    const e = press({ key: "/" });
+    expect(useUiStore.getState().paletteOpen).toBe(false);
+    expect(e.defaultPrevented).toBe(false);
   });
 
   it("stays inert while typing in an input (the literal slash survives)", () => {

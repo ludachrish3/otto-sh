@@ -1,6 +1,7 @@
 """Command layer e2e (spec 2026-07-17: untitledui-command-layer): palette
-open -> filter -> navigate, one chord smoke test, and the ``/`` search-focus
-routing. Contract: ``data-testid`` attributes only.
+open -> filter -> navigate, the ⌘K chord smoke test (test_palette_opens…),
+the click-only theme toggle, and the ``/`` in-page search-focus routing.
+Contract: ``data-testid`` attributes only.
 
 Fixtures import through the client-side Import front door against
 ``shell_dash`` (an empty-collector, dist-serving harness), zero backend --
@@ -68,24 +69,42 @@ def test_search_trigger_opens_palette(page: Page, shell_dash) -> None:
     expect(_tid(page, "command-menu")).not_to_be_visible()
 
 
-def test_theme_chord_toggles_dark_mode(page: Page, shell_dash) -> None:
-    """Ctrl+L flips the html dark-mode class (chord smoke test -- proves the
-    chord path end-to-end in a real browser, preventDefault included)."""
+def test_theme_toggle_via_overflow_menu(page: Page, shell_dash) -> None:
+    """The theme toggle flips the html dark-mode class from the overflow menu.
+
+    ⌘L was removed (macOS captures it to focus the address bar, so the chord
+    was dead on that platform), leaving the toggle click-only; this proves the
+    remaining toggle path end-to-end in a real browser."""
     page.goto(shell_dash.url)
     _import_fixture(page, "kitchen-sink.json")
     before = page.evaluate("document.documentElement.classList.contains('dark-mode')")
-    page.keyboard.press("Control+KeyL")
+    _tid(page, "overflow-menu").click()
+    _tid(page, "menu-theme").click()
     page.wait_for_function(
         f"document.documentElement.classList.contains('dark-mode') !== {str(before).lower()}"
     )
 
 
-def test_slash_opens_palette_off_subject_pages(page: Page, shell_dash) -> None:
-    """Bare "/" opens the palette when no series-search input is registered
-    (SeriesPanel is the only registrant, and it mounts only on SubjectPage --
-    searchFocus.ts). "/" is the topology landing post-import (route swap),
-    so this is already "off subject pages" without any extra navigation."""
+def test_slash_focuses_series_search_not_palette(page: Page, shell_dash) -> None:
+    """"/" is the IN-PAGE chart/host search affordance, kept distinct from the
+    global command palette (⌘K / the AppBar trigger). Off subject pages — where
+    no series-search input is registered (SeriesPanel is the only registrant and
+    mounts only on SubjectPage, searchFocus.ts) — "/" is a NO-OP, not a second
+    way into the palette. On a subject page it focuses that page's search box.
+    """
     page.goto(shell_dash.url)
     _import_fixture(page, "kitchen-sink.json")
+    # Post-import landing is topology (route swap) — no series search here, so
+    # "/" must NOT open the palette (that would re-conflate it with ⌘K).
     page.keyboard.press("Slash")
-    expect(_tid(page, "command-menu")).to_be_visible()
+    expect(_tid(page, "command-menu")).not_to_be_visible()
+
+    # On a subject page the series-search box registers itself; "/" focuses it.
+    page.goto(f"{shell_dash.url}#/hosts")
+    first_tile = page.locator('[data-testid^="subject-link-"]').first
+    first_tile.wait_for()
+    first_tile.click()
+    page.locator('[data-testid="subject-page"]').wait_for()
+    page.keyboard.press("Slash")
+    expect(_tid(page, "series-search")).to_be_focused()
+    expect(_tid(page, "command-menu")).not_to_be_visible()

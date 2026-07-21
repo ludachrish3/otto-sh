@@ -36,7 +36,13 @@ import { formatBinding, SEARCH_BINDING } from "../ui/shortcuts";
 import { TextInput } from "../ui/TextInput";
 
 export function SeriesPanel(props: {
+  /** The FILTERED tree — drives the series checkbox list below the chips. */
   tree: ChartNode[];
+  /** The UNFILTERED chart list — drives the filter chips, so selecting one
+   * chip never removes the others (they are the controls that DO the
+   * filtering; deriving them from the filtered `tree` made every non-selected
+   * chip vanish, killing multi-select — TODO item 3). */
+  allCharts: ChartNode[];
   checked: Set<string>;
   onToggle: (key: string) => void;
   search: string;
@@ -46,8 +52,9 @@ export function SeriesPanel(props: {
   source: string | null;
   onSource: (source: string | null) => void;
 }) {
-  const { tree, checked, onToggle, search, onSearch, chips, onChips, source, onSource } = props;
-  const sources = sourcesIn(tree);
+  const { tree, allCharts, checked, onToggle, search, onSearch, chips, onChips, source, onSource } =
+    props;
+  const sources = sourcesIn(allCharts);
 
   return (
     <aside
@@ -63,7 +70,7 @@ export function SeriesPanel(props: {
         inputRef={registerSearchInput}
       />
       <div className="flex flex-col gap-2">
-        {tree.length > 0 && (
+        {allCharts.length > 0 && (
           <TagGroup
             label="Chart filters"
             selectionMode="multiple"
@@ -71,13 +78,13 @@ export function SeriesPanel(props: {
             onSelectionChange={(keys) => {
               const next =
                 keys === "all"
-                  ? new Set(tree.map((c) => c.chartKey))
+                  ? new Set(allCharts.map((c) => c.chartKey))
                   : new Set([...keys].map(String));
               onChips(next.size === 0 ? null : next);
             }}
           >
             <TagList className="flex flex-wrap gap-1.5">
-              {tree.map((chart) => (
+              {allCharts.map((chart) => (
                 <Tag key={chart.chartKey} id={chart.chartKey}>
                   <span data-testid={`chip-${chart.chartKey}`}>{chart.chartLabel}</span>
                 </Tag>

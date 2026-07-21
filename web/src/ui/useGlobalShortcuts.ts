@@ -1,8 +1,8 @@
 // The one document-level keydown listener (spec §Global shortcuts). Chords
 // fire from anywhere — they never type characters — and preventDefault on
 // match is load-bearing: it is what keeps ⌘S from ALSO opening the
-// browser's save dialog and ⌘L from focusing the address bar. The bare
-// "/" is the only guarded key (shouldSuppressSlash).
+// browser's save dialog. The bare "/" is the only guarded key
+// (shouldSuppressSlash).
 import { useEffect } from "react";
 
 import type { Command } from "./commands";
@@ -30,8 +30,12 @@ export function useGlobalShortcuts(commands: Command[]): void {
       }
       if (matchesBinding(e, SEARCH_BINDING)) {
         if (shouldSuppressSlash(e.target, useUiStore.getState().paletteOpen)) return;
-        e.preventDefault();
-        if (!focusSearchInput()) actions.openPalette();
+        // "/" is the in-page chart/host search affordance (SeriesPanel), kept
+        // distinct from the global command palette (⌘K). Focus the registered
+        // search box if one is present; otherwise do nothing — "/" is NOT a
+        // second way into the palette, or the two searches re-conflate. Only
+        // preventDefault when we actually consume it (focus a box).
+        if (focusSearchInput()) e.preventDefault();
         return;
       }
       for (const command of commands) {

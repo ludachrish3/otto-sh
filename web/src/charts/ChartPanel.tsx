@@ -1,15 +1,24 @@
 // Direct ECharts instance management (UX spec §5): init/setOption/resize/
 // dispose against a ref'd div. Instances join `groupId` so echarts.connect
-// syncs the axisPointer crosshair across the whole stack. Zoom gestures
-// (inside dataZoom) are debounced and surfaced as an absolute TimeRange —
-// the review store's range is the single source of truth, so the zoomed
-// window round-trips through the store and every chart (and the review
-// bar's inputs) follows.
+// syncs the axisPointer crosshair (and each chart's tooltip values) across
+// the whole stack; the y half of the cross is hover-scoped — parked off in
+// the built option, un-suppressed here for only the chart under the cursor
+// (TODO item 4, see the hover listeners below). Zoom gestures (inside
+// dataZoom) are debounced and surfaced as an absolute TimeRange — the review
+// store's range is the single source of truth, so the zoomed window
+// round-trips through the store and every chart (and the review bar's
+// inputs) follows.
 import { useEffect, useRef } from "react";
 
 import type { TimeRange } from "../data/exportDoc";
 import { echarts } from "./echarts";
-import { type ChartTheme, type EventMarker, windowPatch, zoomToRange } from "./options";
+import {
+  type ChartTheme,
+  type EventMarker,
+  windowPatch,
+  yAxisPointerPatch,
+  zoomToRange,
+} from "./options";
 
 const HEIGHT_PX = 280;
 const ZOOM_DEBOUNCE_MS = 200;
@@ -70,6 +79,10 @@ export function ChartPanel(props: {
   const chart = useRef<EChartsLike | null>(null);
   const latest = useRef({ win, onZoom, sweepArmed, onSweep });
   latest.current = { win, onZoom, sweepArmed, onSweep };
+  // True while the cursor is inside this panel — the one chart whose y-axis
+  // pointer is un-suppressed (see the hover listeners in the init effect and
+  // the re-assert in the option effect below).
+  const hovered = useRef(false);
 
   useEffect(() => {
     if (!el.current) return;
@@ -195,6 +208,23 @@ export function ChartPanel(props: {
     container.addEventListener("mousedown", onPanDown, true);
     container.addEventListener("mousemove", onPanMove, true);
     container.addEventListener("mouseup", onPanUp, true);
+    // Hover-scoped y crosshair (TODO item 4): the connect group broadcasts the
+    // axisPointer to every chart in the stack, so the built option parks
+    // yAxis.axisPointer.show at false everywhere (strictly un-drawable — see
+    // buildStackOption) and only the chart the cursor is actually inside gets
+    // it flipped back to "auto", restoring the full cross + floating y label
+    // there. mouseenter always precedes the zr mousemove that would draw the
+    // pointer, so the un-suppression is in place before it's needed.
+    const onHoverEnter = () => {
+      hovered.current = true;
+      instance.setOption(yAxisPointerPatch(true), { notMerge: false });
+    };
+    const onHoverLeave = () => {
+      hovered.current = false;
+      instance.setOption(yAxisPointerPatch(false), { notMerge: false });
+    };
+    container.addEventListener("mouseenter", onHoverEnter);
+    container.addEventListener("mouseleave", onHoverLeave);
     return () => {
       clearTimeout(timer);
       clearTimeout(panTimer);
@@ -202,6 +232,8 @@ export function ChartPanel(props: {
       container.removeEventListener("mousedown", onPanDown, true);
       container.removeEventListener("mousemove", onPanMove, true);
       container.removeEventListener("mouseup", onPanUp, true);
+      container.removeEventListener("mouseenter", onHoverEnter);
+      container.removeEventListener("mouseleave", onHoverLeave);
       instance.dispose();
       chart.current = null;
     };
@@ -226,6 +258,12 @@ export function ChartPanel(props: {
     // object — a whole-model rebuild silently drops it (no-op risk #1) unless
     // reissued here on every notMerge setOption.
     chart.current?.dispatchAction(BRUSH_ARM_ACTION);
+    // Same trap for the hover-scoped y pointer: the fresh model carries the
+    // built option's resting show:false, silently re-suppressing a chart the
+    // cursor is still inside (live charts rebuild under the cursor all the
+    // time). Re-assert the hovered state; at rest there's nothing to do — the
+    // resting state IS the built option's.
+    if (hovered.current) chart.current?.setOption(yAxisPointerPatch(true), { notMerge: false });
     // data-echarts-point-count: stamped HERE, inside the effect that actually
     // makes the imperative setOption() call above — same reasoning as
     // data-echarts-window-to below (see its comment). SubjectPage's

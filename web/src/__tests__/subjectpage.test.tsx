@@ -102,6 +102,22 @@ describe("SubjectPage chart stack", () => {
     expect(last.series.every((s) => s.id !== "CPU %")).toBe(true);
   });
 
+  it("selecting a chart chip keeps the other chips present (chips feed off the full tree)", async () => {
+    // Guards the SubjectPage prop wiring: the chart-filter chips get the
+    // UNfiltered tree (allCharts=tree), the series-checkbox list gets the
+    // filtered one (tree=filtered). Swap those two props and selecting one chip
+    // narrows the tree to that chart, so the OTHER chips vanish and you can no
+    // longer add a second chart to compare — the exact TODO item 3 bug. The
+    // SeriesPanel unit test passes with either prop order; only rendering the
+    // real SubjectPage exercises the wiring.
+    load("chassis-a_lc1");
+    const user = userEvent.setup();
+    expect(screen.getByTestId("chip-mem")).toBeTruthy();
+    await user.click(screen.getByTestId("chip-cpu"));
+    expect(screen.getByTestId("chip-cpu")).toBeTruthy();
+    expect(screen.getByTestId("chip-mem")).toBeTruthy();
+  });
+
   it("element subject renders member series", () => {
     load("chassis-a");
     expect(screen.getByTestId("chart-panel-cpu")).toBeTruthy();

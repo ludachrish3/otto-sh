@@ -61,6 +61,49 @@ describe("buildStackOption", () => {
     expect(opt.xAxis.max).toBe(WINDOW.to);
   });
 
+  it("reserves a left gutter wide enough for the +/- zoom button column", () => {
+    // The zoom column (SubjectPage) is pinned top-LEFT over grid.left. A bare
+    // y-axis needs only ~56px; grid.left is widened past that so the buttons
+    // (right edge ~32px in) clear the y-axis labels/name/hover crosshair label
+    // that live against the axis line (TODO item 2). Regressing grid.left back
+    // toward ~56 would put the buttons over the labels again.
+    const opt = buildStackOption({
+      unit: "%",
+      yTitle: "CPU %",
+      series: [series(0)],
+      window: WINDOW,
+      events: [],
+      theme,
+    }) as { grid: { left: number } };
+    expect(opt.grid.left).toBeGreaterThanOrEqual(80);
+  });
+
+  it("keeps the cross axisPointer but parks the y-axis pointer off at rest", () => {
+    // The charts ARE echarts.connect-ed (synced crosshair + tooltips across the
+    // stack — the feature). "cross" keeps the y crosshair + floating y label on
+    // the hovered chart. yAxis.axisPointer.show:false is the strict half:
+    // ECharts' collectAxesInfo (axisPointer/modelHelper) drops an axis with an
+    // explicit show:false from axesInfo BEFORE any trigger logic, so neither
+    // the tooltip cross nor a connect broadcast can ever draw a y line/label on
+    // a chart at rest — that's what mirrored the hovered chart's y label onto
+    // every other chart at a meaningless height (TODO item 4). ChartPanel flips
+    // show back to "auto" on the ONE chart under the cursor (mouseenter), so
+    // hovering still gets the full cross there.
+    const opt = buildStackOption({
+      unit: "%",
+      yTitle: "CPU %",
+      series: [series(0)],
+      window: WINDOW,
+      events: [],
+      theme,
+    }) as {
+      tooltip: { axisPointer: { type: string } };
+      yAxis: { axisPointer: { show: boolean } };
+    };
+    expect(opt.tooltip.axisPointer.type).toBe("cross");
+    expect(opt.yAxis.axisPointer.show).toBe(false);
+  });
+
   it("attaches event markers to the first series only", () => {
     const events = [
       { id: 1, label: "point", color: "#7c5cff", fromMs: 1_200_000, toMs: null },
@@ -173,6 +216,16 @@ describe("eventMarkers", () => {
     const marks = eventMarkers(rows, WINDOW); // 1_000_000..2_000_000 ms
     expect(marks.map((m) => m.id)).toEqual([1, 3]);
     expect(marks[1].toMs).toBe(1_500_000);
+  });
+
+  it("carries the dash style, defaulting to 'dash' when the row omits it", () => {
+    const rows = [
+      { id: 1, timestamp: "1970-01-01T00:20:00Z", label: "dotted", color: "#111111", dash: "dot" },
+      { id: 2, timestamp: "1970-01-01T00:21:00Z", label: "default", color: "#222222" },
+    ];
+    const marks = eventMarkers(rows, WINDOW);
+    expect(marks[0].dash).toBe("dot");
+    expect(marks[1].dash).toBe("dash");
   });
 
   it("assigns negative synthetic ids to id-less rows to avoid collision with real ids", () => {
@@ -308,7 +361,10 @@ describe("eventOverlay markArea lanes", () => {
     expect(pos0).toEqual(pos1); // both lane 0 — the common case is unchanged
   });
 
-  it("leaves label text and colour untouched — a layout fix, not a restyle", () => {
+  it("keeps the label text and draws the fill in the event colour (now alpha-faded)", () => {
+    // The lane fix left the label untouched; TODO item 5 later faded the fill
+    // by baking alpha into the colour (so the dashed border can stay opaque),
+    // so the fill CONTAINS the event colour rather than equalling it.
     const events = [
       { id: 1, label: "stress run", color: "#ff6b6b", fromMs: 1_000, toMs: 2_000 },
       { id: 2, label: "log capture", color: "#2f9e6e", fromMs: 1_500, toMs: 2_500 },
@@ -317,9 +373,9 @@ describe("eventOverlay markArea lanes", () => {
       markArea: { data: [{ name: string; itemStyle: { color: string } }, unknown][] };
     };
     expect(markArea.data[0][0].name).toBe("stress run");
-    expect(markArea.data[0][0].itemStyle.color).toBe("#ff6b6b");
+    expect(markArea.data[0][0].itemStyle.color).toContain("#ff6b6b");
     expect(markArea.data[1][0].name).toBe("log capture");
-    expect(markArea.data[1][0].itemStyle.color).toBe("#2f9e6e");
+    expect(markArea.data[1][0].itemStyle.color).toContain("#2f9e6e");
   });
 
   it("leaves markLine (instant-event) behaviour untouched", () => {
@@ -345,5 +401,47 @@ describe("eventOverlay markArea label color (Task 11 dark-mode fix)", () => {
     };
     expect(markArea.data[0][0].label.color).toBe(theme.ink);
     expect(markArea.data[0][0].label.fontSize).toBe(10);
+  });
+});
+
+// TODO item 5: the event's dash style round-trips through the editor + API but
+// the chart ignored it — markLines were always "dashed" and spans had no
+// border at all. Both now honor the dash (spans on all four edges).
+describe("eventOverlay dash styling (TODO item 5)", () => {
+  const theme = { muted: "#999", ink: "#f3f4f6" };
+
+  it("maps a point event's dash onto the markLine's lineStyle type", () => {
+    const events = [
+      { id: 1, label: "reload", color: "#7c5cff", fromMs: 1_000, toMs: null, dash: "dot" },
+    ];
+    const { markLine } = eventOverlay(events, theme) as {
+      markLine: { data: { lineStyle: { type: unknown } }[] };
+    };
+    expect(markLine.data[0].lineStyle.type).toBe("dotted");
+  });
+
+  it("draws the span border in the event's dash type and colour on all four edges", () => {
+    const events = [
+      { id: 1, label: "stress", color: "#ff6b6b", fromMs: 1_000, toMs: 2_000, dash: "solid" },
+    ];
+    const { markArea } = eventOverlay(events, theme) as {
+      markArea: {
+        data: [
+          { itemStyle: { borderType: unknown; borderColor: string; borderWidth: number } },
+          unknown,
+        ][];
+      };
+    };
+    expect(markArea.data[0][0].itemStyle.borderType).toBe("solid");
+    expect(markArea.data[0][0].itemStyle.borderColor).toBe("#ff6b6b");
+    expect(markArea.data[0][0].itemStyle.borderWidth).toBeGreaterThan(0);
+  });
+
+  it("maps the non-named plotly dash styles to numeric ECharts dash patterns", () => {
+    const span = (dash: string) =>
+      eventOverlay([{ id: 1, label: "s", color: "#fff", fromMs: 1_000, toMs: 2_000, dash }], theme)
+        .markArea as { data: [{ itemStyle: { borderType: unknown } }, unknown][] };
+    expect(span("longdash").data[0][0].itemStyle.borderType).toBeInstanceOf(Array);
+    expect(span("dashdot").data[0][0].itemStyle.borderType).toBeInstanceOf(Array);
   });
 });

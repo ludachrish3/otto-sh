@@ -120,6 +120,93 @@ describe("ChartPanel lifecycle", () => {
   });
 });
 
+// Hover-scoped y crosshair (TODO item 4): connected charts broadcast the
+// axisPointer to the whole group, which used to mirror the hovered chart's y
+// crosshair + label onto every chart at a meaningless height. The built option
+// parks yAxis.axisPointer.show at false (chartoptions.test.ts pins that);
+// ChartPanel flips it to "auto" for the ONE instance under the cursor. The
+// receiving side is strict by construction — ECharts' collectAxesInfo drops a
+// show:false axis from axesInfo before any trigger/broadcast logic — but that
+// half lives inside real ECharts, so a browser check stands in for it; these
+// tests pin the toggling contract this component owns.
+describe("ChartPanel hover-scoped y axisPointer", () => {
+  beforeEach(() => {
+    instances.length = 0;
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    cleanup();
+  });
+
+  function yPointerPatches(instance: FakeChart) {
+    return instance.calls.filter(
+      (c) => (c.opt as { yAxis?: { axisPointer?: unknown } }).yAxis?.axisPointer !== undefined,
+    );
+  }
+
+  it("enables the y pointer on mouseenter and parks it again on mouseleave", () => {
+    const { container } = render(
+      <ChartPanel option={{ a: 1 }} groupId="g" window={WINDOW} testId="chart-panel-x" />,
+    );
+    const el = container.querySelector('[data-testid="chart-panel-x"]');
+    if (!(el instanceof HTMLElement)) throw new Error("chart-panel-x not found");
+    expect(yPointerPatches(instances[0])).toHaveLength(0); // rest: option's own show:false rules
+    fireEvent.mouseEnter(el);
+    const afterEnter = yPointerPatches(instances[0]);
+    expect(afterEnter).toHaveLength(1);
+    expect(afterEnter[0].opt).toEqual({ yAxis: { axisPointer: { show: "auto" } } });
+    // MERGE, never notMerge — a whole-model replace here would wipe the chart.
+    expect(afterEnter[0].opts?.notMerge).not.toBe(true);
+    fireEvent.mouseLeave(el);
+    const afterLeave = yPointerPatches(instances[0]);
+    expect(afterLeave).toHaveLength(2);
+    expect(afterLeave[1].opt).toEqual({ yAxis: { axisPointer: { show: false } } });
+  });
+
+  // MUTATION-PROOF (same instance-state-vs-option-model trap as the brush
+  // re-arm): a notMerge rebuild installs a fresh model carrying the built
+  // option's resting show:false, silently un-hovering a chart the cursor is
+  // still inside (live charts rebuild while hovered all the time). The re-arm
+  // in the option effect must re-assert the hovered state AFTER the rebuild.
+  it("re-asserts the hovered state after a notMerge option rebuild", () => {
+    const { container, rerender } = render(
+      <ChartPanel option={{ a: 1 }} groupId="g" window={WINDOW} testId="chart-panel-x" />,
+    );
+    const el = container.querySelector('[data-testid="chart-panel-x"]');
+    if (!(el instanceof HTMLElement)) throw new Error("chart-panel-x not found");
+    fireEvent.mouseEnter(el);
+    rerender(<ChartPanel option={{ a: 2 }} groupId="g" window={WINDOW} testId="chart-panel-x" />);
+    const calls = instances[0].calls;
+    const lastRebuild = calls.map((c) => c.opts?.notMerge === true).lastIndexOf(true);
+    expect(lastRebuild).toBeGreaterThan(-1);
+    const reassert = calls
+      .slice(lastRebuild + 1)
+      .filter(
+        (c) =>
+          (c.opt as { yAxis?: { axisPointer?: { show?: unknown } } }).yAxis?.axisPointer?.show ===
+          "auto",
+      );
+    expect(reassert).toHaveLength(1);
+  });
+
+  it("does NOT re-assert after a rebuild when the cursor is outside", () => {
+    const { container, rerender } = render(
+      <ChartPanel option={{ a: 1 }} groupId="g" window={WINDOW} testId="chart-panel-x" />,
+    );
+    const el = container.querySelector('[data-testid="chart-panel-x"]');
+    if (!(el instanceof HTMLElement)) throw new Error("chart-panel-x not found");
+    fireEvent.mouseEnter(el);
+    fireEvent.mouseLeave(el);
+    const before = instances[0].calls.length;
+    rerender(<ChartPanel option={{ a: 2 }} groupId="g" window={WINDOW} testId="chart-panel-x" />);
+    const after = instances[0].calls.slice(before);
+    // Exactly the notMerge rebuild — no stray y-pointer patch (the built
+    // option's own show:false already IS the resting state).
+    expect(after.map((c) => c.opts?.notMerge)).toEqual([true]);
+  });
+});
+
 // Task 12 (Monitor Plan 5c): brush-based drag zoom-select + sweep-to-mark.
 // A `lineX` brush is armed via takeGlobalCursor so a chart-area drag always
 // draws a selection rectangle; brushEnd then routes the selected range to

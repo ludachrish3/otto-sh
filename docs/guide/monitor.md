@@ -370,7 +370,8 @@ for them to persist to.
 second-granularity **Start**/**End** date-time fields (clearing **End**
 turns a span back into a point event), a row of color swatches, and a
 **Dash** style select (`solid`, `dot`, `dash`, `longdash`, `dashdot`,
-`longdashdot`) that only affects a span's chart overlay. Editing or
+`longdashdot`) applied to the event's chart overlay — a point event's marker
+line and the border drawn around a span. Editing or
 deleting an existing event reuses the same panel; deleting requires
 pressing **Delete** twice ("Really delete?") before it takes effect.
 

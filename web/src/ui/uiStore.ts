@@ -3,7 +3,7 @@
 // palette itself + the shortcut layer mount inside the Router (they need
 // navigation). A store, not context, so both sides reach it without a
 // provider spanning that boundary. Theme lives here too (not in AppBar
-// useState) because the palette's ⌘L command must flip the same reactive
+// useState) because the palette's theme command must flip the same reactive
 // value the menu label reads.
 import { create } from "zustand";
 

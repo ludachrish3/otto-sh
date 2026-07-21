@@ -281,7 +281,8 @@ export function SubjectPage() {
       </p>
       <div className="flex gap-4">
         <SeriesPanel
-          tree={filterTree(tree, { search, chips, source })}
+          tree={filtered}
+          allCharts={tree}
           checked={checked}
           onToggle={toggle}
           search={search}
@@ -536,7 +537,11 @@ function ChartSection(props: {
             scrolls the page again), so +/- buttons are the click-driven zoom
             gesture. Same math as a drag-zoom — zoomAbout about the window's
             center, then clampRange to the session's bounds — skipped
-            entirely once zoomAbout hits the 1000ms floor and returns null. */}
+            entirely once zoomAbout hits the 1000ms floor and returns null.
+            Pinned top-left, but the chart's grid.left (options.ts) is widened
+            to reserve a gutter for this column so it no longer collides with
+            the y-axis name, tick labels, or the hover crosshair y-value label
+            it used to obscure (TODO item 2). */}
         <div className="absolute top-1 left-1 z-10 flex flex-col gap-1">
           <ButtonUtility
             aria-label="Zoom in"

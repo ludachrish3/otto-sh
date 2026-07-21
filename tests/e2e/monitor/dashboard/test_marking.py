@@ -369,6 +369,106 @@ def test_zoom_buttons(page: Page, live_stream_dash) -> None:
     expect(panel).to_have_attribute("data-echarts-point-count", "2")
 
 
+def test_zoom_buttons_clear_the_y_axis(page: Page, live_stream_dash) -> None:
+    """The +/- zoom column sits top-LEFT, but in a gutter widened for it: the
+    chart's grid.left (options.ts) is 88px, so the y-axis line — and its
+    right-aligned tick labels, name and hover crosshair y-value label — sits far
+    enough right of the ~32px-wide button column to clear it for realistic tick
+    widths (TODO item 2). Guarded geometrically here: the button's right edge
+    stays within the left gutter; the grid.left>=80 assertion in
+    chartoptions.test.ts guards the other half — that the axis was pushed right.
+    (A pathologically wide tick label, 6-7 digits, could still reach back under
+    the column; realistic metric ranges don't, so it's left unbounded.)
+    """
+    # button column lives entirely within the left gutter, clear of the y-axis
+    # line at 88px and its left-extending tick labels
+    gutter_px = 56
+    t0 = datetime.now(tz=timezone.utc)
+    _push_tick(live_stream_dash, "r1", t0, 10.0)
+    page.goto(live_stream_dash.url)
+    page.goto(f"{live_stream_dash.url}#/hosts")
+    _tid(page, "subject-link-r1").click()
+    page.locator('[data-testid="subject-page"]').wait_for()
+
+    panel = _tid(page, "chart-panel-CPU").bounding_box()
+    zoom = _tid(page, "zoom-in-CPU").bounding_box()
+    assert panel is not None
+    assert zoom is not None
+    right_edge = zoom["x"] + zoom["width"] - panel["x"]
+    assert right_edge <= gutter_px, (
+        f"zoom column right edge is {right_edge:.0f}px into the chart — past the "
+        f"{gutter_px}px gutter, so it reaches the y-axis label band it must clear"
+    )
+
+
+def test_slideout_scrim_outstacks_live_window_tabs(page: Page, live_stream_dash) -> None:
+    """The event slide-out's scrim must out-stack the subject page's live-window
+    (5m/15m/1h) tabs (TODO item 1).
+
+    The vendored ``Tab`` paints its pill at ``z-10`` as a flex item whose
+    stacking context hoists to the document root (nothing between it and
+    ``<body>`` forms one). With the scrim at its original ``z-index: auto`` the
+    tabs therefore painted THROUGH the open panel, on top of it — measured on
+    the real bundle at ~2x the brightness of the dimmed background around them
+    (tab centre ~151 vs surroundings ~83 on a 0-255 scale). Everything else on
+    the page (the chart, the +/- zoom column trapped in the chart's own local
+    stacking context, the AppBar) dims correctly under the same scrim; the tabs
+    were the sole escapee.
+
+    ``elementFromPoint`` cannot catch this: the tab paints above the panel but
+    is NOT the pointer target there (the panel content is), so paint-order and
+    hit-order disagree at that pixel. The regression is pinned on the stacking
+    order itself — the full-viewport scrim geometrically covers the tabs, and it
+    must carry a numeric z-index at least the tabs' so it paints over them. The
+    scrim now uses ``z-50`` (matching the command palette's own scrim).
+    """
+    t0 = datetime.now(tz=timezone.utc)
+    _push_tick(live_stream_dash, "r1", t0, 10.0)
+    page.goto(live_stream_dash.url)
+    page.goto(f"{live_stream_dash.url}#/hosts")
+    _tid(page, "subject-link-r1").click()
+    page.locator('[data-testid="subject-page"]').wait_for()
+    _tid(page, "events-button").click()
+    _tid(page, "events-panel").wait_for()
+
+    stack = page.evaluate(
+        """() => {
+          const zval = (el) => {
+            const z = parseInt(getComputedStyle(el).zIndex, 10);
+            return Number.isNaN(z) ? null : z;
+          };
+          const tab = document.querySelector('[data-testid="live-window-5m"]');
+          const scrim = [...document.querySelectorAll('div')].find((d) => {
+            const s = getComputedStyle(d);
+            return s.position === 'fixed' && d.className.includes('bg-overlay');
+          });
+          if (!tab || !scrim) return null;
+          const tr = tab.getBoundingClientRect();
+          const sr = scrim.getBoundingClientRect();
+          const cx = tr.x + tr.width / 2;
+          const cy = tr.y + tr.height / 2;
+          return {
+            tabZ: zval(tab),
+            scrimZ: zval(scrim),
+            covers: sr.x <= cx && cx <= sr.x + sr.width && sr.y <= cy && cy <= sr.y + sr.height,
+          };
+        }"""
+    )
+    assert stack is not None, "live-window tabs and/or the slide-out scrim were not found"
+    assert stack["covers"], "the scrim does not geometrically cover the live-window tabs"
+    # Premise guard: the tab escapes only because it carries a positive z-index.
+    assert stack["tabZ"] is not None, (
+        "premise changed: the live-window tab no longer carries a numeric z-index to escape"
+    )
+    assert stack["scrimZ"] is not None, (
+        "scrim has z-index: auto — the live-window tabs paint on top of the open slide-out"
+    )
+    assert stack["scrimZ"] >= stack["tabZ"], (
+        f"scrim (z={stack['scrimZ']}) does not out-stack the live-window tabs "
+        f"(z={stack['tabZ']}): the tabs paint on top of the open slide-out"
+    )
+
+
 def test_db_review_edit_persists_across_restart(page: Page, db_review_dash) -> None:
     """A ``.db`` archive is event-editable in review mode (Plan 5c Task 5):
     add an event via ``events-compose-add`` -> editor -> Save; restart the

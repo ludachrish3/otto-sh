@@ -31,7 +31,6 @@ import {
   IMPORT_BINDING,
   MARK_NOW_BINDING,
   PAUSE_BINDING,
-  THEME_BINDING,
 } from "./shortcuts";
 import { type EventEditorTarget, useUiStore } from "./uiStore";
 
@@ -147,7 +146,8 @@ export function useCommands(): Command[] {
         label: theme === "dark" ? "Switch to light mode" : "Switch to dark mode",
         section: "Actions",
         icon: theme === "dark" ? Sun : Moon01,
-        binding: THEME_BINDING,
+        // No binding: ⌘L is captured by macOS (focus address bar), so the
+        // toggle is a click-only palette/overflow row, like Navigation rows.
         enabled: true,
         run: toggleTheme,
       },

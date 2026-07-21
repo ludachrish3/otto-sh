@@ -16,7 +16,15 @@ export const ModalOverlay = (props: ModalOverlayProps) => {
             {...props}
             className={(state) =>
                 cx(
-                    "fixed inset-0 flex min-h-dvh w-full items-center justify-end bg-overlay/70 pl-6 outline-hidden ease-linear md:pl-10",
+                    // z-50 matches the command-palette scrim (CommandMenu.tsx) and
+                    // must stay >= app-content z-index: the subject page's live-window
+                    // Tabs paint their pill at a z-10 flex-item stacking context that
+                    // hoists to the document root, so an auto/absent z-index here let
+                    // them bleed on top of the open panel (TODO item 1). Keep it AT 50,
+                    // not higher: the panel's own react-aria overlays must still render
+                    // above it — tooltips are explicitly z-50, and popovers portal later
+                    // in the DOM (react-aria's own overlay z), so equal-or-later wins.
+                    "fixed inset-0 z-50 flex min-h-dvh w-full items-center justify-end bg-overlay/70 pl-6 outline-hidden ease-linear md:pl-10",
                     state.isEntering && "duration-300 animate-in fade-in",
                     state.isExiting && "duration-500 animate-out fade-out",
                     typeof props.className === "function" ? props.className(state) : props.className,

@@ -1,13 +1,15 @@
 // web/src/ui/SearchTrigger.tsx
 // The AppBar's palette trigger (spec decision 7/9): a <button> DRESSED as
 // the vendored sm input (wrapper classes mirror InputBase's AriaGroup —
-// rounded-lg bg-primary shadow-xs inset ring-primary) with the "/" keycap.
-// It is not a real input on purpose: focusing it must not start text
-// entry, it opens the palette, which owns the real filter field.
+// rounded-lg bg-primary shadow-xs inset ring-primary) with the ⌘K keycap.
+// It is the GLOBAL command search — it opens the palette, which owns the
+// real filter field — so it advertises ⌘K (PALETTE_BINDING), distinct from
+// the "/" that focuses the in-page chart/host search boxes (SeriesPanel). It
+// is not a real input on purpose: focusing it must not start text entry.
 import { SearchLg } from "@untitledui/icons";
 
 import { Kbd } from "./Kbd";
-import { formatBinding, SEARCH_BINDING } from "./shortcuts";
+import { formatBinding, PALETTE_BINDING } from "./shortcuts";
 import { useUiStore } from "./uiStore";
 
 export function SearchTrigger() {
@@ -16,7 +18,7 @@ export function SearchTrigger() {
     <button
       type="button"
       data-testid="search-trigger"
-      aria-label="Search (press / or the command menu)"
+      aria-label="Search commands (press Cmd+K or Ctrl+K)"
       onClick={openPalette}
       className="flex w-50 cursor-pointer items-center gap-2 rounded-lg bg-primary py-1 pr-1.5
         pl-2.5 text-sm text-quaternary shadow-xs ring-1 ring-primary outline-focus-ring
@@ -25,7 +27,7 @@ export function SearchTrigger() {
     >
       <SearchLg aria-hidden className="size-4 shrink-0 text-fg-quaternary" />
       <span className="grow text-left text-placeholder">Search…</span>
-      <Kbd>{formatBinding(SEARCH_BINDING)}</Kbd>
+      <Kbd>{formatBinding(PALETTE_BINDING)}</Kbd>
     </button>
   );
 }

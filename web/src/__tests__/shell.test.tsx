@@ -222,7 +222,7 @@ describe("App shell", () => {
     expect(exportItem.getAttribute("aria-disabled")).toBe("true");
   });
 
-  it("overflow menu is icon-advanced: chord addons on every action row", async () => {
+  it("overflow menu is icon-advanced: chord addons on action rows, none on the chord-less theme row", async () => {
     const user = userEvent.setup();
     render(<App />);
     // menu-shortcuts only renders once data is loaded (Finding [1]).
@@ -231,7 +231,8 @@ describe("App shell", () => {
     // jsdom is non-mac -> Ctrl-form labels (shortcuts.ts formatBinding).
     expect((await screen.findByTestId("menu-import")).textContent).toContain("Ctrl I");
     expect(screen.getByTestId("menu-export").textContent).toContain("Ctrl S");
-    expect(screen.getByTestId("menu-theme").textContent).toContain("Ctrl L");
+    // Theme is now chord-less (⌘L removed — macOS captures it): no keycap addon.
+    expect(screen.getByTestId("menu-theme").textContent).not.toContain("Ctrl");
     expect(screen.getByTestId("menu-shortcuts").textContent).toContain("Ctrl K");
   });
 
