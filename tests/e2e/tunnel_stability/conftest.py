@@ -13,6 +13,7 @@ from otto.tunnel import remove_tunnel
 from tests._fixtures.labdata import host_data
 from tests._fixtures.tunnel_bed import (
     VEGGIES,
+    assert_bed_clean_before_module,
     assert_no_leftover_tunnel_processes,
     assert_reachable,
     build_bed_host,
@@ -68,9 +69,17 @@ async def reap_tunnels(tunnel_lab):
 
 
 @pytest.fixture(scope="module", autouse=True)
-def _final_leftover_sweep():
-    """Module-final bed hygiene: FAIL (never skip) if any tagged process
-    survived. Sync fixture with its own asyncio.run — it fires after every
-    per-test event loop has closed (same pattern as test_tunnel_e2e.py)."""
+def _final_leftover_sweep(request):
+    """Bed hygiene bracketing each module: clean going in, clean coming out.
+
+    The setup half proves the bed was clean before this module ran, which is
+    what lets the final sweep blame *this* module rather than merely reporting
+    that tagged processes exist somewhere on a shared bed (see
+    test_tunnel_e2e.py's copy for the 2026-07-21 misattribution this fixes).
+    It also fails fast: a soak module is minutes of bed time to spend against
+    state someone else left behind. Sync fixture with its own asyncio.run — it
+    fires after every per-test event loop has closed."""
+    module_id = f"tests/e2e/tunnel_stability/{Path(request.node.path).name}"
+    asyncio.run(assert_bed_clean_before_module(module_id))
     yield
-    asyncio.run(assert_no_leftover_tunnel_processes())
+    asyncio.run(assert_no_leftover_tunnel_processes(module_id))

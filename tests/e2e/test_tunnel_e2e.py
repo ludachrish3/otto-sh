@@ -84,6 +84,7 @@ from tests._fixtures.tunnel_bed import (
     BIND_CONFIRM_TIMEOUT,
     LISTEN_TIMEOUT,
     POLL_INTERVAL,
+    assert_bed_clean_before_module,
     assert_no_leftover_tunnel_processes,
     assert_reachable,
     build_bed_host,
@@ -113,6 +114,10 @@ _PORT_CONTAINER = 15002
 _PORT_DEGRADE = 15003
 _PORT_CLI_CYCLE = 15004
 _PORT_FOREIGN = 45003
+
+# Named in the bed-hygiene reports so a failure says which module it is about
+# without the reader having to map a nodeid back to a file.
+_MODULE_ID = "tests/e2e/test_tunnel_e2e.py"
 
 REPO2_DIR = Path(__file__).resolve().parents[1] / "repo2"
 OLDOS_DOCKER_DIR = REPO2_DIR / "docker" / "oldos"
@@ -154,14 +159,23 @@ async def reap_tunnels(tunnel_lab):
 
 @pytest.fixture(scope="module", autouse=True)
 def _final_leftover_sweep():
-    """Module-final bed hygiene: FAIL (never skip) if any tagged process survived.
+    """Bed hygiene, bracketing the module: clean going in, clean coming out.
+
+    The setup half is what makes the teardown half's accusation trustworthy.
+    The bed is shared, so a bare "tagged processes exist" sweep cannot tell
+    *this module leaked* from *someone else's leftovers are still here* — and
+    it used to word the second as the first (2026-07-21: an interrupted
+    stability run's tunnel on port 15130 was reported as a leak of this
+    module, whose ports are 15000-15004). Proving the bed clean on the way in
+    turns the final sweep into a sound claim about this module alone.
 
     Plain sync fixture (not ``pytest_asyncio``) running its own throwaway
     ``asyncio.run`` -- it fires strictly after every per-test event loop in
     this module has already closed, so it needs no ``loop_scope`` coordination.
     """
+    asyncio.run(assert_bed_clean_before_module(_MODULE_ID))
     yield
-    asyncio.run(assert_no_leftover_tunnel_processes())
+    asyncio.run(assert_no_leftover_tunnel_processes(_MODULE_ID))
 
 
 # ---------------------------------------------------------------------------

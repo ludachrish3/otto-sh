@@ -67,8 +67,94 @@ async def assert_reachable(element: str, ip: str) -> None:
         await writer.wait_closed()
 
 
-async def assert_no_leftover_tunnel_processes() -> None:
-    r"""Scan all three peers for ``otto-tunnel:`` tagged processes; raise if any remain.
+# Service-port blocks, one per suite that builds tunnels on this bed. Kept in
+# step with tests/e2e/tunnel_stability/_harness.py, whose own comment pins
+# "the 15100-15199 block, disjoint from test_tunnel_e2e's". The guard uses
+# this only to NAME a likely owner in its report -- never to decide pass/fail.
+PORT_BLOCKS: tuple[tuple[int, int, str], ...] = (
+    (15000, 15099, "tests/e2e/test_tunnel_e2e.py"),
+    (15100, 15199, "tests/e2e/tunnel_stability/ (make stability-tunnel)"),
+)
+
+
+def owning_suite(service_port: int) -> str | None:
+    """Which suite reserves *service_port*'s block, or ``None`` if unreserved."""
+    for low, high, owner in PORT_BLOCKS:
+        if low <= service_port <= high:
+            return owner
+    return None
+
+
+def _format_age(seconds: float | None) -> str:
+    """``7h11m`` / ``3m02s`` / ``?`` -- age is the tell that a process is stale."""
+    if seconds is None:
+        return "?"
+    total = int(seconds)
+    hours, rem = divmod(total, 3600)
+    minutes, secs = divmod(rem, 60)
+    if hours:
+        return f"{hours}h{minutes:02d}m"
+    if minutes:
+        return f"{minutes}m{secs:02d}s"
+    return f"{secs}s"
+
+
+def _reap_recipe(tunnel_ids: list[str]) -> str:
+    """A copy-pasteable reaper. The CLI needs ``--lab`` and the repo ships no
+    lab.json, so the Python path over this module's own bed helpers is the one
+    that actually runs."""
+    ids = ", ".join(repr(t) for t in tunnel_ids)
+    return (
+        '    uv run python -c "import asyncio; from otto.config.lab import Lab; '
+        "from otto.tunnel import remove_tunnel; "
+        "from tests._fixtures.tunnel_bed import VEGGIES, build_bed_host; "
+        "lab=Lab(name='reap'); [lab.add_host(build_bed_host(n)) for n in VEGGIES]; "
+        f'[print(asyncio.run(remove_tunnel(lab, t))) for t in [{ids}]]"'
+    )
+
+
+def format_leftover_report(found: list, *, module: str, preexisting: bool) -> str:
+    """Explain WHOSE tagged processes *found* are, and how to clear them.
+
+    *found* is a list of ``(host_id, Observation)``. *preexisting* selects the
+    two very different claims this guard can make:
+
+    ``True``  -- seen at module SETUP, before any test here ran. Whatever left
+    them, it was not this module, and saying so is the whole point: the old
+    guard blamed a test whose ports are 15000-15004 for a tunnel on 15130.
+
+    ``False`` -- absent at setup, present at teardown. The bed was verified
+    clean on the way in, so this module really did leak them.
+    """
+    rows, ids = [], []
+    for host_id, obs in found:
+        tunnel = obs.parsed.tunnel
+        ids.append(tunnel.id)
+        owner = owning_suite(tunnel.service_port)
+        provenance = f"port block owned by {owner}" if owner else "port in no declared block"
+        rows.append(
+            f"  {host_id} pid={obs.pid} tunnel={tunnel.id} "
+            f"port={tunnel.service_port} age={_format_age(obs.age_seconds)}  [{provenance}]"
+        )
+    if preexisting:
+        header = (
+            f"otto-tunnel processes were ALREADY on the bed BEFORE {module} ran -- "
+            f"they are NOT this module's leak and no test here had run yet.\n"
+            f"Most likely an interrupted run of whichever suite owns the port block "
+            f"below (a suite that is killed mid-test never reaches its reap teardown).\n"
+            f"The bed is shared, so these would also poison every later run until removed."
+        )
+    else:
+        header = (
+            f"{module} LEAKED otto-tunnel processes.\n"
+            f"The bed was verified clean at this module's setup, so these were "
+            f"created by this module and its teardown failed to reap them."
+        )
+    return "\n".join([header, *rows, "", "Reap them, then re-run:", _reap_recipe(sorted(set(ids)))])
+
+
+async def observe_tunnel_processes() -> list:
+    r"""Scan all three peers; return ``[(host_id, Observation), ...]``.
 
     Must decode each line through :func:`parse_process_discovery` (the same
     strict sentinel parser production discovery uses) rather than treat any
@@ -78,18 +164,33 @@ async def assert_no_leftover_tunnel_processes() -> None:
     self-match, not a real tagged tunnel process. ``parse_process_discovery``
     requires the full 11-segment sentinel and correctly ignores that noise.
     """
-    hosts = [build_bed_host(ne) for ne in ("carrot", "tomato", "pepper")]
+    hosts = [build_bed_host(ne) for ne in VEGGIES]
+    found: list = []
     try:
-        leaks: list[str] = []
         for host in hosts:
             result = await host.exec(DISCOVERY_PS_COMMAND, timeout=15, log=LogMode.QUIET)
-            observed = parse_process_discovery(result.value or "")
-            if observed:
-                detail = ", ".join(f"pid={o.pid} tunnel={o.parsed.tunnel.id}" for o in observed)
-                leaks.append(f"{host.id}: {detail}")
+            found.extend((host.id, o) for o in parse_process_discovery(result.value or ""))
     finally:
         await asyncio.gather(*(h.close() for h in hosts), return_exceptions=True)
-    assert not leaks, "otto-tunnel processes leaked past test module teardown:\n" + "\n".join(leaks)
+    return found
+
+
+async def assert_bed_clean_before_module(module: str) -> None:
+    """Module SETUP gate: fail fast if anyone else left tunnels on the bed.
+
+    Running a tunnel module against a dirty bed is not worth doing -- the
+    results are untrustworthy and the module-final sweep would fail anyway,
+    but blaming this module. Failing here instead costs one scan and makes
+    the teardown sweep's accusation airtight: the bed was clean on the way in.
+    """
+    found = await observe_tunnel_processes()
+    assert not found, format_leftover_report(found, module=module, preexisting=True)
+
+
+async def assert_no_leftover_tunnel_processes(module: str = "this module") -> None:
+    """Module-final sweep: fail if this module left any tagged process behind."""
+    found = await observe_tunnel_processes()
+    assert not found, format_leftover_report(found, module=module, preexisting=False)
 
 
 def listener_script(port: int, outfile: str, timeout: float) -> str:
