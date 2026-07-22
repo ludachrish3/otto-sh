@@ -109,12 +109,43 @@ if not res:
     logger.error(f"download failed: {res.msg}")
 ```
 
+`put` takes an optional `mode` -- the permission bits the uploaded files
+should end up with:
+
+```python
+res = await host.put(
+    src_files=[Path("app.bin")],
+    dest_dir=Path("/opt/bin"),
+    mode=0o755,
+)
+```
+
+From the CLI the same value is written as an octal string, which is **always**
+read base-8 -- `--mode 755` means `0o755`, never decimal 755:
+
+```console
+$ otto host web1 put ./app.bin /opt/bin --mode 755
+```
+
+The mode is applied after the bytes land, in a single batched `chmod` covering
+the whole transfer.  If the transfer succeeds but the `chmod` fails, those
+files are reported as errors that still carry their destination path -- so a
+caller can tell "never arrived" apart from "arrived with the wrong
+permissions".
+
 ```{note}
 `put` and `get` are available on all host types, with per-class semantics:
 {class}`~otto.host.local_host.LocalHost` copies files within the local
 filesystem, {class}`~otto.host.unix_host.UnixHost` transfers between the
 local machine and the remote host, and `EmbeddedHost` provides its own
 console/tftp transfer path; see {doc}`embedded`.
+
+`mode` follows the same split: it is honoured by
+{class}`~otto.host.local_host.LocalHost`, every
+{class}`~otto.host.unix_host.UnixHost` backend (`scp`, `sftp`, `ftp`, `nc`),
+and `DockerContainerHost`.  `EmbeddedHost` has no permission model -- a FAT or
+LittleFS device has no permission bits to set -- so passing `mode` to one
+fails before any bytes move rather than being silently ignored.
 ```
 
 ## Exit codes

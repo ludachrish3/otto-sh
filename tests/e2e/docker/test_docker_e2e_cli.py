@@ -221,11 +221,29 @@ def test_e2e_host_put_get_roundtrip(teardown_after, docker_host, tmp_path):
         "put",
         str(payload),
         "/tmp",
+        "--mode",
+        "755",
         xdir=tmp_path,
         compose_suffix=suffix,
     )
     assert put.returncode == 0, f"put failed:\n{put.stderr}"
     assert "Transfer complete" in put.stdout
+
+    # `--mode 755` must land as 0o755 INSIDE the container. This is the one
+    # assertion that cannot be made by reading: the mode is applied by a
+    # `docker exec chmod` after `docker cp`, so only a real container proves
+    # it reached the right filesystem. It also pins the octal contract
+    # end-to-end — decimal 755 would show as 1363.
+    stat = _run_otto(
+        "host",
+        f"{docker_host}.repo1.api",
+        "run",
+        "stat -c %a /tmp/payload.bin",
+        xdir=tmp_path,
+        compose_suffix=suffix,
+    )
+    assert stat.returncode == 0, f"stat failed:\n{stat.stderr}"
+    assert "755" in stat.stdout, f"expected mode 755 in container, got:\n{stat.stdout}"
 
     out_dir = tmp_path / "back"
     out_dir.mkdir()

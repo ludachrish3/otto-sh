@@ -12,13 +12,17 @@ exec_cmd), the :meth:`_warmup_for_transfer` helper, and a no-op default
 
 import asyncio
 from collections.abc import Callable, Coroutine
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+from typing_extensions import override
 
 if TYPE_CHECKING:
     from ..connections import ConnectionManager
 
-from ...result import CommandResult
-from .base import BaseFileTransfer
+from ...result import CommandResult, Result
+from ...utils import Status
+from .base import BaseFileTransfer, chmod_command
 
 
 class UnixFileTransfer(BaseFileTransfer):
@@ -31,6 +35,11 @@ class UnixFileTransfer(BaseFileTransfer):
     """
 
     host_families = frozenset({"unix"})
+
+    supports_mode = True
+    """Every unix backend ends with the file on a posix filesystem reachable
+    through the host's shell, so one ``chmod`` serves scp, sftp, ftp and nc
+    alike."""
 
     def __init__(
         self,
@@ -46,6 +55,21 @@ class UnixFileTransfer(BaseFileTransfer):
     async def prepare(self) -> None:
         """No-op default — subclasses override to run a strategy probe."""
         return
+
+    @override
+    async def _apply_mode(self, dest_paths: list[Path], mode: int) -> Result:
+        """Chmod the transferred files in one batched command over the host shell.
+
+        Uses the same ``exec_cmd`` seam the backends already hold, so the cost
+        is a single extra round trip regardless of file count.
+        """
+        result = await self._exec_cmd(chmod_command(mode, dest_paths))
+        if result.status.is_ok:
+            return Result(Status.Success)
+        return Result(
+            Status.Error,
+            msg=result.value or f"chmod exited {result.retcode}",
+        )
 
     async def _warmup_for_transfer(self, file_count: int) -> None:
         """Probe strategies and pre-open exec sessions for the upcoming transfer — all concurrently.

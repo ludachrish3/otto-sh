@@ -269,6 +269,19 @@ otto host <HOST_ID> get SRC... DEST
 destination directory.  For `put`, sources are local paths; for `get`, sources
 are remote paths.
 
+| Option | Default | Description |
+| ------ | ------- | ----------- |
+| `--mode TEXT` | backend default | **`put` only.** Octal permission bits for the uploaded file(s) — `755`, `0644`, `0o4755`. Always read as octal, never decimal |
+
+The mode is applied after the bytes land, in one batched `chmod` covering the
+whole transfer.  Hosts whose transfer backend has no permission model
+(embedded `console`/`tftp`) reject `--mode` before transferring anything,
+rather than accepting it and silently doing nothing.
+
+```console
+$ otto host web1 put ./app.bin /opt/bin --mode 755
+```
+
 ### `reboot` options
 
 ```text

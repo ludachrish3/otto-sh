@@ -27,7 +27,7 @@ from typing_extensions import override
 
 from ..logger.mode import LogMode
 from ..result import CommandResult, Result
-from ..utils import Arg, Exclude, Status, cli_exposed
+from ..utils import Arg, Exclude, Opt, Status, cli_exposed
 from .file_ops import PosixFileOps
 from .host import BaseHost, is_dry_run
 from .power import PowerController
@@ -54,6 +54,10 @@ class LocalFileTransfer(BaseFileTransfer):
     single blocking C call with no progress hook, the analogue of an
     embedded ``fs read``.
     """
+
+    supports_mode = True
+    """A local copy lands on the machine's own filesystem, so ``Path.chmod``
+    applies the mode directly — no shell, no transport."""
 
     async def _do_copy(
         self,
@@ -100,6 +104,24 @@ class LocalFileTransfer(BaseFileTransfer):
         progress_factory: TransferProgressFactory | None,
     ) -> dict[Path, Result]:
         return await self._do_copy(src_files, dest_dir, progress_factory)
+
+    @override
+    async def _apply_mode(self, dest_paths: list[Path], mode: int) -> Result:
+        """Chmod the copied files directly, off the event loop.
+
+        ``Path.chmod`` is a blocking syscall; the whole batch runs in one
+        worker thread rather than one hop per file.
+        """
+
+        def _chmod_all() -> None:
+            for path in dest_paths:
+                path.chmod(mode)
+
+        try:
+            await asyncio.to_thread(_chmod_all)
+        except OSError as e:
+            return Result(Status.Error, msg=str(e))
+        return Result(Status.Success)
 
 
 logger = logging.getLogger(__name__)
@@ -331,20 +353,29 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
             list[Path] | Path, Arg(variadic=True, elem_type=Path, help="Local file(s) to upload.")
         ],
         dest_dir: Path,
+        mode: Annotated[
+            int | str | None,
+            Opt(help="Octal permission bits for the uploaded file(s), e.g. 755, 0644, 0o4755."),
+        ] = None,
         show_progress: Annotated[bool, Exclude] = True,
     ) -> Result:
         """Copy files to dest_dir on the local filesystem.
 
-        Delegates to :class:`LocalFileTransfer`; see :meth:`get`.
+        Delegates to :class:`LocalFileTransfer`; see :meth:`get`. *mode* sets
+        the permission bits on the copies — an ``int`` (``0o755``) from
+        Python, or a string always read as octal (``"755"``, ``"0755"``,
+        ``"0o755"``). Without it, ``shutil.copy2`` preserves the source
+        file's own permissions.
         """
         if not isinstance(src_files, list):
             src_files = [src_files]
         if is_dry_run():
-            return self._dry_run_transfer("PUT", src_files, dest_dir)
+            return self._dry_run_transfer("PUT", src_files, dest_dir, mode)
         return await self._file_transfer.put_files(
             src_files,
             dest_dir,
             show_progress,
+            mode,
         )
 
     ####################

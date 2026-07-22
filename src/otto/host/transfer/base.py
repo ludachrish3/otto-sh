@@ -8,6 +8,7 @@ the :data:`TransferProgressHandler` / :data:`TransferProgressFactory` type
 aliases consumed by the progress-bar wiring layer.
 """
 
+import shlex
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
@@ -93,6 +94,74 @@ def validate_filename_lengths(
     return Result(Status.Success)
 
 
+MAX_FILE_MODE = 0o7777
+"""Highest permission value ``mode`` accepts.
+
+Twelve bits: setuid, setgid, sticky, then the three rwx triads — the same
+range ``chmod(1)`` accepts as an octal argument.
+"""
+
+
+def parse_file_mode(value: int | str | None) -> Result:
+    """Normalize a transfer permission *mode*, or explain why it is not one.
+
+    Strings are **always** interpreted base-8, with or without a ``0o``/``0``
+    prefix, because that is the only reading a permission mode can sensibly
+    have — ``--mode 755`` read as decimal would silently mean ``0o1363``.
+    Integers are taken as-is: a Python caller writing ``mode=0o755`` has
+    already expressed the value, and re-reading it base-8 would corrupt it.
+
+    Returns an ok :class:`~otto.result.Result` whose ``value`` is the ``int``
+    mode (or ``None`` when no mode was requested), or a failing one whose
+    ``msg`` names the offending input. Mirrors
+    :func:`validate_filename_lengths` so the two fold identically in
+    :meth:`BaseFileTransfer.put_files`.
+    """
+    if value is None:
+        return Result(Status.Success, value=None)
+    # bool subclasses int, so True would silently become 0o1 without this.
+    if isinstance(value, bool):
+        return Result(
+            Status.Error,
+            msg=f"invalid octal mode {value!r}: expected octal digits (e.g. 755, 0644, 0o4755)",
+        )
+    if isinstance(value, int):
+        mode = value
+    else:
+        try:
+            mode = int(value, 8)
+        except ValueError:
+            return Result(
+                Status.Error,
+                msg=(f"invalid octal mode {value!r}: digits must be 0-7 (e.g. 755, 0644, 0o4755)"),
+            )
+    if mode < 0:
+        return Result(Status.Error, msg=f"invalid octal mode {value!r}: must not be negative")
+    if mode > MAX_FILE_MODE:
+        return Result(
+            Status.Error,
+            msg=f"mode 0o{mode:o} out of range (max 0o{MAX_FILE_MODE:o})",
+        )
+    return Result(Status.Success, value=mode)
+
+
+def chmod_command(mode: int, paths: list[Path]) -> str:
+    """Build one batched ``chmod`` command covering every path in *paths*.
+
+    A single invocation for the whole batch, so a multi-file transfer costs
+    one extra round trip rather than one per file. The mode is rendered as
+    bare octal because that is what ``chmod(1)`` expects — a ``0o`` prefix
+    would be parsed as a filename on most implementations.
+
+    The ``--`` terminator matters: ``shlex.quote`` leaves a leading-dash path
+    like ``-rf`` unquoted (it contains no shell metacharacters), and a
+    relative ``dest_dir`` collapses ``Path(".") / "-rf"`` to exactly that, so
+    without ``--`` ``chmod`` would read the destination as option flags.
+    """
+    quoted = " ".join(shlex.quote(str(p)) for p in paths)
+    return f"chmod {mode:o} -- {quoted}"
+
+
 def aggregate_transfer(per_file: dict[Path, Result]) -> Result:
     """Fold a per-file mapping into the aggregate transfer Result.
 
@@ -154,6 +223,19 @@ class BaseFileTransfer(ABC):
     rejected at registration.
     """
 
+    supports_mode: bool = False
+    """Whether this backend can apply a permission ``mode`` after a put.
+
+    Declarative, like :attr:`host_families`: :meth:`put_files` reads it
+    **pre-flight** and refuses a ``mode`` it could never honour before any
+    bytes move — a 200 MB upload that ends in "this backend has no permission
+    model" helps nobody. A backend setting this ``True`` must implement
+    ``_apply_mode``.
+
+    ``False`` for embedded backends (``console``, ``tftp``): a Zephyr
+    filesystem has no permission bits to set.
+    """
+
     @classmethod
     def create(cls, ctx: "TransferContext") -> "BaseFileTransfer":
         """Build a transfer backend from a :class:`TransferContext`.
@@ -179,16 +261,42 @@ class BaseFileTransfer(ABC):
         src_files: list[Path],
         dest_dir: Path,
         show_progress: bool = True,
+        mode: int | str | None = None,
     ) -> Result:
         """Upload *src_files* to *dest_dir*, validating filenames and driving progress display.
 
-        Rejects over-limit basenames up front (see :func:`validate_filename_lengths`),
-        then acquires the process-wide shared Rich progress bar (if *show_progress*)
-        and delegates to the concrete backend's ``_run_put`` implementation. Returns
-        the aggregate :class:`~otto.result.Result` whose ``value`` maps each source
-        path (exactly as passed) to its per-file :class:`~otto.result.Result`.
+        Rejects a bad or unhonourable *mode* and over-limit basenames up front
+        — in that order, cheapest and most specific first — then acquires the
+        process-wide shared Rich progress bar (if *show_progress*) and
+        delegates to the concrete backend's ``_run_put`` implementation. When
+        *mode* is set, the files that landed are chmod-ed in one batch
+        afterwards (see ``_apply_mode``).
+
+        *mode* is the permission bits for the uploaded files: an ``int``
+        (``0o755``) from Python, or a string that is **always** read as octal
+        (``"755"``, ``"0755"``, ``"0o755"``). ``None`` leaves whatever
+        permissions the backend's own defaults produce.
+
+        Returns the aggregate :class:`~otto.result.Result` whose ``value`` maps
+        each source path (exactly as passed) to its per-file
+        :class:`~otto.result.Result`.
         """
         from .progress import _acquire_shared_progress, make_rich_progress_factory
+
+        mode_check = parse_file_mode(mode)
+        if not mode_check.is_ok:
+            return aggregate_transfer(
+                {f: Result(mode_check.status, msg=mode_check.msg) for f in src_files}
+            )
+        resolved_mode: int | None = mode_check.value
+        if resolved_mode is not None and not self.supports_mode:
+            msg = (
+                f"host {self._name!r}: {type(self).__name__} has no permission "
+                f"model; cannot apply mode 0o{resolved_mode:o}. Drop the mode "
+                f"argument (--mode on the CLI) or transfer with a backend that "
+                f"supports it."
+            )
+            return aggregate_transfer({f: Result(Status.Error, msg=msg) for f in src_files})
 
         name_check = validate_filename_lengths(
             src_files,
@@ -200,15 +308,15 @@ class BaseFileTransfer(ABC):
                 {f: Result(name_check.status, msg=name_check.msg) for f in src_files}
             )
         if not show_progress:
-            return aggregate_transfer(await self._run_put(src_files, dest_dir, None))
-        async with _acquire_shared_progress() as progress:
-            return aggregate_transfer(
-                await self._run_put(
+            per_file = await self._run_put(src_files, dest_dir, None)
+        else:
+            async with _acquire_shared_progress() as progress:
+                per_file = await self._run_put(
                     src_files,
                     dest_dir,
                     make_rich_progress_factory(progress, self._name),
                 )
-            )
+        return aggregate_transfer(await self._finish_put(per_file, resolved_mode))
 
     async def get_files(
         self,
@@ -245,6 +353,51 @@ class BaseFileTransfer(ABC):
                     make_rich_progress_factory(progress, self._name),
                 )
             )
+
+    async def _apply_mode(self, dest_paths: list[Path], mode: int) -> Result:
+        """Set *mode* on the already-transferred *dest_paths*.
+
+        Called once per :meth:`put_files` with the destination paths that
+        actually landed — never with files that failed or were skipped, and
+        never at all when nothing landed. Implementations should apply the
+        mode in a **single** batched operation (see :func:`chmod_command`) so
+        a multi-file transfer costs one extra round trip rather than N.
+
+        Deliberately not an ``abstractmethod``: backends that cannot support
+        modes leave :attr:`supports_mode` ``False`` and never reach this. A
+        backend that flips the flag without implementing this gets a loud
+        failure rather than a silent no-op.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} sets supports_mode = True but does not implement _apply_mode()."
+        )
+
+    async def _finish_put(
+        self,
+        per_file: dict[Path, Result],
+        mode: int | None,
+    ) -> dict[Path, Result]:
+        """Apply *mode* to the files that landed, downgrading them if chmod fails.
+
+        A chmod failure keeps ``value=dest_path`` on the downgraded entry: the
+        bytes did land, only the permissions did not, and a caller must be
+        able to tell that apart from a transfer that never happened.
+        """
+        if mode is None:
+            return per_file
+        landed = {src: r for src, r in per_file.items() if r.status is Status.Success and r.value}
+        if not landed:
+            return per_file
+        mode_result = await self._apply_mode([r.value for r in landed.values()], mode)
+        if mode_result.is_ok:
+            return per_file
+        for src, r in landed.items():
+            per_file[src] = Result(
+                Status.Error,
+                value=r.value,
+                msg=f"{src}: transferred, but setting mode 0o{mode:o} failed: {mode_result.msg}",
+            )
+        return per_file
 
     @abstractmethod
     async def _run_put(

@@ -58,7 +58,7 @@ import logging
 
 from ..logger.mode import LogMode
 from ..result import CommandResult, Result
-from ..utils import Arg, Exclude, Status, cli_exposed
+from ..utils import Arg, Exclude, Opt, Status, cli_exposed
 from .binary_loader import BinaryLoader
 from .capability import TERM_RESOLVER, TRANSFER_RESOLVER
 from .command_frame import CommandFrame, ZephyrFrame
@@ -548,6 +548,10 @@ class EmbeddedHost(RemoteHost):
             list[Path] | Path, Arg(variadic=True, elem_type=Path, help="Local file(s) to upload.")
         ],
         dest_dir: Path,
+        mode: Annotated[
+            int | str | None,
+            Opt(help="Octal permission bits for the uploaded file(s), e.g. 755, 0644, 0o4755."),
+        ] = None,
         show_progress: Annotated[bool, Exclude] = True,
     ) -> Result:
         """Transfer files from the local machine to the embedded host.
@@ -561,14 +565,20 @@ class EmbeddedHost(RemoteHost):
         mounted filesystem (e.g. ``/RAM:`` on a FAT target) rather than on
         Zephyr's bare ``/``, which has no FS and rejects opens with
         ``-ENOENT``.
+
+        A non-``None`` *mode* is **rejected before any bytes move**: an
+        embedded filesystem (FAT, LittleFS) has no permission bits to set, so
+        accepting one would be a silent lie. The parameter exists on the
+        signature only so the failure names this host and backend rather than
+        surfacing as an unknown-argument error.
         """
         if not isinstance(src_files, list):
             src_files = [src_files]
         dest_dir = self._resolve_dest(dest_dir)
         if is_dry_run():
-            return self._dry_run_transfer("PUT", src_files, dest_dir)
+            return self._dry_run_transfer("PUT", src_files, dest_dir, mode)
         with SuppressCommandOutput(host=cast("Host", self)):
-            return await self._file_transfer.put_files(src_files, dest_dir, show_progress)
+            return await self._file_transfer.put_files(src_files, dest_dir, show_progress, mode)
 
     ####################
     #  File operations

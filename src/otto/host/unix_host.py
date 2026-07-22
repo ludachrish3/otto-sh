@@ -767,16 +767,26 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
             list[Path] | Path, Arg(variadic=True, elem_type=Path, help="Local file(s) to upload.")
         ],
         dest_dir: Path,
+        mode: Annotated[
+            int | str | None,
+            Opt(help="Octal permission bits for the uploaded file(s), e.g. 755, 0644, 0o4755."),
+        ] = None,
         show_progress: Annotated[bool, Exclude] = True,
     ) -> Result:
-        """Transfer files from local machine to remote host."""
+        """Transfer files from local machine to remote host.
+
+        *mode* sets the permission bits on the uploaded files — an ``int``
+        (``0o755``) from Python, or a string always read as octal (``"755"``,
+        ``"0755"``, ``"0o755"``). It is applied in one batched ``chmod`` after
+        the bytes land, whichever unix backend (scp/sftp/ftp/nc) carried them.
+        """
         if not isinstance(src_files, list):
             src_files = [src_files]
         dest_dir = self._resolve_dest(dest_dir)
         if is_dry_run():
-            return self._dry_run_transfer("PUT", src_files, dest_dir)
+            return self._dry_run_transfer("PUT", src_files, dest_dir, mode)
         with SuppressCommandOutput(host=cast("Host", self)):
-            return await self._file_transfer.put_files(src_files, dest_dir, show_progress)
+            return await self._file_transfer.put_files(src_files, dest_dir, show_progress, mode)
 
     ####################
     #  Kernel modules

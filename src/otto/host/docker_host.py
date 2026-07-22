@@ -34,7 +34,7 @@ from typing_extensions import override
 
 from ..logger.mode import LogMode
 from ..result import CommandResult, Result
-from ..utils import Arg, Status, cli_exposed
+from ..utils import Arg, Opt, Status, cli_exposed
 from .file_ops import PosixFileOps
 from .host import BaseHost, Host, is_dry_run
 from .privilege import PosixPrivilege
@@ -442,6 +442,10 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
             list[Path] | Path, Arg(variadic=True, elem_type=Path, help="Local file(s) to upload.")
         ],
         dest_dir: Path,
+        mode: Annotated[
+            int | str | None,
+            Opt(help="Octal permission bits for the uploaded file(s), e.g. 755, 0644, 0o4755."),
+        ] = None,
     ) -> Result:
         """Upload local files into the container.
 
@@ -449,15 +453,24 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         ``docker cp`` from there into the container. The staging dir is
         cleaned up unconditionally so a failed transfer doesn't leak.
 
+        *mode* is applied with a ``chmod`` **inside the container** after the
+        copies land — deliberately not by stamping the staging copy and
+        trusting ``docker cp`` to preserve it, which would put undocumented
+        third-party behaviour in the trust path.
+
         Returns a :class:`~otto.result.Result` whose ``value`` maps each source
         path (as passed) to its per-file outcome, matching
         :meth:`~otto.host.host.BaseHost.put`.
         """
-        from .transfer import aggregate_transfer
+        from .transfer import aggregate_transfer, chmod_command, parse_file_mode
 
         files = src_files if isinstance(src_files, list) else [src_files]
         if is_dry_run():
-            return self._dry_run_transfer("PUT", files, dest_dir)
+            return self._dry_run_transfer("PUT", files, dest_dir, mode)
+        mode_check = parse_file_mode(mode)
+        if not mode_check.is_ok:
+            return aggregate_transfer({f: Result(Status.Error, msg=mode_check.msg) for f in files})
+        resolved_mode: int | None = mode_check.value
         await self._ensure_running()
 
         stage = self._stage_dir(self.container_id)
@@ -495,6 +508,27 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
                     per_file[f] = Result(Status.Error, msg=f"docker cp failed: {cp.value}")
                 else:
                     per_file[f] = Result(Status.Success, value=dest_dir / f.name)
+            if resolved_mode is not None:
+                landed = [
+                    r.value for r in per_file.values() if r.status is Status.Success and r.value
+                ]
+                if landed:
+                    # `self.exec` is a docker exec — it runs INSIDE the
+                    # container. `self.parent.exec` would chmod the staging
+                    # copy on the parent instead, which is about to be deleted.
+                    chmod = await self.exec(chmod_command(resolved_mode, landed))
+                    if not chmod.status.is_ok:
+                        for f, r in per_file.items():
+                            if r.status is Status.Success:
+                                per_file[f] = Result(
+                                    Status.Error,
+                                    value=r.value,
+                                    msg=(
+                                        f"{f}: transferred, but setting mode "
+                                        f"0o{resolved_mode:o} failed: "
+                                        f"{chmod.value or f'chmod exited {chmod.retcode}'}"
+                                    ),
+                                )
             return aggregate_transfer(per_file)
         finally:
             await self.parent.exec(f"rm -rf {shlex.quote(str(stage))}")

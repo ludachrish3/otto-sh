@@ -330,8 +330,16 @@ class Host(Protocol):
         self,
         src_files: list[Path] | Path,
         dest_dir: Path,
+        mode: int | str | None = None,
     ) -> Result:
         """Upload one or more local files to a directory on the host.
+
+        ``mode`` sets the permission bits on the uploaded files: an ``int``
+        (``0o755``) from Python, or a string always read as octal (``"755"``,
+        ``"0755"``, ``"0o755"``). ``None`` leaves the backend's default
+        permissions. Hosts whose transfer backend has no permission model
+        (embedded ``console``/``tftp``) reject a non-``None`` mode before
+        transferring anything.
 
         Returns a :class:`~otto.result.Result` whose ``value`` is a
         ``dict[Path, Result]`` mapping each source path — keyed exactly as
@@ -340,7 +348,9 @@ class Host(Protocol):
         :attr:`~otto.utils.Status.Skipped` (``"not attempted (earlier failure)"``)
         for a file a sequential backend never reached. The aggregate status is
         the first non-ok entry's status (Skipped counts as ok, so a trailing run
-        of Skipped never fails the aggregate on its own).
+        of Skipped never fails the aggregate on its own). A file that
+        transferred but whose ``mode`` could not be applied is an error entry
+        that still carries its ``dest_path``.
         """
         ...
 
@@ -473,16 +483,39 @@ class BaseHost(ABC):
             status=Status.Skipped, value="[DRY RUN] Command not executed", command=cmd, retcode=0
         )
 
-    def _dry_run_transfer(self, action: str, files: list[Path], dest: Path) -> Result:
+    def _dry_run_transfer(
+        self,
+        action: str,
+        files: list[Path],
+        dest: Path,
+        mode: int | str | None = None,
+    ) -> Result:
         """Return a synthetic per-file transfer result for dry-run mode.
 
         Builds the same ``value: dict[Path, Result]`` shape as a real transfer,
         keyed by the source paths exactly as passed. Every file is marked
         ``Status.Skipped`` (which counts as ok) with a ``[DRY RUN]`` diagnostic,
         so the folded aggregate is Skipped and its ``msg`` names the action.
+
+        A *mode* is parsed here even though nothing is transferred: a typo'd
+        ``--mode 789`` is the caller's own input and costs nothing to catch, so
+        a dry run should catch it. Backend capability is **not** checked — that
+        belongs to the real transfer, which is where the backend is actually
+        selected and used.
         """
+        from .transfer.base import parse_file_mode
+
+        mode_check = parse_file_mode(mode)
+        if not mode_check.is_ok:
+            self._log_command(f"[DRY RUN] {action}: {mode_check.msg}")
+            return Result(
+                Status.Error,
+                value={src: Result(Status.Error, msg=mode_check.msg) for src in files},
+                msg=mode_check.msg,
+            )
+        suffix = f" (mode 0o{mode_check.value:o})" if mode_check.value is not None else ""
         file_names = ", ".join(str(f) for f in files)
-        self._log_command(f"[DRY RUN] {action}: {file_names} -> {dest}")
+        self._log_command(f"[DRY RUN] {action}: {file_names} -> {dest}{suffix}")
         per_file = {
             src: Result(Status.Skipped, value=dest / src.name, msg=f"[DRY RUN] {action}: {src}")
             for src in files
@@ -490,7 +523,9 @@ class BaseHost(ABC):
         # Every file is Skipped (ok), so the fold would report Success; a dry-run
         # transfer is explicitly Skipped, and the aggregate msg carries the banner.
         return Result(
-            Status.Skipped, value=per_file, msg=f"[DRY RUN] {action}: {file_names} -> {dest}"
+            Status.Skipped,
+            value=per_file,
+            msg=f"[DRY RUN] {action}: {file_names} -> {dest}{suffix}",
         )
 
     ####################
@@ -737,6 +772,7 @@ class BaseHost(ABC):
         self,
         src_files: list[Path] | Path,
         dest_dir: Path,
+        mode: int | str | None = None,
     ) -> Result:
         """Upload local files to a directory on the host. Subclasses must override."""
         raise NotImplementedError from None

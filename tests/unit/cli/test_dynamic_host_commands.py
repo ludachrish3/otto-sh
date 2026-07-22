@@ -963,3 +963,60 @@ def test_opt_name_rename_dispatches_end_to_end(monkeypatch):
     # fully replaces (not appends to) the synthesized decl.
     r_old = CliRunner().invoke(app, ["h1", "frob", "--dest-dir", "/other"])
     assert r_old.exit_code != 0
+
+
+def test_cli_mode_755_is_octal_not_decimal():
+    """`--mode 755` must mean 0o755 (493), never decimal 755 (0o1363).
+
+    Drives the REAL synthesized parameter through Typer's parser. If `mode`
+    were annotated `int`, Typer would hand over the integer 755 and the
+    string assertion below would fail — which is what makes this a guard
+    rather than a restatement of parse_file_mode's own unit test.
+    """
+    from otto.cli.param_synth import build_cli_binding
+    from otto.host.transfer.base import parse_file_mode
+
+    mode_param = next(p for p in build_cli_binding(UnixHost.put).params if p.name == "mode")
+    captured = {}
+
+    def cmd(mode=None):
+        captured["raw"] = mode
+
+    cmd.__signature__ = inspect.Signature([mode_param])
+    app = typer.Typer()
+    app.command()(cmd)
+
+    result = CliRunner().invoke(app, ["--mode", "755"])
+    assert result.exit_code == 0, result.output
+    assert captured["raw"] == "755"  # a STRING leaves the CLI...
+    assert parse_file_mode(captured["raw"]).value == 0o755  # ...read base-8
+    assert parse_file_mode(captured["raw"]).value != 755  # ...never decimal
+
+
+@pytest.mark.asyncio
+async def test_cli_bad_octal_mode_exits_nonzero_with_the_parse_message():
+    """`--mode 789` must fail the command, not transfer with a default mode."""
+
+    class _Host:
+        id = "h1"
+        close = AsyncMock()
+
+        async def put(self, src_files, dest_dir, mode=None, show_progress=True):
+            from otto.host.transfer.base import aggregate_transfer, parse_file_mode
+
+            check = parse_file_mode(mode)
+            return aggregate_transfer({f: Result(check.status, msg=check.msg) for f in src_files})
+
+    host = _Host()
+
+    class _Ctx:
+        obj = host
+
+    @cli_exposed
+    async def put(self, src_files, dest_dir, mode=None): ...
+
+    cmd = make_method_command("put", put)
+    with pytest.raises(typer.Exit) as ei:
+        await cmd(_Ctx(), src_files=[Path("a.bin")], dest_dir=Path("/opt"), mode="789")
+    assert ei.value.exit_code == 2  # Status.Error
+    host.close.assert_awaited_once()

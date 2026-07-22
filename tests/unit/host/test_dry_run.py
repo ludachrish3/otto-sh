@@ -86,6 +86,43 @@ class TestGlobalDryRun:
             assert "PUT" in result.msg
 
     @pytest.mark.asyncio
+    async def test_localhost_put_dry_run_banner_shows_normalized_mode(self):
+        with active_context(dry_run=True):
+            host = LocalHost()
+
+            result = await host.put([Path("/tmp/app.bin")], Path("/opt/bin"), mode="755")
+
+            assert result.status == Status.Skipped
+            # Normalized to octal in the banner, so a dry run shows the value
+            # that would actually be applied rather than echoing the input.
+            assert "(mode 0o755)" in result.msg
+
+    @pytest.mark.asyncio
+    async def test_localhost_put_dry_run_without_mode_has_no_mode_suffix(self):
+        with active_context(dry_run=True):
+            host = LocalHost()
+
+            result = await host.put([Path("/tmp/app.bin")], Path("/opt/bin"))
+
+            assert result.status == Status.Skipped
+            assert "mode" not in result.msg
+
+    @pytest.mark.asyncio
+    async def test_localhost_put_dry_run_rejects_bad_octal(self):
+        # A typo'd mode is the caller's own input and needs no host contact,
+        # so a dry run must catch it rather than reporting a clean plan.
+        with active_context(dry_run=True):
+            host = LocalHost()
+            src = Path("/tmp/app.bin")
+
+            result = await host.put([src], Path("/opt/bin"), mode="789")
+
+            assert result.status == Status.Error
+            assert "789" in result.msg
+            # Keeps the documented per-file mapping shape on the failure path.
+            assert result.value[src].status == Status.Error
+
+    @pytest.mark.asyncio
     async def test_localhost_get_returns_skipped(self):
         with active_context(dry_run=True):
             host = LocalHost()

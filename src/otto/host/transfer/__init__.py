@@ -6,6 +6,7 @@ Literals. Importing this package registers every built-in backend.
 """
 
 from .base import (
+    MAX_FILE_MODE,
     BaseFileTransfer,
     NcListenerCheck,
     NcPortStrategy,
@@ -13,6 +14,8 @@ from .base import (
     TransferProgressFactory,
     TransferProgressHandler,
     aggregate_transfer,
+    chmod_command,
+    parse_file_mode,
     validate_filename_lengths,
 )
 from .console import ConsoleFileTransfer  # registers console on import
@@ -37,6 +40,7 @@ from .tftp import TftpFileTransfer  # registers tftp on import
 from .unix_base import UnixFileTransfer
 
 __all__ = [
+    "MAX_FILE_MODE",
     "TRANSFER_BACKENDS",
     "BaseFileTransfer",
     "ConsoleFileTransfer",
@@ -54,9 +58,11 @@ __all__ = [
     "UnixFileTransfer",
     "aggregate_transfer",
     "build_transfer_backend",
+    "chmod_command",
     "make_rich_progress_factory",
     "make_rich_progress_handler",
     "make_transfer_progress",
+    "parse_file_mode",
     "register_transfer_backend",
     "validate_filename_lengths",
 ]
