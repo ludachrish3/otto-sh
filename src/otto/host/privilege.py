@@ -33,6 +33,7 @@ from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
 
 from ..logger.mode import LogMode
+from .command_frame import history_prefix
 from .login_proxy import Cred, cred_for, perform_switch, run_undo
 
 if TYPE_CHECKING:
@@ -90,6 +91,18 @@ class PosixPrivilege:
         expects: "list[Expect]" = [] if pw is None else [(_SUDO_PROMPT, f"{pw}\n")]
         return wrapped, expects
 
+    def _history_prefix(self) -> str:
+        """Return this host's history-suppression payload ("" when history is kept).
+
+        ``getattr`` rather than direct attribute access because this mixin is
+        also inherited by hosts that declare no ``shell_history`` field
+        (LocalHost, DockerContainerHost). ``True`` is the right fallback for
+        them — assume history is recorded and leave the shell as we found it.
+        """
+        return history_prefix(
+            getattr(self, "command_frame", None), getattr(self, "shell_history", True)
+        )
+
     async def switch_user(self, user: str = "", password: str | None = None) -> None:
         """``su`` the persistent (default) session to *user* (default root).
 
@@ -106,6 +119,7 @@ class PosixPrivilege:
             password,
             self._session_mgr.current_user,  # ty: ignore[unresolved-attribute]
             getattr(self, "name", ""),
+            self._history_prefix(),
         )
         self._session_mgr._set_current_user(applied[-1].login or "root")  # noqa: SLF001 — intra-package access to SessionManager._set_current_user for user elevation  # ty: ignore[unresolved-attribute]
 
@@ -130,6 +144,7 @@ class PosixPrivilege:
             password,
             prev,
             getattr(self, "name", ""),
+            self._history_prefix(),
         )
         self._session_mgr._set_current_user(applied[-1].login or "root")  # noqa: SLF001 — intra-package access to SessionManager._set_current_user for user elevation  # ty: ignore[unresolved-attribute]
         try:
@@ -142,5 +157,7 @@ class PosixPrivilege:
                 # perform_switch's forward path — so a custom undo that needs
                 # the via user's password sees it, and forward/undo stay symmetric.
                 via = cred_for(creds, via_login) or Cred(login=via_login)
-                await run_undo(_HostProxyIO(self), hop, via, getattr(self, "name", ""))
+                await run_undo(
+                    _HostProxyIO(self), hop, via, getattr(self, "name", ""), self._history_prefix()
+                )
             self._session_mgr._set_current_user(prev)  # noqa: SLF001 — intra-package access to SessionManager._set_current_user to restore prior user  # ty: ignore[unresolved-attribute]

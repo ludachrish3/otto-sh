@@ -1181,6 +1181,7 @@ class TestOpenSession:
             mock_conn,
             command_frame=None,
             init_timeout=None,
+            shell_history=False,
         )
 
     # --- Telnet ---
@@ -1247,6 +1248,7 @@ class TestOpenSession:
             init_timeout=None,
             write_chunk_size=mock_client.options.write_chunk_size,
             write_chunk_delay=mock_client.options.write_chunk_delay,
+            shell_history=False,
         )
         await h.close()
 

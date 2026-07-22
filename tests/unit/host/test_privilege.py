@@ -17,8 +17,12 @@ def _without_resync(sent: list[str]) -> list[str]:
     ``run_proxy``/``run_undo`` now end every hop with a resync (see
     ``otto.host.login_proxy._resync_shell``) — filter its noise out before
     asserting on the exact send sequence a test cares about.
+
+    Substring rather than prefix match: on a host with history suppression on
+    (the ``UnixHost`` default) the probe line is preceded by a ``HISTFILE=…``
+    statement, so the echo is no longer first on it.
     """
-    return [s for s in sent if not s.startswith('echo "__OTTO_')]
+    return [s for s in sent if 'echo "__OTTO_' not in s]
 
 
 def _mock_session_mgr():

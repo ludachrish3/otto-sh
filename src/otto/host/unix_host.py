@@ -240,6 +240,22 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     instance. Promoted to a common field in Phase A so any host can declare its
     dialect — see :attr:`~otto.host.embedded_host.EmbeddedHost.command_frame`."""
 
+    shell_history: bool = False
+    """Whether otto's commands are recorded in this host's shell history.
+
+    Defaults False: otto neutralizes ``HISTFILE`` on every interactive shell
+    it opens, so automation traffic doesn't bury a human's own history on a
+    shared lab box. Set True where otto's commands should stay auditable from
+    the shell's own history file.
+
+    Suppression is best-effort and silent — see
+    :meth:`~otto.host.command_frame.BashFrame.quiet_history` for the payload
+    and why it neutralizes ``HISTFILE`` rather than clearing ``HISTSIZE``. It
+    covers the persistent interactive sessions otto opens (SSH, telnet,
+    including shells reached through a login proxy); ``exec``-channel commands
+    were never recorded in the first place, and ``otto login`` deliberately
+    leaves a human's shell alone."""
+
     snmp: SnmpOptions | None = field(default=None, repr=False)
     """Optional SNMP polling config (lab ``snmp`` block). When set, otto's
     monitor collects this host's metrics over SNMP instead of running shell
@@ -366,6 +382,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
             command_frame=self.command_frame,
             creds=self.creds,
             host_id=self.id,
+            shell_history=self.shell_history,
         )
         self._file_transfer = self._build_file_transfer()
 
@@ -394,6 +411,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
             command_frame=self.command_frame,
             creds=self.creds,
             host_id=self.id,
+            shell_history=self.shell_history,
         )
         self._file_transfer = self._build_file_transfer()
 

@@ -20,6 +20,7 @@ from otto.host.command_frame import (
     ZephyrFrame,
     ZephyrSerialFrame,
     build_command_frame,
+    history_prefix,
     register_command_frame,
 )
 
@@ -201,6 +202,105 @@ class TestRecoverProbe:
 
     def test_zephyr_serial_inherits_recover_pattern(self):
         assert ZephyrSerialFrame().recover_pattern(M).pattern == re.escape(M.recover)
+
+
+class TestQuietHistory:
+    """The per-dialect payload that stops a shell recording otto's commands."""
+
+    def test_bash_assigns_histfile_rather_than_unsetting_it(self):
+        # ksh falls back to ~/.sh_history when HISTFILE is UNSET, so `unset
+        # HISTFILE` is the portable-looking option that silently fails on the
+        # oldest targets. Assignment is the load-bearing choice here.
+        payload = BashFrame().quiet_history()
+        assert "HISTFILE=/dev/null" in payload
+        assert "unset HISTFILE" not in payload
+
+    def test_bash_never_reaches_for_histsize_zero(self):
+        # Destructive: bash writes its emptied history list OVER $HISTFILE at
+        # exit, deleting the user's real history.
+        assert "HISTSIZE" not in BashFrame().quiet_history()
+
+    def test_bash_guards_the_parts_ash_and_dash_reject(self):
+        # All three guards are load-bearing; see the portability suite for the
+        # per-shell proof. `command` is the critical one — without it dash
+        # treats the rejected option as a fatal special-builtin error and exits
+        # the whole shell, killing otto's session.
+        payload = BashFrame().quiet_history()
+        assert "command set +o history" in payload  # not a special builtin -> survivable
+        # Silence on the merged PTY stream. The redirect is on the BRACE GROUP,
+        # not the simple command: ksh reports a readonly HISTFILE from its
+        # assignment processing outside the command's own redirection, so
+        # `command export … 2>/dev/null` still leaks that line.
+        assert "{ command export HISTFILE=/dev/null; } 2>/dev/null" in payload
+        assert "{ command set +o history; } 2>/dev/null" in payload
+        # $? pinned to 0 for the resync probe: every group that can fail ends
+        # in `|| :`, and the trailing zsh clause is a `case` (always 0).
+        assert "|| :;" in payload
+        assert payload.endswith("; ")  # statement prefix, ready to concatenate
+
+    def test_bash_assignment_precedes_the_fragile_option(self):
+        # If an exotic shell chokes part-way through the line, the load-bearing
+        # half must already have landed.
+        payload = BashFrame().quiet_history()
+        assert payload.index("HISTFILE=/dev/null") < payload.index("set +o history")
+
+    def test_bash_payload_is_a_statement_prefix_not_a_line(self):
+        # Prepended to an existing handshake/probe line, so it must terminate
+        # its last statement and must not introduce a newline of its own.
+        payload = BashFrame().quiet_history()
+        assert payload.endswith("; ")
+        assert "\n" not in payload
+
+    def test_zephyr_dialects_have_no_persistent_history(self):
+        # Zephyr's shell history is a RAM ring buffer. The empty default is how
+        # non-unix dialects are excluded — no isinstance checks anywhere.
+        assert ZephyrFrame().quiet_history() == ""
+        assert ZephyrSerialFrame().quiet_history() == ""
+
+    def test_base_default_is_empty_so_third_party_frames_opt_out(self):
+        class ThirdParty(CommandFrame):
+            type_name = "third-party-quiet-test"
+
+            def handshake(self, m):
+                return ""
+
+            def frame(self, cmd, m):
+                return ""
+
+            def recover(self, m):
+                return ""
+
+            def end_pattern(self, m):
+                return re.compile("x")
+
+            def marks_begin(self, data, m):
+                return False
+
+            def parse_output(self, buffer, cmd, m):
+                return ""
+
+            def extract_retcode(self, buffer, m):
+                return -1
+
+        assert ThirdParty().quiet_history() == ""
+
+
+class TestHistoryPrefix:
+    """Resolution of frame + flag into the prefix actually written."""
+
+    def test_returns_empty_when_history_is_kept(self):
+        assert history_prefix(BashFrame(), shell_history=True) == ""
+
+    def test_returns_the_dialect_payload_when_history_is_suppressed(self):
+        assert history_prefix(BashFrame(), shell_history=False) == BashFrame().quiet_history()
+
+    def test_none_frame_defaults_to_bash(self):
+        # Mirrors ShellSession's own `command_frame or BashFrame()` default, so
+        # callers holding an unresolved host field don't have to repeat it.
+        assert history_prefix(None, shell_history=False) == BashFrame().quiet_history()
+
+    def test_suppressed_zephyr_still_yields_nothing(self):
+        assert history_prefix(ZephyrFrame(), shell_history=False) == ""
 
 
 class TestRegistry:

@@ -181,8 +181,20 @@ _RESYNC_DEADLINE = 10.0
 _RESYNC_FRAME = BashFrame()
 
 
-async def _resync_shell(io: ProxyIO, host_id: str, hop_login: str) -> None:
+async def _resync_shell(
+    io: ProxyIO, host_id: str, hop_login: str, history_prefix: str = ""
+) -> None:
     """Resync with the shell after a su/sudo/exit transition.
+
+    *history_prefix* is the caller's already-resolved history-suppression
+    payload (:func:`~otto.host.command_frame.history_prefix`), or ``""`` to
+    leave the new shell's history alone. It rides the probe rather than
+    following it: a ``su`` starts a fresh shell that re-reads rc files and so
+    resets ``HISTFILE``, and anything sent after the resync would mean otto's
+    own ``echo "__OTTO_…_RECOVER__$?__"`` probes had already been recorded in
+    the elevated user's history. Riding the probe also inherits
+    ``confirm_live``'s resend loop for free, which matters because the
+    transition's tty flush (see below) eats whichever probe lands first.
 
     Drives the shared :func:`~otto.host.shell_liveness.confirm_live` loop with
     a fresh :class:`~otto.host.command_frame.SessionMarkers` per probe and
@@ -201,7 +213,7 @@ async def _resync_shell(io: ProxyIO, host_id: str, hop_login: str) -> None:
     confirmed = await confirm_live(
         io.send,
         io.expect,
-        _RESYNC_FRAME.recover,
+        lambda m: history_prefix + _RESYNC_FRAME.recover(m),
         _RESYNC_FRAME.recover_pattern,
         lambda: SessionMarkers.for_session(uuid.uuid4().hex[:12]),
         settle=_RESYNC_SETTLE,
@@ -215,7 +227,9 @@ async def _resync_shell(io: ProxyIO, host_id: str, hop_login: str) -> None:
         )
 
 
-async def run_proxy(io: ProxyIO, hop: Cred, via: Cred, host_id: str) -> None:
+async def run_proxy(
+    io: ProxyIO, hop: Cred, via: Cred, host_id: str, history_prefix: str = ""
+) -> None:
     """Run *hop*'s proxy steps over *io*, wrapping failures with context.
 
     Ends with a post-transition shell resync (``_resync_shell``) so the
@@ -228,7 +242,7 @@ async def run_proxy(io: ProxyIO, hop: Cred, via: Cred, host_id: str) -> None:
     try:
         proxy = _get_proxy(hop)
         await proxy.fn(io, ProxyContext(target=hop, via=via, host_id=host_id))
-        await _resync_shell(io, host_id, hop.login)
+        await _resync_shell(io, host_id, hop.login, history_prefix)
     except LoginProxyError:
         raise
     except Exception as e:
@@ -237,7 +251,9 @@ async def run_proxy(io: ProxyIO, hop: Cred, via: Cred, host_id: str) -> None:
         ) from e
 
 
-async def run_undo(io: ProxyIO, hop: Cred, via: Cred, host_id: str) -> None:
+async def run_undo(
+    io: ProxyIO, hop: Cred, via: Cred, host_id: str, history_prefix: str = ""
+) -> None:
     """Reverse *hop*: the registered undo, or the default ``exit``.
 
     Also ends with a post-transition shell resync, like :func:`run_proxy` —
@@ -253,7 +269,7 @@ async def run_undo(io: ProxyIO, hop: Cred, via: Cred, host_id: str) -> None:
             await io.send("exit\n")
         else:
             await proxy.undo(io, ProxyContext(target=hop, via=via, host_id=host_id))
-        await _resync_shell(io, host_id, hop.login)
+        await _resync_shell(io, host_id, hop.login, history_prefix)
     except LoginProxyError:
         raise
     except Exception as e:
@@ -269,6 +285,7 @@ async def perform_switch(
     password: str | None,
     current_user: str,
     host_id: str,
+    history_prefix: str = "",
 ) -> list[Cred]:
     """Become *user* from *current_user*; return the hops applied, in order.
 
@@ -286,9 +303,11 @@ async def perform_switch(
 
     applied: list[Cred] = []
     if cred.via is not None and cred.via != current_user:
-        applied += await perform_switch(io, creds, cred.via, None, current_user, host_id)
+        applied += await perform_switch(
+            io, creds, cred.via, None, current_user, host_id, history_prefix
+        )
         current_user = applied[-1].login
     via = cred_for(creds, current_user) or Cred(login=current_user)
-    await run_proxy(io, cred, via=via, host_id=host_id)
+    await run_proxy(io, cred, via=via, host_id=host_id, history_prefix=history_prefix)
     applied.append(cred)
     return applied

@@ -3,6 +3,7 @@ import asyncio
 import pytest
 
 from otto.host import login_proxy
+from otto.host.command_frame import BashFrame
 from otto.host.login_proxy import (
     LOGIN_PROXIES,
     Cred,
@@ -39,11 +40,21 @@ def _fast_resync_settle(monkeypatch: pytest.MonkeyPatch) -> None:
 _RESYNC_ECHO_PREFIX = 'echo "__OTTO_'
 
 
+def _is_resync(text: str) -> bool:
+    """Whether *text* is the engine's post-transition resync probe.
+
+    Substring rather than prefix match: history suppression prepends a
+    ``HISTFILE=…`` statement to the probe line, so the echo is no longer
+    first on it.
+    """
+    return _RESYNC_ECHO_PREFIX in text
+
+
 def _without_resync(
     sent: list[tuple[str, LogMode]],
 ) -> list[tuple[str, LogMode]]:
     """Drop the engine's post-transition resync echo probes from a `sent` log."""
-    return [s for s in sent if not s[0].startswith(_RESYNC_ECHO_PREFIX)]
+    return [s for s in sent if not _is_resync(s[0])]
 
 
 class RecorderIO:
@@ -64,9 +75,13 @@ class RecorderIO:
         self.sent.append((text, log))
 
     async def expect(self, pattern, timeout: float = 10.0) -> str:
-        if self.sent and self.sent[-1][0].startswith(_RESYNC_ECHO_PREFIX):
+        if self.sent and _is_resync(self.sent[-1][0]):
             return "resync-ok"  # confirm_live treats a non-raising expect as confirmed
         return self._replies.pop(0) if self._replies else ""
+
+    def resync_probes(self) -> list[str]:
+        """Just the post-transition resync probes, in send order."""
+        return [t for t, _ in self.sent if _is_resync(t)]
 
 
 ADMIN = Cred(login="admin", password="hunter2")
@@ -309,3 +324,60 @@ async def test_resync_shell_raises_login_proxy_error_when_deadline_elapses(
     with pytest.raises(LoginProxyError, match=r"h1.*resync.*mysql"):
         await _resync_shell(io, host_id="h1", hop_login="mysql")
     assert io._calls >= 1  # it probed; the deadline (not a fixed count) ended it
+
+
+# ---------------------------------------------------------------------------
+# History suppression across a login-proxy transition
+# ---------------------------------------------------------------------------
+
+_QUIET = BashFrame().quiet_history()
+
+
+@pytest.mark.asyncio
+async def test_resync_probe_carries_suppression_when_requested():
+    # `su` spawns a NEW shell that re-reads rc files, so HISTFILE resets to its
+    # default. The payload has to RIDE the probe: sent afterwards, otto's own
+    # resync echoes would already be in the elevated user's history.
+    io = RecorderIO(["Password:"])
+    await run_proxy(io, MYSQL, via=ADMIN, host_id="h1", history_prefix=_QUIET)
+    probes = io.resync_probes()
+    assert probes
+    assert all(p.startswith(_QUIET) for p in probes)
+
+
+@pytest.mark.asyncio
+async def test_resync_probe_still_ends_in_the_echo_proof_probe():
+    # Suppression must not displace the exit-code probe confirm_live matches on.
+    io = RecorderIO(["Password:"])
+    await run_proxy(io, MYSQL, via=ADMIN, host_id="h1", history_prefix=_QUIET)
+    assert all(p.rstrip("\n").endswith('$?__"') for p in io.resync_probes())
+
+
+@pytest.mark.asyncio
+async def test_resync_probe_untouched_by_default():
+    # Every existing caller keeps the byte-identical probe it had before.
+    io = RecorderIO(["Password:"])
+    await run_proxy(io, MYSQL, via=ADMIN, host_id="h1")
+    probes = io.resync_probes()
+    assert probes
+    assert all(p.startswith(_RESYNC_ECHO_PREFIX) for p in probes)
+
+
+@pytest.mark.asyncio
+async def test_undo_resync_also_carries_suppression():
+    # Returning via `exit` lands in a shell otto already quieted, but the undo
+    # path shares the resync and the payload is idempotent — so it rides along
+    # rather than special-casing direction.
+    io = RecorderIO()
+    await run_undo(io, MYSQL, via=ADMIN, host_id="h1", history_prefix=_QUIET)
+    assert all(p.startswith(_QUIET) for p in io.resync_probes())
+
+
+@pytest.mark.asyncio
+async def test_perform_switch_threads_suppression_through_every_hop():
+    # A multi-hop via-chain must quiet each new shell, not just the last.
+    io = RecorderIO(["Password:", "Password:"])
+    await perform_switch(io, [ADMIN, MYSQL], "mysql", None, "admin", "h1", history_prefix=_QUIET)
+    probes = io.resync_probes()
+    assert probes
+    assert all(p.startswith(_QUIET) for p in probes)

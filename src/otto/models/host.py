@@ -430,6 +430,7 @@ class UnixHostSpec(HostSpec):
     transfer: str | None = None  # optional active pin; resolved at to_host
     impairer: str | None = None  # optional active pin; resolved at to_host
     docker_capable: bool = False
+    shell_history: bool = False
     ssh_options: SshOptionsSpec = SshOptionsSpec()
     sftp_options: SftpOptionsSpec = SftpOptionsSpec()
     scp_options: ScpOptionsSpec = ScpOptionsSpec()
@@ -481,7 +482,7 @@ class UnixHostSpec(HostSpec):
         kw["impairer"] = IMPAIRER_RESOLVER.resolve_active(
             self.valid_impairers, pin=self.impairer, preference=prefs.get("impairer")
         )
-        for n in ("hw_version", "sw_version", "docker_capable"):
+        for n in ("hw_version", "sw_version", "docker_capable", "shell_history"):
             if n in s:
                 kw[n] = getattr(self, n)
         for n in ("ssh_options", "sftp_options", "scp_options", "ftp_options", "nc_options"):

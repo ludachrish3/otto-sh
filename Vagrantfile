@@ -279,11 +279,26 @@ Vagrant.configure("2") do |config|
             # prints "All system dependencies are installed" once satisfied).
             # Browser binaries still come from `make browsers`, never from
             # provisioning.
+            # zsh/ksh/mksh are TEST FIXTURES, not conveniences: otto writes a
+            # history-suppression payload into whatever login shell a host
+            # happens to run, and
+            # tests/unit/host/test_history_suppression_portability.py
+            # parametrizes over every POSIX shell present on the box. Each of
+            # these three found a real defect the others could not — zsh
+            # because its `command` is external-only (so the POSIX
+            # de-specialization idiom is inert there), ksh because it reports a
+            # readonly assignment outside the command's own redirection. bash
+            # and dash are guaranteed (dash IS /bin/sh here) and busybox rides
+            # in with the base image, so only these three need installing.
+            # Dropping one silently narrows that matrix rather than failing.
             apt install -y  gcc                   \
                             gh                    \
                             graphviz              \
                             lcov                  \
                             ruby                  \
+                            zsh                   \
+                            ksh                   \
+                            mksh                  \
                             wget                  \
                             xz-utils              \
                             git                   \

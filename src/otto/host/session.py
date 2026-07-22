@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Any
 
 from typing_extensions import Self, override
 
-from .command_frame import BashFrame, CommandFrame, SessionMarkers
+from .command_frame import BashFrame, CommandFrame, SessionMarkers, history_prefix
 from .login_proxy import Cred, LoginProxyError, cred_for, perform_switch, run_proxy, run_undo
 from .shell_liveness import confirm_live
 from .telnet import TelnetClient
@@ -118,11 +118,19 @@ class ShellSession(ABC):
         self,
         command_frame: CommandFrame | None = None,
         init_timeout: float | None = None,
+        shell_history: bool = True,
     ) -> None:
         self._session_id = uuid.uuid4().hex[:12]
         # The dialect: how commands are framed and parsed. Defaults to bash; an
         # embedded host injects a ZephyrFrame (or a project-registered frame).
         self._frame: CommandFrame = command_frame or BashFrame()
+        # Whether otto's commands are recorded in this host's shell history.
+        # Defaults True — "leave the shell as we found it" — so every caller
+        # that doesn't opt in (LocalHost, DockerContainerHost, EmbeddedHost)
+        # is unaffected. UnixHost passes its own field through, defaulting
+        # False. Same name and same meaning at every layer; see
+        # command_frame.history_prefix for the feature's only negation.
+        self._shell_history = shell_history
         # Unique per-session sentinels, handed to the frame for every
         # render/parse call. Aliased as individual attributes too because the
         # session orchestration (and its tests) reference them directly.
@@ -213,6 +221,19 @@ class ShellSession(ABC):
             self._needs_recovery = False
             await self._recover_session()
 
+    def _handshake_payload(self, m: SessionMarkers) -> str:
+        """Render the complete first line written into a fresh shell.
+
+        The dialect's readiness probe, prefixed by history suppression when
+        the host asked for it. Suppression rides this existing line rather
+        than being a command of its own: the payload is silent and
+        idempotent, so it costs no extra round-trip and stays invisible to
+        the frame parser even though ``confirm_live`` resends the probe on a
+        loop. It has to be on the FIRST line the shell executes — anything
+        written before it is already in the history list.
+        """
+        return history_prefix(self._frame, self._shell_history) + self._frame.handshake(m)
+
     async def _ensure_initialized(self) -> None:
         """Open the transport and initialize the session. Idempotent.
 
@@ -245,7 +266,7 @@ class ShellSession(ABC):
             # telnet login that loops back to "login:" echoing our probe).
             return re.compile(r"(?:^|\r|\n)(?:\x1b\[[0-9;]*m)*" + re.escape(m.ready))
 
-        handshake_cmd = self._frame.handshake(self._markers)
+        handshake_cmd = self._handshake_payload(self._markers)
         logger.debug(
             f"{self._log_tag}: handshake start cmd={handshake_cmd!r} "
             f"marker={self._ready_marker!r} timeout={self._init_timeout}s"
@@ -255,7 +276,7 @@ class ShellSession(ABC):
             confirmed = await confirm_live(
                 self._write,
                 lambda pat, t: asyncio.wait_for(self._read_until_pattern(pat), t),
-                self._frame.handshake,
+                self._handshake_payload,
                 _ready_pattern,
                 lambda: self._markers,
                 settle=0.0,
@@ -642,8 +663,13 @@ class SshSession(ShellSession):
         conn: "SSHClientConnection | None",
         command_frame: CommandFrame | None = None,
         init_timeout: float | None = None,
+        shell_history: bool = True,
     ) -> None:
-        super().__init__(command_frame=command_frame, init_timeout=init_timeout)
+        super().__init__(
+            command_frame=command_frame,
+            init_timeout=init_timeout,
+            shell_history=shell_history,
+        )
         self._conn = conn
         self._process: Any = None
         # When set by a subclass, _open passes this as the command to
@@ -698,8 +724,13 @@ class TelnetSession(ShellSession):
         init_timeout: float | None = None,
         write_chunk_size: int = 0,
         write_chunk_delay: float = 0.0,
+        shell_history: bool = True,
     ) -> None:
-        super().__init__(command_frame=command_frame, init_timeout=init_timeout)
+        super().__init__(
+            command_frame=command_frame,
+            init_timeout=init_timeout,
+            shell_history=shell_history,
+        )
         self._reader = reader
         self._writer = writer
         self._owned_client = _owned_client
@@ -966,6 +997,7 @@ class HostSession:
         deregister: Callable[[str], None],
         creds: "list[Cred] | None" = None,
         host_id: str = "",
+        history_prefix: str = "",
     ) -> None:
         self._name = name
         self._session = session
@@ -978,6 +1010,9 @@ class HostSession:
         # passwordless / ad-hoc. Set by SessionManager.
         self._creds = creds
         self._host_id = host_id
+        # History-suppression payload replayed into each shell this session's
+        # switch_user/as_user enters, resolved once by the SessionManager.
+        self._history_prefix = history_prefix
 
     @property
     def alive(self) -> bool:
@@ -1002,7 +1037,13 @@ class HostSession:
         if self._creds is None:
             raise NotImplementedError("switch_user is not supported on this host's sessions")
         applied = await perform_switch(
-            self, self._creds, user, password, self.current_user, self._host_id
+            self,
+            self._creds,
+            user,
+            password,
+            self.current_user,
+            self._host_id,
+            self._history_prefix,
         )
         self._session.current_user = applied[-1].login or "root"
 
@@ -1019,7 +1060,9 @@ class HostSession:
         if self._creds is None:
             raise NotImplementedError("as_user is not supported on this host's sessions")
         prev = self.current_user
-        applied = await perform_switch(self, self._creds, user, password, prev, self._host_id)
+        applied = await perform_switch(
+            self, self._creds, user, password, prev, self._host_id, self._history_prefix
+        )
         self._session.current_user = applied[-1].login or "root"
         try:
             yield self
@@ -1029,7 +1072,7 @@ class HostSession:
                 # Full via cred (password/params intact), mirroring the forward
                 # path — keeps forward/undo symmetric for custom undo callables.
                 via = cred_for(self._creds, via_login) or Cred(login=via_login)
-                await run_undo(self, hop, via, self._host_id)
+                await run_undo(self, hop, via, self._host_id, self._history_prefix)
             self._session.current_user = prev
 
     async def run(
@@ -1158,6 +1201,7 @@ class SessionManager:
         retry_backoff: float | None = None,
         creds: "list[Cred] | None" = None,
         host_id: str = "",
+        shell_history: bool = True,
     ) -> None:
         self._connections = connections
         self._name = name
@@ -1177,6 +1221,12 @@ class SessionManager:
         # sessions speak the RTOS shell's framing. Decoupled from the transport,
         # so e.g. Zephyr-framing-over-SSH needs no new session class.
         self._command_frame = command_frame
+        # Whether otto's commands are recorded in this host's shell history,
+        # forwarded to every session built here. True (leave the shell as we
+        # found it) keeps LocalHost/DockerContainerHost/EmbeddedHost — and any
+        # caller passing a session_factory — on their existing behavior;
+        # UnixHost passes its own field, which defaults False.
+        self._shell_history = shell_history
         # Optional readiness-handshake ceiling for slow shells (e.g. a Zephyr
         # QEMU telnet console); ``None`` keeps the session's class default.
         self._init_timeout = init_timeout
@@ -1232,6 +1282,15 @@ class SessionManager:
             return ""
         return creds[0]
 
+    def _history_prefix(self) -> str:
+        """Return this host's history-suppression payload ("" when history is kept).
+
+        Resolved from the same frame + flag every session here is built with,
+        so a shell entered through a login proxy is quieted exactly like the
+        one the handshake opened.
+        """
+        return history_prefix(self._command_frame, self._shell_history)
+
     def _seed_user(self, session: "ShellSession") -> None:
         """Stamp a freshly built session with the login user."""
         session.current_user = self._login_user()
@@ -1270,7 +1329,9 @@ class SessionManager:
         io = _SessionProxyIO(session, self)
         for hop in hops:
             via = cred_for(switch_creds, via_login) or Cred(login=via_login)
-            await run_proxy(io, hop, via=via, host_id=self._host_id)
+            await run_proxy(
+                io, hop, via=via, host_id=self._host_id, history_prefix=self._history_prefix()
+            )
             via_login = hop.login
         session.current_user = target
 
@@ -1408,6 +1469,7 @@ class SessionManager:
                     ssh_conn,
                     command_frame=self._command_frame,
                     init_timeout=self._init_timeout,
+                    shell_history=self._shell_history,
                 )
             case "telnet":
                 telnet_conn = await self._connections.telnet()
@@ -1422,6 +1484,7 @@ class SessionManager:
                     init_timeout=self._init_timeout,
                     write_chunk_size=telnet_conn.options.write_chunk_size,
                     write_chunk_delay=telnet_conn.options.write_chunk_delay,
+                    shell_history=self._shell_history,
                 )
             case _:
                 raise ValueError(
@@ -1606,6 +1669,7 @@ class SessionManager:
                             ssh_conn,
                             command_frame=self._command_frame,
                             init_timeout=self._init_timeout,
+                            shell_history=self._shell_history,
                         )
                     case "telnet":
                         user, password = self._connections.credentials
@@ -1636,6 +1700,7 @@ class SessionManager:
                             init_timeout=self._init_timeout,
                             write_chunk_size=client.options.write_chunk_size,
                             write_chunk_delay=client.options.write_chunk_delay,
+                            shell_history=self._shell_history,
                         )
                     case _:
                         raise ValueError(
@@ -1677,6 +1742,7 @@ class SessionManager:
                 deregister=lambda n: (self._named_sessions.pop(n, None), None)[1],
                 creds=self._creds,
                 host_id=self._host_id,
+                history_prefix=self._history_prefix(),
             )
             self._named_sessions[name] = host_session
             return host_session

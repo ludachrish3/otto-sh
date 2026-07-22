@@ -80,6 +80,7 @@ alongside it.
 | `log_stdout` | boolean | Whether to log output to stdout (default `true`).  Setting `log` to `false` overrides this. |
 | `docker_capable` | boolean | `true` when this host can run Docker containers (Unix hosts only). |
 | `has_bash` | boolean | `true` when the host has a working `bash` to `exec -a`-tag processes through. Gates which hosts can host or be scanned for `otto tunnel` tunnels — see {doc}`../network/tunnel`. Defaults to `true` for Unix hosts (including `local` and Docker containers), `false` for embedded hosts. |
+| `shell_history` | boolean | Whether otto's own commands are recorded in this host's shell history (Unix hosts only). Defaults to `false` — otto neutralizes `HISTFILE` on each shell it opens so automation traffic doesn't bury a human's history. Set `true` where otto's commands should stay visible in the history file. See {ref}`per-host-shell-history`. |
 
 (host-identity)=
 

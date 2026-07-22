@@ -25,8 +25,10 @@ from otto.utils import Status
 class MockSession(ShellSession):
     """Concrete ShellSession backed by in-memory asyncio streams for testing."""
 
-    def __init__(self, command_frame: CommandFrame | None = None) -> None:
-        super().__init__(command_frame=command_frame)
+    def __init__(
+        self, command_frame: CommandFrame | None = None, shell_history: bool = True
+    ) -> None:
+        super().__init__(command_frame=command_frame, shell_history=shell_history)
         # Streams simulating the shell's stdin/stdout
         self._in_reader: asyncio.StreamReader | None = None
         self._in_writer: asyncio.StreamWriter | None = None
@@ -517,6 +519,58 @@ def test_shell_session_current_user_defaults_empty():
     """A freshly constructed shell session has no tracked user yet."""
     s = MockSession()
     assert s.current_user == ""
+
+
+class TestShellHistorySuppression:
+    """History suppression rides the readiness handshake (session layer)."""
+
+    @staticmethod
+    async def _first_probe(**kwargs) -> tuple[MockSession, str]:
+        """Drive a MockSession through its handshake; return it and what it wrote."""
+        s = MockSession(**kwargs)
+        await s._open()
+        task = asyncio.create_task(s._ensure_initialized())
+        await asyncio.sleep(0.01)
+        s.feed(s._ready_marker + "\n")
+        await task
+        return s, s.written[0]
+
+    @pytest.mark.asyncio
+    async def test_default_session_leaves_history_alone(self):
+        # The internal default is "history is recorded", so every caller that
+        # doesn't opt in — LocalHost, DockerContainerHost, EmbeddedHost, and
+        # tests building sessions directly — behaves exactly as before.
+        _, probe = await self._first_probe()
+        assert "HISTFILE" not in probe
+
+    @pytest.mark.asyncio
+    async def test_suppressed_session_neutralizes_histfile_before_probing(self):
+        s, probe = await self._first_probe(shell_history=False)
+        assert "HISTFILE=/dev/null" in probe
+        assert probe.index("HISTFILE=/dev/null") < probe.index(f"echo {s._ready_marker}")
+
+    @pytest.mark.asyncio
+    async def test_suppression_costs_no_extra_round_trip(self):
+        # It must ride the EXISTING handshake line rather than being written as
+        # a command of its own — one line, still ending in the READY probe.
+        s, probe = await self._first_probe(shell_history=False)
+        assert probe.count("\n") == 1
+        assert probe.endswith(f"echo {s._ready_marker}\n")
+
+    @pytest.mark.asyncio
+    async def test_suppression_preserves_the_echo_silencing(self):
+        # stty -echo is what keeps the probe text out of the read stream; the
+        # prefix must not displace it.
+        _, probe = await self._first_probe(shell_history=False)
+        assert "stty -echo 2>/dev/null" in probe
+
+    @pytest.mark.asyncio
+    async def test_zephyr_session_unaffected_even_when_suppressed(self):
+        # The frame's empty quiet_history() is the exclusion mechanism, so a
+        # non-unix dialect stays byte-identical with suppression requested.
+        s, probe = await self._first_probe(command_frame=ZephyrFrame(), shell_history=False)
+        assert "HISTFILE" not in probe
+        assert probe == ZephyrFrame().handshake(s._markers)
 
 
 class TestSessionInit:

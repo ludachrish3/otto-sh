@@ -31,6 +31,60 @@ def _isolate_registries():
             xfer_mod.TRANSFER_BACKENDS.unregister(name)
 
 
+class _OfflineConnections(ConnectionManager):
+    """ConnectionManager double that yields a session without touching the network."""
+
+    def __init__(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        self._ssh_conn = object()
+        self._sftp_conn = None
+        self._ftp_conn = None
+        self._telnet_conn = None
+        self._name = kwargs.get("name", "fake")
+        self._term = kwargs.get("term", "ssh")
+        self._hop = None
+
+    async def ssh(self):
+        return self._ssh_conn
+
+
+def _unix_host(**kwargs):
+    return UnixHost(
+        ip="10.0.0.9",
+        creds=[Cred(login="root", password="x")],
+        element="ne",
+        term="ssh",
+        _connection_factory=_OfflineConnections,
+        **kwargs,
+    )
+
+
+class TestShellHistoryReachesTheShell:
+    """UnixHost.shell_history must survive all the way to the bytes written."""
+
+    @staticmethod
+    async def _first_line(**kwargs) -> str:
+        host = _unix_host(**kwargs)
+        session = await host._session_mgr._build_session()
+        return session._handshake_payload(session._markers)
+
+    @pytest.mark.asyncio
+    async def test_default_unix_host_suppresses_history(self):
+        # The product decision: otto should not bury a human's own history.
+        assert "HISTFILE=/dev/null" in await self._first_line()
+
+    @pytest.mark.asyncio
+    async def test_opting_in_leaves_the_shell_untouched(self):
+        assert "HISTFILE" not in await self._first_line(shell_history=True)
+
+    @pytest.mark.asyncio
+    async def test_opting_in_still_silences_echo(self):
+        # Opting into history must not cost the readiness handshake anything.
+        assert "stty -echo" in await self._first_line(shell_history=True)
+
+    def test_field_defaults_to_suppressed(self):
+        assert _unix_host().shell_history is False
+
+
 def test_unix_host_builds_registered_transfer_backend():
     """A custom transfer backend registered at runtime is the one the host builds."""
     built = {}

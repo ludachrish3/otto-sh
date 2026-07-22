@@ -181,6 +181,66 @@ unlimited), and ``passive_commands`` (default ``["epsv", "pasv"]``).
 
 Netcat has additional options and auto-detection strategies — see {doc}`commands/netcat`.
 
+(per-host-shell-history)=
+
+## Shell history
+
+otto drives a Unix host through a persistent interactive shell, so without
+intervention every command it runs is appended to that host's shell history —
+burying a human's own history under automation traffic on a shared lab box.
+
+By default otto suppresses this: on each shell it opens it neutralizes
+``HISTFILE`` before running anything, so nothing it does reaches
+``~/.bash_history``. Set ``shell_history`` to ``true`` on a host where otto's
+commands *should* stay visible in the shell's own history (e.g. an audited
+box where the history file is the record of what touched it):
+
+```json
+{
+    "ip": "10.10.200.12",
+    "element": "target",
+    "creds": [{ "login": "admin", "password": "secret" }],
+    "shell_history": true
+}
+```
+
+Being a plain host field, it can also be defaulted for a whole class of hosts
+from an ``[os_profiles.<name>]`` block in `.otto/settings.toml`, with a
+per-host ``lab.json`` value overriding the profile. It is not accepted in
+``[host_preferences]``, which takes only the menu-style capabilities
+(``term`` / ``transfer`` / ``impairer``).
+
+What suppression covers, and what it deliberately doesn't:
+
+| Path | Suppressed? |
+|------|-------------|
+| SSH and telnet sessions (`host.run`, named sessions, app shells) | yes |
+| Shells entered via a login proxy — `switch_user`, `as_user` | yes; `su` starts a fresh shell that re-reads rc files, so it is re-applied there |
+| `host.exec(...)` | not needed — an exec channel has no PTY, and a non-interactive shell keeps no history at all |
+| Local host commands | not needed — non-interactive |
+| `otto login` | **no**, deliberately — see the caveat below |
+| Embedded / Zephyr targets | not applicable — their shell history is a RAM ring buffer, never a file |
+
+```{note}
+`otto login` is excluded because it hands *you* a real shell, and silently
+losing up-arrow recall would be worse than the noise. The trade-off is not
+free: if that login goes through a login proxy (`--as-user`), otto's own
+`__OTTO_…_RECOVER__` resync probe is written into the elevated shell and so
+appears in *its* history. The two cannot both be had — suppressing the probe
+means suppressing your history for the whole session.
+```
+
+Suppression is best-effort and silent by design: every part of it is guarded,
+so a shell that refuses all of it keeps working, merely unsuppressed. The
+guards are load-bearing rather than decorative — POSIX makes *both* an error
+in a special builtin and a failed variable assignment abort the line, either
+of which would strand the readiness probe that shares it and take the host
+offline. Do not simplify them away.
+
+Notably otto neutralizes ``HISTFILE`` rather than clearing ``HISTSIZE`` —
+setting ``HISTSIZE=0`` would make bash write its emptied history list *over*
+the history file at exit, destroying the user's real history.
+
 (per-host-snmp)=
 
 ## SNMP monitoring block

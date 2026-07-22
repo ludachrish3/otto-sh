@@ -117,6 +117,23 @@ class CommandFrame(ABC):
         """Re-synchronization payload, echoing :attr:`SessionMarkers.recover`."""
         ...
 
+    def quiet_history(self) -> str:
+        """Statement prefix stopping this dialect's shell recording commands.
+
+        Empty when the dialect has no persistent history to suppress — which
+        is how non-unix dialects are excluded from history suppression
+        entirely, without any host-family or ``isinstance`` branching at the
+        call sites. Zephyr keeps its history in a RAM ring buffer, so the
+        inherited empty default is already correct for it.
+
+        The result is prepended to the *first line written into a fresh
+        shell* (the readiness handshake, and the resync probe after a
+        login-proxy hop), so an override MUST emit no output of its own and
+        MUST be idempotent — ``confirm_live`` resends those payloads on a
+        loop until one lands.
+        """
+        return ""
+
     # --- parse half: bytes read -> structured result ---
 
     @abstractmethod
@@ -189,6 +206,85 @@ class BashFrame(CommandFrame):
         # appended by `frame`) never matches this probe's reply — no collision,
         # nothing to drain.
         return f'echo "{m.recover}$?__"\n'
+
+    @override
+    def quiet_history(self) -> str:
+        # Neutralize HISTFILE by ASSIGNMENT, never `unset HISTFILE`: ksh falls
+        # back to ~/.sh_history when it is unset, so unsetting is the
+        # portable-looking choice that silently fails on the oldest targets.
+        # /dev/null works on bash, busybox ash, zsh and ksh alike.
+        #
+        # Emphatically NOT HISTSIZE=0 — that is destructive. bash writes its
+        # (now empty) history list OVER $HISTFILE at exit, deleting the user's
+        # real history.
+        #
+        # This payload is written into whatever shell the host's passwd entry
+        # names, configured however that host's admin left it. BOTH statements
+        # can fail outright rather than merely be unsupported, and POSIX has
+        # two SEPARATE rules that turn such a failure into a dead session.
+        # Every guard below exists for one of them, and each is pinned
+        # per-shell by tests/unit/host/test_history_suppression_portability.py.
+        #
+        # Rule 1 — an error in a SPECIAL BUILTIN (`set` and `export` both are)
+        #   aborts a non-interactive shell entirely. dash exits on the spot,
+        #   and `|| :` does NOT save it: dash leaves before any status is
+        #   tested. The `command` prefix strips special-builtin status, making
+        #   the error ordinary and survivable. The builtin still takes effect
+        #   where supported — bash reports `history off` after it.
+        #
+        # Rule 2 — a failed VARIABLE ASSIGNMENT aborts the rest of the
+        #   compound line. That is why HISTFILE is set with
+        #   `command export HISTFILE=…` and not a bare `HISTFILE=…`: on a
+        #   shell where HISTFILE is readonly, or under `bash --restricted`
+        #   (which forbids setting HISTFILE by name), a bare assignment
+        #   strands the `echo <READY>` that follows on this same line. The
+        #   handshake would then never complete and otto would report "shell
+        #   never became ready ... (e.g. bad credentials)" — i.e. a working
+        #   host goes UNREACHABLE, blaming the wrong thing.
+        #
+        # `2>/dev/null` — stdout and stderr are one merged stream on a PTY, so
+        #   a complaint would be parsed as command output and corrupt the
+        #   READY handshake. (rbash refuses the redirection itself and emits
+        #   noise anyway; harmless, as the read-until-pattern discards
+        #   anything preceding the marker.)
+        #
+        # `|| :` — pins $? to 0. This payload also prefixes the resync probe
+        #   (`echo "…RECOVER__$?__"`), and without it dash/busybox report
+        #   RECOVER__2__/__1__ — harmless to the liveness regex, which only
+        #   needs digits, but it reads as a failure in a debug log.
+        #
+        # zsh needs its own clause. zsh's `command` is a *precommand modifier*
+        # that restricts lookup to EXTERNAL commands (the well-known
+        # "`command cd` doesn't work in zsh"), and there is no external
+        # `export`, so both statements above are silent no-ops there — safe,
+        # but the feature would simply not work on a zsh login shell. A bare
+        # `export HISTFILE=…` is NOT the answer: zsh aborts the line on a
+        # readonly failure exactly like the shells above, so that would
+        # reintroduce the strand. `eval` is the construct that is both
+        # effective and survivable on zsh (its failure is contained and
+        # testable). It is NOT usable as the general mechanism — dash strands
+        # on `eval` even in a clean environment, and busybox strands under
+        # readonly — hence a zsh-scoped clause rather than a rewrite.
+        #
+        # `case` (not `[ ]`/`test`) keeps this a pure shell construct with no
+        # external dependency, and `${ZSH_VERSION:-}` is `set -u` safe. It is
+        # inert everywhere else: the pattern simply never matches.
+        #
+        # Net effect on a shell that refuses everything: a few suppressed
+        # errors, history not suppressed, session fully functional.
+        # The `{ …; } 2>/dev/null` brace group rather than a plain trailing
+        # redirect: ksh reports "HISTFILE: is read only" from its assignment
+        # processing OUTSIDE the simple command's own redirection, so
+        # `command export … 2>/dev/null` still leaks that line onto the merged
+        # PTY stream. Redirecting the group captures it. (Not fatal there —
+        # ksh carries on — but it is exactly the kind of stray output the
+        # READY parse must never see.)
+        return (
+            "{ command export HISTFILE=/dev/null; } 2>/dev/null || :; "
+            "{ command set +o history; } 2>/dev/null || :; "
+            "case ${ZSH_VERSION:-} in ?*) "
+            "eval 'export HISTFILE=/dev/null' 2>/dev/null || :;; esac; "
+        )
 
     @override
     def recover_pattern(self, m: SessionMarkers) -> re.Pattern[str]:
@@ -374,6 +470,24 @@ class ZephyrSerialFrame(ZephyrFrame):
     @override
     def handshake(self, m: SessionMarkers) -> str:
         return f"shell echo off\r{m.ready}\n"
+
+
+def history_prefix(frame: CommandFrame | None, shell_history: bool) -> str:
+    """Prefix that suppresses history recording, or ``""`` when history is kept.
+
+    *frame* None means bash, matching :class:`~otto.host.session.ShellSession`'s
+    own ``command_frame or BashFrame()`` default — so a caller holding a host's
+    unresolved ``command_frame`` field doesn't have to repeat it.
+
+    ``shell_history`` carries one meaning everywhere it appears — "are otto's
+    commands recorded in this host's shell history" — and is threaded through
+    unchanged from :attr:`~otto.host.unix_host.UnixHost.shell_history`. The
+    guard below is deliberately the *only* negation in the feature; resist
+    introducing a second, inverted flag name alongside it.
+    """
+    if shell_history:
+        return ""
+    return (frame or BashFrame()).quiet_history()
 
 
 # Registry of dialect name -> frame class, mirroring
