@@ -22,10 +22,12 @@ for some unrelated reason (no rc file, ``HISTFILE`` already unset, a
 restricted shell), and the suite would look green while proving nothing.
 """
 
+import contextlib
 import uuid
 from collections.abc import Iterator
 
 import pytest
+import pytest_asyncio
 
 from otto import register_login_proxy
 from otto.host.factory import create_host_from_dict
@@ -65,15 +67,46 @@ def leased_host(tmp_path_factory) -> Iterator[tuple[str, str]]:
         yield element, host_data(element)["ip"]
 
 
-def _host(ip: str, element: str, **overrides: object):
-    data: dict[str, object] = {
-        "ip": ip,
-        "element": element,
-        "board": "seed",
-        "creds": [dict(c) for c in _CREDS],
-    }
-    data.update(overrides)
-    return create_host_from_dict(data)
+@pytest_asyncio.fixture
+async def make_host():
+    """Build hosts for a test, and close every one of them at teardown.
+
+    Closing belongs to the fixture rather than to each test because this
+    module deliberately drives ``exec`` *outside* ``async with host:`` — the
+    history digest has to be sampled before the session opens and again after
+    it closes, or it proves nothing about what bash flushed at exit.
+
+    That is exactly the shape that leaks. ``exec`` lazily (re)opens the host's
+    shared SSH connection, and leaving the ``async with`` block does not close
+    what a later ``exec`` reopened; only ``host.close()`` does. An unclosed
+    connection's asyncio transport is then reaped by GC against an
+    already-closed event loop, raising ``ResourceWarning`` from ``__del__`` —
+    which pytest's ``[unraisable]`` plugin escalates into a teardown ERROR on
+    whichever test happens to run *next*, not the one that leaked. The release
+    lane makes that deterministic by forcing a ``gc.collect()`` per test
+    (``OTTO_DETECT_ASYNCIO_LEAKS=1``); without it the same leak is a
+    long-fuse flake that lands on an unrelated test.
+
+    ``AsyncExitStack`` so that one failing ``close`` still unwinds the rest —
+    a half-closed teardown would resurrect the very flake this prevents.
+    """
+    async with contextlib.AsyncExitStack() as stack:
+
+        def _make(ip: str, element: str, **overrides: object):
+            data: dict[str, object] = {
+                "ip": ip,
+                "element": element,
+                "board": "seed",
+                "creds": [dict(c) for c in _CREDS],
+            }
+            data.update(overrides)
+            host = create_host_from_dict(data)
+            # close() is idempotent, so tests that also use `async with host:`
+            # are free to close early — this just guarantees it happens.
+            stack.push_async_callback(host.close)
+            return host
+
+        yield _make
 
 
 async def _history_digest(host, element: str) -> str:
@@ -98,10 +131,10 @@ async def _shells_histfile(host) -> str:
 
 
 @pytest.mark.asyncio
-async def test_default_host_leaves_history_untouched(leased_host):
+async def test_default_host_leaves_history_untouched(leased_host, make_host):
     """The whole point: a default UnixHost writes nothing to ~/.bash_history."""
     element, ip = leased_host
-    host = _host(ip, element)
+    host = make_host(ip, element)
 
     before = await _history_digest(host, element)
 
@@ -128,7 +161,7 @@ async def test_default_host_leaves_history_untouched(leased_host):
 
 
 @pytest.mark.asyncio
-async def test_opting_in_still_records(leased_host):
+async def test_opting_in_still_records(leased_host, make_host):
     """Positive control: with ``shell_history=True`` otto's commands DO land.
 
     This is what makes every suppression assertion in this module meaningful.
@@ -142,7 +175,7 @@ async def test_opting_in_still_records(leased_host):
     value. The bed is left exactly as found.
     """
     element, ip = leased_host
-    host = _host(ip, element, shell_history=True)
+    host = make_host(ip, element, shell_history=True)
     backup = f"/tmp/otto-history-backup-{uuid.uuid4().hex[:8]}"
 
     before = await _history_digest(host, element)
@@ -181,7 +214,7 @@ async def test_opting_in_still_records(leased_host):
 
 
 @pytest.mark.asyncio
-async def test_suppression_survives_a_login_proxy_hop(leased_host):
+async def test_suppression_survives_a_login_proxy_hop(leased_host, make_host):
     """``su`` starts a fresh shell that re-reads rc files, resetting HISTFILE.
 
     This is the only test covering the resync-probe half of the feature: the
@@ -189,7 +222,7 @@ async def test_suppression_survives_a_login_proxy_hop(leased_host):
     the very first line it executes.
     """
     element, ip = leased_host
-    host = _host(ip, element)
+    host = make_host(ip, element)
 
     async with host:
         assert await _shells_histfile(host) == "HISTFILE=[/dev/null]"
@@ -203,10 +236,10 @@ async def test_suppression_survives_a_login_proxy_hop(leased_host):
 
 
 @pytest.mark.asyncio
-async def test_root_history_untouched_across_elevation(leased_host):
+async def test_root_history_untouched_across_elevation(leased_host, make_host):
     """Root's own history file must not collect otto's liveness probes either."""
     element, ip = leased_host
-    host = _host(ip, element)
+    host = make_host(ip, element)
 
     async def _root_digest() -> str:
         result = await host.exec("sudo cat /root/.bash_history 2>/dev/null | sha256sum || true")
