@@ -86,7 +86,7 @@ def test_theme_toggle_via_overflow_menu(page: Page, shell_dash) -> None:
 
 
 def test_slash_focuses_series_search_not_palette(page: Page, shell_dash) -> None:
-    """"/" is the IN-PAGE chart/host search affordance, kept distinct from the
+    """ "/" is the IN-PAGE chart/host search affordance, kept distinct from the
     global command palette (⌘K / the AppBar trigger). Off subject pages — where
     no series-search input is registered (SeriesPanel is the only registrant and
     mounts only on SubjectPage, searchFocus.ts) — "/" is a NO-OP, not a second
