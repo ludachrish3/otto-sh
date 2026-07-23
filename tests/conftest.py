@@ -156,6 +156,11 @@ from otto.host.local_host import LocalHost
 from otto.host.login_proxy import Cred
 from otto.host.unix_host import UnixHost
 from otto.registry import Registry
+from tests._fixtures._coverage_preinit import (
+    PREINIT_OUTCOME,
+    active_pytest_cov,
+    force_coverage_schema_init,
+)
 from tests._fixtures._loop_reaper import classify_loop_origin, reap_or_raise
 
 _logger = logging.getLogger(__name__)
@@ -196,6 +201,31 @@ def pytest_runtest_call(item: pytest.Item):
 def pytest_configure(config):  # type: ignore[no-untyped-def]
     _install_sigint_traceback_dump()
     _install_loop_origin_tracker()
+
+
+def pytest_collection_finish(session):  # type: ignore[no-untyped-def]
+    """Pre-initialize this worker's coverage SQLite schema, single-threaded.
+
+    Runs once per process after collection and before the first test — the last
+    moment when only the main thread exists. Closes coverage's
+    ``no such table: context`` schema-init race, an intermittent, whole-worker
+    failure that has repeatedly aborted ``make release`` at ``make nox`` on the
+    newest-Python ``tests_all`` leg (see
+    :mod:`tests._fixtures._coverage_preinit` for the mechanism). A no-op when
+    pytest-cov has not started coverage in this process (bare ``pytest``,
+    ``--no-cov``, or a distributed run's in-process controller) — which is also
+    where no per-test context writes happen, so there is no race to close.
+
+    The outcome is stashed so ``test_coverage_schema_preinit`` can prove the
+    hook actually ran and armed (a "schema exists" check alone can't — coverage
+    would lazily build the same schema by the first test regardless).
+
+    Lives in the ROOT conftest per the process-global-state rule: the per-worker
+    coverage data file is owned by the process, so every test tree measured
+    under ``--cov`` needs the guard, not just one.
+    """
+    cov = active_pytest_cov(session.config)
+    session.config.stash[PREINIT_OUTCOME] = cov is not None and force_coverage_schema_init(cov)
 
 
 def _install_sigint_traceback_dump() -> None:
