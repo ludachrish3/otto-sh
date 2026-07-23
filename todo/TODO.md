@@ -2,6 +2,8 @@
 
 ## General
 
+Let's rework the coverage interface to aesthetically match the monitor UI (using Untitled UI). I'd like the content on the main page to use the Untitled UI tree view example as a guide for laying out the source file tree of covered files <https://www.untitledui.com/react/components/tree-views#tree-view-example>. Every page should also have breadcrumbs for the file/directory that is currently being viewed. The routing for each page should contain the file path relative to the product repo's root directory (possibly including a routing prefix, like "coverage"). The top of every page should contain coverage statistics broken down by tier (e2e, unit, manual tiers) and type (line, branch, decision, etc.). The statistics cover everything in the currently chosen node and all nodes within it. So the main title page includes coverage for the whole repo. Subdirectories contain stats for all code INSIDE them. Dark mode should be handled in the same way as dark mode in the monitor app. Code should use <https://www.untitledui.com/react/components/code-snippets#code-snippet-example> either verbatim or with changes to support coverage highlighting and "contexts"
+
 - What are the long green bars between each element title and its card? It seems like it should either be in the element card or not there at all.
 - The "Mark now..." should say "Mark event"
   - This button should also change to a dropdown element similar to this: <https://www.untitledui.com/react/components/dropdowns#search-advanced>. It wouldn't exactly be a search function, but it has similar needs (a text box, the current options in the dropdown). If we need to create a custom element, that's okay. We can brainstorm exactly how this should work.
