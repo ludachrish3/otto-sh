@@ -27,7 +27,9 @@ if TYPE_CHECKING:
     from rich.text import Text
 
     from ..host.os_profile import OsProfile
+    from ..models.dependencies import ParsedDependency
     from ..models.settings import OsProfileSpec
+    from .dependencies import ResolvedDependency
 
 logger = logging.getLogger(__name__)
 
@@ -189,6 +191,20 @@ class Repo:
 
     tests: list[Path] = field(default_factory=list[Path], init=False)
     """Directories that contain test suites."""
+
+    declared_dependencies: list["ParsedDependency"] = field(default_factory=list, init=False)
+    """Parsed ``[dependencies]`` entries — required first, then optional, declaration order."""
+
+    dependencies: list["ResolvedDependency"] = field(default_factory=list, init=False)
+    """Per-dependency resolution outcome; populated by bootstrap's dependency pass.
+
+    This list is the runtime query surface: ``bootstrap().repos`` gives global
+    name→version, this gives the structured per-repo view. Statuses reflect
+    the *discovered* set only, not registration success: a ``"satisfied"``
+    optional dependency whose provider repo was itself skipped (unsatisfied
+    required deps of its own, or a dependency cycle) still shows
+    ``"satisfied"`` here — that gap surfaces separately as a startup
+    ``BootstrapWarning``, not as a status change."""
 
     host_preferences: dict[str, dict[str, Any]] = field(
         default_factory=dict,
@@ -573,6 +589,13 @@ class Repo:
         self.libs = list(model.libs)
         self.tests = list(model.tests)
         self.init = list(model.init)
+
+        from ..models.dependencies import parse_dependency_entry
+
+        self.declared_dependencies = [
+            parse_dependency_entry(e, required=True) for e in model.dependencies.required
+        ] + [parse_dependency_entry(e, required=False) for e in model.dependencies.optional]
+
         self.host_preferences = {
             sel: {k: (list(v) if isinstance(v, list) else dict(v)) for k, v in entries.items()}
             for sel, entries in model.host_preferences.items()

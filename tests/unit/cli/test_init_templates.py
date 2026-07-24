@@ -7,6 +7,7 @@ import tomli
 from otto.cli.init_templates import SETTINGS_TEMPLATE
 from otto.models.settings import (
     CoverageSettingsSpec,
+    DependenciesSpec,
     DockerSettingsSpec,
     LabConfigSpec,
     LoggingConfigSpec,
@@ -29,6 +30,7 @@ _SECTION_SPECS = {
     "reservations": (ReservationConfigSpec, set()),
     "coverage": (CoverageSettingsSpec, {"embedded"}),
     "docker": (DockerSettingsSpec, set()),
+    "dependencies": (DependenciesSpec, set()),
 }
 
 

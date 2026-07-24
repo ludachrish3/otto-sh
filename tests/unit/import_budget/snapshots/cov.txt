@@ -85,6 +85,7 @@ otto.logger.levels
 otto.logger.mode
 otto.models
 otto.models.base
+otto.models.dependencies
 otto.models.host
 otto.models.monitor
 otto.models.options

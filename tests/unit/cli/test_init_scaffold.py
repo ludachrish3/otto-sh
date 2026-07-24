@@ -47,6 +47,22 @@ def test_settings_scaffold_has_commented_monitor_tls_block(tmp_path: Path) -> No
     assert '#tls_key = "~/.config/otto/tls/monitor-key.pem"' in text
 
 
+def test_settings_scaffold_has_commented_dependencies_block(tmp_path: Path) -> None:
+    """The commented example sections include a `[dependencies]` block.
+
+    Pins the raw template text alongside the two keys `DependenciesSpec`
+    accepts, so a user uncommenting the block gets a working starting point.
+    Commented-out TOML uses the no-space `#key` convention, so the uncomment
+    drift test in test_init_templates.py also validates the block against
+    the real model.
+    """
+    BY_NAME["settings"].scaffold(tmp_path, CFG)
+    text = (tmp_path / ".otto" / "settings.toml").read_text()
+    assert "#[dependencies]" in text
+    assert '#required = ["other-project >= 1.0"]' in text
+    assert '#optional = ["nice-to-have-project"]' in text
+
+
 def test_lab_scaffold_passes_hostspec_ingest(tmp_path: Path) -> None:
     BY_NAME["lab"].scaffold(tmp_path, CFG)
     lab_file = tmp_path / "lab_data" / "lab.json"

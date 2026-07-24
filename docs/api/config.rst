@@ -10,6 +10,8 @@ settings parsing, and lab loading.
 
 .. automodule:: otto.config.lab
 
+.. automodule:: otto.config.dependencies
+
 .. automodule:: otto.config.repo
 
 .. automodule:: otto.config.version

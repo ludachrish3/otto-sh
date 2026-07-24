@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from ..models.settings import OttoEnvSettings
+    from .dependencies import ResolvedDependency as ResolvedDependency
 
 from .env import (
     load_otto_env as load_otto_env,
@@ -44,6 +45,24 @@ from .repo import (
 from .version import (
     Version as Version,
 )
+
+# name -> (source module, attribute) resolved on first access by __getattr__.
+# Kept lazy (PEP 562) because .dependencies imports ..bootstrap and
+# ..models.dependencies at module level, which would otherwise widen every
+# surface's import graph just to expose one dataclass type.
+_LAZY_EXPORTS: dict[str, tuple[str, str]] = {
+    "ResolvedDependency": ("otto.config.dependencies", "ResolvedDependency"),
+}
+
+
+def __getattr__(name: str) -> object:
+    """PEP 562 lazy resolver for config's public exports."""
+    import importlib
+
+    if name in _LAZY_EXPORTS:
+        module_name, attr = _LAZY_EXPORTS[name]
+        return getattr(importlib.import_module(module_name), attr)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def get_repos() -> list[Repo]:

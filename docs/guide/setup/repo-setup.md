@@ -172,6 +172,46 @@ Each repo has its own settings, libs, tests, and lab search paths.  They
 are all merged at startup -- instructions and suites from every repo appear
 in the CLI, and lab search paths from all repos are combined.
 
+### Declaring dependencies between repos
+
+When one repo's libs or tests build on another's, declare it in
+`.otto/settings.toml`:
+
+```toml
+[dependencies]
+required = ["vantage >= 2.1, < 3", "common-libs"]
+optional = ["metrics >= 1.4"]
+```
+
+Entries are a project name (matched against other repos' `name` fields,
+case- and punctuation-insensitively) optionally followed by comma-ANDed
+version constraints using `==`, `!=`, `>=`, `<=`, `>`, `<`. Versions may be
+shortened (`< 3` means `< 3.0.0`). A version's extra tag (`1.2.3-rc1`) is
+never compared — `1.2.3-rc1` satisfies `>= 1.2.3` — and constraints may not
+carry one.
+
+At startup, otto validates the declarations after discovering every repo in
+`OTTO_SUT_DIRS`:
+
+- A **required** dependency that is missing or version-incompatible fails
+  that repo loudly (its instructions and tests do not load; other repos are
+  unaffected). Repos that require a failed repo are skipped too, with the
+  root cause named.
+- An **optional** dependency that is absent is fine. Present but
+  incompatible prints a startup warning (the feature stays disabled) and
+  never blocks commands.
+- otto also checks that a compatible version is *possible* at all: if two
+  repos' required constraints on the same project can never both hold
+  (`>= 2` vs `< 2`), every participant gets an error naming all the
+  constraints — no version hunt can fix a contradictory declaration set.
+- Registration order follows the dependency graph (a dependency's libs and
+  init modules load before its dependents'). Repos with no declared
+  dependencies keep `OTTO_SUT_DIRS` order exactly.
+
+Inspect the outcome at runtime via `otto.config.get_repos()` — each repo
+carries a `dependencies` list with per-dependency status and the provider's
+version.
+
 ## Lab files
 
 Each directory listed under `labs` holds a `lab.json` file describing the

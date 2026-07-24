@@ -11,6 +11,8 @@ version_re = compile_re(
     r"(?P<major>\d+)\."
     r"(?P<minor>\d+)\."
     r"(?P<patch>\d+)"
+    r"(?P<extra>[-+.][0-9A-Za-z.+-]+)?"
+    r"$"
 )
 
 
@@ -18,11 +20,18 @@ version_re = compile_re(
     init=False,
 )
 class Version:
-    """Parsed semantic version (major.minor.patch) from a product version string.
+    """Parsed semantic version from a product version string.
 
-    Constructed by passing a ``"major.minor.patch"`` string to the constructor,
-    which validates the format and populates the three integer fields.
-    ``repr`` returns the original dotted string.
+    Constructed from ``"major.minor.patch"`` plus an optional extra tag
+    beginning with ``-``, ``+`` or ``.`` (e.g. ``1.2.3-rc1``); ``repr``
+    round-trips the full string; ordering and constraint matching use
+    :attr:`key` and deliberately ignore ``extra`` (a documented limitation:
+    ``1.2.3-rc1`` compares equal to ``1.2.3`` for constraint purposes —
+    SemVer prerelease precedence is intentionally not implemented).
+
+    Note the asymmetry: the dataclass-generated ``__eq__`` is *structural* and
+    includes ``extra`` (``Version("1.2.3-rc1") != Version("1.2.3")``), while
+    dependency constraint matching goes through :attr:`key`, which ignores it.
     """
 
     major: int
@@ -33,6 +42,9 @@ class Version:
 
     patch: int
     """Product patch version."""
+
+    extra: str | None
+    """Optional extra tag including its leading separator (``"-rc1"``), or ``None``."""
 
     def __init__(
         self,
@@ -50,7 +62,13 @@ class Version:
         self.major = int(version_dict["major"])
         self.minor = int(version_dict["minor"])
         self.patch = int(version_dict["patch"])
+        self.extra = version_dict["extra"]
 
     @override
     def __repr__(self) -> str:
-        return f"{self.major}.{self.minor}.{self.patch}"
+        return f"{self.major}.{self.minor}.{self.patch}{self.extra or ''}"
+
+    @property
+    def key(self) -> tuple[int, int, int]:
+        """The comparison triple — constraint matching deliberately ignores ``extra``."""
+        return (self.major, self.minor, self.patch)

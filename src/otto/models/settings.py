@@ -17,10 +17,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, Literal
 
-from pydantic import ConfigDict, Field, field_validator, model_validator
+from pydantic import ConfigDict, Field, ValidationInfo, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from .base import OttoModel
+from .dependencies import clauses_satisfiable, normalize_name, parse_dependency_entry
 from .options import (
     FtpOptionsSpec,
     NcOptionsSpec,
@@ -248,9 +249,11 @@ class ReservationFile(OttoModel):
 # SettingsModel — boundary model for .otto/settings.toml
 # ---------------------------------------------------------------------------
 
-# settings.toml version floor: X.Y.Z. Mirrors config.version.version_re;
-# duplicated (not imported) so models/ stays free of the config bootstrap.
-_VERSION_RE = re.compile(r"^\d+\.\d+\.\d+")
+# settings.toml version format: X.Y.Z with an optional extra tag beginning
+# with '-', '+' or '.'. Mirrors config.version.version_re; duplicated (not
+# imported) so models/ stays free of the config bootstrap. A drift test in
+# tests/unit/config/test_version.py keeps the two in behavioral lockstep.
+_VERSION_RE = re.compile(r"^\d+\.\d+\.\d+(?:[-+.][0-9A-Za-z.+-]+)?$")
 
 # The six per-protocol option tables accepted under [host_preferences."<selector>"],
 # each mapped to the spec that validates it. Keys mirror host.factory.OPTIONS_KEYS
@@ -322,6 +325,30 @@ class CoverageSettingsSpec(OttoModel):
     exclusions: CoverageExclusionsSpec = CoverageExclusionsSpec()
 
 
+class DependenciesSpec(OttoModel):
+    """``[dependencies]`` — inter-project dependencies on other ``OTTO_SUT_DIRS`` repos.
+
+    Entries are ``"name"`` or ``"name <op> N[.N[.N]], ..."``; names match other
+    repos' ``name`` fields PEP-503-normalized. Parsed here only to validate —
+    the resolution pass re-parses via ``Repo.declared_dependencies``.
+    """
+
+    required: list[str] = Field(default_factory=list)
+    optional: list[str] = Field(default_factory=list)
+
+    @field_validator("required", "optional")
+    @classmethod
+    def _validate_entries(cls, v: list[str], info: ValidationInfo) -> list[str]:
+        for entry in v:
+            parsed = parse_dependency_entry(entry, required=info.field_name == "required")
+            if not clauses_satisfiable(parsed.clauses):
+                raise ValueError(
+                    f"dependency {entry!r} can never be satisfied: "
+                    "its clauses are mutually exclusive"
+                )
+        return v
+
+
 class SettingsModel(OttoModel):
     """Boundary model for a repo's ``.otto/settings.toml`` (post ``${sut_dir}`` expansion).
 
@@ -352,6 +379,7 @@ class SettingsModel(OttoModel):
     lab: LabConfigSpec = LabConfigSpec()
     logging: LoggingConfigSpec = LoggingConfigSpec()
     reservations: ReservationConfigSpec = ReservationConfigSpec()
+    dependencies: DependenciesSpec = DependenciesSpec()
 
     @model_validator(mode="before")
     @classmethod
@@ -368,11 +396,10 @@ class SettingsModel(OttoModel):
     @classmethod
     def _validate_version_format(cls, v: str) -> str:
         if _VERSION_RE.match(v) is None:
-            # Prefix match (no ``$``) to stay consistent with the runtime
-            # ``config.version.Version`` parser, which Repo builds from
-            # this same string — a trailing SemVer suffix (``1.2.3-rc1``) is
-            # accepted by both, so the message says "start with".
-            raise ValueError(f"version {v!r} must start with MAJOR.MINOR.PATCH (e.g. 1.2.3)")
+            raise ValueError(
+                f"version {v!r} must be MAJOR.MINOR.PATCH with an optional "
+                "'-', '+' or '.' suffix (e.g. 1.2.3, 1.2.3-rc1)"
+            )
         return v
 
     @field_validator("host_preferences")
@@ -419,6 +446,22 @@ class SettingsModel(OttoModel):
                     )
             out[selector] = validated
         return out
+
+    @model_validator(mode="after")
+    def _validate_dependency_names(self) -> "SettingsModel":
+        """Self-dependency and required∩optional are author errors, caught here."""
+        req = {
+            parse_dependency_entry(e, required=True).normalized for e in self.dependencies.required
+        }
+        opt = {
+            parse_dependency_entry(e, required=False).normalized for e in self.dependencies.optional
+        }
+        both = sorted(req & opt)
+        if both:
+            raise ValueError(f"dependencies declared both required and optional: {', '.join(both)}")
+        if normalize_name(self.name) in req | opt:
+            raise ValueError(f"project {self.name!r} cannot depend on itself")
+        return self
 
 
 # ---------------------------------------------------------------------------

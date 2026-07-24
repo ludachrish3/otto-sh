@@ -34,6 +34,7 @@ from ..version import get_version
 from .builtin_commands import register_builtin_commands
 
 if TYPE_CHECKING:
+    from ..bootstrap import BootstrapResult
     from .registry import CommandSpec
 
 __version__ = get_version()
@@ -594,6 +595,18 @@ def _attach_cached_stubs(
 register_builtin_commands()
 
 
+def _emit_bootstrap_findings(result: "BootstrapResult") -> None:
+    """Startup render site for contained bootstrap findings: errors, then warnings.
+
+    Errors gate dispatch later (``fail_loud_on_bootstrap_errors``); warnings
+    never do — both surface here as ``warning:`` stderr lines.
+    """
+    for err in result.errors:
+        typer.echo(f"warning: {err}", err=True)
+    for warn in result.warnings:
+        typer.echo(f"warning: {warn.message}", err=True)
+
+
 def entry() -> None:
     """Console-script entry: composition root, then the Typer app.
 
@@ -644,8 +657,7 @@ def entry() -> None:
             # errors never reach here; discover() contains those.
             typer.echo(f"error: {e}", err=True)
             raise SystemExit(1) from e
-        for err in result.errors:
-            typer.echo(f"warning: {err}", err=True)
+        _emit_bootstrap_findings(result)
         from ..config.completion_cache import (
             collect_backend_names,
             collect_cli_commands,

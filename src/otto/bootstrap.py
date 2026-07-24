@@ -1,9 +1,13 @@
-"""otto's composition root: repo discovery + contained user-code registration.
+r"""otto's composition root: repo discovery + contained user-code registration.
 
 Replaces ``config``'s import-time side effects. Phase 1 (*discovery*)
 parses the environment and repo ``settings.toml`` files — no user code runs.
-Phase 2 (*registration*) imports each repo's init modules and test files,
-wrapping every user-module exec so one broken file becomes a framed
+Between phase 1 and phase 2 the *dependency pass* (``config.dependencies``)
+validates each repo's declared dependencies, skips repos whose required deps
+are unsatisfied (framed ``DependencyError``\ s), and orders phase-2 registration
+topologically (stable — sut-dir order when no deps are declared). Phase 2
+(*registration*) imports each repo's init modules and test files, wrapping
+every user-module exec so one broken file becomes a framed
 :class:`BootstrapError` instead of bricking the process. Lab loading is
 deliberately NOT part of bootstrap — it happens lazily at first access.
 
@@ -32,6 +36,24 @@ class BootstrapError(Exception):
         self.__cause__ = cause
 
 
+class DependencyError(BootstrapError):
+    """A repo's declared dependencies cannot be satisfied (or a dependency was skipped)."""
+
+    def __init__(self, sut_dir: Any, message: str) -> None:
+        """Frame *message* as ``repo <sut_dir>: <message>``."""
+        Exception.__init__(self, f"repo {sut_dir}: {message}")
+        self.sut_dir = sut_dir
+        self.source = "dependencies"
+
+
+@dataclass(frozen=True)
+class BootstrapWarning:
+    """A non-fatal dependency finding: rendered at startup, never gates dispatch."""
+
+    sut_dir: Any
+    message: str
+
+
 @dataclass(frozen=True)
 class BootstrapResult:
     """Everything bootstrap produced: environment, repos, contained errors."""
@@ -39,6 +61,7 @@ class BootstrapResult:
     env: "OttoEnvSettings"
     repos: list["Repo"]
     errors: list[BootstrapError] = field(default_factory=list)
+    warnings: list[BootstrapWarning] = field(default_factory=list)
 
 
 _discovered: "tuple[OttoEnvSettings, list[Repo]] | None" = None
@@ -74,13 +97,17 @@ def discover() -> "tuple[OttoEnvSettings, list[Repo]]":
 
 
 def bootstrap() -> BootstrapResult:
-    """Run the composition root (idempotent): discovery + contained registration."""
+    """Run the composition root (idempotent): discovery, dependency pass, registration."""
     global _result  # noqa: PLW0603 — module-level singleton/cache
     if _result is not None:
         return _result
     env, repos = discover()
     errors: list[BootstrapError] = list(_discovery_errors)
-    for repo in repos:
+    from .config.dependencies import resolve_dependencies
+
+    resolution = resolve_dependencies(repos)
+    errors.extend(resolution.errors)
+    for repo in resolution.ordered:
         repo.add_libs_to_pythonpath()
         for mod in repo.init:
             try:
@@ -92,7 +119,7 @@ def bootstrap() -> BootstrapResult:
                 repo.import_test_file(test_file)
             except Exception as e:  # noqa: PERF203,BLE001 — containment seam: per-item resilience, ANY user-code failure becomes a framed error
                 errors.append(BootstrapError(repo.sut_dir, test_file.name, e))
-    _result = BootstrapResult(env=env, repos=repos, errors=errors)
+    _result = BootstrapResult(env=env, repos=repos, errors=errors, warnings=resolution.warnings)
     return _result
 
 

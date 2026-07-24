@@ -246,8 +246,8 @@ def test_settings_rejects_bad_version_format():
 
 
 def test_settings_version_allows_semver_suffix():
-    # deliberate prefix match (consistent with the runtime Version parser): a
-    # trailing SemVer suffix is accepted, not rejected.
+    # Version validation accepts optional extra tags with '-', '+', or '.'
+    # separators (consistent with the runtime Version parser).
     m = SettingsModel.model_validate({"name": "r", "version": "1.2.3-rc1"})
     assert m.version == "1.2.3-rc1"
 

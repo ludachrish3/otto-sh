@@ -31,6 +31,15 @@ init = ["{init_module}"]           # modules imported at startup (register instr
 # Restrict --lab/OTTO_LAB to an allowlist (default: any lab found in labs dirs).
 #valid_labs = ["example_lab"]
 
+# --- [dependencies] — other OTTO_SUT_DIRS projects this repo depends on ------
+# Entries are "name" or "name <op> X.Y.Z[, <op> X.Y.Z ...]"; names match other
+# repos' `name` fields (case/punctuation-insensitive). Required deps must be
+# present and compatible or this repo fails to load; optional deps warn when
+# present but incompatible.
+#[dependencies]
+#required = ["other-project >= 1.0"]
+#optional = ["nice-to-have-project"]
+
 # --- [lab] — host-source backend selection (default: built-in "json") --------
 # Backend-specific settings live in [lab.<backend>]; see docs/guide/setup/host-database.md.
 #[lab]
