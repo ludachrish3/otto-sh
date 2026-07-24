@@ -274,10 +274,38 @@ class Repo:
         return Panel(
             lab_name_text,
             title=Text(f"{self.name} {self.version}", style="bold not dim"),
+            subtitle=self.dependencies_summary(),
+            subtitle_align="left",
             border_style="dim",
             padding=(1, 5, 1, 1),
             expand=True,
         )
+
+    def dependencies_summary(self) -> "Text | None":
+        """One-line per-dependency status summary, or ``None`` when none are declared.
+
+        Reads :attr:`dependencies` (populated by bootstrap's resolution pass),
+        so statuses reflect the discovered set, not registration success.
+        Rendered as a panel subtitle — dep-free repos keep their panels
+        byte-identical.
+        """
+        from rich.text import Text
+
+        if not self.dependencies:
+            return None
+        parts: list[Text] = []
+        for dep in self.dependencies:
+            if dep.status == "satisfied":
+                parts.append(Text(f"✓ {dep.name} {dep.provider_version}", style="green"))
+            elif not dep.required and dep.status == "missing":
+                parts.append(Text(f"○ {dep.name} (absent)", style="dim"))
+            else:
+                detail = (
+                    f"found {dep.provider_version}" if dep.status == "incompatible" else dep.status
+                )
+                symbol, style = ("✗", "red") if dep.required else ("⚠", "yellow")
+                parts.append(Text(f"{symbol} {dep.name} ({detail})", style=style))
+        return Text(" · ").join(parts)
 
     def get_instructions_panel(self) -> "Panel":
         """Build a Rich panel listing all instructions contributed by this repo.
@@ -443,6 +471,8 @@ class Repo:
         return Panel(
             content,
             title=Text(title, style="bold not dim"),
+            subtitle=self.dependencies_summary(),
+            subtitle_align="left",
             border_style="dim",
             padding=(1, 5, 1, 1),
             expand=True,

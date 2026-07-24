@@ -14,8 +14,6 @@ test's tmp-imported modules on teardown, keeping discovery independent across
 repeat iterations.
 """
 
-import sys
-
 import pytest
 
 
@@ -25,24 +23,10 @@ def _isolate_tmp_imports(purge_tmp_imports):
     modules are dropped on teardown (the requested fixture owns the setup/teardown)."""
 
 
-@pytest.fixture(autouse=True)
-def _isolate_sys_path():
-    """Dir-wide: restore ``sys.path`` after each bootstrap test.
-
-    ``Repo.add_libs_to_pythonpath()`` appends each repo's ``libs`` dirs (per-test
-    ``tmp_path`` subdirs here) to ``sys.path`` with no cleanup of its own — it's
-    a one-shot, startup-time call in production, so this is fine there. But
-    combined with tests that reuse generic repo/init-module names (e.g. two
-    different tests both writing a repo named ``b`` with ``init = ["b_init"]``),
-    an earlier test's still-on-disk ``tmp_path`` entry sits ahead of the current
-    test's own entry in ``sys.path``. ``purge_tmp_imports`` drops the stale name
-    from ``sys.modules``, so the next ``import_module("b_init")`` re-imports
-    fresh — but the import machinery resolves it against *whichever* matching
-    directory comes first in ``sys.path``, which can be the earlier test's
-    (working) module shadowing the current test's (deliberately broken) one.
-    This guard lives here, not in the root or unit-tree conftest, because
-    bootstrap tests are the only place that mutates ``sys.path`` this way.
-    """
-    snapshot = list(sys.path)
-    yield
-    sys.path[:] = snapshot
+# ``_isolate_sys_path`` (the per-test ``sys.path`` snapshot/restore) used to
+# live here dir-wide. It moved to the root ``tests/conftest.py``: an audit
+# found ``sys.path`` is also mutated outside this tree (direct
+# ``add_libs_to_pythonpath()`` calls in ``tests/unit/config``/``tests/unit/suite``,
+# in-process ``bootstrap()`` in ``tests/e2e/suite``), and process-global state
+# takes a root-level guard — the same #132/#133 rule that moved
+# ``_isolate_registries`` there.

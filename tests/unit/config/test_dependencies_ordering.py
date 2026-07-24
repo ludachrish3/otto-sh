@@ -155,3 +155,36 @@ def test_satisfied_optional_warns_when_provider_skipped(tmp_path):
     # registration success.
     (dep,) = d.dependencies
     assert dep.status == "satisfied"
+
+
+def test_partially_failed_repo_edge_to_survivor_is_dropped(tmp_path):
+    """A repo with one satisfied and one missing required dep is skipped; the
+    satisfied edge from its surviving provider must not corrupt the sort
+    (pins the alive-node guards in _stable_topo_order / _skip_required_cycles)."""
+    b = _repo(tmp_path, "b")
+    a = _repo(tmp_path, "a", required=["b >= 1", "ghost"])
+    out = resolve_dependencies([b, a])
+    assert _names(out.ordered) == ["b"]
+    assert len(out.errors) == 1
+    assert "ghost" in str(out.errors[0])
+    assert [(d.name, d.status) for d in a.dependencies] == [
+        ("b", "satisfied"),
+        ("ghost", "missing"),
+    ]
+
+
+def test_disjoint_required_cycles_each_reported_separately(tmp_path):
+    """Two independent required cycles each get their own cycle errors, naming
+    only their own members (pins _find_cycles over disjoint cycles)."""
+    a = _repo(tmp_path, "a", required=["b"])
+    b = _repo(tmp_path, "b", required=["a"])
+    c = _repo(tmp_path, "c", required=["d"])
+    d = _repo(tmp_path, "d", required=["c"])
+    e = _repo(tmp_path, "e")
+    out = resolve_dependencies([a, b, c, d, e])
+    assert _names(out.ordered) == ["e"]
+    cycle_paths = [str(err).split("cycle: ")[1] for err in out.errors if "cycle: " in str(err)]
+    assert len(cycle_paths) == 4
+    member_sets = [set(p.replace(" -> ", " ").split()) for p in cycle_paths]
+    assert member_sets.count({"a", "b"}) == 2
+    assert member_sets.count({"c", "d"}) == 2

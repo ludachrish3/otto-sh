@@ -1055,6 +1055,35 @@ def _loaded_registries() -> list[Registry]:
 
 
 @pytest.fixture(autouse=True)
+def _isolate_sys_path():
+    """Snapshot ``sys.path`` before each test; restore it in place after.
+
+    ``Repo.add_libs_to_pythonpath()`` appends each repo's ``libs`` dirs to
+    ``sys.path`` with no cleanup of its own — a one-shot, startup-time call in
+    production, fine there. In-process tests trigger it from several trees:
+    ``bootstrap()`` registration (``tests/unit/bootstrap``,
+    ``tests/e2e/suite``) and direct calls (``tests/unit/config/test_repo.py``,
+    ``tests/unit/suite/test_import_and_register.py``). When tests reuse
+    generic repo/init-module names (two tests both writing a repo named ``b``
+    with ``init = ["b_init"]``), an earlier test's still-on-disk ``tmp_path``
+    entry sits ahead of the current test's own entry, and the import machinery
+    resolves the freshly-purged module name against the *earlier* directory —
+    a working module shadowing a deliberately broken one (order-dependent
+    flake, found in the dependency-management work).
+
+    Lives in the ROOT conftest per the #132/#133 rule (see
+    ``_isolate_registries`` below): ``sys.path`` is process-global and its
+    mutators span trees. Higher-scoped fixtures that extend ``sys.path``
+    (e.g. ``tests/repo1/conftest.py``'s import-time append) run before each
+    function-scoped snapshot, so their entries are captured and survive the
+    restore — only additions made during a test body are rolled back.
+    """
+    snapshot = list(sys.path)
+    yield
+    sys.path[:] = snapshot
+
+
+@pytest.fixture(autouse=True)
 def _isolate_registries():
     """Snapshot every global otto ``Registry`` before each test; restore after.
 
