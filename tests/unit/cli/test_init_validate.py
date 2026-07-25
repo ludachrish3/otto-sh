@@ -146,6 +146,17 @@ def test_parse_lab_sections_tolerates_dollar_schema() -> None:
         parse_lab_sections({"routes": []}, "lab.json")
 
 
+def test_parse_lab_sections_mixed_key_types_still_raise_lab_error() -> None:
+    """Non-string keys sort into the error, not a TypeError out of ``sorted``."""
+    from otto.labs.errors import LabRepositoryError
+    from otto.labs.json_repository import parse_lab_sections
+
+    # Mixed str/int unknown keys: sorting them raw is a TypeError, so the
+    # unknown-section set must be normalised to str before it is sorted.
+    with pytest.raises(LabRepositoryError, match="unknown section"):
+        parse_lab_sections({5: [], "routes": []}, "lab.json")
+
+
 def test_schemas_validate_green_after_scaffold_and_reformat(tmp_path: Path) -> None:
     by_name = {a.name: a for a in AREAS}
     by_name["schemas"].scaffold(tmp_path, InitConfig(name="widget", version="0.1.0"))

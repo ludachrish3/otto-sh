@@ -60,8 +60,11 @@ def parse_lab_sections(data: object, source: str) -> dict[str, list[Any]]:
         )
     # `$schema` is the standard editor-wiring key (VS Code / jsonls) — treated
     # as comment space alongside `_`-prefixed keys.
+    # str(k) so a non-string key (possible: *data* is typed ``object``, and the
+    # doctor hands us any parsed value) still sorts into the error message
+    # instead of raising TypeError out of ``sorted`` below.
     unknown = {
-        k for k in data if not (isinstance(k, str) and (k.startswith("_") or k == "$schema"))
+        str(k) for k in data if not (isinstance(k, str) and (k.startswith("_") or k == "$schema"))
     } - _LAB_SECTIONS
     if unknown:
         raise LabRepositoryError(
