@@ -377,6 +377,7 @@ app = typer.Typer(
 )
 def main(  # noqa: PLR0913 — CLI command params
     ctx: typer.Context,
+    *,
     labs: Annotated[
         list[str] | None,
         typer.Option(
@@ -679,7 +680,7 @@ def entry() -> None:
                 instructions,
                 suites,
                 collect_host_ids(result.repos),
-                collect_docker_capable_host_ids(result.repos),
+                docker_hosts=collect_docker_capable_host_ids(result.repos),
                 term_backends=backends["term_backends"],
                 transfer_backends=backends["transfer_backends"],
                 usernames=collect_reservation_usernames(result.repos),

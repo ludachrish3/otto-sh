@@ -96,6 +96,7 @@ def _print_impair_report(report: ImpairReport) -> None:
 @async_typer_command
 async def impair(  # noqa: PLR0913 — CLI command params
     link: str = typer.Argument(..., help="Link id or name.", autocompletion=_link_completer),
+    *,
     delay: str | None = typer.Option(
         None, "--delay", help="Delay: bare number = ms, or an explicit us/ms/s suffix."
     ),

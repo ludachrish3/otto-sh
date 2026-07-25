@@ -62,7 +62,7 @@ async def test_instruction(opts: _Options):
     for host_id, result in transfer_results.items():
         match result:
             case BaseException():
-                logger.exception(
+                logger.error(
                     f"Exception transferring to {host_id}: ",
                     exc_info=result,
                 )

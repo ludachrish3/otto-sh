@@ -298,6 +298,7 @@ suite_app = typer.Typer(
 @suite_app.callback()
 def main(  # noqa: PLR0913 — CLI command params
     ctx: typer.Context,
+    *,
     list_suites: Annotated[  # noqa: ARG001 — required by Typer eager callback option signature
         bool,
         typer.Option(
