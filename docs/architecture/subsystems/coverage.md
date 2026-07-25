@@ -165,6 +165,58 @@ spec for anchor and aging behavior: it scripts a real git repo through
 disposition, table-driven across renames, squash-merge/GC, shallow
 clones, reverts, and aging boundaries.
 
+## The store (v4)
+
+`store.json` is the canonical, versioned artifact `otto cov report`
+writes for downstream consumers — a future frontend, external tooling —
+to read back; the in-process HTML renderer consumes the same store
+directly, in memory, before it is ever serialized. `CoverageStore.save`/
+`.load` (`otto.coverage.store.model`) stamp every file with a top-level
+`"format"` key equal to `STORE_FORMAT_VERSION` (`4`). The loader is
+**exact-match**: a file whose `"format"` is missing, the wrong type, or
+any version other than the one the running otto expects fails loud with
+a `ValueError` naming both versions and telling the caller to
+regenerate, rather than attempting to read renamed or reshaped keys
+under old assumptions. There is no migration shim, by design —
+`store.json` is a cheap-to-regenerate report artifact, not a long-lived
+source of truth, so "delete and regenerate" beats accreted,
+rarely-exercised migration code.
+
+Version 4 adds three things to the schema. Each `RunRecord` grows an
+explicit **`host`** identity (the capture's board id; `""` for a
+synthetic or legacy-merged run with no single host behind it) —
+sharpening the `(tier, label, host)` context identity the supersede
+logic above already keys on from an implicit board-string convention
+into an explicit field, with `label` unchanged as the display string a
+drilldown chip shows. The store gained top-level
+**`thresholds`** (`Thresholds.high`/`.medium`, sourced from
+`[coverage.report]`; see {doc}`../../guide/coverage`) — the render
+cutoffs the HTML renderer used to hard-code (`75.0`/`50.0`) are now
+part of the persisted contract — and **`stat_types`**, the
+type-extensible stats vocabulary `("line", "branch", "decision")`:
+`decision` is a declared slot with no producer yet, so a `store.json`
+consumer should render "no decision data" rather than assume every
+declared type carries values. Each `LineRecord` also grows a reserved
+**`ticket`** slot, `None` until the per-commit ticket plumbing exists —
+nothing writes it today.
+
+Per-host breakdowns are **derived, not stored** — the schema adds no
+new per-line data for them. One capture is exactly one host and exactly
+one run, so grouping a line's existing `run_hits` (run id → hit count)
+by that run's `RunRecord.host` reconstructs per-host line counts
+without a persisted per-host table; this is pinned by
+`tests/unit/cov/test_model.py::TestRunHost::test_per_host_lines_derivable_from_run_hits`.
+
+**Known limitation:** the legacy multi-host `.gcda`-merge fallback
+(board directories with no `capture.json` — back-compat with pre-tier
+output directories) still collapses every host it merged into one
+synthetic run with `host = ""`. `lcov`'s counter merge combines hosts
+before otto ever sees per-board data, so there is no host identity left
+to attribute by the time a run is registered; host attribution
+requires the per-board capture path (`otto cov get` / `otto test
+--cov`, one `capture.json` per board). A report built solely from the
+legacy fallback therefore has no per-host data to derive.
+
 ## What is unique about `cov`
 
 `otto cov report` runs *after* the fact, over directories `otto test --cov`
@@ -186,6 +238,12 @@ remotes.
   merges hosts and runs
 - `otto.coverage.capture` — freezes a merge into a per-board
   `capture.json`, anchored to `base_commit`
+- `otto.coverage.store` — versioned store models (`RunRecord`,
+  `LineRecord`, `Thresholds`, `STAT_TYPES`) and `CoverageStore`'s
+  `save`/`load`, including the `STORE_FORMAT_VERSION` exact-match
+  loader
+- `otto.coverage.report_config` — resolves `[coverage.report]`'s raw
+  settings dict into render `Thresholds` at report time
 - `otto.coverage.renderer` — turns an assembled store into the HTML
   report
 - {mod}`otto.coverage.reporter` — `otto cov report`'s store assembly: tiers,

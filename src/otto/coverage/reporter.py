@@ -41,7 +41,7 @@ from .merge.paths import (
     discover_path_mappings,
 )
 from .renderer.html_renderer import HtmlRenderer
-from .store.model import TIER_SYSTEM, CoverageStore
+from .store.model import TIER_SYSTEM, CoverageStore, Thresholds
 
 if TYPE_CHECKING:
     from ..host.local_host import LocalHost
@@ -215,6 +215,8 @@ class CoverageReporter:
             the report (display only, like ``genhtml --prefix``).  Files
             outside the prefix display unchanged; links and store keys
             always use the full path.
+        thresholds: Render thresholds from ``[coverage.report]``; defaults
+            to ``Thresholds()``.
     """
 
     def __init__(
@@ -229,6 +231,7 @@ class CoverageReporter:
         *,
         collection: CollectionInputs | None = None,
         prefix: Path | None = None,
+        thresholds: "Thresholds | None" = None,
     ) -> None:
         self.gcda_dirs = gcda_dirs
         self.source_root = source_root
@@ -243,6 +246,7 @@ class CoverageReporter:
         self.capture_paths: list[Path] = list(coll.capture_paths)
         self.extra_markers: list[str] = list(coll.extra_markers)
         self.prefix = prefix
+        self.thresholds: Thresholds = thresholds or Thresholds()
         self._validate_tiers()
 
     def _validate_tiers(self) -> None:
@@ -324,6 +328,7 @@ class CoverageReporter:
                 if name not in tier_order:
                     tier_order.append(name)
             store = CoverageStore(tier_order=tier_order)
+            store.thresholds = self.thresholds
 
             wants_system = self._wants_system_tier()
 
@@ -685,6 +690,7 @@ async def run_coverage_report(
     tier_configs: "list[TierConfig] | None" = None,
     extra_markers: list[str] | None = None,
     prefix: Path | None = None,
+    thresholds: "Thresholds | None" = None,
 ) -> CoverageStore | None:
     """Render an HTML coverage report from one or more cov/ directories.
 
@@ -716,13 +722,19 @@ async def run_coverage_report(
     None)]``); explicit ``--tier`` specs, being a git-less escape hatch,
     never reach this mode (the CLI routes them through the legacy path).
 
+    *thresholds* is the render thresholds from ``[coverage.report]``;
+    ``None`` (the default) selects :class:`~otto.coverage.store.model.Thresholds`'s
+    own 80.0/70.0 defaults. Forwarded unchanged to both the legacy and
+    collection-model paths, which each pass it straight through to
+    :class:`CoverageReporter`.
+
     Returns:
         The populated :class:`~otto.coverage.store.model.CoverageStore`, or
         ``None`` when the legacy path found no coverage data.
     """
     if repo_root is None and tier_configs is None:
         return await _run_legacy_report(
-            cov_dirs, report_dir, project_name, tier_specs, prefix=prefix
+            cov_dirs, report_dir, project_name, tier_specs, prefix=prefix, thresholds=thresholds
         )
 
     return await _run_collection_report(
@@ -734,6 +746,7 @@ async def run_coverage_report(
         tier_configs=tier_configs,
         extra_markers=extra_markers,
         prefix=prefix,
+        thresholds=thresholds,
     )
 
 
@@ -744,6 +757,7 @@ async def _run_legacy_report(
     tier_specs: list[TierSpec] | None,
     *,
     prefix: Path | None = None,
+    thresholds: "Thresholds | None" = None,
 ) -> CoverageStore | None:
     """Run the pre-collection-model path — byte-for-byte the historical behavior."""
     try:
@@ -772,6 +786,7 @@ async def _run_legacy_report(
         tiers=tier_specs,
         source_roots=source_roots,
         prefix=prefix,
+        thresholds=thresholds,
     )
     return await reporter.run()
 
@@ -786,6 +801,7 @@ async def _run_collection_report(
     tier_configs: "list[TierConfig] | None",
     extra_markers: list[str] | None,
     prefix: Path | None = None,
+    thresholds: "Thresholds | None" = None,
 ) -> CoverageStore:
     """Run the collection-model path: captures + unit harvest + manual store.
 
@@ -823,5 +839,6 @@ async def _run_collection_report(
             extra_markers=list(extra_markers) if extra_markers else [],
         ),
         prefix=prefix,
+        thresholds=thresholds,
     )
     return await reporter.run()

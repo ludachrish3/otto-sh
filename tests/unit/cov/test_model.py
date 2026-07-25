@@ -11,6 +11,7 @@ from otto.coverage.store.model import (
     FileRecord,
     LineHits,
     LineRecord,
+    Thresholds,
 )
 
 
@@ -226,10 +227,10 @@ class TestCoverageStore:
         assert merged.lines[1].hits.for_tier("unit") == 2
 
     def test_load_defaults_state_runs_tier_colors_when_absent(self, tmp_path):
-        # A well-formed v3 file may still omit the optional "runs"/"tier_colors"
+        # A well-formed v4 file may still omit the optional "runs"/"tier_colors"
         # keys (e.g. a minimal hand-written fixture); load() must default them.
         minimal = {
-            "format": 3,
+            "format": 4,
             "tier_order": ["system"],
             "files": [
                 {
@@ -325,7 +326,7 @@ class TestRuns:
         path = tmp_path / "store.json"
         store.save(path)
         raw = json.loads(path.read_text())
-        assert raw["format"] == 3
+        assert raw["format"] == 4
         assert raw["runs"][0]["base_commit"] == "deadbeef"
         line5 = raw["files"][0]["lines"]["5"]
         assert line5["run"] == {"0": 4}
@@ -344,7 +345,7 @@ class TestRuns:
 
     def test_load_defaults_runs_when_absent(self, tmp_path):
         minimal = {
-            "format": 3,
+            "format": 4,
             "tier_order": ["system"],
             "files": [{"path": "/a.c", "lines": {"1": {"hits": {"system": 1}, "branches": []}}}],
         }
@@ -365,3 +366,108 @@ class TestRuns:
         a.merge(b)
         assert a.lines[1].hits.for_tier("system") == 5
         assert a.lines[1].run_hits == {0: 5}
+
+
+class TestStoreV4Config:
+    def test_save_emits_v4_thresholds_and_stat_types(self, tmp_path) -> None:
+        store = CoverageStore(tier_order=["system"])
+        p = tmp_path / "store.json"
+        store.save(p)
+        raw = json.loads(p.read_text())
+        assert raw["format"] == 4
+        assert raw["thresholds"] == {"high": 80.0, "medium": 70.0}
+        assert raw["stat_types"] == ["line", "branch", "decision"]
+
+    def test_thresholds_roundtrip(self, tmp_path) -> None:
+        store = CoverageStore(tier_order=["system"])
+        store.thresholds = Thresholds(high=90.0, medium=75.0)
+        p = tmp_path / "store.json"
+        store.save(p)
+        loaded = CoverageStore.load(p)
+        assert loaded.thresholds == Thresholds(high=90.0, medium=75.0)
+
+    def test_load_defaults_thresholds_when_absent(self, tmp_path) -> None:
+        p = tmp_path / "store.json"
+        p.write_text('{"format": 4, "tier_order": ["system"], "files": []}')
+        loaded = CoverageStore.load(p)
+        assert loaded.thresholds == Thresholds()
+
+    def test_load_rejects_v3(self, tmp_path) -> None:
+        p = tmp_path / "store.json"
+        p.write_text('{"format": 3, "tier_order": [], "files": []}')
+        with pytest.raises(ValueError, match="found v3"):
+            CoverageStore.load(p)
+
+
+class TestRunHost:
+    def test_add_run_host_roundtrip(self, tmp_path) -> None:
+        store = CoverageStore(tier_order=["nightly"])
+        rid = store.add_run(tier="nightly", label="Rig One", board="rig-1", host="rig-1")
+        p = tmp_path / "store.json"
+        store.save(p)
+        raw = json.loads(p.read_text())
+        assert raw["runs"][0]["host"] == "rig-1"
+        loaded = CoverageStore.load(p)
+        assert loaded.runs[rid].host == "rig-1"
+
+    def test_add_run_defaults_host_empty(self) -> None:
+        store = CoverageStore(tier_order=["system"])
+        rid = store.add_run(tier="system")
+        assert store.runs[rid].host == ""
+
+    def test_per_host_lines_derivable_from_run_hits(self) -> None:
+        """Plan C's per-host breakdown needs no new per-line data: grouping
+        LineRecord.run_hits by RunRecord.host reconstructs per-host line
+        counts, because one capture == one host == one run."""
+        store = CoverageStore(tier_order=["nightly"])
+        r1 = store.add_run(tier="nightly", label="Rig One", host="rig-1")
+        r2 = store.add_run(tier="nightly", label="Rig Two", host="rig-2")
+        f = FileRecord(path=Path("src/a.c"))
+        l1 = f.get_or_create_line(1)
+        l1.hits.add("nightly", 1)
+        l1.run_hits = {r1: 1}
+        l2 = f.get_or_create_line(2)
+        l2.hits.add("nightly", 1)
+        l2.run_hits = {r1: 1, r2: 1}
+        store.merge_file(f)
+        per_host: dict[str, int] = {}
+        for rec in store.files():
+            for line in rec.lines.values():
+                for rid in line.run_hits:
+                    host = store.runs[rid].host
+                    per_host[host] = per_host.get(host, 0) + 1
+        assert per_host == {"rig-1": 2, "rig-2": 1}
+
+
+class TestLineTicketSlot:
+    def test_ticket_roundtrip(self, tmp_path) -> None:
+        store = CoverageStore(tier_order=["system"])
+        f = FileRecord(path=Path("a.c"))
+        line = f.get_or_create_line(1)
+        line.hits.add("system", 1)
+        line.ticket = "PROJ-123"
+        store.merge_file(f)
+        p = tmp_path / "store.json"
+        store.save(p)
+        loaded = CoverageStore.load(p)
+        assert next(iter(loaded.files())).lines[1].ticket == "PROJ-123"
+
+    def test_ticket_absent_when_unset(self, tmp_path) -> None:
+        store = CoverageStore(tier_order=["system"])
+        f = FileRecord(path=Path("a.c"))
+        f.get_or_create_line(1).hits.add("system", 1)
+        store.merge_file(f)
+        p = tmp_path / "store.json"
+        store.save(p)
+        raw = json.loads(p.read_text())
+        (line_dict,) = raw["files"][0]["lines"].values()
+        assert "ticket" not in line_dict
+
+    def test_merge_keeps_first_set_ticket(self) -> None:
+        a = LineRecord(line_number=1, ticket="PROJ-1")
+        b = LineRecord(line_number=1, ticket="PROJ-2")
+        a.merge(b)
+        assert a.ticket == "PROJ-1"
+        c = LineRecord(line_number=1)
+        c.merge(b)
+        assert c.ticket == "PROJ-2"

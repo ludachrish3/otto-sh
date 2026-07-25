@@ -26,7 +26,7 @@ Any string is a valid tier name; this constant spares callers a string
 literal when they mean the canonical system-coverage tier.
 """
 
-STORE_FORMAT_VERSION = 3
+STORE_FORMAT_VERSION = 4
 """``store.json`` schema version, bumped on breaking on-disk changes.
 
 Version 2 is the first version to carry an explicit ``"format"`` key —
@@ -35,11 +35,33 @@ per-record and per-line name (JSON keys and the record class/attribute
 names alike) by dropping a now-redundant qualifying word.  Version 3
 renames the run table's git-anchor field from ``pin`` to
 ``base_commit``, matching the same rename on the capture artifact it is
-sourced from.  There is no migration shim: a file that does not declare
-this exact version fails loud in :meth:`CoverageStore.load` with a
-message telling the caller to regenerate it, rather than silently
-mis-reading renamed/reshaped keys under old names.
+sourced from.  Version 4 adds the report-level config surface: top-level
+``thresholds`` (high/medium render cutoffs from ``[coverage.report]``),
+``stat_types`` (the type-extensible stats vocabulary — ``line``,
+``branch``, and the reserved ``decision`` slot), plus an explicit
+per-run ``host`` identity and a reserved per-line ``ticket`` slot.
+There is no migration shim: a file that does not declare this exact
+version fails loud in :meth:`CoverageStore.load` with a message telling
+the caller to regenerate it, rather than silently mis-reading
+renamed/reshaped keys under old names.
 """
+
+STAT_TYPES: tuple[str, ...] = ("line", "branch", "decision")
+"""The type-extensible stats vocabulary (design §6), emitted into
+``store.json`` for UI consumers.  ``decision`` is a declared slot with no
+producer yet — consumers render "no decision data" until one exists."""
+
+
+@dataclass
+class Thresholds:
+    """Render thresholds (design §4): ``pct >= high`` green, ``>= medium`` yellow."""
+
+    high: float = 80.0
+    medium: float = 70.0
+
+    def to_dict(self) -> dict[str, float]:
+        """Return a plain dict representation of thresholds."""
+        return {"high": self.high, "medium": self.medium}
 
 
 @dataclass
@@ -158,13 +180,16 @@ class RunRecord:
     time from the capture inputs; ``id`` is the record's index into that
     list.  ``label`` is what the drilldown chip shows: the host display
     name when the capture carries one, else the board (host id), else the
-    tier name (synthetic runs pass neither).
+    tier name (synthetic runs pass neither). ``host`` is the explicit
+    host identity (v4); label derivation is unchanged.
     """
 
     id: int
     tier: str
     label: str
     board: str = ""
+    # Host id (the capture's board dir name == host.id); "" = no host attribution.
+    host: str = ""
     labs: list[str] = field(default_factory=list)
     captured_at: str = ""
     tester: dict[str, str] | None = None
@@ -181,6 +206,7 @@ class RunRecord:
             "tier": self.tier,
             "label": self.label,
             "board": self.board,
+            "host": self.host,
             "labs": list(self.labs),
             "captured_at": self.captured_at,
             "tester": self.tester,
@@ -211,6 +237,10 @@ class LineRecord:
     run_hits: dict[int, int] = field(default_factory=dict)
     stale_runs: list[int] = field(default_factory=list)
 
+    # Reserved per-line ticket slot (design §6): absent until the
+    # per-commit ticket plumbing exists — nothing writes it yet.
+    ticket: str | None = None
+
     def merge(self, other: "LineRecord") -> None:
         """Merge *other* into this line record, accumulating hits and branch data."""
         assert self.line_number == other.line_number  # noqa: S101 — internal invariant: callers must only merge matching line numbers
@@ -235,6 +265,10 @@ class LineRecord:
         for run_id in other.stale_runs:
             if run_id not in self.stale_runs:
                 self.stale_runs.append(run_id)
+
+        # First-set wins; revisit when a ticket producer exists.
+        if self.ticket is None:
+            self.ticket = other.ticket
 
 
 @dataclass
@@ -317,6 +351,8 @@ class FileRecord:
             d["run"] = {str(rid): n for rid, n in rec.run_hits.items()}
         if rec.stale_runs:
             d["stale_run"] = list(rec.stale_runs)
+        if rec.ticket is not None:
+            d["ticket"] = rec.ticket
         return d
 
     def to_dict(self) -> dict[str, Any]:
@@ -344,6 +380,7 @@ class CoverageStore:
         self.tier_order: list[str] = list(tier_order) if tier_order else []
         self.tier_colors: dict[str, str] = {}
         self.runs: list[RunRecord] = []
+        self.thresholds: Thresholds = Thresholds()
 
     def register_tier(self, tier: str) -> None:
         """Append *tier* to the tier order if not already present.
@@ -355,12 +392,13 @@ class CoverageStore:
         if tier not in self.tier_order:
             self.tier_order.append(tier)
 
-    def add_run(
+    def add_run(  # noqa: PLR0913 — wide run-record construction API, one keyword per RunRecord field
         self,
         *,
         tier: str,
         label: str | None = None,
         board: str = "",
+        host: str = "",
         labs: list[str] | None = None,
         captured_at: str = "",
         tester: dict[str, str] | None = None,
@@ -383,6 +421,7 @@ class CoverageStore:
                 tier=tier,
                 label=label or board or tier,
                 board=board,
+                host=host,
                 labs=list(labs or []),
                 captured_at=captured_at,
                 tester=tester,
@@ -457,6 +496,8 @@ class CoverageStore:
             "files": [f.to_dict() for f in self.files()],
             "runs": [r.to_dict() for r in self.runs],
             "tier_colors": dict(self.tier_colors),
+            "thresholds": self.thresholds.to_dict(),
+            "stat_types": list(STAT_TYPES),
         }
         path.write_text(json.dumps(data, indent=2))
 
@@ -497,6 +538,10 @@ class CoverageStore:
 
         store = cls(tier_order=tier_order)
         store.tier_colors = dict(tier_colors)
+        th = data.get("thresholds") or {}
+        store.thresholds = Thresholds(
+            high=float(th.get("high", 80.0)), medium=float(th.get("medium", 70.0))
+        )
         for rd in runs_data:
             store.runs.append(
                 RunRecord(
@@ -504,6 +549,7 @@ class CoverageStore:
                     tier=rd["tier"],
                     label=rd["label"],
                     board=rd.get("board", ""),
+                    host=rd.get("host", ""),
                     labs=list(rd.get("labs") or []),
                     captured_at=rd.get("captured_at", ""),
                     tester=rd.get("tester"),
@@ -533,6 +579,7 @@ class CoverageStore:
                     hits=hits,
                     branches=branches,
                     state=ld.get("state"),
+                    ticket=ld.get("ticket"),
                 )
                 lr.run_hits = {int(k): v for k, v in (ld.get("run") or {}).items()}
                 lr.stale_runs = list(ld.get("stale_run") or [])

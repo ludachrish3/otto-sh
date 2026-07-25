@@ -297,6 +297,16 @@ def test_register_capture_run_falls_back_to_board(repo: Path) -> None:
     assert store.runs[rid].label == "b"
 
 
+def test_register_capture_run_sets_host() -> None:
+    cap = Capture(tier="nightly", base_commit="deadbeef", board="rig-1", display_name="Rig One")
+    store = CoverageStore(tier_order=["nightly"])
+    rid = register_capture_run(store, cap)
+    run = store.runs[rid]
+    assert run.host == "rig-1"
+    assert run.label == "Rig One"
+    assert run.board == "rig-1"
+
+
 def test_apply_manual_capture_credits_run_hits(repo: Path) -> None:
     store = CoverageStore(tier_order=["manual"])
     cap = _capture(repo)  # lines {1: 2, 3: 1}

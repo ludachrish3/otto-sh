@@ -2,8 +2,9 @@
 
 Accumulating two captures of the same (tier, label, host) context would
 double-count that context's coverage; the superseded capture drops out
-of the runs table entirely. Plan B's explicit ``host`` field will
-replace the board component of the key.
+of the runs table entirely. The third key component is the capture's
+``board`` field — the host id — the same value carried into
+``RunRecord.host`` at report time (store v4).
 """
 
 import logging
@@ -14,7 +15,8 @@ logger = logging.getLogger(__name__)
 
 
 def _key(cap: Capture) -> tuple[str, str, str]:
-    return (cap.tier, cap.display_name or cap.board, cap.board)
+    host = cap.board
+    return (cap.tier, cap.display_name or host, host)
 
 
 def select_manual_captures(captures: list[Capture]) -> list[Capture]:

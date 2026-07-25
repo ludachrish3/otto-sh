@@ -21,6 +21,7 @@ from otto.cli import cov as cov_module
 from otto.cli.cov import cov_app
 from otto.coverage.capture import produce as produce_module
 from otto.coverage.capture.model import Capture
+from otto.coverage.store.model import Thresholds
 
 runner = CliRunner()
 
@@ -112,7 +113,7 @@ class TestCovReportValidation:
         # legacy no-data path runs and returns None → exit 1. (Without this the
         # outcome would depend on whatever repo bootstrap resolved globally.)
         with (
-            patch.object(cov_module, "_resolve_cov_settings", return_value=(None, None, [])),
+            patch.object(cov_module, "_resolve_cov_settings", return_value=(None, None, [], None)),
             patch.object(cov_module.logger, "error") as mock_err,
         ):
             result = runner.invoke(cov_app, ["report", str(tmp_path)])
@@ -125,7 +126,7 @@ class TestCovReportValidation:
         # Pin the git-less scenario so only the legacy path is exercised.
         (tmp_path / "cov" / "host1").mkdir(parents=True)
         with (
-            patch.object(cov_module, "_resolve_cov_settings", return_value=(None, None, [])),
+            patch.object(cov_module, "_resolve_cov_settings", return_value=(None, None, [], None)),
             patch.object(cov_module.logger, "error"),
         ):
             result = runner.invoke(cov_app, ["report", str(tmp_path)])
@@ -383,7 +384,9 @@ class TestCovReportCollectionModel:
 
         repo_root = tmp_path / "sut"
         tiers = [TierConfig(name="system", kind="e2e", precedence=1, color="green")]
-        with patch.object(cov_module, "_resolve_cov_settings", return_value=(repo_root, tiers, [])):
+        with patch.object(
+            cov_module, "_resolve_cov_settings", return_value=(repo_root, tiers, [], None)
+        ):
             result = runner.invoke(cov_app, ["report", str(tmp_path)])
 
         assert result.exit_code == 0
@@ -405,7 +408,7 @@ class TestCovReportCollectionModel:
         with patch.object(
             cov_module,
             "_resolve_cov_settings",
-            return_value=(repo_root, tiers, ["MYPROJ_NO_COV"]),
+            return_value=(repo_root, tiers, ["MYPROJ_NO_COV"], None),
         ):
             result = runner.invoke(cov_app, ["report", str(tmp_path)])
 
@@ -434,7 +437,9 @@ class TestCovReportCollectionModel:
     def test_no_output_dirs_allowed_for_manual_only_report(self, mock_run_report):
         """output_dirs is optional: a manual-store-only report needs no run dirs."""
         repo_root = Path("/some/repo")
-        with patch.object(cov_module, "_resolve_cov_settings", return_value=(repo_root, None, [])):
+        with patch.object(
+            cov_module, "_resolve_cov_settings", return_value=(repo_root, None, [], None)
+        ):
             result = runner.invoke(cov_app, ["report"])
 
         assert result.exit_code == 0
@@ -463,7 +468,9 @@ class TestCovReportCollectionModelErrors:
 
         with (
             patch.object(
-                cov_module, "_resolve_cov_settings", return_value=(repo_root, self._tiers(), [])
+                cov_module,
+                "_resolve_cov_settings",
+                return_value=(repo_root, self._tiers(), [], None),
             ),
             patch.object(cov_module.logger, "error") as mock_err,
         ):
@@ -480,7 +487,9 @@ class TestCovReportCollectionModelErrors:
 
         with (
             patch.object(
-                cov_module, "_resolve_cov_settings", return_value=(repo_root, self._tiers(), [])
+                cov_module,
+                "_resolve_cov_settings",
+                return_value=(repo_root, self._tiers(), [], None),
             ),
             patch.object(cov_module.logger, "error") as mock_err,
         ):
@@ -501,7 +510,9 @@ class TestCovReportCollectionModelErrors:
 
         with (
             patch.object(
-                cov_module, "_resolve_cov_settings", return_value=(not_git, self._tiers(), [])
+                cov_module,
+                "_resolve_cov_settings",
+                return_value=(not_git, self._tiers(), [], None),
             ),
             patch.object(cov_module.logger, "error") as mock_err,
         ):
@@ -535,23 +546,25 @@ class TestResolveCovSettingsExtraMarkers:
             }
         )
         with patch("otto.config.get_repos", return_value=[repo]):
-            repo_root, tier_configs, extra_markers = cov_module._resolve_cov_settings()
+            repo_root, tier_configs, extra_markers, thresholds = cov_module._resolve_cov_settings()
         assert repo_root == repo.sut_dir
         assert tier_configs is not None
         assert extra_markers == ["MYPROJ_NO_COV"]
+        assert thresholds == Thresholds()
 
     def test_no_exclusions_table_yields_empty_markers(self):
         repo = self._repo({"tiers": {"system": {"kind": "e2e", "precedence": 1}}})
         with patch("otto.config.get_repos", return_value=[repo]):
-            _repo_root, _tier_configs, extra_markers = cov_module._resolve_cov_settings()
+            _repo_root, _tier_configs, extra_markers, _ = cov_module._resolve_cov_settings()
         assert extra_markers == []
 
     def test_no_cov_repo_yields_empty_markers(self):
         with patch("otto.config.get_repos", return_value=[]):
-            repo_root, tier_configs, extra_markers = cov_module._resolve_cov_settings()
+            repo_root, tier_configs, extra_markers, thresholds = cov_module._resolve_cov_settings()
         assert repo_root is None
         assert tier_configs is None
         assert extra_markers == []
+        assert thresholds is None
 
 
 # ── _resolve_tester — identity defaults (spec decision 15) ──────────────────

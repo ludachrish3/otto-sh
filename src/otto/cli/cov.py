@@ -112,6 +112,7 @@ if TYPE_CHECKING:
     from typing import Any
 
     from ..config.repo import Repo
+    from ..coverage.store.model import Thresholds
     from ..coverage.tiers import TierConfig
     from ..host.remote_host import RemoteHost
     from ..host.unix_host import UnixHost
@@ -179,30 +180,41 @@ def _parse_tier_specs(raw_tiers: list[str]) -> list[TierSpec]:
     return specs
 
 
-def _resolve_cov_settings() -> "tuple[Path | None, list[TierConfig] | None, list[str]]":
-    """Resolve ``(repo_root, tier_configs, extra_markers)`` from settings for ``report``.
+def _resolve_cov_settings() -> (
+    "tuple[Path | None, list[TierConfig] | None, list[str], Thresholds | None]"
+):
+    """Resolve settings for ``report``: ``(repo_root, tier_configs, extra_markers, thresholds)``.
 
     Uses the same first-repo-with-``[coverage]`` selection as ``get`` and
     ``clean`` (via :func:`otto.coverage.config.get_cov_repo`).  Returns
-    ``(None, None, [])`` when no coverage section is configured — the
+    ``(None, None, [], None)`` when no coverage section is configured — the
     git-less fallback that keeps ``otto cov report`` working exactly as
     before on a tree with no ``[coverage]`` settings.
 
     ``extra_markers`` comes from ``[coverage.exclusions].markers`` — extra
     exclusion-marker strings (spec §8) forwarded to the renderer's per-file
     source scan alongside the built-in ``LCOV_EXCL_*`` markers.
+
+    ``thresholds`` comes from ``[coverage.report]`` — render thresholds
+    forwarded to the reporter/renderer (:func:`otto.coverage.report_config.load_report_thresholds`).
     """
     from ..config import get_repos
     from ..coverage.config import get_cov_config, get_cov_repo
+    from ..coverage.report_config import load_report_thresholds
     from ..coverage.tiers import load_tiers
 
     repos = get_repos()
     cov_repo = get_cov_repo(repos)
     if cov_repo is None:
-        return None, None, []
+        return None, None, [], None
     cov_config = get_cov_config(repos)
     extra_markers = list(cov_config.get("exclusions", {}).get("markers") or [])
-    return cov_repo.sut_dir, load_tiers(cov_config, cov_repo.sut_dir), extra_markers
+    return (
+        cov_repo.sut_dir,
+        load_tiers(cov_config, cov_repo.sut_dir),
+        extra_markers,
+        load_report_thresholds(cov_config),
+    )
 
 
 @cov_app.command()
@@ -275,15 +287,19 @@ def report(
     repo_root: Path | None = None
     tier_configs: "list[TierConfig] | None" = None
     extra_markers: list[str] = []
+    thresholds: "Thresholds | None" = None
     if tier:
         try:
             tier_specs: list[TierSpec] = _parse_tier_specs(tier)
         except typer.BadParameter as e:
             logger.exception("Bad tier parameter")
             raise typer.Exit(1) from e
+        # --tier never resolves settings (see precedence rule above), so
+        # thresholds stays None here — run_coverage_report defaults to
+        # Thresholds()'s 80.0/70.0.
     else:
         tier_specs = [(TIER_SYSTEM, None)]
-        repo_root, tier_configs, extra_markers = _resolve_cov_settings()
+        repo_root, tier_configs, extra_markers, thresholds = _resolve_cov_settings()
 
     cov_dirs = [d / "cov" for d in output_dirs]
     report_dir = report_dir.resolve()
@@ -300,6 +316,7 @@ def report(
                 repo_root=repo_root,
                 tier_configs=tier_configs,
                 extra_markers=extra_markers,
+                thresholds=thresholds,
                 prefix=prefix,
             )
         )

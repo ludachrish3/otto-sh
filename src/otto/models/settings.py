@@ -311,6 +311,31 @@ class CoverageExclusionsSpec(OttoModel):
     markers: list[str] = Field(default_factory=list)
 
 
+class CoverageReportSpec(OttoModel):
+    """``[coverage.report]`` — report rendering thresholds (design §4/§11).
+
+    gcovr-style percentage cutoffs: ``pct >= high`` renders green,
+    ``pct >= medium`` yellow, below red.  Validation-only, like the other
+    coverage specs — the runtime value is re-read from the raw settings
+    dict by ``otto.coverage.report_config.load_report_thresholds``.
+    """
+
+    # int bounds, float defaults: autodoc's annotation stringifier treats a
+    # float literal inside Annotated metadata (``Le(100.0)``) as a dotted
+    # py:class target and nitpicky -W fails on it; int literals never
+    # xref (see docs/conf.py _EXTERNAL_DOC_LINKS notes). Same constraint.
+    high: float = Field(default=80.0, ge=0, le=100)
+    medium: float = Field(default=70.0, ge=0, le=100)
+
+    @model_validator(mode="after")
+    def _medium_not_above_high(self) -> "CoverageReportSpec":
+        if self.medium > self.high:
+            raise ValueError(
+                f"[coverage.report] medium ({self.medium}) must not exceed high ({self.high})"
+            )
+        return self
+
+
 class CoverageSettingsSpec(OttoModel):
     """Typed ``[coverage]`` table (was a free-form dict).
 
@@ -323,6 +348,7 @@ class CoverageSettingsSpec(OttoModel):
     embedded: dict[str, Any] = Field(default_factory=dict)
     tiers: dict[str, CoverageTierSpec] = Field(default_factory=dict)
     exclusions: CoverageExclusionsSpec = CoverageExclusionsSpec()
+    report: CoverageReportSpec = CoverageReportSpec()
 
 
 class DependenciesSpec(OttoModel):

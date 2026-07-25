@@ -279,6 +279,12 @@ _EXTERNAL_DOC_LINKS = {
     # ``UnixHostSpec.creds`` renders as opaque text and never attempts one).
     "annotated_types.MinLen": "https://github.com/annotated-types/annotated-types#minlen-maxlen-len",
     "annotated_types.MaxLen": "https://github.com/annotated-types/annotated-types#minlen-maxlen-len",
+    # Same stringifier behavior for range constraints: CoverageReportSpec
+    # (models/settings.py) uses ``Field(ge=0, le=100)``, rendering as
+    # ``Annotated[float, Ge(0), Le(100)]`` — two metadata args, so each
+    # constraint class becomes a py:class xref attempt.
+    "annotated_types.Ge": "https://github.com/annotated-types/annotated-types#gt-ge-lt-le",
+    "annotated_types.Le": "https://github.com/annotated-types/annotated-types#gt-ge-lt-le",
 }
 
 

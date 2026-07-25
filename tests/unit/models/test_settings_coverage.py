@@ -67,3 +67,27 @@ def test_bad_kind_rejected() -> None:
 def test_exclusion_markers() -> None:
     s = _settings({"exclusions": {"markers": ["MYPROJ_NO_COV"]}})
     assert s.coverage.exclusions.markers == ["MYPROJ_NO_COV"]
+
+
+def test_report_defaults() -> None:
+    s = SettingsModel.model_validate(BASE)
+    assert s.coverage.report.high == 80.0
+    assert s.coverage.report.medium == 70.0
+
+
+def test_report_parses_values() -> None:
+    s = _settings({"report": {"high": 90, "medium": 75}})
+    assert s.coverage.report.high == 90.0
+    assert s.coverage.report.medium == 75.0
+
+
+def test_report_rejects_medium_above_high() -> None:
+    with pytest.raises(ValidationError, match="medium"):
+        _settings({"report": {"high": 70, "medium": 80}})
+
+
+def test_report_rejects_out_of_range() -> None:
+    with pytest.raises(ValidationError):
+        _settings({"report": {"high": 101}})
+    with pytest.raises(ValidationError):
+        _settings({"report": {"medium": -1}})

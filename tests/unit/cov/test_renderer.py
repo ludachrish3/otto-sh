@@ -3,7 +3,7 @@
 from pathlib import Path
 
 from otto.coverage.renderer.html_renderer import HtmlRenderer
-from otto.coverage.store.model import CoverageStore, LineHits, LineRecord
+from otto.coverage.store.model import CoverageStore, LineHits, LineRecord, Thresholds
 
 
 def _write(tmp_path: Path, name: str, text: str) -> Path:
@@ -74,14 +74,14 @@ class TestExcludedLinesPersisted:
         assert frec.excluded_lines == {2}
 
     def test_load_tolerates_absent_excluded_lines_key(self, tmp_path):
-        """A v3 store.json with no excluded_lines key loads to an empty set."""
+        """A v4 store.json with no excluded_lines key loads to an empty set."""
         import json
 
         store_json = tmp_path / "store.json"
         store_json.write_text(
             json.dumps(
                 {
-                    "format": 3,
+                    "format": 4,
                     "tier_order": ["system"],
                     "files": [{"path": "/x/f.c", "lines": {}}],
                 }
@@ -241,3 +241,25 @@ class TestRunsDrilldown:
         assert f"commit {full_sha[:12]}" in html
         assert full_sha not in html
         assert full_sha[:13] not in html
+
+
+class TestThresholdBucketing:
+    def test_pct_class_boundaries_at_defaults(self, tmp_path):
+        r = HtmlRenderer(tmp_path / "report")
+        assert r._pct_class(80.0) == "pct-high"
+        assert r._pct_class(79.9) == "pct-mid"
+        assert r._pct_class(70.0) == "pct-mid"
+        assert r._pct_class(69.9) == "pct-low"
+
+    def test_render_uses_store_thresholds(self, tmp_path):
+        src = _write(tmp_path, "half.c", "int a;\nint b;\n")
+        store = CoverageStore(tier_order=["system"])
+        store.thresholds = Thresholds(high=40.0, medium=30.0)
+        fr = store.get_or_create_file(src)
+        fr.lines[1] = LineRecord(line_number=1, hits=LineHits(counts={"system": 1}))
+        fr.lines[2] = LineRecord(line_number=2)  # uncovered → 50% file pct
+        out_dir = tmp_path / "report"
+        HtmlRenderer(out_dir).render(store)
+        html = (out_dir / "index.html").read_text()
+        # 50% >= high(40) → pct-high; impossible under the defaults (80/70 → pct-low).
+        assert "pct-high" in html

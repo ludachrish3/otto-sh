@@ -88,6 +88,9 @@ init = ["{init_module}"]           # modules imported at startup (register instr
 #max_age = "180d"
 #[coverage.exclusions]
 #markers = ["GCOV_EXCL"]
+#[coverage.report]
+#high = 80
+#medium = 70
 
 # --- [docker] — image builds + compose stacks --------------------------------
 #[docker]

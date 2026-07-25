@@ -41,16 +41,12 @@ from pathlib import Path
 from typing import Any, cast
 
 from ...version import get_version
-from ..store.model import BranchHits, CoverageStore, FileRecord, LineRecord, RunRecord
+from ..store.model import BranchHits, CoverageStore, FileRecord, LineRecord, RunRecord, Thresholds
 
 logger = logging.getLogger(__name__)
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 STATIC_DIR = Path(__file__).parent / "static"
-
-# Coverage percentage thresholds for CSS class assignment (pct-high / pct-mid / pct-low).
-_PCT_HIGH_THRESHOLD = 75.0
-_PCT_MID_THRESHOLD = 50.0
 
 # Pretty labels for the conventional tier names.  Tiers without an entry
 # here render with their raw name title-cased — no code change needed to
@@ -96,6 +92,7 @@ class HtmlRenderer:
         self.project_name = project_name
         self.extra_markers: list[str] = list(extra_markers or [])
         self.prefix = prefix
+        self._thresholds = Thresholds()
         # Deferred so importing the renderer module (and thus `otto.coverage`,
         # pulled onto the CLI startup path via cli.cov) does not load jinja2.
         from jinja2 import Environment, FileSystemLoader, select_autoescape
@@ -118,6 +115,7 @@ class HtmlRenderer:
         # this module but never calls render()).
         from ..colors import DEFAULT_TIER_COLORS, STATE_COLORS
 
+        self._thresholds = store.thresholds
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self._copy_static()
         tier_order = self._effective_tier_order(store)
@@ -534,12 +532,11 @@ class HtmlRenderer:
     # Misc helpers
     # ------------------------------------------------------------------
 
-    @staticmethod
-    def _pct_class(pct: float) -> str:
+    def _pct_class(self, pct: float) -> str:
         """Return a CSS class name based on a coverage percentage."""
-        if pct >= _PCT_HIGH_THRESHOLD:
+        if pct >= self._thresholds.high:
             return "pct-high"
-        if pct >= _PCT_MID_THRESHOLD:
+        if pct >= self._thresholds.medium:
             return "pct-mid"
         return "pct-low"
 
