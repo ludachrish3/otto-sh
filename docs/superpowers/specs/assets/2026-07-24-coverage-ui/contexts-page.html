@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>otto coverage — runs &amp; contexts mockup</title>
+<style>
+  :root {
+    --bg-primary:#ffffff; --bg-secondary:#fafafa; --bg-tertiary:#f5f5f5;
+    --text-primary:#171717; --text-secondary:#404040; --text-tertiary:#525252; --text-quaternary:#737373;
+    --border-primary:#d4d4d4; --border-secondary:#e5e5e5;
+    --brand:#7c5cff; --brand-tint:rgba(124,92,255,.10);
+    --pct-high:#2f9e6e; --pct-mid:#b8860b; --pct-low:#d03b3b;
+    --tier-sys:#2f9e6e; --tier-unit:#eab308; --tier-man:#f97316;
+    --state-stale:#8b5cf6; --state-aging:#b0885a; --state-excl:#9ca3af; --state-unc:#d03b3b;
+    --shadow-xs:0 1px 2px rgba(0,0,0,.05); --shadow-md:0 4px 12px rgba(0,0,0,.08);
+  }
+  .dark-mode {
+    --bg-primary:#0a0a0a; --bg-secondary:#171717; --bg-tertiary:#262626;
+    --text-primary:#fafafa; --text-secondary:#d4d4d4; --text-tertiary:#a3a3a3; --text-quaternary:#8a8a8a;
+    --border-primary:#404040; --border-secondary:#262626;
+    --brand-tint:rgba(124,92,255,.18);
+    --pct-high:#3fbf87; --pct-mid:#e8a13c; --pct-low:#f06a6a;
+    --tier-unit:#facc15; --state-aging:#c9a06b;
+    --shadow-xs:0 1px 2px rgba(0,0,0,.4); --shadow-md:0 4px 12px rgba(0,0,0,.5);
+  }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { font-family:"Inter Variable",Inter,system-ui,sans-serif; background:#374151; padding:18px; }
+  .note-banner { max-width:1180px; margin:0 auto 14px; color:#e5e7eb; font-size:13px; line-height:1.5; }
+  .note-banner b { color:#fff; }
+  .browser { max-width:1180px; margin:0 auto; border-radius:12px; overflow:hidden; box-shadow:0 8px 30px rgba(0,0,0,.35); }
+  .urlbar { display:flex; align-items:center; gap:10px; background:#1f2937; padding:8px 12px; }
+  .urlbar .dots { display:flex; gap:6px; }
+  .urlbar .dot { width:11px; height:11px; border-radius:50%; }
+  .urlbar .url { flex:1; background:#111827; color:#9ca3af; font:12px/1 ui-monospace,monospace; padding:7px 12px; border-radius:8px; white-space:nowrap; overflow-x:auto; }
+  .urlbar .url b { color:#e5e7eb; font-weight:600; }
+
+  .app { background:var(--bg-primary); color:var(--text-primary); min-height:640px; position:relative; }
+  .appbar { display:flex; height:48px; align-items:center; justify-content:space-between; gap:12px; border-bottom:1px solid var(--border-secondary); padding:0 16px; }
+  .brandmark { display:flex; align-items:center; gap:8px; font-size:14px; font-weight:600; }
+  .brandmark .hex { color:var(--brand); font-size:16px; }
+  .brandmark .sub { color:var(--text-quaternary); font-weight:400; }
+  .appbar-right { display:flex; align-items:center; gap:6px; position:relative; }
+  .iconbtn { display:flex; align-items:center; justify-content:center; width:32px; height:32px; border-radius:8px; border:none; background:transparent; color:var(--text-tertiary); cursor:pointer; }
+  .iconbtn:hover { background:var(--bg-tertiary); color:var(--text-primary); }
+  .iconbtn svg { width:17px; height:17px; }
+  .focus-chip { display:none; align-items:center; gap:7px; font-size:12px; font-weight:500; color:var(--brand); background:var(--brand-tint); border:1px solid color-mix(in srgb,var(--brand) 35%,transparent); border-radius:999px; padding:4px 11px; }
+  .focus-chip .x { cursor:pointer; opacity:.7; font-size:11px; }
+  .focus-chip .x:hover { opacity:1; }
+  .menu .mi .chk { margin-left:auto; color:var(--brand); font-weight:600; }
+  .menu { position:absolute; right:0; top:40px; background:var(--bg-primary); border:1px solid var(--border-secondary); border-radius:10px; box-shadow:var(--shadow-md); min-width:200px; padding:4px; display:none; z-index:10; }
+  .menu.open { display:block; }
+  .menu .mi { display:flex; align-items:center; gap:9px; width:100%; text-align:left; font-size:13px; color:var(--text-secondary); padding:7px 10px; border:none; background:transparent; border-radius:7px; cursor:pointer; font-family:inherit; }
+  .menu .mi:hover { background:var(--bg-tertiary); color:var(--text-primary); }
+  .menu .mi svg { width:15px; height:15px; color:var(--text-quaternary); flex:none; }
+  .menu .mdiv { height:1px; background:var(--border-secondary); margin:4px 6px; }
+  .menu .mhead { font-size:10.5px; text-transform:uppercase; letter-spacing:.04em; color:var(--text-quaternary); padding:6px 10px 3px; font-weight:600; }
+  .menu .krow { display:flex; align-items:center; gap:8px; font-size:12.5px; color:var(--text-secondary); padding:2.5px 10px; }
+  .menu .sw { width:13px; height:13px; border-radius:4px; flex:none; }
+
+  .page { padding:16px 20px 90px; }
+  .header-grid { display:flex; gap:20px; align-items:flex-start; justify-content:space-between; flex-wrap:wrap; margin-bottom:18px; }
+  .crumbs { display:flex; align-items:center; gap:4px; font-size:13px; }
+  .crumbs a { color:var(--text-tertiary); text-decoration:none; padding:3px 7px; border-radius:6px; cursor:pointer; }
+  .crumbs a:hover { background:var(--bg-tertiary); color:var(--text-primary); }
+  .crumbs .sep { color:var(--text-quaternary); }
+  .crumbs .cur { color:var(--text-primary); font-weight:600; padding:3px 7px; background:var(--bg-tertiary); border-radius:6px; }
+  .crumbs .home svg { width:14px; height:14px; vertical-align:-2px; }
+  .title-block h1 { font-size:18px; font-weight:600; letter-spacing:-.01em; margin:10px 0 2px; }
+  .title-block .meta { font-size:12.5px; color:var(--text-quaternary); }
+  .title-block .meta b { color:var(--text-tertiary); font-weight:500; }
+
+  .stats-card { border:1px solid var(--border-secondary); border-radius:12px; background:var(--bg-primary); box-shadow:var(--shadow-xs); overflow:hidden; min-width:380px; }
+  .stats-card .card-h { display:flex; justify-content:space-between; align-items:center; padding:8px 14px; border-bottom:1px solid var(--border-secondary); background:var(--bg-secondary); }
+  .stats-card .card-h .t { font-size:12px; font-weight:600; color:var(--text-secondary); }
+  .stats-card .card-h .scope { font-size:11px; color:var(--text-quaternary); font-family:ui-monospace,monospace; }
+  table.stats { border-collapse:collapse; width:100%; font-size:12.5px; }
+  table.stats th, table.stats td { padding:6px 14px; text-align:right; }
+  table.stats th { font-size:11px; font-weight:500; color:var(--text-quaternary); text-transform:uppercase; letter-spacing:.04em; }
+  table.stats th:first-child, table.stats td:first-child { text-align:left; }
+  table.stats td:first-child { color:var(--text-secondary); font-weight:500; }
+  table.stats tr.all td { font-weight:600; border-top:1px solid var(--border-secondary); background:var(--bg-secondary); }
+  .tierdot { display:inline-block; width:8px; height:8px; border-radius:3px; margin-right:7px; }
+  .pct { font-variant-numeric:tabular-nums; font-weight:600; }
+  .frac { color:var(--text-quaternary); font-weight:400; font-size:11px; margin-left:5px; font-variant-numeric:tabular-nums; }
+  .hi { color:var(--pct-high); } .mid { color:var(--pct-mid); } .lo { color:var(--pct-low); } .na { color:var(--text-quaternary); font-weight:400; }
+
+  /* filter row */
+  .filters { display:flex; align-items:center; gap:8px; margin-bottom:12px; flex-wrap:wrap; }
+  .chipbtn { font-size:12px; font-weight:500; color:var(--text-tertiary); background:transparent; border:1px solid var(--border-secondary); border-radius:999px; padding:5px 13px; cursor:pointer; display:inline-flex; align-items:center; gap:6px; }
+  .chipbtn:hover { background:var(--bg-tertiary); color:var(--text-primary); }
+  .chipbtn.on { color:var(--brand); border-color:color-mix(in srgb,var(--brand) 45%,transparent); background:var(--brand-tint); }
+  .search { margin-left:auto; display:flex; align-items:center; gap:7px; border:1px solid var(--border-secondary); border-radius:8px; padding:6px 10px; background:var(--bg-primary); }
+  .search svg { width:14px; height:14px; color:var(--text-quaternary); }
+  .search input { border:none; outline:none; background:transparent; color:var(--text-primary); font:12.5px "Inter Variable",Inter,system-ui,sans-serif; width:180px; }
+  .search input::placeholder { color:var(--text-quaternary); }
+
+  /* runs table */
+  .runs-card { border:1px solid var(--border-secondary); border-radius:12px; box-shadow:var(--shadow-xs); overflow:hidden; }
+  .rhead, .rrow { display:grid; grid-template-columns:minmax(190px,1.2fr) 92px minmax(120px,1fr) 96px 82px 110px 150px 90px; gap:0 10px; align-items:center; }
+  .rhead { padding:9px 16px; background:var(--bg-secondary); border-bottom:1px solid var(--border-secondary); font-size:11px; font-weight:500; color:var(--text-quaternary); text-transform:uppercase; letter-spacing:.04em; }
+  .rrow { padding:9px 16px; font-size:12.5px; border-top:1px solid var(--border-secondary); cursor:pointer; }
+  .rrow:first-of-type { border-top:none; }
+  .rrow:hover { background:var(--bg-secondary); }
+  .rrow .rname { display:flex; align-items:center; gap:8px; font-weight:500; color:var(--text-primary); min-width:0; }
+  .rrow .rname .chev { color:var(--text-quaternary); width:13px; height:13px; flex:none; transition:transform .12s; }
+  .rrow.open .rname .chev { transform:rotate(90deg); }
+  .tierchip { display:inline-flex; align-items:center; gap:6px; font-size:11.5px; font-weight:500; padding:2px 9px; border-radius:999px; width:fit-content; }
+  .hostpill { font:10.5px ui-monospace,monospace; color:var(--text-tertiary); background:var(--bg-tertiary); border:1px solid var(--border-secondary); border-radius:5px; padding:0 6px; margin-right:4px; white-space:nowrap; }
+  .rrow .cell { color:var(--text-tertiary); font-variant-numeric:tabular-nums; }
+  .contrib { display:flex; flex-direction:column; gap:3px; }
+  .contrib .num { font-size:11.5px; color:var(--text-tertiary); font-variant-numeric:tabular-nums; }
+  .cbar { height:4px; border-radius:2px; background:var(--bg-tertiary); overflow:hidden; }
+  .cbar i { display:block; height:100%; border-radius:2px; }
+  .status { font-size:10.5px; padding:1px 8px; border-radius:999px; font-weight:600; width:fit-content; white-space:nowrap; }
+  .status.ok { color:var(--pct-high); background:color-mix(in srgb,var(--pct-high) 13%,transparent); }
+  .status.aging { color:var(--state-aging); background:color-mix(in srgb,var(--state-aging) 16%,transparent); }
+  .status.stale { color:var(--state-stale); background:color-mix(in srgb,var(--state-stale) 14%,transparent); }
+  .remap { font-size:10.5px; color:var(--text-quaternary); margin-top:2px; }
+
+  /* expanded detail */
+  .rdetail { border-top:1px dashed var(--border-secondary); background:var(--bg-secondary); padding:14px 16px 16px; display:grid; grid-template-columns:250px 215px 230px 1fr; gap:18px; }
+  .hostrow { display:grid; grid-template-columns:auto 44px 1fr; gap:8px; align-items:center; font-size:12px; margin-bottom:5px; }
+  .hostrow .n { text-align:right; color:var(--text-quaternary); font-variant-numeric:tabular-nums; }
+  .rdetail h5 { font-size:10.5px; text-transform:uppercase; letter-spacing:.04em; color:var(--text-quaternary); font-weight:600; margin-bottom:7px; }
+  .meta-grid { display:grid; grid-template-columns:auto 1fr; gap:3px 12px; font-size:12px; }
+  .meta-grid .k { color:var(--text-quaternary); }
+  .meta-grid .v { color:var(--text-secondary); font-weight:500; }
+  .meta-grid .v.mono { font-family:ui-monospace,monospace; font-weight:400; }
+  table.ctypes { border-collapse:collapse; font-size:12px; width:100%; background:var(--bg-primary); border:1px solid var(--border-secondary); border-radius:10px; overflow:hidden; }
+  table.ctypes th, table.ctypes td { padding:5px 12px; text-align:right; }
+  table.ctypes th { font-size:10.5px; text-transform:uppercase; letter-spacing:.04em; color:var(--text-quaternary); font-weight:500; background:var(--bg-secondary); }
+  table.ctypes th:first-child, table.ctypes td:first-child { text-align:left; color:var(--text-secondary); font-weight:500; }
+  .filelist { display:flex; flex-direction:column; gap:5px; }
+  .fitem { display:grid; grid-template-columns:minmax(120px,1fr) 46px 90px; gap:10px; align-items:center; font-size:12px; }
+  .fitem .fp { font-family:ui-monospace,monospace; color:var(--text-secondary); cursor:pointer; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .fitem .fp:hover { color:var(--brand); text-decoration:underline; }
+  .fitem .n { text-align:right; color:var(--text-quaternary); font-variant-numeric:tabular-nums; }
+  .focusbtn { grid-column:1 / -1; justify-self:start; display:flex; align-items:center; gap:7px; font-size:12px; font-weight:500; color:var(--brand); background:var(--brand-tint); border:1px solid color-mix(in srgb,var(--brand) 35%,transparent); border-radius:8px; padding:6px 13px; cursor:pointer; }
+  .focusbtn:hover { filter:brightness(1.05); }
+  .focusbtn svg { width:13px; height:13px; }
+
+  .toast { position:fixed; left:50%; transform:translateX(-50%); bottom:26px; background:#111827; color:#e5e7eb; font-size:12.5px; padding:9px 16px; border-radius:10px; box-shadow:var(--shadow-md); opacity:0; transition:opacity .15s; pointer-events:none; z-index:50; max-width:640px; text-align:center; }
+  .toast b { color:#fff; font-family:ui-monospace,monospace; font-weight:600; }
+  .toast.show { opacity:1; }
+</style>
+</head>
+<body>
+  <div class="note-banner">
+    <b>Screen 3 of 3 — Runs &amp; contexts.</b> The deep-dive for every coverage context in the report:
+    named <b>otto test runs</b> (one row per <b>run</b>, hosts listed per run — multi-host is the norm), the <b>unit harvest</b>, and <b>manual capture labels</b>.
+    Try: <b>tier filter chips</b> + <b>search</b>, clicking a <b>row</b> (expands metadata, per-type contribution,
+    top files), the <b>Focus this context</b> button — now functional: it pins an <b>app-bar chip</b> and re-scopes the stats card; the <b>⋮ menu</b> gets a <b>Focus context</b> switcher usable from every page. File links, the ⋮ key, dark mode.
+  </div>
+
+  <div class="browser">
+    <div class="urlbar">
+      <div class="dots"><span class="dot" style="background:#f87171"></span><span class="dot" style="background:#fbbf24"></span><span class="dot" style="background:#34d399"></span></div>
+      <div class="url">file:///home/chris/acme-fw/cov_report/index.html<b>#/runs</b></div>
+    </div>
+    <div class="app" id="app">
+      <header class="appbar">
+        <div class="brandmark"><span class="hex">⬡</span> otto coverage <span class="sub">· acme-fw</span></div>
+        <div class="appbar-right">
+          <span class="focus-chip" id="focusChip"><span class="tierdot" id="focusDot" style="margin:0"></span><span id="focusLabel"></span><span class="x" id="focusClear" title="Clear focus">✕</span></span>
+          <button class="iconbtn" id="themeBtn" title="Toggle dark mode"></button>
+          <button class="iconbtn" id="moreBtn" title="More">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg>
+          </button>
+          <div class="menu" id="menu">
+            <button class="mi">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h0m4 0h0m4 0h0m4 0h0M7 14h10"/></svg>
+              Keyboard shortcuts
+            </button>
+            <div class="mdiv"></div>
+            <div class="mhead">Focus context</div>
+            <div id="menuFocus"></div>
+            <div class="mdiv"></div>
+            <div class="mhead">Coverage key — tiers</div>
+            <div class="krow"><span class="sw" style="background:var(--tier-sys)"></span> system (e2e)</div>
+            <div class="krow"><span class="sw" style="background:var(--tier-unit)"></span> unit</div>
+            <div class="krow"><span class="sw" style="background:var(--tier-man)"></span> manual</div>
+            <div class="mhead">States</div>
+            <div class="krow"><span class="sw" style="background:var(--state-unc)"></span> uncovered</div>
+            <div class="krow"><span class="sw" style="background:var(--state-excl)"></span> excluded</div>
+            <div class="krow"><span class="sw" style="background:var(--state-stale)"></span> stale (revoked)</div>
+            <div class="krow"><span class="sw" style="background:var(--state-aging)"></span> aging</div>
+          </div>
+        </div>
+      </header>
+
+      <div class="page">
+        <div class="header-grid">
+          <div class="title-block">
+            <nav class="crumbs">
+              <a class="home"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/></svg> acme-fw</a>
+              <span class="sep">/</span><span class="cur">runs</span>
+            </nav>
+            <h1>Runs &amp; contexts</h1>
+            <div class="meta"><b id="rc"></b> contexts · <b>6</b> hosts · report generated <b>2026-07-23 14:02 UTC</b></div>
+          </div>
+          <div class="stats-card">
+            <div class="card-h"><span class="t">Coverage — whole repo</span><span class="scope">all contexts</span></div>
+            <table class="stats" id="statsTable"></table>
+          </div>
+        </div>
+
+        <div class="filters">
+          <button class="chipbtn on" data-tier="all">All tiers</button>
+          <button class="chipbtn" data-tier="sys"><span class="tierdot" style="background:var(--tier-sys);margin:0"></span> system</button>
+          <button class="chipbtn" data-tier="unit"><span class="tierdot" style="background:var(--tier-unit);margin:0"></span> unit</button>
+          <button class="chipbtn" data-tier="man"><span class="tierdot" style="background:var(--tier-man);margin:0"></span> manual</button>
+          <label class="search">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.4-3.4"/></svg>
+            <input id="q" placeholder="Filter by run, host, ticket…">
+          </label>
+        </div>
+
+        <div class="runs-card">
+          <div class="rhead">
+            <div>Run</div><div>Tier</div><div>Host</div><div>Board</div><div>Labs</div><div>Date</div><div>Lines contributed</div><div>Status</div>
+          </div>
+          <div id="runRows"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+<script>
+(function(){
+  "use strict";
+  var TOTAL_LINES=1836, TOTAL_BR=352, TOTAL_DEC=170;
+  var RUNS=[
+    {label:"nightly-full", hosts:[["router-a",875],["router-b",799]], tier:"sys", tlabel:"system", board:"stm32h7-rev3", labs:"lab-1, lab-2",
+     date:"2026-07-21", tester:"—", ticket:"—", note:"full regression sweep, tunnel matrix enabled",
+     base:"8f3c21a", remap:false, status:"ok", lines:995, br:[214,352], dec:[96,170],
+     files:[["src/net/tcp.c",289],["src/core/sched.c",171],["src/drivers/uart.c",138],["src/net/udp.c",90],["src/main.c",80]]},
+    {label:"unit harvest", hosts:[["ci-01",968]], tier:"unit", tlabel:"unit", board:"host", labs:"—",
+     date:"2026-07-22", tester:"—", ticket:"—", note:"pytest + ctest harvest_dirs fold",
+     base:"8f3c21a", remap:false, status:"ok", lines:968, br:[196,352], dec:[81,170],
+     files:[["lib/parse.c",176],["src/core/sched.c",140],["src/net/tcp.c",120],["src/net/udp.c",112],["src/net/dhcp.c",84]]},
+    {label:"field bring-up", hosts:[["bench-3",71]], tier:"man", tlabel:"manual", board:"stm32h7-rev2", labs:"lab-3",
+     date:"2026-06-02", tester:"M. Reyes", ticket:"FW-1188", note:"initial rev2 board bring-up, RF cage",
+     base:"41d9e02", remap:true, status:"aging", lines:71, br:[14,352], dec:[0,0],
+     files:[["src/net/tcp.c",44],["src/core/sched.c",12],["src/main.c",6],["src/drivers/uart.c",9]]},
+    {label:"RF cert sweep", hosts:[["bench-1",52]], tier:"man", tlabel:"manual", board:"stm32h7-rev3", labs:"lab-2",
+     date:"2026-07-08", tester:"D. Okafor", ticket:"FW-1204", note:"FCC pre-scan checklist",
+     base:"8f3c21a", remap:false, status:"ok", lines:52, br:[9,352], dec:[0,0],
+     files:[["src/drivers/uart.c",22],["src/net/tcp.c",18],["src/core/timer.c",12]]},
+    {label:"smoke-2025", hosts:[["bench-2",0]], tier:"man", tlabel:"manual", board:"stm32f4-rev1", labs:"lab-3",
+     date:"2025-11-14", tester:"M. Reyes", ticket:"FW-0961", note:"pre-rework smoke checklist",
+     base:"c07771f", remap:false, status:"stale", lines:0, revoked:118, br:[0,352], dec:[0,0],
+     files:[]}
+  ];
+
+  function pct(h,t){ return t? 100*h/t : null; }
+  var THRESH={high:80,medium:70};
+  function pctCls(p){ return p==null?"na": p>=THRESH.high?"hi": p>=THRESH.medium?"mid":"lo"; }
+  function fmt(p){ return p==null?"—":(Math.round(p*10)/10).toFixed(1)+"%"; }
+  function esc(x){ return String(x).replace(/&/g,"&amp;").replace(/</g,"&lt;"); }
+
+  function cell(h,t){ var p=pct(h,t);
+    return '<td><span class="pct '+pctCls(p)+'">'+fmt(p)+'</span><span class="frac">'+(t? h+"/"+t:"")+'</span></td>'; }
+  var STATS_ALL = "<thead><tr><th>Tier</th><th>Line</th><th>Branch</th><th>Decision</th></tr></thead><tbody>"+
+    "<tr><td><span class='tierdot' style='background:var(--tier-sys)'></span>system (e2e)</td>"+cell(995,1836)+cell(214,352)+cell(96,170)+"</tr>"+
+    "<tr><td><span class='tierdot' style='background:var(--tier-unit)'></span>unit</td>"+cell(968,1836)+cell(196,352)+cell(81,170)+"</tr>"+
+    "<tr><td><span class='tierdot' style='background:var(--tier-man)'></span>manual</td>"+cell(108,1836)+cell(21,352)+cell(0,0)+"</tr>"+
+    "<tr class='all'><td>All tiers</td>"+cell(1423,1836)+cell(262,352)+cell(118,170)+"</tr></tbody>";
+  var focused=null;
+  function renderStats(){
+    var el=document.getElementById("statsTable");
+    var scope=document.querySelector(".stats-card .card-h .scope");
+    if(!focused){ el.innerHTML=STATS_ALL; scope.textContent="all contexts"; return; }
+    var r=focused;
+    el.innerHTML="<thead><tr><th>Context</th><th>Line</th><th>Branch</th><th>Decision</th></tr></thead><tbody>"+
+      "<tr class='all'><td><span class='tierdot' style='background:var(--tier-"+r.tier+")'></span>"+esc(r.label)+"</td>"+
+      cell(r.lines,TOTAL_LINES)+cell(r.br[0],r.br[1])+cell(r.dec[0],r.dec[1])+"</tr></tbody>";
+    scope.textContent="focused: "+r.label;
+  }
+  function setFocus(r){
+    focused=r;
+    var chip=document.getElementById("focusChip");
+    if(r){ chip.style.display="inline-flex"; document.getElementById("focusLabel").textContent=r.label;
+      document.getElementById("focusDot").style.background="var(--tier-"+r.tier+")"; }
+    else chip.style.display="none";
+    renderStats(); buildMenuFocus();
+  }
+  function buildMenuFocus(){
+    var box=document.getElementById("menuFocus"); box.innerHTML="";
+    function item(label, r){
+      var b=document.createElement("button"); b.className="mi";
+      b.innerHTML='<span class="tierdot" style="background:'+(r?'var(--tier-'+r.tier+')':'var(--text-quaternary)')+';margin:0"></span>'+esc(label)+(((focused===r)||(!focused&&!r))?'<span class="chk">✓</span>':"");
+      b.onclick=function(e){ e.stopPropagation(); setFocus(r); };
+      box.appendChild(b);
+    }
+    item("All contexts", null);
+    RUNS.forEach(function(r){ item(r.label, r); });
+  }
+
+  var tierFilter="all", query="";
+  function statusHTML(r){
+    var s = r.status==="ok" ? '<span class="status ok">OK</span>'
+          : r.status==="aging" ? '<span class="status aging">aging</span>'
+          : '<span class="status stale">stale</span>';
+    if(r.remap) s+='<div class="remap">✎ remapped</div>';
+    return s;
+  }
+  function detailHTML(r){
+    var meta =
+      '<div><h5>Capture metadata</h5><div class="meta-grid">'+
+      '<span class="k">Run label</span><span class="v">'+esc(r.label)+'</span>'+
+      '<span class="k">Hosts</span><span class="v">'+r.hosts.map(function(h){ return '<span class="hostpill">'+esc(h[0])+'</span>'; }).join("")+'</span>'+
+      '<span class="k">Board</span><span class="v mono">'+esc(r.board)+'</span>'+
+      '<span class="k">Labs</span><span class="v">'+esc(r.labs)+'</span>'+
+      '<span class="k">Captured</span><span class="v">'+esc(r.date)+'</span>'+
+      '<span class="k">Tester</span><span class="v">'+esc(r.tester)+'</span>'+
+      '<span class="k">Ticket</span><span class="v">'+esc(r.ticket)+'</span>'+
+      '<span class="k">Base commit</span><span class="v mono">'+esc(r.base)+(r.remap?" → HEAD (remapped)":"")+'</span>'+
+      '<span class="k">Note</span><span class="v">'+esc(r.note)+'</span>'+
+      '</div></div>';
+    var rows;
+    if(r.status==="stale"){
+      rows='<tr><td>Line</td><td colspan="2" style="color:var(--state-stale);font-weight:500">'+r.revoked+' credits revoked — anchor unverifiable</td></tr>';
+    } else {
+      rows='<tr><td>Line</td><td>'+r.lines+'/'+TOTAL_LINES+'</td>'+'<td><span class="pct '+pctCls(pct(r.lines,TOTAL_LINES))+'">'+fmt(pct(r.lines,TOTAL_LINES))+'</span></td></tr>'+
+           '<tr><td>Branch</td><td>'+r.br[0]+'/'+r.br[1]+'</td><td><span class="pct '+pctCls(pct(r.br[0],r.br[1]))+'">'+fmt(pct(r.br[0],r.br[1]))+'</span></td></tr>'+
+           '<tr><td>Decision</td>'+(r.dec[1]?'<td>'+r.dec[0]+'/'+r.dec[1]+'</td><td><span class="pct '+pctCls(pct(r.dec[0],r.dec[1]))+'">'+fmt(pct(r.dec[0],r.dec[1]))+'</span></td>':'<td colspan="2" class="na" style="color:var(--text-quaternary)">no decision data</td>')+'</tr>';
+    }
+    var maxh=Math.max.apply(null,r.hosts.map(function(h){return h[1];}).concat([1]));
+    var hostsec='<div><h5>Per-host lines</h5>'+r.hosts.map(function(h){
+      return '<div class="hostrow"><span class="hostpill">'+esc(h[0])+'</span><span class="n">'+h[1]+'</span>'+
+             '<span class="cbar"><i style="width:'+(100*h[1]/maxh)+'%;background:var(--tier-'+r.tier+')"></i></span></div>';
+    }).join("")+'</div>';
+    var types='<div><h5>Contribution by type</h5><table class="ctypes"><thead><tr><th>Type</th><th>Hits</th><th>%</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+    var files='<div><h5>Top files</h5><div class="filelist">'+
+      (r.files.length ? r.files.map(function(f){
+        var p=100*f[1]/420;
+        return '<div class="fitem"><span class="fp" data-f="'+esc(f[0])+'">'+esc(f[0])+'</span><span class="n">'+f[1]+'</span>'+
+               '<span class="cbar"><i style="width:'+Math.min(100,p)+'%;background:var(--tier-'+r.tier+')"></i></span></div>';
+      }).join("") : '<span style="font-size:12px;color:var(--text-quaternary)">no live credits — every line this capture touched has changed</span>')+
+      '</div></div>';
+    var focus='<button class="focusbtn" data-run="'+esc(r.label)+'" data-nh="'+r.hosts.length+'">'+
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v3m0 14v3M2 12h3m14 0h3"/></svg>'+
+      'Focus this context</button>';
+    return meta+hostsec+types+files+focus;
+  }
+  function render(){
+    var wrap=document.getElementById("runRows"); wrap.innerHTML="";
+    var shown=0;
+    RUNS.forEach(function(r){
+      if(tierFilter!=="all" && r.tier!==tierFilter) return;
+      var hay=(r.label+" "+r.hosts.map(function(h){return h[0];}).join(" ")+" "+r.ticket+" "+r.board).toLowerCase();
+      if(query && hay.indexOf(query)<0) return;
+      shown++;
+      var row=document.createElement("div");
+      row.className="rrow";
+      row.innerHTML=
+        '<div class="rname"><svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>'+esc(r.label)+'</div>'+
+        '<span class="tierchip" style="color:var(--tier-'+r.tier+');background:color-mix(in srgb,var(--tier-'+r.tier+') 14%,transparent)"><span class="tierdot" style="background:var(--tier-'+r.tier+');margin:0"></span>'+r.tlabel+'</span>'+
+        '<div>'+r.hosts.map(function(h){ return '<span class="hostpill">'+esc(h[0])+'</span>'; }).join("")+'</div>'+
+        '<div class="cell">'+esc(r.board)+'</div>'+
+        '<div class="cell">'+esc(r.labs)+'</div>'+
+        '<div class="cell">'+esc(r.date)+'</div>'+
+        '<div class="contrib"><span class="num">'+(r.status==="stale"? r.revoked+' revoked' : r.lines+' / '+TOTAL_LINES)+'</span>'+
+          '<span class="cbar"><i style="width:'+(r.status==="stale"?0:100*r.lines/TOTAL_LINES)+'%;background:var(--tier-'+r.tier+')"></i></span></div>'+
+        '<div>'+statusHTML(r)+'</div>';
+      var detail=document.createElement("div");
+      detail.className="rdetail"; detail.style.display="none";
+      detail.innerHTML=detailHTML(r);
+      row.addEventListener("click", function(){
+        var open=detail.style.display!=="none";
+        detail.style.display=open?"none":"grid";
+        row.classList.toggle("open", !open);
+      });
+      detail.addEventListener("click", function(ev){
+        var fp=ev.target.closest(".fp");
+        if(fp){ showToast("would route to <b>#/coverage/"+fp.dataset.f+"</b> — file page (screen 2)"); return; }
+        var fb=ev.target.closest(".focusbtn");
+        if(fb){ var run=RUNS.filter(function(x){ return x.label===fb.dataset.run; })[0]; setFocus(run);
+          showToast("focused <b>"+fb.dataset.run+"</b> — chip pinned in the app bar (✕ clears); on directory and file pages every %, bar, and tint would recompute to this run"); ev.stopPropagation(); return; }
+        ev.stopPropagation();
+      });
+      wrap.appendChild(row); wrap.appendChild(detail);
+    });
+    document.getElementById("rc").textContent=shown;
+  }
+  document.querySelectorAll(".chipbtn").forEach(function(b){
+    b.addEventListener("click", function(){
+      document.querySelectorAll(".chipbtn").forEach(function(x){ x.classList.remove("on"); });
+      b.classList.add("on"); tierFilter=b.dataset.tier; render();
+    });
+  });
+  document.getElementById("q").addEventListener("input", function(){ query=this.value.toLowerCase(); render(); });
+
+  /* chrome */
+  var SUN='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M2 12h2m16 0h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>';
+  var MOON='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.8A8.5 8.5 0 1 1 11.2 3a6.6 6.6 0 0 0 9.8 9.8z"/></svg>';
+  var appEl=document.getElementById("app"), themeBtn=document.getElementById("themeBtn");
+  function setThemeIcon(){ themeBtn.innerHTML = appEl.classList.contains("dark-mode") ? SUN : MOON; }
+  themeBtn.onclick=function(){ appEl.classList.toggle("dark-mode"); setThemeIcon(); };
+  setThemeIcon();
+  var menu=document.getElementById("menu");
+  document.getElementById("moreBtn").onclick=function(e){ e.stopPropagation(); menu.classList.toggle("open"); };
+  document.addEventListener("click", function(e){ if(menu.classList.contains("open") && !menu.contains(e.target)) menu.classList.remove("open"); });
+  document.querySelector(".crumbs .home").addEventListener("click", function(){ showToast("would route to <b>#/coverage</b> — directory page (screen 1)"); });
+
+  document.getElementById("focusClear").onclick=function(){ setFocus(null); };
+  var toastEl=document.getElementById("toast"), toastT=null;
+  function showToast(html){ toastEl.innerHTML=html; toastEl.classList.add("show"); clearTimeout(toastT); toastT=setTimeout(function(){ toastEl.classList.remove("show"); },4200); }
+  render(); renderStats(); buildMenuFocus();
+})();
+</script>
+</body>
+</html>

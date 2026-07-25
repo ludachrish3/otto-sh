@@ -458,9 +458,12 @@ no path arguments needed for the unit or manual tiers.
 ### Staleness and aging
 
 Manual captures are anchored evidence — as the repo moves on, otto must
-decide whether that evidence still applies.  A per-file anchor chain
-(current blob SHA → blob diff → base_commit diff → unverifiable)
-resolves each capture's lines to one of these states at report time:
+decide whether that evidence still applies.  A tree-wide diff against the
+capture's `base_commit` resolves every file's lines in one pass — renames
+followed, whitespace ignored.  Only when `base_commit` itself cannot be
+resolved (a squash-merged branch, a shallow clone) does otto fall back to
+checking each file individually against its recorded blob SHA.  Either
+path resolves each capture's lines to one of these states at report time:
 
 | State | Meaning | Effect on coverage |
 |-------|---------|---------------------|
@@ -476,11 +479,62 @@ old**.
 The anchor-chain diff is **whitespace-insensitive** (`git diff -w`), so a
 pure reformat — reindentation, tabs↔spaces, trailing-whitespace strips —
 does not stale a manually-covered line: the evidence carries through, and
-lines merely shifted by such edits remap to their new numbers. Only a
-change to the code itself revokes coverage. (The SUTs are C/C++, where
-whitespace is not semantically load-bearing; the single case this also
-forgives — a whitespace change *inside a string literal* — is treated as
-immaterial to coverage.)
+lines merely shifted by such edits remap to their new numbers.  Only a
+change to the code itself revokes coverage, and only the lines that
+actually changed — the rest of the file stays valid.  (The SUTs are
+C/C++, where whitespace is not semantically load-bearing; the single case
+this also forgives — a whitespace change *inside a string literal* — is
+treated as immaterial to coverage.)  Line-ending-only changes (a file
+flipped CRLF↔LF) are immune the same way — `-w` treats them as
+whitespace, not content.
+
+Encoding changes are not exempt from that revocation: a BOM addition or
+a charset transcode changes the file's bytes, and `-w` only ignores
+whitespace, not arbitrary byte differences — the affected lines revoke
+and must be re-proven, the same as any other edit.  Because only the
+byte-differing lines are affected, a transcode that leaves most of a
+file's bytes untouched (adding a BOM, re-encoding otherwise-ASCII
+content) revokes only the handful of lines it actually changed, not the
+whole file.
+
+```{warning}
+A conversion that trips git's own binary-file heuristic — encoding to
+UTF-16, or any charset that introduces NUL bytes — is **not detected**
+by the anchor chain today. `git diff` reports the file as
+`Binary files ... differ` with no line hunks, so the tree diff drops it
+entirely; a file present on disk but absent from that diff reads as
+unchanged, so coverage on it stays valid even though every byte was
+rewritten.
+Re-prove coverage by hand after this kind of charset conversion — the
+anchor chain will not catch it for you.
+```
+
+Renames are followed as far as `git diff -M` tracks them: a capture taken
+against `foo.c` still resolves cleanly after a plain `git mv foo.c
+bar.c`.  File **splits or copies** are not rename-tracked by git and so
+are not followed either — restructuring code that way means re-proving
+coverage against the new files.
+
+A few more rulings that fall out of how captures are anchored and
+resolved:
+
+- A **newer manual capture with the same run label and host** entirely
+  replaces the older one — the superseded capture's credits do not
+  accumulate, and it drops out of the run table (see
+  {ref}`coverage-runs`).
+- On a **shallow clone**, a capture older than the clone's fetch depth has
+  a `base_commit` git cannot resolve here; validity falls back to the
+  per-file blob check instead of crashing — files whose current blob
+  still matches the recorded one stay valid, and only the files (or
+  lines) that no longer match degrade, with the report naming the fix
+  (`git fetch --unshallow`) rather than failing silently.
+- A capture whose `base_commit` has been **squash-merged away** (the
+  commit was garbage-collected once its branch folded into `main`) can no
+  longer be diffed against directly, so otto verifies each of that
+  capture's files individually against its recorded blob SHA instead.
+  That per-file fallback is batched into a small, constant number of git
+  calls per capture regardless of file count, so validity checking stays
+  fast even on large repos served over NFS.
 
 (coverage-runs)=
 ### Runs: which run covered this line?

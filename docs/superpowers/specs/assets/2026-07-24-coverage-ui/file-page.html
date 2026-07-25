@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>otto coverage — file page mockup</title>
+<style>
+  :root {
+    --bg-primary:#ffffff; --bg-secondary:#fafafa; --bg-tertiary:#f5f5f5;
+    --text-primary:#171717; --text-secondary:#404040; --text-tertiary:#525252; --text-quaternary:#737373;
+    --border-primary:#d4d4d4; --border-secondary:#e5e5e5;
+    --brand:#7c5cff; --brand-tint:rgba(124,92,255,.10);
+    --pct-high:#2f9e6e; --pct-mid:#b8860b; --pct-low:#d03b3b;
+    --tier-sys:#2f9e6e; --tier-unit:#eab308; --tier-man:#f97316;
+    --state-stale:#8b5cf6; --state-aging:#b0885a; --state-excl:#9ca3af; --state-unc:#d03b3b;
+    --syn-kw:#8250df; --syn-type:#0550ae; --syn-str:#0a7d33; --syn-num:#b35900; --syn-com:#6e7781; --syn-pre:#cf222e;
+    --shadow-xs:0 1px 2px rgba(0,0,0,.05); --shadow-md:0 4px 12px rgba(0,0,0,.08);
+  }
+  .dark-mode {
+    --bg-primary:#0a0a0a; --bg-secondary:#171717; --bg-tertiary:#262626;
+    --text-primary:#fafafa; --text-secondary:#d4d4d4; --text-tertiary:#a3a3a3; --text-quaternary:#8a8a8a;
+    --border-primary:#404040; --border-secondary:#262626;
+    --brand-tint:rgba(124,92,255,.18);
+    --pct-high:#3fbf87; --pct-mid:#e8a13c; --pct-low:#f06a6a;
+    --tier-unit:#facc15; --state-aging:#c9a06b;
+    --syn-kw:#c297ff; --syn-type:#79b8ff; --syn-str:#56d364; --syn-num:#ffab70; --syn-com:#8b949e; --syn-pre:#ff7b72;
+    --shadow-xs:0 1px 2px rgba(0,0,0,.4); --shadow-md:0 4px 12px rgba(0,0,0,.5);
+  }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { font-family:"Inter Variable",Inter,system-ui,sans-serif; background:#374151; padding:18px; }
+  .note-banner { max-width:1180px; margin:0 auto 14px; color:#e5e7eb; font-size:13px; line-height:1.5; }
+  .note-banner b { color:#fff; }
+  .browser { max-width:1180px; margin:0 auto; border-radius:12px; overflow:hidden; box-shadow:0 8px 30px rgba(0,0,0,.35); }
+  .urlbar { display:flex; align-items:center; gap:10px; background:#1f2937; padding:8px 12px; }
+  .urlbar .dots { display:flex; gap:6px; }
+  .urlbar .dot { width:11px; height:11px; border-radius:50%; }
+  .urlbar .url { flex:1; background:#111827; color:#9ca3af; font:12px/1 ui-monospace,monospace; padding:7px 12px; border-radius:8px; white-space:nowrap; overflow-x:auto; }
+  .urlbar .url b { color:#e5e7eb; font-weight:600; }
+
+  .app { background:var(--bg-primary); color:var(--text-primary); min-height:640px; position:relative; }
+  .appbar { display:flex; height:48px; align-items:center; justify-content:space-between; gap:12px; border-bottom:1px solid var(--border-secondary); padding:0 16px; }
+  .brandmark { display:flex; align-items:center; gap:8px; font-size:14px; font-weight:600; }
+  .brandmark .hex { color:var(--brand); font-size:16px; }
+  .brandmark .sub { color:var(--text-quaternary); font-weight:400; }
+  .appbar-right { display:flex; align-items:center; gap:6px; }
+  .iconbtn { display:flex; align-items:center; justify-content:center; width:32px; height:32px; border-radius:8px; border:none; background:transparent; color:var(--text-tertiary); cursor:pointer; }
+  .iconbtn:hover { background:var(--bg-tertiary); color:var(--text-primary); }
+  .iconbtn svg { width:17px; height:17px; }
+
+  .page { padding:16px 20px 90px; }
+  .header-grid { display:flex; gap:20px; align-items:flex-start; justify-content:space-between; flex-wrap:wrap; margin-bottom:18px; }
+  .crumbs { display:flex; align-items:center; gap:4px; font-size:13px; flex-wrap:wrap; }
+  .crumbs a { color:var(--text-tertiary); text-decoration:none; padding:3px 7px; border-radius:6px; cursor:pointer; }
+  .crumbs a:hover { background:var(--bg-tertiary); color:var(--text-primary); }
+  .crumbs .sep { color:var(--text-quaternary); }
+  .crumbs .cur { color:var(--text-primary); font-weight:600; padding:3px 7px; background:var(--bg-tertiary); border-radius:6px; }
+  .crumbs .home svg { width:14px; height:14px; vertical-align:-2px; }
+  .title-block h1 { font-size:18px; font-weight:600; letter-spacing:-.01em; margin:10px 0 2px; font-family:ui-monospace,monospace; }
+  .title-block .meta { font-size:12.5px; color:var(--text-quaternary); }
+  .title-block .meta b { color:var(--text-tertiary); font-weight:500; }
+
+  .stats-card { border:1px solid var(--border-secondary); border-radius:12px; background:var(--bg-primary); box-shadow:var(--shadow-xs); overflow:hidden; min-width:380px; }
+  .stats-card .card-h { display:flex; justify-content:space-between; align-items:center; padding:8px 14px; border-bottom:1px solid var(--border-secondary); background:var(--bg-secondary); }
+  .stats-card .card-h .t { font-size:12px; font-weight:600; color:var(--text-secondary); }
+  .stats-card .card-h .scope { font-size:11px; color:var(--text-quaternary); font-family:ui-monospace,monospace; }
+  table.stats { border-collapse:collapse; width:100%; font-size:12.5px; }
+  table.stats th, table.stats td { padding:6px 14px; text-align:right; }
+  table.stats th { font-size:11px; font-weight:500; color:var(--text-quaternary); text-transform:uppercase; letter-spacing:.04em; }
+  table.stats th:first-child, table.stats td:first-child { text-align:left; }
+  table.stats td:first-child { color:var(--text-secondary); font-weight:500; }
+  table.stats tr.all td { font-weight:600; border-top:1px solid var(--border-secondary); background:var(--bg-secondary); }
+  .tierdot { display:inline-block; width:8px; height:8px; border-radius:3px; margin-right:7px; }
+  .pct { font-variant-numeric:tabular-nums; font-weight:600; }
+  .frac { color:var(--text-quaternary); font-weight:400; font-size:11px; margin-left:5px; font-variant-numeric:tabular-nums; }
+  .hi { color:var(--pct-high); } .mid { color:var(--pct-mid); } .lo { color:var(--pct-low); } .na { color:var(--text-quaternary); font-weight:400; }
+
+  /* ---- code card (Untitled UI code-snippet skeleton) ---- */
+  .code-card { border:1px solid var(--border-secondary); border-radius:12px; box-shadow:var(--shadow-xs); overflow:hidden; }
+  .code-h { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:9px 14px; background:var(--bg-secondary); border-bottom:1px solid var(--border-secondary); }
+  .code-h .left { display:flex; align-items:center; gap:9px; font-size:13px; font-weight:600; font-family:ui-monospace,monospace; }
+  .code-h .left svg { width:15px; height:15px; color:var(--text-quaternary); }
+  .lang-badge { font-size:10.5px; font-weight:600; color:var(--text-tertiary); background:var(--bg-tertiary); border:1px solid var(--border-secondary); padding:1px 8px; border-radius:999px; font-family:"Inter Variable",Inter,system-ui,sans-serif; }
+  .code-h .right { display:flex; align-items:center; gap:6px; }
+  .ghostbtn { display:flex; align-items:center; gap:6px; font-size:12px; font-weight:500; color:var(--text-tertiary); background:transparent; border:1px solid var(--border-secondary); border-radius:8px; padding:5px 11px; cursor:pointer; }
+  .ghostbtn:hover { background:var(--bg-tertiary); color:var(--text-primary); }
+  .ghostbtn svg { width:13px; height:13px; }
+
+  .code-cols { display:grid; grid-template-columns:46px 40px 40px 40px 96px 1fr 66px; align-items:center; padding:4px 0; background:var(--bg-secondary); border-bottom:1px solid var(--border-secondary); font-size:10px; text-transform:uppercase; letter-spacing:.04em; color:var(--text-quaternary); font-weight:600; position:sticky; top:0; z-index:2; }
+  .code-cols div { text-align:center; }
+  .code-cols .src { text-align:left; padding-left:14px; }
+  .code-cols .ctx { text-align:right; padding-right:14px; }
+  .code-cols .tiercol { display:flex; align-items:center; justify-content:center; gap:4px; }
+
+  .code-body { font:12.5px/1.65 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
+  .cl { display:grid; grid-template-columns:46px 40px 40px 40px 96px 1fr 66px; align-items:center; border-left:3px solid transparent; }
+  .cl:hover { filter:brightness(0.985); }
+  .dark-mode .cl:hover { filter:brightness(1.12); }
+  .cl .ln { text-align:right; padding-right:10px; color:var(--text-quaternary); font-size:11px; user-select:none; }
+  .cl .hc { text-align:center; font-size:11px; color:var(--text-tertiary); font-variant-numeric:tabular-nums; }
+  .cl .hc.zero { color:var(--text-quaternary); opacity:.45; }
+  .cl .brs { display:flex; gap:3px; justify-content:center; flex-wrap:wrap; padding:1px 2px; }
+  .cl .src { white-space:pre; overflow-x:auto; padding:1px 14px 1px 14px; }
+  .cl .ctx { text-align:right; padding-right:10px; }
+  .ctxbtn { display:inline-flex; align-items:center; gap:3px; font:11px "Inter Variable",Inter,system-ui,sans-serif; color:var(--text-quaternary); background:transparent; border:none; border-radius:6px; padding:2px 7px; cursor:pointer; }
+  .ctxbtn:hover { background:rgba(0,0,0,.06); color:var(--text-primary); }
+  .dark-mode .ctxbtn:hover { background:rgba(255,255,255,.08); }
+  .ctxbtn svg { width:11px; height:11px; transition:transform .12s; }
+  .cl.ctx-open .ctxbtn svg { transform:rotate(90deg); }
+
+  /* row states: tint + left accent */
+  .cl.t-sys  { background:color-mix(in srgb,var(--tier-sys) 13%,transparent);  border-left-color:var(--tier-sys); }
+  .cl.t-unit { background:color-mix(in srgb,var(--tier-unit) 15%,transparent); border-left-color:var(--tier-unit); }
+  .cl.t-man  { background:color-mix(in srgb,var(--tier-man) 14%,transparent);  border-left-color:var(--tier-man); }
+  .cl.s-unc  { background:color-mix(in srgb,var(--state-unc) 10%,transparent); border-left-color:var(--state-unc); }
+  .cl.s-excl { background:color-mix(in srgb,var(--state-excl) 15%,transparent); border-left-color:var(--state-excl); }
+  .cl.s-excl .src { color:var(--text-quaternary); }
+  .cl.s-stale { background:color-mix(in srgb,var(--state-stale) 12%,transparent); border-left-color:var(--state-stale); }
+  .cl.s-aging { background:color-mix(in srgb,var(--state-aging) 15%,transparent); border-left-color:var(--state-aging); }
+
+  /* branch pills */
+  .bp { font:10px/1.5 ui-monospace,monospace; font-weight:600; padding:0 5px; border-radius:5px; cursor:default; }
+  .bp.tk { color:var(--pct-high); background:color-mix(in srgb,var(--pct-high) 15%,transparent); }
+  .bp.nt { color:var(--pct-low); background:color-mix(in srgb,var(--pct-low) 14%,transparent); }
+  .bp.ur { color:var(--text-quaternary); background:color-mix(in srgb,var(--state-excl) 18%,transparent); text-decoration:line-through; }
+
+  /* per-line context panel */
+  .ctxpanel { grid-column:1 / -1; background:var(--bg-secondary); border-top:1px dashed var(--border-secondary); border-bottom:1px dashed var(--border-secondary); padding:8px 14px 9px 60px; display:flex; flex-wrap:wrap; gap:6px; }
+  .runchip { display:inline-flex; align-items:center; gap:7px; font:11.5px "Inter Variable",Inter,system-ui,sans-serif; font-weight:500; color:var(--text-secondary); background:var(--bg-primary); border:1px solid var(--border-secondary); border-radius:999px; padding:3px 11px; box-shadow:var(--shadow-xs); }
+  .runchip .cnt { color:var(--text-quaternary); font-variant-numeric:tabular-nums; }
+  .runchip .host { font:10.5px ui-monospace,monospace; color:var(--text-tertiary); background:var(--bg-tertiary); border:1px solid var(--border-secondary); border-radius:5px; padding:0 6px; }
+  .runchip.stale { color:var(--state-stale); border-color:color-mix(in srgb,var(--state-stale) 40%,transparent); }
+  .runchip.stale .cnt { color:var(--state-stale); text-decoration:line-through; }
+  .runchip.aging .cnt::after { content:" · aging"; color:var(--state-aging); }
+
+  /* syntax */
+  .k { color:var(--syn-kw); } .ty { color:var(--syn-type); } .s { color:var(--syn-str); }
+  .n { color:var(--syn-num); } .c { color:var(--syn-com); font-style:italic; } .p { color:var(--syn-pre); }
+
+  /* overflow menu (holds the coverage key as inline info) */
+  .appbar-right { position:relative; }
+  .menu { position:absolute; right:0; top:40px; background:var(--bg-primary); border:1px solid var(--border-secondary); border-radius:10px; box-shadow:var(--shadow-md); min-width:200px; padding:4px; display:none; z-index:10; }
+  .menu.open { display:block; }
+  .menu .mi { display:flex; align-items:center; gap:9px; width:100%; text-align:left; font-size:13px; color:var(--text-secondary); padding:7px 10px; border:none; background:transparent; border-radius:7px; cursor:pointer; font-family:inherit; }
+  .menu .mi:hover { background:var(--bg-tertiary); color:var(--text-primary); }
+  .menu .mi svg { width:15px; height:15px; color:var(--text-quaternary); flex:none; }
+  .menu .mdiv { height:1px; background:var(--border-secondary); margin:4px 6px; }
+  .menu .mhead { font-size:10.5px; text-transform:uppercase; letter-spacing:.04em; color:var(--text-quaternary); padding:6px 10px 3px; font-weight:600; }
+  .menu .krow { display:flex; align-items:center; gap:8px; font-size:12.5px; color:var(--text-secondary); padding:2.5px 10px; }
+  .menu .sw { width:13px; height:13px; border-radius:4px; flex:none; }
+
+  .toast { position:fixed; left:50%; transform:translateX(-50%); bottom:26px; background:#111827; color:#e5e7eb; font-size:12.5px; padding:9px 16px; border-radius:10px; box-shadow:var(--shadow-md); opacity:0; transition:opacity .15s; pointer-events:none; z-index:50; }
+  .toast b { color:#fff; font-family:ui-monospace,monospace; font-weight:600; }
+  .toast.show { opacity:1; }
+</style>
+</head>
+<body>
+  <div class="note-banner">
+    <b>Screen 2 of 3 — Source-file page</b> (<span style="font-family:ui-monospace,monospace">src/net/tcp.c</span>).
+    Try: the <b>▸ chevrons in the right gutter</b> (per-line contexts — which runs covered that line),
+    <b>breadcrumbs</b> (each segment routes to its directory page), the
+    <b>coverage key</b> (inline reference info inside the <b>⋮ overflow menu</b>), and <b>dark mode</b>. Context chips now show <b>run label + host ID</b> — the same labeled run appears once per host that produced hits.
+    Row colors follow the same winner-take-all precedence as today: excluded &gt; highest-precedence tier with a hit &gt; aging &gt; stale &gt; uncovered; untinted rows are uncoverable (blank/declarations).
+  </div>
+
+  <div class="browser">
+    <div class="urlbar">
+      <div class="dots"><span class="dot" style="background:#f87171"></span><span class="dot" style="background:#fbbf24"></span><span class="dot" style="background:#34d399"></span></div>
+      <div class="url">file:///home/chris/acme-fw/cov_report/index.html<b>#/coverage/src/net/tcp.c</b></div>
+    </div>
+    <div class="app" id="app">
+      <header class="appbar">
+        <div class="brandmark"><span class="hex">⬡</span> otto coverage <span class="sub">· acme-fw</span></div>
+        <div class="appbar-right">
+          <button class="iconbtn" id="themeBtn" title="Toggle dark mode"></button>
+          <button class="iconbtn" id="moreBtn" title="More">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg>
+          </button>
+          <div class="menu" id="menu">
+            <button class="mi">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h0m4 0h0m4 0h0m4 0h0M7 14h10"/></svg>
+              Keyboard shortcuts
+            </button>
+            <div class="mdiv"></div>
+            <div class="mhead">Coverage key — tiers</div>
+            <div class="krow"><span class="sw" style="background:var(--tier-sys)"></span> system (e2e)</div>
+            <div class="krow"><span class="sw" style="background:var(--tier-unit)"></span> unit</div>
+            <div class="krow"><span class="sw" style="background:var(--tier-man)"></span> manual</div>
+            <div class="mhead">States</div>
+            <div class="krow"><span class="sw" style="background:var(--state-unc)"></span> uncovered</div>
+            <div class="krow"><span class="sw" style="background:var(--state-excl)"></span> excluded</div>
+            <div class="krow"><span class="sw" style="background:var(--state-stale)"></span> stale (revoked)</div>
+            <div class="krow"><span class="sw" style="background:var(--state-aging)"></span> aging</div>
+            <div class="mhead">Branches</div>
+            <div class="krow"><span class="bp tk">B0</span> taken</div>
+            <div class="krow"><span class="bp nt">B1</span> not taken</div>
+            <div class="krow"><span class="bp ur">B2</span> unreachable</div>
+          </div>
+        </div>
+      </header>
+
+      <div class="page">
+        <div class="header-grid">
+          <div class="title-block">
+            <nav class="crumbs">
+              <a class="home" data-r="#/coverage"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/></svg> acme-fw</a>
+              <span class="sep">/</span><a data-r="#/coverage/src">src</a>
+              <span class="sep">/</span><a data-r="#/coverage/src/net">net</a>
+              <span class="sep">/</span><span class="cur">tcp.c</span>
+            </nav>
+            <h1>tcp.c</h1>
+            <div class="meta"><b>402</b> lines · <b>318</b> covered · blob <b>8f3c21a</b> @ HEAD · report generated <b>2026-07-23 14:02 UTC</b></div>
+          </div>
+          <div class="stats-card">
+            <div class="card-h"><span class="t">Coverage — this file</span><span class="scope">src/net/tcp.c</span></div>
+            <table class="stats" id="statsTable"></table>
+          </div>
+        </div>
+
+        <div class="code-card">
+          <div class="code-h">
+            <div class="left">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg>
+              tcp.c <span class="lang-badge">C</span>
+            </div>
+            <div class="right">
+              <button class="ghostbtn" id="expandAll">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 8l5 5 5-5"/></svg>
+                Expand contexts
+              </button>
+            </div>
+          </div>
+          <div class="code-cols">
+            <div>#</div>
+            <div class="tiercol" title="system (e2e) hits"><span class="tierdot" style="background:var(--tier-sys);margin:0"></span></div>
+            <div class="tiercol" title="unit hits"><span class="tierdot" style="background:var(--tier-unit);margin:0"></span></div>
+            <div class="tiercol" title="manual hits"><span class="tierdot" style="background:var(--tier-man);margin:0"></span></div>
+            <div>Branches</div>
+            <div class="src">Source</div>
+            <div class="ctx">Runs</div>
+          </div>
+          <div class="code-body" id="codeBody"></div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+<script>
+(function(){
+  "use strict";
+  var RUNS = [
+    {name:"nightly-full",   host:"router-a", tier:"sys"},
+    {name:"nightly-full",   host:"router-b", tier:"sys"},
+    {name:"unit harvest",   host:"ci-01",    tier:"unit"},
+    {name:"field bring-up", host:"bench-3",  tier:"man", aging:true},
+    {name:"RF cert sweep",  host:"bench-1",  tier:"man"}
+  ];
+  // h:[sys,unit,man] hits (null = uncoverable); br: [label, tk|nt|ur, tooltip];
+  // runs: [runIdx, count, stale?]; st: forced state (excl|stale|aging)
+  var L = [
+    {c:'#include "tcp.h"', h:null},
+    {c:'#include "checksum.h"', h:null},
+    {c:'', h:null},
+    {c:'#define TCP_MAX_RETRIES 5', h:null},
+    {c:'', h:null},
+    {c:'static uint32_t g_iss;   /* initial send sequence */', h:null},
+    {c:'', h:null},
+    {c:'int tcp_open(struct tcp_sock *ts, uint16_t port)', h:[212,48,6], runs:[[0,118],[1,94],[2,48],[4,6]]},
+    {c:'{', h:null},
+    {c:'    if (port == 0)', h:[212,48,6], br:[["B0","tk"],["B1","tk"]], runs:[[0,118],[1,94],[2,48],[4,6]]},
+    {c:'        return -EINVAL;', h:[0,12,0], runs:[[2,12]]},
+    {c:'', h:null},
+    {c:'    ts->state = TCP_SYN_SENT;', h:[212,36,6], runs:[[0,118],[1,94],[2,36],[4,6]]},
+    {c:'    ts->iss   = g_iss++;', h:[212,36,6], runs:[[0,118],[1,94],[2,36],[4,6]]},
+    {c:'    ts->rto_ms = TCP_RTO_INITIAL;', h:[212,36,6], runs:[[0,118],[1,94],[2,36],[4,6]]},
+    {c:'    return tcp_send_syn(ts);', h:[212,36,6], runs:[[0,118],[1,94],[2,36],[4,6]]},
+    {c:'}', h:null},
+    {c:'', h:null},
+    {c:'int tcp_send(struct tcp_sock *ts, const void *buf, size_t len)', h:[188,102,0], runs:[[0,102],[1,86],[2,102]]},
+    {c:'{', h:null},
+    {c:'    if (ts->state != TCP_ESTABLISHED)', h:[188,102,0], br:[["B0","tk"],["B1","tk"]], runs:[[0,102],[1,86],[2,102]]},
+    {c:'        return -ENOTCONN;', h:[0,18,0], runs:[[2,18]]},
+    {c:'', h:null},
+    {c:'    if (len > tcp_mss(ts)) {', h:[188,84,0], br:[["B0","tk"],["B1","nt"]], runs:[[0,102],[1,86],[2,84]]},
+    {c:'        len = tcp_fragment(ts, buf, len);', h:[0,0,0], runs:[]},
+    {c:'        if (len == 0)', h:[0,0,0], br:[["B0","nt"],["B1","nt"]], runs:[]},
+    {c:'            return -ENOMEM;', h:[0,0,0], runs:[]},
+    {c:'    }', h:null},
+    {c:'', h:null},
+    {c:'    return tcp_output(ts, buf, len);', h:[188,84,0], runs:[[0,102],[1,86],[2,84]]},
+    {c:'}', h:null},
+    {c:'', h:null},
+    {c:'/* Legacy software checksum - kept for boards without CSUM offload. */', h:null},
+    {c:'uint16_t tcp_cksum_sw(const void *seg, size_t len)', h:[0,0,0], st:"stale", runs:[[3,41,true]]},
+    {c:'{', h:null},
+    {c:'    uint32_t acc = csum_partial(seg, len);', h:[0,0,0], st:"stale", runs:[[3,41,true]]},
+    {c:'    return csum_fold(acc);', h:[0,0,0], st:"stale", runs:[[3,41,true]]},
+    {c:'}', h:null},
+    {c:'', h:null},
+    {c:'void tcp_rto_backoff(struct tcp_sock *ts)', h:[0,0,9], st:"aging", runs:[[3,9]]},
+    {c:'{', h:null},
+    {c:'    ts->rto_ms = MIN(ts->rto_ms * 2, TCP_RTO_MAX);', h:[0,0,9], st:"aging", runs:[[3,9]]},
+    {c:'    if (ts->retries++ > TCP_MAX_RETRIES)', h:[0,0,9], br:[["B0","nt"],["B1","tk"]], st:"aging", runs:[[3,9]]},
+    {c:'        tcp_abort(ts);', h:[0,0,2], st:"aging", runs:[[3,2]]},
+    {c:'}', h:null},
+    {c:'', h:null},
+    {c:'/* LCOV_EXCL_START - debug dump, never in production image */', h:null, st:"excl"},
+    {c:'void tcp_dump_sock(const struct tcp_sock *ts)', h:[0,0,0], st:"excl"},
+    {c:'{', h:null, st:"excl"},
+    {c:'    printf("tcp[%u] state=%d iss=%u\\n", ts->port, ts->state, ts->iss);', h:[0,0,0], st:"excl"},
+    {c:'}', h:null, st:"excl"},
+    {c:'/* LCOV_EXCL_STOP */', h:null, st:"excl"},
+    {c:'', h:null},
+    {c:'int tcp_close(struct tcp_sock *ts)', h:[64,0,0], br:[["B0","tk"],["B1","ur"]], runs:[[0,40],[1,24]]},
+    {c:'{', h:null},
+    {c:'    ts->state = TCP_CLOSED;', h:[64,0,0], runs:[[0,40],[1,24]]},
+    {c:'    return tcp_output_fin(ts);', h:[64,0,0], runs:[[0,40],[1,24]]},
+    {c:'}', h:null}
+  ];
+
+  /* ---------- stats card (tcp.c numbers from screen 1 data) ---------- */
+  function pct(h,t){ return t? 100*h/t : null; }
+  var THRESH={high:80,medium:70};
+  function pctCls(p){ return p==null ? "na" : p>=THRESH.high ? "hi" : p>=THRESH.medium ? "mid" : "lo"; }
+  function fmt(p){ return p==null ? "—" : (Math.round(p*10)/10).toFixed(1)+"%"; }
+  function cell(h,t){ var p=pct(h,t);
+    return '<td><span class="pct '+pctCls(p)+'">'+fmt(p)+'</span><span class="frac">'+(t? h+"/"+t:"")+'</span></td>'; }
+  document.getElementById("statsTable").innerHTML =
+    "<thead><tr><th>Tier</th><th>Line</th><th>Branch</th><th>Decision</th></tr></thead><tbody>"+
+    "<tr><td><span class='tierdot' style='background:var(--tier-sys)'></span>system (e2e)</td>"+cell(289,402)+cell(51,92)+cell(22,44)+"</tr>"+
+    "<tr><td><span class='tierdot' style='background:var(--tier-unit)'></span>unit</td>"+cell(120,402)+cell(36,92)+cell(18,44)+"</tr>"+
+    "<tr><td><span class='tierdot' style='background:var(--tier-man)'></span>manual</td>"+cell(44,402)+cell(8,92)+cell(0,0)+"</tr>"+
+    "<tr class='all'><td>All tiers</td>"+cell(318,402)+cell(66,92)+cell(30,44)+"</tr></tbody>";
+
+  /* ---------- syntax highlighting (mock; real app: Shiki, bundled) ---------- */
+  function esc(s){ return s.replace(/&/g,"&amp;").replace(/</g,"&lt;"); }
+  function hl(code){
+    if(/^\s*\/\*.*\*\/\s*$/.test(code)) return '<span class="c">'+esc(code)+'</span>';
+    var s = esc(code);
+    if(/^#/.test(s)) return s.replace(/^(#\w+)/,'<span class="p">$1</span>').replace(/("[^"]*")/g,'<span class="s">$1</span>');
+    s = s.replace(/("(?:[^"\\]|\\.)*")/g,'<span class="s">$1</span>');
+    s = s.replace(/\/\*.*?\*\//g, function(m){ return '<span class="c">'+m+'</span>'; });
+    s = s.replace(/\b(if|else|return|while|for|switch|case|break|static|const|struct|sizeof|void)\b/g,'<span class="k">$1</span>');
+    s = s.replace(/\b(uint32_t|uint16_t|int|size_t|char)\b/g,'<span class="ty">$1</span>');
+    s = s.replace(/\b(\d+|0x[0-9a-fA-F]+)\b/g,'<span class="n">$1</span>');
+    return s;
+  }
+
+  /* ---------- row state: excluded > tier(sys>unit>man) > aging > stale > uncovered ---------- */
+  function rowState(l){
+    if(l.st==="excl") return "s-excl";
+    if(l.h){
+      if(l.h[0]>0) return "t-sys";
+      if(l.h[1]>0) return "t-unit";
+      if(l.h[2]>0) return "t-man";
+    }
+    if(l.st==="aging") return "s-aging";
+    if(l.st==="stale") return "s-stale";
+    if(l.h) return "s-unc";
+    return "";
+  }
+
+  /* ---------- render ---------- */
+  var CHEV='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>';
+  var body=document.getElementById("codeBody");
+  L.forEach(function(l, idx){
+    var row=document.createElement("div");
+    row.className="cl "+rowState(l);
+    var hc = l.h
+      ? l.h.map(function(n){ return '<div class="hc'+(n? "":" zero")+'">'+(n||"·")+'</div>'; }).join("")
+      : '<div class="hc zero"></div><div class="hc zero"></div><div class="hc zero"></div>';
+    var brs = (l.br||[]).map(function(b){
+      var tip = b[1]==="ur" ? "unreachable on every tier"
+              : b[1]==="tk" ? "taken — sys ×"+(l.h?l.h[0]:0)+", unit ×"+(l.h?l.h[1]:0)
+              : "never taken on any tier";
+      return '<span class="bp '+b[1]+'" title="block 0 · '+b[0]+' — '+tip+'">'+b[0]+'</span>';
+    }).join("");
+    var nruns = (l.runs||[]).length;
+    var ctx = nruns
+      ? '<button class="ctxbtn" title="runs covering this line">'+CHEV+nruns+'</button>'
+      : '';
+    row.innerHTML =
+      '<div class="ln">'+(idx+1)+'</div>'+hc+
+      '<div class="brs">'+brs+'</div>'+
+      '<div class="src">'+(hl(l.c)||"&nbsp;")+'</div>'+
+      '<div class="ctx">'+ctx+'</div>';
+    body.appendChild(row);
+    if(nruns){
+      var panel=document.createElement("div");
+      panel.className="ctxpanel"; panel.style.display="none";
+      panel.innerHTML = l.runs.map(function(r){
+        var run=RUNS[r[0]];
+        var cls="runchip"+(r[2]?" stale":"")+(run.aging&&!r[2]?" aging":"");
+        var cnt=r[2] ? "revoked" : "× "+r[1];
+        return '<span class="'+cls+'"><span class="tierdot" style="background:var(--tier-'+run.tier+');margin:0"></span>'+run.name+'<span class="host">'+run.host+'</span><span class="cnt">'+cnt+'</span></span>';
+      }).join("");
+      body.appendChild(panel);
+      row.querySelector(".ctxbtn").addEventListener("click", function(){
+        var open = panel.style.display!=="none";
+        panel.style.display = open? "none":"flex";
+        row.classList.toggle("ctx-open", !open);
+      });
+    }
+  });
+
+  /* expand/collapse all contexts */
+  var allOpen=false;
+  document.getElementById("expandAll").addEventListener("click", function(){
+    allOpen=!allOpen;
+    document.querySelectorAll(".ctxpanel").forEach(function(p){ p.style.display=allOpen?"flex":"none"; });
+    document.querySelectorAll(".cl").forEach(function(r){ if(r.querySelector(".ctxbtn")) r.classList.toggle("ctx-open", allOpen); });
+    this.firstElementChild.style.transform = allOpen? "rotate(180deg)":"";
+  });
+
+  /* crumbs */
+  document.querySelectorAll(".crumbs a").forEach(function(a){
+    a.addEventListener("click", function(){ showToast("would route to <b>"+a.dataset.r+"</b> — directory page (screen 1)"); });
+  });
+
+  /* chrome */
+  var SUN='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M2 12h2m16 0h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>';
+  var MOON='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.8A8.5 8.5 0 1 1 11.2 3a6.6 6.6 0 0 0 9.8 9.8z"/></svg>';
+  var appEl=document.getElementById("app"), themeBtn=document.getElementById("themeBtn");
+  function setThemeIcon(){ themeBtn.innerHTML = appEl.classList.contains("dark-mode") ? SUN : MOON; }
+  themeBtn.onclick=function(){ appEl.classList.toggle("dark-mode"); setThemeIcon(); };
+  setThemeIcon();
+  var menu=document.getElementById("menu");
+  document.getElementById("moreBtn").onclick=function(e){ e.stopPropagation(); menu.classList.toggle("open"); };
+  document.addEventListener("click", function(e){ if(menu.classList.contains("open") && !menu.contains(e.target)) menu.classList.remove("open"); });
+
+
+  var toastEl=document.getElementById("toast"), toastT=null;
+  function showToast(html){ toastEl.innerHTML=html; toastEl.classList.add("show"); clearTimeout(toastT); toastT=setTimeout(function(){ toastEl.classList.remove("show"); },3200); }
+})();
+</script>
+</body>
+</html>

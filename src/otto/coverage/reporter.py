@@ -407,9 +407,21 @@ class CoverageReporter:
             #     capture or unit harvest already covers is not marked
             #     stale just because the manual anchor chain couldn't
             #     verify its own copy.
-            manual_captures = self._manual_captures()
+            #
+            #     ``seen_runs`` is seeded from *every* committed manual
+            #     capture, not just supersede's winners: a cov-dir copy of
+            #     a since-superseded capture must still be recognized and
+            #     skipped by key here, or it falls through to the e2e
+            #     base_commit guard as an unrecognized run (crash once the
+            #     tree has moved past its base_commit, silent double-count
+            #     if base_commit still equals HEAD). Only the winners fold
+            #     into the store below.
+            from .capture.supersede import select_manual_captures
+
+            all_manual_captures = self._manual_captures()
+            manual_captures = select_manual_captures(all_manual_captures)
             seen_runs: set[tuple[str, str, str, str]] = set()
-            for cap in manual_captures:
+            for cap in all_manual_captures:
                 seen_runs.add(self._run_key(cap))
             self._load_captures(store, seen_runs)
             await self._harvest_unit_tiers(localhost, work_dir, loader)

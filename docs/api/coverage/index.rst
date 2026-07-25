@@ -12,6 +12,7 @@ data from embedded and remote targets.
    fetcher
    renderer
    capture
+   anchor
    validity
    tiers
    exclusions

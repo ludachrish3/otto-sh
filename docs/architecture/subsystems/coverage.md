@@ -84,6 +84,87 @@ valid-but-old lines past the tier's `max_age` are flagged **aging** without
 losing coverage credit. See {doc}`../../guide/coverage` for the full
 valid/stale/aging/unverifiable state table and how each renders in a report.
 
+## Anchor resolution: two paths, one contract
+
+The validity pass's dominant cost is git subprocess fan-out, not computation —
+remaps are in-memory over `-U0` hunks, and history length is irrelevant to a
+tree-to-tree diff — so `AnchorResolver` (`otto.coverage.anchor`) resolves a
+whole capture per subprocess batch instead of per file. That distinction
+matters most on NFS-mounted repos, where every git spawn re-touches `.git`
+metadata over the wire.
+
+**Two-path resolution.** For each capture, `AnchorResolver` runs one
+tree-wide `git diff -M -w -U0 --relative <base_commit> -- .` against the
+working tree. When that resolves — the common case — it answers every
+file at once: a path absent from the diff is unchanged (unless it is also
+absent from the working tree, e.g. a capture carried over from a different
+repo, in which case it is unverifiable), a path present is modified or
+renamed (`-M` is git's rename tracking, taken as policy), and a path with
+no `new_path` was deleted. When `base_commit` itself cannot be resolved —
+the tree diff raises `GitUnavailableError` because the commit was
+squash-merged away and garbage-collected, or the repo is a shallow clone
+that never fetched it — the resolver builds a batched fallback index from
+each capture entry's recorded blob SHA instead.
+
+**Batched fallback pipeline** (`otto.coverage.capture.gitio`), in order:
+`hash_objects()` hashes every fallback candidate (a capture entry with a
+recorded blob and a file still present in the working tree) in one `git
+hash-object --stdin-paths` spawn, fast-pathing the files whose hash already
+matches the capture's blob. The remaining changed files' base blobs are
+existence-checked in one `git cat-file --batch-check` (`blobs_exist()`) —
+a blob missing from the object database degrades that file to
+unverifiable/stale rather than erroring — then fetched in one `git cat-file
+--batch` (`cat_blobs()`). Base and current contents are materialized into
+two sibling temp directories and diffed with a single `git diff --no-index
+-w -U0` (`diff_no_index_dir_u0()`), parsed by the same multi-file `-U0`
+parser (`parse_multifile_u0`) the tree path uses. A capture entry with no
+recorded blob at all — or any resolution requested without a capture-wide
+file map in the first place — is left to the lazy, unbatched per-file
+chain (blob fast-path → blob diff → unverifiable) that the batched index
+otherwise short-circuits.
+
+**Parity contract.** Both paths return the same `AnchorResult` (a new
+path or `None`, hunks, and a `verifiable` flag) for every row of the
+semantics table in `AnchorResolver`'s docstring, and whitespace immunity
+comes from `-w` on every diff flavor the resolver runs — tree, per-file
+blob, and batched dir-level alike. `validity.apply_manual_capture`
+consumes `AnchorResult` as its only resolution currency; it never branches
+on which path produced one.
+
+**Spawn budgets are pinned contracts, not aspirations.** ≤2 git spawns per
+fold on the tree path and ≤6 on the fallback path are enforced by test:
+`tests/unit/cov/test_git_spawn_budget.py` counts spawns through the
+process chokepoint (`gitio._run_raw`) on the tree path, and
+`tests/integration/cov/test_validity_scale.py` does the same for a
+100-file fallback fold. Spawn count stands in for NFS round-trip cost —
+deterministic on any machine, where a wall-clock budget would just be
+runner noise.
+
+That the fix is batching and not a cache is a deliberate, checkpointed
+call: a content-addressed validity cache was designed, then descoped at
+the 2026-07-24 checkpoint once profiling showed the batched fallback
+resolving a synthetic 2,000-file, 10%-churn repo in 5 flat spawns / 49 ms
+— down from 2,602 spawns / 1.53 s for the pre-batching per-file chain.
+A cache could not have touched the O(N) hashing spawns that dominated
+that cost (every current file still has to be hashed to know what
+changed), so its residual value fell below the carrying cost of a
+persistent store's pruning/corruption/atomicity surface. See §9 of
+`docs/superpowers/specs/2026-07-24-coverage-report-ui-rework-design.md`
+for the full ruling and numbers.
+
+**Supersede-on-recapture**
+(`otto.coverage.capture.supersede.select_manual_captures`) runs before
+folding: manual captures are deduplicated by `(tier, label, host)`, the
+newest `captured_at` wins, and a replaced capture drops out of the runs
+table entirely rather than having its credits accumulate alongside the
+newer one.
+
+**RepoTimeline** (`tests/_fixtures/_repo_timeline.py`) is the executable
+spec for anchor and aging behavior: it scripts a real git repo through
+`commit → capture → mutate → fold` and asserts the resulting per-line
+disposition, table-driven across renames, squash-merge/GC, shallow
+clones, reverts, and aging boundaries.
+
 ## What is unique about `cov`
 
 `otto cov report` runs *after* the fact, over directories `otto test --cov`

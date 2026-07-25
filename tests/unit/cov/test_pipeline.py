@@ -724,3 +724,69 @@ async def test_duplicate_survives_stale_base_commit_via_key_hoist(tmp_path):
     # path -> valid, not stale.
     assert fr.lines[1].hits.for_tier("manual") == 2
     assert fr.lines[1].state is None
+
+
+@pytest.mark.asyncio
+async def test_superseded_covdir_duplicate_still_skipped(tmp_path):
+    """Same shape as ``test_duplicate_survives_stale_base_commit_via_key_hoist``,
+    plus ONE extra committed re-capture of the same (tier, label, host)
+    context. Supersede drops the old committed capture from the winners
+    list (:func:`select_manual_captures`), so seeding ``seen_runs`` from
+    winners alone never recognizes the old run's key: the cov-dir copy of
+    the superseded capture then reaches the e2e ``base_commit`` guard and
+    raises. ``seen_runs`` must be seeded from *every* committed manual
+    capture, not just the winners, so a stale cov-dir duplicate is
+    skipped by key regardless of supersede's outcome.
+    """
+    from otto.coverage.capture.gitio import blob_sha, head_commit
+    from otto.coverage.capture.model import Capture, CaptureFileCov
+    from otto.coverage.capture.store_dir import write_manual_capture
+    from otto.coverage.reporter import CollectionInputs, CoverageReporter
+    from otto.coverage.tiers import load_tiers
+
+    repo = _init_repo(tmp_path)  # f.c: "int a;\nint b;\nint c;\n"
+    head1 = head_commit(repo)
+
+    cap_old = Capture(
+        tier="manual",
+        base_commit=head1,
+        captured_at="2026-07-01T00:00:00Z",
+        ticket="T-1",
+        labs=["lab1"],
+        board="b1",
+        files={"f.c": CaptureFileCov(blob=blob_sha(repo, Path("f.c")), lines={1: 2})},
+    )
+    write_manual_capture(cap_old, repo)  # committed manual-store copy, anchored to head1
+
+    dup = tmp_path / "out" / "cov" / "b1" / "capture.json"
+    cap_old.save(dup)  # verbatim cov-dir duplicate of the OLD run
+
+    # Advance the repo past head1.
+    (repo / "unrelated.txt").write_text("x\n")
+    _git(repo, tmp_path, "add", "unrelated.txt")
+    _git(repo, tmp_path, "commit", "-qm", "unrelated")
+    head2 = head_commit(repo)
+    assert head2 != head1
+
+    # Re-capture the SAME context (tier=manual, label falls back to board=b1)
+    # at head2, newer captured_at -> supersedes cap_old.
+    cap_new = cap_old.model_copy(
+        update={"base_commit": head2, "captured_at": "2026-07-02T00:00:00Z"}
+    )
+    write_manual_capture(cap_new, repo)
+
+    cov_config = {"tiers": {"manual": {"kind": "manual", "precedence": 1}}}
+    reporter = CoverageReporter(
+        [],
+        repo,
+        tmp_path / "report",
+        collection=CollectionInputs(
+            repo_root=repo,
+            tier_configs=load_tiers(cov_config),
+            capture_paths=[dup],
+        ),
+    )
+    # Expected (intent of the key-hoist + supersede): the cov-dir copy of the
+    # superseded run is skipped; report runs and folds only cap_new.
+    store = await reporter.run()
+    assert len(store.runs) == 1

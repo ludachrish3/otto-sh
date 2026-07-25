@@ -1,16 +1,19 @@
 """Report-time validity for manual captures anchored to ``base_commit`` (spec §7).
 
-Anchor chain per file: blob fast-path → blob diff → base_commit diff →
-unverifiable (whole file stale, loud warning).  Valid lines are loaded
-into the store under the capture's tier; stale lines are marked but
-carry no hits; aging marks valid-but-old manual evidence.
+Anchor resolution per capture: one tree-wide diff (:class:`~otto.coverage.anchor.AnchorResolver`)
+answers every file, following renames to their new path; when ``base_commit``
+itself is unresolvable (GC'd/shallow), each file falls back to the per-file
+blob chain (fast-path blob match → blob diff → unverifiable, whole file
+stale, loud warning).  Valid lines are loaded into the store under the
+capture's tier; stale lines are marked but carry no hits; aging marks
+valid-but-old manual evidence.
 """
 
 import logging
-import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .anchor import AnchorResolver
 from .capture import gitio
 from .capture.model import Capture, CaptureFileCov
 from .capture.remap import LineRemapper, parse_u0_hunks
@@ -148,25 +151,6 @@ def load_dirty_capture_into_store(
         _insert_lines(file_rec, capture.tier, mapped_lines, mapped_branches, run_id=run_id)
 
 
-def _anchor_diff(
-    fc: CaptureFileCov, repo_root: Path, relpath: Path, base_commit: str
-) -> str | None:
-    """-U0 diff base_commit→current for one file; '' = unchanged; None = unverifiable."""
-    current = repo_root / relpath
-    if not current.is_file():
-        return None
-    if fc.blob and gitio.hash_object(repo_root, current) == fc.blob:
-        return ""
-    base_blob = fc.blob if fc.blob and gitio.blob_exists(repo_root, fc.blob) else None
-    if base_blob is None:
-        base_blob = gitio.blob_sha(repo_root, relpath, rev=base_commit)
-    if base_blob is None:
-        return None
-    with tempfile.NamedTemporaryFile(suffix=relpath.suffix) as tmp:
-        Path(tmp.name).write_bytes(gitio.cat_blob(repo_root, base_blob))
-        return gitio.diff_no_index_u0(Path(tmp.name), current)
-
-
 def _is_aging(capture: Capture, max_age_days: int | None, today: datetime | None) -> bool:
     if max_age_days is None:
         return False
@@ -201,8 +185,8 @@ def _apply_unverifiable_capture(
     a line it never actually ran.
     """
     logger.warning(
-        "Manual capture %s/%s is unverifiable (base_commit %s and blob missing) — "
-        "treating as stale; re-capture to refresh.",
+        "Manual capture %s/%s is unverifiable (file deleted, or base_commit %s and blob "
+        "missing) — treating as stale; re-capture to refresh.",
         capture.ticket,
         rel_str,
         capture.base_commit[:12],
@@ -230,15 +214,16 @@ def apply_manual_capture(
     if aging and run_id is not None:
         store.runs[run_id].aging = True
 
+    resolver = AnchorResolver(repo_root, capture.base_commit, files=capture.files)
     for rel_str, fc in capture.files.items():
         relpath = Path(rel_str)
-        diff = _anchor_diff(fc, repo_root, relpath, capture.base_commit)
-        file_rec = store.get_or_create_file(repo_root / relpath)
-        if diff is None:
+        result = resolver.resolve(relpath, fc)
+        if result.new_relpath is None:
+            file_rec = store.get_or_create_file(repo_root / relpath)
             _apply_unverifiable_capture(file_rec, capture, rel_str, fc, run_id)
             continue
-
-        remapper = LineRemapper(parse_u0_hunks(diff))
+        file_rec = store.get_or_create_file(repo_root / result.new_relpath)
+        remapper = LineRemapper(result.hunks)
 
         # Remap base_commit (OLD) coordinates → current-worktree (NEW)
         # coordinates. Lines with no new position (changed/deleted since
