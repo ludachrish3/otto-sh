@@ -21,8 +21,8 @@ object, which otto has never had (connectivity is only *implied* today by the
 
 1. **Implicit** — derived from `hop` chains (host A reaches host B through host
    C ⇒ edges A–C, C–B). This is the SSH/telnet *management* path. No new data;
-   just a derived view (the topology derivation already sketched in
-   `topology_plan.md`).
+   just a derived view (now shipped as the dashboard topology page's
+   management-plane derivation).
 2. **Declared** — defined in the lab file as additional routes that are *not*
    the management path. These carry other traffic: UDP, HTTP, RTP, etc.
 3. **Dynamic** — created at runtime via `otto link add` (tunnels), tracked in a

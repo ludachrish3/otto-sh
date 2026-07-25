@@ -12,8 +12,6 @@
 
 - Add profiling for tab completion. If tab complete takes more than 50 ms, let's look at ways to refactor and keep that to as small of a time as possible.
 - Make sure we're up-to-date for Untitled component versions: <https://www.untitledui.com/react/docs/upgrade>
-- Add a topology screenshot to the guide — trivially rides the rewritten capture now.
-- Retire the fixture-stem enumeration class (three near-misses this phase; derive all lists from one source).
 - Slot ≥ 8 palette policy (top of the Plan-3 follow-ups): what a 9th series does — design decision, not code yet.
 - safari's chart titles bleed into the menu on the lefthand side
 - External libraries should also be able to provide data plots. A possible example is an external traffic generator. If it has metrics to share and record (packets/sec, connections/sec), it should also be able to record these in the graphs and DB entries.
@@ -30,7 +28,6 @@
   [untitled-ui-adoption-followups.md](untitled-ui-adoption-followups.md) for
   what the adoption leaves behind.
 - Maybe each coverage run can take an annotation (manual tests already do), which can be treated like a context in python coverage reports. If a line is covered by multiple tiers and runs of coverage, expanding the line with a dropdown error on the righthand side of the page will highlight all the contexts with the appropriate tier color and the context name.
-- Look into code quality (linting and type checking), coverage reports for the frontend typescript code. I'd like there to be parity in terms of code quality enforcement for all code, python and typescripit alike.
 - Docker redesign to use remote docker daemon management. Can pass through HTTP, TCP, and raw socket data over a tunneled SSH connection to a docker daemon host and control the docker daemon. The daemon needs to open a port that it listens on, and the SSH client sets up a port forwarding rule to access the docker daemon's open port.
 - E2E testing and compatibility matrix
 - Log tracebacks to the complete log file (the otto.log that currently gets saved)
@@ -39,7 +36,6 @@
 - Login utility
   - Make sure logging into docker containers works
   - Scrutinize log file output
-- Clang coverage
 - Beef up monitoring metrics
   - Make sure they work with zephyr
 - Integration tests for all new functionality except power on/off
@@ -52,8 +48,6 @@
 - Change the `--project-name` option (or similar) to default to the product name from the repo info. Change the options to `--report-name`, which will append the name as a subtitle to the project name, still derived from the repo's name
 - Add a `--list-markers` option to the test subcommand
 - Make --show-hosts display a Rich.Tree of hosts within an NE. Group by NE in panels and order by slot number.
-- Graphical representation of a lab's hosts.
-  - Plan available in the topology_plan.md file
 - otto cov report --report should be changed to --dir and be a dir, just like the --cov-dir option
 - Further nc transfer startup optimizations deferred to dedicated todos:
   - [hop_nc_transfer_flake.md](hop_nc_transfer_flake.md) — root-cause the nc-through-hop transfer hang (currently band-aided with `@pytest.mark.retry(3)`).
@@ -72,9 +66,7 @@
 
 ## Big Picture
 
-- Projects need to have more control over customizing host usage.
-  - Specify custom monitor commands and objects. This probably required a pretty big refactor to allow out-of-band commands at custom frequencies. And to allow custom commands.
-  - **In flight:** the monitor revamp Phase 1 plan (`docs/superpowers/plans/2026-07-02-monitor-phase1-backend-contract.md`) covers the monitor half — project-level parser registration, per-parser collection intervals, parser API v2 (`ParseContext`).
+- Projects need to have more control over customizing host usage. (The monitor half is done — project-level parser registration, per-parser collection intervals, parser API v2 — via monitor Phase 1; what remains is the non-monitor surface, e.g. custom protocols/host behavior hooks.)
 - No fleet-level connection cap: each host lazily opens its own connections, but nothing bounds the total. A 100+ host lab could exhaust target `MaxSessions`/`MaxStartups` or local fd limits. (Carried from the retired expert-feedback reassessment.)
 - The `resources` field on hosts/labs is declared but nothing consumes or enforces it — either implement lease/locking semantics or document it as purely user-facing metadata. (Carried from the retired expert-feedback reassessment.)
 
@@ -96,9 +88,6 @@
 
 - Disable export buttons when disconnected
 - Historical view should not display the event toolbar, play/pause button, and the export buttons.
-- Make adding custom plots easy.
-  - Each project might have custom commands that only apply to certain hosts. It's possible some kind of dashboard templating should be added, or whatever the industry standard might indicate for multi-host dashboards. Some plots might also have custom frequencies. If no frequency is provided to a plot, then the global frequency should be used. If a value is provided, then that value should be used for that plot and that plot alone.
-  - Allow projects to define which parsers to use (basically override the DEFAULT_PARSERS value)
 - Move play/pause button somewhere else. Doesn't really make sense where it is right now.
 - Add a date picker and URL params (start and end timestamps to start) to scope the starting graphs
 - Add the ability to fully collapse graphs in the monitor view

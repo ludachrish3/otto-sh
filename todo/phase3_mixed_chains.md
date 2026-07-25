@@ -174,7 +174,6 @@ to decide whether relay is needed.
 | 3 | Timeout and recovery | If `connect_through` fails, detect and report clearly; mark session dead |
 | 4 | Multiple concurrent sessions | Each named session through a telnet hop needs its own telnet connection chain |
 | 5 | Document limitations | Fragility, tool requirements on hops, no SCP/SFTP through telnet, relay overhead |
-| 6 | Update `multi-hop-growth-plan.md` | Mark Phase 3 items as done |
 
 ## Key Files
 

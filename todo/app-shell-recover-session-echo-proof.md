@@ -1,81 +1,21 @@
-# Echo-proof `_recover_session` for REPL-parked sessions
+# AppShell follow-ups after the echo-proof `_recover_session` fix
 
-> **STATUS 2026-07-05 — the echo-proof root fix is IMPLEMENTED** on the
-> `shell-liveness-probe-unification` branch (`confirm_live` + `BashFrame.recover`
-> exit-code probe; the "Proposed fix" section below is now done, via a distinct
-> RECOVER-marker digit form disjoint from `end_pattern`). Recovery from inside a
-> mysql/python3 REPL now correctly reports the session **dead** instead of a
-> false positive, on both the SSH/telnet base path and real python3-over-
-> LocalHost. What REMAINS from this doc: the **relaxation** below — revisit the
-> `AppShell.attach()` "discard the session after `AppShellTimeoutError`" caveat
-> now that recovery is trustworthy (see "Validation required" step 3). The
-> "Related deferred minors" backlog at the bottom is untouched by this.
+> The echo-proof root fix SHIPPED 2026-07-05 (`confirm_live` +
+> `BashFrame.recover` exit-code probe on the shell-liveness-probe-unification
+> branch): recovery from inside a mysql/python3 REPL now correctly reports the
+> session dead instead of a false positive. Shipped detail pruned 2026-07-25;
+> what remains is the relaxation below plus the deferred-minors backlog.
 
-Goal: make `ShellSession._recover_session()` reliably confirm the POSIX shell
-is back even when the session was parked *inside* an application REPL (mysql,
-python3) — so an `AppShell.attach()` caller can keep using the session after an
-`AppShellTimeoutError` instead of having to discard it.
+## Remaining: relax the `AppShell.attach()` caveat
 
-Deferred out of the AppShell (Part 2) branch by decision (2026-07-04): the
-AppShell branch ships with a documented caveat on `AppShell.attach()` ("discard
-the session after `AppShellTimeoutError`"), and this root-cause fix lands as its
-own focused, live-bed-validated change because it touches the shared Part-1
-recovery machinery, not just AppShell.
-
-## The problem (from the Part 2 whole-branch review, finding I-3)
-
-`_recover_session()` writes Ctrl+C, then `echo __OTTO_<id>_RECOVER__`, and
-declares success on a bare **substring** match of the marker in the output.
-That confirmation is unsound when the session is sitting inside a REPL:
-
-- Ctrl+C does **not** exit mysql or python3 — both trap SIGINT and stay at
-  their prompt.
-- The `echo __OTTO_<id>_RECOVER__` payload then lands *inside the REPL*, and
-  both REPLs quote the offending input back in their error output — mysql:
-  `ERROR 1064 ... near 'echo __OTTO_..._RECOVER__'`; python3: the `SyntaxError`
-  traceback echoes the source line. So the marker appears in output, the
-  substring matches, and recovery reports success **while the session is still
-  parked inside the app**.
-
-Impact (today, mitigated by the caveat): on the caller-owned
-`AppShell.attach()` path, a `cmd()` timeout → `_exit` skips quit (correct),
-"recovers" (false positive), unlocks — and the caller's session is
-poisoned-but-green: every later `run()` types a sentinel frame into the REPL,
-times out at its own budget, and "recovers" falsely again. `BaseHost.app_shell`
-is unaffected — it owns and closes the session, so a poisoned session is simply
-discarded.
-
-This is pre-existing `_recover_session` machinery; Part 2 only made
-"sitting inside a REPL" a first-class, reachable state, which turns the latent
-weakness into a reachable failure of the documented "still recovers" guarantee.
-
-## Proposed fix: an echo-proof framed confirmation
-
-A plain echoed marker can be *reproduced* by a REPL, so it can never prove the
-shell actually ran. Follow the recovery marker with a **framed probe** whose
-end sentinel embeds `$?` (the same mechanism the command frame already uses —
-see `src/otto/host/command_frame.py`, the `END_<prefix>__<N>__` form):
-
-- A real POSIX shell expands `$?` and emits `...__0__` (or the real exit code).
-- An echoing REPL can only reproduce the literal `$?` text; it cannot fabricate
-  the `__<digits>__` exit-code form. A match on the digit-form end sentinel is
-  therefore proof of genuine shell execution, not an echo.
-
-Confirm recovery on the framed-probe match, not the bare marker substring. This
-strengthens `_recover_session()` for **all** of otto (any path that can leave a
-transport mid-interaction), not just AppShell.
-
-## Validation required (why this is its own change)
-
-- Live-bed: drive `_recover_session` from *inside* mysql and python3 (and a
-  wedged bash) and confirm the framed probe reports failure/true-state, not a
-  false positive.
-- Confirm no regression on the clean recovery path (SSH/telnet/local) already
-  covered by the recovery tests.
-- Once landed, revisit the `AppShell.attach()` caveat: if recovery becomes
-  trustworthy from inside a REPL, the "discard the session" note can be relaxed,
-  and the I-2 `_needs_recovery` mark on launch timeout becomes a genuine
-  self-heal rather than a best-effort.
+`AppShell.attach()` still documents "discard the session after
+`AppShellTimeoutError`" (`src/otto/host/app_shell.py`) — a caveat from the era
+when `_recover_session` could report success while the session was still
+parked inside a REPL. Now that recovery is echo-proof and trustworthy, revisit
+it: the "discard the session" note can likely be relaxed, and the I-2
+`_needs_recovery` mark on launch timeout becomes a genuine self-heal rather
+than a best-effort. Confirm on the live bed (recovery from inside mysql /
+python3 / a wedged bash) before changing the documented contract.
 
 ## Related deferred minors from the Part 2 review (low priority backlog)
 

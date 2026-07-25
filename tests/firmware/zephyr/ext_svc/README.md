@@ -6,7 +6,8 @@ the repo `Vagrantfile`). Gated by `CONFIG_OTTO_EXT_SVC`, set only in
 `configs/cov_an385/overlay.conf` — configs that don't set it (`no_fs_arm`,
 every x86 config) compile nothing from here.
 
-Added for the basecamp product request (`todo/testbed-request.md`): an LLEXT
+Added for the basecamp product request
+(`docs/superpowers/specs/2026-07-20-basecamp-testbed-enablement-design.md`): an LLEXT
 extension cannot define its own thread stack (`K_THREAD_STACK_DEFINE` has
 alignment/section requirements a loaded extension's sections can't satisfy),
 so a background service inside an extension needs the base to own the stack.

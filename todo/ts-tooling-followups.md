@@ -32,24 +32,7 @@ is left to the Playwright e2e), `EventToolbar.tsx` (~34%), `api/sse.ts` (~28%),
 `EventPopover.tsx` (~34%). Raise the thresholds each time coverage climbs so it
 stays a ratchet.
 
-## 3. Firefox (Gecko) browser-engine testing — DONE (in this branch)
-
-The dashboard e2e now runs the full suite on all three engines (Chromium/Blink,
-Firefox/Gecko, WebKit/Safari); the one Safari-specific test stays
-`@only_browser("webkit")`. This surfaced and fixed a real SSE bug (Firefox sat
-at "Connecting…" until the first byte — `server.py` now sends an immediate
-prelude). **CI is parallelized:** the nox `dashboard` session is parametrized
-by browser and the CI `dashboard` job is a `browser: [chromium, firefox,
-webkit]` matrix (fail-fast off), so each engine runs on its own runner —
-wall-clock is one engine's runtime, not three. The coverage-gating lane is
-scoped for speed: `make dashboard` (and thus `make coverage`) runs **Chromium
-only** by default — coverage is engine-independent, so one engine keeps the
-per-task gate fast (the browser analogue of `make coverage` pinning a single
-Python). Full cross-engine runs are `make dashboard-all`, `make release`, and
-the CI matrix. Override ad hoc with `DASHBOARD_BROWSERS="chromium firefox
-webkit"`. Nothing outstanding here.
-
-## 4. TypeScript performance tooling
+## 3. TypeScript performance tooling
 
 For when perf concerns surface with more dashboard usage:
 - `vitest bench` (zero new dep) to micro-benchmark the hot SSE data-path
@@ -61,7 +44,7 @@ For when perf concerns surface with more dashboard usage:
 - React DevTools Profiler (+ optional `why-did-you-render` in dev) for
   unnecessary-re-render hunts.
 
-## 5. Revisit the deliberate `biome-ignore` sites
+## 4. Revisit the deliberate `biome-ignore` sites
 
 Enabling the strict rules surfaced intentional patterns that were documented
 with inline `biome-ignore` + rationale rather than "fixed":
@@ -71,14 +54,3 @@ with inline `biome-ignore` + rationale rather than "fixed":
   init/refresh behavior.
 - `dashboard.css` — mode-toggle `!important` and base-then-state specificity.
   Check whether specificity alone can replace the `!important` overrides.
-
-## 6. (Discovered, NOT this workstream) main docs gate is red
-
-Building `make docs` on the branch base (`ac77da2`, origin/main) fails the
-`-W` nitpicky gate with 25 `otto.host.login_proxy.Cred` / `login_proxy` xref
-warnings: `src/otto/host/login_proxy.py` was added without a
-`docs/api/host/loginproxy.rst` automodule page, so other host modules'
-docstrings can't resolve `Cred`. Unrelated to TS tooling — belongs to the
-login-proxy workstream. Fix is a one-file add (an `.. automodule::
-otto.host.login_proxy` page + toctree entry), but confirm the login-proxy
-work's intended doc placement first.

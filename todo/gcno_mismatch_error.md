@@ -1,13 +1,16 @@
 # Improve `.gcno` mismatch error handling in `otto cov`
 
-> **Status 2026-07-02 — partially done.** The *stamp mismatch* variant now has
-> a typed friendly error: `LcovMerger` detects `"stamp mismatch"` in lcov
-> output and raises `CoverageDataMismatchError`
-> (`src/otto/coverage/errors.py`, `correlator/merger.py:104`). The
-> **function-count** variant below (`reports 'X' functions … mismatch with
-> notes file`, which does *not* contain the "stamp mismatch" substring) is
-> still unhandled — extend the same detection to cover it. Candidate to fold
-> into the in-flight coverage-tier capture work.
+> **Status 2026-07-25 — one variant left.** The *stamp mismatch* variant has a
+> typed friendly error (`CoverageDataMismatchError`), and the clang variants
+> are caught structurally pre-lcov: `LcovMerger` verifies the `.gcda`↔`.gcno`
+> pairing (header stamps + clang per-function checksum triplets,
+> `merge/merger.py`) before invoking lcov, proven e2e against real clang 18
+> stale deploys, documented at `docs/guide/coverage-clang.md`. Still open: the
+> GNU **function-count** variant below (`reports 'X' functions … mismatch with
+> notes file`, which contains neither the "stamp mismatch" substring nor a
+> stamp difference) — extend the same friendly typing to it. Also unavoidable:
+> in-place constant-only clang drift is undetectable from the files (llvm-cov
+> accepts it); only the base_commit guard covers that.
 
 ## The error
 
@@ -81,43 +84,6 @@ Common ways to land here:
 - A new exception type (e.g. `GcnoMismatchError`) raised from the merger
   and caught in [src/otto/cli/cov.py](../src/otto/cli/cov.py) to print the
   friendly message and exit with a distinct code.
-
-## Third variant (found 2026-07-20): clang mismatch is completely silent
-
-> **Status 2026-07-20 — the clang variants are now caught.** `LcovMerger`
-> verifies the `.gcda`↔`.gcno` pairing structurally before invoking lcov
-> (`merge/merger.py`): header stamps (catches GCC rebuilds and clang
-> structural drift) plus, for clang-dialect files, the per-function
-> (ident, lineno_checksum, cfg_checksum) triplets llvm-cov itself
-> verifies (catches line-shifting edits, which keep clang's structure
-> stamp). Both raise `CoverageDataMismatchError` pre-lcov, proven e2e
-> against real clang 18 stale deploys. Still open: the GNU
-> **function-count** variant above (raw lcov error today, wants the
-> friendly typing); in-place constant-only clang drift is undetectable
-> from the files (llvm-cov accepts it) — only the base_commit guard
-> covers that.
-
-Verified on clang 18 / llvm-cov 18 / lcov 2.0: when a `.gcda` from a stale
-clang binary meets a fresh `.gcno` (source changed *structurally* — clang's
-stamp is a structure hash, so constant-only edits keep it and llvm-cov
-accepts the old counters as valid; only the base_commit guard sees that),
-`llvm-cov gcov` prints *"file checksums do not match: X != Y"* and
-*"Invalid .gcda File!"* **but exits 0**, and `lcov --capture` via the
-gcov-tool wrapper succeeds with the affected file recorded at **all-zero
-hit counts — no error text in lcov output at all**. So neither the
-`"stamp mismatch"` substring check (`merge/merger.py:108`) nor the
-function-count signature above can ever fire for clang; the user just
-gets a silently zeroed file.
-
-Detection can't come from lcov output. A pre-merge structural check
-works for **both** compilers: the 32-bit word at byte offset 8 is the
-stamp in `.gcno` and `.gcda` alike (magic, version, stamp — GNU and
-clang agree on that header slot; confirmed by direct read on both).
-Comparing each fetched `.gcda`'s stamp against its `.gcno` before
-invoking lcov would catch the GNU *and* clang variants early, with the
-implicated file paths in hand for the friendly message. Documented for
-users at `docs/guide/coverage-clang.md` (`coverage-clang-stale-deploys`)
-meanwhile.
 
 ## Not in scope
 

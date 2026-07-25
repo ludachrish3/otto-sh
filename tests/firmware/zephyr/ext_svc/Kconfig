@@ -3,7 +3,9 @@
 # Base-side plumbing that loadable extensions cannot provide for themselves:
 # a base-owned thread stack (K_THREAD_STACK_DEFINE has section/alignment
 # requirements an extension's sections can't satisfy). Added for the basecamp
-# product request (todo/testbed-request.md). Deliberately NOT here: any gcov
+# product request
+# (docs/superpowers/specs/2026-07-20-basecamp-testbed-enablement-design.md).
+# Deliberately NOT here: any gcov
 # runtime — otto applications that want coverage ship their own
 # instrumentation and emission in the extension (Approach A,
 # tests/repo3/docs/feasibility.md), keeping the base product-agnostic.
