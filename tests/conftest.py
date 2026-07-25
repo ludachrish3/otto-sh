@@ -140,6 +140,7 @@ for _var in [k for k in os.environ if k.startswith("OTTO_") and k not in _OTTO_A
 
 import asyncio
 import contextlib
+import gc
 import logging
 import sys
 import weakref
@@ -162,6 +163,11 @@ from tests._fixtures._coverage_preinit import (
     force_coverage_schema_init,
 )
 from tests._fixtures._loop_reaper import classify_loop_origin, reap_or_raise
+from tests._fixtures._transport_leaks import (
+    describe_referrers,
+    install_transport_tracker,
+    scan_leaked_transports,
+)
 
 _logger = logging.getLogger(__name__)
 
@@ -201,6 +207,7 @@ def pytest_runtest_call(item: pytest.Item):
 def pytest_configure(config):  # type: ignore[no-untyped-def]
     _install_sigint_traceback_dump()
     _install_loop_origin_tracker()
+    install_transport_tracker(lambda: _current_test)
 
 
 def pytest_collection_finish(session):  # type: ignore[no-untyped-def]
@@ -411,6 +418,9 @@ def pytest_runtest_teardown(item):
     # never masked" invariant local and self-evident.
     reapable = [loop for loop in _LOOP_INFO if loop not in owned or origin_of(loop) == "product"]
     _loops_reaped += reap_or_raise(reapable, origin_of, describe=describe)
+    # After the reap, so transports bound to a just-reaped function loop are
+    # flagged at this very boundary instead of one test later.
+    _report_leaked_transports(item)
     return result
 
 
@@ -424,64 +434,43 @@ def pytest_terminal_summary(terminalreporter):  # type: ignore[no-untyped-def]
 
 
 # ---------------------------------------------------------------------------
-# Asyncio leak detector (diagnostic, autouse on host tests)
+# Asyncio transport-leak detector (diagnostic; reporting gated by
+# OTTO_DETECT_ASYNCIO_LEAKS=1, e.g. `make release` / stability targets)
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture(autouse=True)
-def _detect_asyncio_leaks(request):
-    """Attribute leaked asyncio transports to the test that created them.
+def _report_leaked_transports(item) -> None:  # type: ignore[no-untyped-def]
+    """Attribute leaked asyncio transports at the test boundary.
 
-    Recipe from ``~/wiki/inbox/2026-04-24-detect-asyncio-leaks-at-source.md``:
-    after each test, look for live transports whose ``_loop`` is closed.
-    Those are the things that fire ``ResourceWarning`` from ``__del__`` at
-    GC time and are then escalated by pytest's ``[unraisable]`` plugin into
-    a ``PytestUnraisableExceptionWarning`` on whichever *next* test happens
-    to be running — the source of the xdist-flake symptom.
-
-    Only enabled by setting ``OTTO_DETECT_ASYNCIO_LEAKS=1`` in the env so
-    it doesn't slow the regular run with the per-test ``gc.collect()``.
+    A transport left open on a closed loop fires ``ResourceWarning`` from
+    ``__del__`` at GC time and is escalated by pytest's ``[unraisable]``
+    plugin into a ``PytestUnraisableExceptionWarning`` on whichever *later*
+    test happens to be running — the source of the xdist-flake symptom.
+    :mod:`tests._fixtures._transport_leaks` records every transport at
+    creation (originally a per-test whole-heap gc scan, replaced 2026-07-25
+    after it measured at 2.3-3.4x suite CPU), so this check costs nothing
+    when no transport leaked. Print rather than raise: we want to *attribute*
+    the leak, not fail the test that detected it.
     """
-    yield
-    import os
-
     if not os.environ.get("OTTO_DETECT_ASYNCIO_LEAKS"):
         return
-    import gc
-    from asyncio.base_subprocess import BaseSubprocessTransport
-    from asyncio.selector_events import _SelectorTransport
-
-    gc.collect()
-    leaks = []
-    for o in gc.get_objects():
-        if not isinstance(o, (BaseSubprocessTransport, _SelectorTransport)):
-            continue
-        loop = getattr(o, "_loop", None)
-        if loop is None or not loop.is_closed():
-            continue
-        # Filter to ones that would actually emit a ResourceWarning from
-        # __del__: i.e., the transport is still "open" (closing flag unset).
-        # Already-closed transports don't warn even if they linger in GC.
-        closing = getattr(o, "_closing", None)
-        sock = getattr(o, "_sock", None)
-        details = f" closing={closing} sock={sock!r}"
-        # Show what's referencing this transport so we can find the leak.
-        referrers = gc.get_referrers(o)
-        ref_summary = ", ".join(
-            f"{type(r).__module__}.{type(r).__name__}"
-            for r in referrers[:5]
-            if r is not gc.get_referrers and r is not leaks
-        )
-        leaks.append(f"{o!r}{details}\n    referrers: {ref_summary}")
-    if leaks:
-        # Print rather than raise: we want to *attribute* the leak, not
-        # fail the test that detected it.
+    leaks = scan_leaked_transports()
+    if not leaks:
+        return
+    print(  # noqa: T201 — test diagnostic output
+        f"\nLEAK after {item.nodeid}: {len(leaks)} live transport(s) bound to closed loop:"
+    )
+    for transport, description in leaks:
         print(  # noqa: T201 — test diagnostic output
-            f"\nLEAK after {request.node.nodeid}: "
-            f"{len(leaks)} live transport(s) bound to closed loop:"
+            f"  {description}\n    referrers: {describe_referrers(transport)}"
         )
-        for leak in leaks:
-            print(f"  {leak}")  # noqa: T201 — test diagnostic output
+    # Flush the leaked transports' ResourceWarnings right here (rather than at
+    # some later organic gc point inside an innocent test) so the unraisable
+    # escalation lands on the leaking test, next to the report above. Our own
+    # strong refs must go first or the collect can't finalize them. Only ever
+    # runs on the leak path — the steady-state check stays gc-free.
+    del transport, leaks
+    gc.collect()
 
 
 # ---------------------------------------------------------------------------
