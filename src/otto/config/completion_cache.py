@@ -521,6 +521,7 @@ def write_cache(  # noqa: PLR0913 — one keyword arg per cached name-set, by de
     instructions: list[dict[str, Any]],
     suites: list[dict[str, Any]],
     hosts: list[str],
+    *,
     docker_hosts: list[str] | None = None,
     term_backends: list[str] | None = None,
     transfer_backends: list[dict[str, Any]] | None = None,

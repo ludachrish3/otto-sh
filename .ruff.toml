@@ -4,6 +4,9 @@ indent-width = 4
 extend-exclude = [".vscode", ".idea", "__pycache__", ".python-version", ".ruff.toml", "ruff.toml", "setup.cfg", "pyproject.toml", "tests/repo_broken"]
 
 [format]
+# ruff 0.16.0 began formatting Python code blocks inside Markdown; docs/ prose samples
+# are hand-aligned, so keep the formatter to real Python files.
+exclude = ["*.md"]
 indent-style = "space"
 line-ending = "lf"
 quote-style = "double"

@@ -103,14 +103,22 @@ class TestScopedCommands:
 
         cmds = self.imp.scoped_filter_commands("eth1.100", 4, Selector(5201))
         assert cmds == [
-            "tc filter add dev eth1.100 parent 1: pref 40 protocol ip u32 "
-            "match ip protocol 6 0xff match ip dport 5201 0xffff flowid 1:4",
-            "tc filter add dev eth1.100 parent 1: pref 41 protocol ip u32 "
-            "match ip protocol 6 0xff match ip sport 5201 0xffff flowid 1:4",
-            "tc filter add dev eth1.100 parent 1: pref 42 protocol ip u32 "
-            "match ip protocol 17 0xff match ip dport 5201 0xffff flowid 1:4",
-            "tc filter add dev eth1.100 parent 1: pref 43 protocol ip u32 "
-            "match ip protocol 17 0xff match ip sport 5201 0xffff flowid 1:4",
+            (
+                "tc filter add dev eth1.100 parent 1: pref 40 protocol ip u32 "
+                "match ip protocol 6 0xff match ip dport 5201 0xffff flowid 1:4"
+            ),
+            (
+                "tc filter add dev eth1.100 parent 1: pref 41 protocol ip u32 "
+                "match ip protocol 6 0xff match ip sport 5201 0xffff flowid 1:4"
+            ),
+            (
+                "tc filter add dev eth1.100 parent 1: pref 42 protocol ip u32 "
+                "match ip protocol 17 0xff match ip dport 5201 0xffff flowid 1:4"
+            ),
+            (
+                "tc filter add dev eth1.100 parent 1: pref 43 protocol ip u32 "
+                "match ip protocol 17 0xff match ip sport 5201 0xffff flowid 1:4"
+            ),
         ]
 
     def test_filter_commands_single_proto_uses_its_two_slots(self) -> None:
@@ -328,9 +336,11 @@ class TestParseScoped:
             # slot/proto mismatch: pref 40 is the dport/tcp slot but matches udp
             (
                 ours_root + "qdisc netem 40: parent 1:4 limit 1000 delay 5ms\n",
-                "filter parent 1: protocol ip pref 40 u32 fh 800::800 flowid 1:4\n"
-                "  match 00110000/00ff0000 at 8\n"
-                "  match 00001451/0000ffff at 20\n",
+                (
+                    "filter parent 1: protocol ip pref 40 u32 fh 800::800 flowid 1:4\n"
+                    "  match 00110000/00ff0000 at 8\n"
+                    "  match 00001451/0000ffff at 20\n"
+                ),
             ),
             # incomplete slot set: tcp selector with only its dport filter
             (

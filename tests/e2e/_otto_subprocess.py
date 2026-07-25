@@ -150,4 +150,4 @@ def assert_output_dir(xdir: Path, command: str) -> Path:
     """
     found = output_dirs(xdir, command)
     assert found, f"expected a {command!r} output dir under {xdir}, found none"
-    return sorted(found)[-1]
+    return max(found)

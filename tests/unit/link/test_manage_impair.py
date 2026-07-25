@@ -462,13 +462,19 @@ class TestScopedImpair:
         )
         assert report.applied[0].selector == Selector(5201, "tcp")
         assert carrot.sudo_commands == [
-            "tc qdisc replace dev eth1.100 root handle 1: prio bands 11 "
-            "priomap 1 2 2 2 1 2 0 0 1 1 1 1 1 1 1 1",
+            (
+                "tc qdisc replace dev eth1.100 root handle 1: prio bands 11 "
+                "priomap 1 2 2 2 1 2 0 0 1 1 1 1 1 1 1 1"
+            ),
             "tc qdisc replace dev eth1.100 parent 1:4 handle 40: netem delay 200ms",
-            "tc filter add dev eth1.100 parent 1: pref 40 protocol ip u32 "
-            "match ip protocol 6 0xff match ip dport 5201 0xffff flowid 1:4",
-            "tc filter add dev eth1.100 parent 1: pref 41 protocol ip u32 "
-            "match ip protocol 6 0xff match ip sport 5201 0xffff flowid 1:4",
+            (
+                "tc filter add dev eth1.100 parent 1: pref 40 protocol ip u32 "
+                "match ip protocol 6 0xff match ip dport 5201 0xffff flowid 1:4"
+            ),
+            (
+                "tc filter add dev eth1.100 parent 1: pref 41 protocol ip u32 "
+                "match ip protocol 6 0xff match ip sport 5201 0xffff flowid 1:4"
+            ),
         ]
 
     @pytest.mark.asyncio
@@ -598,13 +604,19 @@ class TestScopedImpair:
             )
         restore = carrot.sudo_commands[-4:]
         assert restore == [
-            "tc qdisc replace dev eth1.100 root handle 1: prio bands 11 "
-            "priomap 1 2 2 2 1 2 0 0 1 1 1 1 1 1 1 1",
+            (
+                "tc qdisc replace dev eth1.100 root handle 1: prio bands 11 "
+                "priomap 1 2 2 2 1 2 0 0 1 1 1 1 1 1 1 1"
+            ),
             "tc qdisc replace dev eth1.100 parent 1:4 handle 40: netem delay 200ms",
-            "tc filter add dev eth1.100 parent 1: pref 40 protocol ip u32 "
-            "match ip protocol 6 0xff match ip dport 5201 0xffff flowid 1:4",
-            "tc filter add dev eth1.100 parent 1: pref 41 protocol ip u32 "
-            "match ip protocol 6 0xff match ip sport 5201 0xffff flowid 1:4",
+            (
+                "tc filter add dev eth1.100 parent 1: pref 40 protocol ip u32 "
+                "match ip protocol 6 0xff match ip dport 5201 0xffff flowid 1:4"
+            ),
+            (
+                "tc filter add dev eth1.100 parent 1: pref 41 protocol ip u32 "
+                "match ip protocol 6 0xff match ip sport 5201 0xffff flowid 1:4"
+            ),
         ]
         # and the root was cleared before the rebuild
         assert "tc qdisc del dev eth1.100 root" in carrot.sudo_commands

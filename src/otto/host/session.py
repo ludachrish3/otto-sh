@@ -1190,6 +1190,7 @@ class SessionManager:
 
     def __init__(  # noqa: PLR0913 — wide session-construction API (transport/dialect/elevation seams)
         self,
+        *,
         connections: "ConnectionManager | None" = None,
         name: str = "",
         log_command: Callable[[str, LogMode], None] = lambda *_: None,
