@@ -90,7 +90,7 @@ fi
 # OPT_NONE and OPT_CUSTOM are sentinel values — they drive behavior, not tags.
 # OPT_DEFAULT controls which option number is selected on empty input.
 OPT_NONE="None"
-OPT_CLAUDE_OPUS="Claude Opus 4.8"
+OPT_CLAUDE_OPUS="Claude Opus 5"
 OPT_CLAUDE_SONNET="Claude Sonnet 5"
 OPT_CLAUDE_FABLE="Claude Fable 5"
 OPT_CUSTOM="Custom"
