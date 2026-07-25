@@ -93,6 +93,7 @@ from otto.host.embedded_host import EmbeddedHost
 from otto.host.command_frame import ZephyrFrame
 from otto.host.os_profile import register_host_class
 
+
 @dataclass(slots=True)
 class MyRtosHost(EmbeddedHost):
     """Custom RTOS host with project-specific defaults."""
@@ -100,6 +101,7 @@ class MyRtosHost(EmbeddedHost):
     os_type: str = "my-rtos"
     os_name: str | None = "MyRTOS"
     command_frame: ZephyrFrame = field(default_factory=ZephyrFrame)
+
 
 register_host_class("my-rtos", MyRtosHost)
 ```

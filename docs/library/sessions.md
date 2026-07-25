@@ -32,7 +32,7 @@ other named sessions.
 Sessions support the async context manager protocol for automatic cleanup:
 
 ```python
-async with (await host.open_session("monitor")) as mon:
+async with await host.open_session("monitor") as mon:
     result = await mon.run("stat /tmp/file.bin")
 # session is closed automatically
 ```
@@ -135,6 +135,7 @@ To run a command at a fixed interval, pair `host.run(...)` with
 ```python
 import asyncio
 
+
 async def poll_status(host):
     """Run 'uptime' every 10 seconds, gather with sleep."""
     results = await asyncio.gather(
@@ -157,6 +158,7 @@ simultaneously:
 
 ```python
 import asyncio
+
 
 async def collect_from_all(hosts, interval_secs):
     """Collect metrics from all hosts, then sleep for the remainder."""

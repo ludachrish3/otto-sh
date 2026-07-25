@@ -12,8 +12,8 @@ parameter combination gets its own artifact directory:
 import pytest
 from otto.suite import OttoSuite
 
-class TestInterfaces(OttoSuite):
 
+class TestInterfaces(OttoSuite):
     @pytest.mark.parametrize("interface", ["eth0", "eth1", "mgmt0"])
     async def test_interface_up(self, interface: str) -> None:
         """Runs 3 times — once per interface."""
@@ -53,11 +53,13 @@ outside of a suite:
 ```python
 import pytest
 
+
 @pytest.mark.timeout(30)
 async def test_firmware_version(self, suite_options) -> None:
     """Fail if the test takes longer than 30 seconds."""
     result = (await host.run("show version")).only
     assert suite_options.firmware in result.value
+
 
 @pytest.mark.retry(3)
 async def test_flaky_connection(self) -> None:
@@ -91,6 +93,7 @@ import typer
 
 from otto import options
 
+
 @options
 class RepoOptions:
     device_type: Annotated[str, typer.Option(help="Device type.")] = "router"
@@ -106,9 +109,11 @@ from otto import options
 from my_shared.options import RepoOptions
 from otto.suite import OttoSuite
 
+
 @options
 class _Options(RepoOptions):
     firmware: Annotated[str, typer.Option(help="Firmware version.")] = "latest"
+
 
 class TestDevice(OttoSuite[_Options]):
     Options = _Options

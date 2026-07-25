@@ -263,6 +263,7 @@ specific labs are present and loadable against your known fixtures:
 from otto.testing import assert_lab_repository_conforms
 from my_lab_source import CmdbLabRepository
 
+
 def test_cmdb_conforms():
     assert_lab_repository_conforms(CmdbLabRepository(repo_dir="."))
 ```

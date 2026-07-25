@@ -137,13 +137,16 @@ closes anything still connected when the invocation ends.
 That yields three equally valid usage modes, mirroring file descriptors:
 
 ```python
-async with ctx.get_host("router1") as h:   # 1. tight, early scoping
+# 1. tight, early scoping
+async with ctx.get_host("router1") as h:
     await h.run("uptime")
 
-h = ctx.get_host("router1")                # 2. no ceremony — the scope
-await h.run("uptime")                      #    closes it at command end
+# 2. no ceremony — the scope closes it at command end
+h = ctx.get_host("router1")
+await h.run("uptime")
 
-await h.close()                            # 3. explicit manual control
+# 3. explicit manual control
+await h.close()
 ```
 
 `close()` is idempotent, so an early per-host close and the end-of-scope sweep

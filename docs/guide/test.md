@@ -27,13 +27,19 @@ from otto.suite import OttoSuite
 
 @options
 class _Options:
-    firmware: Annotated[str, typer.Option(
-        help="Firmware version to validate against.",
-    )] = "latest"
+    firmware: Annotated[
+        str,
+        typer.Option(
+            help="Firmware version to validate against.",
+        ),
+    ] = "latest"
 
-    check_interfaces: Annotated[bool, typer.Option(
-        help="When True, verify all expected interfaces are up.",
-    )] = True
+    check_interfaces: Annotated[
+        bool,
+        typer.Option(
+            help="When True, verify all expected interfaces are up.",
+        ),
+    ] = True
 
 
 class TestDevice(OttoSuite[_Options]):

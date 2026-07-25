@@ -41,9 +41,7 @@ class RepoOptions:
     device_type: Annotated[
         str, typer.Option(help="Type of device under test (e.g. 'router', 'switch').")
     ] = "router"
-    lab_env: Annotated[
-        str, typer.Option(help="Lab environment to target.")
-    ] = "staging"
+    lab_env: Annotated[str, typer.Option(help="Lab environment to target.")] = "staging"
 ```
 
 `--device-type` and `--lab-env` now appear in `--help` wherever this class is
@@ -85,7 +83,8 @@ from otto import options
 @options
 class RepoOptions:
     retries: Annotated[
-        int, typer.Option(help="Connection retries (must be >= 0).")
+        int,
+        typer.Option(help="Connection retries (must be >= 0)."),
     ] = Field(default=3, ge=0)
 ```
 
@@ -134,7 +133,7 @@ from my_shared.options import RepoOptions  # your base, listed in `init`
 
 
 @options
-class _Options(RepoOptions):              # inherits --device-type, --lab-env, --retries
+class _Options(RepoOptions):  # inherits --device-type, --lab-env, --retries
     firmware: Annotated[str, typer.Option(help="Firmware version.")] = "latest"
 
 
@@ -161,13 +160,12 @@ from my_shared.options import RepoOptions  # your base, listed in `init`
 
 
 @options
-class _DeployOpts(RepoOptions):           # inherits --device-type, --lab-env, --retries
+class _DeployOpts(RepoOptions):  # inherits --device-type, --lab-env, --retries
     debug: Annotated[bool, typer.Option("--field/--debug")] = False
 
 
 @instruction(options=_DeployOpts)
-async def deploy(opts: _DeployOpts):
-    ...
+async def deploy(opts: _DeployOpts): ...
 ```
 
 `otto run deploy --help` shows the same repo-wide flags plus `--field/--debug`.

@@ -320,9 +320,7 @@ from otto.tunnel import TunnelCarrier, register_carrier
 
 class MyCarrier(TunnelCarrier):
     supported_protocols: ClassVar[frozenset[str]] = frozenset({"tcp"})
-    requirements_command: ClassVar[str] = (
-        "command -v my-tool >/dev/null 2>&1 && echo ok || echo no"
-    )
+    requirements_command: ClassVar[str] = "command -v my-tool >/dev/null 2>&1 && echo ok || echo no"
     tools_description: ClassVar[str] = "my-tool"
 
     def ingress_args(self, protocol, service_port, bind_ip, next_ip, carrier_port):
@@ -355,12 +353,13 @@ from otto.cli.run import instruction
 from otto.config import get_lab
 from otto.tunnel import add_tunnel, discover_tunnels, remove_tunnel
 
+
 @instruction()
 async def add_multi_hop_tunnel():
     lab = get_lab()
     added = await add_tunnel(
         lab, [("carrot_seed", None), ("compost", None), ("tomato_seed", None)], port=6001
     )
-    live = await discover_tunnels(lab)          # every tunnel found right now
+    live = await discover_tunnels(lab)  # every tunnel found right now
     report = await remove_tunnel(lab, added.tunnel.id)
 ```

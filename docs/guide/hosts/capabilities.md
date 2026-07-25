@@ -285,10 +285,10 @@ from otto.result import Result
 from otto.utils import cli_exposed
 from otto.host import UnixHost
 
+
 class MyHost(UnixHost):
     @cli_exposed(help_="Flash firmware to the board")
-    async def flash_firmware(self, image: Path) -> Result:
-        ...
+    async def flash_firmware(self, image: Path) -> Result: ...
 ```
 
 ```text
@@ -343,15 +343,15 @@ an `--option`).  Used by `power` (`state`) and `ls` (`path`), where passing
 the value positionally is natural:
 
 ```python
-state: Annotated[str | None, Arg()] = None     # otto host <id> power on
-path:  Annotated[str | Path, Arg()] = "."       # otto host <id> ls /var/log
+state: Annotated[str | None, Arg()] = None  # otto host <id> power on
+path: Annotated[str | Path, Arg()] = "."  # otto host <id> ls /var/log
 ```
 
 **`Opt(...)`** — force a parameter to an `--option` regardless of whether it
 has a default.  Used by `run`'s `timeout`:
 
 ```python
-timeout: Annotated[float | None, Opt(help='Timeout in seconds.')] = None
+timeout: Annotated[float | None, Opt(help="Timeout in seconds.")] = None
 ```
 
 **`Exclude`** — drop a parameter from the CLI entirely; the method receives its
@@ -360,7 +360,7 @@ flags — `run`'s `expects` and `log` are the canonical examples:
 
 ```python
 expects: Annotated[Expect | None, Exclude] = None
-log:     Annotated[bool, Exclude] = True
+log: Annotated[bool, Exclude] = True
 ```
 
 ### Per-verb summary

@@ -126,10 +126,12 @@ from otto.config import all_hosts
 
 logger = logging.getLogger(__name__)
 
+
 @instruction()
 async def deploy(
-    debug: Annotated[bool, typer.Option("--field/--debug",
-        help="Use field or debug products.")] = False,
+    debug: Annotated[
+        bool, typer.Option("--field/--debug", help="Use field or debug products.")
+    ] = False,
 ):
     for host in all_hosts():
         await host.run(["echo deploying", "make install"])
@@ -154,9 +156,11 @@ import typer
 from otto import options
 from otto.suite import OttoSuite
 
+
 @options
 class _Options:
     firmware: Annotated[str, typer.Option(help="Firmware version.")] = "latest"
+
 
 class TestDevice(OttoSuite[_Options]):
     Options = _Options

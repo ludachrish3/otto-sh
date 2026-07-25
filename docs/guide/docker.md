@@ -97,6 +97,7 @@ suites import the same library directly:
 ```python
 from otto.docker import build_images, compose_up, compose_down, composed
 
+
 @instruction()
 async def smoke():
     async with composed(repo, lab, own=True) as containers:
@@ -142,9 +143,9 @@ match short-circuits the build; `--rebuild` forces it.
 variables) across separate calls — same as `LocalHost` and `UnixHost`:
 
 ```python
-await api.run(["cd /tmp", "pwd"])         # prints /tmp
+await api.run(["cd /tmp", "pwd"])  # prints /tmp
 await api.run("export FOO=bar")
-await api.run("echo $FOO")                # prints bar
+await api.run("echo $FOO")  # prints bar
 ```
 
 `exec()` is the stateless, concurrent-safe counterpart — each call

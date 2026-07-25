@@ -111,6 +111,7 @@ from otto.cli.run import instruction
 
 logger = logging.getLogger("otto")
 
+
 @instruction()
 async def deploy(
     debug: Annotated[bool, typer.Option("--field/--debug")] = False,
@@ -138,9 +139,11 @@ from typing import Annotated
 import typer
 from otto.suite import OttoSuite, register_suite
 
+
 @dataclass
 class _Options:
     firmware: Annotated[str, typer.Option(help="Firmware version.")] = "latest"
+
 
 @register_suite()
 class TestDevice(OttoSuite[_Options]):

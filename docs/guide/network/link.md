@@ -439,8 +439,8 @@ class MyImpairer(LinkImpairer):
     def clear_command(self, netdev: str) -> str:
         return f"my-shaper clear {netdev}"
 
-    def parse_read(self, output: str) -> ImpairmentParams | None:
-        ...  # parse `my-shaper show` output back into ImpairmentParams
+    # parse `my-shaper show` output back into ImpairmentParams
+    def parse_read(self, output: str) -> ImpairmentParams | None: ...
 
 
 register_impairer("my_impairer", MyImpairer)

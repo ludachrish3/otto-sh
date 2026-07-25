@@ -29,15 +29,18 @@ logger = logging.getLogger(__name__)
 
 @instruction()
 async def deploy(
-    debug: Annotated[bool, typer.Option("--field/--debug",
-        help="Use field or debug products.")] = False,
+    debug: Annotated[
+        bool, typer.Option("--field/--debug", help="Use field or debug products.")
+    ] = False,
 ):
     """Deploy the build to all hosts in the lab."""
     for host in all_hosts():
-        result = await host.run([
-            "echo deploying...",
-            "make install",
-        ])
+        result = await host.run(
+            [
+                "echo deploying...",
+                "make install",
+            ]
+        )
         logger.info(f"{host.name}: {result[-1].status}")
 ```
 
@@ -174,13 +177,19 @@ from otto import options
 
 @options
 class RepoOptions:
-    device_type: Annotated[str, typer.Option(
-        help="Type of device under test (e.g. 'router', 'switch').",
-    )] = "router"
+    device_type: Annotated[
+        str,
+        typer.Option(
+            help="Type of device under test (e.g. 'router', 'switch').",
+        ),
+    ] = "router"
 
-    lab_env: Annotated[str, typer.Option(
-        help="Lab environment to target (e.g. 'staging', 'production').",
-    )] = "staging"
+    lab_env: Annotated[
+        str,
+        typer.Option(
+            help="Lab environment to target (e.g. 'staging', 'production').",
+        ),
+    ] = "staging"
 ```
 
 ### 2. Inherit and extend in each instruction
@@ -201,20 +210,21 @@ logger = logging.getLogger(__name__)
 
 
 @options
-class _DeployOpts(RepoOptions):                     # inherits --device-type, --lab-env
-    debug: Annotated[bool, typer.Option(
-        "--field/--debug",
-        help="Use field or debug products.",
-    )] = False
+class _DeployOpts(RepoOptions):  # inherits --device-type, --lab-env
+    debug: Annotated[
+        bool,
+        typer.Option(
+            "--field/--debug",
+            help="Use field or debug products.",
+        ),
+    ] = False
 
 
 @instruction(options=_DeployOpts)
 async def deploy(opts: _DeployOpts):
     """Deploy the build to all hosts in the lab."""
     logger.info(
-        f"device_type={opts.device_type!r}  "
-        f"lab_env={opts.lab_env!r}  "
-        f"debug={opts.debug}",
+        f"device_type={opts.device_type!r}  lab_env={opts.lab_env!r}  debug={opts.debug}",
     )
 ```
 
@@ -245,7 +255,7 @@ from otto.suite import OttoSuite
 
 
 @options
-class _Options(RepoOptions):                       # inherits --device-type, --lab-env
+class _Options(RepoOptions):  # inherits --device-type, --lab-env
     firmware: Annotated[str, typer.Option()] = "latest"
 
 

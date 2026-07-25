@@ -594,7 +594,6 @@ You can also start the monitor programmatically from within a single test:
 
 ```python
 class TestPerformance(OttoSuite[_Options]):
-
     async def test_load(self, suite_options: _Options) -> None:
         await self.start_monitor(hosts=[host1, host2])
         await self.add_monitor_event("Load started", color="#2ca02c")
@@ -816,17 +815,19 @@ CSV file. Register it like any other parser (see [Custom parsers](#custom-parser
 from otto.monitor.log_sourced import CsvMetricParser
 from otto.monitor.parsers import register_parsers
 
-register_parsers([
-    CsvMetricParser(
-        "cat /var/log/perf/net.csv",
-        columns=["rx_kbps", "tx_kbps"],
-        chart="Cron net digest",
-        tab="network",
-        tab_label="Network",
-        unit="kb/s",
-        interval=60,
-    ),
-])
+register_parsers(
+    [
+        CsvMetricParser(
+            "cat /var/log/perf/net.csv",
+            columns=["rx_kbps", "tx_kbps"],
+            chart="Cron net digest",
+            tab="network",
+            tab_label="Network",
+            unit="kb/s",
+            interval=60,
+        ),
+    ]
+)
 ```
 
 Line format: the first column is an ISO-8601 or epoch-seconds timestamp
@@ -878,14 +879,16 @@ from otto.monitor.parsers import register_parsers
 
 SYSLOG_PATTERN = r"^(?P<ts>\S+) (?P<loghost>\S+) (?P<proc>[^:\[]+)(?:\[\d+\])?: (?P<message>.*)$"
 
-register_parsers([
-    RegexLogEventParser(
-        "tail -n 200 /var/log/syslog",
-        SYSLOG_PATTERN,
-        tab="syslog",
-        tab_label="Syslog",
-    ),
-])
+register_parsers(
+    [
+        RegexLogEventParser(
+            "tail -n 200 /var/log/syslog",
+            SYSLOG_PATTERN,
+            tab="syslog",
+            tab_label="Syslog",
+        ),
+    ]
+)
 ```
 
 Every named group in `pattern` besides the timestamp group becomes a table
@@ -1086,13 +1089,13 @@ from otto.monitor.snmp import SnmpMetric, register_snmp_metric
 
 register_snmp_metric(
     SnmpMetric(
-        oid='1.3.6.1.4.1.99999.1.5.0',
-        label='Fan Speed',
-        chart='Fan',
-        y_title='RPM',
-        unit='rpm',
-        tab='fans',
-        tab_label='Fans',
+        oid="1.3.6.1.4.1.99999.1.5.0",
+        label="Fan Speed",
+        chart="Fan",
+        y_title="RPM",
+        unit="rpm",
+        tab="fans",
+        tab_label="Fans",
         scale=1.0,
     )
 )

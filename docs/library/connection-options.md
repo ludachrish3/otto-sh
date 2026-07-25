@@ -123,8 +123,8 @@ Otto's default already disables host-key checking (that's the historical
 behavior).  For a host where you *do* want to check:
 
 ```python
-ssh_options=SshOptions(
-    known_hosts='/home/engineer/.ssh/known_hosts',
+ssh_options = SshOptions(
+    known_hosts="/home/engineer/.ssh/known_hosts",
 )
 ```
 
@@ -251,10 +251,13 @@ from otto.config import get_host, all_hosts
 from otto.host.options import SshOptions, TelnetOptions
 
 # A single host with a one-off SSH override.
-host = get_host("router1", ssh_options=SshOptions(
-    port=9999,
-    connect_timeout=2.0,
-))
+host = get_host(
+    "router1",
+    ssh_options=SshOptions(
+        port=9999,
+        connect_timeout=2.0,
+    ),
+)
 
 # Every host yielded by all_hosts() with a wider telnet window.
 for h in all_hosts(telnet_options=TelnetOptions(cols=300)):
@@ -317,8 +320,10 @@ the `SshOptions` in Python and supply a `post_connect` coroutine:
 from asyncssh import SSHClientConnection
 from otto.host.options import SshOptions
 
+
 async def setup(conn: SSHClientConnection) -> None:
-    await conn.forward_local_path('/tmp/docker.sock', '/var/run/docker.sock')
+    await conn.forward_local_path("/tmp/docker.sock", "/var/run/docker.sock")
+
 
 ssh_options = SshOptions(post_connect=setup)
 ```

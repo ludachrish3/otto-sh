@@ -87,20 +87,28 @@ padding sit between):
 
 ```python
 import glob, struct, sys, pathlib
+
 build, binary = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
-notes = {f: (b[4:8], struct.unpack_from("<I", b, 8)[0])
-         for f in glob.glob(str(build / "**" / "*.gcno"), recursive=True)
-         for b in [pathlib.Path(f).read_bytes()]}
+notes = {
+    f: (b[4:8], struct.unpack_from("<I", b, 8)[0])
+    for f in glob.glob(str(build / "**" / "*.gcno"), recursive=True)
+    for b in [pathlib.Path(f).read_bytes()]
+}
 blob = binary.read_bytes()
-embedded = {struct.unpack_from("<I", blob, i + off)[0]
-            for ver in {v for v, _ in notes.values()}
-            for off in (8, 16)              # 32-bit / 64-bit gcov_info layouts
-            for i in range(len(blob) - 24) if blob[i:i + 4] == ver}
+embedded = {
+    struct.unpack_from("<I", blob, i + off)[0]
+    for ver in {v for v, _ in notes.values()}
+    for off in (8, 16)  # 32-bit / 64-bit gcov_info layouts
+    for i in range(len(blob) - 24)
+    if blob[i : i + 4] == ver
+}
 stale = {f: s for f, (_, s) in notes.items() if s not in embedded}
 if stale:
-    sys.exit("stamp guard: %s does not embed the stamp of %s "
-             "— it is stale relative to the notes; re-link before deploying"
-             % (binary, ", ".join("%s (%#x)" % kv for kv in stale.items())))
+    sys.exit(
+        "stamp guard: %s does not embed the stamp of %s "
+        "— it is stale relative to the notes; re-link before deploying"
+        % (binary, ", ".join("%s (%#x)" % kv for kv in stale.items()))
+    )
 print("stamp guard OK: %d notes file(s) match" % len(notes))
 ```
 

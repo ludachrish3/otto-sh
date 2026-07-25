@@ -4,9 +4,15 @@ indent-width = 4
 extend-exclude = [".vscode", ".idea", "__pycache__", ".python-version", ".ruff.toml", "ruff.toml", "setup.cfg", "pyproject.toml", "tests/repo_broken"]
 
 [format]
-# ruff 0.16.0 began formatting Python code blocks inside Markdown; docs/ prose samples
-# are hand-aligned, so keep the formatter to real Python files.
-exclude = ["*.md"]
+# ruff formats Python code blocks inside Markdown (0.16.0+). The published docs
+# under docs/ want that; our internal planning notes do not. Their snippets are
+# deliberate *fragments* — class-method excerpts shown at method indentation,
+# hand-aligned comment columns — and ruff formats each block as a standalone
+# module, de-indenting them to column 0 and turning methods into module-level
+# functions (it corrupted 41 of the 94 files under docs/superpowers this way).
+# Neither tree is published: sphinx already skips docs/superpowers via
+# docs/conf.py's exclude_patterns, and todo/ sits outside docs/ entirely.
+exclude = ["docs/superpowers/**", "todo/**"]
 indent-style = "space"
 line-ending = "lf"
 quote-style = "double"

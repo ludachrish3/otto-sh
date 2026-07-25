@@ -168,15 +168,21 @@ stamp sits at byte offset 8 of the `.gcno`; in the extension it follows the
 
 ```python
 import glob, struct, sys, pathlib
+
 build = pathlib.Path(sys.argv[1])
 gcno = pathlib.Path(glob.glob(str(build / "**" / "*.gcno"), recursive=True)[0]).read_bytes()
 ver, stamp = gcno[4:8], struct.unpack_from("<I", gcno, 8)[0]
 blob = (build / "zephyr" / "my_product_cov.stripped.llext").read_bytes()
-stamps = [struct.unpack_from("<I", blob, i + 8)[0]
-          for i in range(len(blob) - 12) if blob[i:i + 4] == ver]
+stamps = [
+    struct.unpack_from("<I", blob, i + 8)[0]
+    for i in range(len(blob) - 12)
+    if blob[i : i + 4] == ver
+]
 if stamp not in stamps:
-    sys.exit(f"stamp guard: .gcno {stamp:#x} not in extension {list(map(hex, stamps))} "
-             "— the shipped .llext is stale relative to the notes file")
+    sys.exit(
+        f"stamp guard: .gcno {stamp:#x} not in extension {list(map(hex, stamps))} "
+        "— the shipped .llext is stale relative to the notes file"
+    )
 ```
 
 `tests/repo3/product/build.sh` runs exactly this check on every build; copy

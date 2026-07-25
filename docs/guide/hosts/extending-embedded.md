@@ -70,6 +70,7 @@ data:
 import re
 from otto.host.command_frame import CommandFrame, SessionMarkers, register_command_frame
 
+
 class MyShellFrame(CommandFrame):
     type_name = "myshell"
 
@@ -77,7 +78,7 @@ class MyShellFrame(CommandFrame):
         return f"{m.ready}\n"
 
     def frame(self, cmd: str, m: SessionMarkers) -> str:
-        return f'echo {m.begin}; {cmd}; echo {m.end_prefix}$?__\n'
+        return f"echo {m.begin}; {cmd}; echo {m.end_prefix}$?__\n"
 
     def recover(self, m: SessionMarkers) -> str:
         return f"echo {m.recover}\n"
@@ -88,12 +89,13 @@ class MyShellFrame(CommandFrame):
     def marks_begin(self, data: str, m: SessionMarkers) -> bool:
         return data.rstrip("\r\n").endswith(m.begin)
 
-    def parse_output(self, buffer: str, cmd: str, m: SessionMarkers) -> str:
-        ...  # slice between the BEGIN marker and end_pattern
+    # slice between the BEGIN marker and end_pattern
+    def parse_output(self, buffer: str, cmd: str, m: SessionMarkers) -> str: ...
 
     def extract_retcode(self, buffer: str, m: SessionMarkers) -> int:
         match = self.end_pattern(m).search(buffer)
         return int(match.group(1)) if match and match.groups() else -1
+
 
 register_command_frame("myshell", MyShellFrame)
 ```
@@ -166,11 +168,14 @@ set the class constants, register:
 # myproject/otto_filesystems.py
 from otto.host.embedded_filesystem import EmbeddedFileSystem, register_filesystem
 
+
 class NffsFileSystem(EmbeddedFileSystem):
     """NewtNFFS on simulated flash, mounted at /nffs."""
+
     type_name = "nffs"
     mount = "/nffs"
     # NFFS auto-mounts via zephyr,fstab — no mount_cmd needed.
+
 
 register_filesystem("nffs", NffsFileSystem)
 ```
@@ -202,8 +207,10 @@ class MyFsFileSystem(EmbeddedFileSystem):
 
     def rm_command(self, path):
         return f"myfs rm {path}"
+
     # trunc_command, ls_command, statvfs_command inherit the stock
     # `fs <verb> ...` defaults — override only if the vendor shell differs.
+
 
 register_filesystem("myfs", MyFsFileSystem)
 ```

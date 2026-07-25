@@ -44,12 +44,14 @@ context, and tears everything down on exit — even if your code raises.
 import asyncio
 import otto
 
+
 async def main():
     async with otto.open_context(lab="mylab", search_paths=[...]) as ctx:
         results = await ctx.run_on_all_hosts("uname -a")
         for host_id, result in results.items():
             print(host_id, result)
     # every host opened in the block is closed here, deterministically
+
 
 asyncio.run(main())
 ```
@@ -126,7 +128,7 @@ async with otto.open_context(lab="mylab") as ctx:
 ```python
 async with otto.open_context(lab="mylab") as ctx:
     host = ctx.get_host("router1")
-    await configure(host)      # pass it wherever you like
+    await configure(host)  # pass it wherever you like
 # scope.close() sweeps host when the block exits
 ```
 
@@ -136,7 +138,7 @@ async with otto.open_context(lab="mylab") as ctx:
 async with otto.open_context(lab="mylab") as ctx:
     host = ctx.get_host("router1")
     await host.run("reboot")
-    await host.close()         # early close — idempotent; scope sweep is a no-op
+    await host.close()  # early close — idempotent; scope sweep is a no-op
 ```
 
 `close()` is idempotent: calling it multiple times is safe.

@@ -520,7 +520,10 @@ from otto.suite import OttoSuite
 @options
 class _Options:
     firmware: Annotated[str, typer.Option(help="Firmware version.")] = "latest"
-    retries: Annotated[int, typer.Option(help="Connection retries (>= 0).")] = Field(default=3, ge=0)
+    retries: Annotated[
+        int,
+        typer.Option(help="Connection retries (>= 0)."),
+    ] = Field(default=3, ge=0)
 
 
 class TestExample(OttoSuite[_Options]):

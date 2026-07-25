@@ -87,9 +87,11 @@ Projects can register additional dialects from an init module:
 ```python
 from otto.host.command_frame import register_command_frame, ZephyrFrame
 
+
 class ZephyrInlineRetcodeFrame(ZephyrFrame):
     type_name = "zephyr-inline"
     # ... override parse_retcode / parse_output for 2.7 inline retcode
+
 
 register_command_frame(ZephyrInlineRetcodeFrame.type_name, ZephyrInlineRetcodeFrame)
 ```
@@ -123,9 +125,11 @@ Projects can register custom variants from an init module:
 ```python
 from otto.host.embedded_filesystem import register_filesystem, EmbeddedFileSystem
 
+
 class MyFlashFs(EmbeddedFileSystem):
     type_name = "my-flash"
     mount = "/flash"
+
 
 register_filesystem(MyFlashFs.type_name, MyFlashFs)
 ```

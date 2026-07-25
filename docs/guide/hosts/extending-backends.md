@@ -144,8 +144,8 @@ class XmodemTransfer(BaseFileTransfer):
                 per_file[src] = Result(Status.Error, msg=f"{src}: {exc}")
         return per_file
 
-    async def _run_get(self, src_files, dest_dir, progress_factory):
-        ...  # same shape as _run_put, reading from the device instead
+    # same shape as _run_put, reading from the device instead
+    async def _run_get(self, src_files, dest_dir, progress_factory): ...
 
 
 register_transfer_backend("xmodem", XmodemTransfer)

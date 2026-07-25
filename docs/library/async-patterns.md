@@ -101,6 +101,7 @@ without pre-filtering yourself.
 import re
 from otto.config import run_on_all_hosts
 
+
 async def check_all_hosts():
     """Run 'uname -a' on every host concurrently."""
     results = await run_on_all_hosts("uname -a")
@@ -109,6 +110,7 @@ async def check_all_hosts():
             print(f"{host_id}: ERROR - {result}")
         else:
             print(f"{host_id}: {result.only.value.strip()}")
+
 
 async def check_routers_only():
     """Target just hosts whose id matches /router/."""
@@ -134,6 +136,7 @@ your own.
 from pathlib import Path
 from otto.config import do_for_all_hosts
 from otto.host.unix_host import UnixHost
+
 
 async def deploy_firmware():
     """Push a firmware file to all hosts concurrently."""
@@ -161,6 +164,7 @@ async def install_and_verify(host: UnixHost, package: str) -> str:
     result = await host.exec(f"dpkg -s {package}")
     return result.value
 
+
 results = await do_for_all_hosts(install_and_verify, "nginx")
 ```
 
@@ -174,6 +178,7 @@ coordinating cross-host synchronization inside the same task graph.
 ```python
 import asyncio
 from otto.config import all_hosts
+
 
 async def mixed_workload():
     hosts = list(all_hosts())

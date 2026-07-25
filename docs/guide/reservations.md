@@ -328,6 +328,7 @@ own fixtures:
 from otto.testing import assert_reservation_backend_conforms
 from my_team_backend import MyTeamBackend
 
+
 def test_my_backend_conforms():
     assert_reservation_backend_conforms(
         MyTeamBackend(url="https://jira.example.com"),
