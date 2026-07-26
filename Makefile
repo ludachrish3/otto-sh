@@ -307,9 +307,9 @@ web: $(WEB_NODE_MODULES) ## (Build & Release) Build the web/ React dashboard + t
 	scripts/build_web_no_warnings.sh build
 	scripts/build_web_no_warnings.sh build:covapp
 	scripts/check_airgap.sh
-	scripts/check_airgap.sh src/otto/coverage/renderer/static/covapp
+	scripts/check_airgap.sh src/otto/_webassets/covapp
 	scripts/check_brand_tokens.sh
-	scripts/check_brand_tokens.sh src/otto/coverage/renderer/static/covapp
+	scripts/check_brand_tokens.sh src/otto/_webassets/covapp
 
 web-dev: $(WEB_NODE_MODULES) ## (Dev) Run the web/ Vite dev server with hot reload; proxies /api to a running otto monitor (default target http://127.0.0.1:8080, override with VITE_OTTO_TARGET=http://host:port)
 	cd web && npm run dev
@@ -322,13 +322,13 @@ web-dev: $(WEB_NODE_MODULES) ## (Dev) Run the web/ Vite dev server with hot relo
 test-ts: $(WEB_NODE_MODULES) ## (Dev) Run the web/ vitest suite once — no coverage, the fast TS loop. (Deliberately no test-python twin and no bare `test`: the fast Python lane is `coverage-unit`.)
 	cd web && npm run test
 
-web-clean: ## (Dev) Remove the built web/ dist outputs (monitor dashboard + covapp)
-	rm -rf src/otto/monitor/static/dist
-	rm -rf src/otto/coverage/renderer/static/covapp
+web-clean: ## (Dev) Remove the built web/ dist outputs (monitor dashboard + covapp) from src/otto/_webassets/
+	rm -rf src/otto/_webassets/monitor
+	rm -rf src/otto/_webassets/covapp
 
 # uv_build embeds the ENTIRE module tree (src/otto/**) into both the sdist and
 # the wheel by default — unlike hatchling, it is not VCS-aware, so it doesn't
-# care that static/dist/ is .gitignore'd (see the [tool.uv.build-backend]
+# care that _webassets/*/ is .gitignore'd (see the [tool.uv.build-backend]
 # comment in pyproject.toml). That makes the embedding implicit rather than
 # explicit config, so this target exists to pin it with a real assertion:
 # build the dashboard, build the wheel, and fail loudly if the dashboard ever
@@ -342,22 +342,21 @@ web-clean: ## (Dev) Remove the built web/ dist outputs (monitor dashboard + cova
 # recipe line (see the release: warning above for what happens when that rule
 # is violated).
 # NOTE: prerequisites assume serial execution; do not run wheel-check under make -j.
-wheel-check: clean-dist web build ## (Build & Release) Rebuild the dashboard + wheel and assert the wheel embeds src/otto/monitor/static/dist/ (air-gap requirement)
-	@count=$$(unzip -l dist/*.whl | grep -c "otto/monitor/static/dist/" || true); \
-	if [ "$$count" -eq 0 ]; then \
-		echo "wheel-check: FAIL — no otto/monitor/static/dist/ entries in dist/*.whl; an air-gapped install would ship without the dashboard." >&2; \
-		exit 1; \
-	fi; \
-	if ! unzip -p dist/*.whl otto/monitor/static/dist/index.html > /dev/null; then \
-		echo "wheel-check: FAIL — index.html missing from the wheel's static/dist." >&2; exit 1; \
-	fi; \
-	echo "wheel-check: OK — $$count otto/monitor/static/dist/ entries embedded in the wheel (incl. index.html)."; \
+wheel-check: clean-dist web build ## (Build & Release) Rebuild the dashboard + wheel and assert the wheel embeds both src/otto/_webassets/{monitor/dist,covapp}/ artifacts (air-gap requirement)
+	@for entry in monitor/dist/index.html covapp/index.html; do \
+		dir="otto/_webassets/$${entry%%/*}/"; \
+		count=$$(unzip -l dist/*.whl | grep -c "$$dir" || true); \
+		if [ "$$count" -eq 0 ]; then \
+			echo "wheel-check: FAIL — no $$dir entries in dist/*.whl; an air-gapped install would ship without this frontend." >&2; \
+			exit 1; \
+		fi; \
+		if ! unzip -p dist/*.whl "otto/_webassets/$$entry" > /dev/null; then \
+			echo "wheel-check: FAIL — otto/_webassets/$$entry missing from dist/*.whl." >&2; \
+			exit 1; \
+		fi; \
+		echo "wheel-check: OK — $$count $$dir entries embedded (incl. $${entry#*/})."; \
+	done
 	scripts/check_airgap.sh
-	@if ! unzip -l dist/*.whl | grep -q "otto/coverage/renderer/static/covapp/index.html"; then \
-		echo "wheel-check: FAIL — otto/coverage/renderer/static/covapp/index.html missing from dist/*.whl; an air-gapped install would ship the coverage-report SPA without its shell." >&2; \
-		exit 1; \
-	fi; \
-	echo "wheel-check: OK — otto/coverage/renderer/static/covapp/index.html embedded in the wheel."
 	@if unzip -l dist/*.whl | grep -q '\.map$$'; then \
 		echo "wheel-check: FAIL — sourcemap (*.map) files embedded in the wheel; the wheel-exclude in pyproject.toml [tool.uv.build-backend] should strip them." >&2; \
 		exit 1; \
@@ -402,8 +401,8 @@ build: ## (Build & Release) Build the project with uv
 #
 # Both suites — and the docs build, whose GUI media is photographed from the
 # real shell (see docs/_build/html/index.html below) — drive real build
-# artifacts: the React dashboard (src/otto/monitor/static/dist/) and the
-# coverage-report SPA (src/otto/coverage/renderer/static/covapp/index.html).
+# artifacts: the React dashboard (src/otto/_webassets/monitor/dist/) and the
+# coverage-report SPA (src/otto/_webassets/covapp/index.html).
 # They exist only once `make web` has run (noxfile.py's `dashboard` session
 # docstring documents this as `make dashboard`'s prerequisite). Declaring them
 # as real file targets, built on demand by `make web`, lets a fresh checkout or
@@ -463,8 +462,8 @@ BROWSER_WORKERS ?= $(shell if [ "$$(nproc)" -ge 2 ] && [ "$$(awk '/MemTotal/ {pr
 # suites share one serial xdist group and extra workers would sit idle.
 # Recursive (=), not :=, so a command-line BROWSER_WORKERS override flows in.
 BROWSER_SHARD_ENV = $(if $(filter-out 1,$(BROWSER_WORKERS)),OTTO_BROWSER_SHARD=1,)
-DASHBOARD_DIST := src/otto/monitor/static/dist/index.html
-COVAPP_DIST := src/otto/coverage/renderer/static/covapp/index.html
+DASHBOARD_DIST := src/otto/_webassets/monitor/dist/index.html
+COVAPP_DIST := src/otto/_webassets/covapp/index.html
 
 # Everything vite feeds into the two bundles: the app sources (including the
 # committed api/*.gen.ts, which is the seam through which a pydantic-model

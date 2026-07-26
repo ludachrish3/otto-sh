@@ -10,7 +10,7 @@ renderer.
 
 1. **Copy the bundle.** `make web` builds a second Vite app
    (`web/src/covapp/`) into
-   `src/otto/coverage/renderer/static/covapp/` — a classic-script IIFE
+   `src/otto/_webassets/covapp/` — a classic-script IIFE
    bundle with no ES modules, no inline scripts, and only relative asset
    paths, so it boots the same from `file://`, a CI artifacts browser, or
    behind Jenkins' minimal CSP. That directory isn't committed; it's built

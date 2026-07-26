@@ -257,8 +257,8 @@ def dashboard(session: nox.Session, browser: str) -> None:
     coverage-report suite's browser matrix into CI: this session is what
     `.github/workflows/ci.yml`'s `dashboard` job runs per engine.
 
-    Both suites drive a BUILT React bundle (`src/otto/monitor/static/dist/`
-    and `src/otto/coverage/renderer/static/covapp/dist/` respectively) —
+    Both suites drive a BUILT React bundle (`src/otto/_webassets/monitor/dist/`
+    and `src/otto/_webassets/covapp/dist/` respectively) —
     there's no legacy static fallback since the Task 9 cutover, so both
     `dist/` dirs must already exist before this session runs. Building them
     needs Node/npm (`make web`, which installs web/'s dependencies itself),

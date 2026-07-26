@@ -41,6 +41,7 @@ from typing import ClassVar
 
 import pytest
 
+from otto import _webassets
 from otto.coverage.store.model import CoverageStore, FileRecord
 from tests.e2e._otto_subprocess import output_dirs
 
@@ -523,7 +524,7 @@ class TestCoverageIntegrity:
         never be copied into an emitted report (see spa_renderer.py's
         ``_copy_bundle`` docstring)."""
         _, report_dir, *_ = coverage_run
-        bundle_src = PROJECT_ROOT / "src/otto/coverage/renderer/static/covapp"
+        bundle_src = _webassets.COVAPP
         if bundle_src.exists():
             assert (report_dir / "index.html").is_file()
             assert (report_dir / "dist" / "covapp.js").is_file()

@@ -33,7 +33,7 @@ def _find_file(node, name):
     return None
 
 
-def test_fixture_report_renders(tmp_path):
+def test_fixture_report_renders(tmp_path, hermetic_covapp_bundle):
     report_dir = build_fixture_report(tmp_path)
     assert (report_dir / "index.html").exists()
     assert (report_dir / "dist" / "covapp.js").exists()

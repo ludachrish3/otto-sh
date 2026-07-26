@@ -22,11 +22,50 @@ the same reason: the state they guard is process-global, so a guard confined to
 one tree leaves every other tree exposed — the defect behind issues #132 and
 #133. Anything guarding process-global state belongs at the root; only genuinely
 tree-local setup belongs here.
+
+``_no_ambient_webassets`` below is the mirror-image case: the *fixture itself*
+(``neutralized_webassets``) is a root-conftest process-global guard per #132,
+but its ACTIVATION — making it autouse — is deliberately scoped to this tree
+only. The unit lane must default to blind (issue #175: a real ``make web``
+build on a dev box must never make a unit test pass by accident), but
+``tests/e2e`` must default to seeing the real bundle (the Playwright dashboard
+lane serves and screenshots it) and ``tests/integration`` has no opinion
+either way. Autouse-ing the same fixture at the root would flip the e2e
+default too, so the fixture lives at the root (shareable, #132-compliant) and
+only its autouse wiring is tree-local, matching this file's established
+root-fixture-vs-local-activation split.
 """
 
 import sys
 
 import pytest
+
+
+@pytest.fixture(autouse=True)
+def _no_ambient_webassets(neutralized_webassets: object) -> None:
+    """Every tests/unit test starts blind to real build artifacts (#175).
+
+    Activates the root ``neutralized_webassets`` fixture for every test
+    collected under ``tests/unit`` so a missing monkeypatch fails identically
+    on a bare-checkout CI runner and on a dev box that happens to have run
+    ``make web`` — see ``neutralized_webassets``'s docstring in the root
+    conftest for the full mechanism and the #132 rationale for keeping the
+    fixture itself there.
+
+    Ordering with package-level hermetic-dist fixtures (e.g.
+    ``tests/unit/monitor/conftest.py``'s autouse ``_hermetic_static_dir``,
+    which stands in a throwaway React dist so most of that package's tests
+    can boot a ``MonitorServer`` without needing a real build): pytest sets up
+    autouse fixtures shallowest-conftest-first, so THIS fixture (declared in
+    the shallower ``tests/unit/conftest.py``) runs and neutralizes first, and
+    the deeper package's autouse fixture then re-patches the same attribute
+    over it — verified empirically for this pair (``pytest tests/unit/monitor``
+    green: the package's hermetic dist wins, unaffected by the neutralizer
+    running first). A test that needs the real present-bundle path instead
+    (outside that package) requests ``hermetic_covapp_bundle`` /
+    ``hermetic_monitor_dist`` directly — an in-body request always wins over
+    any autouse fixture, ordering aside.
+    """
 
 
 @pytest.fixture

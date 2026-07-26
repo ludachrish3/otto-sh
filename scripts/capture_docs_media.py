@@ -50,8 +50,12 @@ OUT_DIR = REPO_ROOT / "docs" / "_static" / "generated"
 STAMP = OUT_DIR / ".stamp"
 
 # Inputs whose change invalidates the media: this script, the harness
-# fixtures it drives, the fixture documents it imports, and the whole monitor
-# subsystem (server, collector, static frontend assets).
+# fixtures it drives, the fixture documents it imports, the whole monitor
+# subsystem (server, collector), the coverage renderer, and the built
+# frontend artifacts themselves (src/otto/_webassets/ — the actual bundles
+# the real MonitorServer serves; they live outside the two package trees
+# above, so without this entry a stale built bundle wouldn't invalidate the
+# stamp and the docs media would silently keep showing the previous build).
 _STAMP_INPUTS = [
     Path(__file__).resolve(),
     REPO_ROOT / "tests" / "_fixtures" / "_dashboard_harness.py",
@@ -61,6 +65,7 @@ _STAMP_INPUTS = [
     REPO_ROOT / "web" / "fixtures" / "isp-core.json",
     REPO_ROOT / "src" / "otto" / "monitor",
     REPO_ROOT / "src" / "otto" / "coverage" / "renderer",
+    REPO_ROOT / "src" / "otto" / "_webassets",
 ]
 
 # The files this script promises to produce (docs pages reference them).

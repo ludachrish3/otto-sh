@@ -421,7 +421,7 @@ collector itself couldn't learn anything sooner anyway.
 ### Frontend development
 
 The dashboard's frontend is a React + Vite + TypeScript single-page app in
-`web/`. Vite builds it into `src/otto/monitor/static/dist/`, the *only*
+`web/`. Vite builds it into `src/otto/_webassets/monitor/dist/`, the *only*
 frontend {class}`~otto.monitor.server.MonitorServer` serves — there is no
 legacy fallback, so a checkout without a build fails loudly with a
 `make web` pointer rather than silently serving something stale.

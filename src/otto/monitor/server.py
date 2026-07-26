@@ -38,6 +38,7 @@ from starlette.requests import Request
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from typing_extensions import override
 
+from .. import _webassets
 from ..console import CONSOLE
 from ..models import LabSnapshot, MonitorExport
 from ..models.monitor import EventCreateBody, EventRecord, EventUpdateBody, SessionRecord
@@ -48,7 +49,7 @@ from .events import MonitorEvent
 from .export import build_live_export, document_json
 from .session import SessionFrame
 
-_STATIC_DIR = Path(__file__).parent / "static"
+_STATIC_DIR = _webassets.MONITOR
 
 logger = logging.getLogger(__name__)
 

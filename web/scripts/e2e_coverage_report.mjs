@@ -18,8 +18,8 @@ const webRoot = resolve(repo, "web");
 const rawDir = resolve(repo, "reports/ts-e2e-cov/raw");
 const outDir = resolve(repo, "reports/ts-e2e-cov/istanbul");
 const dists = [
-  resolve(repo, "src/otto/monitor/static/dist"),
-  resolve(repo, "src/otto/coverage/renderer/static/covapp/dist"),
+  resolve(repo, "src/otto/_webassets/monitor/dist"),
+  resolve(repo, "src/otto/_webassets/covapp/dist"),
 ];
 
 // Vendored Untitled UI source + generated wire types: excluded from coverage

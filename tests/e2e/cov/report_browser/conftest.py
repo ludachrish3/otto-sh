@@ -12,12 +12,12 @@ from pathlib import Path
 
 import pytest
 
-import otto.coverage.renderer as renderer_pkg
+from otto import _webassets
 from tests._fixtures._browser_guard import browser_tests_could_run
 from tests._fixtures._report_fixture import build_fixture_report
 from tests._fixtures._ts_coverage import ts_coverage, write_ts_coverage
 
-_COVAPP_INDEX = Path(renderer_pkg.__file__).parent / "static" / "covapp" / "index.html"
+_COVAPP_INDEX = _webassets.COVAPP / "index.html"
 
 _REPO_ROOT = Path(__file__).resolve().parents[4]
 _WEB_SRC = _REPO_ROOT / "web" / "src"

@@ -110,7 +110,7 @@ remotes.
   covapp bundle, then calls `spa_data.emit_chunks`; the reporter's only
   renderer
 - `web/src/covapp/` — the covapp SPA's TypeScript source (built by `make
-  web` into `otto.coverage.renderer`'s `static/covapp/`, wheel-embedded)
+  web` into `otto._webassets.COVAPP`, wheel-embedded)
 - {mod}`otto.coverage.reporter` — `otto cov report`'s store assembly: tiers,
   the base_commit guard, and the `--tier NAME=PATH` escape hatch
 - {mod}`otto.coverage.validity` — the report-time valid/stale/aging pass over

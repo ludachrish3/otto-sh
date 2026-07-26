@@ -96,7 +96,7 @@ jobs:
           enable-cache: true
       - run: uv python install 3.10
       # Post-cutover, the browser suite exercises the built React dashboard
-      # (src/otto/monitor/static/dist/) through a real MonitorServer — there
+      # (src/otto/_webassets/monitor/dist/) through a real MonitorServer — there
       # is no legacy static fallback anymore, so `dist/` must exist before
       # the pytest steps below run. The nox session can't build it itself
       # (its venv is Python-only — see the `dashboard` session docstring), so

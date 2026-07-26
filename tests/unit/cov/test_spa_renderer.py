@@ -54,12 +54,18 @@ class TestBundleCopy:
     emitted report grows ~4.8MB (the real built bundle carries a hidden
     sourcemap for the TS coverage fold)."""
 
-    def test_present_bundle_copies_index_and_dist_with_no_sourcemaps(self, tmp_path):
+    def test_present_bundle_copies_index_and_dist_with_no_sourcemaps(
+        self, tmp_path, hermetic_covapp_bundle
+    ):
         out = tmp_path / "report"
         SpaRenderer(out).render(CoverageStore(tier_order=["system"]))
         assert (out / "index.html").exists()
         assert (out / "dist" / "covapp.js").exists()
         assert (out / "dist" / "covapp.css").exists()
+        # hermetic_covapp_bundle seeds dist/covapp.js.map, so this is an
+        # unconditional pin (not dependent on whatever vite happened to emit):
+        # the map is guaranteed present in the source, and must not survive
+        # the copy.
         assert not list(out.rglob("*.map")), "SpaRenderer must exclude *.map from the bundle copy"
 
     def test_missing_bundle_warns_names_make_web_and_still_emits_cov_data(
@@ -87,7 +93,7 @@ class TestBundleCopy:
 
         assert any("make web" in r.message for r in caplog.records)
 
-    def test_present_dist_does_not_warn(self, tmp_path, caplog):
+    def test_present_dist_does_not_warn(self, tmp_path, caplog, hermetic_covapp_bundle):
         out = tmp_path / "report"
         with caplog.at_level("WARNING"):
             SpaRenderer(out).render(CoverageStore(tier_order=["system"]))
@@ -95,7 +101,9 @@ class TestBundleCopy:
 
 
 class TestEmptyStoreReport:
-    def test_empty_store_still_emits_index_js_and_copies_bundle(self, tmp_path):
+    def test_empty_store_still_emits_index_js_and_copies_bundle(
+        self, tmp_path, hermetic_covapp_bundle
+    ):
         out = tmp_path / "report"
         SpaRenderer(out).render(CoverageStore(tier_order=["system"]))
         payload = _index_payload(out)
@@ -168,7 +176,7 @@ class TestExcludedLinesRoundTripThroughReporter:
 
     @pytest.mark.asyncio
     async def test_settings_driven_collection_path_renders_spa_and_saves_store(
-        self, tmp_path, monkeypatch
+        self, tmp_path, monkeypatch, hermetic_covapp_bundle
     ):
         """Mirrors ``test_cov.py``'s settings-driven (repo_root + tier_configs)
         collection-model wiring end to end: the real ``run_coverage_report``
@@ -209,3 +217,20 @@ class TestExcludedLinesRoundTripThroughReporter:
         raw = json.loads((out / "store.json").read_text())
         (file_entry,) = [f for f in raw["files"] if f["path"].endswith("f.c")]
         assert file_entry["excluded_lines"] == [2]
+
+
+def test_hermetic_bundle_overrides_unit_lane_neutralization(hermetic_covapp_bundle):
+    """The explicit present-bundle fixture must win over the autouse neutralizer.
+
+    ``tests/unit/conftest.py``'s autouse ``_no_ambient_webassets`` blinds every
+    unit test to real build artifacts by default (issue #175); this in-body
+    fixture request must still resolve ``spa_renderer.STATIC_DIR`` to the
+    hermetic bundle it just built, not the neutralizer's void path — pytest
+    instantiates same-scope autouse fixtures FIRST, so the explicitly
+    requested ``hermetic_covapp_bundle``'s monkeypatch runs (and lands) last,
+    overwriting the neutralizer's.
+    """
+    from otto.coverage.renderer import spa_renderer
+
+    assert hermetic_covapp_bundle == spa_renderer.STATIC_DIR
+    assert (spa_renderer.STATIC_DIR / "index.html").exists()

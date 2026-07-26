@@ -725,7 +725,7 @@ class TestDashboardRoute:
     ``web/`` is the only frontend; there is no legacy fallback anymore).
 
     Builds a throwaway static directory under ``tmp_path`` (never the real
-    ``src/otto/monitor/static/``) and monkeypatches the module-level
+    ``src/otto/_webassets/monitor/``) and monkeypatches the module-level
     ``_STATIC_DIR`` to point at it, so these tests can't be satisfied by (or
     disturb) a real ``dist/`` build.
     """

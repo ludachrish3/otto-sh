@@ -11,8 +11,9 @@ import { defineConfig } from "vitest/config";
 // otto monitor's MonitorServer serves this build's output straight off disk
 // (see src/otto/monitor/server.py's dashboard() dist-preferred branch), so
 // the base path must match the StaticFiles mount it already exposes at
-// /static/dist/*. emptyOutDir keeps stale chunks from a previous build from
-// lingering in the dist otto serves.
+// /static/dist/* — outDir moves freely (src/otto/_webassets/monitor/), the
+// URL space does not. emptyOutDir keeps stale chunks from a previous build
+// from lingering in the dist otto serves.
 const OTTO_TARGET = process.env.VITE_OTTO_TARGET ?? "http://127.0.0.1:8080";
 
 export default defineConfig({
@@ -26,7 +27,7 @@ export default defineConfig({
     },
   },
   build: {
-    outDir: "../src/otto/monitor/static/dist",
+    outDir: "../src/otto/_webassets/monitor/dist",
     emptyOutDir: true,
     // Hidden sourcemaps: emitted for the merged TS coverage gate
     // (make coverage-ts maps Chromium V8 coverage of THIS shipped bundle back

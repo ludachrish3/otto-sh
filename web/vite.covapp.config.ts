@@ -26,7 +26,7 @@ export default defineConfig({
   base: "./",
   resolve: { alias: { "@": resolve(__dirname, "./src") } },
   build: {
-    outDir: "../src/otto/coverage/renderer/static/covapp",
+    outDir: "../src/otto/_webassets/covapp",
     emptyOutDir: true,
     // Vite's default (cssCodeSplit: true) is fine for "es"/"cjs" output, but
     // for "iife"/"umd" formats it injects CSS via a `document.createElement

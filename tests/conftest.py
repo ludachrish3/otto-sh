@@ -144,6 +144,7 @@ import gc
 import logging
 import sys
 import weakref
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -932,6 +933,101 @@ def hermetic_monitor_dist(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Pa
     (dist_dir / "index.html").write_text("<html>HERMETIC_TEST_DIST_MARKER</html>")
     monkeypatch.setattr(server_module, "_STATIC_DIR", static_dir)
     return static_dir
+
+
+@pytest.fixture
+def neutralized_webassets(tmp_path: Path) -> Iterator[Path]:
+    """Point every registered webasset consumer at a nonexistent directory.
+
+    ``otto._webassets.ALL`` is the single registry of in-package build
+    artifacts (``make web`` output, gitignored, embedded in the wheel); every
+    module-global that resolves one — ``otto.monitor.server._STATIC_DIR``,
+    ``otto.coverage.renderer.spa_renderer.STATIC_DIR`` — is listed in
+    ``tests/_fixtures/webassets.py``'s ``CONSUMERS``. This fixture monkeypatches
+    every entry there to a path under ``tmp_path`` that is guaranteed absent, so
+    a test that requests it exercises exactly the "no build artifact" path
+    regardless of whether this checkout happens to have run ``make web``.
+
+    Requested directly by a test that wants an explicit void; activated
+    unconditionally for the whole unit tree by ``tests/unit/conftest.py``'s
+    autouse ``_no_ambient_webassets`` (issue #175) — see that fixture's
+    docstring for the ordering contract with package-level hermetic-dist
+    fixtures such as ``hermetic_monitor_dist`` / ``_hermetic_static_dir``.
+
+    Lives in the ROOT conftest per the #132 process-global-state rule: the
+    ``otto._webassets`` paths are process-global module attributes, not local
+    to ``tests/unit`` — a guard confined to one tree would leave every other
+    tree exposed to whichever real (or absent) dist that process happens to
+    see, exactly the defect class #132/#133 already fixed for other guards in
+    this file.
+
+    Uses a PRIVATE ``pytest.MonkeyPatch`` instance, never the shared
+    ``monkeypatch`` fixture. Requesting the shared fixture from an autouse
+    fixture this early would promote its instantiation ahead of every later
+    fixture's ``mock.patch`` context (e.g. ``tests/unit/cli``'s autouse
+    ``no_logger_output_dir``), inverting the teardown LIFO those tests rely
+    on: a test-body ``monkeypatch.setattr`` on an attribute that a still-open
+    ``mock.patch`` owns records the MOCK as "previous", and with the shared
+    instance now finalizing last it re-installs that mock AFTER the patch
+    restored the real function — leaking a MagicMock into the module for the
+    rest of the worker's life (surfaced as mix-dependent logger-test failures
+    the first time this fixture went tree-wide).
+    """
+    import importlib
+
+    from tests._fixtures.webassets import CONSUMERS
+
+    mp = pytest.MonkeyPatch()
+    void = tmp_path / "_absent_webassets"
+    for module_name, attr in CONSUMERS:
+        module = importlib.import_module(module_name)
+        mp.setattr(module, attr, void / module_name.rpartition(".")[2])
+    yield void
+    mp.undo()
+
+
+@pytest.fixture
+def hermetic_covapp_bundle(tmp_path: Path) -> Iterator[Path]:
+    """Stand in a throwaway covapp bundle so a test can exercise the
+    present-bundle paths of ``SpaRenderer`` without a real ``make web`` build.
+
+    Mirrors ``hermetic_monitor_dist`` for the covapp coverage-SPA artifact:
+    since the unit lane now defaults to blind (``neutralized_webassets``,
+    autouse in ``tests/unit/conftest.py``, issue #175), any test asserting on
+    the "bundle present" behavior — the index.html/dist copy, the *.map
+    exclusion, the no-warning path — must request this fixture explicitly
+    rather than rely on an ambient dev-box build.
+
+    Seeds ``dist/covapp.js.map`` deliberately: the *.map-exclusion pin becomes
+    unconditional instead of depending on what vite happened to emit in this
+    checkout — a test asserting "no .map copied" is meaningful precisely
+    because one was there to exclude.
+
+    Lives in the ROOT conftest per the #132 process-global-state rule, same as
+    ``neutralized_webassets`` above: ``spa_renderer.STATIC_DIR`` is a
+    process-global module attribute, not local to ``tests/unit``, so any tree
+    that wants the real-bundle-present behavior (not just the unit lane) can
+    request this fixture without import gymnastics.
+
+    Private ``pytest.MonkeyPatch`` instance for the same LIFO-inversion reason
+    as ``neutralized_webassets`` above. Ordering with the neutralizer is
+    plain fixture LIFO either way: this fixture sets up after it (explicit
+    request beats autouse) and undoes before it, so the void is restored, then
+    the real path.
+    """
+    from otto.coverage.renderer import spa_renderer
+
+    mp = pytest.MonkeyPatch()
+    bundle = tmp_path / "_hermetic_covapp"
+    dist = bundle / "dist"
+    dist.mkdir(parents=True)
+    (bundle / "index.html").write_text("<html>HERMETIC_COVAPP_MARKER</html>")
+    (dist / "covapp.js").write_text("// hermetic bundle js")
+    (dist / "covapp.css").write_text("/* hermetic bundle css */")
+    (dist / "covapp.js.map").write_text("{}")
+    mp.setattr(spa_renderer, "STATIC_DIR", bundle)
+    yield bundle
+    mp.undo()
 
 
 @pytest.fixture(autouse=True)

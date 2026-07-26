@@ -2,7 +2,7 @@
   "name": "otto-monitor-web",
   "private": true,
   "version": "0.1.0",
-  "description": "React+TS frontend for the otto monitor dashboard, built to src/otto/monitor/static/dist/.",
+  "description": "React+TS frontend for the otto monitor dashboard, built to src/otto/_webassets/monitor/dist/.",
   "type": "module",
   "scripts": {
     "dev": "vite",

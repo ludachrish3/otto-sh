@@ -25,12 +25,12 @@
 # it's checking is produced.
 #
 # Usage: scripts/check_brand_tokens.sh [dist-dir]  (default:
-# src/otto/monitor/static/dist; also run against
-# src/otto/coverage/renderer/static/covapp by the `web` Makefile target — see
+# src/otto/_webassets/monitor/dist; also run against
+# src/otto/_webassets/covapp by the `web` Makefile target — see
 # the CSS_FILES glob below for why one script covers both dist layouts)
 set -euo pipefail
 
-DIST="${1:-src/otto/monitor/static/dist}"
+DIST="${1:-src/otto/_webassets/monitor/dist}"
 
 if [ ! -d "$DIST" ]; then
     echo "check_brand_tokens: '$DIST' does not exist — run \`make web\` first." >&2

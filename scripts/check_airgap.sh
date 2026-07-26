@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Air-gap gate for the built React monitor dashboard (src/otto/monitor/static/dist/).
+# Air-gap gate for the built React monitor dashboard (src/otto/_webassets/monitor/dist/).
 # otto runs in air-gapped labs, so the dashboard must never depend on a
 # CDN/font/analytics fetch at runtime. This greps the built JS/CSS/HTML for any
 # absolute http(s) URL and fails if one shows up that isn't on the allowlist
 # below. Usage: scripts/check_airgap.sh [dist-dir]  (default:
-# src/otto/monitor/static/dist)
+# src/otto/_webassets/monitor/dist)
 #
 # Extraction uses `grep -o` (one match per line of output) rather than
 # whole-line filtering: vite/react bundle output packs many logically distinct
@@ -13,7 +13,7 @@
 # allowlisted one. Matching per-URL avoids that.
 set -euo pipefail
 
-DIST="${1:-src/otto/monitor/static/dist}"
+DIST="${1:-src/otto/_webassets/monitor/dist}"
 
 if [ ! -d "$DIST" ]; then
     echo "check_airgap: '$DIST' does not exist — run \`make web\` first." >&2
