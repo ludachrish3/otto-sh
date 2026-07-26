@@ -121,6 +121,35 @@ TIMEOUT_CMD := timeout --foreground --kill-after=10s $(PYTEST_TIMEOUT)
 JUNIT_DIR := reports/junit
 junitxml = --junitxml=$(JUNIT_DIR)/$(1)/$(1).xml
 
+# ═══ Recipe output convention ═══════════════════════════════════════════════
+#
+# Every recipe line is @-silenced, and each unit of work is announced by one
+# $(SAY) banner. What reaches the terminal is therefore the banner plus the
+# tool's OWN output — never make's echo of the shell plumbing behind it. The
+# rules, so new targets stay in step:
+#
+#   1. @-silence every recipe line. No exceptions: an echoed `rm -rf`, `cp`, or
+#      backslash-continued pytest invocation is noise the banner already covers.
+#   2. Announce each distinct unit of work with exactly one $(SAY). A target
+#      that runs two different tools (lint-ts = biome + knip) gets two; a target
+#      that runs one tool in several invocations (lint-python = ruff check +
+#      ruff format) gets one.
+#   3. Say what is about to happen and any detail that varies at runtime
+#      (browser set, worker count, iteration count, gate threshold) — those are
+#      exactly what the suppressed command line would otherwise have shown.
+#   4. Two kinds of line are NOT banners and stay plain: results/verdicts
+#      (`wheel-check: OK — ...`) and the end-of-release instructions. A banner
+#      is an action, and blurring that makes both harder to scan.
+#   5. Pure-delegation recipes (a lone `$(MAKE) foo`) get no banner — the child
+#      announces itself, and a second banner would just double every line.
+#      Likewise, prerequisite-only aggregators (`validate`, `check`, `docs`)
+#      have no recipe at all: a banner there would print AFTER the work it
+#      claims to introduce, which is worse than silence.
+#
+# The exact command a target runs stays one keystroke away: `make -n <target>`.
+# Colour matches what `make help` already emits.
+SAY := printf '\033[1;36m==>\033[0m %s\n'
+
 # ═══ Build & Release pipeline ═══════════════════════════════════════════════
 
 all: ## (Build & Release) Run full pipeline against the dev VM (includes integration tests)
@@ -135,7 +164,8 @@ ci: ## (Build & Release) Run pipeline without VM-dependent tests (used by GitHub
 
 changelog: export PATH := $(VENV_BIN):$(PATH)
 changelog: ## (Build & Release) Regenerate CHANGELOG.md from conventional commit history (Unreleased only — does not touch released sections)
-	git-cliff -o CHANGELOG.md
+	@$(SAY) "git-cliff → CHANGELOG.md (Unreleased)"
+	@git-cliff -o CHANGELOG.md
 
 # WARNING: `make -n release` is NOT side-effect-free — the recipe is one
 # backslash-continued line containing $(MAKE), so GNU make executes it under
@@ -154,9 +184,11 @@ release: ## (Build & Release) npm ci web/, Python static checks (check-python), 
 		&& $(MAKE) validate-ts \
 		&& $(MAKE) profile \
 		&& NEW_VERSION="$${NEW_VERSION:-$$(bump-my-version show new_version --increment $(BUMP))}" \
-		&& echo "Targeting v$$NEW_VERSION" \
+		&& $(SAY) "targeting v$$NEW_VERSION" \
+		&& $(SAY) "git-cliff → CHANGELOG.md (tagged v$$NEW_VERSION)" \
 		&& git-cliff --tag "v$$NEW_VERSION" -o CHANGELOG.md \
 		&& git add CHANGELOG.md \
+		&& $(SAY) "bump-my-version → v$$NEW_VERSION" \
 		&& bump-my-version bump --verbose --allow-dirty --new-version "$$NEW_VERSION" $(BUMP) \
 		&& $(MAKE) wheel-check \
 		&& $(MAKE) build \
@@ -171,22 +203,28 @@ release: ## (Build & Release) npm ci web/, Python static checks (check-python), 
 		&& echo "To rehearse first, dispatch release-testpypi.yml from the Actions tab."
 
 nox-unit: ## Run the unit suite across all supported Pythons (no VMs). Fastest safe test. Override iterations with COUNT=N (default 1); JUnit XML lands in reports/junit/nox-unit/.
-	uv run nox -s tests_unit -- --count=$(NOX_COUNT) --repeat-scope=session
+	@$(SAY) "nox: unit suite, all Pythons (x$(NOX_COUNT))"
+	@uv run nox -s tests_unit -- --count=$(NOX_COUNT) --repeat-scope=session
 
 nox-integration: ## Run the unit + integration level tiers across all supported Pythons. Requires the full lab. Override COUNT=N (default 1); JUnit XML lands in reports/junit/nox-integration/.
-	uv run nox -s tests_integration -- --count=$(NOX_COUNT) --repeat-scope=session
+	@$(SAY) "nox: unit + integration tiers, all Pythons (x$(NOX_COUNT))"
+	@uv run nox -s tests_integration -- --count=$(NOX_COUNT) --repeat-scope=session
 
 nox-unix: ## Run the Unix-VM integration suite (incl. multi-hop) across all supported Pythons. Requires dev VM with Vagrant hosts up. Override COUNT=N (default 1); JUnit XML in reports/junit/nox-unix/.
-	uv run nox -s tests_unix -- --count=$(NOX_COUNT) --repeat-scope=session
+	@$(SAY) "nox: Unix-VM suite, all Pythons (x$(NOX_COUNT))"
+	@uv run nox -s tests_unix -- --count=$(NOX_COUNT) --repeat-scope=session
 
 nox-embedded: ## Run the embedded (Zephyr) suite across all supported Pythons. Requires Vagrant lab up. Override COUNT=N (default 1); JUnit XML in reports/junit/nox-embedded/.
-	uv run nox -s tests_embedded -- --count=$(NOX_COUNT) --repeat-scope=session
+	@$(SAY) "nox: embedded/Zephyr suite, all Pythons (x$(NOX_COUNT))"
+	@uv run nox -s tests_embedded -- --count=$(NOX_COUNT) --repeat-scope=session
 
 nox-hostless: ## Run the no-testbed CI gate (tests/unit + no-VM e2e) across all supported Pythons. No VMs. Override COUNT=N (default 1); JUnit XML lands in reports/junit/nox-hostless/.
-	uv run nox -s tests_hostless -- --count=$(NOX_COUNT) --repeat-scope=session
+	@$(SAY) "nox: hostless CI gate, all Pythons (x$(NOX_COUNT))"
+	@uv run nox -s tests_hostless -- --count=$(NOX_COUNT) --repeat-scope=session
 
 nox-unit-repeat: ## Repeat the whole tests/unit tree twice in one process — the test-isolation leak guard (registry/tmp-import/module-identity) that also runs in CI. No VMs. JUnit XML lands in reports/junit/nox-unit-repeat/. (Count is fixed at 2; the check is pass/fail, not a soak.)
-	uv run nox -s tests_unit_repeat
+	@$(SAY) "nox: tests/unit twice in one process (isolation-leak guard)"
+	@uv run nox -s tests_unit_repeat
 
 # Interpreters for the tiered `nox` lane. PRIMARY (mirrors noxfile.py's
 # PRIMARY_PYTHON — hand-kept pair) is the floor: the oldest supported
@@ -215,10 +253,12 @@ NOX_CANARY := 3.14
 NOX_MIDDLE := 3.11 3.12 3.13
 
 nox: ## Run the full suite on the PRIMARY (3.10, floor) + CANARY (3.14, newest — version-specific warnings) Pythons, and the hostless CI-gate slice on the middle versions. Requires dev VM with Vagrant hosts up. Not used by CI. Full cross-version matrix: `make nox-full`. Override COUNT=N (default 1); JUnit XML in reports/junit/nox/ + reports/junit/nox-hostless/.
-	uv run nox -s tests_all-$(NOX_PRIMARY) tests_all-$(NOX_CANARY) $(foreach v,$(NOX_MIDDLE),tests_hostless-$(v)) -- --count=$(NOX_COUNT) --repeat-scope=session
+	@$(SAY) "nox: full suite on $(NOX_PRIMARY) + $(NOX_CANARY), hostless on $(NOX_MIDDLE) (x$(NOX_COUNT))"
+	@uv run nox -s tests_all-$(NOX_PRIMARY) tests_all-$(NOX_CANARY) $(foreach v,$(NOX_MIDDLE),tests_hostless-$(v)) -- --count=$(NOX_COUNT) --repeat-scope=session
 
 nox-full: ## Run the FULL test suite (all environments) across ALL supported Pythons — the pre-tiering `make nox` (~5× its wall-clock). Requires dev VM with Vagrant hosts up. Override COUNT=N (default 1); JUnit XML in reports/junit/nox/.
-	uv run nox -s tests_all -- --count=$(NOX_COUNT) --repeat-scope=session
+	@$(SAY) "nox: FULL matrix — every suite on every Python (x$(NOX_COUNT))"
+	@uv run nox -s tests_all -- --count=$(NOX_COUNT) --repeat-scope=session
 
 validate: validate-python validate-ts ## (Build & Release) Validate ALL code (Python + TS): sub-targets validate-python + validate-ts
 
@@ -231,27 +271,32 @@ validate-python: ## (Build & Release) Python validation (clean-dist, static chec
 validate-ts: check-ts coverage-ts ## (Build & Release) TypeScript validation: Biome+knip, tsc, merged coverage gate (unit floor runs inside it via test:coverage; CI's browserless slice is check-ts + coverage-ts-unit)
 
 clean-dist:
+	@$(SAY) "removing dist/"
 	@rm -rf dist
 
 # ═══ Dev environment ════════════════════════════════════════════════════════
 
 dev: ## (Dev) Set up the dev environment (uv sync, git hooks, hyperfine, Chromium, web/ deps)
-	uv sync
-	git config core.hooksPath .githooks
-	$(MAKE) hyperfine
-	$(MAKE) browsers
-	$(MAKE) web-install
-	@echo "Dev environment ready"
+	@$(SAY) "uv sync"
+	@uv sync
+	@$(SAY) "git hooks → .githooks"
+	@git config core.hooksPath .githooks
+	@$(MAKE) hyperfine
+	@$(MAKE) browsers
+	@$(MAKE) web-install
+	@$(SAY) "dev environment ready"
 
 hyperfine:
 	@if [ -x "$(VENV_BIN)/hyperfine" ] && "$(VENV_BIN)/hyperfine" --version | grep -qF "$(HYPERFINE_VERSION)"; then \
-		echo "hyperfine $(HYPERFINE_VERSION) already installed"; \
+		$(SAY) "hyperfine $(HYPERFINE_VERSION) already installed"; \
 	else \
+		$(SAY) "installing hyperfine $(HYPERFINE_VERSION)"; \
 		bash scripts/install_hyperfine.sh "$(HYPERFINE_VERSION)" "$(VENV_BIN)"; \
 	fi
 
 browsers: ## (Setup) Install the Playwright Chromium + Firefox + WebKit binaries: the dashboard e2e suite runs on all three engines, and the docs media pipeline uses Chromium. On a box missing a browser's system libs, run `uv run playwright install-deps <chromium|firefox|webkit>` once — the Vagrantfile's dev-root provisioner carries the exact apt package list + how to regenerate it.
-	uv run playwright install chromium firefox webkit
+	@$(SAY) "playwright install: chromium firefox webkit"
+	@uv run playwright install chromium firefox webkit
 
 # web/ (React+TS monitor dashboard) build lanes. `make web` produces the
 # dist/ that MonitorServer requires (see server.py's _dist_index_path()) —
@@ -261,15 +306,22 @@ browsers: ## (Setup) Install the Playwright Chromium + Firefox + WebKit binaries
 # left behind by a smoke build used to shadow the legacy dashboard.html —
 # that's why `make web-clean` exists, but it's no longer required after
 # every build.)
+# npm ci occasionally hits a transient registry ECONNRESET mid-download in CI
+# (issue #107) that npm's own fetch-retries don't catch. Retry ONLY on
+# network-class failures (up to 3 attempts, 5s/10s backoff); a deterministic
+# error such as a package.json/lockfile drift still fails fast on attempt 1.
+# The whole loop is @-silenced: echoing it is 11 lines of shell noise. npm's own
+# log is buffered and replayed IN FULL on failure (that's the diagnostic); on
+# success only its one-line tally is shown, so the routine case stays quiet.
 web-install: ## (Dev) Install web/'s npm dependencies from the committed lockfile (npm ci)
-	# npm ci occasionally hits a transient registry ECONNRESET mid-download in CI
-	# (issue #107) that npm's own fetch-retries don't catch. Retry ONLY on
-	# network-class failures (up to 3 attempts, 5s/10s backoff); a deterministic
-	# error such as a package.json/lockfile drift still fails fast on attempt 1.
-	cd web && n=1; while :; do \
+	@$(SAY) "npm ci (web/)"
+	@cd web && n=1 && while :; do \
 	  log=$$(mktemp); \
-	  npm ci >"$$log" 2>&1; rc=$$?; cat "$$log"; \
-	  if [ $$rc -eq 0 ]; then rm -f "$$log"; break; fi; \
+	  npm ci >"$$log" 2>&1; rc=$$?; \
+	  if [ $$rc -eq 0 ]; then \
+	    grep -E '^(added|removed|changed|up to date)' "$$log" || cat "$$log"; \
+	    rm -f "$$log"; break; fi; \
+	  cat "$$log" >&2; \
 	  if ! grep -qiE 'ECONNRESET|ETIMEDOUT|EAI_AGAIN|ENOTFOUND|ECONNREFUSED|socket hang up|npm (error|ERR!) network' "$$log"; then \
 	    rm -f "$$log"; echo "web-install: npm ci failed (exit $$rc), not a network error - failing fast" >&2; exit $$rc; fi; \
 	  rm -f "$$log"; \
@@ -289,30 +341,39 @@ web-install: ## (Dev) Install web/'s npm dependencies from the committed lockfil
 # nothing here and silently drop the dependency.)
 WEB_NODE_MODULES := web/node_modules/.package-lock.json
 
+# Pure delegation, so no banner of its own (rule 5) — and the recipe must stay
+# a lone `$(MAKE)` line: make runs `$(MAKE)` lines even under -n, and -n rides
+# through MAKEFLAGS so the child dry-runs too. Adding any non-$(MAKE) command
+# here (a $(SAY) included) would execute for real during `make -n`.
 $(WEB_NODE_MODULES): web/package.json web/package-lock.json
-	$(MAKE) web-install
+	@$(MAKE) web-install
 
 web: $(WEB_NODE_MODULES) ## (Build & Release) Build the web/ React dashboard + the covapp SPA (vite) into their static dist dirs, then gate both against absolute http(s) URLs (air-gap requirement — labs have no network access, see scripts/check_airgap.sh) and against a resolved-brand-color regression (scripts/check_brand_tokens.sh)
-	# Regenerate web/src/api/types.gen.ts and web/src/api/export.gen.ts from
-	# the live pydantic models and fail BEFORE the vite build if either
-	# committed file has drifted — a stale wire contract should be caught by
-	# its own diff, not surface later as a build or runtime type error with
-	# no clue which model changed.
-	scripts/gen_web_types.sh
-	git diff --exit-code web/src/api/types.gen.ts web/src/api/export.gen.ts
-	# build_web_no_warnings.sh = vite with warnings-as-errors: any "(!)"
-	# build warning (chunk budget overrun, rollup notices) fails the build
-	# instead of scrolling past. The chunk budget itself lives in
-	# web/vite.config.ts (chunkSizeWarningLimit) / web/vite.covapp.config.ts.
-	scripts/build_web_no_warnings.sh build
-	scripts/build_web_no_warnings.sh build:covapp
-	scripts/check_airgap.sh
-	scripts/check_airgap.sh src/otto/_webassets/covapp
-	scripts/check_brand_tokens.sh
-	scripts/check_brand_tokens.sh src/otto/_webassets/covapp
+# Regenerate web/src/api/types.gen.ts and web/src/api/export.gen.ts from
+# the live pydantic models and fail BEFORE the vite build if either
+# committed file has drifted — a stale wire contract should be caught by
+# its own diff, not surface later as a build or runtime type error with
+# no clue which model changed.
+	@$(SAY) "regenerating web/ API types from the live pydantic models"
+	@scripts/gen_web_types.sh
+	@git diff --exit-code web/src/api/types.gen.ts web/src/api/export.gen.ts
+# build_web_no_warnings.sh = vite with warnings-as-errors: any "(!)"
+# build warning (chunk budget overrun, rollup notices) fails the build
+# instead of scrolling past. The chunk budget itself lives in
+# web/vite.config.ts (chunkSizeWarningLimit) / web/vite.covapp.config.ts.
+	@$(SAY) "vite build: monitor dashboard (warnings are errors)"
+	@scripts/build_web_no_warnings.sh build
+	@$(SAY) "vite build: covapp (warnings are errors)"
+	@scripts/build_web_no_warnings.sh build:covapp
+	@$(SAY) "gating both bundles: air-gap + brand tokens"
+	@scripts/check_airgap.sh
+	@scripts/check_airgap.sh src/otto/_webassets/covapp
+	@scripts/check_brand_tokens.sh
+	@scripts/check_brand_tokens.sh src/otto/_webassets/covapp
 
 web-dev: $(WEB_NODE_MODULES) ## (Dev) Run the web/ Vite dev server with hot reload; proxies /api to a running otto monitor (default target http://127.0.0.1:8080, override with VITE_OTTO_TARGET=http://host:port)
-	cd web && npm run dev
+	@$(SAY) "vite dev server (web/) — proxying /api to $${VITE_OTTO_TARGET:-http://127.0.0.1:8080}"
+	@cd web && npm run dev
 
 # web/ quality lanes moved to the language-parity family (lint-ts /
 # typecheck-ts / coverage-ts-unit / test-ts) in the Quality section below —
@@ -320,11 +381,13 @@ web-dev: $(WEB_NODE_MODULES) ## (Dev) Run the web/ Vite dev server with hot relo
 # stay here: they are artifact/dev targets, not language-parity gates.
 
 test-ts: $(WEB_NODE_MODULES) ## (Dev) Run the web/ vitest suite once — no coverage, the fast TS loop. (Deliberately no test-python twin and no bare `test`: the fast Python lane is `coverage-unit`.)
-	cd web && npm run test
+	@$(SAY) "vitest (web/) — no coverage"
+	@cd web && npm run test
 
 web-clean: ## (Dev) Remove the built web/ dist outputs (monitor dashboard + covapp) from src/otto/_webassets/
-	rm -rf src/otto/_webassets/monitor
-	rm -rf src/otto/_webassets/covapp
+	@$(SAY) "removing built web/ dist (monitor + covapp)"
+	@rm -rf src/otto/_webassets/monitor
+	@rm -rf src/otto/_webassets/covapp
 
 # uv_build embeds the ENTIRE module tree (src/otto/**) into both the sdist and
 # the wheel by default — unlike hatchling, it is not VCS-aware, so it doesn't
@@ -343,6 +406,7 @@ web-clean: ## (Dev) Remove the built web/ dist outputs (monitor dashboard + cova
 # is violated).
 # NOTE: prerequisites assume serial execution; do not run wheel-check under make -j.
 wheel-check: clean-dist web build ## (Build & Release) Rebuild the dashboard + wheel and assert the wheel embeds both src/otto/_webassets/{monitor/dist,covapp}/ artifacts (air-gap requirement)
+	@$(SAY) "asserting dist/*.whl embeds the web assets"
 	@for entry in monitor/dist/index.html covapp/index.html; do \
 		dir="otto/_webassets/$${entry%%/*}/"; \
 		count=$$(unzip -l dist/*.whl | grep -c "$$dir" || true); \
@@ -356,7 +420,7 @@ wheel-check: clean-dist web build ## (Build & Release) Rebuild the dashboard + w
 		fi; \
 		echo "wheel-check: OK — $$count $$dir entries embedded (incl. $${entry#*/})."; \
 	done
-	scripts/check_airgap.sh
+	@scripts/check_airgap.sh
 	@if unzip -l dist/*.whl | grep -q '\.map$$'; then \
 		echo "wheel-check: FAIL — sourcemap (*.map) files embedded in the wheel; the wheel-exclude in pyproject.toml [tool.uv.build-backend] should strip them." >&2; \
 		exit 1; \
@@ -364,14 +428,18 @@ wheel-check: clean-dist web build ## (Build & Release) Rebuild the dashboard + w
 	echo "wheel-check: OK — no *.map files in the wheel."
 
 docs-media: ## (Docs) Force-regenerate the build-time GUI media (screenshots, clips, termynal blocks) in docs/_static/generated/
-	uv run python scripts/capture_docs_media.py --mode force
-	uv run python scripts/capture_docs_termynal.py --mode force
+	@$(SAY) "capturing docs GUI media (screenshots + clips)"
+	@uv run python scripts/capture_docs_media.py --mode force
+	@$(SAY) "capturing docs termynal blocks"
+	@uv run python scripts/capture_docs_termynal.py --mode force
 
 profile: hyperfine ## (Dev) Enforce the import budget (module-count caps + snapshots + denylist) + hyperfine wall-clock
-	uv run python scripts/import_budget.py --check --hyperfine
+	@$(SAY) "import budget (module caps + snapshots + denylist) + hyperfine"
+	@uv run python scripts/import_budget.py --check --hyperfine
 
 build: ## (Build & Release) Build the project with uv
-	uv build
+	@$(SAY) "uv build → dist/"
+	@uv build
 
 # ═══ Test & Coverage (Python tiers + TS legs) ═══════════════════════════════
 
@@ -429,24 +497,30 @@ build: ## (Build & Release) Build the project with uv
 # for real even under `make -n`, so a dry run against a checkout with no dist
 # yet will actually build it.
 coverage-python: dashboard ## Run the full Python suite (all tiers, pinned Python) and enforce the 95 gate; the browser (Playwright) suite runs first as its own process via the `dashboard` prerequisite — its coverage data is folded in via --cov-append. Requires lab VMs (+ `make browsers` once). JUnit XML lands in reports/junit/coverage-python/.
-	$(TIMEOUT_CMD) uv run pytest -m "not stability and not browser" --cov-append --cov-fail-under=$(COVERAGE_THRESHOLD) $(call junitxml,coverage-python)
+	@$(SAY) "pytest: all tiers, pinned Python (gate: $(COVERAGE_THRESHOLD)%, browser lane folded in)"
+	@$(TIMEOUT_CMD) uv run pytest -m "not stability and not browser" --cov-append --cov-fail-under=$(COVERAGE_THRESHOLD) $(call junitxml,coverage-python)
 
 coverage: coverage-python coverage-ts ## Run BOTH language coverage gates: coverage-python (full pytest, 95 floor) + coverage-ts (merged vitest+e2e floor). The dashboard browser lane runs exactly once — coverage-python triggers it, and coverage-ts's artifact stamp sees it fresh.
 
 coverage-unit: ## Run the unit level tier (tests/unit only; no testbed) with a coverage report (no gate — one tier can't meet the whole-repo floor). JUnit XML lands in reports/junit/coverage-unit/.
-	$(TIMEOUT_CMD) uv run pytest tests/unit -m "not stability" $(call junitxml,coverage-unit)
+	@$(SAY) "pytest: tests/unit (no gate)"
+	@$(TIMEOUT_CMD) uv run pytest tests/unit -m "not stability" $(call junitxml,coverage-unit)
 
 coverage-integration: ## Run the unit + integration level tiers (tests/unit + tests/integration) with a coverage report (no gate). Requires the full lab. JUnit XML in reports/junit/coverage-integration/.
-	$(TIMEOUT_CMD) uv run pytest tests/unit tests/integration -m "not stability" $(call junitxml,coverage-integration)
+	@$(SAY) "pytest: tests/unit + tests/integration (no gate)"
+	@$(TIMEOUT_CMD) uv run pytest tests/unit tests/integration -m "not stability" $(call junitxml,coverage-integration)
 
 coverage-hostless: ## Run the no-testbed CI gate suite (tests/unit + no-VM e2e) and enforce the CI coverage gate. No VMs. JUnit XML lands in reports/junit/coverage-hostless/.
-	$(TIMEOUT_CMD) uv run pytest tests/unit tests/e2e -m "$(M_HOSTLESS)" --cov-fail-under=$(CI_COVERAGE_THRESHOLD) $(call junitxml,coverage-hostless)
+	@$(SAY) "pytest: hostless CI slice, no VMs (gate: $(CI_COVERAGE_THRESHOLD)%)"
+	@$(TIMEOUT_CMD) uv run pytest tests/unit tests/e2e -m "$(M_HOSTLESS)" --cov-fail-under=$(CI_COVERAGE_THRESHOLD) $(call junitxml,coverage-hostless)
 
 coverage-unix: ## Run the Unix-VM resource slice (incl. multi-hop) with a coverage report (no gate). Requires lab VMs. JUnit XML in reports/junit/coverage-unix/.
-	$(TIMEOUT_CMD) uv run pytest -m "$(M_UNIX)" $(call junitxml,coverage-unix)
+	@$(SAY) "pytest: Unix-VM slice, incl. multi-hop (no gate)"
+	@$(TIMEOUT_CMD) uv run pytest -m "$(M_UNIX)" $(call junitxml,coverage-unix)
 
 coverage-embedded: ## Run the embedded (Zephyr) resource slice with a coverage report (no gate). Requires Vagrant lab up. JUnit XML in reports/junit/coverage-embedded/.
-	$(TIMEOUT_CMD) uv run pytest -m "$(M_EMBEDDED)" $(call junitxml,coverage-embedded)
+	@$(SAY) "pytest: embedded/Zephyr slice (no gate)"
+	@$(TIMEOUT_CMD) uv run pytest -m "$(M_EMBEDDED)" $(call junitxml,coverage-embedded)
 
 DASHBOARD_BROWSERS ?= chromium
 # Browser-lane worker count. The suites are parallel-safe by construction
@@ -480,7 +554,7 @@ WEB_SRCS := $(shell find web/src -type f) \
             web/package-lock.json
 
 $(DASHBOARD_DIST) $(COVAPP_DIST) &: $(WEB_SRCS) $(WEB_NODE_MODULES)
-	$(MAKE) web
+	@$(MAKE) web
 
 # Merged-TS-coverage inputs. The browser lane (dashboard) dumps raw Chromium
 # V8 coverage (tests/_fixtures/_ts_coverage.py); its recipe touches the raw
@@ -509,10 +583,11 @@ BROWSER_TEST_SRCS := $(shell find tests/e2e/monitor/dashboard tests/e2e/cov/repo
                      tests/_fixtures/_report_fixture.py
 
 $(TS_E2E_RAW_STAMP): $(WEB_SRCS) $(BROWSER_TEST_SRCS)
-	$(MAKE) dashboard
+	@$(MAKE) dashboard
 
 $(TS_E2E_COV): $(TS_E2E_RAW_STAMP) $(WEB_NODE_MODULES) web/scripts/e2e_coverage_report.mjs
-	cd web && npm run e2e:coverage-report
+	@$(SAY) "merging raw V8 browser coverage → istanbul"
+	@cd web && npm run e2e:coverage-report
 
 # The `-m "browser and not soak"` below MUST match noxfile.py's
 # DASHBOARD_MARKER_EXPR (the `dashboard` session's marker, which is what
@@ -523,17 +598,18 @@ $(TS_E2E_COV): $(TS_E2E_RAW_STAMP) $(WEB_NODE_MODULES) web/scripts/e2e_coverage_
 # one) that makes keeping them in step worth a standing comment. If this
 # expression changes, change noxfile.py's too.
 dashboard: $(DASHBOARD_DIST) $(COVAPP_DIST) ## Run the browser e2e suites (monitor dashboard + coverage report) on DASHBOARD_BROWSERS (default: chromium — feeds `coverage`). Full matrix: `make dashboard-all`. Needs `make browsers` once; (re)builds web/'s dist bundles when missing or older than web/src/ (see `make web`). Excludes `soak` (see `dashboard-soak`) — minutes of pushing, not a per-task gate.
+	@$(SAY) "playwright e2e: $(DASHBOARD_BROWSERS) — $(BROWSER_WORKERS) worker(s)"
 	@rm -rf reports/ts-e2e-cov/raw
 # OTTO_TS_COVERAGE arms the browser suites' CDP V8-coverage collection
 # (tests/_fixtures/_ts_coverage.py). Only make sets it, so ad-hoc or `nox`
 # runs of these suites don't append raw dumps outside this recipe's rm+stamp
 # protocol — which would let `make coverage-ts` merge in a browser run make
 # never scheduled.
-	$(BROWSER_SHARD_ENV) OTTO_TS_COVERAGE=1 $(TIMEOUT_CMD) uv run pytest tests/e2e/monitor/dashboard tests/e2e/cov/report_browser -m "browser and not soak" $(foreach b,$(DASHBOARD_BROWSERS),--browser $(b)) -n $(BROWSER_WORKERS) --cov-report= --screenshot only-on-failure --output reports/playwright $(call junitxml,dashboard)
+	@$(BROWSER_SHARD_ENV) OTTO_TS_COVERAGE=1 $(TIMEOUT_CMD) uv run pytest tests/e2e/monitor/dashboard tests/e2e/cov/report_browser -m "browser and not soak" $(foreach b,$(DASHBOARD_BROWSERS),--browser $(b)) -n $(BROWSER_WORKERS) --cov-report= --screenshot only-on-failure --output reports/playwright $(call junitxml,dashboard)
 	@mkdir -p reports/ts-e2e-cov/raw && touch $(TS_E2E_RAW_STAMP)
 
 dashboard-all: ## Run the dashboard e2e on ALL engines (Chromium + Firefox + WebKit); invoked by `make release`. Needs `make browsers` once.
-	$(MAKE) dashboard DASHBOARD_BROWSERS="chromium firefox webkit"
+	@$(MAKE) dashboard DASHBOARD_BROWSERS="chromium firefox webkit"
 
 # --browser chromium is intentionally hardcoded, not DASHBOARD_BROWSERS:
 # measured directly, the soak passes on Chromium in ~15s but WebKit's main
@@ -543,7 +619,8 @@ dashboard-all: ## Run the dashboard e2e on ALL engines (Chromium + Firefox + Web
 # on any non-chromium `browser_name`, so this flag is belt-and-suspenders,
 # not the only guard.
 dashboard-soak: $(DASHBOARD_DIST) ## Run the dashboard replay soak (Tier-3, `soak`-marked; NOT part of `make dashboard`/`make coverage`) — drives FakeCollector at max rate in-process, no VM. Chromium only (see comment above). JUnit XML lands in reports/junit/dashboard-soak/.
-	$(TIMEOUT_CMD) uv run pytest tests/e2e/monitor/dashboard/test_replay_soak.py -m "browser and soak" --browser chromium -n 1 --no-cov --screenshot only-on-failure --output reports/playwright $(call junitxml,dashboard-soak)
+	@$(SAY) "playwright soak: SSE replay (chromium, serial, no coverage)"
+	@$(TIMEOUT_CMD) uv run pytest tests/e2e/monitor/dashboard/test_replay_soak.py -m "browser and soak" --browser chromium -n 1 --no-cov --screenshot only-on-failure --output reports/playwright $(call junitxml,dashboard-soak)
 
 # Soak/stability + repeat targets disable coverage (--no-cov, overriding the
 # --cov in pytest addopts). Per-test `--cov-context=test` tracing adds overhead
@@ -551,7 +628,8 @@ dashboard-soak: $(DASHBOARD_DIST) ## Run the dashboard replay soak (Tier-3, `soa
 # xdist, helps push tight per-test timeouts over their wall-clock budget. These
 # runs exist to flush flakes, not to measure coverage — that's `make coverage`.
 stability-unit: ## Run no-VM SessionManager concurrency/soak tests by marker. JUnit XML lands in reports/junit/stability-unit/. Override iterations with COUNT=N (default 50).
-	OTTO_DETECT_ASYNCIO_LEAKS=1 uv run pytest \
+	@$(SAY) "pytest soak: concurrency marker, no VMs (x$(STABILITY_UNIT_COUNT), leak detector on)"
+	@OTTO_DETECT_ASYNCIO_LEAKS=1 uv run pytest \
 	    -m concurrency \
 	    --count=$(STABILITY_UNIT_COUNT) \
 	    -p no:cacheprovider \
@@ -559,7 +637,8 @@ stability-unit: ## Run no-VM SessionManager concurrency/soak tests by marker. JU
 	    $(call junitxml,stability-unit)
 
 stability-unix: ## Real telnet/SSH soak against the Unix Vagrant VMs (incl. multi-hop). Requires lab VMs. JUnit XML in reports/junit/stability-unix/. Override iterations with COUNT=N (default 10).
-	OTTO_DETECT_ASYNCIO_LEAKS=1 uv run pytest \
+	@$(SAY) "pytest soak: real telnet/SSH on the Unix VMs (x$(STABILITY_UNIX_COUNT), leak detector on)"
+	@OTTO_DETECT_ASYNCIO_LEAKS=1 uv run pytest \
 	    -m "stability and integration and not embedded and not hops" \
 	    --count=$(STABILITY_UNIX_COUNT) \
 	    -p no:cacheprovider \
@@ -567,7 +646,8 @@ stability-unix: ## Real telnet/SSH soak against the Unix Vagrant VMs (incl. mult
 	    $(call junitxml,stability-unix)
 
 stability-tunnel: ## Tunnel soak against the live bed (churn/concurrency/traffic/adversity/health/monitor-loop). Requires lab VMs. JUnit XML in reports/junit/stability-tunnel/. COUNT=N repeats the suite (default 1); CYCLES=N sets internal loop depth (default 5).
-	OTTO_DETECT_ASYNCIO_LEAKS=1 OTTO_TUNNEL_SOAK_CYCLES=$(STABILITY_TUNNEL_CYCLES) uv run pytest \
+	@$(SAY) "pytest soak: tunnels on the live bed (x$(STABILITY_TUNNEL_COUNT), $(STABILITY_TUNNEL_CYCLES) cycles/test)"
+	@OTTO_DETECT_ASYNCIO_LEAKS=1 OTTO_TUNNEL_SOAK_CYCLES=$(STABILITY_TUNNEL_CYCLES) uv run pytest \
 	    tests/e2e/tunnel_stability \
 	    -m "stability and hops" \
 	    --count=$(STABILITY_TUNNEL_COUNT) \
@@ -576,7 +656,8 @@ stability-tunnel: ## Tunnel soak against the live bed (churn/concurrency/traffic
 	    $(call junitxml,stability-tunnel)
 
 stability-embedded: ## Cross-OS stability contract against real telnet/SSH targets (Zephyr). Requires Vagrant lab up. JUnit XML lands in reports/junit/stability-embedded/. Override iterations with COUNT=N (default 1).
-	OTTO_DETECT_ASYNCIO_LEAKS=1 uv run pytest \
+	@$(SAY) "pytest soak: cross-OS contract incl. Zephyr (x$(STABILITY_EMBEDDED_COUNT), leak detector on)"
+	@OTTO_DETECT_ASYNCIO_LEAKS=1 uv run pytest \
 	    -m "stability and embedded" \
 	    -p no:cacheprovider \
 	    --no-cov \
@@ -584,10 +665,10 @@ stability-embedded: ## Cross-OS stability contract against real telnet/SSH targe
 	    $(call junitxml,stability-embedded)
 
 stability: ## Run the full stability/soak suite: no-VM concurrency, then real telnet/SSH (Unix + embedded). Runs all tiers even if an earlier one is RED. Requires lab VMs for tiers 2-3. Override iterations with COUNT=N.
-	@echo "── Tier 1 (unit-level concurrency) ──"
+	@$(SAY) "Tier 1 — unit-level concurrency"
 	-@$(MAKE) stability-unit COUNT=$(COUNT)
 	@echo
-	@echo "── Tier 2 (real telnet/SSH) ──"
+	@$(SAY) "Tier 2 — real telnet/SSH"
 	@if command -v jq >/dev/null 2>&1; then \
 	    reachable=0; total=0; \
 	    for ip in $$(jq -r '.hosts[].ip' tests/_fixtures/lab_data/tech1/lab.json); do \
@@ -606,14 +687,15 @@ stability: ## Run the full stability/soak suite: no-VM concurrency, then real te
 	fi
 	@$(MAKE) stability-unix COUNT=$(COUNT)
 	@echo
-	@echo "── Tier 2b (tunnel soak) ──"
+	@$(SAY) "Tier 2b — tunnel soak"
 	@$(MAKE) stability-tunnel $(if $(filter command line,$(origin COUNT)),COUNT=$(COUNT)) $(if $(filter command line,$(origin CYCLES)),CYCLES=$(CYCLES))
 	@echo
-	@echo "── Tier 3 (cross-OS stability contract — includes embedded) ──"
+	@$(SAY) "Tier 3 — cross-OS stability contract (includes embedded)"
 	@$(MAKE) stability-embedded COUNT=$(COUNT)
 
 repeat: ## Run the full local suite (unit + integration + e2e) under pytest-repeat (excludes `browser` — see note above M_HOSTLESS; run its soak separately). Local only; requires VMs. JUnit XML in reports/junit/repeat/. Override COUNT=N (default 10).
-	OTTO_DETECT_ASYNCIO_LEAKS=1 uv run pytest \
+	@$(SAY) "pytest soak: full local suite, no browser (x$(COUNT), leak detector on)"
+	@OTTO_DETECT_ASYNCIO_LEAKS=1 uv run pytest \
 	    -m "not browser" \
 	    --count=$(COUNT) \
 	    -p no:cacheprovider \
@@ -623,18 +705,21 @@ repeat: ## Run the full local suite (unit + integration + e2e) under pytest-repe
 # ═══ Lab ════════════════════════════════════════════════════════════════════
 
 vm-health: ## (Lab) Probe every lab VM + Zephyr QEMU instance; prints per-host timestamps + clock drift. Requires the Vagrant lab up.
-	uv run python scripts/lab_health.py
+	@$(SAY) "probing lab VMs + Zephyr QEMU (timestamps + clock drift)"
+	@uv run python scripts/lab_health.py
 
 qemu-restart: ## (Lab) Restart the Zephyr QEMU + SNMP-relay units on the hop VM(s), then health-check. Use to recover a wedged embedded bed.
-	uv run python scripts/lab_health.py --restart-qemu
+	@$(SAY) "restarting Zephyr QEMU + SNMP relay, then health-checking"
+	@uv run python scripts/lab_health.py --restart-qemu
 
 # ═══ Quality: static analysis + autofix ═════════════════════════════════════
 
 lint: lint-python lint-ts ## (Quality) Lint ALL code (Python + TS): sub-targets lint-python + lint-ts
 
 lint-python: ## (Quality) Run ruff lint + format checks (part of check-python)
-	uv run ruff check .
-	uv run ruff format --check .
+	@$(SAY) "ruff: lint + format check"
+	@uv run ruff check .
+	@uv run ruff format --check .
 
 # `biome check` = lint rules + formatting + ASSIST actions (organize-imports).
 # `biome lint` + `biome format` together are STRICTLY WEAKER: neither reports
@@ -647,8 +732,10 @@ lint-python: ## (Quality) Run ruff lint + format checks (part of check-python)
 # web/knip.json (vendored Untitled UI source + generated wire types excluded,
 # mirroring biome.json's files.includes).
 lint-ts: $(WEB_NODE_MODULES) ## (Quality) Lint web/: the authoritative Biome gate (rules + format + assists) + knip (unused exports/files/deps)
-	cd web && npm run check
-	cd web && npm run knip
+	@$(SAY) "biome check (web/): rules + format + assists"
+	@cd web && npm run check
+	@$(SAY) "knip (web/): unused exports, files, deps"
+	@cd web && npm run knip
 
 format: format-python format-ts ## (Quality) Apply ALL safe autofixes (Python + TS): sub-targets format-python + format-ts
 
@@ -658,19 +745,23 @@ format: format-python format-ts ## (Quality) Apply ALL safe autofixes (Python + 
 # TS leg runs `biome check --write` (biome format alone cannot apply assist
 # actions like organize-imports, which lint-ts gates).
 format-python: ## (Quality) Apply ruff safe lint autofixes + autoformat
-	uv run ruff check --fix .
-	uv run ruff format .
+	@$(SAY) "ruff: safe lint autofixes + format"
+	@uv run ruff check --fix .
+	@uv run ruff format .
 
 format-ts: $(WEB_NODE_MODULES) ## (Quality) Apply Biome fixes to web/: rules + format + assists (`biome check --write`)
-	cd web && npm run check:fix
+	@$(SAY) "biome check --write (web/): rules + format + assists"
+	@cd web && npm run check:fix
 
 typecheck: typecheck-python typecheck-ts ## (Quality) Type-check ALL code (Python + TS): sub-targets typecheck-python + typecheck-ts
 
 typecheck-python: ## (Quality) Run ty type checker
-	uv run ty check
+	@$(SAY) "ty check"
+	@uv run ty check
 
 typecheck-ts: $(WEB_NODE_MODULES) ## (Quality) Type-check web/ with tsc --noEmit (no build)
-	cd web && npm run typecheck
+	@$(SAY) "tsc --noEmit (web/)"
+	@cd web && npm run typecheck
 
 check: check-python check-ts ## (Quality) ALL static analysis (Python + TS): sub-targets check-python + check-ts
 
@@ -679,7 +770,8 @@ check-python: lint-python typecheck-python ## (Quality) All Python static analys
 check-ts: lint-ts typecheck-ts ## (Quality) All TS static analysis: Biome + knip (lint-ts) + tsc
 
 coverage-ts-unit: $(WEB_NODE_MODULES) ## (Quality) Run the web/ vitest suite with v8 coverage and enforce the UNIT-tier floor (the TS analogue of coverage-hostless's reduced CI gate; the full merged gate is coverage-ts)
-	cd web && npm run test:coverage
+	@$(SAY) "vitest coverage (web/) — unit-tier floor"
+	@cd web && npm run test:coverage
 
 # The FULL TS coverage gate: vitest (unit) + the Playwright e2e leg, merged
 # into ONE istanbul report and gated at the merged floor. The vitest-only
@@ -687,20 +779,25 @@ coverage-ts-unit: $(WEB_NODE_MODULES) ## (Quality) Run the web/ vitest suite wit
 # browserless tier CI runs — the exact analogue of coverage-hostless's 90 vs
 # the full gate's 95 on the Python side.
 coverage-ts: $(TS_E2E_COV) ## (Quality) Merged TS coverage gate: vitest + browser-e2e legs, one report, one floor (see also coverage-ts-unit)
-	cd web && npm run test:coverage
-	rm -rf reports/ts-cov/final && mkdir -p reports/ts-cov/final
-	cp web/coverage/coverage-final.json reports/ts-cov/final/vitest.json
-	cp $(TS_E2E_COV) reports/ts-cov/final/e2e.json
-	cd web && npm run coverage:merged
+	@$(SAY) "vitest coverage (web/) — unit leg"
+	@cd web && npm run test:coverage
+	@$(SAY) "merging vitest + browser-e2e coverage — merged floor"
+	@rm -rf reports/ts-cov/final && mkdir -p reports/ts-cov/final
+	@cp web/coverage/coverage-final.json reports/ts-cov/final/vitest.json
+	@cp $(TS_E2E_COV) reports/ts-cov/final/e2e.json
+	@cd web && npm run coverage:merged
 
 schema: ## (Dev) Generate JSON Schema for lab.json / settings.toml / reservations into schemas/ (git-ignored; for editor autocomplete)
-	uv run otto schema export --out schemas
+	@$(SAY) "exporting JSON Schema → schemas/"
+	@uv run otto schema export --out schemas
 
 monitor-fixtures: ## (Dev) Regenerate the committed monitor dummy-data fixtures in web/fixtures/ (spec 2026-07-10)
-	uv run python scripts/gen_monitor_fixtures.py web/fixtures
+	@$(SAY) "regenerating monitor fixtures → web/fixtures/"
+	@uv run python scripts/gen_monitor_fixtures.py web/fixtures
 
 import-snapshot: ## (Dev) Regenerate import-budget golden snapshots + print per-surface counts (run after an intentional import change, then review the diff and update caps)
-	uv run python scripts/import_budget.py --update
+	@$(SAY) "updating import-budget golden snapshots"
+	@uv run python scripts/import_budget.py --update
 
 # ═══ Docs ═══════════════════════════════════════════════════════════════════
 
@@ -712,20 +809,22 @@ SPHINX_SRCS :=  docs/conf.py                        \
 docs: docs-lint docs-html doctest doctest-src ## (Docs) Build HTML docs + Sphinx & src doctests (sub-targets: docs-lint, docs-html, doctest, doctest-src, docs-inventories)
 
 docs-lint:
-	uv run doc8 docs/
-	uv run python scripts/lint_markdown_doctests.py docs/
+	@$(SAY) "doc8 + markdown-doctest lint (docs/)"
+	@uv run doc8 docs/
+	@uv run python scripts/lint_markdown_doctests.py docs/
 
 docs-html: docs/_build/html/index.html
 
 docs-inventories:
-	mkdir -p docs/_inventories
-	curl -sSL --retry 3 -o docs/_inventories/python.inv     https://docs.python.org/3/objects.inv
-	curl -sSL --retry 3 -o docs/_inventories/typer.inv      https://typer.tiangolo.com/objects.inv
-	curl -sSL --retry 3 -o docs/_inventories/rich.inv       https://rich.readthedocs.io/en/stable/objects.inv
-	curl -sSL --retry 3 -o docs/_inventories/pydantic.inv   https://docs.pydantic.dev/latest/objects.inv
-	curl -sSL --retry 3 -o docs/_inventories/asyncssh.inv   https://asyncssh.readthedocs.io/en/stable/objects.inv
-	curl -sSL --retry 3 -o docs/_inventories/pytest.inv     https://docs.pytest.org/en/stable/objects.inv
-	curl -sSL --retry 3 -o docs/_inventories/telnetlib3.inv https://telnetlib3.readthedocs.io/en/latest/objects.inv
+	@$(SAY) "fetching intersphinx inventories → docs/_inventories/"
+	@mkdir -p docs/_inventories
+	@curl -sSL --retry 3 -o docs/_inventories/python.inv     https://docs.python.org/3/objects.inv
+	@curl -sSL --retry 3 -o docs/_inventories/typer.inv      https://typer.tiangolo.com/objects.inv
+	@curl -sSL --retry 3 -o docs/_inventories/rich.inv       https://rich.readthedocs.io/en/stable/objects.inv
+	@curl -sSL --retry 3 -o docs/_inventories/pydantic.inv   https://docs.pydantic.dev/latest/objects.inv
+	@curl -sSL --retry 3 -o docs/_inventories/asyncssh.inv   https://asyncssh.readthedocs.io/en/stable/objects.inv
+	@curl -sSL --retry 3 -o docs/_inventories/pytest.inv     https://docs.pytest.org/en/stable/objects.inv
+	@curl -sSL --retry 3 -o docs/_inventories/telnetlib3.inv https://telnetlib3.readthedocs.io/en/latest/objects.inv
 
 # -E (fresh env, no stale doctrees) + -a (write all) make a local build match
 # CI's clean build, so incremental state can't mask or invent a warning.
@@ -736,13 +835,16 @@ docs-inventories:
 # the built dist, so without these the docs build happily photographs whatever
 # stale bundle is lying around — or, on a fresh worktree, none at all.
 docs/_build/html/index.html: $(SPHINX_SRCS) $(DASHBOARD_DIST) $(COVAPP_DIST)
-	uv run sphinx-build -E -a -W -b html docs/ docs/_build/html
+	@$(SAY) "sphinx-build html (clean rebuild, warnings are errors)"
+	@uv run sphinx-build -E -a -W -b html docs/ docs/_build/html
 
 doctest:
-	uv run sphinx-build -E -b doctest docs/ docs/_build/doctest
+	@$(SAY) "sphinx-build doctest"
+	@uv run sphinx-build -E -b doctest docs/ docs/_build/doctest
 
 doctest-src:
-	uv run pytest -p no:cacheprovider -o addopts="--doctest-modules" src/otto
+	@$(SAY) "pytest --doctest-modules src/otto"
+	@uv run pytest -p no:cacheprovider -o addopts="--doctest-modules" src/otto
 
 # web-clean is a prerequisite because the built frontend IS a generated
 # artifact, and omitting it made this target quietly dishonest: a `make clean`
@@ -753,16 +855,17 @@ doctest-src:
 # them. docs/_static/generated/ is the media capture's own output and is
 # stamp-managed (it regenerates when its inputs move), so it stays.
 clean: web-clean ## (Dev) Remove all generated artifacts
+	@$(SAY) "removing dist/ reports/ docs/_build/"
 	@rm -rf dist
 	@rm -rf reports
 	@rm -rf docs/_build
-	@# Reset the embedded-gcov submodule(s) to pristine. This discards the
-	@# gcc-12+ patch that product/build.sh applies; that patch is tracked
-	@# (tests/repo3/third_party/patches/) and re-applied idempotently on the
-	@# next build, so resetting here keeps the submodule from drifting between
-	@# builds (a stale patch/build is what desyncs .gcno and trips gcov's
-	@# "stamp mismatch").
-	@git submodule foreach --recursive 'git reset --hard && git clean -fdx'
+# Reset the embedded-gcov submodule(s) to pristine. This discards the gcc-12+
+# patch that product/build.sh applies; that patch is tracked
+# (tests/repo3/third_party/patches/) and re-applied idempotently on the next
+# build, so resetting here keeps the submodule from drifting between builds (a
+# stale patch/build is what desyncs .gcno and trips gcov's "stamp mismatch").
+	@$(SAY) "resetting submodules to pristine"
+	@git submodule foreach --recursive 'git reset --hard && git clean -fdx' >/dev/null
 
 help: ## Show this help message
 	@printf '\n\033[1mTesting\033[0m  (COUNT=N overrides iterations; omit the suffix to run all tiers)\n'

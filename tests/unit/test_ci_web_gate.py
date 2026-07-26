@@ -61,8 +61,12 @@ def test_check_ts_chain_reaches_biome_check() -> None:
 
 
 def test_coverage_ts_unit_runs_the_vitest_floor() -> None:
-    cov = re.search(r"^coverage-ts-unit:.*\n\t(.+)$", _MAKEFILE, re.MULTILINE)
+    # Spans the WHOLE recipe (like test_check_ts_chain_reaches_biome_check
+    # above), not just its first line: every Makefile recipe now opens with a
+    # $(SAY) banner, so a first-line-only match would read the banner and miss
+    # the command it is announcing.
+    cov = re.search(r"^coverage-ts-unit:.*(?:\n\t.+)+", _MAKEFILE, re.MULTILINE)
     assert cov, "no `coverage-ts-unit` target in the Makefile"
-    assert "npm run test:coverage" in cov.group(1), (
+    assert "npm run test:coverage" in cov.group(0), (
         "`coverage-ts-unit` must enforce the vitest unit-tier coverage floor"
     )
