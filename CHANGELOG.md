@@ -5,6 +5,51 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-07-26
+
+### Added
+
+- delete the Jinja render lane, rename --report to --dir, expand coverage docs
+- coverage SPA report — covapp replaces the Jinja renderer output
+- coverage store v4 — run host identity, thresholds, stats vocabulary, ticket slot
+- manual-coverage validity engine — rename-following anchors, O(1) git batching, supersede
+- dependency-status panel subtitle, graph pins, root sys.path guard
+- inter-project dependency management for OTTO_SUT_DIRS repos
+
+
+### Changed
+
+- replace asyncio leak detector heap scan with creation-time registry
+
+
+### Dependencies
+
+- bump react-dom to 19.2.8 alongside react
+- bump react from 19.2.7 to 19.2.8 in /web
+- bump ty from 0.0.61 to 0.0.63
+- bump ruff from 0.15.22 to 0.16.0
+- bump actions/checkout from 7.0.0 to 7.0.1
+- bump hypothesis from 6.157.0 to 6.161.2
+- bump @biomejs/biome from 2.5.4 to 2.5.5 in /web
+- bump @vitejs/plugin-react from 6.0.3 to 6.0.4 in /web
+- bump knip from 6.27.0 to 6.29.0 in /web
+- bump sse-starlette from 3.4.5 to 3.4.6
+- bump fastapi from 0.139.2 to 0.140.0
+- bump astral-sh/setup-uv from 8.3.2 to 9.0.0
+
+
+### Fixed
+
+- webassets consolidation + hermetic unit lane (#175)
+- normalise unknown lab.json section keys to str before sorting
+- satisfy ruff 0.16.0 — parenthesize implicit concat, keyword-only wide signatures
+
+
+### Maintenance
+
+- update Opus version to 5
+
+
 ## [0.7.4] - 2026-07-23
 
 ### Added
@@ -987,7 +1032,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - added GitHub templates
 - set up release management
 
-[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.7.4...HEAD
+[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/ludachrish3/otto-sh/compare/v0.7.4...v0.8.0
 [0.7.4]: https://github.com/ludachrish3/otto-sh/compare/v0.7.3...v0.7.4
 [0.7.3]: https://github.com/ludachrish3/otto-sh/compare/v0.7.2...v0.7.3
 [0.7.2]: https://github.com/ludachrish3/otto-sh/compare/v0.7.1...v0.7.2
