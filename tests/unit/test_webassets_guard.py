@@ -7,9 +7,12 @@ otherwise the next artifact silently re-creates the #175 class.
 """
 
 import importlib
+import importlib.util
 import inspect
 import re
 from pathlib import Path
+
+import pytest
 
 from otto import _webassets
 from tests._fixtures.webassets import CONSUMERS
@@ -122,3 +125,56 @@ def test_all_covers_every_registry_constant():
     root = Path(_webassets.__file__).parent
     for value in _webassets.ALL.values():
         assert value.parent == root
+
+
+def _load_build_backend_shim():
+    """Import scripts/otto_build_backend.py by path (scripts/ is not a package)."""
+    spec = importlib.util.spec_from_file_location(
+        "otto_build_backend", REPO_ROOT / "scripts" / "otto_build_backend.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_build_backend_is_the_guarded_shim():
+    """pyproject must wire the in-tree shim, or bare `uv build` ships asset-less.
+
+    Reverting ``build-backend`` to plain ``"uv_build"`` silently reopens the
+    hole this whole guard family exists for: a wheel built on a checkout that
+    never ran ``make web`` installs fine and fails at first use in an
+    air-gapped lab. String pins on purpose — tomllib parsing adds nothing the
+    literal text doesn't already prove, and the shim file must ride inside the
+    sdist for wheel-from-sdist builds to find it.
+    """
+    text = (REPO_ROOT / "pyproject.toml").read_text()
+    assert 'build-backend = "otto_build_backend"' in text
+    assert 'backend-path = ["scripts"]' in text
+    assert 'source-include = ["scripts/otto_build_backend.py"]' in text
+
+
+def test_build_backend_required_files_match_the_registry():
+    """The shim's required-file list stays coupled to otto._webassets.ALL.
+
+    Same per-artifact sentinel files the Makefile wheel-check loop asserts:
+    the monitor bundle's dist/index.html, the covapp bundle's index.html. A
+    new ALL entry must grow both this tuple and the wheel-check loop.
+    """
+    shim = _load_build_backend_shim()
+    sentinel = {"monitor": "dist/index.html", "covapp": "index.html"}
+    assert set(sentinel) == set(_webassets.ALL)
+    expected = {f"src/otto/_webassets/{name}/{sentinel[name]}" for name in _webassets.ALL}
+    assert set(shim.REQUIRED_WEBASSETS) == expected
+
+
+def test_build_backend_guard_refuses_missing_assets(tmp_path):
+    """Red-provable core: an asset-less tree raises, naming make web; a
+    populated one passes."""
+    shim = _load_build_backend_shim()
+    with pytest.raises(RuntimeError, match="make web"):
+        shim.assert_webassets_present("wheel", root=tmp_path)
+    for rel in shim.REQUIRED_WEBASSETS:
+        target = tmp_path / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("x")
+    shim.assert_webassets_present("wheel", root=tmp_path)

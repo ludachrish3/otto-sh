@@ -35,9 +35,13 @@ on machines that only run otto.
 ### From a wheel (internet-connected)
 
 Build a wheel and install it.  The wheel only declares runtime
-dependencies — dev tools like pytest and sphinx are excluded:
+dependencies — dev tools like pytest and sphinx are excluded.  The web
+frontends (monitor dashboard, coverage report) ship inside the wheel, so the
+build refuses to run until they exist — build them first (needs Node, see
+`.nvmrc`):
 
 ```bash
+make web-install && make web       # builds the web frontends the wheel embeds
 uv build --wheel                   # produces dist/otto_sh-<version>-py3-none-any.whl
 pip install dist/otto_sh-*.whl     # installs otto + downloads runtime deps from PyPI
 ```
@@ -78,7 +82,12 @@ target.
 
 #### Step 1: Build the otto wheel (internet-connected machine)
 
+The air-gapped host installs the web frontends from the wheel — they cannot
+be fetched or rebuilt there.  The build backend enforces this: it refuses to
+produce a wheel until `make web` has built them (needs Node, see `.nvmrc`):
+
 ```bash
+make web-install && make web
 uv build --wheel          # produces dist/otto_sh-<version>-py3-none-any.whl
 ```
 

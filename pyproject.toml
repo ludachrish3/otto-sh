@@ -81,13 +81,20 @@ requires = [
     "uv_build>=0.10.0",
     "uv_build<0.12.0",
 ]
-build-backend = "uv_build"
+# In-tree PEP 517 shim around uv_build (scripts/otto_build_backend.py): a
+# wheel/sdist built without the web assets (`make web` never ran) FAILS
+# loudly instead of silently shipping frontend-less to air-gapped labs.
+# Editable installs (uv sync, RTD, hostless CI) are deliberately unguarded.
+build-backend = "otto_build_backend"
+backend-path = ["scripts"]
 
 # Dist name is `otto-sh` (for PyPI); the import package stays `otto`, so the
 # build backend needs to be pointed at src/otto/ explicitly.
 [tool.uv.build-backend]
 module-name = "otto"
 wheel-exclude = ["**/*.map"]
+# The sdist must carry the shim itself, or a wheel can't be built from it.
+source-include = ["scripts/otto_build_backend.py"]
 
 # NOTE on air-gapped installs (no extra config needed here, on purpose):
 # otto labs are air-gapped, so `otto monitor`'s React dashboard and the
@@ -105,7 +112,10 @@ wheel-exclude = ["**/*.map"]
 # embedded automatically once `make web` has populated it before `uv build`
 # runs — no [tool.uv.build-backend] include/data config is required. Verified
 # via `make wheel-check` (builds web + wheel, then asserts both artifacts'
-# index.html + assets are present in the .whl); do not add a `wheel-exclude`/
+# index.html + assets are present in the .whl), and enforced at build time by
+# the otto_build_backend shim above, which refuses to build a wheel/sdist
+# when the assets are absent (a bare `uv build` — e.g. the release
+# workflows — would otherwise ship frontend-less); do not add a `wheel-exclude`/
 # `source-exclude` pattern that would match `_webassets/**`, or air-gapped
 # installs break silently. The one deliberate, narrow exception is
 # `wheel-exclude = ["**/*.map"]`: both bundles build with

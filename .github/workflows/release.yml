@@ -42,8 +42,23 @@ jobs:
       - name: Set up Python
         run: uv python install 3.10
 
-      - name: Build sdist and wheel
-        run: uv build
+      # The wheel must embed the built web frontends (air-gapped labs install
+      # them from it), so the release build goes through `make wheel-check`:
+      # web build + airgap/brand gates + `uv build` + embed assertions. The
+      # otto_build_backend shim would fail a bare `uv build` here anyway —
+      # this step order is what makes it pass.
+      - name: Set up Node
+        uses: actions/setup-node@v7.0.0
+        with:
+          node-version-file: .nvmrc
+
+      - name: Install project and web dependencies
+        run: |
+          uv sync
+          make web-install
+
+      - name: Build web assets + sdist + wheel (gated)
+        run: make wheel-check
 
       - name: Upload dist artifact
         uses: actions/upload-artifact@v7

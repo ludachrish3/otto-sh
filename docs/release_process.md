@@ -48,7 +48,11 @@ Pushing a `v*` tag fires [`.github/workflows/release.yml`](https://github.com/lu
 - A **guard** job inspects the tag. Only final-version tags (`vX.Y.Z`)
   proceed to PyPI. Prerelease tags (`v0.4.0rc1`, `a2`, `b1`, `.dev0`) are
   skipped here — those are for the TestPyPI dry-run workflow instead.
-- **build** produces the sdist and wheel with `uv build`.
+- **build** produces the sdist and wheel via `make wheel-check`: it builds
+  the web frontends first (they ship inside the wheel for air-gapped labs),
+  runs the air-gap/brand gates, then `uv build` plus embed assertions. The
+  build backend itself refuses an asset-less wheel, so a bare `uv build`
+  without the web step fails rather than publishing a frontend-less package.
 - **publish** uploads to PyPI via OIDC, gated by the `pypi` GitHub
   Environment.
 - **github-release** creates the GitHub Release, attaching the artifacts and
