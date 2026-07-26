@@ -1,0 +1,378 @@
+// Report-wide context-focus filter (Task 7): a single pinned run-label the
+// app-bar chip / ⋮ menu / DirectoryPage / FilePage / RunsPage all recompute
+// against. State lives in the HASH-EMBEDDED route query
+// (`#/coverage/path?ctx=<label>`) — deliberately NOT the real pre-`#`
+// `location.search`: wouter's own `useSearch()`/`navigate()` (see
+// node_modules/wouter/src/use-hash-location.js and src/index.js) only ever
+// read/write that real query, never a hash-embedded one, and — verified
+// empirically against this project's pinned wouter version — regexparam's
+// compiled `/coverage/*` pattern SWALLOWS a literal "?ctx=..." suffix left
+// unstripped in the hash into its wildcard capture (`/coverage/a.c?ctx=x`
+// captures as one segment "a.c?ctx=x"), corrupting `findNode` segment
+// resolution; the exact `/coverage` route stops matching at all. So this
+// module owns its own tiny hash/query parsing (`parseHashQuery`/
+// `setHashQuery`/`replaceHashQuery` — push vs. replace, see their doc
+// comments) instead of reaching for wouter's hooks, AND exports a drop-in
+// replacement `useHashLocation` for `<Router hook={...}>` (App.tsx) that
+// always strips the query before route matching sees it.
+//
+// Mirrors to `localStorage["otto-cov:<stamp>:focus"]` (stamp-namespaced so
+// two reports served from one shared CI/artifacts origin don't stomp each
+// other's pinned focus).
+//
+// Centralized here rather than per-page: ONE `FocusProvider` (mounted once
+// at App.tsx's root, inside `ToastProvider` — `setFocus` toasts on
+// pin/clear) owns the state, the persistence, and the "survive navigation"
+// correction. Every page reads/writes focus through `useFocus()` only —
+// never `location.hash`/`localStorage` directly.
+import {
+  createContext,
+  type ReactNode,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  useSyncExternalStore,
+} from "react";
+
+import { groupContexts } from "./contexts";
+import { getIndex } from "./data";
+import { useToast } from "./Toast";
+import type { IndexPayload } from "./types";
+
+const CTX_PARAM = "ctx";
+
+function storageKey(stamp: string): string {
+  return `otto-cov:${stamp}:focus`;
+}
+
+function rawHash(): string {
+  const { hash } = window.location;
+  return hash.startsWith("#") ? hash.slice(1) : hash;
+}
+
+/** Splits a hash-fragment string (sans leading "#") into its path and raw
+ * (undecoded) query, e.g. "/coverage/a.c?ctx=x" -> ["/coverage/a.c",
+ * "ctx=x"]; no "?" -> the whole string is the path, query "". */
+function splitHash(hash: string): [path: string, query: string] {
+  const i = hash.indexOf("?");
+  return i === -1 ? [hash, ""] : [hash.slice(0, i), hash.slice(i + 1)];
+}
+
+/** Reads the CURRENT hash fragment's query part. See this module's header
+ * comment for why this is NOT wouter's `useSearch()`/`useLocation()`. */
+export function parseHashQuery(): URLSearchParams {
+  const [, query] = splitHash(rawHash());
+  return new URLSearchParams(query);
+}
+
+/** Writes a full hash string via `history.replaceState` — no new session-
+ * history entry — then dispatches a synthetic `hashchange` (replaceState
+ * doesn't fire one natively) so wouter's subscription and this module's
+ * own `useHashLocation`/`FocusProvider` notice the change. Shared by
+ * `useHashLocation`'s `navigate(..., {replace: true})` branch and
+ * `replaceHashQuery` below — both are "rewrite the current entry in
+ * place" writes, never a real navigation.
+ *
+ * Passes `window.history.state` through (NOT `null`) so a REWRITE never
+ * clobbers `HISTORY_STAMP_KEY` (below) if the current entry already
+ * carries one — required for `FocusProvider`'s Back/Forward detection to
+ * survive its own reconciliation writes (task-9-report.md's fix-round:
+ * the entry this function rewrites is often the exact one
+ * `stampCurrentEntry` is about to mark, or already has). */
+function replaceHash(next: string): void {
+  const url = new URL(window.location.href);
+  url.hash = next;
+  window.history.replaceState(window.history.state, "", url);
+  window.dispatchEvent(
+    typeof HashChangeEvent !== "undefined"
+      ? new HashChangeEvent("hashchange")
+      : new Event("hashchange"),
+  );
+}
+
+/** `history.state` key `FocusProvider` stamps onto every session-history
+ * entry it has itself settled (via `stampCurrentEntry`, below) — the
+ * Back/Forward-vs-in-app-navigation discriminator its "survive
+ * navigation" effect needs. See that effect's doc comment for why a
+ * `popstate`/`history.length`-based heuristic (this module's first
+ * attempt, task-9-report.md) is NOT reliable and this replaces it. */
+const HISTORY_STAMP_KEY = "ottoCov";
+
+interface StampedState {
+  [HISTORY_STAMP_KEY]?: true;
+}
+
+/** Marks the CURRENT session-history entry as "known to this app" —
+ * idempotent (a no-op `replaceState` call is skipped) and URL-preserving
+ * (the 2-arg `replaceState(state, title)` form never touches
+ * `location.href`). Call once, at the end of handling any hash
+ * transition this module has fully processed (boot, and every
+ * "survive navigation" pass) — never at push time itself, which is
+ * exactly what keeps a genuinely fresh push's `history.state` reading
+ * `null` until THIS module has had a chance to look at it. */
+function stampCurrentEntry(): void {
+  const prev = (window.history.state ?? {}) as StampedState;
+  if (prev[HISTORY_STAMP_KEY]) return;
+  window.history.replaceState({ ...prev, [HISTORY_STAMP_KEY]: true }, "");
+}
+
+/** Whether the entry the browser is CURRENTLY on was previously settled
+ * by `stampCurrentEntry`. A native `location.hash = …` push (this
+ * module's own `navigate()`, `setHashQuery`, or a plain
+ * `<a href="#/...">` click) always lands on a BRAND NEW entry, which
+ * browsers always create with `state: null` — never something we can
+ * stamp in advance, since we only ever stamp AFTER already having
+ * processed a hash transition once. So `isKnownEntry() === true` can
+ * only mean "we've been at this exact history position before", i.e. a
+ * real Back/Forward (or `history.go`) landed here — never a fresh
+ * push. */
+function isKnownEntry(): boolean {
+  const state = window.history.state as StampedState | null;
+  return Boolean(state?.[HISTORY_STAMP_KEY]);
+}
+
+/** Rewrites the hash fragment's query in place, preserving its path part,
+ * via a plain `location.hash` assignment — not wouter's `navigate()`
+ * (which sends a "?..." suffix on `to` to the real pre-`#`
+ * `location.search` instead, per the header comment). A `location.hash`
+ * write fires a native `hashchange` event AND pushes a new session-history
+ * entry (same as `history.pushState`) — correct here because every caller
+ * of `setHashQuery` is an explicit user action (`setFocus` pinning/
+ * clearing), which SHOULD leave a Back-button stop. No-ops (no write, no
+ * event) when the computed hash already matches. Reconciliation writes
+ * that are NOT a user action (boot restore, the navigation-survival
+ * re-append) must use `replaceHashQuery` instead — see its doc comment. */
+export function setHashQuery(mutate: (params: URLSearchParams) => void): void {
+  const [path, query] = splitHash(rawHash());
+  const params = new URLSearchParams(query);
+  mutate(params);
+  const qs = params.toString();
+  const next = (path || "/") + (qs ? `?${qs}` : "");
+  if (next !== rawHash()) window.location.hash = next;
+}
+
+/** Same contract as `setHashQuery`, but via `replaceHash` (no new
+ * session-history entry) — for RECONCILIATION writes only: `FocusProvider`'s
+ * boot-time write-back and its navigation-survival re-append. Both react
+ * to something that already happened (page load, or another navigation
+ * that already pushed its own entry) rather than being the user action
+ * itself, so they must not ALSO push — otherwise every in-app navigation
+ * while focused produces two entries (the plain nav's, then this one's),
+ * and Back lands on the ctx-less intermediate entry, which the re-append
+ * effect immediately corrects forward again — Back can never actually
+ * leave the page. `setFocus`'s own pin/clear writes (a real user action)
+ * still go through `setHashQuery`'s push semantics, unchanged. */
+export function replaceHashQuery(mutate: (params: URLSearchParams) => void): void {
+  const [path, query] = splitHash(rawHash());
+  const params = new URLSearchParams(query);
+  mutate(params);
+  const qs = params.toString();
+  const next = (path || "/") + (qs ? `?${qs}` : "");
+  if (next !== rawHash()) replaceHash(next);
+}
+
+/** `<Router hook={...}>` (App.tsx) — a drop-in replacement for wouter's own
+ * `wouter/use-hash-location`, differing in exactly one respect: it ALWAYS
+ * strips a trailing "?..." query before handing the path to wouter's route
+ * matcher (see header comment for why that's required once `ctx` lives
+ * inside the hash). `navigate()` here deliberately does NOT try to
+ * preserve an existing query when writing a plain path — `FocusProvider`'s
+ * re-append effect below corrects that after ANY navigation (this hook's
+ * own `navigate`, wouter's, or a plain `<a href="#/...">` click), so this
+ * function doesn't need special-case query-preserving logic itself. */
+export function useHashLocation(): [string, (to: string, opts?: { replace?: boolean }) => void] {
+  const subscribe = useCallback((callback: () => void) => {
+    window.addEventListener("hashchange", callback);
+    return () => window.removeEventListener("hashchange", callback);
+  }, []);
+  const getSnapshot = useCallback(() => splitHash(rawHash())[0] || "/", []);
+  const getServerSnapshot = useCallback(() => "/", []);
+  const location = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
+
+  const navigate = useCallback((to: string, opts: { replace?: boolean } = {}) => {
+    const path = to.startsWith("/") ? to : `/${to}`;
+    if (opts.replace) {
+      replaceHash(path);
+    } else {
+      window.location.hash = path; // fires a native hashchange
+    }
+  }, []);
+
+  return [location, navigate];
+}
+
+export interface UseFocusResult {
+  focus: string | null;
+  setFocus: (label: string | null) => void;
+}
+
+const FocusContext = createContext<UseFocusResult | null>(null);
+
+/** `null` for an unknown label (a stale deep link or localStorage entry —
+ * e.g. the report was regenerated with a different run set, or storage was
+ * hand-edited) as well as for `null` itself — callers always get back
+ * either a label `groupContexts(index)` can resolve, or `null`, never a
+ * dangling pointer. */
+function resolveLabel(label: string | null, index: IndexPayload | null): string | null {
+  if (label === null || index === null) return null;
+  const known = groupContexts(index).some((ctx) => ctx.label === label);
+  return known ? label : null;
+}
+
+/** Boot precedence (spec-pinned): the hash query wins; else localStorage. */
+function initialFocus(index: IndexPayload | null): string | null {
+  const fromQuery = parseHashQuery().get(CTX_PARAM);
+  if (fromQuery !== null) return resolveLabel(fromQuery, index);
+  if (index !== null) {
+    const stored = localStorage.getItem(storageKey(index.stamp));
+    if (stored !== null) return resolveLabel(stored, index);
+  }
+  return null;
+}
+
+/** Mounted once at App.tsx's root, inside `ToastProvider` (this provider
+ * calls `useToast()` itself, to fire the pin/clear toast from the ONE
+ * place `focus` actually changes, rather than duplicating that call at
+ * every `setFocus` call site). */
+export function FocusProvider({ children }: { children: ReactNode }) {
+  const index = getIndex();
+  const { show } = useToast();
+  const [focus, setFocusState] = useState<string | null>(() => initialFocus(index));
+
+  // Boot reconciliation (runs once, at mount): whichever source won the
+  // query>storage precedence above becomes the sole source going forward —
+  // write it into both channels (a no-op if already in agreement), or
+  // clear both if boot resolved to null. That last branch is what makes an
+  // unknown/stale label "no crash, treated as cleared" rather than a
+  // dangling ?ctx= or storage entry the user can never escape. Not a user
+  // action, so no toast here — only explicit `setFocus` calls below toast.
+  // `replaceHashQuery`, NOT `setHashQuery`: this fires on every page load
+  // (including a bare reload with a pre-existing history), so pushing here
+  // would grow session history by one entry per load with no corresponding
+  // user action — see `replaceHashQuery`'s doc comment.
+  //
+  // `stampCurrentEntry()` at the end (unconditionally, either branch): the
+  // entry the app BOOTED on needs to be marked "known" too, same as every
+  // entry the "survive navigation" effect below settles — otherwise the
+  // very first Back press (with no in-app navigation in between) would
+  // land on an unstamped boot entry and get misread as a fresh push
+  // rather than the real traversal it is.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: boot-only effect (see comment above) — deliberately `[]`, not re-run on `focus`/`index` changes (setFocus keeps both channels in sync for those directly)
+  useEffect(() => {
+    if (focus === null) {
+      if (parseHashQuery().has(CTX_PARAM)) replaceHashQuery((p) => p.delete(CTX_PARAM));
+      if (index !== null) localStorage.removeItem(storageKey(index.stamp));
+    } else {
+      replaceHashQuery((p) => p.set(CTX_PARAM, focus));
+      if (index !== null) localStorage.setItem(storageKey(index.stamp), focus);
+    }
+    stampCurrentEntry();
+  }, []);
+
+  // Survive navigation: wouter's navigate() and a plain `<a href="#/...">`
+  // click both REPLACE the whole hash fragment, dropping an embedded
+  // `?ctx=` — restore it after every such `hashchange` so the chip stays
+  // pinned across pages (the reassert branch below). A real Back/Forward
+  // is the opposite case: the landed entry's OWN `?ctx=` (or lack of one)
+  // is exactly what was true at that point in history, so this ADOPTS it
+  // into `focus` instead of reasserting — otherwise Back could never
+  // actually leave a focused page.
+  //
+  // Discriminating the two: `isKnownEntry()` (see its doc comment) —
+  // `history.state` carries our own stamp iff this module has already
+  // settled this exact history position before, which can only be true on
+  // a real Back/Forward/`history.go` landing, never a brand-new push (a
+  // push always creates its entry with `state: null`, and nothing stamps
+  // an entry before this module has processed a hashchange for it at
+  // least once).
+  //
+  // This replaces an EARLIER version of this discriminator (task-9-report.md,
+  // first fix round) that combined `popstate` + "did `history.length`
+  // grow" — provably wrong, found by review: a push made from MID-STACK
+  // (i.e. after at least one Back) TRUNCATES the forward entries it
+  // replaces, so `history.length` does not reliably grow on a push either
+  // — e.g. pin (push B) -> navigate (push C) -> Back once (now at B, C
+  // still "forward") -> click any link (push D, which drops C and appends
+  // D: length unchanged) got misread as a Back/Forward and silently
+  // cleared the pin. The `history.state` stamp has no such failure mode:
+  // it doesn't infer from a COUNT that can coincidentally match, it reads
+  // a durable per-entry marker this module itself wrote.
+  //
+  // Landing on an entry this module has genuinely never seen (a fresh
+  // push, OR a Back/Forward far enough to reach a pre-app entry that
+  // predates this page load, which was never stamped) both fall through
+  // to the SAME reassert branch below — deliberately: an entry this
+  // module can't prove is a real "clear focus" traversal is treated as
+  // "keep reasserting", the old round-1 behavior. Silently DROPPING a
+  // user's pin on an ambiguous landing is the worse failure; reasserting
+  // it one entry too eagerly just costs an extra Back press, which the
+  // (unambiguous, stamped) entries below it will still honor correctly.
+  //
+  // `resolveLabel`, not the raw param, in the adopt branch so a Back to a
+  // stamped-but-now-stale/unknown label still degrades to "cleared"
+  // rather than crashing (same contract as boot). Explicit `setFocus`
+  // calls update `focus` state synchronously, so neither branch here ever
+  // fights it.
+  //
+  // `replaceHashQuery`, NOT `setHashQuery`, in the reassert branch: the
+  // navigation that triggered this handler ALREADY pushed its own history
+  // entry (wouter's navigate() or the browser's own `<a href>` handling) —
+  // pushing AGAIN here would leave a ctx-less intermediate entry behind
+  // every single in-app navigation while focused, which is the push-based
+  // version of the same trap. Rewriting the CURRENT (just-pushed) entry in
+  // place instead means every navigation while focused costs exactly one
+  // Back-button stop, and it always already carries the right `?ctx=`.
+  useEffect(() => {
+    function onHashChange() {
+      if (isKnownEntry()) {
+        const landed = resolveLabel(parseHashQuery().get(CTX_PARAM), index);
+        if (landed !== focus) {
+          setFocusState(landed);
+          if (index !== null) {
+            if (landed === null) localStorage.removeItem(storageKey(index.stamp));
+            else localStorage.setItem(storageKey(index.stamp), landed);
+          }
+        }
+        return;
+      }
+      if (focus !== null && parseHashQuery().get(CTX_PARAM) !== focus) {
+        replaceHashQuery((p) => p.set(CTX_PARAM, focus));
+      }
+      stampCurrentEntry();
+    }
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
+  }, [focus, index]);
+
+  const setFocus = useCallback(
+    (label: string | null) => {
+      const resolved = resolveLabel(label, index);
+      if (resolved === null) {
+        setHashQuery((p) => p.delete(CTX_PARAM));
+        if (index !== null) localStorage.removeItem(storageKey(index.stamp));
+        setFocusState(null);
+        show("Focus cleared");
+        return;
+      }
+      setHashQuery((p) => p.set(CTX_PARAM, resolved));
+      if (index !== null) localStorage.setItem(storageKey(index.stamp), resolved);
+      setFocusState(resolved);
+      show(`Focused ${resolved}`);
+    },
+    [index, show],
+  );
+
+  const value = useMemo<UseFocusResult>(() => ({ focus, setFocus }), [focus, setFocus]);
+  return <FocusContext.Provider value={value}>{children}</FocusContext.Provider>;
+}
+
+/** Must be called under a `FocusProvider` (mounted once near the app root —
+ * see App.tsx), the same contract `Toast.tsx`'s `useToast()` already
+ * establishes for this codebase. */
+export function useFocus(): UseFocusResult {
+  const ctx = useContext(FocusContext);
+  if (ctx === null) throw new Error("useFocus must be used within a FocusProvider");
+  return ctx;
+}

@@ -25,7 +25,9 @@
 # it's checking is produced.
 #
 # Usage: scripts/check_brand_tokens.sh [dist-dir]  (default:
-# src/otto/monitor/static/dist)
+# src/otto/monitor/static/dist; also run against
+# src/otto/coverage/renderer/static/covapp by the `web` Makefile target — see
+# the CSS_FILES glob below for why one script covers both dist layouts)
 set -euo pipefail
 
 DIST="${1:-src/otto/monitor/static/dist}"
@@ -35,11 +37,16 @@ if [ ! -d "$DIST" ]; then
     exit 1
 fi
 
-shopt -s nullglob
-CSS_FILES=("$DIST"/assets/*.css)
-shopt -u nullglob
+# The React dashboard's default vite output naming puts hashed CSS under
+# assets/*.css; the covapp lane (vite.covapp.config.ts) overrides
+# assetFileNames to dist/covapp.[ext] instead (see its header — the classic-
+# script build wants one fixed-name JS + CSS pair, not a hashed assets/
+# dir). globstar makes this glob layout-agnostic so ONE script serves both.
+shopt -s nullglob globstar
+CSS_FILES=("$DIST"/**/*.css)
+shopt -u nullglob globstar
 if [ "${#CSS_FILES[@]}" -eq 0 ]; then
-    echo "check_brand_tokens: no built CSS under '$DIST/assets' — run \`make web\` first." >&2
+    echo "check_brand_tokens: no built CSS found under '$DIST' — run \`make web\` first." >&2
     exit 1
 fi
 
@@ -53,17 +60,17 @@ fi
 resolved="$(grep -aho -- '--color-brand-500:[^;]*;' "${CSS_FILES[@]}" | tail -n1)"
 
 if [ -z "$resolved" ]; then
-    echo "check_brand_tokens: FAIL — '--color-brand-500' not found in built CSS under $DIST/assets." >&2
+    echo "check_brand_tokens: FAIL — '--color-brand-500' not found in built CSS under $DIST." >&2
     exit 1
 fi
 
 if ! grep -qi '#7c5cff' <<<"$resolved"; then
-    echo "check_brand_tokens: FAIL — --color-brand-500 resolved to '$resolved' in the built CSS, not otto's brand violet (#7c5cff). Untitled UI's purple is winning the @theme merge -- check web/src/app.css's @import order (theme.css must be imported BEFORE otto's own @theme block)." >&2
+    echo "check_brand_tokens: FAIL — --color-brand-500 resolved to '$resolved' in the built CSS, not otto's brand violet (#7c5cff). Untitled UI's purple is winning the @theme merge -- check the stylesheet's @import order (web/src/app.css or web/src/covapp/covapp.css: theme.css must be imported BEFORE otto's own @theme block)." >&2
     exit 1
 fi
 
 if grep -qi '9e77ed' "${CSS_FILES[@]}"; then
-    echo "check_brand_tokens: FAIL — Untitled UI's purple (#9E77ED) still appears in the built CSS under $DIST/assets. charts/palette.ts must never resolve it." >&2
+    echo "check_brand_tokens: FAIL — Untitled UI's purple (#9E77ED) still appears in the built CSS under $DIST. charts/palette.ts must never resolve it." >&2
     exit 1
 fi
 

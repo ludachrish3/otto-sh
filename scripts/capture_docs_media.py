@@ -124,8 +124,12 @@ def _capture_coverage_report(browser) -> None:  # noqa: ANN001 — playwright im
         report_dir = build_fixture_report(Path(tmp))
         page = browser.new_page(viewport=_VIEWPORT)
         page.set_default_timeout(_CAPTURE_TIMEOUT_MS)
-        page.goto((report_dir / "index.html").as_uri())
-        page.wait_for_selector("table.files-table")
+        # The SPA is a hash-router (covapp) — with no hash it falls through
+        # to the NotFoundPlaceholder route, so the shot needs "#/coverage"
+        # explicitly. The fixture's two files sit under one "product/" dir,
+        # so the root directory page's only row is that dir.
+        page.goto((report_dir / "index.html").as_uri() + "#/coverage")
+        page.wait_for_selector('[data-testid="tree-row-dir:product"]')
         page.screenshot(path=OUT_DIR / "coverage-report.png", full_page=True)
         page.close()
 

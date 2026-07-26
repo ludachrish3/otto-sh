@@ -20,6 +20,7 @@ const outDir = resolve(repo, "reports/ts-e2e-cov/istanbul");
 const dists = [
   resolve(repo, "src/otto/monitor/static/dist"),
   resolve(repo, "src/otto/coverage/renderer/static/dist"),
+  resolve(repo, "src/otto/coverage/renderer/static/covapp/dist"),
 ];
 
 // Vendored Untitled UI source + generated wire types: excluded from coverage

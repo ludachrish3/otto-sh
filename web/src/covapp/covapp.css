@@ -1,0 +1,102 @@
+/* covapp's single stylesheet: Tailwind v4 + theme tokens, mirroring
+   web/src/app.css's structure (see its header for the full rationale) —
+   a second, independent bundle (Global Constraints: classic-script IIFE,
+   no shared runtime with the monitor dashboard), so it carries its own
+   copy of the same setup rather than importing app.css directly.
+
+   Foundation is vendored Untitled UI (../styles/theme.css) — the full
+   semantic token vocabulary (bg-primary, text-tertiary, border-secondary,
+   ...) plus its type scale, gated on `.dark-mode` (web/src/theme.ts).
+   Never hand-edit that file. Anything we author lives in src/covapp/**. */
+@import "tailwindcss";
+@import "@fontsource-variable/inter";
+@import "../styles/theme.css";
+
+@plugin "tailwindcss-animate";
+@plugin "tailwindcss-react-aria-components";
+
+@custom-variant dark (&:where(.dark-mode, .dark-mode *));
+@custom-variant label (& [data-label]);
+@custom-variant focus-input-within (&:has(input:focus));
+
+/* OUR @theme block comes AFTER the import above, so these win over Untitled
+   UI's brand purple (#9E77ED) — copied verbatim from app.css's override
+   list. scripts/check_brand_tokens.sh asserts the RESOLVED
+   --color-brand-500 in the built covapp CSS, so this order is load-bearing,
+   not cosmetic. */
+@theme {
+  --font-sans: "Inter Variable", system-ui, sans-serif;
+  /* Brand: violet, matching the existing event-default #7c5cff family. */
+  --color-brand-50: #f3f1ff;
+  --color-brand-300: #b3a5ff;
+  --color-brand-500: #7c5cff;
+  --color-brand-600: #6a4be6;
+  --color-brand-700: #5940bf;
+  /* Status colors (parity with app.css; unused today, kept so a later
+     covapp task reaching for --color-status-* resolves the same values). */
+  --color-status-live: #2f9e6e;
+  --color-status-historical: #4c8dff;
+  --color-status-warn: #e8a13c;
+  --color-status-ok: #2f9e6e;
+  --color-status-error: #d03b3b;
+}
+
+body {
+  @apply bg-primary font-sans text-primary antialiased;
+}
+
+/* Shiki dual-theme (Task 5 brief): highlight.ts renders with
+   `themes: { light: "github-light", dark: "github-dark" }` +
+   `defaultColor: "light"` — every token's inline `style` carries its
+   github-light color directly PLUS a `--shiki-dark`-prefixed custom
+   property (and friends) holding the github-dark value. This is Shiki's
+   documented "CSS variables" dual-theme pattern
+   (https://shiki.style/guide/dual-themes#class-based-dark-mode): light is
+   the default (no override needed), and this rule swaps in the dark
+   variant's vars whenever `.dark-mode` is active (web/src/theme.ts).
+   `ui/CodeView.tsx` tags the source cell `.shiki` so this can target it
+   without covapp.css needing to know anything about CodeView's other
+   internals. `!important` is required, not stylistic: each token's own
+   `color` comes from an inline `style` attribute Shiki writes directly on
+   the span, and an inline style attribute always beats an external
+   stylesheet rule regardless of selector specificity — there is no other
+   way to override it. The `inherit` fallback (rather than Shiki's own
+   `!important`-only recipe, which has no fallback) keeps lines that were
+   never run through Shiki (the "text" language fallback — plain escaped,
+   unstyled spans) resolving to the ambient text color instead of an unset
+   custom property. github-light/github-dark (the only two themes this
+   build ships) don't differ in font-style/weight/decoration, only color —
+   so that's the only property this override needs. */
+.dark-mode .shiki,
+.dark-mode .shiki span {
+  /* biome-ignore lint/complexity/noImportantStyles: required to beat Shiki's own inline `style` per token — see comment above */
+  color: var(--shiki-dark, inherit) !important;
+}
+
+/* File-page code-view row tints (Task 5 brief) for the 4 fixed-cardinality
+   `s-*` states `rowClassFor` (covapp/pages/FilePage.tsx) can produce —
+   excluded/stale/aging/plain-uncovered. Colors come from `--state-*`
+   custom properties FilePage sets once on the code-card container (from
+   `IndexPayload.state_colors`), never hard-coded here — same
+   Global-Constraints rule as thresholds. `t-<tier>` tints are NOT here:
+   tier names are data-driven and unbounded (no fixed set of classes to
+   predeclare), so FilePage applies those as inline style per row instead. */
+.s-unc {
+  background: color-mix(in srgb, var(--state-unc) 10%, transparent);
+  border-left-color: var(--state-unc);
+}
+.s-excl {
+  background: color-mix(in srgb, var(--state-excl) 15%, transparent);
+  border-left-color: var(--state-excl);
+}
+.s-excl .cv-src {
+  color: var(--color-text-quaternary);
+}
+.s-stale {
+  background: color-mix(in srgb, var(--state-stale) 12%, transparent);
+  border-left-color: var(--state-stale);
+}
+.s-aging {
+  background: color-mix(in srgb, var(--state-aging) 15%, transparent);
+  border-left-color: var(--state-aging);
+}

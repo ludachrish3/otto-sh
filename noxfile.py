@@ -229,7 +229,7 @@ def tests_all(session: nox.Session) -> None:
 @nox_uv.session(python=[PRIMARY_PYTHON], uv_groups=["dev"])
 @nox.parametrize("browser", ["chromium", "firefox", "webkit"])
 def dashboard(session: nox.Session, browser: str) -> None:
-    """Run the monitor-dashboard browser e2e suite for one engine.
+    """Run the monitor-dashboard + coverage-report browser e2e suites for one engine.
 
     Parametrized over Chromium (Blink), Firefox (Gecko), and WebKit (Safari):
     `nox -s dashboard` runs all three (serially — nox has no in-process
@@ -249,15 +249,24 @@ def dashboard(session: nox.Session, browser: str) -> None:
     that duplication is exactly what let the soak run on every push here
     before this comment existed.
 
-    This suite drives the built React dashboard (`src/otto/monitor/static/
-    dist/`) through a real `MonitorServer` — there's no legacy static
-    fallback since the Task 9 cutover, so `dist/` must already exist before
-    this session runs. Building it needs Node/npm (`make web`, which installs
-    web/'s dependencies itself), which nox-uv's per-session venvs (Python-only,
-    one per `PYTHON_VERSIONS` entry) have no way to provision. Rather than bolt
-    a Node toolchain onto a nox session, that step lives directly in
-    `.github/workflows/ci.yml`'s `dashboard` job, ahead of the nox call;
-    `make dashboard` (the local/dev entrypoint) carries the same prerequisite —
+    Runs both suites in one pytest invocation: `tests/e2e/monitor/dashboard`
+    (the monitor dashboard, through a real `MonitorServer`) and
+    `tests/e2e/cov/report_browser` (the coverage-report SPA — both its
+    `file://` lane and, since Task 10, the served-CSP lane against a real
+    HTTP server; see `tests/_fixtures/_csp_server.py`). This is what puts the
+    coverage-report suite's browser matrix into CI: this session is what
+    `.github/workflows/ci.yml`'s `dashboard` job runs per engine.
+
+    Both suites drive a BUILT React bundle (`src/otto/monitor/static/dist/`
+    and `src/otto/coverage/renderer/static/covapp/dist/` respectively) —
+    there's no legacy static fallback since the Task 9 cutover, so both
+    `dist/` dirs must already exist before this session runs. Building them
+    needs Node/npm (`make web`, which installs web/'s dependencies itself),
+    which nox-uv's per-session venvs (Python-only, one per `PYTHON_VERSIONS`
+    entry) have no way to provision. Rather than bolt a Node toolchain onto a
+    nox session, that step lives directly in `.github/workflows/ci.yml`'s
+    `dashboard` job, ahead of the nox call; `make dashboard` (the local/dev
+    entrypoint) carries the same prerequisite —
     and, unlike this session, rebuilds a dist that has gone stale against
     web/src/ rather than only one that is missing.
     Each engine's browser system libraries are installed by that job via
@@ -267,6 +276,7 @@ def dashboard(session: nox.Session, browser: str) -> None:
     session.run(
         "pytest",
         "tests/e2e/monitor/dashboard",
+        "tests/e2e/cov/report_browser",
         "-m",
         DASHBOARD_MARKER_EXPR,
         "--browser",

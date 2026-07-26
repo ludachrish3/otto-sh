@@ -14,8 +14,9 @@ multi-tier HTML coverage reports.  Coverage tiers — `system` (e2e),
    harvested unit counters, the committed manual store) into an HTML
    report.
 
-![The multi-tier coverage report: summary, legend, and a sortable per-file
-table with per-tier percentage columns](../_static/generated/coverage-report.png)
+![The coverage report's directory page: a sortable tree of covered source
+directories and files, per-tier percentage columns with threshold-colored
+bars, and the per-node stats card](../_static/generated/coverage-report.png)
 
 *The screenshot is generated from the live report renderer at docs build
 time by `scripts/capture_docs_media.py` — the same pipeline that captures
@@ -699,7 +700,7 @@ denominator:
   branch-only variants (line/block still counted, only its branches
   excluded).
 
-The HTML renderer additionally re-scans each rendered source file for
+The renderer additionally re-scans each rendered source file for
 these markers so excluded lines and blocks are visually distinct
 (grey, with a per-file excluded count) instead of reading as ordinary
 uncovered code.  In the row-coloring precedence (see
@@ -788,32 +789,82 @@ the only evidence was manual and the code changed since) →
 Because tier names are free-form, multiple tiers can share a `kind`,
 and colors are configurable, the report never relies on convention to
 explain itself: a **legend** mapping every tier name and state to its
-color renders on the project index and on every per-file page.
+color is always one click away, in the app bar's **⋮** overflow menu
+present on every page.
 
 ## Output
 
-The HTML report is written to the `--report` directory (default:
-`./cov_report/index.html`).  The report shows:
+`otto cov report` writes a self-contained **single-page app** to the
+`--report` directory (default: `./cov_report/index.html`) — there is no
+build step and nothing to serve: open `index.html` straight off disk
+(`file://`) or point any static host or CI artifacts browser at the
+directory. Routes are **hash-based** (`#/coverage/...`, `#/runs`), so deep
+links resolve identically from disk, from a CI job's artifacts browser, or
+from a GitLab Pages subpath at any URL depth — no server rewrite rule to
+configure.
 
-- **Project summary** with aggregate (all-tier) and per-tier breakdowns,
-  plus per-file stale/aging/excluded counts.
-- **Legend** mapping tier names and line states to their colors.
-- **Captures table** — the full run table (see
-  {ref}`coverage-runs`), shown whenever the store has at least
-  one run: every contributing manual and e2e capture (tier, board,
-  labs, date, tester, ticket, note, and whether the dirty-tree remap
-  applied), plus one synthetic row per unit tier harvested.
-- **Sortable file table** with one column per configured tier.
-- **Per-file pages** with the same summary structure plus annotated
-  source: per-tier hit counts, branch pills (taken/not-taken/
-  unreachable), winner-take-all row coloring per
-  {ref}`coverage-colors`, and the per-line **runs** drilldown from
-  {ref}`coverage-runs`.
+- **Directory pages** (`#/coverage`, `#/coverage/<dir>`) — a tree view from
+  the current node down, one row per child directory or file, with
+  per-directory **rollups**: hit/total, threshold-colored line and branch
+  percentage (see {ref}`coverage-report-thresholds`), one column per
+  configured tier, and flag badges for stale/aging/excluded counts. Every
+  column is sortable. The root page also shows a collapsed **Runs &
+  captures** summary — the full table lives at `#/runs`.
+- **File pages** (`#/coverage/<file>`) — annotated source: per-tier hit
+  columns, branch pills (taken/not-taken/unreachable), winner-take-all row
+  coloring per {ref}`coverage-colors`, and the per-line **runs** drilldown
+  from {ref}`coverage-runs`, listing every run that hit the line with
+  revoked/aging credits marked.
+- **Runs & contexts page** (`#/runs`) — one row per run (see
+  {ref}`coverage-runs`); multi-host runs show host pills with an
+  expandable per-host lines breakdown, filterable by tier and free-text
+  search over label/host/ticket/board. Per-run **branch** contribution
+  isn't part of the stored data (**branch** hits are recorded per line, not
+  per line-and-run — unlike line hits, which are) and renders as "not
+  tracked per-run".
+- **Report-wide context focus** — pin a run's context from its row on the
+  runs page, or from the app bar's **⋮** overflow menu (also home to
+  keyboard shortcuts and the tier/state color key); every stat, percentage,
+  and file-page tint recomputes to that run's coverage alone, with
+  everything else reading as uncovered/neutral. The pinned context encodes
+  into `?ctx=<run-label>` on the current route — a focused view is
+  bookmarkable and shareable — and persists per report in `localStorage`.
+  Branch cells show "—" while a focus is active; focus mode filters line
+  stats only.
 
-`store.json` is written alongside the HTML report with the same data —
+`store.json` is written alongside the report with the same data —
 validity states, colors, runs, and each file's excluded lines
 included — as the explicit data contract for tooling built on top of
-a report (e.g. a future frontend) without touching the pipeline.
+a report without touching the pipeline.
+
+## Hosting the report in CI
+
+The report has no server-side requirements: every asset reference is
+relative, there are no ES module scripts, no inline `<script>`, no
+`eval`, and no WASM. That makes it render identically whether it's opened
+straight from disk (`file://`, zero serving) or published by a CI job.
+
+**GitLab** works out of the box — publish the `--report` directory as a
+Pages site, or just let GitLab's artifacts browser serve it. No
+configuration is needed.
+
+**Jenkins** applies a strict Content-Security-Policy to archived HTML by
+default, which blocks all JavaScript. The report only needs that CSP
+relaxed enough to run same-origin classic scripts — nothing else. Publish
+the report with the HTML Publisher plugin and set this minimal policy via
+the `hudson.model.DirectoryBrowserSupport.CSP` system property:
+
+```text
+default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; base-uri 'none'; form-action 'none'
+```
+
+This is sufficient because the report never needs more than it grants: no
+inline scripts, no `eval`, no WASM (syntax highlighting runs a pure-JS
+regex engine, never a WASM grammar) — only classic `<script src="...">`
+tags loading relative, self-hosted assets. A browser test serves a built
+report under exactly this header and asserts the app boots with zero
+console errors, so a stray inline script can never silently regress
+Jenkins support.
 
 ## Embedded (console) coverage
 

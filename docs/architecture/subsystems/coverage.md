@@ -168,8 +168,8 @@ clones, reverts, and aging boundaries.
 ## The store (v4)
 
 `store.json` is the canonical, versioned artifact `otto cov report`
-writes for downstream consumers — a future frontend, external tooling —
-to read back; the in-process HTML renderer consumes the same store
+writes for downstream consumers — external tooling, a foreign report
+viewer — to read back; the in-process renderer consumes the same store
 directly, in memory, before it is ever serialized. `CoverageStore.save`/
 `.load` (`otto.coverage.store.model`) stamp every file with a top-level
 `"format"` key equal to `STORE_FORMAT_VERSION` (`4`). The loader is
@@ -217,6 +217,65 @@ requires the per-board capture path (`otto cov get` / `otto test
 --cov`, one `capture.json` per board). A report built solely from the
 legacy fallback therefore has no per-host data to derive.
 
+## The renderer
+
+`SpaRenderer` (`otto.coverage.renderer.spa_renderer`) replaced `HtmlRenderer`
+at `otto.coverage.reporter`'s single renderer construction site — the report
+`otto cov report` emits is now the covapp single-page app, not
+server-rendered Jinja HTML. The swap is duck-typed: both renderers expose
+the same `render(store)` entry point, so the reporter's call site needed no
+branching, only the one construction-site change.
+
+`SpaRenderer.render` does two things, in order:
+
+1. **Copy the bundle.** `make web` builds a second Vite app
+   (`web/src/covapp/`) into
+   `src/otto/coverage/renderer/static/covapp/` — a classic-script IIFE
+   bundle with no ES modules, no inline scripts, and only relative asset
+   paths, so it boots the same from `file://`, a CI artifacts browser, or
+   behind Jenkins' minimal CSP. That directory isn't committed; it's built
+   by `make web` and wheel-embedded (`make wheel-check` asserts the
+   bundle's `index.html` is present in the built wheel). `SpaRenderer` copies
+   it into the report directory as-is (sourcemaps excluded — kept out of
+   every emitted report, used only by the TS coverage fold in CI).
+2. **Emit the data chunks** (`otto.coverage.renderer.spa_data`, pure Python
+   — no Jinja, no `jinja2` import) — `cov_data/index.js`, one classic-script
+   assignment to `window.__OTTO_COV__` carrying the report-wide payload:
+   config (thresholds, tier colors/labels, state colors), the run table,
+   and a directory tree with **per-directory rollup stats precomputed in
+   Python** (hit/total per stat type, per-tier breakdowns, stale/aging/
+   excluded flag counts) so the frontend never re-aggregates the whole
+   store client-side. Alongside it, one `cov_data/files/<mangled-path>.js`
+   classic-script chunk per source file, each calling
+   `window.__OTTO_COV_FILE__({...})` with that file's annotated source and
+   per-line hit/branch/state/run data. Chunks load lazily on navigation to
+   a file page, not up front, so page-load cost stays constant regardless
+   of report size. Every index and file chunk carries the same **stamp** (a
+   UTC timestamp plus a short random suffix, freshly generated per
+   `render()` call) and the same `OTTO_COV_DATA_FORMAT` constant — the
+   frontend's `EXPECTED_DATA_FORMAT` must match it exactly
+   (`otto.coverage.renderer.spa_data.OTTO_COV_DATA_FORMAT` and the
+   TypeScript constant are bumped together or never). A stamp mismatch
+   between the index and a stale cached chunk, or a format the running
+   bundle doesn't recognize, renders a "this report needs to be
+   regenerated" guard screen instead of a wrong or partial report.
+
+Exclusion display stays render-time, not store-time, for the same reason it
+always has: a single-valued `LineRecord.state` can't express "excluded
+always wins" over covered/stale/aging, so the reporter never bakes
+`state == "excluded"` into the store — it only forwards the configured
+extra marker strings. `emit_chunks` re-scans each file's source for
+exclusion markers and annotates `FileRecord.excluded_lines` on the store as
+a side effect of building that file's chunk. This is why `otto cov report`
+calls `store.save(...)` for `store.json` **after** `renderer.render(store)`
+returns — saving first would miss every file's excluded-line list.
+
+The Jinja lane (`otto.coverage.renderer.html_renderer`'s `HtmlRenderer`,
+its templates, and `report.css`) is **retained but no longer wired** — its
+own unit tests still pass because they construct `HtmlRenderer` directly,
+bypassing the reporter. Deleting it (and the old `web/src/covreport/` Vite
+config) is tracked as follow-up work, not part of this change.
+
 ## What is unique about `cov`
 
 `otto cov report` runs *after* the fact, over directories `otto test --cov`
@@ -244,8 +303,17 @@ remotes.
   loader
 - `otto.coverage.report_config` — resolves `[coverage.report]`'s raw
   settings dict into render `Thresholds` at report time
-- `otto.coverage.renderer` — turns an assembled store into the HTML
-  report
+- `otto.coverage.renderer` — turns an assembled store into a report
+- `otto.coverage.renderer.spa_data` — pure-Python emitter for the covapp
+  data chunks (`cov_data/index.js` + per-file chunks); no Jinja
+- `otto.coverage.renderer.spa_renderer` — `SpaRenderer`: copies the built
+  covapp bundle, then calls `spa_data.emit_chunks`; the reporter's active
+  renderer
+- `web/src/covapp/` — the covapp SPA's TypeScript source (built by `make
+  web` into `otto.coverage.renderer`'s `static/covapp/`, wheel-embedded)
+- `otto.coverage.renderer.html_renderer` — `HtmlRenderer` and its templates
+  remain but are no longer constructed by the reporter (see "The renderer"
+  above)
 - {mod}`otto.coverage.reporter` — `otto cov report`'s store assembly: tiers,
   the base_commit guard, and the `--tier NAME=PATH` escape hatch
 - {mod}`otto.coverage.validity` — the report-time valid/stale/aging pass over

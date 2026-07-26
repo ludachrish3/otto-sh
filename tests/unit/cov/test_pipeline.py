@@ -160,7 +160,12 @@ class TestExclusionDisplayIsRenderTime:
 
     @pytest.mark.asyncio
     async def test_run_passes_extra_markers_to_renderer(self, tmp_path, monkeypatch):
-        from otto.coverage import reporter as reporter_module
+        # reporter.py defers `from .renderer.spa_renderer import SpaRenderer`
+        # to the construction site inside run() (import-budget guard: keeps
+        # SpaRenderer's transitive imports off the `otto cov --help` path) —
+        # so the name to patch is the renderer module's own attribute, not a
+        # module-level binding on `reporter` (there isn't one anymore).
+        from otto.coverage.renderer import spa_renderer as spa_renderer_module
 
         captured: dict[str, object] = {}
 
@@ -180,7 +185,7 @@ class TestExclusionDisplayIsRenderTime:
             def render(self, store):
                 captured["rendered"] = store
 
-        monkeypatch.setattr(reporter_module, "HtmlRenderer", FakeRenderer)
+        monkeypatch.setattr(spa_renderer_module, "SpaRenderer", FakeRenderer)
 
         reporter = CoverageReporter(
             gcda_dirs=[],

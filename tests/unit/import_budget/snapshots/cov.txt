@@ -23,8 +23,6 @@ otto.coverage.merge
 otto.coverage.merge.lcov_loader
 otto.coverage.merge.merger
 otto.coverage.merge.paths
-otto.coverage.renderer
-otto.coverage.renderer.html_renderer
 otto.coverage.reporter
 otto.coverage.store
 otto.coverage.store.model

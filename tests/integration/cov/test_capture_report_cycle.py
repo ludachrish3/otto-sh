@@ -1,5 +1,6 @@
 """get → modify → report: valid/stale split over real git history."""
 
+import json
 import subprocess
 from pathlib import Path
 
@@ -10,6 +11,27 @@ from otto.coverage.capture.model import Capture, CaptureFileCov
 from otto.coverage.capture.store_dir import write_manual_capture
 from otto.coverage.reporter import run_coverage_report
 from otto.coverage.tiers import load_tiers
+
+
+def _mangle_path(path: str) -> str:
+    """Replicate ``spa_data.mangle_path`` — independent oracle, not
+    imported, same stance ``tests/e2e/cov/test_coverage_e2e.py``'s local
+    copy takes: a real mangling regression would still be caught here."""
+    return path.replace("/", "_").replace("\\", "_").lstrip("_")
+
+
+def _file_chunk(report_dir: Path, path: str) -> dict:
+    """Parse a per-file chunk's ``window.__OTTO_COV_FILE__({...});`` body."""
+    chunk_path = report_dir / "cov_data" / "files" / f"{_mangle_path(path)}.js"
+    text = chunk_path.read_text()
+    return json.loads(text[len("window.__OTTO_COV_FILE__(") : -3])
+
+
+def _index_payload(report_dir: Path) -> dict:
+    """Parse ``cov_data/index.js``'s ``window.__OTTO_COV__ = {...};`` body."""
+    text = (report_dir / "cov_data" / "index.js").read_text()
+    return json.loads(text[len("window.__OTTO_COV__ = ") : -2])
+
 
 ENV = {
     "GIT_AUTHOR_NAME": "t",
@@ -143,7 +165,18 @@ async def test_runs_traceable_end_to_end(tmp_path: Path) -> None:
     assert fr2.lines[2].run_hits == {t1: 1, t22: 3}
     assert reloaded.runs[t1].label == "Rack 2 Slot 4"
 
-    # The rendered page carries the drilldown.
-    page = next((report / "files").glob("*.html")).read_text()
-    assert "Rack 2 Slot 4" in page
-    assert "run-stale" in page
+    # The rendered SPA report carries the drilldown too (spec §9/§10): the
+    # per-file chunk's line JSON names each valid run's credit and the
+    # revoked run on the staled line — the JSON analog of the retired
+    # Jinja template's per-line run chips (a live chip per `run_hits`
+    # entry, a struck "run-stale" chip per `stale_runs` entry) — and the
+    # index payload's run table carries the label the old HTML assertion
+    # looked for.
+    chunk = _file_chunk(report, str(fr.path))
+    assert chunk["lines"]["2"]["run"] == {str(t1): 1, str(t22): 3}  # live chips
+    assert chunk["lines"]["1"]["stale_run"] == [t1]  # struck "run-stale" chip
+    assert "run" not in chunk["lines"]["1"]  # revoked run carries no live hit
+
+    payload = _index_payload(report)
+    labels_by_id = {r["id"]: r["label"] for r in payload["runs"]}
+    assert labels_by_id[t1] == "Rack 2 Slot 4"

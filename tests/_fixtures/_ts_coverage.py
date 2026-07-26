@@ -37,12 +37,25 @@ def start_ts_coverage(page: Page) -> CDPSession:
 
 
 def collect_ts_coverage(client: CDPSession, sink: list[dict]) -> None:
-    """Take the coverage snapshot and keep only our served bundles."""
+    """Take the coverage snapshot and keep only our served bundles.
+
+    Three bundle shapes reach here: the monitor dashboard's hashed
+    `.../dist/assets/index-*.js`, the Jinja-era covreport lane's unhashed
+    `.../dist/covreport.js`, and the covapp SPA's unhashed
+    `.../dist/covapp.js` (both `file://` and, since Task 10, served-CSP —
+    `tests/_fixtures/_csp_server.py`). `endswith("covapp.js")` is the
+    narrowest predicate that also matches it: a bare `"/dist/"` substring
+    check would additionally match non-script dist assets (fonts, CSS) that
+    `Profiler.takePreciseCoverage` never actually returns, so it would be a
+    no-op broadening, not a meaningfully different filter — but naming the
+    exact bundle file keeps this list self-documenting as new bundles are
+    added, rather than silently widening to "anything under dist/".
+    """
     data = client.send("Profiler.takePreciseCoverage")
     client.send("Profiler.stopPreciseCoverage")
     for entry in data["result"]:
         url = entry.get("url", "")
-        if "/assets/" in url or url.endswith("covreport.js"):
+        if "/assets/" in url or url.endswith(("covreport.js", "covapp.js")):
             sink.append(entry)
 
 

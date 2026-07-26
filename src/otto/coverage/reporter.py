@@ -40,7 +40,6 @@ from .merge.paths import (
     discover_from_gcno,
     discover_path_mappings,
 )
-from .renderer.html_renderer import HtmlRenderer
 from .store.model import TIER_SYSTEM, CoverageStore, Thresholds
 
 if TYPE_CHECKING:
@@ -433,13 +432,21 @@ class CoverageReporter:
             self._load_manual_store(store, manual_captures)
             self._fill_tier_colors(store)
 
-            # 4. Render HTML. Exclusion display is render-time (spec §8/§9):
-            # a single-valued LineRecord.state can't express "excluded always
-            # wins" over covered/stale/aging, so the reporter never bakes
-            # state="excluded" into the store — it just forwards the extra
-            # marker strings for the renderer's own per-file source scan.
-            logger.info("=== Rendering HTML report ===")
-            renderer = HtmlRenderer(
+            # 4. Render the SPA report. Exclusion display is render-time (spec
+            # §8/§9): a single-valued LineRecord.state can't express "excluded
+            # always wins" over covered/stale/aging, so the reporter never
+            # bakes state="excluded" into the store — it just forwards the
+            # extra marker strings for the renderer's own per-file source scan.
+            logger.info("=== Rendering coverage report ===")
+            # Deferred so importing this module (pulled onto the CLI startup
+            # path via cli.cov) does not drag in SpaRenderer's transitive
+            # imports (spa_data, and through it colors/exclusions) — same
+            # rationale as HtmlRenderer's own deferred jinja2 import, now
+            # enforced by the import-budget guard
+            # (tests/unit/import_budget/test_import_budget.py).
+            from .renderer.spa_renderer import SpaRenderer
+
+            renderer = SpaRenderer(
                 self.output_dir,
                 project_name=self.project_name,
                 extra_markers=self.extra_markers,

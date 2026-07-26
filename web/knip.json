@@ -1,12 +1,14 @@
 {
   "$schema": "./node_modules/knip/schema.json",
+  "entry": ["src/covapp/main.tsx"],
   "project": ["src/**/*.{ts,tsx}"],
   "ignore": [
     "src/components/**",
     "src/utils/is-react-component.ts",
     "src/hooks/use-resize-observer.ts",
     "src/api/types.gen.ts",
-    "src/api/export.gen.ts"
+    "src/api/export.gen.ts",
+    "src/covapp/types.ts"
   ],
   "ignoreDependencies": [
     "tailwindcss",

@@ -31,8 +31,8 @@ which deadlocks asyncssh transfers.
 
 from __future__ import annotations
 
+import json
 import os
-import re
 import shutil
 import subprocess
 import sys
@@ -123,10 +123,30 @@ def _find_file_record(store: CoverageStore, suffix: str) -> FileRecord:
     raise AssertionError(f"No FileRecord ending with {suffix!r} in store")
 
 
-def _file_link(path: str) -> str:
-    """Replicate HtmlRenderer._file_link mangling."""
-    safe = path.replace("/", "_").replace("\\", "_").lstrip("_")
-    return f"files/{safe}.html"
+def _mangle_path(path: str) -> str:
+    """Replicate ``spa_data.mangle_path`` (same formula the retired
+    ``HtmlRenderer._file_link`` used) — this module intentionally
+    reimplements it as an independent oracle rather than importing the
+    renderer, so a mangling regression there would still be caught here."""
+    return path.replace("/", "_").replace("\\", "_").lstrip("_")
+
+
+def _file_chunk_link(path: str) -> str:
+    """Report-relative path to *path*'s per-file JS chunk (SpaRenderer's
+    ``cov_data/files/<mangled>.js`` — see spa_renderer.py/spa_data.py)."""
+    return f"cov_data/files/{_mangle_path(path)}.js"
+
+
+def _index_payload(report_dir: Path) -> dict:
+    """Parse ``cov_data/index.js``'s ``window.__OTTO_COV__ = {...};`` body."""
+    text = (report_dir / "cov_data" / "index.js").read_text()
+    return json.loads(text[len("window.__OTTO_COV__ = ") : -2])
+
+
+def _file_chunk(chunk_path: Path) -> dict:
+    """Parse a per-file chunk's ``window.__OTTO_COV_FILE__({...});`` body."""
+    text = chunk_path.read_text()
+    return json.loads(text[len("window.__OTTO_COV_FILE__(") : -3])
 
 
 @pytest.fixture(scope="module")
@@ -175,14 +195,25 @@ def coverage_run(tmp_path_factory):
 
 
 # ---------------------------------------------------------------------------
-# Test Class 1: HTML Report Structure
+# Test Class 1: SPA Report Structure
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.integration
 @pytest.mark.xdist_group("coverage_e2e")
-class TestHtmlReportStructure:
-    """Verify the HTML report has the correct file structure and content."""
+class TestSpaReportStructure:
+    """Verify the SPA report has the correct file structure and content.
+
+    Ported (Task 8 fix round) from the Jinja-era ``TestHtmlReportStructure``
+    (``files/*.html`` pages, a ``"tier-system"`` CSS pill, ``<tr class="line
+    ...">`` rows) onto the artifacts :class:`~otto.coverage.renderer.spa_renderer.SpaRenderer`
+    actually emits: ``index.html`` + ``dist/`` at the report root, and the
+    ``cov_data/index.js`` / ``cov_data/files/<mangled>.js`` data chunks (see
+    ``spa_renderer.py``'s and ``spa_data.py``'s module docstrings for the
+    exact layout). Every test here keeps its ORIGINAL intent — it is only
+    the artifact shape that moved; the underlying store-level expectations
+    (e.g. "hits > 0", "branch was taken") are untouched.
+    """
 
     def test_index_html_exists(self, coverage_run):
         _, report_dir, *_ = coverage_run
@@ -190,83 +221,77 @@ class TestHtmlReportStructure:
         assert index.exists(), "index.html was not generated"
         assert index.stat().st_size > 0, "index.html is empty"
 
-    def test_per_file_html_for_math_ops(self, coverage_run):
+    def test_per_file_chunk_for_math_ops(self, coverage_run):
         store, report_dir, *_ = coverage_run
         rec = _find_file_record(store, "math_ops.c")
-        link = _file_link(str(rec.path))
-        assert (report_dir / link).exists(), f"Per-file page not found at {link}"
+        link = _file_chunk_link(str(rec.path))
+        assert (report_dir / link).exists(), f"Per-file chunk not found at {link}"
 
-    def test_per_file_html_for_main_c(self, coverage_run):
+    def test_per_file_chunk_for_main_c(self, coverage_run):
         store, report_dir, *_ = coverage_run
         rec = _find_file_record(store, "main.c")
-        link = _file_link(str(rec.path))
-        assert (report_dir / link).exists(), f"Per-file page not found at {link}"
+        link = _file_chunk_link(str(rec.path))
+        assert (report_dir / link).exists(), f"Per-file chunk not found at {link}"
 
-    def test_exactly_two_file_pages(self, coverage_run):
+    def test_exactly_two_file_chunks(self, coverage_run):
         _, report_dir, *_ = coverage_run
-        files_dir = report_dir / "files"
-        assert files_dir.is_dir(), "files/ directory not created"
-        html_files = list(files_dir.glob("*.html"))
-        assert len(html_files) == 2, (
-            f"Expected 2 per-file pages, found {len(html_files)}: {html_files}"
+        files_dir = report_dir / "cov_data" / "files"
+        assert files_dir.is_dir(), "cov_data/files/ directory not created"
+        chunk_files = list(files_dir.glob("*.js"))
+        assert len(chunk_files) == 2, (
+            f"Expected 2 per-file chunks, found {len(chunk_files)}: {chunk_files}"
         )
 
-    def test_index_links_to_file_pages(self, coverage_run):
+    def test_index_payload_references_file_chunks(self, coverage_run):
         store, report_dir, *_ = coverage_run
-        index_html = (report_dir / "index.html").read_text()
+        index_text = (report_dir / "cov_data" / "index.js").read_text()
         for suffix in ("math_ops.c", "main.c"):
             rec = _find_file_record(store, suffix)
-            link = _file_link(str(rec.path))
-            assert link in index_html, f"index.html missing link to {link}"
+            chunk_id = _mangle_path(str(rec.path))
+            assert chunk_id in index_text, f"index.js tree missing chunk reference for {suffix}"
 
-    def test_index_shows_nonzero_system_pct(self, coverage_run):
+    def test_index_payload_shows_nonzero_system_pct(self, coverage_run):
         store, report_dir, *_ = coverage_run
-        index_html = (report_dir / "index.html").read_text()
-        # Summary table row carries a "tier-system" pill followed by numeric cells.
-        assert "tier-system" in index_html, "System tier pill missing from summary"
+        payload = _index_payload(report_dir)
+        # tier_order carries every tier the report knows about (the JSON
+        # analog of the old "tier-system" CSS pill in the summary table).
+        assert "system" in payload["tier_order"], "System tier missing from tier_order"
         # Store should agree the system coverage is non-zero.
         assert store.overall_pct("system") > 0
 
-    def test_file_html_has_all_source_lines(self, coverage_run):
+    def test_file_chunk_source_has_all_lines(self, coverage_run):
         store, report_dir, *_ = coverage_run
         rec = _find_file_record(store, "math_ops.c")
-        link = _file_link(str(rec.path))
-        html = (report_dir / link).read_text()
-        # Source rows carry class="line ..." — the leading space disambiguates
-        # from summary-table rows which use class="summary-row ...".
-        tr_count = html.count('<tr class="line ')
+        chunk = _file_chunk(report_dir / _file_chunk_link(str(rec.path)))
+        # The chunk's full source text is what the SPA renders one code row
+        # per line of — the JSON analog of the old `<tr class="line ...">`
+        # count (which counted rendered rows, one per source line).
         source_line_count = len(PRODUCT_DIR.joinpath("math_ops.c").read_text().splitlines())
-        assert tr_count == source_line_count, (
-            f"Expected {source_line_count} <tr> rows, found {tr_count}"
+        chunk_line_count = len(chunk["source"].splitlines())
+        assert chunk_line_count == source_line_count, (
+            f"Expected {source_line_count} source lines in the chunk, found {chunk_line_count}"
         )
 
-    def test_file_html_contains_branch_pills(self, coverage_run):
+    def test_file_chunk_contains_taken_branch(self, coverage_run):
         store, report_dir, *_ = coverage_run
         rec = _find_file_record(store, "math_ops.c")
-        link = _file_link(str(rec.path))
-        html = (report_dir / link).read_text()
-        assert "branch-pill" in html, "No branch pills found"
-        assert "branch-taken" in html, "No taken branch pills found"
+        chunk = _file_chunk(report_dir / _file_chunk_link(str(rec.path)))
+        all_branches = [b for line in chunk["lines"].values() for b in line["branches"]]
+        assert all_branches, "No branches found in chunk"
+        assert any(b["hits"].get("system", 0) > 0 for b in all_branches), (
+            "No taken (system-hit) branches found"
+        )
 
-    def test_html_hit_counts_match_store(self, coverage_run):
+    def test_chunk_hit_counts_match_store(self, coverage_run):
         store, report_dir, *_ = coverage_run
         rec = _find_file_record(store, "math_ops.c")
-        link = _file_link(str(rec.path))
-        html = (report_dir / link).read_text()
+        chunk = _file_chunk(report_dir / _file_chunk_link(str(rec.path)))
 
         expected_hits = rec.lines[4].hits.for_tier("system")
         assert expected_hits > 0
 
-        # The system-tier hit count is the first "hits hits-system" cell
-        # following line #4's lineno cell.  The template emits one such
-        # cell per configured tier in precedence order.
-        pattern = (
-            r'<td class="lineno">4</td>\s*'
-            r'<td class="hits hits-system">(\d+)</td>'
-        )
-        match = re.search(pattern, html)
-        assert match, "Could not find hits-system cell for line 4"
-        assert int(match.group(1)) == expected_hits
+        actual_hits = chunk["lines"]["4"]["hits"]["system"]
+        assert actual_hits == expected_hits
 
 
 # ---------------------------------------------------------------------------
@@ -491,11 +516,21 @@ class TestCoverageIntegrity:
         pct = store.overall_branch_pct("system", conservative=True)
         assert 0 < pct <= 100
 
-    def test_static_assets_copied(self, coverage_run):
+    def test_spa_bundle_assets_copied(self, coverage_run):
+        """SpaRenderer copies the built covapp bundle (index.html + dist/)
+        to the report ROOT — unlike the retired HtmlRenderer, there is no
+        ``static/`` subdirectory, and the bundle's hidden sourcemap must
+        never be copied into an emitted report (see spa_renderer.py's
+        ``_copy_bundle`` docstring)."""
         _, report_dir, *_ = coverage_run
-        static_src = PROJECT_ROOT / "src/otto/coverage/renderer/static"
-        if static_src.exists():
-            assert (report_dir / "static").is_dir()
+        bundle_src = PROJECT_ROOT / "src/otto/coverage/renderer/static/covapp"
+        if bundle_src.exists():
+            assert (report_dir / "index.html").is_file()
+            assert (report_dir / "dist" / "covapp.js").is_file()
+            assert not (report_dir / "static").exists(), (
+                "SPA reports have no static/ dir — the Jinja lane's layout leaked in"
+            )
+            assert not list(report_dir.rglob("*.map")), "*.map must be excluded from the copy"
 
 
 # ---------------------------------------------------------------------------

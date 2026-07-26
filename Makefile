@@ -292,7 +292,7 @@ WEB_NODE_MODULES := web/node_modules/.package-lock.json
 $(WEB_NODE_MODULES): web/package.json web/package-lock.json
 	$(MAKE) web-install
 
-web: $(WEB_NODE_MODULES) ## (Build & Release) Build the web/ React dashboard + the covreport bundle (vite) into their static dist dirs, then gate both against absolute http(s) URLs (air-gap requirement — labs have no network access, see scripts/check_airgap.sh) and the dashboard against a resolved-brand-color regression (scripts/check_brand_tokens.sh)
+web: $(WEB_NODE_MODULES) ## (Build & Release) Build the web/ React dashboard + the covreport bundle + the covapp SPA scaffold (vite) into their static dist dirs, then gate all three against absolute http(s) URLs (air-gap requirement — labs have no network access, see scripts/check_airgap.sh) and the dashboard + covapp against a resolved-brand-color regression (scripts/check_brand_tokens.sh)
 	# Regenerate web/src/api/types.gen.ts and web/src/api/export.gen.ts from
 	# the live pydantic models and fail BEFORE the vite build if either
 	# committed file has drifted — a stale wire contract should be caught by
@@ -303,12 +303,15 @@ web: $(WEB_NODE_MODULES) ## (Build & Release) Build the web/ React dashboard + t
 	# build_web_no_warnings.sh = vite with warnings-as-errors: any "(!)"
 	# build warning (chunk budget overrun, rollup notices) fails the build
 	# instead of scrolling past. The chunk budget itself lives in
-	# web/vite.config.ts (chunkSizeWarningLimit).
+	# web/vite.config.ts (chunkSizeWarningLimit) / web/vite.covapp.config.ts.
 	scripts/build_web_no_warnings.sh build
 	scripts/build_web_no_warnings.sh build:covreport
+	scripts/build_web_no_warnings.sh build:covapp
 	scripts/check_airgap.sh
 	scripts/check_airgap.sh src/otto/coverage/renderer/static/dist
+	scripts/check_airgap.sh src/otto/coverage/renderer/static/covapp
 	scripts/check_brand_tokens.sh
+	scripts/check_brand_tokens.sh src/otto/coverage/renderer/static/covapp
 
 web-dev: $(WEB_NODE_MODULES) ## (Dev) Run the web/ Vite dev server with hot reload; proxies /api to a running otto monitor (default target http://127.0.0.1:8080, override with VITE_OTTO_TARGET=http://host:port)
 	cd web && npm run dev
@@ -321,9 +324,10 @@ web-dev: $(WEB_NODE_MODULES) ## (Dev) Run the web/ Vite dev server with hot relo
 test-ts: $(WEB_NODE_MODULES) ## (Dev) Run the web/ vitest suite once — no coverage, the fast TS loop. (Deliberately no test-python twin and no bare `test`: the fast Python lane is `coverage-unit`.)
 	cd web && npm run test
 
-web-clean: ## (Dev) Remove the built web/ dist outputs (monitor dashboard + covreport)
+web-clean: ## (Dev) Remove the built web/ dist outputs (monitor dashboard + covreport + covapp)
 	rm -rf src/otto/monitor/static/dist
 	rm -rf src/otto/coverage/renderer/static/dist
+	rm -rf src/otto/coverage/renderer/static/covapp
 
 # uv_build embeds the ENTIRE module tree (src/otto/**) into both the sdist and
 # the wheel by default — unlike hatchling, it is not VCS-aware, so it doesn't
@@ -357,6 +361,11 @@ wheel-check: clean-dist web build ## (Build & Release) Rebuild the dashboard + w
 		exit 1; \
 	fi; \
 	echo "wheel-check: OK — $$count otto/coverage/renderer/static/dist/ entries embedded."
+	@if ! unzip -l dist/*.whl | grep -q "otto/coverage/renderer/static/covapp/index.html"; then \
+		echo "wheel-check: FAIL — otto/coverage/renderer/static/covapp/index.html missing from dist/*.whl; an air-gapped install would ship the coverage-report SPA without its shell." >&2; \
+		exit 1; \
+	fi; \
+	echo "wheel-check: OK — otto/coverage/renderer/static/covapp/index.html embedded in the wheel."
 
 docs-media: ## (Docs) Force-regenerate the build-time GUI media (screenshots, clips, termynal blocks) in docs/_static/generated/
 	uv run python scripts/capture_docs_media.py --mode force
@@ -459,21 +468,24 @@ BROWSER_WORKERS ?= $(shell if [ "$$(nproc)" -ge 2 ] && [ "$$(awk '/MemTotal/ {pr
 BROWSER_SHARD_ENV = $(if $(filter-out 1,$(BROWSER_WORKERS)),OTTO_BROWSER_SHARD=1,)
 DASHBOARD_DIST := src/otto/monitor/static/dist/index.html
 COVREPORT_DIST := src/otto/coverage/renderer/static/dist/covreport.js
+COVAPP_DIST := src/otto/coverage/renderer/static/covapp/index.html
 
-# Everything vite feeds into the two bundles: the app sources (including the
+# Everything vite feeds into the three bundles: the app sources (including the
 # committed api/*.gen.ts, which is the seam through which a pydantic-model
 # change reaches the frontend — `make web` regenerates and diff-gates them),
-# the html entry, the tsc/vite configs, and the dependency manifests. Biome's
+# the html entries, the tsc/vite configs, and the dependency manifests. Biome's
 # config and web/fixtures/ are deliberately absent: neither is a build input.
 WEB_SRCS := $(shell find web/src -type f) \
             web/index.html               \
+            web/covapp.html              \
             web/tsconfig.json            \
             web/vite.config.ts           \
             web/vite.covreport.config.ts \
+            web/vite.covapp.config.ts    \
             web/package.json             \
             web/package-lock.json
 
-$(DASHBOARD_DIST) $(COVREPORT_DIST) &: $(WEB_SRCS) $(WEB_NODE_MODULES)
+$(DASHBOARD_DIST) $(COVREPORT_DIST) $(COVAPP_DIST) &: $(WEB_SRCS) $(WEB_NODE_MODULES)
 	$(MAKE) web
 
 # Merged-TS-coverage inputs. The browser lane (dashboard) dumps raw Chromium

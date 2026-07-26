@@ -1,0 +1,152 @@
+// Tier x Line/Branch/Decision matrix (Task 3 brief; DOM/anatomy reference:
+// docs/superpowers/specs/assets/2026-07-24-coverage-ui/file-page.html's
+// `.stats` table / `.pct`/`.frac`/`tr.all`/`.tierdot`) — recreated with
+// Tailwind utilities over the vendored semantic tokens, not the mockup's
+// literal CSS.
+import { cx } from "@/utils/cx";
+
+import { fmtPct, pct, pctClass } from "../stats";
+import type { Thresholds } from "../types";
+
+export interface TierStatRow {
+  key: string;
+  label: string;
+  dotColor?: string;
+  line: [number, number];
+  /** `null` (Task 7: the focused-context single row) mirrors `decision`'s
+   * "no data" rendering — v4's `run_hits` is per-line only (Global
+   * Constraints' documented data limitation: per-run branch contribution
+   * isn't stored), so a focused row has nothing to show here. Every
+   * pre-Task-7 caller still passes a tuple — this is purely additive. */
+  branch: [number, number] | null;
+  /** `null` when this stat type has no data for this row (e.g. decision
+   * counts aren't rolled up onto tree nodes) — rendered as a muted
+   * "no data", never a bogus 0%. */
+  decision: [number, number] | null;
+}
+
+export interface StatsCardProps {
+  scope: string;
+  title: string;
+  rows: TierStatRow[];
+  thresholds: Thresholds;
+  /** First column header text — "Tier" for the normal per-tier matrix,
+   * "Context" for Task 7's focused single-row variant.
+   * @default "Tier" */
+  keyColumnLabel?: string;
+}
+
+// Tailwind classes for each pctClass() bucket — same tokens
+// EventEditor.tsx/DataWarningsBanner.tsx use for error/warning text, so the
+// mockup's --pct-high/mid/low map onto this app's existing status-color
+// vocabulary rather than inventing a parallel one.
+const PCT_COLOR: Record<ReturnType<typeof pctClass>, string> = {
+  "pct-high": "text-success-primary",
+  "pct-mid": "text-warning-primary",
+  "pct-low": "text-error-primary",
+  "pct-na": "text-quaternary",
+};
+
+function StatCell({
+  hit,
+  total,
+  thresholds,
+}: {
+  hit: number;
+  total: number;
+  thresholds: Thresholds;
+}) {
+  const p = pct(hit, total);
+  const cls = pctClass(p, thresholds);
+  return (
+    <td className="py-1.5 pr-4 text-right whitespace-nowrap">
+      <span className={cx("font-semibold tabular-nums", PCT_COLOR[cls])}>{fmtPct(p)}</span>
+      {total > 0 && (
+        <span className="ml-1.5 text-xs font-normal tabular-nums text-quaternary">
+          {hit}/{total}
+        </span>
+      )}
+    </td>
+  );
+}
+
+/** Shared by the Branch and Decision columns: both can be `null` ("no
+ * data" for this row — Task 7's focused single row has no branch data
+ * per-run, and decision counts were never rolled up onto tree nodes in the
+ * first place), rendered identically muted rather than as a bogus 0%. */
+function NullableStatCell({
+  value,
+  thresholds,
+}: {
+  value: [number, number] | null;
+  thresholds: Thresholds;
+}) {
+  if (value === null) {
+    return (
+      <td className="py-1.5 pr-4 text-right whitespace-nowrap">
+        <span className="text-xs font-normal text-quaternary">no data</span>
+      </td>
+    );
+  }
+  const [hit, total] = value;
+  return <StatCell hit={hit} total={total} thresholds={thresholds} />;
+}
+
+export function StatsCard({
+  scope,
+  title,
+  rows,
+  thresholds,
+  keyColumnLabel = "Tier",
+}: StatsCardProps) {
+  return (
+    <div
+      data-testid="stats-card"
+      className="w-full max-w-md rounded-xl bg-primary p-3 ring-1 ring-secondary sm:w-auto"
+    >
+      <div className="mb-2 flex items-baseline justify-between gap-3">
+        <span className="text-sm font-semibold text-secondary">{title}</span>
+        <span className="truncate text-xs text-quaternary">{scope}</span>
+      </div>
+      <table className="w-full border-collapse text-sm">
+        <thead>
+          <tr className="text-left text-xs font-medium text-quaternary">
+            <th className="pb-1 pr-4 font-medium">{keyColumnLabel}</th>
+            <th className="pb-1 pr-4 text-right font-medium">Line</th>
+            <th className="pb-1 pr-4 text-right font-medium">Branch</th>
+            <th className="pb-1 text-right font-medium">Decision</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => {
+            const isAll = row.key === "all";
+            return (
+              <tr
+                key={row.key}
+                data-testid={`stats-row-${row.key}`}
+                className={cx(
+                  isAll && "border-t border-secondary bg-secondary font-semibold text-primary",
+                )}
+              >
+                <td className="py-1.5 pr-4 font-medium text-secondary">
+                  {row.dotColor && (
+                    <span
+                      aria-hidden
+                      data-testid="tier-dot"
+                      className="mr-1.5 inline-block size-2 rounded-sm align-middle"
+                      style={{ backgroundColor: row.dotColor }}
+                    />
+                  )}
+                  {row.label}
+                </td>
+                <StatCell hit={row.line[0]} total={row.line[1]} thresholds={thresholds} />
+                <NullableStatCell value={row.branch} thresholds={thresholds} />
+                <NullableStatCell value={row.decision} thresholds={thresholds} />
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
