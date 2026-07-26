@@ -5,7 +5,7 @@ processes them with ``lcov``, and renders a multi-tier HTML report.
 
 **Usage**::
 
-    otto cov report RUN_DIR1 [RUN_DIR2 ...] --report ./my_report
+    otto cov report RUN_DIR1 [RUN_DIR2 ...] --dir ./my_report
 
 Each *RUN_DIR* is an ``otto test`` output directory containing a ``cov/``
 subdirectory with per-host ``.gcda`` files.  Multiple directories can be
@@ -17,8 +17,8 @@ See the :doc:`/guide/coverage` and :doc:`/guide/hosts/index` documentation.
 
 **Options**
 
-``--report PATH``
-    Where to place the generated HTML report (default: ``./cov_report``).
+``--dir PATH``
+    Where to place the generated coverage report (default: ``./cov_report``).
 
 ``--project-name STR``
     Title shown in the HTML report header.
@@ -232,9 +232,9 @@ def report(
     report_dir: Annotated[
         Path,
         typer.Option(
-            "--report",
-            "-r",
-            help="Where to place the generated HTML report.",
+            "--dir",
+            "-d",
+            help="Where to place the generated coverage report.",
         ),
     ] = Path("./cov_report"),
     project_name: Annotated[

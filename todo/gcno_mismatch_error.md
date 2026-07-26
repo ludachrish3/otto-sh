@@ -14,7 +14,7 @@
 
 ## The error
 
-When running `otto cov report <log_dir> --report <out>`, lcov/geninfo can fail with:
+When running `otto cov report <log_dir> --dir <out>`, lcov/geninfo can fail with:
 
 ```
 geninfo: ERROR: "/path/to/file.gcno": reports 'X' functions, but this version of gcov

@@ -17,6 +17,7 @@ pytestmark = [
 ]
 
 
+@pytest.mark.no_bundle_page  # renders the script-free 403 hint HTML, not the app bundle
 def test_bare_url_renders_403_hint_not_dashboard(shell_dash, page) -> None:
     parts = urlsplit(shell_dash.url)
     bare = urlunsplit((parts.scheme, parts.netloc, "/", "", ""))

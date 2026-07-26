@@ -36,12 +36,13 @@ def start_ts_coverage(page: Page) -> CDPSession:
     return client
 
 
-def collect_ts_coverage(client: CDPSession, sink: list[dict]) -> None:
+def collect_ts_coverage(
+    client: CDPSession, sink: list[dict], *, allow_no_match: bool = False
+) -> None:
     """Take the coverage snapshot and keep only our served bundles.
 
-    Three bundle shapes reach here: the monitor dashboard's hashed
-    `.../dist/assets/index-*.js`, the Jinja-era covreport lane's unhashed
-    `.../dist/covreport.js`, and the covapp SPA's unhashed
+    Two bundle shapes reach here: the monitor dashboard's hashed
+    `.../dist/assets/index-*.js`, and the covapp SPA's unhashed
     `.../dist/covapp.js` (both `file://` and, since Task 10, served-CSP —
     `tests/_fixtures/_csp_server.py`). `endswith("covapp.js")` is the
     narrowest predicate that also matches it: a bare `"/dist/"` substring
@@ -50,13 +51,32 @@ def collect_ts_coverage(client: CDPSession, sink: list[dict]) -> None:
     no-op broadening, not a meaningfully different filter — but naming the
     exact bundle file keeps this list self-documenting as new bundles are
     added, rather than silently widening to "anything under dist/".
+
+    Every armed chromium browser test loads one of our bundles EXCEPT a test
+    explicitly marked ``@pytest.mark.no_bundle_page`` (e.g. the access-key
+    refusal path, which deliberately renders a script-free 403 hint page) —
+    that marker is the exhaustive exception list, threaded through here as
+    ``allow_no_match`` by the ``ts_coverage`` generator below. For every
+    unmarked test, a zero-match snapshot is always a broken filter or a
+    stale/missing build, never a legitimate state — see the guard at the end
+    of this function.
     """
     data = client.send("Profiler.takePreciseCoverage")
     client.send("Profiler.stopPreciseCoverage")
+    matched = False
     for entry in data["result"]:
         url = entry.get("url", "")
-        if "/assets/" in url or url.endswith(("covreport.js", "covapp.js")):
+        if "/assets/" in url or url.endswith("covapp.js"):
             sink.append(entry)
+            matched = True
+    if not matched and not allow_no_match:
+        seen = sorted({e.get("url", "") for e in data["result"]})[:10]
+        raise RuntimeError(
+            "ts-coverage: collection was armed and a snapshot taken, but no "
+            "script URL matched the bundle filter — the filter and the built "
+            "bundles have drifted, or the build is stale/missing. URLs seen: "
+            f"{seen}"
+        )
 
 
 def write_ts_coverage(sink: list[dict]) -> None:
@@ -88,6 +108,12 @@ def ts_coverage(request: pytest.FixtureRequest, sink: list[dict]) -> Iterator[No
     a bare ``page`` parameter would force browser parametrization onto a
     conftest's non-browser tests and pull sync Playwright's event loop into
     the shared hostless process.
+
+    ``@pytest.mark.no_bundle_page`` opts a test out of the zero-match guard
+    in ``collect_ts_coverage`` (not out of collection itself — the CDP
+    session still starts and the snapshot is still taken and merged into
+    ``sink``): it names a test that deliberately renders a page with none of
+    our bundles, e.g. the access-key refusal path's 403 hint HTML.
     """
     if (
         not os.environ.get("OTTO_TS_COVERAGE")
@@ -99,6 +125,7 @@ def ts_coverage(request: pytest.FixtureRequest, sink: list[dict]) -> Iterator[No
     if request.getfixturevalue("browser_name") != "chromium":
         yield
         return
+    allow_no_match = request.node.get_closest_marker("no_bundle_page") is not None
     client = start_ts_coverage(request.getfixturevalue("page"))
     yield
-    collect_ts_coverage(client, sink)
+    collect_ts_coverage(client, sink, allow_no_match=allow_no_match)

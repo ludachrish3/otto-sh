@@ -163,7 +163,14 @@ describe("useHashLocation (custom Router hook)", () => {
   it("navigate() writes a plain hash path", () => {
     window.location.hash = "#/coverage";
     const { result } = renderHook(() => useHashLocation());
-    result.current[1]("/coverage/other");
+    // Wrapped in `act`: navigate()'s plain-push branch dispatches its
+    // hashchange synchronously (matching wouter's own `navigate` — see
+    // pushHash's doc comment), which synchronously re-renders this same
+    // hook's `useSyncExternalStore` subscription outside any Testing
+    // Library helper that would otherwise wrap it.
+    act(() => {
+      result.current[1]("/coverage/other");
+    });
     expect(window.location.hash).toBe("#/coverage/other");
   });
 });

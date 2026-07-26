@@ -7,7 +7,6 @@
 
 import { File02, Folder } from "@untitledui/icons";
 import type { ReactNode } from "react";
-import { useHashLocation } from "wouter/use-hash-location";
 
 import { Disclosure } from "@/ui/Disclosure";
 import { type TreeColumn, TreeView } from "@/ui/TreeView";
@@ -15,9 +14,9 @@ import { cx } from "@/utils/cx";
 
 import { AppShell } from "../chrome/AppShell";
 import { groupContexts } from "../contexts";
-import { useFocus } from "../focus";
+import { useFocus, useHashLocation } from "../focus";
 import { crumbsFor, encodePath, fmtCount, focusedTreeRow, tierRows } from "../format";
-import { findNode, fmtPct, type PctClass, pct, pctClass } from "../stats";
+import { findNode, fmtPct, PCT_TEXT, type PctClass, pct, pctClass } from "../stats";
 import type { DirNode, FileNode, IndexPayload, Stats } from "../types";
 
 const NAME_COLUMN: TreeColumn = {
@@ -113,17 +112,6 @@ function renderName(row: Row): ReactNode {
     </span>
   );
 }
-
-// Text color for a pct-class bucket — same vocabulary StatsCard.tsx's
-// PCT_COLOR uses (EventEditor.tsx/DataWarningsBanner.tsx's error/warning
-// tokens), so the tree's Line %/Branch % cells read consistently with the
-// stats card above them.
-const PCT_TEXT: Record<PctClass, string> = {
-  "pct-high": "text-success-primary",
-  "pct-mid": "text-warning-primary",
-  "pct-low": "text-error-primary",
-  "pct-na": "text-quaternary",
-};
 
 // Minibar fill — the `fg-*` layer (not `text-*`) is this codebase's existing
 // vocabulary for colored bars/dots (src/topo/nodes.tsx's STATUS_SEGMENT,

@@ -19,13 +19,12 @@ const rawDir = resolve(repo, "reports/ts-e2e-cov/raw");
 const outDir = resolve(repo, "reports/ts-e2e-cov/istanbul");
 const dists = [
   resolve(repo, "src/otto/monitor/static/dist"),
-  resolve(repo, "src/otto/coverage/renderer/static/dist"),
   resolve(repo, "src/otto/coverage/renderer/static/covapp/dist"),
 ];
 
 // Vendored Untitled UI source + generated wire types: excluded from coverage
 // the same way Biome/vitest/knip exclude them (web/README.md, vendor
-// boundary). Bootstrap entrypoints (main.tsx, covreport/main.ts) are
+// boundary). Bootstrap entrypoints (main.tsx, covapp/main.tsx) are
 // deliberately INCLUDED here — the e2e leg is precisely what exercises them
 // (vitest excludes them for the opposite reason).
 const EXCLUDED = new Set([
@@ -69,11 +68,12 @@ const excluded = (absSourcePath) => {
 // the brief assumed a root-mounted dist (pathname === the dist-relative
 // path). The actual served URLs, observed in a real raw dump, are
 // `http://host:port/static/dist/assets/index-*.js` (monitor server mounts
-// _STATIC_DIR at /static, static/server.py) and, for the covreport suite
+// _STATIC_DIR at /static, static/server.py) and, for the covapp suite
 // (opened via file://, no server — report_browser/conftest.py),
-// `file:///tmp/.../report/static/dist/covreport.js`. Both share a `/dist/`
-// path segment immediately before the dist-relative subpath, so anchor on
-// that instead of assuming the URL is dist-rooted.
+// `file:///tmp/.../cov_report_fixture0/dist/covapp.js` (the session's
+// `report_dir` tmp path, not a literal "covapp" segment). Both share a
+// `/dist/` path segment immediately before the dist-relative subpath, so
+// anchor on that instead of assuming the URL is dist-rooted.
 function distFileFor(url) {
   const pathname = new URL(url).pathname;
   const marker = "/dist/";
@@ -145,7 +145,7 @@ if (!dumps.length) {
 // Group every raw CDP snapshot by its served path (host:port stripped). The
 // browser suites run each test against a fresh monitor server on an ephemeral
 // port, so the SAME ~8.8 MB dist bundle (index-*.js) is captured once per test
-// — dozens of near-identical snapshots on dozens of ports, plus the covreport
+// — dozens of near-identical snapshots on dozens of ports, plus the covapp
 // bundle. Handing each snapshot to monocart separately made this script parse
 // that bundle's 8.8 MB hidden sourcemap once PER snapshot and hold every copy
 // (monocart retains each add()ed entry's sourceMap until generate()), which

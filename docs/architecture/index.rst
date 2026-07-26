@@ -29,7 +29,7 @@ the principles are the recurring design rules.
    subsystems/network
    subsystems/monitoring
    subsystems/security
-   subsystems/coverage
+   subsystems/coverage/index
    subsystems/reservations
    subsystems/bootstrap
    subsystems/data-boundary

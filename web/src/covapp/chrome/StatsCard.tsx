@@ -5,7 +5,7 @@
 // literal CSS.
 import { cx } from "@/utils/cx";
 
-import { fmtPct, pct, pctClass } from "../stats";
+import { fmtPct, PCT_TEXT, pct, pctClass } from "../stats";
 import type { Thresholds } from "../types";
 
 export interface TierStatRow {
@@ -36,17 +36,6 @@ export interface StatsCardProps {
   keyColumnLabel?: string;
 }
 
-// Tailwind classes for each pctClass() bucket — same tokens
-// EventEditor.tsx/DataWarningsBanner.tsx use for error/warning text, so the
-// mockup's --pct-high/mid/low map onto this app's existing status-color
-// vocabulary rather than inventing a parallel one.
-const PCT_COLOR: Record<ReturnType<typeof pctClass>, string> = {
-  "pct-high": "text-success-primary",
-  "pct-mid": "text-warning-primary",
-  "pct-low": "text-error-primary",
-  "pct-na": "text-quaternary",
-};
-
 function StatCell({
   hit,
   total,
@@ -60,7 +49,7 @@ function StatCell({
   const cls = pctClass(p, thresholds);
   return (
     <td className="py-1.5 pr-4 text-right whitespace-nowrap">
-      <span className={cx("font-semibold tabular-nums", PCT_COLOR[cls])}>{fmtPct(p)}</span>
+      <span className={cx("font-semibold tabular-nums", PCT_TEXT[cls])}>{fmtPct(p)}</span>
       {total > 0 && (
         <span className="ml-1.5 text-xs font-normal tabular-nums text-quaternary">
           {hit}/{total}

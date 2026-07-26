@@ -118,6 +118,9 @@ export interface LineJson {
   run?: Record<string, number>;
   /** Present only when at least one run's evidence for this line was revoked. */
   stale_run?: number[];
+  /** Reserved per-line ticket slot (store v4) — emitted only when the
+   * Python side has a ticket for the line; no producer fills it yet. */
+  ticket?: string;
 }
 
 /** `cov_data/files/<chunk>.js` payload shape (`window.__OTTO_COV_FILE__` argument). */

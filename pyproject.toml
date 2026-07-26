@@ -40,7 +40,6 @@ dependencies = [
     "aiosqlite>=0.21.0",
     "asyncssh>=2.22.0",
     "fastapi>=0.135.1",
-    "jinja2>=3.1.0",
     "pydantic>=2.6,<3",
     "pydantic-settings>=2.2,<3",
     # SNMP manager for embedded / separate-channel performance monitoring.
@@ -88,6 +87,7 @@ build-backend = "uv_build"
 # build backend needs to be pointed at src/otto/ explicitly.
 [tool.uv.build-backend]
 module-name = "otto"
+wheel-exclude = ["**/*.map"]
 
 # NOTE on air-gapped installs (no extra config needed here, on purpose):
 # otto labs are air-gapped, so `otto monitor`'s React dashboard must ship
@@ -105,7 +105,13 @@ module-name = "otto"
 # `make wheel-check` (builds web + wheel, then asserts dist/index.html + its
 # assets are present in the .whl); do not add a `wheel-exclude`/
 # `source-exclude` pattern that would match `static/dist/**`, or air-gapped
-# installs break silently.
+# installs break silently. The one deliberate, narrow exception is
+# `wheel-exclude = ["**/*.map"]`: both bundles build with
+# `sourcemap: "hidden"` (no `sourceMappingURL` comment, so nothing ever
+# requests a map at runtime); the maps exist on disk solely for the merged
+# TS-coverage fold, and SpaRenderer already strips them from every emitted
+# report. Without this, a wheel built after `make web` ships ~5 MB of dead
+# sourcemaps.
 
 [dependency-groups]
 dev = [
@@ -212,6 +218,7 @@ markers = [
     "concurrency: fast, no-VM SessionManager concurrency/soak tests — run via `make stability-unit`; stays in coverage",
     "e2e: end-to-end-tier test, auto-stamped from tests/e2e/ (level axis; orthogonal to the integration/embedded resource markers)",
     "soak: heavy browser-driven replay stress test (tests/e2e/monitor/dashboard/test_replay_soak.py) — excluded from `make dashboard`'s default -m selection and from noxfile.py's `dashboard` session (keep both in sync); chromium-only (`make dashboard-soak`, or -m soak --browser chromium — the test itself skips on other engines)",
+    "no_bundle_page: browser test whose page deliberately renders none of our bundles (e.g. an access-key-refusal HTML hint page) — opts out of tests/_fixtures/_ts_coverage.py's zero-match guard without disabling collection",
 ]
 
 # NB: coverage.py config lives in .coveragerc, not here — that file is shared

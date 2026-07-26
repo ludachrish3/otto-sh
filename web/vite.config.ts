@@ -87,7 +87,6 @@ export default defineConfig({
         "src/api/types.gen.ts",
         "src/api/export.gen.ts",
         "src/main.tsx",
-        "src/covreport/main.ts",
         "src/covapp/main.tsx",
         // Vendored Untitled UI source — not ours to test. web/src/ui/** (our
         // own components) stays measured. Same vendor boundary Biome's

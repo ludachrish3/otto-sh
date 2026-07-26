@@ -86,7 +86,7 @@ layers on otto's concerns:
 - **Retry** — `@pytest.mark.retry(n)` re-runs a failing test in place.
 - **Monitoring and coverage** — test start/end events are stamped onto the
   monitor timeline, and coverage runs fetch embedded counters after the
-  session ({doc}`../subsystems/monitoring`, {doc}`../subsystems/coverage`).
+  session ({doc}`../subsystems/monitoring`, {doc}`../subsystems/coverage/index`).
 
 ## Selection runs
 

@@ -92,6 +92,32 @@ function replaceHash(next: string): void {
   );
 }
 
+/** Same shape as `replaceHash`, but via `history.pushState` (a new session-
+ * history entry, `state: null` — the same as any fresh push per the
+ * `isKnownEntry()` doc comment below) — for real in-app navigations
+ * (`useHashLocation`'s plain, non-`replace` `navigate()`). A bare
+ * `window.location.hash = next` assignment would ALSO push a new entry, but
+ * per the HTML spec its `hashchange` fires as a QUEUED TASK, not
+ * synchronously — verified empirically in this project's jsdom (a
+ * `location.hash` write updates `.hash` immediately but the event only
+ * arrives on a later tick), which lands the resulting route change outside
+ * any `act()` a caller's `fireEvent` wrapped, tripping this project's
+ * console-error-is-a-failure gate on route-driven tests (App.test.tsx's "%"
+ * round-trip regression). Dispatching manually, like wouter's own
+ * `navigate()` and this module's `replaceHash`, keeps `useHashLocation` a
+ * genuinely faithful drop-in — same synchronous contract wouter's raw hook
+ * already had. */
+function pushHash(next: string): void {
+  const url = new URL(window.location.href);
+  url.hash = next;
+  window.history.pushState(null, "", url);
+  window.dispatchEvent(
+    typeof HashChangeEvent !== "undefined"
+      ? new HashChangeEvent("hashchange")
+      : new Event("hashchange"),
+  );
+}
+
 /** `history.state` key `FocusProvider` stamps onto every session-history
  * entry it has itself settled (via `stampCurrentEntry`, below) — the
  * Back/Forward-vs-in-app-navigation discriminator its "survive
@@ -119,11 +145,12 @@ function stampCurrentEntry(): void {
 }
 
 /** Whether the entry the browser is CURRENTLY on was previously settled
- * by `stampCurrentEntry`. A native `location.hash = …` push (this
- * module's own `navigate()`, `setHashQuery`, or a plain
- * `<a href="#/...">` click) always lands on a BRAND NEW entry, which
- * browsers always create with `state: null` — never something we can
- * stamp in advance, since we only ever stamp AFTER already having
+ * by `stampCurrentEntry`. A fresh entry always lands with `state: null` —
+ * whether it's a native `location.hash = …` push (`setHashQuery` or a
+ * plain `<a href="#/...">` click), which browsers create with `state:
+ * null` on their own, or this module's own `navigate()`, which pushes via
+ * `pushHash`'s explicit `history.pushState(null, ...)` — never something
+ * we can stamp in advance, since we only ever stamp AFTER already having
  * processed a hash transition once. So `isKnownEntry() === true` can
  * only mean "we've been at this exact history position before", i.e. a
  * real Back/Forward (or `history.go`) landed here — never a fresh
@@ -196,7 +223,7 @@ export function useHashLocation(): [string, (to: string, opts?: { replace?: bool
     if (opts.replace) {
       replaceHash(path);
     } else {
-      window.location.hash = path; // fires a native hashchange
+      pushHash(path);
     }
   }, []);
 

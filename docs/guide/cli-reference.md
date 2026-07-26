@@ -380,7 +380,7 @@ automatically.
 
 | Option | Default | Description |
 | ------ | ------- | ----------- |
-| `--report, -r PATH` | `./cov_report` | Directory for the generated HTML report (`index.html` is written inside it) |
+| `--dir, -d PATH` | `./cov_report` | Where to place the generated coverage report |
 | `--project-name NAME` | `Coverage Report` | Title shown in the HTML report header |
 | `--tier NAME[=PATH]` | the configured tiers | Git-less escape hatch; repeatable. See tier rules below. |
 
@@ -410,8 +410,8 @@ annotated source view.
 
 ```text
 otto cov get --tier manual --ticket PROJ-123 --note "verified failover"
-otto cov report runs/2026-05-16_T1200/ --report ./report
-otto cov report run_a/ run_b/ run_c/ --report ./combined
+otto cov report runs/2026-05-16_T1200/ --dir ./report
+otto cov report run_a/ run_b/ run_c/ --dir ./combined
 otto cov report runs/ --tier unit=unit.info --tier system --tier manual=manual.info
 ```
 

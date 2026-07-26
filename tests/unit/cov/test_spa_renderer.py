@@ -1,9 +1,9 @@
 """Tests for SpaRenderer: bundle copy, data-chunk emission, warn-and-continue degrade.
 
-Carries forward the Jinja-era HtmlRenderer pins that must survive the SPA swap
-at the Python level (the vitest suites cover the DOM level) — see
-``test_html_renderer_dist.py`` / ``test_renderer.py`` for the shapes these
-mirror.
+Carries forward the pins from the retired Jinja-era renderer tests that must
+survive the SPA swap at the Python level (the vitest suites cover the DOM
+level) — the shapes these mirror were originally pinned in the deleted
+``test_html_renderer_dist.py`` / ``test_renderer.py``.
 """
 
 import json

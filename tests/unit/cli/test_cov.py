@@ -244,7 +244,7 @@ class TestCovReportSuccess:
             [
                 "report",
                 str(cov_tree),
-                "--report",
+                "--dir",
                 "/tmp/my_report",
             ],
         )
@@ -474,7 +474,7 @@ class TestCovReportCollectionModelErrors:
             ),
             patch.object(cov_module.logger, "error") as mock_err,
         ):
-            result = runner.invoke(cov_app, ["report", "--report", str(tmp_path / "report")])
+            result = runner.invoke(cov_app, ["report", "--dir", str(tmp_path / "report")])
 
         assert result.exit_code == 1
         assert "Traceback" not in result.output
@@ -493,7 +493,7 @@ class TestCovReportCollectionModelErrors:
             ),
             patch.object(cov_module.logger, "error") as mock_err,
         ):
-            result = runner.invoke(cov_app, ["report", "--report", str(tmp_path / "report")])
+            result = runner.invoke(cov_app, ["report", "--dir", str(tmp_path / "report")])
 
         assert result.exit_code == 1
         assert "Traceback" not in result.output
@@ -517,7 +517,7 @@ class TestCovReportCollectionModelErrors:
             patch.object(cov_module.logger, "error") as mock_err,
         ):
             result = runner.invoke(
-                cov_app, ["report", str(not_git), "--report", str(tmp_path / "report")]
+                cov_app, ["report", str(not_git), "--dir", str(tmp_path / "report")]
             )
 
         assert result.exit_code == 1

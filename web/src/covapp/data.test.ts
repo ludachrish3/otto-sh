@@ -106,6 +106,17 @@ describe("loadFileChunk", () => {
     await expect(promise).resolves.toEqual(chunk);
   });
 
+  it("encodes URL-reserved characters in the chunk id when building the script src", () => {
+    window.__OTTO_COV__ = makeIndex();
+    const appendSpy = vi.spyOn(document.head, "appendChild");
+
+    const chunk = "product_100%_ready#.c";
+    loadFileChunk(chunk);
+
+    const script = appendSpy.mock.calls[0][0] as HTMLScriptElement;
+    expect(script.getAttribute("src")).toBe(`./cov_data/files/${encodeURIComponent(chunk)}.js`);
+  });
+
   it("caches a resolved chunk — a second call does not inject another script", async () => {
     window.__OTTO_COV__ = makeIndex();
     const appendSpy = vi.spyOn(document.head, "appendChild");

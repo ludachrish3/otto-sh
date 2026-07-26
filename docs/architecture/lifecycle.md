@@ -80,7 +80,7 @@ reservation gate. Each first-party command declares what it needs on its
 | {doc}`host <subsystems/hosts>` | yes | yes | yes |
 | {doc}`monitor <subsystems/monitoring>` | yes | yes | self-gated per branch: `--live` collection gates, reviewing a saved source doesn't |
 | {doc}`docker <subsystems/docker-hosts>` | yes | yes | no — containers ride the parent's reservation |
-| {doc}`cov <subsystems/coverage>` | yes | no — reads existing run dirs | no |
+| {doc}`cov <subsystems/coverage/index>` | yes | no — reads existing run dirs | no |
 | {doc}`reservation <subsystems/reservations>` | no (`lab_free`) — `check` loads lab data itself | no | no — it *is* the gate, made inspectable |
 | {doc}`schema <subsystems/data-boundary>` | no (`lab_free`) | no | no |
 | {doc}`init <subsystems/bootstrap>` | no (`lab_free`) | no | no |

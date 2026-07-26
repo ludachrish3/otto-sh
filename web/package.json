@@ -7,7 +7,6 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "build:covreport": "vite build --config vite.covreport.config.ts",
     "build:covapp": "vite build --config vite.covapp.config.ts",
     "preview": "vite preview",
     "test": "vitest run",

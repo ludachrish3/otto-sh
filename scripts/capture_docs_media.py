@@ -69,6 +69,8 @@ ARTIFACTS = [
     "dashboard-review.png",
     "dashboard-review-charts.png",
     "coverage-report.png",
+    "coverage-file.png",
+    "coverage-runs.png",
 ]
 
 _VIEWPORT = {"width": 1280, "height": 720}
@@ -118,19 +120,48 @@ def _write_placeholders() -> None:
 
 
 def _capture_coverage_report(browser) -> None:  # noqa: ANN001 — playwright import is deferred
+    """Photograph all three SPA page kinds against ONE rendered report.
+
+    The fixture is shared with ``tests/e2e/cov/report_browser/`` (see
+    ``build_fixture_report``'s docstring), so the routes and wait-selectors
+    below mirror exactly what that suite already pins rather than guessing:
+    ``test_spa_file.py``'s ``_open_file`` helper for the file page, and
+    ``test_spa_runs_focus.py``'s ``_goto(..., "/runs")`` for the runs page.
+    One report render, one page object, one browser context — three
+    navigations, three shots.
+    """
     from tests._fixtures._report_fixture import build_fixture_report
 
     with tempfile.TemporaryDirectory(prefix="otto-docs-cov-") as tmp:
         report_dir = build_fixture_report(Path(tmp))
+        base_uri = (report_dir / "index.html").as_uri()
         page = browser.new_page(viewport=_VIEWPORT)
         page.set_default_timeout(_CAPTURE_TIMEOUT_MS)
-        # The SPA is a hash-router (covapp) — with no hash it falls through
-        # to the NotFoundPlaceholder route, so the shot needs "#/coverage"
-        # explicitly. The fixture's two files sit under one "product/" dir,
-        # so the root directory page's only row is that dir.
-        page.goto((report_dir / "index.html").as_uri() + "#/coverage")
+
+        # Directory page — the SPA is a hash-router (covapp) — with no hash
+        # it falls through to the NotFoundPlaceholder route, so the shot
+        # needs "#/coverage" explicitly. The fixture's two files sit under
+        # one "product/" dir, so the root directory page's only row is that
+        # dir.
+        page.goto(base_uri + "#/coverage")
         page.wait_for_selector('[data-testid="tree-row-dir:product"]')
         page.screenshot(path=OUT_DIR / "coverage-report.png", full_page=True)
+
+        # File page — product/main.c carries every row-precedence state the
+        # renderer knows in one file (see _report_fixture.py's docstring):
+        # a tier-tinted hit row, a stale row, an aging row, and line 4's
+        # three-state branch pills — so this one shot shows tier colors, a
+        # stale row, and branch pills all at once.
+        page.goto(base_uri + "#/coverage/product/main.c")
+        page.wait_for_selector('[data-testid="code-row-1"]')
+        page.screenshot(path=OUT_DIR / "coverage-file.png", full_page=True)
+
+        # Runs page — one row per context, multi-host pills, tier/search
+        # filters.
+        page.goto(base_uri + "#/runs")
+        page.wait_for_selector('[data-testid="run-row-nightly-full"]')
+        page.screenshot(path=OUT_DIR / "coverage-runs.png", full_page=True)
+
         page.close()
 
 

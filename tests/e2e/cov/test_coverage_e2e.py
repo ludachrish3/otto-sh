@@ -3,7 +3,7 @@
 Emulates the real user workflow::
 
     otto -l veggies test --cov TestCoverageProduct
-    otto -l veggies cov <log_dir> --report ./report
+    otto -l veggies cov <log_dir> --dir ./report
 
 Both stages run as real subprocesses so every code path a user exercises
 (argv parsing, Typer wiring, ``--lab`` resolution, config init,
@@ -178,7 +178,7 @@ def coverage_run(tmp_path_factory):
 
     # Stage 2 — render the HTML report and persist the store JSON.
     _run_otto(
-        ["-l", "veggies", "cov", "report", str(log_dir), "--report", str(report_dir)],
+        ["-l", "veggies", "cov", "report", str(log_dir), "--dir", str(report_dir)],
         xdir=xdir,
         timeout=120,
     )
@@ -187,7 +187,7 @@ def coverage_run(tmp_path_factory):
     assert store_path.is_file(), f"CoverageReporter did not write {store_path}"
     store = CoverageStore.load(store_path)
 
-    # `otto cov report` touches no remote host: its report goes to --report, so it
+    # `otto cov report` touches no remote host: its report goes to --dir, so it
     # must create NO per-invocation output dir. Only stage-1's `test` dir exists.
     assert not output_dirs(xdir, "cov"), "cov report must not create an output dir"
 
@@ -705,7 +705,7 @@ class TestPollutedBuildTree:
         report_dir = tmp_path / "report"
 
         result = _run_otto(
-            ["-l", "veggies", "cov", "report", str(log_dir), "--report", str(report_dir)],
+            ["-l", "veggies", "cov", "report", str(log_dir), "--dir", str(report_dir)],
             xdir=xdir,
             timeout=120,
         )
@@ -734,7 +734,7 @@ class TestPollutedBuildTree:
                 "cov",
                 "report",
                 str(legacy_dir),
-                "--report",
+                "--dir",
                 str(tmp_path / "report"),
             ],
             env=_otto_env(xdir),

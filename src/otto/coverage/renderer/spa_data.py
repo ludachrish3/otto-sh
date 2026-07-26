@@ -5,16 +5,15 @@ This is the pure-Python half of the SPA report: it turns a
 
 - ``cov_data/index.js`` — one classic-script assignment
   (``window.__OTTO_COV__ = {...};``) carrying the report-wide
-  :data:`IndexPayload`-shaped dict (config, run table, and a directory
-  tree of rollup :data:`Stats`), and
+  ``IndexPayload``-shaped dict (config, run table, and a directory
+  tree of rollup ``Stats``), and
 - ``cov_data/files/<mangled>.js`` — one classic-script call
   (``window.__OTTO_COV_FILE__({...});``) per file, carrying its
   annotated source and per-line hit/branch/state data.
 
-It deliberately mirrors the mechanics of
-:class:`~otto.coverage.renderer.html_renderer.HtmlRenderer` (display-path
-prefix stripping, path mangling, tier labels/colors, the source-exclusion
-scan) without importing from it — that module is retired in Plan D.
+It deliberately mirrors the mechanics of the retired Jinja renderer
+(display-path prefix stripping, path mangling, tier labels/colors, the
+source-exclusion scan) without importing from it.
 """
 
 import json
@@ -36,9 +35,8 @@ OTTO_COV_DATA_FORMAT: int = 1
 
 Bump alongside the TypeScript ``EXPECTED_DATA_FORMAT`` constant, or never."""
 
-# Pretty labels for the conventional tier names. Copied from
-# HtmlRenderer (not imported — that module dies in Plan D). Tiers without
-# an entry here render with their raw name title-cased.
+# Pretty labels for the conventional tier names. Tiers without an entry
+# here render with their raw name title-cased.
 TIER_LABELS: dict[str, str] = {
     "system": "System",
     "unit": "Unit",
@@ -63,9 +61,9 @@ def make_stamp() -> str:
 def mangle_path(path: Path) -> str:
     """Mangle a canonical file path into a filesystem/URL-safe chunk id.
 
-    Same scheme as ``HtmlRenderer._file_link``: full canonical path (never
-    the display path), so chunk filenames stay stable across ``--prefix``
-    changes.
+    Same scheme the retired Jinja renderer used: full canonical path
+    (never the display path), so chunk filenames stay stable across
+    ``--prefix`` changes.
     """
     return str(path).replace("/", "_").replace("\\", "_").lstrip("_")
 
@@ -83,7 +81,7 @@ def _display_path(record: FileRecord, prefix: Path | None) -> str:
 def _resolve_tier_colors(store: CoverageStore, tier_order: list[str]) -> dict[str, str]:
     """Per-tier colors: ``store.tier_colors`` first, else a name-keyed default.
 
-    Same fallback quirk as ``HtmlRenderer._resolve_tier_colors``.
+    Same fallback quirk the retired Jinja renderer used.
     """
     return {t: store.tier_colors.get(t) or DEFAULT_TIER_COLORS.get(t, "green") for t in tier_order}
 
@@ -278,8 +276,8 @@ def build_index_payload(
 
     Reads whatever exclusion data is already on each ``FileRecord`` —
     it does not scan source itself; :func:`emit_chunks` runs that scan
-    (mirroring ``HtmlRenderer``) and annotates the store before this
-    function's per-file stats are computed.
+    (mirroring the retired Jinja renderer) and annotates the store before
+    this function's per-file stats are computed.
     """
     tier_order = list(store.tier_order)
     tier_colors = _resolve_tier_colors(store, tier_order)
@@ -329,7 +327,7 @@ def _build_file_chunk(
 ) -> dict[str, Any]:
     """Build one ``FileChunk`` dict, annotating ``fr.excluded_lines`` as a side effect.
 
-    Mirrors ``HtmlRenderer._render_file``'s source read + exclusion scan.
+    Mirrors the retired Jinja renderer's source read + exclusion scan.
     """
     try:
         source_text = fr.path.read_text(errors="replace")
@@ -344,7 +342,7 @@ def _build_file_chunk(
     excluded_linenos = scan_excluded_lines(source_text, extra_markers or None)
     # Annotate the store (spec §9 frontend contract): the reporter renders
     # before it saves store.json, so this flows through to the serialised
-    # store for frontend consumers, exactly like HtmlRenderer does today.
+    # store for frontend consumers, exactly like the retired Jinja renderer did.
     fr.excluded_lines = excluded_linenos
 
     lines_json = {str(lineno): _line_to_json(lr) for lineno, lr in fr.lines.items()}
@@ -373,8 +371,8 @@ def emit_chunks(
     Every file's source-exclusion scan runs first (annotating
     ``FileRecord.excluded_lines`` on the store), so the index payload's
     per-node ``flags.excluded`` counts reflect it — the reporter's later
-    ``store.save()`` then persists the same annotation, exactly like
-    ``HtmlRenderer`` does today.
+    ``store.save()`` then persists the same annotation, exactly like the
+    retired Jinja renderer did.
     """
     cov_data_dir = output_dir / "cov_data"
     files_dir = cov_data_dir / "files"

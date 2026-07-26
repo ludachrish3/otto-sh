@@ -11,7 +11,7 @@ Run against the standard ``embedded`` lab; the coverage host(s) are selected by
 the repo-declared ``[coverage].hosts`` regex (not a dedicated lab), e.g.::
 
     otto test --cov --lab embedded TestEmbeddedCoverage
-    otto cov report <output_dir> --report ./report
+    otto cov report <output_dir> --dir ./report
 
 Per-host lifecycle: ``host.load`` (install) -> ``call_fn cov_init`` ->
 ``call_fn <op>`` (exercise) -> [collector: ``call_fn cov_dump``] ->

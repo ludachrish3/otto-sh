@@ -1,0 +1,119 @@
+# Coverage — the collection pipeline
+
+The problem: embedded and cross-compiled products execute where no coverage
+tooling runs. gcov counters (`.gcda`) accumulate on the target — in memory or
+on an on-device filesystem — while the compile-time graph (`.gcno`) and
+sources live in the build tree on the runner. Neither side alone can make a
+report; this pipeline marries them.
+
+```{graphviz}
+digraph coverage {
+    rankdir=LR;
+    node [shape=box];
+
+    test [label="otto test --cov /\notto cov get\ninstrumented run or retrieval"];
+    fetch [label="fetch\n.gcda from covered hosts\n(transfer on Unix,\nconsole extraction embedded)"];
+    merge [label="merge\nmatch .gcda ↔ .gcno graph,\nremap sysroot paths,\nmerge hosts + runs (lcov)"];
+    capture [label="capture.json\nper board: parsed hits,\ngit-anchored coordinates"];
+    render [label="otto cov report\ncaptures + unit harvest\n+ manual store → HTML"];
+    err [label="CoverageDataMismatchError\nstale build → instructions,\nnot a wrong report", shape=note, style=dashed];
+
+    test -> fetch -> merge -> capture -> render;
+    merge -> err [style=dashed, label=" stamp\nmismatch"];
+}
+```
+
+The stages (packages `otto.coverage.fetcher` → `merge` → `capture` →
+`renderer` → `reporter`):
+
+1. **Fetch** — pull `.gcda` data from each covered host after the run.
+   Fetchers are per-family: file transfer for Unix hosts, console extraction
+   for embedded targets. Which hosts are covered is *repo-declared* — the
+   `[coverage].hosts` regex in `settings.toml` — never inferred, so hop hosts
+   and uninstrumented beds can't sneak into a report.
+2. **Merge** — match counters to the build tree's `.gcno` graph and remap
+   embedded/sysroot paths back to source paths, merging counters across hosts
+   and runs (lcov semantics).
+3. **Capture** — freeze the merged result into a per-board `capture.json`:
+   parsed hits in committed-code coordinates, anchored to the repo's
+   `HEAD` (`base_commit`) and per-file blob SHAs.
+4. **Render / report** — `otto cov report` assembles every tier — e2e
+   captures, a fresh unit-tier harvest, the committed manual store — into an
+   HTML report plus summary tiers.
+
+The merge stage's core invariant is *build/counter identity*: `.gcda` files
+are only meaningful against the exact `.gcno` graph the binary was compiled
+with. That pairing happens once, at **collection** — the capture holds
+parsed hits, so the report step never touches the build tree again and a
+later rebuild cannot invalidate it (a capture's own guard is its
+`base_commit`, which must match `HEAD` at report time). When the raw pairing disagrees — a
+stale or partially rebuilt product tree at collection time, or a
+pre-capture run directory re-merged via the legacy fallback — the pipeline
+stops with a diagnostic error that names the mismatch and the rebuild that
+fixes it, rather than a gcov stack trace or a silently wrong report. That
+fail-with-instructions posture is a house rule ({doc}`../../principles`).
+
+## How this section is organized
+
+The pipeline above is one axis; the four pages below are the other.
+{doc}`types` is the vocabulary every stage speaks — tiers, stat types, line
+states, thresholds — and the store schema that carries them. {doc}`merging`
+is what `otto cov report` actually does with the pieces: the fold order,
+run accumulation, and the rules that keep one piece of evidence from being
+counted twice. {doc}`manual` is the one tier whose data is committed, and
+therefore the one that has to be re-proved against a moving tree on every
+report. {doc}`renderer` is the last mile — an assembled store to a
+self-contained report directory.
+
+```{toctree}
+:maxdepth: 1
+
+types
+merging
+manual
+renderer
+```
+
+## What is unique about `cov`
+
+`otto cov report` runs *after* the fact, over directories `otto test --cov`
+or `otto cov get` already wrote: it still loads the lab — per-host toolchain
+resolution (`gcov`, `lcov`) comes from host configuration, with the `.gcno`
+header's gcov version stamp as the fallback (a clang stamp routes counters
+through `llvm-cov gcov`) — but it creates **no output directory of its
+own** and runs **no gate**: reporting on yesterday's run must never be
+blocked by today's reservations ({doc}`../../lifecycle`). Its siblings do touch the
+lab: `otto cov get` fetches counters — into the standard per-invocation
+output directory, or `--output` — and `otto cov clean` zeroes them on the
+remotes.
+
+## Where the code lives
+
+- `otto.coverage.fetcher` — pulls `.gcda` off covered hosts (file
+  transfer on Unix, console extraction on embedded)
+- `otto.coverage.merge` — pairs counters to the `.gcno` build graph and
+  merges hosts and runs
+- `otto.coverage.capture` — freezes a merge into a per-board
+  `capture.json`, anchored to `base_commit`
+- `otto.coverage.tiers` — resolves the declarative `[coverage.tiers]`
+  table into precedence-ordered `TierConfig` values
+- `otto.coverage.store` — versioned store models (`RunRecord`,
+  `LineRecord`, `Thresholds`, `STAT_TYPES`) and `CoverageStore`'s
+  `save`/`load`, including the `STORE_FORMAT_VERSION` exact-match
+  loader
+- `otto.coverage.report_config` — resolves `[coverage.report]`'s raw
+  settings dict into render `Thresholds` at report time
+- `otto.coverage.renderer` — turns an assembled store into a report
+- `otto.coverage.renderer.spa_data` — pure-Python emitter for the covapp
+  data chunks (`cov_data/index.js` + per-file chunks)
+- `otto.coverage.renderer.spa_renderer` — `SpaRenderer`: copies the built
+  covapp bundle, then calls `spa_data.emit_chunks`; the reporter's only
+  renderer
+- `web/src/covapp/` — the covapp SPA's TypeScript source (built by `make
+  web` into `otto.coverage.renderer`'s `static/covapp/`, wheel-embedded)
+- {mod}`otto.coverage.reporter` — `otto cov report`'s store assembly: tiers,
+  the base_commit guard, and the `--tier NAME=PATH` escape hatch
+- {mod}`otto.coverage.validity` — the report-time valid/stale/aging pass over
+  manual captures
+- `otto.coverage.anchor` — `AnchorResolver`: the per-capture tree-diff /
+  blob-fallback resolution the validity pass consumes

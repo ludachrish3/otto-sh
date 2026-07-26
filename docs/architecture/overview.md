@@ -19,7 +19,7 @@ explaining what it does once the shared machinery hands over control:
 | {doc}`otto test <subsystems/execution>` | Verdicts: suites and pytest-native selection runs |
 | {doc}`otto host <subsystems/hosts>` | Direct host verbs, synthesized from Python methods |
 | {doc}`otto monitor <subsystems/monitoring>` | Live metrics, dashboard, and replay |
-| {doc}`otto cov <subsystems/coverage>` | Cross-compiled gcov coverage reports |
+| {doc}`otto cov <subsystems/coverage/index>` | Cross-compiled gcov coverage reports |
 | {doc}`otto docker <subsystems/docker-hosts>` | Images and compose stacks on lab hosts |
 | {doc}`otto reservation <subsystems/reservations>` | The reservation gate, made inspectable |
 | {doc}`otto schema <subsystems/data-boundary>` | The data contracts, exported for editors |

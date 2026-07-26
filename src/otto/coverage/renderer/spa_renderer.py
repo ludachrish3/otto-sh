@@ -6,9 +6,8 @@ into the report directory and writes the JS data chunks (Task 1's
 ``spa_data.emit_chunks``) that bundle consumes at ``file://`` or any served
 subpath (spec §2 — no server, no ES modules, no network fetches).
 
-Mirrors :class:`~otto.coverage.renderer.html_renderer.HtmlRenderer`'s
-missing-dist degrade (``_copy_static``) without importing from it — that
-module is retired in Plan D.
+Mirrors the retired Jinja renderer's missing-dist degrade
+(``_copy_static``) without importing from it.
 """
 
 import logging
@@ -24,7 +23,7 @@ STATIC_DIR = Path(__file__).parent / "static" / "covapp"
 """The built covapp bundle (``make web`` -> ``vite build --config vite.covapp.config.ts``).
 
 Not committed — a hostless unit-test checkout that skipped ``make web`` has
-no ``index.html``/``dist/`` here; :meth:`SpaRenderer._copy_bundle` degrades
+no ``index.html``/``dist/`` here; ``SpaRenderer._copy_bundle`` degrades
 gracefully rather than failing the whole report.
 """
 
@@ -82,7 +81,7 @@ class SpaRenderer:
         if not (STATIC_DIR / "index.html").exists():
             # The bundle is built by `make web` (vite), not committed.
             # Degrade — but say exactly what is missing and how to get it,
-            # same rationale as HtmlRenderer._copy_static's dist-less case.
+            # same rationale as the retired Jinja renderer's dist-less case.
             logger.warning(
                 "Coverage report bundle (covapp) is missing — the report cannot "
                 "render without it. Run `make web` to build the frontend assets."

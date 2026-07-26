@@ -271,6 +271,22 @@ class TestCoverageStore:
         assert "summary" not in line_dict
         assert line_dict["state"] is None
 
+    def test_load_tolerates_absent_excluded_lines_key(self, tmp_path):
+        """A v4 store.json with no excluded_lines key loads to an empty set."""
+        store_json = tmp_path / "store.json"
+        store_json.write_text(
+            json.dumps(
+                {
+                    "format": 4,
+                    "tier_order": ["system"],
+                    "files": [{"path": "/x/f.c", "lines": {}}],
+                }
+            )
+        )
+        reloaded = CoverageStore.load(store_json)
+        (frec,) = list(reloaded.files())
+        assert frec.excluded_lines == set()
+
 
 class TestRuns:
     def test_add_run_allocates_sequential_ids(self):

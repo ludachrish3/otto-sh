@@ -440,8 +440,7 @@ class CoverageReporter:
             logger.info("=== Rendering coverage report ===")
             # Deferred so importing this module (pulled onto the CLI startup
             # path via cli.cov) does not drag in SpaRenderer's transitive
-            # imports (spa_data, and through it colors/exclusions) — same
-            # rationale as HtmlRenderer's own deferred jinja2 import, now
+            # imports (spa_data, and through it colors/exclusions) —
             # enforced by the import-budget guard
             # (tests/unit/import_budget/test_import_budget.py).
             from .renderer.spa_renderer import SpaRenderer
@@ -689,7 +688,7 @@ def _partition_board_dirs(cov_dirs: list[Path]) -> tuple[list[Path], list[Path]]
 
 async def run_coverage_report(
     cov_dirs: list[Path],
-    report_dir: Path,
+    output_dir: Path,
     project_name: str = "Coverage Report",
     tier_specs: list[TierSpec] | None = None,
     *,
@@ -741,12 +740,12 @@ async def run_coverage_report(
     """
     if repo_root is None and tier_configs is None:
         return await _run_legacy_report(
-            cov_dirs, report_dir, project_name, tier_specs, prefix=prefix, thresholds=thresholds
+            cov_dirs, output_dir, project_name, tier_specs, prefix=prefix, thresholds=thresholds
         )
 
     return await _run_collection_report(
         cov_dirs,
-        report_dir,
+        output_dir,
         project_name=project_name,
         tier_specs=tier_specs,
         repo_root=repo_root,
@@ -759,7 +758,7 @@ async def run_coverage_report(
 
 async def _run_legacy_report(
     cov_dirs: list[Path],
-    report_dir: Path,
+    output_dir: Path,
     project_name: str,
     tier_specs: list[TierSpec] | None,
     *,
@@ -787,7 +786,7 @@ async def _run_legacy_report(
     reporter = CoverageReporter(
         gcda_dirs=gcda_dirs,
         source_root=source_root,
-        output_dir=report_dir,
+        output_dir=output_dir,
         project_name=project_name,
         toolchains=toolchains,
         tiers=tier_specs,
@@ -800,7 +799,7 @@ async def _run_legacy_report(
 
 async def _run_collection_report(
     cov_dirs: list[Path],
-    report_dir: Path,
+    output_dir: Path,
     *,
     project_name: str,
     tier_specs: list[TierSpec] | None,
@@ -834,7 +833,7 @@ async def _run_collection_report(
     reporter = CoverageReporter(
         gcda_dirs=gcda_dirs,
         source_root=source_root,
-        output_dir=report_dir,
+        output_dir=output_dir,
         project_name=project_name,
         toolchains=toolchains,
         tiers=tier_specs,

@@ -8,7 +8,7 @@ on teardown.  Designed to be run with ``otto test --cov`` to collect
 Usage::
 
     otto test --cov TestCoverageProduct
-    otto cov report <output_dir> --report ./report
+    otto cov report <output_dir> --dir ./report
 
 The product exercises different code paths on each host so that
 merged coverage across hosts is greater than any single host's

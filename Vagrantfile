@@ -393,7 +393,7 @@ Vagrant.configure("2") do |config|
             printf '[Match]\\nType=ether\\n\\n[Link]\\nMTUBytes=1350\\n' > /etc/systemd/network/10-mtu.link
         SHELL
 
-        # Node.js 24 (matches .nvmrc) for the web/ toolchain: dashboard/covreport
+        # Node.js 24 (matches .nvmrc) for the web/ toolchain: dashboard/covapp
         # builds (make web*, CI dashboard job) AND the TS quality gates
         # (make check-ts / validate-ts -> Biome lint+format, tsc, vitest v8
         # coverage; CI check-ts job). Biome and vitest are npm devDependencies

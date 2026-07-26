@@ -23,7 +23,7 @@ time by `scripts/capture_docs_media.py` — the same pipeline that captures
 the monitor dashboard — so it can never drift from what `otto cov report`
 actually produces.*
 
-See {doc}`../architecture/subsystems/coverage` for how the fetch → merge →
+See {doc}`../architecture/subsystems/coverage/index` for how the fetch → merge →
 capture → render pipeline fits together, and for the design behind tiers,
 validity, and why only manual captures are committed.
 
@@ -447,7 +447,7 @@ git commit -m "cov: manual verification for PROJ-123"
 Then generate a single report covering all three:
 
 ```bash
-otto cov report path/to/e2e_run_output/ --report ./cov_report
+otto cov report path/to/e2e_run_output/ --dir ./cov_report
 ```
 
 `otto cov report` reads the e2e capture(s) from the given output
@@ -564,7 +564,7 @@ warning, never a revoke).
 ## Generating Reports: `otto cov report`
 
 ```bash
-otto cov report <output_dir> --report ./my_report
+otto cov report <output_dir> --dir ./my_report
 ```
 
 `otto cov report` assembles a store from every source available:
@@ -593,7 +593,7 @@ fails loudly instead of publishing a blank report.
 To combine coverage from separate test runs into a single report:
 
 ```bash
-otto cov report run1_output/ run2_output/ run3_output/ --report ./combined_report
+otto cov report run1_output/ run2_output/ run3_output/ --dir ./combined_report
 ```
 
 ### Options
@@ -601,7 +601,7 @@ otto cov report run1_output/ run2_output/ run3_output/ --report ./combined_repor
 | Option                    | Description                                                          | Default             |
 |---------------------------|----------------------------------------------------------------------|---------------------|
 | `OUTPUT_DIRS`             | `otto test`/`otto cov get` output dirs with `cov/` subdirectories    | none — report is built from the manual store alone |
-| `--report, -r PATH`       | Where to place the HTML report                                       | `./cov_report`      |
+| `--dir, -d PATH`          | Where to place the generated coverage report                        | `./cov_report`      |
 | `--project-name STR`      | Title shown in the report header                                     | `Coverage Report`   |
 | `--tier NAME[=PATH]`      | Git-less escape hatch (see below); repeatable, order = precedence    | the configured tiers (or `system` with none configured) |
 
@@ -679,7 +679,7 @@ otto cov report runs/ \
     --tier system \
     --tier integration=i.info \
     --tier manual=m.info \
-    --report ./cov_report
+    --dir ./cov_report
 ```
 
 This produces a four-tier report with precedence
@@ -795,7 +795,7 @@ present on every page.
 ## Output
 
 `otto cov report` writes a self-contained **single-page app** to the
-`--report` directory (default: `./cov_report/index.html`) — there is no
+`--dir` directory (default: `./cov_report/index.html`) — there is no
 build step and nothing to serve: open `index.html` straight off disk
 (`file://`) or point any static host or CI artifacts browser at the
 directory. Routes are **hash-based** (`#/coverage/...`, `#/runs`), so deep
@@ -815,6 +815,10 @@ configure.
   coloring per {ref}`coverage-colors`, and the per-line **runs** drilldown
   from {ref}`coverage-runs`, listing every run that hit the line with
   revoked/aging credits marked.
+
+  ![Annotated source view: winner-take-all row tinting, branch pills, and
+  per-line run drilldowns](../_static/generated/coverage-file.png)
+
 - **Runs & contexts page** (`#/runs`) — one row per run (see
   {ref}`coverage-runs`); multi-host runs show host pills with an
   expandable per-host lines breakdown, filterable by tier and free-text
@@ -822,6 +826,10 @@ configure.
   isn't part of the stored data (**branch** hits are recorded per line, not
   per line-and-run — unlike line hits, which are) and renders as "not
   tracked per-run".
+
+  ![Runs & contexts page: one row per context with per-host breakdowns and
+  filters](../_static/generated/coverage-runs.png)
+
 - **Report-wide context focus** — pin a run's context from its row on the
   runs page, or from the app bar's **⋮** overflow menu (also home to
   keyboard shortcuts and the tier/state color key); every stat, percentage,
@@ -844,7 +852,7 @@ relative, there are no ES module scripts, no inline `<script>`, no
 `eval`, and no WASM. That makes it render identically whether it's opened
 straight from disk (`file://`, zero serving) or published by a CI job.
 
-**GitLab** works out of the box — publish the `--report` directory as a
+**GitLab** works out of the box — publish the `--dir` directory as a
 Pages site, or just let GitLab's artifacts browser serve it. No
 configuration is needed.
 

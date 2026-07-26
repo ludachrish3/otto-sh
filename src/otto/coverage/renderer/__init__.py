@@ -1,5 +1,6 @@
-"""Coverage renderer: generate an HTML report from a ``CoverageStore``."""
+"""Coverage renderer: the covapp SPA report emitted from a ``CoverageStore``.
 
-from .html_renderer import HtmlRenderer
-
-__all__ = ["HtmlRenderer"]
+The renderer is :class:`~otto.coverage.renderer.spa_renderer.SpaRenderer`
+(imported from its submodule directly — this package deliberately re-exports
+nothing, so importing it stays free for the import-budget surfaces).
+"""

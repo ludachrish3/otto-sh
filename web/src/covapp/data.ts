@@ -114,7 +114,7 @@ export function loadFileChunk(chunk: string): Promise<FileChunk> {
     pending.set(chunk, [{ resolve, reject }]);
 
     const script = document.createElement("script");
-    script.src = `./cov_data/files/${chunk}.js`;
+    script.src = `./cov_data/files/${encodeURIComponent(chunk)}.js`;
     script.onerror = () => {
       const list = pending.get(chunk) ?? [];
       pending.delete(chunk);

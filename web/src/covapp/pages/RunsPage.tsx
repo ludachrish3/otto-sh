@@ -30,7 +30,7 @@ import { AppShell } from "../chrome/AppShell";
 import { type Context, groupContexts, searchHaystack } from "../contexts";
 import { useFocus } from "../focus";
 import { encodePath, fmtCount, focusedTreeRow, tierRows } from "../format";
-import { fmtPct, type PctClass, pct, pctClass } from "../stats";
+import { fmtPct, PCT_TEXT, pct, pctClass } from "../stats";
 import type { IndexPayload } from "../types";
 
 // Pinned column widths (contexts-page.html's `.rhead`/`.rrow` grid) — kept
@@ -39,17 +39,6 @@ import type { IndexPayload } from "../types";
 // own pinned-width grids.
 const ROW_GRID = "minmax(190px,1.2fr) 92px minmax(120px,1fr) 96px 82px 110px 150px 90px";
 const DETAIL_GRID = "250px 215px 230px 1fr";
-
-// Same fixed vocabulary StatsCard.tsx's/DirectoryPage.tsx's own PCT_COLOR/
-// PCT_TEXT maps use (EventEditor.tsx/DataWarningsBanner.tsx's error/warning
-// tokens) — kept as a local copy rather than a shared export; each of these
-// covapp pages already carries its own tiny copy (see DirectoryPage.tsx).
-const PCT_TEXT: Record<PctClass, string> = {
-  "pct-high": "text-success-primary",
-  "pct-mid": "text-warning-primary",
-  "pct-low": "text-error-primary",
-  "pct-na": "text-quaternary",
-};
 
 const STATUS_BADGE: Record<
   Context["status"],

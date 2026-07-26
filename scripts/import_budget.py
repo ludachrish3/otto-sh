@@ -35,7 +35,7 @@ class Surface:
 
 
 # Heavy third-party stacks that must stay off the surfaces that don't own them.
-_ALL_HEAVY = ("fastapi", "uvicorn", "starlette", "pytest", "jinja2")
+_ALL_HEAVY = ("fastapi", "uvicorn", "starlette", "pytest")
 
 # Caps are on the NON-STDLIB module count (otto + third-party), never the full
 # sys.modules total. The stdlib import graph drifts across Python versions
@@ -53,12 +53,9 @@ SURFACES: list[Surface] = [
     Surface("docker", ["otto", "docker", "--help"], _ALL_HEAVY, cap=265),
     Surface("schema", ["otto", "schema", "--help"], _ALL_HEAVY, cap=260),
     # monitor owns the dashboard, so fastapi/uvicorn/starlette are allowed here.
-    Surface("monitor", ["otto", "monitor", "--help"], ("pytest", "jinja2"), cap=272),
+    Surface("monitor", ["otto", "monitor", "--help"], ("pytest",), cap=272),
     # test runs the suite, so pytest is allowed here.
-    Surface(
-        "test", ["otto", "test", "--help"], ("fastapi", "uvicorn", "starlette", "jinja2"), cap=260
-    ),
-    # cov templates the HTML report, so jinja2 is allowed here.
+    Surface("test", ["otto", "test", "--help"], ("fastapi", "uvicorn", "starlette"), cap=260),
     Surface(
         "cov", ["otto", "cov", "--help"], ("fastapi", "uvicorn", "starlette", "pytest"), cap=272
     ),

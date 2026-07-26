@@ -23,6 +23,16 @@ export function pctClass(p: number | null, thresholds: Thresholds): PctClass {
   return "pct-low";
 }
 
+/** Text-color class per pct bucket — the single copy (was triplicated across
+ * DirectoryPage/RunsPage/StatsCard), using the same tokens
+ * EventEditor.tsx/DataWarningsBanner.tsx use for error/warning text. */
+export const PCT_TEXT: Record<PctClass, string> = {
+  "pct-high": "text-success-primary",
+  "pct-mid": "text-warning-primary",
+  "pct-low": "text-error-primary",
+  "pct-na": "text-quaternary",
+};
+
 /** One decimal place + "%", "—" for null (mirrors the mockup's `fmt()`). */
 export function fmtPct(p: number | null): string {
   if (p === null) return "—";

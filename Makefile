@@ -292,7 +292,7 @@ WEB_NODE_MODULES := web/node_modules/.package-lock.json
 $(WEB_NODE_MODULES): web/package.json web/package-lock.json
 	$(MAKE) web-install
 
-web: $(WEB_NODE_MODULES) ## (Build & Release) Build the web/ React dashboard + the covreport bundle + the covapp SPA scaffold (vite) into their static dist dirs, then gate all three against absolute http(s) URLs (air-gap requirement — labs have no network access, see scripts/check_airgap.sh) and the dashboard + covapp against a resolved-brand-color regression (scripts/check_brand_tokens.sh)
+web: $(WEB_NODE_MODULES) ## (Build & Release) Build the web/ React dashboard + the covapp SPA (vite) into their static dist dirs, then gate both against absolute http(s) URLs (air-gap requirement — labs have no network access, see scripts/check_airgap.sh) and against a resolved-brand-color regression (scripts/check_brand_tokens.sh)
 	# Regenerate web/src/api/types.gen.ts and web/src/api/export.gen.ts from
 	# the live pydantic models and fail BEFORE the vite build if either
 	# committed file has drifted — a stale wire contract should be caught by
@@ -305,10 +305,8 @@ web: $(WEB_NODE_MODULES) ## (Build & Release) Build the web/ React dashboard + t
 	# instead of scrolling past. The chunk budget itself lives in
 	# web/vite.config.ts (chunkSizeWarningLimit) / web/vite.covapp.config.ts.
 	scripts/build_web_no_warnings.sh build
-	scripts/build_web_no_warnings.sh build:covreport
 	scripts/build_web_no_warnings.sh build:covapp
 	scripts/check_airgap.sh
-	scripts/check_airgap.sh src/otto/coverage/renderer/static/dist
 	scripts/check_airgap.sh src/otto/coverage/renderer/static/covapp
 	scripts/check_brand_tokens.sh
 	scripts/check_brand_tokens.sh src/otto/coverage/renderer/static/covapp
@@ -324,9 +322,8 @@ web-dev: $(WEB_NODE_MODULES) ## (Dev) Run the web/ Vite dev server with hot relo
 test-ts: $(WEB_NODE_MODULES) ## (Dev) Run the web/ vitest suite once — no coverage, the fast TS loop. (Deliberately no test-python twin and no bare `test`: the fast Python lane is `coverage-unit`.)
 	cd web && npm run test
 
-web-clean: ## (Dev) Remove the built web/ dist outputs (monitor dashboard + covreport + covapp)
+web-clean: ## (Dev) Remove the built web/ dist outputs (monitor dashboard + covapp)
 	rm -rf src/otto/monitor/static/dist
-	rm -rf src/otto/coverage/renderer/static/dist
 	rm -rf src/otto/coverage/renderer/static/covapp
 
 # uv_build embeds the ENTIRE module tree (src/otto/**) into both the sdist and
@@ -335,8 +332,9 @@ web-clean: ## (Dev) Remove the built web/ dist outputs (monitor dashboard + covr
 # comment in pyproject.toml). That makes the embedding implicit rather than
 # explicit config, so this target exists to pin it with a real assertion:
 # build the dashboard, build the wheel, and fail loudly if the dashboard ever
-# stops making it in (e.g. a future wheel-exclude, or a uv_build default
-# change). Deliberately NOT wired into `coverage` — it rebuilds the frontend
+# stops making it in (e.g. an overbroad wheel-exclude pattern — one narrow
+# `**/*.map` exclude exists deliberately, see pyproject.toml — or a uv_build
+# default change). Deliberately NOT wired into `coverage` — it rebuilds the frontend
 # and a real wheel, which is release-flow overhead, not a per-commit gate.
 # Prerequisite composition (clean-dist web build), not $(MAKE) calls in the
 # recipe: `make -n wheel-check` must stay dry-run-safe, and GNU make only
@@ -355,17 +353,16 @@ wheel-check: clean-dist web build ## (Build & Release) Rebuild the dashboard + w
 	fi; \
 	echo "wheel-check: OK — $$count otto/monitor/static/dist/ entries embedded in the wheel (incl. index.html)."; \
 	scripts/check_airgap.sh
-	@count=$$(unzip -l dist/*.whl | grep -c "otto/coverage/renderer/static/dist/" || true); \
-	if [ "$$count" -eq 0 ]; then \
-		echo "wheel-check: FAIL — no otto/coverage/renderer/static/dist/ entries in dist/*.whl; an air-gapped install would ship the coverage report without its frontend." >&2; \
-		exit 1; \
-	fi; \
-	echo "wheel-check: OK — $$count otto/coverage/renderer/static/dist/ entries embedded."
 	@if ! unzip -l dist/*.whl | grep -q "otto/coverage/renderer/static/covapp/index.html"; then \
 		echo "wheel-check: FAIL — otto/coverage/renderer/static/covapp/index.html missing from dist/*.whl; an air-gapped install would ship the coverage-report SPA without its shell." >&2; \
 		exit 1; \
 	fi; \
 	echo "wheel-check: OK — otto/coverage/renderer/static/covapp/index.html embedded in the wheel."
+	@if unzip -l dist/*.whl | grep -q '\.map$$'; then \
+		echo "wheel-check: FAIL — sourcemap (*.map) files embedded in the wheel; the wheel-exclude in pyproject.toml [tool.uv.build-backend] should strip them." >&2; \
+		exit 1; \
+	fi; \
+	echo "wheel-check: OK — no *.map files in the wheel."
 
 docs-media: ## (Docs) Force-regenerate the build-time GUI media (screenshots, clips, termynal blocks) in docs/_static/generated/
 	uv run python scripts/capture_docs_media.py --mode force
@@ -406,7 +403,7 @@ build: ## (Build & Release) Build the project with uv
 # Both suites — and the docs build, whose GUI media is photographed from the
 # real shell (see docs/_build/html/index.html below) — drive real build
 # artifacts: the React dashboard (src/otto/monitor/static/dist/) and the
-# coverage-report bundle (src/otto/coverage/renderer/static/dist/covreport.js).
+# coverage-report SPA (src/otto/coverage/renderer/static/covapp/index.html).
 # They exist only once `make web` has run (noxfile.py's `dashboard` session
 # docstring documents this as `make dashboard`'s prerequisite). Declaring them
 # as real file targets, built on demand by `make web`, lets a fresh checkout or
@@ -467,10 +464,9 @@ BROWSER_WORKERS ?= $(shell if [ "$$(nproc)" -ge 2 ] && [ "$$(awk '/MemTotal/ {pr
 # Recursive (=), not :=, so a command-line BROWSER_WORKERS override flows in.
 BROWSER_SHARD_ENV = $(if $(filter-out 1,$(BROWSER_WORKERS)),OTTO_BROWSER_SHARD=1,)
 DASHBOARD_DIST := src/otto/monitor/static/dist/index.html
-COVREPORT_DIST := src/otto/coverage/renderer/static/dist/covreport.js
 COVAPP_DIST := src/otto/coverage/renderer/static/covapp/index.html
 
-# Everything vite feeds into the three bundles: the app sources (including the
+# Everything vite feeds into the two bundles: the app sources (including the
 # committed api/*.gen.ts, which is the seam through which a pydantic-model
 # change reaches the frontend — `make web` regenerates and diff-gates them),
 # the html entries, the tsc/vite configs, and the dependency manifests. Biome's
@@ -480,12 +476,11 @@ WEB_SRCS := $(shell find web/src -type f) \
             web/covapp.html              \
             web/tsconfig.json            \
             web/vite.config.ts           \
-            web/vite.covreport.config.ts \
             web/vite.covapp.config.ts    \
             web/package.json             \
             web/package-lock.json
 
-$(DASHBOARD_DIST) $(COVREPORT_DIST) $(COVAPP_DIST) &: $(WEB_SRCS) $(WEB_NODE_MODULES)
+$(DASHBOARD_DIST) $(COVAPP_DIST) &: $(WEB_SRCS) $(WEB_NODE_MODULES)
 	$(MAKE) web
 
 # Merged-TS-coverage inputs. The browser lane (dashboard) dumps raw Chromium
@@ -528,7 +523,7 @@ $(TS_E2E_COV): $(TS_E2E_RAW_STAMP) $(WEB_NODE_MODULES) web/scripts/e2e_coverage_
 # every engine, until nox's expression was brought back in line with this
 # one) that makes keeping them in step worth a standing comment. If this
 # expression changes, change noxfile.py's too.
-dashboard: $(DASHBOARD_DIST) $(COVREPORT_DIST) ## Run the browser e2e suites (monitor dashboard + coverage report) on DASHBOARD_BROWSERS (default: chromium — feeds `coverage`). Full matrix: `make dashboard-all`. Needs `make browsers` once; (re)builds web/'s dist bundles when missing or older than web/src/ (see `make web`). Excludes `soak` (see `dashboard-soak`) — minutes of pushing, not a per-task gate.
+dashboard: $(DASHBOARD_DIST) $(COVAPP_DIST) ## Run the browser e2e suites (monitor dashboard + coverage report) on DASHBOARD_BROWSERS (default: chromium — feeds `coverage`). Full matrix: `make dashboard-all`. Needs `make browsers` once; (re)builds web/'s dist bundles when missing or older than web/src/ (see `make web`). Excludes `soak` (see `dashboard-soak`) — minutes of pushing, not a per-task gate.
 	@rm -rf reports/ts-e2e-cov/raw
 # OTTO_TS_COVERAGE arms the browser suites' CDP V8-coverage collection
 # (tests/_fixtures/_ts_coverage.py). Only make sets it, so ad-hoc or `nox`
@@ -548,7 +543,7 @@ dashboard-all: ## Run the dashboard e2e on ALL engines (Chromium + Firefox + Web
 # module docstring for the measurement). The test itself now skips loudly
 # on any non-chromium `browser_name`, so this flag is belt-and-suspenders,
 # not the only guard.
-dashboard-soak: $(DASHBOARD_DIST) $(COVREPORT_DIST) ## Run the dashboard replay soak (Tier-3, `soak`-marked; NOT part of `make dashboard`/`make coverage`) — drives FakeCollector at max rate in-process, no VM. Chromium only (see comment above). JUnit XML lands in reports/junit/dashboard-soak/.
+dashboard-soak: $(DASHBOARD_DIST) ## Run the dashboard replay soak (Tier-3, `soak`-marked; NOT part of `make dashboard`/`make coverage`) — drives FakeCollector at max rate in-process, no VM. Chromium only (see comment above). JUnit XML lands in reports/junit/dashboard-soak/.
 	$(TIMEOUT_CMD) uv run pytest tests/e2e/monitor/dashboard/test_replay_soak.py -m "browser and soak" --browser chromium -n 1 --no-cov --screenshot only-on-failure --output reports/playwright $(call junitxml,dashboard-soak)
 
 # Soak/stability + repeat targets disable coverage (--no-cov, overriding the
@@ -741,7 +736,7 @@ docs-inventories:
 # photographs the REAL frontend through headless Chromium. That server serves
 # the built dist, so without these the docs build happily photographs whatever
 # stale bundle is lying around — or, on a fresh worktree, none at all.
-docs/_build/html/index.html: $(SPHINX_SRCS) $(DASHBOARD_DIST) $(COVREPORT_DIST)
+docs/_build/html/index.html: $(SPHINX_SRCS) $(DASHBOARD_DIST) $(COVAPP_DIST)
 	uv run sphinx-build -E -a -W -b html docs/ docs/_build/html
 
 doctest:
