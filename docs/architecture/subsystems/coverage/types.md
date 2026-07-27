@@ -161,14 +161,14 @@ generated with — including a report opened years later from a bundle built
 against different settings. Store v4 is what made that possible; before it,
 the renderer hard-coded its own cutoffs.
 
-## The store (v4)
+## The store (v5)
 
 `store.json` is the canonical, versioned artifact `otto cov report`
 writes for downstream consumers — external tooling, a foreign report
 viewer — to read back; the in-process renderer consumes the same store
 directly, in memory, before it is ever serialized. `CoverageStore.save`/
 `.load` (`otto.coverage.store.model`) stamp every file with a top-level
-`"format"` key equal to `STORE_FORMAT_VERSION` (`4`). The loader is
+`"format"` key equal to `STORE_FORMAT_VERSION` (`5`). The loader is
 **exact-match**: a file whose `"format"` is missing, the wrong type, or
 any version other than the one the running otto expects fails loud with
 a `ValueError` naming both versions and telling the caller to
@@ -177,6 +177,12 @@ under old assumptions. There is no migration shim, by design —
 `store.json` is a cheap-to-regenerate report artifact, not a long-lived
 source of truth, so "delete and regenerate" beats accreted,
 rarely-exercised migration code.
+
+This is otto's own internal, renderer-shaped schema — free to reshape on
+every `STORE_FORMAT_VERSION` bump. The one export built for consumers otto
+does not control, `tickets.json` (`--tickets-json` / `--cov-tickets-json`),
+deliberately does **not** share this version counter; see
+{ref}`coverage-tickets-json`.
 
 Version 4 adds three things to the schema. Each `RunRecord` grows an
 explicit **`host`** identity (the capture's board id; `""` for a
@@ -192,9 +198,25 @@ part of the persisted contract — and **`stat_types`**, the
 type-extensible stats vocabulary `("line", "branch", "decision")`:
 `decision` is a declared slot with no producer yet, so a `store.json`
 consumer should render "no decision data" rather than assume every
-declared type carries values. Each `LineRecord` also grows a reserved
-**`ticket`** slot, `None` until the per-commit ticket plumbing exists —
-nothing writes it today.
+declared type carries values. Each `LineRecord` also grew a reserved
+**`ticket`** slot at v4, `None` until the per-commit ticket plumbing
+existed — v5 (below) is what finally writes it.
+
+Version 5 settles that reservation and adds the ticket table it feeds.
+`LineRecord.ticket` becomes a **`list[str]`** (the v4 slot was
+single-valued; a commit naming several ticket ids attributes its lines to
+*all* of them — {doc}`attribution`'s "overlap" ruling — so a reserved
+scalar could never have held the real shape), omitted from the serialized
+line entirely when empty rather than written as `null` or `[]`. A new
+top-level **`tickets`** table maps each ticket id to its `TicketRecord`
+(`url` — `None` when `[coverage.tickets]` configures no template, or the
+id doesn't match one — and `commits`, the shas that named it). Both are
+populated by exactly one thing: `[coverage.tickets]` being configured at
+all ({doc}`attribution`) — a report with no such config still writes the
+v5 shape (`"format": 5`, a present-but-empty top-level `tickets` table,
+every `LineRecord` omitting `ticket`) rather than reverting to v4's, but
+the coverage numbers themselves are exactly what a v4 report would have
+produced.
 
 Per-host breakdowns are **derived, not stored** — the schema adds no
 new per-line data for them. One capture is exactly one host and exactly

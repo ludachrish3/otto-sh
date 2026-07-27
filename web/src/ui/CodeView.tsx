@@ -57,6 +57,20 @@ export interface CodeLine {
    * inventing a class per tier. The fixed-cardinality states (excluded/
    * stale/aging/uncovered) instead rely on plain `rowClass` CSS rules. */
   style?: CSSProperties;
+  /** Content for the leading ticket-gutter column (Task 11 — the slot
+   * `gridTemplateFor`'s doc comment below reserved for this). `undefined`
+   * for a line with no ticket attribution, in which case the column
+   * renders its historical bare `aria-hidden` placeholder div — so a
+   * report with no `[coverage.tickets]` attribution anywhere stays
+   * byte-identical to before this field existed. FilePage is the only
+   * caller today; CodeView itself has no opinion on what the content is. */
+  ticketGutter?: ReactNode;
+  /** Whether this row falls inside the active `?lines=` deep-link range
+   * (Task 11, FilePage's `parseLinesRange`) — rendered as
+   * `data-highlighted="true"` on the row div, omitted entirely otherwise
+   * (never `"false"`), so a plain attribute-presence check is enough for
+   * callers to detect it either way. */
+  highlighted?: boolean;
 }
 
 export interface CodeViewProps {
@@ -74,15 +88,23 @@ export interface CodeViewProps {
    * controlled — CodeView holds no expansion state of its own. */
   openLines: ReadonlySet<number>;
   onToggleLine: (lineNumber: number) => void;
+  /** Width of the leading ticket-gutter column (`CodeLine.ticketGutter`) —
+   * defaults to `"0px"`, the same collapsed width this column has always
+   * had, so a caller that never sets `ticketGutter` on any line (or omits
+   * this prop entirely) gets a byte-identical grid template to before
+   * Task 11. FilePage passes a real width only when at least one line in
+   * the file actually carries a ticket. */
+  ticketGutterWidth?: string;
 }
 
-/** `["0px", ...column widths, "1fr", "66px"].join(" ")` — the reserved
- * ticket gutter (zero-width until per-ticket plumbing exists — a spec
- * non-goal today, kept as a real grid column so adding it later is a
- * one-line width change, not a template rewrite) leads, the source column
- * flexes, and the runs/expansion toggle owns a fixed trailing column. */
-function gridTemplateFor(columns: GutterCol[]): string {
-  return ["0px", ...columns.map((c) => c.width), "1fr", "66px"].join(" ");
+/** `[ticketGutterWidth, ...column widths, "1fr", "66px"].join(" ")` — the
+ * ticket gutter (Task 11 — collapsed to `"0px"` until a caller supplies a
+ * real width, kept as a genuine grid column from the start so wiring it up
+ * later was a one-line width change, not a template rewrite) leads, the
+ * source column flexes, and the runs/expansion toggle owns a fixed
+ * trailing column. */
+function gridTemplateFor(columns: GutterCol[], ticketGutterWidth: string): string {
+  return [ticketGutterWidth, ...columns.map((c) => c.width), "1fr", "66px"].join(" ");
 }
 
 const ROW_BASE =
@@ -142,8 +164,9 @@ export function CodeView({
   renderExpansion,
   openLines,
   onToggleLine,
+  ticketGutterWidth = "0px",
 }: CodeViewProps) {
-  const gridTemplate = gridTemplateFor(columns);
+  const gridTemplate = gridTemplateFor(columns, ticketGutterWidth);
 
   return (
     <div data-testid="code-view">
@@ -172,10 +195,17 @@ export function CodeView({
             <Fragment key={line.number}>
               <div
                 data-testid={`code-row-${line.number}`}
+                data-highlighted={line.highlighted ? "true" : undefined}
                 className={cx(ROW_BASE, line.rowClass)}
                 style={{ gridTemplateColumns: gridTemplate, ...line.style }}
               >
-                <div aria-hidden />
+                {/* `aria-hidden` only when empty (the historical, byte-
+                    identical case) — a ticket chip's `<a>` must stay in
+                    the accessibility tree, so this can't be unconditional
+                    like the header row's matching placeholder above. */}
+                <div aria-hidden={line.ticketGutter === undefined ? true : undefined}>
+                  {line.ticketGutter}
+                </div>
                 {columns.map((col, i) => (
                   <div key={col.id} className="flex items-center justify-center px-0.5 text-center">
                     {line.cells[i]}

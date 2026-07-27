@@ -22,15 +22,16 @@ class FileDiff:
     hunks: list[Hunk] = field(default_factory=list)
 
 
-def _unquote(path: str) -> str:
+def unquote(path: str) -> str:
     """Undo git's C-style quoting for paths with specials (best effort)."""
     if path.startswith('"') and path.endswith('"'):
         return path[1:-1].encode().decode("unicode_escape")
     return path
 
 
-def _strip_side(path: str, prefix: str) -> str | None:
-    path = _unquote(path)
+def strip_side(path: str, prefix: str) -> str | None:
+    """Strip a diff side's ``a/``/``b/`` prefix, or ``None`` for ``/dev/null``."""
+    path = unquote(path)
     if path == _DEV_NULL:
         return None
     if path.startswith(prefix):
@@ -63,13 +64,13 @@ def parse_multifile_u0(diff_text: str) -> dict[str, FileDiff]:
                 in_hunks = True
             if not in_hunks:
                 if line.startswith("rename from "):
-                    old = _unquote(line[len("rename from ") :])
+                    old = unquote(line[len("rename from ") :])
                 elif line.startswith("rename to "):
-                    new = _unquote(line[len("rename to ") :])
+                    new = unquote(line[len("rename to ") :])
                 elif line.startswith("--- "):
-                    old = _strip_side(line[4:], "a/")
+                    old = strip_side(line[4:], "a/")
                 elif line.startswith("+++ "):
-                    new = _strip_side(line[4:], "b/")
+                    new = strip_side(line[4:], "b/")
                     have_newline = True
         if old is None:
             return  # pure addition (old side /dev/null) or unparsable

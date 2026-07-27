@@ -13,7 +13,7 @@ import * as dataModule from "../data";
 import { _resetForTests, StampMismatchError } from "../data";
 import { emptyStats, makeIndex, Providers } from "../testUtils";
 import type { FileChunk, FileNode, IndexPayload, RunJson } from "../types";
-import { FilePage, rowClassFor, rowClassForFocus } from "./FilePage";
+import { FilePage, parseLinesRange, rowClassFor, rowClassForFocus } from "./FilePage";
 
 function renderPage(props: { index: IndexPayload; segments: string[]; node: FileNode }) {
   return render(<FilePage {...props} />, { wrapper: Providers });
@@ -134,6 +134,51 @@ describe("rowClassForFocus", () => {
   });
 });
 
+// `parseLinesRange` (Task 11) reads `window.location.hash` directly via
+// `parseHashQuery()` — the top-level `afterEach` above already resets the
+// hash after every test in this file, so these need no describe-local
+// cleanup of their own.
+describe("parseLinesRange", () => {
+  it("returns null when there is no ?lines= param at all", () => {
+    window.location.hash = "#/coverage/a.c";
+    expect(parseLinesRange(100)).toBeNull();
+  });
+
+  it("returns null when there is no hash at all", () => {
+    expect(parseLinesRange(100)).toBeNull();
+  });
+
+  it("parses a bare single line as a 1-line range", () => {
+    window.location.hash = "#/coverage/a.c?lines=4";
+    expect(parseLinesRange(100)).toEqual({ start: 4, end: 4 });
+  });
+
+  it("parses an inclusive A-B range", () => {
+    window.location.hash = "#/coverage/a.c?lines=2-3";
+    expect(parseLinesRange(100)).toEqual({ start: 2, end: 3 });
+  });
+
+  it("ignores non-numeric input instead of throwing", () => {
+    window.location.hash = "#/coverage/a.c?lines=banana";
+    expect(parseLinesRange(100)).toBeNull();
+  });
+
+  it("ignores a reversed range instead of throwing", () => {
+    window.location.hash = "#/coverage/a.c?lines=5-2";
+    expect(parseLinesRange(100)).toBeNull();
+  });
+
+  it("ignores a range starting below line 1", () => {
+    window.location.hash = "#/coverage/a.c?lines=0-2";
+    expect(parseLinesRange(100)).toBeNull();
+  });
+
+  it("ignores a range whose end exceeds the file's total line count", () => {
+    window.location.hash = "#/coverage/a.c?lines=1-101";
+    expect(parseLinesRange(100)).toBeNull();
+  });
+});
+
 const RUNS: RunJson[] = [
   {
     id: 1,
@@ -233,6 +278,21 @@ function makeChunk(overrides: Partial<FileChunk> = {}): FileChunk {
     excluded: [3],
     ...overrides,
   };
+}
+
+/** `makeChunk()` plus per-line `.ticket` ids overlaid onto whichever lines
+ * `tickets` names (task-11 brief's snippet, adapted: keys stay strings —
+ * `chunk.lines` is a `Record<string, LineJson>`, and `Object.entries`
+ * already stringifies numeric object keys, so no `Number()` round-trip is
+ * needed to index back in). Every OTHER field on the touched line (hits,
+ * branches, run, state) is preserved from `makeChunk()` untouched. */
+function chunkWithTickets(tickets: Record<number, string[]>): FileChunk {
+  const chunk = makeChunk();
+  for (const [lineno, ids] of Object.entries(tickets)) {
+    const line = chunk.lines[lineno];
+    if (line) line.ticket = ids;
+  }
+  return chunk;
 }
 
 function makeFileIndex(overrides: Partial<IndexPayload> = {}): IndexPayload {
@@ -530,6 +590,309 @@ describe("FilePage", () => {
       renderFocused("nightly-full");
       await screen.findByTestId("code-row-1");
       expect(screen.getByTestId("focus-chip").textContent).toContain("nightly-full");
+    });
+  });
+
+  describe("ticket gutter (Task 11)", () => {
+    it("keeps the code-columns grid template byte-identical to before ticket gutters existed, when no line carries a ticket", async () => {
+      mockChunkLoad({ resolve: makeChunk() });
+      renderPage({ index: makeFileIndex(), segments: ["src", "net", "tcp.c"], node: NODE });
+      const cols = await screen.findByTestId("code-columns");
+      // num(46px) + tier:system(40px) + tier:unit(40px) + branches(96px),
+      // led by the collapsed "0px" ticket gutter — same string this grid
+      // template produced before Task 11 touched CodeView.tsx at all.
+      expect(cols.style.gridTemplateColumns).toBe("0px 46px 40px 40px 96px 1fr 66px");
+    });
+
+    it("widens the leading grid column once some line in the file carries a ticket", async () => {
+      mockChunkLoad({ resolve: chunkWithTickets({ 1: ["PROJ-1"] }) });
+      renderPage({ index: makeFileIndex(), segments: ["src", "net", "tcp.c"], node: NODE });
+      const cols = await screen.findByTestId("code-columns");
+      expect(cols.style.gridTemplateColumns).toBe("72px 46px 40px 40px 96px 1fr 66px");
+    });
+
+    it("renders a ticket chip in the gutter for a line that carries one", async () => {
+      mockChunkLoad({ resolve: chunkWithTickets({ 1: ["PROJ-1"] }) });
+      renderPage({ index: makeFileIndex(), segments: ["src", "net", "tcp.c"], node: NODE });
+      const gutter = await screen.findByTestId("ticket-gutter-1");
+      expect(gutter.textContent).toContain("PROJ-1");
+    });
+
+    it("collapses multiple tickets on one line to the first id plus an overflow count", async () => {
+      mockChunkLoad({ resolve: chunkWithTickets({ 1: ["PROJ-1", "PROJ-2", "PROJ-3"] }) });
+      renderPage({ index: makeFileIndex(), segments: ["src", "net", "tcp.c"], node: NODE });
+      const gutter = await screen.findByTestId("ticket-gutter-1");
+      expect(gutter.textContent).toContain("PROJ-1");
+      expect(gutter.textContent).toContain("+2");
+      expect(gutter.textContent).not.toContain("PROJ-2");
+      expect(gutter.textContent).not.toContain("PROJ-3");
+    });
+
+    it("renders no gutter column at all when no line in the file carries a ticket", async () => {
+      mockChunkLoad({ resolve: makeChunk() });
+      renderPage({ index: makeFileIndex(), segments: ["src", "net", "tcp.c"], node: NODE });
+      await screen.findByTestId("code-row-1");
+      expect(screen.queryByTestId(/^ticket-gutter-/)).toBeNull();
+    });
+
+    // Fixture built specifically so a gutter rendering the WRONG line's ids
+    // is detectable (lines genuinely differ in ownership) — collapsing this
+    // to one shared id across every assertion would let a bug like "always
+    // show the first ticket found anywhere in the chunk" pass silently.
+    it("renders each line's OWN ticket ids — never another line's", async () => {
+      mockChunkLoad({ resolve: chunkWithTickets({ 1: ["PROJ-1"], 6: ["PROJ-9"] }) });
+      renderPage({ index: makeFileIndex(), segments: ["src", "net", "tcp.c"], node: NODE });
+      const gutter1 = await screen.findByTestId("ticket-gutter-1");
+      const gutter6 = await screen.findByTestId("ticket-gutter-6");
+      expect(gutter1.textContent).toContain("PROJ-1");
+      expect(gutter1.textContent).not.toContain("PROJ-9");
+      expect(gutter6.textContent).toContain("PROJ-9");
+      expect(gutter6.textContent).not.toContain("PROJ-1");
+      // line 2 carries no ticket even though the file overall does.
+      expect(screen.queryByTestId("ticket-gutter-2")).toBeNull();
+    });
+
+    it("links the visible id to the tracker when the matching ticket summary has a url", async () => {
+      mockChunkLoad({ resolve: chunkWithTickets({ 1: ["PROJ-1"] }) });
+      const index = makeFileIndex({
+        tickets: [
+          {
+            id: "PROJ-1",
+            url: "https://tracker.example/PROJ-1",
+            owned: 1,
+            covered: 1,
+            uncovered: 0,
+            per_tier: {},
+            chunk: "PROJ-1",
+          },
+        ],
+      });
+      renderPage({ index, segments: ["src", "net", "tcp.c"], node: NODE });
+      const gutter = await screen.findByTestId("ticket-gutter-1");
+      const link = within(gutter).getByRole("link");
+      expect(link.getAttribute("href")).toBe("https://tracker.example/PROJ-1");
+      expect(link.textContent).toBe("PROJ-1");
+    });
+
+    it("renders plain text, no link, when no matching ticket summary has a url", async () => {
+      mockChunkLoad({ resolve: chunkWithTickets({ 1: ["PROJ-1"] }) });
+      renderPage({ index: makeFileIndex(), segments: ["src", "net", "tcp.c"], node: NODE });
+      const gutter = await screen.findByTestId("ticket-gutter-1");
+      expect(within(gutter).queryByRole("link")).toBeNull();
+    });
+  });
+
+  describe("?lines= deep link (Task 11)", () => {
+    it("highlights the range named by ?lines=A-B and leaves lines outside it unmarked", async () => {
+      window.location.hash = "#/coverage/a.c?lines=2-3";
+      mockChunkLoad({ resolve: makeChunk() });
+      renderPage({ index: makeFileIndex(), segments: ["src", "net", "tcp.c"], node: NODE });
+      await screen.findByTestId("code-row-1");
+      expect(screen.getByTestId("code-row-2").getAttribute("data-highlighted")).toBe("true");
+      expect(screen.getByTestId("code-row-3").getAttribute("data-highlighted")).toBe("true");
+      expect(screen.getByTestId("code-row-1").getAttribute("data-highlighted")).not.toBe("true");
+      expect(screen.getByTestId("code-row-4").getAttribute("data-highlighted")).not.toBe("true");
+    });
+
+    it("highlights a single line for a bare ?lines=N", async () => {
+      window.location.hash = "#/coverage/a.c?lines=2";
+      mockChunkLoad({ resolve: makeChunk() });
+      renderPage({ index: makeFileIndex(), segments: ["src", "net", "tcp.c"], node: NODE });
+      await screen.findByTestId("code-row-1");
+      expect(screen.getByTestId("code-row-2").getAttribute("data-highlighted")).toBe("true");
+      expect(screen.getByTestId("code-row-1").getAttribute("data-highlighted")).not.toBe("true");
+    });
+
+    it("ignores a non-numeric ?lines= value instead of throwing", async () => {
+      window.location.hash = "#/coverage/a.c?lines=banana";
+      mockChunkLoad({ resolve: makeChunk() });
+      renderPage({ index: makeFileIndex(), segments: ["src", "net", "tcp.c"], node: NODE });
+      await screen.findByTestId("code-row-1");
+      for (let n = 1; n <= 7; n++) {
+        expect(screen.getByTestId(`code-row-${n}`).getAttribute("data-highlighted")).not.toBe(
+          "true",
+        );
+      }
+    });
+
+    it("ignores a reversed ?lines= range instead of throwing", async () => {
+      window.location.hash = "#/coverage/a.c?lines=5-2";
+      mockChunkLoad({ resolve: makeChunk() });
+      renderPage({ index: makeFileIndex(), segments: ["src", "net", "tcp.c"], node: NODE });
+      await screen.findByTestId("code-row-1");
+      for (let n = 1; n <= 7; n++) {
+        expect(screen.getByTestId(`code-row-${n}`).getAttribute("data-highlighted")).not.toBe(
+          "true",
+        );
+      }
+    });
+
+    it("ignores an out-of-bounds ?lines= range instead of throwing", async () => {
+      // SOURCE (this file's fixture) has exactly 7 lines.
+      window.location.hash = "#/coverage/a.c?lines=1-999";
+      mockChunkLoad({ resolve: makeChunk() });
+      renderPage({ index: makeFileIndex(), segments: ["src", "net", "tcp.c"], node: NODE });
+      await screen.findByTestId("code-row-1");
+      for (let n = 1; n <= 7; n++) {
+        expect(screen.getByTestId(`code-row-${n}`).getAttribute("data-highlighted")).not.toBe(
+          "true",
+        );
+      }
+    });
+
+    it("scrolls the first highlighted row into view once the chunk is ready", async () => {
+      // jsdom (pinned this project) has no `scrollIntoView` at all — see
+      // FilePage.tsx's scroll-effect doc comment. Assigned directly (not
+      // `vi.spyOn`, which requires the method to already exist) and removed
+      // again below so it doesn't leak into later tests in this file.
+      const scrollSpy = vi.fn();
+      Element.prototype.scrollIntoView = scrollSpy;
+      try {
+        window.location.hash = "#/coverage/a.c?lines=2-3";
+        mockChunkLoad({ resolve: makeChunk() });
+        renderPage({ index: makeFileIndex(), segments: ["src", "net", "tcp.c"], node: NODE });
+        const row2 = await screen.findByTestId("code-row-2");
+        await waitFor(() => expect(scrollSpy).toHaveBeenCalledTimes(1));
+        expect(scrollSpy.mock.instances[0]).toBe(row2);
+        expect(scrollSpy).toHaveBeenCalledWith({ block: "center" });
+      } finally {
+        delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+      }
+    });
+  });
+
+  // Task 12: ticket context on the file page — the ONE place that dims
+  // rather than hides (spec §6.3: you can't read code with lines removed
+  // from the middle of it). Unlike DirectoryPage (which only has per-file
+  // owned/covered COUNTS from a loaded TicketChunk), FilePage already has
+  // this file's full per-line data (`LineJson.ticket`), so its ticket-scoped
+  // stats row is an EXACT recompute, not a placeholder-sized approximation.
+  describe("ticket context (Task 12)", () => {
+    function renderPinned(
+      ticketId: string,
+      chunk: FileChunk,
+      opts: { ctxLabel?: string; index?: IndexPayload } = {},
+    ) {
+      const index =
+        opts.index ??
+        makeFileIndex({
+          tickets: [
+            {
+              id: ticketId,
+              url: null,
+              owned: 0,
+              covered: 0,
+              uncovered: 0,
+              per_tier: {},
+              chunk: ticketId,
+            },
+          ],
+        });
+      window.__OTTO_COV__ = index;
+      window.location.hash = opts.ctxLabel
+        ? `#/coverage/src/net/tcp.c?ticket=${ticketId}&ctx=${encodeURIComponent(opts.ctxLabel)}`
+        : `#/coverage/src/net/tcp.c?ticket=${ticketId}`;
+      mockChunkLoad({ resolve: chunk });
+      renderPage({ index, segments: ["src", "net", "tcp.c"], node: NODE });
+      return index;
+    }
+
+    it("leaves an owned line at full opacity", async () => {
+      renderPinned("PROJ-1", chunkWithTickets({ 1: ["PROJ-1"] }));
+      const row1 = await screen.findByTestId("code-row-1");
+      expect(row1.style.opacity).toBe("");
+    });
+
+    it("dims a hit line the pinned ticket doesn't own, without removing it from the DOM", async () => {
+      renderPinned("PROJ-1", chunkWithTickets({ 1: ["PROJ-1"] }));
+      // `findByTestId` succeeding at all is the "still rendered" half of
+      // this assertion — a HIDDEN line (DirectoryPage's own treatment,
+      // deliberately NOT this page's) would make this query fail outright.
+      const row2 = await screen.findByTestId("code-row-2");
+      expect(row2.style.opacity).toBe("0.4");
+    });
+
+    it("dims regardless of coverage state — excluded and blank/uncoverable lines dim too when not owned", async () => {
+      renderPinned("PROJ-1", chunkWithTickets({ 1: ["PROJ-1"] }));
+      const row3 = await screen.findByTestId("code-row-3"); // excluded
+      const row4 = screen.getByTestId("code-row-4"); // blank/uncoverable
+      expect(row3.style.opacity).toBe("0.4");
+      expect(row4.style.opacity).toBe("0.4");
+    });
+
+    it("no line is dimmed at all when no ticket is pinned", async () => {
+      mockChunkLoad({ resolve: chunkWithTickets({ 1: ["PROJ-1"] }) });
+      renderPage({ index: makeFileIndex(), segments: ["src", "net", "tcp.c"], node: NODE });
+      const row1 = await screen.findByTestId("code-row-1");
+      const row2 = screen.getByTestId("code-row-2");
+      expect(row1.style.opacity).toBe("");
+      expect(row2.style.opacity).toBe("");
+    });
+
+    it("the stats card shows a single ticket-scoped row recomputed from owned/hit lines, never the file's whole totals", async () => {
+      // Strict subset: 2 owned lines (1 and 4) out of the chunk's 3 keys —
+      // line 2 is hit but NOT owned, proving it must be excluded from both
+      // the numerator and denominator. Only line 1 (of the 2 owned) is
+      // hit — the answer is 1/2, never the chunk's overall 2/3 (which
+      // would include line 2's hit) or 1/3 (which would count line 2 in
+      // the denominator without its hit).
+      const chunk = makeChunk({
+        lines: {
+          "1": { hits: { system: 1, unit: 0 }, branches: [], state: null, ticket: ["PROJ-1"] },
+          "2": { hits: { system: 1, unit: 0 }, branches: [], state: null }, // hit, NOT owned
+          "4": { hits: { system: 0, unit: 0 }, branches: [], state: null, ticket: ["PROJ-1"] },
+        },
+      });
+      renderPinned("PROJ-1", chunk);
+
+      await screen.findByTestId("code-row-1");
+      const card = screen.getByTestId("stats-card");
+      expect(card.textContent).toContain("ticket: PROJ-1");
+      const row = screen.getByTestId("stats-row-ticket");
+      expect(row.textContent).toContain("PROJ-1");
+      expect(row.textContent).toContain("1/2");
+      expect(row.textContent?.match(/no data/g)?.length).toBe(2); // branch + decision
+    });
+
+    it("shows the app-bar ticket chip while pinned", async () => {
+      renderPinned("PROJ-1", chunkWithTickets({ 1: ["PROJ-1"] }));
+      await screen.findByTestId("code-row-1");
+      expect(screen.getByTestId("ticket-chip").textContent).toContain("PROJ-1");
+    });
+
+    // The headline compose scenario (spec): "PROJ-412's lines, as proven by
+    // the manual run" — the composed row's numerator is member-run hits
+    // WITHIN the ticket's owned lines, never the ticket-only answer.
+    it("composes with a focused context: numerator becomes member-run hits within the ticket's owned lines", async () => {
+      const chunk = makeChunk({
+        lines: {
+          "1": {
+            hits: { system: 1, unit: 0 },
+            branches: [],
+            state: null,
+            ticket: ["PROJ-1"],
+            run: { "1": 1 }, // member run (nightly-full = run id 1)
+          },
+          "2": {
+            hits: { system: 1, unit: 0 },
+            branches: [],
+            state: null,
+            ticket: ["PROJ-1"],
+            run: { "3": 1 }, // owned, but hit by a NON-member run
+          },
+          "4": { hits: {}, branches: [], state: null, ticket: ["PROJ-1"] }, // owned, not hit
+        },
+      });
+      renderPinned("PROJ-1", chunk, { ctxLabel: "nightly-full" });
+
+      await screen.findByTestId("code-row-1");
+      const row = screen.getByTestId("stats-row-ticket");
+      // Ticket-only would read 2/3 (lines 1 and 2 both have a truthy
+      // hits.system) — the composed answer is 1/3, proving the member-run
+      // filter actually applied.
+      expect(row.textContent).toContain("1/3");
+      expect(screen.getByTestId("focus-chip")).toBeTruthy();
+      expect(screen.getByTestId("ticket-chip")).toBeTruthy();
     });
   });
 });

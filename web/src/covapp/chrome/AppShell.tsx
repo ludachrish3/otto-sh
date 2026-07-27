@@ -108,12 +108,44 @@ function FocusChip({
   );
 }
 
+/** `FocusChip`'s ticket-context counterpart (Task 12) — same tier-dot +
+ * label + ✕ anatomy, but never tier-colored: a ticket has no single tier of
+ * its own (its lines can span every tier), so its dot is always the neutral
+ * `bg-fg-quaternary` swatch `FocusChip` only falls back to when a context's
+ * OWN tier color is unavailable. */
+function TicketChip({ id, onClear }: { id: string; onClear: () => void }) {
+  return (
+    <span
+      data-testid="ticket-chip"
+      className="inline-flex max-w-52 items-center gap-1.5 rounded-full border
+        border-fg-brand-primary_alt bg-brand-primary_alt px-2.5 py-1 text-xs font-medium
+        text-brand-secondary"
+    >
+      <span aria-hidden className="size-2 shrink-0 rounded-sm bg-fg-quaternary" />
+      <span className="truncate font-mono">{id}</span>
+      <button
+        type="button"
+        data-testid="ticket-clear"
+        aria-label="Clear ticket pin"
+        title="Clear ticket pin"
+        onClick={onClear}
+        className="shrink-0 opacity-70 outline-none hover:opacity-100"
+      >
+        ✕
+      </button>
+    </span>
+  );
+}
+
 /** One row of the ⋮ menu's "Focus context" section — "All contexts" (no
  * `dotColor`, per `contexts-page.html`'s `buildMenuFocus`: even that row
  * gets a (neutral) dot, mirrored here via `bg-fg-quaternary`) or a
  * per-context row, ✓ marking whichever is active. A real `onAction`
  * (Dropdown.Item's activation handler), not a raw `onClick` — same as
- * every other actionable item in this menu. */
+ * every other actionable item in this menu. Reused as-is for the "Pin
+ * ticket" section below (Task 12) — the shape (active/dotColor/label/
+ * testId/onAction) is generic; a ticket row just never supplies a
+ * `dotColor`. */
 function FocusMenuItem({
   active,
   dotColor,
@@ -160,7 +192,7 @@ function BranchPill({ tone }: { tone: "high" | "low" | "na" }) {
 
 export function AppShell({ crumbs, title, meta, stats, children }: AppShellProps) {
   const index = getIndex();
-  const { focus, setFocus } = useFocus();
+  const { focus, setFocus, ticket, setTicket } = useFocus();
   const [theme, setTheme] = useState<Theme>(() => loadTheme());
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
 
@@ -194,6 +226,10 @@ export function AppShell({ crumbs, title, meta, stats, children }: AppShellProps
   // label string) via the same `groupContexts` every other page uses.
   const contexts = index ? groupContexts(index) : [];
   const focusedContext = contexts.find((ctx) => ctx.label === focus) ?? null;
+  // Task 12: the ⋮ menu's "Pin ticket" switcher — an empty `tickets.json`
+  // (no `[coverage.tickets]` attribution anywhere in this report) hides the
+  // whole section rather than showing an empty, useless one.
+  const tickets = index?.tickets ?? [];
 
   return (
     <div className="flex min-h-screen flex-col">
@@ -201,15 +237,37 @@ export function AppShell({ crumbs, title, meta, stats, children }: AppShellProps
         data-testid="app-bar"
         className="flex h-12 shrink-0 items-center justify-between gap-3 border-b border-secondary px-4"
       >
-        <div
-          data-testid="brand"
-          className="flex items-center gap-2 text-sm font-semibold text-secondary"
-        >
-          <span aria-hidden className="text-brand-500">
-            ⬡
-          </span>
-          <span>otto coverage</span>
-          {index && <span className="text-quaternary">· {index.project_name}</span>}
+        <div className="flex min-w-0 items-center gap-5">
+          <div
+            data-testid="brand"
+            className="flex items-center gap-2 text-sm font-semibold text-secondary"
+          >
+            <span aria-hidden className="text-brand-500">
+              ⬡
+            </span>
+            <span>otto coverage</span>
+            {index && <span className="text-quaternary">· {index.project_name}</span>}
+          </div>
+          {/* Top-level page nav (Task 10: neither this nor the Runs link
+              existed before — both are added together here). `#/tickets`
+              sits outside the `#/coverage/...` namespace deliberately (see
+              App.tsx) so it can never collide with a real directory path. */}
+          <nav data-testid="app-nav" className="flex items-center gap-1 text-xs font-medium">
+            <a
+              href="#/runs"
+              data-testid="nav-runs"
+              className="rounded-md px-2 py-1 text-tertiary hover:bg-tertiary hover:text-primary"
+            >
+              Runs
+            </a>
+            <a
+              href="#/tickets"
+              data-testid="nav-tickets"
+              className="rounded-md px-2 py-1 text-tertiary hover:bg-tertiary hover:text-primary"
+            >
+              Tickets
+            </a>
+          </nav>
         </div>
         <div className="flex items-center gap-2">
           {focus !== null && (
@@ -219,6 +277,7 @@ export function AppShell({ crumbs, title, meta, stats, children }: AppShellProps
               onClear={() => setFocus(null)}
             />
           )}
+          {ticket !== null && <TicketChip id={ticket} onClear={() => setTicket(null)} />}
           <ButtonUtility
             aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
             tooltip={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
@@ -269,6 +328,31 @@ export function AppShell({ crumbs, title, meta, stats, children }: AppShellProps
                     />
                   ))}
                 </Dropdown.Section>
+                {tickets.length > 0 && (
+                  <>
+                    <Dropdown.Separator />
+                    <Dropdown.Section>
+                      <Dropdown.SectionHeader className="px-2.5 pt-2 pb-1 text-xs font-medium text-quaternary">
+                        Pin ticket
+                      </Dropdown.SectionHeader>
+                      <FocusMenuItem
+                        active={ticket === null}
+                        label="All tickets"
+                        testId="menu-ticket-all"
+                        onAction={() => setTicket(null)}
+                      />
+                      {tickets.map((t) => (
+                        <FocusMenuItem
+                          key={t.id}
+                          active={ticket === t.id}
+                          label={t.id}
+                          testId={`menu-ticket-${t.id}`}
+                          onAction={() => setTicket(t.id)}
+                        />
+                      ))}
+                    </Dropdown.Section>
+                  </>
+                )}
                 <Dropdown.Separator />
                 {tierOrder.length > 0 && (
                   <Dropdown.Section>

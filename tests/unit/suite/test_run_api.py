@@ -442,6 +442,154 @@ def test_run_suite_cov_dir_override_used_as_report_source(tmp_path, monkeypatch)
     assert args[0] == [cov_dir]
 
 
+# ── run_suite / _post_run_coverage: [coverage.tickets] wiring ───────────────
+#
+# Task 7 wired ticket_spec only into `otto cov report`'s path
+# (cov._resolve_cov_settings); `otto test --cov-report` went through
+# _post_run_coverage, which never called load_ticket_spec, so its store
+# never carried ticket data no matter what [coverage.tickets] said — and
+# --cov-tickets-json there would have hit build_ticket_export's own
+# loud-fail. These two tests close that gap: one pins the settings ->
+# run_coverage_report(ticket_spec=...) wiring (mirrors
+# TestCovReportCollectionModel.test_ticket_spec_threaded_from_settings in
+# tests/unit/cli/test_cov.py); the other proves it end to end with a real
+# git commit, a real (non-mocked) run_coverage_report, and a real
+# --cov-tickets-json write.
+
+
+def test_run_suite_ticket_spec_threaded_from_settings(tmp_path, monkeypatch):
+    """[coverage.tickets] on the repo's settings must reach
+    run_coverage_report's ticket_spec kwarg via the otto-test path, exactly
+    as it already does via otto cov report's _resolve_cov_settings."""
+    import otto.config
+
+    log_dir = tmp_path / "log"
+    log_dir.mkdir()
+
+    repo = MagicMock()
+    repo.tests = [log_dir]
+    repo.sut_dir = log_dir
+    repo.name = "repo"
+    repo.settings = {
+        "coverage": {
+            "tiers": {"system": {"kind": "e2e", "precedence": 1}},
+            "tickets": {"pattern": r"[A-Z]{2,10}-[0-9]+"},
+        }
+    }
+
+    monkeypatch.setattr(otto.config, "get_repos", lambda: [repo])
+    monkeypatch.setattr("pytest.main", lambda *a, **k: pytest.ExitCode.OK)
+    monkeypatch.setattr("otto.coverage.collect.collect_coverage", AsyncMock())
+    monkeypatch.setattr("otto.coverage.collect.clean_remote_gcda", AsyncMock())
+
+    mock_store = MagicMock()
+    mock_store.overall_pct.return_value = 50.0
+    mock_store.file_count.return_value = 1
+    mock_run_report = AsyncMock(return_value=mock_store)
+    monkeypatch.setattr("otto.coverage.reporter.run_coverage_report", mock_run_report)
+
+    class _TicketSuite:
+        pass
+
+    run_suite(
+        _TicketSuite,
+        run_options=RunOptions(cov=True, cov_clean=False, cov_report=True),
+        output_dir=log_dir,
+    )
+
+    mock_run_report.assert_called_once()
+    ticket_spec = mock_run_report.call_args.kwargs["ticket_spec"]
+    assert ticket_spec is not None
+    assert ticket_spec.extract("fix PROJ-7") == ["PROJ-7"]
+
+
+def test_run_suite_no_coverage_section_leaves_ticket_spec_none(tmp_path, monkeypatch):
+    """A repo with no [coverage] section resolves ticket_spec=None (the
+    feature-absent default) rather than raising — mirrors the legacy
+    gcda-only report path staying unchanged."""
+    log_dir = tmp_path / "log"
+    log_dir.mkdir()
+    mock = _run_suite_report(
+        tmp_path,
+        monkeypatch,
+        run_options=RunOptions(cov=True, cov_clean=False, cov_report=True),
+        log_dir=log_dir,
+    )
+    assert mock.call_args.kwargs["ticket_spec"] is None
+
+
+def test_post_run_coverage_populates_ticket_data_end_to_end(tmp_path, monkeypatch):
+    """A real git repo whose sole commit names PROJ-7, harvested through a
+    real (non-mocked) run_coverage_report and written via --cov-tickets-json,
+    must produce a tickets.json naming PROJ-7 — proving the otto-test path
+    now populates ticket data, not just that a mock received a kwarg."""
+    import asyncio
+    import json
+    import subprocess
+
+    from otto.coverage.merge import merger as merger_mod
+    from otto.suite.run import _post_run_coverage
+
+    repo_root = tmp_path / "sut"
+    repo_root.mkdir()
+    git_env = {
+        "GIT_AUTHOR_NAME": "t",
+        "GIT_AUTHOR_EMAIL": "t@x",
+        "GIT_COMMITTER_NAME": "t",
+        "GIT_COMMITTER_EMAIL": "t@x",
+        "PATH": "/usr/bin:/bin",
+        "HOME": str(tmp_path),
+    }
+
+    def _git(*args):
+        subprocess.run(["git", *args], cwd=repo_root, check=True, capture_output=True, env=git_env)
+
+    _git("init", "-q")
+    (repo_root / "f.c").write_text("int a;\nint b;\n")
+    _git("add", "f.c")
+    _git("commit", "-qm", "fix PROJ-7")
+
+    hdir = tmp_path / "unit_build"
+    hdir.mkdir()
+    (hdir / "f.gcda").write_bytes(b"")
+    (hdir / "f.gcno").write_bytes(b"")
+
+    async def fake_capture(self, gcda_dir, gcno_dir, output, toolchain=None):
+        output.write_text(f"TN:\nSF:{repo_root / 'f.c'}\nDA:1,5\nend_of_record\n")
+        return output
+
+    monkeypatch.setattr(merger_mod.LcovMerger, "capture", fake_capture)
+
+    repo = MagicMock()
+    repo.sut_dir = repo_root
+    repo.name = "repo"
+    repo.settings = {
+        "coverage": {
+            "tiers": {"unit": {"kind": "unit", "precedence": 1, "harvest_dirs": [str(hdir)]}},
+            "tickets": {"pattern": r"[A-Z]{2,10}-[0-9]+"},
+        }
+    }
+
+    log_dir = tmp_path / "log"
+    log_dir.mkdir()
+    tickets_json = tmp_path / "tickets.json"
+
+    opts = RunOptions(
+        cov=False,
+        cov_clean=False,
+        cov_report=True,
+        cov_tickets_json=tickets_json,
+    )
+    asyncio.run(_post_run_coverage([repo], log_dir, opts))
+
+    assert tickets_json.exists(), (
+        "tickets.json was not written — ticket_spec never reached the store"
+    )
+    payload = json.loads(tickets_json.read_text())
+    assert [t["id"] for t in payload["tickets"]] == ["PROJ-7"]
+    assert payload["tickets"][0]["lines"]["owned"] >= 1
+
+
 # ── run_suite: cov_dir empty/overwrite guard ─────────────────────────────────
 
 

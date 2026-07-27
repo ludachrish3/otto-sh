@@ -839,11 +839,221 @@ configure.
   bookmarkable and shareable — and persists per report in `localStorage`.
   Branch cells show "—" while a focus is active; focus mode filters line
   stats only.
+- **Tickets page** (`#/tickets`) — present only when `[coverage.tickets]`
+  is configured (see {ref}`coverage-tickets`); one row per ticket id, sorted
+  worst-uncovered-first, with the same overall stats card scoped to every
+  attributed line. Expanding a row lists its missing lines grouped by file
+  as ranges, each linking straight into the annotated source.
+
+  ![Tickets page: one row per ticket sorted by uncovered lines, an expanded
+  row's missing-line ranges, and the overall attributed-lines stats
+  card](../_static/generated/coverage-tickets.png)
+
+- **Ticket context** — pin a ticket from the tickets page's row or the app
+  bar's **⋮** menu's own "Pin ticket" section; unlike run focus, which dims
+  non-participating code, pinning a ticket **hides** files (and directories)
+  it never touched from the tree entirely, and every remaining
+  percentage recomputes over that ticket's owned lines alone — a
+  hidden-count row above the tree names what was removed, so the
+  narrowing is never silent. The file page keeps the opposite rule: it
+  **dims**, never hides, a non-owned line, because code inside a file must
+  stay readable. Composes with run focus (`?ticket=<id>` alongside
+  `?ctx=<label>`) — "this ticket's lines, as proven by that run" is a
+  real, separate question from either filter alone.
+
+  ![A pinned ticket at the directory page: utils.c's row is hidden (it
+  owns none of the ticket's lines) and the banner names what was
+  hidden](../_static/generated/coverage-ticket-context.png)
 
 `store.json` is written alongside the report with the same data —
-validity states, colors, runs, and each file's excluded lines
+validity states, colors, runs, tickets, and each file's excluded lines
 included — as the explicit data contract for tooling built on top of
-a report without touching the pipeline.
+a report without touching the pipeline. `tickets.json` (see
+{ref}`coverage-tickets-json`) is a separate, public export built for
+consumers otto does not control.
+
+(coverage-tickets)=
+## Per-Ticket Coverage
+
+Otto can answer, for every ticket named in the repo's commit history, how
+much of the code it wrote is covered and exactly which lines still aren't —
+the tickets page (above), a per-line gutter chip on the file page, and the
+`tickets.json` export ({ref}`coverage-tickets-json`) all read from the same
+attribution. The feature is entirely **opt-in**: with no `[coverage.tickets]`
+block, none of it runs — no git log walk, no tickets page, no gutter column,
+no ticket data anywhere in the store or an export — and the coverage
+numbers themselves are exactly what they'd be without this section.
+
+### Configuration
+
+```toml
+[coverage.tickets]
+pattern = "#(?P<num>[0-9]+)"
+url = "https://github.com/org/repo/issues/{num}"
+```
+
+| Field | Meaning |
+|-------|---------|
+| `pattern` | Required. A Python regex `finditer` over each commit's subject + body. |
+| `url` | Optional. A `str.format` template rendering a tracker link for a ticket id. |
+
+**The display id is the whole match**, not a named group — a commit that
+writes `Fixes #1204` shows `#1204` in the gutter and the tickets page,
+matching what the commit actually wrote. **`url` formats over `pattern`'s
+named groups**, plus the positional `{0}` for the whole match, so a
+template can consume only part of the id: GitHub's example above links
+`#1204` to `.../issues/1204` via the named group `num`, while a Jira-style
+`pattern = "(?P<key>[A-Z]{2,10}-\\d+)"` would use `{key}` — identical to the
+whole match there, since Jira ids carry no leading punctuation to strip.
+A commit naming several ids (`Fixes #101, relates to #205`) attributes its
+lines to **all** of them — see "Overlapping tickets" below.
+
+Both fields are validated **loudly, at settings load**, never at render
+time: `pattern` must compile as a regular expression, and every field name
+that `url` references must exist as a named group in `pattern` (or be `0`)
+— a template naming a group the pattern doesn't define is a config error
+raised before any report is built, not a blank link discovered later.
+
+Two synthetic rows keep every owned line represented on the tickets page
+and in `tickets.json`, consistent with "every attributed line belongs
+somewhere": **`(uncommitted)`** for working-tree lines that haven't been
+committed yet, and **`(no ticket)`** for lines whose owning commit matched
+`pattern` nowhere.
+
+### The `--first-parent` ruling
+
+Attribution walks `git log --first-parent`: a line is credited to the
+**merge** that brought it to the mainline, not the topic-branch commit that
+originally wrote it. On a linear history (no merge commits — most `git
+rebase`-based workflows) this is identical to `git blame`. On a
+merge-heavy history it **diverges from `git blame` by design**: a merge
+commit typically carries the PR/ticket reference in its message, while the
+topic commits behind it are frequently "wip", "fixup", or otherwise
+untraceable to a ticket on their own — following first-parent history is
+what actually recovers the ticket a change belongs to. Passing
+`--no-first-parent` is not offered as a config knob today: the ruling is
+that first-parent is the *correct* reading for ticket attribution, not one
+option among several (see {doc}`../architecture/subsystems/coverage/attribution`
+for the full rationale and how this divergence is pinned as a deliberate
+test case rather than a bug).
+
+(coverage-tickets-overlap)=
+### Overlapping tickets
+
+**A ticket's owned lines are not a partition of the repo.** Because a
+commit naming several ticket ids attributes its lines to all of them, two
+tickets can — and in practice regularly do — both claim the same line. The
+tickets page states this explicitly under its table (rows overlap and do
+not sum to the stats card above them, which counts each attributed line
+once regardless of how many tickets claim it) rather than leaving it as a
+surprise when the numbers don't add up. The same rule applies to
+`tickets.json`: summing every ticket's `lines.owned` across the file can
+legitimately exceed the top-level `totals.owned`.
+
+### Why a git log walk, not `git blame`
+
+Attribution runs a bounded git log walk (a **constant number** of
+subprocesses — a discovery pass plus a patch walk — regardless of how many
+files are covered) rather than spawning `git blame` per file. This
+was measured and decided on **filesystem-operation count**, not wall
+clock, because otto targets NFS-backed checkouts
+(`otto/filesystem.py`'s `is_network_fs`) where every git subprocess
+re-touches `.git` metadata over the network and per-operation latency —
+not CPU — dominates; a local SSD's wall clock understates the real cost by
+orders of magnitude. `git blame` re-opens the pack indexes once per file
+with no batch mode, so its cost is flat per file regardless of how many
+files share history; the log walk amortizes across every covered file in
+that same fixed handful of processes. See
+{doc}`../architecture/subsystems/coverage/attribution`
+for the measured numbers and the (corrected) engineering story behind the
+walk that's actually shipped.
+
+(coverage-tickets-json)=
+## The `tickets.json` Export
+
+`otto cov report --tickets-json PATH` (mirrored on `otto test` as
+`--cov-tickets-json PATH`) writes a machine-readable per-ticket coverage
+summary — otto's **first public export format**. Every other JSON otto
+writes (`store.json`) is an internal, renderer-shaped artifact free to
+reshape on any `otto` release; `tickets.json` has consumers otto does not
+control (CI dashboards, ticket-coverage bots, ad-hoc scripts), so it is
+specified and versioned as a stable contract instead:
+
+```json
+{
+  "format": 1,
+  "generated": "2026-07-26T21:00:00Z",
+  "otto_version": "0.8.0",
+  "project": "myproduct",
+  "traversal": "first-parent",
+  "thresholds": {"high": 80, "medium": 70},
+  "tiers": ["unit", "system", "manual"],
+  "totals": {"owned": 17284, "covered": 16240, "uncovered": 1044},
+  "tickets": [
+    {
+      "id": "PROJ-388",
+      "url": "https://jira.example.com/browse/PROJ-388",
+      "commits": ["a1b2c3d4e5f6..."],
+      "lines": {"owned": 97, "covered": 61, "uncovered": 36},
+      "per_tier": {"unit": 61, "system": 0, "manual": 0},
+      "files": [
+        {
+          "path": "src/net/arp.c",
+          "owned": 64,
+          "covered": 41,
+          "missing": [[142, 158], [204, 204], [219, 221]]
+        }
+      ]
+    }
+  ]
+}
+```
+
+### Compatibility policy
+
+- **`format` is its own integer, versioned independently of
+  `store.json`'s `STORE_FORMAT_VERSION`.** The internal store may be
+  reshaped freely for the renderer's benefit; this export's schema changes
+  on its own schedule, and only when the exported shape itself changes.
+- **Output is deterministic apart from the `generated` timestamp**:
+  tickets sorted by `id`, each ticket's `files` sorted by `path`, and
+  `missing` ranges ascending. Two reports built from identical coverage
+  data at the same `generated` stamp produce byte-identical files — this
+  is what a CI diff actually compares (the timestamp aside), and is itself
+  pinned by test (generating twice with a fixed `generated` and asserting
+  byte equality, not just field-by-field) — so a diff between two real
+  regenerations is exactly the coverage delta, never noise from key
+  ordering or incidental formatting.
+- **Every `path` is repo-relative POSIX**, never the internal store's
+  absolute, machine-specific path — two CI runners with different
+  checkout locations emit identical bytes for identical coverage, and an
+  external consumer can map a path onto its own checkout without knowing
+  anything about the machine that produced the file.
+- **`missing` ranges are inclusive `[start, end]` pairs** — `[142, 142]`
+  for a single line — using the exact same grouping the tickets page
+  renders (`group_ranges`, shared code, not two independent
+  implementations that could drift apart).
+- **`(uncommitted)` and `(no ticket)` appear as ordinary ticket entries**,
+  so the export's `totals` sum the same way the tickets page's stats card
+  does.
+- **Loud-fails without `[coverage.tickets]` configured, or with a
+  configuration that attributed nothing.** Requesting `--tickets-json`
+  asks for ticket data; writing an empty file instead of erroring would
+  read as "this project has no uncovered ticket work" — exit `1` with a
+  clear cause instead. `otto test --cov-tickets-json` fails this same way
+  *before the suite runs* when `[coverage.tickets]` isn't configured at
+  all (a known misconfiguration, worth failing fast on); a git walk that
+  ran but matched nothing is only knowable after the run, so that case is
+  a warning on the otherwise-successful test run instead, matching every
+  other `--cov-*` post-run tail's never-fail-a-green-run policy.
+- **Omitted flag → no file written**, ever — there is no implicit default
+  path, so nothing appears that wasn't explicitly asked for.
+
+This is also the natural substrate for a future per-ticket
+`--cov-fail-under` variant, and the shape other planned report formats
+(Cobertura, Coveralls, Codecov) are expected to follow: independent
+format version, deterministic ordering, loud failure on missing inputs.
+Neither is built yet.
 
 ## Hosting the report in CI
 

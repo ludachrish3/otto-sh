@@ -42,9 +42,23 @@ import { useToast } from "./Toast";
 import type { IndexPayload } from "./types";
 
 const CTX_PARAM = "ctx";
+// Task 12: the ticket-context (denominator) filter's own hash-query param
+// and storage key — a SECOND, entirely independent pinned value sharing
+// this module's hash-query/localStorage machinery (boot precedence,
+// Back/Forward stamping, "unknown value treated as cleared") rather than a
+// parallel implementation, but never sharing STATE with `focus`/CTX_PARAM:
+// `ctx` narrows the numerator (only that run's hits count, all code stays
+// visible), `ticket` narrows the denominator (only that ticket's lines are
+// in scope at all) — opposite axes that must compose, so setting/clearing
+// one must never read or write the other's param/storage key.
+const TICKET_PARAM = "ticket";
 
 function storageKey(stamp: string): string {
   return `otto-cov:${stamp}:focus`;
+}
+
+function ticketStorageKey(stamp: string): string {
+  return `otto-cov:${stamp}:ticket`;
 }
 
 function rawHash(): string {
@@ -233,6 +247,13 @@ export function useHashLocation(): [string, (to: string, opts?: { replace?: bool
 export interface UseFocusResult {
   focus: string | null;
   setFocus: (label: string | null) => void;
+  /** Task 12: the pinned ticket id (`?ticket=<id>`), or `null` — resolved/
+   * persisted exactly like `focus` above (same boot precedence, same
+   * Back/Forward stamping), just against `index.tickets` instead of
+   * `groupContexts(index)`, and via its own, entirely independent param/
+   * storage key so it can never clear (or be cleared by) `focus`. */
+  ticket: string | null;
+  setTicket: (id: string | null) => void;
 }
 
 const FocusContext = createContext<UseFocusResult | null>(null);
@@ -248,6 +269,16 @@ function resolveLabel(label: string | null, index: IndexPayload | null): string 
   return known ? label : null;
 }
 
+/** `resolveLabel`'s ticket counterpart (Task 12) — same "unknown/stale
+ * value degrades to cleared, never a crash" contract, checked against
+ * `index.tickets` (Task 9's per-ticket rollups) instead of
+ * `groupContexts(index)`. */
+function resolveTicket(id: string | null, index: IndexPayload | null): string | null {
+  if (id === null || index === null) return null;
+  const known = index.tickets.some((t) => t.id === id);
+  return known ? id : null;
+}
+
 /** Boot precedence (spec-pinned): the hash query wins; else localStorage. */
 function initialFocus(index: IndexPayload | null): string | null {
   const fromQuery = parseHashQuery().get(CTX_PARAM);
@@ -255,6 +286,17 @@ function initialFocus(index: IndexPayload | null): string | null {
   if (index !== null) {
     const stored = localStorage.getItem(storageKey(index.stamp));
     if (stored !== null) return resolveLabel(stored, index);
+  }
+  return null;
+}
+
+/** `initialFocus`'s ticket counterpart — same query>storage precedence. */
+function initialTicket(index: IndexPayload | null): string | null {
+  const fromQuery = parseHashQuery().get(TICKET_PARAM);
+  if (fromQuery !== null) return resolveTicket(fromQuery, index);
+  if (index !== null) {
+    const stored = localStorage.getItem(ticketStorageKey(index.stamp));
+    if (stored !== null) return resolveTicket(stored, index);
   }
   return null;
 }
@@ -267,6 +309,10 @@ export function FocusProvider({ children }: { children: ReactNode }) {
   const index = getIndex();
   const { show } = useToast();
   const [focus, setFocusState] = useState<string | null>(() => initialFocus(index));
+  // Task 12: a second, independent piece of state — never derived from or
+  // combined with `focus` above (see this module's header comment on why
+  // ctx/ticket must compose rather than share a slot).
+  const [ticket, setTicketState] = useState<string | null>(() => initialTicket(index));
 
   // Boot reconciliation (runs once, at mount): whichever source won the
   // query>storage precedence above becomes the sole source going forward —
@@ -274,11 +320,19 @@ export function FocusProvider({ children }: { children: ReactNode }) {
   // clear both if boot resolved to null. That last branch is what makes an
   // unknown/stale label "no crash, treated as cleared" rather than a
   // dangling ?ctx= or storage entry the user can never escape. Not a user
-  // action, so no toast here — only explicit `setFocus` calls below toast.
-  // `replaceHashQuery`, NOT `setHashQuery`: this fires on every page load
-  // (including a bare reload with a pre-existing history), so pushing here
-  // would grow session history by one entry per load with no corresponding
-  // user action — see `replaceHashQuery`'s doc comment.
+  // action, so no toast here — only explicit `setFocus`/`setTicket` calls
+  // below toast. `replaceHashQuery`, NOT `setHashQuery`: this fires on
+  // every page load (including a bare reload with a pre-existing history),
+  // so pushing here would grow session history by one entry per load with
+  // no corresponding user action — see `replaceHashQuery`'s doc comment.
+  //
+  // Ticket reconciliation runs the SAME shape as ctx's, as its own
+  // `replaceHashQuery` call — each call independently re-reads the
+  // CURRENT hash (see `setHashQuery`/`replaceHashQuery`'s "read, mutate,
+  // write" contract) and only ever touches its own param, so doing ctx
+  // then ticket sequentially composes correctly (whichever ran first is
+  // still present in the hash when the second one reads it) rather than one
+  // clobbering the other.
   //
   // `stampCurrentEntry()` at the end (unconditionally, either branch): the
   // entry the app BOOTED on needs to be marked "known" too, same as every
@@ -286,7 +340,7 @@ export function FocusProvider({ children }: { children: ReactNode }) {
   // very first Back press (with no in-app navigation in between) would
   // land on an unstamped boot entry and get misread as a fresh push
   // rather than the real traversal it is.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: boot-only effect (see comment above) — deliberately `[]`, not re-run on `focus`/`index` changes (setFocus keeps both channels in sync for those directly)
+  // biome-ignore lint/correctness/useExhaustiveDependencies: boot-only effect (see comment above) — deliberately `[]`, not re-run on `focus`/`ticket`/`index` changes (setFocus/setTicket keep both channels in sync for those directly)
   useEffect(() => {
     if (focus === null) {
       if (parseHashQuery().has(CTX_PARAM)) replaceHashQuery((p) => p.delete(CTX_PARAM));
@@ -294,6 +348,13 @@ export function FocusProvider({ children }: { children: ReactNode }) {
     } else {
       replaceHashQuery((p) => p.set(CTX_PARAM, focus));
       if (index !== null) localStorage.setItem(storageKey(index.stamp), focus);
+    }
+    if (ticket === null) {
+      if (parseHashQuery().has(TICKET_PARAM)) replaceHashQuery((p) => p.delete(TICKET_PARAM));
+      if (index !== null) localStorage.removeItem(ticketStorageKey(index.stamp));
+    } else {
+      replaceHashQuery((p) => p.set(TICKET_PARAM, ticket));
+      if (index !== null) localStorage.setItem(ticketStorageKey(index.stamp), ticket);
     }
     stampCurrentEntry();
   }, []);
@@ -351,27 +412,57 @@ export function FocusProvider({ children }: { children: ReactNode }) {
   // version of the same trap. Rewriting the CURRENT (just-pushed) entry in
   // place instead means every navigation while focused costs exactly one
   // Back-button stop, and it always already carries the right `?ctx=`.
+  //
+  // Ticket (Task 12) mirrors every branch below independently — its own
+  // `resolveTicket`/`ticketStorageKey`/`TICKET_PARAM`, compared against its
+  // own `ticket` state — so a landing that changes ctx but not ticket (or
+  // vice versa) only touches the one that actually changed, and the
+  // reassert branch's single `replaceHashQuery` call composes both params
+  // in one rewrite (each `p.set` call only touches its own key, per
+  // `URLSearchParams`'s ordinary contract) rather than two separate writes
+  // racing each other.
+  //
+  // Fix round 1 (task-12-report.md, Minor): `replaceHashQuery` itself is
+  // guarded internally (a no-op mutate never actually writes — see its own
+  // doc comment), so calling it unconditionally here was never a
+  // CORRECTNESS bug, only pointless work (constructing a `URLSearchParams`,
+  // running both `if` checks, serializing back to a string) on every
+  // navigation while NEITHER filter is pinned — the overwhelmingly common
+  // case. Restoring the outer guard (present pre-Task-12 for `ctx` alone)
+  // skips that work entirely rather than relying on the callee to no-op it.
   useEffect(() => {
     function onHashChange() {
       if (isKnownEntry()) {
-        const landed = resolveLabel(parseHashQuery().get(CTX_PARAM), index);
-        if (landed !== focus) {
-          setFocusState(landed);
+        const params = parseHashQuery();
+        const landedFocus = resolveLabel(params.get(CTX_PARAM), index);
+        if (landedFocus !== focus) {
+          setFocusState(landedFocus);
           if (index !== null) {
-            if (landed === null) localStorage.removeItem(storageKey(index.stamp));
-            else localStorage.setItem(storageKey(index.stamp), landed);
+            if (landedFocus === null) localStorage.removeItem(storageKey(index.stamp));
+            else localStorage.setItem(storageKey(index.stamp), landedFocus);
+          }
+        }
+        const landedTicket = resolveTicket(params.get(TICKET_PARAM), index);
+        if (landedTicket !== ticket) {
+          setTicketState(landedTicket);
+          if (index !== null) {
+            if (landedTicket === null) localStorage.removeItem(ticketStorageKey(index.stamp));
+            else localStorage.setItem(ticketStorageKey(index.stamp), landedTicket);
           }
         }
         return;
       }
-      if (focus !== null && parseHashQuery().get(CTX_PARAM) !== focus) {
-        replaceHashQuery((p) => p.set(CTX_PARAM, focus));
+      if (focus !== null || ticket !== null) {
+        replaceHashQuery((p) => {
+          if (focus !== null) p.set(CTX_PARAM, focus);
+          if (ticket !== null) p.set(TICKET_PARAM, ticket);
+        });
       }
       stampCurrentEntry();
     }
     window.addEventListener("hashchange", onHashChange);
     return () => window.removeEventListener("hashchange", onHashChange);
-  }, [focus, index]);
+  }, [focus, ticket, index]);
 
   const setFocus = useCallback(
     (label: string | null) => {
@@ -391,7 +482,32 @@ export function FocusProvider({ children }: { children: ReactNode }) {
     [index, show],
   );
 
-  const value = useMemo<UseFocusResult>(() => ({ focus, setFocus }), [focus, setFocus]);
+  // `setTicket`'s own `setHashQuery`/`localStorage` calls only ever touch
+  // `TICKET_PARAM`/`ticketStorageKey` — never `CTX_PARAM`/`storageKey` — so
+  // pinning/clearing a ticket can never clear (or be cleared by) `focus`,
+  // the compose guarantee Task 12 requires.
+  const setTicket = useCallback(
+    (id: string | null) => {
+      const resolved = resolveTicket(id, index);
+      if (resolved === null) {
+        setHashQuery((p) => p.delete(TICKET_PARAM));
+        if (index !== null) localStorage.removeItem(ticketStorageKey(index.stamp));
+        setTicketState(null);
+        show("Ticket pin cleared");
+        return;
+      }
+      setHashQuery((p) => p.set(TICKET_PARAM, resolved));
+      if (index !== null) localStorage.setItem(ticketStorageKey(index.stamp), resolved);
+      setTicketState(resolved);
+      show(`Pinned ticket ${resolved}`);
+    },
+    [index, show],
+  );
+
+  const value = useMemo<UseFocusResult>(
+    () => ({ focus, setFocus, ticket, setTicket }),
+    [focus, setFocus, ticket, setTicket],
+  );
   return <FocusContext.Provider value={value}>{children}</FocusContext.Provider>;
 }
 

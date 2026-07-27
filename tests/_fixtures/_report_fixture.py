@@ -18,6 +18,16 @@ stale line with no live hits) and one aging, dirty-remapped ``manual`` run
 ("field bring-up", ticket FW-1188) — every state (``t-<tier>``/``s-excl``/
 ``s-stale``/``s-aging``) the SPA's file-page row precedence renders is
 reachable from this one fixture.
+
+Per-ticket attribution (Task 13): two commit-message-attributed tickets,
+distinct from ``RunRecord.ticket`` above (a different axis — see design §1).
+``PROJ-204`` owns main.c's ``checked_add()`` body through the stale brace
+(lines 3-7) and nothing in utils.c, so pinning it hides utils.c's tree row;
+its one uncovered line (6, the stale/no-hit line) gives the tickets page a
+real missing-range to expand and a real ``?lines=`` deep link to click
+through. ``PROJ-9`` owns only utils.c's one hit line, fully covered, and
+carries no tracker ``url`` (the other ticket does) — exercising both of
+``TicketIdCell``'s render variants in one fixture.
 """
 
 from pathlib import Path
@@ -28,6 +38,7 @@ from otto.coverage.store.model import (
     CoverageStore,
     FileRecord,
     LineRecord,
+    TicketRecord,
 )
 
 _MAIN_C = """\
@@ -190,13 +201,28 @@ def build_fixture_report(base_dir: Path) -> Path:
     aging_line = main_rec.get_or_create_line(9)
     aging_line.state = "aging"
     aging_line.run_hits[run_field] = 3
+    # PROJ-204 (Task 13, per-ticket attribution): owns checked_add()'s body
+    # through the stale brace (3-7) — 4 hit lines, 1 uncovered (the stale
+    # line 6, which carries no per-tier hit) — and nothing in utils.c, so a
+    # pinned PROJ-204 hides utils.c's tree row entirely (module docstring).
+    for lineno in (3, 4, 5, 6, 7):
+        main_rec.lines[lineno].ticket = ["PROJ-204"]
     store.merge_file(main_rec)
 
     # -- utils.c -----------------------------------------------------------
     utils_rec = FileRecord(path=src_dir / "utils.c")
     utils_rec.lines[2] = _line(2, {"unit": 6}, {run_unit: 6})
     utils_rec.lines[6] = _line(6, {})  # LCOV_EXCL_LINE-marked in source -> s-excl at render
+    # PROJ-9: owns only this one, fully-covered line — never touches
+    # main.c, and carries no tracker `url` (PROJ-204 does), exercising
+    # TicketIdCell's plain-text render variant.
+    utils_rec.lines[2].ticket = ["PROJ-9"]
     store.merge_file(utils_rec)
+
+    store.tickets["PROJ-204"] = TicketRecord(
+        id="PROJ-204", url="https://example.test/issues/204", commits=[_BASE_COMMIT_NIGHTLY]
+    )
+    store.tickets["PROJ-9"] = TicketRecord(id="PROJ-9", url=None, commits=[_BASE_COMMIT_FIELD])
 
     report_dir = base_dir / "report"
     SpaRenderer(report_dir, project_name="otto example product", prefix=base_dir).render(store)

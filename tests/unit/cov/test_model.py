@@ -6,12 +6,14 @@ from pathlib import Path
 import pytest
 
 from otto.coverage.store.model import (
+    STORE_FORMAT_VERSION,
     BranchHits,
     CoverageStore,
     FileRecord,
     LineHits,
     LineRecord,
     Thresholds,
+    TicketRecord,
 )
 
 
@@ -227,10 +229,10 @@ class TestCoverageStore:
         assert merged.lines[1].hits.for_tier("unit") == 2
 
     def test_load_defaults_state_runs_tier_colors_when_absent(self, tmp_path):
-        # A well-formed v4 file may still omit the optional "runs"/"tier_colors"
+        # A well-formed v5 file may still omit the optional "runs"/"tier_colors"
         # keys (e.g. a minimal hand-written fixture); load() must default them.
         minimal = {
-            "format": 4,
+            "format": 5,
             "tier_order": ["system"],
             "files": [
                 {
@@ -272,12 +274,12 @@ class TestCoverageStore:
         assert line_dict["state"] is None
 
     def test_load_tolerates_absent_excluded_lines_key(self, tmp_path):
-        """A v4 store.json with no excluded_lines key loads to an empty set."""
+        """A v5 store.json with no excluded_lines key loads to an empty set."""
         store_json = tmp_path / "store.json"
         store_json.write_text(
             json.dumps(
                 {
-                    "format": 4,
+                    "format": 5,
                     "tier_order": ["system"],
                     "files": [{"path": "/x/f.c", "lines": {}}],
                 }
@@ -342,7 +344,7 @@ class TestRuns:
         path = tmp_path / "store.json"
         store.save(path)
         raw = json.loads(path.read_text())
-        assert raw["format"] == 4
+        assert raw["format"] == 5
         assert raw["runs"][0]["base_commit"] == "deadbeef"
         line5 = raw["files"][0]["lines"]["5"]
         assert line5["run"] == {"0": 4}
@@ -361,7 +363,7 @@ class TestRuns:
 
     def test_load_defaults_runs_when_absent(self, tmp_path):
         minimal = {
-            "format": 4,
+            "format": 5,
             "tier_order": ["system"],
             "files": [{"path": "/a.c", "lines": {"1": {"hits": {"system": 1}, "branches": []}}}],
         }
@@ -384,13 +386,13 @@ class TestRuns:
         assert a.lines[1].run_hits == {0: 5}
 
 
-class TestStoreV4Config:
-    def test_save_emits_v4_thresholds_and_stat_types(self, tmp_path) -> None:
+class TestStoreConfig:
+    def test_save_emits_thresholds_and_stat_types(self, tmp_path) -> None:
         store = CoverageStore(tier_order=["system"])
         p = tmp_path / "store.json"
         store.save(p)
         raw = json.loads(p.read_text())
-        assert raw["format"] == 4
+        assert raw["format"] == 5
         assert raw["thresholds"] == {"high": 80.0, "medium": 70.0}
         assert raw["stat_types"] == ["line", "branch", "decision"]
 
@@ -404,7 +406,7 @@ class TestStoreV4Config:
 
     def test_load_defaults_thresholds_when_absent(self, tmp_path) -> None:
         p = tmp_path / "store.json"
-        p.write_text('{"format": 4, "tier_order": ["system"], "files": []}')
+        p.write_text('{"format": 5, "tier_order": ["system"], "files": []}')
         loaded = CoverageStore.load(p)
         assert loaded.thresholds == Thresholds()
 
@@ -461,12 +463,12 @@ class TestLineTicketSlot:
         f = FileRecord(path=Path("a.c"))
         line = f.get_or_create_line(1)
         line.hits.add("system", 1)
-        line.ticket = "PROJ-123"
+        line.ticket = ["PROJ-123"]
         store.merge_file(f)
         p = tmp_path / "store.json"
         store.save(p)
         loaded = CoverageStore.load(p)
-        assert next(iter(loaded.files())).lines[1].ticket == "PROJ-123"
+        assert next(iter(loaded.files())).lines[1].ticket == ["PROJ-123"]
 
     def test_ticket_absent_when_unset(self, tmp_path) -> None:
         store = CoverageStore(tier_order=["system"])
@@ -479,11 +481,63 @@ class TestLineTicketSlot:
         (line_dict,) = raw["files"][0]["lines"].values()
         assert "ticket" not in line_dict
 
-    def test_merge_keeps_first_set_ticket(self) -> None:
-        a = LineRecord(line_number=1, ticket="PROJ-1")
-        b = LineRecord(line_number=1, ticket="PROJ-2")
+    def test_merge_unions_ticket_lists(self) -> None:
+        a = LineRecord(line_number=1, ticket=["PROJ-1"])
+        b = LineRecord(line_number=1, ticket=["PROJ-2"])
         a.merge(b)
-        assert a.ticket == "PROJ-1"
+        assert a.ticket == ["PROJ-1", "PROJ-2"]
         c = LineRecord(line_number=1)
         c.merge(b)
-        assert c.ticket == "PROJ-2"
+        assert c.ticket == ["PROJ-2"]
+
+
+def test_format_is_five():
+    """v5 replaces the reserved single-ticket slot with a list and a ticket table."""
+    assert STORE_FORMAT_VERSION == 5
+
+
+def test_line_ticket_defaults_to_empty_list():
+    """``LineRecord.ticket`` defaults to ``[]``, not ``None``."""
+    assert LineRecord(line_number=1).ticket == []
+
+
+def test_empty_ticket_list_is_omitted_from_json(tmp_path):
+    """The v4 `is not None` guard serialized a meaningless empty string."""
+    store = CoverageStore(tier_order=["unit"])
+    rec = store.get_or_create_file(tmp_path / "a.c")
+    rec.get_or_create_line(1)
+    path = tmp_path / "store.json"
+    store.save(path)
+    assert "ticket" not in json.loads(path.read_text())["files"][0]["lines"]["1"]
+
+
+def test_ticket_list_round_trips(tmp_path):
+    """Per-line ticket lists and the top-level ticket table both round-trip."""
+    store = CoverageStore(tier_order=["unit"])
+    rec = store.get_or_create_file(tmp_path / "a.c")
+    rec.get_or_create_line(1).ticket = ["PROJ-1", "PROJ-2"]
+    store.tickets["PROJ-1"] = TicketRecord(id="PROJ-1", url="u/1", commits=["abc"])
+    path = tmp_path / "store.json"
+    store.save(path)
+
+    loaded = CoverageStore.load(path)
+
+    assert next(loaded.files()).lines[1].ticket == ["PROJ-1", "PROJ-2"]
+    assert loaded.tickets["PROJ-1"].url == "u/1"
+    assert loaded.tickets["PROJ-1"].commits == ["abc"]
+
+
+def test_merge_unions_tickets_without_duplicates():
+    """Merging two captures of the same line unions ticket ids, order-preserving, no dupes."""
+    a = LineRecord(line_number=1, ticket=["PROJ-1"])
+    b = LineRecord(line_number=1, ticket=["PROJ-2", "PROJ-1"])
+    a.merge(b)
+    assert a.ticket == ["PROJ-1", "PROJ-2"]
+
+
+def test_v4_store_is_rejected_loud(tmp_path):
+    """A v4 store.json (pre-list ticket, no tickets table) fails loud, no migration."""
+    path = tmp_path / "store.json"
+    path.write_text(json.dumps({"format": 4, "files": [], "runs": []}))
+    with pytest.raises(ValueError, match="v5"):
+        CoverageStore.load(path)

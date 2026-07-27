@@ -41,9 +41,11 @@ function makeLines(overrides: Partial<CodeLine>[] = []): CodeLine[] {
 function Harness({
   lines,
   renderExpansion,
+  ticketGutterWidth,
 }: {
   lines: CodeLine[];
   renderExpansion?: (line: CodeLine) => React.ReactNode;
+  ticketGutterWidth?: string;
 }) {
   const [openLines, setOpenLines] = useState<Set<number>>(new Set());
   function onToggleLine(n: number) {
@@ -62,6 +64,7 @@ function Harness({
       renderExpansion={renderExpansion}
       openLines={openLines}
       onToggleLine={onToggleLine}
+      ticketGutterWidth={ticketGutterWidth}
     />
   );
 }
@@ -162,5 +165,43 @@ describe("CodeView", () => {
     render(<Harness lines={makeLines()} />);
     expect(screen.getByTestId("code-row-1")).toBeTruthy();
     expect(screen.getByTestId("code-row-2")).toBeTruthy();
+  });
+
+  describe("ticket gutter + line highlighting (Task 11)", () => {
+    it("defaults ticketGutterWidth to 0px and keeps the leading cell a bare aria-hidden placeholder", () => {
+      render(<Harness lines={makeLines()} />);
+      const colsRow = screen.getByTestId("code-columns");
+      expect(colsRow.style.gridTemplateColumns).toBe("0px 46px 40px 96px 1fr 66px");
+      const leading = screen.getByTestId("code-row-1").firstElementChild;
+      expect(leading?.getAttribute("aria-hidden")).toBe("true");
+      expect(leading?.textContent).toBe("");
+    });
+
+    it("widens the leading column via ticketGutterWidth and renders a line's ticketGutter content", () => {
+      render(
+        <Harness
+          lines={makeLines([{ ticketGutter: <a href="/x">PROJ-1</a> }])}
+          ticketGutterWidth="72px"
+        />,
+      );
+      const colsRow = screen.getByTestId("code-columns");
+      expect(colsRow.style.gridTemplateColumns).toBe("72px 46px 40px 96px 1fr 66px");
+      const row1Leading = screen.getByTestId("code-row-1").firstElementChild;
+      // Real (potentially interactive) content must NOT be hidden from the
+      // accessibility tree — unlike the empty/decorative case above.
+      expect(row1Leading?.getAttribute("aria-hidden")).toBeNull();
+      expect(row1Leading?.querySelector("a")?.textContent).toBe("PROJ-1");
+      // Line 2 has no ticketGutter override — stays the bare placeholder
+      // even while the column itself is widened for line 1's sake.
+      const row2Leading = screen.getByTestId("code-row-2").firstElementChild;
+      expect(row2Leading?.getAttribute("aria-hidden")).toBe("true");
+      expect(row2Leading?.textContent).toBe("");
+    });
+
+    it("stamps data-highlighted=true only on rows whose CodeLine.highlighted is true", () => {
+      render(<Harness lines={makeLines([{ highlighted: true }])} />);
+      expect(screen.getByTestId("code-row-1").getAttribute("data-highlighted")).toBe("true");
+      expect(screen.getByTestId("code-row-2").getAttribute("data-highlighted")).toBeNull();
+    });
   });
 });

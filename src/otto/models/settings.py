@@ -336,6 +336,19 @@ class CoverageReportSpec(OttoModel):
         return self
 
 
+class CoverageTicketsSpec(OttoModel):
+    """``[coverage.tickets]`` — commit-message ticket attribution.
+
+    Validation-only, like the other coverage specs — the runtime value is
+    re-read from the raw settings dict by
+    ``otto.coverage.tickets.load_ticket_spec``, which compiles ``pattern``
+    and cross-checks ``url``'s named groups against it.
+    """
+
+    pattern: str
+    url: str | None = None
+
+
 class CoverageSettingsSpec(OttoModel):
     """Typed ``[coverage]`` table (was a free-form dict).
 
@@ -349,6 +362,7 @@ class CoverageSettingsSpec(OttoModel):
     tiers: dict[str, CoverageTierSpec] = Field(default_factory=dict)
     exclusions: CoverageExclusionsSpec = CoverageExclusionsSpec()
     report: CoverageReportSpec = CoverageReportSpec()
+    tickets: CoverageTicketsSpec | None = None
 
 
 class DependenciesSpec(OttoModel):

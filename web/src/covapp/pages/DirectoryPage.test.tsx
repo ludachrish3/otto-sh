@@ -1,10 +1,12 @@
 // DirectoryPage (Task 4 brief) built on ui/TreeView + Task 3's AppShell/
 // StatsCard. Fixtures come from ../testUtils (Task 4's testUtils migration).
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import * as dataModule from "../data";
+import { _resetForTests, StampMismatchError } from "../data";
 import { emptyStats, makeIndex, Providers } from "../testUtils";
-import type { DirNode, IndexPayload, RunJson } from "../types";
+import type { DirNode, IndexPayload, RunJson, TicketChunk } from "../types";
 import { DirectoryPage } from "./DirectoryPage";
 
 function renderPage(props: { index: IndexPayload; segments: string[] }) {
@@ -99,6 +101,8 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  vi.restoreAllMocks();
+  _resetForTests();
   window.location.hash = "";
   localStorage.clear();
   delete (window as { __OTTO_COV__?: IndexPayload }).__OTTO_COV__;
@@ -301,6 +305,285 @@ describe("DirectoryPage", () => {
       const mainRow = screen.getByTestId("tree-row-file:src/main.c");
       expect(mainRow.children[1].textContent).toBe("0/20");
       expect(mainRow.children[2].textContent).toContain("0.0%");
+    });
+  });
+
+  // Task 12: `?ticket=<id>` — the denominator filter. Fixture deliberately
+  // gives the ticket a STRICT SUBSET of lines (3 of main.c's 20) in a
+  // STRICT SUBSET of files (main.c only — util.c and vendor/z.c are never
+  // touched at all) so hiding/recompute assertions can actually fail
+  // against a broken (e.g. no-op) implementation — a fixture where the
+  // ticket owned everything couldn't distinguish "scoped" from "unscoped".
+  describe("under ticket scope", () => {
+    function buildTicketTree(): DirNode {
+      const mainStats = emptyStats({
+        lines: { total: 20, hit: 15, per_tier: { system: 10, unit: 12 } },
+        // Deliberately LARGER than the ticket's scoped total (3, per
+        // `makeTicketChunk` below) — the fix-round-1 review's exact probe:
+        // a naive composed row divides this whole-file ctx count (10) by
+        // the ticket-scoped total (3), producing a visibly-impossible
+        // "333.3%" instead of an honest decline.
+        ctx_lines: { "router-a (system bed)": 10 },
+      });
+      const utilStats = emptyStats({
+        lines: { total: 5, hit: 5, per_tier: { system: 5, unit: 5 } },
+      });
+      const zStats = emptyStats({ lines: { total: 8, hit: 4, per_tier: { system: 4, unit: 4 } } });
+      return {
+        name: "acme-fw",
+        dirs: [
+          {
+            name: "src",
+            dirs: [],
+            files: [
+              { name: "main.c", path: "src/main.c", chunk: "src_main.c", stats: mainStats },
+              { name: "util.c", path: "src/util.c", chunk: "src_util.c", stats: utilStats },
+            ],
+            stats: emptyStats({ lines: { total: 25, hit: 20, per_tier: {} } }),
+          },
+          {
+            name: "vendor",
+            dirs: [],
+            files: [{ name: "z.c", path: "vendor/z.c", chunk: "vendor_z.c", stats: zStats }],
+            stats: emptyStats({ lines: { total: 8, hit: 4, per_tier: {} } }),
+          },
+        ],
+        files: [],
+        stats: emptyStats({ lines: { total: 33, hit: 24, per_tier: {} } }),
+      };
+    }
+
+    function buildTicketIndex(overrides: Partial<IndexPayload> = {}): IndexPayload {
+      return buildIndex({
+        tree: buildTicketTree(),
+        tickets: [
+          {
+            id: "PROJ-1",
+            url: null,
+            owned: 3,
+            covered: 2,
+            uncovered: 1,
+            per_tier: {},
+            chunk: "PROJ-1",
+          },
+        ],
+        ...overrides,
+      });
+    }
+
+    function makeTicketChunk(overrides: Partial<TicketChunk> = {}): TicketChunk {
+      return {
+        stamp: "stamp-1",
+        id: "PROJ-1",
+        files: [{ path: "src/main.c", owned: 3, covered: 2, missing: [[3, 3]] }],
+        ...overrides,
+      };
+    }
+
+    function renderPinned(index: IndexPayload, segments: string[] = []) {
+      window.__OTTO_COV__ = index;
+      window.location.hash = `#/coverage${
+        segments.length ? `/${segments.join("/")}` : ""
+      }?ticket=PROJ-1`;
+      return renderPage({ index, segments });
+    }
+
+    it("shows a loading state before the ticket chunk resolves", () => {
+      vi.spyOn(dataModule, "loadTicketChunk").mockReturnValue(new Promise(() => {}));
+      renderPinned(buildTicketIndex());
+      expect(screen.getByTestId("ticket-scope-loading")).toBeTruthy();
+    });
+
+    it("hides files/dirs the ticket never touched, keeping only the participating file", async () => {
+      vi.spyOn(dataModule, "loadTicketChunk").mockResolvedValue(makeTicketChunk());
+      renderPinned(buildTicketIndex());
+
+      expect(await screen.findByTestId("tree-row-file:src/main.c")).toBeTruthy();
+      expect(screen.queryByTestId("tree-row-file:src/util.c")).toBeNull();
+      expect(screen.queryByTestId("tree-row-dir:vendor")).toBeNull();
+    });
+
+    it("recomputes the row's line count/percent against the ticket's own lines, never the file's whole total", async () => {
+      vi.spyOn(dataModule, "loadTicketChunk").mockResolvedValue(makeTicketChunk());
+      renderPinned(buildTicketIndex());
+
+      const mainRow = await screen.findByTestId("tree-row-file:src/main.c");
+      const cells = mainRow.children;
+      expect(cells[1].textContent).toBe("2/3"); // NOT "15/20"
+      expect(cells[2].textContent).toContain("66.7%"); // 2/3, not 75.0% (15/20)
+    });
+
+    it("Branch % and per-tier columns read 'no data' (no per-ticket breakdown exists), not a stale whole-file number", async () => {
+      vi.spyOn(dataModule, "loadTicketChunk").mockResolvedValue(makeTicketChunk());
+      renderPinned(buildTicketIndex());
+
+      const mainRow = await screen.findByTestId("tree-row-file:src/main.c");
+      const cells = mainRow.children;
+      expect(cells[3].textContent).toBe("—"); // branch
+      expect(cells[4].textContent).toBe("—"); // tier:system
+      expect(cells[5].textContent).toBe("—"); // tier:unit
+    });
+
+    it("shows a hidden-count banner naming how many files were hidden and that a ticket is pinned — never silent", async () => {
+      vi.spyOn(dataModule, "loadTicketChunk").mockResolvedValue(makeTicketChunk());
+      renderPinned(buildTicketIndex());
+
+      const banner = await screen.findByTestId("ticket-scope-banner");
+      expect(banner.textContent).toContain("2 files hidden"); // util.c + vendor/z.c
+      expect(banner.textContent).toContain("1 ticket pinned");
+    });
+
+    // Fix round 1 (Minor): "1 files hidden" has no singular form.
+    it("pluralizes the hidden-count banner correctly for exactly one hidden file", async () => {
+      vi.spyOn(dataModule, "loadTicketChunk").mockResolvedValue(
+        makeTicketChunk({
+          files: [
+            { path: "src/main.c", owned: 3, covered: 2, missing: [[3, 3]] },
+            { path: "src/util.c", owned: 5, covered: 5, missing: [] },
+          ],
+        }),
+      );
+      renderPinned(buildTicketIndex());
+
+      // Only vendor/z.c is hidden now (main.c and util.c are both owned).
+      const banner = await screen.findByTestId("ticket-scope-banner");
+      expect(banner.textContent).toContain("1 file hidden");
+      expect(banner.textContent).not.toContain("1 files hidden");
+    });
+
+    it("the stats card shows a single ticket-scoped row using the recomputed (not whole-repo) total", async () => {
+      vi.spyOn(dataModule, "loadTicketChunk").mockResolvedValue(makeTicketChunk());
+      renderPinned(buildTicketIndex());
+
+      await screen.findByTestId("tree-row-file:src/main.c");
+      const card = screen.getByTestId("stats-card");
+      expect(card.textContent).toContain("ticket: PROJ-1");
+
+      const row = screen.getByTestId("stats-row-ticket");
+      expect(row.textContent).toContain("PROJ-1");
+      expect(row.textContent).toContain("2/3");
+      expect(row.textContent?.match(/no data/g)?.length).toBe(2); // branch + decision
+    });
+
+    it("shows the app-bar ticket chip while pinned", async () => {
+      vi.spyOn(dataModule, "loadTicketChunk").mockResolvedValue(makeTicketChunk());
+      renderPinned(buildTicketIndex());
+      await screen.findByTestId("tree-row-file:src/main.c");
+      expect(screen.getByTestId("ticket-chip").textContent).toContain("PROJ-1");
+    });
+
+    // Fix round 1 (task-12-report.md, IMPORTANT): a reviewer probe found
+    // this composed case rendering "10/3" / "333.3%" — the ctx numerator
+    // (10, whole-file `ctx_lines`) divided by the ticket-scoped denominator
+    // (3) — a plausible-looking but impossible-to-be-true number. There is
+    // no per-line ticket+run cross-tab at tree granularity to compute this
+    // correctly, so it must decline honestly (NaCell, "—") instead, exactly
+    // like Branch % already does for the identical "not tracked at this
+    // granularity" reason. Contrast FilePage's OWN composed row (unchanged
+    // by this fix), which recomputes exactly because it has full per-line
+    // data for the one file it's showing.
+    it("composes with ctx: declines Lines/Line%/per-tier honestly (NaCell) rather than showing a wrong percentage", async () => {
+      vi.spyOn(dataModule, "loadTicketChunk").mockResolvedValue(makeTicketChunk());
+      const index = buildTicketIndex();
+      window.__OTTO_COV__ = index;
+      window.location.hash = `#/coverage?ticket=PROJ-1&ctx=${encodeURIComponent("router-a (system bed)")}`;
+      renderPage({ index, segments: [] });
+
+      const mainRow = await screen.findByTestId("tree-row-file:src/main.c");
+      const cells = mainRow.children;
+      // ctx_lines["router-a (system bed)"] = 10 (fixture) over the
+      // ticket-scoped total of 3 — the exact case that used to read
+      // "10/3" / "333.3%".
+      expect(cells[1].textContent).toBe("—"); // lines
+      expect(cells[2].textContent).toBe("—"); // line %
+      expect(cells[3].textContent).toBe("—"); // branch % (already declined pre-fix)
+      expect(cells[4].textContent).toBe("—"); // tier:system
+      expect(cells[5].textContent).toBe("—"); // tier:unit
+      expect(mainRow.textContent).not.toContain("333.3");
+      expect(mainRow.textContent).not.toContain("10/3");
+      expect(screen.getByTestId("focus-chip")).toBeTruthy();
+      expect(screen.getByTestId("ticket-chip")).toBeTruthy();
+    });
+
+    it("composes with ctx: the StatsCard's composed row also declines the Line cell honestly, not a wrong percentage", async () => {
+      vi.spyOn(dataModule, "loadTicketChunk").mockResolvedValue(makeTicketChunk());
+      const index = buildTicketIndex();
+      window.__OTTO_COV__ = index;
+      window.location.hash = `#/coverage?ticket=PROJ-1&ctx=${encodeURIComponent("router-a (system bed)")}`;
+      renderPage({ index, segments: [] });
+
+      await screen.findByTestId("tree-row-file:src/main.c");
+      const row = screen.getByTestId("stats-row-ticket");
+      expect(row.textContent).toContain("PROJ-1");
+      expect(row.textContent).toContain("router-a (system bed)");
+      expect(row.textContent).not.toContain("333.3");
+      // Line + Branch + Decision all decline — none of the three has a
+      // commensurable numerator/denominator pair at this granularity.
+      expect(row.textContent?.match(/no data/g)?.length).toBe(3);
+    });
+
+    it("returns null from scopeTreeToTicket cleanly: a ticket that touches nothing in view hides every file", async () => {
+      vi.spyOn(dataModule, "loadTicketChunk").mockResolvedValue(
+        makeTicketChunk({
+          files: [{ path: "somewhere/else.c", owned: 4, covered: 1, missing: [] }],
+        }),
+      );
+      renderPinned(
+        buildTicketIndex({
+          tickets: [
+            {
+              id: "PROJ-1",
+              url: null,
+              owned: 4,
+              covered: 1,
+              uncovered: 3,
+              per_tier: {},
+              chunk: "PROJ-1",
+            },
+          ],
+        }),
+      );
+
+      const banner = await screen.findByTestId("ticket-scope-banner");
+      expect(banner.textContent).toContain("3 files hidden"); // main.c, util.c, z.c — all of them
+      expect(screen.queryByTestId("tree-row-file:src/main.c")).toBeNull();
+      expect(screen.queryByTestId("tree-row-dir:src")).toBeNull();
+    });
+
+    it("guard-screens the whole page on a stamp mismatch (report changed on disk)", async () => {
+      vi.spyOn(dataModule, "loadTicketChunk").mockRejectedValue(new StampMismatchError("PROJ-1"));
+      renderPinned(buildTicketIndex());
+
+      const guard = await screen.findByTestId("guard-screen");
+      expect(guard.textContent).toContain("report changed on disk");
+    });
+
+    it("shows an inline error (not a whole-page guard screen) for a plain chunk-load failure, without silently falling back to the unscoped tree", async () => {
+      vi.spyOn(dataModule, "loadTicketChunk").mockRejectedValue(new Error("network broke"));
+      renderPinned(buildTicketIndex());
+
+      const error = await screen.findByTestId("ticket-scope-error");
+      expect(error).toBeTruthy();
+      // Must not silently render the FULL unscoped tree in place of the
+      // failed scope — that would look identical to "no ticket pinned".
+      expect(screen.queryByTestId("tree-row-file:src/util.c")).toBeNull();
+      // The chip must still be present/dismissable so the user can recover.
+      expect(screen.getByTestId("ticket-chip")).toBeTruthy();
+    });
+
+    it("loads the chunk exactly once even as segments change while the same ticket stays pinned", async () => {
+      const spy = vi.spyOn(dataModule, "loadTicketChunk").mockResolvedValue(makeTicketChunk());
+      const index = buildTicketIndex();
+      window.__OTTO_COV__ = index;
+      window.location.hash = "#/coverage?ticket=PROJ-1";
+      const { rerender } = renderPage({ index, segments: [] });
+      await screen.findByTestId("tree-row-file:src/main.c");
+
+      window.location.hash = "#/coverage/src?ticket=PROJ-1";
+      rerender(<DirectoryPage index={index} segments={["src"]} />);
+      await waitFor(() => expect(screen.getByTestId("tree-row-file:src/main.c")).toBeTruthy());
+
+      expect(spy).toHaveBeenCalledTimes(1);
     });
   });
 });

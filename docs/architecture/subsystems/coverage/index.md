@@ -55,15 +55,18 @@ fail-with-instructions posture is a house rule ({doc}`../../principles`).
 
 ## How this section is organized
 
-The pipeline above is one axis; the four pages below are the other.
+The pipeline above is one axis; the five pages below are the other.
 {doc}`types` is the vocabulary every stage speaks — tiers, stat types, line
 states, thresholds — and the store schema that carries them. {doc}`merging`
 is what `otto cov report` actually does with the pieces: the fold order,
 run accumulation, and the rules that keep one piece of evidence from being
 counted twice. {doc}`manual` is the one tier whose data is committed, and
 therefore the one that has to be re-proved against a moving tree on every
-report. {doc}`renderer` is the last mile — an assembled store to a
-self-contained report directory.
+report. {doc}`attribution` answers a different question about the same
+committed history — not "is this evidence still valid" but "which ticket
+does this line belong to" — with its own git log walk and its own
+filesystem-operation budget. {doc}`renderer` is the last mile — an
+assembled store to a self-contained report directory.
 
 ```{toctree}
 :maxdepth: 1
@@ -71,6 +74,7 @@ self-contained report directory.
 types
 merging
 manual
+attribution
 renderer
 ```
 
@@ -102,7 +106,15 @@ remotes.
   `save`/`load`, including the `STORE_FORMAT_VERSION` exact-match
   loader
 - `otto.coverage.report_config` — resolves `[coverage.report]`'s raw
-  settings dict into render `Thresholds` at report time
+  settings dict into render `Thresholds` at report time; also re-exports
+  `[coverage.tickets]`'s loader (`otto.coverage.tickets`, below)
+- `otto.coverage.tickets` — `TicketSpec`: compiles `[coverage.tickets]`'s
+  `pattern`/`url`, extracts ticket ids from commit messages ({doc}`attribution`)
+- `otto.coverage.attribution` — the bounded git log walk and backward
+  hunk replay that attributes every line to a commit, then a ticket
+  ({doc}`attribution`)
+- `otto.coverage.ticket_export` — builds and writes `tickets.json`, otto's
+  first public coverage export (see the guide's per-ticket section)
 - `otto.coverage.renderer` — turns an assembled store into a report
 - `otto.coverage.renderer.spa_data` — pure-Python emitter for the covapp
   data chunks (`cov_data/index.js` + per-file chunks)

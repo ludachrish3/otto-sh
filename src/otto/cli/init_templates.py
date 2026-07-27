@@ -91,6 +91,9 @@ init = ["{init_module}"]           # modules imported at startup (register instr
 #[coverage.report]
 #high = 80
 #medium = 70
+#[coverage.tickets]
+#pattern = "[A-Z]{{2,10}}-[0-9]+"
+#url = "https://example.atlassian.net/browse/{{0}}"
 
 # --- [docker] — image builds + compose stacks --------------------------------
 #[docker]

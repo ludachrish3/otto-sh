@@ -15,7 +15,6 @@
 - Slot ≥ 8 palette policy (top of the Plan-3 follow-ups): what a 9th series does — design decision, not code yet.
 - safari's chart titles bleed into the menu on the lefthand side
 - External libraries should also be able to provide data plots. A possible example is an external traffic generator. If it has metrics to share and record (packets/sec, connections/sec), it should also be able to record these in the graphs and DB entries.
-- per-ticket coverage report
 - Monitor GUI displays UTC times instead of local times
 - Untitled UI component adoption: the token foundation and primitives
   (Button, Badge, segmented control, Select, dropdown/Menu, slideout-menu,

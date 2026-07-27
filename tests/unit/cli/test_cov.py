@@ -113,7 +113,9 @@ class TestCovReportValidation:
         # legacy no-data path runs and returns None → exit 1. (Without this the
         # outcome would depend on whatever repo bootstrap resolved globally.)
         with (
-            patch.object(cov_module, "_resolve_cov_settings", return_value=(None, None, [], None)),
+            patch.object(
+                cov_module, "_resolve_cov_settings", return_value=(None, None, [], None, None)
+            ),
             patch.object(cov_module.logger, "error") as mock_err,
         ):
             result = runner.invoke(cov_app, ["report", str(tmp_path)])
@@ -126,7 +128,9 @@ class TestCovReportValidation:
         # Pin the git-less scenario so only the legacy path is exercised.
         (tmp_path / "cov" / "host1").mkdir(parents=True)
         with (
-            patch.object(cov_module, "_resolve_cov_settings", return_value=(None, None, [], None)),
+            patch.object(
+                cov_module, "_resolve_cov_settings", return_value=(None, None, [], None, None)
+            ),
             patch.object(cov_module.logger, "error"),
         ):
             result = runner.invoke(cov_app, ["report", str(tmp_path)])
@@ -359,6 +363,112 @@ class TestCovReportSuccess:
         assert result.exit_code == 1
 
 
+# ── report command — --tickets-json export ───────────────────────────────────
+
+
+class TestCovReportTicketsJson:
+    @pytest.fixture
+    def cov_tree(self, tmp_path):
+        host_dir = tmp_path / "cov" / "host1"
+        host_dir.mkdir(parents=True)
+        (host_dir / "main.gcda").write_bytes(b"\x00")
+        return tmp_path
+
+    @pytest.fixture
+    def mock_run_report(self):
+        mock_store = MagicMock()
+        mock_store.overall_pct.return_value = 75.0
+        mock_store.file_count.return_value = 3
+        mock = AsyncMock(return_value=mock_store)
+        with patch.object(cov_module, "run_coverage_report", mock):
+            yield mock, mock_store
+
+    @pytest.fixture
+    def mock_resolve_settings(self, tmp_path):
+        """A resolved repo_root -- --tickets-json requires one (to emit
+        repo-relative paths), and the settings-driven collection-model path
+        (not --tier) is what normally resolves it."""
+        from otto.coverage.tickets import build_ticket_spec
+        from otto.coverage.tiers import TierConfig
+
+        repo_root = tmp_path / "sut"
+        tiers = [TierConfig(name="system", kind="e2e", precedence=1, color="green")]
+        spec = build_ticket_spec(r"[A-Z]{2,10}-[0-9]+", None)
+        with patch.object(
+            cov_module, "_resolve_cov_settings", return_value=(repo_root, tiers, [], None, spec)
+        ):
+            yield repo_root
+
+    def test_no_flag_never_writes_export(self, cov_tree, mock_run_report):
+        with patch("otto.coverage.ticket_export.write_ticket_export") as mock_write:
+            result = runner.invoke(cov_app, ["report", str(cov_tree)])
+        assert result.exit_code == 0
+        mock_write.assert_not_called()
+
+    def test_tickets_json_writes_export_with_expected_args(
+        self, cov_tree, mock_run_report, mock_resolve_settings
+    ):
+        _mock, mock_store = mock_run_report
+        repo_root = mock_resolve_settings
+        target = cov_tree / "tickets.json"
+        with patch("otto.coverage.ticket_export.write_ticket_export") as mock_write:
+            result = runner.invoke(
+                cov_app,
+                [
+                    "report",
+                    str(cov_tree),
+                    "--tickets-json",
+                    str(target),
+                    "--project-name",
+                    "My App",
+                ],
+            )
+        assert result.exit_code == 0, result.output
+        mock_write.assert_called_once()
+        args, kwargs = mock_write.call_args
+        assert args[0] is mock_store
+        assert args[1] == target
+        assert kwargs["repo_root"] == repo_root
+        assert kwargs["project"] == "My App"
+        assert isinstance(kwargs["otto_version"], str)
+        assert isinstance(kwargs["generated"], str)
+
+    def test_tickets_json_no_ticket_data_exits_1_clean(
+        self, cov_tree, mock_run_report, mock_resolve_settings
+    ):
+        """--tickets-json was explicitly requested: no ticket data must abort
+        the whole command (loud-fail), unlike otto test's swallow policy."""
+        target = cov_tree / "tickets.json"
+        with (
+            patch(
+                "otto.coverage.ticket_export.write_ticket_export",
+                side_effect=ValueError("no ticket data in this report — [coverage.tickets] ..."),
+            ),
+            patch.object(cov_module.logger, "error") as mock_err,
+        ):
+            result = runner.invoke(
+                cov_app, ["report", str(cov_tree), "--tickets-json", str(target)]
+            )
+        assert result.exit_code == 1
+        assert "Traceback" not in result.output
+        assert "[coverage.tickets]" in mock_err.call_args[0][0]
+
+    def test_tickets_json_without_repo_root_exits_1_clean(self, cov_tree, mock_run_report):
+        """The --tier legacy path never resolves a repo_root (or a
+        ticket_spec) -- store.tickets is guaranteed empty there, so this
+        must fail with the same clean "no ticket data" message rather than
+        crashing on a None repo_root inside write_ticket_export."""
+        target = cov_tree / "tickets.json"
+        with patch.object(cov_module.logger, "error") as mock_err:
+            result = runner.invoke(
+                cov_app,
+                ["report", str(cov_tree), "--tickets-json", str(target), "--tier", "system"],
+            )
+        assert result.exit_code == 1
+        assert "Traceback" not in result.output
+        assert "[coverage.tickets]" in mock_err.call_args[0][0]
+
+
 # ── report command — collection-model wiring (Task 10) ──────────────────────
 
 
@@ -385,7 +495,7 @@ class TestCovReportCollectionModel:
         repo_root = tmp_path / "sut"
         tiers = [TierConfig(name="system", kind="e2e", precedence=1, color="green")]
         with patch.object(
-            cov_module, "_resolve_cov_settings", return_value=(repo_root, tiers, [], None)
+            cov_module, "_resolve_cov_settings", return_value=(repo_root, tiers, [], None, None)
         ):
             result = runner.invoke(cov_app, ["report", str(tmp_path)])
 
@@ -394,6 +504,43 @@ class TestCovReportCollectionModel:
         assert kwargs["repo_root"] == repo_root
         assert kwargs["tier_configs"] == tiers
         assert kwargs["tier_specs"] == [("system", None)]
+
+    def test_ticket_spec_threaded_from_settings(self, tmp_path, mock_run_report):
+        """[coverage.tickets] (via _resolve_cov_settings) reaches run_coverage_report."""
+        from otto.coverage.tickets import build_ticket_spec
+        from otto.coverage.tiers import TierConfig
+
+        host_dir = tmp_path / "cov" / "host1"
+        host_dir.mkdir(parents=True)
+        (host_dir / "main.gcda").write_bytes(b"\x00")
+
+        repo_root = tmp_path / "sut"
+        tiers = [TierConfig(name="system", kind="e2e", precedence=1, color="green")]
+        spec = build_ticket_spec(r"[A-Z]{2,10}-[0-9]+", None)
+        with patch.object(
+            cov_module, "_resolve_cov_settings", return_value=(repo_root, tiers, [], None, spec)
+        ):
+            result = runner.invoke(cov_app, ["report", str(tmp_path)])
+
+        assert result.exit_code == 0
+        assert mock_run_report.call_args.kwargs["ticket_spec"] is spec
+
+    def test_explicit_tier_flags_never_thread_ticket_spec(self, tmp_path, mock_run_report):
+        """--tier bypasses settings resolution entirely, so ticket_spec stays None
+        even when [coverage.tickets] would otherwise resolve one."""
+        host_dir = tmp_path / "cov" / "host1"
+        host_dir.mkdir(parents=True)
+        (host_dir / "main.gcda").write_bytes(b"\x00")
+
+        with patch.object(
+            cov_module, "_resolve_cov_settings", side_effect=AssertionError("must not resolve")
+        ):
+            result = runner.invoke(
+                cov_app, ["report", str(tmp_path), "--tier", "unit=/u.info", "--tier", "system"]
+            )
+
+        assert result.exit_code == 0
+        assert mock_run_report.call_args.kwargs["ticket_spec"] is None
 
     def test_extra_markers_threaded_from_settings(self, tmp_path, mock_run_report):
         """[coverage.exclusions].markers (via _resolve_cov_settings) reach run_coverage_report."""
@@ -408,7 +555,7 @@ class TestCovReportCollectionModel:
         with patch.object(
             cov_module,
             "_resolve_cov_settings",
-            return_value=(repo_root, tiers, ["MYPROJ_NO_COV"], None),
+            return_value=(repo_root, tiers, ["MYPROJ_NO_COV"], None, None),
         ):
             result = runner.invoke(cov_app, ["report", str(tmp_path)])
 
@@ -438,7 +585,7 @@ class TestCovReportCollectionModel:
         """output_dirs is optional: a manual-store-only report needs no run dirs."""
         repo_root = Path("/some/repo")
         with patch.object(
-            cov_module, "_resolve_cov_settings", return_value=(repo_root, None, [], None)
+            cov_module, "_resolve_cov_settings", return_value=(repo_root, None, [], None, None)
         ):
             result = runner.invoke(cov_app, ["report"])
 
@@ -470,7 +617,7 @@ class TestCovReportCollectionModelErrors:
             patch.object(
                 cov_module,
                 "_resolve_cov_settings",
-                return_value=(repo_root, self._tiers(), [], None),
+                return_value=(repo_root, self._tiers(), [], None, None),
             ),
             patch.object(cov_module.logger, "error") as mock_err,
         ):
@@ -489,7 +636,7 @@ class TestCovReportCollectionModelErrors:
             patch.object(
                 cov_module,
                 "_resolve_cov_settings",
-                return_value=(repo_root, self._tiers(), [], None),
+                return_value=(repo_root, self._tiers(), [], None, None),
             ),
             patch.object(cov_module.logger, "error") as mock_err,
         ):
@@ -512,7 +659,7 @@ class TestCovReportCollectionModelErrors:
             patch.object(
                 cov_module,
                 "_resolve_cov_settings",
-                return_value=(not_git, self._tiers(), [], None),
+                return_value=(not_git, self._tiers(), [], None, None),
             ),
             patch.object(cov_module.logger, "error") as mock_err,
         ):
@@ -546,25 +693,49 @@ class TestResolveCovSettingsExtraMarkers:
             }
         )
         with patch("otto.config.get_repos", return_value=[repo]):
-            repo_root, tier_configs, extra_markers, thresholds = cov_module._resolve_cov_settings()
+            repo_root, tier_configs, extra_markers, thresholds, ticket_spec = (
+                cov_module._resolve_cov_settings()
+            )
         assert repo_root == repo.sut_dir
         assert tier_configs is not None
         assert extra_markers == ["MYPROJ_NO_COV"]
         assert thresholds == Thresholds()
+        assert ticket_spec is None
 
     def test_no_exclusions_table_yields_empty_markers(self):
         repo = self._repo({"tiers": {"system": {"kind": "e2e", "precedence": 1}}})
         with patch("otto.config.get_repos", return_value=[repo]):
-            _repo_root, _tier_configs, extra_markers, _ = cov_module._resolve_cov_settings()
+            _repo_root, _tier_configs, extra_markers, _, _ticket_spec = (
+                cov_module._resolve_cov_settings()
+            )
         assert extra_markers == []
 
     def test_no_cov_repo_yields_empty_markers(self):
         with patch("otto.config.get_repos", return_value=[]):
-            repo_root, tier_configs, extra_markers, thresholds = cov_module._resolve_cov_settings()
+            repo_root, tier_configs, extra_markers, thresholds, ticket_spec = (
+                cov_module._resolve_cov_settings()
+            )
         assert repo_root is None
         assert tier_configs is None
         assert extra_markers == []
         assert thresholds is None
+        assert ticket_spec is None
+
+    def test_reads_ticket_spec_from_settings(self):
+        """[coverage.tickets] (via load_ticket_spec) reaches _resolve_cov_settings's
+        return tuple — the feature-absent None default is exercised above."""
+        repo = self._repo(
+            {
+                "tiers": {"system": {"kind": "e2e", "precedence": 1}},
+                "tickets": {"pattern": r"[A-Z]{2,10}-[0-9]+"},
+            }
+        )
+        with patch("otto.config.get_repos", return_value=[repo]):
+            _repo_root, _tier_configs, _extra_markers, _thresholds, ticket_spec = (
+                cov_module._resolve_cov_settings()
+            )
+        assert ticket_spec is not None
+        assert ticket_spec.extract("fix PROJ-7") == ["PROJ-7"]
 
 
 # ── _resolve_tester — identity defaults (spec decision 15) ──────────────────

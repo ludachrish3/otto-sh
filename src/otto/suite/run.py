@@ -73,6 +73,7 @@ class RunOptions:
     cov_report_dir: Path | None = None
     overwrite_cov_report_dir: bool = False
     project_name: str = "Coverage Report"
+    cov_tickets_json: Path | None = None
     monitor: bool = False
     monitor_interval: float = 5.0
     monitor_output: Path | None = None
@@ -299,6 +300,7 @@ async def _post_run_coverage(repos: "list[Repo]", log_dir: Path, opts: RunOption
         from ..coverage.config import get_cov_config, get_cov_repo, prepare_empty_dir
         from ..coverage.report_config import load_report_thresholds
         from ..coverage.reporter import run_coverage_report
+        from ..coverage.tickets import load_ticket_spec
         from ..coverage.tiers import load_tiers
 
         cov_dir = opts.cov_dir or log_dir / "cov"
@@ -307,16 +309,18 @@ async def _post_run_coverage(repos: "list[Repo]", log_dir: Path, opts: RunOption
         )
         # Resolve the same collection-model inputs `otto cov report` uses
         # (declared tiers/colors, exclusion markers, report thresholds, the
-        # committed manual store), from the repos already in hand —
-        # mirroring cov._resolve_cov_settings but without re-fetching. A
-        # tree with no [coverage] section falls back to (None, None, [],
-        # None), i.e. the legacy gcda-only report, exactly as before.
+        # committed manual store, the [coverage.tickets] pattern), from the
+        # repos already in hand — mirroring cov._resolve_cov_settings but
+        # without re-fetching. A tree with no [coverage] section falls back
+        # to (None, None, [], None, None), i.e. the legacy gcda-only report,
+        # exactly as before.
         cov_repo = get_cov_repo(repos)
         repo_root = cov_repo.sut_dir if cov_repo is not None else None
         cov_config = get_cov_config(repos)
         tier_configs = load_tiers(cov_config, repo_root) if cov_repo is not None else None
         extra_markers = list(cov_config.get("exclusions", {}).get("markers") or [])
         thresholds = load_report_thresholds(cov_config) if cov_repo is not None else None
+        ticket_spec = load_ticket_spec(cov_config) if cov_repo is not None else None
         # Like the capture tail, in-run report generation must never fail an
         # otherwise-successful test run: the empty/overwrite gate
         # (prepare_empty_dir, which now raises a neutral ValueError — a report-dir
@@ -340,6 +344,7 @@ async def _post_run_coverage(repos: "list[Repo]", log_dir: Path, opts: RunOption
                 tier_configs=tier_configs,
                 extra_markers=extra_markers,
                 thresholds=thresholds,
+                ticket_spec=ticket_spec,
             )
         except (ValueError, RuntimeError, FileNotFoundError) as e:
             # escape_markup(*e*): the console handler renders log messages as
@@ -357,6 +362,47 @@ async def _post_run_coverage(repos: "list[Repo]", log_dir: Path, opts: RunOption
                 "Coverage: %.1f%% overall (%d files)", store.overall_pct(), store.file_count()
             )
             logger.info("Report: %s", report_dir / "index.html")
+
+            if opts.cov_tickets_json is not None:
+                # Scoped separately from the report-generation try/except
+                # above: a missing-ticket-data ValueError here must not be
+                # misreported as "Coverage report generation failed" (the
+                # HTML report already succeeded) — same never-fail-a-
+                # successful-run policy, distinct message. The CLI
+                # (cli/test.py's main() callback) fails fast on the
+                # *knowable* misconfiguration (no [coverage.tickets] at all)
+                # before the test run even starts; this stays the catch-all
+                # for the genuinely unknowable case (config present, but the
+                # git walk matched nothing) plus any library caller that
+                # skipped that preflight (e.g. no repo_root at all here).
+                if repo_root is None:
+                    logger.warning(
+                        "Ticket export skipped (no ticket data in this report — "
+                        "[coverage.tickets] must be configured for --cov-tickets-json); "
+                        "coverage report still written to %s",
+                        report_dir,
+                    )
+                else:
+                    from ..coverage.ticket_export import make_generated_stamp, write_ticket_export
+                    from ..version import get_version
+
+                    try:
+                        write_ticket_export(
+                            store,
+                            opts.cov_tickets_json,
+                            repo_root=repo_root,
+                            project=opts.project_name,
+                            otto_version=get_version(),
+                            generated=make_generated_stamp(),
+                        )
+                    except ValueError as e:
+                        logger.warning(
+                            "Ticket export failed (%s); coverage report still written to %s",
+                            escape_markup(str(e)),
+                            report_dir,
+                        )
+                    else:
+                        logger.info("Ticket export: %s", opts.cov_tickets_json)
 
 
 def _run_pytest_session(

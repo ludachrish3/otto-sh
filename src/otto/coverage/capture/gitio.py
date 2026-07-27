@@ -6,11 +6,69 @@ commands only).  Callers pass the sut repo root; a non-repo raises
 """
 
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 
 
 class GitUnavailableError(RuntimeError):
     """Raised when git cannot answer (not a repo / git missing)."""
+
+
+_CONFIG_PIN: list[str] = ["-c", "diff.mnemonicprefix=false"]
+"""Global git option, prepended before the subcommand name.
+
+``diff.mnemonicprefix`` has no per-invocation flag (unlike the settings in
+``_DIFF_FLAG_PIN``), so it must be pinned with ``-c``. Left at its
+ambient default (a common dotfiles setting turns it on), ``git diff``/``git
+log -p`` emit ``c/``/``w/`` path prefixes instead of ``a/``/``b/``, which
+silently defeats every ``a/``/``b/``-prefix-stripping parser in this
+package (:func:`~otto.coverage.capture.treediff.strip_side`,
+:func:`~otto.coverage.attribution.parse_commit_diff`) — every parsed path
+comes out wrong (e.g. ``w/f.c`` instead of ``f.c``), so
+``_apply_worktree_overlay`` silently skips every file and an uncommitted
+edit inherits the previous committer's ticket (final-review blocker 1).
+"""
+
+_DIFF_FLAG_PIN: list[str] = ["--no-color", "--no-ext-diff", "--no-show-signature"]
+"""Sub-command flags, appended after the subcommand name (log/diff).
+
+Each has a direct flag form, so a flag pins it rather than another ``-c``
+— preferred per the review, and it reads as plumbing options alongside the
+``-w``/``-U0``/``-M`` this module already passes. Real reproductions from
+the review, all against a repo-local or ``~/.gitconfig`` setting this
+module must not trust:
+
+- ``diff.external`` set to any program makes the diff subprocess hard-fail
+  (``GitUnavailableError``) instead of running git's own diff engine —
+  ``--no-ext-diff`` disallows the external helper outright.
+- ``log.showSignature = true`` on a repo with even one signed commit
+  interleaves gpg/ssh signature-check text (e.g. ``No signature``) into
+  the NUL-delimited metadata stream :func:`log_walk_u0` parses, corrupting
+  that commit's sha field — with every commit signed this empties the
+  metadata table entirely and the walk silently degrades to "no history
+  found" (every line reads as the sentinel
+  :data:`~otto.coverage.attribution.UNCOMMITTED`).
+  ``--no-show-signature`` suppresses the check.
+- ``color.ui`` forcing ANSI escapes into piped output is the same class of
+  risk (not independently reproduced, but free to close off alongside the
+  other two); ``--no-color`` pins it.
+"""
+
+
+def _pin(subcommand: str, *rest: str) -> list[str]:
+    """Build a git argv for *subcommand* immune to hostile ambient config.
+
+    Every porcelain command this module runs against the SUT repo goes
+    through this so ``diff.mnemonicprefix``, ``diff.external``,
+    ``log.showSignature``, and ``color.ui`` — the SUT repo's local config
+    and the invoking user's ``~/.gitconfig`` alike — can never silently
+    change what a caller parses back out of stdout. See
+    ``_CONFIG_PIN`` and ``_DIFF_FLAG_PIN`` for the specific
+    reproductions this closes. Not applied to :func:`diff_no_index_u0` /
+    :func:`diff_no_index_dir_u0`, which run outside any repo on throwaway
+    anchor files rather than the SUT tree — out of this fix's scope.
+    """
+    return [*_CONFIG_PIN, subcommand, *_DIFF_FLAG_PIN, *rest]
 
 
 def _run_raw(args: list[str], cwd: Path | None, ok_codes: tuple[int, ...] = (0,)) -> bytes:
@@ -183,8 +241,12 @@ def diff_worktree_file_u0(repo_root: Path, relpath: Path) -> str:
     SUTs are C/C++, where intra-string whitespace is not coverage-
     relevant, so the one behavioural case ``-w`` also equates (spacing
     inside a string literal) is an accepted, immaterial false-valid.
+
+    Pinned against hostile ambient config (``_pin``) — pre-existing
+    exposure shared with :func:`diff_tree_u0`, closed in the same wave as
+    the newer walk commands below since it was a one-line change.
     """
-    return _run(["diff", "-w", "-U0", "HEAD", "--", relpath.as_posix()], repo_root)
+    return _run(_pin("diff", "-w", "-U0", "HEAD", "--", relpath.as_posix()), repo_root)
 
 
 def diff_no_index_u0(path_a: Path, path_b: Path) -> str:
@@ -236,9 +298,12 @@ def diff_tree_u0(repo_root: Path, base: str) -> str:
         GitUnavailableError: *base* is not a resolvable commit here
             (GC'd after a squash-merge, or absent from a shallow clone).
             Callers fall back to the per-file blob chain.
+
+    Pinned against hostile ambient config (``_pin``) — see
+    :func:`diff_worktree_file_u0`.
     """
     return _run(
-        ["diff", "-M", "-w", "-U0", "--relative", base, "--", "."],
+        _pin("diff", "-M", "-w", "-U0", "--relative", base, "--", "."),
         repo_root,
     )
 
@@ -246,3 +311,172 @@ def diff_tree_u0(repo_root: Path, base: str) -> str:
 def is_shallow(repo_root: Path) -> bool:
     """Return whether the repo is a shallow clone (affects anchor degradation hints)."""
     return _run(["rev-parse", "--is-shallow-repository"], repo_root).strip() == "true"
+
+
+_REC_SEP = "\x1e"
+"""ASCII record separator — delimits commits in the log stream.
+
+A source line could contain anything, so the delimiter must be a byte that
+effectively never occurs in text; ``\\x1e``/``\\x1f`` are the standard
+choice and are what keeps a file full of quotes and braces from
+fabricating commit boundaries.
+"""
+_FIELD_SEP = "\x1f"
+_COMMIT_FIELDS = 4  # sha, subject, body, diff_text
+
+
+@dataclass(frozen=True)
+class CommitDiff:
+    """One commit's metadata plus its ``-U0`` diff against its first parent."""
+
+    sha: str
+    subject: str
+    body: str
+    diff_text: str
+
+
+def log_walk_u0(
+    repo_root: Path, relpaths: list[str], *, first_parent: bool = True
+) -> list[CommitDiff]:
+    """Stream ``git log -p -U0 -w -M`` over *relpaths*, newest commit first.
+
+    Two O(1) subprocesses: one for metadata (NUL-delimited, safe from control
+    chars in subject/body), one for diffs (sha-only in-band, joined by sha).
+    ``-w`` mirrors manual-validity contract; ``-M`` follows renames. Both
+    calls are pinned against hostile ambient config (``_pin``).
+
+    Raises:
+        GitUnavailableError: the two streams' commit shas disagree — a
+            sha the diff call found has no metadata entry (or vice versa).
+            Both calls walk the same pathspec/``--first-parent`` setting,
+            so a healthy repo always joins every commit; a mismatch means
+            something corrupted one stream (this is what
+            ``log.showSignature`` did before the pin above existed —
+            interleaved gpg/ssh signature-check text broke the sha field a
+            commit was keyed under) and partial attribution would be
+            silently, plausibly wrong, so this raises instead of dropping
+            the unjoined commit(s) on the floor.
+    """
+    if not relpaths:
+        return []
+
+    # Call 1: Get metadata with NUL delimiters (commits cannot contain NUL)
+    args_meta = ["--format=%H%x00%s%x00%b%x00"]
+    if first_parent:
+        args_meta.append("--first-parent")
+    args_meta += ["--", *relpaths]
+
+    raw_meta = _run(_pin("log", *args_meta), repo_root)
+
+    # Parse metadata: split by \x00, every 3 fields is one commit
+    metadata: dict[str, tuple[str, str]] = {}
+    if raw_meta:
+        fields = raw_meta.split("\x00")
+        for i in range(0, len(fields) - 1, 3):
+            if i + 2 < len(fields):
+                sha = fields[i].strip()
+                subject = fields[i + 1]
+                body = fields[i + 2]
+                if sha:
+                    metadata[sha] = (subject, body)
+
+    # Call 2: Get diffs with sha as join key (no metadata, so no control char risk)
+    args_diff = [
+        f"--format={_REC_SEP}%H{_REC_SEP}",
+        "-p",
+        "-U0",
+        "-w",
+        "-M",
+    ]
+    if first_parent:
+        args_diff.append("--first-parent")
+    args_diff += ["--", *relpaths]
+
+    raw_diff = _run(_pin("log", *args_diff), repo_root)
+
+    # Parse diffs by splitting on \n\x1e; restore newline for symmetry
+    out: list[CommitDiff] = []
+    unjoined: list[str] = []
+    if raw_diff:
+        records_raw = raw_diff.split("\n" + _REC_SEP)
+        for idx, record_raw in enumerate(records_raw):
+            proc_record = record_raw
+            # Restore \x1e prefix if lost (records after first had it consumed by split)
+            if not proc_record.startswith(_REC_SEP):
+                proc_record = _REC_SEP + proc_record
+            if not proc_record.strip():
+                continue
+            # Parse \x1e<sha>\x1e<diff...>
+            proc_record = proc_record[1:]  # Strip leading \x1e
+            parts = proc_record.split(_REC_SEP, 1)  # Split into [sha, diff]
+            sha = parts[0].strip()
+            diff_text = parts[1] if len(parts) > 1 else ""
+            # Normalize diff_text: strip leading newlines, restore trailing newline if consumed
+            if diff_text:
+                diff_text = diff_text.lstrip("\n")  # Remove leading newlines
+                # Add back trailing newline consumed by split (all but last record)
+                if idx < len(records_raw) - 1 and diff_text and not diff_text.endswith("\n"):
+                    diff_text = diff_text + "\n"
+            # Look up metadata by sha
+            if sha in metadata:
+                subject, body = metadata[sha]
+                out.append(CommitDiff(sha=sha, subject=subject, body=body, diff_text=diff_text))
+            elif sha:
+                unjoined.append(sha)
+    if unjoined:
+        raise GitUnavailableError(
+            f"git log metadata/diff join mismatch: {len(unjoined)} commit(s) from the "
+            f"diff stream have no matching metadata entry (first: {unjoined[0]!r} of "
+            f"{len(unjoined)}); attribution would otherwise silently degrade to partial "
+            "results — this usually means ambient git config is polluting one of the "
+            "two log streams"
+        )
+    return out
+
+
+def name_status_walk_u0(repo_root: Path, *, first_parent: bool = True) -> list[str]:
+    """Stream ``git log --name-status -M -w``, one raw block per commit, newest first.
+
+    Deliberately **unrestricted** in pathspec, unlike every other walk in
+    this module. A rename's old-side path must already be in the pathspec
+    before ``-M`` can pair it — which is exactly the historical name this
+    walk exists to *discover*, so it cannot itself be scoped to the paths
+    under consideration without reintroducing the same bug
+    ``otto.coverage.attribution._expand_historical_paths`` exists to
+    fix. What keeps a whole-history walk cheap is dropping ``-p``: the
+    payload is a couple of name-status lines per touched path instead of a
+    full diff, so this costs a small fraction of :func:`log_walk_u0`'s
+    output for the same commit count. ``-M -w`` match :func:`log_walk_u0`
+    exactly so the two passes agree on which commits are renames — a
+    mismatch would leave the ``-p`` pass short a path it needed.
+
+    Each returned entry is one commit's raw ``--name-status`` text (its
+    ``A``/``M``/``D``/``R<score>`` lines, tab-separated); callers pull
+    rename records out themselves (``attribution.parse_rename_records``)
+    since add/modify/delete lines carry no path-identity information this
+    walk needs to expose.
+    """
+    args = ["log", "--name-status", "-M", "-w", "--format=%x00"]
+    if first_parent:
+        args.append("--first-parent")
+    raw = _run(args, repo_root)
+    if not raw:
+        return []
+    return raw.split("\x00")[1:]
+
+
+def diff_worktree_u0(repo_root: Path, relpaths: list[str]) -> str:
+    """One ``git diff -w -U0 HEAD`` covering *relpaths* — not one per file.
+
+    The per-file sibling :func:`diff_worktree_file_u0` is right for the
+    validity pass, which resolves one capture at a time; attribution covers
+    the whole store at once and is budgeted at O(1) subprocesses. Pinned
+    against hostile ambient config (``_pin``) — a repo-local or
+    ``~/.gitconfig`` ``diff.mnemonicprefix = true`` renders ``c/``/``w/``
+    path prefixes here instead of ``a/``/``b/``, which silently defeats
+    ``_apply_worktree_overlay``'s path lookup and lets an uncommitted edit
+    inherit the previous committer's ticket (final-review blocker 1).
+    """
+    if not relpaths:
+        return ""
+    return _run(_pin("diff", "-w", "-U0", "HEAD", "--", *relpaths), repo_root)

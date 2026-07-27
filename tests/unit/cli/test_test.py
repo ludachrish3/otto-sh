@@ -717,3 +717,73 @@ class TestCovReportOption:
         assert exit_code != 0
         assert "--cov-report-dir" in output
         assert "is a file" in output or "not a directory" in output
+
+
+# ── --cov-tickets-json option ─────────────────────────────────────────────────
+
+
+def _repo_with_tickets_configured():
+    """A repo whose settings satisfy the --cov-tickets-json preflight gate."""
+    repo = MagicMock()
+    repo.settings = {
+        "coverage": {
+            "tiers": {"system": {"kind": "e2e", "precedence": 1}},
+            "tickets": {"pattern": r"[A-Z]{2,10}-[0-9]+"},
+        }
+    }
+    return repo
+
+
+class TestCovTicketsJsonOption:
+    def test_no_flag_leaves_cov_tickets_json_none(self):
+        exit_code, ctx_obj, output = _capture_cov_ctx([])
+        assert exit_code == 0, f"output={output!r}"
+        assert ctx_obj["cov_tickets_json"] is None
+
+    def test_cov_tickets_json_recorded(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("otto.cli.test.get_repos", lambda: [_repo_with_tickets_configured()])
+        target = tmp_path / "tickets.json"
+        exit_code, ctx_obj, output = _capture_cov_ctx(["--cov-tickets-json", str(target)])
+        assert exit_code == 0, f"output={output!r}"
+        assert ctx_obj["cov_tickets_json"] == target
+
+    def test_cov_tickets_json_implies_cov_report_and_cov(self, tmp_path, monkeypatch):
+        """Mirrors --cov-report-dir: naming a tickets export with no other
+        --cov-report flag still implies --cov-report (and --cov) — a bare
+        --cov-tickets-json PATH must not silently do nothing."""
+        monkeypatch.setattr("otto.cli.test.get_repos", lambda: [_repo_with_tickets_configured()])
+        target = tmp_path / "tickets.json"
+        exit_code, ctx_obj, output = _capture_cov_ctx(["--cov-tickets-json", str(target)])
+        assert exit_code == 0, f"output={output!r}"
+        assert ctx_obj["cov_report"] is True
+        assert ctx_obj["cov"] is True
+
+    def test_cov_tickets_json_without_coverage_tickets_config_fails_fast(
+        self, tmp_path, monkeypatch
+    ):
+        """Misconfiguration (flag given, no [coverage.tickets] anywhere) must
+        fail BEFORE the (possibly long) test run starts, not silently
+        warn-and-skip after it finishes — otherwise a CI pipeline wiring
+        --cov-tickets-json gets exit 0, no file, and a warning nobody reads."""
+        monkeypatch.setattr("otto.cli.test.get_repos", list)
+        target = tmp_path / "tickets.json"
+        exit_code, ctx_obj, output = _capture_cov_ctx(["--cov-tickets-json", str(target)])
+        assert exit_code != 0
+        assert ctx_obj == {}
+        assert "--cov-tickets-json" in output
+        assert "[coverage.tickets]" in output
+
+    def test_cov_tickets_json_with_coverage_but_no_tickets_table_fails_fast(
+        self, tmp_path, monkeypatch
+    ):
+        """[coverage] configured but with no [coverage.tickets] sub-table is
+        the same knowable-up-front misconfiguration as no [coverage] at
+        all."""
+        repo = MagicMock()
+        repo.settings = {"coverage": {"tiers": {"system": {"kind": "e2e", "precedence": 1}}}}
+        monkeypatch.setattr("otto.cli.test.get_repos", lambda: [repo])
+        target = tmp_path / "tickets.json"
+        exit_code, ctx_obj, output = _capture_cov_ctx(["--cov-tickets-json", str(target)])
+        assert exit_code != 0
+        assert ctx_obj == {}
+        assert "[coverage.tickets]" in output

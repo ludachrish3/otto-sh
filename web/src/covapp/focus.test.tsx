@@ -36,12 +36,32 @@ function buildIndex(overrides: Partial<IndexPayload> = {}): IndexPayload {
       makeRun({ id: 1, label: "ctx-a", tier: "system" }),
       makeRun({ id: 2, label: "ctx-b", tier: "unit" }),
     ],
+    tickets: [
+      {
+        id: "PROJ-1",
+        url: null,
+        owned: 1,
+        covered: 1,
+        uncovered: 0,
+        per_tier: {},
+        chunk: "PROJ-1",
+      },
+      {
+        id: "PROJ-2",
+        url: null,
+        owned: 1,
+        covered: 1,
+        uncovered: 0,
+        per_tier: {},
+        chunk: "PROJ-2",
+      },
+    ],
     ...overrides,
   });
 }
 
 function Consumer() {
-  const { focus, setFocus } = useFocus();
+  const { focus, setFocus, ticket, setTicket } = useFocus();
   return (
     <div>
       <span data-testid="focus-value">{focus ?? "null"}</span>
@@ -53,6 +73,16 @@ function Consumer() {
       </button>
       <button type="button" data-testid="clear" onClick={() => setFocus(null)}>
         clear
+      </button>
+      <span data-testid="ticket-value">{ticket ?? "null"}</span>
+      <button type="button" data-testid="pin-proj-1" onClick={() => setTicket("PROJ-1")}>
+        pin PROJ-1
+      </button>
+      <button type="button" data-testid="pin-proj-2" onClick={() => setTicket("PROJ-2")}>
+        pin PROJ-2
+      </button>
+      <button type="button" data-testid="unpin" onClick={() => setTicket(null)}>
+        unpin
       </button>
     </div>
   );
@@ -402,6 +432,184 @@ describe("useFocus / FocusProvider", () => {
     window.location.hash = `#/coverage?ctx=${encodeURIComponent("router-a (system bed)")}`;
     renderConsumer();
     expect(screen.getByTestId("focus-value").textContent).toBe("router-a (system bed)");
+  });
+});
+
+// Task 12: `?ticket=<id>` — a SECOND, independent pinned value sharing this
+// same module's hash-query/localStorage machinery (storage key
+// "otto-cov:<stamp>:ticket", boot precedence query>storage, unknown-id
+// treated as cleared) — verbatim the same contract `focus`/`ctx` already
+// has, just against `index.tickets` instead of `groupContexts(index)`. The
+// one thing genuinely new here (not just "ctx again with a different
+// name"): `ctx` and `ticket` MUST compose — pinning/clearing one must never
+// touch the other's param or storage key, in either direction, because they
+// narrow OPPOSITE axes (ctx narrows the numerator, ticket the denominator)
+// and the spec's whole point is expressing both together ("PROJ-412's
+// lines, as proven by the manual run").
+describe("useFocus / FocusProvider: ticket (Task 12)", () => {
+  it("setTicket writes the hash query and the stamp-namespaced storage key", () => {
+    window.__OTTO_COV__ = buildIndex();
+    window.location.hash = "#/coverage";
+    renderConsumer();
+
+    fireEvent.click(screen.getByTestId("pin-proj-1"));
+
+    expect(screen.getByTestId("ticket-value").textContent).toBe("PROJ-1");
+    expect(window.location.hash).toBe("#/coverage?ticket=PROJ-1");
+    expect(localStorage.getItem("otto-cov:stamp-1:ticket")).toBe("PROJ-1");
+  });
+
+  it("setTicket switches directly between two tickets", () => {
+    window.__OTTO_COV__ = buildIndex();
+    window.location.hash = "#/coverage";
+    renderConsumer();
+
+    fireEvent.click(screen.getByTestId("pin-proj-1"));
+    fireEvent.click(screen.getByTestId("pin-proj-2"));
+
+    expect(screen.getByTestId("ticket-value").textContent).toBe("PROJ-2");
+    expect(window.location.hash).toBe("#/coverage?ticket=PROJ-2");
+    expect(localStorage.getItem("otto-cov:stamp-1:ticket")).toBe("PROJ-2");
+  });
+
+  it("setTicket(null) removes the query param and the storage key", () => {
+    window.__OTTO_COV__ = buildIndex();
+    window.location.hash = "#/coverage?ticket=PROJ-1";
+    localStorage.setItem("otto-cov:stamp-1:ticket", "PROJ-1");
+    renderConsumer();
+
+    fireEvent.click(screen.getByTestId("unpin"));
+
+    expect(screen.getByTestId("ticket-value").textContent).toBe("null");
+    expect(window.location.hash).toBe("#/coverage");
+    expect(localStorage.getItem("otto-cov:stamp-1:ticket")).toBeNull();
+  });
+
+  it("boot: the hash query wins over localStorage, same precedence as ctx", () => {
+    window.__OTTO_COV__ = buildIndex();
+    localStorage.setItem("otto-cov:stamp-1:ticket", "PROJ-2");
+    window.location.hash = "#/coverage?ticket=PROJ-1";
+    renderConsumer();
+
+    expect(screen.getByTestId("ticket-value").textContent).toBe("PROJ-1");
+  });
+
+  it("boot: an unknown ticket id is treated as cleared, without crashing, and the stale param is wiped", () => {
+    window.__OTTO_COV__ = buildIndex();
+    window.location.hash = "#/coverage?ticket=GHOST-1";
+    expect(() => renderConsumer()).not.toThrow();
+
+    expect(screen.getByTestId("ticket-value").textContent).toBe("null");
+    expect(window.location.hash).toBe("#/coverage");
+  });
+
+  it("namespaces the ticket storage key by report stamp, independently of the ctx key", () => {
+    window.__OTTO_COV__ = buildIndex({ stamp: "stamp-A" });
+    window.location.hash = "#/coverage";
+    renderConsumer();
+
+    fireEvent.click(screen.getByTestId("pin-proj-1"));
+
+    expect(localStorage.getItem("otto-cov:stamp-A:ticket")).toBe("PROJ-1");
+    expect(localStorage.getItem("otto-cov:stamp-1:ticket")).toBeNull();
+  });
+
+  it("toasts distinctly from ctx's 'Focused <label>'/'Focus cleared' on pin/clear", () => {
+    window.__OTTO_COV__ = buildIndex();
+    window.location.hash = "#/coverage";
+    renderConsumer();
+
+    fireEvent.click(screen.getByTestId("pin-proj-1"));
+    expect(screen.getByTestId("toast").textContent).toMatch(/PROJ-1/);
+
+    fireEvent.click(screen.getByTestId("unpin"));
+    expect(screen.getByTestId("toast").textContent).toMatch(/ticket/i);
+  });
+
+  describe("composes with ctx — neither ever clears the other", () => {
+    it("pinning a ticket after a context leaves the context's query param and storage untouched", () => {
+      window.__OTTO_COV__ = buildIndex();
+      window.location.hash = "#/coverage";
+      renderConsumer();
+
+      fireEvent.click(screen.getByTestId("set-a"));
+      fireEvent.click(screen.getByTestId("pin-proj-1"));
+
+      expect(screen.getByTestId("focus-value").textContent).toBe("ctx-a");
+      expect(screen.getByTestId("ticket-value").textContent).toBe("PROJ-1");
+      const hashParams = new URLSearchParams(window.location.hash.split("?")[1]);
+      expect(hashParams.get("ctx")).toBe("ctx-a");
+      expect(hashParams.get("ticket")).toBe("PROJ-1");
+      expect(localStorage.getItem("otto-cov:stamp-1:focus")).toBe("ctx-a");
+      expect(localStorage.getItem("otto-cov:stamp-1:ticket")).toBe("PROJ-1");
+    });
+
+    it("pinning a context after a ticket leaves the ticket's query param and storage untouched", () => {
+      window.__OTTO_COV__ = buildIndex();
+      window.location.hash = "#/coverage";
+      renderConsumer();
+
+      fireEvent.click(screen.getByTestId("pin-proj-1"));
+      fireEvent.click(screen.getByTestId("set-a"));
+
+      expect(screen.getByTestId("ticket-value").textContent).toBe("PROJ-1");
+      expect(screen.getByTestId("focus-value").textContent).toBe("ctx-a");
+      const hashParams = new URLSearchParams(window.location.hash.split("?")[1]);
+      expect(hashParams.get("ticket")).toBe("PROJ-1");
+      expect(hashParams.get("ctx")).toBe("ctx-a");
+    });
+
+    it("clearing the context (setFocus(null)) leaves a pinned ticket in place", () => {
+      window.__OTTO_COV__ = buildIndex();
+      window.location.hash = "#/coverage";
+      renderConsumer();
+
+      fireEvent.click(screen.getByTestId("set-a"));
+      fireEvent.click(screen.getByTestId("pin-proj-1"));
+      fireEvent.click(screen.getByTestId("clear"));
+
+      expect(screen.getByTestId("focus-value").textContent).toBe("null");
+      expect(screen.getByTestId("ticket-value").textContent).toBe("PROJ-1");
+      expect(window.location.hash).toBe("#/coverage?ticket=PROJ-1");
+    });
+
+    it("clearing the ticket (setTicket(null)) leaves a pinned context in place", () => {
+      window.__OTTO_COV__ = buildIndex();
+      window.location.hash = "#/coverage";
+      renderConsumer();
+
+      fireEvent.click(screen.getByTestId("set-a"));
+      fireEvent.click(screen.getByTestId("pin-proj-1"));
+      fireEvent.click(screen.getByTestId("unpin"));
+
+      expect(screen.getByTestId("ticket-value").textContent).toBe("null");
+      expect(screen.getByTestId("focus-value").textContent).toBe("ctx-a");
+      expect(window.location.hash).toBe("#/coverage?ctx=ctx-a");
+    });
+
+    it("boots both from a deep link carrying ctx and ticket together", () => {
+      window.__OTTO_COV__ = buildIndex();
+      window.location.hash = "#/coverage?ctx=ctx-a&ticket=PROJ-1";
+      renderConsumer();
+
+      expect(screen.getByTestId("focus-value").textContent).toBe("ctx-a");
+      expect(screen.getByTestId("ticket-value").textContent).toBe("PROJ-1");
+    });
+
+    it("re-appends BOTH a dropped ctx and a dropped ticket after a navigation that drops the whole query", async () => {
+      window.__OTTO_COV__ = buildIndex();
+      window.location.hash = "#/coverage?ctx=ctx-a&ticket=PROJ-1";
+      renderConsumer();
+
+      window.location.hash = "#/coverage/foo"; // plain navigation, drops the whole query
+      await waitFor(() => {
+        const params = new URLSearchParams(window.location.hash.split("?")[1]);
+        expect(params.get("ctx")).toBe("ctx-a");
+        expect(params.get("ticket")).toBe("PROJ-1");
+      });
+      expect(screen.getByTestId("focus-value").textContent).toBe("ctx-a");
+      expect(screen.getByTestId("ticket-value").textContent).toBe("PROJ-1");
+    });
   });
 });
 

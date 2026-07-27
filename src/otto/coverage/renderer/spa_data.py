@@ -9,7 +9,12 @@ This is the pure-Python half of the SPA report: it turns a
   tree of rollup ``Stats``), and
 - ``cov_data/files/<mangled>.js`` — one classic-script call
   (``window.__OTTO_COV_FILE__({...});``) per file, carrying its
-  annotated source and per-line hit/branch/state data.
+  annotated source and per-line hit/branch/state data, and
+- ``cov_data/tickets/<mangled>.js`` — one classic-script call
+  (``window.__OTTO_COV_TICKET__(id, {...});``) per ticket, carrying its
+  per-file missing-line detail. Small per-ticket rollups ride
+  ``index.js``; this deferred chunk keeps boot cost constant regardless
+  of how many tickets a mature repo yields.
 
 It deliberately mirrors the mechanics of the retired Jinja renderer
 (display-path prefix stripping, path mangling, tier labels/colors, the
@@ -27,6 +32,7 @@ from ...version import get_version
 from ..colors import DEFAULT_TIER_COLORS, STATE_COLORS
 from ..exclusions import scan_excluded_lines
 from ..store.model import STAT_TYPES, CoverageStore, FileRecord, LineRecord, RunRecord
+from ..ticket_export import group_ranges as _group_ranges
 
 logger = logging.getLogger(__name__)
 
@@ -97,8 +103,8 @@ def _line_to_json(lr: LineRecord) -> dict[str, Any]:
         d["run"] = {str(rid): n for rid, n in lr.run_hits.items()}
     if lr.stale_runs:
         d["stale_run"] = list(lr.stale_runs)
-    if lr.ticket is not None:
-        d["ticket"] = lr.ticket
+    if lr.ticket:
+        d["ticket"] = list(lr.ticket)
     return d
 
 
@@ -261,6 +267,106 @@ def _build_run_contrib(store: CoverageStore, prefix: Path | None) -> dict[str, A
 
 
 # ----------------------------------------------------------------------
+# tickets
+# ----------------------------------------------------------------------
+
+
+def _build_ticket_summaries(
+    store: CoverageStore, prefix: Path | None, stamp: str
+) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]], dict[str, Any]]:
+    """Return (index summaries, per-ticket chunk payloads, deduped totals).
+
+    Summaries are small and ride ``index.js``; the missing-line detail is
+    deferred to a per-ticket chunk so boot cost stays constant regardless of
+    how many tickets a mature repo yields. Each chunk carries ``stamp`` (design
+    §5: every data chunk does, so a stale bundle guard-screens instead of
+    silently rendering against a newer report), mirroring how file chunks
+    already carry it (``_build_file_chunk``).
+
+    The third return value, ``tickets_totals``, is the DEDUPED repo-truth
+    behind the tickets page's aggregate StatsCard (design §6.1: "the overall
+    card is repo-truth; the rows sum to more"). Multi-ticket lines are the
+    normal case (§2: a commit naming several ids attributes its lines to
+    ALL of them), so summing the per-ticket rows below would double-count
+    every such line — this instead counts each line AT MOST ONCE, in the
+    same pass, by gating on ``line.ticket`` truthiness rather than iterating
+    ``ticket_id in line.ticket``.
+    """
+    owned: dict[str, dict[str, list[int]]] = {}
+    hits: dict[str, dict[str, list[int]]] = {}
+    # Accumulated in the same pass — see ticket_export.build_ticket_export
+    # for why this is not recomputed per ticket.
+    per_tier_of: dict[str, dict[str, int]] = {}
+    total_owned = 0
+    total_covered = 0
+    total_per_tier: dict[str, int] = dict.fromkeys(store.tier_order, 0)
+    for record in store.files():
+        display = _display_path(record, prefix)
+        for lineno, line in record.lines.items():
+            if line.ticket:
+                # Deduped totals: this line counts ONCE here regardless of
+                # how many tickets in `line.ticket` claim it — the opposite
+                # of the per-ticket loop below, which deliberately DOES
+                # attribute it to every ticket that names it.
+                total_owned += 1
+                if line.hits.is_hit():
+                    total_covered += 1
+                for tier in store.tier_order:
+                    if line.hits.is_hit(tier):
+                        total_per_tier[tier] += 1
+            for ticket_id in line.ticket:
+                owned.setdefault(ticket_id, {}).setdefault(display, []).append(lineno)
+                if line.hits.is_hit():
+                    hits.setdefault(ticket_id, {}).setdefault(display, []).append(lineno)
+                tiers = per_tier_of.setdefault(ticket_id, {})
+                for tier in store.tier_order:
+                    if line.hits.is_hit(tier):
+                        tiers[tier] = tiers.get(tier, 0) + 1
+
+    summaries: list[dict[str, Any]] = []
+    chunks: dict[str, dict[str, Any]] = {}
+    for ticket_id in sorted(owned):
+        rec = store.tickets.get(ticket_id)
+        total = sum(len(v) for v in owned[ticket_id].values())
+        covered = sum(len(v) for v in hits.get(ticket_id, {}).values())
+        chunk = mangle_path(Path(ticket_id))
+        summaries.append(
+            {
+                "id": ticket_id,
+                "url": rec.url if rec else None,
+                "owned": total,
+                "covered": covered,
+                "uncovered": total - covered,
+                "per_tier": {
+                    tier: per_tier_of.get(ticket_id, {}).get(tier, 0) for tier in store.tier_order
+                },
+                "chunk": chunk,
+            }
+        )
+        files = []
+        for display in sorted(owned[ticket_id]):
+            hit_set = set(hits.get(ticket_id, {}).get(display, []))
+            missing = [n for n in sorted(owned[ticket_id][display]) if n not in hit_set]
+            files.append(
+                {
+                    "path": display,
+                    "owned": len(owned[ticket_id][display]),
+                    "covered": len(hit_set),
+                    "missing": _group_ranges(missing),
+                }
+            )
+        chunks[chunk] = {"stamp": stamp, "id": ticket_id, "files": files}
+
+    tickets_totals = {
+        "owned": total_owned,
+        "covered": total_covered,
+        "uncovered": total_owned - total_covered,
+        "per_tier": total_per_tier,
+    }
+    return summaries, chunks, tickets_totals
+
+
+# ----------------------------------------------------------------------
 # Public API
 # ----------------------------------------------------------------------
 
@@ -299,6 +405,7 @@ def build_index_payload(
         _insert_file(root, parts, file_node, stats, tier_order)
 
     tree = _finalize(root)
+    ticket_summaries, _, tickets_totals = _build_ticket_summaries(store, prefix, stamp)
 
     return {
         "format": OTTO_COV_DATA_FORMAT,
@@ -316,6 +423,8 @@ def build_index_payload(
         "run_contrib": _build_run_contrib(store, prefix),
         "total_lines": tree["stats"]["lines"]["total"],
         "tree": tree,
+        "tickets": ticket_summaries,
+        "tickets_totals": tickets_totals,
     }
 
 
@@ -373,6 +482,11 @@ def emit_chunks(
     per-node ``flags.excluded`` counts reflect it — the reporter's later
     ``store.save()`` then persists the same annotation, exactly like the
     retired Jinja renderer did.
+
+    Also writes one ``cov_data/tickets/<mangled>.js`` per ticket carrying its
+    missing-line detail (deferred off ``index.js`` — see
+    ``_build_ticket_summaries``); the ``tickets`` directory is skipped
+    entirely when the store has no ticket data.
     """
     cov_data_dir = output_dir / "cov_data"
     files_dir = cov_data_dir / "files"
@@ -382,6 +496,17 @@ def emit_chunks(
         chunk = _build_file_chunk(fr, prefix, extra_markers, stamp)
         out = files_dir / f"{chunk['chunk']}.js"
         out.write_text(f"window.__OTTO_COV_FILE__({json.dumps(chunk)});\n")
+
+    _, ticket_chunks, _ = _build_ticket_summaries(store, prefix, stamp)
+    if ticket_chunks:
+        tickets_dir = cov_data_dir / "tickets"
+        tickets_dir.mkdir(parents=True, exist_ok=True)
+        for chunk_id, chunk_payload in ticket_chunks.items():
+            out = tickets_dir / f"{chunk_id}.js"
+            out.write_text(
+                f"window.__OTTO_COV_TICKET__({json.dumps(chunk_id)}, "
+                f"{json.dumps(chunk_payload)});\n"
+            )
 
     payload = build_index_payload(store, project_name=project_name, prefix=prefix, stamp=stamp)
     (cov_data_dir / "index.js").write_text(f"window.__OTTO_COV__ = {json.dumps(payload)};\n")

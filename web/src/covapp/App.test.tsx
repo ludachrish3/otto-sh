@@ -108,6 +108,31 @@ describe("App (Task 3 chrome wiring)", () => {
     expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Runs & contexts");
   });
 
+  it("#/tickets renders the real TicketsPage inside AppShell chrome", () => {
+    window.__OTTO_COV__ = makeIndexBase({
+      tier_order: ["unit"],
+      tier_labels: { unit: "Unit" },
+      tier_colors: { unit: "blue" },
+      tickets: [
+        {
+          id: "PROJ-1",
+          url: null,
+          owned: 10,
+          covered: 4,
+          uncovered: 6,
+          per_tier: { unit: 4 },
+          chunk: "PROJ-1",
+        },
+      ],
+    });
+    window.location.hash = "#/tickets";
+    render(<App />);
+    expect(screen.getByTestId("app-bar")).toBeTruthy();
+    expect(screen.getByTestId("stats-card")).toBeTruthy();
+    expect(screen.getByTestId("tickets-card")).toBeTruthy();
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Tickets");
+  });
+
   it("an unknown route renders NotFoundPlaceholder without chrome", () => {
     window.location.hash = "#/nope";
     render(<App />);

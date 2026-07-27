@@ -26,7 +26,7 @@ Any string is a valid tier name; this constant spares callers a string
 literal when they mean the canonical system-coverage tier.
 """
 
-STORE_FORMAT_VERSION = 4
+STORE_FORMAT_VERSION = 5
 """``store.json`` schema version, bumped on breaking on-disk changes.
 
 Version 2 is the first version to carry an explicit ``"format"`` key —
@@ -40,6 +40,8 @@ sourced from.  Version 4 adds the report-level config surface: top-level
 ``stat_types`` (the type-extensible stats vocabulary — ``line``,
 ``branch``, and the reserved ``decision`` slot), plus an explicit
 per-run ``host`` identity and a reserved per-line ``ticket`` slot.
+Version 5 turns the reserved per-line ``ticket`` slot into a list (a
+commit may name several tickets) and adds a top-level ``tickets`` table.
 There is no migration shim: a file that does not declare this exact
 version fails loud in :meth:`CoverageStore.load` with a message telling
 the caller to regenerate it, rather than silently mis-reading
@@ -219,6 +221,19 @@ class RunRecord:
 
 
 @dataclass
+class TicketRecord:
+    """One ticket surfaced by commit-message attribution."""
+
+    id: str
+    url: str | None = None
+    commits: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-serialisable dict representation of this ticket."""
+        return {"id": self.id, "url": self.url, "commits": list(self.commits)}
+
+
+@dataclass
 class LineRecord:
     """Coverage data for a single source line."""
 
@@ -237,9 +252,11 @@ class LineRecord:
     run_hits: dict[int, int] = field(default_factory=dict)
     stale_runs: list[int] = field(default_factory=list)
 
-    # Reserved per-line ticket slot (design §6): absent until the
-    # per-commit ticket plumbing exists — nothing writes it yet.
-    ticket: str | None = None
+    # Per-line ticket ids (design §6): the ticket(s) named by the commit
+    # that last touched this line, per commit-message attribution. A
+    # commit may name several tickets, so every one of them owns the
+    # line — hence a list, not a single reserved slot.
+    ticket: list[str] = field(default_factory=list)
 
     def merge(self, other: "LineRecord") -> None:
         """Merge *other* into this line record, accumulating hits and branch data."""
@@ -266,9 +283,11 @@ class LineRecord:
             if run_id not in self.stale_runs:
                 self.stale_runs.append(run_id)
 
-        # First-set wins; revisit when a ticket producer exists.
-        if self.ticket is None:
-            self.ticket = other.ticket
+        # Union without duplicates, preserving order: two captures of the
+        # same line must not double-count or drop ticket ids.
+        for ticket_id in other.ticket:
+            if ticket_id not in self.ticket:
+                self.ticket.append(ticket_id)
 
 
 @dataclass
@@ -351,8 +370,8 @@ class FileRecord:
             d["run"] = {str(rid): n for rid, n in rec.run_hits.items()}
         if rec.stale_runs:
             d["stale_run"] = list(rec.stale_runs)
-        if rec.ticket is not None:
-            d["ticket"] = rec.ticket
+        if rec.ticket:
+            d["ticket"] = list(rec.ticket)
         return d
 
     def to_dict(self) -> dict[str, Any]:
@@ -372,7 +391,8 @@ class CoverageStore:
     to drive column ordering and the winner-take-all row coloring used
     by the annotated source view.  ``runs`` captures the run table —
     each run record corresponds to one coverage run or synthetic per-tier
-    aggregate loaded into the store.
+    aggregate loaded into the store.  ``tickets`` is the ticket table —
+    keyed by ticket id, populated by commit-message attribution.
     """
 
     def __init__(self, tier_order: list[str] | None = None) -> None:
@@ -381,6 +401,7 @@ class CoverageStore:
         self.tier_colors: dict[str, str] = {}
         self.runs: list[RunRecord] = []
         self.thresholds: Thresholds = Thresholds()
+        self.tickets: dict[str, TicketRecord] = {}
 
     def register_tier(self, tier: str) -> None:
         """Append *tier* to the tier order if not already present.
@@ -498,6 +519,7 @@ class CoverageStore:
             "tier_colors": dict(self.tier_colors),
             "thresholds": self.thresholds.to_dict(),
             "stat_types": list(STAT_TYPES),
+            "tickets": {k: v.to_dict() for k, v in self.tickets.items()},
         }
         path.write_text(json.dumps(data, indent=2))
 
@@ -542,6 +564,10 @@ class CoverageStore:
         store.thresholds = Thresholds(
             high=float(th.get("high", 80.0)), medium=float(th.get("medium", 70.0))
         )
+        for tid, td in (data.get("tickets") or {}).items():
+            store.tickets[tid] = TicketRecord(
+                id=td["id"], url=td.get("url"), commits=list(td.get("commits") or [])
+            )
         for rd in runs_data:
             store.runs.append(
                 RunRecord(
@@ -579,7 +605,7 @@ class CoverageStore:
                     hits=hits,
                     branches=branches,
                     state=ld.get("state"),
-                    ticket=ld.get("ticket"),
+                    ticket=list(ld.get("ticket") or []),
                 )
                 lr.run_hits = {int(k): v for k, v in (ld.get("run") or {}).items()}
                 lr.stale_runs = list(ld.get("stale_run") or [])

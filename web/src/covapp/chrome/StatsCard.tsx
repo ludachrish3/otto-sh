@@ -12,7 +12,15 @@ export interface TierStatRow {
   key: string;
   label: string;
   dotColor?: string;
-  line: [number, number];
+  /** `null` (Task 12 fix round 1: a composed ctx+ticket row on
+   * DirectoryPage's tree) mirrors `branch`/`decision`'s "no data"
+   * rendering — the ctx numerator (`ctx_lines`, whole-file) and the
+   * ticket denominator (scoped to the ticket's own lines) are no longer
+   * commensurable once both filters compose at tree granularity, so
+   * showing ANY computed percentage there would be a plausible-looking
+   * but out-of-range number, not an approximation. Every pre-Task-12
+   * caller still passes a tuple — this is purely additive. */
+  line: [number, number] | null;
   /** `null` (Task 7: the focused-context single row) mirrors `decision`'s
    * "no data" rendering — v4's `run_hits` is per-line only (Global
    * Constraints' documented data limitation: per-run branch contribution
@@ -128,7 +136,7 @@ export function StatsCard({
                   )}
                   {row.label}
                 </td>
-                <StatCell hit={row.line[0]} total={row.line[1]} thresholds={thresholds} />
+                <NullableStatCell value={row.line} thresholds={thresholds} />
                 <NullableStatCell value={row.branch} thresholds={thresholds} />
                 <NullableStatCell value={row.decision} thresholds={thresholds} />
               </tr>

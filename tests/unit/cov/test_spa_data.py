@@ -10,7 +10,7 @@ from otto.coverage.renderer.spa_data import (
     make_stamp,
     mangle_path,
 )
-from otto.coverage.store.model import CoverageStore, Thresholds
+from otto.coverage.store.model import CoverageStore, Thresholds, TicketRecord
 
 
 def _write(tmp_path: Path, name: str, text: str) -> Path:
@@ -285,3 +285,196 @@ class TestEmitChunks:
             stamp="S",
         )
         assert (out_dir / "cov_data" / "index.js").exists()
+
+
+def _ticket_store(tmp_path):
+    """Two lines owned by PROJ-1, one of them hit."""
+    store = CoverageStore(tier_order=["unit"])
+    record = store.get_or_create_file(tmp_path / "a.c")
+    first = record.get_or_create_line(1)
+    first.ticket = ["PROJ-1"]
+    first.hits.add("unit", 1)
+    second = record.get_or_create_line(2)
+    second.ticket = ["PROJ-1"]
+    store.tickets["PROJ-1"] = TicketRecord(id="PROJ-1", url="u/1", commits=["abc"])
+    return store
+
+
+def test_index_payload_carries_ticket_summaries(tmp_path):
+    payload = build_index_payload(
+        _ticket_store(tmp_path), project_name="P", prefix=tmp_path, stamp="S"
+    )
+    assert payload["tickets"] == [
+        {
+            "id": "PROJ-1",
+            "url": "u/1",
+            "owned": 2,
+            "covered": 1,
+            "uncovered": 1,
+            "per_tier": {"unit": 1},
+            "chunk": payload["tickets"][0]["chunk"],
+        }
+    ]
+    assert payload["tickets"][0]["chunk"]
+
+
+def test_ticket_chunks_are_emitted_per_ticket(tmp_path):
+    out = tmp_path / "report"
+    out.mkdir()
+    emit_chunks(
+        _ticket_store(tmp_path),
+        out,
+        project_name="P",
+        prefix=tmp_path,
+        extra_markers=None,
+        stamp="S",
+    )
+    chunks = sorted((out / "cov_data" / "tickets").iterdir())
+    assert len(chunks) == 1
+    assert chunks[0].read_text().startswith("window.__OTTO_COV_TICKET__(")
+
+
+def test_no_tickets_emits_empty_list_and_no_chunk_dir(tmp_path):
+    store = CoverageStore(tier_order=["unit"])
+    store.get_or_create_file(tmp_path / "a.c").get_or_create_line(1)
+    out = tmp_path / "report"
+    out.mkdir()
+    payload = build_index_payload(store, project_name="P", prefix=tmp_path, stamp="S")
+    emit_chunks(store, out, project_name="P", prefix=tmp_path, extra_markers=None, stamp="S")
+    assert payload["tickets"] == []
+    assert not (out / "cov_data" / "tickets").exists()
+
+
+def test_line_json_carries_ticket_ids_and_omits_empty(tmp_path):
+    out = tmp_path / "report"
+    out.mkdir()
+    emit_chunks(
+        _ticket_store(tmp_path),
+        out,
+        project_name="P",
+        prefix=tmp_path,
+        extra_markers=None,
+        stamp="S",
+    )
+    text = next((out / "cov_data" / "files").iterdir()).read_text()
+    assert '"ticket": ["PROJ-1"]' in text
+
+    plain = CoverageStore(tier_order=["unit"])
+    plain.get_or_create_file(tmp_path / "b.c").get_or_create_line(1)
+    out2 = tmp_path / "report2"
+    out2.mkdir()
+    emit_chunks(plain, out2, project_name="P", prefix=tmp_path, extra_markers=None, stamp="S")
+    assert '"ticket"' not in next((out2 / "cov_data" / "files").iterdir()).read_text()
+
+
+def test_tickets_totals_dedupes_a_line_owned_by_two_tickets(tmp_path):
+    """Design spec §2/§6.1: overlap is the normal case — a line named by two
+    tickets must count ONCE in the repo-truth totals, never once per ticket.
+
+    Fixture is built so a summing implementation and a deduping one produce
+    DIFFERENT numbers (line 1 is claimed by both PROJ-1 and PROJ-2 and is
+    hit): summed-across-tickets would read owned=3 (2 + 1), covered=2 (1 +
+    1); the deduped truth is owned=2, covered=1 — line 1 counted once.
+    """
+    store = CoverageStore(tier_order=["unit"])
+    record = store.get_or_create_file(tmp_path / "a.c")
+    shared = record.get_or_create_line(1)
+    shared.ticket = ["PROJ-1", "PROJ-2"]
+    shared.hits.add("unit", 1)
+    solo = record.get_or_create_line(2)
+    solo.ticket = ["PROJ-2"]
+    store.tickets["PROJ-1"] = TicketRecord(id="PROJ-1", url=None, commits=["a"])
+    store.tickets["PROJ-2"] = TicketRecord(id="PROJ-2", url=None, commits=["b"])
+
+    payload = build_index_payload(store, project_name="P", prefix=tmp_path, stamp="S")
+
+    assert payload["tickets_totals"] == {
+        "owned": 2,
+        "covered": 1,
+        "uncovered": 1,
+        "per_tier": {"unit": 1},
+    }
+    # The per-ticket rows are UNCHANGED by this — they still overlap/sum to
+    # more than the deduped card, which is exactly what the UI caption warns
+    # about (design §2).
+    by_id = {t["id"]: t for t in payload["tickets"]}
+    assert by_id["PROJ-1"]["owned"] == 1
+    assert by_id["PROJ-2"]["owned"] == 2
+
+
+def test_tickets_totals_is_zero_when_no_tickets(tmp_path):
+    store = CoverageStore(tier_order=["unit"])
+    store.get_or_create_file(tmp_path / "a.c").get_or_create_line(1)
+    payload = build_index_payload(store, project_name="P", prefix=tmp_path, stamp="S")
+    assert payload["tickets_totals"] == {
+        "owned": 0,
+        "covered": 0,
+        "uncovered": 0,
+        "per_tier": {"unit": 0},
+    }
+
+
+def test_sentinel_ticket_ids_flow_through_summaries_and_get_their_own_chunk(tmp_path):
+    """Task 14: `(no ticket)`/`(uncommitted)` are ordinary ids by the time
+    they reach spa_data.py — `_build_ticket_summaries` doesn't know or care
+    what a ticket id string looks like, so a sentinel-owned line must
+    appear in the index rollup and get its own per-ticket chunk exactly
+    like any real ticket id."""
+    store = CoverageStore(tier_order=["unit"])
+    record = store.get_or_create_file(tmp_path / "a.c")
+    record.get_or_create_line(1).ticket = ["(no ticket)"]
+    record.get_or_create_line(2).ticket = ["(uncommitted)"]
+    store.tickets["(no ticket)"] = TicketRecord(id="(no ticket)", url=None, commits=["abc"])
+    store.tickets["(uncommitted)"] = TicketRecord(id="(uncommitted)", url=None, commits=[])
+
+    payload = build_index_payload(store, project_name="P", prefix=tmp_path, stamp="S")
+    ids = {t["id"]: t for t in payload["tickets"]}
+    assert set(ids) == {"(no ticket)", "(uncommitted)"}
+    assert ids["(no ticket)"]["url"] is None
+    assert ids["(uncommitted)"]["url"] is None
+
+    out = tmp_path / "report"
+    out.mkdir()
+    emit_chunks(store, out, project_name="P", prefix=tmp_path, extra_markers=None, stamp="S")
+    chunk_files = sorted((out / "cov_data" / "tickets").iterdir())
+    assert len(chunk_files) == 2
+
+
+def test_tickets_totals_counts_a_sentinel_owned_line_once(tmp_path):
+    """Same dedup rule `test_tickets_totals_dedupes_a_line_owned_by_two_tickets`
+    pins for two real tickets sharing a line must also hold for a
+    sentinel-owned line — it is still exactly one attributed line, counted
+    once, never once per (nonexistent) additional owner."""
+    store = CoverageStore(tier_order=["unit"])
+    record = store.get_or_create_file(tmp_path / "a.c")
+    line = record.get_or_create_line(1)
+    line.ticket = ["(no ticket)"]
+    line.hits.add("unit", 1)
+    store.tickets["(no ticket)"] = TicketRecord(id="(no ticket)", url=None, commits=["abc"])
+
+    payload = build_index_payload(store, project_name="P", prefix=tmp_path, stamp="S")
+
+    assert payload["tickets_totals"] == {
+        "owned": 1,
+        "covered": 1,
+        "uncovered": 0,
+        "per_tier": {"unit": 1},
+    }
+
+
+def test_ticket_chunk_carries_the_report_stamp(tmp_path):
+    """Design §5: every data chunk carries the report stamp so a stamp
+    mismatch renders the guard screen instead of silently showing stale
+    data — ticket chunks were missing this."""
+    out = tmp_path / "report"
+    out.mkdir()
+    emit_chunks(
+        _ticket_store(tmp_path),
+        out,
+        project_name="P",
+        prefix=tmp_path,
+        extra_markers=None,
+        stamp="the-stamp",
+    )
+    chunk_path = next((out / "cov_data" / "tickets").iterdir())
+    assert '"stamp": "the-stamp"' in chunk_path.read_text()

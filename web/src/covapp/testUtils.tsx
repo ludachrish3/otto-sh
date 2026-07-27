@@ -82,6 +82,8 @@ export function makeIndex(overrides: Partial<IndexPayload> = {}): IndexPayload {
     run_contrib: {},
     total_lines: 0,
     tree: { name: "acme-fw", dirs: [], files: [], stats: emptyStats() },
+    tickets: [],
+    tickets_totals: { owned: 0, covered: 0, uncovered: 0, per_tier: {} },
     ...overrides,
   };
 }

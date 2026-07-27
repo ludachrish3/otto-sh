@@ -16,6 +16,7 @@ import { DirectoryPage } from "./pages/DirectoryPage";
 import { FilePage } from "./pages/FilePage";
 import { GuardScreen } from "./pages/GuardScreen";
 import { RunsPage } from "./pages/RunsPage";
+import { TicketsPage } from "./pages/TicketsPage";
 import { findNode } from "./stats";
 import { ToastProvider } from "./Toast";
 import type { IndexPayload } from "./types";
@@ -98,6 +99,9 @@ function CoverageApp() {
         </Route>
         <Route path="/runs">
           <RunsPage index={index} />
+        </Route>
+        <Route path="/tickets">
+          <TicketsPage index={index} />
         </Route>
         <Route>
           <NotFoundPlaceholder />

@@ -127,6 +127,28 @@ describe("StatsCard", () => {
     expect(row.textContent?.match(/no data/g)?.length).toBe(2);
   });
 
+  // Task 12 fix round 1: a composed ctx+ticket row on DirectoryPage's tree
+  // has no honest way to compute a Line number (the ctx numerator is
+  // whole-file, the ticket denominator is scoped — not commensurable), so
+  // it must decline exactly like `branch`/`decision` already do here,
+  // never render a plausible-but-wrong percentage.
+  it("renders muted 'no data' for a null line cell too, same as branch/decision", () => {
+    const declinedRow: TierStatRow = {
+      key: "ticket",
+      label: "PROJ-1 · nightly-full",
+      line: null,
+      branch: null,
+      decision: null,
+    };
+    render(
+      <StatsCard scope="ticket: PROJ-1" title="t" rows={[declinedRow]} thresholds={thresholds} />,
+    );
+    const row = screen.getByTestId("stats-row-ticket");
+    // All three nullable cells render the same muted text — never a
+    // fraction, never a bogus/out-of-range percentage.
+    expect(row.textContent?.match(/no data/g)?.length).toBe(3);
+  });
+
   it("defaults the first column header to 'Tier'", () => {
     render(<StatsCard scope="acme-fw" title="t" rows={rows()} thresholds={thresholds} />);
     expect(screen.getByText("Tier")).toBeTruthy();

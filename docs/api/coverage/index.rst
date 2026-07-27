@@ -15,5 +15,9 @@ data from embedded and remote targets.
    anchor
    validity
    tiers
+   report_config
+   tickets
+   attribution
+   ticket_export
    exclusions
    colors

@@ -40,12 +40,13 @@ from .merge.paths import (
     discover_from_gcno,
     discover_path_mappings,
 )
-from .store.model import TIER_SYSTEM, CoverageStore, Thresholds
+from .store.model import TIER_SYSTEM, CoverageStore, Thresholds, TicketRecord
 
 if TYPE_CHECKING:
     from ..host.local_host import LocalHost
     from ..host.toolchain import Toolchain
     from .capture.model import Capture
+    from .tickets import TicketSpec
     from .tiers import TierConfig
 
 logger = logging.getLogger(__name__)
@@ -216,9 +217,15 @@ class CoverageReporter:
             always use the full path.
         thresholds: Render thresholds from ``[coverage.report]``; defaults
             to ``Thresholds()``.
+        ticket_spec: Compiled ``[coverage.tickets]`` pattern (Task 1). ``None``
+            (the default) is the "feature absent" signal: no git log walk
+            runs, no line or ``store.tickets`` entry is annotated, and the
+            coverage numbers themselves are unchanged. When set,
+            ``_annotate_tickets`` attributes every stored line to the
+            ticket(s) named by the commit that last touched it.
     """
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 — wide constructor: each field is an independently-optional report input
         self,
         gcda_dirs: list[Path],
         source_root: Path,
@@ -231,6 +238,7 @@ class CoverageReporter:
         collection: CollectionInputs | None = None,
         prefix: Path | None = None,
         thresholds: "Thresholds | None" = None,
+        ticket_spec: "TicketSpec | None" = None,
     ) -> None:
         self.gcda_dirs = gcda_dirs
         self.source_root = source_root
@@ -246,6 +254,7 @@ class CoverageReporter:
         self.extra_markers: list[str] = list(coll.extra_markers)
         self.prefix = prefix
         self.thresholds: Thresholds = thresholds or Thresholds()
+        self.ticket_spec: "TicketSpec | None" = ticket_spec
         self._validate_tiers()
 
     def _validate_tiers(self) -> None:
@@ -431,6 +440,16 @@ class CoverageReporter:
             await self._harvest_unit_tiers(localhost, work_dir, loader)
             self._load_manual_store(store, manual_captures)
             self._fill_tier_colors(store)
+
+            # 3c. Per-ticket attribution (design §6): a no-op unless both
+            # ticket_spec is configured and repo_root is known (only the
+            # collection-model path resolves one — the git-less --tier
+            # escape hatch never does). Must run after every fold above so
+            # the store's final line set is what gets attributed, and
+            # before rendering so the SPA data build sees populated
+            # LineRecord.ticket / store.tickets.
+            if self.repo_root is not None:
+                self._annotate_tickets(store, self.repo_root)
 
             # 4. Render the SPA report. Exclusion display is render-time (spec
             # §8/§9): a single-valued LineRecord.state can't express "excluded
@@ -660,6 +679,113 @@ class CoverageReporter:
         for tier in self.tier_configs:
             store.tier_colors[tier.name] = tier.color
 
+    def _annotate_tickets(self, store: CoverageStore, repo_root: Path) -> None:
+        """Attribute every stored line to the ticket(s) that last touched it.
+
+        A no-op when :attr:`ticket_spec` is ``None`` (the feature-absent
+        signal — no git log walk runs) or when the store holds no files
+        under *repo_root* to attribute. Files outside *repo_root* have no
+        history to attribute against it and are skipped rather than
+        crashing the run.
+
+        Every owned line stays represented (spec §4/§6.1/§7): a line whose
+        commit named a real ticket gets those id(s); a line whose commit
+        matched no configured pattern gets the synthetic
+        :data:`~otto.coverage.attribution.NO_TICKET` id; a line that is a
+        working-tree edit never committed gets
+        :data:`~otto.coverage.attribution.UNCOMMITTED_TICKET`. Both
+        sentinels get a :class:`TicketRecord` with ``url=None``, exactly
+        like any other id, so they flow through the store, the export, and
+        the SPA unchanged — the collision guard that keeps a real commit
+        from silently merging into either bucket lives in
+        :func:`~otto.coverage.attribution.attribute_tickets` (a matched id
+        equal to a reserved sentinel is dropped there, not here).
+        """
+        if self.ticket_spec is None:
+            return
+        # Deferred: this is the only caller that needs a git log walk, and
+        # keeping the import out of module scope means a report with no
+        # ``[coverage.tickets]`` configured never pulls in attribution's
+        # transitive imports (mirrors SpaRenderer's deferred import below).
+        from .attribution import NO_TICKET, UNCOMMITTED, UNCOMMITTED_TICKET, attribute_tickets
+
+        # The store keys files by resolved absolute path (get_or_create_file
+        # resolves whenever the file exists on disk); resolve repo_root the
+        # same way before every is_relative_to/relative_to comparison below —
+        # otherwise a repo_root that reaches the tree through a symlink
+        # component would wrongly read every file in it as "outside the
+        # repo" (mirrors capture/model.py's identical repo_root.resolve()
+        # ahead of its own is_relative_to check).
+        repo_root = repo_root.resolve()
+        line_counts = {
+            path.relative_to(repo_root).as_posix(): max(rec.lines)
+            for rec in store.files()
+            for path in [rec.path]
+            if rec.lines and rec.path.is_relative_to(repo_root)
+        }
+        if not line_counts:
+            return
+        per_line, commits, per_line_sha = attribute_tickets(
+            repo_root, line_counts, self.ticket_spec
+        )
+
+        # Real shas that own at least one no-ticket-sentinel line, and
+        # whether any line was assigned the uncommitted sentinel — tracked
+        # here so the TicketRecord entries below are only created when at
+        # least one line actually needs them.
+        no_ticket_shas: set[str] = set()
+        saw_uncommitted = False
+        # `line_counts` above is keyed by each file's *highest* stored line
+        # number, not by which lines are actually coverable — a covered
+        # file with lines {1, 5} still walks (and attributes) lines 2-4, so
+        # `commits` (built over every walked line) can name a ticket whose
+        # only touched lines are these gaps. Track which ticket ids own at
+        # least one line that survives the `lineno not in rec.lines` filter
+        # below, so a ticket owning zero coverable lines gets no
+        # :class:`TicketRecord` at all — one wouldn't appear anywhere in
+        # the SPA or the export anyway, since both read per-line data.
+        tickets_with_coverable_lines: set[str] = set()
+
+        for rec in store.files():
+            if not rec.path.is_relative_to(repo_root):
+                continue
+            relpath = rec.path.relative_to(repo_root).as_posix()
+            line_shas = per_line_sha.get(relpath, {})
+            for lineno, ids in per_line.get(relpath, {}).items():
+                if lineno not in rec.lines:
+                    continue
+                if ids:
+                    rec.lines[lineno].ticket = list(ids)
+                    tickets_with_coverable_lines.update(ids)
+                    continue
+                # `per_line_sha` is built from the exact same (relpath,
+                # lineno) pairs as `per_line` (attribute_tickets populates
+                # both in one pass over its internal `by_sha`), so this
+                # lookup always hits — either UNCOMMITTED or a real sha,
+                # never absent.
+                sha = line_shas[lineno]
+                if sha == UNCOMMITTED:
+                    rec.lines[lineno].ticket = [UNCOMMITTED_TICKET]
+                    saw_uncommitted = True
+                else:
+                    rec.lines[lineno].ticket = [NO_TICKET]
+                    no_ticket_shas.add(sha)
+
+        for ticket_id, shas in commits.items():
+            if ticket_id not in tickets_with_coverable_lines:
+                continue
+            store.tickets[ticket_id] = TicketRecord(
+                id=ticket_id, url=self.ticket_spec.url_for(ticket_id), commits=shas
+            )
+        if no_ticket_shas:
+            store.tickets[NO_TICKET] = TicketRecord(
+                id=NO_TICKET, url=None, commits=sorted(no_ticket_shas)
+            )
+        if saw_uncommitted:
+            store.tickets[UNCOMMITTED_TICKET] = TicketRecord(
+                id=UNCOMMITTED_TICKET, url=None, commits=[]
+            )
+
 
 def _partition_board_dirs(cov_dirs: list[Path]) -> tuple[list[Path], list[Path]]:
     """Split each cov dir's board subdirs into (gcda dirs, capture.json paths).
@@ -697,6 +823,7 @@ async def run_coverage_report(
     extra_markers: list[str] | None = None,
     prefix: Path | None = None,
     thresholds: "Thresholds | None" = None,
+    ticket_spec: "TicketSpec | None" = None,
 ) -> CoverageStore | None:
     """Render an HTML coverage report from one or more cov/ directories.
 
@@ -734,6 +861,14 @@ async def run_coverage_report(
     collection-model paths, which each pass it straight through to
     :class:`CoverageReporter`.
 
+    *ticket_spec* is the compiled ``[coverage.tickets]`` pattern (Task 1);
+    ``None`` (the default) is the feature-absent signal — no git log walk
+    runs. Ticket attribution needs a git *repo_root* to walk, which only the
+    collection-model path resolves, so *ticket_spec* is forwarded there only;
+    a caller that supplies it without *repo_root*/*tier_configs* falls into
+    the legacy branch and it is silently ignored (mirroring that branch's
+    "byte-for-byte the historical behavior" contract).
+
     Returns:
         The populated :class:`~otto.coverage.store.model.CoverageStore`, or
         ``None`` when the legacy path found no coverage data.
@@ -753,6 +888,7 @@ async def run_coverage_report(
         extra_markers=extra_markers,
         prefix=prefix,
         thresholds=thresholds,
+        ticket_spec=ticket_spec,
     )
 
 
@@ -808,6 +944,7 @@ async def _run_collection_report(
     extra_markers: list[str] | None,
     prefix: Path | None = None,
     thresholds: "Thresholds | None" = None,
+    ticket_spec: "TicketSpec | None" = None,
 ) -> CoverageStore:
     """Run the collection-model path: captures + unit harvest + manual store.
 
@@ -846,5 +983,6 @@ async def _run_collection_report(
         ),
         prefix=prefix,
         thresholds=thresholds,
+        ticket_spec=ticket_spec,
     )
     return await reporter.run()

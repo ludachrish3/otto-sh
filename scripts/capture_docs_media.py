@@ -76,6 +76,8 @@ ARTIFACTS = [
     "coverage-report.png",
     "coverage-file.png",
     "coverage-runs.png",
+    "coverage-tickets.png",
+    "coverage-ticket-context.png",
 ]
 
 _VIEWPORT = {"width": 1280, "height": 720}
@@ -125,15 +127,20 @@ def _write_placeholders() -> None:
 
 
 def _capture_coverage_report(browser) -> None:  # noqa: ANN001 — playwright import is deferred
-    """Photograph all three SPA page kinds against ONE rendered report.
+    """Photograph every SPA page kind against ONE rendered report.
 
     The fixture is shared with ``tests/e2e/cov/report_browser/`` (see
     ``build_fixture_report``'s docstring), so the routes and wait-selectors
     below mirror exactly what that suite already pins rather than guessing:
-    ``test_spa_file.py``'s ``_open_file`` helper for the file page, and
-    ``test_spa_runs_focus.py``'s ``_goto(..., "/runs")`` for the runs page.
-    One report render, one page object, one browser context — three
-    navigations, three shots.
+    ``test_spa_file.py``'s ``_open_file`` helper for the file page,
+    ``test_spa_runs_focus.py``'s ``_goto(..., "/runs")`` for the runs page,
+    and ``test_spa_tickets.py`` for the tickets page and the pinned-ticket
+    directory view (Task 13) — including which ticket to pin
+    (``PROJ-204``, the one that owns lines in ``product/main.c`` but
+    nothing in ``product/utils.c``, so the pinned shot actually shows a
+    hidden file row and the hidden-count banner, not a no-op pin). One
+    report render, one page object, one browser context — five
+    navigations, five shots.
     """
     from tests._fixtures._report_fixture import build_fixture_report
 
@@ -166,6 +173,38 @@ def _capture_coverage_report(browser) -> None:  # noqa: ANN001 — playwright im
         page.goto(base_uri + "#/runs")
         page.wait_for_selector('[data-testid="run-row-nightly-full"]')
         page.screenshot(path=OUT_DIR / "coverage-runs.png", full_page=True)
+
+        # Tickets page (Task 13) — two tickets, one linked to a tracker,
+        # one plain; PROJ-204's row is expanded so the shot also shows the
+        # missing-line-range detail, not just the collapsed table.
+        page.goto(base_uri + "#/tickets")
+        page.wait_for_selector('[data-testid="ticket-row"]')
+        page.locator('[data-testid="ticket-toggle-PROJ-204"]').click()
+        page.wait_for_selector('[data-testid="ticket-detail"]')
+        page.screenshot(path=OUT_DIR / "coverage-tickets.png", full_page=True)
+
+        # Pinned ticket context (Task 13) — pinning PROJ-204 (via the app
+        # bar's own "Pin ticket" menu, the only way to pin one — the
+        # tickets page's own rows have no per-row pin button) at the
+        # "product/" directory hides utils.c's row and shows the
+        # hidden-count banner, since PROJ-204 owns nothing in utils.c.
+        page.goto(base_uri + "#/coverage/product")
+        page.wait_for_selector('[data-testid="tree-row-file:product/utils.c"]')
+        page.locator('[data-testid="appbar-menu"]').click()
+        page.locator('[data-testid="menu-ticket-PROJ-204"]').click()
+        page.wait_for_selector('[data-testid="ticket-scope-banner"]')
+        # The ⋮ popover stays open after the menu click (it's a multi-item
+        # menu, not a one-shot action) and a "Pinned ticket" toast fires —
+        # both would otherwise cover the tree/banner the shot exists to
+        # show. Escape closes the popover (standard for this component
+        # library); the toast auto-dismisses within Toast.tsx's own timeout,
+        # which the wait_for_selector above already outlasted.
+        page.keyboard.press("Escape")
+        page.locator('[data-testid="menu-ticket-PROJ-204"]').wait_for(state="hidden")
+        # Also let the "Pinned ticket PROJ-204" toast (Toast.tsx) clear the
+        # bottom of the viewport rather than screenshotting mid-fade.
+        page.locator('[data-testid="toast"]').first.wait_for(state="detached")
+        page.screenshot(path=OUT_DIR / "coverage-ticket-context.png", full_page=True)
 
         page.close()
 

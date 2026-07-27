@@ -795,3 +795,244 @@ async def test_superseded_covdir_duplicate_still_skipped(tmp_path):
     # superseded run is skipped; report runs and folds only cap_new.
     store = await reporter.run()
     assert len(store.runs) == 1
+
+
+# ── Task 7: CoverageReporter ticket attribution wiring ───────────────────────
+
+
+def _repo_with_ticket_commit(tmp_path: Path) -> Path:
+    """Create a one-commit git repo whose commit message names ticket PROJ-7."""
+    repo = tmp_path / "ticket_sut"
+    repo.mkdir()
+    _git(repo, tmp_path, "init", "-q")
+    (repo / "a.c").write_text("one\ntwo\n")
+    _git(repo, tmp_path, "add", "-A")
+    _git(repo, tmp_path, "commit", "-q", "-m", "seed PROJ-7")
+    return repo
+
+
+def _store_with_lines(repo: Path):
+    """A minimal store with one file (repo/a.c) and two known line numbers."""
+    from otto.coverage.store.model import CoverageStore
+
+    store = CoverageStore(tier_order=["unit"])
+    record = store.get_or_create_file(repo / "a.c")
+    record.get_or_create_line(1)
+    record.get_or_create_line(2)
+    return store
+
+
+def _reporter_with(**kwargs) -> CoverageReporter:
+    """Build a CoverageReporter with the constructor's minimum required args.
+
+    Mirrors ``TestCoverageReporter.test_run_empty_dirs`` (the nearest
+    existing ``CoverageReporter(`` construction in this module) — the
+    placeholder source_root/output_dir are never touched by
+    ``_annotate_tickets``, so *kwargs* only needs to override what a given
+    test cares about (here, ``ticket_spec``).
+    """
+    defaults: dict[str, object] = {
+        "gcda_dirs": [],
+        "source_root": Path("/nonexistent/source"),
+        "output_dir": Path("/nonexistent/out"),
+    }
+    defaults.update(kwargs)
+    return CoverageReporter(**defaults)
+
+
+def test_reporter_annotates_lines_with_tickets(tmp_path):
+    """With a ticket_spec configured, _annotate_tickets attributes both the
+    per-line ticket ids and the store's ticket -> commits table."""
+    from otto.coverage.tickets import build_ticket_spec
+
+    repo = _repo_with_ticket_commit(tmp_path)
+    store = _store_with_lines(repo)
+    reporter = _reporter_with(ticket_spec=build_ticket_spec(r"[A-Z]{2,10}-[0-9]+", None))
+
+    reporter._annotate_tickets(store, repo)
+
+    assert next(store.files()).lines[1].ticket == ["PROJ-7"]
+    assert store.tickets["PROJ-7"].commits
+
+
+def test_reporter_without_spec_leaves_tickets_empty(tmp_path):
+    """ticket_spec=None (the feature-absent default) must run no git walk at
+    all and leave every LineRecord.ticket / store.tickets untouched."""
+    repo = _repo_with_ticket_commit(tmp_path)
+    store = _store_with_lines(repo)
+    reporter = _reporter_with(ticket_spec=None)
+
+    reporter._annotate_tickets(store, repo)
+
+    assert all(line.ticket == [] for line in next(store.files()).lines.values())
+    assert store.tickets == {}
+
+
+@pytest.mark.asyncio
+async def test_run_wires_ticket_attribution_into_the_store(tmp_path):
+    """Regression: `run()` must itself call `_annotate_tickets` — not just
+    have a correct, independently-tested method sitting unused.
+
+    The two tests above call ``reporter._annotate_tickets(...)`` directly,
+    so they prove the method works but say nothing about whether ``run()``
+    actually invokes it; a reviewer deleted that one call site from ``run()``
+    and the entire cov + cli suite (482 tests) stayed green. This test goes
+    through the public ``run()`` entry point with a real one-commit git repo
+    (commit message names a ticket), a real ``.info`` tier so the store
+    actually holds lines, ``repo_root`` set via ``CollectionInputs``, and a
+    ``ticket_spec`` — so deleting the ``run()`` call site makes *this* test
+    fail even though every other test still passes.
+    """
+    from otto.coverage.tickets import build_ticket_spec
+
+    repo = tmp_path / "sut"
+    repo.mkdir()
+    _git(repo, tmp_path, "init", "-q")
+    (repo / "f.c").write_text("int a;\nint b;\n")
+    _git(repo, tmp_path, "add", "f.c")
+    _git(repo, tmp_path, "commit", "-q", "-m", "seed PROJ-9")
+
+    info = tmp_path / "u.info"
+    info.write_text(f"TN:\nSF:{repo / 'f.c'}\nDA:1,3\nDA:2,1\nend_of_record\n")
+
+    reporter = CoverageReporter(
+        [],
+        repo,
+        tmp_path / "report",
+        tiers=[("unit", info)],
+        collection=CollectionInputs(repo_root=repo),
+        ticket_spec=build_ticket_spec(r"[A-Z]{2,10}-[0-9]+", None),
+    )
+    store = await reporter.run()
+
+    (fr,) = [f for f in store.files() if f.path.name == "f.c"]
+    assert fr.lines[1].ticket == ["PROJ-9"]
+    assert fr.lines[2].ticket == ["PROJ-9"]
+    assert "PROJ-9" in store.tickets
+    assert store.tickets["PROJ-9"].commits
+
+
+# ── Task 14: synthetic (no ticket) / (uncommitted) rows ─────────────────────
+#
+# reporter.py:721's `if ids and lineno in rec.lines` used to drop both
+# rows on the floor: attribution.attribute_tickets already returns an empty
+# id list for BOTH a no-ticket-matching commit and an uncommitted line (see
+# test_attribution.py's `test_attribute_tickets_exposes_owning_sha_...`), so
+# the falsy check silently discarded both instead of just one. These tests
+# exercise `_annotate_tickets` directly (like the two tests above) with a
+# real one-commit repo, so a reviewer reverting the sentinel assignment
+# would see one of these fail even though every ticket-configured test
+# above (which never exercises a no-ticket commit or a dirty line) stays
+# green.
+
+
+def _repo_with_no_ticket_commit(tmp_path: Path) -> Path:
+    """A one-commit repo whose message names no ticket at all."""
+    repo = tmp_path / "no_ticket_sut"
+    repo.mkdir()
+    _git(repo, tmp_path, "init", "-q")
+    (repo / "a.c").write_text("one\ntwo\n")
+    _git(repo, tmp_path, "add", "-A")
+    _git(repo, tmp_path, "commit", "-q", "-m", "chore: bump dependency")
+    return repo
+
+
+def test_reporter_assigns_no_ticket_sentinel_for_unmatched_commit(tmp_path):
+    """A line whose owning commit matched no ticket pattern lands in the
+    synthetic `(no ticket)` row instead of being dropped."""
+    from otto.coverage.attribution import NO_TICKET
+    from otto.coverage.tickets import build_ticket_spec
+
+    repo = _repo_with_no_ticket_commit(tmp_path)
+    store = _store_with_lines(repo)
+    reporter = _reporter_with(ticket_spec=build_ticket_spec(r"[A-Z]{2,10}-[0-9]+", None))
+
+    reporter._annotate_tickets(store, repo)
+
+    (rec,) = list(store.files())
+    assert rec.lines[1].ticket == [NO_TICKET]
+    assert rec.lines[2].ticket == [NO_TICKET]
+    assert NO_TICKET in store.tickets
+    assert store.tickets[NO_TICKET].url is None
+    assert store.tickets[NO_TICKET].commits  # the real sha that matched no ticket
+
+
+def test_reporter_assigns_uncommitted_sentinel_and_does_not_inherit_prior_ticket(tmp_path):
+    """A working-tree edit lands in `(uncommitted)` — and, critically, does
+    NOT inherit the ticket of whoever last committed that line, which is
+    exactly the bug the sentinel exists to prevent (attribution.py's
+    `_apply_worktree_overlay` docstring)."""
+    from otto.coverage.attribution import UNCOMMITTED_TICKET
+    from otto.coverage.tickets import build_ticket_spec
+
+    repo = _repo_with_ticket_commit(tmp_path)  # commits "one\ntwo\n" as "seed PROJ-7"
+    (repo / "a.c").write_text("one\nDIRTY\n")  # line 2 edited, never committed
+    store = _store_with_lines(repo)
+    reporter = _reporter_with(ticket_spec=build_ticket_spec(r"[A-Z]{2,10}-[0-9]+", None))
+
+    reporter._annotate_tickets(store, repo)
+
+    (rec,) = list(store.files())
+    assert rec.lines[1].ticket == ["PROJ-7"]  # untouched line: still committed to PROJ-7
+    assert rec.lines[2].ticket == [UNCOMMITTED_TICKET]  # NOT ["PROJ-7"]
+    assert UNCOMMITTED_TICKET in store.tickets
+    assert store.tickets[UNCOMMITTED_TICKET].url is None
+
+
+# ── Final-review fix: no TicketRecord for a ticket owning zero coverable lines ──
+#
+# `_annotate_tickets`'s `line_counts` is keyed by each file's *highest*
+# stored line number (`max(rec.lines)`), not by which specific lines are
+# coverable — a covered file storing only lines {1, 3} still asks
+# `attribute_tickets` to walk lines 1-3, so a commit whose only change is
+# line 2 (the gap) gets attributed and its ticket lands in `commits`, even
+# though line 2 itself is filtered out by `if lineno not in rec.lines`
+# below and so never reaches any `LineRecord`. Left unfixed, that ticket
+# would still get a `TicketRecord` in `store.tickets` — appearing in the
+# tickets page and the `tickets.json` export with zero owned lines.
+
+
+def _repo_with_a_non_coverable_gap(tmp_path: Path) -> tuple[Path, str, str]:
+    """Two commits against a 3-line file; only the second touches line 2.
+
+    Returns ``(repo, first_sha, second_sha)``. Callers register a store
+    that knows about lines 1 and 3 only, leaving line 2 as the "gap" a
+    real coverage tool would never report (a blank line, a comment, a
+    brace-only line).
+    """
+    repo = tmp_path / "gap_sut"
+    repo.mkdir()
+    _git(repo, tmp_path, "init", "-q")
+    (repo / "a.c").write_text("one\ntwo\nthree\n")
+    _git(repo, tmp_path, "add", "-A")
+    _git(repo, tmp_path, "commit", "-q", "-m", "seed PROJ-1")
+    first = head_commit(repo)
+
+    (repo / "a.c").write_text("one\nCHANGED\nthree\n")
+    _git(repo, tmp_path, "add", "-A")
+    _git(repo, tmp_path, "commit", "-q", "-m", "edit PROJ-2")
+    second = head_commit(repo)
+
+    return repo, first, second
+
+
+def test_ticket_owning_only_a_non_coverable_line_gets_no_ticket_record(tmp_path):
+    """PROJ-2 touched only the gap line (2) — it must not surface as a ticket."""
+    from otto.coverage.store.model import CoverageStore
+    from otto.coverage.tickets import build_ticket_spec
+
+    repo, first, _second = _repo_with_a_non_coverable_gap(tmp_path)
+    store = CoverageStore(tier_order=["unit"])
+    record = store.get_or_create_file(repo / "a.c")
+    record.get_or_create_line(1)
+    record.get_or_create_line(3)  # line 2 deliberately absent: the gap
+    reporter = _reporter_with(ticket_spec=build_ticket_spec(r"[A-Z]{2,10}-[0-9]+", None))
+
+    reporter._annotate_tickets(store, repo)
+
+    (rec,) = list(store.files())
+    assert rec.lines[1].ticket == ["PROJ-1"]
+    assert rec.lines[3].ticket == ["PROJ-1"]  # untouched by the line-2-only edit
+    assert "PROJ-1" in store.tickets
+    assert store.tickets["PROJ-1"].commits == [first]
+    assert "PROJ-2" not in store.tickets

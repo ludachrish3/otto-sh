@@ -8,6 +8,7 @@ settings-parse time; this module re-reads the raw dict at report time.
 from typing import Any
 
 from .store.model import Thresholds
+from .tickets import TicketSpec, load_ticket_spec  # noqa: F401 — re-export for reporter
 
 
 def load_report_thresholds(cov_config: dict[str, Any]) -> Thresholds:

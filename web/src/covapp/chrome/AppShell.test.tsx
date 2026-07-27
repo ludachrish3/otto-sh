@@ -4,7 +4,7 @@
 // ShortcutsDialog. AppShell reads tier/state legend data straight off
 // window.__OTTO_COV__ (getIndex()) rather than via props — the same fixture
 // technique data.test.ts uses.
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
@@ -42,6 +42,17 @@ describe("AppShell", () => {
     expect(screen.getByTestId("breadcrumbs")).toBeTruthy();
     expect(screen.getByText("acme-fw", { selector: "h1" })).toBeTruthy();
     expect(screen.getByTestId("page-meta").textContent).toBe("42 files");
+  });
+
+  // Task 10: neither the Runs nor the Tickets nav link existed before this
+  // task — both are added together here (see AppShell.tsx's header nav
+  // comment) so `#/tickets` is actually reachable from the app chrome, not
+  // just from a hand-typed hash.
+  it("renders top-level nav links to Runs and Tickets", () => {
+    renderShell();
+    const nav = screen.getByTestId("app-nav");
+    expect(within(nav).getByTestId("nav-runs").getAttribute("href")).toBe("#/runs");
+    expect(within(nav).getByTestId("nav-tickets").getAttribute("href")).toBe("#/tickets");
   });
 
   it("renders children in the page body", () => {
@@ -195,6 +206,127 @@ describe("AppShell", () => {
       nightlyItem = screen.getByTestId("menu-focus-nightly-full");
       expect(allItem.querySelector("svg")).toBeTruthy();
       expect(nightlyItem.querySelector("svg")).toBeNull();
+    });
+  });
+
+  // Task 12: a SECOND, independent app-bar chip + ⋮ menu switcher for the
+  // ticket-context (denominator) filter — same anatomy as `describe("focus"`
+  // above, deliberately never sharing state with it (a ticket has no tier of
+  // its own, so its chip/menu rows carry no dot color, unlike a context's).
+  describe("ticket", () => {
+    beforeEach(() => {
+      window.__OTTO_COV__ = makeIndex({
+        stamp: "stamp-ticket",
+        tickets: [
+          {
+            id: "PROJ-1",
+            url: null,
+            owned: 10,
+            covered: 5,
+            uncovered: 5,
+            per_tier: {},
+            chunk: "PROJ-1",
+          },
+          {
+            id: "PROJ-2",
+            url: null,
+            owned: 4,
+            covered: 4,
+            uncovered: 0,
+            per_tier: {},
+            chunk: "PROJ-2",
+          },
+        ],
+      });
+    });
+
+    it("no ticket chip when nothing is pinned", () => {
+      renderShell();
+      expect(screen.queryByTestId("ticket-chip")).toBeNull();
+    });
+
+    it("⋮ menu shows 'All tickets' checked by default, and one item per ticket", async () => {
+      const user = userEvent.setup();
+      renderShell();
+      await user.click(screen.getByTestId("appbar-menu"));
+      expect((await screen.findByTestId("menu-ticket-all")).querySelector("svg")).toBeTruthy();
+      expect(screen.getByTestId("menu-ticket-PROJ-1").querySelector("svg")).toBeNull();
+      expect(screen.getByTestId("menu-ticket-PROJ-2")).toBeTruthy();
+    });
+
+    it("clicking a ticket in the menu pins it, showing the chip", async () => {
+      const user = userEvent.setup();
+      renderShell();
+      await user.click(screen.getByTestId("appbar-menu"));
+      await user.click(screen.getByTestId("menu-ticket-PROJ-1"));
+
+      const chip = await screen.findByTestId("ticket-chip");
+      expect(chip.textContent).toContain("PROJ-1");
+    });
+
+    it("chip ✕ clears the ticket pin, hiding the chip", async () => {
+      const user = userEvent.setup();
+      renderShell();
+      await user.click(screen.getByTestId("appbar-menu"));
+      await user.click(screen.getByTestId("menu-ticket-PROJ-1"));
+      await screen.findByTestId("ticket-chip");
+
+      await user.click(screen.getByTestId("ticket-clear"));
+      expect(screen.queryByTestId("ticket-chip")).toBeNull();
+    });
+
+    it("the ✓ moves in the menu as the ticket selection changes", async () => {
+      const user = userEvent.setup();
+      renderShell();
+      await user.click(screen.getByTestId("appbar-menu"));
+      await user.click(screen.getByTestId("menu-ticket-PROJ-1"));
+
+      await user.click(screen.getByTestId("appbar-menu"));
+      expect(screen.getByTestId("menu-ticket-all").querySelector("svg")).toBeNull();
+      expect(screen.getByTestId("menu-ticket-PROJ-1").querySelector("svg")).toBeTruthy();
+
+      await user.click(screen.getByTestId("menu-ticket-all"));
+      await user.click(screen.getByTestId("appbar-menu"));
+      expect(screen.getByTestId("menu-ticket-all").querySelector("svg")).toBeTruthy();
+      expect(screen.getByTestId("menu-ticket-PROJ-1").querySelector("svg")).toBeNull();
+    });
+
+    // The headline compose scenario (spec): both an app-bar context chip AND
+    // a ticket chip can be pinned simultaneously, neither displacing the
+    // other.
+    it("shows BOTH a focus chip and a ticket chip at once — pinning one never displaces the other", async () => {
+      window.__OTTO_COV__ = makeIndex({
+        stamp: "stamp-ticket",
+        runs: [makeRun({ id: 1, label: "manual run", tier: "system" })],
+        tickets: [
+          {
+            id: "PROJ-1",
+            url: null,
+            owned: 10,
+            covered: 5,
+            uncovered: 5,
+            per_tier: {},
+            chunk: "PROJ-1",
+          },
+        ],
+      });
+      const user = userEvent.setup();
+      renderShell();
+      await user.click(screen.getByTestId("appbar-menu"));
+      await user.click(screen.getByTestId("menu-focus-manual run"));
+      await user.click(screen.getByTestId("appbar-menu"));
+      await user.click(screen.getByTestId("menu-ticket-PROJ-1"));
+
+      expect(screen.getByTestId("focus-chip").textContent).toContain("manual run");
+      expect(screen.getByTestId("ticket-chip").textContent).toContain("PROJ-1");
+    });
+
+    it("⋮ menu renders no ticket section when no tickets are attributed", async () => {
+      window.__OTTO_COV__ = makeIndex({ stamp: "stamp-ticket", tickets: [] });
+      const user = userEvent.setup();
+      renderShell();
+      await user.click(screen.getByTestId("appbar-menu"));
+      expect(screen.queryByTestId("menu-ticket-all")).toBeNull();
     });
   });
 });

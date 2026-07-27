@@ -106,7 +106,7 @@ class AnchorResolver:
     def _build_fallback_index(self, files: dict[str, CaptureFileCov]) -> dict[str, AnchorResult]:
         """Resolve every file's blob fallback with O(1) git spawns (spec §9 amendment).
 
-        Same semantics as :meth:`_resolve_by_blob` (fast-path blob match →
+        Same semantics as ``_resolve_by_blob`` (fast-path blob match →
         blob diff → unverifiable) but batched: files with ``fc.blob is
         None`` are left out of the index for the lazy path to handle;
         files whose current path is missing are unverifiable immediately.
@@ -117,7 +117,7 @@ class AnchorResolver:
         trees — the base_commit resolvability is gone here (that's why
         we're in this branch at all), so there is no per-file
         ``blob_sha(rev=base)`` rescue to replicate: it would fail for
-        every file the same way it does in :meth:`_resolve_by_blob`.
+        every file the same way it does in ``_resolve_by_blob``.
         """
         index: dict[str, AnchorResult] = {}
         candidates: dict[str, Path] = {}

@@ -23,6 +23,14 @@ See the :doc:`/guide/coverage` and :doc:`/guide/hosts/index` documentation.
 ``--project-name STR``
     Title shown in the HTML report header.
 
+``--tickets-json PATH``
+    Also write a machine-readable per-ticket coverage summary (``format: 1``,
+    versioned independently of the internal ``store.json``) to this path.
+    Every file path in it is repo-relative posix (never an absolute,
+    machine-specific path), so it diffs cleanly across checkouts. Requires
+    ``[coverage.tickets]`` to have attributed at least one ticket; fails
+    loud otherwise (exit 1) rather than writing an empty file.
+
 ``--tier NAME[=PATH]``
     Repeatable.  Add a coverage tier to the report.  ``NAME`` is a
     free-form label (e.g. ``unit``, ``manual``, ``integration``); ``PATH``
@@ -113,6 +121,7 @@ if TYPE_CHECKING:
 
     from ..config.repo import Repo
     from ..coverage.store.model import Thresholds
+    from ..coverage.tickets import TicketSpec
     from ..coverage.tiers import TierConfig
     from ..host.remote_host import RemoteHost
     from ..host.unix_host import UnixHost
@@ -181,15 +190,17 @@ def _parse_tier_specs(raw_tiers: list[str]) -> list[TierSpec]:
 
 
 def _resolve_cov_settings() -> (
-    "tuple[Path | None, list[TierConfig] | None, list[str], Thresholds | None]"
+    "tuple[Path | None, list[TierConfig] | None, list[str], Thresholds | None, TicketSpec | None]"
 ):
-    """Resolve settings for ``report``: ``(repo_root, tier_configs, extra_markers, thresholds)``.
+    """Resolve settings for ``report``.
+
+    Returns ``(repo_root, tier_configs, extra_markers, thresholds, ticket_spec)``.
 
     Uses the same first-repo-with-``[coverage]`` selection as ``get`` and
     ``clean`` (via :func:`otto.coverage.config.get_cov_repo`).  Returns
-    ``(None, None, [], None)`` when no coverage section is configured — the
-    git-less fallback that keeps ``otto cov report`` working exactly as
-    before on a tree with no ``[coverage]`` settings.
+    ``(None, None, [], None, None)`` when no coverage section is configured
+    — the git-less fallback that keeps ``otto cov report`` working exactly
+    as before on a tree with no ``[coverage]`` settings.
 
     ``extra_markers`` comes from ``[coverage.exclusions].markers`` — extra
     exclusion-marker strings (spec §8) forwarded to the renderer's per-file
@@ -197,16 +208,22 @@ def _resolve_cov_settings() -> (
 
     ``thresholds`` comes from ``[coverage.report]`` — render thresholds
     forwarded to the reporter/renderer (:func:`otto.coverage.report_config.load_report_thresholds`).
+
+    ``ticket_spec`` comes from ``[coverage.tickets]`` — the compiled
+    commit-message ticket pattern (:func:`otto.coverage.tickets.load_ticket_spec`).
+    ``None`` when the table is absent is the feature-absent signal: the
+    reporter runs no git log walk and the report is unchanged.
     """
     from ..config import get_repos
     from ..coverage.config import get_cov_config, get_cov_repo
     from ..coverage.report_config import load_report_thresholds
+    from ..coverage.tickets import load_ticket_spec
     from ..coverage.tiers import load_tiers
 
     repos = get_repos()
     cov_repo = get_cov_repo(repos)
     if cov_repo is None:
-        return None, None, [], None
+        return None, None, [], None, None
     cov_config = get_cov_config(repos)
     extra_markers = list(cov_config.get("exclusions", {}).get("markers") or [])
     return (
@@ -214,6 +231,7 @@ def _resolve_cov_settings() -> (
         load_tiers(cov_config, cov_repo.sut_dir),
         extra_markers,
         load_report_thresholds(cov_config),
+        load_ticket_spec(cov_config),
     )
 
 
@@ -244,6 +262,16 @@ def report(
             help="Title shown in the HTML report header.",
         ),
     ] = "Coverage Report",
+    tickets_json: Annotated[
+        Path | None,
+        typer.Option(
+            "--tickets-json",
+            help=(
+                "Also write a machine-readable per-ticket coverage summary to this "
+                "path. Requires [coverage.tickets]."
+            ),
+        ),
+    ] = None,
     prefix: Annotated[
         Path | None,
         typer.Option(
@@ -288,6 +316,7 @@ def report(
     tier_configs: "list[TierConfig] | None" = None
     extra_markers: list[str] = []
     thresholds: "Thresholds | None" = None
+    ticket_spec: "TicketSpec | None" = None
     if tier:
         try:
             tier_specs: list[TierSpec] = _parse_tier_specs(tier)
@@ -295,11 +324,12 @@ def report(
             logger.exception("Bad tier parameter")
             raise typer.Exit(1) from e
         # --tier never resolves settings (see precedence rule above), so
-        # thresholds stays None here — run_coverage_report defaults to
-        # Thresholds()'s 80.0/70.0.
+        # thresholds/ticket_spec stay None here — run_coverage_report
+        # defaults to Thresholds()'s 80.0/70.0 and runs no ticket
+        # attribution (it has no git repo_root to walk).
     else:
         tier_specs = [(TIER_SYSTEM, None)]
-        repo_root, tier_configs, extra_markers, thresholds = _resolve_cov_settings()
+        repo_root, tier_configs, extra_markers, thresholds, ticket_spec = _resolve_cov_settings()
 
     cov_dirs = [d / "cov" for d in output_dirs]
     report_dir = report_dir.resolve()
@@ -317,6 +347,7 @@ def report(
                 tier_configs=tier_configs,
                 extra_markers=extra_markers,
                 thresholds=thresholds,
+                ticket_spec=ticket_spec,
                 prefix=prefix,
             )
         )
@@ -377,6 +408,45 @@ def report(
         store.file_count(),
     )
     logger.info("Report: %s", report_dir / "index.html")
+
+    if tickets_json is not None:
+        # Lazy: otto.version and otto.coverage.ticket_export are cheap, but
+        # kept function-local to match every other coverage import in this
+        # command (see the `report`/`get` docstrings' import-budget notes).
+        from ..coverage.ticket_export import make_generated_stamp, write_ticket_export
+        from ..version import get_version
+
+        if repo_root is None:
+            # The --tier legacy path and the no-[coverage]-section fallback
+            # both leave repo_root unset here — and both also leave
+            # ticket_spec unset, so no attribution ever ran and
+            # store.tickets is always empty in this branch too. Same
+            # message as the empty-store ValueError below, raised directly
+            # rather than handing a None repo_root to write_ticket_export
+            # (which requires one to emit repo-relative paths).
+            logger.error(
+                "no ticket data in this report — [coverage.tickets] must be configured "
+                "for --tickets-json"
+            )
+            raise typer.Exit(1)
+
+        try:
+            write_ticket_export(
+                store,
+                tickets_json,
+                repo_root=repo_root,
+                project=project_name,
+                otto_version=get_version(),
+                generated=make_generated_stamp(),
+            )
+        except ValueError as e:
+            # --tickets-json was explicitly requested — an empty/absent
+            # ticket table is a loud, CI-visible failure here (unlike
+            # `otto test`'s never-fail-a-successful-run policy for its
+            # optional post-run tail).
+            logger.error(escape_markup(str(e)))  # noqa: TRY400 — deliberately no traceback: clean cause line
+            raise typer.Exit(1) from e
+        logger.info("Ticket export: %s", tickets_json)
 
 
 # `report` is purely local and must never create a per-invocation output dir

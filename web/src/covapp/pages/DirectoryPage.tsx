@@ -6,7 +6,7 @@
 // AppShell's ⋮ menu (Task 3), already wired.
 
 import { File02, Folder } from "@untitledui/icons";
-import type { ReactNode } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 
 import { Disclosure } from "@/ui/Disclosure";
 import { type TreeColumn, TreeView } from "@/ui/TreeView";
@@ -14,10 +14,13 @@ import { cx } from "@/utils/cx";
 
 import { AppShell } from "../chrome/AppShell";
 import { groupContexts } from "../contexts";
+import { loadTicketChunk, StampMismatchError } from "../data";
 import { useFocus, useHashLocation } from "../focus";
 import { crumbsFor, encodePath, fmtCount, focusedTreeRow, tierRows } from "../format";
 import { findNode, fmtPct, PCT_TEXT, type PctClass, pct, pctClass } from "../stats";
-import type { DirNode, FileNode, IndexPayload, Stats } from "../types";
+import { scopeTreeToTicket, ticketChunkToFileLines, ticketTreeRow } from "../tickets";
+import type { DirNode, FileNode, IndexPayload, Stats, TicketChunk } from "../types";
+import { GuardScreen } from "./GuardScreen";
 
 const NAME_COLUMN: TreeColumn = {
   id: "name",
@@ -191,12 +194,65 @@ function NaCell() {
  * belongs to exactly one tier, so those columns have nothing of their own
  * to show, but read as a real "0.0%" rather than a blank/na cell — spec-
  * pinned); Branch % becomes `NaCell` ("—", no bar — branch isn't tracked
- * per-run at all). Flags stay node-wide (not context-scoped) either way. */
-function renderCellsFor(index: IndexPayload, focusedLabel: string | null, focusedTier?: string) {
+ * per-run at all). Flags stay node-wide (not context-scoped) either way.
+ *
+ * `ticketActive` (Task 12): when a ticket is pinned and NO context is
+ * focused, `row`'s `stats` is already the TICKET-SCOPED one (the caller
+ * builds `roots` from the scoped tree, not the original) — Lines/Line % read
+ * it directly, same shape as the plain unfocused cells below. Branch % and
+ * every per-tier column become `NaCell` ("no data") rather than dividing a
+ * whole-file branch/per-tier count by the new, much smaller ticket-scoped
+ * total: neither is tracked per-ticket at all (a `TicketChunk` carries only
+ * owned/covered LINE counts), so showing a real-looking percentage computed
+ * from mismatched numerator/denominator sources would read as a correctness
+ * bug, not an approximation — the same reasoning `focusedLabel`'s branch
+ * column above already applies for the identical "not tracked at this
+ * granularity" reason. When a context IS ALSO focused (`focusedLabel !==
+ * null`) while a ticket is pinned, composing the two is declined the same
+ * honest way — the `ticketActive` check nested inside the `focusedLabel`
+ * branch below returns all-`NaCell` rather than computing anything; see
+ * its own "Fix round 1" comment for why (`stats.ctx_lines` is a
+ * whole-file numerator with no per-line ticket+run cross-tab to restrict
+ * it to the ticket's owned lines, so dividing it by the ticket-scoped
+ * `stats.lines.total` would read as a correctness bug, not an
+ * approximation). */
+function renderCellsFor(
+  index: IndexPayload,
+  focusedLabel: string | null,
+  focusedTier: string | undefined,
+  ticketActive: boolean,
+) {
   return (row: Row): ReactNode[] => {
     const stats = rowStats(row);
 
     if (focusedLabel !== null) {
+      // Fix round 1 (task-12-report.md, IMPORTANT): when a ticket is ALSO
+      // active, `stats.lines.total` is the TICKET-scoped denominator (the
+      // caller builds `roots` from the scoped tree), but `stats.ctx_lines`
+      // is still a whole-file numerator — no per-line ticket+run cross-tab
+      // exists at tree granularity to restrict it to the ticket's owned
+      // lines. Dividing the two produced a plausible-looking but
+      // out-of-range percentage (a real fixture: 10 whole-file ctx hits
+      // over a 3-line ticket scope read "333.3%") — decline honestly
+      // instead, the same "not tracked at this granularity" treatment
+      // Branch % already gets on its own, one line below. Contrast
+      // FilePage's `ticketFileRow`, which recomputes this EXACTLY under
+      // the same compose because it already has one file's full per-line
+      // data — this decline is specific to the tree's coarser data, not a
+      // general "compose is unsupported" rule.
+      if (ticketActive) {
+        const cells: ReactNode[] = [
+          <NaCell key="lines" />,
+          <NaCell key="line" />,
+          <NaCell key="branch" />,
+        ];
+        for (const tier of index.tier_order) {
+          cells.push(<NaCell key={`tier:${tier}`} />);
+        }
+        cells.push(<FlagsCell key="flags" flags={stats.flags} stateColors={index.state_colors} />);
+        return cells;
+      }
+
       const hit = stats.ctx_lines[focusedLabel] ?? 0;
       const total = stats.lines.total;
       const focusedPct = pct(hit, total);
@@ -213,6 +269,25 @@ function renderCellsFor(index: IndexPayload, focusedLabel: string | null, focuse
             {fmtPct(tier === focusedTier ? focusedPct : 0)}
           </span>,
         );
+      }
+      cells.push(<FlagsCell key="flags" flags={stats.flags} stateColors={index.state_colors} />);
+      return cells;
+    }
+
+    if (ticketActive) {
+      const cells: ReactNode[] = [
+        <span key="lines" className="tabular-nums">
+          {stats.lines.hit}/{stats.lines.total}
+        </span>,
+        <PctCell
+          key="line"
+          p={pct(stats.lines.hit, stats.lines.total)}
+          thresholds={index.thresholds}
+        />,
+        <NaCell key="branch" />,
+      ];
+      for (const tier of index.tier_order) {
+        cells.push(<NaCell key={`tier:${tier}`} />);
       }
       cells.push(<FlagsCell key="flags" flags={stats.flags} stateColors={index.state_colors} />);
       return cells;
@@ -309,9 +384,73 @@ export interface DirectoryPageProps {
   segments: string[];
 }
 
+/** All-zero `Stats` for the "ticket touched nothing in this subtree" case
+ * (`scopeTreeToTicket` returned `null`) — a real, render-safe `DirNode`
+ * stand-in (0 dirs, 0 files) rather than special-casing `null` through every
+ * downstream read (`roots`, `countFiles`, the StatsCard row). */
+const EMPTY_SCOPE_STATS: Stats = {
+  lines: { total: 0, hit: 0, per_tier: {} },
+  branches: { total: 0, hit: 0, per_tier: {} },
+  flags: { stale: 0, aging: 0, excluded: 0 },
+  ctx_lines: {},
+};
+
+type TicketChunkState =
+  | { status: "idle" }
+  | { status: "loading" }
+  | { status: "error"; reason: "stamp" | "other" }
+  | { status: "ready"; chunk: TicketChunk };
+
 export function DirectoryPage({ index, segments }: DirectoryPageProps) {
   const [, navigate] = useHashLocation();
-  const { focus } = useFocus();
+  const { focus, ticket } = useFocus();
+
+  // Ticket context (Task 12): resolved/loaded here, unconditionally, BEFORE
+  // the `node === null` guard below — same reasoning as `useFocus()` itself
+  // (Rules of Hooks: this component's own guard can return early on some
+  // renders but not others, so every hook must run regardless of whether
+  // `node` resolves this time).
+  const ticketSummary = ticket ? index.tickets.find((t) => t.id === ticket) : undefined;
+  const [ticketChunkState, setTicketChunkState] = useState<TicketChunkState>({ status: "idle" });
+
+  // Keyed on the CHUNK NAME, not the `ticketSummary` object (a fresh
+  // reference every render via `.find`) — re-fetches only when the pinned
+  // ticket actually changes, and `loadTicketChunk`'s own cache (data.ts)
+  // means re-mounting on a different directory route while the SAME ticket
+  // stays pinned costs no extra request either.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentionally keyed on the chunk name alone (see comment above)
+  useEffect(() => {
+    if (!ticketSummary) {
+      setTicketChunkState({ status: "idle" });
+      return;
+    }
+    let cancelled = false;
+    setTicketChunkState({ status: "loading" });
+    loadTicketChunk(ticketSummary.chunk)
+      .then((chunk) => {
+        if (!cancelled) setTicketChunkState({ status: "ready", chunk });
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) {
+          setTicketChunkState({
+            status: "error",
+            reason: err instanceof StampMismatchError ? "stamp" : "other",
+          });
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [ticketSummary?.chunk]);
+
+  // A stamp mismatch means the report on disk changed since the index
+  // loaded (design §5) — the WHOLE report is stale, not just the ticket
+  // scope, so this guard-screens the entire page, mirroring FilePage.tsx/
+  // TicketsPage.tsx's contract for the identical error.
+  if (ticketChunkState.status === "error" && ticketChunkState.reason === "stamp") {
+    return <GuardScreen reason="report changed on disk" />;
+  }
+
   const node = findNode(index.tree, segments);
   // App.tsx only mounts DirectoryPage once findNode(...) already resolved a
   // DirNode for these segments — this guard is defensive, not a real route.
@@ -323,12 +462,36 @@ export function DirectoryPage({ index, segments }: DirectoryPageProps) {
   // resolve here just renders unfocused instead of crashing.
   const focusedContext = focus ? groupContexts(index).find((c) => c.label === focus) : undefined;
 
+  const ticketLoading = ticketSummary !== undefined && ticketChunkState.status === "loading";
+  const ticketOtherError =
+    ticketSummary !== undefined &&
+    ticketChunkState.status === "error" &&
+    ticketChunkState.reason === "other";
+  const ticketReady = ticketSummary !== undefined && ticketChunkState.status === "ready";
+
+  // Denominator scoping (Task 12, spec §6.3): keeps only the files/dirs the
+  // pinned ticket touched, recomputing each one's line total/hit against the
+  // ticket's OWN lines — never a passthrough of the whole-repo numbers. A
+  // `null` scopeTreeToTicket result (the ticket touched nothing in THIS
+  // subtree) degrades to the all-zero empty node rather than falling back
+  // to the unscoped tree — falling back would silently show "everything",
+  // exactly the failure mode a denominator filter must never produce.
+  let scopedNode: DirNode | null = null;
+  if (ticketReady && ticketChunkState.status === "ready") {
+    const { lines, hits } = ticketChunkToFileLines(ticketChunkState.chunk);
+    scopedNode = scopeTreeToTicket(node, lines, hits);
+  }
+  const effectiveNode: DirNode = ticketReady
+    ? (scopedNode ?? { name: node.name, dirs: [], files: [], stats: EMPTY_SCOPE_STATS })
+    : node;
+  const hiddenCount = ticketReady ? countFiles(node) - countFiles(effectiveNode) : 0;
+
   const columns = buildColumns(index);
   const roots: Row[] = [
-    ...node.dirs.map((d) =>
+    ...effectiveNode.dirs.map((d) =>
       dirRow(d, segments.length > 0 ? `${segments.join("/")}/${d.name}` : d.name),
     ),
-    ...node.files.map((f) => fileRow(f)),
+    ...effectiveNode.files.map((f) => fileRow(f)),
   ];
 
   function onNavigate(row: Row): void {
@@ -339,6 +502,7 @@ export function DirectoryPage({ index, segments }: DirectoryPageProps) {
   const isRoot = segments.length === 0;
   const title = isRoot ? index.project_name : `${node.name}/`;
   const scope = isRoot ? "whole repo" : `${segments.join("/")}/`;
+  const scopeWithTicket = ticketReady ? `ticket: ${ticketSummary?.id}` : scope;
 
   return (
     <AppShell
@@ -351,31 +515,69 @@ export function DirectoryPage({ index, segments }: DirectoryPageProps) {
         </>
       }
       stats={{
-        scope: focusedContext ? `focused: ${focusedContext.label}` : scope,
+        scope: focusedContext
+          ? ticketReady
+            ? `focused: ${focusedContext.label} · ticket: ${ticketSummary?.id}`
+            : `focused: ${focusedContext.label}`
+          : scopeWithTicket,
         title: "Coverage — this node and below",
+        // Fix round 1 (task-12-report.md, IMPORTANT): when BOTH a context
+        // and a ticket are active, `ticketTreeRow(..., focusedContext)`
+        // (not `focusedTreeRow`) — its `ctx` argument makes it decline the
+        // Line cell honestly (see its own doc comment) instead of dividing
+        // a whole-file ctx numerator by the ticket-scoped denominator.
         rows: focusedContext
-          ? focusedTreeRow(index, node.stats, focusedContext)
-          : tierRows(index, node.stats),
+          ? ticketReady
+            ? ticketTreeRow(effectiveNode, ticketSummary?.id ?? "", focusedContext)
+            : focusedTreeRow(index, effectiveNode.stats, focusedContext)
+          : ticketReady
+            ? ticketTreeRow(effectiveNode, ticketSummary?.id ?? "")
+            : tierRows(index, node.stats),
         thresholds: index.thresholds,
-        keyColumnLabel: focusedContext ? "Context" : "Tier",
+        keyColumnLabel: ticketReady ? "Ticket" : focusedContext ? "Context" : "Tier",
       }}
     >
       <div
         data-testid="directory-tree"
         className="overflow-hidden rounded-xl border border-secondary shadow-xs"
       >
-        <TreeView
-          roots={roots}
-          getChildren={rowChildren}
-          getRowId={rowId}
-          columns={columns}
-          renderName={renderName}
-          renderCells={renderCellsFor(index, focus, focusedContext?.tier)}
-          sortValue={rowSortValue}
-          onNavigate={onNavigate}
-          defaultExpanded
-        />
+        {ticketLoading ? (
+          <div data-testid="ticket-scope-loading" className="p-8 text-center text-sm text-tertiary">
+            Loading ticket scope…
+          </div>
+        ) : ticketOtherError ? (
+          <div
+            data-testid="ticket-scope-error"
+            className="p-8 text-center text-sm text-error-primary"
+          >
+            Failed to load this ticket's scope.
+          </div>
+        ) : (
+          <TreeView
+            roots={roots}
+            getChildren={rowChildren}
+            getRowId={rowId}
+            columns={columns}
+            renderName={renderName}
+            renderCells={renderCellsFor(index, focus, focusedContext?.tier, ticketReady)}
+            sortValue={rowSortValue}
+            onNavigate={onNavigate}
+            defaultExpanded
+          />
+        )}
       </div>
+      {ticketReady && (
+        // Never silent (spec's standing requirement): a denominator filter
+        // that quietly removes files must always say so, in one plain row —
+        // shown even when `hiddenCount` is 0, so "a ticket is pinned but
+        // hid nothing here" is just as visible as "it hid 142 files".
+        // Singular/plural "file"/"files" (fix round 1, Minor): "1 files
+        // hidden" has no singular form. "1 ticket pinned" needs no such
+        // handling — exactly one ticket can ever be pinned at a time.
+        <p data-testid="ticket-scope-banner" className="mt-2 text-xs text-quaternary">
+          {fmtCount(hiddenCount)} file{hiddenCount === 1 ? "" : "s"} hidden · 1 ticket pinned
+        </p>
+      )}
       {isRoot && <RunsDisclosure index={index} />}
     </AppShell>
   );

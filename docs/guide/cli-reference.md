@@ -185,6 +185,7 @@ are applied.
 | `--cov-report-dir PATH` | `<output>/cov_report` | Override HTML report destination (implies `--cov-report`) |
 | `--overwrite-cov-report-dir` | off | Allow `--cov-report-dir` to clear an existing non-empty dir |
 | `--project-name NAME` | `Coverage Report` | Title shown in the HTML report header (with `--cov-report`) |
+| `--cov-tickets-json PATH` | not written | Also write a per-ticket coverage summary after the run (implies `--cov-report`; see {ref}`coverage-tickets-json`). Requires `[coverage.tickets]` to be configured — checked before the test run starts, so a misconfiguration fails fast rather than after a long run |
 | `--monitor / --no-monitor` | off | Collect host performance metrics for the entire run |
 | `--monitor-interval SECONDS` | `5.0` | Sampling interval for `--monitor` (minimum 1.0) |
 | `--monitor-output PATH` | `<output>/monitor.json` | Override monitor data destination (`.json` or `.db`) |
@@ -382,6 +383,7 @@ automatically.
 | ------ | ------- | ----------- |
 | `--dir, -d PATH` | `./cov_report` | Where to place the generated coverage report |
 | `--project-name NAME` | `Coverage Report` | Title shown in the HTML report header |
+| `--tickets-json PATH` | not written | Also write a per-ticket coverage summary (otto's first public export — see {ref}`coverage-tickets-json`). Requires `[coverage.tickets]` to have attributed at least one ticket; fails loud (exit 1) otherwise |
 | `--tier NAME[=PATH]` | the configured tiers | Git-less escape hatch; repeatable. See tier rules below. |
 
 ### Tiers

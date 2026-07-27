@@ -97,6 +97,17 @@ either limit is reached first.
 ``--project-name STR``
     Title shown in the HTML report header (only used with ``--cov-report``).
 
+``--cov-tickets-json PATH``
+    Also write a machine-readable per-ticket coverage summary (``format: 1``,
+    versioned independently of the internal ``store.json``) to this path.
+    Implies ``--cov-report`` (and therefore ``--cov``). ``[coverage.tickets]``
+    must be configured at all, checked immediately — an unconfigured table
+    aborts before the test run starts rather than after a long run finishes.
+    A *configured* ``[coverage.tickets]`` whose git walk simply matched no
+    commits is a different, genuinely unknowable-in-advance case: that still
+    logs a warning and skips the export after the run rather than failing it
+    (matching this command's other post-run coverage steps).
+
 ``--monitor``
     Enable host performance monitoring for the duration of the run.  Samples
     every host (or those matched by ``--monitor-hosts``) on a fixed interval
@@ -458,6 +469,17 @@ def main(  # noqa: PLR0913 — CLI command params
             help="Title shown in the HTML report header (only used with --cov-report).",
         ),
     ] = "Coverage Report",
+    cov_tickets_json: Annotated[
+        Path | None,
+        typer.Option(
+            "--cov-tickets-json",
+            help=(
+                "Also write a machine-readable per-ticket coverage summary to this "
+                "path. Implies --cov-report. Requires [coverage.tickets] to be "
+                "configured (checked before the test run starts)."
+            ),
+        ),
+    ] = None,
     monitor: Annotated[
         bool,
         typer.Option(
@@ -542,7 +564,7 @@ def main(  # noqa: PLR0913 — CLI command params
         except ValueError as e:
             raise typer.BadParameter(str(e), param_hint="--cov-dir") from e
 
-    cov_report_effective = cov_report or cov_report_dir is not None
+    cov_report_effective = cov_report or cov_report_dir is not None or cov_tickets_json is not None
     if cov_report_dir is not None:
         # Re-import is free when --cov-dir already ran the block above: Python
         # caches the module in sys.modules, so this never re-pays the
@@ -555,6 +577,25 @@ def main(  # noqa: PLR0913 — CLI command params
             )
         except ValueError as e:
             raise typer.BadParameter(str(e), param_hint="--cov-report-dir") from e
+
+    if cov_tickets_json is not None:
+        # Lazy: mirrors the --cov-dir/--cov-report-dir gates above -- a plain
+        # `otto test` (no coverage flags) never loads otto.coverage. Fail
+        # fast, before the (possibly long) test run starts: an unconfigured
+        # [coverage.tickets] is a misconfiguration knowable right now, unlike
+        # "the git walk found no matching commits" (only knowable after the
+        # report actually runs, so that case stays a post-run warning in
+        # otto.suite.run._post_run_coverage). Without this, --cov-tickets-json
+        # would run the whole suite, warn once in an unread log, exit 0, and
+        # never write the file -- a silently broken CI pipeline.
+        from ..coverage.config import get_cov_config
+        from ..coverage.tickets import load_ticket_spec
+
+        if load_ticket_spec(get_cov_config(get_repos())) is None:
+            raise typer.BadParameter(
+                "--cov-tickets-json requires [coverage.tickets] to be configured",
+                param_hint="--cov-tickets-json",
+            )
 
     monitor_effective = monitor or monitor_output is not None or monitor_hosts is not None
 
@@ -572,6 +613,7 @@ def main(  # noqa: PLR0913 — CLI command params
         cov_report_dir=cov_report_dir,
         overwrite_cov_report_dir=overwrite_cov_report_dir,
         project_name=project_name,
+        cov_tickets_json=cov_tickets_json,
         monitor=monitor_effective,
         monitor_interval=monitor_interval,
         monitor_output=monitor_output,

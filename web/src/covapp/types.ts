@@ -101,6 +101,47 @@ export interface IndexPayload {
   total_lines: number;
   /** Root dir node; `name` == `project_name`. */
   tree: DirNode;
+  /** Per-ticket rollups (commit-message attribution). Missing-line detail
+   * is deferred to each ticket's `chunk` (`cov_data/tickets/<chunk>.js`). */
+  tickets: TicketSummary[];
+  /** DEDUPED repo-truth behind the tickets page's aggregate StatsCard
+   * (design §6.1: "the overall card is repo-truth; the rows sum to
+   * more"). A line named by several tickets (§2 — the normal case, not an
+   * edge case) counts ONCE here, unlike `tickets[].owned`/`covered`, which
+   * deliberately attribute it to every ticket that names it — summing
+   * `tickets[]` is therefore NOT a substitute for this field. */
+  tickets_totals: TicketTotals;
+}
+
+/** One ticket's index-level rollup (`IndexPayload["tickets"]`). */
+export interface TicketSummary {
+  id: string;
+  url: string | null;
+  owned: number;
+  covered: number;
+  uncovered: number;
+  per_tier: Record<string, number>;
+  /** Chunk id — key into `cov_data/tickets/<chunk>.js`. */
+  chunk: string;
+}
+
+/** `IndexPayload["tickets_totals"]` — see its doc comment for why this is
+ * NOT the same as summing `TicketSummary[]`. */
+export interface TicketTotals {
+  owned: number;
+  covered: number;
+  uncovered: number;
+  per_tier: Record<string, number>;
+}
+
+/** One ticket's deferred detail chunk. */
+export interface TicketChunk {
+  /** Same value as the index payload's `stamp` at emit time — a mismatch
+   * means the report changed on disk since the index was loaded (design
+   * §5: every data chunk carries the stamp). */
+  stamp: string;
+  id: string;
+  files: { path: string; owned: number; covered: number; missing: [number, number][] }[];
 }
 
 export interface BranchJson {
@@ -118,9 +159,9 @@ export interface LineJson {
   run?: Record<string, number>;
   /** Present only when at least one run's evidence for this line was revoked. */
   stale_run?: number[];
-  /** Reserved per-line ticket slot (store v4) — emitted only when the
-   * Python side has a ticket for the line; no producer fills it yet. */
-  ticket?: string;
+  /** Ticket ids owning this line (commit-message attribution); omitted
+   * when the line has none. */
+  ticket?: string[];
 }
 
 /** `cov_data/files/<chunk>.js` payload shape (`window.__OTTO_COV_FILE__` argument). */
@@ -138,12 +179,14 @@ export interface FileChunk {
   excluded: number[];
 }
 
-// The two classic-script globals Task 1's emitted JS assigns/calls.
-// Declared here (not in data.ts) so every consumer of these wire types picks
-// up the same ambient `Window` augmentation without a second import.
+// The classic-script globals the emitted JS assigns/calls (index, per-file
+// chunks, per-ticket chunks). Declared here (not in data.ts) so every
+// consumer of these wire types picks up the same ambient `Window`
+// augmentation without a second import.
 declare global {
   interface Window {
     __OTTO_COV__?: IndexPayload;
     __OTTO_COV_FILE__?: (chunk: FileChunk) => void;
+    __OTTO_COV_TICKET__?: (id: string, chunk: TicketChunk) => void;
   }
 }
