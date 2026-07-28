@@ -190,8 +190,9 @@ on the {doc}`coverage-clang` page.
 counters from every host matched by `[coverage].hosts` — Unix hosts
 over the network, embedded boards over the console — parses them with
 the discovered toolchain, and writes one `capture.json` per board
-(anchored to `base_commit`) plus debug artifacts (the raw `.gcda` and the toolchain's
-`.gcov`/`.info` intermediates) into the command's output directory:
+(anchored to `base_commit`) plus debug artifacts (the raw `.gcda` and the
+`.info` tracefiles lcov captured from them) into the command's output
+directory:
 
 ```text
 <output>/

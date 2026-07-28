@@ -2,9 +2,8 @@
 
 `SpaRenderer` (`otto.coverage.renderer.spa_renderer`) is the reporter's only
 renderer: the report `otto cov report` emits is the covapp single-page app.
-It replaced a server-rendered Jinja `HtmlRenderer`, which was deleted —
-module, templates, and `report.css` — once the SPA became the reporter's
-renderer.
+There is no server-side templating anywhere in the path — the report is a
+static bundle plus data chunks.
 
 `SpaRenderer.render` does two things, in order:
 

@@ -158,8 +158,8 @@ top-level `thresholds` → `IndexPayload.thresholds` →
 The frontend takes thresholds as an *argument* at every call site, never as
 a module constant, so a report always colours against the cutoffs it was
 generated with — including a report opened years later from a bundle built
-against different settings. Store v4 is what made that possible; before it,
-the renderer hard-coded its own cutoffs.
+against different settings. Persisting the cutoffs in the store is what
+makes that possible.
 
 ## The store (v5)
 
@@ -192,9 +192,8 @@ logic ({doc}`merging`) keys on from an implicit board-string convention
 into an explicit field, with `label` unchanged as the display string a
 drilldown chip shows. The store gained top-level
 **`thresholds`** (`Thresholds.high`/`.medium`, sourced from
-`[coverage.report]`; see {doc}`../../../guide/coverage`) — the render
-cutoffs the renderer used to hard-code (`75.0`/`50.0`) are now
-part of the persisted contract — and **`stat_types`**, the
+`[coverage.report]`; see {doc}`../../../guide/coverage`), making the render
+cutoffs part of the persisted contract — and **`stat_types`**, the
 type-extensible stats vocabulary `("line", "branch", "decision")`:
 `decision` is a declared slot with no producer yet, so a `store.json`
 consumer should render "no decision data" rather than assume every
