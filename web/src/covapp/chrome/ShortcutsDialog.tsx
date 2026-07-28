@@ -16,6 +16,9 @@ interface Binding {
 const BINDINGS: Binding[] = [
   { keys: "?", description: "Open this dialog" },
   { keys: "Esc", description: "Close this dialog" },
+  // TicketSearch binds this via ui/shortcuts' SEARCH_BINDING, the same
+  // binding the monitor's search uses.
+  { keys: "/", description: "Pin a ticket by id" },
 ];
 
 export interface ShortcutsDialogProps {

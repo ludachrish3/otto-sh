@@ -29,7 +29,7 @@ import { cx } from "@/utils/cx";
 import { AppShell } from "../chrome/AppShell";
 import { type Context, groupContexts, searchHaystack } from "../contexts";
 import { useFocus } from "../focus";
-import { encodePath, fmtCount, focusedTreeRow, tierRows } from "../format";
+import { encodePath, fmtCount, focusedTreeRow, keyColumnLabel, tierRows } from "../format";
 import { fmtPct, PCT_TEXT, pct, pctClass } from "../stats";
 import type { IndexPayload } from "../types";
 
@@ -451,7 +451,7 @@ export function RunsPage({ index }: RunsPageProps) {
           ? focusedTreeRow(index, index.tree.stats, focusedContext)
           : tierRows(index, index.tree.stats),
         thresholds: index.thresholds,
-        keyColumnLabel: focusedContext ? "Context" : "Tier",
+        keyColumnLabel: keyColumnLabel({ ticket: false, context: focusedContext !== null }),
       }}
     >
       <div className="mb-3 flex flex-wrap items-center gap-2">

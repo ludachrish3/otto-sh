@@ -195,3 +195,17 @@ export function chunkTierRows(index: IndexPayload, chunk: FileChunk): TierStatRo
   });
   return rows;
 }
+
+/** The StatsCard key-column header, for whichever scope combination is
+ * active. Shared by every page that renders one so the composed case
+ * cannot drift: DirectoryPage and FilePage each used to build this inline
+ * and disagreed when a ticket and a context were BOTH active, one naming
+ * "Ticket" and the other "Context" for the identical `PROJ-1 · manual`
+ * cell (`ticketTreeRow`/`ticketFileRow` both label that row with both
+ * halves). Naming both is the only header that describes it. */
+export function keyColumnLabel({ ticket, context }: { ticket: boolean; context: boolean }): string {
+  if (ticket && context) return "Ticket · Context";
+  if (ticket) return "Ticket";
+  if (context) return "Context";
+  return "Tier";
+}

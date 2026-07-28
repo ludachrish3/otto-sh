@@ -10,7 +10,7 @@
 // the production `data.ts` path instead of only ever hitting a mock.
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as dataModule from "../data";
 import { _resetForTests } from "../data";
@@ -216,7 +216,7 @@ describe("TicketsPage", () => {
 
   it("expanding a row loads the ticket's chunk and shows missing lines grouped by file as ranges, each linking into the code", async () => {
     const chunk = makeTicketChunk({
-      files: [{ path: "src/a.c", owned: 4, covered: 2, missing: [[2, 3]] }],
+      files: [{ path: "src/a.c", owned: 4, covered: 2, missing: [[2, 3]], per_tier: {} }],
     });
     const spy = vi.spyOn(dataModule, "loadTicketChunk").mockResolvedValue(chunk);
     renderPage(INDEX);
@@ -279,7 +279,7 @@ describe("TicketsPage", () => {
       "PROJ-1",
       makeTicketChunk({
         stamp: INDEX.stamp,
-        files: [{ path: "src/a.c", owned: 4, covered: 2, missing: [[2, 3]] }],
+        files: [{ path: "src/a.c", owned: 4, covered: 2, missing: [[2, 3]], per_tier: {} }],
       }),
     );
 
@@ -328,11 +328,127 @@ describe("TicketsPage", () => {
       makeTicketChunk({
         id: "(no ticket)",
         stamp: sentinelChunkIndex.stamp,
-        files: [{ path: "src/a.c", owned: 4, covered: 1, missing: [[2, 4]] }],
+        files: [{ path: "src/a.c", owned: 4, covered: 1, missing: [[2, 4]], per_tier: {} }],
       }),
     );
 
     expect(await screen.findByText("src/a.c")).toBeTruthy();
     expect(screen.getByText("2-4")).toBeTruthy();
+  });
+});
+
+// Line % column (follow-up item 5b — present in the original mock, missing
+// from the shipped table). Fixtures below give the two tickets DIFFERENT
+// ratios that do NOT rank the same way as any existing column, so sorting
+// by Line % is distinguishable from sorting by owned/covered/uncovered.
+describe("line % column", () => {
+  const PCT_INDEX = makeIndex({
+    tickets: [
+      // 20% of 100 owned — most owned, most uncovered, WORST ratio.
+      {
+        id: "PROJ-BIG",
+        url: null,
+        owned: 100,
+        covered: 20,
+        uncovered: 80,
+        per_tier: { unit: 20 },
+        chunk: "big",
+      },
+      // 90% of 10 owned — least owned, least uncovered, BEST ratio.
+      {
+        id: "PROJ-SMALL",
+        url: null,
+        owned: 10,
+        covered: 9,
+        uncovered: 1,
+        per_tier: { unit: 9 },
+        chunk: "small",
+      },
+    ],
+  });
+
+  it("renders each ticket's covered/owned percentage", () => {
+    renderPage(PCT_INDEX);
+    const rows = screen.getAllByTestId("ticket-row");
+    expect(within(rows[0]).getByTestId("ticket-line-pct").textContent).toContain("20.0%");
+    expect(within(rows[1]).getByTestId("ticket-line-pct").textContent).toContain("90.0%");
+  });
+
+  it("sorts by ratio, not by any count column", async () => {
+    const user = userEvent.setup();
+    renderPage(PCT_INDEX);
+
+    await user.click(screen.getByRole("button", { name: /Line %/ }));
+
+    // A numeric column leads descending (onSort's convention), so the 90%
+    // ticket comes first. That ordering is unique to the ratio: descending
+    // by owned, covered OR uncovered would all put PROJ-BIG first instead,
+    // so this cannot pass against a sort that fell back to a count column.
+    const ids = screen.getAllByTestId("ticket-id").map((n) => n.textContent);
+    expect(ids).toEqual(["PROJ-SMALL", "PROJ-BIG"]);
+
+    await user.click(screen.getByRole("button", { name: /Line %/ }));
+    const flipped = screen.getAllByTestId("ticket-id").map((n) => n.textContent);
+    expect(flipped).toEqual(["PROJ-BIG", "PROJ-SMALL"]);
+  });
+});
+
+// Row-level pin controls (follow-up item 5c): before these, the tickets
+// page could list and sort every ticket but could not pin one — that lived
+// only in the app bar, so a reader who found the interesting ticket here had
+// to go re-find it in a separate search box.
+describe("row pin control", () => {
+  const PIN_INDEX = makeIndex({
+    tickets: [
+      {
+        id: "PROJ-1",
+        url: null,
+        owned: 10,
+        covered: 5,
+        uncovered: 5,
+        per_tier: {},
+        chunk: "PROJ-1",
+      },
+    ],
+  });
+
+  // FocusProvider resolves a pin against the GLOBAL index (window.
+  // __OTTO_COV__), not the page's prop — an id it cannot find degrades to
+  // "cleared" by design — and the app-bar chip is AppShell's, which reads
+  // the same global. So the fixture has to be installed there, not just
+  // handed to the page.
+  beforeEach(() => {
+    window.__OTTO_COV__ = PIN_INDEX;
+  });
+
+  it("pins that row's ticket, which the app-bar chip then reflects", async () => {
+    const user = userEvent.setup();
+    renderPage(PIN_INDEX);
+
+    await user.click(screen.getByTestId("ticket-pin-PROJ-1"));
+
+    expect((await screen.findByTestId("ticket-chip")).textContent).toContain("PROJ-1");
+  });
+
+  it("the control reads as pressed once its ticket is pinned", async () => {
+    const user = userEvent.setup();
+    renderPage(PIN_INDEX);
+    const pin = screen.getByTestId("ticket-pin-PROJ-1");
+    expect(pin.getAttribute("aria-pressed")).toBe("false");
+
+    await user.click(pin);
+
+    expect(screen.getByTestId("ticket-pin-PROJ-1").getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("clicking the pinned row again unpins it", async () => {
+    const user = userEvent.setup();
+    renderPage(PIN_INDEX);
+
+    await user.click(screen.getByTestId("ticket-pin-PROJ-1"));
+    await screen.findByTestId("ticket-chip");
+    await user.click(screen.getByTestId("ticket-pin-PROJ-1"));
+
+    expect(screen.queryByTestId("ticket-chip")).toBeNull();
   });
 });

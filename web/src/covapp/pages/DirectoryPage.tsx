@@ -10,14 +10,21 @@ import { type ReactNode, useEffect, useState } from "react";
 
 import { Disclosure } from "@/ui/Disclosure";
 import { type TreeColumn, TreeView } from "@/ui/TreeView";
-import { cx } from "@/utils/cx";
 
 import { AppShell } from "../chrome/AppShell";
+import { PctCell } from "../chrome/PctCell";
 import { groupContexts } from "../contexts";
 import { loadTicketChunk, StampMismatchError } from "../data";
 import { useFocus, useHashLocation } from "../focus";
-import { crumbsFor, encodePath, fmtCount, focusedTreeRow, tierRows } from "../format";
-import { findNode, fmtPct, PCT_TEXT, type PctClass, pct, pctClass } from "../stats";
+import {
+  crumbsFor,
+  encodePath,
+  fmtCount,
+  focusedTreeRow,
+  keyColumnLabel,
+  tierRows,
+} from "../format";
+import { findNode, fmtPct, pct } from "../stats";
 import { scopeTreeToTicket, ticketChunkToFileLines, ticketTreeRow } from "../tickets";
 import type { DirNode, FileNode, IndexPayload, Stats, TicketChunk } from "../types";
 import { GuardScreen } from "./GuardScreen";
@@ -113,28 +120,6 @@ function renderName(row: Row): ReactNode {
       <Icon aria-hidden className="size-4 shrink-0 text-quaternary" />
       <span className="truncate">{label}</span>
     </span>
-  );
-}
-
-// Minibar fill — the `fg-*` layer (not `text-*`) is this codebase's existing
-// vocabulary for colored bars/dots (src/topo/nodes.tsx's STATUS_SEGMENT,
-// AppShell.tsx's tier/state swatches), same green/yellow/red as PCT_TEXT.
-const PCT_BAR: Record<PctClass, string> = {
-  "pct-high": "bg-fg-success-primary",
-  "pct-mid": "bg-fg-warning-primary",
-  "pct-low": "bg-fg-error-primary",
-  "pct-na": "bg-fg-quaternary",
-};
-
-function PctCell({ p, thresholds }: { p: number | null; thresholds: IndexPayload["thresholds"] }) {
-  const cls = pctClass(p, thresholds);
-  return (
-    <div>
-      <span className={cx("font-semibold tabular-nums", PCT_TEXT[cls])}>{fmtPct(p)}</span>
-      <div className="mt-1 h-1 overflow-hidden rounded-full bg-tertiary">
-        <div className={cx("h-full rounded-full", PCT_BAR[cls])} style={{ width: `${p ?? 0}%` }} />
-      </div>
-    </div>
   );
 }
 
@@ -478,8 +463,8 @@ export function DirectoryPage({ index, segments }: DirectoryPageProps) {
   // exactly the failure mode a denominator filter must never produce.
   let scopedNode: DirNode | null = null;
   if (ticketReady && ticketChunkState.status === "ready") {
-    const { lines, hits } = ticketChunkToFileLines(ticketChunkState.chunk);
-    scopedNode = scopeTreeToTicket(node, lines, hits);
+    const { lines, hits, tiers } = ticketChunkToFileLines(ticketChunkState.chunk);
+    scopedNode = scopeTreeToTicket(node, lines, hits, tiers);
   }
   const effectiveNode: DirNode = ticketReady
     ? (scopedNode ?? { name: node.name, dirs: [], files: [], stats: EMPTY_SCOPE_STATS })
@@ -528,13 +513,13 @@ export function DirectoryPage({ index, segments }: DirectoryPageProps) {
         // a whole-file ctx numerator by the ticket-scoped denominator.
         rows: focusedContext
           ? ticketReady
-            ? ticketTreeRow(effectiveNode, ticketSummary?.id ?? "", focusedContext)
+            ? ticketTreeRow(index, effectiveNode, ticketSummary?.id ?? "", focusedContext)
             : focusedTreeRow(index, effectiveNode.stats, focusedContext)
           : ticketReady
-            ? ticketTreeRow(effectiveNode, ticketSummary?.id ?? "")
+            ? ticketTreeRow(index, effectiveNode, ticketSummary?.id ?? "")
             : tierRows(index, node.stats),
         thresholds: index.thresholds,
-        keyColumnLabel: ticketReady ? "Ticket" : focusedContext ? "Context" : "Tier",
+        keyColumnLabel: keyColumnLabel({ ticket: ticketReady, context: focusedContext !== null }),
       }}
     >
       <div

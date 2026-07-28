@@ -1,10 +1,13 @@
 """Git plumbing used by coverage captures. All repos live in tmp_path."""
 
+import ast
 import subprocess
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
 
+from otto.coverage.capture import gitio as gitio_module
 from otto.coverage.capture.gitio import (
     GitUnavailableError,
     blob_exists,
@@ -148,3 +151,68 @@ def test_blob_sha_not_a_repo_raises(tmp_path: Path) -> None:
 def test_blob_exists_not_a_repo_raises(tmp_path: Path) -> None:
     with pytest.raises(GitUnavailableError):
         blob_exists(tmp_path, "0" * 40)
+
+
+class TestEveryPorcelainCallIsPinned:
+    """Structural guard: a new porcelain git call cannot skip the config pins.
+
+    The ``_pin``/``_pin_no_index`` wrappers exist because porcelain output
+    is shaped by the invoking user's ``~/.gitconfig`` (``color.ui``,
+    ``diff.mnemonicPrefix``, ``diff.external``, ``log.showSignature``), and
+    every failure of that class found so far has been *silent* — a parser
+    that matches nothing reads as "no changes" rather than raising. Nothing
+    stopped the next ``_run(["diff", ...])`` from reappearing unpinned, and
+    no behavioural test can catch it: the whole suite would have to run
+    under a decorated global config to notice.
+
+    So this asserts on the module's own AST instead. Every call to a
+    ``_run*`` helper must pass either a ``_pin``/``_pin_no_index`` call or
+    an argv whose subcommand is *plumbing* — ``rev-parse``, ``cat-file``,
+    ``hash-object``, ``status --porcelain`` and friends have output
+    contracts git commits to keeping stable and machine-readable, which is
+    exactly what porcelain lacks.
+    """
+
+    RUNNERS: ClassVar[set[str]] = {"_run", "_run_raw", "_run_raw_input"}
+    PINNERS: ClassVar[set[str]] = {"_pin", "_pin_no_index"}
+    # Output shaped by user config -> must be pinned.
+    PORCELAIN: ClassVar[set[str]] = {"diff", "log", "show", "whatchanged", "blame", "shortlog"}
+
+    def _run_calls(self):
+        tree = ast.parse(Path(gitio_module.__file__).read_text())
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id in self.RUNNERS
+                and node.args
+            ):
+                yield node, node.args[0]
+
+    def test_at_least_one_call_of_each_kind_is_present(self):
+        """Fixture property: the walk must actually see both shapes.
+
+        Without this the guard below would pass vacuously if the AST walk
+        silently stopped matching (a renamed runner, a refactor to kwargs).
+        """
+        kinds = {type(arg).__name__ for _node, arg in self._run_calls()}
+        assert {"Call", "List"} <= kinds, f"AST walk found only {kinds}"
+
+    def test_no_porcelain_call_bypasses_the_pin(self):
+        offenders = []
+        for _node, arg in self._run_calls():
+            if isinstance(arg, ast.Call) and isinstance(arg.func, ast.Name):
+                if arg.func.id in self.PINNERS:
+                    continue
+                offenders.append(f"unrecognised argv builder {arg.func.id}()")
+                continue
+            if isinstance(arg, ast.List) and arg.elts:
+                first = arg.elts[0]
+                if isinstance(first, ast.Constant) and first.value in self.PORCELAIN:
+                    offenders.append(
+                        f"line {arg.lineno}: git {first.value} runs unpinned — "
+                        f"wrap it in _pin()/_pin_no_index()"
+                    )
+        assert not offenders, "porcelain git calls bypassing the config pin:\n" + "\n".join(
+            offenders
+        )

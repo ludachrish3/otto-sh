@@ -120,8 +120,9 @@ def test_pinning_ticket_hides_non_participating_file_row_and_shows_banner(
     expect(page.locator('[data-testid="tree-row-file:product/main.c"]')).to_be_visible()
     expect(page.locator('[data-testid="tree-row-file:product/utils.c"]')).to_be_visible()
 
-    page.locator('[data-testid="appbar-menu"]').click()
-    page.locator('[data-testid="menu-ticket-PROJ-204"]').click()
+    # Pinning moved out of the ⋮ menu into its own app-bar search box.
+    page.locator('[data-testid="ticket-search"] input').fill("PROJ-204")
+    page.locator('[data-testid="ticket-search-option-PROJ-204"]').click()
     expect(page.locator('[data-testid="ticket-chip"]')).to_contain_text("PROJ-204")
 
     expect(page.locator('[data-testid="tree-row-file:product/main.c"]')).to_be_visible()

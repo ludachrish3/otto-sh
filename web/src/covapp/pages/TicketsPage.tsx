@@ -23,29 +23,33 @@
 // it. That's exactly why the rows can overlap and not sum to the card: the
 // caption under the table says so explicitly rather than leaving it
 // implied.
-import { ChevronRight, SearchMd } from "@untitledui/icons";
+import { Bookmark, ChevronRight, SearchMd } from "@untitledui/icons";
 import { useEffect, useState } from "react";
 
 import { Input } from "@/components/base/input/input";
 import { cx } from "@/utils/cx";
 
 import { AppShell } from "../chrome/AppShell";
+import { PctCell } from "../chrome/PctCell";
 import type { TierStatRow } from "../chrome/StatsCard";
 import { loadTicketChunk, StampMismatchError } from "../data";
+import { useFocus } from "../focus";
 import { encodePath, fmtCount } from "../format";
+import { pct } from "../stats";
 import type { IndexPayload, TicketChunk, TicketSummary } from "../types";
 import { GuardScreen } from "./GuardScreen";
 
-type SortKey = "id" | "owned" | "covered" | "uncovered" | `tier:${string}`;
+type SortKey = "id" | "owned" | "covered" | "uncovered" | "line" | `tier:${string}`;
 
 // Pinned widths for the fixed columns (toggle, id, owned, covered,
-// uncovered) — one more `72px` is appended per tier (buildRowGrid, below),
-// same literal-`gridTemplateColumns`-string technique RunsPage.tsx's
+// uncovered, line %) — one more `72px` is appended per tier (buildRowGrid,
+// below), same literal-`gridTemplateColumns`-string technique RunsPage.tsx's
 // ROW_GRID uses.
-const FIXED_COLUMNS = "28px minmax(160px,1.2fr) 84px 84px 96px";
+const FIXED_COLUMNS = "28px minmax(160px,1.2fr) 84px 84px 96px 84px";
+const PIN_COLUMN = "32px";
 
 function buildRowGrid(tierOrder: string[]): string {
-  return [FIXED_COLUMNS, ...tierOrder.map(() => "72px")].join(" ");
+  return [FIXED_COLUMNS, ...tierOrder.map(() => "72px"), PIN_COLUMN].join(" ");
 }
 
 /** Aggregate StatsCard rows scoped to "all attributed lines" (design
@@ -81,6 +85,10 @@ function ticketStatsRows(index: IndexPayload): TierStatRow[] {
 function sortValue(ticket: TicketSummary, key: SortKey): number | string {
   if (key === "id") return ticket.id;
   if (key === "owned" || key === "covered" || key === "uncovered") return ticket[key];
+  // A ratio, not a count: a ticket owning 10 lines with 9 covered outranks
+  // one owning 100 with 20, which no count column orders the same way.
+  // `pct` is null for a zero denominator, which sorts as 0.
+  if (key === "line") return pct(ticket.covered, ticket.owned) ?? 0;
   return ticket.per_tier[key.slice("tier:".length)] ?? 0;
 }
 
@@ -105,7 +113,7 @@ export function fmtLineRange([start, end]: [number, number]): string {
  * otherwise ordinary `TicketSummary` rows (never `url`-linked, never
  * excluded from sort or search) all the way from `reporter.py` through
  * this page. */
-const SENTINEL_TICKET_IDS = new Set(["(no ticket)", "(uncommitted)"]);
+export const SENTINEL_TICKET_IDS = new Set(["(no ticket)", "(uncommitted)"]);
 
 /** A ticket with a `url` renders as a link; one without renders as plain
  * text (task-10 brief, verbatim). Both variants carry the SAME
@@ -267,12 +275,16 @@ function TicketRow({
   expanded,
   chunkState,
   onToggle,
+  pinned,
+  onPin,
 }: {
   ticket: TicketSummary;
   index: IndexPayload;
   expanded: boolean;
   chunkState: ChunkState | undefined;
   onToggle: () => void;
+  pinned: boolean;
+  onPin: () => void;
 }) {
   return (
     <div>
@@ -301,9 +313,28 @@ function TicketRow({
         <span className="font-semibold tabular-nums text-primary">
           {fmtCount(ticket.uncovered)}
         </span>
+        <PctCell
+          p={pct(ticket.covered, ticket.owned)}
+          thresholds={index.thresholds}
+          testId="ticket-line-pct"
+        />
         {index.tier_order.map((tier) => (
           <TierHitCell key={tier} value={ticket.per_tier[tier] ?? 0} />
         ))}
+        <button
+          type="button"
+          data-testid={`ticket-pin-${ticket.id}`}
+          aria-pressed={pinned}
+          aria-label={`${pinned ? "Unpin" : "Pin"} ${ticket.id}`}
+          title={`${pinned ? "Unpin" : "Pin"} ${ticket.id}`}
+          onClick={onPin}
+          className={cx(
+            "flex size-5 shrink-0 items-center justify-center rounded outline-none hover:bg-tertiary",
+            pinned ? "text-brand-secondary" : "text-quaternary hover:text-primary",
+          )}
+        >
+          <Bookmark aria-hidden className="size-3.5" />
+        </button>
       </div>
       {expanded && <TicketDetail state={chunkState ?? { status: "loading" }} />}
     </div>
@@ -315,6 +346,10 @@ export interface TicketsPageProps {
 }
 
 export function TicketsPage({ index }: TicketsPageProps) {
+  // Pinning from a row is the same denominator filter the app-bar search
+  // sets, so it goes through the SAME focus state — never a second source of
+  // truth for "which ticket is pinned".
+  const { ticket: pinnedTicket, setTicket } = useFocus();
   const [query, setQuery] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("uncovered");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
@@ -461,6 +496,12 @@ export function TicketsPage({ index }: TicketsPageProps) {
                 dir={sortDir}
                 onClick={() => onSort("uncovered")}
               />
+              <SortHeader
+                label="Line %"
+                active={sortKey === "line"}
+                dir={sortDir}
+                onClick={() => onSort("line")}
+              />
               {index.tier_order.map((tier) => {
                 const tierKey = `tier:${tier}` as const;
                 return (
@@ -473,6 +514,7 @@ export function TicketsPage({ index }: TicketsPageProps) {
                   />
                 );
               })}
+              <span aria-hidden />
             </div>
             {visible.map((ticket) => (
               <TicketRow
@@ -482,6 +524,8 @@ export function TicketsPage({ index }: TicketsPageProps) {
                 expanded={expandedId === ticket.id}
                 chunkState={chunks[ticket.chunk]}
                 onToggle={() => onToggle(ticket.id)}
+                pinned={pinnedTicket === ticket.id}
+                onPin={() => setTicket(pinnedTicket === ticket.id ? null : ticket.id)}
               />
             ))}
           </div>

@@ -141,7 +141,17 @@ export interface TicketChunk {
    * §5: every data chunk carries the stamp). */
   stamp: string;
   id: string;
-  files: { path: string; owned: number; covered: number; missing: [number, number][] }[];
+  files: {
+    path: string;
+    owned: number;
+    covered: number;
+    missing: [number, number][];
+    /** Per-tier count of THIS ticket's lines in THIS file that the tier
+     * hit — the breakdown `TicketSummary.per_tier` rolls up across files
+     * and therefore cannot be split back apart. Lets a ticket-scoped
+     * subtree render real tier rows instead of one aggregate row. */
+    per_tier: Record<string, number>;
+  }[];
 }
 
 export interface BranchJson {

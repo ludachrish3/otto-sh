@@ -375,7 +375,7 @@ describe("DirectoryPage", () => {
       return {
         stamp: "stamp-1",
         id: "PROJ-1",
-        files: [{ path: "src/main.c", owned: 3, covered: 2, missing: [[3, 3]] }],
+        files: [{ path: "src/main.c", owned: 3, covered: 2, missing: [[3, 3]], per_tier: {} }],
         ...overrides,
       };
     }
@@ -438,8 +438,8 @@ describe("DirectoryPage", () => {
       vi.spyOn(dataModule, "loadTicketChunk").mockResolvedValue(
         makeTicketChunk({
           files: [
-            { path: "src/main.c", owned: 3, covered: 2, missing: [[3, 3]] },
-            { path: "src/util.c", owned: 5, covered: 5, missing: [] },
+            { path: "src/main.c", owned: 3, covered: 2, missing: [[3, 3]], per_tier: {} },
+            { path: "src/util.c", owned: 5, covered: 5, missing: [], per_tier: {} },
           ],
         }),
       );
@@ -525,7 +525,7 @@ describe("DirectoryPage", () => {
     it("returns null from scopeTreeToTicket cleanly: a ticket that touches nothing in view hides every file", async () => {
       vi.spyOn(dataModule, "loadTicketChunk").mockResolvedValue(
         makeTicketChunk({
-          files: [{ path: "somewhere/else.c", owned: 4, covered: 1, missing: [] }],
+          files: [{ path: "somewhere/else.c", owned: 4, covered: 1, missing: [], per_tier: {} }],
         }),
       );
       renderPinned(

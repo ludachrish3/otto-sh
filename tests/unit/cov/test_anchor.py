@@ -2,6 +2,7 @@
 
 import subprocess
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
 
@@ -94,6 +95,81 @@ class TestFallbackPath:
         (root / "a.c").write_text("different\n")
         r = AnchorResolver(root, "0" * 40).resolve(Path("a.c"), fc)
         assert not r.verifiable
+
+
+class TestHostileGlobalGitConfig:
+    """``git diff --no-index`` runs outside any repo but still reads ``~/.gitconfig``.
+
+    The two ``--no-index`` calls behind the blob fallback were originally
+    left unpinned on the reasoning that they "run outside any repo on
+    throwaway anchor files", so no repo config could reach them. That
+    reasoning is wrong: git still loads the invoking user's **global**
+    config, and two common settings each corrupt the output these paths
+    parse.
+
+    - ``color.ui = always`` wraps every line in ANSI escapes, defeating
+      the ``diff --git``/``---``/``@@`` prefix matching in
+      :func:`~otto.coverage.capture.treediff.parse_multifile_u0` and
+      :func:`~otto.coverage.capture.remap.parse_u0_hunks`.
+    - ``diff.mnemonicPrefix = true`` renders ``1/``/``2/`` path prefixes
+      here — note the *different letters* from the ``c/``/``w/`` a repo
+      diff emits, so the pin added for repo-side diffs does not cover
+      this — and the batched index's ``<dir_a.name>/`` lookup then misses.
+
+    Both corruptions land on the same branch: a diff that fails to parse
+    yields no hunks, which ``_build_fallback_index`` and
+    ``_resolve_by_blob`` read as "absent from the ``-w`` diff, therefore
+    whitespace-only/verbatim". The file below really did change on line 2,
+    so a silent degradation reports stale manual coverage as still valid.
+
+    The hostile settings are **global** (``GIT_CONFIG_GLOBAL``), not
+    repo-local, because that is the only channel that reaches a
+    ``--no-index`` invocation. ``_git`` keeps its own hermetic env, so the
+    fixture repo is still built under clean config — only the production
+    calls under test see the hostile file.
+
+    Asserting on hunk counts rather than lazy/batched parity is
+    deliberate: under a corrupting config *both* paths degrade to verbatim
+    identically, so a parity assertion stays green and proves nothing.
+    """
+
+    UNRESOLVABLE_BASE = "0" * 40
+
+    SETTINGS: ClassVar[list] = [
+        # Silent: ANSI escapes defeat every prefix match, so nothing parses.
+        pytest.param("[color]\n\tui = always\n", id="color.ui=always"),
+        # Silent: 1/ and 2/ prefixes, so the batched index's path lookup misses.
+        pytest.param("[diff]\n\tmnemonicPrefix = true\n", id="diff.mnemonicPrefix=true"),
+        # Loud: the helper replaces git's diff engine and exits nonzero.
+        pytest.param("[diff]\n\texternal = /bin/false\n", id="diff.external"),
+    ]
+
+    @pytest.fixture
+    def hostile(self, request, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        cfg = tmp_path / "hostile.gitconfig"
+        cfg.write_text(request.param)
+        monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(cfg))
+        monkeypatch.setenv("GIT_CONFIG_SYSTEM", "/dev/null")
+
+    @pytest.mark.parametrize("hostile", SETTINGS, indirect=True)
+    def test_lazy_blob_chain_still_finds_the_edit(self, repo, hostile):
+        root, _base, fc = repo
+        (root / "a.c").write_text("l1\nCHANGED\nl3\nl4\n")
+
+        r = AnchorResolver(root, self.UNRESOLVABLE_BASE).resolve(Path("a.c"), fc)
+
+        assert r.verifiable
+        assert len(r.hunks) == 1, "hostile global config emptied the per-file blob diff"
+
+    @pytest.mark.parametrize("hostile", SETTINGS, indirect=True)
+    def test_batched_fallback_index_still_finds_the_edit(self, repo, hostile):
+        root, _base, fc = repo
+        (root / "a.c").write_text("l1\nCHANGED\nl3\nl4\n")
+
+        r = AnchorResolver(root, self.UNRESOLVABLE_BASE, files={"a.c": fc}).resolve(Path("a.c"), fc)
+
+        assert r.verifiable
+        assert len(r.hunks) == 1, "hostile global config emptied the batched dir diff"
 
 
 class TestBatchedVsLazyParity:

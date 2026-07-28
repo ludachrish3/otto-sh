@@ -1,75 +1,63 @@
 # Per-ticket coverage — follow-ups
 
 Carried from the per-ticket coverage branch (spec
-`docs/superpowers/specs/2026-07-26-per-ticket-coverage-design.md`). Everything here was
-triaged by the final whole-branch review as safe to carry — no blockers. Grouped by theme.
+`docs/superpowers/specs/2026-07-26-per-ticket-coverage-design.md`), then triaged against the
+merged code on 2026-07-27. Everything actionable has since been done; this file is kept as
+the record of what was found, what shipped, and what was deliberately closed.
 
-## 1. The ambient-git seam (the branch's weakest area)
+## Done
 
-The final review's assessment: the attribution engine is oracle-pinned against `git blame`,
-mutation-hardened, and budgeted at a constant 4 subprocesses — but it parses **porcelain**
-`git log -p` / `git diff` output, and every committed test runs in a hermetic git
-environment. That makes this whole class structurally invisible to the suite; *the first
-user with a decorated `~/.gitconfig` is the test*.
+**The ambient-git seam.** Triage found the remaining bullet was not polish but a live
+silent-wrong-answer defect. `diff_no_index_u0` / `diff_no_index_dir_u0` were exempted from
+the config pins on the reasoning that they "run outside any repo" — but git still loads the
+invoking user's global `~/.gitconfig`. `color.ui = always` breaks both (ANSI escapes defeat
+every prefix match) and `diff.mnemonicPrefix = true` breaks the batched one via `1/`/`2/`
+prefixes — *different letters* from the `c/`/`w/` a repo diff emits, so the shipped
+blocker-1 fix did not cover it. Both land on `AnchorResolver`'s "absent from the `-w` diff,
+therefore whitespace-only" branch, so a changed file reads as verbatim and stale manual
+coverage stays valid. Fixed with a `--no-index`-safe pin (`_pin` cannot be reused verbatim:
+`--no-index` has a restricted option parser that rejects `--no-show-signature`), a
+config-hostile regression test that sets the keys *globally* and parametrises one at a time,
+and an AST guard so a new porcelain call cannot skip the pins.
 
-Config pins (`-c diff.mnemonicprefix=false --no-ext-diff --no-show-signature --no-color`)
-and one config-hostile regression test now cover the known shapes. Remaining:
+**Cross-language drift.** All three mirrors now pin to one shared table
+(`tests/_fixtures/covapp_ticket_contract.json`), asserted from both languages, following the
+`format_outage_cases.json` precedent. The Python half reads its keys off real emitted
+payloads; the TS half adds a compile-time layer via `Record<keyof X, true>`.
 
-- `diff_no_index_u0` / `diff_no_index_dir_u0` are unpinned (they take no repo context, so
-  the exposure is different, but they were never audited).
-- `name_status_walk_u0` is deliberately unpinned. Its immunity was **verified empirically**:
-  signature pollution appears in its raw stream, but the `\x00` block count is preserved and
-  `parse_rename_records`' `startswith("R")` + 3-tab-field filter ignores it. Residual: a
-  hypothetical signature verifier emitting `R<x>\t<y>\t<z>` lines would defeat it. No
-  observed gpg/ssh output does.
-- Consider a broader audit: any new porcelain-parsing git call needs the same pins, and
-  nothing enforces that today.
+**Per-file per-tier counts.** `TicketChunk.files[]` now carries a per-tier breakdown, so a
+ticket-scoped subtree renders real tier rows instead of one aggregate row. The composed
+ticket+context case still declines honestly — that cross-tab does not exist at tree
+granularity.
 
-## 2. Cross-language drift (no compiler, no guard)
+**Oracle whitespace case.** Added, asserting the reindent sha is absent outright rather than
+relying on oracle-equality (which both engines could satisfy while both being wrong).
 
-Three hand-maintained Python↔TypeScript mirrors held up field-for-field under review but
-have nothing enforcing them:
+**UI.** Composed-mode key-column header unified behind one shared function; Line % column
+added to the tickets table; ticket pinning moved out of the flat ⋮ menu into an app-bar
+search box (left of the ⋮, `/` to focus, capped option list) plus per-row pin controls.
 
-- `web/src/covapp/types.ts` mirrors the emitted dict keys.
-- `TicketsPage.tsx` hardcodes `"(no ticket)"` / `"(uncommitted)"` as TS literals mirroring
-  the Python sentinel constants.
-- The chunk-callback contract (`window.__OTTO_COV_TICKET__`).
+## Closed — will not do
 
-A drift guard over any one of these would be cheap insurance.
+Triaged as not worth doing; do not re-open without new evidence.
 
-## 3. Error-surface polish
+- **`mangle_path` traversal.** Not exploitable: every `/` and `\` is replaced, so `..`
+  yields the literal file `...js` and `../../evil` yields `.._.._evil`. The sibling
+  collision (`PROJ/1` vs `PROJ_1`) is real but needs a repo whose ticket regex matches both
+  forms.
+- **`name_status_walk_u0` staying unpinned.** Its immunity was re-verified under
+  `color.ui = always` as well as signature pollution — git does not colourise
+  `--name-status`, and the `\x00` block count survives.
+- **Wrapping `TicketConfigError` in `typer.BadParameter`.** Matches existing precedent
+  (`load_tiers` raises a bare `ValueError` the same way). Wrapping only the ticket path
+  would make the CLI *less* consistent; this is a repo-wide config-error decision or
+  nothing. Same for the `string.Formatter` `ValueError` on an unbalanced brace.
+- **`sorted(record.commits)` chronological ordering.** Cosmetic; deterministic either way.
+- **`?lines=` not refreshing on a same-file range change.** Unreachable via produced links,
+  which always remount.
 
-- A malformed `[coverage.tickets]` block raises an uncaught `TicketConfigError` from the CLI
-  preflight on **every** `otto cov report`, not only `--tickets-json` runs. Loud, nonzero and
-  descriptive — matches existing precedent — but wrapping it in `typer.BadParameter` at both
-  entry points would be cleaner.
-- An unbalanced brace in `[coverage.tickets] url` surfaces a bare `ValueError` from
-  `string.Formatter` rather than `TicketConfigError`. Still config-load-time.
+## Not carried here
 
-## 4. Data-shape notes
-
-- `mangle_path` on ticket ids: two ids that mangle to the same chunk name (e.g. `PROJ/1` and
-  `PROJ_1`) would **silently overwrite** each other in the chunks dict, so both summaries
-  would show one ticket's detail. Far-fetched trigger; no traversal guard for a pathological
-  id such as `..` either.
-- `sorted(record.commits)` trades chronological first-parent order for hash order.
-  Deterministic either way; chronological may read better in the export.
-
-## 5. UI scale and polish
-
-- AppShell's "Pin ticket" menu lists every ticket flat — a mature repo yields hundreds. The
-  tickets page rows have no pin affordance of their own.
-- Composed-mode `keyColumnLabel` differs by page ("Ticket" on the directory page, "Context"
-  on the file page) when both filters are active.
-- No line-% bar column on the tickets table (present in the original mock).
-- A `?lines=` change that alters only the range on the *same* file does not refresh the
-  highlight (unreachable via produced links, which always remount).
-
-## 6. Deferred enhancements
-
-- `TicketChunk` carries no per-file per-tier covered counts, so tier columns render "no data"
-  under ticket-only scope. Python walks the per-line data already and could emit it cheaply —
-  this would replace an honest decline with a real number.
-- The oracle suite covers linear histories plus a dedicated first-parent divergence case; a
-  whitespace-only change is not among its timeline cases (both sides use `-w`, so it would
-  pin that equivalence).
+`tickets.json`'s own `files[]` entries still have no per-tier breakdown. That export is an
+independently versioned public schema, so adding one is a deliberate schema change rather
+than a follow-up — raise it as its own piece of work if a consumer wants it.

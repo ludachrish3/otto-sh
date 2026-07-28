@@ -297,6 +297,11 @@ def _build_ticket_summaries(
     # Accumulated in the same pass — see ticket_export.build_ticket_export
     # for why this is not recomputed per ticket.
     per_tier_of: dict[str, dict[str, int]] = {}
+    # ticket -> display path -> tier -> covered count. The ticket-wide
+    # rollup above cannot be split back apart per file, and the frontend
+    # needs the per-file breakdown to render real tier rows for a scoped
+    # subtree instead of declining to one aggregate row.
+    per_tier_file_of: dict[str, dict[str, dict[str, int]]] = {}
     total_owned = 0
     total_covered = 0
     total_per_tier: dict[str, int] = dict.fromkeys(store.tier_order, 0)
@@ -319,9 +324,11 @@ def _build_ticket_summaries(
                 if line.hits.is_hit():
                     hits.setdefault(ticket_id, {}).setdefault(display, []).append(lineno)
                 tiers = per_tier_of.setdefault(ticket_id, {})
+                file_tiers = per_tier_file_of.setdefault(ticket_id, {}).setdefault(display, {})
                 for tier in store.tier_order:
                     if line.hits.is_hit(tier):
                         tiers[tier] = tiers.get(tier, 0) + 1
+                        file_tiers[tier] = file_tiers.get(tier, 0) + 1
 
     summaries: list[dict[str, Any]] = []
     chunks: dict[str, dict[str, Any]] = {}
@@ -347,12 +354,14 @@ def _build_ticket_summaries(
         for display in sorted(owned[ticket_id]):
             hit_set = set(hits.get(ticket_id, {}).get(display, []))
             missing = [n for n in sorted(owned[ticket_id][display]) if n not in hit_set]
+            file_tiers = per_tier_file_of.get(ticket_id, {}).get(display, {})
             files.append(
                 {
                     "path": display,
                     "owned": len(owned[ticket_id][display]),
                     "covered": len(hit_set),
                     "missing": _group_ranges(missing),
+                    "per_tier": {tier: file_tiers.get(tier, 0) for tier in store.tier_order},
                 }
             )
         chunks[chunk] = {"stamp": stamp, "id": ticket_id, "files": files}

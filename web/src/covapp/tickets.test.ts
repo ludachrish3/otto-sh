@@ -24,21 +24,21 @@ const TREE = {
       name: "src",
       dirs: [],
       files: [
-        { name: "a.c", path: "src/a.c", chunk: "a", stats: {} as never },
-        { name: "b.c", path: "src/b.c", chunk: "b", stats: {} as never },
+        { name: "a.c", path: "src/a.c", chunk: "a", stats: emptyStats() },
+        { name: "b.c", path: "src/b.c", chunk: "b", stats: emptyStats() },
       ],
-      stats: {} as never,
+      stats: emptyStats(),
     },
     {
       name: "vendor",
       dirs: [],
-      files: [{ name: "z.c", path: "vendor/z.c", chunk: "z", stats: {} as never }],
-      stats: {} as never,
+      files: [{ name: "z.c", path: "vendor/z.c", chunk: "z", stats: emptyStats() }],
+      stats: emptyStats(),
     },
   ],
   files: [],
-  stats: {} as never,
-} as never;
+  stats: emptyStats(),
+} as unknown as DirNode;
 
 describe("scopeTreeToTicket", () => {
   it("keeps only files the ticket touched", () => {
@@ -67,19 +67,14 @@ describe("scopeTreeToTicket", () => {
           name: "big.c",
           path: "big.c",
           chunk: "big",
-          stats: {
-            lines: { total: 400, hit: 380 },
-            branches: { total: 0, hit: 0 },
-            flags: { stale: 0, aging: 0, excluded: 0 },
-            ctx_lines: {},
-          },
+          stats: emptyStats({ lines: { total: 400, hit: 380, per_tier: {} } }),
         },
       ],
-      stats: {} as never,
-    } as never;
+      stats: emptyStats(),
+    } as unknown as DirNode;
     const owned = Array.from({ length: 12 }, (_, i) => i + 1);
     const scoped = scopeTreeToTicket(big, { "big.c": owned }, { "big.c": owned.slice(0, 6) })!;
-    expect(scoped.files[0].stats.lines).toEqual({ total: 12, hit: 6 });
+    expect(scoped.files[0].stats.lines).toEqual({ total: 12, hit: 6, per_tier: {} });
   });
 
   // Directory rollups must be RECOMPUTED from their (already-scoped)
@@ -134,8 +129,8 @@ describe("ticketChunkToFileLines", () => {
   it("builds owned/hit line-array maps sized to each file's owned/covered counts", () => {
     const chunk = makeTicketChunk({
       files: [
-        { path: "src/a.c", owned: 12, covered: 6, missing: [] },
-        { path: "src/b.c", owned: 3, covered: 3, missing: [] },
+        { path: "src/a.c", owned: 12, covered: 6, missing: [], per_tier: {} },
+        { path: "src/b.c", owned: 3, covered: 3, missing: [], per_tier: {} },
       ],
     });
     const { lines, hits } = ticketChunkToFileLines(chunk);
@@ -147,7 +142,7 @@ describe("ticketChunkToFileLines", () => {
 
   it("a file the ticket never touched (owned 0) still gets an entry, never crashing scopeTreeToTicket lookups", () => {
     const chunk = makeTicketChunk({
-      files: [{ path: "src/dead.c", owned: 0, covered: 0, missing: [] }],
+      files: [{ path: "src/dead.c", owned: 0, covered: 0, missing: [], per_tier: {} }],
     });
     const { lines, hits } = ticketChunkToFileLines(chunk);
     expect(lines["src/dead.c"]).toHaveLength(0);
@@ -156,9 +151,11 @@ describe("ticketChunkToFileLines", () => {
 
   it("composes directly with scopeTreeToTicket end to end", () => {
     const chunk = makeTicketChunk({
-      files: [{ path: "src/a.c", owned: 12, covered: 6, missing: [[7, 12]] }],
+      files: [
+        { path: "src/a.c", owned: 12, covered: 6, missing: [[7, 12]], per_tier: { unit: 4 } },
+      ],
     });
-    const { lines, hits } = ticketChunkToFileLines(chunk);
+    const { lines, hits, tiers } = ticketChunkToFileLines(chunk);
     const tree = {
       name: "",
       dirs: [],
@@ -167,18 +164,14 @@ describe("ticketChunkToFileLines", () => {
           name: "a.c",
           path: "src/a.c",
           chunk: "a",
-          stats: {
-            lines: { total: 400, hit: 380 },
-            branches: { total: 0, hit: 0 },
-            flags: { stale: 0, aging: 0, excluded: 0 },
-            ctx_lines: {},
-          },
+          stats: emptyStats({ lines: { total: 400, hit: 380, per_tier: { unit: 380 } } }),
         },
       ],
-      stats: {} as never,
-    } as never;
-    const scoped = scopeTreeToTicket(tree, lines, hits)!;
-    expect(scoped.files[0].stats.lines).toEqual({ total: 12, hit: 6 });
+      stats: emptyStats(),
+    } as unknown as DirNode;
+    const scoped = scopeTreeToTicket(tree, lines, hits, tiers)!;
+    // per_tier is the ticket's 4, never the file's whole-repo 380.
+    expect(scoped.files[0].stats.lines).toEqual({ total: 12, hit: 6, per_tier: { unit: 4 } });
   });
 });
 
@@ -190,7 +183,8 @@ describe("ticketTreeRow", () => {
       files: [],
       stats: emptyStats({ lines: { total: 12, hit: 6, per_tier: {} } }),
     };
-    const rows = ticketTreeRow(node, "PROJ-1");
+    // No tiers declared, so the summary row is the whole answer.
+    const rows = ticketTreeRow(makeIndex({ tier_order: [] }), node, "PROJ-1");
     expect(rows).toEqual([
       {
         key: "ticket",
@@ -317,5 +311,90 @@ describe("ticketFileRow", () => {
   it("a file with no lines owned by the ticket at all reports 0/0 (StatsCard renders '—', not a crash)", () => {
     const rows = ticketFileRow(index, makeFileChunk(), "PROJ-1");
     expect(rows[0].line).toEqual([0, 0]);
+  });
+});
+
+// Per-file per-tier counts (follow-up item 6a): before these, a TicketChunk
+// carried owned/covered counts only, so a ticket-scoped subtree had no tier
+// breakdown to render and `ticketTreeRow` could only offer one aggregate
+// row. The fixtures below give each file a DIFFERENT tier's coverage so a
+// summed rollup is distinguishable from either file's own numbers — a
+// fixture where both files shared one tier would pass against a rollup
+// wrongly copied onto every node.
+describe("ticket-scoped per-tier counts", () => {
+  const TWO_FILE_TREE = {
+    name: "",
+    dirs: [],
+    files: [
+      { name: "a.c", path: "a.c", chunk: "a", stats: emptyStats() },
+      { name: "b.c", path: "b.c", chunk: "b", stats: emptyStats() },
+    ],
+    stats: emptyStats(),
+  } as unknown as DirNode;
+
+  const TIERS = { "a.c": { unit: 1, system: 0 }, "b.c": { unit: 0, system: 1 } };
+
+  it("scopes each file's per_tier to the ticket's own lines", () => {
+    const scoped = scopeTreeToTicket(
+      TWO_FILE_TREE,
+      { "a.c": [1, 2], "b.c": [1] },
+      { "a.c": [1], "b.c": [1] },
+      TIERS,
+    )!;
+    const byName = Object.fromEntries(scoped.files.map((f) => [f.name, f]));
+    expect(byName["a.c"].stats.lines.per_tier).toEqual({ unit: 1, system: 0 });
+    expect(byName["b.c"].stats.lines.per_tier).toEqual({ unit: 0, system: 1 });
+  });
+
+  it("sums per_tier across a directory's scoped children", () => {
+    const scoped = scopeTreeToTicket(
+      TWO_FILE_TREE,
+      { "a.c": [1, 2], "b.c": [1] },
+      { "a.c": [1], "b.c": [1] },
+      TIERS,
+    )!;
+    expect(scoped.stats.lines.per_tier).toEqual({ unit: 1, system: 1 });
+  });
+
+  it("ticketChunkToFileLines carries the chunk's per-file tier counts through", () => {
+    const chunk = makeTicketChunk({
+      files: [
+        { path: "a.c", owned: 2, covered: 1, missing: [[2, 2]], per_tier: { unit: 1, system: 0 } },
+      ],
+    });
+    expect(ticketChunkToFileLines(chunk).tiers).toEqual({ "a.c": { unit: 1, system: 0 } });
+  });
+
+  it("ticketTreeRow renders a real number per tier instead of one aggregate row", () => {
+    const index = makeIndex({
+      tier_order: ["unit", "system"],
+      tier_labels: { unit: "Unit", system: "System" },
+      tier_colors: { unit: "#111", system: "#222" },
+    });
+    const node = {
+      stats: emptyStats({ lines: { total: 3, hit: 2, per_tier: { unit: 1, system: 1 } } }),
+    } as unknown as DirNode;
+
+    const rows = ticketTreeRow(index, node, "PROJ-1");
+
+    expect(rows.map((r) => r.key)).toEqual(["unit", "system", "ticket"]);
+    expect(rows[0].line).toEqual([1, 3]);
+    expect(rows[1].line).toEqual([1, 3]);
+    expect(rows[2].line).toEqual([2, 3]);
+  });
+
+  it("still declines to a single row when a context is ALSO focused", () => {
+    // Unchanged behaviour: a ticket+context cross-tab does not exist at tree
+    // granularity, so the honest answer stays "no data" (the 333.3% case).
+    const index = makeIndex({ tier_order: ["unit"] });
+    const node = {
+      stats: emptyStats({ lines: { total: 3, hit: 2, per_tier: { unit: 1 } } }),
+    } as unknown as DirNode;
+    const ctx = { label: "manual" } as Context;
+
+    const rows = ticketTreeRow(index, node, "PROJ-1", ctx);
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].line).toBeNull();
   });
 });

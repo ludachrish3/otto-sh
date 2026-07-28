@@ -183,24 +183,22 @@ def _capture_coverage_report(browser) -> None:  # noqa: ANN001 — playwright im
         page.wait_for_selector('[data-testid="ticket-detail"]')
         page.screenshot(path=OUT_DIR / "coverage-tickets.png", full_page=True)
 
-        # Pinned ticket context (Task 13) — pinning PROJ-204 (via the app
-        # bar's own "Pin ticket" menu, the only way to pin one — the
-        # tickets page's own rows have no per-row pin button) at the
+        # Pinned ticket context (Task 13) — pinning PROJ-204 at the
         # "product/" directory hides utils.c's row and shows the
         # hidden-count banner, since PROJ-204 owns nothing in utils.c.
+        # Pinning lives in the app bar's own search box (the tickets page's
+        # rows carry a pin control too, but this shot is of the tree).
         page.goto(base_uri + "#/coverage/product")
         page.wait_for_selector('[data-testid="tree-row-file:product/utils.c"]')
-        page.locator('[data-testid="appbar-menu"]').click()
-        page.locator('[data-testid="menu-ticket-PROJ-204"]').click()
+        page.locator('[data-testid="ticket-search"] input').fill("PROJ-204")
+        page.locator('[data-testid="ticket-search-option-PROJ-204"]').click()
         page.wait_for_selector('[data-testid="ticket-scope-banner"]')
-        # The ⋮ popover stays open after the menu click (it's a multi-item
-        # menu, not a one-shot action) and a "Pinned ticket" toast fires —
-        # both would otherwise cover the tree/banner the shot exists to
-        # show. Escape closes the popover (standard for this component
-        # library); the toast auto-dismisses within Toast.tsx's own timeout,
-        # which the wait_for_selector above already outlasted.
+        # A "Pinned ticket" toast fires and would otherwise cover the
+        # tree/banner this shot exists to show. The option list closes
+        # itself on select; Escape is kept as a belt-and-braces dismissal
+        # for any popover the click may have left open.
         page.keyboard.press("Escape")
-        page.locator('[data-testid="menu-ticket-PROJ-204"]').wait_for(state="hidden")
+        page.locator('[data-testid="ticket-search-options"]').wait_for(state="hidden")
         # Also let the "Pinned ticket PROJ-204" toast (Toast.tsx) clear the
         # bottom of the viewport rather than screenshotting mid-fade.
         page.locator('[data-testid="toast"]').first.wait_for(state="detached")

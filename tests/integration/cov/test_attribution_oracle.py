@@ -135,3 +135,42 @@ def test_first_parent_attributes_to_the_merge_not_the_topic_commit(tmp_path):
 
     assert got["a.c"][2] == merge_sha
     assert got["a.c"][2] != _blame_shas(repo, tmp_path, "a.c", 2)[2]
+
+
+def test_whitespace_only_commit_does_not_re_attribute_any_line(tmp_path):
+    """Both engines pass ``-w``, so a reindent must not steal ownership.
+
+    The manual-validity contract already treats a whitespace-only edit as
+    "the code did not change" (``gitio``'s ``-w`` on every diff, so a
+    reformat does not invalidate coverage anchored to the untouched code).
+    Attribution inherits that from the same flag, and this pins the two
+    engines agreeing about it.
+
+    Oracle-equality alone would NOT prove it: if both blame and the replay
+    engine credited the reindent commit, they would still agree and this
+    test would pass while the property it exists for was broken. So the
+    reindent sha is asserted absent outright — that is the assertion that
+    can actually fail, with equality as the corroborating half.
+    """
+    repo = _repo(tmp_path)
+    body = [f"line {i}\n" for i in range(10)]
+    (repo / "a.c").write_text("".join(body))
+    _commit(repo, tmp_path, "seed")
+
+    body[4] = "edited\n"
+    (repo / "a.c").write_text("".join(body))
+    _commit(repo, tmp_path, "real edit")
+    before_reindent = _git(repo, tmp_path, "rev-parse", "HEAD").stdout.strip()
+
+    # Whitespace-only: every line re-indented, no token changed.
+    (repo / "a.c").write_text("".join(f"    {line}" for line in body))
+    _commit(repo, tmp_path, "reindent everything")
+    reindent = _git(repo, tmp_path, "rev-parse", "HEAD").stdout.strip()
+
+    got = attribute_lines(repo, {"a.c": len(body)})
+
+    assert reindent not in got["a.c"].values(), (
+        "a whitespace-only commit re-attributed lines despite -w"
+    )
+    assert got["a.c"][5] == before_reindent
+    assert got["a.c"] == _blame_shas(repo, tmp_path, "a.c", len(body))

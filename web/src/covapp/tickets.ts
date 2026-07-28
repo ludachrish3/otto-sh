@@ -34,19 +34,35 @@ import type { DirNode, FileChunk, FileNode, IndexPayload, Stats, TicketChunk } f
  * `total`/`hit` become the LENGTH of `owned`/`hit` (never the file's
  * whole-repo counts) — the entire point of a denominator filter is that a
  * file where the ticket touched 12 of 400 coverable lines reports coverage
- * of those 12, not of the 400. Every other `Stats` field (branches/flags/
- * per_tier/ctx_lines) is carried over from the file's ORIGINAL, whole-file
- * stats verbatim: none of that data exists in a per-ticket-scoped form (a
- * `TicketChunk` carries owned/covered LINE counts only) — a known,
- * documented limitation, not an oversight; callers that render a Branch %
- * or per-tier % for a ticket-scoped row should treat those as "no data"
- * (mirroring how `DirectoryPage`'s existing run-focus rows already treat
- * Branch % under focus, for the identical reason: v4 doesn't store that
- * granularity per-run either). */
-function scopeFileStats(stats: Stats, owned: number[], hit: number[]): Stats {
+ * of those 12, not of the 400.
+ *
+ * `lines.per_tier` is scoped too when `tiers` is supplied — the emitter now
+ * carries a per-file per-tier breakdown of the ticket's own lines
+ * (`TicketChunk.files[].per_tier`), so a ticket-scoped row can show a real
+ * number per tier rather than declining. Without it (a chunk from an older
+ * report) the whole-file counts carry over and callers should keep treating
+ * per-tier as "no data".
+ *
+ * The remaining `Stats` fields (branches/flags/ctx_lines) still carry over
+ * from the file's ORIGINAL whole-file stats verbatim: none of that data
+ * exists in a per-ticket-scoped form — a known, documented limitation, so
+ * callers rendering a Branch % for a ticket-scoped row should treat it as
+ * "no data" (mirroring how run-focus rows already treat Branch %, for the
+ * identical reason: v4 doesn't store that granularity per-run either). */
+function scopeFileStats(
+  stats: Stats,
+  owned: number[],
+  hit: number[],
+  tiers?: Record<string, number>,
+): Stats {
   return {
     ...stats,
-    lines: { ...stats.lines, total: owned.length, hit: hit.length },
+    lines: {
+      ...stats.lines,
+      total: owned.length,
+      hit: hit.length,
+      per_tier: tiers ?? stats.lines.per_tier,
+    },
   };
 }
 
@@ -54,11 +70,12 @@ function scopeFile(
   file: FileNode,
   ticketLines: Record<string, number[]>,
   ticketHits: Record<string, number[]>,
+  ticketTiers?: Record<string, Record<string, number>>,
 ): FileNode | null {
   const owned = ticketLines[file.path];
   if (owned === undefined) return null; // the ticket never touched this file
   const hit = ticketHits[file.path] ?? [];
-  return { ...file, stats: scopeFileStats(file.stats, owned, hit) };
+  return { ...file, stats: scopeFileStats(file.stats, owned, hit, ticketTiers?.[file.path]) };
 }
 
 /** A directory's OWN rollup, recomputed as the sum of its (already-scoped)
@@ -70,15 +87,17 @@ function scopeFile(
 function aggregateDirStats(stats: Stats, dirs: DirNode[], files: FileNode[]): Stats {
   let total = 0;
   let hit = 0;
-  for (const d of dirs) {
-    total += d.stats.lines.total;
-    hit += d.stats.lines.hit;
+  // Summed the same way as total/hit so a directory row's per-tier numbers
+  // describe the scoped subtree, not the original whole one.
+  const per_tier: Record<string, number> = {};
+  for (const child of [...dirs, ...files]) {
+    total += child.stats.lines.total;
+    hit += child.stats.lines.hit;
+    for (const [tier, count] of Object.entries(child.stats.lines.per_tier)) {
+      per_tier[tier] = (per_tier[tier] ?? 0) + count;
+    }
   }
-  for (const f of files) {
-    total += f.stats.lines.total;
-    hit += f.stats.lines.hit;
-  }
-  return { ...stats, lines: { ...stats.lines, total, hit } };
+  return { ...stats, lines: { ...stats.lines, total, hit, per_tier } };
 }
 
 /** Pure recursive filter (Task 12 brief): keeps only the files/directories a
@@ -103,12 +122,13 @@ export function scopeTreeToTicket(
   node: DirNode,
   ticketLines: Record<string, number[]>,
   ticketHits: Record<string, number[]>,
+  ticketTiers?: Record<string, Record<string, number>>,
 ): DirNode | null {
   const files = node.files
-    .map((f) => scopeFile(f, ticketLines, ticketHits))
+    .map((f) => scopeFile(f, ticketLines, ticketHits, ticketTiers))
     .filter((f): f is FileNode => f !== null);
   const dirs = node.dirs
-    .map((d) => scopeTreeToTicket(d, ticketLines, ticketHits))
+    .map((d) => scopeTreeToTicket(d, ticketLines, ticketHits, ticketTiers))
     .filter((d): d is DirNode => d !== null);
 
   if (files.length === 0 && dirs.length === 0) return null;
@@ -130,25 +150,39 @@ export function scopeTreeToTicket(
 export function ticketChunkToFileLines(chunk: TicketChunk): {
   lines: Record<string, number[]>;
   hits: Record<string, number[]>;
+  tiers: Record<string, Record<string, number>>;
 } {
   const lines: Record<string, number[]> = {};
   const hits: Record<string, number[]> = {};
+  // Real counts, unlike `lines`/`hits` above — the emitter breaks each
+  // file's covered total down per tier, so these pass through as-is.
+  const tiers: Record<string, Record<string, number>> = {};
   for (const file of chunk.files) {
     lines[file.path] = Array.from({ length: file.owned });
     hits[file.path] = Array.from({ length: file.covered });
+    tiers[file.path] = file.per_tier ?? {};
   }
-  return { lines, hits };
+  return { lines, hits, tiers };
 }
 
-/** `DirectoryPage`'s ticket-only StatsCard row (mirrors `format.ts`'s
- * `focusedTreeRow` shape exactly, for the same reason: branch/decision are
- * always `null` — "no data" — because neither is tracked per-ticket, same
- * as `focusedTreeRow`'s branch is `null` because it isn't tracked per-run).
+/** `DirectoryPage`'s ticket-only StatsCard rows: one row per tier followed
+ * by the ticket's own summary row. Branch/decision stay `null` — "no data"
+ * — because neither is tracked per-ticket (same as `focusedTreeRow`'s
+ * branch is `null` because it isn't tracked per-run).
+ *
+ * The per-tier rows exist because the emitter carries a per-file per-tier
+ * breakdown of a ticket's lines (`TicketChunk.files[].per_tier`, summed up
+ * the scoped tree by `aggregateDirStats`); before that the only honest
+ * option was the summary row alone. The numerator is the ticket's lines
+ * that THIS tier hit and the denominator is the ticket's line total, so the
+ * rows share the summary's denominator and each answers "how much of this
+ * ticket did this tier prove?".
+ *
  * `node` must already be the SCOPED node (`scopeTreeToTicket`'s return
  * value) — this reads its `stats.lines` directly, verbatim, doing no
- * scoping itself. No `dotColor`: unlike a run-focus `Context`, a ticket has
- * no single tier of its own (design §6.1: a ticket's lines can span every
- * tier).
+ * scoping itself. The summary row carries no `dotColor`: unlike a run-focus
+ * `Context`, a ticket has no single tier of its own (design §6.1: a
+ * ticket's lines can span every tier).
  *
  * Optional `ctx` (Task 12 fix round 1, IMPORTANT): when a context is ALSO
  * focused, `line` declines to `null` ("no data", same treatment `branch`/
@@ -162,17 +196,36 @@ export function ticketChunkToFileLines(chunk: TicketChunk): {
  * naively). Contrast `ticketFileRow` below, whose OWN composed case
  * recomputes exactly — it already has one file's full per-line data, which
  * this tree-level function does not. */
-export function ticketTreeRow(node: DirNode, ticketId: string, ctx?: Context): TierStatRow[] {
-  return [
-    {
-      key: "ticket",
-      label: ctx ? `${ticketId} · ${ctx.label}` : ticketId,
-      dotColor: undefined,
-      line: ctx ? null : [node.stats.lines.hit, node.stats.lines.total],
-      branch: null,
-      decision: null,
-    },
-  ];
+export function ticketTreeRow(
+  index: IndexPayload,
+  node: DirNode,
+  ticketId: string,
+  ctx?: Context,
+): TierStatRow[] {
+  const summary: TierStatRow = {
+    key: "ticket",
+    label: ctx ? `${ticketId} · ${ctx.label}` : ticketId,
+    dotColor: undefined,
+    line: ctx ? null : [node.stats.lines.hit, node.stats.lines.total],
+    branch: null,
+    decision: null,
+  };
+  // Composed with a run focus there is still nothing honest to say per
+  // tier (see this function's doc comment), so the single declining row
+  // remains the whole answer.
+  if (ctx) return [summary];
+
+  const tiers: TierStatRow[] = index.tier_order.map((tier) => ({
+    key: tier,
+    label: index.tier_labels[tier] ?? tier,
+    dotColor: index.tier_colors[tier],
+    // Numerator scoped to the ticket AND the tier; denominator is the
+    // ticket's own line total, the same one the summary row divides by.
+    line: [node.stats.lines.per_tier[tier] ?? 0, node.stats.lines.total],
+    branch: null,
+    decision: null,
+  }));
+  return [...tiers, summary];
 }
 
 /** `FilePage`'s ticket-scoped StatsCard row — unlike `ticketTreeRow` (which

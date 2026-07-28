@@ -478,3 +478,50 @@ def test_ticket_chunk_carries_the_report_stamp(tmp_path):
     )
     chunk_path = next((out / "cov_data" / "tickets").iterdir())
     assert '"stamp": "the-stamp"' in chunk_path.read_text()
+
+
+def _two_file_two_tier_ticket_store(tmp_path):
+    """PROJ-1 owns lines across two files, each covered by a DIFFERENT tier.
+
+    The fixture property that makes failure possible: a per-file per-tier
+    count must differ both from the ticket-wide per-tier rollup (which sums
+    to one hit in each tier) and from the other file's (a.c is unit-only,
+    b.c is system-only). A single-file or single-tier fixture would pass
+    against a rollup wrongly copied onto every file.
+    """
+    store = CoverageStore(tier_order=["unit", "system"])
+    a = store.get_or_create_file(tmp_path / "a.c")
+    a_hit = a.get_or_create_line(1)
+    a_hit.ticket = ["PROJ-1"]
+    a_hit.hits.add("unit", 1)
+    a_missing = a.get_or_create_line(2)
+    a_missing.ticket = ["PROJ-1"]
+    b = store.get_or_create_file(tmp_path / "b.c")
+    b_hit = b.get_or_create_line(1)
+    b_hit.ticket = ["PROJ-1"]
+    b_hit.hits.add("system", 1)
+    store.tickets["PROJ-1"] = TicketRecord(id="PROJ-1", url=None, commits=["abc"])
+    return store
+
+
+def test_ticket_chunk_files_carry_per_tier_covered_counts(tmp_path):
+    """Design §6.1 gap: without this the frontend can only decline to a
+    single aggregate row under ticket scope, because a TicketChunk carried
+    owned/covered counts but no tier breakdown per file."""
+    out = tmp_path / "report"
+    out.mkdir()
+    emit_chunks(
+        _two_file_two_tier_ticket_store(tmp_path),
+        out,
+        project_name="P",
+        prefix=tmp_path,
+        extra_markers=None,
+        stamp="S",
+    )
+    text = min((out / "cov_data" / "tickets").iterdir()).read_text()
+    body = text[text.index("(") + 1 : text.rindex(")")]
+    _chunk_id, payload = json.loads(f"[{body}]")
+
+    by_path = {f["path"]: f for f in payload["files"]}
+    assert by_path["a.c"]["per_tier"] == {"unit": 1, "system": 0}
+    assert by_path["b.c"]["per_tier"] == {"unit": 0, "system": 1}

@@ -14,7 +14,13 @@ import { AppShell } from "../chrome/AppShell";
 import { groupContexts } from "../contexts";
 import { loadFileChunk, StampMismatchError } from "../data";
 import { parseHashQuery, useFocus } from "../focus";
-import { chunkTierRows, crumbsFor, focusedFileRow, lineHasMemberHit } from "../format";
+import {
+  chunkTierRows,
+  crumbsFor,
+  focusedFileRow,
+  keyColumnLabel,
+  lineHasMemberHit,
+} from "../format";
 import { highlightLines, langForPath } from "../highlight";
 import { ticketFileRow } from "../tickets";
 import type { BranchJson, FileChunk, FileNode, IndexPayload, LineJson } from "../types";
@@ -617,7 +623,10 @@ export function FilePage({ index, segments, node }: FilePageProps) {
         title: "Coverage — this file",
         rows: statsRows,
         thresholds: index.thresholds,
-        keyColumnLabel: focusedContext ? "Context" : ticket !== null ? "Ticket" : "Tier",
+        keyColumnLabel: keyColumnLabel({
+          ticket: ticket !== null,
+          context: focusedContext !== null,
+        }),
       }}
     >
       <div

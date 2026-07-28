@@ -55,6 +55,18 @@ module must not trust:
 """
 
 
+_NO_INDEX_FLAG_PIN: list[str] = ["--no-color", "--no-ext-diff"]
+"""``--no-index``-safe subset of ``_DIFF_FLAG_PIN``.
+
+``git diff --no-index`` parses its options with a **restricted** parser
+and rejects ``--no-show-signature`` outright (``error: unknown option``,
+rc 128/129) even though plain ``git diff --no-show-signature`` accepts it
+— so ``_DIFF_FLAG_PIN`` cannot be reused verbatim here. Dropping it costs
+nothing: ``--no-index`` compares two paths and never displays a commit,
+so there is no signature to suppress.
+"""
+
+
 def _pin(subcommand: str, *rest: str) -> list[str]:
     """Build a git argv for *subcommand* immune to hostile ambient config.
 
@@ -62,13 +74,44 @@ def _pin(subcommand: str, *rest: str) -> list[str]:
     through this so ``diff.mnemonicprefix``, ``diff.external``,
     ``log.showSignature``, and ``color.ui`` — the SUT repo's local config
     and the invoking user's ``~/.gitconfig`` alike — can never silently
-    change what a caller parses back out of stdout. See
-    ``_CONFIG_PIN`` and ``_DIFF_FLAG_PIN`` for the specific
-    reproductions this closes. Not applied to :func:`diff_no_index_u0` /
-    :func:`diff_no_index_dir_u0`, which run outside any repo on throwaway
-    anchor files rather than the SUT tree — out of this fix's scope.
+    change what a caller parses back out of stdout. See ``_CONFIG_PIN``
+    and ``_DIFF_FLAG_PIN`` for the specific reproductions this closes.
+    :func:`diff_no_index_u0` / :func:`diff_no_index_dir_u0` use
+    ``_pin_no_index`` instead — same protection, restricted flag set.
     """
     return [*_CONFIG_PIN, subcommand, *_DIFF_FLAG_PIN, *rest]
+
+
+def _pin_no_index(*rest: str) -> list[str]:
+    """Build a ``git diff --no-index`` argv immune to hostile ambient config.
+
+    These two calls run outside any repository, on throwaway anchor files
+    rather than the SUT tree, and were originally left unpinned on the
+    reasoning that no repo config could therefore reach them. That
+    reasoning is wrong — **git still loads the invoking user's global
+    ``~/.gitconfig``** — and two common settings each corrupt the output
+    silently (pinned by
+    ``tests/unit/cov/test_anchor.py::TestHostileGlobalGitConfig``):
+
+    - ``color.ui = always`` wraps every line in ANSI escapes, so the
+      ``diff --git``/``---``/``@@`` prefix matching in
+      :func:`~otto.coverage.capture.treediff.parse_multifile_u0` and
+      :func:`~otto.coverage.capture.remap.parse_u0_hunks` matches nothing.
+    - ``diff.mnemonicPrefix = true`` emits ``1/``/``2/`` path prefixes
+      here — *different letters* from the ``c/``/``w/`` a repo diff emits,
+      so ``_CONFIG_PIN``'s repo-side reproduction does not describe this
+      one — and :func:`diff_no_index_dir_u0`'s ``<dir>/``-prefixed lookup
+      then misses every file.
+
+    Both corruptions are silent in the same way: an unparseable diff
+    yields no hunks, and :class:`~otto.coverage.anchor.AnchorResolver`
+    reads "no hunks" as "absent from the ``-w`` diff, therefore
+    whitespace-only" — so a changed file is reported verbatim and stale
+    manual coverage stays valid. ``diff.external`` fails loudly instead
+    (rc 128), which is merely wrong rather than dangerous, and
+    ``--no-ext-diff`` closes it off alongside the other two.
+    """
+    return [*_CONFIG_PIN, "diff", "--no-index", *_NO_INDEX_FLAG_PIN, *rest]
 
 
 def _run_raw(args: list[str], cwd: Path | None, ok_codes: tuple[int, ...] = (0,)) -> bytes:
@@ -258,10 +301,11 @@ def diff_no_index_u0(path_a: Path, path_b: Path) -> str:
     when the files differ — that is success here; with ``-w`` a
     whitespace-only difference exits 0 with empty output (hunkless), which
     the remapper treats as verbatim.
+
+    Pinned against hostile *global* git config (``_pin_no_index``) —
+    running outside a repo does not exempt it from ``~/.gitconfig``.
     """
-    return _run(
-        ["diff", "--no-index", "-w", "-U0", str(path_a), str(path_b)], cwd=None, ok_codes=(0, 1)
-    )
+    return _run(_pin_no_index("-w", "-U0", str(path_a), str(path_b)), cwd=None, ok_codes=(0, 1))
 
 
 def diff_no_index_dir_u0(dir_a: Path, dir_b: Path) -> str:
@@ -277,9 +321,14 @@ def diff_no_index_dir_u0(dir_a: Path, dir_b: Path) -> str:
     :func:`~otto.coverage.capture.treediff.parse_multifile_u0` already
     strips); the caller strips the remaining ``<dir_a.name>/`` prefix to
     recover capture-relative paths.
+
+    Pinned against hostile *global* git config (``_pin_no_index``).
+    This is the call ``diff.mnemonicPrefix`` breaks: ``1/``/``2/`` prefixes
+    survive ``strip_side``'s ``a/``/``b/`` strip, so the ``<dir_a.name>/``
+    lookup above misses every file and each one is read as unchanged.
     """
     return _run(
-        ["diff", "--no-index", "-w", "-U0", dir_a.name, dir_b.name],
+        _pin_no_index("-w", "-U0", dir_a.name, dir_b.name),
         cwd=dir_a.parent,
         ok_codes=(0, 1),
     )

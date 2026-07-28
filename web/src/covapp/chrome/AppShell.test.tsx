@@ -25,6 +25,14 @@ afterEach(() => {
   document.documentElement.classList.remove("dark-mode");
 });
 
+/** The ticket picker's real <input>: covapp's `Input` spreads unknown props
+ * onto react-aria's TextField wrapper, so a `data-testid` would land on the
+ * wrapper div rather than the field — the accessible name is what reaches
+ * the input itself. */
+function ticketSearchInput(): HTMLInputElement {
+  return screen.getByRole("textbox", { name: "Pin a ticket by id" }) as HTMLInputElement;
+}
+
 function renderShell(children = <div>child content</div>) {
   return render(
     <AppShell crumbs={[{ label: "acme-fw" }]} title="acme-fw" meta="42 files" stats={null}>
@@ -245,88 +253,111 @@ describe("AppShell", () => {
       expect(screen.queryByTestId("ticket-chip")).toBeNull();
     });
 
-    it("⋮ menu shows 'All tickets' checked by default, and one item per ticket", async () => {
+    // Follow-up item 5c: the ⋮ menu used to list EVERY ticket flat, which a
+    // mature repo turns into hundreds of unreachable rows. Pinning now lives
+    // in a search box of its own, in the app bar to the LEFT of the ⋮ menu
+    // (not inside it), reachable with "/" like the monitor's search.
+    it("app bar carries a ticket search box, and the ⋮ menu no longer lists tickets", async () => {
       const user = userEvent.setup();
       renderShell();
+      expect(screen.getByTestId("ticket-search")).toBeTruthy();
       await user.click(screen.getByTestId("appbar-menu"));
-      expect((await screen.findByTestId("menu-ticket-all")).querySelector("svg")).toBeTruthy();
-      expect(screen.getByTestId("menu-ticket-PROJ-1").querySelector("svg")).toBeNull();
-      expect(screen.getByTestId("menu-ticket-PROJ-2")).toBeTruthy();
+      expect(screen.queryByTestId("menu-ticket-all")).toBeNull();
+      expect(screen.queryByTestId("menu-ticket-PROJ-1")).toBeNull();
     });
 
-    it("clicking a ticket in the menu pins it, showing the chip", async () => {
+    it("the search box sits before the ⋮ menu in the app bar", () => {
+      renderShell();
+      const bar = screen.getByTestId("app-bar");
+      const order = bar.compareDocumentPosition(screen.getByTestId("ticket-search"));
+      expect(order & Node.DOCUMENT_POSITION_CONTAINED_BY).toBeTruthy();
+      const search = screen.getByTestId("ticket-search");
+      const menu = screen.getByTestId("appbar-menu");
+      // FOLLOWING = search comes before menu in document order.
+      expect(search.compareDocumentPosition(menu) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    });
+
+    it("typing narrows the options to matching ticket ids", async () => {
       const user = userEvent.setup();
       renderShell();
-      await user.click(screen.getByTestId("appbar-menu"));
-      await user.click(screen.getByTestId("menu-ticket-PROJ-1"));
+      await user.type(ticketSearchInput(), "PROJ-2");
+      expect(screen.getByTestId("ticket-search-option-PROJ-2")).toBeTruthy();
+      expect(screen.queryByTestId("ticket-search-option-PROJ-1")).toBeNull();
+    });
+
+    it("choosing an option pins that ticket, showing the chip", async () => {
+      const user = userEvent.setup();
+      renderShell();
+      await user.type(ticketSearchInput(), "PROJ-1");
+      await user.click(screen.getByTestId("ticket-search-option-PROJ-1"));
 
       const chip = await screen.findByTestId("ticket-chip");
       expect(chip.textContent).toContain("PROJ-1");
     });
 
+    it("caps the option list and says how many more matched", async () => {
+      // The scale case the flat menu could not handle: many tickets must not
+      // render as many rows.
+      window.__OTTO_COV__ = makeIndex({
+        stamp: "stamp-ticket",
+        tickets: Array.from({ length: 40 }, (_, i) => ({
+          id: `PROJ-${i}`,
+          url: null,
+          owned: 1,
+          covered: 0,
+          uncovered: 1,
+          per_tier: {},
+          chunk: `PROJ-${i}`,
+        })),
+      });
+      const user = userEvent.setup();
+      renderShell();
+      await user.click(ticketSearchInput());
+
+      const options = screen.getAllByTestId(/^ticket-search-option-/);
+      expect(options.length).toBeLessThan(40);
+      expect(screen.getByTestId("ticket-search-overflow").textContent).toContain("more");
+    });
+
     it("chip ✕ clears the ticket pin, hiding the chip", async () => {
       const user = userEvent.setup();
       renderShell();
-      await user.click(screen.getByTestId("appbar-menu"));
-      await user.click(screen.getByTestId("menu-ticket-PROJ-1"));
+      await user.type(ticketSearchInput(), "PROJ-1");
+      await user.click(screen.getByTestId("ticket-search-option-PROJ-1"));
       await screen.findByTestId("ticket-chip");
 
       await user.click(screen.getByTestId("ticket-clear"));
       expect(screen.queryByTestId("ticket-chip")).toBeNull();
     });
 
-    it("the ✓ moves in the menu as the ticket selection changes", async () => {
+    it('"/" focuses the ticket search from anywhere on the page', async () => {
       const user = userEvent.setup();
       renderShell();
-      await user.click(screen.getByTestId("appbar-menu"));
-      await user.click(screen.getByTestId("menu-ticket-PROJ-1"));
+      document.body.focus();
 
-      await user.click(screen.getByTestId("appbar-menu"));
-      expect(screen.getByTestId("menu-ticket-all").querySelector("svg")).toBeNull();
-      expect(screen.getByTestId("menu-ticket-PROJ-1").querySelector("svg")).toBeTruthy();
+      await user.keyboard("/");
 
-      await user.click(screen.getByTestId("menu-ticket-all"));
-      await user.click(screen.getByTestId("appbar-menu"));
-      expect(screen.getByTestId("menu-ticket-all").querySelector("svg")).toBeTruthy();
-      expect(screen.getByTestId("menu-ticket-PROJ-1").querySelector("svg")).toBeNull();
+      expect(document.activeElement).toBe(ticketSearchInput());
     });
 
-    // The headline compose scenario (spec): both an app-bar context chip AND
-    // a ticket chip can be pinned simultaneously, neither displacing the
-    // other.
-    it("shows BOTH a focus chip and a ticket chip at once — pinning one never displaces the other", async () => {
-      window.__OTTO_COV__ = makeIndex({
-        stamp: "stamp-ticket",
-        runs: [makeRun({ id: 1, label: "manual run", tier: "system" })],
-        tickets: [
-          {
-            id: "PROJ-1",
-            url: null,
-            owned: 10,
-            covered: 5,
-            uncovered: 5,
-            per_tier: {},
-            chunk: "PROJ-1",
-          },
-        ],
-      });
+    it('"/" typed inside a text field stays a literal slash', async () => {
+      // The shared shouldSuppressSlash guard: the shortcut must never eat a
+      // character the user is actually typing.
       const user = userEvent.setup();
-      renderShell();
-      await user.click(screen.getByTestId("appbar-menu"));
-      await user.click(screen.getByTestId("menu-focus-manual run"));
-      await user.click(screen.getByTestId("appbar-menu"));
-      await user.click(screen.getByTestId("menu-ticket-PROJ-1"));
+      renderShell(<input data-testid="other-field" />);
+      const other = screen.getByTestId("other-field") as HTMLInputElement;
+      other.focus();
 
-      expect(screen.getByTestId("focus-chip").textContent).toContain("manual run");
-      expect(screen.getByTestId("ticket-chip").textContent).toContain("PROJ-1");
+      await user.keyboard("/");
+
+      expect(other.value).toBe("/");
+      expect(document.activeElement).toBe(other);
     });
 
-    it("⋮ menu renders no ticket section when no tickets are attributed", async () => {
+    it("renders no ticket search when no tickets are attributed", () => {
       window.__OTTO_COV__ = makeIndex({ stamp: "stamp-ticket", tickets: [] });
-      const user = userEvent.setup();
       renderShell();
-      await user.click(screen.getByTestId("appbar-menu"));
-      expect(screen.queryByTestId("menu-ticket-all")).toBeNull();
+      expect(screen.queryByTestId("ticket-search")).toBeNull();
     });
   });
 });

@@ -24,6 +24,7 @@ import { getIndex } from "../data";
 import { useFocus } from "../focus";
 import { ShortcutsDialog } from "./ShortcutsDialog";
 import { StatsCard, type StatsCardProps } from "./StatsCard";
+import { TicketSearch } from "./TicketSearch";
 
 export interface AppShellProps {
   crumbs: Crumb[];
@@ -226,9 +227,10 @@ export function AppShell({ crumbs, title, meta, stats, children }: AppShellProps
   // label string) via the same `groupContexts` every other page uses.
   const contexts = index ? groupContexts(index) : [];
   const focusedContext = contexts.find((ctx) => ctx.label === focus) ?? null;
-  // Task 12: the ⋮ menu's "Pin ticket" switcher — an empty `tickets.json`
-  // (no `[coverage.tickets]` attribution anywhere in this report) hides the
-  // whole section rather than showing an empty, useless one.
+  // Task 12: the ticket pin switcher, which lives in its own app-bar search
+  // box (TicketSearch) rather than the ⋮ menu — an empty `tickets.json` (no
+  // `[coverage.tickets]` attribution anywhere in this report) hides the box
+  // rather than showing an empty, useless one.
   const tickets = index?.tickets ?? [];
 
   return (
@@ -287,6 +289,9 @@ export function AppShell({ crumbs, title, meta, stats, children }: AppShellProps
             size="sm"
             onClick={toggleTheme}
           />
+          {tickets.length > 0 && (
+            <TicketSearch tickets={tickets} ticket={ticket} onPin={setTicket} />
+          )}
           <Dropdown.Root>
             <ButtonUtility
               aria-label="More actions"
@@ -328,31 +333,6 @@ export function AppShell({ crumbs, title, meta, stats, children }: AppShellProps
                     />
                   ))}
                 </Dropdown.Section>
-                {tickets.length > 0 && (
-                  <>
-                    <Dropdown.Separator />
-                    <Dropdown.Section>
-                      <Dropdown.SectionHeader className="px-2.5 pt-2 pb-1 text-xs font-medium text-quaternary">
-                        Pin ticket
-                      </Dropdown.SectionHeader>
-                      <FocusMenuItem
-                        active={ticket === null}
-                        label="All tickets"
-                        testId="menu-ticket-all"
-                        onAction={() => setTicket(null)}
-                      />
-                      {tickets.map((t) => (
-                        <FocusMenuItem
-                          key={t.id}
-                          active={ticket === t.id}
-                          label={t.id}
-                          testId={`menu-ticket-${t.id}`}
-                          onAction={() => setTicket(t.id)}
-                        />
-                      ))}
-                    </Dropdown.Section>
-                  </>
-                )}
                 <Dropdown.Separator />
                 {tierOrder.length > 0 && (
                   <Dropdown.Section>
