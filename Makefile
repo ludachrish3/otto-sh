@@ -767,7 +767,19 @@ check: check-python check-ts ## (Quality) ALL static analysis (Python + TS): sub
 
 check-python: lint-python typecheck-python ## (Quality) All Python static analysis: ruff (lint+format) + ty
 
-check-ts: lint-ts typecheck-ts ## (Quality) All TS static analysis: Biome + knip (lint-ts) + tsc
+# The vendored-source leg is deliberately part of check-ts rather than a
+# post-build gate like check_airgap.sh / check_brand_tokens.sh: it reads the
+# committed tree, not a built artifact, so it needs no `make web` (and no
+# node_modules, and no network) and belongs with the other static gates that
+# run on every push. It is the cheap half of a two-part contract with
+# scripts/check_untitledui_drift.sh — this one answers "did WE edit the
+# vendored source?" in under a second; the weekly drift workflow answers
+# "did UPSTREAM change?" over the network. The drift check alone cannot tell
+# those apart, so without this leg a hand-edit here is reported as upstream
+# drift, forever, under the wrong title (issue #177).
+check-ts: lint-ts typecheck-ts ## (Quality) All TS static analysis: Biome + knip (lint-ts) + tsc + the vendored Untitled UI never-hand-edited gate
+	@$(SAY) "untitledui vendored source: contentHash vs web/untitledui.lock.json"
+	@scripts/check_untitledui_hash.sh
 
 coverage-ts-unit: $(WEB_NODE_MODULES) ## (Quality) Run the web/ vitest suite with v8 coverage and enforce the UNIT-tier floor (the TS analogue of coverage-hostless's reduced CI gate; the full merged gate is coverage-ts)
 	@$(SAY) "vitest coverage (web/) — unit-tier floor"

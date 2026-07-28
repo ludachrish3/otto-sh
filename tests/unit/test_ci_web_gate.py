@@ -60,6 +60,33 @@ def test_check_ts_chain_reaches_biome_check() -> None:
     )
 
 
+def test_check_ts_gates_the_vendored_untitledui_tree() -> None:
+    """Pins check-ts's vendored-source leg: the never-hand-edited gate.
+
+    Untitled UI is copy-in source, so scripts/check_untitledui_drift.sh --
+    the weekly, networked half of the contract -- cannot tell "upstream
+    changed" from "we edited it": it is a one-directional content diff, so a
+    local hand-edit reads there as UPSTREAM drift, forever, under a title
+    naming the wrong culprit (issue #177). The cheap half is a network-free
+    contentHash recompute, and it only earns its keep by running on every
+    push -- i.e. by staying wired into check-ts, which is what CI invokes.
+    Spans the whole recipe, not just the prerequisite line, for the same
+    reason test_coverage_ts_unit_runs_the_vitest_floor does.
+    """
+    check_ts = re.search(r"^check-ts:.*(?:\n\t.+)+", _MAKEFILE, re.MULTILINE)
+    assert check_ts, "no `check-ts` target with a recipe in the Makefile"
+    assert "scripts/check_untitledui_hash.sh" in check_ts.group(0), (
+        "`check-ts` must run scripts/check_untitledui_hash.sh — without it a "
+        "hand-edit to web/src/components/** is only ever reported by the "
+        "WEEKLY drift check, as upstream drift, under the wrong title"
+    )
+    script = _REPO / "scripts" / "check_untitledui_hash.sh"
+    assert script.is_file(), f"{script} is referenced by check-ts but missing"
+    assert script.stat().st_mode & 0o111, (
+        f"{script} is not executable, so check-ts's recipe cannot run it"
+    )
+
+
 def test_coverage_ts_unit_runs_the_vitest_floor() -> None:
     # Spans the WHOLE recipe (like test_check_ts_chain_reaches_biome_check
     # above), not just its first line: every Makefile recipe now opens with a

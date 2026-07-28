@@ -23,8 +23,19 @@ upstream-drift check that re-vendors with a pinned CLI version and diffs the
 result against this tree (`scripts/check_untitledui_drift.sh`,
 `web/untitledui.lock.json`). That check only works if the vendored tree is
 **byte-identical** to what the CLI emits — a single hand-edit (e.g. renaming a
-class, reformatting) destroys that property permanently and silently, because
-nothing else notices until the next drift check produces a false positive.
+class, reformatting) destroys that property permanently: the drift check is a
+one-directional content diff, so it cannot tell "upstream changed" from "we
+edited it", and your edit is reported as *upstream* drift on every run
+thereafter (that is what issue #177 was).
+
+Because that failure is both silent and misattributed, the rule is enforced
+rather than merely documented. `scripts/check_untitledui_hash.sh` recomputes
+this tree's `contentHash` and compares it to the value recorded in
+`untitledui.lock.json`; it needs no network and runs on every push as a leg of
+`make check-ts`, so a hand-edit fails at the commit that introduces it instead
+of surfacing days later in the weekly drift workflow. If you *deliberately*
+re-vendor, update `contentHash.value` (and `vendoredAt`) in the same commit —
+that is the supported way to move this tree, and the only thing the gate asks.
 
 If a vendored file collides with something ours, reconcile the collision on
 **our** side, not theirs. For example, `theme.css` gates its dark tokens on a
