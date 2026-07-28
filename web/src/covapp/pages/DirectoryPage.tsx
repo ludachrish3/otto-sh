@@ -519,7 +519,7 @@ export function DirectoryPage({ index, segments }: DirectoryPageProps) {
             ? ticketTreeRow(index, effectiveNode, ticketSummary?.id ?? "")
             : tierRows(index, node.stats),
         thresholds: index.thresholds,
-        keyColumnLabel: keyColumnLabel({ ticket: ticketReady, context: focusedContext !== null }),
+        keyColumnLabel: keyColumnLabel({ ticket: ticketReady, context: Boolean(focusedContext) }),
       }}
     >
       <div

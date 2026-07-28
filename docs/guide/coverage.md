@@ -842,20 +842,22 @@ configure.
 - **Tickets page** (`#/tickets`) — present only when `[coverage.tickets]`
   is configured (see {ref}`coverage-tickets`); one row per ticket id, sorted
   worst-uncovered-first, with the same overall stats card scoped to every
-  attributed line. Expanding a row lists its missing lines grouped by file
-  as ranges, each linking straight into the annotated source.
+  attributed line. Each row carries owned/covered/uncovered counts, a
+  threshold-colored line percentage, one column per tier, and a pin control;
+  every column is sortable. Expanding a row lists its missing lines grouped
+  by file as ranges, each linking straight into the annotated source.
 
   ![Tickets page: one row per ticket sorted by uncovered lines, an expanded
   row's missing-line ranges, and the overall attributed-lines stats
   card](../_static/generated/coverage-tickets.png)
 
-- **Ticket context** — pin a ticket from the tickets page's row or the app
-  bar's **⋮** menu's own "Pin ticket" section; unlike run focus, which dims
-  non-participating code, pinning a ticket **hides** files (and directories)
-  it never touched from the tree entirely, and every remaining
-  percentage recomputes over that ticket's owned lines alone — a
-  hidden-count row above the tree names what was removed, so the
-  narrowing is never silent. The file page keeps the opposite rule: it
+- **Ticket context** — pin a ticket from its row on the tickets page, or from
+  the ticket **search box** in the app bar (press <kbd>/</kbd> to jump straight
+  to it); unlike run focus, which dims non-participating code, pinning a
+  ticket **hides** files (and directories) it never touched from the tree
+  entirely, and every remaining percentage — including the per-tier rows —
+  recomputes over that ticket's owned lines alone. A hidden-count row above
+  the tree names what was removed, so the narrowing is never silent. The file page keeps the opposite rule: it
   **dims**, never hides, a non-owned line, because code inside a file must
   stay readable. Composes with run focus (`?ticket=<id>` alongside
   `?ctx=<label>`) — "this ticket's lines, as proven by that run" is a

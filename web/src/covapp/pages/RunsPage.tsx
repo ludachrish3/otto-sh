@@ -451,7 +451,7 @@ export function RunsPage({ index }: RunsPageProps) {
           ? focusedTreeRow(index, index.tree.stats, focusedContext)
           : tierRows(index, index.tree.stats),
         thresholds: index.thresholds,
-        keyColumnLabel: keyColumnLabel({ ticket: false, context: focusedContext !== null }),
+        keyColumnLabel: keyColumnLabel({ ticket: false, context: Boolean(focusedContext) }),
       }}
     >
       <div className="mb-3 flex flex-wrap items-center gap-2">

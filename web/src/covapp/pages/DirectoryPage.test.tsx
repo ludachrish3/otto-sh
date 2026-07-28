@@ -388,6 +388,21 @@ describe("DirectoryPage", () => {
       return renderPage({ index, segments });
     }
 
+    // Regression: the shared keyColumnLabel helper was wired up with
+    // `focusedContext !== null`, but every page derives focusedContext from
+    // `Array.prototype.find`, which yields UNDEFINED — so the check was
+    // always true and a ticket-only view claimed a context was focused too.
+    // The helper's own unit test could not catch this; it lives in the
+    // wiring, so it has to be asserted through a rendered page.
+    it("heads the key column 'Ticket' when a ticket is pinned and NO context is focused", async () => {
+      vi.spyOn(dataModule, "loadTicketChunk").mockResolvedValue(makeTicketChunk());
+      renderPinned(buildTicketIndex());
+      await screen.findByTestId("ticket-scope-banner");
+
+      const header = document.querySelector("thead th");
+      expect(header?.textContent).toBe("Ticket");
+    });
+
     it("shows a loading state before the ticket chunk resolves", () => {
       vi.spyOn(dataModule, "loadTicketChunk").mockReturnValue(new Promise(() => {}));
       renderPinned(buildTicketIndex());

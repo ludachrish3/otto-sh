@@ -625,7 +625,7 @@ export function FilePage({ index, segments, node }: FilePageProps) {
         thresholds: index.thresholds,
         keyColumnLabel: keyColumnLabel({
           ticket: ticket !== null,
-          context: focusedContext !== null,
+          context: Boolean(focusedContext),
         }),
       }}
     >

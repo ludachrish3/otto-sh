@@ -2,9 +2,10 @@
 (Tasks 10-12) in a real browser: the page boots with rows and a stats card,
 the search box filters, expanding a row loads its chunk and shows a real
 missing-line range, clicking that range navigates to the file page with the
-span highlighted, and pinning a ticket (via the app-bar's ⋮ menu — the
-tickets page itself has no per-row pin button, only expand) hides
-non-participating tree rows behind a hidden-count banner.
+span highlighted, and pinning a ticket (via the app bar's own ticket
+search box, which replaced the ⋮ menu's flat list; the tickets page's rows
+carry their own pin control too) hides non-participating tree rows behind
+a hidden-count banner.
 
 The fixture's per-ticket data (``tests/_fixtures/_report_fixture.py``,
 Task-13 addendum — see its module docstring) has exactly two tickets:
