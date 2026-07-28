@@ -8,25 +8,30 @@
 // `disallowEmptySelection={false}` — TagGroup defaults single-select to
 // disallowing an empty selection, same as a radio group would).
 //
-// Tag drops `data-testid` on the floor: its prop destructuring lists a fixed
-// set of names with no `...rest` capture, so an unrecognized prop never
-// reaches the DOM at all — not even on a wrapper, the way Badge/Select/
-// Input's testid gaps do. A `<span data-testid=...>` wrapped AROUND `<Tag>`
-// doesn't work either: react-aria's TagList collection-builder does a
-// special hidden-tree walk to find Tag items, and a plain host element
-// (span) between TagList and Tag makes the scanner drop the item entirely
-// (verified — it renders an empty `role="grid"`, zero tags). The only place
-// left to put it is `children`, which Tag renders verbatim inside its own
-// interactive root, so a click anywhere inside (including the span) bubbles
-// to Tag's press handler same as clicking the tag directly. The cost: Tag
-// only derives its accessible `textValue` when `children` is a plain
-// string, and there is no prop to override that (same destructuring gap) —
-// non-string children triggers a harmless dev-only console warning
-// ("A `textValue` prop is required..."). Accepted as the least-bad option
-// short of forking Tag's className/layout logic to reach the raw
-// react-aria-components primitive directly. (The vitest console guard
-// elevates warnings to failures; this one is on its reviewed ACCEPTED list
-// — see web/vitest.setup.ts.)
+// Chip test hooks ride on `data-key`, NOT `data-testid`. Tag drops
+// `data-testid` on the floor: its prop destructuring lists a fixed set of
+// names with no `...rest` capture, so an unrecognized prop never reaches the
+// DOM at all — not even on a wrapper, the way Badge/Select/Input's testid
+// gaps do. A `<span data-testid=...>` wrapped AROUND `<Tag>` doesn't work
+// either: react-aria's TagList collection-builder does a special hidden-tree
+// walk to find Tag items, and a plain host element (span) between TagList and
+// Tag makes the scanner drop the item entirely (verified — it renders an
+// empty `role="grid"`, zero tags).
+//
+// Putting the testid span inside `children` DID render, but silently cost the
+// chips their accessible name: Tag derives `textValue` only from plain-string
+// children (`typeof children === "string"`, same destructuring gap means a
+// caller-supplied `textValue` is dropped too), and react-aria feeds that
+// straight into the tag's `aria-label`. Non-string children => no textValue =>
+// no aria-label at all, which is exactly what react-aria's dev-only
+// "A `textValue` prop is required for <Tag> elements" warning was reporting.
+// It was not cosmetic.
+//
+// So children stay plain strings, and the per-chip hook is the `data-key`
+// attribute react-aria already stamps on each tag root from the `id` prop
+// below (verified in the rendered DOM). The enclosing TagGroup does spread
+// rest props, so the group-level `data-testid` there namespaces the two
+// groups — chart chips and source chips can share a key without colliding.
 import { Badge } from "@/components/base/badges/badges";
 import { Checkbox } from "@/components/base/checkbox/checkbox";
 import { Tag, TagGroup, TagList } from "@/components/base/tags/tags";
@@ -72,6 +77,7 @@ export function SeriesPanel(props: {
       <div className="flex flex-col gap-2">
         {allCharts.length > 0 && (
           <TagGroup
+            data-testid="chart-chips"
             label="Chart filters"
             selectionMode="multiple"
             selectedKeys={chips ?? new Set()}
@@ -86,7 +92,7 @@ export function SeriesPanel(props: {
             <TagList className="flex flex-wrap gap-1.5">
               {allCharts.map((chart) => (
                 <Tag key={chart.chartKey} id={chart.chartKey}>
-                  <span data-testid={`chip-${chart.chartKey}`}>{chart.chartLabel}</span>
+                  {chart.chartLabel}
                 </Tag>
               ))}
             </TagList>
@@ -94,6 +100,7 @@ export function SeriesPanel(props: {
         )}
         {sources.length > 0 && (
           <TagGroup
+            data-testid="source-chips"
             label="Source filters"
             selectionMode="single"
             disallowEmptySelection={false}
@@ -106,7 +113,7 @@ export function SeriesPanel(props: {
             <TagList className="flex flex-wrap gap-1.5">
               {sources.map((src) => (
                 <Tag key={src} id={src}>
-                  <span data-testid={`chip-source-${src}`}>src: {src}</span>
+                  {`src: ${src}`}
                 </Tag>
               ))}
             </TagList>

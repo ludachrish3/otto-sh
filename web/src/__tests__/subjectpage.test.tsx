@@ -112,10 +112,14 @@ describe("SubjectPage chart stack", () => {
     // real SubjectPage exercises the wiring.
     load("chassis-a_lc1");
     const user = userEvent.setup();
-    expect(screen.getByTestId("chip-mem")).toBeTruthy();
-    await user.click(screen.getByTestId("chip-cpu"));
-    expect(screen.getByTestId("chip-cpu")).toBeTruthy();
-    expect(screen.getByTestId("chip-mem")).toBeTruthy();
+    // Chips are addressed by react-aria's `data-key` (from Tag's `id`), not a
+    // testid the vendored Tag cannot forward — see SeriesPanel.tsx's header.
+    const chip = (key: string) =>
+      screen.getByTestId("chart-chips").querySelector(`[data-key="${key}"]`);
+    expect(chip("mem")).toBeTruthy();
+    await user.click(chip("cpu") as HTMLElement);
+    expect(chip("cpu")).toBeTruthy();
+    expect(chip("mem")).toBeTruthy();
   });
 
   it("element subject renders member series", () => {

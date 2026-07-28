@@ -25,15 +25,17 @@ import { afterEach, beforeEach } from "vitest";
 // Accepted warnings — each entry is a REVIEWED exception, not a mute button.
 // Add one only with a comment saying why the warning cannot be fixed at the
 // source and why it is harmless.
-const ACCEPTED: RegExp[] = [
-  // SeriesPanel's chips (see its header comment): the vendored Tag's fixed
-  // prop destructure can neither forward `data-testid` nor accept a
-  // `textValue` override, and its children must carry the testid <span>, so
-  // react-aria's dev-only "A `textValue` prop is required" advisory is
-  // unavoidable short of forking the vendored component. Harmless here:
-  // textValue only feeds TagGroup type-to-select, which the chips don't use.
-  /A `textValue` prop is required for <Tag> elements/,
-];
+//
+// Deliberately EMPTY. It held react-aria's "A `textValue` prop is required
+// for <Tag> elements" for SeriesPanel's chips on the theory that the warning
+// was cosmetic and unfixable without hand-editing the vendored Tag. Both
+// halves were wrong: the missing textValue also cost every chip its
+// `aria-label` (react-aria feeds one from the other), and the fix was
+// caller-side all along — plain-string children, test hooks moved to the
+// `data-key` react-aria already emits. See SeriesPanel.tsx's header. Treat a
+// new entry here as the last resort it is: an accepted warning is a defect
+// nobody will look at again.
+const ACCEPTED: RegExp[] = [];
 
 // Interception spans beforeEach->afterEach, so output from beforeAll/
 // afterAll hooks escapes the guard — accepted; no current hook logs.

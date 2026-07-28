@@ -30,6 +30,15 @@ const kitchen = parseExportDocument(
 afterEach(cleanup);
 afterEach(() => registerSearchInput(null));
 
+// Chips carry no `data-testid` — the vendored Tag cannot forward one, and
+// smuggling it in via a child <span> is what stripped their accessible name
+// in the first place (see SeriesPanel.tsx's header). react-aria stamps
+// `data-key` on each tag root from the `id` prop, and the enclosing TagGroup
+// carries the group testid, so this pair addresses a chip unambiguously.
+function chip(group: "chart-chips" | "source-chips", key: string): HTMLElement | null {
+  return screen.getByTestId(group).querySelector(`[data-key="${key}"]`);
+}
+
 function renderPanel(overrides: Partial<Parameters<typeof SeriesPanel>[0]> = {}) {
   // Resolve `tree` from the overrides first so the derived defaults (allCharts,
   // checked) follow the caller's tree — tests that pass a different subject's
@@ -55,8 +64,23 @@ function renderPanel(overrides: Partial<Parameters<typeof SeriesPanel>[0]> = {})
 describe("SeriesPanel", () => {
   it("renders a chip per chart and a source chip", () => {
     renderPanel();
-    expect(screen.getByTestId("chip-cpu")).toBeTruthy();
-    expect(screen.getByTestId("chip-source-mgmt-01")).toBeTruthy();
+    expect(chip("chart-chips", "cpu")).toBeTruthy();
+    expect(chip("source-chips", "mgmt-01")).toBeTruthy();
+  });
+
+  it("every chip carries an accessible name", () => {
+    // Regression guard for the fix that removed the chips' testid <span>:
+    // the vendored Tag derives react-aria's `textValue` (and from it the
+    // rendered `aria-label`) ONLY from plain-string children, so wrapping the
+    // label in any element left every chip nameless to a screen reader. Goes
+    // red against the pre-fix markup — the tag root has no aria-label at all.
+    const props = renderPanel();
+    for (const chart of props.allCharts) {
+      expect(chip("chart-chips", chart.chartKey)?.getAttribute("aria-label")).toBe(
+        chart.chartLabel,
+      );
+    }
+    expect(chip("source-chips", "mgmt-01")?.getAttribute("aria-label")).toBe("src: mgmt-01");
   });
 
   it("keeps every chart's chip while the filtered tree is narrowed to one", () => {
@@ -75,7 +99,7 @@ describe("SeriesPanel", () => {
 
     // Every chart still has a chip, even the ones filtered out of `tree`.
     for (const chart of all) {
-      expect(screen.getByTestId(`chip-${chart.chartKey}`)).toBeTruthy();
+      expect(chip("chart-chips", chart.chartKey)).toBeTruthy();
     }
     // ...but the checkbox list (driven by the narrowed tree) omits the others.
     expect(screen.queryByTestId(`series-node-${other?.series[0]?.key}`)).toBeNull();
@@ -122,7 +146,7 @@ describe("SeriesPanel", () => {
   it("hides the source chip row when no external sources exist", () => {
     const tree = buildSeriesTree(kitchen, "db-01");
     renderPanel({ tree, checked: new Set() });
-    expect(screen.queryByTestId("chip-source-mgmt-01")).toBeNull();
+    expect(screen.queryByTestId("source-chips")).toBeNull();
   });
 
   it("Ctrl+A inside the chart-filter chips selects every chart key", async () => {
@@ -141,9 +165,10 @@ describe("SeriesPanel", () => {
     const onChips = vi.fn();
     const props = renderPanel({ onChips });
 
-    // Click a chip first to move focus into the grid (clicking anywhere in
-    // the Tag's children bubbles to its press handler — see file header).
-    await user.click(screen.getByTestId("chip-cpu"));
+    // Click a chip first to move focus into the grid.
+    const cpu = chip("chart-chips", "cpu");
+    expect(cpu).toBeTruthy();
+    await user.click(cpu as HTMLElement);
     await user.keyboard("{Control>}a{/Control}");
 
     const allChartKeys = props.tree.map((c) => c.chartKey);

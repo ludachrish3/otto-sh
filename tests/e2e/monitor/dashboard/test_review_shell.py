@@ -624,7 +624,7 @@ def test_subject_charts_render_and_filter(shell_dash, page):
     page.locator('[data-testid="series-node-CPU %"]').click()
     page.locator('[data-testid="chart-panel-cpu"]').wait_for(state="detached")
     # Chip filter narrows to one group.
-    page.locator('[data-testid="chip-mem"]').click()
+    page.locator('[data-testid="chart-chips"] [data-key="mem"]').click()
     page.locator('[data-testid="chart-panel-psu-temp"]').wait_for(state="detached")
     assert page.locator('[data-testid="chart-stack"] canvas').count() == 1
 
@@ -640,7 +640,7 @@ def test_source_badges_and_source_filter(shell_dash, page):
     panel.wait_for()
     assert "mgmt-01" in panel.inner_text()
     before = page.locator('[data-testid^="series-node-"]').count()
-    page.locator('[data-testid="chip-source-mgmt-01"]').click()
+    page.locator('[data-testid="source-chips"] [data-key="mgmt-01"]').click()
     page.wait_for_function(
         f"() => document.querySelectorAll('[data-testid^=\"series-node-\"]').length < {before}"
     )
