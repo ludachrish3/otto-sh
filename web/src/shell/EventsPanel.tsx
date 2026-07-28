@@ -189,6 +189,23 @@ export function EventsPanel(props: { isOpen: boolean; onClose: () => void }) {
         if (!open) onClose();
       }}
       isDismissable
+      // z-50 matches the command-palette scrim (CommandMenu.tsx) and must stay
+      // >= app-content z-index: the subject page's live-window Tabs paint their
+      // pill at a z-10 flex-item stacking context that hoists to the document
+      // root, so the vendored scrim's auto/absent z-index let them bleed on top
+      // of the open panel. Keep it AT 50, not higher: the panel's own react-aria
+      // overlays must still render above it — tooltips are explicitly z-50, and
+      // popovers portal later in the DOM (react-aria's own overlay z), so
+      // equal-or-later wins.
+      //
+      // It rides here rather than on the vendored slideout-menu.tsx because that
+      // file is copy-in vendored source that must stay byte-identical to what
+      // the untitledui CLI emits (web/README.md's never-hand-edit rule) — a
+      // hand-edit there reads as upstream drift forever
+      // (scripts/check_untitledui_drift.sh). The vendored ModalOverlay feeds
+      // props.className through cx (tailwind-merge) last, so this lands on the
+      // same backdrop <div> and wins the z-index group.
+      className="z-50"
     >
       <Modal>
         <Dialog data-testid="events-panel" aria-label="Events">

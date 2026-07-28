@@ -155,6 +155,10 @@ export function EventEditor() {
         if (!open) closeEventEditor();
       }}
       isDismissable
+      // Stacks the scrim above the live-window Tabs' hoisted z-10 pill; same
+      // rationale (and the same reason it lives on the call site rather than in
+      // the vendored slideout-menu.tsx) as EventsPanel.tsx's ModalOverlay.
+      className="z-50"
     >
       <Modal>
         <Dialog
