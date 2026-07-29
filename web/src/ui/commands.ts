@@ -105,7 +105,7 @@ export function useCommands(): Command[] {
         id: `nav-host-${host.id}`,
         label: host.id,
         section: "Navigation",
-        sublabel: pieces.length > 0 ? pieces.join(" · ") : undefined,
+        ...(pieces.length > 0 && { sublabel: pieces.join(" · ") }),
         icon: Monitor01,
         enabled: true,
         run: () => navigate(`/host/${host.id}`),

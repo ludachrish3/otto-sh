@@ -205,7 +205,9 @@ export function ticketTreeRow(
   const summary: TierStatRow = {
     key: "ticket",
     label: ctx ? `${ticketId} · ${ctx.label}` : ticketId,
-    dotColor: undefined,
+    // `dotColor` is simply absent: a tree-level ticket row never carries a
+    // tier dot. It was previously spelled `dotColor: undefined`, which under
+    // `exactOptionalPropertyTypes` is a different thing from omitting it.
     line: ctx ? null : [node.stats.lines.hit, node.stats.lines.total],
     branch: null,
     decision: null,
@@ -262,7 +264,7 @@ export function ticketFileRow(
     {
       key: "ticket",
       label: ctx ? `${ticketId} · ${ctx.label}` : ticketId,
-      dotColor: ctx ? index.tier_colors[ctx.tier] : undefined,
+      ...(ctx && { dotColor: index.tier_colors[ctx.tier] }),
       line: [hit, owned],
       branch: null,
       decision: null,

@@ -31,7 +31,7 @@ describe("buildSeriesTree maxSeries", () => {
     if (psu) psu.max_series = 3; // explicit cap
     const tree = buildSeriesTree(session, "chassis-a_lc1");
     const byKey = Object.fromEntries(tree.map((c) => [c.chartKey, c.maxSeries]));
-    expect(byKey.cpu).toBeNull();
+    expect(byKey["cpu"]).toBeNull();
     expect(byKey["psu-temp"]).toBe(3);
   });
 });

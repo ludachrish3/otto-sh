@@ -132,7 +132,10 @@ describe("buildTopoGraph — inter-element (kitchen-sink)", () => {
     expect(implicit[0].links).toHaveLength(3);
     const declared = graph.edges.filter((e) => e.provenance === "declared");
     expect(declared).toHaveLength(2); // app-db + metrics-udp, both workers~db-01
-    expect(declared.map((e) => e.parallelIndex).sort()).toEqual([0, 1]);
+    // Numeric comparator, not a bare .sort(): parallelIndex is a number, and
+    // the default sort compares STRINGIFIED elements, so a pair happens to
+    // come out right while [0, 1, 10, 2] would not.
+    expect(declared.map((e) => e.parallelIndex).sort((a, b) => a - b)).toEqual([0, 1]);
   });
 
   it("passes impair through", () => {
@@ -145,7 +148,12 @@ describe("buildTopoGraph — inter-element (kitchen-sink)", () => {
 
   it("attaches hop-less elements to local", () => {
     const locals = graph.edges.filter((e) => e.provenance === "local");
-    expect(locals.map((e) => e.target).sort()).toEqual(["db-01", "edge-gw", "mgmt-01", "workers"]);
+    expect(locals.map((e) => e.target).sort((a, b) => a.localeCompare(b))).toEqual([
+      "db-01",
+      "edge-gw",
+      "mgmt-01",
+      "workers",
+    ]);
   });
 
   it("sources overlay adds deduped reports-for edges only when on", () => {
@@ -176,7 +184,7 @@ describe("buildTopoGraph — intra-element", () => {
     const intra = buildTopoGraph(cascade, eff, { expand: "rack-a", sources: false });
     const pair = intra.edges.filter((e) => e.provenance === "declared" && e.source !== e.target);
     expect(pair).toHaveLength(2);
-    expect(pair.map((e) => e.parallelIndex).sort()).toEqual([0, 1]);
+    expect(pair.map((e) => e.parallelIndex).sort((a, b) => a - b)).toEqual([0, 1]);
   });
 });
 

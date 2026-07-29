@@ -55,8 +55,13 @@ export interface CodeLine {
    * set of "t-<tier>" CSS rules to predeclare, so the caller computes the
    * actual color (e.g. via `color-mix`) and supplies it here rather than
    * inventing a class per tier. The fixed-cardinality states (excluded/
-   * stale/aging/uncovered) instead rely on plain `rowClass` CSS rules. */
-  style?: CSSProperties;
+   * stale/aging/uncovered) instead rely on plain `rowClass` CSS rules.
+   *
+   * `| undefined` is explicit (it is not redundant under
+   * `exactOptionalPropertyTypes`): the producers compute this per line and
+   * return `undefined` for the rows that need no extra style, so "computed to
+   * nothing" and "omitted" are the same thing to this field. */
+  style?: CSSProperties | undefined;
   /** Content for the leading ticket-gutter column (Task 11 — the slot
    * `gridTemplateFor`'s doc comment below reserved for this). `undefined`
    * for a line with no ticket attribution, in which case the column
@@ -82,8 +87,11 @@ export interface CodeViewProps {
   columns: GutterCol[];
   /** Content for a line's expansion panel (e.g. FilePage's run-chip list).
    * Absent, or returning `null`/`undefined` for a given line, means that
-   * line never shows an expander button even if `expandable` is set. */
-  renderExpansion?: (line: CodeLine) => ReactNode;
+   * line never shows an expander button even if `expandable` is set.
+   * `| undefined` is explicit so a forwarding caller can hand its own
+   * optional prop straight through under `exactOptionalPropertyTypes` —
+   * "absent" and "explicitly undefined" mean the same thing here. */
+  renderExpansion?: ((line: CodeLine) => ReactNode) | undefined;
   /** Which lines' panels are currently open, by line number. Fully
    * controlled — CodeView holds no expansion state of its own. */
   openLines: ReadonlySet<number>;
@@ -93,8 +101,9 @@ export interface CodeViewProps {
    * had, so a caller that never sets `ticketGutter` on any line (or omits
    * this prop entirely) gets a byte-identical grid template to before
    * Task 11. FilePage passes a real width only when at least one line in
-   * the file actually carries a ticket. */
-  ticketGutterWidth?: string;
+   * the file actually carries a ticket. `| undefined` for the same reason as
+   * `renderExpansion` above: the default applies either way. */
+  ticketGutterWidth?: string | undefined;
 }
 
 /** `[ticketGutterWidth, ...column widths, "1fr", "66px"].join(" ")` — the

@@ -17,7 +17,7 @@ const ARRAY_FIELDS = ["metrics", "events", "log_events", "deleted_event_ids"] as
 function isFragment(v: unknown): v is MonitorSessionFragment {
   if (typeof v !== "object" || v === null) return false;
   const rec = v as Record<string, unknown>;
-  if (typeof rec.session !== "string") return false;
+  if (typeof rec["session"] !== "string") return false;
   return ARRAY_FIELDS.every((key) => rec[key] === undefined || Array.isArray(rec[key]));
 }
 

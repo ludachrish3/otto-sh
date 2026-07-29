@@ -22,6 +22,7 @@ import { Breadcrumbs, type Crumb } from "../../ui/Breadcrumbs";
 import { groupContexts } from "../contexts";
 import { getIndex } from "../data";
 import { useFocus } from "../focus";
+import type { IndexPayload } from "../types";
 import { ShortcutsDialog } from "./ShortcutsDialog";
 import { StatsCard, type StatsCardProps } from "./StatsCard";
 import { TicketSearch } from "./TicketSearch";
@@ -50,7 +51,26 @@ export interface AppShellProps {
  * list, so passing these two here wins over the vendored disabled
  * treatment and restores full-opacity swatches for what are informational
  * rows, not actually-disabled actions. */
-function KeyRow({ id, color, children }: { id: string; color?: string; children: ReactNode }) {
+// `color?: string | undefined`, not `color?: string`: under
+// `exactOptionalPropertyTypes` the two differ, and every caller below reads a
+// `Partial<IndexPayload["state_colors"]>` entry, which IS `string | undefined`
+// whenever no index has loaded. "No colour" and "colour omitted" render
+// identically here (the `{color && …}` guard), so accepting the explicit
+// undefined once at this declaration is honest and beats four conditional
+// spreads at the call sites.
+function KeyRow({
+  id,
+  color,
+  children,
+}: {
+  // A react-aria collection Key, forwarded straight to Dropdown.Item — NOT a
+  // DOM id (react-aria mints the real element id itself). That is why KeyRow
+  // is listed in biome.json's useUniqueElementIds `excludedComponents`; if
+  // this ever renders a real element with id={id}, take it back off that list.
+  id: string;
+  color?: string | undefined;
+  children: ReactNode;
+}) {
   return (
     <Dropdown.Item id={id} isDisabled textValue={id} className="opacity-100 cursor-default">
       <span className="flex items-center gap-2">
@@ -155,7 +175,10 @@ function FocusMenuItem({
   onAction,
 }: {
   active: boolean;
-  dotColor?: string;
+  /** `| undefined` explicitly — see TierStatRow.dotColor. A tier with no
+   * wire colour renders the neutral `bg-fg-quaternary` dot below, which is
+   * this component already treating `undefined` as a value it understands. */
+  dotColor?: string | undefined;
   label: string;
   testId: string;
   onAction: () => void;
@@ -220,7 +243,11 @@ export function AppShell({ crumbs, title, meta, stats, children }: AppShellProps
   const tierOrder = index?.tier_order ?? [];
   const tierLabels = index?.tier_labels ?? {};
   const tierColors = index?.tier_colors ?? {};
-  const stateColors = index?.state_colors ?? {};
+  // Partial, unlike IndexPayload's own (closed, always-populated) field: with
+  // no index loaded there is no palette, and colors are never hard-coded
+  // here (Global Constraints). Each KeyRow below simply renders no swatch —
+  // the type now says that can happen instead of claiming a `string`.
+  const stateColors: Partial<IndexPayload["state_colors"]> = index?.state_colors ?? {};
 
   // Contexts for the chip's tier dot + the ⋮ menu's "Focus context"
   // switcher — derived here (not read off `focus`, which is only ever a
@@ -275,7 +302,7 @@ export function AppShell({ crumbs, title, meta, stats, children }: AppShellProps
           {focus !== null && (
             <FocusChip
               label={focus}
-              tierColor={focusedContext ? tierColors[focusedContext.tier] : undefined}
+              {...(focusedContext && { tierColor: tierColors[focusedContext.tier] })}
               onClear={() => setFocus(null)}
             />
           )}

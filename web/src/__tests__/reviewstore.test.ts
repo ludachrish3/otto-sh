@@ -197,7 +197,7 @@ describe("reviewStore", () => {
     if (active === null) throw new Error("expected an active session after import");
     const warningsBefore = useReviewStore.getState().warnings.length;
     const metricsBefore =
-      useReviewStore.getState().sessions.find((s) => s.id === active)?.metrics.length ?? 0;
+      useReviewStore.getState().sessions.find((x) => x.id === active)?.metrics.length ?? 0;
 
     useReviewStore.getState().actions.appendFragment({
       format: 1,

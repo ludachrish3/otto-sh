@@ -15,6 +15,19 @@ export interface Thresholds {
   medium: number;
 }
 
+/** The per-line states that carry their own tint, mirroring `STATE_COLORS`
+ * in `src/otto/coverage/colors.py` — a fixed set, unlike tiers. */
+export type CoverageState = "uncovered" | "excluded" | "stale" | "aging";
+
+/** Who took a manual capture (`_resolve_tester` in `src/otto/cli/cov.py`).
+ * `name` is always resolved (CLI option, else the OS username); `email` only
+ * when `git config user.email` is set or `--tester-email` was passed. A bare
+ * `Record<string, string>` hid both facts. */
+export interface Tester {
+  name: string;
+  email?: string;
+}
+
 /** One run row (`RunRecord.to_dict()` verbatim). */
 export interface RunJson {
   id: number;
@@ -24,7 +37,7 @@ export interface RunJson {
   host: string;
   labs: string[];
   captured_at: string;
-  tester: Record<string, string> | null;
+  tester: Tester | null;
   ticket: string | null;
   note: string | null;
   base_commit: string;
@@ -92,7 +105,11 @@ export interface IndexPayload {
   tier_order: string[];
   tier_labels: Record<string, string>;
   tier_colors: Record<string, string>;
-  state_colors: Record<string, string>;
+  /** Always all four keys — `spa_data.py` emits `dict(STATE_COLORS)`, a
+   * module constant, not a per-report computation. Unlike `tier_*` above
+   * (whose keys are the report's own tier names) this is a CLOSED set, so it
+   * is typed as one: `state_colors.stlae` is now a compile error. */
+  state_colors: Record<CoverageState, string>;
   thresholds: Thresholds;
   stat_types: string[];
   runs: RunJson[];

@@ -80,7 +80,10 @@ function lowerBound(tsMs: number[], t: number): number {
   let hi = tsMs.length;
   while (lo < hi) {
     const mid = (lo + hi) >>> 1;
-    if (tsMs[mid] < t) lo = mid + 1;
+    const at = tsMs[mid];
+    // `at !== undefined &&` is exactly the old `tsMs[mid] < t`: a missing slot
+    // compared false and took the same `else`.
+    if (at !== undefined && at < t) lo = mid + 1;
     else hi = mid;
   }
   return lo;

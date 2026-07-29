@@ -250,7 +250,7 @@ describe("DirectoryPage", () => {
       const index = buildIndex();
       window.__OTTO_COV__ = index;
       window.location.hash = `#/coverage${
-        segments.length ? `/${segments.join("/")}` : ""
+        segments.length > 0 ? `/${segments.join("/")}` : ""
       }?ctx=${encodeURIComponent(ctxLabel)}`;
       renderPage({ index, segments });
       return index;
@@ -383,7 +383,7 @@ describe("DirectoryPage", () => {
     function renderPinned(index: IndexPayload, segments: string[] = []) {
       window.__OTTO_COV__ = index;
       window.location.hash = `#/coverage${
-        segments.length ? `/${segments.join("/")}` : ""
+        segments.length > 0 ? `/${segments.join("/")}` : ""
       }?ticket=PROJ-1`;
       return renderPage({ index, segments });
     }

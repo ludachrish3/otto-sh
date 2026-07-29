@@ -29,17 +29,45 @@ const MIN_ZOOM_DELTA_MS = 1000;
 // level (echarts' `takeGlobalCursor`, not part of the option object), so a
 // whole-model rebuild silently drops it unless re-issued (see the option
 // effect below).
-const BRUSH_ARM_ACTION = {
+const BRUSH_ARM_ACTION: BrushArmAction = {
   type: "takeGlobalCursor",
   key: "brush",
   brushOption: { brushType: "lineX", brushMode: "single" },
-} as const;
+};
+
+/** The second argument to `setOption`. Named rather than left as a bare
+ * record because every merge-vs-replace decision in this file rides on these
+ * two flags, and a bare record made `{ notMrge: true }` (a full replace
+ * silently downgraded to a merge) type-check happily. */
+export interface SetOptionOpts {
+  notMerge?: boolean;
+  lazyUpdate?: boolean;
+}
+
+/** Arms the single-shot lineX brush cursor (Task 12). */
+export interface BrushArmAction {
+  type: "takeGlobalCursor";
+  key: "brush";
+  brushOption: { brushType: string; brushMode: string };
+}
+
+/** Clears any brush rectangle currently drawn. */
+export interface BrushClearAction {
+  type: "brush";
+  areas: unknown[];
+}
+
+/** Every `dispatchAction` payload this component sends. A closed union, for
+ * the same reason as SetOptionOpts: ECharts silently ignores an action whose
+ * `type` it does not recognise, so a typo here is invisible at runtime and
+ * was invisible at compile time too. */
+export type ChartAction = BrushArmAction | BrushClearAction;
 
 interface EChartsLike {
   group: string;
-  setOption: (option: Record<string, unknown>, opts?: Record<string, unknown>) => void;
+  setOption: (option: Record<string, unknown>, opts?: SetOptionOpts) => void;
   on: (event: string, handler: (e: unknown) => void) => void;
-  dispatchAction: (payload: Record<string, unknown>) => void;
+  dispatchAction: (payload: ChartAction) => void;
   resize: () => void;
   dispose: () => void;
 }
@@ -279,9 +307,9 @@ export function ChartPanel(props: {
     // setOption() — rather than the `series` prop is what makes this
     // attribute able to fail when that one couldn't.
     if (el.current) {
-      const drawn = (option.series as { data?: unknown[] }[] | undefined) ?? [];
+      const drawn = (option["series"] as { data?: unknown[] }[] | undefined) ?? [];
       const pointCount = drawn.reduce((n, s) => n + (s.data?.length ?? 0), 0);
-      el.current.dataset.echartsPointCount = String(pointCount);
+      el.current.dataset["echartsPointCount"] = String(pointCount);
     }
   }, [option]);
 
@@ -326,9 +354,9 @@ export function ChartPanel(props: {
     // also moves -window-to) — proving that needs both ends of the range
     // read from the same imperative stamp.
     if (el.current) {
-      el.current.dataset.echartsWindowFrom = String(win.from);
-      el.current.dataset.echartsWindowTo = String(win.to);
-      el.current.dataset.echartsMarkerCount = String(markers.length);
+      el.current.dataset["echartsWindowFrom"] = String(win.from);
+      el.current.dataset["echartsWindowTo"] = String(win.to);
+      el.current.dataset["echartsMarkerCount"] = String(markers.length);
     }
   }, [win.from, win.to, markersKey, theme?.muted, anchorSeriesId]);
 

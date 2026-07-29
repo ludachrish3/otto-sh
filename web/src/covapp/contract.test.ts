@@ -23,7 +23,11 @@ const contract = JSON.parse(
   readFileSync(join(here, "../../../tests/_fixtures/covapp_ticket_contract.json"), "utf-8"),
 ) as {
   sentinel_ticket_ids: string[];
-  chunk_callbacks: Record<string, string>;
+  /** Spelled out rather than `Record<string, string>`: the callback NAMES
+   * are the whole API between the emitted classic scripts and this bundle,
+   * so a contract file that dropped one should fail HERE, at the type, not
+   * as an `undefined` key silently asserted against `typeof … === "function"`. */
+  chunk_callbacks: { index: string; file: string; ticket: string };
   ticket_summary_keys: string[];
   ticket_totals_keys: string[];
   ticket_chunk_keys: string[];

@@ -40,19 +40,119 @@
   "linter": {
     "enabled": true,
     "domains": {
-      "react": "recommended"
+      "react": "all",
+      "test": "all",
+      "types": "all",
+      "tailwind": "all"
     },
     "rules": {
-      "preset": "recommended",
+      "preset": "all",
+      "complexity": {
+        "useMaxParams": {
+          "level": "error",
+          "options": {
+            "max": 5
+          }
+        },
+        "useLiteralKeys": "off",
+        "noExcessiveLinesPerFunction": "off",
+        "noExcessiveCognitiveComplexity": "off",
+        "noVoid": "off",
+        "useSimplifiedLogicExpression": "off"
+      },
+      "performance": {
+        "noJsxPropsBind": "off",
+        "useSolidForComponent": "off"
+      },
       "correctness": {
-        "useExhaustiveDependencies": "error",
-        "useHookAtTopLevel": "error",
-        "noUnusedVariables": "error",
-        "noUnusedFunctionParameters": "error",
-        "noUnusedImports": "error"
+        "useUniqueElementIds": {
+          "level": "error",
+          "options": {
+            "excludedComponents": ["Item", "Tab", "KeyRow"]
+          }
+        },
+        "noUnresolvedImports": "off",
+        "useImportExtensions": "off",
+        "noSolidDestructuredProps": "off",
+        "useQwikValidLexicalScope": "off"
+      },
+      "security": {
+        "noSecrets": {
+          "level": "error",
+          "options": {
+            "entropyThreshold": 50
+          }
+        }
+      },
+      "suspicious": {
+        "noEqualsToNull": "off",
+        "noUnnecessaryConditions": "off",
+        "noLeakedRender": "off",
+        "noBitwiseOperators": "off",
+        "noMisplacedAssertion": "off",
+        "noReactSpecificProps": "off"
+      },
+      "style": {
+        "useComponentExportOnlyModules": "off",
+        "useBlockStatements": "off",
+        "noMagicNumbers": "off",
+        "useNamingConvention": "off",
+        "noTernary": "off",
+        "useGlobalThis": "off",
+        "noJsxLiterals": "off",
+        "noImplicitBoolean": "off",
+        "noContinue": "off",
+        "useDestructuring": "off",
+        "noIncrementDecrement": "off",
+        "useExportsLast": "off",
+        "useNumericSeparators": "off",
+        "noExcessiveLinesPerFile": "off",
+        "noHexColors": "off",
+        "noNegationElse": "off",
+        "noNestedTernary": "off",
+        "useFilenamingConvention": "off",
+        "noDefaultExport": "off"
+      },
+      "nursery": {
+        "noFloatingPromises": "error"
       }
     }
   },
+  "overrides": [
+    {
+      "includes": [
+        "**/*.test.ts",
+        "**/*.test.tsx",
+        "**/__tests__/**",
+        "scripts/**",
+        "vitest.setup.ts",
+        "vite.config.ts",
+        "vite.covapp.config.ts"
+      ],
+      "linter": {
+        "rules": {
+          "correctness": {
+            "noNodejsModules": "off"
+          },
+          "performance": {
+            "useTopLevelRegex": "off",
+            "noDelete": "off",
+            "noNamespaceImport": "off",
+            "noAwaitInLoops": "off"
+          },
+          "suspicious": {
+            "noEmptyBlockStatements": "off",
+            "noConsole": "off"
+          },
+          "style": {
+            "useAtIndex": "off",
+            "noExcessiveClassesPerFile": "off",
+            "noProcessEnv": "off"
+          }
+        }
+      }
+    }
+  ],
   "assist": {
     "enabled": true,
     "actions": {

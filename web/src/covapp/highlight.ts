@@ -60,6 +60,12 @@ function plainLines(source: string): string[] {
   return source.split("\n").map((line) => escapeHtml(line));
 }
 
+/** The two trailing artefacts a Shiki "line" span leaves behind once the
+ * opening tags are split away — stripped once per SOURCE LINE, so both are
+ * module-level rather than rebuilt inside the per-line `.map` below. */
+const TRAILING_NEWLINE = /\n$/;
+const CLOSING_SPAN = /<\/span>$/;
+
 /** One highlighted HTML fragment per line of `source`, indexed the same as
  * `source.split("\n")` (see `plainLines`) — safe to drop straight into a
  * `dangerouslySetInnerHTML` source cell (`ui/CodeView.tsx`): Shiki
@@ -100,5 +106,5 @@ export async function highlightLines(source: string, lang: CodeLang): Promise<st
   const inner = html.slice(codeStart, codeEnd);
   const parts = inner.split('<span class="line">');
   parts.shift(); // drop the (empty) text before the first line span
-  return parts.map((part) => part.replace(/\n$/, "").replace(/<\/span>$/, ""));
+  return parts.map((part) => part.replace(TRAILING_NEWLINE, "").replace(CLOSING_SPAN, ""));
 }

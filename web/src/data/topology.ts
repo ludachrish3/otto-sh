@@ -274,8 +274,16 @@ function buildTunnelEdges(
       warnings.push(`tunnel ${t.id}: malformed hops (expected >=2 host ids)`);
       continue;
     }
-    for (let i = 0; i + 1 < t.hops.length; i++) {
-      const [ha, hb] = [t.hops[i], t.hops[i + 1]];
+    // Consecutive hop pairs — a tunnel's hops are a chain, so segment i joins
+    // hop i to hop i + 1. Materialising the pairs means both endpoints below
+    // are real host ids rather than two index reads taken on trust.
+    const hopPairs: [string, string][] = [];
+    let prevHop: string | null = null;
+    for (const hop of t.hops) {
+      if (prevHop !== null) hopPairs.push([prevHop, hop]);
+      prevHop = hop;
+    }
+    for (const [i, [ha, hb]] of hopPairs.entries()) {
       const missing = [ha, hb].filter((h) => !knownHost(h));
       if (missing.length > 0) {
         const names = missing.map((h) => `"${h}"`).join(", ");
@@ -378,7 +386,7 @@ export function buildTopoGraph(
       const memberHosts = members
         .map((id) => byId.get(id))
         .filter((h): h is HostSnapshot => h !== undefined);
-      const depth = memberHosts.length ? Math.min(...memberHosts.map((h) => depthOf(h))) : 1;
+      const depth = memberHosts.length > 0 ? Math.min(...memberHosts.map((h) => depthOf(h))) : 1;
       nodes.push({
         id: el.id,
         kind: "element",

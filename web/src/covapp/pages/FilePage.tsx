@@ -74,7 +74,7 @@ export function rowClassForFocus(
  * rely on `covapp.css` rules reading the `--state-*` custom properties
  * `FilePage` sets once on the code-card container below. */
 function tierStyleFor(rowClass: string, index: IndexPayload): CSSProperties | undefined {
-  if (!rowClass.startsWith("t-")) return undefined;
+  if (!rowClass.startsWith("t-")) return;
   const color = index.tier_colors[rowClass.slice(2)] ?? "currentColor";
   return {
     backgroundColor: `color-mix(in srgb, ${color} 14%, transparent)`,
@@ -116,7 +116,9 @@ function collectRunIds(line: LineJson | undefined): Set<number> {
   return new Set([...fromRun, ...fromStale]);
 }
 
-function TierHeaderDot({ color, label }: { color?: string; label: string }) {
+/** `color?: string | undefined` explicitly — see TierStatRow.dotColor. The
+ * `?? "currentColor"` below is this component already saying it accepts one. */
+function TierHeaderDot({ color, label }: { color?: string | undefined; label: string }) {
   return (
     <span title={`${label} hits`} className="flex items-center justify-center">
       <span
@@ -287,7 +289,7 @@ function buildTicketGutter(
   index: IndexPayload,
 ): ReactNode | undefined {
   const ids = line?.ticket;
-  if (!ids || ids.length === 0) return undefined;
+  if (!ids || ids.length === 0) return;
   const [first, ...rest] = ids;
   const url = index.tickets.find((t) => t.id === first)?.url ?? null;
   const chipClass = "truncate font-mono text-[10px] font-medium text-tertiary";
@@ -370,6 +372,9 @@ export interface LineRange {
   end: number;
 }
 
+/** The whole accepted grammar of `?lines=`: `A` or `A-B`, digits only. */
+const LINES_PARAM = /^(\d+)(?:-(\d+))?$/;
+
 /** Parses the `?lines=A-B` (or bare `?lines=A`) deep link (design §6.2) via
  * `parseHashQuery()` (`focus.tsx`) — never wouter's own `useSearch()`/
  * `location.search`, per that module's header comment on why `?ctx=` (and
@@ -384,7 +389,7 @@ export interface LineRange {
 export function parseLinesRange(totalLines: number): LineRange | null {
   const raw = parseHashQuery().get("lines");
   if (raw === null) return null;
-  const match = /^(\d+)(?:-(\d+))?$/.exec(raw);
+  const match = LINES_PARAM.exec(raw);
   if (!match) return null;
   const start = Number(match[1]);
   const end = match[2] === undefined ? start : Number(match[2]);
@@ -432,15 +437,18 @@ export function FilePage({ index, segments, node }: FilePageProps) {
     setOpenLines(new Set());
     setHighlight(null);
     loadFileChunk(node.chunk)
-      .then(async (chunk) => {
-        const htmlLines = await highlightLines(chunk.source, langForPath(chunk.path));
+      // `loadedChunk`, not `chunk`: the render body below destructures its own
+      // `chunk` out of `state`, and these two are a lifecycle apart — this one
+      // is the value that just resolved, that one is whatever is committed.
+      .then(async (loadedChunk) => {
+        const htmlLines = await highlightLines(loadedChunk.source, langForPath(loadedChunk.path));
         if (cancelled) return;
-        setState({ status: "ready", chunk, htmlLines });
+        setState({ status: "ready", chunk: loadedChunk, htmlLines });
         // Bounds-checking `?lines=` needs the file's real line count, which
         // only exists once the chunk has resolved — see `parseLinesRange`'s
         // doc comment for why an out-of-bounds bound is ignored rather than
         // clamped.
-        setHighlight(parseLinesRange(chunk.source.split("\n").length));
+        setHighlight(parseLinesRange(loadedChunk.source.split("\n").length));
       })
       .catch((err: unknown) => {
         if (cancelled) return;
@@ -536,7 +544,7 @@ export function FilePage({ index, segments, node }: FilePageProps) {
   // Meta line ("N lines · M covered") always reflects the file's OVERALL
   // coverage, unaffected by focus — only the stats card below rescopes.
   const rows = chunkTierRows(index, chunk);
-  const allRow = rows[rows.length - 1];
+  const allRow = rows.at(-1);
   // `chunkTierRows`' own "all tiers" row always carries a real tuple here
   // (never `null` — that's only ever produced by DirectoryPage's composed
   // ctx+ticket row, Task 12 fix round 1); `?.` narrows the TYPE (TierStatRow.

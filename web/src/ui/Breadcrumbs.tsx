@@ -39,8 +39,13 @@ export function Breadcrumbs({ items }: { items: Crumb[] }) {
                 {item.label}
               </span>
             ) : (
+              // `href` is spread conditionally: react-aria's `LinkProps`
+              // declares `href?: string`, so under
+              // `exactOptionalPropertyTypes` an explicit undefined is an
+              // error. A non-current crumb always HAS an href in practice;
+              // `Crumb.href` is optional only because the last one omits it.
               <Link
-                href={item.href}
+                {...(item.href !== undefined && { href: item.href })}
                 className={cx(
                   ITEM,
                   "cursor-pointer text-quaternary hover:bg-primary_alt hover:text-secondary hover:shadow-sm",

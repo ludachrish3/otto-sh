@@ -85,12 +85,15 @@ function dashType(dash: string | undefined): "solid" | "dashed" | "dotted" | num
   return DASH_TO_ECHARTS[dash ?? "dash"] ?? "dashed";
 }
 
+/** Exactly `#rrggbb` — the only shape `withAlpha` can append a byte to. */
+const SIX_DIGIT_HEX = /^#[0-9a-fA-F]{6}$/;
+
 /** A #rrggbb hex with an alpha byte appended (#rrggbbaa). Used for a span's
  * faint fill so its dashed border can stay full-strength — itemStyle.opacity
  * would fade the border too, leaving the dash unreadable. Non-6-digit-hex
  * colors (never produced by the palette) pass through unchanged. */
 function withAlpha(color: string, alpha: number): string {
-  if (!/^#[0-9a-fA-F]{6}$/.test(color)) return color;
+  if (!SIX_DIGIT_HEX.test(color)) return color;
   const byte = Math.round(alpha * 255)
     .toString(16)
     .padStart(2, "0");
@@ -160,27 +163,52 @@ const LANE_LABEL_STEP_PX = 14;
  * in distinct lanes; events that never overlap anything all settle into
  * lane 0, so the common (non-overlapping) case is unchanged.
  *
- * Returns lanes in the SAME order as `events` (not sorted order), so a
- * caller can zip the result straight back onto its own array. Pure and
+ * Returns lanes in the SAME order as `events` (not sorted order). Pure and
  * synchronous — no ECharts/DOM dependency — so it's unit-testable directly,
- * independent of eventOverlay's wiring below. */
+ * independent of eventOverlay's wiring below. A caller that needs the lanes
+ * next to the events they belong to should call `withLanes` rather than
+ * zipping this array back on by index. */
 export function assignLanes(events: { fromMs: number; toMs: number }[]): number[] {
+  return withLanes(events).map((laned) => laned.lane);
+}
+
+/** `assignLanes`' algorithm, handing each event back TOGETHER WITH its lane
+ * instead of as a parallel array. `eventOverlay` consumes this form so the
+ * span/lane pairing is structural: a `lanes[i]` read alongside `spans[i]`
+ * asks the reader to take the alignment on faith, and it is the alignment —
+ * not the colouring — that a future edit is most likely to break silently.
+ * `assignLanes` stays the exported, directly-unit-tested statement of the
+ * "one lane per input, in input order" contract. */
+function withLanes<T extends { fromMs: number; toMs: number }>(
+  events: T[],
+): { event: T; lane: number }[] {
+  // Sort the events themselves, each carrying its original index, rather than
+  // sorting a list of indices and reading back through `events[a]`: the
+  // comparator then works on real objects, and the scatter write below is the
+  // only place an index appears at all.
   const order = events
-    .map((_, i) => i)
+    .map((event, index) => ({ event, index }))
     .sort((a, b) => {
-      const byStart = events[a].fromMs - events[b].fromMs;
-      return byStart !== 0 ? byStart : events[a].toMs - events[b].toMs;
+      const byStart = a.event.fromMs - b.event.fromMs;
+      return byStart !== 0 ? byStart : a.event.toMs - b.event.toMs;
     });
   const laneEnds: number[] = []; // laneEnds[lane] = end (toMs) of that lane's last occupant
-  const lanes: number[] = new Array(events.length);
-  for (const i of order) {
-    const ev = events[i];
-    let lane = 0;
-    while (lane < laneEnds.length && laneEnds[lane] > ev.fromMs) lane++;
-    lanes[i] = lane;
-    laneEnds[lane] = ev.toMs;
+  const laned: { event: T; lane: number }[] = new Array(events.length);
+  for (const { event, index } of order) {
+    // Lowest-numbered lane whose most recently placed occupant has already
+    // ended, or a fresh lane if every existing one is still occupied.
+    // `laneEnd > event.fromMs` is "still occupied"; the predicate is written
+    // as that negation rather than `laneEnd <= event.fromMs` so that a NaN
+    // end (Date.parse of a malformed wire timestamp) stays on the side the
+    // previous `while (... && laneEnds[lane] > ev.fromMs)` put it on.
+    const firstFree = laneEnds.findIndex((laneEnd) => !(laneEnd > event.fromMs));
+    const lane = firstFree === -1 ? laneEnds.length : firstFree;
+    // Every index appears in `order` exactly once, so `laned` is dense on
+    // return even though it starts life as a hole-filled `new Array`.
+    laned[index] = { event, lane };
+    laneEnds[lane] = event.toMs;
   }
-  return lanes;
+  return laned;
 }
 
 /** markLine/markArea for a chart's anchor (index-0) series — split out of
@@ -214,12 +242,16 @@ export function eventOverlay(
   // are assigned over exactly the set being drawn here — deterministic and
   // stateless, recomputed fresh on every call (no identity to keep in sync
   // as the window/event set changes).
-  const spans = events.filter((e) => e.toMs !== null);
-  const lanes = assignLanes(spans.map((e) => ({ fromMs: e.fromMs, toMs: e.toMs as number })));
+  //
+  // flatMap rather than filter so `toMs` is narrowed to a real number once,
+  // here: both the lane assignment and the markArea's closing coordinate then
+  // read it directly instead of each restating `e.toMs as number`.
+  const spans = events.flatMap((e) => (e.toMs === null ? [] : [{ ...e, toMs: e.toMs }]));
+  const laned = withLanes(spans);
   const markArea = {
     silent: true,
     animation: false,
-    data: spans.map((e, i) => [
+    data: laned.map(({ event: e, lane }) => [
       {
         xAxis: e.fromMs,
         name: e.label,
@@ -242,12 +274,12 @@ export function eventOverlay(
         // against a dark surface. theme.ink is the same token buildStackOption's
         // tooltip textStyle already uses for dark-mode-safe text.
         label: {
-          position: ["50%", lanes[i] * LANE_LABEL_STEP_PX],
+          position: ["50%", lane * LANE_LABEL_STEP_PX],
           color: theme.ink,
           fontSize: 10,
         },
       },
-      { xAxis: e.toMs as number },
+      { xAxis: e.toMs },
     ]),
   };
   return { markLine, markArea };
@@ -269,13 +301,16 @@ export function windowPatch(args: {
   anchorSeriesId: string | null;
 }): Record<string, unknown> {
   const { window, events, theme, anchorSeriesId } = args;
-  const patch: Record<string, unknown> = {
+  return {
     xAxis: { min: window.from, max: window.to },
+    // Built in one expression rather than assigned onto a mutable record, so
+    // the patch's whole shape is visible at a glance and the "no anchor
+    // series => no series key at all" rule (a merge patch carrying
+    // `series: undefined` is not the same thing) is stated once, here.
+    ...(anchorSeriesId !== null
+      ? { series: [{ id: anchorSeriesId, ...eventOverlay(events, theme) }] }
+      : {}),
   };
-  if (anchorSeriesId !== null) {
-    patch.series = [{ id: anchorSeriesId, ...eventOverlay(events, theme) }];
-  }
-  return patch;
 }
 
 /** Merge patch toggling this instance's y-axis pointer between the resting
@@ -416,7 +451,9 @@ export function buildStackOption(args: {
         color: s.muted ? theme.mutedSeries : theme.series[s.slot % theme.series.length],
       },
       data: s.points,
-      ...(i === 0 && (markLine.data.length || markArea.data.length) ? { markLine, markArea } : {}),
+      ...(i === 0 && (markLine.data.length > 0 || markArea.data.length > 0)
+        ? { markLine, markArea }
+        : {}),
     })),
   };
 }

@@ -40,8 +40,12 @@ TYPE_LABELS=(
     "Code restructuring, no behavior change"
     "CI/CD configuration"
 )
-TYPE_DEFAULT=3   # chore — safest default if you're unsure
 TYPE_SKIP=$((${#TYPE_OPTIONS[@]} + 1))
+# Default to NO prefix. `chore` used to be the default on the theory that it was
+# the safest guess, but a guessed prefix is worse than none: it is wrong more
+# often than not, and it silently mangles a subject that already says what it
+# is. Empty input now leaves the message exactly as written.
+TYPE_DEFAULT=$TYPE_SKIP
 
 # First non-comment line of the existing message — used to detect a
 # pre-existing conventional prefix and skip the prompt in that case.
@@ -51,7 +55,12 @@ first_line=$(grep -m1 -v '^#' "$COMMIT_MSG_FILE" | head -n1)
 # regex syntax rather than shell grouping. Reference unquoted below.
 conventional_prefix_re='^(feat|fix|chore|docs|test|refactor|ci|build|perf|style|revert)(\([^)]+\))?!?:'
 
-if [[ ! "$first_line" =~ $conventional_prefix_re ]]; then
+# The tty probe uses the same idiom as the AI-assistance prompt below: a plain
+# command rather than `exec`, so it fails cleanly into "skip the prompt" instead
+# of printing `/dev/tty: No such device or address` and then reading EOF. Without
+# it, a scripted commit fell through to whatever TYPE_DEFAULT was and got that
+# prefix prepended to a subject that never asked for one.
+if [[ ! "$first_line" =~ $conventional_prefix_re ]] && { : < /dev/tty; } 2>/dev/null; then
     # Read from terminal directly — stdin is not available in git hooks
     exec < /dev/tty
 
@@ -63,7 +72,9 @@ if [[ ! "$first_line" =~ $conventional_prefix_re ]]; then
         [ "$num" -eq "$TYPE_DEFAULT" ] && marker="  (default)"
         printf "  [%s] %-10s %s%s\n" "$num" "${TYPE_OPTIONS[$i]}:" "${TYPE_LABELS[$i]}" "$marker"
     done
-    printf "  [%s] %-10s leave message as-is\n" "$TYPE_SKIP" "skip:"
+    skip_marker=""
+    [ "$TYPE_SKIP" -eq "$TYPE_DEFAULT" ] && skip_marker="  (default)"
+    printf "  [%s] %-10s leave message as-is%s\n" "$TYPE_SKIP" "skip:" "$skip_marker"
     printf "Select [%s]: " "$TYPE_DEFAULT"
     read -r tchoice
 

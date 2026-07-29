@@ -195,7 +195,13 @@ export function TopologyPage() {
       session,
       healthForHosts(session, range, nowMs),
     );
-    const g = buildTopoGraph(session, effective, { expand, sources });
+    // `expand` is omitted, not passed as undefined: "no element expanded" is
+    // the absence of the option, which is what `buildTopoGraph`'s
+    // `expand?: string` already means.
+    const g = buildTopoGraph(session, effective, {
+      sources,
+      ...(expand !== undefined && { expand }),
+    });
     return { ...g, warnings: [...warnings, ...g.warnings] };
   }, [session, range, expand, sources, mode, now]);
 

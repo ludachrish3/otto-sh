@@ -13,6 +13,7 @@
 // A test that intentionally exercises a warning path can opt out explicitly:
 //   import { allowConsoleOutput } from "../vitest.setup";  // path as needed
 //   allowConsoleOutput();  // inside the test body, scoped to that test
+import { cleanup } from "@testing-library/react";
 import { afterEach, beforeEach } from "vitest";
 
 // React 19 requires this flag for act() (which Testing Library wraps every
@@ -64,6 +65,21 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  // Testing Library's automatic cleanup is NOT active in this project: its
+  // auto-registration requires vitest's `globals: true`, which we do not use
+  // (the same reason IS_REACT_ACT_ENVIRONMENT is set by hand above). Without
+  // this, every mounted tree survives its own test — harmless under a fixed
+  // file order, and a wrong render count as soon as the order changes.
+  // clock.test.tsx's `useNow` counters were reading renders from the previous
+  // test's still-subscribed HealthTile (2 expected, 4 observed, shuffle seeds
+  // 11 and 33) until 2026-07-28.
+  //
+  // It unmounts INSIDE this hook, before the console interceptor is removed
+  // below, so a warning emitted during unmount is still captured and billed to
+  // the test that caused it. Registering a separate `afterEach(cleanup)` would
+  // work too, but only under an assumption about the order vitest runs sibling
+  // hooks in; this construction needs no such assumption.
+  cleanup();
   console.warn = original.warn;
   console.error = original.error;
   if (!allowed && captured.length > 0) {

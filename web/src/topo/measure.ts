@@ -51,6 +51,71 @@ export interface PathEdge {
 
 const NUMBER_RE = /-?\d*\.?\d+(?:e[-+]?\d+)?/gi;
 
+/** The two path grammars `routeEdge` emits, as fixed-arity tuples. Naming the
+ * arity is what lets `samplePath` destructure the parsed coordinates at all:
+ * `nums.length === 4` buried in a compound condition states the invariant to
+ * the reader but not to the type checker, which then types every destructured
+ * coordinate `number | undefined` and lets the evaluators below compute
+ * silent NaN. */
+type LineCoords = readonly [sx: number, sy: number, tx: number, ty: number];
+type CubicCoords = readonly [
+  sx: number,
+  sy: number,
+  c1x: number,
+  c1y: number,
+  c2x: number,
+  c2y: number,
+  tx: number,
+  ty: number,
+];
+
+/** A parsed coordinate is usable only if it is present AND finite. Honest
+ * accounting of what each half buys, because neither is load-bearing today:
+ *
+ * - `!== undefined` is the type-checker's price for the arity check. `nums`
+ *   comes from `.map(Number)` so it is dense, and the callers below check
+ *   `length` first — it cannot fire. It is what carries "there are exactly
+ *   four of them" into the destructure, which is the whole point of naming
+ *   the invariant here instead of burying it in a compound condition.
+ * - `Number.isFinite` CAN fire, but only on an absurd literal: a coordinate
+ *   of 309-plus digits parses to `Infinity`. Not the exponent form —
+ *   NUMBER_RE matches `1e999`, but `samplePath`'s command scan rejects the
+ *   `e` as an unsupported command before any number is parsed, which makes
+ *   NUMBER_RE's exponent branch unreachable from here. Kept because it costs
+ *   one comparison at a parse boundary and the alternative is silent: an
+ *   Infinity coordinate samples the whole edge to Infinity/NaN points, which
+ *   `pointInRect` and `segmentsIntersect` both read as "no hit" — the budget
+ *   passing by measuring nothing, which is the failure the header comment
+ *   exists to prevent. */
+function isCoord(v: number | undefined): v is number {
+  return v !== undefined && Number.isFinite(v);
+}
+
+function lineCoords(nums: number[]): LineCoords | null {
+  const [sx, sy, tx, ty] = nums;
+  if (nums.length !== 4 || !isCoord(sx) || !isCoord(sy) || !isCoord(tx) || !isCoord(ty))
+    return null;
+  return [sx, sy, tx, ty];
+}
+
+function cubicCoords(nums: number[]): CubicCoords | null {
+  const [sx, sy, c1x, c1y, c2x, c2y, tx, ty] = nums;
+  if (
+    nums.length !== 8 ||
+    !isCoord(sx) ||
+    !isCoord(sy) ||
+    !isCoord(c1x) ||
+    !isCoord(c1y) ||
+    !isCoord(c2x) ||
+    !isCoord(c2y) ||
+    !isCoord(tx) ||
+    !isCoord(ty)
+  ) {
+    return null;
+  }
+  return [sx, sy, c1x, c1y, c2x, c2y, tx, ty];
+}
+
 function sampleAt(n: number, at: (t: number) => Point): Point[] {
   const pts: Point[] = [];
   const count = Math.max(1, n);
@@ -79,13 +144,19 @@ export function samplePath(d: string, n: number): Point[] {
     }
   }
   const nums = (d.match(NUMBER_RE) ?? []).map(Number);
+  // `commands` is one letter per match, so joining it IS the grammar — "ML"
+  // or "MC" — and says so more directly than a length check plus two
+  // positional compares.
+  const grammar = commands.join("");
 
-  if (commands.length === 2 && commands[0] === "M" && commands[1] === "L" && nums.length === 4) {
-    const [sx, sy, tx, ty] = nums;
+  const line = grammar === "ML" ? lineCoords(nums) : null;
+  if (line !== null) {
+    const [sx, sy, tx, ty] = line;
     return sampleAt(n, (t) => ({ x: sx + (tx - sx) * t, y: sy + (ty - sy) * t }));
   }
-  if (commands.length === 2 && commands[0] === "M" && commands[1] === "C" && nums.length === 8) {
-    const [sx, sy, c1x, c1y, c2x, c2y, tx, ty] = nums;
+  const cubic = grammar === "MC" ? cubicCoords(nums) : null;
+  if (cubic !== null) {
+    const [sx, sy, c1x, c1y, c2x, c2y, tx, ty] = cubic;
     return sampleAt(n, (t) => {
       const u = 1 - t;
       return {
@@ -148,6 +219,24 @@ function segmentsIntersect(p1: Point, p2: Point, p3: Point, p4: Point): boolean 
   return t > 0.001 && t < 0.999 && u > 0.001 && u < 0.999;
 }
 
+/** One straight piece of a sampled polyline. The crossing test consumes
+ * segments, not points; materialising them once means the intersection loop
+ * below reads two real `Point`s per side instead of indexing `pts[k]` and
+ * `pts[k + 1]` and hoping both are in range. */
+type Segment = readonly [Point, Point];
+
+/** Consecutive point pairs, in order — `n` points give `n - 1` segments, and
+ * fewer than two points give none. */
+function segmentsOf(pts: Point[]): Segment[] {
+  const out: Segment[] = [];
+  let prev: Point | null = null;
+  for (const p of pts) {
+    if (prev !== null) out.push([prev, p]);
+    prev = p;
+  }
+  return out;
+}
+
 /** Count edge PAIRS (not sharing an endpoint) whose sampled polylines
  * intersect at least once — segment-intersection over consecutive sample
  * pairs, the same technique the layout-preview prototype used to measure
@@ -156,13 +245,13 @@ export function countCrossings(edges: PathEdge[]): number {
   const polylines = edges.map((e) => ({
     source: e.source,
     target: e.target,
-    pts: samplePath(e.path, CROSSING_SAMPLES),
+    segments: segmentsOf(samplePath(e.path, CROSSING_SAMPLES)),
   }));
   let count = 0;
-  for (let i = 0; i < polylines.length; i++) {
-    for (let j = i + 1; j < polylines.length; j++) {
-      const a = polylines[i];
-      const b = polylines[j];
+  for (const [i, a] of polylines.entries()) {
+    // Every LATER polyline, so each unordered pair is considered exactly
+    // once — what the old `j = i + 1` inner loop said with an index.
+    for (const b of polylines.slice(i + 1)) {
       if (
         a.source === b.source ||
         a.source === b.target ||
@@ -171,13 +260,12 @@ export function countCrossings(edges: PathEdge[]): number {
       ) {
         continue; // edges sharing an endpoint meet there — not a crossing
       }
-      let found = false;
-      for (let k = 0; k < a.pts.length - 1 && !found; k++) {
-        for (let l = 0; l < b.pts.length - 1 && !found; l++) {
-          if (segmentsIntersect(a.pts[k], a.pts[k + 1], b.pts[l], b.pts[l + 1])) found = true;
-        }
-      }
-      if (found) count++;
+      // `some` short-circuits on the first hit exactly as the old
+      // `&& !found` loop conditions did.
+      const crosses = a.segments.some(([a1, a2]) =>
+        b.segments.some(([b1, b2]) => segmentsIntersect(a1, a2, b1, b2)),
+      );
+      if (crosses) count++;
     }
   }
   return count;

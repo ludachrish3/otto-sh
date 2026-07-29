@@ -3,7 +3,7 @@
 // marking.ts is a thin imperative wrapper over eventApi.ts + the ui/review
 // stores, so the store IS the assertion surface rather than a mock.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import minimal from "../../fixtures/minimal.json";
+import minimal from "../../fixtures/minimal.json" with { type: "json" };
 import { useReviewStore } from "../data/reviewStore";
 import { blankDraft, endOpenSpan, markNow, startSpan } from "../shell/marking";
 import { useUiStore } from "../ui/uiStore";

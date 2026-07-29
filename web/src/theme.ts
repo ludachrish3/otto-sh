@@ -16,13 +16,14 @@ export function loadTheme(): Theme {
  *
  * ONE class: `.dark-mode`. Untitled UI's vendored theme.css gates its dark
  * token block on `.dark-mode` — that becomes *the* dark-mode class, full
- * stop. app.css's `@custom-variant dark (&:where(.dark-mode, .dark-mode
- * *));` points every `dark:` utility (ours and Untitled UI's) at it too, so
- * there is exactly one selector to keep in sync, not two. We do not also
- * toggle a `.dark` class to shadow it — that was tried and reverted: a
- * shadow class is coupling with nobody paying for it, and it only exists to
- * avoid touching app.css. Editing app.css (ours, not vendored) instead of
- * carrying a second class is the actual fix. */
+ * stop. app.css's
+ * `@custom-variant dark (&:where(.dark-mode, .dark-mode *));` points every
+ * `dark:` utility (ours and Untitled UI's) at it too, so there is exactly
+ * one selector to keep in sync, not two. We do not also toggle a `.dark`
+ * class to shadow it — that was tried and reverted: a shadow class is
+ * coupling with nobody paying for it, and it only exists to avoid touching
+ * app.css. Editing app.css (ours, not vendored) instead of carrying a
+ * second class is the actual fix. */
 export function applyTheme(theme: Theme): void {
   document.documentElement.classList.toggle("dark-mode", theme === "dark");
 }

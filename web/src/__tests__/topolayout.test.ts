@@ -70,14 +70,14 @@ describe("layoutTopo", () => {
       kind: "host",
       depth: 1,
       label: "za",
-      host: { id: "za", element: "e", slot: 1 } as TopoNode["host"],
+      host: { id: "za", element: "e", slot: 1 } as NonNullable<TopoNode["host"]>,
     };
     const b: TopoNode = {
       id: "ab",
       kind: "host",
       depth: 1,
       label: "ab",
-      host: { id: "ab", element: "e", slot: 2 } as TopoNode["host"],
+      host: { id: "ab", element: "e", slot: 2 } as NonNullable<TopoNode["host"]>,
     };
     // Both are edge-less singleton components, so both land in the same
     // (data-plane) column regardless -- this test is only about row order

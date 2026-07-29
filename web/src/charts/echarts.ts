@@ -10,10 +10,10 @@ import {
   MarkLineComponent,
   TooltipComponent,
 } from "echarts/components";
-import * as echartsCore from "echarts/core";
+import { connect, init, use } from "echarts/core";
 import { CanvasRenderer } from "echarts/renderers";
 
-echartsCore.use([
+use([
   LineChart,
   GridComponent,
   TooltipComponent,
@@ -24,4 +24,10 @@ echartsCore.use([
   CanvasRenderer,
 ]);
 
-export const echarts = echartsCore;
+/** The two entry points ChartPanel needs, and nothing else. Named imports
+ * rather than `import * as echartsCore` (performance/noNamespaceImport):
+ * re-exporting the whole `echarts/core` namespace object made every export
+ * on it reachable, which is the opposite of this module's stated purpose.
+ * The object shape is kept because seven test files `vi.mock` this module
+ * as `{ echarts: { init, connect } }`. */
+export const echarts = { init, connect };

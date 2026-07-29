@@ -11,7 +11,9 @@ function lineFor(s: SeriesInput) {
     events: [],
     theme: chartTheme(false),
   });
-  return (built.series as Array<{ itemStyle: { color: string }; lineStyle: { width: number } }>)[0];
+  return (
+    built["series"] as Array<{ itemStyle: { color: string }; lineStyle: { width: number } }>
+  )[0];
 }
 
 describe("hybrid CPU coloring", () => {

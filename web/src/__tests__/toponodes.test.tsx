@@ -50,7 +50,7 @@ describe("HostNode", () => {
       kind: "host",
       depth: 2,
       label: "rack-a_n1",
-      host: { id: "rack-a_n1", element: "rack-a", slot: 1 } as TopoNode["host"],
+      host: { id: "rack-a_n1", element: "rack-a", slot: 1 } as NonNullable<TopoNode["host"]>,
       effective: "unreachable",
       enterTarget: "/host/rack-a_n1",
     };
@@ -67,7 +67,7 @@ describe("HostNode", () => {
       kind: "host",
       depth: 1,
       label: "h",
-      host: { id: "h", element: "h" } as TopoNode["host"],
+      host: { id: "h", element: "h" } as NonNullable<TopoNode["host"]>,
       effective: "ok",
     };
     render(<HostNode data={host} />);
@@ -82,7 +82,7 @@ describe("HostNode", () => {
       kind: "host",
       depth: 1,
       label: "lonely",
-      host: { id: "lonely", element: "lonely" } as TopoNode["host"],
+      host: { id: "lonely", element: "lonely" } as NonNullable<TopoNode["host"]>,
       effective: "unreachable",
     };
     render(<HostNode data={host} />);
@@ -97,7 +97,7 @@ describe("HostNode", () => {
       kind: "host",
       depth: 2,
       label: "rack-a_n1",
-      host: { id: "rack-a_n1", element: "rack-a", slot: 1 } as TopoNode["host"],
+      host: { id: "rack-a_n1", element: "rack-a", slot: 1 } as NonNullable<TopoNode["host"]>,
       effective: "unreachable",
     };
     render(<HostNode data={{ ...host, slotBadge: true }} />);

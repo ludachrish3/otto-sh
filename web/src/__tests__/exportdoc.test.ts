@@ -12,7 +12,7 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
-import kitchenDoc from "../../fixtures/kitchen-sink.json";
+import kitchenDoc from "../../fixtures/kitchen-sink.json" with { type: "json" };
 import {
   ExportParseError,
   metricsForSubject,
@@ -149,7 +149,7 @@ describe("meta densification", () => {
 
   it("densifies an absent meta", () => {
     const doc = structuredClone(base);
-    delete (doc.sessions[0] as Record<string, unknown>).meta;
+    delete (doc.sessions[0] as Record<string, unknown>)["meta"];
     const { sessions } = parseExportDocument(JSON.stringify(doc));
     expect(sessions[0].meta).toEqual({ interval: null, charts: [], tabs: [] });
   });

@@ -39,7 +39,10 @@ class FakeEventSource {
   onmessage: ((e: MessageEvent<string>) => void) | null = null;
   onopen: (() => void) | null = null;
   onerror: (() => void) | null = null;
-  constructor(public url: string) {}
+  url: string;
+  constructor(url: string) {
+    this.url = url;
+  }
   close() {}
 }
 

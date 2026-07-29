@@ -35,7 +35,7 @@ function makeIndex(overrides: Partial<IndexPayload> = {}): IndexPayload {
     tier_order: [],
     tier_labels: {},
     tier_colors: {},
-    state_colors: {},
+    state_colors: { uncovered: "#f4a9a8", excluded: "grey", stale: "violet", aging: "tan" },
     thresholds: { high: 80, medium: 70 },
     stat_types: ["line", "branch", "decision"],
     runs: [],
@@ -120,7 +120,10 @@ describe("loadFileChunk", () => {
     const appendSpy = vi.spyOn(document.head, "appendChild");
 
     const chunk = "product_100%_ready#.c";
-    loadFileChunk(chunk);
+    // Deliberately left pending: this case asserts only the src that injection
+    // builds, and nothing ever calls __OTTO_COV_FILE__ for this id. `void`
+    // marks the non-await (complexity/noVoid is off so it stays writable).
+    void loadFileChunk(chunk);
 
     const script = appendSpy.mock.calls[0][0] as HTMLScriptElement;
     expect(script.getAttribute("src")).toBe(`./cov_data/files/${encodeURIComponent(chunk)}.js`);
@@ -213,7 +216,10 @@ describe("loadTicketChunk", () => {
     const appendSpy = vi.spyOn(document.head, "appendChild");
 
     const chunk = "product_100%_ready#.c";
-    loadTicketChunk(chunk);
+    // Deliberately left pending, as in the file-chunk case above: nothing ever
+    // calls __OTTO_COV_TICKET__ for this id, and _resetForTests() drops the
+    // waiter rather than rejecting it, so no rejection can escape.
+    void loadTicketChunk(chunk);
 
     const script = appendSpy.mock.calls[0][0] as HTMLScriptElement;
     expect(script.getAttribute("src")).toBe(`./cov_data/tickets/${encodeURIComponent(chunk)}.js`);

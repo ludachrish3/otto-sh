@@ -1,4 +1,948 @@
 {
+  // One strictness flag is deliberately absent, measured rather than assumed
+  // (2026-07-28, tree at 345cb701):
+  //
+  // skipLibCheck stays true despite measuring 0 errors with it off. Turning
+  // it off makes this gate hostage to third-party .d.ts quality, so a
+  // Dependabot bump could redden CI for a defect we cannot fix in this tree.
+  //
+  // noUnusedLocals and noUnusedParameters are deliberately absent, per the
+  // tool-ownership policy in
+  // docs/superpowers/specs/2026-07-27-ts-strictness-design.md: BIOME owns
+  // unused code. Both were briefly enabled in tier 4 and then removed. They
+  // are exact duplicates of Biome's noUnusedImports / noUnusedVariables /
+  // noUnusedFunctionParameters -- same findings, no extra detection, two
+  // error messages per defect -- and Biome names the three cases separately
+  // where tsc emits one TS6133 for all of them.
+  //
+  // The original justification ("different gate legs, so a misconfiguration
+  // of one cannot silently drop the check") did not survive scrutiny: both
+  // legs run inside `make check-ts`. Nor does autofix favour tsc's removal --
+  // Biome's fixes here are classified Unsafe, so `biome check --write` does
+  // not apply them either.
+  //
+  // noPropertyAccessFromIndexSignature is enabled as of tier 4. It required
+  // turning Biome's complexity/useLiteralKeys OFF (biome.json), because the
+  // two rules are exact inverses over the same expression: Biome rewrites
+  // `rec["mode"]` back to `rec.mode`, which is what this flag rejects on an
+  // index signature. They cannot both be satisfied. tsc's rule carries
+  // information -- it makes "this key may not exist" visually distinct from
+  // "this property is declared" -- and Biome's is purely cosmetic, so
+  // Biome's is the one that goes. The disagreement is total and stylistic,
+  // not site-specific: with useLiteralKeys on, every honest bracket access
+  // in the tree (35 of them) emits a FIXABLE diagnostic telling the next
+  // reader to undo it. Note biome.json is strict JSON -- a comment there
+  // makes Biome silently discard the WHOLE config and lint with defaults --
+  // which is why this note lives here.
+  //
+  // exactOptionalPropertyTypes is enabled as of tier 4. It distinguishes
+  // "key absent" from "key present with value undefined", which is a real
+  // distinction wherever a target declares `x?: T`. 27 sites in our code
+  // (77 more are vendored and filtered). Three shapes of fix, and which one
+  // applies is decided by WHO OWNS THE TARGET, not by taste:
+  //
+  //   - Target is vendored or third-party => omit the key, via a conditional
+  //     spread `{...(v !== undefined && { k: v })}`. Widening is not
+  //     available, because the rejection happens at the target's
+  //     declaration. Note this means widening OUR OWN forwarding wrapper's
+  //     props does nothing at all (measured on src/ui/TextInput.tsx).
+  //   - Target is ours and an explicit undefined genuinely means "absent"
+  //     => widen it to `x?: T | undefined`. One widening at a shared
+  //     declaration beats a conditional spread at every call site, and in
+  //     JSX there is no tidy way to omit a prop.
+  //   - Neither end is ours => see src/ui/icons.tsx. @untitledui/icons
+  //     redeclares `color?: string` over React's `color?: string |
+  //     undefined`, so its `FC<Props>` fails the contravariant check against
+  //     the vendored input's `icon?: ComponentType<HTMLAttributes<...>>`.
+  //     Resolved with a real adapter component, not a cast.
+  //
+  // noUncheckedIndexedAccess is enabled as of tier 4, for src/ ONLY. Test
+  // files are exempt from THIS ONE FLAG (and nothing else) via a deferral
+  // block in scripts/typecheck_web.sh; the remaining sites and the exit
+  // condition are tracked in todo/ts-nuia-test-sites-burndown.md.
+  //
+  // The split is measured, not a concession to volume. Task 4 cleared all 72
+  // src/ sites and scored each: 3 were genuine latent fragilities, 69 were
+  // the type checker failing to see an invariant a reader confirms in
+  // seconds. The 3 share a shape -- a positional read crossing a structure or
+  // function boundary (lanes[i] paired with spans[i] across a function call,
+  // targets[i] with bucket[i] held together only by construction order). Where
+  // no boundary is crossed the flag found nothing: topo/measure.ts scored 0
+  // in 29 sites because every read sat inside the function that established
+  // the invariant. Scored the same way, the test tree yielded two files worth
+  // fixing (toporouting.test.ts, health.test.ts, 56 sites) and 305 that are
+  // fixture[0].foo three lines below the literal that built the fixture.
+  //
+  // Deferring by SITE COUNT would have inverted that: the two biggest test
+  // files, exportdoc.test.ts and chartoptions.test.ts, are exactly the ones
+  // not worth touching.
+  //
+  // Every gate that reads this file must therefore go through that filter:
+  // `npm run build`'s tsc leg does, and `make check-ts` does. `npm run
+  // typecheck` deliberately does NOT -- it is the raw, ad-hoc view, and it
+  // will report the vendored button.tsx error.
+  //
+  // =====================================================================
+  // BIOME RULE DECISIONS -- tier 5 task 1: `correctness` + `security`.
+  //
+  // biome.json is strict JSON and cannot carry comments: a `//` there does
+  // NOT error -- Biome silently discards the ENTIRE config and lints with
+  // defaults, so the vendored exclusions vanish (180 files clean becomes
+  // ~409 files / ~924 errors, with nothing saying the config was ignored).
+  // Every rule decision in biome.json is therefore recorded here, keyed by
+  // rule name. Later tier-5 tasks append to this block.
+  //
+  // Counts measured 2026-07-28 at 9a6193b8 with preset:"all" and domains
+  // {react,test,types,tailwind}:"all": 636 diagnostics over 9 firing rules
+  // across these two groups.
+  //
+  // OFF -- correctness/useImportExtensions (529 = 469 relative + 60 `@/`).
+  //   The rule asks for the TRUE source extension (`.tsx`/`.ts`), not `.js`
+  //   -- `forceJsExtensions` defaults false -- so tsc would accept the fix
+  //   (`allowImportingTsExtensions` is already on). Declined anyway: the
+  //   benefit it claims is resolution of UNBUNDLED ESM in a browser, and
+  //   nothing here is ever served unbundled -- Vite bundles for prod and
+  //   rewrites specifiers in dev. Meanwhile the vendored Untitled UI tree
+  //   (96 relative imports, 0 with extensions, never hand-editable) stays
+  //   extensionless, so adopting the rule splits the tree's import style
+  //   along a line no gate can hold.
+  //
+  // OFF -- correctness/noUnresolvedImports (6). All six are the rule's own
+  //   resolver failing, not unresolved imports: "react has no export named
+  //   StrictMode/Children/Fragment" (x4, src/main.tsx, src/covapp/main.tsx,
+  //   src/ui/CodeView.tsx) and, in scripts/e2e_coverage_report.mjs,
+  //   "@bcoe/v8-coverage cannot be resolved" plus "monocart-coverage-reports
+  //   has no export named CoverageReport". Node imports all six successfully
+  //   (verified by running the imports), and tsc resolves the four src/ ones.
+  //   Tool-ownership rules 4 and 5 in
+  //   docs/superpowers/specs/2026-07-27-ts-strictness-design.md: on a
+  //   contradiction the tool carrying type information wins, so tsc keeps
+  //   module resolution and Biome's restatement of it goes.
+  //
+  // KEPT, RETUNED -- security/noSecrets, entropyThreshold 50 (7 -> 0). All 7
+  //   default-threshold hits were read individually and none is a
+  //   credential: six are CSS selector strings ('[data-type="second"]',
+  //   "div[class*='ring-1']", '[role="menuitem"]', 'div[style*="background"]',
+  //   the shortcut guard's selector list, and a "#/coverage?ticket=GHOST-1"
+  //   URL hash) and one is a vitest it.each title template
+  //   ("formatOutage($ms) === $text"). Note src/ui/shortcuts.ts is SHIPPED
+  //   code, not a fixture. 50 is measured, not picked: 41 (default) flags 7,
+  //   45-49 still flag RunsPage.test.tsx's 'div[style*="background"]', 50
+  //   flags none. Against 7 planted real-secret shapes the retuned rule still
+  //   catches 6 (GitHub PAT, AWS key id, OpenAI key, Slack bot token, RSA
+  //   private key header, JWT); only a bare AWS secret access key drops out,
+  //   and that one already drops at 45. So keeping the rule at 50 detects
+  //   strictly more than the alternative of turning it off -- and this repo
+  //   has no other secret-scanning gate (no gitleaks/detect-secrets).
+  //
+  // KEPT, SCOPED -- correctness/noNodejsModules (65 -> 0), via biome.json's
+  //   `overrides`. Every one of the 65 is a legitimate Node context: 20 test
+  //   files, scripts/e2e_coverage_report.mjs, and the two vite configs. ZERO
+  //   are in browser-shipped src/**. The override exempts exactly the files
+  //   that never enter a bundle, so the rule stays a live tripwire on
+  //   everything that does. Proven load-bearing: deleting the overrides block
+  //   makes 66 reappear (the 65 plus the node:process import added below).
+  //
+  // KEPT, SCOPED -- correctness/useUniqueElementIds (18 -> 0), via
+  //   `excludedComponents: ["Item", "Tab", "KeyRow"]`. Not one of the 18 is a
+  //   DOM id: they are react-aria-components collection Keys on
+  //   `Dropdown.Item` (which extends AriaMenuItemProps) and `Tab`, plus our
+  //   own `KeyRow`, which forwards `id` straight through to Dropdown.Item.
+  //   They must be STATIC -- ViewSwitcher's `selectedKey` matches
+  //   id="topology"/id="hosts" -- so the rule's prescribed useId() fix would
+  //   break tab selection. Biome rejects dotted names in this option
+  //   ("'excludedComponents' does not accept values with dots"), so the entry
+  //   is the member name's last segment, `Item`. The rule still fires on a
+  //   real `<div id="...">`, proven differentially; the tree has 0 such sites
+  //   today, which is why this is a tripwire rather than a cleanup.
+  //
+  // KEPT + FIXED -- correctness/useJsonImportAttributes (6). The six fixture
+  //   imports now carry `with { type: "json" }`.
+  //
+  // KEPT + FIXED -- correctness/noGlobalDirnameFilename (3) and
+  //   noProcessGlobal (1). Both are real, not style: web/package.json is
+  //   `"type": "module"`, so vite.config.ts and vite.covapp.config.ts ARE ES
+  //   modules, in which neither `__dirname` nor a bare `process` is a
+  //   binding. They only ever resolved because Vite pre-bundles the config
+  //   before evaluating it. Now `import.meta.dirname` (Node >= 20.11) and an
+  //   explicit `import process from "node:process"`.
+  //
+  // KEPT + FIXED -- correctness/useSingleJsDocAsterisk (1), src/theme.ts. A
+  //   false positive worth recording: the flagged line began with the `*` of
+  //   the documented CSS selector `.dark-mode *));`, and the rule's UNSAFE
+  //   autofix deletes exactly that asterisk -- silently rewriting the
+  //   selector this comment exists to document. Fixed by rewrapping the
+  //   comment (same words) so the selector sits on one line. The autofix was
+  //   NOT applied; never run `biome check --write --unsafe` over prose here.
+  //
+  // KEPT, UNCHANGED -- correctness/useExhaustiveDependencies. Already
+  //   "error", and it emits 0 unsuppressed diagnostics under the tier-5
+  //   target config. The plan's "12 pre-existing hook dependency bugs" was a
+  //   measurement artifact: its harness greps the rule name out of the whole
+  //   report, and this tree carries 7 justified `biome-ignore
+  //   lint/correctness/useExhaustiveDependencies` comments that Biome echoes
+  //   inside OTHER rules' code frames. Anchor per-rule counts to the
+  //   `path:line:col rule` diagnostic header, never a bare grep -- the same
+  //   artifact inflates the plan's whole-tree baseline from 3,691 to 3,720.
+  //
+  // HAZARD for task 5's flip: do NOT put `next: "none"` in biome.json's
+  //   `domains`. Measured here: with `react: "all"`, adding `next: "none"`
+  //   silently disables correctness/useExhaustiveDependencies, and the only
+  //   visible symptom is Biome reporting the 7 suppressions above as
+  //   `suppressions/unused`. Omit the `next` key entirely.
+  //
+  //   CORRECTION (task 2): this entry also claimed `next: "none"` "swallows
+  //   one suspicious/noEmptyBlockStatements". It does not. Re-measured both
+  //   ways at 4d305c91: the `suspicious` group is 194 either way and the 90
+  //   noEmptyBlockStatements sites are an IDENTICAL SET (diff of the sorted
+  //   `path:line:col` headers is empty). Biome emits diagnostics in
+  //   nondeterministic file order, so an unsorted diff of two runs shows
+  //   spurious moves -- that is what the original claim measured. Compare
+  //   diagnostic SETS, never two raw report orderings. The
+  //   useExhaustiveDependencies half of this hazard is real and re-confirmed
+  //   (7 `suppressions/unused` with the key, 0 without).
+  //
+  // =====================================================================
+  // BIOME RULE DECISIONS -- tier 5 task 2: `suspicious`.
+  //
+  // Counts measured 2026-07-28 at 4d305c91 with preset:"all" and domains
+  // {react,test,types,tailwind}:"all": 194 diagnostics over 10 rules, which
+  // matches the plan's per-rule table exactly (the un-anchored grep artifact
+  // that inflated task 1's numbers does not bite here -- no biome-ignore
+  // comment in this tree names a `suspicious` rule).
+  //
+  // KEPT, SCOPED -- suspicious/noEmptyBlockStatements (90 -> 0), via the same
+  //   `overrides` block as noNodejsModules. The plan expected "usually a
+  //   swallowed error or an unfinished branch". Measured, it is 0 for 90:
+  //   every hit is 47 arrow no-ops (`() => {}`) plus 43 class/object method
+  //   stubs (`observe() {}`, `setOption() {}`, `dispose() {}`), and all 90 sit
+  //   in 21 *.test.ts(x) files. ZERO are a `catch`, an if/else branch or a
+  //   loop body, and ZERO are in browser-shipped src/**. An empty body IS the
+  //   correct implementation of a test double -- the method must exist to
+  //   satisfy an interface and must do nothing. So the rule is scoped off for
+  //   tests and stays a live tripwire on shipped code, where an empty `catch`
+  //   really is a swallowed error. Proven differentially.
+  //
+  // KEPT, SCOPED -- suspicious/noConsole (3 -> 0), same `overrides` block.
+  //   All three are outside src/**: scripts/e2e_coverage_report.mjs printing
+  //   the path it just wrote (that IS the CLI's output), and vitest.setup.ts
+  //   capturing `console.warn`/`console.error` -- the console-interception
+  //   harness itself, which cannot be written without naming console. src/**
+  //   has zero console calls today, so scoping keeps the tripwire at no cost.
+  //
+  // KEPT + FIXED -- suspicious/useArraySortCompare (3), all in
+  //   src/__tests__/topology.test.ts. Two are the real thing and the same
+  //   class tier 4 found in charts/options.ts: `.map(e => e.parallelIndex)
+  //   .sort()` over NUMBERS, where the default comparator sorts stringified
+  //   elements. Both assert `[0, 1]`, which a lexicographic sort happens to
+  //   get right -- a test passing for the wrong reason that would mis-order
+  //   silently at [0, 1, 10, 2]. Now `(a, b) => a - b`. The third sorts
+  //   strings, where the default is already correct; made explicit with the
+  //   house idiom `a.localeCompare(b)`, which is also what the production
+  //   code that emits those ids uses (data/topology.ts:215).
+  //
+  // KEPT + FIXED -- suspicious/noShadow (5). Three are one hazard:
+  //   chartoptions.test.ts has a module-level `const theme = chartTheme(false)`
+  //   (the REAL theme) shadowed by three two-key stubs `{muted, ink}` fed to
+  //   `eventOverlay`. Deleting a stub would silently fall through to the real
+  //   theme with the tests still passing. Renamed to `overlayTheme`, which
+  //   says which of the two it is; the comment and test title that mention
+  //   `theme.ink` are left alone because they describe eventOverlay's OWN
+  //   parameter name, not the local. The other two: reviewstore.test.ts wrote
+  //   the same predicate as `(s) => s.id` on one line and `(x) => x.id` 18
+  //   lines later while a `const s` sat between them -- now both `x`; and
+  //   FilePage.tsx's load callback took `chunk` while the render body
+  //   destructures its own `chunk` out of `state` -- now `loadedChunk`, since
+  //   they are a lifecycle apart.
+  //
+  // KEPT + FIXED -- suspicious/useAwait (1), covapp/focus.test.tsx:662. An
+  //   `it(..., async () => {})` with no `await` anywhere in its body (it
+  //   drives everything through a synchronous `act()`). `async` dropped.
+  //
+  // OFF -- suspicious/noEqualsToNull (37). `== null` here is deliberate: one
+  //   test that catches null AND undefined, which is exactly what `??` and
+  //   `?.` do internally. The rule's replacement `=== null` is NOT
+  //   equivalent, and this is measured rather than argued: applying the
+  //   rule's own autofix to a scratch copy of the tree (`biome lint --write
+  //   --unsafe --only=suspicious/noEqualsToNull`, 18 files rewritten) takes
+  //   tsc from 400 diagnostics to 428. All 28 new ones are "possibly
+  //   undefined" / "possibly null", across 14 files -- charts/options.ts,
+  //   data/{exportDoc,fragment,seriesIndex,topology}.ts,
+  //   pages/{OverviewPage,SubjectPage}.tsx,
+  //   shell/{EventEditor,EventsPanel,marking,SubjectHealthBanner},
+  //   topo/{LinkInspector,nodes,TopologyPage}. Note the fix is classified
+  //   Unsafe, so `biome check --write` will not apply it -- but
+  //   `--write --unsafe` will, which is why this is an "off" and not a
+  //   "leave it firing and ignore it". Tool-ownership rules 4 and 5: tsc
+  //   owns null-vs-undefined and contradicts this rule 28 times.
+  //
+  // OFF -- suspicious/noUnnecessaryConditions (27). The plan called this
+  //   "the closest Biome analogue to `ty`". Measured, its model of optional
+  //   chaining is wrong: it evaluates `a?.b` as though the chain always
+  //   succeeds, so it reports every `a?.b ?? fallback` as having a
+  //   "guaranteed non-nullish" left-hand side. Reproduced in a self-contained
+  //   file with no cross-module inference, `types` domain on -- it flags
+  //   `line?.branches ?? []` where the parameter is annotated
+  //   `{branches: number[]} | undefined` IN THAT FILE, `v?.a ?? "fallback"`
+  //   where `v: {a: string} | null`, and `.exec(css)?.[1]` where `exec`
+  //   returns `RegExpExecArray | null` per lib.es5.d.ts. Rewriting those
+  //   three exactly as the rule prescribes gives 3 tsc errors out of 3,
+  //   including TS2531 "Object is possibly 'null'" -- a null dereference. It
+  //   does model noUncheckedIndexedAccess correctly (`xs[0]?.x ?? d` is not
+  //   flagged), so this is specific to the `?.` short-circuit. 24 of the 27
+  //   are that false positive; the other 3 (covapp/stats.test.ts) are `?.`
+  //   after an `as` cast, where the cast is the smell rather than the `?.`.
+  //   Tool-ownership rule 4 again.
+  //
+  // OFF -- suspicious/noLeakedRender (20). The plan called this "the
+  //   `{count && <X/>}` bug that renders a bare `0`" and "likely the most
+  //   valuable rule in this group". It cannot find that bug, because it is
+  //   NOT type-aware: with `types: "all"` it still flags `{flag && <X/>}`
+  //   where `flag: boolean` and `{obj && <X/>}` where `obj: {a: number} |
+  //   null` (probed directly). It flags every `&&` in JSX whose left side is
+  //   not syntactically a comparison. Typed by hand, the 20 split: 15 cannot
+  //   leak anything renderable (11 boolean, 4 object-or-nullish) and 5 are
+  //   `string | undefined` (KeyRow `color`, TierStatRow `dotColor` x2,
+  //   route param `expand`, `command.sublabel`) where the leak is `""` -- an
+  //   empty text node, invisible. ZERO have a numeric left operand, so the
+  //   defect the rule is named for does not exist in this tree. Keeping it
+  //   would mean 20 edits turning `{isOpen && <Modal/>}` into `{!!isOpen &&
+  //   ...}` or a ternary, which is the bare-`!` churn the guiding principle
+  //   rejects. Worth re-measuring if Biome makes the rule type-aware: the bug
+  //   class is real and neither tsc nor anything else here catches it.
+  //
+  // OFF -- suspicious/noBitwiseOperators (5). All five are bitwise because
+  //   the API is: `(e.buttons & 1) === 0` (MouseEvent.buttons is a bitmask
+  //   per the DOM spec), two `compareDocumentPosition(...) &
+  //   Node.DOCUMENT_POSITION_*` assertions (also a spec bitmask), and two
+  //   `(lo + hi) >>> 1` binary-search midpoints (data/health.ts,
+  //   data/seriesIndex.ts) -- the standard overflow-safe halving. None has a
+  //   non-bitwise expression. The rule targets `&`/`|` typed for `&&`/`||`,
+  //   which does not occur here.
+  //
+  // OFF -- suspicious/noMisplacedAssertion (3). The rule is lexical: it asks
+  //   whether an `expect()` sits INSIDE an `it()`/`test()` body, and cannot
+  //   follow a call. All three are assertion HELPERS -- topoedge.test.ts's
+  //   `block()` and topolayout.test.ts's `rowIndex()`/`midOf()` -- and every
+  //   call site of all three is inside an `it()` (verified: lines 179-232,
+  //   219-241, 268-269). Nothing runs at collection time. Annotating instead
+  //   of turning it off was considered and rejected: the pattern it
+  //   false-positives on is a good one this tree uses deliberately, so each
+  //   new assertion helper would owe another annotation -- a rule that taxes
+  //   good code.
+  //
+  // =====================================================================
+  // BIOME RULE DECISIONS -- tier 5 task 3: `complexity` + `performance`.
+  //
+  // Counts measured 2026-07-28 at 936c7e08 with preset:"all" and domains
+  // {react,test,types,tailwind}:"all": 181 diagnostics over 7 `complexity`
+  // rules and 179 over 5 `performance` rules, matching the plan's per-rule
+  // tables exactly (no delta to attribute).
+  //
+  // KEPT + FIXED -- performance/useTopLevelRegex, 7 sites in shipped src/**.
+  //   The rule's premise ("this regex literal is rebuilt every call") is true
+  //   where the enclosing function runs per item: covapp/highlight.ts rebuilt
+  //   TWO literals per SOURCE LINE inside a .map over a whole file (now
+  //   TRAILING_NEWLINE / CLOSING_SPAN), data/health.ts rebuilt /cpu/i twice
+  //   per comparison inside a sort comparator, i.e. O(n log n) per call (now
+  //   one CPU_LABEL, which also de-duplicates the two copies), and
+  //   charts/options.ts's withAlpha runs per span per chart rebuild (now
+  //   SIX_DIGIT_HEX). The other two are one-shot -- covapp/pages/FilePage.tsx's
+  //   `?lines=` hash parse and ui/shortcuts.ts's detectMac -- and were hoisted
+  //   anyway (LINES_PARAM, APPLE_PLATFORM) because naming the pattern is worth
+  //   more than the allocation is. Safe in all 7: none carries /g, so no
+  //   hoisted literal acquires a shared `lastIndex`. Checked before hoisting;
+  //   a /g literal moved to module scope is a real bug, not a speedup.
+  //
+  // KEPT, SCOPED -- performance/useTopLevelRegex (53 -> 0), via the same
+  //   `overrides` block as noNodejsModules. 44 of the 53 are in *.test.ts(x)
+  //   and 2 in scripts/e2e_coverage_report.mjs. A regex in a test body is
+  //   evaluated once, so the rule's premise is simply false there, and
+  //   hoisting would move the pattern away from the assertion that explains
+  //   it. Same "not shipped to a browser" line the override already draws.
+  //
+  // KEPT, SCOPED -- performance/noDelete (11 -> 0), same `overrides` block.
+  //   All 11 are in tests, and the rule's own (unsafe) fix is not equivalent
+  //   to what it replaces: `delete o.k` REMOVES the key, `o.k = undefined`
+  //   leaves it present holding undefined. That difference is the thing under
+  //   test at every one of the 11 -- exportdoc.test.ts's "densifies an ABSENT
+  //   meta", and `delete (window as {...}).__OTTO_COV__` in six covapp files,
+  //   where an assignment would leave `"__OTTO_COV__" in window` true and the
+  //   GuardScreen path unreachable. It is also the exact distinction tier 4's
+  //   exactOptionalPropertyTypes exists to make, so tool-ownership rule 4
+  //   applies. src/** uses `delete` zero times, so the rule stays a live
+  //   tripwire on shipped code, where the megamorphic-shape cost is real.
+  //
+  // KEPT, SCOPED -- performance/noAwaitInLoops (4 -> 0), same `overrides`
+  //   block. All four are `for (let i = 0; i < N; i++) await
+  //   user.keyboard("{ArrowUp}")` -- N sequential keystrokes against a
+  //   spinner. The rule's suggested Promise.all() would race them, which is
+  //   not a faster version of the test but a different (and meaningless) one.
+  //   Zero hits in src/**.
+  //
+  // KEPT, SCOPED + FIXED -- performance/noNamespaceImport (5 -> 0). Four are
+  //   `import * as dataModule from "../data"` in tests, which is not a style
+  //   choice: `vi.spyOn(dataModule, fn)` needs the namespace OBJECT, and
+  //   nothing tree-shakes a test. Scoped off there. The fifth was in shipped
+  //   code and was a real finding: src/charts/echarts.ts opens with "Tree-
+  //   shaken echarts core" and then did `import * as echartsCore` and
+  //   `export const echarts = echartsCore`, re-exporting the entire
+  //   echarts/core namespace and making every export on it reachable -- the
+  //   opposite of the comment's claim. Now `import { connect, init, use }`
+  //   with `export const echarts = { init, connect }`; all three are free
+  //   functions, and the object shape is preserved because seven test files
+  //   vi.mock this module as `{ echarts: { init, connect } }`. Measured, not
+  //   argued: built both ways, the monitor bundle goes 2,110,869 -> 2,098,052
+  //   bytes, so the namespace re-export was retaining 12,817 bytes of
+  //   echarts/core that nothing in this app calls.
+  //
+  // KEPT, RETUNED -- complexity/useMaxParams, max 5 (4 -> 1 annotation).
+  //   Three of the four sit at exactly 5, one over the default, and in all
+  //   three the fifth parameter is an accumulator or optional accessor rather
+  //   than another datum (`warnings: string[]` in data/topology.ts's
+  //   buildTunnelEdges and `endTimestamp?: (rec) => ...` in data/exportDoc.ts's
+  //   dropInvalidTimestamps -- a house idiom, see normalizeSession). 5 admits
+  //   that shape and keeps the rule live at 6. The fourth, topo/routing.ts's
+  //   `cubic`, takes 8 and is annotated in place: its parameters ARE the SVG
+  //   cubic path's operands in path order, and both call sites compute scalar
+  //   geometry an options object would only re-wrap.
+  //
+  // KEPT + FIXED -- complexity/noUselessUndefined (2), both in
+  //   covapp/pages/FilePage.tsx. `return undefined` -> `return`. This is the
+  //   house style and not merely the rule's taste: the tree already writes a
+  //   bare `return;` 30 times in shipped code against 2 `return undefined;`.
+  //   Checked for a tool-ownership collision first and there is none --
+  //   noImplicitReturns is on, and tsc accepts a bare `return;` in a function
+  //   declared `X | undefined` (probed directly, 0 new diagnostics).
+  //
+  // KEPT + ANNOTATED -- complexity/noImplicitCoercions (1). The rule is worth
+  //   having: probed directly, it catches `!!x`, `+s`, `"" + n`,
+  //   `~arr.indexOf(...)` and `1 * n`, and this tree has none of them today,
+  //   so it costs nothing and guards a real readability class. Its single hit
+  //   is a false positive -- `y: 1 * ROW_H` in toporouting.test.ts's NODES
+  //   fixture, where the `1` is the second entry of a 0/1/2/3/4 row-index
+  //   column, not a Number() coercion (the rule's own unsafe fix proposes
+  //   `Number(ROW_H)`, which is nonsense). Annotated at the site.
+  //
+  //   NOTE on suppression syntax, learned the hard way here: a `biome-ignore`
+  //   comment binds to the line IMMEDIATELY after it, and continuation `//`
+  //   lines break that -- both annotations above were initially written as a
+  //   multi-line `// biome-ignore ...` block and Biome reported BOTH as
+  //   `suppressions/unused` while still emitting the diagnostic. Put the
+  //   prose above and the `biome-ignore` line last, directly on top of the
+  //   code.
+  //
+  // OFF -- performance/noJsxPropsBind (106). The rule's cost model is that an
+  //   unstable prop function defeats a memoized child's props comparison.
+  //   This tree has no such child: `memo(` / `React.memo` / `PureComponent`
+  //   appear ZERO times across src/**, vendored components included, so React
+  //   re-renders every child on every parent render regardless of prop
+  //   identity. Measured against the tree's own render-count guards rather
+  //   than assumed: 2 of the 106 (SubjectPage.tsx's `onZoom` and `onSweep`)
+  //   are props of ChartSection, the component both
+  //   src/__tests__/chart_memo.test.tsx and
+  //   src/shell/subjecthealthbanner.test.tsx watch. Converting `onZoom` to a
+  //   useCallback left the render-count guard at exactly its previous numbers
+  //   (ChartPanel renders afterMount=1, afterTicks=1) and chart_memo's
+  //   buildStackOption toHaveBeenCalledTimes assertions unchanged, 14/14
+  //   green both ways. The mechanism is visible in charts/ChartPanel.tsx: it
+  //   reads onZoom/onSweep through a `latest` ref refreshed every render and
+  //   names no callback in any of its three dependency arrays, which is
+  //   strictly better than useCallback (a ref cannot go stale). Note also
+  //   that the rule is not "no inline arrows": probed directly, it fires on
+  //   `onToggle={toggle}` and `onClick={toggleTheme}` where those are plain
+  //   named functions declared in the component body, so the only satisfying
+  //   fix really is useCallback at all 106 sites.
+  //
+  // OFF -- complexity/noVoid (22). Enabling it would directly contradict task
+  //   5's `nursery/noFloatingPromises`, measured: with both on, `void work()`
+  //   emits noVoid and the bare `work()` emits noFloatingPromises, whose own
+  //   remediation text names the void operator ("...or is not explicitly
+  //   ignored using the `void` operator"). Fourteen of the 22 are exactly
+  //   that marker on a deliberately-unawaited call (App.tsx, data/stream.ts,
+  //   shell/{EventEditor,EventsPanel,ImportExport,MarkControl},
+  //   topo/TopologyPage.tsx, ui/commands.ts), so the two rules make those
+  //   lines unwritable. The other 8 (perf_budget.test.ts, clock.test.tsx) use
+  //   `void` to make an arrow's body a statement, e.g.
+  //   `act(() => void vi.advanceTimersByTime(4000))`. noFloatingPromises is
+  //   the rule that carries information here and noVoid is the one that goes.
+  //
+  // OFF -- complexity/noExcessiveLinesPerFunction (116, max 50). 71 of the
+  //   116 are `describe`/`it` callbacks -- a suite body is not a function
+  //   anyone splits, and "consider refactoring this function to split it into
+  //   smaller functions" is not advice about a test file. Of the 45 in src,
+  //   the metric counts JSX markup as function lines: SubjectPage.tsx:297
+  //   (`{filtered.map((chart) => ...)}`, 58) and OverviewPage.tsx:54
+  //   (`{session.elements.map((el) => ...)}`, 53) are JSX list-render
+  //   callbacks flagged as over-long functions, and the top of the list is
+  //   page components whose length is their markup (SubjectPage 268,
+  //   ChartPanel 251, FilePage 215, TopologyPage 191). The src range is
+  //   51..268, so no maxLines is both passing and meaningful: 270 makes the
+  //   rule dead, anything lower still flags code it cannot improve. Splitting
+  //   to satisfy a line count is the failure mode the tier's guiding
+  //   principle names explicitly.
+  //
+  // OFF -- complexity/noExcessiveCognitiveComplexity (24, max 15). The
+  //   metric's dominant term here is nesting, and React's own required shape
+  //   spends levels before any logic reaches it. Measured on the clearest
+  //   case: ui/useGlobalShortcuts.ts's `onKeyDown` scores 31 -- more than
+  //   twice the budget -- and it is a flat, priority-ordered keyboard
+  //   dispatcher, five guard clauses each ending in an unconditional return
+  //   plus one loop, already the simplest form that shape can take. There is
+  //   nothing in it to extract. The mass above 25 is graph code where the
+  //   nesting IS the algorithm: data/topology.ts (91, 40, 28) and
+  //   topo/layout.ts (71, 29, 28, 26). buildTopoGraph at 91 was read
+  //   specifically for a clarifying split and has none available -- its two
+  //   halves are already named by comment banners and share eight locals, so
+  //   extracting either would hand the extraction 8 parameters. The observed
+  //   range is 17..91; a threshold that passes is a dead rule. Recorded here
+  //   rather than silently dropped: buildTopoGraph (91) and layerBackbone
+  //   (71) are 2-3x everything else in the tree and are the two functions to
+  //   look at first if this is ever revisited.
+  //
+  // OFF -- complexity/useSimplifiedLogicExpression (12). Every one of the 12
+  //   is an early-return guard, and the rule's "simplification" is De
+  //   Morgan's law applied in the direction that ADDS a negation:
+  //   `if (!a || !b) continue` -> `if (!(a && b)) continue`, eleven times
+  //   (data/topology.ts x5, topo/layout.ts x3, shell/ReviewBar.tsx,
+  //   topo/TopologyPage.tsx, data/reviewStore.ts). "If either is missing,
+  //   bail" becomes a double negation of a conjunction, which is strictly
+  //   harder to read at the exact place a reader is checking a guard. The
+  //   twelfth (ui/shortcuts.ts, `!e.ctrlKey && !e.metaKey` -> `!(e.ctrlKey ||
+  //   e.metaKey)`) is the same trade. The rule's real target -- `&`/`|` typed
+  //   where `&&`/`||` was meant, or `x || (x && y)` -- does not occur here.
+  //
+  // =====================================================================
+  // BIOME RULE DECISIONS -- tier 5 task 4: `style`.
+  //
+  // Counts measured 2026-07-28 at 39dc8213 with preset:"all" and domains
+  // {react,test,types,tailwind}:"all". 27 rules, 2,513 diagnostics, now 0.
+  // Eight rules kept (all fixed or scoped to zero), nineteen off. This is
+  // the `.ruff.toml` shape and the expected outcome for this group: the
+  // unit of work was 27 rule decisions, not 2,513 edits.
+  //
+  // TWO COUNTING DEFECTS in the plan's table, both worth keeping because
+  // they will bite the next person who measures a group:
+  //
+  //   1. The plan lists noNonNullAssertion at 5. It fires 0. Those "5" are
+  //      the SAME un-anchored-grep artifact task 1 found for
+  //      useExhaustiveDependencies: this tree carries 7 justified
+  //      `biome-ignore lint/style/noNonNullAssertion` comments (present at
+  //      1dddf565, the plan's own baseline), and Biome echoes 5 of them
+  //      inside OTHER rules' code frames (noContinue, useBlockStatements).
+  //      A bare `grep -c noNonNullAssertion` counts the echoes.
+  //
+  //   2. The header-anchored count that FIXES defect 1 introduces its own
+  //      blind spot: useFilenamingConvention is a FILE-LEVEL diagnostic,
+  //      emitted as `path lint/style/rule` with NO `:line:col`, so
+  //      `grep -cE '^[...]+:[0-9]+:[0-9]+ lint/style/'` cannot see its 12.
+  //      Reconcile against the `Found N warnings/infos` footer, not the
+  //      anchored count alone: 771 + 1,742 = 2,513 = 2,501 anchored + 12
+  //      file-level. 2,518 - 5 - 12 = 2,501 attributes the delta exactly.
+  //
+  // -------- KEPT --------
+  //
+  // KEPT, TRIPWIRE -- style/noNonNullAssertion (0 unsuppressed). This is
+  //   the rule that makes tier 4's discipline durable: tier 4 cleared 72
+  //   indexed-access sites without adding a single `!`, and the tree's 7
+  //   remaining assertions each already carry a justified suppression
+  //   naming this rule. Because it fires 0, a differential proof is the
+  //   ONLY evidence it works, and one was taken: a scratch
+  //   `m.get(k)!` draws `src/__nna_probe.ts:2:45
+  //   lint/style/noNonNullAssertion` with the rule on, and 0 diagnostics
+  //   with it off. The proof also showed the rule is load-bearing in a
+  //   SECOND direction nobody planned for -- with it off, Biome reports the
+  //   7 justified suppressions as `suppressions/unused`, so turning this
+  //   rule off does not merely lose the tripwire, it turns 7 documented
+  //   invariants into dead comments the linter then complains about.
+  //   Costs nothing today; catches the 8th `!`.
+  //
+  // KEPT + FIXED -- style/useErrorCause (2). Both were real losses of the
+  //   original error, in the two modules whose failures reach a user as a
+  //   toast: data/eventApi.ts discarded `err` from the fetch catch, and
+  //   data/exportDoc.ts's JSON.parse used a PARAMETERLESS `catch {}`, so
+  //   the syntax error's position was gone. Now `{ cause: err }` on both.
+  //   `ErrorOptions` needs no lib change (target/lib are already ES2022)
+  //   and both classes are bare `extends Error`, so they inherit the
+  //   two-argument constructor unchanged.
+  //
+  // KEPT + FIXED -- style/useExplicitLengthCheck (11 over 9 lines).
+  //   `arr.length` as a truthiness test becomes `arr.length > 0` / `=== 0`.
+  //   Kept because the explicit form states the predicate the reader has to
+  //   reconstruct otherwise, and because it composes badly when negated --
+  //   `if (map.sources.length && !keepOld.length)` reads as two different
+  //   kinds of test and is now `map.sources.length > 0 && keepOld.length
+  //   === 0`. Applied BY HAND, not by autofix: the fix is classified
+  //   Unsafe. charts/options.ts:454 exceeded the 100-char line width after
+  //   the rewrite and was re-wrapped by the formatter.
+  //
+  // KEPT + FIXED -- style/useConsistentMethodSignatures (1),
+  //   covapp/Toast.tsx's `ToastContextValue.show`. Method-style
+  //   `show(m: string): void` is checked BIVARIANTLY even under
+  //   strictFunctionTypes (which `strict` turns on); property-style
+  //   `show: (m: string) => void` is checked contravariantly. So this is a
+  //   small real type-safety gain, not a formatting preference, and it is
+  //   the tree's only method-style signature.
+  //
+  // KEPT + FIXED -- style/useConsistentArrayType (1), topo/layout.ts's
+  //   `Array<[string, string]>` -> `[string, string][]`. House style is not
+  //   in doubt: 293 `T[]` annotations against this one generic form.
+  //
+  // KEPT, SCOPED + FIXED -- style/useAtIndex (3 -> 0). The one SHIPPED site
+  //   (covapp/pages/FilePage.tsx) became `rows.at(-1)`, which is a strict
+  //   improvement and a type no-op: under tier 4's noUncheckedIndexedAccess
+  //   `rows[rows.length - 1]` is ALREADY `T | undefined`, and the value was
+  //   already consumed through `allRow?.line?.[...]`.
+  //
+  //   The two TEST sites are scoped off via the `overrides` block, for a
+  //   MEASURED reason rather than the usual "not shipped" one, and this is
+  //   the interesting part: the test-file noUncheckedIndexedAccess deferral
+  //   in scripts/typecheck_web.sh is DIFFERENTIAL AND BY RULE -- it re-runs
+  //   tsc with the flag off and subtracts. `arr[arr.length - 1]` is
+  //   deferred because it only errors with the flag on; `arr.at(-1)`
+  //   returns `T | undefined` with the flag EITHER WAY, so its error
+  //   appears in the baseline and is NOT deferred. Proven by applying the
+  //   rule's own fix to the two sites: `make check-ts` went from clean/305
+  //   deferred to FAILED with 2 hard errors (TS18048 + TS2532 in
+  //   logevents.data.test.ts) and 302 deferred. A rule whose fix converts a
+  //   deferred diagnostic into a gate failure must not run there.
+  //
+  // KEPT, SCOPED -- style/noExcessiveClassesPerFile (4 -> 0, max 1), via
+  //   the same `overrides` block. All four are test files declaring TWO
+  //   DOM-API stubs side by side (a fake ResizeObserver next to a fake
+  //   IntersectionObserver). Splitting a test's two one-line browser
+  //   doubles across two files moves them away from the setup that
+  //   installs them. src/** declares no classes at all, so the rule stays a
+  //   live tripwire on shipped code at zero cost.
+  //
+  // KEPT, SCOPED -- style/noProcessEnv (1 -> 0), same block. The single hit
+  //   is vite.config.ts reading VITE_OTTO_TARGET to parameterise the dev
+  //   proxy -- a Node-side config file, where `process.env` is the
+  //   documented mechanism and the rule's advice ("use a centralized
+  //   configuration file") describes the file it is flagging. Scoping
+  //   rather than disabling matters here: Vite does NOT shim `process.env`
+  //   into a browser bundle, so a `process.env.X` that reached src/** would
+  //   be a genuine runtime defect, and src/** has zero today.
+  //
+  // -------- OFF --------
+  //
+  // OFF -- style/useBlockStatements (443, 386 of them in shipped src/**).
+  //   Requires braces on every single-statement body, i.e. `if (!ok)
+  //   return;` becomes a three-line block. This tree's dominant shape is
+  //   the one-line guard clause, and the rule's own code frames show the
+  //   cost: it proposes rewriting `if (ni === -1) return [seg[0]];` and
+  //   `if (endpoints.includes(name)) continue;` into blocks. Tripling the
+  //   line count of a guard is the churn the tier's guiding principle
+  //   rejects, and braces add no information where the body is on the same
+  //   line as its condition.
+  //
+  // OFF -- style/noMagicNumbers (433). 368 are in test/script/config files,
+  //   where a literal IS the fixture -- naming `expect(x).toBe(3)`'s 3
+  //   makes the assertion less checkable, not more. Of the 65 in src, the
+  //   rule cannot tell a magic number from an inherently numeric datum: it
+  //   flags SVG dash arrays (`longdashdot: [14, 4, 2, 4]`, 3 hits on one
+  //   line), `Math.round(alpha * 255)`, and -- decisively -- GENERATED code
+  //   in src/api/export.gen.ts, where `export type Format = 1` is a
+  //   schema-pinned literal type nobody may edit. A rule that fires on a
+  //   generated file cannot be satisfied without excluding it.
+  //
+  // OFF -- style/useNamingConvention (404). 383 of the 404 are "object
+  //   property should be in camelCase" on the PYTHON WIRE FORMAT. Fields
+  //   like `log_events`, `chart_map`, `deleted_event_ids` are Pydantic
+  //   model fields in src/otto/models/monitor.py and column names in
+  //   src/otto/monitor/db.py; renaming them in TS would break the
+  //   import/export document format at the language boundary. Of the
+  //   remaining 21: 11 are the covapp's deliberate `__OTTO_COV__` /
+  //   `__OTTO_COV_FILE__` / `__OTTO_COV_TICKET__` window handshake, a named
+  //   external contract with the Python-generated coverage page; 3 are
+  //   strictCase rejecting DOMAIN spellings (`lastXAxis` -- ECharts' own
+  //   option is `xAxis` -- plus `EChartsLike` and, again, generated code in
+  //   src/api/export.gen.ts's `YTitle`); 5 are SCREAMING_CASE test
+  //   fixtures; 1 is `class RO` (a ResizeObserver stub). The last one,
+  //   `per_tier` in covapp/tickets.ts, LOOKS like a genuine find and is not
+  //   -- it is snake_case precisely so it can be returned by shorthand into
+  //   `{ ...stats.lines, total, hit, per_tier }`, i.e. it is the wire name
+  //   again.
+  //
+  // OFF -- style/noTernary (310, 296 in shipped src/**). A React tree
+  //   cannot avoid the ternary: `{hasData ? <Chart/> : <Empty/>}` is how
+  //   JSX expresses a two-branch choice, since an `if` is not an
+  //   expression. Banning it would push every conditional render into a
+  //   helper function or an IIFE. The rule is defensible in a codebase
+  //   without JSX; this is not one.
+  //
+  // OFF -- style/useGlobalThis (299). Measured, ALL 299 are the identifier
+  //   `window` -- not one `self` or `global`, which are the aliases the
+  //   rule exists to unify. This is a browser application whose tests run
+  //   in jsdom, so `window` is the correct and specific name; `globalThis`
+  //   is the portable name for code that must also run in Node, which
+  //   none of this is. `globalThis.location.hash` and
+  //   `globalThis.matchMedia` are strictly less clear than the DOM's own
+  //   spelling.
+  //
+  // OFF -- style/noJsxLiterals (199, 176 in shipped src/**). Requires every
+  //   user-visible string in JSX to be hoisted into an expression
+  //   container or a constant. That is an internationalisation discipline,
+  //   and this app has no i18n layer and ships English only. Applying it
+  //   would move 176 button labels and headings away from the markup they
+  //   label, for no reader or user benefit.
+  //
+  // OFF -- style/noImplicitBoolean (63). Requires `<Panel isOpen={true} />`
+  //   over `<Panel isOpen />`. The shorthand is JSX's own spec-level
+  //   sugar, universal in React, and used consistently across the tree's
+  //   55 shipped sites.
+  //
+  // OFF -- style/noContinue (55, 53 in shipped src/**). Every hit is an
+  //   early-continue guard at the top of a loop body. Removing `continue`
+  //   means wrapping the remainder in an `if`, adding a nesting level per
+  //   guard exactly where a reader is checking preconditions. This also
+  //   contradicts a decision already recorded above: task 3 turned
+  //   complexity/useSimplifiedLogicExpression off to KEEP `if (!a || !b)
+  //   continue` readable, and task 3 documented that the dominant term in
+  //   noExcessiveCognitiveComplexity is nesting -- so this rule would add
+  //   the complexity that rule measures.
+  //
+  // OFF -- style/useDestructuring (44). Wants `const [session] =
+  //   doc.sessions` for `doc.sessions[0]`. Under tier 4's
+  //   noUncheckedIndexedAccess both forms are `T | undefined`, so there is
+  //   no type gain, and the rule does not compose: `instances[0].calls`
+  //   would have to become `const [{ calls }] = instances`, which buries
+  //   the index and the field access in one pattern. Positional reads that
+  //   cross a boundary were already audited by hand in tier 4 (3 genuine
+  //   fragilities in 72 sites); a syntax rule adds nothing to that.
+  //
+  // OFF -- style/noIncrementDecrement (41). Bans `i++`/`i--`. 15 of the
+  //   shipped hits are the counter of a C-style `for (let i = 0; i < n;
+  //   i++)` loop, where `i += 1` is the same operation spelled longer, and
+  //   the rest are counters in render-count test probes. The hazard the
+  //   rule targets -- `x = i++` used for its value -- does not occur here.
+  //
+  // OFF -- style/useExportsLast (35, 34 in shipped src/**). Requires all
+  //   exports at the bottom of the file. Every hit is an exported
+  //   `interface`/`type` declared immediately above the component or
+  //   function it describes (`AppShellProps` above `AppShell`,
+  //   `EventMarker` above the code that builds one). Moving 34 props
+  //   interfaces to the end of their files separates each declaration from
+  //   its only consumer to satisfy an ordering with no reader benefit.
+  //
+  // OFF -- style/useNumericSeparators (33). Note the DIRECTION, which is
+  //   the reverse of what the plan's grouping implies: every hit is
+  //   "Unnecessary grouping of digits ... Short numbers don't require
+  //   separators", i.e. it wants `1_000` rewritten to `1000`. All 33 are in
+  //   test files where 4-digit millisecond literals are written `1_000` /
+  //   `2_000` deliberately, to line up visually with the 5- and 7-digit
+  //   ms values (`10_000`, `3_600_000`) in the same fixtures. Removing the
+  //   separators would make that column inconsistent, which is the
+  //   opposite of the rule's purpose.
+  //
+  // OFF -- style/noExcessiveLinesPerFile (30 files, max 300). Same
+  //   judgement as task 3's noExcessiveLinesPerFunction, and the same
+  //   arithmetic: 18 of the 30 are test files, where length is coverage,
+  //   and the 12 in src are page components and data modules whose length
+  //   is their markup or their schema. A file-length cap cannot distinguish
+  //   a file that should be split from one that is simply long, and
+  //   splitting to satisfy a count is a failure under the guiding
+  //   principle.
+  //
+  // OFF -- style/noHexColors (28). The plan asked whether these are "chart
+  //   config (legitimate) or component styling (should be a token)".
+  //   Measured, the answer is NEITHER, and the rule cannot answer that
+  //   question at all: it is CSS-ONLY. All 28 hits are in src/app.css (18)
+  //   and src/covapp/covapp.css (10), and all 28 are custom-property
+  //   DEFINITIONS -- `--color-brand-500: #7c5cff`, `--color-status-error:
+  //   #d03b3b`, `--topo-edge-static: #4b5563` -- inside `@theme` and the
+  //   `:root`/`.dark-mode` pair. A hex there is not a violation of
+  //   scripts/check_brand_tokens.sh; it is the value that gate exists to
+  //   protect, and there is nowhere else for it to come from. Meanwhile the
+  //   96 hex literals that ARE in TypeScript -- charts/palette.ts's ECharts
+  //   series ramp, which genuinely needs literal colors -- draw ZERO
+  //   diagnostics, so keeping the rule would flag only the one place a hex
+  //   belongs while never seeing the place the plan was worried about.
+  //
+  // OFF -- style/useComponentExportOnlyModules (25). The plan is right that
+  //   this is a react-refresh rule rather than a taste one, but its benefit
+  //   is UNATTAINABLE here, which is measured rather than argued. 6 of the
+  //   25 are test files (never hot-reloaded) and would be scoped off; the
+  //   other 19 are real. But lifting the vendored exclusion shows the
+  //   Untitled UI tree commits the SAME violation 46 times across 17 files,
+  //   and 8 of those are imported by our own modules -- button.tsx by 5,
+  //   button-utility.tsx by 6, badges.tsx and slideout-menu.tsx by 3 each.
+  //   Those files are gate-protected against hand-edits (issue #177,
+  //   scripts/check_untitledui_drift.sh), so Fast Refresh is already
+  //   defeated in the components every page renders, and fixing our 19
+  //   cannot recover it. The 19 are also the wrong 19 to move: 7 are the
+  //   canonical context pattern (`useToast` beside `ToastProvider`, five
+  //   hash-routing helpers beside `FocusProvider`), whose split would force
+  //   EXPORTING the context object itself and let a consumer skip the
+  //   null-check the hook exists to perform. `allowConstantExport: true`
+  //   was tried and is INERT here -- 19 either way -- because all four
+  //   colocated constants are `new Set(...)`, array, object or `Record`
+  //   initialisers rather than the primitives the option admits.
+  //
+  // OFF -- style/noNegationElse (21, all in shipped src/**). Flips a
+  //   negated test and swaps the branches: `ev.end_timestamp != null ?
+  //   parseTs(ev.end_timestamp) : null` becomes `== null ? null :
+  //   parseTs(...)`. That puts the do-nothing branch first and the actual
+  //   work second at every site, and `typeof HashChangeEvent !== "undefined"`
+  //   is the standard feature test, written negatively on purpose. It also
+  //   pulls against task 2's noEqualsToNull decision, which kept `!= null`
+  //   as one deliberate test for null-or-undefined.
+  //
+  // OFF -- style/useFilenamingConvention (12; file-level, see defect 2
+  //   above). The tree's convention is real and deliberate: PascalCase for
+  //   a React component module, camelCase for a plain one. `filenameCases`
+  //   is a FLAT allow-list and cannot express "PascalCase iff component",
+  //   and the rule's escape hatch ("or equal to the name of an export")
+  //   fails for exactly the files here -- test files export nothing, and
+  //   Toast.tsx exports `ToastProvider`/`useToast` but no `Toast`. Measured
+  //   the alternatives: the default set flags 12 correct PascalCase
+  //   component and component-test modules, and the only setting that
+  //   reaches 0 is camelCase|kebab-case|snake_case|PascalCase -- which
+  //   admits every case the tree could ever produce, leaving a rule that
+  //   cannot fail.
+  //
+  // OFF -- style/noNestedTernary (11). Every hit is a FLAT chain in the
+  //   else position, not a ternary nested inside a condition or a
+  //   consequent: `pathA < pathB ? -1 : pathA > pathB ? 1 : 0` is the
+  //   canonical three-way comparator, and `tone === "high" ? 0 : tone ===
+  //   "low" ? 1 : 2` is a lookup table. Both read as the switch they stand
+  //   in for. The rule's real target -- a ternary hidden inside another
+  //   ternary's condition -- does not occur here.
+  //
+  // OFF -- style/noDefaultExport (4). Two of the four cannot be satisfied
+  //   at all: vite.config.ts and vite.covapp.config.ts MUST default-export
+  //   their `defineConfig(...)`, because that is how Vite loads a config --
+  //   a named export is not read. The other two are `export default App` in
+  //   src/App.tsx and src/covapp/App.tsx, the React root convention that
+  //   all 7 of this tree's import sites already spell `import App from`.
+  //   Scoping the two configs off would leave a rule whose entire live
+  //   surface is the two app entry points, bought with a 9-file rename of
+  //   an ecosystem-standard idiom.
+  //
+  // =====================================================================
+  // BIOME RULE DECISIONS -- tier 5 task 5: the flip to `preset: "all"`.
+  //
+  // biome.json now has the .ruff.toml shape -- `preset: "all"` plus an
+  // off-list. All 29 explicit "error" entries tasks 1-4 wrote were deleted,
+  // each checked first against the resolved rule set (`biome rage --linter`,
+  // see the tool caveat below) to confirm preset "all" enables it; all 29
+  // were present. Three entries survive because their OPTIONS are the
+  // decision rather than the level: complexity/useMaxParams (max 5),
+  // correctness/useUniqueElementIds (excludedComponents) and
+  // security/noSecrets (entropyThreshold 50).
+  //
+  // The flip changed nothing it should not: `biome lint
+  // --max-diagnostics=20000 .` is BYTE-IDENTICAL before and after -- 180
+  // files, 0 anchored diagnostics, 0 file-level diagnostics, 0
+  // suppressions/unused, exit 0.
+  //
+  // DOMAINS -- the plan's domain block is wrong, and it is the tier's third
+  // sighting of one trap. It prescribed nine framework domains pinned to
+  // `"none"` ("records that they were considered"), minus `next`, which task
+  // 1 measured as silently disabling correctness/useExhaustiveDependencies.
+  // `next` is not special. Biome 2.5.5 declares FOURTEEN domains -- drizzle,
+  // react, reactNative, test, solid, next, qwik, svelte, vue, project,
+  // tailwind, turborepo, playwright, types (the plan omits `project`
+  // entirely) -- a rule belongs to SEVERAL of them, and `"none"` on ANY one
+  // of a rule's domains disables that rule outright:
+  //
+  //   qwik:      "none" kills correctness/useJsxKeyInIterable  <-- React's
+  //              missing-list-key rule
+  //   solid:     "none" kills suspicious/noDuplicatedSpreadProps
+  //   next:      "none" kills useExhaustiveDependencies + useHookAtTopLevel
+  //   turborepo: "none" kills suspicious/noUndeclaredEnvVars
+  //   svelte / vue / reactNative / drizzle / playwright: cost nothing here
+  //
+  // An explicit rule entry cannot win one back: `"useJsxKeyInIterable":
+  // "error"` alongside `qwik: "none"` still emits nothing (probed on a
+  // scratch component with an unkeyed `.map` -- 1 diagnostic without the
+  // domain key, 0 with it, either way the entry is written). A domain
+  // "none" is not a default; it is a veto.
+  //
+  // So `domains` keeps only the four "all" entries, and the four framework
+  // rules that actually fire go off BY NAME instead -- the same convention
+  // as every other decision above, with the counts the domain "none"s were
+  // hiding:
+  //
+  // OFF -- suspicious/noReactSpecificProps (456). Fires on every
+  //   `className`, because Solid spells it `class`. This is React.
+  // OFF -- correctness/noSolidDestructuredProps (121). Destructuring props
+  //   breaks Solid's reactivity; in React it is the idiom.
+  // OFF -- correctness/useQwikValidLexicalScope (82). Qwik's
+  //   serialisation-boundary rule. There is no such boundary here.
+  // OFF -- performance/useSolidForComponent (46). Wants Solid's `<For>`
+  //   in place of `.map`.
+  //
+  // 456 + 121 + 82 + 46 = 705, which is exactly what preset "all" with no
+  // "none" domain reports on this tree, so those four names account for the
+  // whole of the plan's "~700 diagnostics". Net against the plan's block: 0
+  // rules lost, 16 recovered, tree still 0 diagnostics. Twelve of the 16 are
+  // vue/qwik rules that fire 0 here; the four that matter are
+  // useJsxKeyInIterable, noDuplicatedSpreadProps, noUndeclaredEnvVars and
+  // (via omitting `next`) the pair task 1 already saved.
+  //
+  //   THE TRADE, stated so it can be challenged: a domain "none" would also
+  //   pre-suppress solid/qwik rules Biome adds LATER, which a by-name
+  //   off-list does not. But that is the posture `preset: "all"` already
+  //   takes for every other group -- a new rule appears, gets read, gets a
+  //   decision -- and it is worth paying to keep useJsxKeyInIterable, which
+  //   is a genuine React correctness rule that fires 0 today, i.e. exactly
+  //   the kind of tripwire task 4 kept noNonNullAssertion for.
+  //
+  //   TOOL CAVEAT -- `biome rage --linter` prints the RESOLVED rule set and
+  //   is how the table above was found, but it is a debug command and it
+  //   misleads twice. (1) It PANICS -- "internal error: entered unreachable
+  //   code: DomainFilter::as_rule_filters: domain tailwind not found",
+  //   printing no rule list at all -- whenever `tailwind` appears in
+  //   `domains` at ANY value, so every enumeration here was taken with the
+  //   tailwind key removed. (2) With react:"all" AND qwik:"none" it still
+  //   lists useJsxKeyInIterable as enabled, where `biome lint` does not emit
+  //   it. Confirm every rage finding with a lint differential against a file
+  //   that violates the rule. Rage is a lead; lint is the evidence.
+  //
+  // KEPT -- tailwind: "all", though it enables zero STABLE rules today
+  //   (which is why rage panics on it: the domain has no rule filters
+  //   registered). This is a Tailwind v4 app, so the opt-in is semantically
+  //   right and costs nothing measurable -- the tree reports the same 0 with
+  //   and without it.
+  //
+  // UNSET -- `project`. `project: "none"` would drop noPrivateImports,
+  //   noUndeclaredDependencies, useJsonImportAttributes, noDeprecatedImports
+  //   and noImportCycles. `project: "all"` adds nothing: rage claims it
+  //   contributes noUnresolvedImports and useImportExtensions, but lint
+  //   disagrees -- deleting those two "off" entries with no `project` key
+  //   present brings back exactly 6 and 529, task 1's counts. Caveat (2)
+  //   above, again.
+  //
+  // ADDED, BY NAME -- nursery/noFloatingPromises (2 -> 0). preset "all" does
+  //   NOT include nursery, and the GROUP stays out: all 83 rules on measures
+  //   3,356 diagnostics, ~80% of it from rules that are wrong here
+  //   (noUndeclaredClasses flags every Tailwind utility, 1,949;
+  //   noReactNativeRawText fires 204 times on a web app). Nursery rules are
+  //   also renamed or promoted between minor versions, so naming exactly one
+  //   keeps the upgrade cost to one line. Floating promises are caught by
+  //   neither tsc nor any stable Biome rule, in a codebase built on
+  //   streaming and chunk loads.
+  //
+  //   Both hits are in covapp/data.test.ts, the same shape twice: it calls
+  //   loadFileChunk / loadTicketChunk for their SIDE EFFECT (the injected
+  //   `<script src>`, whose URL-encoding is what the case asserts) and drops
+  //   the promise, which then never settles -- nothing calls
+  //   __OTTO_COV_FILE__ / __OTTO_COV_TICKET__ for those ids. Both are now
+  //   marked `void`, which is the remediation the rule's own message names
+  //   ("...or is not explicitly ignored using the `void` operator") and is
+  //   writable only because task 3 turned complexity/noVoid off for exactly
+  //   this interaction. Neither can leak a rejection: data.ts's
+  //   _resetForTests() drops the waiter list rather than rejecting it.
+  //   Proven live afterwards, differentially -- a scratch `work();` on an
+  //   async function draws src/__fp_probe.ts:5:3
+  //   lint/nursery/noFloatingPromises with the rule on and nothing with it
+  //   off.
+  //
+  // NOTE -- `biome check .` formats biome.json ITSELF. A config that is
+  //   valid JSON but wrongly indented (a script rewrite, say) fails the gate
+  //   as `biome.json format`, which reads nothing like a rule decision.
+  // =====================================================================
   "compilerOptions": {
     "paths": { "@/*": ["./src/*"] },
     "target": "ES2022",
@@ -13,8 +957,13 @@
     "noEmit": true,
     "jsx": "react-jsx",
     "strict": true,
-    "noUnusedLocals": false,
-    "noUnusedParameters": false,
+    "noImplicitOverride": true,
+    "noImplicitReturns": true,
+    "verbatimModuleSyntax": true,
+    "erasableSyntaxOnly": true,
+    "noPropertyAccessFromIndexSignature": true,
+    "exactOptionalPropertyTypes": true,
+    "noUncheckedIndexedAccess": true,
     "noFallthroughCasesInSwitch": true,
     "noUncheckedSideEffectImports": true
   },

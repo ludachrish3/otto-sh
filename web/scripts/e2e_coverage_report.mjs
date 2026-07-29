@@ -113,7 +113,7 @@ function pruneSourceMap(map) {
   // relative or absolute paths) — the keep filter would silently match nothing
   // and the report would go quietly empty for this bundle. Fail loud instead,
   // matching the missing-.map precedent.
-  if (map.sources.length && !keepOld.length) {
+  if (map.sources.length > 0 && keepOld.length === 0) {
     throw new Error(
       `e2e_coverage_report: sourcemap has ${map.sources.length} sources but none under /web/src/ — ` +
         "the served bundle's source paths changed shape; coverage would be silently empty",
@@ -136,7 +136,7 @@ function pruneSourceMap(map) {
 }
 
 const dumps = existsSync(rawDir) ? readdirSync(rawDir).filter((f) => f.endsWith(".json")) : [];
-if (!dumps.length) {
+if (dumps.length === 0) {
   throw new Error(
     "e2e_coverage_report: no raw dumps in reports/ts-e2e-cov/raw — run `make dashboard` (chromium) first",
   );

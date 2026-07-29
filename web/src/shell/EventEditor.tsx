@@ -236,7 +236,15 @@ export function EventEditor() {
               selectedKey={form.dash}
               onSelectionChange={(key) => key !== null && setForm({ ...form, dash: String(key) })}
             >
-              {(item) => <Select.Item id={item.id} label={item.label} />}
+              {/* Conditional spread, not `label={item.label}`: the vendored
+                  `SelectItemProps` declares `label?: string`, and the render
+                  callback types `item.label` as `string | undefined`. */}
+              {(item) => (
+                <Select.Item
+                  id={item.id}
+                  {...(item.label !== undefined && { label: item.label })}
+                />
+              )}
             </Select>
             {error !== null && (
               <p data-testid="editor-error" className="text-xs text-error-primary">

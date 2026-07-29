@@ -1,3 +1,7 @@
+// `import.meta.dirname`, not `__dirname`: web/package.json is
+// `"type": "module"`, so this file is an ES module and `__dirname` is not a
+// binding in it — it only resolved because Vite pre-bundles the config
+// (biome correctness/noGlobalDirnameFilename). Same change in vite.config.ts.
 import { resolve } from "node:path";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
@@ -24,7 +28,7 @@ function classicScript(): Plugin {
 export default defineConfig({
   plugins: [react(), tailwindcss(), classicScript()],
   base: "./",
-  resolve: { alias: { "@": resolve(__dirname, "./src") } },
+  resolve: { alias: { "@": resolve(import.meta.dirname, "./src") } },
   build: {
     outDir: "../src/otto/_webassets/covapp",
     emptyOutDir: true,
@@ -41,7 +45,7 @@ export default defineConfig({
     sourcemap: "hidden",
     chunkSizeWarningLimit: 2_000, // bundle-size ceiling (spec §10) — warnings are build failures
     rollupOptions: {
-      input: resolve(__dirname, "covapp.html"),
+      input: resolve(import.meta.dirname, "covapp.html"),
       output: {
         format: "iife",
         // NOT inlineDynamicImports: true — Vite 8 ships Rolldown, which

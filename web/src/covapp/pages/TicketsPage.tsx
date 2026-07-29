@@ -23,10 +23,11 @@
 // it. That's exactly why the rows can overlap and not sum to the card: the
 // caption under the table says so explicitly rather than leaving it
 // implied.
-import { Bookmark, ChevronRight, SearchMd } from "@untitledui/icons";
+import { Bookmark, ChevronRight } from "@untitledui/icons";
 import { useEffect, useState } from "react";
 
 import { Input } from "@/components/base/input/input";
+import { SearchIcon } from "@/ui/icons";
 import { cx } from "@/utils/cx";
 
 import { AppShell } from "../chrome/AppShell";
@@ -454,7 +455,7 @@ export function TicketsPage({ index }: TicketsPageProps) {
               <Input
                 aria-label="Search tickets by id"
                 size="sm"
-                icon={SearchMd}
+                icon={SearchIcon}
                 placeholder="Search tickets…"
                 value={query}
                 onChange={setQuery}

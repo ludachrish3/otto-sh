@@ -111,7 +111,7 @@ describe("applyFragment", () => {
       } as never),
     );
     expect(next.meta.charts.map((c) => c.label)).toContain("newlabel");
-    expect(next.chartMap.newlabel).toBe("cpu");
+    expect(next.chartMap["newlabel"]).toBe("cpu");
   });
 
   it("ignores a fragment addressed to a different session", () => {

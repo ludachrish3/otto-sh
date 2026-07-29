@@ -141,7 +141,7 @@ export function filterTree(
       if (chartHit) return true;
       return s.label.toLowerCase().includes(needle) || s.host.toLowerCase().includes(needle);
     });
-    if (series.length) out.push({ ...chart, series });
+    if (series.length > 0) out.push({ ...chart, series });
   }
   return out;
 }

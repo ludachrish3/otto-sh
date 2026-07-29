@@ -5,6 +5,7 @@
 import { describe, expect, it } from "vitest";
 
 import { COL_W, ROW_H } from "../topo/layout";
+import { type Point, samplePath } from "../topo/measure";
 import { INTERACTION_WIDTH, type Rect, routeEdge } from "../topo/routing";
 
 const W = 208; // element node: w-52
@@ -23,47 +24,65 @@ const H = 72; // element node height
  * below needs -- and chassis-a is placed one column over for the
  * cross-column tests further down. spare-chassis is an element with 0
  * hosts and still gets a row here. */
-const NODES: Record<string, Rect> = {
+// `satisfies`, not `: Record<string, Rect>` — the annotation erased the six
+// element names into an index signature, so `NODES.wrokers` type-checked and
+// handed routeEdge an undefined Rect at run time. This keeps the Rect check
+// AND the literal keys.
+const NODES = {
   "db-01": { x: COL_W, y: 0 * ROW_H, width: W, height: H },
+  // `1 * ROW_H` is a row INDEX times the row height, not a Number() coercion:
+  // the `1` is the second entry of the 0/1/2/3/4 index column below, and
+  // dropping it (the rule's only reading of this line that isn't the absurd
+  // `Number(ROW_H)` its own unsafe fix proposes) would break the one row of
+  // that column that makes this table readable as a table.
+  // biome-ignore lint/complexity/noImplicitCoercions: row index, not a coercion
   "edge-gw": { x: COL_W, y: 1 * ROW_H, width: W, height: H },
   "mgmt-01": { x: COL_W, y: 2 * ROW_H, width: W, height: H },
   "spare-chassis": { x: COL_W, y: 3 * ROW_H, width: W, height: H },
   workers: { x: COL_W, y: 4 * ROW_H, width: W, height: H },
   "chassis-a": { x: 2 * COL_W, y: 0, width: W, height: H },
-};
+} satisfies Record<string, Rect>;
 
-/** Sample the two path shapes routing.ts emits: "M x,y L x,y" and
- * "M x,y C c1x,c1y c2x,c2y x,y". */
-function samplePath(path: string, steps = 400): [number, number][] {
-  const n = (path.match(/-?\d+(?:\.\d+)?/g) ?? []).map(Number);
-  const out: [number, number][] = [];
-  if (path.includes("L")) {
-    const [sx, sy, tx, ty] = n;
-    for (let i = 0; i <= steps; i++) {
-      const t = i / steps;
-      out.push([sx + (tx - sx) * t, sy + (ty - sy) * t]);
-    }
-    return out;
-  }
-  const [sx, sy, c1x, c1y, c2x, c2y, tx, ty] = n;
-  for (let i = 0; i <= steps; i++) {
-    const t = i / steps;
-    const u = 1 - t;
-    out.push([
-      u ** 3 * sx + 3 * u * u * t * c1x + 3 * u * t * t * c2x + t ** 3 * tx,
-      u ** 3 * sy + 3 * u * u * t * c1y + 3 * u * t * t * c2y + t ** 3 * ty,
-    ]);
-  }
-  return out;
+/** Sample count for the occlusion scan.
+ *
+ * This file used to carry its OWN copy of the sampler, which took a STEP count
+ * and returned steps+1 points; `measure.samplePath` takes the POINT COUNT
+ * directly, so every count here is the old step count plus one and the sampled
+ * `t` values are unchanged.
+ *
+ * The local copy was deleted rather than kept, and that is the point of this
+ * import. It parsed the coordinate numbers out of the path and destructured
+ * four (or eight) of them with NO arity check — the very guard the code it
+ * mirrors (`measure.ts`'s `lineCoords`/`cubicCoords`) does perform. Feed it a
+ * grammar `routeEdge` does not emit today and every destructured coordinate is
+ * `undefined`, every sampled point is `(NaN, NaN)`, and every `x >= r.x` test
+ * below is false — so `boxesUnder` returns `[]` and the occlusion assertions,
+ * the entire reason this file exists, PASS while measuring nothing. Verified
+ * against the deleted code with a quadratic path: the same geometry reports
+ * `["box"]` as a cubic and `[]` as a `Q`. `measure.samplePath` throws on an
+ * unrecognised command or arity instead. */
+const OCCLUSION_SAMPLES = 401;
+
+/** Where a path starts. `samplePath(_, 1)` yields exactly the `t = 0` point,
+ * but reading position 0 out of an array cannot say so — this names the
+ * invariant once instead of at each call site. */
+function pathStart(path: string): Point {
+  const [start] = samplePath(path, 1);
+  if (start === undefined) throw new Error(`pathStart: no sample for path "${path}"`);
+  return start;
+}
+
+function inside(p: Point, r: Rect): boolean {
+  return p.x >= r.x && p.x <= r.x + r.width && p.y >= r.y && p.y <= r.y + r.height;
 }
 
 /** Names of the nodes this path disappears behind. */
 function boxesUnder(path: string, endpoints: string[]): string[] {
   const hit = new Set<string>();
-  for (const [x, y] of samplePath(path)) {
+  for (const p of samplePath(path, OCCLUSION_SAMPLES)) {
     for (const [name, r] of Object.entries(NODES)) {
       if (endpoints.includes(name)) continue;
-      if (x >= r.x && x <= r.x + r.width && y >= r.y && y <= r.y + r.height) hit.add(name);
+      if (inside(p, r)) hit.add(name);
     }
   }
   return [...hit].sort();
@@ -104,14 +123,14 @@ describe("routeEdge — same column", () => {
     const a = routeEdge(NODES["db-01"], NODES["edge-gw"], 0, 2);
     const b = routeEdge(NODES["db-01"], NODES["edge-gw"], 1, 2);
     expect(a.path).not.toBe(b.path);
-    const [ax] = samplePath(a.path, 1);
-    const [bx] = samplePath(b.path, 1);
+    const a0 = pathStart(a.path);
+    const b0 = pathStart(b.path);
     const cx = COL_W + W / 2;
     // Symmetric around the shared centreline, not shifted wholesale to one side.
-    expect(cx - ax[0]).toBeCloseTo(bx[0] - cx);
+    expect(cx - a0.x).toBeCloseTo(b0.x - cx);
     // And far enough apart that each keeps its own INTERACTION_WIDTH pointer
     // target — the same threshold #131 pinned for the bowed multi-row case.
-    expect(Math.abs(bx[0] - ax[0])).toBeGreaterThan(INTERACTION_WIDTH / 2);
+    expect(Math.abs(b0.x - a0.x)).toBeGreaterThan(INTERACTION_WIDTH / 2);
   });
 
   it("keeps a lone adjacent-row edge exactly centred (groupSize 1 is unaffected)", () => {
@@ -155,28 +174,33 @@ describe("routeEdge — occlusion invariant across row spans", () => {
    * it gets. Endpoint-independent of NODES/kitchen-sink on purpose: this is
    * the general regression guard, not a fixture-shaped one. It fails the
    * moment CTRL_Y_MAX is removed (or the bow goes back to scaling with
-   * width), because clearance at row span >= 5 goes negative again. */
-  function syntheticColumn(rowSpan: number): Rect[] {
-    const col: Rect[] = [];
-    for (let row = 0; row <= rowSpan; row++) {
-      col.push({ x: COL_W, y: row * ROW_H, width: W, height: H });
-    }
-    return col;
+   * width), because clearance at row span >= 5 goes negative again.
+   *
+   * Returns the three ROLES the test actually has for those boxes — the two
+   * the edge connects and the ones it must clear — rather than a flat array
+   * the caller then re-derives them from with `col[0]` / `col[rowSpan]` /
+   * `col.slice(1, rowSpan)`. Those reads restated the "rowSpan+1 boxes"
+   * invariant at the call site, where nothing enforces it: get the argument
+   * and the index out of step and `routeEdge` is silently handed an
+   * `undefined` rect. */
+  function syntheticColumn(rowSpan: number): { top: Rect; between: Rect[]; bottom: Rect } {
+    const rowAt = (row: number): Rect => ({ x: COL_W, y: row * ROW_H, width: W, height: H });
+    return {
+      top: rowAt(0),
+      between: Array.from({ length: rowSpan - 1 }, (_, i) => rowAt(i + 1)),
+      bottom: rowAt(rowSpan),
+    };
   }
 
   it.each(Array.from({ length: 19 }, (_, i) => i + 2))(
     "clears every intervening node at row span %i",
     (rowSpan) => {
-      const col = syntheticColumn(rowSpan);
-      const top = col[0];
-      const bottom = col[rowSpan];
-      const between = col.slice(1, rowSpan);
+      const { top, between, bottom } = syntheticColumn(rowSpan);
       for (const parallelIndex of [0, 1]) {
         const { path } = routeEdge(top, bottom, parallelIndex, 2);
-        for (const [x, y] of samplePath(path)) {
+        for (const p of samplePath(path, OCCLUSION_SAMPLES)) {
           for (const r of between) {
-            const inside = x >= r.x && x <= r.x + r.width && y >= r.y && y <= r.y + r.height;
-            expect(inside).toBe(false);
+            expect(inside(p, r)).toBe(false);
           }
         }
       }
@@ -204,15 +228,20 @@ describe("routeEdge — parallel edges stay independently clickable", () => {
    * some points are always buried. What matters is that a usable stretch in the
    * middle is not. */
   function clickablePoints(inner: string, outer: string): number {
-    const innerPts = samplePath(inner, 20);
-    const outerPts = samplePath(outer, 200);
+    // 21 samples less both endpoints leaves the 19 interior ones. Dropping
+    // them by slicing the array says which points are excluded and why; the
+    // `for (let i = 1; i < 20; i++)` this replaces encoded the sample count
+    // twice — once as samplePath's argument and once as a loop bound — with
+    // nothing tying the two together.
+    const innerPts = samplePath(inner, 21).slice(1, -1);
+    const outerPts = samplePath(outer, 201);
     let clear = 0;
-    for (let i = 1; i < 20; i++) {
+    for (const p of innerPts) {
       // Distance from this point on the inner curve to the NEAREST point on the
       // outer curve — the outer edge's hit band is centred on its own stroke.
       let nearest = Number.POSITIVE_INFINITY;
-      for (const [ox, oy] of outerPts) {
-        nearest = Math.min(nearest, Math.hypot(innerPts[i][0] - ox, innerPts[i][1] - oy));
+      for (const o of outerPts) {
+        nearest = Math.min(nearest, Math.hypot(p.x - o.x, p.y - o.y));
       }
       if (nearest > INTERACTION_WIDTH / 2) clear++;
     }
@@ -279,9 +308,12 @@ describe("routeEdge — label point", () => {
     ["cross column, fanned", () => routeEdge(NODES["edge-gw"], NODES["chassis-a"], 0, 2)],
   ])("lies on the curve (%s)", (_name, route) => {
     const { path, labelX, labelY } = route();
-    const pts = samplePath(path, 400);
-    const [midX, midY] = pts[200];
-    expect(labelX).toBeCloseTo(midX, 6);
-    expect(labelY).toBeCloseTo(midY, 6);
+    // Three samples are t = 0, 0.5, 1, so the middle one IS the midpoint.
+    // `pts[200]` out of 401 was the same t by arithmetic the reader had to do,
+    // and silently stopped being the midpoint if the sample count moved.
+    const [, mid] = samplePath(path, 3);
+    if (mid === undefined) throw new Error(`no midpoint sample for path "${path}"`);
+    expect(labelX).toBeCloseTo(mid.x, 6);
+    expect(labelY).toBeCloseTo(mid.y, 6);
   });
 });

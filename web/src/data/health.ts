@@ -31,21 +31,33 @@ function cadenceMs(session: NormalizedSession, labels: Set<string>): number | nu
     .filter((c) => chartLabels.has(c.label))
     .map((c) => c.interval ?? session.meta.interval)
     .filter((v): v is number => v != null);
-  if (intervals.length) return Math.min(...intervals) * 1000;
+  if (intervals.length > 0) return Math.min(...intervals) * 1000;
   return session.meta.interval != null ? session.meta.interval * 1000 : null;
 }
 
-/** Highest index i such that tsMs[i] <= t, or -1 if every sample is after t.
- * Binary search — O(log n) per series, never a scan of the series itself. */
-function lastIndexAtOrBefore(tsMs: number[], t: number): number {
+/** The latest sample at or before `t` — its timestamp and its position in the
+ * series — or null when every sample is after `t`. Binary search: O(log n)
+ * per series, never a scan of the series itself.
+ *
+ * Returns the TIMESTAMP rather than the bare index the callers used to read
+ * back out of `tsMs` themselves. "-1 means nothing found" is a convention
+ * every caller had to remember and re-check; `null` is one the type enforces.
+ * `index` comes along only for the one caller that must reach the aligned
+ * record array. */
+function lastSampleAtOrBefore(tsMs: number[], t: number): { index: number; ts: number } | null {
   let lo = 0;
   let hi = tsMs.length;
   while (lo < hi) {
     const mid = (lo + hi) >>> 1;
-    if (tsMs[mid] <= t) lo = mid + 1;
+    const at = tsMs[mid];
+    // `at !== undefined &&` is exactly the old `tsMs[mid] <= t`: a missing
+    // slot compared false and took the `else` too.
+    if (at !== undefined && at <= t) lo = mid + 1;
     else hi = mid;
   }
-  return lo - 1;
+  const index = lo - 1;
+  const ts = tsMs[index];
+  return ts === undefined ? null : { index, ts };
 }
 
 /** Health of a single host (spec §6, same rule as healthForHosts — this IS
@@ -80,11 +92,9 @@ export function healthForHost(
     labels.add(key.slice(hostId.length + 1));
     // biome-ignore lint/style/noNonNullAssertion: tsMs always has an entry for every key in keysByHost
     const tsMs = session.index.tsMs.get(key)!;
-    const idx = lastIndexAtOrBefore(tsMs, evalTo);
-    if (idx < 0) continue;
-    const ts = tsMs[idx];
-    if (ts < evalFrom) continue;
-    if (last === null || ts > last) last = ts;
+    const found = lastSampleAtOrBefore(tsMs, evalTo);
+    if (found === null || found.ts < evalFrom) continue;
+    if (last === null || found.ts > last) last = found.ts;
   }
 
   if (last === null) {
@@ -142,6 +152,11 @@ function formatValue(value: number): string {
   return value >= 10 ? String(Math.round(value)) : String(Math.round(value * 10) / 10);
 }
 
+/** What makes a "%" chart the CPU one, for `headlineFor`'s preference sort.
+ * Module-level because it is consulted twice per comparison inside a sort
+ * comparator, i.e. O(n log n) times per call. */
+const CPU_LABEL = /cpu/i;
+
 /** Labeled headline metric for a host tile (UX spec §8): CPU-preferred,
  * else the first meta-order chart with in-range samples. The LABEL matters
  * because of the fallback — "34% cpu", "7212 rpm fan".
@@ -160,8 +175,8 @@ export function headlineFor(
   const evalFrom = range?.from ?? session.startMs;
   const evalTo = Math.min(range?.to ?? session.endMs, session.endMs);
   const specs = [...session.meta.charts].sort((a, b) => {
-    const cpuA = a.unit === "%" && /cpu/i.test(a.label) ? 0 : 1;
-    const cpuB = b.unit === "%" && /cpu/i.test(b.label) ? 0 : 1;
+    const cpuA = a.unit === "%" && CPU_LABEL.test(a.label) ? 0 : 1;
+    const cpuB = b.unit === "%" && CPU_LABEL.test(b.label) ? 0 : 1;
     return cpuA - cpuB;
   });
 
@@ -176,13 +191,22 @@ export function headlineFor(
       if ((session.chartMap[rawLabel] ?? rawLabel) !== spec.label) continue;
       // biome-ignore lint/style/noNonNullAssertion: tsMs/recs always have an entry for every key in keysByHost
       const tsMs = session.index.tsMs.get(key)!;
-      const idx = lastIndexAtOrBefore(tsMs, evalTo);
-      if (idx < 0) continue;
-      const ts = tsMs[idx];
-      if (ts < evalFrom) continue;
-      // biome-ignore lint/style/noNonNullAssertion: tsMs and recs are index-aligned
-      const value = session.index.recs.get(key)![idx].value;
-      if (!best || ts > best.ts) best = { ts, value };
+      const found = lastSampleAtOrBefore(tsMs, evalTo);
+      if (found === null || found.ts < evalFrom) continue;
+      // seriesIndex.ts builds `tsMs` and `recs` together, one entry per
+      // sample, so a position found in one indexes the other. Stating that
+      // here — and naming it if it is ever untrue — replaces a `!` that
+      // asserted the same thing silently and would have surfaced as a bare
+      // "cannot read properties of undefined" three frames away.
+      const recs = session.index.recs.get(key);
+      const rec = recs?.[found.index];
+      if (rec === undefined) {
+        throw new Error(
+          `headlineFor: series "${key}" has ${recs?.length ?? 0} record(s) for ` +
+            `${tsMs.length} timestamp(s) — seriesIndex must keep them aligned`,
+        );
+      }
+      if (!best || found.ts > best.ts) best = { ts: found.ts, value: rec.value };
     }
     if (best) {
       const unit = spec.unit === "%" ? "%" : ` ${spec.unit}`;

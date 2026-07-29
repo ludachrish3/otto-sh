@@ -116,7 +116,11 @@ describe("buildStackOption", () => {
       window: WINDOW,
       events,
       theme,
-    }) as { series: Record<string, unknown>[] };
+      // Named rather than `Record<string, unknown>[]`: the two keys this test
+      // is about are now spelled once, in the cast, so a typo below is a
+      // compile error instead of a silently-undefined assertion. Same idiom
+      // as the tooltip/yAxis cast above.
+    }) as { series: { markLine?: unknown; markArea?: unknown }[] };
     expect(opt.series[0].markLine).toBeDefined();
     expect(opt.series[0].markArea).toBeDefined();
     expect(opt.series[1].markLine).toBeUndefined();
@@ -333,14 +337,14 @@ describe("assignLanes", () => {
 });
 
 describe("eventOverlay markArea lanes", () => {
-  const theme = { muted: "#999", ink: "#eee" };
+  const overlayTheme = { muted: "#999", ink: "#eee" };
 
   it("gives two overlapping span events distinct label positions", () => {
     const events = [
       { id: 1, label: "stress run", color: "#ff6b6b", fromMs: 1_000, toMs: 2_000 },
       { id: 2, label: "log capture", color: "#2f9e6e", fromMs: 1_500, toMs: 2_500 },
     ];
-    const { markArea } = eventOverlay(events, theme) as {
+    const { markArea } = eventOverlay(events, overlayTheme) as {
       markArea: { data: [{ label: { position: unknown[] } }, unknown][] };
     };
     const pos0 = markArea.data[0][0].label.position;
@@ -353,7 +357,7 @@ describe("eventOverlay markArea lanes", () => {
       { id: 1, label: "a", color: "#ff6b6b", fromMs: 1_000, toMs: 2_000 },
       { id: 2, label: "b", color: "#2f9e6e", fromMs: 3_000, toMs: 4_000 },
     ];
-    const { markArea } = eventOverlay(events, theme) as {
+    const { markArea } = eventOverlay(events, overlayTheme) as {
       markArea: { data: [{ label: { position: unknown[] } }, unknown][] };
     };
     const pos0 = markArea.data[0][0].label.position;
@@ -369,7 +373,7 @@ describe("eventOverlay markArea lanes", () => {
       { id: 1, label: "stress run", color: "#ff6b6b", fromMs: 1_000, toMs: 2_000 },
       { id: 2, label: "log capture", color: "#2f9e6e", fromMs: 1_500, toMs: 2_500 },
     ];
-    const { markArea } = eventOverlay(events, theme) as {
+    const { markArea } = eventOverlay(events, overlayTheme) as {
       markArea: { data: [{ name: string; itemStyle: { color: string } }, unknown][] };
     };
     expect(markArea.data[0][0].name).toBe("stress run");
@@ -380,7 +384,7 @@ describe("eventOverlay markArea lanes", () => {
 
   it("leaves markLine (instant-event) behaviour untouched", () => {
     const events = [{ id: 1, label: "config reload", color: "#7c5cff", fromMs: 1_000, toMs: null }];
-    const { markLine } = eventOverlay(events, theme) as {
+    const { markLine } = eventOverlay(events, overlayTheme) as {
       markLine: { data: { xAxis: number; name: string }[] };
     };
     expect(markLine.data).toHaveLength(1);
@@ -395,11 +399,11 @@ describe("eventOverlay markArea lanes", () => {
 describe("eventOverlay markArea label color (Task 11 dark-mode fix)", () => {
   it("colors the label with theme.ink so it reads against dark surfaces", () => {
     const events = [{ id: 1, label: "stress run", color: "#ff6b6b", fromMs: 1_000, toMs: 2_000 }];
-    const theme = { muted: "#999", ink: "#f3f4f6" };
-    const { markArea } = eventOverlay(events, theme) as {
+    const overlayTheme = { muted: "#999", ink: "#f3f4f6" };
+    const { markArea } = eventOverlay(events, overlayTheme) as {
       markArea: { data: [{ label: { color: string; fontSize: number } }, unknown][] };
     };
-    expect(markArea.data[0][0].label.color).toBe(theme.ink);
+    expect(markArea.data[0][0].label.color).toBe(overlayTheme.ink);
     expect(markArea.data[0][0].label.fontSize).toBe(10);
   });
 });
@@ -408,13 +412,13 @@ describe("eventOverlay markArea label color (Task 11 dark-mode fix)", () => {
 // the chart ignored it — markLines were always "dashed" and spans had no
 // border at all. Both now honor the dash (spans on all four edges).
 describe("eventOverlay dash styling (TODO item 5)", () => {
-  const theme = { muted: "#999", ink: "#f3f4f6" };
+  const overlayTheme = { muted: "#999", ink: "#f3f4f6" };
 
   it("maps a point event's dash onto the markLine's lineStyle type", () => {
     const events = [
       { id: 1, label: "reload", color: "#7c5cff", fromMs: 1_000, toMs: null, dash: "dot" },
     ];
-    const { markLine } = eventOverlay(events, theme) as {
+    const { markLine } = eventOverlay(events, overlayTheme) as {
       markLine: { data: { lineStyle: { type: unknown } }[] };
     };
     expect(markLine.data[0].lineStyle.type).toBe("dotted");
@@ -424,7 +428,7 @@ describe("eventOverlay dash styling (TODO item 5)", () => {
     const events = [
       { id: 1, label: "stress", color: "#ff6b6b", fromMs: 1_000, toMs: 2_000, dash: "solid" },
     ];
-    const { markArea } = eventOverlay(events, theme) as {
+    const { markArea } = eventOverlay(events, overlayTheme) as {
       markArea: {
         data: [
           { itemStyle: { borderType: unknown; borderColor: string; borderWidth: number } },
@@ -439,8 +443,10 @@ describe("eventOverlay dash styling (TODO item 5)", () => {
 
   it("maps the non-named plotly dash styles to numeric ECharts dash patterns", () => {
     const span = (dash: string) =>
-      eventOverlay([{ id: 1, label: "s", color: "#fff", fromMs: 1_000, toMs: 2_000, dash }], theme)
-        .markArea as { data: [{ itemStyle: { borderType: unknown } }, unknown][] };
+      eventOverlay(
+        [{ id: 1, label: "s", color: "#fff", fromMs: 1_000, toMs: 2_000, dash }],
+        overlayTheme,
+      ).markArea as { data: [{ itemStyle: { borderType: unknown } }, unknown][] };
     expect(span("longdash").data[0][0].itemStyle.borderType).toBeInstanceOf(Array);
     expect(span("dashdot").data[0][0].itemStyle.borderType).toBeInstanceOf(Array);
   });

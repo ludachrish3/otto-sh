@@ -44,10 +44,14 @@ export function ReviewBar() {
       {sessions.length > 1 && (
         <Select
           aria-label="Session"
+          // `supportingText` is OMITTED when the session has no note rather
+          // than set to `undefined`: the vendored `SelectItemType` declares
+          // `supportingText?: string`, which under
+          // `exactOptionalPropertyTypes` rejects an explicit undefined.
           items={sessions.map((s) => ({
             id: s.id,
             label: s.label ?? s.id,
-            supportingText: s.note ?? undefined,
+            ...(s.note != null && { supportingText: s.note }),
           }))}
           selectedKey={activeSessionId ?? ""}
           onSelectionChange={(key) => {
@@ -56,7 +60,13 @@ export function ReviewBar() {
           data-testid="session-picker"
         >
           {(item) => (
-            <Select.Item id={item.id} label={item.label} supportingText={item.supportingText} />
+            <Select.Item
+              id={item.id}
+              {...(item.label !== undefined && { label: item.label })}
+              {...(item.supportingText !== undefined && {
+                supportingText: item.supportingText,
+              })}
+            />
           )}
         </Select>
       )}

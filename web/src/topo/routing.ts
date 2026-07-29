@@ -95,6 +95,12 @@ const BULGE = 0.75;
 const centerX = (r: Rect): number => r.x + r.width / 2;
 const centerY = (r: Rect): number => r.y + r.height / 2;
 
+// These eight ARE the SVG cubic path's operands, in path order: the
+// signature mirrors the grammar of the string it formats
+// (`M sx,sy C c1x,c1y c2x,c2y tx,ty`). Both call sites compute scalar
+// geometry (dx/dy/nx/ny) that an options object would only re-wrap for this
+// one line to unwrap again.
+// biome-ignore lint/complexity/useMaxParams: signature mirrors the SVG path grammar
 function cubic(
   sx: number,
   sy: number,

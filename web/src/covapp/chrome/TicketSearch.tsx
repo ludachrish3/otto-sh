@@ -10,10 +10,10 @@
 // disagree about what "/" means — but the listener is local rather than
 // `useGlobalShortcuts`, which is wired to the monitor's command registry and
 // zustand store that covapp deliberately does not carry.
-import { SearchMd } from "@untitledui/icons";
 import { useEffect, useRef, useState } from "react";
 
 import { Input } from "@/components/base/input/input";
+import { SearchIcon } from "@/ui/icons";
 import { registerSearchInput } from "@/ui/searchFocus";
 import { matchesBinding, SEARCH_BINDING, shouldSuppressSlash } from "@/ui/shortcuts";
 import { cx } from "@/utils/cx";
@@ -90,7 +90,7 @@ export function TicketSearch({
         data-testid="ticket-search-input"
         aria-label="Pin a ticket by id"
         size="sm"
-        icon={SearchMd}
+        icon={SearchIcon}
         shortcut="/"
         placeholder="Pin ticket…"
         value={query}

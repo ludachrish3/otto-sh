@@ -1,6 +1,6 @@
 // web/src/__tests__/eventapi.test.ts
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import minimal from "../../fixtures/minimal.json";
+import minimal from "../../fixtures/minimal.json" with { type: "json" };
 import { createEvent, deleteEvent, EventApiError, endEvent, updateEvent } from "../data/eventApi";
 import { useReviewStore } from "../data/reviewStore";
 

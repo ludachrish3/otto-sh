@@ -34,7 +34,7 @@ describe("groupRowsFromData", () => {
   it("groups a session's log-event rows by (host, tab)", () => {
     const rows = [row(1), row(2, "host2"), row(3)];
     const grouped = groupRowsFromData(rows);
-    expect(grouped["host1/syslog"].map((r) => r.fields.message)).toEqual(["row 1", "row 3"]);
+    expect(grouped["host1/syslog"].map((r) => r.fields["message"])).toEqual(["row 1", "row 3"]);
     expect(grouped["host2/syslog"]).toHaveLength(1);
   });
 
@@ -43,14 +43,14 @@ describe("groupRowsFromData", () => {
     const grouped = groupRowsFromData(many);
     const kept = grouped["host1/syslog"];
     expect(kept).toHaveLength(MAX_TABLE_ROWS);
-    expect(kept[kept.length - 1].fields.message).toBe(`row ${MAX_TABLE_ROWS + 19}`);
-    expect(kept[0].fields.message).toBe("row 20");
+    expect(kept[kept.length - 1].fields["message"]).toBe(`row ${MAX_TABLE_ROWS + 19}`);
+    expect(kept[0].fields["message"]).toBe("row 20");
   });
 });
 
 describe("visibleRows", () => {
   it("returns newest-first", () => {
-    expect(visibleRows([row(1), row(2)], "").map((r) => r.fields.message)).toEqual([
+    expect(visibleRows([row(1), row(2)], "").map((r) => r.fields["message"])).toEqual([
       "row 2",
       "row 1",
     ]);

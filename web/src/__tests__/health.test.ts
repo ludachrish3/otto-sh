@@ -14,18 +14,39 @@ import {
   healthForHosts,
 } from "../data/health";
 
+/** Parse a document this file builds to hold exactly ONE session, and return
+ * that session.
+ *
+ * `parseExportDocument(...).sessions[0]` is `NormalizedSession | undefined`,
+ * and every builder below handed that straight on to `healthForHost(s)`: the
+ * "exactly one session" invariant lived at the producer while consumers
+ * hundreds of lines away simply assumed it — `buildSession` went as far as
+ * DECLARING `: NormalizedSession`, a claim its `return` did not support.
+ * Checking it once, here, makes that claim true, and makes a fixture that
+ * stops parsing name itself instead of surfacing as "Cannot read properties
+ * of undefined" in whichever test happened to run first. */
+function parseOneSession(text: string, what: string): NormalizedSession {
+  const parsed = parseExportDocument(text);
+  const [session] = parsed.sessions;
+  if (session === undefined) {
+    throw new Error(`${what}: expected one session, parsed ${parsed.sessions.length}`);
+  }
+  return session;
+}
+
 const HERE = dirname(fileURLToPath(import.meta.url));
-const kitchen = parseExportDocument(
+const kitchen = parseOneSession(
   readFileSync(join(HERE, "../../fixtures/kitchen-sink.json"), "utf-8"),
-).sessions[0];
+  "fixtures/kitchen-sink.json",
+);
 
 const MIN = 60_000;
 
 // Hoisted to module scope so both the synthetic-edge-cases describe block and
 // the healthForHost/healthForHosts agreement test below can build sessions
 // with a log-only host (status "unknown").
-function synthetic(metrics: object[], logEvents: object[] = []) {
-  return parseExportDocument(
+function synthetic(metrics: object[], logEvents: object[] = []): NormalizedSession {
+  return parseOneSession(
     JSON.stringify({
       format: 1,
       sessions: [
@@ -49,7 +70,8 @@ function synthetic(metrics: object[], logEvents: object[] = []) {
         },
       ],
     }),
-  ).sessions[0];
+    "synthetic()",
+  );
 }
 
 describe("healthForHosts against kitchen-sink", () => {
@@ -122,8 +144,8 @@ function buildSession(opts: {
     command: "x",
     chart: "cpu",
   };
-  if (opts.chartIntervalSec !== undefined) chart.interval = opts.chartIntervalSec;
-  return parseExportDocument(
+  if (opts.chartIntervalSec !== undefined) chart["interval"] = opts.chartIntervalSec;
+  return parseOneSession(
     JSON.stringify({
       format: 1,
       sessions: [
@@ -143,7 +165,8 @@ function buildSession(opts: {
         },
       ],
     }),
-  ).sessions[0];
+    "buildSession()",
+  );
 }
 
 describe("healthForHost direct coverage (concrete values, not routed through healthForHosts)", () => {
@@ -387,7 +410,7 @@ describe("headlineFor", () => {
   });
 
   it("falls back to the first chart with data when CPU is absent", () => {
-    const s = parseExportDocument(
+    const s = parseOneSession(
       JSON.stringify({
         format: 1,
         sessions: [
@@ -409,7 +432,8 @@ describe("headlineFor", () => {
           },
         ],
       }),
-    ).sessions[0];
+      "fan-headline fixture",
+    );
     expect(headlineFor(s, "a", null)?.text).toBe("7212 rpm fan");
   });
 
@@ -434,7 +458,7 @@ describe("elementRollup", () => {
     // genuinely discriminating fixture (kitchen-sink's chassis-a members
     // happen to share slot order and id order, so it can't tell slot-sort
     // from id-sort apart).
-    const session = parseExportDocument(
+    const session = parseOneSession(
       JSON.stringify({
         format: 1,
         sessions: [
@@ -462,7 +486,8 @@ describe("elementRollup", () => {
           },
         ],
       }),
-    ).sessions[0];
+      "slot-order fixture",
+    );
     const element = session.elements.find((e) => e.id === "rack-x");
     if (!element) throw new Error("rack-x missing from synthetic fixture");
     const healths = healthForHosts(session, null);

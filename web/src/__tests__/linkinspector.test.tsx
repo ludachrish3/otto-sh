@@ -19,17 +19,37 @@ const link: LinkSnapshot = {
   impair: "edge-gw",
 };
 
+/** Fields every fixture edge shares. `link` is deliberately not among them —
+ * see `edgeWith` and `bundleWith`. */
+const BASE_EDGE: Omit<TopoEdge, "link"> = {
+  id: "lnk-1",
+  source: "workers",
+  target: "db-01",
+  provenance: "declared",
+  impair: "edge-gw",
+  parallelIndex: 0,
+};
+
+/** A single-link edge — the ordinary case. */
 function edgeWith(overrides: Partial<TopoEdge>): TopoEdge {
-  return {
-    id: "lnk-1",
-    source: "workers",
-    target: "db-01",
-    provenance: "declared",
-    link,
-    impair: "edge-gw",
-    parallelIndex: 0,
-    ...overrides,
-  };
+  return { ...BASE_EDGE, link, ...overrides };
+}
+
+/** A collapsed implicit bundle: carries `links` and NO single `link`, which is
+ * the shape production actually builds (data/topology.ts's `implicitByPair`
+ * loop emits `id`/`source`/`target`/`provenance`/`links`/`impair`/
+ * `parallelIndex` and no `link` key at all).
+ *
+ * This exists because under `exactOptionalPropertyTypes` "no link" has to be
+ * an ABSENT key, and `edgeWith({ link: undefined })` — what this fixture used
+ * to say — is a different thing that `TopoEdge.link?: LinkSnapshot` rejects.
+ * Note nothing observes the difference at run time: `LinkInspector` keys the
+ * collapsed-bundle note off `edge.links.length`, never off `edge.link`, and a
+ * mutation that puts the default `link` back leaves all five specs green. The
+ * separate constructor is for fixture fidelity to the production shape, not a
+ * behaviour this suite pins. */
+function bundleWith(overrides: Partial<TopoEdge>): TopoEdge {
+  return { ...BASE_EDGE, ...overrides };
 }
 
 describe("LinkInspector", () => {
@@ -63,10 +83,9 @@ describe("LinkInspector", () => {
   });
 
   it("summarizes collapsed implicit bundles", async () => {
-    const bundle = edgeWith({
+    const bundle = bundleWith({
       id: "implicit:chassis-a~edge-gw",
       provenance: "implicit",
-      link: undefined,
       links: [link, { ...link, id: "lnk-2" }, { ...link, id: "lnk-3" }],
       impair: null,
     });

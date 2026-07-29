@@ -33,9 +33,12 @@ function mergeFragments(
   let changed = false;
   for (const frag of frags) {
     const i = next.findIndex((s) => s.id === frag.session);
-    if (i === -1) continue; // a fragment for a session we do not hold — ignore
-    const merged = applyFragment(next[i], frag, warnings);
-    if (merged === next[i]) continue;
+    // Reading the slot IS the -1 check: `next[-1]` is undefined, so one
+    // lookup replaces the sentinel compare plus two re-reads of `next[i]`.
+    const current = next[i];
+    if (current === undefined) continue; // a fragment for a session we do not hold — ignore
+    const merged = applyFragment(current, frag, warnings);
+    if (merged === current) continue;
     if (!changed) {
       next = [...next];
       changed = true;

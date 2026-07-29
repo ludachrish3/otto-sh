@@ -2,7 +2,7 @@
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import minimal from "../../fixtures/minimal.json";
+import minimal from "../../fixtures/minimal.json" with { type: "json" };
 import { useReviewStore } from "../data/reviewStore";
 import { TopologyPage } from "../topo/TopologyPage";
 import { CommandMenu } from "./CommandMenu";

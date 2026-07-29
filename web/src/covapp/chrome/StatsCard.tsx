@@ -11,7 +11,13 @@ import type { Thresholds } from "../types";
 export interface TierStatRow {
   key: string;
   label: string;
-  dotColor?: string;
+  /** `| undefined` explicitly, not just `?`: the colour comes from the wire
+   * payload's `tier_colors` record, so a tier listed in `tier_order` with no
+   * colour entry reads as `undefined` — a real state this row RENDERS (no
+   * swatch), not a caller forgetting to pass one. Under
+   * exactOptionalPropertyTypes a bare `?` would reject that value and push
+   * nine call sites into conditional spreads to say the same thing. */
+  dotColor?: string | undefined;
   /** `null` (Task 12 fix round 1: a composed ctx+ticket row on
    * DirectoryPage's tree) mirrors `branch`/`decision`'s "no data"
    * rendering — the ctx numerator (`ctx_lines`, whole-file) and the

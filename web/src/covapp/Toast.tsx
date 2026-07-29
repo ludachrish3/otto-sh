@@ -10,7 +10,7 @@ import { createContext, type ReactNode, useCallback, useContext, useRef, useStat
 const AUTO_DISMISS_MS = 3200;
 
 interface ToastContextValue {
-  show(message: string): void;
+  show: (message: string) => void;
 }
 
 const ToastContext = createContext<ToastContextValue | null>(null);

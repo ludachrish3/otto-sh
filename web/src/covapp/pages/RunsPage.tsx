@@ -18,12 +18,13 @@
 // `ctx.runs[0]` — same one-value assumption contexts.ts documents for
 // `tier` (a label spanning members with different boards/labs/etc. is a
 // data anomaly, not a case this page tries to reconcile).
-import { ChevronRight, SearchMd, Target02 } from "@untitledui/icons";
+import { ChevronRight, Target02 } from "@untitledui/icons";
 import type { ReactNode } from "react";
 import { useState } from "react";
 
 import { Badge } from "@/components/base/badges/badges";
 import { Input } from "@/components/base/input/input";
+import { SearchIcon } from "@/ui/icons";
 import { cx } from "@/utils/cx";
 
 import { AppShell } from "../chrome/AppShell";
@@ -59,7 +60,8 @@ function FilterChip({
   active: boolean;
   onClick: () => void;
   testId: string;
-  dotColor?: string;
+  /** `| undefined` explicitly — see TierStatRow.dotColor. */
+  dotColor?: string | undefined;
   children: ReactNode;
 }) {
   // No vendored pill-toggle fits this shape (a single-select chip row) — a
@@ -478,7 +480,7 @@ export function RunsPage({ index }: RunsPageProps) {
           <Input
             aria-label="Filter by run, host, ticket"
             size="sm"
-            icon={SearchMd}
+            icon={SearchIcon}
             placeholder="Filter by run, host, ticket…"
             value={query}
             onChange={setQuery}

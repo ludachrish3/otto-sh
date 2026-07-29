@@ -65,12 +65,15 @@ export function SubjectHealthBanner(props: { subjectId: string; children: ReactN
   // tech3 unreachable for 2m" would be true of tech2 and false of tech3 if
   // tech3 had only been down 20s (Minor 3, 5b follow-ups review). A host
   // subject has exactly one down member (memberIds above is `[subjectId]`),
-  // so `down[0]` is that member's own reading, not an aggregate.
+  // so `firstDown` is that member's own reading, not an aggregate. Testing
+  // the member itself rather than `down.length === 0` is the same condition
+  // with the value already in hand.
+  const [firstDown] = down;
   const text =
-    down.length === 0
+    firstDown === undefined
       ? null
       : kind === "host"
-        ? `Unreachable for ${formatOutage(down[0].health.outageMs)} — showing last-known data`
+        ? `Unreachable for ${formatOutage(firstDown.health.outageMs)} — showing last-known data`
         : `${down
             .map((m) => `${m.id} (${formatOutage(m.health.outageMs)})`)
             .join(", ")} unreachable — showing last-known data`;

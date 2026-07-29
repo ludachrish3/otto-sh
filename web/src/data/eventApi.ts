@@ -23,7 +23,7 @@ async function request(path: string, init: RequestInit): Promise<Response> {
   try {
     res = await fetch(path, init);
   } catch (err) {
-    throw new EventApiError(`Network error: ${String(err)}`);
+    throw new EventApiError(`Network error: ${String(err)}`, { cause: err });
   }
   if (!res.ok) throw new EventApiError(await errorMessage(res));
   return res;

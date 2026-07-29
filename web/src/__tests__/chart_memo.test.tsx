@@ -12,6 +12,8 @@ import userEvent from "@testing-library/user-event";
 import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import type { SetOptionOpts } from "../charts/ChartPanel";
+
 // Untitled UI's Checkbox puts data-testid on the <label>, not the
 // visually-hidden <input> nested inside — react-aria's Checkbox needs the
 // real pointer-event sequence userEvent produces (fireEvent.click doesn't
@@ -37,8 +39,11 @@ globalThis.ResizeObserver ??= class {
 // ECharts, so a test can pin the actual VALUES that reached the chart.
 class FakeChart {
   group = "";
-  calls: { opt: Record<string, unknown>; opts?: Record<string, unknown> }[] = [];
-  setOption(opt: Record<string, unknown>, opts?: Record<string, unknown>) {
+  // `opts?: SetOptionOpts | undefined`: this records what each setOption()
+  // call ACTUALLY received, and a caller passing no opts hands the method an
+  // `undefined`. Recording that faithfully is the point of the fake.
+  calls: { opt: Record<string, unknown>; opts?: SetOptionOpts | undefined }[] = [];
+  setOption(opt: Record<string, unknown>, opts?: SetOptionOpts) {
     this.calls.push({ opt, opts });
   }
   on() {}
@@ -88,7 +93,7 @@ const WINDOW_MS = 900_000; // reviewStore's default windowMs
  * hit here. Throws if none was ever applied. */
 function lastXAxis(chart: FakeChart): { min: number; max: number } {
   for (let i = chart.calls.length - 1; i >= 0; i--) {
-    const xAxis = chart.calls[i].opt.xAxis as { min: number; max: number } | undefined;
+    const xAxis = chart.calls[i].opt["xAxis"] as { min: number; max: number } | undefined;
     if (xAxis) return xAxis;
   }
   throw new Error("no setOption call carried an xAxis patch");
@@ -236,10 +241,10 @@ describe("chart option memoization", () => {
     // path, not some other route to the same numbers.
     const patchCalls = instances[0].calls.slice(callsBeforeTick);
     const mergeCall = patchCalls.find(
-      (c) => c.opt.xAxis !== undefined && c.opts?.notMerge === false,
+      (c) => c.opt["xAxis"] !== undefined && c.opts?.notMerge === false,
     );
     expect(mergeCall).toBeDefined();
-    expect(mergeCall?.opt.grid).toBeUndefined();
+    expect(mergeCall?.opt["grid"]).toBeUndefined();
   });
 
   // Plan 5b Task 13 (the replay soak) caught this live, end-to-end: open a

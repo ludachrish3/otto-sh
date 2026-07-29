@@ -17,6 +17,19 @@ import { emptyStats, makeIndex } from "./testUtils";
 import { scopeTreeToTicket, ticketChunkToFileLines, ticketFileRow, ticketTreeRow } from "./tickets";
 import type { DirNode, FileChunk, TicketChunk } from "./types";
 
+// `scopeTreeToTicket` returns `DirNode | null`. Every call below expects a
+// tree back; asserting that explicitly (rather than with `!`) turns a
+// contract break into a named failure instead of a TypeError three lines
+// later, and keeps `noNonNullAssertion` enforced in test code.
+// Params are borrowed from the real signature rather than restated, so adding
+// an argument to `scopeTreeToTicket` cannot leave this wrapper silently
+// accepting a stale shape.
+function scopedOrThrow(...args: Parameters<typeof scopeTreeToTicket>): DirNode {
+  const scoped = scopeTreeToTicket(...args);
+  if (scoped === null) throw new Error("scopeTreeToTicket returned null; expected a scoped tree");
+  return scoped;
+}
+
 const TREE = {
   name: "",
   dirs: [
@@ -42,13 +55,13 @@ const TREE = {
 
 describe("scopeTreeToTicket", () => {
   it("keeps only files the ticket touched", () => {
-    const scoped = scopeTreeToTicket(TREE, { "src/a.c": [1, 2] }, { "src/a.c": [1] })!;
+    const scoped = scopedOrThrow(TREE, { "src/a.c": [1, 2] }, { "src/a.c": [1] });
     expect(scoped.dirs.map((d) => d.name)).toEqual(["src"]);
     expect(scoped.dirs[0].files.map((f) => f.name)).toEqual(["a.c"]);
   });
 
   it("drops directories left empty rather than showing hollow rows", () => {
-    const scoped = scopeTreeToTicket(TREE, { "src/a.c": [1] }, {})!;
+    const scoped = scopedOrThrow(TREE, { "src/a.c": [1] }, {});
     expect(scoped.dirs.find((d) => d.name === "vendor")).toBeUndefined();
   });
 
@@ -73,7 +86,7 @@ describe("scopeTreeToTicket", () => {
       stats: emptyStats(),
     } as unknown as DirNode;
     const owned = Array.from({ length: 12 }, (_, i) => i + 1);
-    const scoped = scopeTreeToTicket(big, { "big.c": owned }, { "big.c": owned.slice(0, 6) })!;
+    const scoped = scopedOrThrow(big, { "big.c": owned }, { "big.c": owned.slice(0, 6) });
     expect(scoped.files[0].stats.lines).toEqual({ total: 12, hit: 6, per_tier: {} });
   });
 
@@ -111,11 +124,11 @@ describe("scopeTreeToTicket", () => {
       files: [],
       stats: emptyStats({ lines: { total: 999, hit: 999, per_tier: {} } }),
     };
-    const scoped = scopeTreeToTicket(
+    const scoped = scopedOrThrow(
       tree,
       { "src/a.c": [1, 2, 3], "src/b.c": [1] }, // 3 + 1 = 4 owned total
       { "src/a.c": [1], "src/b.c": [] }, // 1 + 0 = 1 hit total
-    )!;
+    );
     expect(scoped.dirs[0].stats.lines).toEqual({ total: 4, hit: 1, per_tier: {} });
     expect(scoped.stats.lines).toEqual({ total: 4, hit: 1, per_tier: {} });
   });
@@ -169,7 +182,7 @@ describe("ticketChunkToFileLines", () => {
       ],
       stats: emptyStats(),
     } as unknown as DirNode;
-    const scoped = scopeTreeToTicket(tree, lines, hits, tiers)!;
+    const scoped = scopedOrThrow(tree, lines, hits, tiers);
     // per_tier is the ticket's 4, never the file's whole-repo 380.
     expect(scoped.files[0].stats.lines).toEqual({ total: 12, hit: 6, per_tier: { unit: 4 } });
   });
@@ -335,24 +348,24 @@ describe("ticket-scoped per-tier counts", () => {
   const TIERS = { "a.c": { unit: 1, system: 0 }, "b.c": { unit: 0, system: 1 } };
 
   it("scopes each file's per_tier to the ticket's own lines", () => {
-    const scoped = scopeTreeToTicket(
+    const scoped = scopedOrThrow(
       TWO_FILE_TREE,
       { "a.c": [1, 2], "b.c": [1] },
       { "a.c": [1], "b.c": [1] },
       TIERS,
-    )!;
+    );
     const byName = Object.fromEntries(scoped.files.map((f) => [f.name, f]));
     expect(byName["a.c"].stats.lines.per_tier).toEqual({ unit: 1, system: 0 });
     expect(byName["b.c"].stats.lines.per_tier).toEqual({ unit: 0, system: 1 });
   });
 
   it("sums per_tier across a directory's scoped children", () => {
-    const scoped = scopeTreeToTicket(
+    const scoped = scopedOrThrow(
       TWO_FILE_TREE,
       { "a.c": [1, 2], "b.c": [1] },
       { "a.c": [1], "b.c": [1] },
       TIERS,
-    )!;
+    );
     expect(scoped.stats.lines.per_tier).toEqual({ unit: 1, system: 1 });
   });
 

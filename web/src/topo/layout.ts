@@ -106,7 +106,7 @@ function peelDataPlaneBackbone(
   // degree-1 node one hop further in).
   const peeledTo = new Map<string, string>();
   for (;;) {
-    const toPeel: Array<[string, string]> = [];
+    const toPeel: [string, string][] = [];
     for (const id of remaining) {
       if (remainingDegree(id) !== 1) continue;
       const nb = [...(adjacency.get(id) ?? [])].find((x) => remaining.has(x));
@@ -138,7 +138,11 @@ function median(values: number[]): number {
   if (values.length === 0) return 0;
   const sorted = [...values].sort((a, b) => a - b);
   const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
+  // The one (odd length) or two (even length) central values. Slicing them
+  // out states the parity rule once, where reading `sorted[mid - 1]` and
+  // `sorted[mid]` states it twice and leaves two indices to justify.
+  const middle = sorted.slice(sorted.length % 2 === 0 ? mid - 1 : mid, mid + 1);
+  return middle.reduce((a, b) => a + b) / middle.length;
 }
 
 /** Rule 4's confidence guard. A component's branches are only ORIENTED
@@ -223,27 +227,30 @@ function layerBackbone(
     // neighbours that are ALSO connected to each other once the root is
     // removed (isp-core's pe-01<->pgw-01) land in the SAME branch -- they
     // are one structure, not independent alternatives.
-    const branchOf = new Map<string, number>();
-    const branchSizes: number[] = [];
+    // Each branch is kept as its MEMBER LIST rather than as a branch number
+    // plus a parallel `branchSizes`/`branchSign` pair. A branch's size is then
+    // `members.length` and its sign is attached straight to its members below,
+    // so nothing downstream has to index one array with a number that came
+    // out of another.
+    const branches: string[][] = [];
     const branchSeen = new Set<string>();
     for (const id of comp) {
       if (root.has(id) || branchSeen.has(id)) continue;
-      const branchIdx = branchSizes.length;
+      const members: string[] = [];
       const stack = [id];
       branchSeen.add(id);
-      let size = 0;
       while (stack.length > 0) {
         const cur = stack.pop() as string;
-        branchOf.set(cur, branchIdx);
-        size++;
+        members.push(cur);
         for (const nb of adjacency.get(cur) ?? []) {
           if (!compSet.has(nb) || root.has(nb) || branchSeen.has(nb)) continue;
           branchSeen.add(nb);
           stack.push(nb);
         }
       }
-      branchSizes.push(size);
+      branches.push(members);
     }
+    const branchSizes = branches.map((members) => members.length);
 
     // The confidence guard: with fewer than two branches there is nothing to
     // compare (single branch, or the whole component IS the root), so it
@@ -261,7 +268,11 @@ function layerBackbone(
     // tie sits AT the median, so it never satisfies `size < branchMedian`
     // and never orients, whether or not `decisive` is true. See
     // DECISIVE_RATIO's docstring -- the guard does not do this work.
-    const branchSign = branchSizes.map((size) => (decisive && size < branchMedian ? -1 : 1));
+    const signOf = new Map<string, number>();
+    for (const members of branches) {
+      const sign = decisive && members.length < branchMedian ? -1 : 1;
+      for (const id of members) signOf.set(id, sign);
+    }
 
     // Multi-source BFS from the root cluster over the FULL component (not
     // comp\root) for hop distance; sign comes from the node's branch.
@@ -286,8 +297,9 @@ function layerBackbone(
         rawLayer.set(id, 0);
         continue;
       }
-      const b = branchOf.get(id);
-      const sign = b !== undefined ? branchSign[b] : 1;
+      // A node in no branch (root members are handled above) defaults to
+      // downstream, exactly as the old `branchOf.get(id) === undefined` arm did.
+      const sign = signOf.get(id) ?? 1;
       rawLayer.set(id, sign * (dist.get(id) ?? 1));
     }
 
@@ -460,7 +472,9 @@ function barycentricRowSort(byColumn: Map<number, TopoNode[]>, edges: TopoEdge[]
     if (sweep % 2 === 0) {
       for (const c of columns) sweepColumn(c, c - 1); // left -> right
     } else {
-      for (let i = columns.length - 1; i >= 0; i--) sweepColumn(columns[i], columns[i] + 1); // right -> left
+      // `[...columns].reverse()` copies first: `columns` is read again on the
+      // next sweep and must keep its ascending order.
+      for (const c of [...columns].reverse()) sweepColumn(c, c + 1); // right -> left
     }
   }
 
@@ -492,9 +506,12 @@ function barycentricRowSort(byColumn: Map<number, TopoNode[]>, edges: TopoEdge[]
         const ia = order.indexOf(e.source);
         const ib = order.indexOf(e.target);
         if (ia === -1 || ib === -1 || Math.abs(ia - ib) <= 1) continue;
-        const [entry] = bucket.splice(ib, 1);
+        // Splice out and re-insert the SAME one-element slice rather than
+        // destructuring it: `splice` already hands back an array, so spreading
+        // it re-inserts exactly what was removed and no element read is needed.
+        const moving = bucket.splice(ib, 1);
         const newIa = bucket.findIndex((n) => n.id === e.source);
-        bucket.splice(newIa + 1, 0, entry);
+        bucket.splice(newIa + 1, 0, ...moving);
         moved = true;
       }
     }
@@ -598,24 +615,26 @@ function coordinateAssignment(
     // their current y -- chasing the anchor's stale position just re-opens the
     // gap every sweep, since the anchor moves to its own target in the very
     // same pass.
-    const targets = bucket.map((n) => {
-      const own = crossTarget.get(n.id);
-      if (own !== undefined) return own;
-      const docked = sameColumnNeighbors.get(n.id);
+    // Each node carries its own target rather than sitting in an array the
+    // placement loop below has to index in lock-step with `bucket`.
+    const targeted = bucket.map((node) => {
+      const own = crossTarget.get(node.id);
+      if (own !== undefined) return { node, target: own };
+      const docked = sameColumnNeighbors.get(node.id);
       if (docked && docked.length > 0) {
         const anchored = docked
           .map((id) => crossTarget.get(id) ?? y.get(id))
           .filter((v): v is number => v !== undefined);
-        if (anchored.length > 0) return median(anchored);
+        if (anchored.length > 0) return { node, target: median(anchored) };
       }
-      return y.get(n.id) ?? 0;
+      return { node, target: y.get(node.id) ?? 0 };
     });
     // Order-preserving: walk the column in its (fixed) row order and push each
     // node down to at least ROW_H below the previous one.
     let prevY = Number.NEGATIVE_INFINITY;
-    for (let i = 0; i < bucket.length; i++) {
-      const ny = Math.max(targets[i], prevY + ROW_H);
-      y.set(bucket[i].id, ny);
+    for (const { node, target } of targeted) {
+      const ny = Math.max(target, prevY + ROW_H);
+      y.set(node.id, ny);
       prevY = ny;
     }
   };
@@ -624,7 +643,8 @@ function coordinateAssignment(
     if (sweep % 2 === 0) {
       for (const c of columns) refineColumn(c, c - 1); // left -> right
     } else {
-      for (let i = columns.length - 1; i >= 0; i--) refineColumn(columns[i], columns[i] + 1); // right -> left
+      // Copy before reversing — `columns` is reused by the next sweep.
+      for (const c of [...columns].reverse()) refineColumn(c, c + 1); // right -> left
     }
   }
 

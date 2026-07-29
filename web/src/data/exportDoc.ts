@@ -203,9 +203,8 @@ function normalizeSession(raw: SessionRecord, warnings: string[]): NormalizedSes
   // catch NaN, only null/undefined — so it walked straight through here
   // and from there into sessionBounds/clampRange/presetRange and
   // seriesIndex's ascending `tsMs` arrays, see seriesIndex.ts).
-  const lastSampleMs = metrics.length
-    ? Math.max(...metrics.map((m) => parseTs(m.timestamp)))
-    : null;
+  const lastSampleMs =
+    metrics.length > 0 ? Math.max(...metrics.map((m) => parseTs(m.timestamp))) : null;
   const endMs = parsedEnd ?? lastSampleMs ?? startMs;
 
   const hostIds = new Set<string>();
@@ -290,8 +289,8 @@ export function parseExportDocument(text: string): ParseResult {
   let doc: unknown;
   try {
     doc = JSON.parse(text);
-  } catch {
-    throw new ExportParseError("Not a JSON document.");
+  } catch (err) {
+    throw new ExportParseError("Not a JSON document.", { cause: err });
   }
   if (typeof doc !== "object" || doc === null) {
     throw new ExportParseError("Not a JSON object.");
@@ -303,10 +302,10 @@ export function parseExportDocument(text: string): ParseResult {
         "Re-export from a current otto run.",
     );
   }
-  if (record.format !== 1) {
-    throw new ExportParseError(`Unsupported export format ${String(record.format)}.`);
+  if (record["format"] !== 1) {
+    throw new ExportParseError(`Unsupported export format ${String(record["format"])}.`);
   }
-  if (!Array.isArray(record.sessions)) {
+  if (!Array.isArray(record["sessions"])) {
     throw new ExportParseError("Missing 'sessions' array.");
   }
   const typed = doc as MonitorHistoricalExportDocument;

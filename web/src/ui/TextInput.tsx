@@ -47,14 +47,21 @@ export function TextInput({
   return (
     <TextField value={value} onChange={onChange} className="inline-flex items-center gap-1.5">
       <Label className="text-xs text-tertiary">{label}</Label>
+      {/* The four optional props are spread CONDITIONALLY rather than passed
+          as `foo={maybeUndefined}`: under `exactOptionalPropertyTypes`,
+          `InputBase`'s vendored props declare `shortcut?: string` (not
+          `?: string | undefined`), so handing it an explicit `undefined`
+          is an error. Widening OUR OWN prop types above would not help --
+          the rejection happens at the target's declaration, and the target
+          is vendored. Omitting the key is the only fix available here. */}
       <InputBase
         type={type}
         size="sm"
-        data-testid={testId}
         wrapperClassName="w-auto"
-        shortcut={shortcut}
-        ref={inputRef}
-        onKeyDown={onKeyDown}
+        {...(testId !== undefined && { "data-testid": testId })}
+        {...(shortcut !== undefined && { shortcut })}
+        {...(inputRef !== undefined && { ref: inputRef })}
+        {...(onKeyDown !== undefined && { onKeyDown })}
       />
     </TextField>
   );

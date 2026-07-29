@@ -16,18 +16,18 @@ class FakeChart {
   /** Full (option, opts) pairs — `options` above keeps only the option arg for
    * the legacy lifecycle assertions; this also captures the setOption opts so
    * tests can pin notMerge/lazyUpdate. */
-  calls: { opt: unknown; opts: Record<string, unknown> | undefined }[] = [];
+  calls: { opt: unknown; opts: SetOptionOpts | undefined }[] = [];
   handlers = new Map<string, (e: unknown) => void>();
   /** Recorded `dispatchAction` payloads — Task 12's brush arming/clearing. */
-  dispatched: Record<string, unknown>[] = [];
-  setOption(opt: unknown, opts?: Record<string, unknown>) {
+  dispatched: ChartAction[] = [];
+  setOption(opt: unknown, opts?: SetOptionOpts) {
     this.options.push(opt);
     this.calls.push({ opt, opts });
   }
   on(event: string, cb: (e: unknown) => void) {
     this.handlers.set(event, cb);
   }
-  dispatchAction(payload: Record<string, unknown>) {
+  dispatchAction(payload: ChartAction) {
     this.dispatched.push(payload);
   }
   /** Drives a registered handler directly, same shape as `handlers.get(...)?.(e)`
@@ -52,7 +52,13 @@ vi.mock("../charts/echarts", () => ({
   },
 }));
 
-import { ChartPanel } from "../charts/ChartPanel";
+import {
+  type BrushArmAction,
+  type BrushClearAction,
+  type ChartAction,
+  ChartPanel,
+  type SetOptionOpts,
+} from "../charts/ChartPanel";
 
 const WINDOW = { from: 1_000_000, to: 2_000_000 };
 
@@ -222,8 +228,12 @@ describe("ChartPanel brush select (Task 12)", () => {
     cleanup();
   });
 
-  function arms(instance: FakeChart) {
-    return instance.dispatched.filter((d) => d.type === "takeGlobalCursor" && d.key === "brush");
+  function arms(instance: FakeChart): BrushArmAction[] {
+    return instance.dispatched.filter((d): d is BrushArmAction => d.type === "takeGlobalCursor");
+  }
+
+  function clears(instance: FakeChart): BrushClearAction[] {
+    return instance.dispatched.filter((d): d is BrushClearAction => d.type === "brush");
   }
 
   // (a) Mount runs BOTH the init effect and the option effect (dep
@@ -262,9 +272,9 @@ describe("ChartPanel brush select (Task 12)", () => {
     );
     instances[0].emit("brushEnd", { areas: [{ coordRange: [1_200_000, 1_800_000] }] });
     expect(onZoom).toHaveBeenCalledWith({ from: 1_200_000, to: 1_800_000 });
-    const clears = instances[0].dispatched.filter((d) => d.type === "brush");
-    expect(clears).toHaveLength(1);
-    expect(clears[0].areas).toEqual([]);
+    const cleared = clears(instances[0]);
+    expect(cleared).toHaveLength(1);
+    expect(cleared[0].areas).toEqual([]);
   });
 
   // (d)
@@ -303,8 +313,7 @@ describe("ChartPanel brush select (Task 12)", () => {
     instances[0].emit("brushEnd", { areas: [{ coordRange: [1_200_000, 1_200_400] }] });
     expect(onSweep).not.toHaveBeenCalled();
     expect(onZoom).not.toHaveBeenCalled();
-    const clears = instances[0].dispatched.filter((d) => d.type === "brush");
-    expect(clears).toHaveLength(1);
+    expect(clears(instances[0])).toHaveLength(1);
   });
 });
 

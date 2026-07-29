@@ -44,9 +44,9 @@ function isModePayload(value: unknown): value is ModePayload {
   if (typeof value !== "object" || value === null) return false;
   const rec = value as Record<string, unknown>;
   return (
-    (rec.mode === "live" || rec.mode === "review") &&
-    (typeof rec.source === "string" || rec.source === null) &&
-    typeof rec.editable === "boolean"
+    (rec["mode"] === "live" || rec["mode"] === "review") &&
+    (typeof rec["source"] === "string" || rec["source"] === null) &&
+    typeof rec["editable"] === "boolean"
   );
 }
 

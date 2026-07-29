@@ -33,8 +33,10 @@ export function groupRowsFromData(rows: LogEventRow[]): Record<string, LogEventR
     out[key] ??= [];
     out[key].push(row);
   }
-  for (const key of Object.keys(out)) {
-    out[key] = out[key].slice(-MAX_TABLE_ROWS);
+  // `entries()` rather than `keys()`: the group is already in hand, so
+  // trimming it needs no second lookup of the key we are standing on.
+  for (const [key, group] of Object.entries(out)) {
+    out[key] = group.slice(-MAX_TABLE_ROWS);
   }
   return out;
 }

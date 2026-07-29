@@ -731,6 +731,11 @@ lint-python: ## (Quality) Run ruff lint + format checks (part of check-python)
 # Python side: unused exports/files/deps across web/src, scoped by
 # web/knip.json (vendored Untitled UI source + generated wire types excluded,
 # mirroring biome.json's files.includes).
+# --error-on-warnings lives in web/package.json's `check` script, not here, so
+# a bare `npm run check` in web/ enforces the same bar as CI. Biome exits 0 on
+# warnings by default: 7 noNonNullAssertion warnings sat in tickets.test.ts
+# under a green gate until 2026-07-28. There is no warn tier on the Python
+# side (ruff errors only, pytest filterwarnings=error) and there is not one here.
 lint-ts: $(WEB_NODE_MODULES) ## (Quality) Lint web/: the authoritative Biome gate (rules + format + assists) + knip (unused exports/files/deps)
 	@$(SAY) "biome check (web/): rules + format + assists"
 	@cd web && npm run check
@@ -759,9 +764,18 @@ typecheck-python: ## (Quality) Run ty type checker
 	@$(SAY) "ty check"
 	@uv run ty check
 
-typecheck-ts: $(WEB_NODE_MODULES) ## (Quality) Type-check web/ with tsc --noEmit (no build)
-	@$(SAY) "tsc --noEmit (web/)"
-	@cd web && npm run typecheck
+# Routed through scripts/typecheck_web.sh rather than `npm run typecheck`
+# because tsconfig cannot scope rules by directory: `exclude` only drops a
+# file from the program's ROOT set, and a file reached through an import is
+# checked anyway, so vendored Untitled UI source cannot be exempted in config.
+# The script derives its vendored path list from web/untitledui.lock.json --
+# the same source scripts/check_untitledui_hash.sh reads -- so the gate that
+# forbids editing those files and the gate that stops grading them cannot
+# disagree about which files those are. web/package.json's `typecheck` script
+# stays the raw, unfiltered tsc for ad-hoc use.
+typecheck-ts: $(WEB_NODE_MODULES) ## (Quality) Type-check web/ with tsc --noEmit (no build), vendored Untitled UI diagnostics filtered out
+	@$(SAY) "tsc --noEmit (web/) — vendored Untitled UI diagnostics filtered"
+	@scripts/typecheck_web.sh
 
 check: check-python check-ts ## (Quality) ALL static analysis (Python + TS): sub-targets check-python + check-ts
 

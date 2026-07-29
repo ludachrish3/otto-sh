@@ -144,19 +144,15 @@ function FlagsCell({
   stateColors,
 }: {
   flags: Stats["flags"];
-  stateColors: Record<string, string>;
+  stateColors: IndexPayload["state_colors"];
 }) {
   if (flags.stale === 0 && flags.aging === 0 && flags.excluded === 0) return null;
   return (
     <div className="flex flex-wrap items-center justify-end gap-1">
-      {flags.stale > 0 && (
-        <FlagPill label={`${flags.stale} stale`} color={stateColors.stale ?? "currentColor"} />
-      )}
-      {flags.aging > 0 && (
-        <FlagPill label={`${flags.aging} aging`} color={stateColors.aging ?? "currentColor"} />
-      )}
+      {flags.stale > 0 && <FlagPill label={`${flags.stale} stale`} color={stateColors.stale} />}
+      {flags.aging > 0 && <FlagPill label={`${flags.aging} aging`} color={stateColors.aging} />}
       {flags.excluded > 0 && (
-        <FlagPill label={`${flags.excluded} excl`} color={stateColors.excluded ?? "currentColor"} />
+        <FlagPill label={`${flags.excluded} excl`} color={stateColors.excluded} />
       )}
     </div>
   );

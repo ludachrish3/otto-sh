@@ -328,10 +328,22 @@ function mockChunkLoad(result: { resolve: FileChunk } | { reject: Error }) {
 }
 
 describe("FilePage", () => {
-  it("shows a minimal loading state before the chunk resolves", () => {
+  it("shows a minimal loading state before the chunk resolves", async () => {
     mockChunkLoad({ resolve: makeChunk() });
     renderPage({ index: makeFileIndex(), segments: ["src", "net", "tcp.c"], node: NODE });
     expect(screen.getByTestId("file-loading").textContent).toContain("tcp.c");
+    // The chunk promise resolves after this body returns. Awaiting the loaded
+    // render keeps that state update inside this test's act() scope; without
+    // it React applies the update outside act and the console guard fails the
+    // test with a bare "not wrapped in act(...)" that says nothing about the
+    // loading state this test is actually about.
+    //
+    // NB: `expect.requireAssertions` counts `expect()` calls ONLY — a bare
+    // `findBy*` throws when the element never appears but does NOT count as an
+    // assertion. This test is fine because the `expect` above it counts; do not
+    // copy the trailing-findBy pattern into a test that has no other assertion,
+    // or the failure will talk about assertion counts rather than what broke.
+    await screen.findByTestId("code-row-1");
   });
 
   it("routes a StampMismatchError to the guard screen with the stamp-mismatch reason", async () => {

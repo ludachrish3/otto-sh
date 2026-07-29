@@ -31,12 +31,12 @@ function isIndexPayloadShape(value: unknown): value is IndexPayload {
   if (typeof value !== "object" || value === null) return false;
   const rec = value as Record<string, unknown>;
   return (
-    typeof rec.format === "number" &&
-    typeof rec.stamp === "string" &&
-    Array.isArray(rec.tier_order) &&
-    Array.isArray(rec.runs) &&
-    typeof rec.tree === "object" &&
-    rec.tree !== null
+    typeof rec["format"] === "number" &&
+    typeof rec["stamp"] === "string" &&
+    Array.isArray(rec["tier_order"]) &&
+    Array.isArray(rec["runs"]) &&
+    typeof rec["tree"] === "object" &&
+    rec["tree"] !== null
   );
 }
 

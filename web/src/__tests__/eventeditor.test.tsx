@@ -8,7 +8,7 @@
 import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import kitchenSink from "../../fixtures/kitchen-sink.json";
+import kitchenSink from "../../fixtures/kitchen-sink.json" with { type: "json" };
 import { useReviewStore } from "../data/reviewStore";
 import { EventEditor } from "../shell/EventEditor";
 import { type EventDraft, useUiStore } from "../ui/uiStore";
@@ -183,7 +183,7 @@ describe("EventEditor", () => {
       expect.objectContaining({ method: "PATCH" }),
     );
     const body = jsonBody(fetchMock);
-    expect(body.label).toBe("config reload v2");
+    expect(body["label"]).toBe("config reload v2");
     // event id 1 has no end_timestamp in the fixture -- an untouched edit
     // must still explicitly clear it (full-field PATCH), not omit the key.
     expect(body).toHaveProperty("end_timestamp", null);
@@ -367,6 +367,6 @@ describe("EventEditor", () => {
     await user.click(screen.getByTestId("editor-save"));
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
     const body = jsonBody(fetchMock);
-    expect(body.timestamp).toBe(new Date(draft.timestampMs + 5000).toISOString());
+    expect(body["timestamp"]).toBe(new Date(draft.timestampMs + 5000).toISOString());
   });
 });

@@ -659,7 +659,7 @@ describe("FocusProvider: history.state stamp discriminates Back/Forward from a f
     expect(screen.getByTestId("focus-value").textContent).toBe("ctx-a"); // reasserted, not cleared
   });
 
-  it("a hashchange landing on a PREVIOUSLY-STAMPED entry ADOPTS its own ctx instead of reasserting the pin", async () => {
+  it("a hashchange landing on a PREVIOUSLY-STAMPED entry ADOPTS its own ctx instead of reasserting the pin", () => {
     window.__OTTO_COV__ = buildIndex();
     window.location.hash = "#/coverage?ctx=ctx-a";
     renderConsumer();
