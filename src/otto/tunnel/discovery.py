@@ -67,13 +67,20 @@ async def _scan_hosts(hosts: list[Any]) -> tuple[list[tuple[str, Observation]], 
             # would auto-start its whole compose stack (issue #139; docker is
             # a test aid, never a tunnel requirement).
             probe = getattr(host, "is_running", None)
+            # is_running() is a liveness probe, not a command-execution method —
+            # it has no timeout parameter, so it stays externally bounded here.
             if probe is not None and not await asyncio.wait_for(probe(), _TUNNEL_HOST_TIMEOUT):
                 return [], None
-            result = await asyncio.wait_for(
-                host.exec(DISCOVERY_PS_COMMAND, log=LogMode.QUIET), _TUNNEL_HOST_TIMEOUT
+            result = await host.exec(
+                DISCOVERY_PS_COMMAND, timeout=_TUNNEL_HOST_TIMEOUT, log=LogMode.QUIET
             )
+            if result.timed_out:
+                logger.warning(f"otto tunnel: timed out scanning host {host.id!r}")
+                return [], host.id
             observed = parse_process_discovery(result.value)
         except asyncio.TimeoutError:
+            # Still reachable via the is_running() probe above, which remains
+            # externally wrapped.
             logger.warning(f"otto tunnel: timed out scanning host {host.id!r}")
             return [], host.id
         except Exception as e:  # noqa: BLE001 — best-effort scan; name + skip

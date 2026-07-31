@@ -145,6 +145,12 @@ class Opt:
     elem_type: type | None = None
     name: str | None = None
     help: str | None = None
+    min: float | None = None
+    """Inclusive lower bound forwarded to click's numeric range, or None.
+
+    Typer exposes only an inclusive ``min`` (no ``min_open``), so design the
+    accepted range so an inclusive bound expresses it exactly.
+    """
 
 
 class _Exclude:

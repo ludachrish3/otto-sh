@@ -95,7 +95,9 @@ async def _build_one(
         flags.extend(["--build-arg", shlex.quote(f"{arg_name}={arg_value}")])
 
     cmd = f"docker build {' '.join(flags)} {shlex.quote(str(remote_ctx))}"
-    result = await parent.exec(cmd, timeout=None)
+    # Unbounded on purpose: an image build/pull has no defensible bound, and a
+    # made-up constant would be wrong on a slower builder. `inf` states that.
+    result = await parent.exec(cmd, timeout=float("inf"))
     if not result.status.is_ok:
         return result.status, result.value
     return Status.Success, full_tag

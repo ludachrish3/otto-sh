@@ -16,9 +16,10 @@ from otto.cli.expose import (
     exposed_cli_names,
     make_method_command,
 )
+from otto.host.host import DEFAULT_COMMAND_TIMEOUT
 from otto.host.unix_host import UnixHost
 from otto.result import CommandResult, Result, Results
-from otto.utils import Arg, Status, cli_exposed
+from otto.utils import Arg, Opt, Status, cli_exposed
 
 
 def test_cli_exposed_sets_markers_with_dashed_default_name():
@@ -1020,3 +1021,62 @@ async def test_cli_bad_octal_mode_exits_nonzero_with_the_parse_message():
         await cmd(_Ctx(), src_files=[Path("a.bin")], dest_dir=Path("/opt"), mode="789")
     assert ei.value.exit_code == 2  # Status.Error
     host.close.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
+# Task 10: `otto host <id> run --timeout` bound + advertised default
+# ---------------------------------------------------------------------------
+
+
+def test_run_timeout_advertises_default_and_range(monkeypatch):
+    """The synthesized --timeout carries BaseHost.run's default and a >=0 bound."""
+    app = _make_app(monkeypatch, {"u1": UnixHost})
+    r = CliRunner().invoke(app, ["u1", "run", "--help"])
+    assert r.exit_code == 0, r.output
+    assert "30.0" in r.output, "the default must be advertised in help"
+    assert "x>=0" in r.output, "the range bound must be advertised in help"
+
+
+def test_run_rejects_a_negative_timeout(monkeypatch):
+    """A negative --timeout is a clean click usage error, not a traceback."""
+    app = _make_app(monkeypatch, {"u1": UnixHost})
+    r = CliRunner().invoke(app, ["u1", "run", "--timeout", "-5", "echo hi"])
+    assert r.exit_code == 2, r.output
+    assert "not in the range" in r.output
+
+
+def test_run_accepts_infinite_timeout(monkeypatch):
+    """`--timeout inf` is the documented unbounded escape hatch: it clears the
+    `min=0.0` click range bound and reaches the bound host method unchanged."""
+    captured: dict = {}
+
+    class _Host:
+        id = "h1"
+
+        @cli_exposed
+        async def run(
+            self,
+            cmds: str,
+            timeout: Annotated[float, Opt(help="Timeout.", min=0.0)] = DEFAULT_COMMAND_TIMEOUT,
+        ) -> None:
+            captured["timeout"] = timeout
+
+        async def close(self) -> None:
+            pass
+
+    import otto.host.os_profile as op
+
+    monkeypatch.setattr(op, "HOST_CLASSES", {"h": _Host})
+    monkeypatch.setattr("otto.cli.expose.host_class_for_id", lambda hid: _Host)
+    app = typer.Typer(name="host", cls=HostGroup)
+    host = _Host()
+
+    @app.callback(invoke_without_command=True)
+    def main(ctx: typer.Context, host_id: str = typer.Argument("")):
+        if ctx.resilient_parsing:
+            return
+        ctx.obj = host
+
+    r = CliRunner().invoke(app, ["h1", "run", "--timeout", "inf", "echo hi"])
+    assert r.exit_code == 0, r.output
+    assert captured["timeout"] == float("inf")

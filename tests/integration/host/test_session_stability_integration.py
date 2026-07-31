@@ -197,7 +197,7 @@ async def test_real_long_telnet_exec_vs_concurrent(host1: UnixHost) -> None:
     pool dispatch is sane; this version proves the *actual* telnetlib3
     reader/writer state holds up under the same workload.
     """
-    long_task = asyncio.create_task(host1.exec("sleep 5", timeout=None))
+    long_task = asyncio.create_task(host1.exec("sleep 5", timeout=float("inf")))
     try:
         # Give the long exec a moment to acquire its session.
         await asyncio.sleep(0.5)

@@ -50,14 +50,17 @@ class FakeHost:
     tools_ok: bool = True
     tools_output: str | None = None
     """Verbatim tools-probe reply; overrides the ``tools_ok`` ok/no shorthand."""
+    tools_timeout: bool = False
+    """The tools-probe ``exec`` comes back ``timed_out=True`` instead of a reply."""
     probe_ports: str = ""
     probe_ok: bool = True
     probe_timeout: bool = False
     launch_fail_at: int | None = None
     launch_hang_at: int | None = None
-    """Launch-call index (this host's own launch counter) that hangs past any
-    caller-side timeout instead of returning — simulates an ack that never
-    arrives even though the command may have reached the host."""
+    """Launch-call index (this host's own launch counter) that comes back
+    ``timed_out=True`` instead of ok — simulates an ack that never arrives
+    even though the command may have reached the host (``exec`` itself
+    enforces the timeout now; the fake mirrors its returned result)."""
     scan_fail: bool = False
     """Raise instead of answering the discovery scan (host unreachable)."""
     kill_fail: bool = False
@@ -71,35 +74,52 @@ class FakeHost:
         self.commands.append(cmd)
         if self.calls is not None:
             self.calls.append((self.id, cmd))
-        if "command -v socat" in cmd:
-            if self.tools_output is not None:
-                return CommandResult(status=Status.Success, value=self.tools_output, command=cmd)
+
+        def _timed_out() -> CommandResult:
             return CommandResult(
-                status=Status.Success, value="ok" if self.tools_ok else "no", command=cmd
+                status=Status.Error,
+                value=f"Command timed out after {timeout}s",
+                command=cmd,
+                retcode=-1,
+                timed_out=True,
             )
-        if cmd == FREE_PORT_PROBE_COMMAND:
+
+        if "command -v socat" in cmd:
+            if self.tools_timeout:
+                result = _timed_out()
+            elif self.tools_output is not None:
+                result = CommandResult(status=Status.Success, value=self.tools_output, command=cmd)
+            else:
+                result = CommandResult(
+                    status=Status.Success, value="ok" if self.tools_ok else "no", command=cmd
+                )
+        elif cmd == FREE_PORT_PROBE_COMMAND:
             if self.probe_timeout:
-                raise asyncio.TimeoutError("probe wedged")
-            if not self.probe_ok:
-                return CommandResult(status=Status.Failed, value="boom", command=cmd, retcode=1)
-            return CommandResult(status=Status.Success, value=self.probe_ports, command=cmd)
-        if cmd == DISCOVERY_PS_COMMAND:
+                result = _timed_out()
+            elif not self.probe_ok:
+                result = CommandResult(status=Status.Failed, value="boom", command=cmd, retcode=1)
+            else:
+                result = CommandResult(status=Status.Success, value=self.probe_ports, command=cmd)
+        elif cmd == DISCOVERY_PS_COMMAND:
             if self.scan_fail:
                 raise ConnectionError("host is unreachable")
             text = self.ps_texts.pop(0) if len(self.ps_texts) > 1 else self.ps_texts[0]
-            return CommandResult(status=Status.Success, value=text, command=cmd)
-        if cmd.startswith("kill "):
+            result = CommandResult(status=Status.Success, value=text, command=cmd)
+        elif cmd.startswith("kill "):
             if self.kill_fail:
                 raise ConnectionError("kill failed")
-            return CommandResult(status=Status.Success, value="", command=cmd)
-        # Anything else is a launch command.
-        idx = self._launch_calls
-        self._launch_calls += 1
-        if self.launch_hang_at == idx:
-            await asyncio.sleep(0.2)
-        if self.launch_fail_at == idx:
-            return CommandResult(status=Status.Failed, value="boom", command=cmd, retcode=1)
-        return CommandResult(status=Status.Success, value="", command=cmd)
+            result = CommandResult(status=Status.Success, value="", command=cmd)
+        else:
+            # Anything else is a launch command.
+            idx = self._launch_calls
+            self._launch_calls += 1
+            if self.launch_hang_at == idx:
+                result = _timed_out()
+            elif self.launch_fail_at == idx:
+                result = CommandResult(status=Status.Failed, value="boom", command=cmd, retcode=1)
+            else:
+                result = CommandResult(status=Status.Success, value="", command=cmd)
+        return result
 
 
 @dataclass
@@ -458,6 +478,14 @@ class TestInternals:
         # bare `ok` line anywhere satisfies the contract.
         host = FakeHost("a", ip="10.0.0.1", tools_output="motd banner\nok\n")
         asyncio.run(_require_tools(host, SocatCarrier()))  # no raise
+
+    def test_require_tools_timeout_raises_host_named(self) -> None:
+        # The probe exec times out (CommandResult.timed_out) rather than
+        # raising asyncio.TimeoutError — _require_tools must still convert
+        # that into the same host-named message it always raised.
+        host = FakeHost("a", ip="10.0.0.1", tools_timeout=True)
+        with pytest.raises(RuntimeError, match="host 'a' timed out checking for socat"):
+            asyncio.run(_require_tools(host, SocatCarrier()))
 
     def test_probe_used_ports_gathers_across_hosts(self) -> None:
         a = FakeHost("a", ip="10.0.0.1", probe_ports="LISTEN 0 0.0.0.0:49200 *:*\n")

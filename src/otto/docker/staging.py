@@ -84,11 +84,15 @@ async def stage_image_context(
         if not put_result.is_ok:
             raise RuntimeError(f"failed to stage build context to parent: {put_result.msg}")
 
-        # Extract on parent.
+        # Extract on parent. Unbounded on purpose: this command's duration IS
+        # the transfer (extracting the just-uploaded build context), which
+        # scales with its size — a wall-clock bound here is meaningless
+        # (see nc.py).
         remote_tar = remote_dir / tmp_path.name
         result = await parent.exec(
             f"tar -xf {shlex.quote(str(remote_tar))} -C {shlex.quote(str(remote_dir))} "
-            f"&& rm -f {shlex.quote(str(remote_tar))}"
+            f"&& rm -f {shlex.quote(str(remote_tar))}",
+            timeout=float("inf"),
         )
         if not result.status.is_ok:
             raise RuntimeError(f"failed to extract build context on parent: {result.value}")

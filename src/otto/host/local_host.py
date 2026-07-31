@@ -9,6 +9,7 @@ works uniformly across all host backends.
 """
 
 import asyncio
+import contextlib
 import logging
 import re
 import shutil
@@ -29,7 +30,7 @@ from ..logger.mode import LogMode
 from ..result import CommandResult, Result
 from ..utils import Arg, Exclude, Opt, Status, cli_exposed
 from .file_ops import PosixFileOps
-from .host import BaseHost, is_dry_run
+from .host import _EXEC_REAP_TIMEOUT, BaseHost, is_dry_run
 from .power import PowerController
 from .privilege import PosixPrivilege
 from .product import Product
@@ -193,8 +194,8 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
     async def _run_one(
         self,
         cmd: str,
+        timeout: float,
         expects: list[Expect] | None = None,
-        timeout: float | None = 10.0,
         log: LogMode = LogMode.NORMAL,
     ) -> CommandResult:
         """Execute a command via the persistent local shell session.
@@ -209,10 +210,10 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
         )
 
     @override
-    async def exec(
+    async def _exec_one(
         self,
         cmd: str,
-        timeout: float | None = None,
+        timeout: float,
         log: LogMode = LogMode.NORMAL,
     ) -> CommandResult:
         """Run a command in a fresh subprocess (stateless, concurrent-safe).
@@ -221,14 +222,12 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
         calls, and multiple exec() calls can run concurrently via
         asyncio.gather().
         """
-        if is_dry_run():
-            return self._dry_run_result(cmd)
         return await self._exec_subprocess(cmd, timeout, log=self._effective_log(log))
 
     async def _exec_subprocess(
         self,
         cmd: str,
-        timeout: float | None = None,
+        timeout: float,
         log: LogMode = LogMode.NORMAL,
     ) -> CommandResult:
         """Fire-and-forget subprocess execution."""
@@ -250,22 +249,46 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
                 status=status, value="Failed to set up stdout", command=cmd, retcode=EIO
             )
 
-        try:
+        # Narrow once, outside the closure: proc.stdout is confirmed non-None
+        # above, and this local is never reassigned, so the drain loop below
+        # doesn't need its own None-check.
+        stdout = proc.stdout
+
+        async def _drain() -> None:
             while True:
-                data = await asyncio.wait_for(proc.stdout.readline(), timeout=timeout)
+                data = await stdout.readline()
                 if not len(data):
                     break
                 line = data.decode().rstrip()
                 lines.append(line)
                 if mode is not LogMode.NEVER:
                     self._log_output(line, mode)
+
+        try:
+            # The whole drain is wrapped in a single wait_for so *timeout*
+            # bounds the command, not each individual readline -- a command
+            # that emits output more often than the timeout period (e.g.
+            # `ping`) would otherwise never trip the per-line wait and run
+            # forever.
+            await asyncio.wait_for(_drain(), timeout=timeout)
         except asyncio.TimeoutError:
             proc.terminate()
+            # A process can trap SIGTERM, so bound the reap -- an unbounded wait
+            # here would defeat the timeout it implements. If the bound fires,
+            # escalate to SIGKILL (untrappable) rather than leaving the process
+            # running with our pipes held open.
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=_EXEC_REAP_TIMEOUT)
+            except asyncio.TimeoutError:
+                proc.kill()
+                with contextlib.suppress(asyncio.TimeoutError):
+                    await asyncio.wait_for(proc.wait(), timeout=_EXEC_REAP_TIMEOUT)
             return CommandResult(
                 status=Status.Error,
                 value=f"Command timed out after {timeout}s\n" + "\n".join(lines),
                 command=cmd,
                 retcode=-1,
+                timed_out=True,
             )
 
         await proc.wait()
@@ -301,17 +324,12 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
         await self._session_mgr.send(text, log=effective)
 
     @override
-    async def expect(
+    async def _expect_one(
         self,
         pattern: str | re.Pattern[str],
-        timeout: float = 10.0,
+        timeout: float,
     ) -> str:
         """Wait for a pattern in the host's session output stream."""
-        if is_dry_run():
-            self._log_command(
-                "[DRY RUN] expect() skipped — pattern would never match without a live session"
-            )
-            return ""
         return await self._session_mgr.expect(pattern, timeout)
 
     ####################

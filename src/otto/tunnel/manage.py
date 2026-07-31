@@ -76,14 +76,11 @@ async def _container_ip(container: Any) -> str:
         "'{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "
         f"{container.container_id}"
     )
-    try:
-        result = await asyncio.wait_for(
-            container.parent.exec(cmd, log=LogMode.QUIET), _TUNNEL_HOST_TIMEOUT
-        )
-    except asyncio.TimeoutError as e:
+    result = await container.parent.exec(cmd, timeout=_TUNNEL_HOST_TIMEOUT, log=LogMode.QUIET)
+    if result.timed_out:
         raise RuntimeError(
             f"host {container.parent.id!r} timed out inspecting container {container.id!r}"
-        ) from e
+        )
     ip = result.value.strip() if result.is_ok else ""
     if not ip:
         raise ValueError(f"container {container.id!r} has no resolvable network address")
@@ -103,6 +100,8 @@ async def _resolve_one(lab: "Lab", spec: EndpointSpec) -> ResolvedHop:
             )
         # Probe, never start: a tunnel add must not compose a docker stack
         # (issue #139) — the container is a lab member only while it runs.
+        # is_running() is a liveness probe, not a command-execution method — it
+        # has no timeout parameter, so it stays externally bounded here.
         try:
             running = await asyncio.wait_for(host.is_running(), _TUNNEL_HOST_TIMEOUT)
         except asyncio.TimeoutError as e:
@@ -295,15 +294,11 @@ async def _require_tools(host: Any, carrier: TunnelCarrier) -> None:
     failure text happens to contain ``ok`` ("not ok", "broken") cannot slip
     past the fail-fast check and die opaquely at launch time instead.
     """
-    try:
-        result = await asyncio.wait_for(
-            host.exec(carrier.requirements_command, log=LogMode.QUIET),
-            _TUNNEL_HOST_TIMEOUT,
-        )
-    except asyncio.TimeoutError as e:
-        raise RuntimeError(
-            f"host {host.id!r} timed out checking for {carrier.tools_description}"
-        ) from e
+    result = await host.exec(
+        carrier.requirements_command, timeout=_TUNNEL_HOST_TIMEOUT, log=LogMode.QUIET
+    )
+    if result.timed_out:
+        raise RuntimeError(f"host {host.id!r} timed out checking for {carrier.tools_description}")
     if not any(line.strip() == "ok" for line in result.value.splitlines()):
         raise RuntimeError(
             f"host {host.id!r} is missing {carrier.tools_description} (required for tunnels)"
@@ -319,12 +314,11 @@ async def _probe_used_ports(resolved: list[ResolvedHop]) -> set[int]:
     """
 
     async def probe(r: ResolvedHop) -> set[int]:
-        try:
-            result = await asyncio.wait_for(
-                r.host.exec(FREE_PORT_PROBE_COMMAND, log=LogMode.QUIET), _TUNNEL_HOST_TIMEOUT
-            )
-        except asyncio.TimeoutError as e:
-            raise RuntimeError(f"host {r.hop.host!r} timed out probing for free ports") from e
+        result = await r.host.exec(
+            FREE_PORT_PROBE_COMMAND, timeout=_TUNNEL_HOST_TIMEOUT, log=LogMode.QUIET
+        )
+        if result.timed_out:
+            raise RuntimeError(f"host {r.hop.host!r} timed out probing for free ports")
         return parse_listening_ports(result.value) if result.is_ok else set()
 
     return set().union(*await asyncio.gather(*(probe(r) for r in resolved)))
@@ -341,8 +335,8 @@ async def _kill_tunnel_on(hosts: list[Any], tunnel_id: str) -> None:
     for host_id, pids in by_host.items():
         kill_cmd = kill_command(pids)
         try:
-            await asyncio.wait_for(
-                host_by_id[host_id].exec(kill_cmd, log=LogMode.QUIET), _TUNNEL_HOST_TIMEOUT
+            await host_by_id[host_id].exec(
+                kill_cmd, timeout=_TUNNEL_HOST_TIMEOUT, log=LogMode.QUIET
             )
         except Exception as e:  # noqa: BLE001 — rollback is best-effort by design
             logger.warning(f"otto tunnel: rollback reap failed on {host_id!r}: {e}")
@@ -367,6 +361,11 @@ def _raise_launch_failure(resolved: list[ResolvedHop], proc: "_ProcSpec", result
         f"host {_proc_host_name(resolved, proc)!r} failed to launch "
         f"{proc.direction.value}/{proc.role.value}: {result.value!r}"
     )
+
+
+def _raise_launch_timeout(resolved: list[ResolvedHop], proc: "_ProcSpec") -> None:
+    """Raise for a launch ``exec`` that timed out (TRY301: kept out of the try body)."""
+    raise RuntimeError(f"host {_proc_host_name(resolved, proc)!r} timed out spawning the tunnel")
 
 
 def _raise_verify_failure(tunnel: Tunnel, missing: set[ProcKey], unreachable: list[str]) -> None:
@@ -456,15 +455,13 @@ async def add_tunnel(
                 # below bounds the ack, not the send, so the command may have
                 # already reached the host even if we never see success.
                 launched = True
-                try:
-                    result = await asyncio.wait_for(
-                        host.exec(launch_command(sentinel, proc.argv), log=LogMode.QUIET),
-                        _TUNNEL_HOST_TIMEOUT,
-                    )
-                except asyncio.TimeoutError as e:
-                    raise RuntimeError(
-                        f"host {_proc_host_name(resolved, proc)!r} timed out spawning the tunnel"
-                    ) from e
+                result = await host.exec(
+                    launch_command(sentinel, proc.argv),
+                    timeout=_TUNNEL_HOST_TIMEOUT,
+                    log=LogMode.QUIET,
+                )
+                if result.timed_out:
+                    _raise_launch_timeout(resolved, proc)
                 if not result.is_ok:
                     _raise_launch_failure(resolved, proc, result)
 
@@ -510,15 +507,13 @@ async def _reap(lab: "Lab", predicate: Any) -> RemovedReport:
         host = lab.hosts[host_id]
         kill_cmd = kill_command(pids)
         try:
-            result = await asyncio.wait_for(
-                host.exec(kill_cmd, log=LogMode.QUIET), _TUNNEL_HOST_TIMEOUT
-            )
-        except asyncio.TimeoutError:
-            logger.warning(f"otto tunnel: timed out reaping host {host_id!r}")
-            unreachable.add(host_id)
-            continue
+            result = await host.exec(kill_cmd, timeout=_TUNNEL_HOST_TIMEOUT, log=LogMode.QUIET)
         except Exception as e:  # noqa: BLE001 — transparent partial reap
             logger.warning(f"otto tunnel: could not reap on host {host_id!r}: {e}")
+            unreachable.add(host_id)
+            continue
+        if result.timed_out:
+            logger.warning(f"otto tunnel: timed out reaping host {host_id!r}")
             unreachable.add(host_id)
             continue
         if not result.is_ok:

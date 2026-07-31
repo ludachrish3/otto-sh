@@ -11,6 +11,7 @@ from otto.context import (
     set_context,
     try_get_context,
 )
+from otto.host.host import DEFAULT_COMMAND_TIMEOUT
 
 
 class _FakeHost:
@@ -188,7 +189,7 @@ class _FakeRunHost(_FakeHost):
         super().__init__(host_id)
         self.run_calls: list = []
 
-    async def run(self, cmds, timeout=None):
+    async def run(self, cmds, timeout=DEFAULT_COMMAND_TIMEOUT):
         self.run_calls.append((cmds, timeout))
         return f"ran:{self.id}"
 
@@ -233,7 +234,8 @@ async def test_run_on_all_hosts_normalizes_str_to_list():
     lab.hosts["h1"] = h
     ctx = OttoContext(lab=lab)
     results = await ctx.run_on_all_hosts("uname -a")
-    assert h.run_calls == [(["uname -a"], None)]  # str normalized to a single-element list
+    # str normalized to a single-element list; timeout defaults to DEFAULT_COMMAND_TIMEOUT
+    assert h.run_calls == [(["uname -a"], DEFAULT_COMMAND_TIMEOUT)]
     assert results["h1"] == "ran:h1"
 
 

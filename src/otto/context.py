@@ -107,6 +107,15 @@ def reset_context(token: "Token[OttoContext | None]") -> None:
     _active.reset(token)
 
 
+# Deferred to here (rather than the top-of-file imports) on purpose: importing
+# otto.host at module scope pulls in otto.host.interact, which imports
+# try_get_context from this module at ITS module scope. Doing so before
+# try_get_context is defined above would raise ImportError on a fresh
+# `import otto.context` (circular import). Only a plain value is needed here,
+# so the deferred position is enough — no need to push this to TYPE_CHECKING.
+from .host.host import DEFAULT_COMMAND_TIMEOUT  # noqa: E402
+
+
 @dataclass
 class OttoContext:
     """The active per-invocation runtime: chosen lab, runtime flags, and host lifecycle scope."""
@@ -235,7 +244,7 @@ class OttoContext:
         cmds: "list[str] | str",
         pattern: "re.Pattern[str] | None" = None,
         concurrent: bool = True,
-        timeout: float | None = None,
+        timeout: float = DEFAULT_COMMAND_TIMEOUT,
         *,
         include_containers: bool = False,
         term: "str | None" = None,

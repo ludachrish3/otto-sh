@@ -64,7 +64,7 @@ from .capability import TERM_RESOLVER, TRANSFER_RESOLVER
 from .command_frame import CommandFrame, ZephyrFrame
 from .connections import ConnectionManager
 from .embedded_filesystem import EmbeddedFileSystem, NoFileSystem
-from .host import Host, SuppressCommandOutput, is_dry_run
+from .host import DEFAULT_COMMAND_TIMEOUT, Host, SuppressCommandOutput, is_dry_run
 from .interface import Interface
 from .login_proxy import Cred
 from .options import SnmpOptions, TelnetOptions
@@ -429,8 +429,8 @@ class EmbeddedHost(RemoteHost):
     async def _run_one(
         self,
         cmd: str,
+        timeout: float,
         expects: list[Expect] | None = None,
-        timeout: float | None = 10.0,
         log: LogMode = LogMode.NORMAL,
     ) -> CommandResult:
         """Execute a single command on the embedded host via the persistent shell session.
@@ -446,10 +446,10 @@ class EmbeddedHost(RemoteHost):
         )
 
     @override
-    async def exec(
+    async def _exec_one(
         self,
         cmd: str,
-        timeout: float | None = None,
+        timeout: float,
         log: LogMode = LogMode.NORMAL,
     ) -> CommandResult:
         """Run a single command on the embedded host.
@@ -460,8 +460,6 @@ class EmbeddedHost(RemoteHost):
         ``run``. It exists for API parity; use ``run`` for stateful
         workflows.
         """
-        if is_dry_run():
-            return self._dry_run_result(cmd)
         return await self._session_mgr.run_cmd(cmd, timeout=timeout, log=self._effective_log(log))
 
     @override
@@ -488,17 +486,12 @@ class EmbeddedHost(RemoteHost):
         await self._session_mgr.send(text, log=effective)
 
     @override
-    async def expect(
+    async def _expect_one(
         self,
         pattern: str | re.Pattern[str],
-        timeout: float = 10.0,
+        timeout: float,
     ) -> str:
         """Wait for a pattern in the host's session output stream."""
-        if is_dry_run():
-            self._log_command(
-                "[DRY RUN] expect() skipped — pattern would never match without a live connection"
-            )
-            return ""
         return await self._session_mgr.expect(pattern, timeout)
 
     def _require_loader(self) -> BinaryLoader:
@@ -587,13 +580,17 @@ class EmbeddedHost(RemoteHost):
     @cli_exposed(output_dir=False)
     async def exists(self, path: "str | Path") -> bool:
         """Return ``True`` when *path* exists on the device (via ``fs ls``)."""
-        result = await self._run_one(self.filesystem.ls_command(str(path)))
+        result = await self._run_one(
+            self.filesystem.ls_command(str(path)), timeout=DEFAULT_COMMAND_TIMEOUT
+        )
         return result.status.is_ok
 
     @cli_exposed(output_dir=False)
     async def ls(self, path: "Annotated[str | Path, Arg()]" = ".", all: bool = False) -> list[str]:  # noqa: A002, ARG002 — A002: CLI-exposed param name; ARG002: required by UnixHost.ls override signature
         """List entry names in *path* via the device ``fs ls`` former."""
-        result = await self._run_one(self.filesystem.ls_command(str(path)))
+        result = await self._run_one(
+            self.filesystem.ls_command(str(path)), timeout=DEFAULT_COMMAND_TIMEOUT
+        )
         if not result.status.is_ok:
             return []
         return [line for line in result.value.splitlines() if line]
@@ -606,7 +603,9 @@ class EmbeddedHost(RemoteHost):
         force: bool = False,  # noqa: ARG002 — required by UnixHost.rm override signature (flags not supported on embedded)
     ) -> Result:
         """Remove *path* via the device ``fs rm`` former (flags ignored)."""
-        result = await self._run_one(self.filesystem.rm_command(str(path)))
+        result = await self._run_one(
+            self.filesystem.rm_command(str(path)), timeout=DEFAULT_COMMAND_TIMEOUT
+        )
         return Result(result.status, msg=result.value)
 
     def _no_fileop(self, name: str) -> NoReturn:
@@ -655,7 +654,7 @@ class EmbeddedHost(RemoteHost):
         file: Annotated[Path, Arg(help="Binary to load into the device runtime.")],
         name: Annotated[str, Arg(help="Name to register the loaded binary under.")],
         show_progress: Annotated[bool, Exclude] = False,
-        timeout: Annotated[float | None, Exclude] = 120.0,
+        timeout: Annotated[float, Exclude] = 120.0,
     ) -> Result:
         """Load a binary into the device runtime via the host's binary loader.
 
@@ -703,7 +702,7 @@ class EmbeddedHost(RemoteHost):
     async def unload(
         self,
         name: Annotated[str, Arg(help="Name of the binary to unload.")],
-        timeout: Annotated[float | None, Exclude] = 20.0,
+        timeout: Annotated[float, Exclude] = 20.0,
     ) -> Result:
         """Unload *name* from the device runtime, draining to full eviction.
 

@@ -122,7 +122,9 @@ async def _compose_cmd(
     cmd = f"docker compose -p {shlex.quote(project_name)} {file_args} {action}"
     if extra:
         cmd += f" {extra}"
-    result = await parent.exec(cmd, timeout=None)
+    # Unbounded on purpose: an image build/pull has no defensible bound, and a
+    # made-up constant would be wrong on a slower builder. `inf` states that.
+    result = await parent.exec(cmd, timeout=float("inf"))
     return result.status, result.value
 
 

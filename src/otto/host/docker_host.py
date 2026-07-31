@@ -26,6 +26,7 @@ import shlex
 from dataclasses import (
     dataclass,
     field,
+    replace,
 )
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
@@ -295,10 +296,10 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         return f"docker exec {flags} {self.container_id} sh -c {shlex.quote(cmd)}"
 
     @override
-    async def exec(
+    async def _exec_one(
         self,
         cmd: str,
-        timeout: float | None = None,
+        timeout: float,
         log: LogMode = LogMode.NORMAL,
     ) -> CommandResult:
         """Run a single command in the container via the parent.
@@ -307,34 +308,28 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         ``docker exec``. ``run()`` is the stateful counterpart that
         preserves shell state across calls.
         """
-        if is_dry_run():
-            return self._dry_run_result(cmd)
         return await self._exec_via_parent(cmd, timeout, log=log)
 
     async def _exec_via_parent(
         self,
         cmd: str,
-        timeout: float | None = None,
+        timeout: float,
         log: LogMode = LogMode.NORMAL,
     ) -> CommandResult:
         """Wrap *cmd* in ``docker exec`` and dispatch through the parent."""
         wrapped = await self._docker_exec(cmd)
         result = await self.parent.exec(wrapped, timeout=timeout, log=self._effective_log(log))
-        # Replace the wrapped command in the result so callers see what
-        # they asked for, not the docker-exec wrapper.
-        return CommandResult(
-            status=result.status,
-            value=result.value,
-            command=cmd,
-            retcode=result.retcode,
-        )
+        # Replace the wrapped command in the result so callers see what they
+        # asked for, not the docker-exec wrapper. `replace` rather than a field
+        # list so new CommandResult fields are carried through automatically.
+        return replace(result, command=cmd)
 
     @override
     async def _run_one(
         self,
         cmd: str,
+        timeout: float,
         expects: "list[Expect] | None" = None,
-        timeout: float | None = 10.0,
         log: LogMode = LogMode.NORMAL,
     ) -> CommandResult:
         """Execute one command on the persistent in-container shell.
@@ -371,17 +366,8 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         await self._session_mgr.send(text, log=effective)
 
     @override
-    async def expect(
-        self,
-        pattern: "str | re.Pattern[str]",
-        timeout: float = 10.0,
-    ) -> str:
+    async def _expect_one(self, pattern: "str | re.Pattern[str]", timeout: float) -> str:
         """Wait for a pattern in the container's session output stream."""
-        if is_dry_run():
-            self._log_command(
-                "[DRY RUN] expect() skipped — pattern would never match without a live session"
-            )
-            return ""
         await self._ensure_running()
         return await self._session_mgr.expect(pattern, timeout)
 
@@ -500,9 +486,13 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
             per_file: dict[Path, Result] = {}
             for f in files:
                 staged = stage / f.name
+                # Unbounded on purpose: this command's duration IS the
+                # transfer into the container, which scales with the file's
+                # size — a wall-clock bound here is meaningless (see nc.py).
                 cp = await self.parent.exec(
                     f"docker cp {shlex.quote(str(staged))} "
-                    f"{shlex.quote(self.container_id)}:{shlex.quote(str(dest_dir))}"
+                    f"{shlex.quote(self.container_id)}:{shlex.quote(str(dest_dir))}",
+                    timeout=float("inf"),
                 )
                 if not cp.status.is_ok:
                     per_file[f] = Result(Status.Error, msg=f"docker cp failed: {cp.value}")
@@ -569,9 +559,13 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
             staged_paths: list[Path] = []
             for i, f in enumerate(files):
                 staged = stage / f.name
+                # Unbounded on purpose: this command's duration IS the
+                # transfer out of the container, which scales with the file's
+                # size — a wall-clock bound here is meaningless (see nc.py).
                 cp = await self.parent.exec(
                     f"docker cp {shlex.quote(self.container_id)}:{shlex.quote(str(f))} "
-                    f"{shlex.quote(str(staged))}"
+                    f"{shlex.quote(str(staged))}",
+                    timeout=float("inf"),
                 )
                 if not cp.status.is_ok:
                     # docker cp for one file failed — mark it and skip the rest,

@@ -598,8 +598,8 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     async def _run_one(
         self,
         cmd: str,
+        timeout: float,
         expects: list[Expect] | None = None,
-        timeout: float | None = 10.0,
         log: LogMode = LogMode.NORMAL,
     ) -> CommandResult:
         """Execute a single command on the remote host via the **persistent shell session**.
@@ -623,8 +623,8 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
                 matched against output as it arrives; the corresponding response is
                 sent automatically.
             timeout: Seconds before the command is considered hung. On expiry,
-                Ctrl+C is sent and ``Status.Error`` is returned. ``None`` disables
-                the timeout (use for long-running commands).
+                Ctrl+C is sent and ``Status.Error`` is returned. Pass
+                ``float("inf")`` for a deliberately unbounded command.
 
         Returns:
             A :class:`~otto.result.CommandResult`; ``value`` holds the output.
@@ -637,10 +637,10 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         )
 
     @override
-    async def exec(
+    async def _exec_one(
         self,
         cmd: str,
-        timeout: float | None = None,
+        timeout: float,
         log: LogMode = LogMode.NORMAL,
     ) -> CommandResult:
         """Run a single command concurrent-safely, independent of the persistent shell.
@@ -679,9 +679,10 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
             cmd: Shell command to run. Shell operators (``<``, ``>``, ``|``) work on
                 SSH because asyncssh wraps the command in a shell; on telnet the
                 command runs through the login shell of the new session.
-            timeout: Seconds before the command is considered hung. ``None`` (the
-                default) disables the timeout — appropriate for long-running commands
-                such as a netcat listener waiting for a connection.
+            timeout: Seconds before the command is considered hung.
+                Defaults to :data:`~otto.host.host.DEFAULT_COMMAND_TIMEOUT`;
+                pass ``float("inf")`` for a deliberately unbounded command such
+                as a netcat listener awaiting a connection.
 
         Returns:
             A :class:`~otto.result.CommandResult`; ``value`` holds the output.
@@ -690,8 +691,6 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
             :meth:`~otto.host.host.BaseHost.run`: stateful, sequential alternative
             with expect support.
         """
-        if is_dry_run():
-            return self._dry_run_result(cmd)
         return await self._session_mgr.exec(cmd, timeout=timeout, log=self._effective_log(log))
 
     @override
@@ -719,7 +718,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
             ``expect``, and ``close``.
 
         See Also:
-            :meth:`~otto.host.unix_host.UnixHost.exec`: stateless alternative for one-off commands.
+            :meth:`~otto.host.host.BaseHost.exec`: stateless alternative for one-off commands.
             :meth:`~otto.host.host.BaseHost.run`: default persistent session.
         """
         if is_dry_run():
@@ -737,17 +736,12 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         await self._session_mgr.send(text, log=effective)
 
     @override
-    async def expect(
+    async def _expect_one(
         self,
         pattern: str | re.Pattern[str],
-        timeout: float = 10.0,
+        timeout: float,
     ) -> str:
         """Wait for a pattern in the host's session output stream."""
-        if is_dry_run():
-            self._log_command(
-                "[DRY RUN] expect() skipped — pattern would never match without a live connection"
-            )
-            return ""
         return await self._session_mgr.expect(pattern, timeout)
 
     ####################

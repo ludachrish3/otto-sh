@@ -351,7 +351,10 @@ path: Annotated[str | Path, Arg()] = "."  # otto host <id> ls /var/log
 has a default.  Used by `run`'s `timeout`:
 
 ```python
-timeout: Annotated[float | None, Opt(help="Timeout in seconds.")] = None
+timeout: Annotated[
+    float,
+    Opt(help="Per-command/cumulative timeout (seconds); use inf for unbounded.", min=0.0),
+] = DEFAULT_COMMAND_TIMEOUT
 ```
 
 **`Exclude`** — drop a parameter from the CLI entirely; the method receives its

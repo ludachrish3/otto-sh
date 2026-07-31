@@ -1,9 +1,9 @@
 """Impair/repair/list orchestration — kernel qdisc state is the ONLY state.
 
 Reads go through ``host.exec`` (no privilege needed); mutations through
-``host.run(cmd, sudo=host.current_user != "root")``. Every host call is
-wrapped in ``asyncio.wait_for(..., _IMPAIR_HOST_TIMEOUT)`` and a down host is
-a loud, host-named ``RuntimeError`` — never a skip (spec §9, dev-VM rule).
+``host.run(cmd, sudo=host.current_user != "root")``. Every host call passes
+``timeout=_IMPAIR_HOST_TIMEOUT`` and a down host is a loud, host-named
+``RuntimeError`` — never a skip (spec §9, dev-VM rule).
 
 These four functions — :func:`impair_link`, :func:`repair_link`,
 :func:`repair_all`, :func:`read_link_states` — plus :func:`find_link` ARE the
@@ -12,7 +12,6 @@ overlay, and any direct importer call exactly these. Nothing here prints or
 knows about exit codes/colors.
 """
 
-import asyncio
 import contextlib
 from dataclasses import dataclass
 from dataclasses import field as dc_field
@@ -128,9 +127,13 @@ def find_link(lab: Any, ident: str) -> Link:
 async def _exec(host: Any, cmd: str) -> Any:
     """Run a read-only *cmd* on *host*; timeout/transport errors are host-named."""
     try:
-        result = await asyncio.wait_for(host.exec(cmd, log=LogMode.QUIET), _IMPAIR_HOST_TIMEOUT)
-    except (TimeoutError, asyncio.TimeoutError, OSError, ConnectionError) as e:
+        result = await host.exec(cmd, timeout=_IMPAIR_HOST_TIMEOUT, log=LogMode.QUIET)
+    except (OSError, ConnectionError) as e:
         raise RuntimeError(f"host {host.id!r} unreachable running {cmd!r}: {e!r}") from e
+    if result.timed_out:
+        raise RuntimeError(
+            f"host {host.id!r} unreachable running {cmd!r}: timed out after {_IMPAIR_HOST_TIMEOUT}s"
+        )
     if not result.is_ok:
         raise RuntimeError(f"{cmd!r} failed on {host.id!r}: {result.msg or result.value}")
     return result
@@ -139,18 +142,22 @@ async def _exec(host: Any, cmd: str) -> Any:
 async def _root_run(host: Any, cmd: str) -> Any:
     """Run a mutating *cmd* on *host*, sudo'd unless already root.
 
-    Only transport-level failures (timeout/OSError/ConnectionError) raise
-    here — a command that reaches the host but reports failure is caught by
-    the caller's own re-read (:func:`impair_link`'s post-apply verify,
-    :func:`repair_link`'s post-clear re-read), never silently swallowed here.
+    A non-ok result is deliberately NOT raised here — a command that reaches the
+    host but reports failure is caught by the caller's own re-read
+    (:func:`impair_link`'s post-apply verify, :func:`repair_link`'s post-clear
+    re-read), never silently swallowed here.
     """
     need_sudo = host.current_user != "root"
     try:
-        results = await asyncio.wait_for(
-            host.run(cmd, sudo=need_sudo, log=LogMode.QUIET), _IMPAIR_HOST_TIMEOUT
+        results = await host.run(
+            cmd, sudo=need_sudo, timeout=_IMPAIR_HOST_TIMEOUT, log=LogMode.QUIET
         )
-    except (TimeoutError, asyncio.TimeoutError, OSError, ConnectionError) as e:
+    except (OSError, ConnectionError) as e:
         raise RuntimeError(f"host {host.id!r} unreachable running {cmd!r}: {e!r}") from e
+    if results[0].timed_out:
+        raise RuntimeError(
+            f"host {host.id!r} unreachable running {cmd!r}: timed out after {_IMPAIR_HOST_TIMEOUT}s"
+        )
     return results[0]
 
 

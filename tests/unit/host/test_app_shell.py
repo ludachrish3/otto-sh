@@ -19,6 +19,7 @@ output block.
 
 import asyncio
 import re
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from pydantic import ValidationError
@@ -781,3 +782,32 @@ async def test_cmd_default_unchanged_without_session_override():
         await shell.cmd("SELECT 1")
     assert session.expected[0] == (DemoShell.prompt, 30.0)
     assert session.expected[1] == (DemoShell.prompt, 30.0)
+
+
+# =========================================================================== #
+# cmd_timeout tracks DEFAULT_COMMAND_TIMEOUT (Task 9)
+# =========================================================================== #
+
+
+def test_cmd_timeout_tracks_the_shared_constant():
+    """AppShell must not carry a second copy of the default that can drift."""
+    from otto.host.host import DEFAULT_COMMAND_TIMEOUT
+
+    assert AppShell.cmd_timeout == DEFAULT_COMMAND_TIMEOUT
+
+
+@pytest.mark.asyncio
+async def test_per_session_override_is_not_clobbered_by_the_default():
+    """The None sentinel must keep inheriting: a session override survives cmd()."""
+
+    class _Shell(AppShell):
+        launch = "python3"
+        prompt = r">>> "
+
+    session = MagicMock()
+    session.send = AsyncMock()
+    session.expect = AsyncMock(return_value=">>> ")
+    sh = _Shell(session, timeout=120.0)
+    await sh.cmd("1+1")
+    # cmd() passed no timeout, so it must use the session's 120.0 — not the class default.
+    assert session.expect.await_args.args[1] == 120.0

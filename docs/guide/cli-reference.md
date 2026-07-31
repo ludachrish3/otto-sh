@@ -253,11 +253,11 @@ type exposes.
 otto host <HOST_ID> run [OPTIONS] COMMANDS...
 ```
 
-| Option | Description |
-| ------ | ----------- |
-| `COMMANDS...` | One or more shell commands (space-separated, each quoted as needed) |
-| `--sudo / --no-sudo` | Run every command through `sudo` |
-| `--timeout SECS` | Cumulative timeout in seconds across all commands |
+| Option | Default | Description |
+| ------ | ------- | ----------- |
+| `COMMANDS...` | — | One or more shell commands (space-separated, each quoted as needed) |
+| `--sudo / --no-sudo` | `--no-sudo` | Run every command through `sudo` |
+| `--timeout SECS` | `30.0` | Cumulative timeout in seconds across all commands. Must be `>= 0`; pass `inf` for a deliberately unbounded command |
 
 ### `put` / `get` arguments
 

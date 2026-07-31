@@ -147,6 +147,35 @@ async def test_exec_quotes_dangerous_chars():
     assert parent_cmd_after_sh_c.startswith("'")  # shlex.quote uses single quotes
 
 
+@pytest.mark.asyncio
+async def test_exec_preserves_every_field_through_the_command_rebuild():
+    """`_exec_via_parent` rebuilds the result only to swap `command` back to
+    the unwrapped one the caller asked for -- every other field, including
+    ones added to `CommandResult` after this rebuild was written (like
+    `timed_out`) and pre-existing ones it never enumerated (`msg`), must
+    survive unchanged. A field-list reconstruction silently drops both;
+    `dataclasses.replace` cannot.
+    """
+    parent = _mock_parent()
+    h = _make_container(parent)
+    wrapped_cmd = f"docker exec -i {h.container_id} sh -c 'sleep 10'"
+    parent.exec.return_value = CommandResult(
+        status=Status.Error,
+        value="Command timed out after 0.1s",
+        msg="diagnostic detail",
+        command=wrapped_cmd,
+        retcode=-1,
+        timed_out=True,
+    )
+
+    result = await h.exec("sleep 10")
+
+    assert result.timed_out is True
+    assert result.msg == "diagnostic detail"
+    assert result.command == "sleep 10"  # unwrapped, not the docker-exec wrapper
+    assert result.command != wrapped_cmd
+
+
 # ---------------------------------------------------------------------------
 # run — persistent-shell dispatch
 # ---------------------------------------------------------------------------
@@ -409,6 +438,10 @@ async def test_put_stages_then_docker_cps_then_cleans_up(tmp_path):
     assert any("mkdir -p" in c for c in cmds), cmds
     assert any("docker cp" in c and h.container_id in c and "/srv/in" in c for c in cmds), cmds
     assert any("rm -rf" in c for c in cmds), cmds
+    # The docker cp's duration IS the transfer (scales with file size), so it
+    # must be unbounded — never inherit the 30s default.
+    cp_call = next(c for c in parent.exec.call_args_list if "docker cp" in c.args[0])
+    assert cp_call.kwargs.get("timeout") == float("inf")
 
 
 @pytest.mark.asyncio
@@ -446,6 +479,10 @@ async def test_get_two_step_via_parent():
     parent.get.assert_awaited_once()
     args, _ = parent.get.call_args
     assert args[1] == Path("./out")
+    # The docker cp's duration IS the transfer (scales with file size), so it
+    # must be unbounded — never inherit the 30s default.
+    cp_call = next(c for c in parent.exec.call_args_list if "docker cp" in c.args[0])
+    assert cp_call.kwargs.get("timeout") == float("inf")
 
 
 # ---------------------------------------------------------------------------

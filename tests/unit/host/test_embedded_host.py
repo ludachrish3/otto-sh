@@ -15,6 +15,7 @@ import pytest
 from otto.host import EmbeddedHost, RemoteHost, ZephyrHost
 from otto.host.binary_loader import LlextHexLoader
 from otto.host.command_frame import ZephyrFrame
+from otto.host.host import DEFAULT_COMMAND_TIMEOUT
 from otto.host.options import TelnetOptions
 from otto.logger.mode import LogMode
 from otto.result import CommandResult
@@ -382,7 +383,7 @@ class TestDelegation:
         await host.exec("llext load_hex foo DEADBEEF", log=LogMode.QUIET)
         host._session_mgr.run_cmd.assert_awaited_once_with(
             "llext load_hex foo DEADBEEF",
-            timeout=None,
+            timeout=DEFAULT_COMMAND_TIMEOUT,
             log=LogMode.QUIET,
         )
 

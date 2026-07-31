@@ -11,6 +11,7 @@ from typing import (
     cast,
 )
 
+from ..host.host import DEFAULT_COMMAND_TIMEOUT
 from .lab import Lab
 
 if TYPE_CHECKING:
@@ -266,7 +267,7 @@ async def run_on_all_hosts(  # noqa: PLR0913 — wide host-dispatch API
     cmds: list[str] | str,
     pattern: re.Pattern[str] | None = None,
     concurrent: bool = True,
-    timeout: float | None = None,
+    timeout: float = DEFAULT_COMMAND_TIMEOUT,
     *,
     include_containers: bool = False,
     term: str | None = None,
@@ -288,7 +289,8 @@ async def run_on_all_hosts(  # noqa: PLR0913 — wide host-dispatch API
         pattern: Compiled regex filter passed to :func:`all_hosts`.
         concurrent: When ``True`` (default), run all calls via
             ``asyncio.gather``.  When ``False``, execute serially.
-        timeout: Per-host timeout forwarded to ``run``.
+        timeout: Per-host timeout forwarded to ``run``. Defaults to
+            :data:`~otto.host.host.DEFAULT_COMMAND_TIMEOUT`.
         include_containers: Forwarded to :func:`do_for_all_hosts`. When
             ``False`` (default), container hosts are excluded.
         term, transfer: optional active-protocol override; see

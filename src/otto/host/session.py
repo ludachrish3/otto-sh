@@ -37,7 +37,7 @@ import logging
 from ..logger.mode import LogMode
 from ..result import CommandResult, Results
 from ..utils import Status
-from .host import ShellCommand
+from .host import _EXEC_REAP_TIMEOUT, DEFAULT_COMMAND_TIMEOUT, ShellCommand
 
 logger = logging.getLogger(__name__)
 
@@ -339,7 +339,7 @@ class ShellSession(ABC):
     async def expect(
         self,
         pattern: str | re.Pattern[str],
-        timeout: float = 30.0,
+        timeout: float = DEFAULT_COMMAND_TIMEOUT,
     ) -> str:
         """Wait for a pattern in the output stream.
 
@@ -366,7 +366,7 @@ class ShellSession(ABC):
         self,
         cmd: str,
         expects: list[Expect] | None = None,
-        timeout: float | None = None,
+        timeout: float = DEFAULT_COMMAND_TIMEOUT,
         on_output: Callable[[str], None] | None = None,
         redact: bool = False,
         write_progress: Callable[[int, int], None] | None = None,
@@ -382,8 +382,10 @@ class ShellSession(ABC):
                 appears in the output before the end sentinel, the response is
                 automatically sent. Expects are inherently optional — if the
                 pattern never appears, the end sentinel matches normally.
-            timeout: Optional timeout in seconds. On expiry, the session
-                attempts recovery via Ctrl+C and returns Status.Error.
+            timeout: Seconds before the command is considered hung. On expiry,
+                the session attempts recovery via Ctrl+C and returns
+                Status.Error. Defaults to :data:`~otto.host.host.DEFAULT_COMMAND_TIMEOUT`;
+                pass ``float("inf")`` for a deliberately unbounded command.
 
         Returns:
             CommandResult with exit code extracted from the sentinel.
@@ -403,13 +405,12 @@ class ShellSession(ABC):
         await self._ensure_ready()
         sink = on_output if on_output is not None else self._on_output
         try:
-            if timeout is not None:
-                return await asyncio.wait_for(
-                    self._run_cmd_inner(cmd, expects, sink, redact, write_progress),
-                    timeout=timeout,
-                )
-            return await self._run_cmd_inner(cmd, expects, sink, redact, write_progress)
-
+            # Always bounded: `inf` never fires, so an intentionally unbounded
+            # command needs no separate branch.
+            return await asyncio.wait_for(
+                self._run_cmd_inner(cmd, expects, sink, redact, write_progress),
+                timeout=timeout,
+            )
         except asyncio.TimeoutError:
             partial = await self._recover_session()
             return CommandResult(
@@ -417,6 +418,7 @@ class ShellSession(ABC):
                 value=f"Command timed out after {timeout}s" + (f"\n{partial}" if partial else ""),
                 command=cmd,
                 retcode=-1,
+                timed_out=True,
             )
         except asyncio.CancelledError:
             # External cancellation (e.g., asyncio.wait_for at the caller
@@ -1079,7 +1081,7 @@ class HostSession:
         self,
         cmds: str | ShellCommand | Sequence[str | ShellCommand],
         expects: Expect | list[Expect] | None = None,
-        timeout: float | None = 10.0,
+        timeout: float = DEFAULT_COMMAND_TIMEOUT,
         log: LogMode = LogMode.NORMAL,
     ) -> Results:
         """Execute one or more commands on this named session.
@@ -1090,12 +1092,23 @@ class HostSession:
         :class:`~otto.host.host.ShellCommand` override the run-level
         defaults; a scalar ``Expect`` tuple at the run level is normalized to a
         one-element list.
-        """
-        from .host import _normalize_expects, _resolve_command, _run_cmds_with_budget
 
+        *timeout* defaults to :data:`~otto.host.host.DEFAULT_COMMAND_TIMEOUT`
+        and behaves exactly as on :meth:`~otto.host.host.Host.run`: a
+        per-command bound for a single command, a cumulative budget for a
+        sequence. Pass ``float("inf")`` for a deliberately unbounded command.
+        """
+        from .host import (
+            _normalize_expects,
+            _resolve_command,
+            _run_cmds_with_budget,
+            _validate_timeout,
+        )
+
+        timeout = _validate_timeout(timeout)
         default_expects = _normalize_expects(expects)
 
-        async def _run_sc(sc: ShellCommand, t: float | None) -> CommandResult:
+        async def _run_sc(sc: ShellCommand, t: float) -> CommandResult:
             # _resolve_command collapsed the None sentinel into a concrete LogMode.
             mode = sc.log if sc.log is not None else LogMode.NORMAL
             if mode is not LogMode.NEVER:
@@ -1110,7 +1123,8 @@ class HostSession:
 
         if isinstance(cmds, (str, ShellCommand)):
             sc = _resolve_command(cmds, default_expects, timeout, log)
-            result = await _run_sc(sc, sc.timeout)
+            # _resolve_command collapsed the None sentinel into a concrete float.
+            result = await _run_sc(sc, sc.timeout if sc.timeout is not None else timeout)
             return Results.collect([result])
 
         resolved = [_resolve_command(c, default_expects, None, log) for c in cmds]
@@ -1126,9 +1140,12 @@ class HostSession:
     async def expect(
         self,
         pattern: str | re.Pattern[str],
-        timeout: float = 10.0,
+        timeout: float = DEFAULT_COMMAND_TIMEOUT,
     ) -> str:
-        """Wait for a pattern in this session's output. See :meth:`~otto.host.unix_host.UnixHost.expect`."""  # noqa: E501 — Sphinx xref
+        """Wait for a pattern in this session's output. See :meth:`~otto.host.host.BaseHost.expect`."""  # noqa: E501 — Sphinx xref
+        from .host import _validate_timeout
+
+        timeout = _validate_timeout(timeout)
         result = await self._session.expect(pattern, timeout)
         self._log_output(result, LogMode.NORMAL)
         return result
@@ -1166,7 +1183,9 @@ class _SessionProxyIO:
             self._mgr._log_command(text.rstrip(), log)  # noqa: SLF001 — intra-package access to SessionManager's log sink
         await self._session.send(text)
 
-    async def expect(self, pattern: str | re.Pattern[str], timeout: float = 10.0) -> str:
+    async def expect(
+        self, pattern: str | re.Pattern[str], timeout: float = DEFAULT_COMMAND_TIMEOUT
+    ) -> str:
         out = await self._session.expect(pattern, timeout)
         self._mgr._log_output(out, LogMode.NORMAL)  # noqa: SLF001 — intra-package access to SessionManager's log sink
         return out
@@ -1196,7 +1215,7 @@ class SessionManager:
         log_command: Callable[[str, LogMode], None] = lambda *_: None,
         log_output: Callable[[str, LogMode], None] = lambda *_: None,
         session_factory: "Callable[[], ShellSession] | None" = None,
-        exec_factory: "Callable[[str, float | None], Awaitable[CommandResult]] | None" = None,
+        exec_factory: "Callable[[str, float], Awaitable[CommandResult]] | None" = None,
         command_frame: CommandFrame | None = None,
         init_timeout: float | None = None,
         retry_backoff: float | None = None,
@@ -1496,7 +1515,7 @@ class SessionManager:
         self,
         cmd: str,
         expects: list[Expect] | None = None,
-        timeout: float | None = 10.0,
+        timeout: float = DEFAULT_COMMAND_TIMEOUT,
         log: LogMode = LogMode.NORMAL,
         write_progress: Callable[[int, int], None] | None = None,
     ) -> CommandResult:
@@ -1523,7 +1542,7 @@ class SessionManager:
     async def exec(
         self,
         cmd: str,
-        timeout: float | None = None,
+        timeout: float = DEFAULT_COMMAND_TIMEOUT,
         log: LogMode = LogMode.NORMAL,
     ) -> CommandResult:
         """Run *cmd* without sharing state with the default session.
@@ -1576,14 +1595,36 @@ class SessionManager:
                     stdin=asyncssh.DEVNULL,
                 )
                 lines: list[str] = []
-                try:
+
+                async def _drain() -> None:
                     async for raw_line in process.stdout:
                         line = raw_line.rstrip("\n")
                         lines.append(line)
                         if mode is not LogMode.NEVER:
                             self._log_output(line, mode)
+
+                try:
+                    await asyncio.wait_for(_drain(), timeout=timeout)
                 except asyncio.TimeoutError:
+                    # asyncssh's terminate() sends a signal to the *remote*
+                    # command, which (like a local subprocess) can ignore it —
+                    # so the reap must be bounded, and if it doesn't complete
+                    # in time we escalate to kill() (untrappable) rather than
+                    # leave the channel open indefinitely.
                     process.terminate()
+                    try:
+                        await asyncio.wait_for(process.wait(), timeout=_EXEC_REAP_TIMEOUT)
+                    except asyncio.TimeoutError:
+                        process.kill()
+                        with suppress(asyncio.TimeoutError):
+                            await asyncio.wait_for(process.wait(), timeout=_EXEC_REAP_TIMEOUT)
+                    return CommandResult(
+                        status=Status.Error,
+                        value=f"Command timed out after {timeout}s\n" + "\n".join(lines),
+                        command=cmd,
+                        retcode=-1,
+                        timed_out=True,
+                    )
                 result = await process.wait()
                 status = Status.Success if result.exit_status == 0 else Status.Failed
                 return CommandResult(
@@ -1760,7 +1801,7 @@ class SessionManager:
     async def expect(
         self,
         pattern: str | re.Pattern[str],
-        timeout: float = 10.0,
+        timeout: float = DEFAULT_COMMAND_TIMEOUT,
     ) -> str:
         """Wait for *pattern* in the default session's output, creating the session if needed."""
         await self._ensure_session()

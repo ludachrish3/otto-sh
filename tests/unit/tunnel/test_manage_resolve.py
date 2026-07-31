@@ -84,13 +84,19 @@ class TestResolveChain:
             asyncio.run(_resolve_chain(lab, [("a", None), ("b", None)]))
 
 
-def _container(cid: str, parent: FakeUnix, inspect_ip: str = "172.17.0.2"):
+def _container(
+    cid: str, parent: FakeUnix, inspect_ip: str = "172.17.0.2", *, inspect_timeout: bool = False
+):
     """A stand-in that IS a DockerContainerHost for the manage layer's isinstance check.
 
     Built via ``__new__`` so ``__post_init__`` (session manager, etc.) never
     runs; only the attributes the manage layer touches are set. The parent is
     a small proxy whose ``exec`` answers the ``docker inspect`` with a real
     ``CommandResult`` (global constraint: never SimpleNamespace fakes).
+
+    *inspect_timeout* makes the ``docker inspect`` call come back
+    ``timed_out=True`` instead of an ip, to exercise ``_container_ip``'s
+    timeout-to-host-named-RuntimeError conversion.
     """
     from otto.host.docker_host import DockerContainerHost
 
@@ -101,6 +107,14 @@ def _container(cid: str, parent: FakeUnix, inspect_ip: str = "172.17.0.2"):
 
         async def exec(self, cmd: str, timeout: float | None = None, **_: object):
             self.calls.append(cmd)
+            if inspect_timeout:
+                return CommandResult(
+                    status=Status.Error,
+                    value=f"Command timed out after {timeout}s",
+                    command=cmd,
+                    retcode=-1,
+                    timed_out=True,
+                )
             return CommandResult(status=Status.Success, value=f"{inspect_ip}\n", command=cmd)
 
     ctr = DockerContainerHost.__new__(DockerContainerHost)
@@ -142,6 +156,19 @@ class TestContainerRules:
             asyncio.run(
                 _resolve_chain(lab, [(other.id, None), (parent.id, None), (ctr.id, "eth0")])
             )
+
+    def test_inspect_timeout_raises_host_named(self) -> None:
+        """``docker inspect`` timing out on the parent is a host-named
+        RuntimeError (spec §9), not a generic failure — ``_container_ip``
+        converts ``CommandResult.timed_out`` rather than catching a raised
+        ``asyncio.TimeoutError`` (the host call no longer raises one)."""
+        parent = FakeUnix("carrot_seed", ip="10.10.200.11")
+        ctr = _container("carrot_seed.repo2.oldos", parent, inspect_timeout=True)
+        other = FakeUnix("tomato_soil", ip="10.10.200.12")
+        lab = _lab(**{parent.id: parent, ctr.id: ctr, other.id: other})
+
+        with pytest.raises(RuntimeError, match="timed out inspecting container"):
+            asyncio.run(_resolve_chain(lab, [(other.id, None), (parent.id, None), (ctr.id, None)]))
 
 
 def _real_placeholder(running_cid: str = "", inspect_ip: str = "172.17.0.2"):

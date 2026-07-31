@@ -220,7 +220,7 @@ def build_cli_binding(func: Callable[..., Any]) -> CliBinding:
             opt_decls = (opt.name,) if opt.name else ()
             # See the list/dict OPTION branch above for why `...` must precede
             # `*opt_decls` — `typer.Option`'s param_decls are varargs after `default`.
-            ann = Annotated[norm, typer.Option(..., *opt_decls, help=opt.help)]
+            ann = Annotated[norm, typer.Option(..., *opt_decls, help=opt.help, min=opt.min)]
             kind = inspect.Parameter.KEYWORD_ONLY
         else:  # attach explicit Typer annotation so KEYWORD_ONLY wrappers still render correctly
             if default is inspect.Parameter.empty:

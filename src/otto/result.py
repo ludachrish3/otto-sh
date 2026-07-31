@@ -68,6 +68,14 @@ class CommandResult(Result):
     retcode: int = -1
     """Shell return code; -1 means the command never ran."""
 
+    timed_out: bool = False
+    """True when the command was killed by its timeout rather than exiting.
+
+    Distinguishes a timeout from an ordinary failure without string-matching
+    :attr:`~otto.result.Result.value`; ``retcode`` cannot, since ``-1`` also
+    means "never ran" and "skipped: cumulative budget exhausted".
+    """
+
     @override
     @property
     def exit_code(self) -> int:

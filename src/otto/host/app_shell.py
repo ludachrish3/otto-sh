@@ -39,6 +39,7 @@ from otto.result import ShellResult
 from otto.utils import Status
 
 from .command_frame import _ANSI_RE
+from .host import DEFAULT_COMMAND_TIMEOUT
 
 if TYPE_CHECKING:
     from .session import HostSession
@@ -273,7 +274,7 @@ class AppShell:
     """Cred login to become before launching (Part-1 proxy machinery); ``None``
     keeps the session's current user."""
 
-    cmd_timeout: ClassVar[float] = 30.0
+    cmd_timeout: ClassVar[float] = DEFAULT_COMMAND_TIMEOUT
     """Class-level default seconds to wait for the prompt on launch and
     :meth:`cmd`. Overridable per-session via ``timeout=`` on :meth:`attach` /
     :meth:`~otto.host.host.BaseHost.app_shell` (governs the launch wait and

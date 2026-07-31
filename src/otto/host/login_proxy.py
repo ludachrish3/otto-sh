@@ -20,6 +20,7 @@ from typing import Any, Protocol, runtime_checkable
 from ..logger.mode import LogMode
 from ..registry import Registry, caller_module
 from .command_frame import BashFrame, SessionMarkers
+from .host import DEFAULT_COMMAND_TIMEOUT
 from .shell_liveness import confirm_live
 
 
@@ -58,7 +59,9 @@ class ProxyIO(Protocol):
         """Send text to the proxy IO."""
         ...
 
-    async def expect(self, pattern: str | re.Pattern[str], timeout: float = 10.0) -> str:
+    async def expect(
+        self, pattern: str | re.Pattern[str], timeout: float = DEFAULT_COMMAND_TIMEOUT
+    ) -> str:
         """Expect a pattern and return the matched output."""
         ...
 

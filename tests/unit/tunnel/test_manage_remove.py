@@ -1,6 +1,7 @@
 """``remove_tunnel`` / ``remove_all_tunnels``: kill + post-kill verify (spec §10)."""
 
 import asyncio
+import logging
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -36,6 +37,8 @@ class FakeHost:
     """If False, the ``kill`` command runs but reports a Failed result."""
     kill_raises: bool = False
     """If True, the ``kill`` command raises (host unreachable mid-reap)."""
+    kill_timeout: bool = False
+    """If True, the ``kill`` command comes back ``timed_out=True`` instead of acking."""
     ps_texts: list = field(default_factory=lambda: [""])
     commands: list = field(default_factory=list)
 
@@ -49,6 +52,14 @@ class FakeHost:
         if cmd.startswith("kill "):
             if self.kill_raises:
                 raise ConnectionError("kill failed")
+            if self.kill_timeout:
+                return CommandResult(
+                    status=Status.Error,
+                    value=f"Command timed out after {timeout}s",
+                    command=cmd,
+                    retcode=-1,
+                    timed_out=True,
+                )
             if not self.kill_ok:
                 return CommandResult(status=Status.Failed, value="boom", command=cmd, retcode=1)
             return CommandResult(status=Status.Success, value="", command=cmd)
@@ -184,6 +195,50 @@ class TestRemoveTunnel:
 
         report = asyncio.run(remove_tunnel(lab, tunnel.id))
 
+        assert report.removed_ids == [tunnel.id]
+        assert "a" not in report.killed
+        assert report.killed == {"b": sorted(pids_b)}
+        assert report.unreachable == ["a"]
+        assert report.survivors == []
+        assert any(cmd.startswith("kill ") for cmd in a.commands)
+
+    def test_kill_timeout_marks_unreachable_and_continues(self) -> None:
+        # A timed-out kill exec (CommandResult.timed_out) must land exactly
+        # like a failed/unreachable kill — logged with its OWN "timed out
+        # reaping" message (not the generic "kill failed"), host added to
+        # `unreachable`, reap CONTINUES to the other hosts — never a raise
+        # that aborts the whole reap (the 4 raising sites don't apply here).
+        # A plain report-shape assertion can't tell "the timed_out branch
+        # ran" from "it fell through to the generic is_ok failure branch"
+        # (both produce the same RemovedReport) — the log message is what
+        # pins that a distinct branch fired, so capture it directly on the
+        # module logger (caplog's root-propagation can be toggled off by
+        # unrelated tests; see test_local_host.py's own note on this).
+        tunnel = Tunnel(protocol="tcp", service_port=8080, path=(TunnelHop("a"), TunnelHop("b")))
+        carrier_fwd, carrier_rev = _LO, _LO + 1
+        text_a, _pids_a = _full_ps(tunnel, "a", carrier_fwd, carrier_rev, 100)
+        text_b, pids_b = _full_ps(tunnel, "b", carrier_fwd, carrier_rev, 200)
+        a = FakeHost("a", ps_texts=[text_a, text_a], kill_timeout=True)
+        b = FakeHost("b", ps_texts=[text_b, ""])
+        lab = _lab(a=a, b=b)
+
+        captured: list[logging.LogRecord] = []
+
+        class _Capture(logging.Handler):
+            def emit(self, record: logging.LogRecord) -> None:
+                captured.append(record)
+
+        manage_logger = logging.getLogger("otto.tunnel.manage")
+        handler = _Capture()
+        manage_logger.addHandler(handler)
+        try:
+            report = asyncio.run(remove_tunnel(lab, tunnel.id))
+        finally:
+            manage_logger.removeHandler(handler)
+
+        messages = [r.getMessage() for r in captured]
+        assert any("timed out reaping host 'a'" in m for m in messages)
+        assert not any("kill failed" in m for m in messages)
         assert report.removed_ids == [tunnel.id]
         assert "a" not in report.killed
         assert report.killed == {"b": sorted(pids_b)}

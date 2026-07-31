@@ -1,6 +1,7 @@
 """Async host abstraction: the Host protocol, BaseHost ABC, and run helpers."""
 
 import asyncio
+import math
 import re
 import uuid
 from abc import ABC
@@ -51,6 +52,39 @@ if TYPE_CHECKING:
 # Runtime type alias — mirrored from session.Expect so get_type_hints can resolve
 # it without a circular import (session.py imports from host.py at module level).
 Expect = tuple[str | re.Pattern[str], str]
+
+DEFAULT_COMMAND_TIMEOUT = 30.0
+"""Seconds a single command may run before otto gives up on it.
+
+Applies to :meth:`Host.run`, :meth:`Host.exec` and
+:meth:`~otto.host.session.HostSession.run` when no explicit timeout is
+given. Pass ``float("inf")`` for a deliberately unbounded command; there is
+no other way to disable the bound.
+"""
+
+_EXEC_REAP_TIMEOUT = 5.0
+"""Seconds to wait for a terminated command to report its exit status.
+
+A process can ignore SIGTERM, so the post-terminate reap must itself be
+bounded — an unbounded wait here would defeat the timeout it implements.
+"""
+
+
+def _validate_timeout(timeout: float) -> float:
+    """Reject timeout values ``asyncio.wait_for`` would silently misinterpret.
+
+    Annotations are not enforced at runtime, so this guards the public entry
+    points against callers a type checker never sees. ``float("inf")`` is
+    allowed — it is the supported spelling for an unbounded command.
+    """
+    if isinstance(timeout, bool) or not isinstance(timeout, (int, float)):
+        raise TypeError(f"timeout must be a number, got {type(timeout).__name__}: {timeout!r}")
+    if math.isnan(timeout):
+        raise ValueError("timeout must not be NaN")
+    if timeout < 0:
+        raise ValueError(f"timeout must be >= 0, got {timeout!r}")
+    return float(timeout)
+
 
 logger = getLogger(__name__)
 
@@ -118,7 +152,17 @@ def _resolve_command(
     default_timeout: float | None,
     default_log: LogMode = LogMode.NORMAL,
 ) -> ShellCommand:
-    """Coerce ``item`` to a ``ShellCommand`` whose ``None`` fields inherit from defaults."""
+    """Coerce ``item`` to a ``ShellCommand`` whose ``None`` fields inherit from defaults.
+
+    A non-``None`` ``item.timeout`` is validated here — ``ShellCommand`` is a
+    public, exported dataclass, so ``item.timeout`` is exactly the kind of
+    caller-supplied value a type checker never sees (a downstream suite
+    building ``ShellCommand(cmd, timeout=float("nan"))`` directly). Leaving it
+    unvalidated would forward NaN/negative values straight to
+    ``asyncio.wait_for``, bypassing the same guard every other entry point
+    applies. ``None`` is passed through untouched — it means "inherit
+    ``default_timeout``", which is already validated by the caller.
+    """
     if isinstance(item, str):
         return ShellCommand(
             cmd=item, expects=default_expects, timeout=default_timeout, log=default_log
@@ -126,15 +170,15 @@ def _resolve_command(
     return ShellCommand(
         cmd=item.cmd,
         expects=item.expects if item.expects is not None else default_expects,
-        timeout=item.timeout if item.timeout is not None else default_timeout,
+        timeout=(_validate_timeout(item.timeout) if item.timeout is not None else default_timeout),
         log=item.log if item.log is not None else default_log,
     )
 
 
 async def _run_cmds_with_budget(
-    run_one: Callable[[ShellCommand, float | None], Awaitable[CommandResult]],
+    run_one: Callable[[ShellCommand, float], Awaitable[CommandResult]],
     cmds: list[ShellCommand],
-    timeout: float | None,
+    timeout: float,
 ) -> Results:
     """Run a list of commands sequentially under a shared timeout budget.
 
@@ -142,37 +186,32 @@ async def _run_cmds_with_budget(
     the remaining budget; when the budget is exhausted, remaining commands are
     skipped with ``Status.Error``. Used by both ``BaseHost.run`` and
     ``HostSession.run`` so the budgeting logic lives in one place.
+
+    *timeout* is always a real number — the public entry points validate it —
+    so there is no unbounded branch here. ``float("inf")`` yields an infinite
+    deadline, which every comparison below handles naturally.
     """
-    deadline: float | None = None
-    if timeout is not None:
-        deadline = asyncio.get_running_loop().time() + timeout
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
 
     entries: list[CommandResult] = []
 
     for sc in cmds:
-        remaining: float | None = None
-        if deadline is not None:
-            remaining = deadline - asyncio.get_running_loop().time()
-            if remaining <= 0:
-                entries.append(
-                    CommandResult(
-                        status=Status.Error,
-                        value="Skipped: cumulative timeout budget exhausted",
-                        command=sc.cmd,
-                        retcode=-1,
-                    )
+        remaining = deadline - loop.time()
+        if remaining <= 0:
+            entries.append(
+                CommandResult(
+                    status=Status.Error,
+                    value="Skipped: cumulative timeout budget exhausted",
+                    command=sc.cmd,
+                    retcode=-1,
+                    timed_out=True,
                 )
-                continue
+            )
+            continue
 
-        if sc.timeout is None:
-            effective = remaining
-        elif remaining is None:
-            effective = sc.timeout
-        else:
-            effective = min(sc.timeout, remaining)
-
-        result = await run_one(sc, effective)
-        entries.append(result)
+        effective = remaining if sc.timeout is None else min(sc.timeout, remaining)
+        entries.append(await run_one(sc, effective))
 
     return Results.collect(entries)
 
@@ -216,7 +255,7 @@ class Host(Protocol):
         self,
         cmds: str | ShellCommand | Sequence[str | ShellCommand],
         expects: Expect | list[Expect] | None = None,
-        timeout: float | None = None,
+        timeout: float = DEFAULT_COMMAND_TIMEOUT,
         log: LogMode = LogMode.NORMAL,
         sudo: bool = False,
     ) -> Results:
@@ -228,8 +267,9 @@ class Host(Protocol):
             expects: Optional ``(pattern, response)`` pair(s) for interactive
                 prompts. Inherited by each command unless overridden per-command.
             timeout: Per-command timeout for a single command, or a cumulative
-                budget shared across all commands in a sequence. ``None`` means
-                no limit.
+                budget shared across all commands in a sequence. Defaults to
+                :data:`DEFAULT_COMMAND_TIMEOUT`. Execution is always bounded;
+                pass ``float("inf")`` for a deliberately unbounded command.
             log: Whether to log command output for this call.
             sudo: If ``True``, each command is run with elevated privileges.
                 Implementations that do not support elevation raise
@@ -244,7 +284,7 @@ class Host(Protocol):
     async def exec(
         self,
         cmd: str,
-        timeout: float | None = None,
+        timeout: float = DEFAULT_COMMAND_TIMEOUT,
         log: LogMode = LogMode.NORMAL,
     ) -> CommandResult:
         """Run a single command outside the typical stateful ``run`` workflow.
@@ -291,7 +331,7 @@ class Host(Protocol):
     async def expect(
         self,
         pattern: str | re.Pattern[str],
-        timeout: float = 30.0,
+        timeout: float = DEFAULT_COMMAND_TIMEOUT,
     ) -> str:
         """Wait for *pattern* to appear in the host's session output.
 
@@ -620,8 +660,9 @@ class BaseHost(ABC):
         ],
         expects: Annotated[Expect | list[Expect] | None, Exclude] = None,
         timeout: Annotated[
-            float | None, Opt(help="Per-command/cumulative timeout (seconds).")
-        ] = None,
+            float,
+            Opt(help="Per-command/cumulative timeout (seconds); use inf for unbounded.", min=0.0),
+        ] = DEFAULT_COMMAND_TIMEOUT,
         log: Annotated[LogMode, Exclude] = LogMode.NORMAL,
         sudo: bool = False,
     ) -> Results:
@@ -643,6 +684,8 @@ class BaseHost(ABC):
                 the remaining budget; when exhausted, remaining commands are skipped
                 with ``Status.Error``. :attr:`ShellCommand.timeout` caps the per-command
                 value but is still bounded by the remaining budget.
+                Defaults to :data:`DEFAULT_COMMAND_TIMEOUT`; pass
+                ``float("inf")`` to opt out of the bound.
             sudo: If ``True``, each command is rewritten through ``_elevate`` before
                 execution. Hosts that do not support elevation (e.g. embedded/RTOS) raise
                 :exc:`NotImplementedError` — see ``_elevate``.
@@ -654,6 +697,7 @@ class BaseHost(ABC):
         See Also:
             :meth:`exec`: stateless, concurrent-safe alternative for one-off commands.
         """
+        timeout = _validate_timeout(timeout)
         default_expects = _normalize_expects(expects)
         if isinstance(cmds, (str, ShellCommand)):
             resolved = [_resolve_command(cmds, default_expects, timeout, log)]
@@ -663,7 +707,8 @@ class BaseHost(ABC):
             result = await self._run_one(
                 single.cmd,
                 expects=_normalize_expects(single.expects),
-                timeout=single.timeout,
+                # _resolve_command collapsed the None sentinel into a concrete float.
+                timeout=single.timeout if single.timeout is not None else timeout,
                 # _resolve_command collapsed the None sentinel into a concrete LogMode.
                 log=single.log if single.log is not None else LogMode.NORMAL,
             )
@@ -673,7 +718,7 @@ class BaseHost(ABC):
         if sudo:
             resolved = [self._apply_sudo(sc) for sc in resolved]
 
-        async def _run_sc(sc: ShellCommand, t: float | None) -> CommandResult:
+        async def _run_sc(sc: ShellCommand, t: float) -> CommandResult:
             return await self._run_one(
                 sc.cmd,
                 expects=_normalize_expects(sc.expects),
@@ -691,8 +736,8 @@ class BaseHost(ABC):
     async def _run_one(
         self,
         cmd: str,
+        timeout: float,
         expects: list[Expect] | None = None,
-        timeout: float | None = None,
         log: LogMode = LogMode.NORMAL,
     ) -> CommandResult:
         """Per-command runner for the persistent shell session. Subclasses override."""
@@ -701,10 +746,34 @@ class BaseHost(ABC):
     async def exec(
         self,
         cmd: str,
-        timeout: float | None = None,
+        timeout: float = DEFAULT_COMMAND_TIMEOUT,
         log: LogMode = LogMode.NORMAL,
     ) -> CommandResult:
-        """Run a single command outside the persistent shell session. Subclasses must override."""
+        """Run a single command outside the persistent shell session.
+
+        Validates *timeout* and delegates to ``_exec_one``, which each host
+        family implements. Do not override this method — override
+        ``_exec_one``, so the validation cannot be bypassed.
+
+        Args:
+            cmd: Shell command to run.
+            timeout: Seconds before the command is abandoned. Defaults to
+                :data:`DEFAULT_COMMAND_TIMEOUT`; pass ``float("inf")`` for a
+                deliberately unbounded command.
+            log: Logging disposition for this call.
+        """
+        timeout = _validate_timeout(timeout)
+        if is_dry_run():
+            return self._dry_run_result(cmd)
+        return await self._exec_one(cmd, timeout=timeout, log=log)
+
+    async def _exec_one(
+        self,
+        cmd: str,
+        timeout: float,
+        log: LogMode = LogMode.NORMAL,
+    ) -> CommandResult:
+        """Family-specific stateless command runner. Subclasses override."""
         raise NotImplementedError from None
 
     async def open_session(
@@ -751,9 +820,34 @@ class BaseHost(ABC):
     async def expect(
         self,
         pattern: str | re.Pattern[str],
-        timeout: float = 30.0,
+        timeout: float = DEFAULT_COMMAND_TIMEOUT,
     ) -> str:
-        """Wait for *pattern* in the session output. Subclasses must override."""
+        """Wait for *pattern* in the session output.
+
+        Validates *timeout* and delegates to ``_expect_one``. Do not
+        override this method — override ``_expect_one``, so the validation
+        and the advertised default cannot drift per host family.
+
+        Args:
+            pattern: A literal string or compiled regex to match against output.
+            timeout: Maximum seconds to wait. Defaults to
+                :data:`DEFAULT_COMMAND_TIMEOUT`; pass ``float("inf")`` to wait
+                indefinitely.
+        """
+        timeout = _validate_timeout(timeout)
+        if is_dry_run():
+            self._log_command(
+                "[DRY RUN] expect() skipped — pattern would never match without a live session"
+            )
+            return ""
+        return await self._expect_one(pattern, timeout)
+
+    async def _expect_one(
+        self,
+        pattern: str | re.Pattern[str],
+        timeout: float,
+    ) -> str:
+        """Family-specific pattern wait. Subclasses override."""
         raise NotImplementedError from None
 
     ####################

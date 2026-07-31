@@ -23,7 +23,7 @@ state like the working directory persists between calls:
 ```{doctest}
 >>> host = LocalHost()
 >>> run(host.run("cd /tmp"))
-Results(status=<Status.Success: 0>, value=[CommandResult(status=<Status.Success: 0>, value='', msg='', command='cd /tmp', retcode=0)], msg='')
+Results(status=<Status.Success: 0>, value=[CommandResult(status=<Status.Success: 0>, value='', msg='', command='cd /tmp', retcode=0, timed_out=False)], msg='')
 >>> result = run(host.run("pwd")).only
 >>> result.value.strip()
 '/tmp'

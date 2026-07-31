@@ -16,7 +16,10 @@ are *derived* from results.
   (Success or Skipped), never the payload — `if result:` always asks "did it
   work?".
 - {class}`~otto.result.CommandResult` — one shell command: adds the `command`
-  string and the shell `retcode` (`-1` means the command never ran).
+  string, the shell `retcode`, and `timed_out`. `retcode -1` no longer implies
+  "never ran" on its own — it is shared by "never ran", "timed out", and
+  "skipped: cumulative budget exhausted". `timed_out` is how a caller tells a
+  timeout apart from an ordinary failure, since `retcode` alone cannot.
 - {class}`~otto.result.Results` — the aggregate `run()` returns: a `Result`
   that is also a `Sequence[CommandResult]`. Its status is the first non-ok
   entry's status; `only` asserts exactly one command ran and returns it;

@@ -4,6 +4,8 @@ import asyncio
 from dataclasses import dataclass, field
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
+
 from otto.logger.mode import LogMode
 from otto.result import CommandResult
 from otto.tunnel.discovery import (
@@ -41,13 +43,21 @@ class FakeHost:
     ps_text: str = ""
     has_bash: bool = True
     fail: bool = False
-    slow: bool = False
+    timeout: bool = False
+    """The scan ``exec`` comes back ``timed_out=True`` instead of a reply
+    (the host's own timeout fires; it never raises ``asyncio.TimeoutError``)."""
     commands: list[str] = field(default_factory=list)
 
     async def exec(self, cmd: str, timeout: float | None = None, **_: object) -> CommandResult:
         self.commands.append(cmd)
-        if self.slow:
-            await asyncio.sleep(3600)
+        if self.timeout:
+            return CommandResult(
+                status=Status.Error,
+                value=f"Command timed out after {timeout}s",
+                command=cmd,
+                retcode=-1,
+                timed_out=True,
+            )
         if self.fail:
             raise ConnectionError("boom")
         return CommandResult(status=Status.Success, value=self.ps_text, command=cmd)
@@ -112,9 +122,13 @@ class TestDiscoverTunnels:
         assert d.missing == {("c", Direction.FWD, Role.RELAY), ("c", Direction.REV, Role.RELAY)}
         assert d.status == "degraded (4/6)"
 
-    def test_unreachable_chain_host_is_uncertain_not_degraded(self) -> None:
+    @pytest.mark.parametrize("attr", ["fail", "timeout"])
+    def test_unreachable_chain_host_is_uncertain_not_degraded(self, attr: str) -> None:
+        # A scan that raises (fail) and a scan that comes back timed_out=True
+        # (timeout — no longer a raised asyncio.TimeoutError) must be handled
+        # identically by discover_tunnels: unreachable, not degraded/missing.
         hosts = {h: FakeHost(h, _full_ps_for(h)) for h in ("a", "c", "b")}
-        hosts["c"].fail = True
+        setattr(hosts["c"], attr, True)
         result = asyncio.run(discover_tunnels(FakeLab(hosts)))
         assert result.unreachable == ["c"]
         (d,) = result.tunnels

@@ -109,6 +109,10 @@ async def test_build_one_runs_when_image_missing(tmp_path):
     assert status is Status.Success
     cmds = [c.args[0] for c in parent.exec.call_args_list]
     assert any(c.startswith("docker build ") for c in cmds), cmds
+    # `tar -xf` (extracting the just-staged build context) must be unbounded
+    # — its duration IS the extraction, which scales with the context size.
+    tar_call = next(c for c in parent.exec.call_args_list if c.args[0].startswith("tar -xf "))
+    assert tar_call.kwargs.get("timeout") == float("inf")
 
 
 @pytest.mark.asyncio

@@ -6,6 +6,8 @@ donate surplus to slower ones.
 """
 
 import asyncio
+import contextlib
+import os
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -34,12 +36,17 @@ class TestRunTimeout:
     """Unit tests for deadline-based timeout propagation."""
 
     @pytest.mark.asyncio
-    async def test_no_timeout_passes_none_to_run_one(self, host: UnixHost):
-        """Without timeout, _run_one receives no explicit timeout."""
+    async def test_no_timeout_uses_the_default_budget(self, host: UnixHost):
+        """Without an explicit timeout, the list form budgets DEFAULT_COMMAND_TIMEOUT."""
+        from otto.host.host import DEFAULT_COMMAND_TIMEOUT
+
         ok = CommandResult(status=Status.Success, value="hi", command="echo hi", retcode=0)
         with patch.object(host, "_run_one", new_callable=AsyncMock, return_value=ok) as mock:
             await host.run(["echo hi"])
-        mock.assert_called_once_with("echo hi", expects=None, timeout=None, log=LogMode.NORMAL)
+        actual = mock.call_args.kwargs["timeout"]
+        # List form = cumulative budget, so this is just under the full default.
+        assert 0 < actual <= DEFAULT_COMMAND_TIMEOUT
+        assert actual > DEFAULT_COMMAND_TIMEOUT - 1.0
 
     @pytest.mark.asyncio
     async def test_timeout_passes_remaining_to_run_one(self, host: UnixHost):
@@ -173,4 +180,381 @@ class TestRunTimeoutIntegration:
             assert all(r.status == Status.Success for r in result)
             assert "done" in result[2].value
         finally:
+            await host.close()
+
+
+class TestValidateTimeout:
+    """The entry-point validator rejects values asyncio.wait_for misreads."""
+
+    def test_default_is_thirty_seconds(self):
+        from otto.host.host import DEFAULT_COMMAND_TIMEOUT
+
+        assert DEFAULT_COMMAND_TIMEOUT == 30.0
+
+    @pytest.mark.parametrize("good", [0, 0.0, 0.5, 30.0, 3600, float("inf")])
+    def test_accepts_non_negative_numbers_and_inf(self, good):
+        from otto.host.host import _validate_timeout
+
+        assert _validate_timeout(good) == float(good)
+
+    # `None`/str/bool are deliberately invalid per the annotation; tests/ is
+    # excluded from ty (pyproject.toml [tool.ty.src] exclude), so passing them
+    # here needs no suppression.
+    @pytest.mark.parametrize("bad", [None, "30", True, False, [1]])
+    def test_rejects_non_numbers(self, bad):
+        from otto.host.host import _validate_timeout
+
+        with pytest.raises(TypeError, match="timeout must be a number"):
+            _validate_timeout(bad)
+
+    def test_rejects_nan(self):
+        from otto.host.host import _validate_timeout
+
+        with pytest.raises(ValueError, match="must not be NaN"):
+            _validate_timeout(float("nan"))
+
+    @pytest.mark.parametrize("bad", [-1, -0.001, float("-inf")])
+    def test_rejects_negatives_including_neg_inf(self, bad):
+        from otto.host.host import _validate_timeout
+
+        with pytest.raises(ValueError, match="must be >= 0"):
+            _validate_timeout(bad)
+
+
+class TestTimedOutFlag:
+    """Every timeout path marks the result, so callers need no string matching."""
+
+    def test_defaults_to_false(self):
+        r = CommandResult(status=Status.Success, value="", command="x", retcode=0)
+        assert r.timed_out is False
+
+    @pytest.mark.asyncio
+    async def test_local_exec_timeout_sets_flag(self):
+        host = LocalHost(log=LogMode.QUIET)
+        try:
+            # `exec` (not a bare `sleep 10`) so dash execs sleep in place of
+            # the shell instead of forking it as a child: proc.terminate()
+            # then kills the actual sleep directly. A bare `sleep 10` leaves
+            # dash's forked grandchild running past the timeout, holding the
+            # stdout pipe open for the full 10s and tripping the suite's
+            # asyncio-transport-leak detector (tests/_fixtures/_transport_leaks.py)
+            # on an unrelated later test.
+            result = await host.exec("exec sleep 10", timeout=0.1)
+        finally:
+            await host.close()
+        assert result.status == Status.Error
+        assert result.timed_out is True
+        assert "timed out" in result.value
+
+    @pytest.mark.asyncio
+    async def test_budget_exhausted_skip_sets_flag(self, host: UnixHost):
+        async def slow_cmd(cmd, **kwargs):
+            await asyncio.sleep(0.08)
+            return CommandResult(status=Status.Success, value="ok", command=cmd, retcode=0)
+
+        with patch.object(host, "_run_one", new_callable=AsyncMock, side_effect=slow_cmd):
+            results = await host.run(["slow1", "slow2", "skipped"], timeout=0.1)
+
+        skipped = [r for r in results if "budget exhausted" in r.value]
+        assert skipped, "expected at least one skipped command"
+        assert all(r.timed_out for r in skipped)
+
+    @pytest.mark.asyncio
+    async def test_reap_is_bounded_when_process_ignores_sigterm(self, monkeypatch):
+        """proc.terminate() can be ignored; the post-terminate reap must not hang.
+
+        The spawned command traps and drops SIGTERM (so `proc.terminate()` has
+        no effect) and is `exec`'d in place — a single process, not forked —
+        so a `proc.kill()` cleanup can't leave an orphaned child behind (see
+        `test_local_exec_timeout_sets_flag` above for what happens when a
+        command DOES fork). `_EXEC_REAP_TIMEOUT` is monkeypatched down so the
+        test stays fast; the outer `asyncio.wait_for` bounds the whole call so
+        a regression to an unbounded reap FAILS this test instead of hanging
+        the suite.
+
+        Also asserts the real OS process is actually gone once the call
+        returns: giving up on the bounded reap without escalating to SIGKILL
+        would leave the ignored-SIGTERM process running with our pipes still
+        held open -- the same leak class as `test_local_exec_timeout_sets_flag`
+        above, but reachable from production code via a plain `LocalHost.exec()`
+        timeout, not just a badly-chosen test command.
+        """
+        import otto.host.local_host as local_host_mod
+
+        monkeypatch.setattr(local_host_mod, "_EXEC_REAP_TIMEOUT", 0.2)
+
+        real_create_subprocess_shell = asyncio.create_subprocess_shell
+        spawned: list[asyncio.subprocess.Process] = []
+
+        async def capturing_create_subprocess_shell(*args, **kwargs):
+            proc = await real_create_subprocess_shell(*args, **kwargs)
+            spawned.append(proc)
+            return proc
+
+        # LocalHost doesn't expose the Process it creates, and proc.terminate()
+        # is exactly what this test proves is ineffective here — so cleanup
+        # (and the liveness check below) has no route to the real OS process
+        # except capturing it ourselves.
+        monkeypatch.setattr(asyncio, "create_subprocess_shell", capturing_create_subprocess_shell)
+
+        host = LocalHost(log=LogMode.QUIET)
+        try:
+            result = await asyncio.wait_for(
+                host.exec(
+                    'exec python3 -c "import signal, time; '
+                    'signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(30)"',
+                    timeout=0.1,
+                ),
+                timeout=5.0,
+            )
+            assert result.status == Status.Error
+            assert result.timed_out is True
+
+            assert spawned, "expected the subprocess-shell spawn to be captured"
+            pid = spawned[0].pid
+            with pytest.raises(ProcessLookupError):
+                os.kill(pid, 0)
+        finally:
+            for proc in spawned:
+                if proc.returncode is None:
+                    proc.kill()
+                    with contextlib.suppress(Exception):
+                        await asyncio.wait_for(proc.wait(), timeout=2.0)
+            await host.close()
+
+
+class TestExecTemplate:
+    """exec() validates once in BaseHost and delegates to _exec_one."""
+
+    @pytest.mark.asyncio
+    async def test_exec_forwards_the_default(self, host: UnixHost):
+        from otto.host.host import DEFAULT_COMMAND_TIMEOUT
+
+        ok = CommandResult(status=Status.Success, value="", command="x", retcode=0)
+        with patch.object(host, "_exec_one", new_callable=AsyncMock, return_value=ok) as mock:
+            await host.exec("x")
+        assert mock.await_args.kwargs["timeout"] == DEFAULT_COMMAND_TIMEOUT
+
+    @pytest.mark.asyncio
+    async def test_exec_rejects_bad_timeout_before_dispatch(self, host: UnixHost):
+        with (
+            patch.object(host, "_exec_one", new_callable=AsyncMock) as mock,
+            pytest.raises(ValueError, match="must be >= 0"),
+        ):
+            await host.exec("x", timeout=-1)
+        mock.assert_not_awaited()
+
+    def test_no_subclass_overrides_exec(self):
+        """exec is final; family behavior belongs in _exec_one."""
+        from otto.host.docker_host import DockerContainerHost
+        from otto.host.embedded_host import EmbeddedHost
+        from otto.host.host import BaseHost
+        from otto.host.local_host import LocalHost
+
+        for cls in (LocalHost, UnixHost, EmbeddedHost, DockerContainerHost):
+            assert "exec" not in vars(cls), f"{cls.__name__} must override _exec_one, not exec"
+            assert "_exec_one" in vars(cls), f"{cls.__name__} must implement _exec_one"
+            assert BaseHost.exec is cls.exec
+
+
+class TestNoUnboundedBranch:
+    """Every command goes through wait_for; inf needs no bypass."""
+
+    def test_run_cmds_with_budget_takes_a_plain_float(self):
+        import inspect
+
+        from otto.host.host import _run_cmds_with_budget
+
+        ann = inspect.signature(_run_cmds_with_budget).parameters["timeout"].annotation
+        assert ann in (float, "float"), f"expected plain float, got {ann!r}"
+
+    @pytest.mark.asyncio
+    async def test_infinite_timeout_still_completes(self):
+        """inf flows through the same wait_for path as any other value."""
+        host = LocalHost(log=LogMode.QUIET)
+        try:
+            result = await host.exec("echo hi", timeout=float("inf"))
+        finally:
+            await host.close()
+        assert result.status == Status.Success
+        assert "hi" in result.value
+        assert result.timed_out is False
+
+
+class TestExpectSurfaceConsistency:
+    """expect advertises one default everywhere, and the impls honour it."""
+
+    def test_protocol_and_impls_agree_on_the_default(self):
+        """Every caller-facing expect() surface defaults to the same constant.
+
+        _expect_one hooks are deliberately excluded here — they take no
+        default of their own (see test_expect_one_hooks_take_no_default), the
+        same shape as _exec_one.
+        """
+        import inspect
+
+        from otto.host.host import DEFAULT_COMMAND_TIMEOUT, BaseHost, Host
+        from otto.host.session import HostSession
+
+        surfaces = [
+            Host.expect,
+            BaseHost.expect,
+            HostSession.expect,
+        ]
+        for fn in surfaces:
+            default = inspect.signature(fn).parameters["timeout"].default
+            assert default == DEFAULT_COMMAND_TIMEOUT, f"{fn.__qualname__} disagrees: {default}"
+
+    def test_expect_one_hooks_take_no_default(self):
+        """_expect_one must not carry its own default — only expect() does.
+
+        A default on the hook is dead code that can only drift, which is
+        exactly how expect() came to contradict its own protocol before this
+        fix (protocol/template promised 30.0, every hook silently used 10.0).
+        """
+        import inspect
+
+        from otto.host.docker_host import DockerContainerHost
+        from otto.host.embedded_host import EmbeddedHost
+        from otto.host.local_host import LocalHost
+
+        for cls in (LocalHost, UnixHost, EmbeddedHost, DockerContainerHost):
+            default = inspect.signature(cls._expect_one).parameters["timeout"].default
+            assert default is inspect.Parameter.empty, (
+                f"{cls.__name__}._expect_one must not declare its own default"
+            )
+
+    def test_no_subclass_overrides_expect(self):
+        """expect is final; family behavior belongs in _expect_one."""
+        from otto.host.docker_host import DockerContainerHost
+        from otto.host.embedded_host import EmbeddedHost
+        from otto.host.host import BaseHost
+        from otto.host.local_host import LocalHost
+
+        for cls in (LocalHost, UnixHost, EmbeddedHost, DockerContainerHost):
+            assert "expect" not in vars(cls), f"{cls.__name__} must override _expect_one"
+            assert "_expect_one" in vars(cls), f"{cls.__name__} must implement _expect_one"
+            assert BaseHost.expect is cls.expect
+
+    @pytest.mark.asyncio
+    async def test_expect_rejects_bad_timeout_before_dispatch(self, host: UnixHost):
+        with (
+            patch.object(host, "_expect_one", new_callable=AsyncMock) as mock,
+            pytest.raises(ValueError, match="must be >= 0"),
+        ):
+            await host.expect("prompt", timeout=-1)
+        mock.assert_not_awaited()
+
+    def test_all_proxyio_conformers_agree_with_the_protocol(self):
+        """Every login_proxy.ProxyIO conformer's expect() matches the protocol's own default.
+
+        ProxyIO.expect(pattern, timeout=...) is a structural contract — its own
+        docstring names four conformers: hosts, HostSession instances, the
+        raw-session adapter used at session establishment (_SessionProxyIO),
+        and the interact bridge adapter (_BridgeProxyIO). privilege.py's
+        _HostProxyIO is a fifth (it forwards straight to a host's expect()).
+        Asserting against ProxyIO.expect's own signature default — not a
+        hardcoded 30.0 — means this keeps holding even if
+        DEFAULT_COMMAND_TIMEOUT itself is ever revalued: the protocol and
+        every implementation are checked against each other, not against a
+        literal that could drift alongside them. This is the regression this
+        whole task exists to prevent: a protocol promising one default while
+        a conformer silently delivers another.
+        """
+        import inspect
+
+        from otto.host.host import BaseHost
+        from otto.host.interact import _BridgeProxyIO
+        from otto.host.login_proxy import ProxyIO
+        from otto.host.privilege import _HostProxyIO
+        from otto.host.session import HostSession, _SessionProxyIO
+
+        protocol_default = inspect.signature(ProxyIO.expect).parameters["timeout"].default
+
+        conformers = [
+            BaseHost.expect,
+            HostSession.expect,
+            _SessionProxyIO.expect,
+            _BridgeProxyIO.expect,
+            _HostProxyIO.expect,
+        ]
+        for fn in conformers:
+            default = inspect.signature(fn).parameters["timeout"].default
+            assert default == protocol_default, (
+                f"{fn.__qualname__} disagrees with ProxyIO.expect: {default} != {protocol_default}"
+            )
+
+
+class TestExecBoundsTheWholeCommand:
+    """LocalHost.exec's timeout must bound the whole command, not each read.
+
+    Before the fix, ``_exec_subprocess`` wrapped only
+    ``proc.stdout.readline()`` in ``asyncio.wait_for(..., timeout=timeout)``,
+    inside the drain loop. A command that emits output more often than the
+    timeout period never triggers ``TimeoutError``: each individual readline
+    comfortably finishes within its own per-line budget, and the loop only
+    ends when the command itself exits — so a steadily-chattering command
+    (e.g. ``ping``) runs forever regardless of ``timeout``.
+    """
+
+    @pytest.mark.asyncio
+    async def test_steady_output_command_times_out_promptly(self, monkeypatch):
+        """A command that never stops emitting output must still time out.
+
+        Uses ``exec python3 -c '...'`` (not a bare shell ``while`` loop) so
+        the periodic-printing process IS the dash-replaced process — the loop
+        and its ``time.sleep`` run inside the single execed python3, forking
+        no external child. A bare ``while true; do ...; sleep 0.02; done``
+        forks a real ``sleep`` grandchild every iteration; if one is still
+        alive when ``proc.terminate()`` fires, it keeps the stdout pipe's
+        write end open past the parent's exit, and the leaked
+        ``_UnixSubprocessTransport`` only surfaces as a ``ResourceWarning``
+        much later, in an unrelated test (see
+        ``test_local_exec_timeout_sets_flag`` above for the same trap).
+
+        Captures the spawned subprocess so it can be force-killed in
+        ``finally`` even if the call under test never returns (proving red
+        against the pre-fix code) — otherwise a failed assertion here would
+        leave a real, infinitely-looping process running on the dev box.
+        The whole call is wrapped in an outer ``asyncio.wait_for`` so a
+        regression FAILS this test rather than wedging the suite.
+        """
+        real_create_subprocess_shell = asyncio.create_subprocess_shell
+        spawned: list[asyncio.subprocess.Process] = []
+
+        async def capturing_create_subprocess_shell(*args, **kwargs):
+            proc = await real_create_subprocess_shell(*args, **kwargs)
+            spawned.append(proc)
+            return proc
+
+        monkeypatch.setattr(asyncio, "create_subprocess_shell", capturing_create_subprocess_shell)
+
+        host = LocalHost(log=LogMode.QUIET)
+        loop = asyncio.get_event_loop()
+        start = loop.time()
+        try:
+            result = await asyncio.wait_for(
+                host.exec(
+                    'exec python3 -c "'
+                    "import time\n"
+                    "while True:\n"
+                    "    print('tick', flush=True)\n"
+                    "    time.sleep(0.02)\n"
+                    '"',
+                    timeout=0.2,
+                ),
+                timeout=5.0,
+            )
+            elapsed = loop.time() - start
+            assert result.status == Status.Error
+            assert result.timed_out is True
+            assert "timed out" in result.value.lower()
+            # Prompt: well under the outer 5.0s bound, not just barely inside it.
+            assert elapsed < 2.0, f"expected a prompt timeout, took {elapsed:.2f}s"
+        finally:
+            for proc in spawned:
+                if proc.returncode is None:
+                    proc.kill()
+                    with contextlib.suppress(Exception):
+                        await asyncio.wait_for(proc.wait(), timeout=2.0)
             await host.close()

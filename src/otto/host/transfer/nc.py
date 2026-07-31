@@ -643,7 +643,9 @@ class NcFileTransfer(UnixFileTransfer):
                 send_task = asyncio.create_task(
                     self._exec_cmd(
                         f"{self._nc_exec} -N {local_ip} {port} < {src} 2>/dev/null",
-                        timeout=None,
+                        # Unbounded on purpose: the command's duration *is* the
+                        # transfer, which scales with file size.
+                        timeout=float("inf"),
                     )
                 )
 
@@ -710,7 +712,10 @@ class NcFileTransfer(UnixFileTransfer):
                     self._exec_cmd(
                         f"{self._nc_exec} -Nl -w {self._nc_listener_timeout} "
                         f"{port} < {src} 2>/dev/null",
-                        timeout=None,
+                        # netcat self-bounds via `-w <listener_timeout>`; an otto
+                        # timeout here would be redundant and could fire first,
+                        # failing a transfer that was still healthy.
+                        timeout=float("inf"),
                     )
                 )
 
@@ -843,7 +848,10 @@ class NcFileTransfer(UnixFileTransfer):
                     self._exec_cmd(
                         f"{self._nc_exec} -l -w {self._nc_listener_timeout} {port} "
                         f"< /dev/null > {dst} 2>/dev/null",
-                        timeout=None,
+                        # netcat self-bounds via `-w <listener_timeout>`; an otto
+                        # timeout here would be redundant and could fire first,
+                        # failing a transfer that was still healthy.
+                        timeout=float("inf"),
                     )
                 )
 

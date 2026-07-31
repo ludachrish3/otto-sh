@@ -11,11 +11,13 @@ ssh / telnet / local).
 import asyncio
 import contextlib
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from otto.host import HostSession, UnixHost
+from otto.host.host import DEFAULT_COMMAND_TIMEOUT
 from otto.host.login_proxy import Cred
 from otto.host.session import ShellSession
 from otto.logger.mode import LogMode
@@ -346,7 +348,8 @@ class TestCommandExecution:
         args, kwargs = host._session_mgr._session.run_cmd.call_args
         assert args == ("sudo ls",)
         assert kwargs["expects"] == expects
-        assert kwargs["timeout"] is None
+        # Single-command form: the default passes straight through unchanged.
+        assert kwargs["timeout"] == DEFAULT_COMMAND_TIMEOUT
         assert kwargs["write_progress"] is None
         assert kwargs["redact"] is False
         assert callable(kwargs["on_output"])  # NORMAL-mode tagging sink, not None
@@ -482,7 +485,7 @@ class TestExec:
         args, kwargs = mock_session.run_cmd.call_args
         assert args == ("echo hello",)
         assert kwargs["expects"] is None
-        assert kwargs["timeout"] is None
+        assert kwargs["timeout"] == DEFAULT_COMMAND_TIMEOUT
         assert kwargs["redact"] is False
         assert callable(kwargs["on_output"])  # NORMAL-mode tagging sink, not None
         await h.close()
@@ -492,7 +495,7 @@ class TestExec:
     async def test_exec_telnet_concurrent_does_not_deadlock(self):
         """Regression: concurrent telnet ``exec()`` calls must not serialize.
 
-        ``_put_files_nc`` launches ``nc -l <port>`` via ``exec(timeout=None)``
+        ``_put_files_nc`` launches ``nc -l <port>`` via ``exec(timeout=float("inf"))``
         to start a listener, then — when multiple files are transferred in
         parallel via ``asyncio.gather`` — other concurrent ``exec()`` calls
         run alongside it (port discovery for the next file, additional
@@ -544,7 +547,7 @@ class TestExec:
             patch("otto.host.session.TelnetSession", side_effect=_new_session),
         ):
             listener_task = asyncio.create_task(
-                h.exec("nc -l 45681 < /dev/null > /tmp/x 2>/dev/null", timeout=None),
+                h.exec("nc -l 45681 < /dev/null > /tmp/x 2>/dev/null", timeout=float("inf")),
             )
             # Wait until the listener is actually running inside its
             # session, so we know it's holding whatever resource the
@@ -604,7 +607,7 @@ class TestExec:
         await h.exec("base64 /bin/ls", log=LogMode.QUIET)
         h._session_mgr.exec.assert_awaited_once_with(
             "base64 /bin/ls",
-            timeout=None,
+            timeout=DEFAULT_COMMAND_TIMEOUT,
             log=LogMode.QUIET,
         )
 
@@ -1457,7 +1460,11 @@ class TestHostSessionProxy:
     @pytest.mark.asyncio
     async def test_run_delegates_cmd_to_shell_session(self, host: UnixHost):
         session, shell = self._make_remote_session(host)
-        await session.run("ls /tmp")
+        # Explicit timeout: HostSession.run's default moved to
+        # DEFAULT_COMMAND_TIMEOUT (30.0); this test only cares that the
+        # session forwards whatever timeout it's given, so pin the old
+        # value it used to receive implicitly.
+        await session.run("ls /tmp", timeout=10.0)
         shell.run_cmd.assert_called_once()
         _, kwargs = shell.run_cmd.call_args
         assert kwargs["expects"] is None
@@ -1469,7 +1476,8 @@ class TestHostSessionProxy:
     async def test_run_forwards_expects(self, host: UnixHost):
         session, shell = self._make_remote_session(host)
         expects = [(r"Password:", "secret\n")]
-        await session.run("sudo ls", expects=expects)  # type: ignore[arg-type]
+        # Explicit timeout: see test_run_delegates_cmd_to_shell_session.
+        await session.run("sudo ls", expects=expects, timeout=10.0)  # type: ignore[arg-type]
         shell.run_cmd.assert_called_once()
         _, kwargs = shell.run_cmd.call_args
         assert kwargs["expects"] == expects
@@ -1498,7 +1506,7 @@ class TestHostSessionProxy:
     async def test_expect_delegates_and_returns_output(self, host: UnixHost):
         session, shell = self._make_remote_session(host)
         result = await session.expect(r"\$")
-        shell.expect.assert_called_once_with(r"\$", 10.0)
+        shell.expect.assert_called_once_with(r"\$", DEFAULT_COMMAND_TIMEOUT)
         assert result == "some output"
 
     @pytest.mark.asyncio
@@ -1883,3 +1891,140 @@ async def test_unload_dry_run_issues_rmmod_without_idempotency_check():
     assert host.run.await_args.args[0] == "rmmod foo"
     host._loaded_modules.assert_not_awaited()  # idempotency check skipped in dry-run
     assert result.status is Status.Success
+
+
+class TestSshExecTimeout:
+    """Regression: UnixHost.exec over SSH must honour its timeout.
+
+    Before the fix the read loop was never wrapped in asyncio.wait_for, so the
+    `except asyncio.TimeoutError` below it was dead code and this test hung.
+    """
+
+    @pytest.mark.asyncio
+    async def test_ssh_exec_stalling_command_times_out(self):
+        h = UnixHost(
+            ip="10.0.0.1",
+            element="stalled",
+            creds=[Cred(login="u", password="p")],
+            term="ssh",
+            log=LogMode.QUIET,
+        )
+
+        class _StalledStdout:
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                await asyncio.sleep(3600)  # never yields, never returns
+                raise StopAsyncIteration
+
+        class _StalledProcess:
+            stdout = _StalledStdout()
+            terminated = False
+
+            def terminate(self):
+                type(self).terminated = True
+
+            async def wait(self):
+                return SimpleNamespace(exit_status=-1)
+
+        class _Conn:
+            async def create_process(self, cmd, **kw):
+                return _StalledProcess()
+
+        h._session_mgr._connections = MagicMock()
+        h._session_mgr._connections.term = "ssh"
+        h._session_mgr._connections.proxy_hops = []
+        h._session_mgr._connections.ssh = AsyncMock(return_value=_Conn())
+        h._session_mgr._exec_factory = None
+
+        result = await asyncio.wait_for(h.exec("sleep 3600", timeout=0.1), timeout=10.0)
+
+        assert result.status == Status.Error
+        assert result.timed_out is True
+        assert "timed out" in result.value
+        assert _StalledProcess.terminated is True
+
+
+class TestSshExecKillEscalation:
+    """Regression: when a remote command ignores terminate(), SSH exec must
+    escalate to kill() rather than hang on the post-terminate reap.
+
+    The fake process's ``wait()`` blocks on an ``asyncio.Event`` that only
+    ``kill()`` sets; ``terminate()`` deliberately does nothing, mirroring a
+    remote command that ignores its termination signal. If the escalation
+    branch in ``SessionManager.exec`` were missing or broken, ``wait()``
+    would never unblock and the outer ``asyncio.wait_for(..., timeout=5.0)``
+    below would fail the test rather than let it hang the suite.
+    """
+
+    @pytest.mark.asyncio
+    async def test_ssh_exec_escalates_to_kill_when_terminate_is_ignored(self, monkeypatch):
+        # Patched where the name is *used* -- session.py binds its own
+        # module-local `_EXEC_REAP_TIMEOUT` via `from .host import
+        # _EXEC_REAP_TIMEOUT`, so patching otto.host.host's copy would not
+        # bite here.
+        monkeypatch.setattr("otto.host.session._EXEC_REAP_TIMEOUT", 0.2)
+
+        h = UnixHost(
+            ip="10.0.0.1",
+            element="stalled",
+            creds=[Cred(login="u", password="p")],
+            term="ssh",
+            log=LogMode.QUIET,
+        )
+
+        class _StalledStdout:
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                await asyncio.sleep(3600)  # never yields, never returns
+                raise StopAsyncIteration
+
+        class _IgnoresTerminateProcess:
+            stdout = _StalledStdout()
+            terminated = False
+            killed = False
+
+            def __init__(self):
+                self._killed_event = asyncio.Event()
+
+            def terminate(self):
+                # Remote command ignores SIGTERM: recorded, but the wait()
+                # below stays blocked until kill() is called.
+                type(self).terminated = True
+
+            def kill(self):
+                type(self).killed = True
+                self._killed_event.set()
+
+            async def wait(self):
+                await self._killed_event.wait()
+                return SimpleNamespace(exit_status=-1)
+
+        process = _IgnoresTerminateProcess()
+
+        class _Conn:
+            async def create_process(self, cmd, **kw):
+                return process
+
+        h._session_mgr._connections = MagicMock()
+        h._session_mgr._connections.term = "ssh"
+        h._session_mgr._connections.proxy_hops = []
+        h._session_mgr._connections.ssh = AsyncMock(return_value=_Conn())
+        h._session_mgr._exec_factory = None
+
+        start = asyncio.get_running_loop().time()
+        result = await asyncio.wait_for(h.exec("sleep 3600", timeout=0.1), timeout=5.0)
+        elapsed = asyncio.get_running_loop().time() - start
+
+        assert result.status == Status.Error
+        assert result.timed_out is True
+        assert _IgnoresTerminateProcess.terminated is True
+        assert _IgnoresTerminateProcess.killed is True
+        # Sanity check that the _EXEC_REAP_TIMEOUT monkeypatch actually took
+        # effect: with the real 5.0s default this would take >5s per bounded
+        # reap attempt and blow the outer 5.0s wait_for above instead of
+        # completing. At the patched 0.2s it finishes in well under a second.
+        assert elapsed < 1.0

@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING
 
 from ..logger.mode import LogMode
 from .command_frame import history_prefix
+from .host import DEFAULT_COMMAND_TIMEOUT
 from .login_proxy import Cred, cred_for, perform_switch, run_undo
 
 if TYPE_CHECKING:
@@ -61,7 +62,9 @@ class _HostProxyIO:
     async def send(self, text: str, *, log: LogMode = LogMode.NORMAL) -> None:
         await self._host.send(text, log=log)  # ty: ignore[unresolved-attribute]
 
-    async def expect(self, pattern: str | re.Pattern[str], timeout: float = 10.0) -> str:
+    async def expect(
+        self, pattern: str | re.Pattern[str], timeout: float = DEFAULT_COMMAND_TIMEOUT
+    ) -> str:
         return await self._host.expect(pattern, timeout)  # ty: ignore[unresolved-attribute]
 
 

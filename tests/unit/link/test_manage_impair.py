@@ -740,3 +740,61 @@ class TestScopedTimers:
         # the sibling's OWN v2 timer (53/udp, pid 4243) survived: rollback was
         # scoped to THIS run's selector (5201/tcp), not "everything"
         assert not any("4243" in c for c in carrot.sudo_commands)
+
+
+class TestTimeoutStillNamesTheHost:
+    """A timed-out host command is a loud, host-named RuntimeError (spec §9).
+
+    ``_exec``/``_root_run`` no longer wrap the host call in an external
+    ``asyncio.wait_for`` — the host's own ``timeout=`` now enforces the bound
+    and reports it back via ``CommandResult.timed_out`` instead of raising.
+    These sites must still convert that into the same host-named error."""
+
+    @pytest.mark.asyncio
+    async def test_exec_timeout_raises_host_named_runtime_error(self) -> None:
+        from otto.link.manage import _exec
+
+        class _Host:
+            id = "carrot"
+
+            async def exec(self, cmd: str, timeout: float | None = None, log=None) -> CommandResult:
+                return CommandResult(
+                    status=Status.Error,
+                    value=f"Command timed out after {timeout}s",
+                    command=cmd,
+                    retcode=-1,
+                    timed_out=True,
+                )
+
+        with pytest.raises(RuntimeError, match=r"carrot.*unreachable"):
+            await _exec(_Host(), "tc qdisc show")
+
+    @pytest.mark.asyncio
+    async def test_root_run_timeout_raises_host_named_runtime_error(self) -> None:
+        """``host.run()`` returns a ``Results``, not a bare ``CommandResult`` —
+        the fake mirrors that shape so a regression to ``results.timed_out``
+        (``Results`` has no such attribute; only entries do) fails loud here
+        instead of only at a real timeout in production."""
+        from otto.link.manage import _root_run
+
+        class _Host:
+            id = "carrot"
+            current_user = "vagrant"
+
+            async def run(
+                self, cmd: str, sudo: bool = False, timeout: float | None = None, log=None
+            ) -> Results:
+                return Results.collect(
+                    [
+                        CommandResult(
+                            status=Status.Error,
+                            value=f"Command timed out after {timeout}s",
+                            command=cmd,
+                            retcode=-1,
+                            timed_out=True,
+                        )
+                    ]
+                )
+
+        with pytest.raises(RuntimeError, match=r"carrot.*unreachable"):
+            await _root_run(_Host(), "tc qdisc replace dev eth1.100 root netem delay 50ms")

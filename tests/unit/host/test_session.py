@@ -7,6 +7,7 @@ to in-memory asyncio streams, avoiding any real SSH or telnet connections.
 """
 
 import asyncio
+import inspect
 import os
 import re
 import signal
@@ -1718,3 +1719,24 @@ class TestExecProxyRouting:
         conn.ssh.assert_not_awaited()  # the raw exec channel must NOT be opened
         assert result.value == "OUT"
         assert mgr._exec_pool[0].current_user == "mysql"
+
+
+class TestHostSessionRunTimeout:
+    """HostSession.run is a public entry point and validates like BaseHost.run."""
+
+    @pytest.mark.asyncio
+    async def test_default_is_the_shared_constant(self):
+        from otto.host.host import DEFAULT_COMMAND_TIMEOUT
+        from otto.host.session import HostSession
+
+        sig = inspect.signature(HostSession.run)
+        assert sig.parameters["timeout"].default == DEFAULT_COMMAND_TIMEOUT
+        assert sig.parameters["timeout"].annotation in (float, "float")
+
+    @pytest.mark.asyncio
+    async def test_rejects_a_negative_timeout(self):
+        from otto.host.session import HostSession
+
+        session = HostSession.__new__(HostSession)
+        with pytest.raises(ValueError, match="must be >= 0"):
+            await session.run("echo hi", timeout=-5)

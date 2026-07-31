@@ -45,6 +45,7 @@ from typing import Any
 
 from ..context import try_get_context
 from ..logger.mode import LogMode
+from .host import DEFAULT_COMMAND_TIMEOUT
 from .login_proxy import Cred, run_proxy
 
 logger = logging.getLogger(__name__)
@@ -360,7 +361,9 @@ class _BridgeProxyIO:
             data = text.encode("utf-8")
         await self._write_remote(data)
 
-    async def expect(self, pattern: "str | re.Pattern[str]", timeout: float = 10.0) -> str:
+    async def expect(
+        self, pattern: "str | re.Pattern[str]", timeout: float = DEFAULT_COMMAND_TIMEOUT
+    ) -> str:
         """Accumulate ``read_remote()`` chunks until *pattern* matches.
 
         Raises ``asyncio.TimeoutError`` if *timeout* elapses first (surfaced
