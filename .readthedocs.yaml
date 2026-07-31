@@ -13,11 +13,18 @@ build:
     nodejs: "24"
   # `dot` renders the architecture-docs diagrams (sphinx.ext.graphviz /
   # inheritance_diagram); without it the -W build fails.
+  # `jq` is what web/'s `npm run build` reads untitledui.lock.json with —
+  # scripts/typecheck_web.sh derives the vendored-path filter from it, and
+  # scripts/check_untitledui_{hash,drift}.sh read the same lockfile. It is
+  # NOT preinstalled on RTD's image; GitHub's ubuntu runners and the dev VM
+  # both ship it, which is why CI stayed green when `build` stopped being a
+  # bare `tsc` (f39d8bec) and only the docs build broke.
   # The lib* set is headless Chromium's runtime for the build-time GUI media
   # (scripts/capture_docs_media.py, hooked from docs/conf.py) — the same list
   # the Vagrantfile provisions on the dev VM for the dashboard e2e suite.
   apt_packages:
     - graphviz
+    - jq
     - libatk1.0-0t64
     - libxcomposite1
     - libxdamage1
