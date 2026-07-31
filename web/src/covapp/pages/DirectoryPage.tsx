@@ -23,6 +23,7 @@ import {
   focusedTreeRow,
   keyColumnLabel,
   tierRows,
+  withHideAssertedSuffix,
 } from "../format";
 import { findNode, fmtPct, pct } from "../stats";
 import { scopeTreeToTicket, ticketChunkToFileLines, ticketTreeRow } from "../tickets";
@@ -196,12 +197,23 @@ function NaCell() {
  * whole-file numerator with no per-line ticket+run cross-tab to restrict
  * it to the ticket's owned lines, so dividing it by the ticket-scoped
  * `stats.lines.total` would read as a correctness bug, not an
- * approximation). */
+ * approximation).
+ *
+ * `hideAsserted` (Task 11, default `false` — byte-identical when omitted):
+ * subtracts `stats.lines.asserted_only`/`asserted_per_tier[tier]` from the
+ * plain (no context, no per-run numerator) Lines/Line %/tier-% cells —
+ * mirroring `tierRows` (format.ts) exactly, since these are the same
+ * rollup fields on the same `Stats` bag (ticket-scoped or not — the ticket
+ * scoping helpers in tickets.ts already carry the scoped subset of both
+ * fields). The context-focused branch's `stats.ctx_lines` numerator is
+ * per-run evidence, never override-sourced (same reasoning `ticketFileRow`'s
+ * `ctx` branch documents), so it's untouched either way. */
 function renderCellsFor(
   index: IndexPayload,
   focusedLabel: string | null,
   focusedTier: string | undefined,
   ticketActive: boolean,
+  hideAsserted = false,
 ) {
   return (row: Row): ReactNode[] => {
     const stats = rowStats(row);
@@ -255,16 +267,14 @@ function renderCellsFor(
       return cells;
     }
 
+    const hit = stats.lines.hit - (hideAsserted ? stats.lines.asserted_only : 0);
+
     if (ticketActive) {
       const cells: ReactNode[] = [
         <span key="lines" className="tabular-nums">
-          {stats.lines.hit}/{stats.lines.total}
+          {hit}/{stats.lines.total}
         </span>,
-        <PctCell
-          key="line"
-          p={pct(stats.lines.hit, stats.lines.total)}
-          thresholds={index.thresholds}
-        />,
+        <PctCell key="line" p={pct(hit, stats.lines.total)} thresholds={index.thresholds} />,
         <NaCell key="branch" />,
       ];
       for (const tier of index.tier_order) {
@@ -276,13 +286,9 @@ function renderCellsFor(
 
     const cells: ReactNode[] = [
       <span key="lines" className="tabular-nums">
-        {stats.lines.hit}/{stats.lines.total}
+        {hit}/{stats.lines.total}
       </span>,
-      <PctCell
-        key="line"
-        p={pct(stats.lines.hit, stats.lines.total)}
-        thresholds={index.thresholds}
-      />,
+      <PctCell key="line" p={pct(hit, stats.lines.total)} thresholds={index.thresholds} />,
       <PctCell
         key="branch"
         p={pct(stats.branches.hit, stats.branches.total)}
@@ -290,7 +296,10 @@ function renderCellsFor(
       />,
     ];
     for (const tier of index.tier_order) {
-      const tierPct = pct(stats.lines.per_tier[tier] ?? 0, stats.lines.total);
+      const tierHit =
+        (stats.lines.per_tier[tier] ?? 0) -
+        (hideAsserted ? (stats.lines.asserted_per_tier[tier] ?? 0) : 0);
+      const tierPct = pct(tierHit, stats.lines.total);
       cells.push(
         <span key={`tier:${tier}`} className="tabular-nums">
           {fmtPct(tierPct)}
@@ -370,7 +379,7 @@ export interface DirectoryPageProps {
  * stand-in (0 dirs, 0 files) rather than special-casing `null` through every
  * downstream read (`roots`, `countFiles`, the StatsCard row). */
 const EMPTY_SCOPE_STATS: Stats = {
-  lines: { total: 0, hit: 0, per_tier: {} },
+  lines: { total: 0, hit: 0, per_tier: {}, asserted_per_tier: {}, asserted_only: 0 },
   branches: { total: 0, hit: 0, per_tier: {} },
   flags: { stale: 0, aging: 0, excluded: 0 },
   ctx_lines: {},
@@ -384,7 +393,7 @@ type TicketChunkState =
 
 export function DirectoryPage({ index, segments }: DirectoryPageProps) {
   const [, navigate] = useHashLocation();
-  const { focus, ticket } = useFocus();
+  const { focus, ticket, hideAsserted } = useFocus();
 
   // Ticket context (Task 12): resolved/loaded here, unconditionally, BEFORE
   // the `node === null` guard below — same reasoning as `useFocus()` itself
@@ -459,8 +468,10 @@ export function DirectoryPage({ index, segments }: DirectoryPageProps) {
   // exactly the failure mode a denominator filter must never produce.
   let scopedNode: DirNode | null = null;
   if (ticketReady && ticketChunkState.status === "ready") {
-    const { lines, hits, tiers } = ticketChunkToFileLines(ticketChunkState.chunk);
-    scopedNode = scopeTreeToTicket(node, lines, hits, tiers);
+    const { lines, hits, tiers, asserted, assertedOnly } = ticketChunkToFileLines(
+      ticketChunkState.chunk,
+    );
+    scopedNode = scopeTreeToTicket(node, lines, hits, { tiers, asserted, assertedOnly });
   }
   const effectiveNode: DirNode = ticketReady
     ? (scopedNode ?? { name: node.name, dirs: [], files: [], stats: EMPTY_SCOPE_STATS })
@@ -496,11 +507,14 @@ export function DirectoryPage({ index, segments }: DirectoryPageProps) {
         </>
       }
       stats={{
-        scope: focusedContext
-          ? ticketReady
-            ? `focused: ${focusedContext.label} · ticket: ${ticketSummary?.id}`
-            : `focused: ${focusedContext.label}`
-          : scopeWithTicket,
+        scope: withHideAssertedSuffix(
+          focusedContext
+            ? ticketReady
+              ? `focused: ${focusedContext.label} · ticket: ${ticketSummary?.id}`
+              : `focused: ${focusedContext.label}`
+            : scopeWithTicket,
+          hideAsserted,
+        ),
         title: "Coverage — this node and below",
         // Fix round 1 (task-12-report.md, IMPORTANT): when BOTH a context
         // and a ticket are active, `ticketTreeRow(..., focusedContext)`
@@ -512,8 +526,8 @@ export function DirectoryPage({ index, segments }: DirectoryPageProps) {
             ? ticketTreeRow(index, effectiveNode, ticketSummary?.id ?? "", focusedContext)
             : focusedTreeRow(index, effectiveNode.stats, focusedContext)
           : ticketReady
-            ? ticketTreeRow(index, effectiveNode, ticketSummary?.id ?? "")
-            : tierRows(index, node.stats),
+            ? ticketTreeRow(index, effectiveNode, ticketSummary?.id ?? "", undefined, hideAsserted)
+            : tierRows(index, node.stats, hideAsserted),
         thresholds: index.thresholds,
         keyColumnLabel: keyColumnLabel({ ticket: ticketReady, context: Boolean(focusedContext) }),
       }}
@@ -540,7 +554,13 @@ export function DirectoryPage({ index, segments }: DirectoryPageProps) {
             getRowId={rowId}
             columns={columns}
             renderName={renderName}
-            renderCells={renderCellsFor(index, focus, focusedContext?.tier, ticketReady)}
+            renderCells={renderCellsFor(
+              index,
+              focus,
+              focusedContext?.tier,
+              ticketReady,
+              hideAsserted,
+            )}
             sortValue={rowSortValue}
             onNavigate={onNavigate}
             defaultExpanded

@@ -12,6 +12,7 @@ from otto.coverage.store.model import (
     FileRecord,
     LineHits,
     LineRecord,
+    OverrideRecord,
     Thresholds,
     TicketRecord,
 )
@@ -232,7 +233,7 @@ class TestCoverageStore:
         # A well-formed v5 file may still omit the optional "runs"/"tier_colors"
         # keys (e.g. a minimal hand-written fixture); load() must default them.
         minimal = {
-            "format": 5,
+            "format": 6,
             "tier_order": ["system"],
             "files": [
                 {
@@ -279,7 +280,7 @@ class TestCoverageStore:
         store_json.write_text(
             json.dumps(
                 {
-                    "format": 5,
+                    "format": 6,
                     "tier_order": ["system"],
                     "files": [{"path": "/x/f.c", "lines": {}}],
                 }
@@ -344,7 +345,7 @@ class TestRuns:
         path = tmp_path / "store.json"
         store.save(path)
         raw = json.loads(path.read_text())
-        assert raw["format"] == 5
+        assert raw["format"] == 6
         assert raw["runs"][0]["base_commit"] == "deadbeef"
         line5 = raw["files"][0]["lines"]["5"]
         assert line5["run"] == {"0": 4}
@@ -363,7 +364,7 @@ class TestRuns:
 
     def test_load_defaults_runs_when_absent(self, tmp_path):
         minimal = {
-            "format": 5,
+            "format": 6,
             "tier_order": ["system"],
             "files": [{"path": "/a.c", "lines": {"1": {"hits": {"system": 1}, "branches": []}}}],
         }
@@ -392,7 +393,7 @@ class TestStoreConfig:
         p = tmp_path / "store.json"
         store.save(p)
         raw = json.loads(p.read_text())
-        assert raw["format"] == 5
+        assert raw["format"] == 6
         assert raw["thresholds"] == {"high": 80.0, "medium": 70.0}
         assert raw["stat_types"] == ["line", "branch", "decision"]
 
@@ -406,7 +407,7 @@ class TestStoreConfig:
 
     def test_load_defaults_thresholds_when_absent(self, tmp_path) -> None:
         p = tmp_path / "store.json"
-        p.write_text('{"format": 5, "tier_order": ["system"], "files": []}')
+        p.write_text('{"format": 6, "tier_order": ["system"], "files": []}')
         loaded = CoverageStore.load(p)
         assert loaded.thresholds == Thresholds()
 
@@ -491,9 +492,9 @@ class TestLineTicketSlot:
         assert c.ticket == ["PROJ-2"]
 
 
-def test_format_is_five():
-    """v5 replaces the reserved single-ticket slot with a list and a ticket table."""
-    assert STORE_FORMAT_VERSION == 5
+def test_format_is_six():
+    """v6 adds the manual-override surface: override records and per-line asserted ids."""
+    assert STORE_FORMAT_VERSION == 6
 
 
 def test_line_ticket_defaults_to_empty_list():
@@ -539,5 +540,81 @@ def test_v4_store_is_rejected_loud(tmp_path):
     """A v4 store.json (pre-list ticket, no tickets table) fails loud, no migration."""
     path = tmp_path / "store.json"
     path.write_text(json.dumps({"format": 4, "files": [], "runs": []}))
-    with pytest.raises(ValueError, match="v5"):
+    with pytest.raises(ValueError, match="v6"):
         CoverageStore.load(path)
+
+
+def test_store_v6_round_trips_overrides_and_asserted(tmp_path):
+    store = CoverageStore(tier_order=["bench"])
+    store.overrides.append(
+        OverrideRecord(id=0, tier="bench", key="ticket:#1", reason="legacy", as_of="a" * 40)
+    )
+    store.overrides_file_active = True
+    rec = store.get_or_create_file(tmp_path / "a.c")
+    line = rec.get_or_create_line(1)
+    line.hits.add("bench", 1)
+    line.asserted = {"bench": [0]}
+    store.save(tmp_path / "store.json")
+    loaded = CoverageStore.load(tmp_path / "store.json")
+    (ov,) = loaded.overrides
+    assert (ov.id, ov.tier, ov.key, ov.reason, ov.as_of) == (
+        0,
+        "bench",
+        "ticket:#1",
+        "legacy",
+        "a" * 40,
+    )
+    (fr,) = list(loaded.files())
+    assert fr.lines[1].asserted == {"bench": [0]}
+    assert loaded.overrides_file_active is True
+
+
+def test_overrides_file_active_defaults_false_and_round_trips(tmp_path):
+    """F2 follow-up (coordinator re-review): `overrides_file_active` — the
+    flag `ticket_export.build_ticket_export` reads for `overrides_active`
+    — must itself survive save/load, both when true (a report ran with an
+    override file, even a reattribute-only one carrying zero
+    `OverrideRecord`s) and when it's the unset default (no override file
+    at all)."""
+    store = CoverageStore(tier_order=["bench"])
+    assert store.overrides_file_active is False
+    store.save(tmp_path / "store.json")
+    raw = json.loads((tmp_path / "store.json").read_text())
+    assert raw["overrides_file_active"] is False
+    loaded = CoverageStore.load(tmp_path / "store.json")
+    assert loaded.overrides_file_active is False
+
+    # True with an empty `overrides` list — the reattribute-only shape
+    # `overrides_active` (spec §7) must distinguish from `bool(overrides)`.
+    store2 = CoverageStore(tier_order=["bench"])
+    store2.overrides_file_active = True
+    store2.save(tmp_path / "store2.json")
+    raw2 = json.loads((tmp_path / "store2.json").read_text())
+    assert raw2["overrides_file_active"] is True
+    assert raw2["overrides"] == []
+    loaded2 = CoverageStore.load(tmp_path / "store2.json")
+    assert loaded2.overrides_file_active is True
+    assert loaded2.overrides == []
+
+
+def test_asserted_is_omitted_from_json_when_empty(tmp_path):
+    store = CoverageStore(tier_order=["bench"])
+    rec = store.get_or_create_file(tmp_path / "a.c")
+    rec.get_or_create_line(1).hits.add("bench", 1)
+    store.save(tmp_path / "store.json")
+    raw = (tmp_path / "store.json").read_text()
+    assert '"asserted"' not in raw
+    assert json.loads(raw)["overrides"] == []
+
+
+def test_line_merge_unions_asserted_ids_per_tier():
+    a = LineRecord(line_number=1, asserted={"bench": [0, 2]})
+    b = LineRecord(line_number=1, asserted={"bench": [2, 3], "field": [1]})
+    a.merge(b)
+    assert a.asserted == {"bench": [0, 2, 3], "field": [1]}
+
+
+def test_v5_store_fails_loud(tmp_path):
+    (tmp_path / "store.json").write_text('{"format": 5}')
+    with pytest.raises(ValueError, match="v6 required"):
+        CoverageStore.load(tmp_path / "store.json")

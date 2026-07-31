@@ -8,7 +8,7 @@
 /** `IndexPayload["format"]` / `FileChunk["stamp"]`-adjacent format marker.
  * Mirrors `OTTO_COV_DATA_FORMAT` in spa_data.py — bump both together or
  * never (Global Constraints). */
-export const EXPECTED_DATA_FORMAT = 1;
+export const EXPECTED_DATA_FORMAT = 2;
 
 export interface Thresholds {
   high: number;
@@ -60,12 +60,24 @@ export interface StatBucket {
   per_tier: Record<string, number>;
 }
 
+/** `Stats["lines"]` — a `StatBucket` plus manual-override provenance
+ * (format 2, manual-overrides spec §3/§5/§9). */
+export interface LineStatBucket extends StatBucket {
+  /** Per-tier count of lines whose hits in that tier are override-sourced
+   * (`lr.asserted` carries that tier), rolled up like `per_tier`. */
+  asserted_per_tier: Record<string, number>;
+  /** Count of lines whose EVERY hitting tier is asserted — i.e. the line
+   * has no real (non-override) coverage evidence at all. Powers the
+   * all-tiers "hide asserted" row. */
+  asserted_only: number;
+}
+
 /** Rollup stats carried by every tree node (dir or file) — Global
  * Constraints' `tier_order` can be `[]` for a data-less store, so
  * `per_tier`/`ctx_lines` must be read as possibly-empty objects, never
  * assumed to contain a particular key. */
 export interface Stats {
-  lines: StatBucket;
+  lines: LineStatBucket;
   branches: StatBucket;
   flags: {
     stale: number;
@@ -113,6 +125,9 @@ export interface IndexPayload {
   thresholds: Thresholds;
   stat_types: string[];
   runs: RunJson[];
+  /** Asserted manual-override entries (`store.overrides`, v6), sorted by
+   * `id` — `LineJson.asserted` values are indexes into this table. */
+  overrides: OverrideJson[];
   run_contrib: Record<string, RunContrib>;
   /** Repo-wide coverable line count. */
   total_lines: number;
@@ -138,6 +153,9 @@ export interface TicketSummary {
   covered: number;
   uncovered: number;
   per_tier: Record<string, number>;
+  /** Per-tier count of this ticket's lines whose hits in that tier are
+   * override-sourced (format 2). */
+  asserted: Record<string, number>;
   /** Chunk id — key into `cov_data/tickets/<chunk>.js`. */
   chunk: string;
 }
@@ -149,6 +167,8 @@ export interface TicketTotals {
   covered: number;
   uncovered: number;
   per_tier: Record<string, number>;
+  /** DEDUPED per-tier count of asserted lines, mirroring `per_tier` (format 2). */
+  asserted: Record<string, number>;
 }
 
 /** One ticket's deferred detail chunk. */
@@ -168,6 +188,14 @@ export interface TicketChunk {
      * and therefore cannot be split back apart. Lets a ticket-scoped
      * subtree render real tier rows instead of one aggregate row. */
     per_tier: Record<string, number>;
+    /** Per-tier count of THIS ticket's lines in THIS file that are
+     * override-sourced in that tier (format 2) — the ticket-scoped subset
+     * of `Stats.lines.asserted_per_tier`, mirroring `per_tier` above. */
+    asserted: Record<string, number>;
+    /** Count of THIS ticket's lines in THIS file whose every hitting tier
+     * is asserted (format 2) — the ticket-scoped subset of
+     * `Stats.lines.asserted_only`. */
+    asserted_only: number;
   }[];
 }
 
@@ -189,6 +217,18 @@ export interface LineJson {
   /** Ticket ids owning this line (commit-message attribution); omitted
    * when the line has none. */
   ticket?: string[];
+  /** tier -> override-entry ids into `IndexPayload.overrides`; present only
+   * while the tier's sole hits are override-sourced. */
+  asserted?: Record<string, number[]>;
+}
+
+/** One asserted manual-override entry (`store.overrides`, v6). */
+export interface OverrideJson {
+  id: number;
+  tier: string;
+  key: string;
+  reason: string;
+  as_of: string | null;
 }
 
 /** `cov_data/files/<chunk>.js` payload shape (`window.__OTTO_COV_FILE__` argument). */

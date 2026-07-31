@@ -40,7 +40,7 @@ def test_fixture_report_renders(tmp_path, hermetic_covapp_bundle):
 
     payload = _index_payload(report_dir)
     assert payload["project_name"] == "otto example product"
-    assert payload["tier_order"] == ["system", "unit", "manual"]
+    assert payload["tier_order"] == ["system", "unit", "manual", "bench"]
 
     file_pages = list((report_dir / "cov_data" / "files").glob("*.js"))
     assert len(file_pages) == 2
@@ -172,20 +172,30 @@ class TestRowStates:
 
 
 def test_line_pct_counts_pin_utils_c_below_main_c(tmp_path):
-    """main.c now carries a stale + an aging line too (9 lines total, 7
-    hit) — still higher than utils.c's 50%, preserving the numeric-sort
-    ordering the browser suite pins (utils.c sorts first ascending)."""
+    """main.c now carries a stale + an aging line, plus (Task 12) a bench
+    really-hit line (1) and a bench asserted-only line (2) — 11 lines
+    total, 9 hit (line 2 counts as hit by default: an asserted line still
+    has a real `hits` entry, it's just override-sourced) — still higher
+    than utils.c's 50%, preserving the numeric-sort ordering the browser
+    suite pins (utils.c sorts first ascending). `per_tier["bench"]` is 2
+    (lines 1 and 2 both carry a bench hit); `asserted_per_tier["bench"]`
+    is 1 and `asserted_only` is 1 — line 2 is the only line whose sole
+    real evidence, in every tier that hit it, is override-sourced."""
     report_dir = build_fixture_report(tmp_path)
     payload = _index_payload(report_dir)
     main_node = _find_file(payload["tree"], "main.c")
     utils_node = _find_file(payload["tree"], "utils.c")
     assert main_node["stats"]["lines"] == {
-        "total": 9,
-        "hit": 7,
-        "per_tier": {"system": 6, "unit": 4, "manual": 0},
+        "total": 11,
+        "hit": 9,
+        "per_tier": {"system": 6, "unit": 4, "manual": 0, "bench": 2},
+        "asserted_per_tier": {"system": 0, "unit": 0, "manual": 0, "bench": 1},
+        "asserted_only": 1,
     }
     assert utils_node["stats"]["lines"] == {
         "total": 2,
         "hit": 1,
-        "per_tier": {"system": 0, "unit": 1, "manual": 0},
+        "per_tier": {"system": 0, "unit": 1, "manual": 0, "bench": 0},
+        "asserted_per_tier": {"system": 0, "unit": 0, "manual": 0, "bench": 0},
+        "asserted_only": 0,
     }

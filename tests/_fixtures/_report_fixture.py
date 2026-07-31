@@ -5,9 +5,9 @@ One builder shared by the report browser suite
 (scripts/capture_docs_media.py), so the pixels users see in the guide are
 produced by the exact report the browser tests pin.
 
-Three tiers (system, unit, manual), two files, every pill state the renderer
-knows: branch-taken, branch-not-taken, branch-unreachable — plus a fully
-covered file and a partially covered one so sorting has something to
+Four tiers (system, unit, manual, bench), two files, every pill state the
+renderer knows: branch-taken, branch-not-taken, branch-unreachable — plus a
+fully covered file and a partially covered one so sorting has something to
 reorder. Rendered with ``prefix=base_dir`` so displayed paths are the
 deterministic ``product/main.c`` / ``product/utils.c`` regardless of the tmp
 dir. Registers a run table (spec §10): two ``system`` runs sharing the
@@ -28,6 +28,19 @@ real missing-range to expand and a real ``?lines=`` deep link to click
 through. ``PROJ-9`` owns only utils.c's one hit line, fully covered, and
 carries no tracker ``url`` (the other ticket does) — exercising both of
 ``TicketIdCell``'s render variants in one fixture.
+
+Manual-testing overrides (Task 12): a fourth tier, ``bench`` — a
+manual-kind tier distinct from the fixture's existing ``manual`` tier —
+with one really-hit line (main.c line 1, ``hits.add("bench", 3)``, no
+override provenance) and one asserted-only line (main.c line 2,
+``hits.add("bench", 1)`` plus ``line.asserted = {"bench": [0]}``, so its
+sole bench evidence is override-sourced) sitting side by side so the file
+page's hollow "asserted" marker and the solid proven-count render on
+neighboring rows. ``store.overrides`` carries the one entry those refs
+point at: ``id=0``, key ``ticket:PROJ-204`` (deliberately reusing the
+per-ticket-attribution ticket id above — a manual-override entry and a
+commit-attributed ticket are different axes that can legitimately name
+the same id), reason "legacy bench regression pass".
 """
 
 from pathlib import Path
@@ -38,6 +51,7 @@ from otto.coverage.store.model import (
     CoverageStore,
     FileRecord,
     LineRecord,
+    OverrideRecord,
     TicketRecord,
 )
 
@@ -103,7 +117,7 @@ def build_fixture_report(base_dir: Path) -> Path:
     (src_dir / "main.c").write_text(_MAIN_C)
     (src_dir / "utils.c").write_text(_UTILS_C)
 
-    store = CoverageStore(tier_order=["system", "unit", "manual"])
+    store = CoverageStore(tier_order=["system", "unit", "manual", "bench"])
 
     # -- Runs (spec §10) -----------------------------------------------
     # Two system runs sharing one label — a multi-host nightly run.
@@ -207,6 +221,17 @@ def build_fixture_report(base_dir: Path) -> Path:
     # pinned PROJ-204 hides utils.c's tree row entirely (module docstring).
     for lineno in (3, 4, 5, 6, 7):
         main_rec.lines[lineno].ticket = ["PROJ-204"]
+    # Manual-overrides (Task 12): line 1 is really hit on the bench tier —
+    # a recorded, non-override hit sitting right next to line 2's
+    # override-sourced one, so the file page's solid-vs-hollow marker pair
+    # is on neighboring rows. Neither carries a ticket.
+    main_rec.lines[1] = _line(1, {"bench": 3})
+    # Line 2 (blank) is asserted-only on bench: its sole bench evidence is
+    # override entry id 0 (registered on `store.overrides` below), so the
+    # SPA renders it with the hollow "asserted" marker, not a solid count.
+    asserted_line = main_rec.get_or_create_line(2)
+    asserted_line.hits.add("bench", 1)
+    asserted_line.asserted = {"bench": [0]}
     store.merge_file(main_rec)
 
     # -- utils.c -----------------------------------------------------------
@@ -223,6 +248,18 @@ def build_fixture_report(base_dir: Path) -> Path:
         id="PROJ-204", url="https://example.test/issues/204", commits=[_BASE_COMMIT_NIGHTLY]
     )
     store.tickets["PROJ-9"] = TicketRecord(id="PROJ-9", url=None, commits=[_BASE_COMMIT_FIELD])
+
+    # Manual-overrides (Task 12): the one entry main.c line 2's `asserted`
+    # ref (id 0) points at.
+    store.overrides = [
+        OverrideRecord(
+            id=0,
+            tier="bench",
+            key="ticket:PROJ-204",
+            reason="legacy bench regression pass",
+            as_of=None,
+        )
+    ]
 
     report_dir = base_dir / "report"
     SpaRenderer(report_dir, project_name="otto example product", prefix=base_dir).render(store)

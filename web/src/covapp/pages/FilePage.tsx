@@ -20,6 +20,7 @@ import {
   focusedFileRow,
   keyColumnLabel,
   lineHasMemberHit,
+  withHideAssertedSuffix,
 } from "../format";
 import { highlightLines, langForPath } from "../highlight";
 import { ticketFileRow } from "../tickets";
@@ -109,11 +110,37 @@ function ownedByTicket(line: LineJson | undefined, ticketId: string): boolean {
   return line?.ticket?.includes(ticketId) ?? false;
 }
 
+/** `rowClassFor`'s hide-asserted input adjustment (Task 11) — deliberately
+ * NOT a change inside `rowClassFor` itself (its own doc comment: exported
+ * standalone so its precedence table stays unit-testable independent of
+ * this page's rendering). A tier whose sole hits are override-sourced
+ * (`lineAssertedIn`) gets its `hits[tier]` zeroed before `rowClassFor` ever
+ * sees it, so a line with ONLY asserted evidence in every tier falls
+ * through to `rowClassFor`'s uncovered/stale/aging branches instead of
+ * tinting by that tier — the row-tint half of "hide asserted coverage",
+ * mirroring `buildCells`'s cell-level zeroing above. A no-op (`line`
+ * unchanged) when `hideAsserted` is `false`. */
+function lineForRowClass(line: LineJson | undefined, hideAsserted: boolean): LineJson | undefined {
+  if (!hideAsserted || !line?.asserted) return line;
+  const hits = { ...line.hits };
+  for (const tier of Object.keys(line.asserted)) {
+    if ((line.asserted[tier]?.length ?? 0) > 0) hits[tier] = 0;
+  }
+  return { ...line, hits };
+}
+
 function collectRunIds(line: LineJson | undefined): Set<number> {
   if (!line) return new Set();
   const fromRun = line.run ? Object.keys(line.run).map(Number) : [];
   const fromStale = line.stale_run ?? [];
   return new Set([...fromRun, ...fromStale]);
+}
+
+/** Whether `tier`'s hits on this line are override-sourced (spec §3: the
+ * marker exists only while the tier's SOLE hits come from an override —
+ * the emitter enforces that, so presence of the key is the whole test). */
+export function lineAssertedIn(line: LineJson | undefined, tier: string): boolean {
+  return (line?.asserted?.[tier]?.length ?? 0) > 0;
 }
 
 /** `color?: string | undefined` explicitly — see TierStatRow.dotColor. The
@@ -146,11 +173,23 @@ function buildColumns(index: IndexPayload): GutterCol[] {
   ];
 }
 
-function HitCell({ value }: { value: number | null }) {
+function HitCell({ value, asserted = false }: { value: number | null; asserted?: boolean }) {
   if (value === null || value === 0) {
     return (
       <span aria-hidden className="text-quaternary opacity-45 tabular-nums">
         ·
+      </span>
+    );
+  }
+  if (asserted) {
+    return (
+      <span
+        data-testid="hit-asserted"
+        title="asserted by a manual-testing override — not proven by a recorded run"
+        className="inline-flex items-center justify-center rounded-full border border-dashed
+          border-current px-1 text-tertiary tabular-nums opacity-80"
+      >
+        {value}
       </span>
     );
   }
@@ -227,14 +266,36 @@ function branchesCell(line: LineJson | undefined, index: IndexPayload): ReactNod
   );
 }
 
-function buildCells(lineNo: number, line: LineJson | undefined, index: IndexPayload): ReactNode[] {
+/** `hideAsserted` (Task 11, default `false` — byte-identical when omitted):
+ * a tier column whose SOLE hits are override-sourced (`lineAssertedIn`)
+ * renders as a plain zero — `HitCell`'s muted "·" glyph, same as a real
+ * uncovered cell — instead of the dashed asserted pill, so hiding asserted
+ * coverage genuinely hides it from the grid, not just from its own dashed
+ * styling. A tier with BOTH real and override evidence can't occur
+ * (`LineJson.asserted`'s doc comment: the marker exists only while a
+ * tier's hits are ENTIRELY override-sourced), so zeroing is never lossy for
+ * a tier that also has real hits. */
+function buildCells(
+  lineNo: number,
+  line: LineJson | undefined,
+  index: IndexPayload,
+  hideAsserted = false,
+): ReactNode[] {
   const cells: ReactNode[] = [
     <span key="num" className="text-quaternary tabular-nums">
       {lineNo}
     </span>,
   ];
   for (const tier of index.tier_order) {
-    cells.push(<HitCell key={tier} value={line ? (line.hits[tier] ?? 0) : null} />);
+    const asserted = lineAssertedIn(line, tier);
+    const hidden = hideAsserted && asserted;
+    cells.push(
+      <HitCell
+        key={tier}
+        value={hidden ? 0 : line ? (line.hits[tier] ?? 0) : null}
+        asserted={asserted && !hideAsserted}
+      />,
+    );
   }
   cells.push(branchesCell(line, index));
   return cells;
@@ -351,16 +412,42 @@ function RunChip({ id, line, index }: { id: number; line: LineJson; index: Index
   );
 }
 
+/** Expander chip for one asserted override ref: dashed-border variant of
+ * `RunChip` so provenance reads as "declared", never "recorded". */
+function AssertedChip({ entryId, index }: { entryId: number; index: IndexPayload }) {
+  const entry = index.overrides.find((o) => o.id === entryId);
+  if (!entry) return null;
+  return (
+    <span
+      data-testid="asserted-chip"
+      className="inline-flex items-center gap-1.5 rounded-full border border-dashed
+        border-secondary bg-primary px-2.5 py-1 text-xs font-medium text-secondary"
+    >
+      <span
+        aria-hidden
+        className="size-2 shrink-0 rounded-sm border border-current"
+        style={{ borderColor: index.tier_colors[entry.tier] ?? "currentColor" }}
+      />
+      {entry.key}
+      <span className="text-quaternary">{entry.reason}</span>
+    </span>
+  );
+}
+
 function renderExpansionFor(chunk: FileChunk, index: IndexPayload) {
   return (codeLine: CodeLine): ReactNode => {
     const line = chunk.lines[String(codeLine.number)];
     if (!line) return null;
-    const ids = collectRunIds(line);
-    if (ids.size === 0) return null;
+    const runIds = collectRunIds(line);
+    const assertedIds = [...new Set(Object.values(line.asserted ?? {}).flat())];
+    if (runIds.size === 0 && assertedIds.length === 0) return null;
     return (
       <>
-        {[...ids].map((id) => (
+        {[...runIds].map((id) => (
           <RunChip key={id} id={id} line={line} index={index} />
+        ))}
+        {assertedIds.map((id) => (
+          <AssertedChip key={`a${id}`} entryId={id} index={index} />
         ))}
       </>
     );
@@ -420,7 +507,7 @@ export function FilePage({ index, segments, node }: FilePageProps) {
   // `node.chunk` for `state`/`openLines`), so a value computed only once at
   // first-ever mount would go stale on the very next file.
   const [highlight, setHighlight] = useState<LineRange | null>(null);
-  const { focus, ticket } = useFocus();
+  const { focus, ticket, hideAsserted } = useFocus();
   // Independently re-resolved against THIS page's own `index` prop, same
   // defensive pattern AppShell.tsx/DirectoryPage.tsx use — a focus label
   // that doesn't resolve here just renders unfocused instead of crashing.
@@ -513,7 +600,7 @@ export function FilePage({ index, segments, node }: FilePageProps) {
     const rowClass =
       focusedContext && memberRunIds
         ? rowClassForFocus(line, excluded, memberRunIds, focusedContext.tier)
-        : rowClassFor(line, excluded, index.tier_order);
+        : rowClassFor(lineForRowClass(line, hideAsserted), excluded, index.tier_order);
     // Task 12: dim (never hide) a line the pinned ticket doesn't own —
     // orthogonal to `rowClass`'s coverage-state tinting above, so an
     // excluded/stale/aging/blank line dims exactly the same as a hit one.
@@ -525,8 +612,8 @@ export function FilePage({ index, segments, node }: FilePageProps) {
       cells:
         focusedContext && memberRunIds
           ? buildCellsFocused(lineNo, line, index, memberRunIds, focusedContext.tier)
-          : buildCells(lineNo, line, index),
-      expandable: collectRunIds(line).size > 0,
+          : buildCells(lineNo, line, index, hideAsserted),
+      expandable: collectRunIds(line).size > 0 || Object.keys(line?.asserted ?? {}).length > 0,
       style: dimStyleFor(rowClass, index, dimmed),
       ticketGutter: buildTicketGutter(lineNo, line, index),
       highlighted: highlight !== null && lineNo >= highlight.start && lineNo <= highlight.end,
@@ -543,6 +630,9 @@ export function FilePage({ index, segments, node }: FilePageProps) {
 
   // Meta line ("N lines · M covered") always reflects the file's OVERALL
   // coverage, unaffected by focus — only the stats card below rescopes.
+  // Meta line reads the UNHIDDEN rows deliberately (see the comment two
+  // lines below) — `hideAsserted` only narrows the STATS CARD's own numbers
+  // (`statsRows`), never this header count.
   const rows = chunkTierRows(index, chunk);
   const allRow = rows.at(-1);
   // `chunkTierRows`' own "all tiers" row always carries a real tuple here
@@ -561,10 +651,10 @@ export function FilePage({ index, segments, node }: FilePageProps) {
   // run"), never the ticket-only answer.
   const statsRows =
     ticket !== null
-      ? ticketFileRow(index, chunk, ticket, focusedContext)
+      ? ticketFileRow(index, chunk, ticket, focusedContext, hideAsserted)
       : focusedContext
         ? focusedFileRow(index, chunk, focusedContext)
-        : rows;
+        : chunkTierRows(index, chunk, hideAsserted);
 
   const expandableNumbers = codeLines.filter((l) => l.expandable).map((l) => l.number);
   const allOpen = expandableNumbers.length > 0 && expandableNumbers.every((n) => openLines.has(n));
@@ -621,13 +711,16 @@ export function FilePage({ index, segments, node }: FilePageProps) {
         </>
       }
       stats={{
-        scope: focusedContext
-          ? ticket !== null
-            ? `focused: ${focusedContext.label} · ticket: ${ticket}`
-            : `focused: ${focusedContext.label}`
-          : ticket !== null
-            ? `ticket: ${ticket}`
-            : node.path,
+        scope: withHideAssertedSuffix(
+          focusedContext
+            ? ticket !== null
+              ? `focused: ${focusedContext.label} · ticket: ${ticket}`
+              : `focused: ${focusedContext.label}`
+            : ticket !== null
+              ? `ticket: ${ticket}`
+              : node.path,
+          hideAsserted,
+        ),
         title: "Coverage — this file",
         rows: statsRows,
         thresholds: index.thresholds,

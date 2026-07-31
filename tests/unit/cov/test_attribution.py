@@ -133,6 +133,31 @@ def _commit(repo: Path, message: str) -> str:
     ).stdout.strip()
 
 
+def _head(repo: Path) -> str:
+    """Return the sha of the current HEAD commit."""
+    return subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=True
+    ).stdout.strip()
+
+
+def _make_ticket_repo(tmp_path: Path, message: str) -> Path:
+    """Create a repo with a single commit touching a.c line 1, with the given message."""
+    repo = _repo(tmp_path)
+    (repo / "a.c").write_text("one\n")
+    _commit(repo, message)
+    return repo
+
+
+def _make_two_commit_ticket_repo(tmp_path: Path) -> Path:
+    """Create a repo with two commits: c1 touches line 1, c2 touches line 2."""
+    repo = _repo(tmp_path)
+    (repo / "a.c").write_text("one\ntwo\n")
+    _commit(repo, "fix #1")
+    (repo / "a.c").write_text("one\nCHANGED\n")
+    _commit(repo, "fix #2")
+    return repo
+
+
 def test_each_line_attributed_to_the_commit_that_last_touched_it(tmp_path):
     repo = _repo(tmp_path)
     (repo / "a.c").write_text("one\ntwo\n")
@@ -418,6 +443,34 @@ def test_attribute_tickets_exposes_owning_sha_so_callers_can_tell_uncommitted_fr
 
     assert lines["a.c"] == {1: [], 2: []}
     assert shas["a.c"] == {1: sha, 2: UNCOMMITTED}
+
+
+def test_reattribution_replaces_the_parsed_ticket_set(tmp_path):
+    repo = _make_ticket_repo(tmp_path, "fix #1")
+    sha = _head(repo)
+    spec = build_ticket_spec("#(?P<n>[0-9]+)", None)
+    lines, commits, _ = attribute_tickets(repo, {"a.c": 1}, spec, reattributions={sha: ["#9"]})
+    assert lines["a.c"][1] == ["#9"]
+    assert "#1" not in commits
+    assert commits["#9"] == [sha]
+
+
+def test_reattribution_to_empty_list_means_no_ticket(tmp_path):
+    repo = _make_ticket_repo(tmp_path, "fix #1")
+    sha = _head(repo)
+    spec = build_ticket_spec("#(?P<n>[0-9]+)", None)
+    lines, commits, _ = attribute_tickets(repo, {"a.c": 1}, spec, reattributions={sha: []})
+    assert lines["a.c"][1] == []
+    assert commits == {}
+
+
+def test_reattribution_leaves_other_commits_alone(tmp_path):
+    repo = _make_two_commit_ticket_repo(tmp_path)
+    c2 = _head(repo)
+    spec = build_ticket_spec("#(?P<n>[0-9]+)", None)
+    lines, _, _ = attribute_tickets(repo, {"a.c": 2}, spec, reattributions={c2: ["#7"]})
+    assert lines["a.c"][1] == ["#1"]
+    assert lines["a.c"][2] == ["#7"]
 
 
 def test_commit_message_matching_a_reserved_sentinel_id_is_dropped_not_merged(tmp_path, caplog):

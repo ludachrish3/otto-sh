@@ -53,12 +53,26 @@ const CTX_PARAM = "ctx";
 // one must never read or write the other's param/storage key.
 const TICKET_PARAM = "ticket";
 
+// Task 11 (manual-overrides spec §6): a THIRD independent pinned value —
+// "hide asserted coverage" — sharing this module's hash-query/localStorage
+// machinery (boot precedence, Back/Forward stamping) exactly like `ticket`
+// above, but a plain boolean rather than an id resolved against report data,
+// so it needs no `resolveXxx`/"unknown value" degradation: the param is
+// either present (serialized `"1"`) or absent, never a third "unknown"
+// state. Composes with BOTH `focus`/`ticket` the same way they compose with
+// each other — its own param/storage key, touched by nothing else.
+const ASSERTED_PARAM = "asserted";
+
 function storageKey(stamp: string): string {
   return `otto-cov:${stamp}:focus`;
 }
 
 function ticketStorageKey(stamp: string): string {
   return `otto-cov:${stamp}:ticket`;
+}
+
+function assertedStorageKey(stamp: string): string {
+  return `otto-cov:${stamp}:asserted`;
 }
 
 function rawHash(): string {
@@ -254,6 +268,13 @@ export interface UseFocusResult {
    * storage key so it can never clear (or be cleared by) `focus`. */
   ticket: string | null;
   setTicket: (id: string | null) => void;
+  /** Task 11: whether asserted (override-sourced) coverage is currently
+   * hidden from every stat recompute/cell that consumes it — resolved/
+   * persisted exactly like `ticket` above (same boot precedence, same
+   * Back/Forward stamping), but via its own, entirely independent param/
+   * storage key so toggling it can never touch `focus`/`ticket`. */
+  hideAsserted: boolean;
+  setHideAsserted: (v: boolean) => void;
 }
 
 const FocusContext = createContext<UseFocusResult | null>(null);
@@ -301,6 +322,19 @@ function initialTicket(index: IndexPayload | null): string | null {
   return null;
 }
 
+/** `initialFocus`/`initialTicket`'s boolean counterpart — same query>storage
+ * precedence, but a bare presence test (`"1"` in the query, or ANY
+ * non-`null` stored value) rather than a lookup against report data: unlike
+ * a label/id, a boolean has no "unknown value" case to degrade. */
+function initialHideAsserted(index: IndexPayload | null): boolean {
+  const fromQuery = parseHashQuery().get(ASSERTED_PARAM);
+  if (fromQuery !== null) return fromQuery === "1";
+  if (index !== null) {
+    return localStorage.getItem(assertedStorageKey(index.stamp)) !== null;
+  }
+  return false;
+}
+
 /** Mounted once at App.tsx's root, inside `ToastProvider` (this provider
  * calls `useToast()` itself, to fire the pin/clear toast from the ONE
  * place `focus` actually changes, rather than duplicating that call at
@@ -313,6 +347,11 @@ export function FocusProvider({ children }: { children: ReactNode }) {
   // combined with `focus` above (see this module's header comment on why
   // ctx/ticket must compose rather than share a slot).
   const [ticket, setTicketState] = useState<string | null>(() => initialTicket(index));
+  // Task 11: a THIRD, independent piece of state — never derived from or
+  // combined with `focus`/`ticket` above (see this module's header comment
+  // and `ASSERTED_PARAM`'s doc comment on why hide-asserted must compose
+  // with both rather than share a slot).
+  const [hideAsserted, setHideAssertedState] = useState<boolean>(() => initialHideAsserted(index));
 
   // Boot reconciliation (runs once, at mount): whichever source won the
   // query>storage precedence above becomes the sole source going forward —
@@ -355,6 +394,13 @@ export function FocusProvider({ children }: { children: ReactNode }) {
     } else {
       replaceHashQuery((p) => p.set(TICKET_PARAM, ticket));
       if (index !== null) localStorage.setItem(ticketStorageKey(index.stamp), ticket);
+    }
+    if (!hideAsserted) {
+      if (parseHashQuery().has(ASSERTED_PARAM)) replaceHashQuery((p) => p.delete(ASSERTED_PARAM));
+      if (index !== null) localStorage.removeItem(assertedStorageKey(index.stamp));
+    } else {
+      replaceHashQuery((p) => p.set(ASSERTED_PARAM, "1"));
+      if (index !== null) localStorage.setItem(assertedStorageKey(index.stamp), "1");
     }
     stampCurrentEntry();
   }, []);
@@ -450,19 +496,28 @@ export function FocusProvider({ children }: { children: ReactNode }) {
             else localStorage.setItem(ticketStorageKey(index.stamp), landedTicket);
           }
         }
+        const landedHideAsserted = params.get(ASSERTED_PARAM) === "1";
+        if (landedHideAsserted !== hideAsserted) {
+          setHideAssertedState(landedHideAsserted);
+          if (index !== null) {
+            if (!landedHideAsserted) localStorage.removeItem(assertedStorageKey(index.stamp));
+            else localStorage.setItem(assertedStorageKey(index.stamp), "1");
+          }
+        }
         return;
       }
-      if (focus !== null || ticket !== null) {
+      if (focus !== null || ticket !== null || hideAsserted) {
         replaceHashQuery((p) => {
           if (focus !== null) p.set(CTX_PARAM, focus);
           if (ticket !== null) p.set(TICKET_PARAM, ticket);
+          if (hideAsserted) p.set(ASSERTED_PARAM, "1");
         });
       }
       stampCurrentEntry();
     }
     window.addEventListener("hashchange", onHashChange);
     return () => window.removeEventListener("hashchange", onHashChange);
-  }, [focus, ticket, index]);
+  }, [focus, ticket, hideAsserted, index]);
 
   const setFocus = useCallback(
     (label: string | null) => {
@@ -504,9 +559,30 @@ export function FocusProvider({ children }: { children: ReactNode }) {
     [index, show],
   );
 
+  // Task 11: mirrors `setTicket`'s shape exactly — its own `setHashQuery`/
+  // `localStorage` calls only ever touch `ASSERTED_PARAM`/`assertedStorageKey`,
+  // never `focus`'s or `ticket`'s, so toggling hide-asserted can never clear
+  // (or be cleared by) either.
+  const setHideAsserted = useCallback(
+    (v: boolean) => {
+      if (!v) {
+        setHashQuery((p) => p.delete(ASSERTED_PARAM));
+        if (index !== null) localStorage.removeItem(assertedStorageKey(index.stamp));
+        setHideAssertedState(false);
+        show("Asserted coverage shown");
+        return;
+      }
+      setHashQuery((p) => p.set(ASSERTED_PARAM, "1"));
+      if (index !== null) localStorage.setItem(assertedStorageKey(index.stamp), "1");
+      setHideAssertedState(true);
+      show("Asserted coverage hidden");
+    },
+    [index, show],
+  );
+
   const value = useMemo<UseFocusResult>(
-    () => ({ focus, setFocus, ticket, setTicket }),
-    [focus, setFocus, ticket, setTicket],
+    () => ({ focus, setFocus, ticket, setTicket, hideAsserted, setHideAsserted }),
+    [focus, setFocus, ticket, setTicket, hideAsserted, setHideAsserted],
   );
   return <FocusContext.Provider value={value}>{children}</FocusContext.Provider>;
 }

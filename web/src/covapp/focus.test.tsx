@@ -44,6 +44,7 @@ function buildIndex(overrides: Partial<IndexPayload> = {}): IndexPayload {
         covered: 1,
         uncovered: 0,
         per_tier: {},
+        asserted: {},
         chunk: "PROJ-1",
       },
       {
@@ -53,6 +54,7 @@ function buildIndex(overrides: Partial<IndexPayload> = {}): IndexPayload {
         covered: 1,
         uncovered: 0,
         per_tier: {},
+        asserted: {},
         chunk: "PROJ-2",
       },
     ],
@@ -61,7 +63,7 @@ function buildIndex(overrides: Partial<IndexPayload> = {}): IndexPayload {
 }
 
 function Consumer() {
-  const { focus, setFocus, ticket, setTicket } = useFocus();
+  const { focus, setFocus, ticket, setTicket, hideAsserted, setHideAsserted } = useFocus();
   return (
     <div>
       <span data-testid="focus-value">{focus ?? "null"}</span>
@@ -83,6 +85,13 @@ function Consumer() {
       </button>
       <button type="button" data-testid="unpin" onClick={() => setTicket(null)}>
         unpin
+      </button>
+      <span data-testid="hide-asserted-value">{String(hideAsserted)}</span>
+      <button type="button" data-testid="hide-asserted-on" onClick={() => setHideAsserted(true)}>
+        hide asserted
+      </button>
+      <button type="button" data-testid="hide-asserted-off" onClick={() => setHideAsserted(false)}>
+        show asserted
       </button>
     </div>
   );
@@ -609,6 +618,142 @@ describe("useFocus / FocusProvider: ticket (Task 12)", () => {
       });
       expect(screen.getByTestId("focus-value").textContent).toBe("ctx-a");
       expect(screen.getByTestId("ticket-value").textContent).toBe("PROJ-1");
+    });
+  });
+});
+
+// Task 11: `?asserted=1` — a THIRD, independent pinned value sharing this
+// same module's hash-query/localStorage machinery (storage key
+// "otto-cov:<stamp>:asserted", boot precedence query>storage) — but a plain
+// boolean, unlike `ticket`'s id: `"1"` in the query or ANY stored value
+// means true, absence means false, with no "unknown value treated as
+// cleared" case to test (a boolean has no such state). Composes with BOTH
+// `focus` and `ticket` — pinning/clearing it must never touch either of
+// their params or storage keys, in either direction.
+describe("useFocus / FocusProvider: hideAsserted (Task 11)", () => {
+  it("setHideAsserted(true) writes the hash query and the stamp-namespaced storage key", () => {
+    window.__OTTO_COV__ = buildIndex();
+    window.location.hash = "#/coverage";
+    renderConsumer();
+
+    fireEvent.click(screen.getByTestId("hide-asserted-on"));
+
+    expect(screen.getByTestId("hide-asserted-value").textContent).toBe("true");
+    expect(window.location.hash).toBe("#/coverage?asserted=1");
+    expect(localStorage.getItem("otto-cov:stamp-1:asserted")).toBe("1");
+  });
+
+  it("setHideAsserted(false) removes the query param and the storage key", () => {
+    window.__OTTO_COV__ = buildIndex();
+    window.location.hash = "#/coverage?asserted=1";
+    localStorage.setItem("otto-cov:stamp-1:asserted", "1");
+    renderConsumer();
+
+    fireEvent.click(screen.getByTestId("hide-asserted-off"));
+
+    expect(screen.getByTestId("hide-asserted-value").textContent).toBe("false");
+    expect(window.location.hash).toBe("#/coverage");
+    expect(localStorage.getItem("otto-cov:stamp-1:asserted")).toBeNull();
+  });
+
+  it("boot: the hash query wins over localStorage, same precedence as ctx/ticket", () => {
+    window.__OTTO_COV__ = buildIndex();
+    localStorage.removeItem("otto-cov:stamp-1:asserted");
+    window.location.hash = "#/coverage?asserted=1";
+    renderConsumer();
+
+    expect(screen.getByTestId("hide-asserted-value").textContent).toBe("true");
+  });
+
+  it("boot: localStorage alone (no query param) still boots it true", () => {
+    window.__OTTO_COV__ = buildIndex();
+    localStorage.setItem("otto-cov:stamp-1:asserted", "1");
+    window.location.hash = "#/coverage";
+    renderConsumer();
+
+    expect(screen.getByTestId("hide-asserted-value").textContent).toBe("true");
+  });
+
+  it("namespaces the storage key by report stamp, independently of the focus/ticket keys", () => {
+    window.__OTTO_COV__ = buildIndex({ stamp: "stamp-A" });
+    window.location.hash = "#/coverage";
+    renderConsumer();
+
+    fireEvent.click(screen.getByTestId("hide-asserted-on"));
+
+    expect(localStorage.getItem("otto-cov:stamp-A:asserted")).toBe("1");
+    expect(localStorage.getItem("otto-cov:stamp-1:asserted")).toBeNull();
+  });
+
+  it("toasts distinctly on hide/show", () => {
+    window.__OTTO_COV__ = buildIndex();
+    window.location.hash = "#/coverage";
+    renderConsumer();
+
+    fireEvent.click(screen.getByTestId("hide-asserted-on"));
+    expect(screen.getByTestId("toast").textContent).toMatch(/hidden/i);
+
+    fireEvent.click(screen.getByTestId("hide-asserted-off"));
+    expect(screen.getByTestId("toast").textContent).toMatch(/shown/i);
+  });
+
+  describe("composes with focus and ticket — neither ever touches the other's param/storage", () => {
+    it("toggling hide-asserted after pinning a context and a ticket leaves both untouched", () => {
+      window.__OTTO_COV__ = buildIndex();
+      window.location.hash = "#/coverage";
+      renderConsumer();
+
+      fireEvent.click(screen.getByTestId("set-a"));
+      fireEvent.click(screen.getByTestId("pin-proj-1"));
+      fireEvent.click(screen.getByTestId("hide-asserted-on"));
+
+      expect(screen.getByTestId("focus-value").textContent).toBe("ctx-a");
+      expect(screen.getByTestId("ticket-value").textContent).toBe("PROJ-1");
+      expect(screen.getByTestId("hide-asserted-value").textContent).toBe("true");
+      const hashParams = new URLSearchParams(window.location.hash.split("?")[1]);
+      expect(hashParams.get("ctx")).toBe("ctx-a");
+      expect(hashParams.get("ticket")).toBe("PROJ-1");
+      expect(hashParams.get("asserted")).toBe("1");
+    });
+
+    it("clearing focus/ticket leaves a pinned hide-asserted in place", () => {
+      window.__OTTO_COV__ = buildIndex();
+      window.location.hash = "#/coverage";
+      renderConsumer();
+
+      fireEvent.click(screen.getByTestId("set-a"));
+      fireEvent.click(screen.getByTestId("pin-proj-1"));
+      fireEvent.click(screen.getByTestId("hide-asserted-on"));
+      fireEvent.click(screen.getByTestId("clear"));
+      fireEvent.click(screen.getByTestId("unpin"));
+
+      expect(screen.getByTestId("focus-value").textContent).toBe("null");
+      expect(screen.getByTestId("ticket-value").textContent).toBe("null");
+      expect(screen.getByTestId("hide-asserted-value").textContent).toBe("true");
+      expect(window.location.hash).toBe("#/coverage?asserted=1");
+    });
+
+    it("boots all three from a deep link carrying ctx, ticket, and asserted together", () => {
+      window.__OTTO_COV__ = buildIndex();
+      window.location.hash = "#/coverage?ctx=ctx-a&ticket=PROJ-1&asserted=1";
+      renderConsumer();
+
+      expect(screen.getByTestId("focus-value").textContent).toBe("ctx-a");
+      expect(screen.getByTestId("ticket-value").textContent).toBe("PROJ-1");
+      expect(screen.getByTestId("hide-asserted-value").textContent).toBe("true");
+    });
+
+    it("re-appends a dropped asserted param (alongside ctx/ticket) after a navigation that drops the whole query", async () => {
+      window.__OTTO_COV__ = buildIndex();
+      window.location.hash = "#/coverage?ctx=ctx-a&ticket=PROJ-1&asserted=1";
+      renderConsumer();
+
+      window.location.hash = "#/coverage/foo"; // plain navigation, drops the whole query
+      await waitFor(() => {
+        const params = new URLSearchParams(window.location.hash.split("?")[1]);
+        expect(params.get("asserted")).toBe("1");
+      });
+      expect(screen.getByTestId("hide-asserted-value").textContent).toBe("true");
     });
   });
 });

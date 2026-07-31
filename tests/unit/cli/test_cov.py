@@ -114,7 +114,7 @@ class TestCovReportValidation:
         # outcome would depend on whatever repo bootstrap resolved globally.)
         with (
             patch.object(
-                cov_module, "_resolve_cov_settings", return_value=(None, None, [], None, None)
+                cov_module, "_resolve_cov_settings", return_value=(None, None, [], None, None, None)
             ),
             patch.object(cov_module.logger, "error") as mock_err,
         ):
@@ -129,7 +129,7 @@ class TestCovReportValidation:
         (tmp_path / "cov" / "host1").mkdir(parents=True)
         with (
             patch.object(
-                cov_module, "_resolve_cov_settings", return_value=(None, None, [], None, None)
+                cov_module, "_resolve_cov_settings", return_value=(None, None, [], None, None, None)
             ),
             patch.object(cov_module.logger, "error"),
         ):
@@ -395,7 +395,9 @@ class TestCovReportTicketsJson:
         tiers = [TierConfig(name="system", kind="e2e", precedence=1, color="green")]
         spec = build_ticket_spec(r"[A-Z]{2,10}-[0-9]+", None)
         with patch.object(
-            cov_module, "_resolve_cov_settings", return_value=(repo_root, tiers, [], None, spec)
+            cov_module,
+            "_resolve_cov_settings",
+            return_value=(repo_root, tiers, [], None, spec, None),
         ):
             yield repo_root
 
@@ -495,7 +497,9 @@ class TestCovReportCollectionModel:
         repo_root = tmp_path / "sut"
         tiers = [TierConfig(name="system", kind="e2e", precedence=1, color="green")]
         with patch.object(
-            cov_module, "_resolve_cov_settings", return_value=(repo_root, tiers, [], None, None)
+            cov_module,
+            "_resolve_cov_settings",
+            return_value=(repo_root, tiers, [], None, None, None),
         ):
             result = runner.invoke(cov_app, ["report", str(tmp_path)])
 
@@ -518,7 +522,9 @@ class TestCovReportCollectionModel:
         tiers = [TierConfig(name="system", kind="e2e", precedence=1, color="green")]
         spec = build_ticket_spec(r"[A-Z]{2,10}-[0-9]+", None)
         with patch.object(
-            cov_module, "_resolve_cov_settings", return_value=(repo_root, tiers, [], None, spec)
+            cov_module,
+            "_resolve_cov_settings",
+            return_value=(repo_root, tiers, [], None, spec, None),
         ):
             result = runner.invoke(cov_app, ["report", str(tmp_path)])
 
@@ -555,7 +561,7 @@ class TestCovReportCollectionModel:
         with patch.object(
             cov_module,
             "_resolve_cov_settings",
-            return_value=(repo_root, tiers, ["MYPROJ_NO_COV"], None, None),
+            return_value=(repo_root, tiers, ["MYPROJ_NO_COV"], None, None, None),
         ):
             result = runner.invoke(cov_app, ["report", str(tmp_path)])
 
@@ -585,7 +591,9 @@ class TestCovReportCollectionModel:
         """output_dirs is optional: a manual-store-only report needs no run dirs."""
         repo_root = Path("/some/repo")
         with patch.object(
-            cov_module, "_resolve_cov_settings", return_value=(repo_root, None, [], None, None)
+            cov_module,
+            "_resolve_cov_settings",
+            return_value=(repo_root, None, [], None, None, None),
         ):
             result = runner.invoke(cov_app, ["report"])
 
@@ -617,7 +625,7 @@ class TestCovReportCollectionModelErrors:
             patch.object(
                 cov_module,
                 "_resolve_cov_settings",
-                return_value=(repo_root, self._tiers(), [], None, None),
+                return_value=(repo_root, self._tiers(), [], None, None, None),
             ),
             patch.object(cov_module.logger, "error") as mock_err,
         ):
@@ -636,7 +644,7 @@ class TestCovReportCollectionModelErrors:
             patch.object(
                 cov_module,
                 "_resolve_cov_settings",
-                return_value=(repo_root, self._tiers(), [], None, None),
+                return_value=(repo_root, self._tiers(), [], None, None, None),
             ),
             patch.object(cov_module.logger, "error") as mock_err,
         ):
@@ -659,7 +667,7 @@ class TestCovReportCollectionModelErrors:
             patch.object(
                 cov_module,
                 "_resolve_cov_settings",
-                return_value=(not_git, self._tiers(), [], None, None),
+                return_value=(not_git, self._tiers(), [], None, None, None),
             ),
             patch.object(cov_module.logger, "error") as mock_err,
         ):
@@ -672,6 +680,34 @@ class TestCovReportCollectionModelErrors:
         message = mock_err.call_args[0][0]
         assert "not a git repository" in message
         assert "--tier" in message
+
+    def test_malformed_overrides_file_exits_1_no_traceback(self, tmp_path):
+        """A settings tree with [coverage.tickets] and a malformed override
+        file: _resolve_cov_settings's real load_override_config call raises
+        OverrideConfigError (a ValueError), which report's existing
+        `except ValueError` handler must print clean — no traceback."""
+        repo = MagicMock()
+        repo.sut_dir = tmp_path / "sut"
+        repo.sut_dir.mkdir()
+        repo.settings = {
+            "coverage": {
+                "tiers": {"system": {"kind": "e2e", "precedence": 1}},
+                "tickets": {"pattern": r"#(?P<n>[0-9]+)"},
+            }
+        }
+        overrides_path = repo.sut_dir / ".otto" / "coverage-overrides.toml"
+        overrides_path.parent.mkdir(parents=True)
+        overrides_path.write_text("not valid toml {{{")
+
+        with (
+            patch("otto.config.get_repos", return_value=[repo]),
+            patch.object(cov_module.logger, "error") as mock_err,
+        ):
+            result = runner.invoke(cov_app, ["report", "--dir", str(tmp_path / "report")])
+
+        assert result.exit_code == 1
+        assert "Traceback" not in result.output
+        assert "not valid TOML" in mock_err.call_args[0][0]
 
 
 # ── _resolve_cov_settings — [coverage.exclusions].markers wiring ────────────
@@ -693,7 +729,7 @@ class TestResolveCovSettingsExtraMarkers:
             }
         )
         with patch("otto.config.get_repos", return_value=[repo]):
-            repo_root, tier_configs, extra_markers, thresholds, ticket_spec = (
+            repo_root, tier_configs, extra_markers, thresholds, ticket_spec, _overrides = (
                 cov_module._resolve_cov_settings()
             )
         assert repo_root == repo.sut_dir
@@ -705,14 +741,14 @@ class TestResolveCovSettingsExtraMarkers:
     def test_no_exclusions_table_yields_empty_markers(self):
         repo = self._repo({"tiers": {"system": {"kind": "e2e", "precedence": 1}}})
         with patch("otto.config.get_repos", return_value=[repo]):
-            _repo_root, _tier_configs, extra_markers, _, _ticket_spec = (
+            _repo_root, _tier_configs, extra_markers, _, _ticket_spec, _overrides = (
                 cov_module._resolve_cov_settings()
             )
         assert extra_markers == []
 
     def test_no_cov_repo_yields_empty_markers(self):
         with patch("otto.config.get_repos", return_value=[]):
-            repo_root, tier_configs, extra_markers, thresholds, ticket_spec = (
+            repo_root, tier_configs, extra_markers, thresholds, ticket_spec, _overrides = (
                 cov_module._resolve_cov_settings()
             )
         assert repo_root is None
@@ -731,11 +767,72 @@ class TestResolveCovSettingsExtraMarkers:
             }
         )
         with patch("otto.config.get_repos", return_value=[repo]):
-            _repo_root, _tier_configs, _extra_markers, _thresholds, ticket_spec = (
+            _repo_root, _tier_configs, _extra_markers, _thresholds, ticket_spec, _overrides = (
                 cov_module._resolve_cov_settings()
             )
         assert ticket_spec is not None
         assert ticket_spec.extract("fix PROJ-7") == ["PROJ-7"]
+
+    def test_reads_overrides_from_settings_with_matching_manual_tier(self, tmp_path):
+        """[coverage.overrides] must resolve using the SAME tier list
+        load_tiers produced for this settings tree, not an empty or wrong
+        one — load_override_config rejects a top-level table whose name
+        isn't a declared kind="manual" tier, so passing the wrong list here
+        would make a well-formed [[bench]] entry look like an unknown
+        table."""
+        import subprocess
+
+        sut_dir = tmp_path / "sut"
+        sut_dir.mkdir()
+        git_env = {
+            "GIT_AUTHOR_NAME": "t",
+            "GIT_AUTHOR_EMAIL": "t@x",
+            "GIT_COMMITTER_NAME": "t",
+            "GIT_COMMITTER_EMAIL": "t@x",
+            "PATH": "/usr/bin:/bin",
+            "HOME": str(tmp_path),
+        }
+
+        def _git(*args):
+            subprocess.run(
+                ["git", *args], cwd=sut_dir, check=True, capture_output=True, env=git_env
+            )
+
+        _git("init", "-q")
+        (sut_dir / "f.c").write_text("int a;\n")
+        _git("add", "f.c")
+        _git("commit", "-qm", "work")
+        sha = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=sut_dir,
+            check=True,
+            capture_output=True,
+            text=True,
+            env=git_env,
+        ).stdout.strip()
+
+        (sut_dir / ".otto").mkdir()
+        (sut_dir / ".otto" / "coverage-overrides.toml").write_text(
+            f'[[bench]]\ncommit = "{sha}"\nreason = "manual pass"\n'
+        )
+
+        repo = self._repo(
+            {
+                "tiers": {
+                    "system": {"kind": "e2e", "precedence": 1},
+                    "bench": {"kind": "manual", "precedence": 2},
+                },
+                "tickets": {"pattern": "#(?P<n>[0-9]+)"},
+            },
+            sut_dir=sut_dir,
+        )
+        with patch("otto.config.get_repos", return_value=[repo]):
+            _repo_root, _tier_configs, _extra_markers, _thresholds, _ticket_spec, overrides = (
+                cov_module._resolve_cov_settings()
+            )
+        assert overrides is not None
+        assert [e.key for e in overrides.asserted] == [f"commit:{sha}"]
+        assert overrides.asserted[0].tier == "bench"
 
 
 # ── _resolve_tester — identity defaults (spec decision 15) ──────────────────

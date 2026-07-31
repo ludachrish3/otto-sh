@@ -36,7 +36,7 @@ from ..ticket_export import group_ranges as _group_ranges
 
 logger = logging.getLogger(__name__)
 
-OTTO_COV_DATA_FORMAT: int = 1
+OTTO_COV_DATA_FORMAT: int = 2
 """``IndexPayload["format"]`` / ``FileChunk["stamp"]``-adjacent format marker.
 
 Bump alongside the TypeScript ``EXPECTED_DATA_FORMAT`` constant, or never."""
@@ -105,6 +105,8 @@ def _line_to_json(lr: LineRecord) -> dict[str, Any]:
         d["stale_run"] = list(lr.stale_runs)
     if lr.ticket:
         d["ticket"] = list(lr.ticket)
+    if lr.asserted:
+        d["asserted"] = {tier: list(ids) for tier, ids in lr.asserted.items()}
     return d
 
 
@@ -115,7 +117,13 @@ def _line_to_json(lr: LineRecord) -> dict[str, Any]:
 
 def _empty_stats(tier_order: list[str]) -> dict[str, Any]:
     return {
-        "lines": {"total": 0, "hit": 0, "per_tier": dict.fromkeys(tier_order, 0)},
+        "lines": {
+            "total": 0,
+            "hit": 0,
+            "per_tier": dict.fromkeys(tier_order, 0),
+            "asserted_per_tier": dict.fromkeys(tier_order, 0),
+            "asserted_only": 0,
+        },
         "branches": {"total": 0, "hit": 0, "per_tier": dict.fromkeys(tier_order, 0)},
         "flags": {"stale": 0, "aging": 0, "excluded": 0},
         "ctx_lines": {},
@@ -128,6 +136,11 @@ def _add_stats(target: dict[str, Any], source: dict[str, Any]) -> None:
     target["lines"]["hit"] += source["lines"]["hit"]
     for tier, n in source["lines"]["per_tier"].items():
         target["lines"]["per_tier"][tier] = target["lines"]["per_tier"].get(tier, 0) + n
+    for tier, n in source["lines"]["asserted_per_tier"].items():
+        target["lines"]["asserted_per_tier"][tier] = (
+            target["lines"]["asserted_per_tier"].get(tier, 0) + n
+        )
+    target["lines"]["asserted_only"] += source["lines"]["asserted_only"]
     target["branches"]["total"] += source["branches"]["total"]
     target["branches"]["hit"] += source["branches"]["hit"]
     for tier, n in source["branches"]["per_tier"].items():
@@ -155,6 +168,13 @@ def _file_stats(
     stats["lines"]["hit"] = sum(1 for lr in lines if lr.hits.is_hit())
     for tier in tier_order:
         stats["lines"]["per_tier"][tier] = sum(1 for lr in lines if lr.hits.for_tier(tier) > 0)
+    for tier in tier_order:
+        stats["lines"]["asserted_per_tier"][tier] = sum(1 for lr in lines if tier in lr.asserted)
+    stats["lines"]["asserted_only"] = sum(
+        1
+        for lr in lines
+        if lr.asserted and all(t in lr.asserted for t in lr.hits.counts if lr.hits.counts[t] > 0)
+    )
 
     all_branches = [b for lr in lines for b in lr.branches]
     stats["branches"]["total"] = len(all_branches)
@@ -297,14 +317,29 @@ def _build_ticket_summaries(
     # Accumulated in the same pass — see ticket_export.build_ticket_export
     # for why this is not recomputed per ticket.
     per_tier_of: dict[str, dict[str, int]] = {}
+    # ticket -> tier -> count of lines asserted (override-sourced) for that
+    # tier, mirroring per_tier_of.
+    asserted_of: dict[str, dict[str, int]] = {}
     # ticket -> display path -> tier -> covered count. The ticket-wide
     # rollup above cannot be split back apart per file, and the frontend
     # needs the per-file breakdown to render real tier rows for a scoped
     # subtree instead of declining to one aggregate row.
     per_tier_file_of: dict[str, dict[str, dict[str, int]]] = {}
+    # ticket -> display path -> tier -> asserted count, mirroring
+    # per_tier_file_of — lets a ticket-scoped file row report the SUBSET of
+    # asserted lines the ticket actually owns in that file, not the file's
+    # whole-repo asserted_per_tier (review finding F1: without this, a
+    # scoped stats bag would carry whole-file override provenance against a
+    # ticket-scoped denominator).
+    asserted_file_of: dict[str, dict[str, dict[str, int]]] = {}
+    # ticket -> display path -> count of the ticket's OWN lines in that file
+    # whose every hitting tier is asserted (mirrors Stats.lines.asserted_only,
+    # scoped the same way asserted_file_of scopes asserted_per_tier).
+    asserted_only_file_of: dict[str, dict[str, int]] = {}
     total_owned = 0
     total_covered = 0
     total_per_tier: dict[str, int] = dict.fromkeys(store.tier_order, 0)
+    total_asserted: dict[str, int] = dict.fromkeys(store.tier_order, 0)
     for record in store.files():
         display = _display_path(record, prefix)
         for lineno, line in record.lines.items():
@@ -319,16 +354,31 @@ def _build_ticket_summaries(
                 for tier in store.tier_order:
                     if line.hits.is_hit(tier):
                         total_per_tier[tier] += 1
+                    if tier in line.asserted:
+                        total_asserted[tier] += 1
+            line_asserted_only = bool(line.asserted) and all(
+                tier in line.asserted for tier, n in line.hits.counts.items() if n > 0
+            )
             for ticket_id in line.ticket:
                 owned.setdefault(ticket_id, {}).setdefault(display, []).append(lineno)
                 if line.hits.is_hit():
                     hits.setdefault(ticket_id, {}).setdefault(display, []).append(lineno)
                 tiers = per_tier_of.setdefault(ticket_id, {})
                 file_tiers = per_tier_file_of.setdefault(ticket_id, {}).setdefault(display, {})
+                asserted_tiers = asserted_of.setdefault(ticket_id, {})
+                asserted_file_tiers = asserted_file_of.setdefault(ticket_id, {}).setdefault(
+                    display, {}
+                )
                 for tier in store.tier_order:
                     if line.hits.is_hit(tier):
                         tiers[tier] = tiers.get(tier, 0) + 1
                         file_tiers[tier] = file_tiers.get(tier, 0) + 1
+                    if tier in line.asserted:
+                        asserted_tiers[tier] = asserted_tiers.get(tier, 0) + 1
+                        asserted_file_tiers[tier] = asserted_file_tiers.get(tier, 0) + 1
+                if line_asserted_only:
+                    file_only = asserted_only_file_of.setdefault(ticket_id, {})
+                    file_only[display] = file_only.get(display, 0) + 1
 
     summaries: list[dict[str, Any]] = []
     chunks: dict[str, dict[str, Any]] = {}
@@ -347,6 +397,9 @@ def _build_ticket_summaries(
                 "per_tier": {
                     tier: per_tier_of.get(ticket_id, {}).get(tier, 0) for tier in store.tier_order
                 },
+                "asserted": {
+                    tier: asserted_of.get(ticket_id, {}).get(tier, 0) for tier in store.tier_order
+                },
                 "chunk": chunk,
             }
         )
@@ -355,6 +408,7 @@ def _build_ticket_summaries(
             hit_set = set(hits.get(ticket_id, {}).get(display, []))
             missing = [n for n in sorted(owned[ticket_id][display]) if n not in hit_set]
             file_tiers = per_tier_file_of.get(ticket_id, {}).get(display, {})
+            asserted_file_tiers = asserted_file_of.get(ticket_id, {}).get(display, {})
             files.append(
                 {
                     "path": display,
@@ -362,6 +416,10 @@ def _build_ticket_summaries(
                     "covered": len(hit_set),
                     "missing": _group_ranges(missing),
                     "per_tier": {tier: file_tiers.get(tier, 0) for tier in store.tier_order},
+                    "asserted": {
+                        tier: asserted_file_tiers.get(tier, 0) for tier in store.tier_order
+                    },
+                    "asserted_only": asserted_only_file_of.get(ticket_id, {}).get(display, 0),
                 }
             )
         chunks[chunk] = {"stamp": stamp, "id": ticket_id, "files": files}
@@ -371,6 +429,7 @@ def _build_ticket_summaries(
         "covered": total_covered,
         "uncovered": total_owned - total_covered,
         "per_tier": total_per_tier,
+        "asserted": total_asserted,
     }
     return summaries, chunks, tickets_totals
 
@@ -429,6 +488,7 @@ def build_index_payload(
         "thresholds": store.thresholds.to_dict(),
         "stat_types": list(STAT_TYPES),
         "runs": [r.to_dict() for r in store.runs],
+        "overrides": [o.to_dict() for o in sorted(store.overrides, key=lambda o: o.id)],
         "run_contrib": _build_run_contrib(store, prefix),
         "total_lines": tree["stats"]["lines"]["total"],
         "tree": tree,

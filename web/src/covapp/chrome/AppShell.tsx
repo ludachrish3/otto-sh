@@ -198,6 +198,41 @@ function FocusMenuItem({
   );
 }
 
+/** One disabled row per manual-testing override entry (Task 11, ⋮ menu
+ * "Overrides" section) — informational, same `isDisabled` `Dropdown.Item`
+ * pattern `KeyRow` above uses, but shaped for an `OverrideJson` rather than
+ * a fixed tier/state swatch: a DASHED tier dot (never solid — mirrors
+ * `FilePage.tsx`'s `AssertedChip`, "declared", never "recorded") plus the
+ * override's own `key` and a truncated `reason` (full text in `title`, for
+ * a reason too long to fit the menu's fixed width). */
+function OverrideEntryRow({
+  entry,
+  tierColor,
+}: {
+  entry: IndexPayload["overrides"][number];
+  tierColor?: string | undefined;
+}) {
+  return (
+    <Dropdown.Item
+      id={`override-${entry.id}`}
+      isDisabled
+      textValue={entry.key}
+      data-testid="override-entry"
+      className="opacity-100 cursor-default"
+    >
+      <span title={entry.reason} className="flex min-w-0 items-center gap-2">
+        <span
+          aria-hidden
+          className="size-2 shrink-0 rounded-sm border border-dashed border-current"
+          style={tierColor ? { borderColor: tierColor } : undefined}
+        />
+        <span className="truncate font-mono text-xs font-medium text-secondary">{entry.key}</span>
+        <span className="truncate text-xs text-quaternary">{entry.reason}</span>
+      </span>
+    </Dropdown.Item>
+  );
+}
+
 function BranchPill({ tone }: { tone: "high" | "low" | "na" }) {
   return (
     <span
@@ -216,7 +251,7 @@ function BranchPill({ tone }: { tone: "high" | "low" | "na" }) {
 
 export function AppShell({ crumbs, title, meta, stats, children }: AppShellProps) {
   const index = getIndex();
-  const { focus, setFocus, ticket, setTicket } = useFocus();
+  const { focus, setFocus, ticket, setTicket, hideAsserted, setHideAsserted } = useFocus();
   const [theme, setTheme] = useState<Theme>(() => loadTheme());
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
 
@@ -259,6 +294,13 @@ export function AppShell({ crumbs, title, meta, stats, children }: AppShellProps
   // `[coverage.tickets]` attribution anywhere in this report) hides the box
   // rather than showing an empty, useless one.
   const tickets = index?.tickets ?? [];
+  // Task 11 (manual-overrides spec §6): the ⋮ menu's "Overrides" section and
+  // the toggle row both only exist when the report actually carries at
+  // least one asserted entry — an empty `overrides` list means nothing to
+  // hide, so both stay absent rather than showing a useless empty section
+  // (same "no data, no control" pattern `tickets.length > 0` above already
+  // uses for `TicketSearch`).
+  const overrides = index?.overrides ?? [];
 
   return (
     <div className="flex min-h-screen flex-col">
@@ -297,6 +339,20 @@ export function AppShell({ crumbs, title, meta, stats, children }: AppShellProps
               Tickets
             </a>
           </nav>
+          {overrides.length > 0 && (
+            // Always-visible indicator (Task 11, spec §6) — the ⋮ menu's
+            // "Overrides" section (below) holds the actual listing; this is
+            // just "something is being asserted here", visible without
+            // opening the menu at all. Dashed border echoes `AssertedChip`/
+            // `OverrideEntryRow`'s "declared, not recorded" treatment.
+            <span
+              data-testid="overrides-badge"
+              title="manual-testing overrides are active — open the ⋮ menu for the list"
+              className="rounded-full border border-dashed border-secondary px-2 text-xs text-tertiary"
+            >
+              {overrides.length} override{overrides.length === 1 ? "" : "s"}
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-2">
           {focus !== null && (
@@ -360,6 +416,43 @@ export function AppShell({ crumbs, title, meta, stats, children }: AppShellProps
                     />
                   ))}
                 </Dropdown.Section>
+                {(overrides.length > 0 || hideAsserted) && (
+                  // Task 11 (manual-overrides spec §6): the row shows when
+                  // the report carries at least one asserted entry — see
+                  // `overrides`' doc comment above — OR when `hideAsserted`
+                  // is already true (F3 fix): a hand-typed `?asserted=1`
+                  // deep link on a no-overrides report must not blank the
+                  // tickets/coverage data with no visible control to clear
+                  // it, so the toggle stays reachable even though the
+                  // report itself has nothing to hide. The always-visible
+                  // badge above stays gated on `overrides.length > 0` only —
+                  // it announces "overrides are active", which isn't true
+                  // here. The toggle row reuses `FocusMenuItem` (no
+                  // `dotColor`, same as "All contexts") rather than a
+                  // bespoke checkbox component, so it reads as one more menu
+                  // action among the others instead of a one-off control.
+                  <>
+                    <Dropdown.Separator />
+                    <Dropdown.Section>
+                      <Dropdown.SectionHeader className="px-2.5 pt-2 pb-1 text-xs font-medium text-quaternary">
+                        Overrides
+                      </Dropdown.SectionHeader>
+                      <FocusMenuItem
+                        active={hideAsserted}
+                        label="Hide asserted coverage"
+                        testId="toggle-hide-asserted"
+                        onAction={() => setHideAsserted(!hideAsserted)}
+                      />
+                      {overrides.map((entry) => (
+                        <OverrideEntryRow
+                          key={entry.id}
+                          entry={entry}
+                          tierColor={tierColors[entry.tier]}
+                        />
+                      ))}
+                    </Dropdown.Section>
+                  </>
+                )}
                 <Dropdown.Separator />
                 {tierOrder.length > 0 && (
                   <Dropdown.Section>

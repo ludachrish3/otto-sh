@@ -10,7 +10,7 @@ from otto.coverage.renderer.spa_data import (
     make_stamp,
     mangle_path,
 )
-from otto.coverage.store.model import CoverageStore, Thresholds, TicketRecord
+from otto.coverage.store.model import CoverageStore, OverrideRecord, Thresholds, TicketRecord
 
 
 def _write(tmp_path: Path, name: str, text: str) -> Path:
@@ -53,7 +53,7 @@ class TestIndexPayload:
             prefix=None,
             stamp="20260725T140200Z-1a2b3c4d",
         )
-        assert payload["format"] == 1
+        assert payload["format"] == 2
         assert payload["stamp"] == "20260725T140200Z-1a2b3c4d"
         assert payload["thresholds"] == {"high": 90.0, "medium": 75.0}
         assert payload["stat_types"] == ["line", "branch", "decision"]
@@ -66,7 +66,13 @@ class TestIndexPayload:
         assert tree["name"] == "Empty"
         assert tree["dirs"] == []
         assert tree["files"] == []
-        assert tree["stats"]["lines"] == {"total": 0, "hit": 0, "per_tier": {"system": 0}}
+        assert tree["stats"]["lines"] == {
+            "total": 0,
+            "hit": 0,
+            "per_tier": {"system": 0},
+            "asserted_per_tier": {"system": 0},
+            "asserted_only": 0,
+        }
         assert payload["total_lines"] == 0
 
     def test_zero_line_file_still_appears_in_tree(self, tmp_path):
@@ -76,7 +82,13 @@ class TestIndexPayload:
         payload = build_index_payload(store, project_name="P", prefix=tmp_path, stamp="S")
         node = _find_file(payload["tree"], "empty.c")
         assert node is not None
-        assert node["stats"]["lines"] == {"total": 0, "hit": 0, "per_tier": {"system": 0}}
+        assert node["stats"]["lines"] == {
+            "total": 0,
+            "hit": 0,
+            "per_tier": {"system": 0},
+            "asserted_per_tier": {"system": 0},
+            "asserted_only": 0,
+        }
 
 
 class TestTreeRollupAndCtxLines:
@@ -312,6 +324,7 @@ def test_index_payload_carries_ticket_summaries(tmp_path):
             "covered": 1,
             "uncovered": 1,
             "per_tier": {"unit": 1},
+            "asserted": {"unit": 0},
             "chunk": payload["tickets"][0]["chunk"],
         }
     ]
@@ -393,6 +406,7 @@ def test_tickets_totals_dedupes_a_line_owned_by_two_tickets(tmp_path):
         "covered": 1,
         "uncovered": 1,
         "per_tier": {"unit": 1},
+        "asserted": {"unit": 0},
     }
     # The per-ticket rows are UNCHANGED by this — they still overlap/sum to
     # more than the deduped card, which is exactly what the UI caption warns
@@ -411,6 +425,7 @@ def test_tickets_totals_is_zero_when_no_tickets(tmp_path):
         "covered": 0,
         "uncovered": 0,
         "per_tier": {"unit": 0},
+        "asserted": {"unit": 0},
     }
 
 
@@ -459,6 +474,7 @@ def test_tickets_totals_counts_a_sentinel_owned_line_once(tmp_path):
         "covered": 1,
         "uncovered": 0,
         "per_tier": {"unit": 1},
+        "asserted": {"unit": 0},
     }
 
 
@@ -525,3 +541,141 @@ def test_ticket_chunk_files_carry_per_tier_covered_counts(tmp_path):
     by_path = {f["path"]: f for f in payload["files"]}
     assert by_path["a.c"]["per_tier"] == {"unit": 1, "system": 0}
     assert by_path["b.c"]["per_tier"] == {"unit": 0, "system": 1}
+
+
+class TestOverrideProvenance:
+    """Format-2 additions: `LineJson.asserted`, `IndexPayload.overrides`,
+    `Stats.lines.asserted_per_tier`/`asserted_only`, and per-ticket
+    `asserted` counts (manual-overrides spec §3/§5/§9)."""
+
+    def test_data_format_is_2(self, tmp_path):
+        store = CoverageStore(tier_order=["system"])
+        payload = build_index_payload(store, project_name="P", prefix=None, stamp="S")
+        assert payload["format"] == 2
+
+    def test_line_json_carries_asserted_map_and_omits_when_empty(self, tmp_path):
+        out = tmp_path / "report"
+        out.mkdir()
+        store = CoverageStore(tier_order=["bench"])
+        fr = store.get_or_create_file(tmp_path / "a.c")
+        asserted_line = fr.get_or_create_line(1)
+        asserted_line.hits.add("bench", 1)
+        asserted_line.asserted = {"bench": [0]}
+        fr.get_or_create_line(2)  # plain line
+
+        emit_chunks(store, out, project_name="P", prefix=tmp_path, extra_markers=None, stamp="S")
+        chunk_path = out / "cov_data" / "files" / f"{mangle_path(tmp_path / 'a.c')}.js"
+        text = chunk_path.read_text()
+        body = text[len("window.__OTTO_COV_FILE__(") : -len(");\n")]
+        chunk = json.loads(body)
+
+        assert chunk["lines"]["1"]["asserted"] == {"bench": [0]}
+        assert "asserted" not in chunk["lines"]["2"]
+
+    def test_index_payload_carries_overrides_table_in_id_order(self, tmp_path):
+        store = CoverageStore(tier_order=["bench"])
+        store.overrides.append(
+            OverrideRecord(id=1, tier="bench", key="ticket:PROJ-2", reason="second", as_of=None)
+        )
+        store.overrides.append(
+            OverrideRecord(
+                id=0, tier="bench", key="ticket:PROJ-1", reason="first", as_of="2026-07-01"
+            )
+        )
+        payload = build_index_payload(store, project_name="P", prefix=None, stamp="S")
+        assert payload["overrides"] == [
+            {
+                "id": 0,
+                "tier": "bench",
+                "key": "ticket:PROJ-1",
+                "reason": "first",
+                "as_of": "2026-07-01",
+            },
+            {"id": 1, "tier": "bench", "key": "ticket:PROJ-2", "reason": "second", "as_of": None},
+        ]
+
+    def test_stats_roll_up_asserted_per_tier(self, tmp_path):
+        src = _write(tmp_path, "a.c", "int a;\nint b;\nint c;\n")
+        store = CoverageStore(tier_order=["bench"])
+        fr = store.get_or_create_file(src)
+        for lineno in (1, 2):
+            lr = fr.get_or_create_line(lineno)
+            lr.hits.add("bench", 1)
+            lr.asserted = {"bench": [0]}
+        really_hit = fr.get_or_create_line(3)
+        really_hit.hits.add("bench", 1)
+
+        payload = build_index_payload(store, project_name="P", prefix=tmp_path, stamp="S")
+        node = _find_file(payload["tree"], "a.c")
+        assert node["stats"]["lines"]["asserted_per_tier"]["bench"] == 2
+        assert payload["tree"]["stats"]["lines"]["asserted_per_tier"]["bench"] == 2
+
+    def test_asserted_only_requires_every_hitting_tier_be_asserted(self, tmp_path):
+        """A line hit for real in one tier and merely asserted in another
+        must NOT count toward `asserted_only` — only a line whose every
+        hitting tier is asserted counts."""
+        src = _write(tmp_path, "a.c", "int a;\nint b;\n")
+        store = CoverageStore(tier_order=["bench", "unit"])
+        fr = store.get_or_create_file(src)
+
+        mixed = fr.get_or_create_line(1)
+        mixed.hits.add("bench", 1)  # real hit, unasserted
+        mixed.hits.add("unit", 1)
+        mixed.asserted = {"unit": [0]}  # only unit is asserted
+
+        pure = fr.get_or_create_line(2)
+        pure.hits.add("bench", 1)
+        # Zero-count tier entry (review finding F3): `pure.hits.counts` now
+        # has a "unit" key present with count 0, pinning that the
+        # asserted_only filter reads `n > 0` (a zero-count entry is not a
+        # hitting tier) rather than merely `tier in lr.hits.counts` (which a
+        # zero-count key would wrongly satisfy) — the line must still count.
+        pure.hits.add("unit", 0)
+        pure.asserted = {"bench": [0]}  # bench is asserted, and it's the only hitting tier
+
+        payload = build_index_payload(store, project_name="P", prefix=tmp_path, stamp="S")
+        node = _find_file(payload["tree"], "a.c")
+        assert node["stats"]["lines"]["asserted_only"] == 1
+        assert payload["tree"]["stats"]["lines"]["asserted_only"] == 1
+
+    def test_ticket_summary_and_totals_carry_asserted(self, tmp_path):
+        store = CoverageStore(tier_order=["bench"])
+        record = store.get_or_create_file(tmp_path / "a.c")
+        asserted_line = record.get_or_create_line(1)
+        asserted_line.ticket = ["PROJ-1"]
+        asserted_line.hits.add("bench", 1)
+        asserted_line.asserted = {"bench": [0]}
+        plain_line = record.get_or_create_line(2)
+        plain_line.ticket = ["PROJ-1"]
+        store.tickets["PROJ-1"] = TicketRecord(id="PROJ-1", url=None, commits=["abc"])
+
+        payload = build_index_payload(store, project_name="P", prefix=tmp_path, stamp="S")
+        summary = next(t for t in payload["tickets"] if t["id"] == "PROJ-1")
+        assert summary["asserted"] == {"bench": 1}
+        assert payload["tickets_totals"]["asserted"] == {"bench": 1}
+
+    def test_tickets_totals_dedupes_an_asserted_line_owned_by_two_tickets(self, tmp_path):
+        """Review finding F2: a single-owner fixture can't distinguish the
+        totals-dedup path from the per-ticket path — a line asserted for one
+        tier and owned by TWO tickets must count ONCE in the deduped
+        `tickets_totals["asserted"]`, while the two per-ticket `asserted` rows
+        (which deliberately attribute the line to both owners) sum to TWO —
+        the same dedup contract `per_tier`/`owned`/`covered` already have,
+        now pinned for `asserted` specifically."""
+        store = CoverageStore(tier_order=["bench"])
+        record = store.get_or_create_file(tmp_path / "a.c")
+        shared = record.get_or_create_line(1)
+        shared.ticket = ["PROJ-1", "PROJ-2"]
+        shared.hits.add("bench", 1)
+        shared.asserted = {"bench": [0]}
+        store.tickets["PROJ-1"] = TicketRecord(id="PROJ-1", url=None, commits=["a"])
+        store.tickets["PROJ-2"] = TicketRecord(id="PROJ-2", url=None, commits=["b"])
+
+        payload = build_index_payload(store, project_name="P", prefix=tmp_path, stamp="S")
+
+        assert payload["tickets_totals"]["asserted"] == {"bench": 1}
+        by_id = {t["id"]: t for t in payload["tickets"]}
+        assert by_id["PROJ-1"]["asserted"] == {"bench": 1}
+        assert by_id["PROJ-2"]["asserted"] == {"bench": 1}
+        summed = sum(by_id[t]["asserted"]["bench"] for t in ("PROJ-1", "PROJ-2"))
+        assert summed == 2

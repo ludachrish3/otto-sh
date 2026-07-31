@@ -29,12 +29,24 @@ function makeIndex(): IndexPayload {
           path: "x.c",
           chunk: "x.c",
           stats: emptyStats({
-            lines: { total: 3, hit: 1, per_tier: { unit: 1 } },
+            lines: {
+              total: 3,
+              hit: 1,
+              per_tier: { unit: 1 },
+              asserted_per_tier: {},
+              asserted_only: 0,
+            },
           }),
         },
       ],
       stats: emptyStats({
-        lines: { total: 10, hit: 7, per_tier: { unit: 7 } },
+        lines: {
+          total: 10,
+          hit: 7,
+          per_tier: { unit: 7 },
+          asserted_per_tier: {},
+          asserted_only: 0,
+        },
         branches: { total: 4, hit: 2, per_tier: { unit: 2 } },
       }),
     },
@@ -121,6 +133,7 @@ describe("App (Task 3 chrome wiring)", () => {
           covered: 4,
           uncovered: 6,
           per_tier: { unit: 4 },
+          asserted: { unit: 0 },
           chunk: "PROJ-1",
         },
       ],
@@ -165,10 +178,26 @@ describe("App (Task 3 chrome wiring)", () => {
             name: "100%.c",
             path: "100%.c",
             chunk: "100_.c",
-            stats: emptyStats({ lines: { total: 3, hit: 1, per_tier: { unit: 1 } } }),
+            stats: emptyStats({
+              lines: {
+                total: 3,
+                hit: 1,
+                per_tier: { unit: 1 },
+                asserted_per_tier: {},
+                asserted_only: 0,
+              },
+            }),
           },
         ],
-        stats: emptyStats({ lines: { total: 3, hit: 1, per_tier: { unit: 1 } } }),
+        stats: emptyStats({
+          lines: {
+            total: 3,
+            hit: 1,
+            per_tier: { unit: 1 },
+            asserted_per_tier: {},
+            asserted_only: 0,
+          },
+        }),
       },
     });
     window.location.hash = "#/coverage";

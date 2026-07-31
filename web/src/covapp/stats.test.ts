@@ -9,7 +9,7 @@ import type { DirNode, FileNode, Stats } from "./types";
 
 function emptyStats(overrides: Partial<Stats> = {}): Stats {
   return {
-    lines: { total: 0, hit: 0, per_tier: {} },
+    lines: { total: 0, hit: 0, per_tier: {}, asserted_per_tier: {}, asserted_only: 0 },
     branches: { total: 0, hit: 0, per_tier: {} },
     flags: { stale: 0, aging: 0, excluded: 0 },
     ctx_lines: {},
@@ -79,7 +79,9 @@ describe("fmtPct", () => {
 
 describe("nodeStats", () => {
   it("returns the node's own stats bag verbatim", () => {
-    const stats = emptyStats({ lines: { total: 10, hit: 7, per_tier: { unit: 7 } } });
+    const stats = emptyStats({
+      lines: { total: 10, hit: 7, per_tier: { unit: 7 }, asserted_per_tier: {}, asserted_only: 0 },
+    });
     const file: FileNode = { name: "x.c", path: "a/x.c", chunk: "a_x.c", stats };
     expect(nodeStats(file)).toBe(stats);
 

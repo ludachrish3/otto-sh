@@ -48,18 +48,36 @@ const RUNS: RunJson[] = [
 
 function buildTree(): DirNode {
   const mainStats = emptyStats({
-    lines: { total: 20, hit: 15, per_tier: { system: 10, unit: 12 } },
+    lines: {
+      total: 20,
+      hit: 15,
+      per_tier: { system: 10, unit: 12 },
+      asserted_per_tier: {},
+      asserted_only: 0,
+    },
     branches: { total: 8, hit: 5, per_tier: { system: 3, unit: 4 } },
     flags: { stale: 2, aging: 1, excluded: 3 },
     ctx_lines: { "router-a (system bed)": 6 },
   });
   const utilStats = emptyStats({
-    lines: { total: 5, hit: 5, per_tier: { system: 5, unit: 5 } },
+    lines: {
+      total: 5,
+      hit: 5,
+      per_tier: { system: 5, unit: 5 },
+      asserted_per_tier: {},
+      asserted_only: 0,
+    },
     branches: { total: 2, hit: 2, per_tier: { system: 2, unit: 2 } },
     ctx_lines: { "router-a (system bed)": 5 },
   });
   const srcStats = emptyStats({
-    lines: { total: 25, hit: 20, per_tier: { system: 15, unit: 17 } },
+    lines: {
+      total: 25,
+      hit: 20,
+      per_tier: { system: 15, unit: 17 },
+      asserted_per_tier: {},
+      asserted_only: 0,
+    },
     branches: { total: 10, hit: 7, per_tier: { system: 5, unit: 6 } },
     flags: { stale: 2, aging: 1, excluded: 3 },
     ctx_lines: { "router-a (system bed)": 11 },
@@ -317,7 +335,13 @@ describe("DirectoryPage", () => {
   describe("under ticket scope", () => {
     function buildTicketTree(): DirNode {
       const mainStats = emptyStats({
-        lines: { total: 20, hit: 15, per_tier: { system: 10, unit: 12 } },
+        lines: {
+          total: 20,
+          hit: 15,
+          per_tier: { system: 10, unit: 12 },
+          asserted_per_tier: {},
+          asserted_only: 0,
+        },
         // Deliberately LARGER than the ticket's scoped total (3, per
         // `makeTicketChunk` below) — the fix-round-1 review's exact probe:
         // a naive composed row divides this whole-file ctx count (10) by
@@ -326,9 +350,23 @@ describe("DirectoryPage", () => {
         ctx_lines: { "router-a (system bed)": 10 },
       });
       const utilStats = emptyStats({
-        lines: { total: 5, hit: 5, per_tier: { system: 5, unit: 5 } },
+        lines: {
+          total: 5,
+          hit: 5,
+          per_tier: { system: 5, unit: 5 },
+          asserted_per_tier: {},
+          asserted_only: 0,
+        },
       });
-      const zStats = emptyStats({ lines: { total: 8, hit: 4, per_tier: { system: 4, unit: 4 } } });
+      const zStats = emptyStats({
+        lines: {
+          total: 8,
+          hit: 4,
+          per_tier: { system: 4, unit: 4 },
+          asserted_per_tier: {},
+          asserted_only: 0,
+        },
+      });
       return {
         name: "acme-fw",
         dirs: [
@@ -339,17 +377,23 @@ describe("DirectoryPage", () => {
               { name: "main.c", path: "src/main.c", chunk: "src_main.c", stats: mainStats },
               { name: "util.c", path: "src/util.c", chunk: "src_util.c", stats: utilStats },
             ],
-            stats: emptyStats({ lines: { total: 25, hit: 20, per_tier: {} } }),
+            stats: emptyStats({
+              lines: { total: 25, hit: 20, per_tier: {}, asserted_per_tier: {}, asserted_only: 0 },
+            }),
           },
           {
             name: "vendor",
             dirs: [],
             files: [{ name: "z.c", path: "vendor/z.c", chunk: "vendor_z.c", stats: zStats }],
-            stats: emptyStats({ lines: { total: 8, hit: 4, per_tier: {} } }),
+            stats: emptyStats({
+              lines: { total: 8, hit: 4, per_tier: {}, asserted_per_tier: {}, asserted_only: 0 },
+            }),
           },
         ],
         files: [],
-        stats: emptyStats({ lines: { total: 33, hit: 24, per_tier: {} } }),
+        stats: emptyStats({
+          lines: { total: 33, hit: 24, per_tier: {}, asserted_per_tier: {}, asserted_only: 0 },
+        }),
       };
     }
 
@@ -364,6 +408,7 @@ describe("DirectoryPage", () => {
             covered: 2,
             uncovered: 1,
             per_tier: {},
+            asserted: {},
             chunk: "PROJ-1",
           },
         ],
@@ -375,7 +420,17 @@ describe("DirectoryPage", () => {
       return {
         stamp: "stamp-1",
         id: "PROJ-1",
-        files: [{ path: "src/main.c", owned: 3, covered: 2, missing: [[3, 3]], per_tier: {} }],
+        files: [
+          {
+            path: "src/main.c",
+            owned: 3,
+            covered: 2,
+            missing: [[3, 3]],
+            per_tier: {},
+            asserted: {},
+            asserted_only: 0,
+          },
+        ],
         ...overrides,
       };
     }
@@ -453,8 +508,24 @@ describe("DirectoryPage", () => {
       vi.spyOn(dataModule, "loadTicketChunk").mockResolvedValue(
         makeTicketChunk({
           files: [
-            { path: "src/main.c", owned: 3, covered: 2, missing: [[3, 3]], per_tier: {} },
-            { path: "src/util.c", owned: 5, covered: 5, missing: [], per_tier: {} },
+            {
+              path: "src/main.c",
+              owned: 3,
+              covered: 2,
+              missing: [[3, 3]],
+              per_tier: {},
+              asserted: {},
+              asserted_only: 0,
+            },
+            {
+              path: "src/util.c",
+              owned: 5,
+              covered: 5,
+              missing: [],
+              per_tier: {},
+              asserted: {},
+              asserted_only: 0,
+            },
           ],
         }),
       );
@@ -540,7 +611,17 @@ describe("DirectoryPage", () => {
     it("returns null from scopeTreeToTicket cleanly: a ticket that touches nothing in view hides every file", async () => {
       vi.spyOn(dataModule, "loadTicketChunk").mockResolvedValue(
         makeTicketChunk({
-          files: [{ path: "somewhere/else.c", owned: 4, covered: 1, missing: [], per_tier: {} }],
+          files: [
+            {
+              path: "somewhere/else.c",
+              owned: 4,
+              covered: 1,
+              missing: [],
+              per_tier: {},
+              asserted: {},
+              asserted_only: 0,
+            },
+          ],
         }),
       );
       renderPinned(
@@ -553,6 +634,7 @@ describe("DirectoryPage", () => {
               covered: 1,
               uncovered: 3,
               per_tier: {},
+              asserted: {},
               chunk: "PROJ-1",
             },
           ],
@@ -600,5 +682,86 @@ describe("DirectoryPage", () => {
 
       expect(spy).toHaveBeenCalledTimes(1);
     });
+  });
+});
+
+// Task 11: "hide asserted coverage" narrows the tree's Lines/Line %/per-tier
+// cells by `Stats.lines.asserted_per_tier`/`asserted_only` — booted from
+// `?asserted=1` (FocusProvider's boot precedence, exercised directly in
+// focus.test.tsx; here it's the SIGNAL these page-level tests set to drive
+// the real render).
+describe("DirectoryPage: hideAsserted (Task 11)", () => {
+  function buildAssertedIndex(): IndexPayload {
+    const rootStats = emptyStats({
+      lines: {
+        total: 10,
+        hit: 8,
+        per_tier: { system: 6, unit: 2 },
+        asserted_per_tier: { system: 3 },
+        asserted_only: 3,
+      },
+      branches: { total: 4, hit: 3, per_tier: { system: 2, unit: 1 } },
+    });
+    return makeIndex({
+      project_name: "acme-fw",
+      tier_order: ["system", "unit"],
+      tier_labels: { system: "System (e2e)", unit: "Unit" },
+      tier_colors: { system: "green", unit: "blue" },
+      tree: { name: "acme-fw", dirs: [], files: [], stats: rootStats },
+    });
+  }
+
+  it("default: raw hit/per-tier counts, scope carries no suffix", () => {
+    renderPage({ index: buildAssertedIndex(), segments: [] });
+    const allRow = screen.getByTestId("stats-row-all");
+    expect(allRow.textContent).toContain("8/10");
+    const systemRow = screen.getByTestId("stats-row-system");
+    expect(systemRow.textContent).toContain("6/10");
+    expect(screen.getByTestId("stats-card").textContent).not.toContain("asserted hidden");
+  });
+
+  it("hideAsserted: subtracts asserted_only from the all-tiers row and asserted_per_tier from each tier row, denominator unchanged", () => {
+    window.location.hash = "#/coverage?asserted=1";
+    renderPage({ index: buildAssertedIndex(), segments: [] });
+    const allRow = screen.getByTestId("stats-row-all");
+    expect(allRow.textContent).toContain("5/10"); // 8 - 3 asserted_only
+    const systemRow = screen.getByTestId("stats-row-system");
+    expect(systemRow.textContent).toContain("3/10"); // 6 - 3 asserted_per_tier.system
+    const unitRow = screen.getByTestId("stats-row-unit");
+    expect(unitRow.textContent).toContain("2/10"); // unaffected (no unit assertions)
+  });
+
+  it("hideAsserted appends ' · asserted hidden' to the scope line, never silently", () => {
+    window.location.hash = "#/coverage?asserted=1";
+    renderPage({ index: buildAssertedIndex(), segments: [] });
+    expect(screen.getByTestId("stats-card").textContent).toContain("asserted hidden");
+  });
+
+  it("hideAsserted also narrows the tree row's own Lines/Line % cell (non-ticket, non-focused path)", () => {
+    const rootStats = emptyStats({
+      lines: {
+        total: 4,
+        hit: 4,
+        per_tier: { system: 4 },
+        asserted_per_tier: { system: 1 },
+        asserted_only: 1,
+      },
+    });
+    const index = makeIndex({
+      project_name: "acme-fw",
+      tier_order: ["system"],
+      tier_labels: { system: "System (e2e)" },
+      tier_colors: { system: "green" },
+      tree: {
+        name: "acme-fw",
+        dirs: [],
+        files: [{ name: "a.c", path: "a.c", chunk: "a.c", stats: rootStats }],
+        stats: rootStats,
+      },
+    });
+    window.location.hash = "#/coverage?asserted=1";
+    renderPage({ index, segments: [] });
+    const row = screen.getByTestId("tree-row-file:a.c");
+    expect(row.textContent).toContain("3/4");
   });
 });

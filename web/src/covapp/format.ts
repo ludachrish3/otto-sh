@@ -61,20 +61,35 @@ export function encodePath(path: string): string {
  * concept (paired branch blocks), computed from a loaded `FileChunk` in
  * Tasks 5-6, not rolled up onto tree nodes. Always appends the "all tiers"
  * summary row (key "all") — StatsCard's implicit contract: that row is
- * caller-supplied, not synthesized inside StatsCard itself. */
-export function tierRows(index: IndexPayload, stats: Stats): TierStatRow[] {
+ * caller-supplied, not synthesized inside StatsCard itself.
+ *
+ * `hideAsserted` (Task 11, default `false` — every existing call site stays
+ * byte-identical): subtracts each tier's own override-sourced count
+ * (`stats.lines.asserted_per_tier[tier]`) from that tier's numerator, and
+ * `stats.lines.asserted_only` (lines with NO real, non-override evidence at
+ * all) from the all-tiers row's numerator — the tree has no per-line
+ * granularity to recompute "hit in a tier not asserted for that line" the
+ * way `chunkTierRows` does, so the rollup fields Task 9 already carries are
+ * the honest tree-level equivalent. Denominators (`stats.lines.total`)
+ * never change — hiding asserted coverage narrows what counts as PROVEN,
+ * never what's coverable. */
+export function tierRows(index: IndexPayload, stats: Stats, hideAsserted = false): TierStatRow[] {
   const rows: TierStatRow[] = index.tier_order.map((tier) => ({
     key: tier,
     label: index.tier_labels[tier] ?? tier,
     dotColor: index.tier_colors[tier],
-    line: [stats.lines.per_tier[tier] ?? 0, stats.lines.total],
+    line: [
+      (stats.lines.per_tier[tier] ?? 0) -
+        (hideAsserted ? (stats.lines.asserted_per_tier[tier] ?? 0) : 0),
+      stats.lines.total,
+    ],
     branch: [stats.branches.per_tier[tier] ?? 0, stats.branches.total],
     decision: null,
   }));
   rows.push({
     key: "all",
     label: "All tiers",
-    line: [stats.lines.hit, stats.lines.total],
+    line: [stats.lines.hit - (hideAsserted ? stats.lines.asserted_only : 0), stats.lines.total],
     branch: [stats.branches.hit, stats.branches.total],
     decision: null,
   });
@@ -151,8 +166,21 @@ export function focusedFileRow(index: IndexPayload, chunk: FileChunk, ctx: Conte
  * if ANY tier recorded a hit on it; a branch counts as "hit" the same way
  * (mirrors `spa_data.py`'s "branch hit = any tier count > 0"). Appends the
  * {key:"all", label:"All tiers"} row itself — StatsCard's implicit
- * contract (see `tierRows`) that row is always caller-supplied. */
-export function chunkTierRows(index: IndexPayload, chunk: FileChunk): TierStatRow[] {
+ * contract (see `tierRows`) that row is always caller-supplied.
+ *
+ * `hideAsserted` (Task 11, default `false` — byte-identical to before this
+ * feature when omitted): a line counts as "hit" for a tier only if that
+ * tier REALLY hit it — recorded evidence, not just an override
+ * (`line.asserted` carries the tier iff its sole hits are override-sourced,
+ * per `LineJson.asserted`'s doc comment) — and the all-tiers row counts a
+ * line only if SOME tier really hit it. Branch counting is untouched:
+ * overrides never carry branch provenance, so hiding asserted lines can
+ * never change a branch count. */
+export function chunkTierRows(
+  index: IndexPayload,
+  chunk: FileChunk,
+  hideAsserted = false,
+): TierStatRow[] {
   const lineTotal = Object.keys(chunk.lines).length;
   let lineHitAll = 0;
   const lineHitByTier: Record<string, number> = {};
@@ -161,10 +189,20 @@ export function chunkTierRows(index: IndexPayload, chunk: FileChunk): TierStatRo
   const branchHitByTier: Record<string, number> = {};
 
   for (const line of Object.values(chunk.lines)) {
-    const hitValues = Object.values(line.hits);
-    if (hitValues.some((n) => n > 0)) lineHitAll++;
+    // `assertedTiers` stays `[]` when `hideAsserted` is `false`, so `really`
+    // degrades to the original "hits[tier] > 0" test in both loops below —
+    // the byte-identical-by-default contract this function's doc comment
+    // promises.
+    const assertedTiers = hideAsserted ? Object.keys(line.asserted ?? {}) : [];
+    const really = (tier: string) => (line.hits[tier] ?? 0) > 0 && !assertedTiers.includes(tier);
+    // Matches the pre-Task-11 all-tiers test exactly (`Object.values(line.
+    // hits).some(n => n > 0)`): every key `line.hits` actually carries, NOT
+    // narrowed to `index.tier_order` — a hit under a tier the report no
+    // longer displays a column for still counts toward "some tier hit this
+    // line", same as before.
+    if (Object.keys(line.hits).some(really)) lineHitAll++;
     for (const tier of index.tier_order) {
-      if ((line.hits[tier] ?? 0) > 0) lineHitByTier[tier] = (lineHitByTier[tier] ?? 0) + 1;
+      if (really(tier)) lineHitByTier[tier] = (lineHitByTier[tier] ?? 0) + 1;
     }
     for (const branch of line.branches) {
       branchTotal++;
@@ -208,4 +246,15 @@ export function keyColumnLabel({ ticket, context }: { ticket: boolean; context: 
   if (ticket) return "Ticket";
   if (context) return "Context";
   return "Tier";
+}
+
+/** Appends " · asserted hidden" to a StatsCard's `scope` string while
+ * `hideAsserted` is active — the ONE place every page's scope-line
+ * construction routes through (Task 11, manual-overrides spec §6: a
+ * denominator/numerator narrowing must never be silent, the same standing
+ * requirement `DirectoryPage.tsx`'s ticket-scope banner already honors for
+ * the ticket filter). A no-op when `hideAsserted` is `false` — every scope
+ * string stays byte-identical to before this feature exists. */
+export function withHideAssertedSuffix(scope: string, hideAsserted: boolean): string {
+  return hideAsserted ? `${scope} · asserted hidden` : scope;
 }

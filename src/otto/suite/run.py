@@ -298,6 +298,7 @@ async def _post_run_coverage(repos: "list[Repo]", log_dir: Path, opts: RunOption
         from rich.markup import escape as escape_markup
 
         from ..coverage.config import get_cov_config, get_cov_repo, prepare_empty_dir
+        from ..coverage.overrides import load_override_config
         from ..coverage.report_config import load_report_thresholds
         from ..coverage.reporter import run_coverage_report
         from ..coverage.tickets import load_ticket_spec
@@ -321,21 +322,29 @@ async def _post_run_coverage(repos: "list[Repo]", log_dir: Path, opts: RunOption
         extra_markers = list(cov_config.get("exclusions", {}).get("markers") or [])
         thresholds = load_report_thresholds(cov_config) if cov_repo is not None else None
         ticket_spec = load_ticket_spec(cov_config) if cov_repo is not None else None
+        overrides = None
         # Like the capture tail, in-run report generation must never fail an
         # otherwise-successful test run: the empty/overwrite gate
         # (prepare_empty_dir, which now raises a neutral ValueError — a report-dir
         # collision on a library re-run into a reused output_dir warns and skips
         # rather than raising typer from a public library entrypoint), a non-git
-        # sut, a polluted tree, or a malformed manual capture are logged and
-        # swallowed, leaving the raw coverage artifacts on disk. The CLI already
-        # validated an explicit --cov-report-dir up front; the default path lives
-        # inside the freshly-created log_dir and is always empty.
+        # sut, a polluted tree, a malformed manual capture, or a malformed
+        # override file are logged and swallowed, leaving the raw coverage
+        # artifacts on disk. The CLI already validated an explicit
+        # --cov-report-dir up front; the default path lives inside the
+        # freshly-created log_dir and is always empty. load_override_config
+        # lives inside this try (not resolved alongside the other settings
+        # above) so a bad override file can't fail an otherwise-successful
+        # test run — it raises OverrideConfigError (a ValueError), caught
+        # below same as every other report-generation failure.
         try:
             prepare_empty_dir(
                 report_dir,
                 overwrite=opts.overwrite_cov_report_dir,
                 flag_name="--cov-report-dir",
             )
+            if cov_repo is not None:
+                overrides = load_override_config(cov_config, cov_repo.sut_dir, tier_configs or [])
             store = await run_coverage_report(
                 [cov_dir],
                 report_dir,
@@ -345,6 +354,7 @@ async def _post_run_coverage(repos: "list[Repo]", log_dir: Path, opts: RunOption
                 extra_markers=extra_markers,
                 thresholds=thresholds,
                 ticket_spec=ticket_spec,
+                overrides=overrides,
             )
         except (ValueError, RuntimeError, FileNotFoundError) as e:
             # escape_markup(*e*): the console handler renders log messages as

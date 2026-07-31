@@ -17,6 +17,7 @@ data from embedded and remote targets.
    tiers
    report_config
    tickets
+   overrides
    attribution
    ticket_export
    exclusions

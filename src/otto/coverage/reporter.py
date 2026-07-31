@@ -46,6 +46,7 @@ if TYPE_CHECKING:
     from ..host.local_host import LocalHost
     from ..host.toolchain import Toolchain
     from .capture.model import Capture
+    from .overrides import OverrideConfig
     from .tickets import TicketSpec
     from .tiers import TierConfig
 
@@ -223,6 +224,14 @@ class CoverageReporter:
             coverage numbers themselves are unchanged. When set,
             ``_annotate_tickets`` attributes every stored line to the
             ticket(s) named by the commit that last touched it.
+        overrides: Parsed ``.otto/coverage-overrides.toml``, as an
+            :class:`~otto.coverage.overrides.OverrideConfig` (overrides spec
+            §2/§3/§6). ``None`` (the default) is the "feature absent"
+            signal: no asserted entries fold in and no reattribution
+            reaches ``attribute_tickets``. When set, applied after
+            ``_annotate_tickets`` in ``run()`` §3c/§3d, since asserted-entry
+            resolution needs the final per-line sha map and ticket->commits
+            map that attribution produces.
     """
 
     def __init__(  # noqa: PLR0913 — wide constructor: each field is an independently-optional report input
@@ -239,6 +248,7 @@ class CoverageReporter:
         prefix: Path | None = None,
         thresholds: "Thresholds | None" = None,
         ticket_spec: "TicketSpec | None" = None,
+        overrides: "OverrideConfig | None" = None,
     ) -> None:
         self.gcda_dirs = gcda_dirs
         self.source_root = source_root
@@ -255,6 +265,7 @@ class CoverageReporter:
         self.prefix = prefix
         self.thresholds: Thresholds = thresholds or Thresholds()
         self.ticket_spec: "TicketSpec | None" = ticket_spec
+        self.overrides: "OverrideConfig | None" = overrides
         self._validate_tiers()
 
     def _validate_tiers(self) -> None:
@@ -337,6 +348,14 @@ class CoverageReporter:
                     tier_order.append(name)
             store = CoverageStore(tier_order=tier_order)
             store.thresholds = self.thresholds
+            # Manual-overrides spec §7: "active" tracks the override FILE's
+            # presence (parsed successfully into an OverrideConfig), not
+            # whether it happens to carry any asserted entries — a
+            # reattribute-only file must still export overrides_active=true
+            # with an empty overrides list (F2, final review). Set up front
+            # rather than inside the attribution/apply branch below so it
+            # stays correct even if that branch never runs.
+            store.overrides_file_active = self.overrides is not None
 
             wants_system = self._wants_system_tier()
 
@@ -449,7 +468,12 @@ class CoverageReporter:
             # before rendering so the SPA data build sees populated
             # LineRecord.ticket / store.tickets.
             if self.repo_root is not None:
-                self._annotate_tickets(store, self.repo_root)
+                attribution = self._annotate_tickets(store, self.repo_root)
+                # 3d. Manual-testing overrides (overrides spec §3): asserted
+                # entries fold in after attribution so the line->sha map and
+                # ticket->commits map they resolve against are final.
+                if self.overrides is not None and attribution is not None:
+                    self._apply_overrides(store, self.repo_root, *attribution)
 
             # 4. Render the SPA report. Exclusion display is render-time (spec
             # §8/§9): a single-valued LineRecord.state can't express "excluded
@@ -679,7 +703,9 @@ class CoverageReporter:
         for tier in self.tier_configs:
             store.tier_colors[tier.name] = tier.color
 
-    def _annotate_tickets(self, store: CoverageStore, repo_root: Path) -> None:
+    def _annotate_tickets(
+        self, store: CoverageStore, repo_root: Path
+    ) -> tuple[dict[str, dict[int, str]], dict[str, list[str]]] | None:
         """Attribute every stored line to the ticket(s) that last touched it.
 
         A no-op when :attr:`ticket_spec` is ``None`` (the feature-absent
@@ -700,9 +726,18 @@ class CoverageReporter:
         from silently merging into either bucket lives in
         :func:`~otto.coverage.attribution.attribute_tickets` (a matched id
         equal to a reserved sentinel is dropped there, not here).
+
+        Returns:
+            ``(per_line_sha, commits)`` on success — the raw per-line owning
+            sha map and the raw ticket id -> commit shas map from
+            :func:`~otto.coverage.attribution.attribute_tickets` (not the
+            coverable-filtered ``store.tickets`` view; override as_of
+            bounding needs every walked commit of a ticket) — for
+            :meth:`_apply_overrides` to resolve asserted entries against.
+            ``None`` on either early-out.
         """
         if self.ticket_spec is None:
-            return
+            return None
         # Deferred: this is the only caller that needs a git log walk, and
         # keeping the import out of module scope means a report with no
         # ``[coverage.tickets]`` configured never pulls in attribution's
@@ -724,9 +759,12 @@ class CoverageReporter:
             if rec.lines and rec.path.is_relative_to(repo_root)
         }
         if not line_counts:
-            return
+            return None
         per_line, commits, per_line_sha = attribute_tickets(
-            repo_root, line_counts, self.ticket_spec
+            repo_root,
+            line_counts,
+            self.ticket_spec,
+            reattributions=self.overrides.reattributions if self.overrides else None,
         )
 
         # Real shas that own at least one no-ticket-sentinel line, and
@@ -786,6 +824,43 @@ class CoverageReporter:
                 id=UNCOMMITTED_TICKET, url=None, commits=[]
             )
 
+        return per_line_sha, commits
+
+    def _apply_overrides(
+        self,
+        store: CoverageStore,
+        repo_root: Path,
+        per_line_sha: dict[str, dict[int, str]],
+        ticket_commits: dict[str, list[str]],
+    ) -> None:
+        """Fold the override file's asserted entries into the store (spec §3).
+
+        One extra constant-cost subprocess (`rev-list --first-parent`) for
+        the as_of ordering — never per entry or per file, and skipped
+        entirely (F4, final review) when there are no asserted entries to
+        bound at all: a reattribute-only override file has nothing for
+        `fp_index` to serve (`apply_asserted_entries` early-returns on an
+        empty entry list regardless), so paying for the walk would be pure
+        waste on the (common, break-glass-only) reattribute-only path.
+        """
+        from .overrides import apply_asserted_entries
+
+        assert self.overrides is not None  # noqa: S101 — caller gates on it
+        if not self.overrides.asserted:
+            return
+        from .capture.gitio import rev_list_first_parent
+
+        fp_index = {sha: i for i, sha in enumerate(rev_list_first_parent(repo_root))}
+        apply_asserted_entries(
+            store,
+            self.overrides.asserted,
+            repo_root=repo_root,
+            per_line_sha=per_line_sha,
+            ticket_commits=ticket_commits,
+            fp_index=fp_index,
+            path=self.overrides.path,
+        )
+
 
 def _partition_board_dirs(cov_dirs: list[Path]) -> tuple[list[Path], list[Path]]:
     """Split each cov dir's board subdirs into (gcda dirs, capture.json paths).
@@ -812,7 +887,7 @@ def _partition_board_dirs(cov_dirs: list[Path]) -> tuple[list[Path], list[Path]]
     return gcda_dirs, capture_paths
 
 
-async def run_coverage_report(
+async def run_coverage_report(  # noqa: PLR0913 — wide entry point: each kwarg is an independently-optional report input
     cov_dirs: list[Path],
     output_dir: Path,
     project_name: str = "Coverage Report",
@@ -824,6 +899,7 @@ async def run_coverage_report(
     prefix: Path | None = None,
     thresholds: "Thresholds | None" = None,
     ticket_spec: "TicketSpec | None" = None,
+    overrides: "OverrideConfig | None" = None,
 ) -> CoverageStore | None:
     """Render an HTML coverage report from one or more cov/ directories.
 
@@ -869,6 +945,13 @@ async def run_coverage_report(
     the legacy branch and it is silently ignored (mirroring that branch's
     "byte-for-byte the historical behavior" contract).
 
+    *overrides* is the parsed ``.otto/coverage-overrides.toml``, as an
+    :class:`~otto.coverage.overrides.OverrideConfig` (overrides spec §2);
+    ``None`` (the default) is the feature-absent signal. Like
+    *ticket_spec*, it only takes effect on the collection-model path — a
+    caller supplying it without *repo_root*/*tier_configs* falls into the
+    legacy branch and it is silently ignored.
+
     Returns:
         The populated :class:`~otto.coverage.store.model.CoverageStore`, or
         ``None`` when the legacy path found no coverage data.
@@ -889,6 +972,7 @@ async def run_coverage_report(
         prefix=prefix,
         thresholds=thresholds,
         ticket_spec=ticket_spec,
+        overrides=overrides,
     )
 
 
@@ -933,7 +1017,7 @@ async def _run_legacy_report(
     return await reporter.run()
 
 
-async def _run_collection_report(
+async def _run_collection_report(  # noqa: PLR0913 — wide internal helper: mirrors run_coverage_report's kwargs
     cov_dirs: list[Path],
     output_dir: Path,
     *,
@@ -945,6 +1029,7 @@ async def _run_collection_report(
     prefix: Path | None = None,
     thresholds: "Thresholds | None" = None,
     ticket_spec: "TicketSpec | None" = None,
+    overrides: "OverrideConfig | None" = None,
 ) -> CoverageStore:
     """Run the collection-model path: captures + unit harvest + manual store.
 
@@ -984,5 +1069,6 @@ async def _run_collection_report(
         prefix=prefix,
         thresholds=thresholds,
         ticket_spec=ticket_spec,
+        overrides=overrides,
     )
     return await reporter.run()

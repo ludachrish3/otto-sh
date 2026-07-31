@@ -233,6 +233,7 @@ describe("AppShell", () => {
             covered: 5,
             uncovered: 5,
             per_tier: {},
+            asserted: {},
             chunk: "PROJ-1",
           },
           {
@@ -242,6 +243,7 @@ describe("AppShell", () => {
             covered: 4,
             uncovered: 0,
             per_tier: {},
+            asserted: {},
             chunk: "PROJ-2",
           },
         ],
@@ -307,6 +309,7 @@ describe("AppShell", () => {
           covered: 0,
           uncovered: 1,
           per_tier: {},
+          asserted: {},
           chunk: `PROJ-${i}`,
         })),
       });
@@ -359,5 +362,130 @@ describe("AppShell", () => {
       renderShell();
       expect(screen.queryByTestId("ticket-search")).toBeNull();
     });
+  });
+});
+
+// Task 11 (manual-overrides spec §6): the ⋮ menu's "Overrides" section (a
+// hide-asserted toggle plus one disabled row per entry) and the always-
+// visible badge — both gated on `index.overrides.length > 0`, same "no
+// data, no control" pattern the ticket search box above already uses.
+describe("AppShell: overrides badge + hide-asserted toggle (Task 11)", () => {
+  function withOverrides(): IndexPayload {
+    return makeIndex({
+      stamp: "stamp-ovr",
+      overrides: [
+        {
+          id: 0,
+          tier: "system",
+          key: "src/net/tcp.c:12",
+          reason: "manual smoke test",
+          as_of: null,
+        },
+        {
+          id: 1,
+          tier: "unit",
+          key: "src/net/udp.c:5",
+          reason: "flaky sim, verified by hand",
+          as_of: null,
+        },
+      ],
+    });
+  }
+
+  it("shows the overrides badge with the entry count when overrides exist", () => {
+    window.__OTTO_COV__ = withOverrides();
+    renderShell();
+    expect(screen.getByTestId("overrides-badge").textContent).toBe("2 overrides");
+  });
+
+  it("singularizes the badge count for exactly one override", () => {
+    window.__OTTO_COV__ = makeIndex({
+      stamp: "stamp-ovr-1",
+      overrides: [{ id: 0, tier: "system", key: "a.c:1", reason: "r", as_of: null }],
+    });
+    renderShell();
+    expect(screen.getByTestId("overrides-badge").textContent).toBe("1 override");
+  });
+
+  it("renders neither the badge nor the menu section when there are no overrides", async () => {
+    const user = userEvent.setup();
+    window.__OTTO_COV__ = makeIndex({ stamp: "stamp-no-ovr", overrides: [] });
+    renderShell();
+    expect(screen.queryByTestId("overrides-badge")).toBeNull();
+
+    await user.click(screen.getByTestId("appbar-menu"));
+    expect(await screen.findByTestId("menu-shortcuts")).toBeTruthy();
+    expect(screen.queryByTestId("toggle-hide-asserted")).toBeNull();
+    expect(screen.queryByTestId("override-entry")).toBeNull();
+  });
+
+  it("⋮ menu lists one override-entry row per entry, with key + tier + reason", async () => {
+    const user = userEvent.setup();
+    window.__OTTO_COV__ = withOverrides();
+    renderShell();
+
+    await user.click(screen.getByTestId("appbar-menu"));
+    const entries = await screen.findAllByTestId("override-entry");
+    expect(entries).toHaveLength(2);
+    expect(entries[0]?.textContent).toContain("src/net/tcp.c:12");
+    expect(entries[0]?.textContent).toContain("manual smoke test");
+    expect(entries[1]?.textContent).toContain("src/net/udp.c:5");
+    expect(entries[1]?.textContent).toContain("flaky sim, verified by hand");
+  });
+
+  it("⋮ menu shows the hide-asserted toggle, labeled and not yet active", async () => {
+    const user = userEvent.setup();
+    window.__OTTO_COV__ = withOverrides();
+    renderShell();
+
+    await user.click(screen.getByTestId("appbar-menu"));
+    const toggle = await screen.findByTestId("toggle-hide-asserted");
+    expect(toggle.textContent).toContain("Hide asserted coverage");
+    expect(toggle.querySelector("svg")).toBeFalsy(); // no ✓ yet
+  });
+
+  it("clicking the toggle flips hideAsserted (✓ appears in the menu) and toasts", async () => {
+    const user = userEvent.setup();
+    window.__OTTO_COV__ = withOverrides();
+    window.location.hash = "#/coverage";
+    renderShell();
+
+    await user.click(screen.getByTestId("appbar-menu"));
+    await user.click(await screen.findByTestId("toggle-hide-asserted"));
+
+    expect(screen.getByTestId("toast").textContent).toMatch(/hidden/i);
+    expect(window.location.hash).toBe("#/coverage?asserted=1");
+
+    await user.click(screen.getByTestId("appbar-menu"));
+    const toggle = await screen.findByTestId("toggle-hide-asserted");
+    expect(toggle.querySelector("svg")).toBeTruthy(); // ✓ now present
+  });
+
+  // F3 fix (final review): a hand-typed `?asserted=1` deep link on a report
+  // with NO overrides used to blank the tickets/coverage data (hideAsserted
+  // reads true from the query) with no visible control anywhere to clear
+  // it — the toggle row was gated on `overrides.length > 0`, which is false
+  // here. The toggle row must stay reachable whenever hideAsserted is
+  // already active, regardless of whether this report has overrides; the
+  // always-visible badge stays overrides-gated since it announces "overrides
+  // are active", which isn't true in this scenario.
+  it("shows the hide-asserted toggle (and lets it clear) even with no overrides, when ?asserted=1", async () => {
+    const user = userEvent.setup();
+    window.__OTTO_COV__ = makeIndex({ stamp: "stamp-no-ovr-deep-link", overrides: [] });
+    window.location.hash = "#/coverage?asserted=1";
+    renderShell();
+
+    expect(screen.queryByTestId("overrides-badge")).toBeNull();
+
+    await user.click(screen.getByTestId("appbar-menu"));
+    const toggle = await screen.findByTestId("toggle-hide-asserted");
+    expect(toggle.querySelector("svg")).toBeTruthy(); // ✓ — hideAsserted started true
+    expect(screen.queryByTestId("override-entry")).toBeNull(); // still no entries to list
+
+    await user.click(toggle);
+    expect(window.location.hash).toBe("#/coverage");
+
+    await user.click(screen.getByTestId("appbar-menu"));
+    expect(screen.queryByTestId("toggle-hide-asserted")).toBeNull(); // gone once cleared
   });
 });

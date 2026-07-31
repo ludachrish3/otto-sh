@@ -35,7 +35,7 @@ import { PctCell } from "../chrome/PctCell";
 import type { TierStatRow } from "../chrome/StatsCard";
 import { loadTicketChunk, StampMismatchError } from "../data";
 import { useFocus } from "../focus";
-import { encodePath, fmtCount } from "../format";
+import { encodePath, fmtCount, withHideAssertedSuffix } from "../format";
 import { pct } from "../stats";
 import type { IndexPayload, TicketChunk, TicketSummary } from "../types";
 import { GuardScreen } from "./GuardScreen";
@@ -58,21 +58,43 @@ function buildRowGrid(tierOrder: string[]): string {
  * denominator (`tickets_totals.owned`) across every tier row, exactly the
  * shape `format.ts`'s `tierRows` uses for the tree-wide card elsewhere in
  * covapp. Branch/decision are always "no data" — `tickets_totals` carries
- * line counts only (no per-ticket branch data exists to dedupe). */
-function ticketStatsRows(index: IndexPayload): TierStatRow[] {
+ * line counts only (no per-ticket branch data exists to dedupe).
+ *
+ * `hideAsserted` (Task 11, default `false` — byte-identical when omitted):
+ * subtracts `tickets_totals.asserted[tier]` (the DEDUPED per-tier
+ * override-sourced count, mirroring `total_asserted` alongside
+ * `total_per_tier` in `spa_data.py`) from each tier row's numerator — that
+ * subtraction is honest because it's per-tier, same denominator, no
+ * cross-tier double-counting risk.
+ *
+ * The "all tiers" row's `line` DECLINES to `null` ("no data", the same
+ * `ticketTreeRow` precedent for a composed row with nothing honest to say)
+ * instead of subtracting anything, fix round (review I2): `tickets_totals`
+ * carries no DEDUPED "lines with NO real evidence in ANY tier" count —
+ * summing the per-tier `asserted` values would double-count a line
+ * asserted in more than one tier, which is the normal case here (§2: a
+ * commit can name several tickets, and by the same token a line can be
+ * asserted in more than one tier). Only the per-tier rows above are honest
+ * without that deduped total; the StatsCard's scope line still says
+ * " · asserted hidden" (never silent) so "no data" here isn't mistaken for
+ * "nothing changed". */
+function ticketStatsRows(index: IndexPayload, hideAsserted = false): TierStatRow[] {
   const totals = index.tickets_totals;
   const rows: TierStatRow[] = index.tier_order.map((tier) => ({
     key: tier,
     label: index.tier_labels[tier] ?? tier,
     dotColor: index.tier_colors[tier],
-    line: [totals.per_tier[tier] ?? 0, totals.owned],
+    line: [
+      (totals.per_tier[tier] ?? 0) - (hideAsserted ? (totals.asserted[tier] ?? 0) : 0),
+      totals.owned,
+    ],
     branch: null,
     decision: null,
   }));
   rows.push({
     key: "all",
     label: "All tiers",
-    line: [totals.covered, totals.owned],
+    line: hideAsserted ? null : [totals.covered, totals.owned],
     branch: null,
     decision: null,
   });
@@ -278,6 +300,7 @@ function TicketRow({
   onToggle,
   pinned,
   onPin,
+  hideAsserted = false,
 }: {
   ticket: TicketSummary;
   index: IndexPayload;
@@ -286,6 +309,7 @@ function TicketRow({
   onToggle: () => void;
   pinned: boolean;
   onPin: () => void;
+  hideAsserted?: boolean;
 }) {
   return (
     <div>
@@ -310,17 +334,45 @@ function TicketRow({
         </button>
         <TicketIdCell ticket={ticket} />
         <span className="tabular-nums text-tertiary">{fmtCount(ticket.owned)}</span>
-        <span className="tabular-nums text-tertiary">{fmtCount(ticket.covered)}</span>
-        <span className="font-semibold tabular-nums text-primary">
-          {fmtCount(ticket.uncovered)}
-        </span>
-        <PctCell
-          p={pct(ticket.covered, ticket.owned)}
-          thresholds={index.thresholds}
-          testId="ticket-line-pct"
-        />
+        {/* Fix round (review I2): `covered`/`uncovered`/Line % decline to
+            "no data" under `hideAsserted`, the same `ticketTreeRow`
+            precedent `ticketStatsRows`' "all tiers" row above follows — no
+            per-ticket DEDUPED asserted-only count exists (only the
+            per-tier `ticket.asserted` breakdown below, which sums to a
+            double-count for a line asserted in more than one tier), so a
+            row that narrowed its per-tier cells but kept a raw `covered`
+            would contradict itself (e.g. "8 covered" beside "unit: 5").
+            Declining here, not guessing, keeps the row internally
+            consistent; the StatsCard's scope-line suffix (never silent)
+            still says the toggle is active. */}
+        {hideAsserted ? (
+          <>
+            <span data-testid="ticket-covered-na" className="text-quaternary">
+              —
+            </span>
+            <span data-testid="ticket-uncovered-na" className="text-quaternary">
+              —
+            </span>
+            <PctCell p={null} thresholds={index.thresholds} testId="ticket-line-pct" />
+          </>
+        ) : (
+          <>
+            <span className="tabular-nums text-tertiary">{fmtCount(ticket.covered)}</span>
+            <span className="font-semibold tabular-nums text-primary">
+              {fmtCount(ticket.uncovered)}
+            </span>
+            <PctCell
+              p={pct(ticket.covered, ticket.owned)}
+              thresholds={index.thresholds}
+              testId="ticket-line-pct"
+            />
+          </>
+        )}
         {index.tier_order.map((tier) => (
-          <TierHitCell key={tier} value={ticket.per_tier[tier] ?? 0} />
+          <TierHitCell
+            key={tier}
+            value={(ticket.per_tier[tier] ?? 0) - (hideAsserted ? (ticket.asserted[tier] ?? 0) : 0)}
+          />
         ))}
         <button
           type="button"
@@ -350,7 +402,7 @@ export function TicketsPage({ index }: TicketsPageProps) {
   // Pinning from a row is the same denominator filter the app-bar search
   // sets, so it goes through the SAME focus state — never a second source of
   // truth for "which ticket is pinned".
-  const { ticket: pinnedTicket, setTicket } = useFocus();
+  const { ticket: pinnedTicket, setTicket, hideAsserted } = useFocus();
   const [query, setQuery] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("uncovered");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
@@ -436,9 +488,9 @@ export function TicketsPage({ index }: TicketsPageProps) {
       stats={
         tickets.length > 0
           ? {
-              scope: "all attributed lines",
+              scope: withHideAssertedSuffix("all attributed lines", hideAsserted),
               title: "Coverage — attributed to a ticket",
-              rows: ticketStatsRows(index),
+              rows: ticketStatsRows(index, hideAsserted),
               thresholds: index.thresholds,
             }
           : null
@@ -527,6 +579,7 @@ export function TicketsPage({ index }: TicketsPageProps) {
                 onToggle={() => onToggle(ticket.id)}
                 pinned={pinnedTicket === ticket.id}
                 onPin={() => setTicket(pinnedTicket === ticket.id ? null : ticket.id)}
+                hideAsserted={hideAsserted}
               />
             ))}
           </div>

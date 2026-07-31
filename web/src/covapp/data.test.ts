@@ -18,7 +18,7 @@ import type { FileChunk, IndexPayload, TicketChunk } from "./types";
 
 function emptyStats() {
   return {
-    lines: { total: 0, hit: 0, per_tier: {} },
+    lines: { total: 0, hit: 0, per_tier: {}, asserted_per_tier: {}, asserted_only: 0 },
     branches: { total: 0, hit: 0, per_tier: {} },
     flags: { stale: 0, aging: 0, excluded: 0 },
     ctx_lines: {},
@@ -27,7 +27,7 @@ function emptyStats() {
 
 function makeIndex(overrides: Partial<IndexPayload> = {}): IndexPayload {
   return {
-    format: 1,
+    format: 2,
     stamp: "stamp-1",
     generated_at: "2026-07-25 00:00 UTC",
     otto_version: "0.0.0",
@@ -39,11 +39,12 @@ function makeIndex(overrides: Partial<IndexPayload> = {}): IndexPayload {
     thresholds: { high: 80, medium: 70 },
     stat_types: ["line", "branch", "decision"],
     runs: [],
+    overrides: [],
     run_contrib: {},
     total_lines: 0,
     tree: { name: "otto example product", dirs: [], files: [], stats: emptyStats() },
     tickets: [],
-    tickets_totals: { owned: 0, covered: 0, uncovered: 0, per_tier: {} },
+    tickets_totals: { owned: 0, covered: 0, uncovered: 0, per_tier: {}, asserted: {} },
     ...overrides,
   };
 }
@@ -77,7 +78,7 @@ describe("dataGuard / getIndex", () => {
   });
 
   it("is 'format' when the payload's format does not match EXPECTED_DATA_FORMAT", () => {
-    window.__OTTO_COV__ = makeIndex({ format: 2 });
+    window.__OTTO_COV__ = makeIndex({ format: 1 });
     expect(dataGuard()).toBe("format");
   });
 

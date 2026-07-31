@@ -148,6 +148,36 @@ calls, and the worktree overlay's diff — pinned by the test
 **all** of them (the guide's {ref}`coverage-tickets-overlap`) — this is
 why a ticket's owned lines are not a partition of the repository.
 
+## Manual-testing overrides
+
+{ref}`coverage-overrides` (the guide) hooks into this walk at two points,
+both without adding to the fixed subprocess budget above.
+
+**Reattribution replaces extraction, not the walk.** `attribute_tickets`
+takes an optional `reattributions: dict[sha, list[ticket_id]]`. Inside the
+shared log walk, a commit whose sha is a key in that map has its ids taken
+directly from the map instead of running through `_extract_real_tickets`'s
+message-pattern matching — one hook, applied before anything downstream
+runs, so every consumer built on `attribute_tickets`'s output (tickets
+page, file-page gutter, ticket context, `tickets.json`, and asserted
+entries keyed on the corrected ticket) sees the corrected id consistently.
+No extra git spawn: the map is a pure in-memory substitution over data the
+walk already produced.
+
+**Asserted entries resolve against the walk's existing products, not a
+new one.** `otto.coverage.overrides.apply_asserted_entries` runs after
+attribution, using `per_line_sha` (the line→commit map `attribute_tickets`
+already returns) and `ticket_commits` to compute each entry's line set: a
+`commit`-keyed entry is just that sha; a `ticket`-keyed entry is that
+ticket's commits, bounded to those at or before its `as_of`. That bound is
+checked against a `fp_index` — a rank in the first-parent order — built
+from exactly **one** additional subprocess, `git rev-list --first-parent
+HEAD`, spawned once per report regardless of how many override entries or
+covered files exist. The fixed per-report subprocess budget
+(`test_git_subprocess_count_is_constant_in_file_count`) therefore grows by
+at most this one constant call when overrides are configured, never by
+one call per entry or per file.
+
 ## Why `--first-parent`
 
 The walk always passes `--first-parent`: a line is credited to the merge

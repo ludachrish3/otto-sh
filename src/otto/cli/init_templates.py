@@ -94,6 +94,9 @@ init = ["{init_module}"]           # modules imported at startup (register instr
 #[coverage.tickets]
 #pattern = "[A-Z]{{2,10}}-[0-9]+"
 #url = "https://example.atlassian.net/browse/{{0}}"
+#[coverage.overrides]
+## Manual-testing override file (defaults to .otto/coverage-overrides.toml)
+#file = ".otto/coverage-overrides.toml"
 
 # --- [docker] — image builds + compose stacks --------------------------------
 #[docker]

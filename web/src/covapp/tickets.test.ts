@@ -80,14 +80,22 @@ describe("scopeTreeToTicket", () => {
           name: "big.c",
           path: "big.c",
           chunk: "big",
-          stats: emptyStats({ lines: { total: 400, hit: 380, per_tier: {} } }),
+          stats: emptyStats({
+            lines: { total: 400, hit: 380, per_tier: {}, asserted_per_tier: {}, asserted_only: 0 },
+          }),
         },
       ],
       stats: emptyStats(),
     } as unknown as DirNode;
     const owned = Array.from({ length: 12 }, (_, i) => i + 1);
     const scoped = scopedOrThrow(big, { "big.c": owned }, { "big.c": owned.slice(0, 6) });
-    expect(scoped.files[0].stats.lines).toEqual({ total: 12, hit: 6, per_tier: {} });
+    expect(scoped.files[0].stats.lines).toEqual({
+      total: 12,
+      hit: 6,
+      per_tier: {},
+      asserted_per_tier: {},
+      asserted_only: 0,
+    });
   });
 
   // Directory rollups must be RECOMPUTED from their (already-scoped)
@@ -109,28 +117,60 @@ describe("scopeTreeToTicket", () => {
               name: "a.c",
               path: "src/a.c",
               chunk: "a",
-              stats: emptyStats({ lines: { total: 999, hit: 999, per_tier: {} } }),
+              stats: emptyStats({
+                lines: {
+                  total: 999,
+                  hit: 999,
+                  per_tier: {},
+                  asserted_per_tier: {},
+                  asserted_only: 0,
+                },
+              }),
             },
             {
               name: "b.c",
               path: "src/b.c",
               chunk: "b",
-              stats: emptyStats({ lines: { total: 999, hit: 999, per_tier: {} } }),
+              stats: emptyStats({
+                lines: {
+                  total: 999,
+                  hit: 999,
+                  per_tier: {},
+                  asserted_per_tier: {},
+                  asserted_only: 0,
+                },
+              }),
             },
           ],
-          stats: emptyStats({ lines: { total: 999, hit: 999, per_tier: {} } }),
+          stats: emptyStats({
+            lines: { total: 999, hit: 999, per_tier: {}, asserted_per_tier: {}, asserted_only: 0 },
+          }),
         },
       ],
       files: [],
-      stats: emptyStats({ lines: { total: 999, hit: 999, per_tier: {} } }),
+      stats: emptyStats({
+        lines: { total: 999, hit: 999, per_tier: {}, asserted_per_tier: {}, asserted_only: 0 },
+      }),
     };
     const scoped = scopedOrThrow(
       tree,
       { "src/a.c": [1, 2, 3], "src/b.c": [1] }, // 3 + 1 = 4 owned total
       { "src/a.c": [1], "src/b.c": [] }, // 1 + 0 = 1 hit total
     );
-    expect(scoped.dirs[0].stats.lines).toEqual({ total: 4, hit: 1, per_tier: {} });
-    expect(scoped.stats.lines).toEqual({ total: 4, hit: 1, per_tier: {} });
+    expect(scoped.dirs[0].stats.lines).toEqual({
+      total: 4,
+      hit: 1,
+      per_tier: {},
+      asserted_per_tier: {},
+      asserted_only: 0,
+    });
+    expect(scoped.stats.lines).toEqual({
+      total: 4,
+      hit: 1,
+      per_tier: {},
+      asserted_per_tier: {},
+      asserted_only: 0,
+    });
   });
 });
 
@@ -142,8 +182,24 @@ describe("ticketChunkToFileLines", () => {
   it("builds owned/hit line-array maps sized to each file's owned/covered counts", () => {
     const chunk = makeTicketChunk({
       files: [
-        { path: "src/a.c", owned: 12, covered: 6, missing: [], per_tier: {} },
-        { path: "src/b.c", owned: 3, covered: 3, missing: [], per_tier: {} },
+        {
+          path: "src/a.c",
+          owned: 12,
+          covered: 6,
+          missing: [],
+          per_tier: {},
+          asserted: {},
+          asserted_only: 0,
+        },
+        {
+          path: "src/b.c",
+          owned: 3,
+          covered: 3,
+          missing: [],
+          per_tier: {},
+          asserted: {},
+          asserted_only: 0,
+        },
       ],
     });
     const { lines, hits } = ticketChunkToFileLines(chunk);
@@ -155,7 +211,17 @@ describe("ticketChunkToFileLines", () => {
 
   it("a file the ticket never touched (owned 0) still gets an entry, never crashing scopeTreeToTicket lookups", () => {
     const chunk = makeTicketChunk({
-      files: [{ path: "src/dead.c", owned: 0, covered: 0, missing: [], per_tier: {} }],
+      files: [
+        {
+          path: "src/dead.c",
+          owned: 0,
+          covered: 0,
+          missing: [],
+          per_tier: {},
+          asserted: {},
+          asserted_only: 0,
+        },
+      ],
     });
     const { lines, hits } = ticketChunkToFileLines(chunk);
     expect(lines["src/dead.c"]).toHaveLength(0);
@@ -165,10 +231,18 @@ describe("ticketChunkToFileLines", () => {
   it("composes directly with scopeTreeToTicket end to end", () => {
     const chunk = makeTicketChunk({
       files: [
-        { path: "src/a.c", owned: 12, covered: 6, missing: [[7, 12]], per_tier: { unit: 4 } },
+        {
+          path: "src/a.c",
+          owned: 12,
+          covered: 6,
+          missing: [[7, 12]],
+          per_tier: { unit: 4 },
+          asserted: {},
+          asserted_only: 0,
+        },
       ],
     });
-    const { lines, hits, tiers } = ticketChunkToFileLines(chunk);
+    const { lines, hits, tiers, asserted, assertedOnly } = ticketChunkToFileLines(chunk);
     const tree = {
       name: "",
       dirs: [],
@@ -177,14 +251,28 @@ describe("ticketChunkToFileLines", () => {
           name: "a.c",
           path: "src/a.c",
           chunk: "a",
-          stats: emptyStats({ lines: { total: 400, hit: 380, per_tier: { unit: 380 } } }),
+          stats: emptyStats({
+            lines: {
+              total: 400,
+              hit: 380,
+              per_tier: { unit: 380 },
+              asserted_per_tier: {},
+              asserted_only: 0,
+            },
+          }),
         },
       ],
       stats: emptyStats(),
     } as unknown as DirNode;
-    const scoped = scopedOrThrow(tree, lines, hits, tiers);
+    const scoped = scopedOrThrow(tree, lines, hits, { tiers, asserted, assertedOnly });
     // per_tier is the ticket's 4, never the file's whole-repo 380.
-    expect(scoped.files[0].stats.lines).toEqual({ total: 12, hit: 6, per_tier: { unit: 4 } });
+    expect(scoped.files[0].stats.lines).toEqual({
+      total: 12,
+      hit: 6,
+      per_tier: { unit: 4 },
+      asserted_per_tier: {},
+      asserted_only: 0,
+    });
   });
 });
 
@@ -194,7 +282,9 @@ describe("ticketTreeRow", () => {
       name: "src",
       dirs: [],
       files: [],
-      stats: emptyStats({ lines: { total: 12, hit: 6, per_tier: {} } }),
+      stats: emptyStats({
+        lines: { total: 12, hit: 6, per_tier: {}, asserted_per_tier: {}, asserted_only: 0 },
+      }),
     };
     // No tiers declared, so the summary row is the whole answer.
     const rows = ticketTreeRow(makeIndex({ tier_order: [] }), node, "PROJ-1");
@@ -208,6 +298,52 @@ describe("ticketTreeRow", () => {
         decision: null,
       },
     ]);
+  });
+
+  // Task 11: `hideAsserted` subtracts the SAME rollup fields `tierRows`
+  // (format.ts) reads — already scoped to the ticket's own lines by
+  // `scopeFileStats`/`aggregateDirStats`, so no separate ticket-scoped
+  // asserted math is needed inside this function.
+  describe("hideAsserted (Task 11)", () => {
+    function nodeWithAsserted(): DirNode {
+      return {
+        name: "src",
+        dirs: [],
+        files: [],
+        stats: emptyStats({
+          lines: {
+            total: 12,
+            hit: 6,
+            per_tier: { system: 4, unit: 2 },
+            asserted_per_tier: { system: 3 },
+            asserted_only: 3,
+          },
+        }),
+      };
+    }
+
+    it("defaults to the raw counts (byte-identical to before this feature)", () => {
+      const index = makeIndex({ tier_order: ["system", "unit"] });
+      const rows = ticketTreeRow(index, nodeWithAsserted(), "PROJ-1");
+      expect(rows.find((r) => r.key === "ticket")?.line).toEqual([6, 12]);
+      expect(rows.find((r) => r.key === "system")?.line).toEqual([4, 12]);
+      expect(rows.find((r) => r.key === "unit")?.line).toEqual([2, 12]);
+    });
+
+    it("subtracts asserted_only from the summary row and asserted_per_tier from each tier row", () => {
+      const index = makeIndex({ tier_order: ["system", "unit"] });
+      const rows = ticketTreeRow(index, nodeWithAsserted(), "PROJ-1", undefined, true);
+      expect(rows.find((r) => r.key === "ticket")?.line).toEqual([3, 12]);
+      expect(rows.find((r) => r.key === "system")?.line).toEqual([1, 12]);
+      expect(rows.find((r) => r.key === "unit")?.line).toEqual([2, 12]); // unaffected
+    });
+
+    it("still declines to a single row (line: null) when composed with a context, hideAsserted or not", () => {
+      const index = makeIndex({ tier_order: ["system"] });
+      const rows = ticketTreeRow(index, nodeWithAsserted(), "PROJ-1", MANUAL_RUN_CTX, true);
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.line).toBeNull();
+    });
   });
 });
 
@@ -325,6 +461,58 @@ describe("ticketFileRow", () => {
     const rows = ticketFileRow(index, makeFileChunk(), "PROJ-1");
     expect(rows[0].line).toEqual([0, 0]);
   });
+
+  describe("hideAsserted (Task 11)", () => {
+    // line 1: asserted-only (its sole hit is override-sourced). line 2: a
+    // real hit. line 3: owned, unhit. Mirrors `chunkTierRows`'s per-line
+    // recompute test in format.test.ts.
+    const assertedChunk = makeFileChunk({
+      lines: {
+        "1": {
+          hits: { system: 1 },
+          branches: [],
+          state: null,
+          ticket: ["PROJ-1"],
+          asserted: { system: [0] },
+        },
+        "2": { hits: { system: 1 }, branches: [], state: null, ticket: ["PROJ-1"] },
+        "3": { hits: {}, branches: [], state: null, ticket: ["PROJ-1"] },
+      },
+    });
+
+    it("defaults to counting the asserted-only line as hit", () => {
+      const rows = ticketFileRow(index, assertedChunk, "PROJ-1");
+      expect(rows[0]?.line).toEqual([2, 3]);
+    });
+
+    it("excludes the asserted-only line from hit when hideAsserted", () => {
+      const rows = ticketFileRow(index, assertedChunk, "PROJ-1", undefined, true);
+      expect(rows[0]?.line).toEqual([1, 3]);
+    });
+
+    it("never changes `owned` (the denominator)", () => {
+      const shown = ticketFileRow(index, assertedChunk, "PROJ-1", undefined, false);
+      const hidden = ticketFileRow(index, assertedChunk, "PROJ-1", undefined, true);
+      expect(hidden[0]?.line?.[1]).toBe(shown[0]?.line?.[1]);
+    });
+
+    it("leaves the ctx-composed branch untouched — real per-run evidence is never asserted-only", () => {
+      const composedChunk = makeFileChunk({
+        lines: {
+          "1": {
+            hits: { system: 1 },
+            branches: [],
+            state: null,
+            ticket: ["PROJ-1"],
+            run: { "1": 1 },
+          },
+        },
+      });
+      const shown = ticketFileRow(index, composedChunk, "PROJ-1", MANUAL_RUN_CTX, false);
+      const hidden = ticketFileRow(index, composedChunk, "PROJ-1", MANUAL_RUN_CTX, true);
+      expect(hidden).toEqual(shown);
+    });
+  });
 });
 
 // Per-file per-tier counts (follow-up item 6a): before these, a TicketChunk
@@ -352,7 +540,7 @@ describe("ticket-scoped per-tier counts", () => {
       TWO_FILE_TREE,
       { "a.c": [1, 2], "b.c": [1] },
       { "a.c": [1], "b.c": [1] },
-      TIERS,
+      { tiers: TIERS },
     );
     const byName = Object.fromEntries(scoped.files.map((f) => [f.name, f]));
     expect(byName["a.c"].stats.lines.per_tier).toEqual({ unit: 1, system: 0 });
@@ -364,7 +552,7 @@ describe("ticket-scoped per-tier counts", () => {
       TWO_FILE_TREE,
       { "a.c": [1, 2], "b.c": [1] },
       { "a.c": [1], "b.c": [1] },
-      TIERS,
+      { tiers: TIERS },
     );
     expect(scoped.stats.lines.per_tier).toEqual({ unit: 1, system: 1 });
   });
@@ -372,7 +560,15 @@ describe("ticket-scoped per-tier counts", () => {
   it("ticketChunkToFileLines carries the chunk's per-file tier counts through", () => {
     const chunk = makeTicketChunk({
       files: [
-        { path: "a.c", owned: 2, covered: 1, missing: [[2, 2]], per_tier: { unit: 1, system: 0 } },
+        {
+          path: "a.c",
+          owned: 2,
+          covered: 1,
+          missing: [[2, 2]],
+          per_tier: { unit: 1, system: 0 },
+          asserted: {},
+          asserted_only: 0,
+        },
       ],
     });
     expect(ticketChunkToFileLines(chunk).tiers).toEqual({ "a.c": { unit: 1, system: 0 } });
@@ -385,7 +581,15 @@ describe("ticket-scoped per-tier counts", () => {
       tier_colors: { unit: "#111", system: "#222" },
     });
     const node = {
-      stats: emptyStats({ lines: { total: 3, hit: 2, per_tier: { unit: 1, system: 1 } } }),
+      stats: emptyStats({
+        lines: {
+          total: 3,
+          hit: 2,
+          per_tier: { unit: 1, system: 1 },
+          asserted_per_tier: {},
+          asserted_only: 0,
+        },
+      }),
     } as unknown as DirNode;
 
     const rows = ticketTreeRow(index, node, "PROJ-1");
@@ -401,7 +605,9 @@ describe("ticket-scoped per-tier counts", () => {
     // granularity, so the honest answer stays "no data" (the 333.3% case).
     const index = makeIndex({ tier_order: ["unit"] });
     const node = {
-      stats: emptyStats({ lines: { total: 3, hit: 2, per_tier: { unit: 1 } } }),
+      stats: emptyStats({
+        lines: { total: 3, hit: 2, per_tier: { unit: 1 }, asserted_per_tier: {}, asserted_only: 0 },
+      }),
     } as unknown as DirNode;
     const ctx = { label: "manual" } as Context;
 
@@ -409,5 +615,85 @@ describe("ticket-scoped per-tier counts", () => {
 
     expect(rows).toHaveLength(1);
     expect(rows[0].line).toBeNull();
+  });
+});
+
+// Review finding F1: `scopeFileStats`/`aggregateDirStats` used to spread
+// `...stats.lines` and overwrite only total/hit/per_tier, so a ticket-scoped
+// stats bag silently carried the file's WHOLE-FILE asserted_per_tier/
+// asserted_only against a ticket-scoped denominator — honest-looking but
+// wrong the moment the ticket owns a strict subset of a file's asserted
+// lines. The fixture below makes that failure mode provable: the file's
+// ORIGINAL (unscoped) stats claim 3 asserted "bench" lines / asserted_only 2
+// — implausibly large numbers a passthrough would leak — while the ticket
+// itself owns only 1 asserted "bench" line, none of them asserted_only.
+describe("ticket-scoped asserted counts", () => {
+  const FILE_TREE = {
+    name: "",
+    dirs: [],
+    files: [
+      {
+        name: "a.c",
+        path: "a.c",
+        chunk: "a",
+        stats: emptyStats({
+          lines: {
+            total: 999,
+            hit: 999,
+            per_tier: {},
+            asserted_per_tier: { bench: 3 },
+            asserted_only: 2,
+          },
+        }),
+      },
+    ],
+    stats: emptyStats(),
+  } as unknown as DirNode;
+
+  it("scopes asserted_per_tier/asserted_only to the ticket's own subset, not the file's whole-file counts", () => {
+    const scoped = scopedOrThrow(
+      FILE_TREE,
+      { "a.c": [1, 2] },
+      { "a.c": [1] },
+      { asserted: { "a.c": { bench: 1 } }, assertedOnly: { "a.c": 0 } },
+    );
+    expect(scoped.files[0].stats.lines.asserted_per_tier).toEqual({ bench: 1 });
+    expect(scoped.files[0].stats.lines.asserted_only).toBe(0);
+  });
+
+  it("sums asserted_per_tier/asserted_only across a directory's scoped children", () => {
+    const dir = {
+      name: "",
+      dirs: [{ name: "src", dirs: [], files: FILE_TREE.files, stats: emptyStats() }],
+      files: [],
+      stats: emptyStats(),
+    } as unknown as DirNode;
+    const scoped = scopedOrThrow(
+      dir,
+      { "a.c": [1, 2] },
+      { "a.c": [1] },
+      { asserted: { "a.c": { bench: 1 } }, assertedOnly: { "a.c": 0 } },
+    );
+    expect(scoped.stats.lines.asserted_per_tier).toEqual({ bench: 1 });
+    expect(scoped.stats.lines.asserted_only).toBe(0);
+  });
+
+  it("ticketChunkToFileLines carries the chunk's per-file asserted counts through", () => {
+    const chunk = makeTicketChunk({
+      files: [
+        {
+          path: "a.c",
+          owned: 2,
+          covered: 1,
+          missing: [[2, 2]],
+          per_tier: { bench: 1 },
+          asserted: { bench: 1 },
+          asserted_only: 0,
+        },
+      ],
+    });
+    const { asserted, assertedOnly } = ticketChunkToFileLines(chunk);
+    expect(asserted).toEqual({ "a.c": { bench: 1 } });
+    expect(assertedOnly).toEqual({ "a.c": 0 });
   });
 });

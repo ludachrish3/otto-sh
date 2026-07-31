@@ -18,7 +18,63 @@ from otto.coverage.capture.gitio import (
     hash_object,
     head_commit,
     is_dirty,
+    rev_list_first_parent,
+    rev_parse_commit,
 )
+
+
+def _git_env(tmp_path: Path) -> dict[str, str]:
+    """Return a hermetic git environment for testing."""
+    return {
+        "GIT_AUTHOR_NAME": "t",
+        "GIT_AUTHOR_EMAIL": "t@x",
+        "GIT_COMMITTER_NAME": "t",
+        "GIT_COMMITTER_EMAIL": "t@x",
+        "HOME": str(tmp_path),
+        "PATH": "/usr/bin:/bin",
+    }
+
+
+def _make_repo(tmp_path: Path) -> tuple[Path, str]:
+    """Initialize a repo with one commit, return (path, full_sha)."""
+    root = tmp_path / "sut"
+    root.mkdir()
+
+    def git(*args: str) -> str:
+        result = subprocess.run(
+            ["git", *args],
+            cwd=root,
+            check=True,
+            capture_output=True,
+            text=True,
+            env=_git_env(tmp_path),
+        )
+        return result.stdout
+
+    git("init", "-q")
+    (root / "a.txt").write_text("initial content\n")
+    git("add", "a.txt")
+    git("commit", "-qm", "init")
+    sha = head_commit(root)
+    return root, sha
+
+
+def _commit_all(repo_root: Path) -> str:
+    """Stage and commit all changes, return new HEAD sha."""
+    subprocess.run(
+        ["git", "add", "-A"],
+        cwd=repo_root,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "commit", "-qm", "change"],
+        cwd=repo_root,
+        check=True,
+        capture_output=True,
+        env=_git_env(repo_root.parent),
+    )
+    return head_commit(repo_root)
 
 
 @pytest.fixture
@@ -32,14 +88,7 @@ def repo(tmp_path: Path) -> Path:
             cwd=root,
             check=True,
             capture_output=True,
-            env={
-                "GIT_AUTHOR_NAME": "t",
-                "GIT_AUTHOR_EMAIL": "t@x",
-                "GIT_COMMITTER_NAME": "t",
-                "GIT_COMMITTER_EMAIL": "t@x",
-                "HOME": str(tmp_path),
-                "PATH": "/usr/bin:/bin",
-            },
+            env=_git_env(tmp_path),
         )
 
     git("init", "-q")
@@ -151,6 +200,30 @@ def test_blob_sha_not_a_repo_raises(tmp_path: Path) -> None:
 def test_blob_exists_not_a_repo_raises(tmp_path: Path) -> None:
     with pytest.raises(GitUnavailableError):
         blob_exists(tmp_path, "0" * 40)
+
+
+def test_rev_parse_commit_resolves_abbreviated_sha(tmp_path: Path) -> None:
+    path, full = _make_repo(tmp_path)
+    assert rev_parse_commit(path, full[:8]) == full
+
+
+def test_rev_parse_commit_unresolvable_raises(tmp_path: Path) -> None:
+    path, _ = _make_repo(tmp_path)
+    with pytest.raises(GitUnavailableError):
+        rev_parse_commit(path, "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
+
+
+def test_rev_parse_commit_non_commit_raises(tmp_path: Path) -> None:
+    path, _ = _make_repo(tmp_path)
+    with pytest.raises(GitUnavailableError):
+        rev_parse_commit(path, "not-a-ref")
+
+
+def test_rev_list_first_parent_newest_first(tmp_path: Path) -> None:
+    path, first = _make_repo(tmp_path)
+    (path / "b.txt").write_text("x")
+    second = _commit_all(path)
+    assert rev_list_first_parent(path) == [second, first]
 
 
 class TestEveryPorcelainCallIsPinned:

@@ -29,7 +29,7 @@ if (typeof globalThis.CSS === "undefined") {
  * how callers already built ad hoc stats fixtures before this migration. */
 export function emptyStats(overrides: Partial<Stats> = {}): Stats {
   return {
-    lines: { total: 0, hit: 0, per_tier: {} },
+    lines: { total: 0, hit: 0, per_tier: {}, asserted_per_tier: {}, asserted_only: 0 },
     branches: { total: 0, hit: 0, per_tier: {} },
     flags: { stale: 0, aging: 0, excluded: 0 },
     ctx_lines: {},
@@ -67,7 +67,7 @@ export function makeRun(overrides: Partial<RunJson> = {}): RunJson {
  * AppShell.test.tsx used before this migration. */
 export function makeIndex(overrides: Partial<IndexPayload> = {}): IndexPayload {
   return {
-    format: 1,
+    format: 2,
     stamp: "stamp-1",
     generated_at: "2026-07-25 00:00 UTC",
     otto_version: "0.0.0",
@@ -79,11 +79,12 @@ export function makeIndex(overrides: Partial<IndexPayload> = {}): IndexPayload {
     thresholds: { high: 80, medium: 70 },
     stat_types: ["line", "branch", "decision"],
     runs: [],
+    overrides: [],
     run_contrib: {},
     total_lines: 0,
     tree: { name: "acme-fw", dirs: [], files: [], stats: emptyStats() },
     tickets: [],
-    tickets_totals: { owned: 0, covered: 0, uncovered: 0, per_tier: {} },
+    tickets_totals: { owned: 0, covered: 0, uncovered: 0, per_tier: {}, asserted: {} },
     ...overrides,
   };
 }

@@ -47,7 +47,13 @@ function makeTicketChunk(overrides: Partial<TicketChunk> = {}): TicketChunk {
 // fixture needs numbers that diverge from summing" standing requirement:
 // if a future edit reverted to summing, these assertions would see
 // 150/95/95 instead and fail.
-const TICKETS_TOTALS = { owned: 120, covered: 80, uncovered: 40, per_tier: { unit: 80 } };
+const TICKETS_TOTALS = {
+  owned: 120,
+  covered: 80,
+  uncovered: 40,
+  per_tier: { unit: 80 },
+  asserted: { unit: 0 },
+};
 
 const INDEX = makeIndex({
   tickets: [
@@ -58,6 +64,7 @@ const INDEX = makeIndex({
       covered: 90,
       uncovered: 10,
       per_tier: { unit: 90 },
+      asserted: { unit: 0 },
       chunk: "PROJ-1",
     },
     {
@@ -67,6 +74,7 @@ const INDEX = makeIndex({
       covered: 5,
       uncovered: 45,
       per_tier: { unit: 5 },
+      asserted: { unit: 0 },
       chunk: "PROJ-2",
     },
   ],
@@ -90,6 +98,7 @@ const TIER_SORT_INDEX = makeIndex({
       covered: 5,
       uncovered: 45,
       per_tier: { unit: 5 },
+      asserted: { unit: 0 },
       chunk: "PROJ-2",
     },
     {
@@ -99,6 +108,7 @@ const TIER_SORT_INDEX = makeIndex({
       covered: 90,
       uncovered: 10,
       per_tier: { unit: 90 },
+      asserted: { unit: 0 },
       chunk: "PROJ-1",
     },
   ],
@@ -120,6 +130,7 @@ const SENTINEL_INDEX = makeIndex({
       covered: 2,
       uncovered: 8,
       per_tier: { unit: 2 },
+      asserted: { unit: 0 },
       chunk: "no-ticket",
     },
     {
@@ -129,10 +140,17 @@ const SENTINEL_INDEX = makeIndex({
       covered: 5,
       uncovered: 0,
       per_tier: { unit: 5 },
+      asserted: { unit: 0 },
       chunk: "PROJ-1",
     },
   ],
-  tickets_totals: { owned: 15, covered: 7, uncovered: 8, per_tier: { unit: 7 } },
+  tickets_totals: {
+    owned: 15,
+    covered: 7,
+    uncovered: 8,
+    per_tier: { unit: 7 },
+    asserted: { unit: 0 },
+  },
 });
 
 describe("fmtLineRange", () => {
@@ -216,7 +234,17 @@ describe("TicketsPage", () => {
 
   it("expanding a row loads the ticket's chunk and shows missing lines grouped by file as ranges, each linking into the code", async () => {
     const chunk = makeTicketChunk({
-      files: [{ path: "src/a.c", owned: 4, covered: 2, missing: [[2, 3]], per_tier: {} }],
+      files: [
+        {
+          path: "src/a.c",
+          owned: 4,
+          covered: 2,
+          missing: [[2, 3]],
+          per_tier: {},
+          asserted: {},
+          asserted_only: 0,
+        },
+      ],
     });
     const spy = vi.spyOn(dataModule, "loadTicketChunk").mockResolvedValue(chunk);
     renderPage(INDEX);
@@ -279,7 +307,17 @@ describe("TicketsPage", () => {
       "PROJ-1",
       makeTicketChunk({
         stamp: INDEX.stamp,
-        files: [{ path: "src/a.c", owned: 4, covered: 2, missing: [[2, 3]], per_tier: {} }],
+        files: [
+          {
+            path: "src/a.c",
+            owned: 4,
+            covered: 2,
+            missing: [[2, 3]],
+            per_tier: {},
+            asserted: {},
+            asserted_only: 0,
+          },
+        ],
       }),
     );
 
@@ -305,10 +343,17 @@ describe("TicketsPage", () => {
           covered: 1,
           uncovered: 3,
           per_tier: { unit: 1 },
+          asserted: { unit: 0 },
           chunk: "(no ticket)",
         },
       ],
-      tickets_totals: { owned: 4, covered: 1, uncovered: 3, per_tier: { unit: 1 } },
+      tickets_totals: {
+        owned: 4,
+        covered: 1,
+        uncovered: 3,
+        per_tier: { unit: 1 },
+        asserted: { unit: 0 },
+      },
     });
     window.__OTTO_COV__ = sentinelChunkIndex;
     const appendSpy = vi.spyOn(document.head, "appendChild");
@@ -328,7 +373,17 @@ describe("TicketsPage", () => {
       makeTicketChunk({
         id: "(no ticket)",
         stamp: sentinelChunkIndex.stamp,
-        files: [{ path: "src/a.c", owned: 4, covered: 1, missing: [[2, 4]], per_tier: {} }],
+        files: [
+          {
+            path: "src/a.c",
+            owned: 4,
+            covered: 1,
+            missing: [[2, 4]],
+            per_tier: {},
+            asserted: {},
+            asserted_only: 0,
+          },
+        ],
       }),
     );
 
@@ -352,6 +407,7 @@ describe("line % column", () => {
         covered: 20,
         uncovered: 80,
         per_tier: { unit: 20 },
+        asserted: { unit: 0 },
         chunk: "big",
       },
       // 90% of 10 owned — least owned, least uncovered, BEST ratio.
@@ -362,6 +418,7 @@ describe("line % column", () => {
         covered: 9,
         uncovered: 1,
         per_tier: { unit: 9 },
+        asserted: { unit: 0 },
         chunk: "small",
       },
     ],
@@ -407,6 +464,7 @@ describe("row pin control", () => {
         covered: 5,
         uncovered: 5,
         per_tier: {},
+        asserted: {},
         chunk: "PROJ-1",
       },
     ],
@@ -450,5 +508,96 @@ describe("row pin control", () => {
     await user.click(screen.getByTestId("ticket-pin-PROJ-1"));
 
     expect(screen.queryByTestId("ticket-chip")).toBeNull();
+  });
+});
+
+// Task 11: "hide asserted coverage" narrows the aggregate StatsCard's
+// per-tier rows (`tickets_totals.asserted`) and each ticket row's own
+// per-tier cell (`TicketSummary.asserted`) — booted from `?asserted=1`,
+// FocusProvider's boot precedence (focus.test.tsx covers the mechanism
+// directly). The aggregate row's "all tiers" `covered`/`owned` numbers and
+// each row's covered/uncovered counts are DELIBERATELY untouched — see
+// `ticketStatsRows`'s doc comment for why `tickets_totals` carries no
+// deduped "asserted-only" total to subtract honestly.
+describe("TicketsPage: hideAsserted (Task 11)", () => {
+  function buildAssertedIndex(): IndexPayload {
+    return makeIndex({
+      tier_order: ["unit"],
+      tickets: [
+        {
+          id: "PROJ-1",
+          url: null,
+          owned: 10,
+          covered: 8,
+          uncovered: 2,
+          per_tier: { unit: 8 },
+          asserted: { unit: 3 },
+          chunk: "PROJ-1",
+        },
+      ],
+      tickets_totals: {
+        owned: 10,
+        covered: 8,
+        uncovered: 2,
+        per_tier: { unit: 8 },
+        asserted: { unit: 3 },
+      },
+    });
+  }
+
+  it("default: raw per-tier counts AND raw covered/uncovered/line%, scope carries no suffix — byte-identical to before this feature", () => {
+    const index = buildAssertedIndex();
+    renderPage(index);
+    expect(screen.getByTestId("stats-row-unit").textContent).toContain("8/10");
+    expect(screen.getByTestId("stats-row-all").textContent).toContain("8/10");
+    const row = screen.getByTestId("ticket-row");
+    expect(row.textContent).toContain("8"); // covered
+    expect(row.textContent).toContain("2"); // uncovered
+    expect(screen.getByTestId("ticket-line-pct").textContent).toContain("80.0%");
+    expect(screen.queryByTestId("ticket-covered-na")).toBeNull();
+    expect(screen.queryByTestId("ticket-uncovered-na")).toBeNull();
+    expect(screen.getByTestId("stats-card").textContent).not.toContain("asserted hidden");
+  });
+
+  it("hideAsserted subtracts tickets_totals.asserted/ticket.asserted from the per-tier cells (honest — same denominator, no cross-tier double-count risk)", () => {
+    window.location.hash = "#/tickets?asserted=1";
+    renderPage(buildAssertedIndex());
+    // 8 - 3 = 5, over the UNCHANGED denominator (10).
+    expect(screen.getByTestId("stats-row-unit").textContent).toContain("5/10");
+    expect(screen.getByTestId("stats-card").textContent).toContain("asserted hidden");
+  });
+
+  it("hideAsserted declines (never fakes) the aggregate all-tiers row's line stat — 'no data', not a guessed subtraction", () => {
+    window.location.hash = "#/tickets?asserted=1";
+    renderPage(buildAssertedIndex());
+    const allRow = screen.getByTestId("stats-row-all");
+    expect(allRow.textContent).toContain("no data");
+    expect(allRow.textContent).not.toContain("8/10");
+  });
+
+  it("hideAsserted declines (never fakes) a ticket row's own covered/uncovered/line% — no deduped per-ticket asserted-only count exists", () => {
+    window.location.hash = "#/tickets?asserted=1";
+    renderPage(buildAssertedIndex());
+    const row = screen.getByTestId("ticket-row");
+    expect(screen.getByTestId("ticket-covered-na")).toBeTruthy();
+    expect(screen.getByTestId("ticket-uncovered-na")).toBeTruthy();
+    // Neither the raw 8/2 numbers nor a guessed subtraction (e.g. 5, from
+    // naively reusing the per-tier `asserted` count) appear anywhere in the
+    // row — declined entirely, not silently wrong.
+    expect(row.textContent).not.toMatch(/\b8\b/);
+    expect(row.textContent).not.toMatch(/\b2\b/);
+    expect(screen.getByTestId("ticket-line-pct").textContent).toBe("—");
+  });
+
+  it("toggle off (default) renders identically to before this feature — no na markers, no suffix", () => {
+    renderPage(buildAssertedIndex());
+    expect(screen.queryByTestId("ticket-covered-na")).toBeNull();
+    expect(screen.queryByTestId("ticket-uncovered-na")).toBeNull();
+    // The all-tiers row's Line cell keeps its real fraction (branch/decision
+    // are ALWAYS "no data" here regardless of hideAsserted — see
+    // `ticketStatsRows`'s doc comment — so this checks the Line number
+    // itself, not absence of "no data" text anywhere in the row).
+    expect(screen.getByTestId("stats-row-all").textContent).toContain("8/10");
+    expect(screen.getByTestId("stats-card").textContent).not.toContain("asserted hidden");
   });
 });

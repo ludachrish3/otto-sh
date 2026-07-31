@@ -30,7 +30,14 @@ import { cx } from "@/utils/cx";
 import { AppShell } from "../chrome/AppShell";
 import { type Context, groupContexts, searchHaystack } from "../contexts";
 import { useFocus } from "../focus";
-import { encodePath, fmtCount, focusedTreeRow, keyColumnLabel, tierRows } from "../format";
+import {
+  encodePath,
+  fmtCount,
+  focusedTreeRow,
+  keyColumnLabel,
+  tierRows,
+  withHideAssertedSuffix,
+} from "../format";
 import { fmtPct, PCT_TEXT, pct, pctClass } from "../stats";
 import type { IndexPayload } from "../types";
 
@@ -421,7 +428,7 @@ export function RunsPage({ index }: RunsPageProps) {
   const [tier, setTier] = useState<string>("all");
   const [query, setQuery] = useState("");
   const [expandedLabel, setExpandedLabel] = useState<string | null>(null);
-  const { focus, setFocus } = useFocus();
+  const { focus, setFocus, hideAsserted } = useFocus();
 
   const contexts = groupContexts(index);
   const distinctHosts = new Set(contexts.flatMap((ctx) => ctx.hosts.map(([host]) => host))).size;
@@ -447,11 +454,18 @@ export function RunsPage({ index }: RunsPageProps) {
         </>
       }
       stats={{
-        scope: focusedContext ? `focused: ${focusedContext.label}` : "all contexts",
+        // Task 11 fix round (review I1): this card is the repo-wide root
+        // rollup, same as DirectoryPage's root — it must narrow/suffix under
+        // `hideAsserted` exactly like that page does, or the two silently
+        // disagree about "whole repo" coverage while the toggle is on.
+        scope: withHideAssertedSuffix(
+          focusedContext ? `focused: ${focusedContext.label}` : "all contexts",
+          hideAsserted,
+        ),
         title: "Coverage — whole repo",
         rows: focusedContext
           ? focusedTreeRow(index, index.tree.stats, focusedContext)
-          : tierRows(index, index.tree.stats),
+          : tierRows(index, index.tree.stats, hideAsserted),
         thresholds: index.thresholds,
         keyColumnLabel: keyColumnLabel({ ticket: false, context: Boolean(focusedContext) }),
       }}

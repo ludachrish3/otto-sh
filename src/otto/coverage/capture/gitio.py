@@ -171,6 +171,25 @@ def head_commit(repo_root: Path) -> str:
     return _run(["rev-parse", "HEAD"], repo_root).strip()
 
 
+def rev_parse_commit(repo_root: Path, rev: str) -> str:
+    """Resolve *rev* (full/abbreviated sha, ref) to a full commit sha.
+
+    ``^{commit}`` peels tags and rejects non-commit objects; ``--verify``
+    makes an unknown or ambiguous *rev* a loud :class:`GitUnavailableError`
+    instead of echoing the input back.
+    """
+    return _run(["rev-parse", "--verify", f"{rev}^{{commit}}"], repo_root).strip()
+
+
+def rev_list_first_parent(repo_root: Path) -> list[str]:
+    """Every first-parent commit sha reachable from HEAD, newest first.
+
+    One process for the whole list; callers index it to answer "is commit A
+    at/before commit B on the mainline" without per-pair subprocesses.
+    """
+    return _run(["rev-list", "--first-parent", "HEAD"], repo_root).split()
+
+
 def is_dirty(repo_root: Path) -> bool:
     """Return True if there are uncommitted changes."""
     return bool(_run(["status", "--porcelain"], repo_root).strip())

@@ -30,6 +30,17 @@ import type { Context } from "./contexts";
 import { lineHasMemberHit } from "./format";
 import type { DirNode, FileChunk, FileNode, IndexPayload, Stats, TicketChunk } from "./types";
 
+/** Per-file scoping overrides for `lines.per_tier`/`asserted_per_tier`/
+ * `asserted_only`, bundled into one object (rather than three positional
+ * params, which would push `scopeFileStats`/`scopeFile`/`scopeTreeToTicket`
+ * past the 5-param lint cap) — keyed by `FileNode.path`, matching
+ * `ticketLines`/`ticketHits`. */
+interface TicketFileScope {
+  tiers?: Record<string, Record<string, number>>;
+  asserted?: Record<string, Record<string, number>>;
+  assertedOnly?: Record<string, number>;
+}
+
 /** One file's `Stats["lines"]` recomputed against the ticket's OWN line set:
  * `total`/`hit` become the LENGTH of `owned`/`hit` (never the file's
  * whole-repo counts) — the entire point of a denominator filter is that a
@@ -43,6 +54,14 @@ import type { DirNode, FileChunk, FileNode, IndexPayload, Stats, TicketChunk } f
  * report) the whole-file counts carry over and callers should keep treating
  * per-tier as "no data".
  *
+ * `lines.asserted_per_tier`/`asserted_only` are scoped the SAME way, from
+ * `TicketChunk.files[].asserted`/`asserted_only` (format 2) — without this a
+ * scoped stats bag would otherwise carry the file's WHOLE-repo override
+ * provenance (spread from `...stats.lines` below) against a ticket-scoped
+ * denominator, which is a lie the moment the ticket owns a strict subset of
+ * the file's asserted lines. `asserted`/`assertedOnly` default to the
+ * whole-file values for the same "older report" fallback `tiers` gets.
+ *
  * The remaining `Stats` fields (branches/flags/ctx_lines) still carry over
  * from the file's ORIGINAL whole-file stats verbatim: none of that data
  * exists in a per-ticket-scoped form — a known, documented limitation, so
@@ -53,7 +72,11 @@ function scopeFileStats(
   stats: Stats,
   owned: number[],
   hit: number[],
-  tiers?: Record<string, number>,
+  fileScope?: {
+    tiers: Record<string, number> | undefined;
+    asserted: Record<string, number> | undefined;
+    assertedOnly: number | undefined;
+  },
 ): Stats {
   return {
     ...stats,
@@ -61,7 +84,9 @@ function scopeFileStats(
       ...stats.lines,
       total: owned.length,
       hit: hit.length,
-      per_tier: tiers ?? stats.lines.per_tier,
+      per_tier: fileScope?.tiers ?? stats.lines.per_tier,
+      asserted_per_tier: fileScope?.asserted ?? stats.lines.asserted_per_tier,
+      asserted_only: fileScope?.assertedOnly ?? stats.lines.asserted_only,
     },
   };
 }
@@ -70,12 +95,19 @@ function scopeFile(
   file: FileNode,
   ticketLines: Record<string, number[]>,
   ticketHits: Record<string, number[]>,
-  ticketTiers?: Record<string, Record<string, number>>,
+  scope?: TicketFileScope,
 ): FileNode | null {
   const owned = ticketLines[file.path];
   if (owned === undefined) return null; // the ticket never touched this file
   const hit = ticketHits[file.path] ?? [];
-  return { ...file, stats: scopeFileStats(file.stats, owned, hit, ticketTiers?.[file.path]) };
+  return {
+    ...file,
+    stats: scopeFileStats(file.stats, owned, hit, {
+      tiers: scope?.tiers?.[file.path],
+      asserted: scope?.asserted?.[file.path],
+      assertedOnly: scope?.assertedOnly?.[file.path],
+    }),
+  };
 }
 
 /** A directory's OWN rollup, recomputed as the sum of its (already-scoped)
@@ -83,21 +115,40 @@ function scopeFile(
  * ticket's lines only" contract `scopeFileStats` applies to one file,
  * aggregated one level up so a directory row (`DirectoryPage`'s tree, or its
  * top StatsCard for "this node and below") reports the scoped total too,
- * never the original whole-subtree one. */
+ * never the original whole-subtree one. `asserted_per_tier`/`asserted_only`
+ * sum the same way — each child is already scoped (by `scopeFile` or a
+ * nested `aggregateDirStats` call), so summing here never reintroduces
+ * whole-repo counts. */
 function aggregateDirStats(stats: Stats, dirs: DirNode[], files: FileNode[]): Stats {
   let total = 0;
   let hit = 0;
+  let assertedOnly = 0;
   // Summed the same way as total/hit so a directory row's per-tier numbers
   // describe the scoped subtree, not the original whole one.
   const per_tier: Record<string, number> = {};
+  const asserted_per_tier: Record<string, number> = {};
   for (const child of [...dirs, ...files]) {
     total += child.stats.lines.total;
     hit += child.stats.lines.hit;
+    assertedOnly += child.stats.lines.asserted_only;
     for (const [tier, count] of Object.entries(child.stats.lines.per_tier)) {
       per_tier[tier] = (per_tier[tier] ?? 0) + count;
     }
+    for (const [tier, count] of Object.entries(child.stats.lines.asserted_per_tier)) {
+      asserted_per_tier[tier] = (asserted_per_tier[tier] ?? 0) + count;
+    }
   }
-  return { ...stats, lines: { ...stats.lines, total, hit, per_tier } };
+  return {
+    ...stats,
+    lines: {
+      ...stats.lines,
+      total,
+      hit,
+      per_tier,
+      asserted_per_tier,
+      asserted_only: assertedOnly,
+    },
+  };
 }
 
 /** Pure recursive filter (Task 12 brief): keeps only the files/directories a
@@ -122,13 +173,13 @@ export function scopeTreeToTicket(
   node: DirNode,
   ticketLines: Record<string, number[]>,
   ticketHits: Record<string, number[]>,
-  ticketTiers?: Record<string, Record<string, number>>,
+  scope?: TicketFileScope,
 ): DirNode | null {
   const files = node.files
-    .map((f) => scopeFile(f, ticketLines, ticketHits, ticketTiers))
+    .map((f) => scopeFile(f, ticketLines, ticketHits, scope))
     .filter((f): f is FileNode => f !== null);
   const dirs = node.dirs
-    .map((d) => scopeTreeToTicket(d, ticketLines, ticketHits, ticketTiers))
+    .map((d) => scopeTreeToTicket(d, ticketLines, ticketHits, scope))
     .filter((d): d is DirNode => d !== null);
 
   if (files.length === 0 && dirs.length === 0) return null;
@@ -151,18 +202,27 @@ export function ticketChunkToFileLines(chunk: TicketChunk): {
   lines: Record<string, number[]>;
   hits: Record<string, number[]>;
   tiers: Record<string, Record<string, number>>;
+  asserted: Record<string, Record<string, number>>;
+  assertedOnly: Record<string, number>;
 } {
   const lines: Record<string, number[]> = {};
   const hits: Record<string, number[]> = {};
   // Real counts, unlike `lines`/`hits` above — the emitter breaks each
   // file's covered total down per tier, so these pass through as-is.
   const tiers: Record<string, Record<string, number>> = {};
+  // Same: real per-file override-provenance counts (format 2), so the
+  // ticket-scoped tree reports the SUBSET of asserted lines this ticket
+  // actually owns in each file, not the file's whole-repo counts.
+  const asserted: Record<string, Record<string, number>> = {};
+  const assertedOnly: Record<string, number> = {};
   for (const file of chunk.files) {
     lines[file.path] = Array.from({ length: file.owned });
     hits[file.path] = Array.from({ length: file.covered });
     tiers[file.path] = file.per_tier ?? {};
+    asserted[file.path] = file.asserted ?? {};
+    assertedOnly[file.path] = file.asserted_only ?? 0;
   }
-  return { lines, hits, tiers };
+  return { lines, hits, tiers, asserted, assertedOnly };
 }
 
 /** `DirectoryPage`'s ticket-only StatsCard rows: one row per tier followed
@@ -201,6 +261,7 @@ export function ticketTreeRow(
   node: DirNode,
   ticketId: string,
   ctx?: Context,
+  hideAsserted = false,
 ): TierStatRow[] {
   const summary: TierStatRow = {
     key: "ticket",
@@ -208,7 +269,19 @@ export function ticketTreeRow(
     // `dotColor` is simply absent: a tree-level ticket row never carries a
     // tier dot. It was previously spelled `dotColor: undefined`, which under
     // `exactOptionalPropertyTypes` is a different thing from omitting it.
-    line: ctx ? null : [node.stats.lines.hit, node.stats.lines.total],
+    //
+    // `hideAsserted` (Task 11, default `false` — byte-identical when
+    // omitted): subtracts `asserted_only` (lines with no real, non-override
+    // evidence at all) the same way `tierRows`'s "all tiers" row does — the
+    // scoped `node.stats.lines` already carries the ticket's own subset of
+    // that field (`scopeFileStats`/`aggregateDirStats` above), so no
+    // separate ticket-scoped asserted math is needed here.
+    line: ctx
+      ? null
+      : [
+          node.stats.lines.hit - (hideAsserted ? node.stats.lines.asserted_only : 0),
+          node.stats.lines.total,
+        ],
     branch: null,
     decision: null,
   };
@@ -221,9 +294,15 @@ export function ticketTreeRow(
     key: tier,
     label: index.tier_labels[tier] ?? tier,
     dotColor: index.tier_colors[tier],
-    // Numerator scoped to the ticket AND the tier; denominator is the
-    // ticket's own line total, the same one the summary row divides by.
-    line: [node.stats.lines.per_tier[tier] ?? 0, node.stats.lines.total],
+    // Numerator scoped to the ticket AND the tier (and, under
+    // `hideAsserted`, minus that tier's own `asserted_per_tier` count);
+    // denominator is the ticket's own line total, the same one the summary
+    // row divides by.
+    line: [
+      (node.stats.lines.per_tier[tier] ?? 0) -
+        (hideAsserted ? (node.stats.lines.asserted_per_tier[tier] ?? 0) : 0),
+      node.stats.lines.total,
+    ],
     branch: null,
     decision: null,
   }));
@@ -242,12 +321,21 @@ export function ticketTreeRow(
  * AND a member run of `ctx` hit it (`lineHasMemberHit`, the same per-run
  * membership test `FilePage.tsx`'s own row tinting and `format.ts`'s
  * `focusedFileRow` use); without `ctx`, "any tier recorded a hit" (mirrors
- * `chunkTierRows`'s "hit if any tier count > 0") is enough. */
+ * `chunkTierRows`'s "hit if any tier count > 0") is enough.
+ *
+ * `hideAsserted` (Task 11, default `false` — byte-identical when omitted)
+ * only narrows the NON-`ctx` "any tier hit" test — mirroring
+ * `chunkTierRows`'s per-line recompute (a tier counts only if its hit isn't
+ * override-sourced, per `LineJson.asserted`). The `ctx` branch needs no
+ * such narrowing: `lineHasMemberHit` already reads `line.run` (a run
+ * actually recording hits), which an override never populates — real
+ * per-run evidence is never asserted-only by construction. */
 export function ticketFileRow(
   index: IndexPayload,
   chunk: FileChunk,
   ticketId: string,
   ctx?: Context,
+  hideAsserted = false,
 ): TierStatRow[] {
   const memberIds = ctx ? new Set(ctx.runs.map((r) => r.id)) : null;
   let owned = 0;
@@ -255,9 +343,10 @@ export function ticketFileRow(
   for (const line of Object.values(chunk.lines)) {
     if (!line.ticket?.includes(ticketId)) continue;
     owned++;
+    const assertedTiers = hideAsserted ? Object.keys(line.asserted ?? {}) : [];
     const isHit = memberIds
       ? lineHasMemberHit(line, memberIds)
-      : Object.values(line.hits).some((n) => n > 0);
+      : Object.entries(line.hits).some(([tier, n]) => n > 0 && !assertedTiers.includes(tier));
     if (isHit) hit++;
   }
   return [

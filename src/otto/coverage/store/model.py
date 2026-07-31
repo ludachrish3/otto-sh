@@ -26,7 +26,7 @@ Any string is a valid tier name; this constant spares callers a string
 literal when they mean the canonical system-coverage tier.
 """
 
-STORE_FORMAT_VERSION = 5
+STORE_FORMAT_VERSION = 6
 """``store.json`` schema version, bumped on breaking on-disk changes.
 
 Version 2 is the first version to carry an explicit ``"format"`` key —
@@ -42,6 +42,13 @@ sourced from.  Version 4 adds the report-level config surface: top-level
 per-run ``host`` identity and a reserved per-line ``ticket`` slot.
 Version 5 turns the reserved per-line ``ticket`` slot into a list (a
 commit may name several tickets) and adds a top-level ``tickets`` table.
+Version 6 adds the manual-override surface: a top-level ``overrides``
+table (one row per asserted entry from ``.otto/coverage-overrides.toml``),
+a top-level ``overrides_file_active`` flag (true whenever an override file
+is configured and loaded, independent of whether it carries any asserted
+entries — added before v6 shipped, so no further bump), and a per-line
+``asserted`` map (tier -> override-entry ids) marking lines whose only
+hits in that tier are override-sourced.
 There is no migration shim: a file that does not declare this exact
 version fails loud in :meth:`CoverageStore.load` with a message telling
 the caller to regenerate it, rather than silently mis-reading
@@ -234,6 +241,32 @@ class TicketRecord:
 
 
 @dataclass
+class OverrideRecord:
+    """One asserted manual-coverage entry from the override file.
+
+    ``key`` is the entry's display identity (``ticket:PROJ-412`` /
+    ``commit:<full sha>``); ``id`` is the index per-line ``asserted``
+    refs point at, so the reason is stored once, not per line.
+    """
+
+    id: int
+    tier: str
+    key: str
+    reason: str
+    as_of: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-serialisable dict representation of this entry."""
+        return {
+            "id": self.id,
+            "tier": self.tier,
+            "key": self.key,
+            "reason": self.reason,
+            "as_of": self.as_of,
+        }
+
+
+@dataclass
 class LineRecord:
     """Coverage data for a single source line."""
 
@@ -257,6 +290,11 @@ class LineRecord:
     # commit may name several tickets, so every one of them owns the
     # line — hence a list, not a single reserved slot.
     ticket: list[str] = field(default_factory=list)
+
+    # Override provenance (manual-overrides spec §3/§5): tier -> ids of the
+    # override entries that asserted this line; present only while the
+    # tier's sole hits are override-sourced.
+    asserted: dict[str, list[int]] = field(default_factory=dict)
 
     def merge(self, other: "LineRecord") -> None:
         """Merge *other* into this line record, accumulating hits and branch data."""
@@ -288,6 +326,12 @@ class LineRecord:
         for ticket_id in other.ticket:
             if ticket_id not in self.ticket:
                 self.ticket.append(ticket_id)
+
+        for tier, ids in other.asserted.items():
+            mine = self.asserted.setdefault(tier, [])
+            for entry_id in ids:
+                if entry_id not in mine:
+                    mine.append(entry_id)
 
 
 @dataclass
@@ -372,6 +416,8 @@ class FileRecord:
             d["stale_run"] = list(rec.stale_runs)
         if rec.ticket:
             d["ticket"] = list(rec.ticket)
+        if rec.asserted:
+            d["asserted"] = {tier: list(ids) for tier, ids in rec.asserted.items()}
         return d
 
     def to_dict(self) -> dict[str, Any]:
@@ -402,6 +448,17 @@ class CoverageStore:
         self.runs: list[RunRecord] = []
         self.thresholds: Thresholds = Thresholds()
         self.tickets: dict[str, TicketRecord] = {}
+        self.overrides: list[OverrideRecord] = []
+        # Manual-overrides spec §7: true whenever an override FILE is
+        # configured and was loaded, independent of whether it happens to
+        # carry zero asserted entries (a reattribute-only file, or one
+        # whose every entry is currently inert, is still "active" — the
+        # file is present and validated). Distinct from `bool(self.overrides)`,
+        # which is false for an active-but-empty-entries file; see
+        # `ticket_export.build_ticket_export`'s `overrides_active` field,
+        # which reads this flag rather than `bool(overrides)` for exactly
+        # that reason (F2, final review).
+        self.overrides_file_active: bool = False
 
     def register_tier(self, tier: str) -> None:
         """Append *tier* to the tier order if not already present.
@@ -520,6 +577,8 @@ class CoverageStore:
             "thresholds": self.thresholds.to_dict(),
             "stat_types": list(STAT_TYPES),
             "tickets": {k: v.to_dict() for k, v in self.tickets.items()},
+            "overrides": [o.to_dict() for o in self.overrides],
+            "overrides_file_active": self.overrides_file_active,
         }
         path.write_text(json.dumps(data, indent=2))
 
@@ -568,6 +627,24 @@ class CoverageStore:
             store.tickets[tid] = TicketRecord(
                 id=td["id"], url=td.get("url"), commits=list(td.get("commits") or [])
             )
+        for od in data.get("overrides") or []:
+            store.overrides.append(
+                OverrideRecord(
+                    id=od["id"],
+                    tier=od["tier"],
+                    key=od["key"],
+                    reason=od["reason"],
+                    as_of=od.get("as_of"),
+                )
+            )
+        # Additive v6-internal key (F2, final review): a store.json written
+        # before this field existed has no "overrides_file_active" key at
+        # all, and `bool(store.overrides)` was the old (wrong) proxy for it —
+        # default False rather than back-filling from `overrides`, since a
+        # missing key on an old store means "unknown", not "active", and the
+        # only stores old enough to lack this key predate the overrides
+        # feature entirely (never carried a nonempty `overrides` list either).
+        store.overrides_file_active = bool(data.get("overrides_file_active", False))
         for rd in runs_data:
             store.runs.append(
                 RunRecord(
@@ -606,6 +683,7 @@ class CoverageStore:
                     branches=branches,
                     state=ld.get("state"),
                     ticket=list(ld.get("ticket") or []),
+                    asserted={t: list(v) for t, v in (ld.get("asserted") or {}).items()},
                 )
                 lr.run_hits = {int(k): v for k, v in (ld.get("run") or {}).items()}
                 lr.stale_runs = list(ld.get("stale_run") or [])

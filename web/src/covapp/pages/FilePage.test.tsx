@@ -13,7 +13,13 @@ import * as dataModule from "../data";
 import { _resetForTests, StampMismatchError } from "../data";
 import { emptyStats, makeIndex, Providers } from "../testUtils";
 import type { FileChunk, FileNode, IndexPayload, RunJson } from "../types";
-import { FilePage, parseLinesRange, rowClassFor, rowClassForFocus } from "./FilePage";
+import {
+  FilePage,
+  lineAssertedIn,
+  parseLinesRange,
+  rowClassFor,
+  rowClassForFocus,
+} from "./FilePage";
 
 function renderPage(props: { index: IndexPayload; segments: string[]; node: FileNode }) {
   return render(<FilePage {...props} />, { wrapper: Providers });
@@ -131,6 +137,25 @@ describe("rowClassForFocus", () => {
 
   it("excluded still wins even with no LineRecord", () => {
     expect(rowClassForFocus(undefined, true, memberIds, "system")).toBe("s-excl");
+  });
+});
+
+describe("lineAssertedIn", () => {
+  it("true when the tier's override-entry list is non-empty", () => {
+    expect(
+      lineAssertedIn({ hits: {}, branches: [], state: null, asserted: { system: [0] } }, "system"),
+    ).toBe(true);
+  });
+
+  it("false for a tier with no asserted entries", () => {
+    expect(
+      lineAssertedIn({ hits: {}, branches: [], state: null, asserted: { system: [0] } }, "unit"),
+    ).toBe(false);
+  });
+
+  it("false when the line has no `asserted` field at all, or no line", () => {
+    expect(lineAssertedIn({ hits: {}, branches: [], state: null }, "system")).toBe(false);
+    expect(lineAssertedIn(undefined, "system")).toBe(false);
   });
 });
 
@@ -295,6 +320,21 @@ function chunkWithTickets(tickets: Record<number, string[]>): FileChunk {
   return chunk;
 }
 
+/** `makeChunk()` plus an asserted-only line 7 (Task 10: SOURCE's trailing
+ * `}` — no other test line uses it) — `hits.system: 1` with
+ * `asserted.system: [0]` so the tier's sole hit is override-sourced, no
+ * `run`/`stale_run` at all (the "asserted-only, still expandable" case). */
+function chunkWithAsserted(): FileChunk {
+  const chunk = makeChunk();
+  chunk.lines["7"] = {
+    hits: { system: 1, unit: 0 },
+    branches: [],
+    state: null,
+    asserted: { system: [0] },
+  };
+  return chunk;
+}
+
 function makeFileIndex(overrides: Partial<IndexPayload> = {}): IndexPayload {
   return makeIndex({
     project_name: "acme-fw",
@@ -455,6 +495,103 @@ describe("FilePage", () => {
     fireEvent.click(screen.getByTestId("expand-contexts"));
     expect(screen.queryByTestId("ctx-panel-5")).toBeNull();
     expect(screen.queryByTestId("ctx-panel-6")).toBeNull();
+  });
+
+  it("asserted line renders the hollow marker, proven line the solid count", async () => {
+    mockChunkLoad({ resolve: chunkWithAsserted() });
+    renderPage({ index: makeFileIndex(), segments: ["src", "net", "tcp.c"], node: NODE });
+    const row7 = await screen.findByTestId("code-row-7");
+    const asserted = within(row7).getByTestId("hit-asserted");
+    expect(asserted.textContent).toBe("1");
+
+    const row1 = await screen.findByTestId("code-row-1");
+    expect(within(row1).queryByTestId("hit-asserted")).toBeNull();
+    expect(row1.textContent).toContain("5");
+  });
+
+  it("expanding an asserted line shows the override reason", async () => {
+    mockChunkLoad({ resolve: chunkWithAsserted() });
+    renderPage({
+      index: makeFileIndex({
+        overrides: [
+          { id: 0, tier: "system", key: "ticket:#1", reason: "legacy bench pass", as_of: null },
+        ],
+      }),
+      segments: ["src", "net", "tcp.c"],
+      node: NODE,
+    });
+    const expander = await screen.findByTestId("code-expander-7");
+    fireEvent.click(expander);
+    const panel = screen.getByTestId("ctx-panel-7");
+    const chip = within(panel).getByTestId("asserted-chip");
+    expect(chip.textContent).toContain("ticket:#1");
+    expect(chip.textContent).toContain("legacy bench pass");
+  });
+
+  // Task 11: "hide asserted coverage" — boots from `?asserted=1` (the same
+  // FocusProvider boot precedence focus.test.tsx exercises directly), so
+  // these tests set the hash before rendering rather than clicking the
+  // AppShell ⋮ menu toggle themselves (that round-trip is AppShell.test.
+  // tsx's job).
+  it("hideAsserted renders an asserted-only cell as a plain zero, not the dashed pill", async () => {
+    window.location.hash = "#/coverage/src/net/tcp.c?asserted=1";
+    mockChunkLoad({ resolve: chunkWithAsserted() });
+    renderPage({ index: makeFileIndex(), segments: ["src", "net", "tcp.c"], node: NODE });
+    const row7 = await screen.findByTestId("code-row-7");
+    expect(within(row7).queryByTestId("hit-asserted")).toBeNull();
+  });
+
+  it("hideAsserted suppresses the tier row-tint on a line whose only hits are asserted", async () => {
+    window.location.hash = "#/coverage/src/net/tcp.c?asserted=1";
+    mockChunkLoad({ resolve: chunkWithAsserted() });
+    renderPage({ index: makeFileIndex(), segments: ["src", "net", "tcp.c"], node: NODE });
+    const row7 = await screen.findByTestId("code-row-7");
+    // Falls through rowClassFor's precedence to uncovered, not `t-system`.
+    expect(row7.className).not.toContain("t-system");
+  });
+
+  it("hideAsserted subtracts the asserted-only line from the tier and all-tiers stats rows", async () => {
+    // Shown (hideAsserted omitted): system hits lines 1, 999, AND 7 (its
+    // override-sourced hit still counts) => 3/6; all-tiers the same 3
+    // lines => 3/6.
+    mockChunkLoad({ resolve: chunkWithAsserted() });
+    renderPage({ index: makeFileIndex(), segments: ["src", "net", "tcp.c"], node: NODE });
+    expect((await screen.findByTestId("stats-row-system")).textContent).toContain("3/6");
+    expect((await screen.findByTestId("stats-row-all")).textContent).toContain("3/6");
+  });
+
+  it("hideAsserted (query-boot) subtracts line 7's asserted-only hit from system and all-tiers", async () => {
+    // Hidden: line 7's system hit is override-sourced only, so it drops out
+    // of BOTH the system row and the all-tiers row, leaving lines 1 and 999
+    // => 2/6 for each. The denominator (6 chunk.lines keys) never changes.
+    window.location.hash = "#/coverage/src/net/tcp.c?asserted=1";
+    mockChunkLoad({ resolve: chunkWithAsserted() });
+    renderPage({ index: makeFileIndex(), segments: ["src", "net", "tcp.c"], node: NODE });
+    expect((await screen.findByTestId("stats-row-system")).textContent).toContain("2/6");
+    expect((await screen.findByTestId("stats-row-all")).textContent).toContain("2/6");
+  });
+
+  it("hideAsserted appends ' · asserted hidden' to the StatsCard scope line, never silently", async () => {
+    window.location.hash = "#/coverage/src/net/tcp.c?asserted=1";
+    mockChunkLoad({ resolve: makeChunk() });
+    renderPage({ index: makeFileIndex(), segments: ["src", "net", "tcp.c"], node: NODE });
+    await screen.findByTestId("stats-row-all");
+    expect(screen.getByTestId("stats-card").textContent).toContain("asserted hidden");
+  });
+
+  it("hideAsserted=false (default) is byte-identical to before this feature", async () => {
+    mockChunkLoad({ resolve: chunkWithAsserted() });
+    renderPage({ index: makeFileIndex(), segments: ["src", "net", "tcp.c"], node: NODE });
+    const row7 = await screen.findByTestId("code-row-7");
+    expect(within(row7).getByTestId("hit-asserted")).toBeTruthy();
+    expect(screen.getByTestId("stats-card").textContent).not.toContain("asserted hidden");
+  });
+
+  it("asserted-only line is expandable", async () => {
+    mockChunkLoad({ resolve: chunkWithAsserted() });
+    renderPage({ index: makeFileIndex(), segments: ["src", "net", "tcp.c"], node: NODE });
+    await screen.findByTestId("code-row-7");
+    expect(screen.getByTestId("code-expander-7")).toBeTruthy();
   });
 
   it("computes the stats card + meta line from the chunk, including past-EOF records", async () => {
@@ -675,6 +812,7 @@ describe("FilePage", () => {
             covered: 1,
             uncovered: 0,
             per_tier: {},
+            asserted: {},
             chunk: "PROJ-1",
           },
         ],
@@ -796,6 +934,7 @@ describe("FilePage", () => {
               covered: 0,
               uncovered: 0,
               per_tier: {},
+              asserted: {},
               chunk: ticketId,
             },
           ],

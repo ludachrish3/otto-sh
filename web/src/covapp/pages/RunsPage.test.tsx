@@ -349,3 +349,46 @@ describe("RunsPage", () => {
     });
   });
 });
+
+// Task 11 fix round (review I1): the "Coverage — whole repo" card is the
+// SAME root rollup DirectoryPage's `segments: []` card reads (both from
+// `index.tree.stats`) — it must narrow/suffix under `hideAsserted` exactly
+// like that page does, or the two silently disagree while the toggle is on.
+describe("RunsPage: hideAsserted (Task 11 fix round)", () => {
+  function buildAssertedIndex(): IndexPayload {
+    return buildIndex({
+      tree: {
+        name: "acme-fw",
+        dirs: [],
+        files: [],
+        stats: {
+          lines: {
+            total: 10,
+            hit: 8,
+            per_tier: { system: 6, unit: 2, manual: 0 },
+            asserted_per_tier: { system: 3 },
+            asserted_only: 3,
+          },
+          branches: { total: 0, hit: 0, per_tier: {} },
+          flags: { stale: 0, aging: 0, excluded: 0 },
+          ctx_lines: {},
+        },
+      },
+    });
+  }
+
+  it("default: raw hit/per-tier counts, scope carries no suffix", () => {
+    renderPage(buildAssertedIndex());
+    expect(screen.getByTestId("stats-row-all").textContent).toContain("8/10");
+    expect(screen.getByTestId("stats-row-system").textContent).toContain("6/10");
+    expect(screen.getByTestId("stats-card").textContent).not.toContain("asserted hidden");
+  });
+
+  it("hideAsserted narrows the all-tiers and per-tier rows, and appends the scope suffix", () => {
+    window.location.hash = "#/runs?asserted=1";
+    renderPage(buildAssertedIndex());
+    expect(screen.getByTestId("stats-row-all").textContent).toContain("5/10"); // 8 - asserted_only(3)
+    expect(screen.getByTestId("stats-row-system").textContent).toContain("3/10"); // 6 - asserted_per_tier.system(3)
+    expect(screen.getByTestId("stats-card").textContent).toContain("asserted hidden");
+  });
+});

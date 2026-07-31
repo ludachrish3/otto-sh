@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from otto.coverage.store.model import CoverageStore, TicketRecord
+from otto.coverage.store.model import CoverageStore, OverrideRecord, TicketRecord
 from otto.coverage.ticket_export import (
     TICKET_EXPORT_FORMAT,
     build_ticket_export,
@@ -119,7 +119,7 @@ def test_export_has_its_own_format_version(tmp_path):
         otto_version="0.8.0",
         generated="2026-07-26T00:00:00Z",
     )
-    assert payload["format"] == TICKET_EXPORT_FORMAT == 1
+    assert payload["format"] == TICKET_EXPORT_FORMAT == 2
 
 
 def test_export_counts_and_missing_ranges(tmp_path):
@@ -323,3 +323,105 @@ def test_export_paths_are_repo_relative(tmp_path):
     assert path == "src/a.c"
     assert not path.startswith("/")
     assert str(tmp_path) not in path
+
+
+# ── Task 8: v2 — per-tier `asserted` counts + `overrides_active` ────────────
+
+
+def _store_with_asserted_line(tmp_path):
+    """One ticket ("#1") owning two lines in "bench": line 1's hit is
+    override-sourced (``line.asserted={"bench": [0]}``), line 2's hit is
+    from a real run (``line.asserted`` empty). ``store.overrides`` carries
+    the one entry line 1's assertion refers to."""
+    store = CoverageStore(tier_order=["bench"])
+    rec = store.get_or_create_file(tmp_path / "a.c")
+    line1 = rec.get_or_create_line(1)
+    line1.ticket = ["#1"]
+    line1.hits.add("bench", 1)
+    line1.asserted = {"bench": [0]}
+    line2 = rec.get_or_create_line(2)
+    line2.ticket = ["#1"]
+    line2.hits.add("bench", 1)
+    store.tickets["#1"] = TicketRecord(id="#1", url=None, commits=["abc"])
+    store.overrides.append(
+        OverrideRecord(id=0, tier="bench", key="ticket:#1", reason="manually verified")
+    )
+    # F2 (final review): `overrides_active` reads `overrides_file_active`
+    # (file-presence), not `bool(store.overrides)` — a store built directly
+    # (bypassing the reporter, which sets this from override-file presence)
+    # must set it explicitly to model an active override file.
+    store.overrides_file_active = True
+    return store
+
+
+def test_export_format_is_2():
+    assert TICKET_EXPORT_FORMAT == 2
+
+
+def test_asserted_counts_per_ticket_and_overrides_active(tmp_path):
+    store = _store_with_asserted_line(tmp_path)
+    payload = build_ticket_export(
+        store,
+        repo_root=tmp_path,
+        project="p",
+        otto_version="0",
+        generated="g",
+    )
+    assert payload["overrides_active"] is True
+    (ticket,) = [t for t in payload["tickets"] if t["id"] == "#1"]
+    assert ticket["per_tier"]["bench"] == 2  # both lines count as covered
+    assert ticket["asserted"]["bench"] == 1  # only line 1 is asserted
+
+
+def test_overrides_absent_emits_false_and_zero_asserted(tmp_path):
+    store = _store(tmp_path)
+    payload = build_ticket_export(
+        store,
+        repo_root=tmp_path,
+        project="p",
+        otto_version="0",
+        generated="g",
+    )
+    assert payload["overrides_active"] is False
+    assert all(set(t["asserted"].values()) <= {0} for t in payload["tickets"])
+
+
+def test_overrides_active_true_with_no_asserted_entries(tmp_path):
+    """F2 (final review): a reattribute-only override file populates
+    `store.overrides_file_active` but adds no `OverrideRecord`s at all (no
+    asserted entries), so `bool(store.overrides)` would wrongly read False.
+    `overrides_active` must still be True — the spec's wording is "an
+    override FILE is present", not "an override file declares an asserted
+    entry"."""
+    store = _store(tmp_path)
+    store.overrides_file_active = True
+    assert store.overrides == []
+    payload = build_ticket_export(
+        store,
+        repo_root=tmp_path,
+        project="p",
+        otto_version="0",
+        generated="g",
+    )
+    assert payload["overrides_active"] is True
+
+
+def test_determinism_still_byte_stable_with_asserted_data(tmp_path):
+    """Extends ``test_export_is_byte_deterministic`` to a store carrying
+    asserted/override data: two writes with a fixed ``generated`` must
+    still agree byte-for-byte."""
+    store = _store_with_asserted_line(tmp_path)
+    a, b = tmp_path / "a.json", tmp_path / "b.json"
+    for path in (a, b):
+        write_ticket_export(
+            store,
+            path,
+            repo_root=tmp_path,
+            project="p",
+            otto_version="0.8.0",
+            generated="2026-07-26T00:00:00Z",
+        )
+    assert a.read_bytes() == b.read_bytes()
+    payload = json.loads(a.read_bytes())
+    assert payload["overrides_active"] is True
+    assert payload["tickets"][0]["asserted"]["bench"] == 1

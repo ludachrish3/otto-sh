@@ -19,6 +19,7 @@
     "ticket": "__OTTO_COV_TICKET__"
   },
   "ticket_summary_keys": [
+    "asserted",
     "chunk",
     "covered",
     "id",
@@ -27,7 +28,15 @@
     "uncovered",
     "url"
   ],
-  "ticket_totals_keys": ["covered", "owned", "per_tier", "uncovered"],
+  "ticket_totals_keys": ["asserted", "covered", "owned", "per_tier", "uncovered"],
   "ticket_chunk_keys": ["files", "id", "stamp"],
-  "ticket_chunk_file_keys": ["covered", "missing", "owned", "path", "per_tier"]
+  "ticket_chunk_file_keys": [
+    "asserted",
+    "asserted_only",
+    "covered",
+    "missing",
+    "owned",
+    "path",
+    "per_tier"
+  ]
 }

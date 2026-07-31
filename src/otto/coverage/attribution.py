@@ -332,6 +332,7 @@ def attribute_tickets(
     spec: TicketSpec,
     *,
     first_parent: bool = True,
+    reattributions: dict[str, list[str]] | None = None,
 ) -> tuple[dict[str, dict[int, list[str]]], dict[str, list[str]], dict[str, dict[int, str]]]:
     """Attribute lines, then resolve each commit to its ticket ids.
 
@@ -346,21 +347,61 @@ def attribute_tickets(
     :data:`NO_TICKET` or :data:`UNCOMMITTED_TICKET` accordingly — without a
     second git log walk (see
     ``CoverageReporter._annotate_tickets``).
+
+    A reattribution overrides the message-parsed ticket ids for any commit
+    in the *reattributions* map, allowing break-glass correction without
+    retesting or rerunning analysis.
+
+    The second (``ticket id -> commit shas``) mapping is **walk-complete**:
+    built directly from every commit ``_fetch_walk`` visited (via
+    ``tickets_of``), not just the ones that currently own an attributed
+    line. A commit whose every line was later superseded (rewritten, or —
+    for a renamed/deleted file — dropped) still names its ticket(s) here.
+    This matters for the manual-overrides feature (override spec §2/§3): an
+    asserted ticket entry's ``as_of`` bound is checked against this map, and
+    a ticket that only ever owned now-superseded lines is legitimately
+    "fully aged out" (owns zero *current* lines — legal), not a typo'd id
+    that never appeared in the walk at all. Building it from the
+    line-ownership loop instead (as this used to) would make a fully-aged
+    ticket indistinguishable from one that was never spelled correctly,
+    since both would be absent from the map either way.
     """
     # One walk, shared by both passes — a second call would double this
     # module's git subprocess count for no benefit.
     walk = _fetch_walk(repo_root, line_counts, first_parent=first_parent)
     by_sha = attribute_lines(repo_root, line_counts, first_parent=first_parent, walk=walk)
-    tickets_of = {c.sha: _extract_real_tickets(spec, f"{c.subject}\n{c.body}", c.sha) for c in walk}
+
+    # Break-glass reattribution (overrides spec §3): a listed commit's ids
+    # replace message extraction entirely, at this single site, so every
+    # consumer (store, gutter, tickets page, export, asserted entries) sees
+    # the same corrected mapping. Load-time validation already rejected
+    # reserved sentinel ids, so no _extract_real_tickets-style filter here.
+    reattr = reattributions or {}
+    tickets_of = {
+        c.sha: (
+            list(reattr[c.sha])
+            if c.sha in reattr
+            else _extract_real_tickets(spec, f"{c.subject}\n{c.body}", c.sha)
+        )
+        for c in walk
+    }
+
+    # Walk-complete: every commit the walk visited contributes to `commits`,
+    # regardless of whether it still owns an attributed line (see the
+    # docstring above). `walk` order is newest -> oldest (attribute_lines
+    # replays it backward from HEAD), so each ticket's sha list comes out
+    # newest-first, same ordering the old line-ownership-driven loop
+    # produced for the (common) case of one owning commit per ticket.
+    commits: dict[str, list[str]] = {}
+    for c in walk:
+        for ticket_id in tickets_of[c.sha]:
+            shas = commits.setdefault(ticket_id, [])
+            if c.sha not in shas:
+                shas.append(c.sha)
 
     lines: dict[str, dict[int, list[str]]] = {}
-    commits: dict[str, list[str]] = {}
     for relpath, per_line in by_sha.items():
         lines[relpath] = {}
         for lineno, sha in per_line.items():
-            ids = list(tickets_of.get(sha, []))
-            lines[relpath][lineno] = ids
-            for ticket_id in ids:
-                if sha not in commits.setdefault(ticket_id, []):
-                    commits[ticket_id].append(sha)
+            lines[relpath][lineno] = list(tickets_of.get(sha, []))
     return lines, commits, by_sha

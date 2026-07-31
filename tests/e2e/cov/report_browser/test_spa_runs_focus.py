@@ -42,18 +42,21 @@ pytestmark = [
 # expected string below is computed from these, never hand-typed.
 # ---------------------------------------------------------------------
 
-# main_rec.lines gets LineRecords for 3, 4, 5, 6, 7, 9, 10, 11, 12 (9
-# entries); of those, only line 6 (state="stale") and line 9
-# (state="aging") carry no tier hit — the rest (3,4,5,7,10,11,12) do.
-MAIN_C_TOTAL_LINES = 9
-MAIN_C_HIT_LINES = 7
+# main_rec.lines gets LineRecords for 1, 2, 3, 4, 5, 6, 7, 9, 10, 11, 12 (11
+# entries — Task 12 added 1 and 2 for the bench tier); of those, only line 6
+# (state="stale") and line 9 (state="aging") carry no tier hit — the rest
+# (1,2,3,4,5,7,10,11,12) do (line 2's bench hit is override-sourced only,
+# but it's still a hit for the unfocused "any tier" count).
+MAIN_C_TOTAL_LINES = 11
+MAIN_C_HIT_LINES = 9
 # nightly-full's member runs (run_sys_a/run_sys_b) post run_hits on lines
-# 3,4,5 (router-a) and 10,11,12 (router-b) — 6 of main.c's 9 lines.
+# 3,4,5 (router-a) and 10,11,12 (router-b) — 6 of main.c's 11 lines; the
+# bench-tier lines 1/2 carry no run_hits for this context.
 MAIN_C_NIGHTLY_FULL_LINES = 6
-# index.total_lines = main.c's 9 + utils.c's 2 (utils.c has LineRecords for
+# index.total_lines = main.c's 11 + utils.c's 2 (utils.c has LineRecords for
 # lines 2 and 6 only).
-TOTAL_LINES = 11
-TOTAL_HIT_LINES = 8  # main.c's 7 + utils.c's 1 (line 2; line 6 is s-excl)
+TOTAL_LINES = 13
+TOTAL_HIT_LINES = 10  # main.c's 9 + utils.c's 1 (line 2; line 6 is s-excl)
 
 
 def _fmt_pct(hit: int, total: int) -> str:

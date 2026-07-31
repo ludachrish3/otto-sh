@@ -46,6 +46,7 @@ const TICKET_SUMMARY_KEYS: Record<keyof TicketSummary, true> = {
   covered: true,
   uncovered: true,
   per_tier: true,
+  asserted: true,
   chunk: true,
 };
 
@@ -54,6 +55,7 @@ const TICKET_TOTALS_KEYS: Record<keyof TicketTotals, true> = {
   covered: true,
   uncovered: true,
   per_tier: true,
+  asserted: true,
 };
 
 const TICKET_CHUNK_KEYS: Record<keyof TicketChunk, true> = {
@@ -68,6 +70,8 @@ const TICKET_CHUNK_FILE_KEYS: Record<keyof TicketChunk["files"][number], true> =
   covered: true,
   missing: true,
   per_tier: true,
+  asserted: true,
+  asserted_only: true,
 };
 
 describe("covapp ticket contract (shared with the Python emitter)", () => {

@@ -44,12 +44,17 @@ def test_tier_columns_render_in_tier_order(page: Page, report_dir: Path) -> None
     testids = page.locator('[data-testid^="tree-col-tier:"]').evaluate_all(
         "els => els.map(el => el.getAttribute('data-testid'))"
     )
-    assert testids == ["tree-col-tier:system", "tree-col-tier:unit", "tree-col-tier:manual"]
+    assert testids == [
+        "tree-col-tier:system",
+        "tree-col-tier:unit",
+        "tree-col-tier:manual",
+        "tree-col-tier:bench",
+    ]
 
 
 def test_line_pct_header_click_sorts_and_flips_row_order(page: Page, report_dir: Path) -> None:
     """Display paths are deterministic (``--prefix`` via the fixture):
-    utils.c (1/2 = 50%) sorts before main.c (7/9 ~= 78%) ascending, and
+    utils.c (1/2 = 50%) sorts before main.c (9/11 ~= 82%) ascending, and
     after it descending."""
     _goto(page, report_dir, "/coverage/product")
     expect(page.locator('[data-testid="tree-row-file:product/utils.c"]')).to_be_visible()

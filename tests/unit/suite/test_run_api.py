@@ -590,6 +590,155 @@ def test_post_run_coverage_populates_ticket_data_end_to_end(tmp_path, monkeypatc
     assert payload["tickets"][0]["lines"]["owned"] >= 1
 
 
+# ── run_suite / _post_run_coverage: overrides wiring ─────────────────────────
+#
+# Task 7 wired the override file into `otto cov report`'s path
+# (cov._resolve_cov_settings) and into `otto test --cov-report`'s
+# _post_run_coverage — but that second wiring had no dedicated test, exactly
+# the gap the [coverage.tickets] comment block above once described for
+# ticket_spec. These two mirror that pair: one pins the settings ->
+# run_coverage_report(overrides=...) wiring for a well-formed file; the
+# other proves a malformed file logs a warning and never fails an
+# otherwise-successful run — the entire reason load_override_config was
+# placed inside _post_run_coverage's existing try/except swallow.
+
+
+def test_run_suite_overrides_threaded_from_settings(tmp_path, monkeypatch):
+    """A well-formed override file on the repo's settings must reach
+    run_coverage_report's overrides kwarg via the otto-test path, exactly
+    as it already does via otto cov report's _resolve_cov_settings."""
+    import subprocess
+
+    import otto.config
+
+    log_dir = tmp_path / "log"
+    log_dir.mkdir()
+    repo_root = tmp_path / "sut"
+    repo_root.mkdir()
+    git_env = {
+        "GIT_AUTHOR_NAME": "t",
+        "GIT_AUTHOR_EMAIL": "t@x",
+        "GIT_COMMITTER_NAME": "t",
+        "GIT_COMMITTER_EMAIL": "t@x",
+        "PATH": "/usr/bin:/bin",
+        "HOME": str(tmp_path),
+    }
+
+    def _git(*args):
+        subprocess.run(["git", *args], cwd=repo_root, check=True, capture_output=True, env=git_env)
+
+    _git("init", "-q")
+    (repo_root / "f.c").write_text("int a;\n")
+    _git("add", "f.c")
+    _git("commit", "-qm", "fix #1")
+    sha = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=repo_root,
+        check=True,
+        capture_output=True,
+        text=True,
+        env=git_env,
+    ).stdout.strip()
+
+    overrides_dir = repo_root / ".otto"
+    overrides_dir.mkdir()
+    (overrides_dir / "coverage-overrides.toml").write_text(
+        f'[[bench]]\ncommit = "{sha}"\nreason = "manual pass"\n'
+    )
+
+    repo = MagicMock()
+    repo.tests = [log_dir]
+    repo.sut_dir = repo_root
+    repo.name = "repo"
+    repo.settings = {
+        "coverage": {
+            "tiers": {
+                "system": {"kind": "e2e", "precedence": 1},
+                "bench": {"kind": "manual", "precedence": 2},
+            },
+            "tickets": {"pattern": "#(?P<n>[0-9]+)"},
+        }
+    }
+
+    monkeypatch.setattr(otto.config, "get_repos", lambda: [repo])
+    monkeypatch.setattr("pytest.main", lambda *a, **k: pytest.ExitCode.OK)
+    monkeypatch.setattr("otto.coverage.collect.collect_coverage", AsyncMock())
+    monkeypatch.setattr("otto.coverage.collect.clean_remote_gcda", AsyncMock())
+
+    mock_store = MagicMock()
+    mock_store.overall_pct.return_value = 50.0
+    mock_store.file_count.return_value = 1
+    mock_run_report = AsyncMock(return_value=mock_store)
+    monkeypatch.setattr("otto.coverage.reporter.run_coverage_report", mock_run_report)
+
+    class _OverridesSuite:
+        pass
+
+    run_suite(
+        _OverridesSuite,
+        run_options=RunOptions(cov=True, cov_clean=False, cov_report=True),
+        output_dir=log_dir,
+    )
+
+    mock_run_report.assert_called_once()
+    overrides = mock_run_report.call_args.kwargs["overrides"]
+    assert overrides is not None
+    assert [e.key for e in overrides.asserted] == [f"commit:{sha}"]
+
+
+def test_run_suite_malformed_overrides_file_warns_and_run_still_succeeds(
+    tmp_path, monkeypatch, caplog
+):
+    """A malformed override file must not fail an otherwise-successful test
+    run: load_override_config sits inside _post_run_coverage's existing
+    try/except swallow (moved there specifically for this reason), so a bad
+    file warns and the run still passes — the same never-fail-a-successful-
+    run contract test_run_suite_cov_report_into_reused_dir_warns_not_raises
+    pins for the report-dir collision case."""
+    import otto.config
+
+    log_dir = tmp_path / "log"
+    log_dir.mkdir()
+    repo_root = tmp_path / "sut"
+    repo_root.mkdir()
+    overrides_dir = repo_root / ".otto"
+    overrides_dir.mkdir()
+    (overrides_dir / "coverage-overrides.toml").write_text("not valid toml {{{")
+
+    repo = MagicMock()
+    repo.tests = [log_dir]
+    repo.sut_dir = repo_root
+    repo.name = "repo"
+    repo.settings = {
+        "coverage": {
+            "tiers": {"bench": {"kind": "manual", "precedence": 1}},
+            "tickets": {"pattern": "#(?P<n>[0-9]+)"},
+        }
+    }
+
+    monkeypatch.setattr(otto.config, "get_repos", lambda: [repo])
+    monkeypatch.setattr("pytest.main", lambda *a, **k: pytest.ExitCode.OK)
+    monkeypatch.setattr("otto.coverage.collect.collect_coverage", AsyncMock())
+    monkeypatch.setattr("otto.coverage.collect.clean_remote_gcda", AsyncMock())
+    mock_run_report = AsyncMock()
+    monkeypatch.setattr("otto.coverage.reporter.run_coverage_report", mock_run_report)
+
+    class _BadOverridesSuite:
+        pass
+
+    with caplog.at_level("WARNING"):
+        result = run_suite(
+            _BadOverridesSuite,
+            run_options=RunOptions(cov=True, cov_clean=False, cov_report=True),
+            output_dir=log_dir,
+        )
+
+    assert isinstance(result, SuiteRunResult)
+    assert result.passed
+    mock_run_report.assert_not_called()
+    assert any("not valid TOML" in r.getMessage() for r in caplog.records)
+
+
 # ── run_suite: cov_dir empty/overwrite guard ─────────────────────────────────
 
 

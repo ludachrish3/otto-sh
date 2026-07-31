@@ -349,6 +349,18 @@ class CoverageTicketsSpec(OttoModel):
     url: str | None = None
 
 
+class CoverageOverridesSpec(OttoModel):
+    """``[coverage.overrides]`` — manual-testing override file location.
+
+    Validation-only, like the other coverage specs — the runtime value is
+    re-read from the raw settings dict by
+    ``otto.coverage.overrides.load_override_config``, which parses and
+    validates the override file itself.
+    """
+
+    file: str | None = None
+
+
 class CoverageSettingsSpec(OttoModel):
     """Typed ``[coverage]`` table (was a free-form dict).
 
@@ -363,6 +375,7 @@ class CoverageSettingsSpec(OttoModel):
     exclusions: CoverageExclusionsSpec = CoverageExclusionsSpec()
     report: CoverageReportSpec = CoverageReportSpec()
     tickets: CoverageTicketsSpec | None = None
+    overrides: CoverageOverridesSpec | None = None
 
 
 class DependenciesSpec(OttoModel):

@@ -16,8 +16,17 @@ from typing import Any
 
 from .store.model import CoverageStore
 
-TICKET_EXPORT_FORMAT = 1
-"""``tickets.json`` schema version. Independent of ``STORE_FORMAT_VERSION``."""
+TICKET_EXPORT_FORMAT = 2
+"""``tickets.json`` schema version. Independent of ``STORE_FORMAT_VERSION``.
+
+v2 is additive over v1: each ticket object gains an ``"asserted"`` map
+(tier -> count of that ticket's lines whose coverage in that tier is
+override-sourced, i.e. ``tier in line.asserted``), and the top-level
+payload gains ``"overrides_active"`` (``store.overrides_file_active`` —
+true whenever an override file is configured and was loaded, *not*
+``bool(store.overrides)``: a reattribute-only override file populates no
+asserted entries at all, and would otherwise read as inactive).
+"""
 
 
 def make_generated_stamp() -> str:
@@ -101,6 +110,10 @@ def build_ticket_export(
     # line once per ticket per tier — O(tickets x tiers x lines), tens of
     # millions of iterations on a store with hundreds of tickets.
     per_tier_of: dict[str, dict[str, int]] = {}
+    # Same shape as per_tier_of, accumulated in the same pass: tier -> count
+    # of this ticket's lines whose hit in that tier is override-sourced
+    # (`tier in line.asserted`).
+    asserted_of: dict[str, dict[str, int]] = {}
     # `totals` (below) is the DEDUPED repo-truth over every attributed line —
     # mirrors spa_data.py's `_build_ticket_summaries` exactly (same gate,
     # same single pass): a line owned by two tickets counts once here,
@@ -137,6 +150,9 @@ def build_ticket_export(
                 for tier in store.tier_order:
                     if line.hits.is_hit(tier):
                         tiers[tier] = tiers.get(tier, 0) + 1
+                    if tier in line.asserted:
+                        a = asserted_of.setdefault(ticket_id, {})
+                        a[tier] = a.get(tier, 0) + 1
 
     tickets: list[dict[str, Any]] = []
     for ticket_id in sorted(per_ticket):
@@ -165,6 +181,9 @@ def build_ticket_export(
                 "commits": sorted(record.commits) if record else [],
                 "lines": {"owned": owned, "covered": covered, "uncovered": owned - covered},
                 "per_tier": per_tier,
+                "asserted": {
+                    tier: asserted_of.get(ticket_id, {}).get(tier, 0) for tier in store.tier_order
+                },
                 "files": files,
             }
         )
@@ -175,6 +194,7 @@ def build_ticket_export(
         "otto_version": otto_version,
         "project": project,
         "traversal": "first-parent",
+        "overrides_active": store.overrides_file_active,
         "thresholds": store.thresholds.to_dict(),
         "tiers": list(store.tier_order),
         "totals": {

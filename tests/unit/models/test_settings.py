@@ -618,3 +618,33 @@ class TestMonitorSettings:
             SettingsModel.model_validate(
                 {"name": "r", "version": "1.0.0", "monitor": {"tls_cret": "/typo.pem"}}
             )
+
+
+def test_coverage_overrides_block_accepts_file_key():
+    from otto.models.settings import CoverageSettingsSpec
+
+    spec = CoverageSettingsSpec.model_validate({"overrides": {"file": "custom/overrides.toml"}})
+    assert spec.overrides is not None
+    assert spec.overrides.file == "custom/overrides.toml"
+
+
+def test_coverage_overrides_block_defaults_file_to_none():
+    from otto.models.settings import CoverageSettingsSpec
+
+    spec = CoverageSettingsSpec.model_validate({"overrides": {}})
+    assert spec.overrides is not None
+    assert spec.overrides.file is None
+
+
+def test_coverage_overrides_block_absent_is_none():
+    from otto.models.settings import CoverageSettingsSpec
+
+    spec = CoverageSettingsSpec.model_validate({})
+    assert spec.overrides is None
+
+
+def test_coverage_overrides_unknown_key_fails():
+    from otto.models.settings import CoverageSettingsSpec
+
+    with pytest.raises(ValidationError):
+        CoverageSettingsSpec.model_validate({"overrides": {"path": "x"}})
