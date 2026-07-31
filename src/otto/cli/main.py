@@ -690,4 +690,9 @@ def entry() -> None:
                 hosts_by_lab=collect_host_ids_by_lab(result.repos),
             )
 
-    app()
+    from ..context import reset_cli_context
+
+    try:
+        app()
+    finally:
+        reset_cli_context()

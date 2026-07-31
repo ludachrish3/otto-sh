@@ -555,6 +555,77 @@ def _reset_tunnel_add_locks():
         manage._ADD_LOCKS.clear()
 
 
+@pytest.fixture(autouse=True)
+def _no_real_signal_handlers():
+    """Force every in-process ``run_command`` call to skip real signal handlers.
+
+    ``run_command`` (``otto.lifecycle``) builds its own
+    ``_CommandRun(install_handlers=True)`` whenever a caller doesn't pass
+    ``_controller=`` explicitly — and plenty of tests reach it that way
+    without knowing it: any ``CliRunner.invoke`` of a command whose Typer
+    callback bottoms out in bare ``run_command(...)`` (e.g.
+    tests/unit/cli/test_cov.py, tests/unit/tunnel/test_cli.py) installs REAL
+    ``loop.add_signal_handler(SIGINT/SIGTERM, ...)`` for the duration of the
+    call. One add/remove cycle permanently disarms this pytest worker's
+    chained SIGINT faulthandler (``_install_sigint_traceback_dump`` above)
+    for every test that runs afterward on it:
+    ``loop.remove_signal_handler`` restores Python's plain
+    ``signal.default_int_handler``, never the chain conftest installed —
+    there is no way back once that happens. tests/unit/test_lifecycle.py's
+    own ``_controller()`` helper documents this exact trap for the tests
+    that drive ``_CommandRun`` through the explicit ``_controller=`` seam;
+    this fixture closes the same hole for every test that goes through
+    ``run_command``'s default path instead.
+
+    Patches ``otto.lifecycle._CommandRun`` itself, since ``run_command``
+    looks that name up as a module global at call time: a factory forcing
+    ``install_handlers=False`` intercepts every DEFAULT construction. Tests
+    that inject their own controller (``_controller=_CommandRun(...)``) or
+    that patch ``otto.lifecycle.run_command`` wholesale (e.g.
+    tests/unit/cli/test_monitor.py) are unaffected — neither path calls this
+    factory.
+
+    Real signal installation/delivery is intentionally NOT covered here —
+    that is tier-2 subprocess e2e coverage (chaos plan 3), which runs in a
+    fresh process this in-process monkeypatch can't reach and shouldn't need
+    to.
+
+    Imports ``otto.lifecycle`` lazily, inside the fixture body rather than at
+    conftest import time, so this file's own import cost is unchanged for
+    the (large) fraction of test runs that never touch a command path.
+
+    Restores ``_CommandRun`` by hand (plain assignment in a ``finally``)
+    rather than via the shared ``monkeypatch`` fixture ON PURPOSE: as a ROOT
+    autouse fixture, pulling in ``monkeypatch`` here changes WHEN that shared
+    instance gets built relative to other fixtures that also request it —
+    e.g. tests/unit/cli/conftest.py's ``no_logger_output_dir``, an
+    autouse ``with patch("otto.logger.management.create_output_dir"): yield``
+    fixture. ``monkeypatch.setattr`` records "restore to the CURRENT value"
+    at the point it's called; if that call lands while
+    ``no_logger_output_dir``'s ``mock.patch`` is already active (order
+    dependent on fixture resolution), monkeypatch captures the *mock* as the
+    value to restore, not the real function. Once torn down, monkeypatch's
+    generic restore can then run *after* ``no_logger_output_dir`` exits its
+    own ``with patch(...)`` block, clobbering that correct restoration back
+    to a stale ``MagicMock`` — corrupting ``create_output_dir`` for every
+    test that runs afterward in the same process. This is exactly the kind
+    of accidental cross-fixture entanglement a shared mutable fixture
+    invites; a private, self-contained save/restore has no such surface.
+    """
+    from otto import lifecycle
+
+    real_command_run = lifecycle._CommandRun
+
+    def _factory(*, teardown_deadline, install_handlers=True):
+        return real_command_run(teardown_deadline=teardown_deadline, install_handlers=False)
+
+    lifecycle._CommandRun = _factory
+    try:
+        yield
+    finally:
+        lifecycle._CommandRun = real_command_run
+
+
 # ---------------------------------------------------------------------------
 # Lab-data helpers
 # ---------------------------------------------------------------------------

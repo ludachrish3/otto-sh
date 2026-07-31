@@ -152,7 +152,10 @@ def monitor(
             tls = None
 
         archive_path = source if source.suffix.lower() == ".db" else None
-        asyncio.run(_serve_review(export, source.name, tls, archive_path))
+
+        from ..lifecycle import run_command
+
+        run_command(_serve_review(export, source.name, tls, archive_path))
         return
 
     # ── Live mode ────────────────────────────────────────────────────────
@@ -241,7 +244,10 @@ def monitor(
         db=monitor_db,
         tunnel_source=lambda: discover_tunnel_records(active_lab),
     )
-    asyncio.run(
+
+    from ..lifecycle import run_command
+
+    run_command(
         _run_monitor(
             collector=collector,
             server=MonitorServer(

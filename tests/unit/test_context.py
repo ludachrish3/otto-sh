@@ -375,3 +375,43 @@ def test_otto_context_output_dir_defaults_none_and_is_settable():
     assert ctx.output_dir is None
     ctx.output_dir = Path("/tmp/otto-run-xyz")
     assert ctx.output_dir == Path("/tmp/otto-run-xyz")
+
+
+@pytest.mark.asyncio
+async def test_hostscope_exit_drains_registered_hosts():
+    """Scope exit sweeps AND forgets: a second enter/exit cycle (run_command
+    is invoked multiple times per command in suite/run.py) must not re-close
+    hosts swept by the first."""
+
+    class _NoConnFlag:
+        """Host without _connected attr; close() is unconditionally called if not drained."""
+
+        def __init__(self) -> None:
+            self.close_calls = 0
+
+        async def close(self) -> None:
+            self.close_calls += 1
+
+    scope = HostScope()
+    h = _NoConnFlag()
+    assert not hasattr(h, "_connected")
+    scope.register(h)
+    async with scope:
+        pass
+    assert h.close_calls == 1
+    async with scope:
+        pass
+    assert h.close_calls == 1
+
+
+def test_set_and_reset_cli_context_pair():
+    from otto.context import reset_cli_context, set_cli_context
+
+    baseline = try_get_context()
+    ctx = OttoContext(lab=_lab_with())
+    set_cli_context(ctx)
+    assert try_get_context() is ctx
+    reset_cli_context()
+    assert try_get_context() is baseline
+    reset_cli_context()  # idempotent: second reset is a no-op
+    assert try_get_context() is baseline

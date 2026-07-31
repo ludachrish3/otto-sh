@@ -1,6 +1,5 @@
 """Shared utilities: status enums, CLI overlay sentinels, and async helpers."""
 
-import asyncio
 import functools
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
@@ -90,25 +89,17 @@ R = TypeVar("R")
 
 
 def async_typer_command(f: Callable[P, Coroutine[Any, Any, R]]) -> Callable[P, R]:
-    """Wrap an async Typer command so it runs under the active ``OttoContext`` scope.
+    """Wrap an async Typer command so it runs under otto's command lifecycle.
 
-    Calls ``asyncio.run`` on the coroutine. If an ``OttoContext`` is already open
-    (i.e. ``try_get_context()`` returns one), the coroutine runs inside its async
-    context manager scope; otherwise it runs bare.
+    Delegates to :func:`otto.lifecycle.run_command`: host-scope entry, the
+    two-stage SIGINT/SIGTERM policy, and the bounded teardown deadline.
     """
 
     @functools.wraps(f)
     def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
-        from .context import try_get_context
+        from .lifecycle import run_command
 
-        async def _run() -> R:
-            ctx = try_get_context()
-            if ctx is None:
-                return await f(*args, **kwargs)
-            async with ctx.scope:
-                return await f(*args, **kwargs)
-
-        return asyncio.run(_run())
+        return run_command(f(*args, **kwargs))
 
     return wrapper
 

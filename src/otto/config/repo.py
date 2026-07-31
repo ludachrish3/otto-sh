@@ -804,7 +804,9 @@ class Repo:
         if self._git_hash is not None:
             return self._git_hash
 
-        asyncio.run(self.set_commit_hash())
+        from ..lifecycle import run_command
+
+        run_command(self.set_commit_hash())
         return self._git_hash
 
     @property
@@ -817,7 +819,9 @@ class Repo:
         if self._git_description is not None:
             return self._git_description
 
-        asyncio.run(self.set_git_description())
+        from ..lifecycle import run_command
+
+        run_command(self.set_git_description())
         return self._git_description
 
     @property

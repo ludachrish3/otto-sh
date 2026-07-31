@@ -38,7 +38,7 @@ import re
 import signal
 import sys
 import threading
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Iterator, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -314,6 +314,46 @@ def _restore_terminal(fd: int, saved: Any) -> None:
         termios.tcsetattr(fd, termios.TCSADRAIN, saved)
 
 
+@contextlib.contextmanager
+def _force_restore_guard(stdin_fd: int, saved_attrs: "Any") -> "Iterator[None]":
+    """Keep the terminal recoverable across a forced exit while raw mode is live.
+
+    ``_run_bridge``'s ``finally`` restores termios on every graceful path; a
+    forced exit (second interrupt / teardown-deadline expiry) abandons that
+    unwind, so the same restore is registered as a lifecycle force-exit hook
+    for exactly the raw-mode window. ``saved_attrs is None`` (stdin not a
+    tty — raw mode never engaged) registers nothing.
+    """
+    if saved_attrs is None:
+        yield
+        return
+    from ..lifecycle import register_force_exit_hook
+
+    unregister = register_force_exit_hook(lambda: _restore_terminal(stdin_fd, saved_attrs))
+    try:
+        yield
+    except BaseException:  # noqa: TRY203 — needed so `else` below only unregisters on a CLEAN exit; `try/else` is a SyntaxError without an `except`
+        # On a FORCED exit, asyncio.run's finalization re-cancels the
+        # abandoned bridge task once ``_main`` returns — that CancelledError
+        # unwinds this generator *before* run_command calls
+        # _run_force_exit_hooks() (which only happens after asyncio.run
+        # returns). If we unregistered here, the hook we just registered
+        # would never fire. So: deliberately leave the hook registered on
+        # any exceptional unwind — it survives to fire post-loop, and
+        # _restore_terminal is idempotent so a later graceful call (there
+        # won't be one; the process exits right after) would be harmless.
+        #
+        # Trade-off: on an exceptional unwind where the process does NOT
+        # force-exit (e.g. a command whose login raised but run_command
+        # completes normally without a force), this hook leaks — it never
+        # fires (hooks only run on forced exits) and sits inert for the rest
+        # of the process. Harmless but sloppy; the alternative (unregistering
+        # unconditionally) is the bug this fixes, so we accept the leak.
+        raise
+    else:
+        unregister()
+
+
 def _print_stderr(msg: str) -> None:
     try:
         sys.stderr.write(msg + "\n")
@@ -448,53 +488,64 @@ async def _run_bridge(
 
     saved_attrs = _setup_raw_mode(stdin_fd) if stdin_is_tty else None
 
-    if banner is not None:
-        _print_stderr(banner)
+    with _force_restore_guard(stdin_fd, saved_attrs):
+        if banner is not None:
+            _print_stderr(banner)
 
-    def _noop_uninstall() -> None:
-        return None
+        def _noop_uninstall() -> None:
+            return None
 
-    uninstall_sigwinch: Callable[[], None] = _noop_uninstall
-    if stdin_is_tty:
+        uninstall_sigwinch: Callable[[], None] = _noop_uninstall
+        if stdin_is_tty:
+            try:
+                uninstall_sigwinch = install_sigwinch()
+            except (NotImplementedError, RuntimeError) as exc:
+                logger.debug(f"SIGWINCH forwarding unavailable: {exc}")
+
+        stdin_queue: "asyncio.Queue[bytes | None]" = asyncio.Queue()
+        shutdown = threading.Event()
+        reader_future = _spawn_stdin_reader(loop, stdin_queue, shutdown)
+
+        line_buffer = _LineBuffer(on_output_line)
+
         try:
-            uninstall_sigwinch = install_sigwinch()
-        except (NotImplementedError, RuntimeError) as exc:
-            logger.debug(f"SIGWINCH forwarding unavailable: {exc}")
+            stdin_task = asyncio.create_task(_pump_stdin_to_remote(stdin_queue, write_remote))
+            remote_task = asyncio.create_task(_pump_remote_to_stdout(read_remote, line_buffer))
 
-    stdin_queue: "asyncio.Queue[bytes | None]" = asyncio.Queue()
-    shutdown = threading.Event()
-    reader_future = _spawn_stdin_reader(loop, stdin_queue, shutdown)
-
-    line_buffer = _LineBuffer(on_output_line)
-
-    try:
-        stdin_task = asyncio.create_task(_pump_stdin_to_remote(stdin_queue, write_remote))
-        remote_task = asyncio.create_task(_pump_remote_to_stdout(read_remote, line_buffer))
-
-        _, pending = await asyncio.wait(
-            [stdin_task, remote_task],
-            return_when=asyncio.FIRST_COMPLETED,
-        )
-        if remote_task in pending:
-            # stdin finished first (user hit the escape byte). Give the remote
-            # pump a bounded window to drain any bytes still in flight — e.g.
-            # the echoed response to a command the user just sent — so they
-            # reach `line_buffer` and get flushed to the session log. Without
-            # this, cancelling immediately forfeits the read-buffer contents.
-            await asyncio.wait([remote_task], timeout=0.2)
-        for task in pending:
-            if task.done():
-                continue
-            task.cancel()
-            with contextlib.suppress(asyncio.CancelledError, Exception):
-                await task
-    finally:
-        shutdown.set()
-        with contextlib.suppress(asyncio.TimeoutError, Exception):
-            await asyncio.wait_for(asyncio.shield(reader_future), timeout=0.5)
-        with contextlib.suppress(Exception):
-            uninstall_sigwinch()
-        _restore_terminal(stdin_fd, saved_attrs)
+            _, pending = await asyncio.wait(
+                [stdin_task, remote_task],
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if remote_task in pending:
+                # stdin finished first (user hit the escape byte). Give the remote
+                # pump a bounded window to drain any bytes still in flight — e.g.
+                # the echoed response to a command the user just sent — so they
+                # reach `line_buffer` and get flushed to the session log. Without
+                # this, cancelling immediately forfeits the read-buffer contents.
+                await asyncio.wait([remote_task], timeout=0.2)
+            for task in pending:
+                if task.done():
+                    continue
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await task
+        finally:
+            shutdown.set()
+            try:
+                # asyncio.wait_for cancels its own internal waiter under a
+                # CancelledError raised while THIS await is suspended (e.g.
+                # a forced-exit re-cancel from asyncio.run's finalization) —
+                # that CancelledError is a BaseException, not an Exception,
+                # so it would escape a bare contextlib.suppress(...) here and
+                # skip _restore_terminal below. Keep the drain best-effort
+                # (suppress its own outcomes) but guarantee the restore runs
+                # regardless via the inner finally.
+                with contextlib.suppress(asyncio.TimeoutError, Exception):
+                    await asyncio.wait_for(asyncio.shield(reader_future), timeout=0.5)
+                with contextlib.suppress(Exception):
+                    uninstall_sigwinch()
+            finally:
+                _restore_terminal(stdin_fd, saved_attrs)
 
 
 async def run_ssh_login(

@@ -72,8 +72,12 @@ class HostScope:
         # RemoteHost-private ``_connected``: DockerContainerHost / LocalHost are
         # BaseHosts without ``_connected``, so treat a missing attr as "needs
         # closing" (close() no-ops when nothing is open).
+        # Drain the list first: the lifecycle wrapper enters/exits this scope
+        # once per asyncio.run, and a command may run several (suite pre/post
+        # phases), so a swept host must not be re-closed by the next cycle.
+        hosts, self._hosts = self._hosts, []
         await asyncio.gather(
-            *(h.close() for h in self._hosts if getattr(h, "_connected", True)),
+            *(h.close() for h in hosts if getattr(h, "_connected", True)),
             return_exceptions=True,
         )
 
@@ -105,6 +109,31 @@ def set_context(ctx: "OttoContext") -> "Token[OttoContext | None]":
 def reset_context(token: "Token[OttoContext | None]") -> None:
     """Restore the context ContextVar to the value it held before the matching ``set_context``."""
     _active.reset(token)
+
+
+_cli_token: "Token[OttoContext | None] | None" = None
+
+
+def set_cli_context(ctx: "OttoContext") -> None:
+    """Install *ctx* as the CLI invocation's context, remembering the reset token.
+
+    The CLI installs the context from deep inside the Typer callback
+    (``cli.invoke.ensure_lab_context``) while the natural reset point is the
+    console-script entry's ``finally`` — the two can't share a stack frame, so
+    the token lives module-side. One CLI invocation per process; tests that
+    drive the app via CliRunner are covered by the autouse ContextVar
+    snapshot fixture in tests/conftest.py either way.
+    """
+    global _cli_token  # noqa: PLW0603 — module-level singleton/cache
+    _cli_token = set_context(ctx)
+
+
+def reset_cli_context() -> None:
+    """Undo :func:`set_cli_context` if it ran; safe to call unconditionally."""
+    global _cli_token  # noqa: PLW0603 — module-level singleton/cache
+    if _cli_token is not None:
+        reset_context(_cli_token)
+        _cli_token = None
 
 
 # Deferred to here (rather than the top-of-file imports) on purpose: importing

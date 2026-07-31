@@ -99,7 +99,6 @@ requires a product-side ``cov_reset`` LLEXT function mirroring
 note and exits 0 rather than failing.
 """
 
-import asyncio
 import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
@@ -335,9 +334,10 @@ def report(
     report_dir = report_dir.resolve()
 
     from ..coverage.capture.gitio import GitUnavailableError
+    from ..lifecycle import run_command
 
     try:
-        store = asyncio.run(
+        store = run_command(
             run_coverage_report(
                 cov_dirs,
                 report_dir,
@@ -806,8 +806,10 @@ def get(
     ] = False,
 ) -> None:
     """Fetch .gcda coverage from the lab and produce per-board captures anchored to base_commit."""
+    from ..lifecycle import run_command
+
     try:
-        asyncio.run(
+        run_command(
             _do_get(
                 output_dir,
                 tier,
@@ -907,8 +909,10 @@ async def _do_clean() -> None:
 @cov_app.command()
 def clean() -> None:
     """Zero .gcda counters on the lab's Unix coverage hosts."""
+    from ..lifecycle import run_command
+
     try:
-        asyncio.run(_do_clean())
+        run_command(_do_clean())
     except _CovError as e:
         # Escaped: same log-emit site as `get`'s _CovError handler above —
         # a literal bracket (e.g. "[coverage]") must survive the Rich-markup

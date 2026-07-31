@@ -121,7 +121,7 @@ def live_mode_mocks():
         patch("otto.cli.monitor.get_lab", return_value=mock_lab),
         patch("otto.cli.monitor.build_monitor_collector", return_value=mock_collector),
         patch("otto.monitor.server.MonitorServer", return_value=mock_server),
-        patch("asyncio.run", side_effect=_close_coro),
+        patch("otto.lifecycle.run_command", side_effect=_close_coro),
     ):
         yield {
             "host": mock_host,
@@ -303,7 +303,8 @@ class TestTlsResolvedBeforeDbCreation:
 # Rejection-path coverage (unknown suffix, legacy-flat JSON, missing file,
 # --live/source mutual exclusion) lives in tests/e2e/cli/test_monitor_cli.py.
 # These cover the ACCEPTANCE path: a well-formed .json/.db export dispatches
-# through to serving (asyncio.run mocked out — no uvicorn is started here).
+# through to serving (otto.lifecycle.run_command mocked out — no uvicorn is
+# started here).
 
 
 class TestSourceArgument:
@@ -313,7 +314,7 @@ class TestSourceArgument:
         # legacy shape ({"metrics": [], "events": []}) is now REJECTED; see
         # test_source_rejects_legacy_json in the e2e suite.
         json_file.write_text(json.dumps({"format": 1, "sessions": []}))
-        with patch("asyncio.run", side_effect=_close_coro):
+        with patch("otto.lifecycle.run_command", side_effect=_close_coro):
             result = runner.invoke(monitor_app, [str(json_file)])
         assert result.exit_code == 0
 
@@ -333,7 +334,7 @@ class TestSourceArgument:
 
         asyncio.run(_seed())
 
-        with patch("asyncio.run", side_effect=_close_coro):
+        with patch("otto.lifecycle.run_command", side_effect=_close_coro):
             result = runner.invoke(monitor_app, [str(db_file)])
         assert result.exit_code == 0
 
@@ -367,7 +368,7 @@ class TestGatePerBranch:
         json_file.write_text(json.dumps({"format": 1, "sessions": []}))
         mock_res = MagicMock()
         ctx = _make_ctx({"otto_reservation": mock_res})
-        with patch("asyncio.run", side_effect=_close_coro):
+        with patch("otto.lifecycle.run_command", side_effect=_close_coro):
             monitor(ctx, source=json_file)
         mock_res.evaluate.assert_not_called()
 

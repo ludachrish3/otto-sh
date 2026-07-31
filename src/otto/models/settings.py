@@ -539,6 +539,9 @@ class OttoEnvSettings(BaseSettings):
     log_days: int = 30
     log_level: str = "INFO"
     log_rich: bool = False
+    teardown_deadline: float = 10.0
+    """Seconds an interrupted command's graceful cleanup may run before it is
+    abandoned (second Ctrl+C / SIGTERM abandons it sooner). OTTO_TEARDOWN_DEADLINE."""
     field_default: str | None = None
     field_products: str | None = None
     compose_suffix: str | None = None

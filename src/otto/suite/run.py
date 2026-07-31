@@ -561,10 +561,10 @@ def run_suite(
     overrides where JUnit/coverage/stability artifacts land (defaults per
     :func:`resolve_output_dir`).
     """
-    import asyncio
     import inspect
 
     from ..config import get_repos
+    from ..lifecycle import run_command
 
     repos = get_repos()
     suite_file = inspect.getfile(suite)
@@ -574,7 +574,7 @@ def run_suite(
 
     with _session_context(log_dir):
         _pre_run_cov_dir_check(run_options)
-        asyncio.run(_pre_run_cov_clean(repos, run_options))
+        run_command(_pre_run_cov_clean(repos, run_options))
         outcome = _run_pytest_session(
             [suite_file],
             suite.__name__,
@@ -586,7 +586,7 @@ def run_suite(
             log_dir,
             suite.__name__,
         )
-        asyncio.run(_post_run_coverage(repos, log_dir, run_options))
+        run_command(_post_run_coverage(repos, log_dir, run_options))
 
     return SuiteRunResult(
         exit_code=_final_exit_code(outcome.rc, outcome.unstable),
@@ -635,9 +635,8 @@ def run_selection(
     if not (run_options.tests or run_options.markers):
         raise ValueError("run_selection requires run_options.tests or run_options.markers")
 
-    import asyncio
-
     from ..config import get_repos
+    from ..lifecycle import run_command
     from .selection import SelectionMatch, repos_with_marker_matches, resolve_selection
 
     opts = run_options
@@ -665,7 +664,7 @@ def run_selection(
     any_unstable = False
     with _session_context(log_dir):
         _pre_run_cov_dir_check(opts)
-        asyncio.run(_pre_run_cov_clean(repos, opts))
+        run_command(_pre_run_cov_clean(repos, opts))
         for match in per_repo:
             repo, targets = match.repo, match.targets
             default_junit = log_dir / (f"junit_{repo.name}.xml" if multi else "junit.xml")
@@ -695,7 +694,7 @@ def run_selection(
             if outcome.report is not None:
                 last_report = outcome.report
 
-        asyncio.run(_post_run_coverage(repos, log_dir, opts))
+        run_command(_post_run_coverage(repos, log_dir, opts))
 
     return SuiteRunResult(
         exit_code=worst,

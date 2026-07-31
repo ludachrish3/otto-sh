@@ -395,6 +395,7 @@ Other useful environment variables:
 | `OTTO_XDIR` | Output directory for logs and artifacts | current directory |
 | `OTTO_LOG_LEVEL` | Logging level (`DEBUG`, `INFO`, `WARNING`, `ERROR`) | `INFO` |
 | `OTTO_LOG_DAYS` | Number of days to retain logs | `30` |
+| `OTTO_TEARDOWN_DEADLINE` | Seconds an interrupted command's cleanup may run before being abandoned | `10` |
 
 ## Lab files
 

@@ -28,6 +28,7 @@ _OTTO_ENV_VARS = (
     "OTTO_LOG_DAYS",
     "OTTO_LOG_LEVEL",
     "OTTO_LOG_RICH",
+    "OTTO_TEARDOWN_DEADLINE",
 )
 
 
@@ -534,6 +535,15 @@ def test_otto_env_settings_xdir_dot_is_preserved(clean_otto_env):
     # a real value (even ".") is kept — only the empty string means "unset".
     clean_otto_env.setenv("OTTO_XDIR", ".")
     assert OttoEnvSettings().xdir == Path()
+
+
+def test_teardown_deadline_reads_env(monkeypatch):
+    monkeypatch.setenv("OTTO_TEARDOWN_DEADLINE", "3.5")
+    assert OttoEnvSettings().teardown_deadline == 3.5
+
+
+def test_teardown_deadline_default(clean_otto_env):
+    assert OttoEnvSettings().teardown_deadline == 10.0
 
 
 # ---------------------------------------------------------------------------

@@ -265,7 +265,7 @@ def ensure_lab_context(ctx: typer.Context) -> "OttoContext":
     Enforces ``--lab``, builds the lab repository, loads the lab, synthesizes
     docker placeholder hosts, resolves reservation state (stashed on
     ``ctx.meta['otto_reservation']``), and installs an ``OttoContext`` via
-    ``set_context``. Guarded by ``ctx.meta['_otto_lab_ready']`` so repeated calls
+    ``set_cli_context``. Guarded by ``ctx.meta['_otto_lab_ready']`` so repeated calls
     are cheap. No banner, no logging init, no output dir — those belong to
     :func:`ensure_cli_session` / :func:`command_preamble`.
     """
@@ -380,10 +380,11 @@ def ensure_lab_context(ctx: typer.Context) -> "OttoContext":
 
     meta["otto_reservation"] = reservation_gate
 
-    # Install the runtime context: lab + dry_run flag.
-    from ..context import OttoContext, set_context
+    # Install the runtime context: lab + dry_run flag. Token kept module-side
+    # in otto.context; entry()'s finally calls reset_cli_context().
+    from ..context import OttoContext, set_cli_context
 
-    set_context(OttoContext(lab=lab, dry_run=opts.dry_run))
+    set_cli_context(OttoContext(lab=lab, dry_run=opts.dry_run))
     meta["_otto_lab_ready"] = True
     return get_context()
 
