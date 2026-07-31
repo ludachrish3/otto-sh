@@ -1,6 +1,9 @@
 import importlib.metadata
 import pathlib
 import sys
+import typing
+
+from sphinx.util import inspect as sphinx_inspect
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent.parent / "src"))
 
@@ -327,6 +330,63 @@ def _strip_inherited_pydantic_signature(
     return None
 
 
+def _drop_privately_typed_params(
+    app,  # noqa: ARG001 — required by Sphinx autodoc-process-signature event handler signature
+    what,
+    name,  # noqa: ARG001 — required by Sphinx autodoc-process-signature event handler signature
+    obj,
+    options,  # noqa: ARG001 — required by Sphinx autodoc-process-signature event handler signature
+    signature,
+    return_annotation,
+):
+    """Omit parameters typed with an otto-private class from the signature.
+
+    ``run_command(..., _controller: _CommandRun | None = None)`` is the case
+    this exists for: a tier-1 test seam typed with the module's internal state
+    machine. ``autodoc_typehints="signature"`` renders every annotation as an
+    xref, and a private class is one autodoc will never document and the
+    zero-``nitpick_ignore`` policy will not let us silence.
+
+    Scoped by the ANNOTATION, not the parameter name — ``expect``'s
+    ``_stack_offset: int`` is private-by-name but publicly typed and
+    deliberately documented in its ``Args:`` block. Scoped to ``otto.*`` — a
+    private third-party type is a different problem and must still fail loudly.
+    Autodoc's own signature string has one parameter removed rather than being
+    rebuilt, so annotation formatting cannot drift from the rest of the docs.
+    """
+    if what not in {"function", "method", "class"} or not signature:
+        return None
+
+    def private(ann):
+        return (
+            getattr(ann, "__module__", "").startswith("otto.")
+            and getattr(ann, "__name__", "").startswith("_")
+        ) or any(private(arg) for arg in typing.get_args(ann))
+
+    try:
+        params = sphinx_inspect.signature(obj).parameters
+    except (TypeError, ValueError):
+        return None
+    drop = {n for n, p in params.items() if p.annotation is not p.empty and private(p.annotation)}
+    if not drop:
+        return None
+
+    # Split on TOP-LEVEL commas only: ``Coroutine[Any, Any, R]`` has its own.
+    inner = signature[1:-1] if signature.startswith("(") and signature.endswith(")") else signature
+    parts, depth, start = [], 0, 0
+    for i, ch in enumerate(inner):
+        depth += (ch in "[({") - (ch in "])}")
+        if ch == "," and depth == 0:
+            parts.append(inner[start:i])
+            start = i + 1
+    parts.append(inner[start:])
+
+    kept = [p.strip() for p in parts if p.split(":")[0].split("=")[0].strip() not in drop]
+    if kept and kept[-1] == "*":  # a bare ``*`` with no keyword-only param behind it
+        kept.pop()
+    return ("(" + ", ".join(kept) + ")", return_annotation)
+
+
 # -- build-time GUI media + terminal blocks ------------------------------------
 # Screenshots, video clips, and termynal terminal blocks are PRODUCTS OF THE
 # BUILD, never committed: scripts/capture_docs_media.py serves the real
@@ -375,6 +435,7 @@ def setup(app):
     app.connect("missing-reference", _resolve_internal_aliases)
     app.connect("missing-reference", _resolve_external_doc_links)
     app.connect("autodoc-process-signature", _strip_inherited_pydantic_signature)
+    app.connect("autodoc-process-signature", _drop_privately_typed_params)
 
 
 # -- napoleon -----------------------------------------------------------------

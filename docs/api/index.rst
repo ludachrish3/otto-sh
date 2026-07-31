@@ -12,6 +12,7 @@ API Reference
    models/index
    bootstrap
    context
+   lifecycle
    link
    tunnel
    logger

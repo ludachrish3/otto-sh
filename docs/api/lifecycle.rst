@@ -1,0 +1,4 @@
+lifecycle
+=========
+
+.. automodule:: otto.lifecycle
