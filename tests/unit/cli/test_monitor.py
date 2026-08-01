@@ -119,7 +119,11 @@ def live_mode_mocks():
     with (
         patch("otto.cli.monitor.all_hosts", return_value=iter([mock_host])),
         patch("otto.cli.monitor.get_lab", return_value=mock_lab),
-        patch("otto.cli.monitor.build_monitor_collector", return_value=mock_collector),
+        # Patched at the source module, not on otto.cli.monitor: the CLI imports
+        # the monitor runtime inside the command body (import budget), so there
+        # is no module-level name to patch — and the call-time import picks this
+        # up either way.
+        patch("otto.monitor.factory.build_monitor_collector", return_value=mock_collector),
         patch("otto.monitor.server.MonitorServer", return_value=mock_server),
         patch("otto.lifecycle.run_command", side_effect=_close_coro),
     ):
@@ -290,7 +294,8 @@ class TestTlsResolvedBeforeDbCreation:
         ctx = _make_ctx({"_otto_root_options": object(), "_otto_lab_ready": True})
         with (
             patch("otto.cli.monitor._resolve_monitor_tls", side_effect=typer.Exit(1)),
-            patch("otto.cli.monitor.build_session_metric_db") as mock_build_db,
+            # Source module, not otto.cli.monitor — see the note above.
+            patch("otto.monitor.export.build_session_metric_db") as mock_build_db,
             pytest.raises(typer.Exit),
         ):
             monitor(ctx, live=True, db=db_file)

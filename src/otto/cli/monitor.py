@@ -25,14 +25,16 @@ from pydantic import ValidationError
 
 from ..config import all_hosts, get_lab
 from ..models import MIN_INTERVAL_SECONDS, MonitorExport
-from ..monitor.collector import MetricCollector
-from ..monitor.db import MetricDB, UnsupportedDBError
-from ..monitor.export import build_db_export, build_session_metric_db
-from ..monitor.factory import build_monitor_collector
-from ..monitor.session import new_frame, snapshot_lab
 
+# The monitor runtime (collector/db/export/factory/session) is deliberately NOT
+# imported here, matching this module's deferred-import convention and the
+# already-deferred MonitorServer below: it drags otto.monitor.* plus aiosqlite
+# onto every `otto ... --help` path for no benefit, since only command bodies
+# ever touch it (import budget). Each use site imports what it needs.
 if TYPE_CHECKING:
     from ..config import MonitorSettings
+    from ..monitor.collector import MetricCollector
+    from ..monitor.db import MetricDB
     from ..monitor.server import MonitorServer
 
 logger = logging.getLogger(__name__)
@@ -193,7 +195,10 @@ def monitor(
         typer.echo(msg, err=True)
         raise typer.Exit(1)
 
+    from ..monitor.export import build_session_metric_db
+    from ..monitor.factory import build_monitor_collector
     from ..monitor.server import MonitorServer
+    from ..monitor.session import new_frame, snapshot_lab
 
     frame = new_frame(label=label, note=note)
     # The active lab's already-resolved DECLARED links (resolved once, at lab
@@ -277,6 +282,9 @@ def _load_review_document(path: Path) -> MonitorExport:
             )
             raise typer.Exit(1) from err
     if suffix == ".db":
+        from ..monitor.db import UnsupportedDBError
+        from ..monitor.export import build_db_export
+
         try:
             return build_db_export(str(path))
         except UnsupportedDBError as err:
@@ -363,6 +371,7 @@ async def _serve_review(
     when the review source is a SQLite archive; ``None`` for a ``.json``
     source, which stays permanently read-only.
     """
+    from ..monitor.collector import MetricCollector
     from ..monitor.server import MonitorServer
 
     server = MonitorServer(
@@ -378,10 +387,10 @@ async def _serve_review(
 
 
 async def _run_monitor(
-    collector: MetricCollector,
+    collector: "MetricCollector",
     server: "MonitorServer",
     interval: timedelta,
-    db: MetricDB | None = None,
+    db: "MetricDB | None" = None,
     duration: timedelta | None = None,
 ) -> None:
     """Run collection and the web server concurrently until Ctrl+C.
