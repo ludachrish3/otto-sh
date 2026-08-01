@@ -37,6 +37,7 @@ GLOBAL_GUARDS = (
     "_clirunner_live_log_capture_guard",
     "_reset_otto_context",
     "_reset_otto_logger_retention",
+    "_reset_bootstrap_state",
 )
 
 

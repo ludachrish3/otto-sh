@@ -526,6 +526,34 @@ def _reset_otto_logger_retention():
 
 
 @pytest.fixture(autouse=True)
+def _reset_bootstrap_state():
+    """Clear ``otto.bootstrap``'s discovery/registration caches between tests.
+
+    ``bootstrap()`` memoizes into four module globals, and ``_discovery_errors``
+    is an append-only list folded into *every* later result
+    (``errors = list(_discovery_errors)``). So one test that drives the CLI with
+    ``OTTO_SUT_DIRS`` pointing at a scratch repo — ``test_init_prompts``'s
+    epilogue tests do exactly that — records a framed "no .otto/settings.toml"
+    error that outlives the ``monkeypatch.setenv`` restoring the var. Every
+    later test on that worker then trips ``fail_loud_on_bootstrap_errors()``,
+    which exits **1** before Click can report the missing ``--lab``, so the
+    ``TestArgumentValidation`` / ``TestLabFreeFlags`` "must exit 2" tests fail
+    with a bare ``SystemExit(1)`` and no usage message. It only reproduced
+    under xdist (~1 run in 3, load-dependent) because it needs the poisoning
+    test and the victims to land on the same worker in that order.
+
+    Root conftest, not ``tests/unit/cli``: these are process-global module
+    caches, and under ``make coverage`` the whole suite shares one process —
+    the same #132/#133 rule that put ``_isolate_registries`` and the
+    ``sys.path`` guard here.
+    """
+    yield
+    from otto import bootstrap
+
+    bootstrap._reset()  # documented test hook for module-global state
+
+
+@pytest.fixture(autouse=True)
 def _reset_tunnel_add_locks():
     """Clear ``otto.tunnel.manage._ADD_LOCKS`` between tests.
 

@@ -84,3 +84,52 @@ def test_ambient_otto_env_cannot_leak_into_a_pytest_run():
     )
     # Guard against silently passing on a deselected/skipped probe.
     assert "1 passed" in result.stdout, f"probe did not run:\n{result.stdout}"
+
+
+def test_bootstrap_state_cannot_leak_between_tests():
+    """Pin: a test that poisons ``otto.bootstrap``'s caches can't fail the next one.
+
+    ``bootstrap()`` memoizes into module globals and folds the append-only
+    ``_discovery_errors`` into every later result, so a test that drives the CLI
+    with ``OTTO_SUT_DIRS`` pointed at a scratch repo leaves a framed discovery
+    error behind after ``monkeypatch`` restores the variable. Every later test
+    on that worker then hits ``fail_loud_on_bootstrap_errors()`` and exits 1
+    before Click reports the missing ``--lab`` — the "must exit 2" tests below
+    fail with a bare ``SystemExit(1)``. ``tests/conftest.py``'s
+    ``_reset_bootstrap_state`` clears the caches between tests; this runs the
+    exact historical pair, in order, in one process to prove it.
+
+    Ordered pair, so ``-p no:randomly``: the leak is order-dependent by nature.
+    """
+    poisoner = "tests/unit/cli/test_init_prompts.py::test_epilogue_skips_sut_dirs_when_already_set"
+    victim = (
+        "tests/unit/cli/test_main.py::TestArgumentValidation"
+        "::test_lab_needing_path_without_lab_reports_missing_option"
+    )
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            poisoner,
+            victim,
+            "-n0",
+            "-q",
+            "--no-cov",
+            "-p",
+            "no:randomly",
+            "-p",
+            "no:cacheprovider",
+        ],
+        cwd=str(PROJECT_ROOT),
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    assert result.returncode == 0, (
+        f"bootstrap state leaked between tests (rc={result.returncode}):\n"
+        f"{result.stdout}\n{result.stderr}"
+    )
+    # A rename of either test would otherwise make this pass vacuously.
+    assert "2 passed" in result.stdout, f"the ordered pair did not run:\n{result.stdout}"
