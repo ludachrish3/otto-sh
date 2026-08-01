@@ -34,6 +34,7 @@ ensure_sut_dirs()
 import asyncio
 import contextlib
 import json
+import socket
 from typing import Any
 
 import pytest
@@ -95,7 +96,22 @@ def reap_orphan_docker_stacks() -> None:
     by an earlier interrupted run would otherwise compound until the daemon
     runs out of network subnets. Best-effort — if the host is unreachable we
     let the individual tests report that themselves.
+
+    Hermetic venues (e.g. the GitHub ``chaos-tier2`` nightly job) have no
+    route to the bed at all — unlike a reachable-but-docker-broken host,
+    connecting to an unroutable address can hang on SYN retries well past
+    the point where the `contextlib.suppress` below would ever catch
+    anything, stalling the whole session before a single test runs. A short
+    TCP preflight distinguishes "no route" (skip the reap silently — it's a
+    lab-only courtesy, not a test, so nothing here fails or skips a test)
+    from "host up, something else went wrong" (still attempt the reap and
+    suppress as before).
     """
+    try:
+        with socket.create_connection((_DOCKER_HOST_IP, 22), timeout=2):
+            pass
+    except OSError:
+        return
     with contextlib.suppress(Exception):
         asyncio.run(_reap_orphan_docker_stacks())
 

@@ -85,12 +85,14 @@ class InteractiveOttoSession:
         cols: int = 80,
         rows: int = 24,
         sut_dirs: Path | None = None,
+        extra_env: dict[str, str] | None = None,
     ) -> None:
         self._argv = [str(OTTO_BIN), *argv]
         self._xdir = Path(xdir)
         self._cols = cols
         self._rows = rows
         self._sut_dirs = sut_dirs
+        self._extra_env = extra_env
         self._master_fd: int | None = None
         self._proc: subprocess.Popen[bytes] | None = None
         self._buf = bytearray()
@@ -102,6 +104,8 @@ class InteractiveOttoSession:
         self._set_winsize(slave_fd, self._cols, self._rows)
 
         env = otto_subprocess_env(self._xdir, sut_dirs=self._sut_dirs)
+        if self._extra_env:
+            env.update(self._extra_env)
         self._proc = subprocess.Popen(
             self._argv,
             stdin=slave_fd,

@@ -19,10 +19,11 @@ GET  /api/export/json  Download the current data as a ``format:1`` document
 """
 
 import asyncio
+import contextlib
 import json
 import logging
 import secrets
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Iterator
 from datetime import datetime, timezone
 from logging import Filter, LogRecord, getLogger
 from pathlib import Path
@@ -649,6 +650,24 @@ def _get_all_ips() -> list[str]:
 _FORCE_STOP_ABORT_PASSES = 10
 
 
+class _LifecycleOwnedServer(uvicorn.Server):
+    """uvicorn Server that leaves signal handling to otto's lifecycle.
+
+    ``uvicorn.Server.serve`` wraps its whole run in ``capture_signals()``,
+    which rebinds SIGINT/SIGTERM via raw ``signal.signal`` for the entire
+    serve window — displacing the per-loop handlers ``run_command``
+    installs and bypassing otto's two-stage interrupt policy (status line,
+    teardown deadline, force hooks). otto owns interrupt policy; shutdown
+    is driven by cancellation from the lifecycle (see ``MonitorServer.serve``),
+    not by uvicorn-observed signals.
+    """
+
+    @override
+    @contextlib.contextmanager
+    def capture_signals(self) -> "Iterator[None]":
+        yield
+
+
 class MonitorServer:
     """
     Wraps a FastAPI/uvicorn server for the monitoring dashboard.
@@ -764,7 +783,7 @@ class MonitorServer:
             ssl_certfile=str(self._tls_cert) if self._tls_cert else None,
             ssl_keyfile=str(self._tls_key) if self._tls_key else None,
         )
-        server = uvicorn.Server(config)
+        server = _LifecycleOwnedServer(config)
 
         async def run_uvicorn() -> None:
             # uvicorn answers a failed startup (e.g. the requested port is
@@ -787,39 +806,61 @@ class MonitorServer:
         self._loop = asyncio.get_running_loop()
         task = asyncio.create_task(run_uvicorn())
 
-        # wait until uvicorn signals it's started
-        while not server.started:
-            if task.done():
-                # The serve task died before signalling startup (e.g. a bad
-                # TLS cert/key raises ssl.SSLError out of Config.load()) — left
-                # unchecked, this loop would poll `server.started` forever
-                # since nothing will ever flip it. task.result() re-raises
-                # whatever killed it, surfacing the real cause instead of a
-                # silent hang.
-                task.result()
-            await asyncio.sleep(0.05)
+        try:
+            # wait until uvicorn signals it's started
+            while not server.started:
+                if task.done():
+                    # The serve task died before signalling startup (e.g. a bad
+                    # TLS cert/key raises ssl.SSLError out of Config.load()) — left
+                    # unchecked, this loop would poll `server.started` forever
+                    # since nothing will ever flip it. task.result() re-raises
+                    # whatever killed it, surfacing the real cause instead of a
+                    # silent hang.
+                    task.result()
+                await asyncio.sleep(0.05)
 
-        # extract the port from the socket
-        self._port = server.servers[0].sockets[0].getsockname()[1]
-        all_urls = self.urls  # each carries the per-run ?key=<token> credential
-        # SECURITY: the access key must never be written to the on-disk log
-        # sinks. Print the keyed URL straight to the terminal via CONSOLE, which
-        # bypasses the file-backed 'otto' logger entirely (the same way
-        # management._print_output_dir emits the output dir) — logging it would
-        # persist a live credential to console.log / verbose.log on every run.
-        # Only a keyless origin goes to the logger for the on-disk audit trail.
-        if len(all_urls) == 1:
-            CONSOLE.print(f"Server running at {all_urls[0]}", highlight=False)
-        else:
-            CONSOLE.print("Server running at:", highlight=False)
-            for u in all_urls:
-                CONSOLE.print(f"  {u}", highlight=False)
-        CONSOLE.print("Press Ctrl+C to stop", highlight=False)
-        logger.info(f"Monitor dashboard started on {self.origin} (access key omitted from logs)")
+            # extract the port from the socket
+            self._port = server.servers[0].sockets[0].getsockname()[1]
+            all_urls = self.urls  # each carries the per-run ?key=<token> credential
+            # SECURITY: the access key must never be written to the on-disk log
+            # sinks. Print the keyed URL straight to the terminal via CONSOLE, which
+            # bypasses the file-backed 'otto' logger entirely (the same way
+            # management._print_output_dir emits the output dir) — logging it would
+            # persist a live credential to console.log / verbose.log on every run.
+            # Only a keyless origin goes to the logger for the on-disk audit trail.
+            if len(all_urls) == 1:
+                CONSOLE.print(f"Server running at {all_urls[0]}", highlight=False)
+            else:
+                CONSOLE.print("Server running at:", highlight=False)
+                for u in all_urls:
+                    CONSOLE.print(f"  {u}", highlight=False)
+            CONSOLE.print("Press Ctrl+C to stop", highlight=False)
+            logger.info(
+                f"Monitor dashboard started on {self.origin} (access key omitted from logs)"
+            )
 
-        self._server = server
+            self._server = server
 
-        await task
+            # Shielded: a Task.cancel() on the *awaiting* coroutine delegates
+            # straight to whatever Future it is suspended on — here, that
+            # would be `task` itself, cascading into uvicorn's own main_loop
+            # sleep and skipping its shutdown() entirely (uvicorn's _serve()
+            # has no try/finally around main_loop(), so an uncaught
+            # CancelledError there never reaches its socket-closing
+            # shutdown()). Shielding lets the cancellation reach us here
+            # (below, in except) without also cancelling `task`, so uvicorn
+            # keeps running long enough to notice `should_exit` and drain
+            # itself gracefully.
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            # First-signal teardown: ask uvicorn to drain gracefully and
+            # wait for it. This second await is part of the command body's
+            # unwind, so the lifecycle teardown deadline still bounds it and
+            # a second signal (or expiry) forces past it — do NOT shield.
+            server.should_exit = True
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+            raise
 
     def stop(self) -> None:
         """Signal the server to shut down (thread-safe)."""

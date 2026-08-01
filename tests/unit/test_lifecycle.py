@@ -389,6 +389,48 @@ async def test_on_signal_cancels_and_schedules_deadline_despite_raising_stderr(m
     assert ctrl._body.cancelled()  # cancel() landed despite the raising write
 
 
+class _ClosedStderr:
+    """A file object in the CLOSED state: write/flush raise ValueError, not OSError."""
+
+    def write(self, _s: str) -> int:
+        raise ValueError("I/O operation on closed file")
+
+    def flush(self) -> None:
+        raise ValueError("I/O operation on closed file")
+
+
+@pytest.mark.asyncio
+async def test_on_signal_survives_closed_stderr(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A closed stderr raises ValueError from write(), not OSError.
+
+    The banner is best-effort diagnostics printed after cancellation and the
+    deadline are committed; a diagnostics failure must never unwind the
+    signal callback (chaos plan 3, carried over from plan 1's review).
+    """
+    from otto import lifecycle as lifecycle_module
+
+    monkeypatch.setattr(lifecycle_module.sys, "stderr", _ClosedStderr())
+    ctrl = _controller()
+    started = asyncio.Event()
+
+    async def body() -> None:
+        started.set()
+        await asyncio.Event().wait()
+
+    main = asyncio.ensure_future(ctrl._main(body()))
+    await started.wait()
+
+    ctrl._on_signal(signal.SIGINT)  # must not raise
+
+    assert ctrl.interrupted == signal.SIGINT
+    assert ctrl._deadline_handle is not None
+    with pytest.raises(_InterruptedCommand) as exc_info:
+        await main
+    assert exc_info.value.signum == signal.SIGINT
+    assert ctrl._body is not None
+    assert ctrl._body.cancelled()  # cancel() landed despite the raising write
+
+
 def test_resolve_teardown_deadline_uses_env_settings(monkeypatch):
     from otto import lifecycle
 

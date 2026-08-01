@@ -166,7 +166,11 @@ class _CommandRun:
             try:
                 sys.stderr.write(_INTERRUPT_STATUS_LINE + "\n")
                 sys.stderr.flush()
-            except OSError:
+            except (OSError, ValueError):
+                # Best-effort: a broken pipe raises OSError, a CLOSED file
+                # object raises ValueError. Either way the cancellation and
+                # deadline above are already committed; diagnostics must not
+                # unwind a signal callback.
                 pass
         else:
             self._force.set()
