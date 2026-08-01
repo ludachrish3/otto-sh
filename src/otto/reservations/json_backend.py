@@ -26,11 +26,18 @@ File format (``version: 1``)::
 import json
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from pydantic import ValidationError
 
-from ..models.settings import ReservationEntry, ReservationFile
 from .check import ReservationBackendError
+
+# Deferred: these models live in otto.models.settings, which subclasses
+# pydantic_settings.BaseSettings and so drags pydantic_settings + dotenv (26
+# modules) onto `otto reservation --help`, where no reservation file is ever
+# read (import budget). _load() imports them when it actually parses one.
+if TYPE_CHECKING:
+    from ..models.settings import ReservationEntry, ReservationFile
 
 
 class JsonReservationBackend:
@@ -100,7 +107,7 @@ class JsonReservationBackend:
     # Internal
     # ------------------------------------------------------------------
 
-    def _active_entries(self) -> list[ReservationEntry]:
+    def _active_entries(self) -> "list[ReservationEntry]":
         """Load the file and return entries that are not past their expiry."""
         data = self._load()
         now = datetime.now(tz=timezone.utc)
@@ -109,7 +116,9 @@ class JsonReservationBackend:
         ]
         return active
 
-    def _load(self) -> ReservationFile:
+    def _load(self) -> "ReservationFile":
+        from ..models.settings import ReservationFile
+
         try:
             raw = self._path.read_text()
         except OSError as e:

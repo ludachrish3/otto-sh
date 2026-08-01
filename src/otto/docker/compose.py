@@ -24,7 +24,6 @@ from ..config.repo import DockerCompose, Repo
 from ..host.docker_host import DockerContainerHost
 from ..host.host import Host
 from ..host.unix_host import UnixHost
-from ..models.settings import OttoEnvSettings
 from ..utils import Status
 
 logger = logging.getLogger(__name__)
@@ -66,6 +65,11 @@ def get_user_compose_project(repo_name: str, suffix: str | None = None) -> str:
     or ``OTTO_COMPOSE_SUFFIX`` if set in the environment. Lowercase only —
     compose project names must be lowercase.
     """
+    # Deferred import: otto.models.settings pulls pydantic_settings + dotenv (26
+    # modules) and `otto docker --help` never resolves a project name (import
+    # budget).
+    from ..models.settings import OttoEnvSettings
+
     # Fresh OttoEnvSettings() (not the get_env() singleton) so OTTO_COMPOSE_SUFFIX
     # is re-read each call — callers/tests set it per-invocation.
     raw_suffix = suffix or OttoEnvSettings().compose_suffix or _safe_username()

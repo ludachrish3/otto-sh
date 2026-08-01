@@ -12,6 +12,7 @@ Usage:
 """
 
 import argparse
+import functools
 import json
 import os
 import shutil
@@ -102,14 +103,22 @@ print(json.dumps({{"count": len(mods), "modules": mods, "otto_modules": otto_mod
 """
 
 
+# Child script measuring the empty baseline: what a bare interpreter already has
+# in sys.modules before a single line of otto runs.
+_CHILD_BASELINE = """
+import sys, json
+print(json.dumps([m for m in sorted(sys.modules)
+                  if m.split(".")[0] not in sys.stdlib_module_names]))
+"""
+
+
 def _sanitized_env() -> dict[str, str]:
     """Env with all OTTO_* vars stripped, so measurement is lab/host independent."""
     return {k: v for k, v in os.environ.items() if not k.startswith("OTTO_")}
 
 
-def measure(argv: list[str]) -> dict:
-    """Import otto in a fresh sanitized subprocess for *argv*; return its module inventory."""
-    code = _CHILD_IMPORT if argv[:1] == ["python"] else _CHILD_CLI.format(argv=argv)
+def _run_child(code: str) -> str:
+    """Run *code* in a fresh sanitized interpreter and return its last stdout line."""
     out = subprocess.run(  # noqa: S603 (fixed interpreter + measured argv, no shell)
         [sys.executable, "-c", code],
         capture_output=True,
@@ -117,7 +126,49 @@ def measure(argv: list[str]) -> dict:
         check=True,
         env=_sanitized_env(),
     )
-    return json.loads(out.stdout.strip().splitlines()[-1])
+    return out.stdout.strip().splitlines()[-1]
+
+
+@functools.lru_cache(maxsize=1)
+def baseline_modules() -> frozenset[str]:
+    """Non-stdlib modules a bare interpreter already carries — never otto's doing.
+
+    Site startup executes every ``.pth`` in site-packages, and legacy
+    ``-nspkg.pth`` files (setuptools-era namespace packages) inject their
+    package into ``sys.modules`` before user code runs. In this venv
+    ``sphinxcontrib-jsmath`` does exactly that, so ``sphinxcontrib`` is present
+    in ``python -c pass`` — nothing in otto imports it. ``_virtualenv`` and
+    ``__main__`` arrive the same way. Charging these to otto's budget would
+    make the cap depend on which unrelated dev/docs dependencies happen to be
+    installed, so they are measured and subtracted rather than counted.
+    """
+    return frozenset(json.loads(_run_child(_CHILD_BASELINE)))
+
+
+def _is_measurement_artifact(module: str) -> bool:
+    """Report whether *module*'s presence reflects the build/platform, not otto's imports.
+
+    mypyc-compiled wheels load a single hashed shared module named
+    ``<hash>__mypyc`` backing the whole compiled group. Those wheels are built
+    per-platform, so an x86_64 CI runner loads it where an aarch64 machine
+    falls back to pure Python and does not — a one-module difference that has
+    nothing to do with how much otto imports. Counting it makes the cap
+    architecture-dependent, which is exactly what this guard promises not to be.
+    """
+    return module.endswith("__mypyc")
+
+
+def measure(argv: list[str]) -> dict:
+    """Import otto in a fresh sanitized subprocess for *argv*; return its module inventory."""
+    code = _CHILD_IMPORT if argv[:1] == ["python"] else _CHILD_CLI.format(argv=argv)
+    result = json.loads(_run_child(code))
+    baseline = baseline_modules()
+    result["non_stdlib_modules"] = [
+        m
+        for m in result["non_stdlib_modules"]
+        if m not in baseline and not _is_measurement_artifact(m)
+    ]
+    return result
 
 
 def snapshot_path(key: str) -> Path:
