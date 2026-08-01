@@ -349,6 +349,11 @@ async def test_reboot_wait_timeout_downgrades_to_failed(monkeypatch):
     ctrl = _FakeController(state=PowerState.ON)
     host = _local_with_controller(ctrl)
 
+    async def went_down(self, timeout, interval=2.0):
+        return True
+
+    monkeypatch.setattr(type(host), "wait_until_down", went_down)
+
     async def never_up(self, timeout, interval=2.0):
         return False
 
@@ -363,6 +368,11 @@ async def test_reboot_wait_timeout_downgrades_to_failed(monkeypatch):
 async def test_reboot_wait_success_keeps_status(monkeypatch):
     ctrl = _FakeController(state=PowerState.ON)
     host = _local_with_controller(ctrl)
+
+    async def went_down(self, timeout, interval=2.0):
+        return True
+
+    monkeypatch.setattr(type(host), "wait_until_down", went_down)
 
     async def comes_up(self, timeout, interval=2.0):
         return True

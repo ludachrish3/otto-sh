@@ -40,6 +40,8 @@ here as ``UnixHost``.
 # Then the _ssh_conn would be the connection used in an "async with" block to issue the command.
 # Main problem here is that eash library uses its own method names to run commands and put/get files
 # Possibly make the homegrown TelnetClient class mirror asyncssh? that could really help with design symmetry.  # noqa: E501 — TODO comment
+import asyncio
+import logging
 import re
 import socket
 from dataclasses import (
@@ -109,6 +111,11 @@ from .transfer import (
     UnixFileTransfer,
     build_transfer_backend,
 )
+
+logger = logging.getLogger(__name__)
+
+_RECOVERY_PROBE_TIMEOUT = 10.0
+"""Per-attempt bound for the post-reboot shell probe (`exec "true"`)."""
 
 
 @dataclass(slots=True)
@@ -892,8 +899,40 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
 
     @override
     async def _soft_reboot(self) -> Result:
-        await self.run("reboot", sudo=True, timeout=10.0)
+        # Issuing `reboot` races the connection teardown: on a fast host the
+        # transport can drop before the command's round-trip completes, and
+        # that failure is indistinguishable from the host obeying quickly.
+        # Tolerate it — reboot(wait=True)'s down-wait is the loud check for
+        # "the command never actually took".
+        try:
+            await self.run("reboot", sudo=True, timeout=10.0)
+        except Exception as e:  # noqa: BLE001 — expected issue-race disconnect; the down-wait disambiguates
+            logger.debug(f"{self.name}: connection dropped while issuing reboot ({e})")
         return Result(Status.Success)
+
+    @override
+    async def _confirm_recovered(self, deadline: float, poll_interval: float, /) -> bool:
+        # "Accepts a connection" is not "booted": early-boot sshd (or a
+        # socket-activated stub) can accept and then stall immediately after.
+        # Recovery = one clean command round-trip on the fresh post-rebuild
+        # connection, retried until the deadline; a raising probe (refused,
+        # reset mid-handshake) is just "not yet", never an error. Do-while
+        # shape: always attempt at least one probe before consulting the
+        # clock — a deadline that has already elapsed by the time we get here
+        # (e.g. the up-wait consumed the whole budget landing right at the
+        # edge) must not fail the gate unprobed; one clean round-trip is a
+        # recovery no matter what the clock says.
+        loop = asyncio.get_running_loop()
+        while True:
+            try:
+                result = await self.exec("true", timeout=_RECOVERY_PROBE_TIMEOUT, log=LogMode.QUIET)
+            except Exception:  # noqa: BLE001 — probe failure means "not booted yet"; the deadline is the arbiter
+                result = None
+            if result is not None and result.status.is_ok:
+                return True
+            if loop.time() >= deadline:
+                return False
+            await asyncio.sleep(poll_interval)
 
     @override
     @cli_exposed

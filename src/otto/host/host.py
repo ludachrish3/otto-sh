@@ -62,6 +62,14 @@ given. Pass ``float("inf")`` for a deliberately unbounded command; there is
 no other way to disable the bound.
 """
 
+DEFAULT_REBOOT_DOWN_TIMEOUT = 60.0
+"""Default bound (seconds) for ``reboot(wait=True)``'s down phase — a host
+still reachable this long after the reboot command means the reboot didn't
+take, and the wait fails loudly instead of watching the old OS.
+
+Pass ``down_timeout=0`` (or negative) to skip the down phase — for hosts
+whose reachability probe target survives the reboot."""
+
 _EXEC_REAP_TIMEOUT = 5.0
 """Seconds to wait for a terminated command to report its exit status.
 
@@ -404,14 +412,23 @@ class Host(Protocol):
         ...
 
     async def reboot(
-        self, hard: bool = False, wait: bool = False, timeout: float = 600.0
+        self,
+        hard: bool = False,
+        wait: bool = False,
+        timeout: float = 600.0,
+        down_timeout: float = DEFAULT_REBOOT_DOWN_TIMEOUT,
+        poll_interval: float = 2.0,
     ) -> Result:
         """Reboot this host.
 
         ``hard=False`` issues an in-shell reboot; ``hard=True`` power-cycles
         via the :class:`~otto.host.power.PowerController`. When *wait* is
-        ``True``, blocks until the host is reachable again or *timeout* seconds
-        have elapsed. Returns a :class:`~otto.result.Result`.
+        ``True``, blocks through a two-phase watch: first the host must go
+        DOWN (bounded by the lesser of *down_timeout* and *timeout* — pass
+        ``down_timeout<=0`` to skip this phase for hosts whose reachability
+        probe target survives the reboot), then come back UP and answer a
+        recovery probe (within the remainder of *timeout*), polling every
+        *poll_interval* seconds. Returns a :class:`~otto.result.Result`.
         """
         ...
 
@@ -1001,26 +1018,76 @@ class BaseHost(ABC):
 
     @cli_exposed
     async def reboot(
-        self, hard: bool = False, wait: bool = False, timeout: float = 600.0
+        self,
+        hard: bool = False,
+        wait: bool = False,
+        timeout: float = 600.0,
+        down_timeout: float = DEFAULT_REBOOT_DOWN_TIMEOUT,
+        poll_interval: float = 2.0,
     ) -> Result:
         """Reboot this host.
 
         ``hard=False`` (default) issues the in-shell reboot command
         (``_soft_reboot``); ``hard=True`` power-cycles via the
-        :class:`~otto.host.power.PowerController`. When *wait*, block on
-        :meth:`wait_until_up` (up to *timeout*, default 10 minutes); if the
-        host is still unreachable when *timeout* expires, the result is
-        downgraded to :attr:`~otto.utils.Status.Failed`.
+        :class:`~otto.host.power.PowerController`. When *wait*, block through
+        a two-phase watch: first the host must go DOWN (bounded by the minimum
+        of *down_timeout* and *timeout* — a host that never goes down means the
+        reboot didn't take), then come back UP (within the remainder of
+        *timeout*), probing every *poll_interval* seconds. Pass
+        ``down_timeout<=0`` to skip the down phase entirely and proceed
+        straight to the up wait — the documented opt-out for hosts whose
+        reachability probe target survives the reboot (e.g. ``LocalHost``, or
+        an embedded target reached through a console server that stays up
+        across the reboot). Either phase expiring downgrades the result to
+        :attr:`~otto.utils.Status.Failed` with a message naming the phase.
         """
         if hard:
             result = await self._require_power_control().cycle(cast("Host", self))
         else:
             result = await self._soft_reboot()
-        if result.is_ok and wait and not await self.wait_until_up(timeout):
-            return Result(
-                Status.Failed,
-                msg=f"{self.name!r} did not become reachable within {timeout}s after reboot",
-            )
+        # The just-issued reboot kills every cached transport, but the caches
+        # don't know it: ConnectionManager.ssh() returns a cached connection
+        # object without an aliveness check, so any reachability probe below
+        # would read the dead cache and vacuously succeed. Drop the stale
+        # per-connection state now — probes must dial fresh. Gated on
+        # result.is_ok: rebuilding after a reboot that was never actually
+        # issued (e.g. a hard reboot whose power-off leg failed) would orphan
+        # live transports instead of dead ones. Residual: a soft reboot that
+        # silently did not take (e.g. sudo denied inside the issued command)
+        # still drops live transports here — unavoidable at issue time,
+        # because the disconnect race makes the command's own result
+        # untrustworthy.
+        rebuild = getattr(self, "rebuild_connections", None)
+        if result.is_ok and rebuild is not None:
+            rebuild()
+        if result.is_ok and wait:
+            loop = asyncio.get_running_loop()
+            deadline = loop.time() + timeout
+            down_bound = min(down_timeout, timeout)
+            if down_timeout > 0 and not await self.wait_until_down(
+                down_bound, interval=poll_interval
+            ):
+                return Result(
+                    Status.Failed,
+                    msg=(
+                        f"{self.name!r} never went down within {down_bound}s of the "
+                        f"reboot — the reboot likely did not take"
+                    ),
+                )
+            remaining = max(0.0, deadline - loop.time())
+            if not await self.wait_until_up(remaining, interval=poll_interval):
+                return Result(
+                    Status.Failed,
+                    msg=f"{self.name!r} did not become reachable within {timeout}s after reboot",
+                )
+            if not await self._confirm_recovered(deadline, poll_interval):
+                return Result(
+                    Status.Failed,
+                    msg=(
+                        f"{self.name!r} accepts connections but its shell never answered "
+                        f"within {timeout}s of the reboot — likely still booting"
+                    ),
+                )
         return result
 
     @cli_exposed
@@ -1059,6 +1126,24 @@ class BaseHost(ABC):
                 return True
             await asyncio.sleep(interval)
         return False
+
+    async def _confirm_recovered(
+        self,
+        _deadline: float,
+        _poll_interval: float,
+        /,
+    ) -> bool:
+        """Post-reboot recovery gate: is the host USABLE, not merely reachable.
+
+        The default accepts reachability as recovery — the right call for
+        families with no stronger probe (an RTOS shell has no ``true``).
+        :class:`~otto.host.unix_host.UnixHost` overrides this with a real
+        command round-trip: early-boot sshd can accept a TCP connection and
+        then stall, so "accepts a connection" must never be the recovery
+        criterion where a shell probe exists. *deadline* is an asyncio
+        loop-clock instant (``loop.time()`` scale), not a duration.
+        """
+        return True
 
     ####################
     #  Logging
