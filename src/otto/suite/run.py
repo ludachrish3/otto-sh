@@ -574,6 +574,7 @@ def run_suite(
     import inspect
 
     from ..config import get_repos
+    from ..context import try_get_context
     from ..lifecycle import run_command
 
     repos = get_repos()
@@ -596,6 +597,13 @@ def run_suite(
             log_dir,
             suite.__name__,
         )
+        # Hosts the in-process pytest session registered were opened on
+        # pytest's own (now-closed) event loops; drop that dead per-loop
+        # state so the post-run sweep below doesn't attempt cross-loop
+        # closes (they can only fail — see HostScope.rebuild_connections).
+        session_ctx = try_get_context()
+        if session_ctx is not None:
+            session_ctx.scope.rebuild_connections()
         run_command(_post_run_coverage(repos, log_dir, run_options))
 
     return SuiteRunResult(
@@ -646,6 +654,7 @@ def run_selection(
         raise ValueError("run_selection requires run_options.tests or run_options.markers")
 
     from ..config import get_repos
+    from ..context import try_get_context
     from ..lifecycle import run_command
     from .selection import SelectionMatch, repos_with_marker_matches, resolve_selection
 
@@ -704,6 +713,13 @@ def run_selection(
             if outcome.report is not None:
                 last_report = outcome.report
 
+        # Hosts the in-process pytest sessions registered were opened on
+        # pytest's own (now-closed) event loops; drop that dead per-loop
+        # state so the post-run sweep below doesn't attempt cross-loop
+        # closes (they can only fail — see HostScope.rebuild_connections).
+        session_ctx = try_get_context()
+        if session_ctx is not None:
+            session_ctx.scope.rebuild_connections()
         run_command(_post_run_coverage(repos, log_dir, opts))
 
     return SuiteRunResult(

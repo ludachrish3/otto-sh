@@ -647,3 +647,78 @@ class TestPutFilesNcConnectFailure:
 
         assert status is Status.Error
         assert "not ready" in msg
+
+
+class TestNcPutCancellationReap:
+    """A cancelled put must reap its remote listener even under a second cancel."""
+
+    @pytest.mark.asyncio
+    async def test_cancel_mid_put_reaps_listener_despite_second_cancel(self, tmp_path: Path):
+        src = tmp_path / "small.bin"
+        src.write_bytes(b"hello world")
+
+        connect_reached = asyncio.Event()
+        reap_started = asyncio.Event()
+        reap_done: "list[bool]" = []
+
+        async def scripted_exec(cmd: str, timeout: "float | None" = None, **kw: object):
+            if " -l " in cmd:
+                await asyncio.Event().wait()  # the remote listener runs until reaped
+            return _ok("9000\n")
+
+        async def parked_connect(host: str, port: int, timeout: float = 2.0):
+            connect_reached.set()
+            await asyncio.Event().wait()  # park until the test cancels the put
+            raise AssertionError("unreachable")
+
+        async def recording_reap(self, port: int) -> None:
+            reap_started.set()
+            await asyncio.sleep(0)  # a real suspension: a torn reap stops HERE
+            reap_done.append(True)
+
+        exec_cmd = AsyncMock(side_effect=scripted_exec)
+        ft = _make_ft(exec_cmd)
+
+        with (
+            patch.object(transfer_mod, "_connect_with_retry", new=parked_connect),
+            patch.object(
+                NcFileTransfer, "_wait_for_remote_listener", new=AsyncMock(return_value=None)
+            ),
+            patch.object(NcFileTransfer, "_reap_nc_listener", new=recording_reap),
+        ):
+            task = asyncio.ensure_future(ft._put_files_nc([src], tmp_path / "dst"))
+            await connect_reached.wait()
+            task.cancel()  # 1st cancel: tears the transfer, triggers the reap
+            await reap_started.wait()
+            task.cancel()  # 2nd cancel: lands during the reap — must be held
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+        assert reap_done == [True], "the second cancellation tore the listener reap"
+
+    @pytest.mark.asyncio
+    async def test_cancel_and_reap_propagates_cancellation_instead_of_swallowing_it(self):
+        """suppress(BaseException) around the listen_task join must not eat a
+        genuine CancelledError landing there (e.g. compensate()'s deadline-
+        fired task.cancel() racing this method mid-join): swallowing it lets
+        the reap start FRESH network I/O after the deadline already fired,
+        which the caller's single follow-up cancel then can't kill (force
+        path stall)."""
+        listen_task_started = asyncio.Event()
+
+        async def _parked_listener() -> None:
+            listen_task_started.set()
+            await asyncio.Event().wait()  # never resolves except via cancellation
+
+        listen_task = asyncio.ensure_future(_parked_listener())
+        reap = AsyncMock()
+        ft = _make_ft(AsyncMock(return_value=_ok("9000\n")))
+
+        with patch.object(NcFileTransfer, "_reap_nc_listener", new=reap):
+            outer = asyncio.ensure_future(ft._cancel_and_reap(listen_task, 9000))
+            await listen_task_started.wait()  # listen_task parked; outer now suspended in the join
+            outer.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await outer
+
+        reap.assert_not_awaited()

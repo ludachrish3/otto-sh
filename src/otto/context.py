@@ -7,6 +7,7 @@ passing (OttoContext methods, open_context) is first-class.
 """
 
 import asyncio
+import logging
 import re
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from contextlib import asynccontextmanager
@@ -24,6 +25,8 @@ if TYPE_CHECKING:
     from .host.remote_host import RemoteHost
 
 T = TypeVar("T")
+
+logger = logging.getLogger(__name__)
 
 LIBRARY_LAB_NAME = "<library>"
 """Sentinel ``Lab.name`` for the minimal, host-less context a library caller
@@ -64,6 +67,25 @@ class HostScope:
             return
         self._hosts.append(host)
 
+    def rebuild_connections(self) -> None:
+        """Drop per-loop connection state on every registered host.
+
+        For hosts opened inside an inner pytest session (``otto test`` /
+        ``run_suite``): their transports are bound to pytest's now-closed
+        event loops, and no later loop can drive them — a cross-loop close
+        only raises into the sweep's failure logging. Rebuilding (the same
+        ``rebuild_connections`` pattern ``otto test --cov`` already uses to
+        refresh hosts after ``pytest.main()`` returns) abandons the dead
+        per-loop state so the post-run sweep closes only what the CURRENT
+        loop actually owns. Real remote cleanup for suite-opened hosts
+        belongs to the suite's own fixtures, on the loop that opened them.
+        Hosts without the hook (fakes, minimal BaseHosts) are left as-is.
+        """
+        for host in self._hosts:
+            rebuild = getattr(host, "rebuild_connections", None)
+            if rebuild is not None:
+                rebuild()
+
     async def __aenter__(self) -> Self:
         return self
 
@@ -76,10 +98,27 @@ class HostScope:
         # once per asyncio.run, and a command may run several (suite pre/post
         # phases), so a swept host must not be re-closed by the next cycle.
         hosts, self._hosts = self._hosts, []
-        await asyncio.gather(
-            *(h.close() for h in hosts if getattr(h, "_connected", True)),
-            return_exceptions=True,
-        )
+        remaining = [h for h in hosts if getattr(h, "_connected", True)]
+        # Dependency-ranked sweep (chaos spec): a host that another registered
+        # host names as its ``parent`` (DockerContainerHost documents
+        # close-before-parent — its docker exec channel drains over the
+        # parent's still-open transport) closes only after its dependents.
+        # Within a rank closes run concurrently; failures are logged per host
+        # — never silently swallowed — and never stop the remaining ranks.
+        while remaining:
+            parent_ids = {id(getattr(h, "parent", None)) for h in remaining}
+            rank = [h for h in remaining if id(h) not in parent_ids]
+            if not rank:
+                rank = remaining  # parent cycle (impossible by construction): close all, don't spin
+            results = await asyncio.gather(*(h.close() for h in rank), return_exceptions=True)
+            for host, result in zip(rank, results, strict=True):
+                if isinstance(result, BaseException):
+                    logger.warning(
+                        f"otto: closing host {getattr(host, 'id', host)!r} failed "
+                        f"during scope sweep: {result!r}"
+                    )
+            closed = {id(h) for h in rank}
+            remaining = [h for h in remaining if id(h) not in closed]
 
 
 _active: ContextVar["OttoContext | None"] = ContextVar("otto_context", default=None)

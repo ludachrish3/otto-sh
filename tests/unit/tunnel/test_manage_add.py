@@ -459,6 +459,55 @@ class TestRollback:
         assert scan_idx > launch_idx  # rollback scan happened AFTER the failed launch
         assert any(cmd.startswith("kill ") for _h, cmd in calls[scan_idx:])
 
+    @pytest.mark.asyncio
+    async def test_cancel_during_rollback_still_reaps(self) -> None:
+        """A cancellation landing DURING the rollback reap must not tear it
+        (lifecycle.compensate shield): the kill still reaches the host that
+        actually launched a process (spec §6.4 — no half-tunnels)."""
+        lab, _calls, tunnel = _pair()
+        a, b = lab.hosts["a"], lab.hosts["b"]
+        # Rollback scans: a never started anything; b's FWD egress is running.
+        a.ps_texts = ["", ""]
+        b.ps_texts = ["", _ps_line(tunnel, Direction.FWD, Role.EGRESS, 1, _LO, 999)]
+
+        launch_started = asyncio.Event()
+        rollback_scanning = asyncio.Event()
+
+        def _gate(host) -> None:
+            orig = host.exec  # bound method of the FakeHost instance
+
+            async def gated(cmd: str, timeout: "float | None" = None, **kw: object):
+                if cmd == DISCOVERY_PS_COMMAND and launch_started.is_set():
+                    # The rollback's reap scan: rendezvous so the test can
+                    # deliver the second cancel mid-rollback, then proceed.
+                    rollback_scanning.set()
+                    await asyncio.sleep(0)
+                elif not (
+                    "command -v socat" in cmd
+                    or cmd in (FREE_PORT_PROBE_COMMAND, DISCOVERY_PS_COMMAND)
+                    or cmd.startswith("kill ")
+                ):
+                    # A launch command: park until the test cancels the add.
+                    launch_started.set()
+                    await asyncio.Event().wait()
+                return await orig(cmd, timeout=timeout, **kw)
+
+            host.exec = gated  # type: ignore[method-assign]
+
+        _gate(a)
+        _gate(b)
+
+        task = asyncio.ensure_future(add_tunnel(lab, [("a", None), ("b", None)], port=8080))
+        await launch_started.wait()
+        task.cancel()  # 1st cancel: tears the parked launch, triggers rollback
+        await rollback_scanning.wait()
+        task.cancel()  # 2nd cancel: lands inside the shielded reap — must be held
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert any(cmd.startswith("kill ") for cmd in b.commands), (
+            "the second cancel tore the rollback reap"
+        )
+
 
 class TestInternals:
     def test_require_tools_ok_host_passes(self) -> None:

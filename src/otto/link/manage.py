@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..host.builtin_hosts import BUILTIN_LOCAL_HOST_ID
 from ..host.daemon import kill_command, launch_command
+from ..lifecycle import compensate
 from ..logger.mode import LogMode
 from .impairer import FIRST_SELECTOR_BAND, MAX_SELECTORS, LinkImpairer, ScopedState, build_impairer
 from .model import Link
@@ -641,8 +642,15 @@ async def impair_link(
             if expire is not None:
                 await _launch_timer(host, link, placement, impairer, expire)
             applied.append(AppliedPlacement(placement, merged))
-    except Exception:
-        await _rollback(link.id, rollback_entries, selector=selector)
+    except BaseException:
+        # BaseException, not Exception: a Ctrl+C (CancelledError) mid-impair
+        # must trigger the same no-half-impairments restore. compensate()
+        # shields the restore from a further interrupt (chaos spec: shielded
+        # compensating actions) and re-raises the cancellation after.
+        await compensate(
+            _rollback(link.id, rollback_entries, selector=selector),
+            what=f"link {link.id} rollback",
+        )
         raise
     return ImpairReport(link.id, applied)
 

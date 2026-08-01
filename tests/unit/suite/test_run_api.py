@@ -1296,3 +1296,49 @@ def test_run_selection_nonempty_cov_dir_without_overwrite_raises(tmp_path, monke
     # were never touched.
     clean_mock.assert_not_awaited()
     assert (cov_dir / "stale.txt").exists()
+
+
+def test_run_suite_rebuilds_scope_hosts_registered_by_the_inner_session(tmp_path, monkeypatch):
+    """Hosts a suite registers during the in-process pytest session were
+    opened on pytest's own (now-closed) loops — run_suite must drop that
+    per-loop state (rebuild_connections) BEFORE the post-run sweep closes
+    them on a fresh loop (Plan 1 carry-over: cross-loop closes can only fail)."""
+    import otto.config
+    from otto.config.lab import Lab
+    from otto.context import OttoContext, reset_context, set_context, try_get_context
+
+    monkeypatch.setattr(otto.config, "get_repos", list)
+
+    events: "list[str]" = []
+
+    class _SuiteHost:
+        id = "bed1"
+
+        def rebuild_connections(self) -> None:
+            events.append("rebuild")
+
+        async def close(self) -> None:
+            events.append("close")
+
+    def fake_pytest_main(args, **_kw):
+        # Simulate a suite calling ctx.get_host(...) mid-session.
+        active = try_get_context()
+        assert active is not None
+        active.scope.register(_SuiteHost())
+        return pytest.ExitCode.OK
+
+    monkeypatch.setattr("pytest.main", fake_pytest_main)
+
+    token = set_context(OttoContext(lab=Lab(name="test")))
+    try:
+
+        class _Suite:
+            pass
+
+        run_suite(_Suite, output_dir=tmp_path)
+    finally:
+        reset_context(token)
+
+    assert events == ["rebuild", "close"], (
+        "dead per-loop state must be dropped BEFORE the post-run sweep closes the host"
+    )

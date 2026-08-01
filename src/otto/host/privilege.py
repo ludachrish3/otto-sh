@@ -32,6 +32,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
 
+from ..lifecycle import compensate
 from ..logger.mode import LogMode
 from .command_frame import history_prefix
 from .host import DEFAULT_COMMAND_TIMEOUT
@@ -153,14 +154,26 @@ class PosixPrivilege:
         try:
             yield self
         finally:
-            creds = self._switch_creds()
-            for i, hop in enumerate(reversed(applied)):
-                via_login = applied[-i - 2].login if i + 1 < len(applied) else prev
-                # Look up the full via cred (password/params intact), mirroring
-                # perform_switch's forward path — so a custom undo that needs
-                # the via user's password sees it, and forward/undo stay symmetric.
-                via = cred_for(creds, via_login) or Cred(login=via_login)
-                await run_undo(
-                    _HostProxyIO(self), hop, via, getattr(self, "name", ""), self._history_prefix()
-                )
-            self._session_mgr._set_current_user(prev)  # noqa: SLF001 — intra-package access to SessionManager._set_current_user to restore prior user  # ty: ignore[unresolved-attribute]
+            # The undo chain is a compensating action: an interrupt landing
+            # while it runs must not strand the session as the switched user
+            # (chaos spec: shielded compensating actions). compensate() holds
+            # the cancellation until every hop is unwound (bounded by the
+            # teardown deadline), then re-raises it.
+            await compensate(
+                self._undo_switch(applied, prev),
+                what=f"{getattr(self, 'name', '')}: as_user undo to {prev or 'login user'!r}",
+            )
+
+    async def _undo_switch(self, applied: "list[Cred]", prev: str) -> None:
+        """Unwind *applied* innermost-first, restoring ``current_user`` to *prev*."""
+        creds = self._switch_creds()
+        for i, hop in enumerate(reversed(applied)):
+            via_login = applied[-i - 2].login if i + 1 < len(applied) else prev
+            # Look up the full via cred (password/params intact), mirroring
+            # perform_switch's forward path — so a custom undo that needs
+            # the via user's password sees it, and forward/undo stay symmetric.
+            via = cred_for(creds, via_login) or Cred(login=via_login)
+            await run_undo(
+                _HostProxyIO(self), hop, via, getattr(self, "name", ""), self._history_prefix()
+            )
+        self._session_mgr._set_current_user(prev)  # noqa: SLF001 — intra-package access to SessionManager._set_current_user to restore prior user  # ty: ignore[unresolved-attribute]

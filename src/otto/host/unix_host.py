@@ -493,9 +493,13 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
 
     @override
     async def close(self) -> None:
-
-        await self._session_mgr.close_all()
-        await self._connections.close()
+        # Sessions first, transports second — and the transports MUST close
+        # even when a session refuses to (chaos spec: teardown chain
+        # robustness). The session failure still propagates afterwards.
+        try:
+            await self._session_mgr.close_all()
+        finally:
+            await self._connections.close()
 
     ####################
     #  Command execution

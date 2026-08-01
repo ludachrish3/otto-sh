@@ -72,6 +72,7 @@ otto.labs.errors
 otto.labs.json_repository
 otto.labs.protocol
 otto.labs.registry
+otto.lifecycle
 otto.link
 otto.link.impairer
 otto.link.model

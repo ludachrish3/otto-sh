@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, TypeGuard
 
 from ..host.daemon import kill_command, launch_command
+from ..lifecycle import compensate
 from ..logger.mode import LogMode
 from .carrier import DEFAULT_CARRIER, TunnelCarrier, build_carrier
 from .discovery import (
@@ -475,7 +476,14 @@ async def add_tunnel(
                 _raise_verify_failure(tunnel, missing, unreachable)
         except BaseException:
             if launched:
-                await _kill_tunnel_on([r.host for r in resolved], tunnel.id)
+                # Shielded: a Ctrl+C landing during the rollback itself must
+                # not tear it — the reap runs to completion (bounded by the
+                # teardown deadline) before the cancellation continues
+                # (chaos spec: shielded compensating actions).
+                await compensate(
+                    _kill_tunnel_on([r.host for r in resolved], tunnel.id),
+                    what=f"tunnel {tunnel.id} rollback",
+                )
             raise
     return AddedTunnel(tunnel=tunnel, carrier_fwd=carrier_fwd, carrier_rev=carrier_rev)
 

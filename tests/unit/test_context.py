@@ -1,3 +1,5 @@
+import asyncio
+import logging
 import re
 from pathlib import Path
 
@@ -12,6 +14,7 @@ from otto.context import (
     try_get_context,
 )
 from otto.host.host import DEFAULT_COMMAND_TIMEOUT
+from tests._fixtures.chaos import ChaosPoints, sweep_cancellation
 
 
 class _FakeHost:
@@ -415,3 +418,132 @@ def test_set_and_reset_cli_context_pair():
     assert try_get_context() is baseline
     reset_cli_context()  # idempotent: second reset is a no-op
     assert try_get_context() is baseline
+
+
+class _ScopedHost:
+    """Standalone fake for ranked-sweep tests: records close order into a shared list."""
+
+    def __init__(
+        self,
+        name: str,
+        order: "list[str]",
+        *,
+        parent: "object | None" = None,
+        fail: bool = False,
+        yields: int = 0,
+    ) -> None:
+        self.id = name
+        self._order = order
+        self._fail = fail
+        self._yields = yields
+        if parent is not None:
+            self.parent = parent
+
+    async def close(self) -> None:
+        for _ in range(self._yields):
+            await asyncio.sleep(0)
+        self._order.append(self.id)
+        if self._fail:
+            raise RuntimeError(f"{self.id}: close blew up")
+
+
+@pytest.mark.asyncio
+async def test_hostscope_closes_children_before_their_parent():
+    """DockerContainerHost.close documents close-before-parent (its docker
+    exec channel drains over the parent's still-open transport); the sweep
+    must honor it. The child here closes SLOWER than its parent would, so a
+    naive concurrent gather finishes the parent first."""
+    order: "list[str]" = []
+    parent = _ScopedHost("parent", order)
+    child = _ScopedHost("child", order, parent=parent, yields=2)
+    scope = HostScope()
+    scope.register(child)
+    scope.register(parent)
+    async with scope:
+        pass
+    assert order == ["child", "parent"]
+
+
+@pytest.mark.asyncio
+async def test_hostscope_ranks_a_three_level_parent_chain():
+    order: "list[str]" = []
+    top = _ScopedHost("top", order)
+    mid = _ScopedHost("mid", order, parent=top, yields=1)
+    leaf = _ScopedHost("leaf", order, parent=mid, yields=2)
+    scope = HostScope()
+    scope.register(top)
+    scope.register(mid)
+    scope.register(leaf)
+    async with scope:
+        pass
+    assert order == ["leaf", "mid", "top"]
+
+
+@pytest.mark.asyncio
+async def test_hostscope_child_close_failure_still_closes_the_parent(caplog):
+    """One host's close dying must be LOGGED (named) and must not stop the
+    remaining ranks — silent swallowing is what this plan removes."""
+    order: "list[str]" = []
+    parent = _ScopedHost("parent", order)
+    child = _ScopedHost("child", order, parent=parent, fail=True)
+    scope = HostScope()
+    scope.register(child)
+    scope.register(parent)
+    with caplog.at_level(logging.WARNING, logger="otto.context"):
+        async with scope:
+            pass
+    assert order == ["child", "parent"]
+    assert any("'child'" in r.message for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_hostscope_sweep_chain():
+    """Tier-1 sweep: one host's close dying (drop OR injected cancel) never
+    skips the other hosts — per-rank gather captures per-host failures."""
+    names = ["h1", "h2", "h3"]
+
+    class _PointHost:
+        def __init__(self, name: str, points: ChaosPoints) -> None:
+            self.id = name
+            self._points = points
+
+        async def close(self) -> None:
+            await self._points.point(self.id)
+
+    async def scenario(points: ChaosPoints) -> None:
+        scope = HostScope()
+        for name in names:
+            scope.register(_PointHost(name, points))
+        async with scope:
+            pass
+
+    def oracle(points, outcome, exc_type, k) -> None:
+        # Both variants: an injected failure inside ONE host's close is
+        # indistinguishable from that close dying — it is captured, logged,
+        # and the sweep continues. (Force-abandon cancels the sweep TASK,
+        # which is a different mechanism and still aborts everything.)
+        assert outcome is None, f"{exc_type.__name__} at host {k} escaped the sweep"
+        assert points.executed == [n for i, n in enumerate(names) if i != k - 1]
+
+    await sweep_cancellation(scenario, oracle)
+
+
+def test_hostscope_rebuild_connections_hits_every_host_with_the_hook():
+    scope = HostScope()
+    calls: "list[str]" = []
+
+    class _WithHook:
+        def __init__(self, name: str) -> None:
+            self.id = name
+
+        def rebuild_connections(self) -> None:
+            calls.append(self.id)
+
+    class _WithoutHook:
+        id = "plain"
+
+    scope.register(_WithHook("a"))
+    scope.register(_WithoutHook())
+    scope.register(_WithHook("b"))
+    scope.rebuild_connections()
+    assert calls == ["a", "b"]

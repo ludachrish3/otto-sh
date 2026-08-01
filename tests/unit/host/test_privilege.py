@@ -1,5 +1,6 @@
 """Unit tests for host privilege elevation (sudo / su / as_user)."""
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -523,3 +524,44 @@ async def test_as_user_undo_via_ordering_observable_host():
         ("mysql", "admin", "adminpw"),  # undo #1: reverse-innermost, via = admin cred
         ("admin", "root", "rootpw"),  # undo #2: via = root cred (the prior user)
     ]
+
+
+@pytest.mark.asyncio
+async def test_as_user_undo_survives_cancellation():
+    """A cancellation landing while the undo chain runs must not strand the
+    session as the switched user: every hop still unwinds and current_user
+    is restored (the undo is a shielded compensating action)."""
+    from otto.host.unix_host import UnixHost
+
+    host = UnixHost(
+        ip="10.0.0.1", element="box", creds=_MULTI_HOP_CREDS, user="root", log=LogMode.QUIET
+    )
+    mgr = _mock_session_mgr()
+    mgr.current_user = "root"
+
+    async def _yielding_send(*_a, **_k) -> None:
+        await asyncio.sleep(0)  # a real suspension per send, so a cancel CAN land mid-undo
+
+    mgr.send.side_effect = _yielding_send
+    host._session_mgr = mgr
+
+    inside = asyncio.Event()
+    release = asyncio.Event()
+
+    async def body() -> None:
+        async with host.as_user("mysql"):
+            inside.set()
+            await release.wait()
+
+    task = asyncio.ensure_future(body())
+    await inside.wait()
+    task.cancel()  # lands at release.wait(); the finally-undo starts
+    await asyncio.sleep(0)
+    task.cancel()  # second cancel, mid-undo: must be held by compensate
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    sent = [c.args[0] for c in mgr.send.await_args_list]
+    assert sent.count("exit\n") == 2, "the undo chain was torn mid-unwind"
+    set_user_calls = [c.args[0] for c in mgr._set_current_user.call_args_list]
+    assert set_user_calls == ["mysql", "root"]  # entered as mysql, restored to root

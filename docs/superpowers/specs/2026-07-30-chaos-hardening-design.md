@@ -274,6 +274,36 @@ The chaos lanes follow the same split:
 Plans 3–5 assert behavior that only exists after plans 1–2 land; the order is
 load-bearing.
 
+## Amendment (2026-07-31): reboot — the eighth surface
+
+Approved with chaos plan 6 (`docs/superpowers/plans/2026-07-31-chaos-plan6-reboot-hardening.md`).
+Remote reboot is the remote-side SIGKILL: daemons (tunnels), qdiscs and
+transient timers (link impairment), and cached transports do not survive it,
+so scenarios characterize what is lost and assert the recovery commands
+reconcile cleanly — the spec's existing SIGKILL pattern, applied to the
+remote end.
+
+- **Hardening first (plan 6):** `reboot(wait=True)` becomes truthful —
+  stale connection state dropped at issue time (probes previously read
+  `ConnectionManager`'s cached connection and vacuously succeeded), a
+  two-phase down-then-up wait (`DEFAULT_REBOOT_DOWN_TIMEOUT = 60.0`; a host
+  that never goes down means the reboot didn't take), and liveness-gated
+  recovery (`_confirm_recovered`: early-boot sshd can accept a TCP
+  connection then stall, so UnixHost recovery means a clean `exec("true")`
+  round-trip, not a completed connect). Deterministic tier-1 tests cover
+  the probe-through-cache, up-before-down, and accept-then-stall pitfalls.
+- **Scenario catalog additions:** bed scenarios (plan 4's set) — happy-path
+  `reboot(wait=True)` on the leased host; reboot at phase markers
+  mid-command and mid-transfer; reboot × tunnel (half-chain discovery +
+  `tunnel remove --all` reaps survivors on the peers); reboot × link
+  (rebooted endpoint clean, peer's qdiscs remain, BedHygiene names them,
+  `repair-link` idempotent against half-clean state). Docker analog
+  (plan 5's set): `docker restart` of a container host mid-exec/mid-session
+  — the CI-viable reboot stand-in; the runner itself cannot reboot.
+- **Venue rule:** real reboots are bed-only, leased bed hosts exclusively;
+  the docker-restart analog is the only reboot-shaped scenario GitHub CI
+  runs.
+
 ## Success criteria
 
 - A first Ctrl+C or SIGTERM at any phase of any command leaves zero otto

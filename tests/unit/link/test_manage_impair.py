@@ -3,6 +3,7 @@
 The fake dispatches on command text the way the tunnel manage fakes do, and
 returns REAL CommandResult/Results objects (global constraint)."""
 
+import asyncio
 from dataclasses import dataclass, field
 
 import pytest
@@ -305,6 +306,97 @@ class TestRefusalsAndSafety:
         carrot.exec = _boom  # type: ignore[method-assign]
         with pytest.raises(RuntimeError, match="carrot_seed"):
             await impair_link(lab, "edge", ImpairmentParams(delay_ms=1.0))
+
+    @pytest.mark.asyncio
+    async def test_cancellation_mid_impair_still_rolls_back(self) -> None:
+        """Ctrl+C between placements (CancelledError) must trigger the same
+        no-half-impairments restore an Exception does; the restore itself is
+        shielded by lifecycle.compensate. Today `except Exception` misses
+        cancellation entirely and leaves the first placement half-impaired."""
+        lab, carrot, tomato, _ = _bed()
+        carrot.qdisc_texts = [
+            "qdisc netem 8001: root refcnt 2 limit 1000 delay 20ms\n",  # prior state
+            "qdisc netem 8001: root refcnt 2 limit 1000 delay 50ms\n",  # verify ok
+        ]
+
+        second_placement_reached = asyncio.Event()
+
+        def _park(host) -> None:
+            """Hang every non-addr call on *host* until the test cancels."""
+
+            async def parked(cmd: str, timeout: "float | None" = None, **kw: object):
+                if cmd == "ip -o addr show":
+                    return host._result(cmd)
+                second_placement_reached.set()
+                await asyncio.Event().wait()
+                raise AssertionError("unreachable")  # parked forever; cancel unwinds
+
+            host.exec = parked  # type: ignore[method-assign]
+            host.run = parked  # type: ignore[method-assign]
+
+        _park(tomato)
+
+        task = asyncio.ensure_future(impair_link(lab, "edge", ImpairmentParams(delay_ms=50.0)))
+        await second_placement_reached.wait()  # carrot's placement is fully applied by now
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        # carrot (the completed first placement) restored to its PRIOR params
+        assert carrot.sudo_commands[-1] == "tc qdisc replace dev eth1.100 root netem delay 20ms"
+
+    @pytest.mark.asyncio
+    async def test_second_cancellation_mid_rollback_restore_does_not_tear_it(self) -> None:
+        """One cancel triggers the no-half-impairments rollback; a SECOND
+        cancel landing while the restore command is actually in flight must
+        not tear it — that is exactly what lifecycle.compensate's shield at
+        this call site is for. Without it (bare `await _rollback(...)`), the
+        second cancel lands inside `_restore_state`'s `_root_run` await and
+        carrot's restore command never reaches the host."""
+        lab, carrot, tomato, _ = _bed()
+        carrot.qdisc_texts = [
+            "qdisc netem 8001: root refcnt 2 limit 1000 delay 20ms\n",  # prior state
+            "qdisc netem 8001: root refcnt 2 limit 1000 delay 50ms\n",  # verify ok
+        ]
+
+        second_placement_reached = asyncio.Event()
+        rollback_restoring = asyncio.Event()
+
+        def _park(host) -> None:
+            """Hang every non-addr call on *host* until the test cancels."""
+
+            async def parked(cmd: str, timeout: "float | None" = None, **kw: object):
+                if cmd == "ip -o addr show":
+                    return host._result(cmd)
+                second_placement_reached.set()
+                await asyncio.Event().wait()
+                raise AssertionError("unreachable")  # parked forever; cancel unwinds
+
+            host.exec = parked  # type: ignore[method-assign]
+            host.run = parked  # type: ignore[method-assign]
+
+        _park(tomato)
+
+        orig_run = carrot.run
+
+        async def gated_run(cmd: str, sudo: bool = False, **kw: object):
+            if sudo and "delay 20ms" in cmd:
+                # The rollback's restore command: rendezvous with the test so
+                # it can deliver the second cancel WHILE this await is live.
+                rollback_restoring.set()
+                await asyncio.sleep(0)
+            return await orig_run(cmd, sudo=sudo, **kw)
+
+        carrot.run = gated_run  # type: ignore[method-assign]
+
+        task = asyncio.ensure_future(impair_link(lab, "edge", ImpairmentParams(delay_ms=50.0)))
+        await second_placement_reached.wait()  # carrot's placement is fully applied by now
+        task.cancel()  # 1st cancel: tears the parked tomato placement, triggers rollback
+        await rollback_restoring.wait()
+        task.cancel()  # 2nd cancel: lands inside the shielded restore — must be held
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        # the restore still reached carrot despite the second, mid-restore cancel
+        assert carrot.sudo_commands[-1] == "tc qdisc replace dev eth1.100 root netem delay 20ms"
 
 
 class TestExpireTimers:

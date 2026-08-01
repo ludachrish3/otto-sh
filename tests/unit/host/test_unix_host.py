@@ -23,6 +23,7 @@ from otto.host.session import ShellSession
 from otto.logger.mode import LogMode
 from otto.result import CommandResult, Result
 from otto.utils import Status
+from tests._fixtures.chaos import ChaosPoints, sweep_cancellation
 
 
 def _cs(
@@ -243,6 +244,52 @@ class TestClose:
         finally:
             gc.enable()
             gc.collect()  # clean up our own cycle
+
+    @pytest.mark.asyncio
+    async def test_close_closes_transports_when_session_close_raises(self):
+        """A wedged session must not leak the raw transports behind it: the
+        failure propagates, but _connections.close() still runs (chaos spec:
+        teardown chain robustness)."""
+        h = UnixHost(
+            ip="10.0.0.1", element="box", creds=[Cred(login="u", password="p")], log=LogMode.QUIET
+        )
+        h._session_mgr.close_all = AsyncMock(side_effect=RuntimeError("session wedged"))
+        conn_close = AsyncMock()
+        h._connections.close = conn_close
+        with pytest.raises(RuntimeError, match="session wedged"):
+            await h.close()
+        conn_close.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_close_chain_sweep(self):
+        """Tier-1 sweep: whichever step dies (drop OR cancel), the other still
+        runs and the failure propagates — try/finally, not log-and-continue."""
+        steps = ["sessions", "connections"]
+
+        async def scenario(points: ChaosPoints) -> None:
+            h = UnixHost(
+                ip="10.0.0.1",
+                element="box",
+                creds=[Cred(login="u", password="p")],
+                log=LogMode.QUIET,
+            )
+
+            async def close_all() -> None:
+                await points.point("sessions")
+
+            async def conn_close() -> None:
+                await points.point("connections")
+
+            h._session_mgr.close_all = close_all
+            h._connections.close = conn_close
+            await h.close()
+
+        def oracle(points, outcome, exc_type, k) -> None:
+            expected = [s for i, s in enumerate(steps) if i != k - 1]
+            assert points.executed == expected, f"step behind {steps[k - 1]!r} was skipped"
+            assert isinstance(outcome, exc_type), "the failure must stay loud"
+
+        await sweep_cancellation(scenario, oracle)
 
 
 # ---------------------------------------------------------------------------

@@ -17,6 +17,7 @@ import logging
 
 from typing_extensions import override
 
+from ...lifecycle import compensate
 from ...result import CommandResult, Result
 from ...utils import Status
 from .base import (
@@ -822,6 +823,26 @@ class NcFileTransfer(UnixFileTransfer):
         with suppress(asyncio.TimeoutError, OSError):
             await asyncio.wait_for(writer.wait_closed(), timeout=1.0)
 
+    async def _cancel_and_reap(self, listen_task: "asyncio.Task[CommandResult]", port: int) -> None:
+        """Join a cancelled put's listener task, then reap the remote ``nc -l``.
+
+        ``suppress(Exception)``, not ``BaseException``: this runs inside
+        ``compensate()``'s shield, so a genuine ``CancelledError`` landing
+        here (compensate's own deadline-fired ``task.cancel()``, or a caller
+        cancellation racing the join) must propagate — swallowing it would
+        let the reap start fresh network I/O AFTER the deadline already
+        fired, which the caller's one remaining cancel can't then kill.
+        ``gather(..., return_exceptions=True)`` only raises when THIS await
+        itself is cancelled, so ``Exception`` alone still covers every
+        listener-join failure ``_reap_nc_listener`` doesn't already
+        best-effort internally.
+        """
+        listen_task.cancel()
+        with suppress(Exception):
+            await asyncio.gather(listen_task, return_exceptions=True)
+        with suppress(Exception):
+            await self._reap_nc_listener(port)
+
     async def _put_files_nc(
         self,
         src_files: list[Path],
@@ -960,13 +981,15 @@ class NcFileTransfer(UnixFileTransfer):
                 # A writer opened in the send loop is already closed by that
                 # loop's own `finally` — which makes nc exit on its own — so
                 # this matters mainly for a cancel landing before the sender
-                # ever connects.
+                # ever connects. compensate() holds any FURTHER cancellation
+                # until the reap resolves (chaos spec: shielded compensating
+                # actions) — without it a second Ctrl+C tears the reap and
+                # strands the listener after all.
                 if listen_task is not None and not listen_task.done():
-                    listen_task.cancel()
-                    with suppress(BaseException):
-                        await asyncio.gather(listen_task, return_exceptions=True)
-                    with suppress(BaseException):
-                        await self._reap_nc_listener(port)
+                    await compensate(
+                        self._cancel_and_reap(listen_task, port),
+                        what=f"{self._name}: nc listener reap (port {port})",
+                    )
                 raise
             else:
                 return Result(Status.Success, value=dst)

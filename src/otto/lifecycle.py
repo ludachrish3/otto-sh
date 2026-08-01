@@ -15,12 +15,15 @@ delivery is exercised by the tier-2 subprocess tests (chaos plan 3).
 
 import asyncio
 import contextlib
+import logging
 import signal
 import sys
 from collections.abc import Callable, Coroutine
 from typing import Any, TypeVar
 
 R = TypeVar("R")
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_TEARDOWN_DEADLINE = 10.0
 """Fallback graceful-teardown bound (seconds) when ``OTTO_TEARDOWN_DEADLINE`` is unset."""
@@ -49,6 +52,65 @@ def _run_force_exit_hooks() -> None:
     for hook in reversed(list(_force_exit_hooks)):
         with contextlib.suppress(Exception):
             hook()
+
+
+async def compensate(
+    coro: "Coroutine[Any, Any, R]",
+    *,
+    deadline: "float | None" = None,
+    what: str = "compensating action",
+) -> "R":
+    """Run a rollback/undo coroutine to completion even if the caller is cancelled.
+
+    The chaos spec's shielded-compensating-action helper: an interrupt
+    landing mid-compensation must not tear it (a half-run rollback is worse
+    than none). Cancellation arriving while *coro* runs is HELD — the inner
+    work continues under ``asyncio.shield`` — and re-raised once the
+    compensation resolves. The first held cancellation arms *deadline*
+    (``None`` resolves ``OTTO_TEARDOWN_DEADLINE``) so a hung compensation
+    cannot stall teardown: on expiry the inner task is cancelled, the
+    abandonment is logged, and the held cancellation still re-raises. With
+    no cancellation this is a plain await — results and exceptions pass
+    through unchanged. Once a cancellation is held it wins over a late
+    compensation failure (the failure is logged, the cancellation
+    re-raises).
+
+    Tier-1 determinism: expiry is a ``call_later`` armed only when a
+    cancellation is held — tests drive it with ``deadline=0`` (fires on the
+    next loop turn), never wall-clock waits.
+    """
+    task = asyncio.ensure_future(coro)
+    held: "asyncio.CancelledError | None" = None
+    timer: "asyncio.TimerHandle | None" = None
+    try:
+        while True:
+            try:
+                result = await asyncio.shield(task)
+            except asyncio.CancelledError as exc:
+                if not task.cancelled():
+                    # OUR wrapper was cancelled, not the work: hold the
+                    # cancellation, keep the work running, bound it.
+                    if held is None:
+                        held = exc
+                        bound = _resolve_teardown_deadline() if deadline is None else deadline
+                        timer = asyncio.get_running_loop().call_later(bound, task.cancel)
+                    continue
+                # The deadline (or loop shutdown) cancelled the work itself.
+                logger.warning(f"otto: {what} abandoned before completion")
+                if held is not None:
+                    raise held from None
+                raise
+            except Exception:
+                if held is not None:
+                    logger.warning(f"otto: {what} failed during shielded unwind", exc_info=True)
+                    raise held from None
+                raise
+            if held is not None:
+                raise held from None
+            return result
+    finally:
+        if timer is not None:
+            timer.cancel()
 
 
 _INTERRUPT_STATUS_LINE = (
@@ -150,9 +212,43 @@ class _CommandRun:
         try:
             try:
                 result = await self._race_force(self._body)
-            except asyncio.CancelledError:
+            except asyncio.CancelledError as exc:
                 if self.interrupted is None:
-                    raise  # external cancellation, not our signal: propagate as-is
+                    # External task-level cancellation, not our signal (an
+                    # embedder cancelled the command task — unreachable from
+                    # the POSIX main-thread CLI, where cancellation only
+                    # arrives via _on_signal). The cancel hit OUR await, not
+                    # necessarily the body's: cancel and join the body, then
+                    # let the sweep below run; the cancellation re-raises
+                    # after it (body_error path).
+                    #
+                    # Arm the deadline BEFORE the join (final-review Finding
+                    # 2): a body whose cancellation UNWIND hangs (catches the
+                    # first cancel and parks again) must not stall this
+                    # embedder's cancellation forever — nothing else arms
+                    # the force event when no signal was seen. Racing the
+                    # join via _race_force bounds it exactly like the signal
+                    # path: on expiry _race_force marks ``forced`` and raises
+                    # _ForcedAbandon, which the sweep's own ``not
+                    # self.forced`` guard below then also skips, matching
+                    # force semantics.
+                    #
+                    # suppress(BaseException), not CancelledError (final-
+                    # review Finding 4): a body that answers cancellation
+                    # with a DIFFERENT exception must not let that exception
+                    # propagate PAST the sweep — cancel wins. Whatever the
+                    # join raises (the body's own translated exception, or
+                    # _ForcedAbandon on deadline expiry) is discarded here;
+                    # the external cancellation captured in body_error below
+                    # is what ultimately propagates, and only AFTER the
+                    # sweep has had its chance to run.
+                    self._deadline_handle = asyncio.get_running_loop().call_later(
+                        self.teardown_deadline, self._force.set
+                    )
+                    self._body.cancel()
+                    with contextlib.suppress(BaseException):
+                        await self._race_force(self._body)
+                    body_error = exc
             except _ForcedAbandon:
                 pass
             except BaseException as exc:  # noqa: BLE001 — body outcome deferred past the sweep

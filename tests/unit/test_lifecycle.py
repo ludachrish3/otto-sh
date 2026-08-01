@@ -410,3 +410,164 @@ def test_resolve_teardown_deadline_falls_back_when_discovery_unavailable(monkeyp
 
     monkeypatch.setattr("otto.config.get_env", _boom)
     assert lifecycle._resolve_teardown_deadline() == DEFAULT_TEARDOWN_DEADLINE
+
+
+@pytest.mark.asyncio
+async def test_external_cancellation_still_sweeps_scope():
+    """A task-level cancel of the command (no signal seen) must cancel the
+    body and sweep scope-registered hosts BEFORE propagating — the old path
+    re-raised first, leaking every host and leaving the body task dangling.
+    Unreachable from the POSIX main-thread CLI; real for embedders."""
+    from otto.config.lab import Lab
+    from otto.context import OttoContext, reset_context, set_context
+
+    ctx = OttoContext(lab=Lab(name="test"))
+    closed: "list[str]" = []
+
+    class _Host:
+        id = "h1"
+
+        async def close(self) -> None:
+            closed.append("h1")
+
+    ctx.scope.register(_Host())
+    token = set_context(ctx)
+    try:
+        started = asyncio.Event()
+
+        async def body() -> None:
+            started.set()
+            await asyncio.Event().wait()  # park until cancelled
+
+        ctrl = _CommandRun(teardown_deadline=60.0, install_handlers=False)
+        main = asyncio.ensure_future(ctrl._main(body()))
+        await started.wait()
+        main.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await main
+        assert closed == ["h1"], "the sweep was skipped on external cancellation"
+        assert ctrl.interrupted is None  # no signal was involved
+        assert ctrl.forced is False
+    finally:
+        reset_context(token)
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(5)
+async def test_external_cancellation_sweep_is_bounded_by_the_deadline():
+    """The external-cancellation path must bound its sweep exactly like the
+    signal path (chaos spec: teardown is bounded by a deadline either way).
+    No signal ever arrives here, so nothing but the external-cancel arm
+    itself can arm the force event — without it, a hung host close would
+    stall an embedder's cancellation forever. teardown_deadline=0.0 fires on
+    the next loop turn: deterministic, no wall-clock wait. The @timeout(5)
+    guard is a backstop only — a regression that drops the deadline-arming
+    would otherwise hang up to the module's 180s default."""
+    from otto.config.lab import Lab
+    from otto.context import OttoContext, reset_context, set_context
+
+    ctx = OttoContext(lab=Lab(name="test"))
+
+    class _HangingHost:
+        id = "hang"
+
+        async def close(self) -> None:
+            await asyncio.Event().wait()  # never resolves on its own
+
+    ctx.scope.register(_HangingHost())
+    token = set_context(ctx)
+    try:
+        started = asyncio.Event()
+
+        async def body() -> None:
+            started.set()
+            await asyncio.Event().wait()  # park until cancelled
+
+        ctrl = _CommandRun(teardown_deadline=0.0, install_handlers=False)
+        main = asyncio.ensure_future(ctrl._main(body()))
+        await started.wait()
+        main.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await main
+        assert ctrl.forced is True  # the hung sweep was abandoned, not awaited forever
+        assert ctrl.interrupted is None  # still no signal was involved
+    finally:
+        reset_context(token)
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(5)
+async def test_external_cancellation_with_hung_body_unwind_is_bounded():
+    """Final-review Finding 2: the deadline used to be armed AFTER joining
+    the body — a body whose cancellation UNWIND hangs (catches the first
+    cancel and parks again, a bad citizen) stalled the embedder's own
+    cancellation forever, since nothing else ever set the force event.
+    Arming the deadline BEFORE the join (matching the signal path) bounds
+    it: the join races the force event via _race_force, expiry there raises
+    _ForcedAbandon (suppressed), and marks ``forced`` — matching force
+    semantics. RED first: against the old arm (`await self._body` with no
+    force-race) this hangs; the @timeout(5) backstop turns that hang into a
+    failure rather than a wedged test run (the same technique the Task 10
+    fix round used)."""
+    started = asyncio.Event()
+
+    async def body() -> None:
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            await asyncio.Event().wait()  # catches the cancel, parks forever
+
+    ctrl = _CommandRun(teardown_deadline=0.0, install_handlers=False)
+    main = asyncio.ensure_future(ctrl._main(body()))
+    await started.wait()
+    main.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await main
+    assert ctrl.forced is True
+
+
+@pytest.mark.asyncio
+async def test_external_cancellation_body_translating_cancel_still_sweeps():
+    """Final-review Finding 4: `suppress(asyncio.CancelledError)` on the join
+    meant a body that answers cancellation with a DIFFERENT exception (a bad
+    citizen translating its own unwind) propagated PAST the sweep entirely —
+    leaking every scope-registered host. `suppress(BaseException)` on the
+    join implements cancel-wins: whatever the body raises while unwinding is
+    swallowed there, the external CancelledError captured in body_error is
+    what ultimately propagates, and only AFTER the sweep runs. RED first:
+    against the old arm this raises ValueError (not CancelledError) and the
+    host is never closed (sweep skipped)."""
+    from otto.config.lab import Lab
+    from otto.context import OttoContext, reset_context, set_context
+
+    ctx = OttoContext(lab=Lab(name="test"))
+    closed: "list[str]" = []
+
+    class _Host:
+        id = "h1"
+
+        async def close(self) -> None:
+            closed.append("h1")
+
+    ctx.scope.register(_Host())
+    token = set_context(ctx)
+    try:
+        started = asyncio.Event()
+
+        async def body() -> None:
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                raise ValueError("translated") from None
+
+        ctrl = _CommandRun(teardown_deadline=60.0, install_handlers=False)
+        main = asyncio.ensure_future(ctrl._main(body()))
+        await started.wait()
+        main.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await main
+        assert closed == ["h1"], "the sweep was skipped when the body translated its cancellation"
+    finally:
+        reset_context(token)
