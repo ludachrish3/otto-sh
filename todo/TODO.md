@@ -3,11 +3,12 @@
 ## General
 
 - Is `${sut_dir}` really needed in file paths within settings.toml? Relative paths would be relative to the root dir anyway.
+- Update hierarchy to expand on first click if the element has mulitiple hosts inside of it. Show a number next to each slot. If it's possible, an extra button to expand the element to show today's elemnt-specific view would be nice. That's a view worth preserving, so if we can't have both then maybe just leave it as-is.
 - What are the long green bars between each element title and its card? It seems like it should either be in the element card or not there at all.
 - The "Mark now..." should say "Mark event"
   - This button should also change to a dropdown element similar to this: <https://www.untitledui.com/react/components/dropdowns#search-advanced>. It wouldn't exactly be a search function, but it has similar needs (a text box, the current options in the dropdown). If we need to create a custom element, that's okay. We can brainstorm exactly how this should work.
 - Is the mini-map supposed to show anything from the bigger view? It looks like a blank rectangle.
-- `otto tunnel list` should print "No active tunnels when there are no results.
+- `otto tunnel list` should print "No active tunnels" when there are no results.
   - Also, the rich table should use rounded corners and more horizontal padding (let's start with 1 on the left and right and see where to go from there.)
 - Add a "fullscreen" icon per chart that expands that single chart to fill the whole chart-canvas area (collapse the rest of the stack; ESC / click to restore). Relates to the existing "fully collapse graphs" item below.
 
