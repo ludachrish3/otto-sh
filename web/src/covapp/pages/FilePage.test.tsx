@@ -619,8 +619,27 @@ describe("FilePage", () => {
     const heading = screen.getByRole("heading", { level: 1 });
     expect(heading.textContent).toBe("tcp.c");
     expect(heading.querySelector("span")?.className).toContain("font-mono");
-    const crumbs = screen.getByTestId("breadcrumbs");
-    expect(within(crumbs).getByText("acme-fw").getAttribute("href")).toBe("#/coverage");
+    // The crumb is AWAITED, not read synchronously: react-aria builds a
+    // Breadcrumbs collection in a hidden render pass and fills the <ol> on a
+    // FOLLOW-UP commit. FilePage gates AppShell behind the async chunk load, so
+    // both commits land outside act() — and `findByTestId("code-row-1")` above
+    // is satisfied by the FIRST of them, which mounts an empty <ol>. The
+    // observed DOM timeline is exactly three commits:
+    //   row=0 ol=-   (loading state, no AppShell)
+    //   row=1 ol=0   (rows up, breadcrumbs mounted but EMPTY)
+    //   row=1 ol=4   (react-aria's follow-up commit fills the collection)
+    // Microtask ordering usually lands the third before the assertion runs;
+    // CI run 30700606751 (issue #191) lost that race and reported
+    // `<ol data-testid="breadcrumbs" />` with no children. "Code rows are up"
+    // is not a proxy for "the collection is built". DirectoryPage's identical
+    // assertion needs no await only because that page renders synchronously,
+    // inside render()'s own act(). Re-querying the <ol> each poll rather than
+    // holding the node from before the await keeps this independent of whether
+    // react-aria reconciles that element in place.
+    await waitFor(() => {
+      const crumbs = screen.getByTestId("breadcrumbs");
+      expect(within(crumbs).getByText("acme-fw").getAttribute("href")).toBe("#/coverage");
+    });
   });
 
   // Regression: `overflow-hidden` on the code-card container establishes a
