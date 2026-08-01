@@ -2,6 +2,7 @@
 
 ## General
 
+- Is `${sut_dir}` really needed in file paths within settings.toml? Relative paths would be relative to the root dir anyway.
 - What are the long green bars between each element title and its card? It seems like it should either be in the element card or not there at all.
 - The "Mark now..." should say "Mark event"
   - This button should also change to a dropdown element similar to this: <https://www.untitledui.com/react/components/dropdowns#search-advanced>. It wouldn't exactly be a search function, but it has similar needs (a text box, the current options in the dropdown). If we need to create a custom element, that's okay. We can brainstorm exactly how this should work.

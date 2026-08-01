@@ -32,3 +32,19 @@ up waits)` — it has no floor of its own, so a slow down/up phase can leave
 the recovery gate almost no time to retry a stalled shell. Worth deciding
 whether it deserves a guaranteed minimum slice of `timeout` once real-host
 (not scripted-probe) reboot scenarios exist to validate against (Plan 4).
+
+## 4. Prompt-then-freeze: one clean round-trip is not proof of a settled boot
+
+Raised by Chris (2026-07-31, from field experience — not necessarily otto's
+testbed hosts): some hosts get far enough to serve a shell prompt, answer a
+command, and then freeze a few seconds later as the rest of the boot
+sequence lands. That defeats `_confirm_recovered`'s current success
+criterion — a single clean `exec("true")` round-trip — the same way
+accept-then-stall defeated TCP-accept. No known-reliable detection
+strategy yet. Candidate directions when this gets picked up: treat the
+first success as a *candidate*, not a confirmation, and require N
+consecutive successful probes spread over a settle window (costs latency on
+every healthy reboot); or a family-tunable settle delay before the
+confirming probe. Interacts with #3 (any settle window eats the leftover
+budget). Real-host scenarios (Plan 4) are the right place to learn what
+actually discriminates.
