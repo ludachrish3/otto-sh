@@ -17,7 +17,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, Literal
 
-from pydantic import ConfigDict, Field, ValidationInfo, field_validator, model_validator
+from pydantic import (
+    AfterValidator,
+    ConfigDict,
+    Field,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from .base import OttoModel
@@ -35,6 +42,32 @@ if TYPE_CHECKING:
     from ..config.repo import DockerCompose, DockerImage, DockerSettings, MonitorSettings
 
 
+def anchor_to_repo(v: Path, info: ValidationInfo) -> Path:
+    """Expand ``~``, then anchor a still-relative path to the repo root.
+
+    ``settings.toml`` is committed and shared team-wide, so a CWD-relative
+    value in it can never resolve stably. Absolute paths (including
+    ``~``-rooted ones, already expanded here) pass through untouched.
+
+    The repo root arrives via pydantic's validation context, which
+    ``Repo.parse_settings`` supplies as ``{"sut_dir": ...}``. With no
+    context the path is left relative so ``SettingsModel`` stays
+    independently validatable.
+
+    Deliberately does not ``resolve()``: that would collapse symlinks and
+    change path identity for repos reached through symlinked checkouts.
+    """
+    v = v.expanduser()
+    if v.is_absolute():
+        return v
+    sut_dir = (info.context or {}).get("sut_dir")
+    return Path(sut_dir) / v if sut_dir is not None else v
+
+
+RepoPath = Annotated[Path, AfterValidator(anchor_to_repo)]
+"""A ``settings.toml`` path: ``~``-expanded, then anchored to the repo root."""
+
+
 class DockerImageSpec(OttoModel):
     """Boundary spec for a ``[[docker.images]]`` entry in ``settings.toml``.
 
@@ -45,8 +78,8 @@ class DockerImageSpec(OttoModel):
     """
 
     name: str
-    dockerfile: Path
-    context: Path
+    dockerfile: RepoPath
+    context: RepoPath
     target: str | None = None
     # dict[str, Any] (not dict[str, str]) for parity with the old TOML parser:
     # a build arg written as a bare scalar (``PORT = 8080``) stays accepted and
@@ -77,7 +110,7 @@ class DockerComposeSpec(OttoModel):
     via ``to_runtime()``.
     """
 
-    path: Path
+    path: RepoPath
     default_host: str | None = None
     services: tuple[str, ...] = ()
 
@@ -118,20 +151,16 @@ class DockerSettingsSpec(OttoModel):
 class MonitorSettingsSpec(OttoModel):
     """Boundary spec for the ``[monitor]`` section of ``settings.toml``.
 
-    TLS for the dashboard server. Paths are ``expanduser()``-expanded here
-    (settings expansion only handles ``${sut_dir}``): the committed value is
-    shared by the whole team, so it conventionally points under
-    ``~/.config/otto/tls/`` — identical text, per-user resolution. ``tls_key``
-    without ``tls_cert`` is rejected; ``tls_cert`` alone is fine (bundled PEM).
+    TLS for the dashboard server. Paths follow the settings-wide convention
+    (``RepoPath``): ``~``-expanded, then anchored to the repo root if still
+    relative. The committed value is shared by the whole team, so it
+    conventionally points under ``~/.config/otto/tls/`` — identical text,
+    per-user resolution. ``tls_key`` without ``tls_cert`` is rejected;
+    ``tls_cert`` alone is fine (bundled PEM).
     """
 
-    tls_cert: Path | None = None
-    tls_key: Path | None = None
-
-    @field_validator("tls_cert", "tls_key")
-    @classmethod
-    def _expand_user(cls, v: Path | None) -> Path | None:
-        return v.expanduser() if v is not None else v
+    tls_cert: RepoPath | None = None
+    tls_key: RepoPath | None = None
 
     @model_validator(mode="after")
     def _key_requires_cert(self) -> "MonitorSettingsSpec":
@@ -418,10 +447,10 @@ class SettingsModel(OttoModel):
     coverage: CoverageSettingsSpec = CoverageSettingsSpec()
 
     # paths + module/name lists
-    labs: list[Path] = Field(default_factory=list)
+    labs: list[RepoPath] = Field(default_factory=list)
     valid_labs: list[str] = Field(default_factory=list)
-    libs: list[Path] = Field(default_factory=list)
-    tests: list[Path] = Field(default_factory=list)
+    libs: list[RepoPath] = Field(default_factory=list)
+    tests: list[RepoPath] = Field(default_factory=list)
     init: list[str] = Field(default_factory=list)
 
     # structured sub-tables

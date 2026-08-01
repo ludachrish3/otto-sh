@@ -250,6 +250,16 @@ class Repo:
     """Parsed `[monitor]` table — optional TLS cert/key for the dashboard server."""
 
     def __post_init__(self) -> None:
+        # ``${sut_dir}`` expands as a plain string substitution in
+        # ``_expand_string`` *before* ``RepoPath`` validation runs. If
+        # ``sut_dir`` were left relative, that expansion would hand
+        # ``anchor_to_repo`` an already repo-prefixed relative string, which
+        # it would then anchor a *second* time (e.g. ``myrepo/myrepo/pylib``).
+        # Making it absolute here — before ``parse_settings`` — means both the
+        # ``${sut_dir}`` spelling and a bare relative path land on the same
+        # correct location. Deliberately ``.absolute()``, not ``.resolve()``:
+        # this must not collapse symlinks or ``..`` (see ``anchor_to_repo``).
+        self.sut_dir = self.sut_dir.absolute()
         self.parse_settings()
 
     def get_lab_panel(self) -> "Panel":
@@ -607,7 +617,7 @@ class Repo:
         self.settings = tomli.loads(settings_text)  # raw — coverage/reservation read it
 
         expanded = self._expand_recursive(self.settings)
-        model = SettingsModel.model_validate(expanded)
+        model = SettingsModel.model_validate(expanded, context={"sut_dir": self.sut_dir})
 
         self.name = model.name
         self.version = Version(model.version)

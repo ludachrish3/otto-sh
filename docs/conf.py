@@ -165,6 +165,12 @@ _SHORT_TYPE_ALIASES = {
     "asyncio.queues.Queue": "asyncio.Queue",
     "_contextvars.Token": "contextvars.Token",
     "types.Annotated": "typing.Annotated",
+    # Autodoc qualifies a bare ``Annotated`` with the module of its FIRST
+    # argument, so ``Annotated[Path, ...]`` (models/settings.py's RepoPath)
+    # renders as ``pathlib.Annotated`` — a target that does not exist. Same
+    # class of misqualification as ``types.Annotated`` above; both resolve to
+    # the one real symbol rather than being silenced.
+    "pathlib.Annotated": "typing.Annotated",
     # rich
     "Panel": "rich.panel.Panel",
     "Progress": "rich.progress.Progress",
@@ -234,6 +240,13 @@ _INTERNAL_ALIASES = {
     # guard, so autodoc can never document it directly. Point the signature
     # xref at its bound type instead.
     "AppShellT": "otto.host.app_shell.AppShell",
+    # models/settings.py's RepoPath is ``Annotated[Path,
+    # AfterValidator(anchor_to_repo)]``; autodoc renders every annotation
+    # component as a py:class xref, but anchor_to_repo is documented as a
+    # py:function. Already fully qualified — the identity mapping exists to
+    # re-dispatch through resolve_any_xref, which matches across object types
+    # (same trick as ``asyncssh.connect`` in _SHORT_TYPE_ALIASES).
+    "otto.models.settings.anchor_to_repo": "otto.models.settings.anchor_to_repo",
 }
 
 

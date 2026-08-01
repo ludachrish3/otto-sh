@@ -1,0 +1,208 @@
+"""Repo-root anchoring for the path fields of ``.otto/settings.toml``.
+
+Every path is ``expanduser()``-expanded and, when still relative, resolved
+against the repo root — never the process CWD. See
+``docs/superpowers/specs/2026-08-01-settings-path-anchoring-design.md``.
+"""
+
+import textwrap
+from pathlib import Path
+
+from otto.config.repo import Repo
+
+
+def _write_repo(repo_dir: Path, settings_body: str) -> Path:
+    """Materialize a minimal SUT repo at *repo_dir* with *settings_body* appended."""
+    otto_dir = repo_dir / ".otto"
+    otto_dir.mkdir(parents=True)
+    base = 'name = "tmp_repo"\nversion = "1.0.0"'
+    body = textwrap.dedent(settings_body).strip()
+    (otto_dir / "settings.toml").write_text(f"{base}\n{body}\n")
+    return repo_dir
+
+
+def test_relative_paths_anchor_to_repo_root_not_cwd(tmp_path, monkeypatch):
+    """The core bug: a bare relative path must not depend on where otto was run."""
+    sut = _write_repo(
+        tmp_path / "repo",
+        """
+        labs  = ["lab_data"]
+        libs  = ["pylib"]
+        tests = ["tests"]
+        """,
+    )
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+
+    repo = Repo(sut_dir=sut)
+
+    assert repo.labs == [sut / "lab_data"]
+    assert repo.libs == [sut / "pylib"]
+    assert repo.tests == [sut / "tests"]
+
+
+def test_sut_dir_variable_and_bare_relative_agree(tmp_path):
+    """Phase 1 is non-breaking: both spellings resolve to the same place."""
+    sut = _write_repo(tmp_path / "repo", 'libs = ["${sut_dir}/pylib", "pylib"]')
+
+    repo = Repo(sut_dir=sut)
+
+    assert repo.libs == [sut / "pylib", sut / "pylib"]
+
+
+def test_sut_dir_relative_does_not_double_anchor(tmp_path, monkeypatch):
+    """Regression: a relative ``sut_dir`` must not double-anchor ``${sut_dir}`` paths.
+
+    ``${sut_dir}`` expands as a plain string substitution in
+    ``Repo._expand_string`` *before* ``RepoPath`` validation runs. If
+    ``sut_dir`` were left relative, that expansion hands ``anchor_to_repo``
+    an already repo-prefixed relative string, which it then anchors a
+    *second* time (``myrepo/myrepo/pylib`` instead of ``myrepo/pylib``).
+    ``Repo.__post_init__`` makes ``sut_dir`` absolute before expansion runs,
+    so both the ``${sut_dir}`` spelling and a bare relative path land on the
+    same correct location, with no doubled path segment.
+    """
+    _write_repo(
+        tmp_path / "myrepo",
+        'libs = ["${sut_dir}/pylib", "pylib"]',
+    )
+    monkeypatch.chdir(tmp_path)
+
+    repo = Repo(sut_dir=Path("myrepo"))
+
+    expected = tmp_path / "myrepo" / "pylib"
+    assert repo.libs == [expected, expected]
+    assert "myrepo/myrepo" not in str(repo.libs[0])
+    assert "myrepo/myrepo" not in str(repo.libs[1])
+
+
+def test_absolute_paths_pass_through_unchanged(tmp_path):
+    """Pins the documented contract: an absolute path in ``settings.toml`` is unchanged.
+
+    This does NOT guard the ``is_absolute()`` early return inside
+    ``anchor_to_repo`` — under POSIX join semantics
+    ``Path('/a/b') / Path('/tmp/x') == Path('/tmp/x')``, so deleting that
+    early return is behavior-identical here (and for the ``~``-rooted case).
+    The early return is documentation of intent, not something any test can
+    prove necessary; this test exists to pin the *contract* (absolute paths
+    pass through unchanged), not the implementation detail.
+    """
+    shared = tmp_path / "shared" / "pylib"
+    sut = _write_repo(tmp_path / "repo", f'libs = ["{shared}"]')
+
+    repo = Repo(sut_dir=sut)
+
+    assert repo.libs == [shared]
+
+
+def test_parent_relative_escapes_the_repo_root_unresolved(tmp_path):
+    """``..`` works, and the join is NOT ``resolve()``d — symlinks must survive."""
+    sut = _write_repo(tmp_path / "repo", 'libs = ["../shared/pylib"]')
+
+    repo = Repo(sut_dir=sut)
+
+    assert repo.libs == [sut / ".." / "shared" / "pylib"]
+
+
+def test_each_repo_anchors_to_its_own_root(tmp_path):
+    """Multi-repo (OTTO_SUT_DIRS): identical text, per-repo resolution."""
+    a = _write_repo(tmp_path / "a", 'libs = ["pylib"]')
+    b = _write_repo(tmp_path / "b", 'libs = ["pylib"]')
+
+    assert Repo(sut_dir=a).libs == [a / "pylib"]
+    assert Repo(sut_dir=b).libs == [b / "pylib"]
+
+
+def test_tilde_path_expands_against_home_not_repo_root(tmp_path, monkeypatch):
+    """Guards the ``~`` branch end-to-end through ``Repo``/``SettingsModel``.
+
+    A future edit that drops ``expanduser()``, or moves it to run after the
+    ``is_absolute()`` check, would silently stop expanding ``~`` and anchor
+    it under the repo root instead of the user's home -- this test fails in
+    either case.
+    """
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    sut = _write_repo(tmp_path / "repo", 'libs = ["~/pylib"]')
+
+    repo = Repo(sut_dir=sut)
+
+    assert repo.libs == [home / "pylib"]
+    assert not str(repo.libs[0]).startswith(str(sut))
+
+
+def test_model_without_context_leaves_relative_paths_unchanged():
+    """SettingsModel stays independently validatable with no repo attached."""
+    from otto.models.settings import SettingsModel
+
+    model = SettingsModel.model_validate({"name": "x", "version": "1.0.0", "libs": ["pylib"]})
+
+    assert model.libs == [Path("pylib")]
+
+
+def test_docker_paths_anchor_to_repo_root(tmp_path, monkeypatch):
+    """Dockerfile/context/compose paths are documented absolute; enforce it."""
+    sut = _write_repo(
+        tmp_path / "repo",
+        """
+        [[docker.images]]
+        name = "api"
+        dockerfile = "docker/api.Dockerfile"
+        context = "docker"
+
+        [[docker.composes]]
+        path = "docker/compose.yml"
+        """,
+    )
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+
+    repo = Repo(sut_dir=sut)
+
+    image = repo.docker_settings.images[0]
+    assert image.dockerfile == sut / "docker" / "api.Dockerfile"
+    assert image.context == sut / "docker"
+    assert repo.docker_settings.composes[0].path == sut / "docker" / "compose.yml"
+
+
+def test_monitor_tls_home_convention_survives(tmp_path, monkeypatch):
+    """``~`` is the opt-out: it must NOT be swallowed by repo anchoring."""
+    home = tmp_path / "home"
+    (home / ".config" / "otto" / "tls").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+
+    sut = _write_repo(
+        tmp_path / "repo",
+        """
+        [monitor]
+        tls_cert = "~/.config/otto/tls/cert.pem"
+        tls_key = "~/.config/otto/tls/key.pem"
+        """,
+    )
+
+    repo = Repo(sut_dir=sut)
+
+    assert repo.monitor_settings.tls_cert == home / ".config" / "otto" / "tls" / "cert.pem"
+    assert repo.monitor_settings.tls_key == home / ".config" / "otto" / "tls" / "key.pem"
+
+
+def test_monitor_tls_relative_anchors_to_repo_root(tmp_path, monkeypatch):
+    """A bare relative TLS path resolves under the repo, not the CWD."""
+    sut = _write_repo(
+        tmp_path / "repo",
+        """
+        [monitor]
+        tls_cert = "certs/bundle.pem"
+        """,
+    )
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+
+    repo = Repo(sut_dir=sut)
+
+    assert repo.monitor_settings.tls_cert == sut / "certs" / "bundle.pem"
+    assert repo.monitor_settings.tls_key is None
