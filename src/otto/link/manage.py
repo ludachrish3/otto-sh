@@ -19,7 +19,6 @@ from typing import TYPE_CHECKING, Any
 
 from ..host.builtin_hosts import BUILTIN_LOCAL_HOST_ID
 from ..host.daemon import kill_command, launch_command
-from ..lifecycle import compensate
 from ..logger.mode import LogMode
 from .impairer import FIRST_SELECTOR_BAND, MAX_SELECTORS, LinkImpairer, ScopedState, build_impairer
 from .model import Link
@@ -647,6 +646,11 @@ async def impair_link(
         # must trigger the same no-half-impairments restore. compensate()
         # shields the restore from a further interrupt (chaos spec: shielded
         # compensating actions) and re-raises the cancellation after.
+        # Imported here, not at module scope: otto.lifecycle is only needed once
+        # a compensating action actually runs, and a top-level import drags it
+        # onto every CLI --help path (import-budget guard).
+        from ..lifecycle import compensate
+
         await compensate(
             _rollback(link.id, rollback_entries, selector=selector),
             what=f"link {link.id} rollback",

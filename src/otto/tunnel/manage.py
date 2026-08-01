@@ -10,7 +10,6 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, TypeGuard
 
 from ..host.daemon import kill_command, launch_command
-from ..lifecycle import compensate
 from ..logger.mode import LogMode
 from .carrier import DEFAULT_CARRIER, TunnelCarrier, build_carrier
 from .discovery import (
@@ -480,6 +479,12 @@ async def add_tunnel(
                 # not tear it — the reap runs to completion (bounded by the
                 # teardown deadline) before the cancellation continues
                 # (chaos spec: shielded compensating actions).
+                # Imported here, not at module scope: otto.lifecycle is only
+                # needed once a compensating action actually runs, and a
+                # top-level import drags it onto every CLI --help path
+                # (import-budget guard).
+                from ..lifecycle import compensate
+
                 await compensate(
                     _kill_tunnel_on([r.host for r in resolved], tunnel.id),
                     what=f"tunnel {tunnel.id} rollback",

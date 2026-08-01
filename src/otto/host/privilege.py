@@ -32,7 +32,6 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
 
-from ..lifecycle import compensate
 from ..logger.mode import LogMode
 from .command_frame import history_prefix
 from .host import DEFAULT_COMMAND_TIMEOUT
@@ -159,6 +158,11 @@ class PosixPrivilege:
             # (chaos spec: shielded compensating actions). compensate() holds
             # the cancellation until every hop is unwound (bounded by the
             # teardown deadline), then re-raises it.
+            # Imported here, not at module scope: otto.lifecycle is only needed
+            # once a compensating action actually runs, and a top-level import
+            # drags it onto every CLI --help path (import-budget guard).
+            from ..lifecycle import compensate
+
             await compensate(
                 self._undo_switch(applied, prev),
                 what=f"{getattr(self, 'name', '')}: as_user undo to {prev or 'login user'!r}",

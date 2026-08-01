@@ -17,7 +17,6 @@ import logging
 
 from typing_extensions import override
 
-from ...lifecycle import compensate
 from ...result import CommandResult, Result
 from ...utils import Status
 from .base import (
@@ -986,6 +985,12 @@ class NcFileTransfer(UnixFileTransfer):
                 # actions) — without it a second Ctrl+C tears the reap and
                 # strands the listener after all.
                 if listen_task is not None and not listen_task.done():
+                    # Imported here, not at module scope: otto.lifecycle is only
+                    # needed once a compensating action actually runs, and a
+                    # top-level import drags it onto every CLI --help path
+                    # (import-budget guard).
+                    from ...lifecycle import compensate
+
                     await compensate(
                         self._cancel_and_reap(listen_task, port),
                         what=f"{self._name}: nc listener reap (port {port})",
