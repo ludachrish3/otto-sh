@@ -352,6 +352,46 @@ class TestTimeout:
         assert session.alive
 
     @pytest.mark.asyncio
+    async def test_connection_lost_during_recovery_still_returns_result(
+        self, session: MockSession, monkeypatch: pytest.MonkeyPatch
+    ):
+        """A transport death during POST-TIMEOUT recovery must not escape either.
+
+        run_cmd's own ``except asyncio.TimeoutError`` handler calls
+        ``_recover_session()``, and an exception raised inside a handler body
+        escapes the whole try/except — the sibling ``ConnectionLost`` clause
+        never sees it. So the catch has to live at ``_confirm_recovered``, the
+        choke point every recovery path funnels through. Without it, a command
+        whose timeout is shorter than the peer's keepalive give-up window
+        (exactly what a blackholed connection produces) hands the user a raw
+        ``asyncssh.ConnectionLost`` traceback instead of the timeout result.
+
+        Deterministic by construction: the first read hangs so the command
+        times out, and the recovery probe's read is the one that dies — no
+        sleep-race between feeding output and the recovery window opening.
+        """
+        calls = 0
+
+        async def reads(_pattern: re.Pattern[str]) -> str:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                await asyncio.sleep(3600)  # hang the command -> run_cmd times out
+                raise AssertionError("unreachable: the hang is cancelled by wait_for")
+            raise asyncssh.ConnectionLost("keepalive gave up during recovery")
+
+        monkeypatch.setattr(session, "_read_until_pattern", reads)
+
+        result = await session.run_cmd("sleep 999", timeout=0.05)
+
+        assert calls >= 2, "recovery never probed -- test no longer exercises the recovery path"
+        assert result.status == Status.Error
+        assert result.timed_out is True
+        assert "timed out" in result.value.lower()
+        # The dead transport is still recorded, so the session isn't reused.
+        assert not session.alive
+
+    @pytest.mark.asyncio
     async def test_recovery_fails_when_parked_in_repl(self, session: MockSession):
         """A session parked in a REPL echoes the probe's literal `$?`, never the
         digit form — recovery must report failure (I-3), not a false positive."""

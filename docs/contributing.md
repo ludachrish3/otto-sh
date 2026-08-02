@@ -311,7 +311,7 @@ what you want to exercise:
 | Full coverage gate (all tiers, excludes `stability`) | `make coverage` | lab VMs |
 | Unix VMs, incl. multi-hop (resource) | `make coverage-unix` / `make nox-unix` | test1/test2/test3 |
 | Embedded / Zephyr (resource) | `make coverage-embedded` / `make nox-embedded` | zephyr VM |
-| Multi-hop only | `uv run pytest -m "hops and not chaos"` | three VMs |
+| Multi-hop only | `uv run pytest -m "hops and not stability"` | three VMs |
 | Stability / soak | `make stability` (or `stability-unit` / `stability-unix` / `stability-tunnel` / `stability-embedded`) | lab VMs (`-unit` needs none) |
 | Chaos lane (tier 3, opt-in — interrupt/SIGKILL/reboot scenarios + BedHygiene) | `make chaos` / `make chaos-embedded` | leased veggies host (+ zephyr board for the embedded leg) |
 | Everything (the dev-VM contract) | `make all` | lab VMs |

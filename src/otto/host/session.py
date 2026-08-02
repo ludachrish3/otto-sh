@@ -631,6 +631,8 @@ class ShellSession(ABC):
         Returns any partial output captured before the probe reply, or ``""``
         if the shell never confirmed (``self._alive`` is set to False then).
         """
+        import asyncssh
+
         captured = ""
 
         async def _expect(pat: re.Pattern[str], t: float) -> str:
@@ -649,7 +651,17 @@ class ShellSession(ABC):
                 probe_timeout=_RECOVERY_PROBE_TIMEOUT,
                 deadline=deadline,
             )
-        except asyncio.IncompleteReadError:
+        except (asyncio.IncompleteReadError, asyncssh.ConnectionLost):
+            # Same class of event as the EOF case: the transport is gone
+            # mid-recovery (e.g. a blackholed connection's keepalive giving up
+            # during the post-timeout Ctrl+C probe, or a still-dead connection
+            # being re-confirmed after a prior cancellation). This is the sole
+            # choke point every recovery caller funnels through -- the
+            # post-timeout leg in run_cmd, the pre-flight leg in _ensure_ready
+            # when _needs_recovery is set, and AppShell._exit's teardown (which
+            # reaches both _recover_session and this method directly) -- so
+            # widening it here closes all of them without touching
+            # send()/_ensure_initialized.
             confirmed = False
 
         if not confirmed:
