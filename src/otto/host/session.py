@@ -345,8 +345,10 @@ class ShellSession(ABC):
 
         Returns captured data up to and including the match.
         Raises asyncio.TimeoutError if the pattern isn't seen within timeout.
-        Marks the session as dead if EOF is received.
+        Marks the session as dead if EOF is received or the transport is lost.
         """
+        import asyncssh
+
         await self._ensure_ready()
         self._require_alive()
         compiled = re.compile(pattern) if isinstance(pattern, str) else pattern
@@ -355,7 +357,11 @@ class ShellSession(ABC):
                 self._read_until_pattern(compiled),
                 timeout=timeout,
             )
-        except asyncio.IncompleteReadError:
+        except (asyncio.IncompleteReadError, asyncssh.ConnectionLost):
+            # Same class of event either way — the transport is gone. expect()
+            # has no CommandResult to encode the failure into (unlike
+            # run_cmd() below), so mark dead and let the caller see the
+            # exception rather than inventing a return shape for it.
             self._alive = False
             raise
         except asyncio.CancelledError:
@@ -390,6 +396,8 @@ class ShellSession(ABC):
         Returns:
             CommandResult with exit code extracted from the sentinel.
         """
+        import asyncssh
+
         # An attached AppShell has this session parked inside an application
         # REPL (mysql, python3); typing the sentinel command frame into it would
         # be gibberish. Cheap `is not None` guard on the hot path — a no-op when
@@ -428,11 +436,17 @@ class ShellSession(ABC):
             # propagation and could leave the recover-marker write detached.
             self._needs_recovery = True
             raise
-        except asyncio.IncompleteReadError:
+        except (asyncio.IncompleteReadError, asyncssh.ConnectionLost) as exc:
+            # Same class of event either way — the transport is gone (EOF on
+            # the stream, or asyncssh's own keepalive giving up on a dead
+            # peer, e.g. a blackholed SSH connection). Give the caller the
+            # same truthful, already-rendered CommandResult shape rather than
+            # letting a raw traceback escape.
             self._alive = False
+            reason = "EOF" if isinstance(exc, asyncio.IncompleteReadError) else "connection lost"
             return CommandResult(
                 status=Status.Error,
-                value="Session died unexpectedly (EOF)",
+                value=f"Session died unexpectedly ({reason})",
                 command=cmd,
                 retcode=-1,
             )

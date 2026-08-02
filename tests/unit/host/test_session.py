@@ -14,6 +14,7 @@ import signal
 import subprocess
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import asyncssh
 import pytest
 import pytest_asyncio
 
@@ -37,6 +38,10 @@ class MockSession(ShellSession):
         self._out_writer: asyncio.StreamWriter | None = None
         # Captures everything written to stdin (for assertions)
         self.written: list[str] = []
+        # Set by feed_connection_lost(); consumed (and cleared) by the next
+        # _read_until_pattern wakeup, mirroring how feed_eof() drives the
+        # IncompleteReadError branch below.
+        self._connection_lost_pending = False
 
     async def _open(self) -> None:
         # Create paired streams: what the session writes to "stdin" can be read
@@ -52,6 +57,9 @@ class MockSession(ShellSession):
         buf = ""
         while True:
             chunk = await self._out_reader.read(1)
+            if self._connection_lost_pending:
+                self._connection_lost_pending = False
+                raise asyncssh.ConnectionLost("connection lost")
             if not chunk:
                 raise asyncio.IncompleteReadError(buf.encode(), None)
             buf += chunk.decode()
@@ -72,6 +80,20 @@ class MockSession(ShellSession):
         """Signal EOF on the session's stdout (simulates shell death)."""
         assert self._out_reader is not None
         self._out_reader.feed_eof()
+
+    def feed_connection_lost(self) -> None:
+        """Simulate asyncssh's keepalive giving up on a dead peer mid-read.
+
+        A real dropped-transport failure (asyncssh.ConnectionLost) doesn't
+        arrive as a clean EOF on the stream the way feed_eof() does — it's
+        raised out of the underlying read call instead. Feed one byte to
+        wake the pending `_out_reader.read(1)`, and _read_until_pattern
+        raises ConnectionLost as soon as it observes the pending flag,
+        before treating that byte as content.
+        """
+        assert self._out_reader is not None
+        self._connection_lost_pending = True
+        self._out_reader.feed_data(b" ")
 
 
 @pytest_asyncio.fixture
@@ -510,6 +532,24 @@ class TestSendExpect:
 
         assert not session.alive
 
+    @pytest.mark.asyncio
+    async def test_expect_connection_lost_marks_session_dead(self, session: MockSession):
+        """A dropped transport (asyncssh keepalive giving up) is the same class
+        of event as EOF: mark the session dead. expect() has no CommandResult
+        to encode failure into, so — mirroring the EOF branch immediately
+        above — it re-raises rather than swallowing the error."""
+
+        async def simulate():
+            await asyncio.sleep(0.01)
+            session.feed_connection_lost()
+
+        feed_task = asyncio.create_task(simulate())
+        with pytest.raises(asyncssh.ConnectionLost):
+            await session.expect(r">>> ", timeout=1.0)
+        await feed_task
+
+        assert not session.alive
+
 
 # ---------------------------------------------------------------------------
 # Session initialization
@@ -623,6 +663,27 @@ class TestSessionDeath:
         await feed_task
 
         assert result.status == Status.Error
+        assert not session.alive
+
+    @pytest.mark.asyncio
+    async def test_connection_lost_during_run_cmd_returns_error(self, session: MockSession):
+        """A lost SSH transport (asyncssh.ConnectionLost — e.g. its keepalive
+        giving up on a dead peer) must not surface as a raw traceback: it's
+        the same class of event as EOF above (the transport is gone), so it
+        gets the same treatment — mark the session dead and hand back a
+        truthful CommandResult the CLI already knows how to render."""
+
+        async def simulate():
+            await asyncio.sleep(0.01)
+            session.feed_connection_lost()
+
+        feed_task = asyncio.create_task(simulate())
+        result = await session.run_cmd("echo hello")
+        await feed_task
+
+        assert result.status == Status.Error
+        assert result.retcode == -1
+        assert "connection lost" in result.value.lower()
         assert not session.alive
 
     @pytest.mark.asyncio
