@@ -22,7 +22,7 @@ def _write_repo(tmp_path, *, broken_test: bool = False) -> str:
             """
             name = "repo"
             version = "1.0.0"
-            tests = ["${sut_dir}/tests"]
+            tests = ["tests"]
             """
         )
     )

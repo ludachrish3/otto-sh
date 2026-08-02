@@ -248,7 +248,7 @@ def _resolve_cov_settings() -> "_CovSettings":
         return None, None, [], None, None, None
     cov_config = get_cov_config(repos)
     extra_markers = list(cov_config.get("exclusions", {}).get("markers") or [])
-    tier_cfgs = load_tiers(cov_config, cov_repo.sut_dir)
+    tier_cfgs = load_tiers(cov_config)
     return (
         cov_repo.sut_dir,
         tier_cfgs,

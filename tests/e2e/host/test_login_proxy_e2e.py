@@ -355,8 +355,8 @@ def _scaffold_sut_dir(sut_dir: Path, ip: str, element: str) -> str:
     (sut_dir / ".otto" / "settings.toml").write_text(
         'name = "lp_e2e"\n'
         'version = "1.0.0"\n'
-        'labs = ["${sut_dir}/lab_data"]\n'
-        'libs = ["${sut_dir}/initlib"]\n'
+        'labs = ["lab_data"]\n'
+        'libs = ["initlib"]\n'
         'init = ["lp_e2e_init"]\n'
     )
     (sut_dir / "initlib" / "lp_e2e_init.py").write_text(_INIT_MODULE_SOURCE)

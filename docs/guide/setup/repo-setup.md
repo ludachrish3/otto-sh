@@ -54,19 +54,24 @@ When several repos are active at once (`OTTO_SUT_DIRS`), each
 `settings.toml` resolves against its own repo root — the same text means
 the right thing in every repo.
 
-#### `${sut_dir}`
+#### Removed: `${sut_dir}`
 
-`${sut_dir}` expands to the absolute path of the repo root, in every
-settings table.  For the settings above it is redundant — a plain
-relative path already resolves there — but it remains useful in the
-tables otto passes through to a backend without interpreting them
-(`[lab.<backend>]`, `[reservations.<backend>]`, and `ssh_options`),
-where otto cannot know which values are paths:
+Earlier versions expanded `${sut_dir}` to the repo root.  It is gone —
+a relative path already resolves there, so the prefix was redundant.  It
+is no longer special in any way: a settings file still containing it
+gets a directory literally named `${sut_dir}`.
 
-```toml
-[lab.sqlbackend]
-db_url = "sqlite:///${sut_dir}/lab.db"
-```
+Drop the prefix: `"${sut_dir}/tests"` becomes `"tests"`, and
+`"${sut_dir}/../shared"` becomes `"../shared"`.
+
+Values otto hands to a backend without interpreting them
+(`[lab.<backend>]`, `[reservations.<backend>]`, `ssh_options`) must now
+be absolute.  Custom lab and reservation backends both receive
+`repo_dir` and can anchor their own paths.
+
+One exception worth knowing: `[reservations.json] path` is read by otto
+itself, not passed through, so a relative value there still resolves
+against the repo root — see {doc}`../reservations`.
 
 ### Field reference
 

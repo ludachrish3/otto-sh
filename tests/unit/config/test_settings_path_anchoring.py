@@ -42,41 +42,6 @@ def test_relative_paths_anchor_to_repo_root_not_cwd(tmp_path, monkeypatch):
     assert repo.tests == [sut / "tests"]
 
 
-def test_sut_dir_variable_and_bare_relative_agree(tmp_path):
-    """Phase 1 is non-breaking: both spellings resolve to the same place."""
-    sut = _write_repo(tmp_path / "repo", 'libs = ["${sut_dir}/pylib", "pylib"]')
-
-    repo = Repo(sut_dir=sut)
-
-    assert repo.libs == [sut / "pylib", sut / "pylib"]
-
-
-def test_sut_dir_relative_does_not_double_anchor(tmp_path, monkeypatch):
-    """Regression: a relative ``sut_dir`` must not double-anchor ``${sut_dir}`` paths.
-
-    ``${sut_dir}`` expands as a plain string substitution in
-    ``Repo._expand_string`` *before* ``RepoPath`` validation runs. If
-    ``sut_dir`` were left relative, that expansion hands ``anchor_to_repo``
-    an already repo-prefixed relative string, which it then anchors a
-    *second* time (``myrepo/myrepo/pylib`` instead of ``myrepo/pylib``).
-    ``Repo.__post_init__`` makes ``sut_dir`` absolute before expansion runs,
-    so both the ``${sut_dir}`` spelling and a bare relative path land on the
-    same correct location, with no doubled path segment.
-    """
-    _write_repo(
-        tmp_path / "myrepo",
-        'libs = ["${sut_dir}/pylib", "pylib"]',
-    )
-    monkeypatch.chdir(tmp_path)
-
-    repo = Repo(sut_dir=Path("myrepo"))
-
-    expected = tmp_path / "myrepo" / "pylib"
-    assert repo.libs == [expected, expected]
-    assert "myrepo/myrepo" not in str(repo.libs[0])
-    assert "myrepo/myrepo" not in str(repo.libs[1])
-
-
 def test_absolute_paths_pass_through_unchanged(tmp_path):
     """Pins the documented contract: an absolute path in ``settings.toml`` is unchanged.
 
@@ -206,6 +171,15 @@ def test_monitor_tls_relative_anchors_to_repo_root(tmp_path, monkeypatch):
 
     assert repo.monitor_settings.tls_cert == sut / "certs" / "bundle.pem"
     assert repo.monitor_settings.tls_key is None
+
+
+def test_sut_dir_variable_is_no_longer_substituted(tmp_path):
+    """``${sut_dir}`` is gone: it survives parsing as a literal path segment."""
+    sut = _write_repo(tmp_path / "repo", 'libs = ["${sut_dir}/pylib"]')
+
+    repo = Repo(sut_dir=sut)
+
+    assert repo.libs == [sut / "${sut_dir}" / "pylib"]
 
 
 def test_anchor_path_direct(tmp_path, monkeypatch):

@@ -294,9 +294,10 @@ api_key_env = "JIRA_API_KEY"
 ```
 
 Otto constructs the backend as
-`MyTeamBackend(url="https://jira.example.com", api_key_env="JIRA_API_KEY")` —
-the `[reservations.<name>]` sub-table becomes keyword arguments, and `url` is
-passed when present. Selecting an unregistered name raises an error listing the
+`MyTeamBackend(url="https://jira.example.com", repo_dir=<repo root>, api_key_env="JIRA_API_KEY")`
+— the `[reservations.<name>]` sub-table becomes keyword arguments, `url` is
+passed when present, and `repo_dir` is always passed for resolving any
+relative paths. Selecting an unregistered name raises an error listing the
 registered backends. This is the same named-registry mechanism otto uses for
 host sources, term/transfer backends, and host classes; an `init` module always
 imports before the reservation check runs, so the name is registered in time.
@@ -362,6 +363,9 @@ def test_my_backend_conforms():
 - **`url` is optional on both sides.** Accept `url: str | None = None` and use
   it, or hardcode your endpoint and omit it — otto passes `url=` only when the
   setting is present.
+- **Accept `repo_dir`.** Otto always passes `repo_dir=<repo root>` — use it to
+  anchor any relative path-like settings your own backend accepts, the same
+  way custom lab backends do.
 - **Optionally implement `list_usernames()`** to power cached `--as-user`
   completion (see [Username tab-completion](#username-tab-completion)).
 

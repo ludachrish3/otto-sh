@@ -26,7 +26,7 @@ def _make_repo(tmp: Path, *, name: str, default_host: str) -> Repo:
         f'name = "{name}"\n'
         f'version = "1.0.0"\n'
         f"\n[[docker.composes]]\n"
-        f'path = "${{sut_dir}}/docker/compose.yml"\n'
+        f'path = "docker/compose.yml"\n'
         f'default_host = "{default_host}"\n'
         f'services = ["svc"]\n'
     )
@@ -46,10 +46,10 @@ def _make_repo_with_image(tmp: Path, *, name: str, default_host: str) -> Repo:
         f'version = "1.0.0"\n'
         f"\n[[docker.images]]\n"
         f'name = "myimage"\n'
-        f'dockerfile = "${{sut_dir}}/docker/Dockerfile"\n'
-        f'context = "${{sut_dir}}/docker"\n'
+        f'dockerfile = "docker/Dockerfile"\n'
+        f'context = "docker"\n'
         f"\n[[docker.composes]]\n"
-        f'path = "${{sut_dir}}/docker/compose.yml"\n'
+        f'path = "docker/compose.yml"\n'
         f'default_host = "{default_host}"\n'
         f'services = ["svc"]\n'
     )

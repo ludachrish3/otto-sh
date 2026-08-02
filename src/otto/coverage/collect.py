@@ -359,11 +359,9 @@ async def _write_metadata(
         """Anchor a raw ``build_dir`` value read from the config passthrough dict.
 
         Applies the documented path-resolution convention (docs/guide/setup/
-        repo-setup.md ``### Path resolution``): ``${sut_dir}`` substitution,
-        then ``~`` expansion and repo-root anchoring for a still-relative
-        value.
+        repo-setup.md ``### Path resolution``): ``~`` expansion and
+        repo-root anchoring for a still-relative value.
         """
-        raw = raw.replace("${sut_dir}", str(cov_repo.sut_dir))
         return str(anchor_path(Path(raw), cov_repo.sut_dir))
 
     embedded_build_dir = embedded_cfg.get("build_dir")  # single legacy/fallback

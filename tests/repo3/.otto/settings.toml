@@ -11,7 +11,7 @@ lab_data_type = "json"
 # reached over a QEMU `-serial telnet:` bridge. The instrumented product
 # (product/) is loaded at runtime; the base carries no coverage code.
 labs = [
-    "${sut_dir}/../_fixtures/lab_data/tech1",
+    "../_fixtures/lab_data/tech1",
 ]
 
 # Labs this repo supports. The repo3 coverage product is a Zephyr LLEXT and only
@@ -23,16 +23,16 @@ valid_labs = [
 ]
 
 libs = [
-    "${sut_dir}/pylib",
+    "pylib",
     # Shared, third-party-style module. repo3 only targets sprout_cov, but
     # `--lab embedded` constructs every host in the lab — including the Zephyr
     # 2.7 sprout27, whose `zephyr-inline` frame lives here. Pulling it in lets
     # repo3 load the shared lab without owning the 2.7 dialect (see
     # tests/custom_hosts).
-    "${sut_dir}/../custom_hosts",
+    "../custom_hosts",
 ]
 tests = [
-    "${sut_dir}/tests",
+    "tests",
 ]
 init = [
     'repo3_instructions',

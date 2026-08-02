@@ -32,6 +32,8 @@ Direct usage:
 ['alice', 'bob']
 """
 
+from pathlib import Path
+
 # A tiny built-in dataset: "shared" is held by two users to demonstrate the
 # multi-holder who_reserved contract.
 _DEMO_RESERVATIONS: dict[str, list[str]] = {
@@ -51,6 +53,10 @@ class ExampleReservationBackend:
     url : str | None
         Accepted for factory uniformity — :func:`otto.reservations.build_backend`
         may call ``cls(url=url, ...)``. This in-memory sample ignores it.
+    repo_dir : Path | None
+        The SUT repo root, forwarded by :func:`otto.reservations.build_backend`.
+        This in-memory sample ignores it; a real backend would use it to anchor
+        relative path-like settings of its own.
     reservations : dict[str, list[str]] | None
         Optional mapping of username to the resources they hold. Defaults to a
         small built-in demo dataset.
@@ -60,6 +66,7 @@ class ExampleReservationBackend:
         self,
         *,
         url: str | None = None,  # noqa: ARG002 — required by registry-seam constructor signature (build_backend passes url= to all reservation backends)
+        repo_dir: Path | None = None,  # noqa: ARG002 — required by registry-seam constructor signature (build_backend passes repo_dir= to all custom reservation backends)
         reservations: dict[str, list[str]] | None = None,
     ) -> None:
         source = _DEMO_RESERVATIONS if reservations is None else reservations

@@ -18,7 +18,7 @@ name = "confrepo"
 version = "0.1.0"
 lab_data_type = "json"
 labs = ["{lab_data_dir}"]
-tests = ["${{sut_dir}}/tests/sub"]
+tests = ["tests/sub"]
 
 [lab]
 backend = "json"

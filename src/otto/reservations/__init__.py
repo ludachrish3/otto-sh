@@ -70,8 +70,10 @@ def build_backend(
           keyword arguments (e.g. ``[reservations.json] path = "..."``).
 
     repo_dir : Path
-        The SUT repo root.  Used only to expand the JSON backend's
-        ``path`` setting when it is relative.
+        The SUT repo root.  Used to expand the JSON backend's ``path``
+        setting when it is relative, and forwarded as ``repo_dir=`` to a
+        custom backend's constructor, mirroring
+        :func:`otto.labs.build_lab_repository`.
 
     Returns
     -------
@@ -125,8 +127,8 @@ def build_backend(
     # from an init module). No dotted-path / importlib resolution.
     extra_kwargs: dict[str, Any] = settings.get(backend_name) or {}
     if url is not None:
-        return cls(url=url, **extra_kwargs)  # type: ignore[no-any-return]
-    return cls(**extra_kwargs)  # type: ignore[no-any-return]
+        return cls(url=url, repo_dir=repo_dir, **extra_kwargs)  # type: ignore[no-any-return]
+    return cls(repo_dir=repo_dir, **extra_kwargs)  # type: ignore[no-any-return]
 
 
 def build_reservation_gate(

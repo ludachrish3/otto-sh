@@ -2,13 +2,13 @@ name = "repo_e2e"
 version = "0.1.0"
 lab_data_type = "json"
 labs = [
-    "${sut_dir}/../_fixtures/lab_data/tech1",
+    "../_fixtures/lab_data/tech1",
 ]
 libs = [
-    "${sut_dir}/pylib",
+    "pylib",
 ]
 tests = [
-    "${sut_dir}/tests",
+    "tests",
 ]
 init = [
     "repo_e2e_instructions",

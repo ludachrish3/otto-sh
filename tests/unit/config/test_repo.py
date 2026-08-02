@@ -174,7 +174,7 @@ def test_product_log_prefixes_init_libs_and_explicit_capture(tmp_path):
     sut = _write_repo(
         tmp_path,
         textwrap.dedent("""
-        libs = ["${sut_dir}/pylib"]
+        libs = ["pylib"]
         init = ["my_instructions.commands", "custom_hosts"]
 
         [logging]
@@ -291,20 +291,6 @@ class TestHostPreferencesParsing:
         with pytest.raises(ValueError, match="unknown"):
             Repo(sut_dir=sut)
 
-    def test_sutdir_expansion_in_host_preferences(self, tmp_path):
-        """``${sut_dir}`` is expanded inside ``[host_preferences]`` strings, like
-        every other repo settings table.
-        """
-        sut = _write_repo(
-            tmp_path,
-            textwrap.dedent("""
-            [host_preferences.".*".ssh_options]
-            known_hosts = "${sut_dir}/known_hosts"
-        """),
-        )
-        repo = Repo(sut_dir=sut)
-        assert repo.host_preferences[".*"]["ssh_options"]["known_hosts"] == f"{sut}/known_hosts"
-
 
 @pytest.fixture
 def restore_profiles():
@@ -395,21 +381,6 @@ class TestOsProfilesParsing:
         with pytest.raises(ValueError, match="unknown default field"):
             Repo(sut_dir=sut)
 
-    def test_sutdir_expansion_in_profile_default(self, tmp_path, restore_profiles):
-        sut = _write_repo(
-            tmp_path,
-            textwrap.dedent("""
-            [os_profiles.nix]
-            base = "unix"
-
-            [os_profiles.nix.ssh_options]
-            known_hosts = "${sut_dir}/known_hosts"
-        """),
-        )
-        repo = Repo(sut_dir=sut)
-        prof = repo.os_profiles["nix"]
-        assert prof.defaults["ssh_options"]["known_hosts"] == f"{sut}/known_hosts"
-
 
 class TestCollectTestsHardening:
     def _make_repo(self, tmp_path, test_body="def test_ok():\n    assert True\n"):
@@ -418,7 +389,7 @@ class TestCollectTestsHardening:
         sut = tmp_path / "sut"
         (sut / ".otto").mkdir(parents=True)
         (sut / ".otto" / "settings.toml").write_text(
-            'name = "sut"\nversion = "1.0.0"\ntests = ["${sut_dir}/tests"]\n'
+            'name = "sut"\nversion = "1.0.0"\ntests = ["tests"]\n'
         )
         (sut / "tests").mkdir()
         (sut / "tests" / "test_a.py").write_text(test_body)

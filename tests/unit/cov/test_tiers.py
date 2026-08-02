@@ -54,20 +54,9 @@ def test_resolve_unknown_name_raises() -> None:
         resolve_get_tier(load_tiers({}), "nope")
 
 
-def test_harvest_dirs_expand_sut_dir() -> None:
-    """``${sut_dir}`` in a harvest dir is expanded on read (runtime reads the
-    raw dict, so the substitution mirrors Repo._expand_string)."""
-    cov = {
-        "tiers": {
-            "unit": {"kind": "unit", "precedence": 1, "harvest_dirs": ["${sut_dir}/build"]},
-        }
-    }
-    (unit,) = load_tiers(cov, Path("/home/me/myproduct"))
-    assert unit.harvest_dirs == [Path("/home/me/myproduct/build")]
-
-
-def test_harvest_dirs_pass_through_without_sut_dir() -> None:
-    """No sut_dir given → the raw string is used verbatim (legacy behavior)."""
+def test_harvest_dirs_are_carried_through_verbatim() -> None:
+    """``load_tiers`` substitutes nothing — even a former template variable
+    survives as a literal path segment, for the reporter to anchor later."""
     cov = {
         "tiers": {
             "unit": {"kind": "unit", "precedence": 1, "harvest_dirs": ["${sut_dir}/build"]},

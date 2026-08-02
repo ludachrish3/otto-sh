@@ -57,16 +57,14 @@ class Area:
 
 
 def _settings_paths(root: Path) -> dict[str, list[Path]] | None:
-    """Parse ``.otto/settings.toml`` and resolve ``${sut_dir}`` in its path lists.
+    """Parse ``.otto/settings.toml`` and anchor its path lists to *root*.
 
-    Mirrors the substitution :meth:`otto.config.repo.Repo._expand_string`
-    performs (plain ``str.replace``, no other variables). Returns ``None`` when
-    the settings file is absent or fails to parse, so callers fall back to the
-    conventional path instead of erroring.
+    Returns ``None`` when the settings file is absent or fails to parse, so
+    callers fall back to the conventional path instead of erroring.
 
-    Applies phase 1 anchoring: bare relative paths (including those starting
-    with ``~``) are anchored to *root*, matching the behavior of
-    :func:`otto.utils.anchor_path`.
+    Applies phase 1 anchoring via :func:`otto.utils.anchor_path`: ``~`` expands
+    to the user's home, and whatever is still relative afterwards is anchored
+    to *root*.
     """
     from ..utils import anchor_path
 
@@ -77,13 +75,12 @@ def _settings_paths(root: Path) -> dict[str, list[Path]] | None:
         data = tomli.loads(settings_path.read_text())
     except (tomli.TOMLDecodeError, OSError):
         return None
-    sut_dir = str(root)
     resolved: dict[str, list[Path]] = {}
     for key in ("labs", "tests", "libs"):
         values = data.get(key, [])
         if not isinstance(values, list):
             continue
-        paths = [Path(str(v).replace("${sut_dir}", sut_dir)) for v in values]
+        paths = [Path(str(v)) for v in values]
         resolved[key] = [anchor_path(p, root) for p in paths]
     return resolved
 

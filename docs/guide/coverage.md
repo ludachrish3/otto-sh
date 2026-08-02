@@ -992,7 +992,7 @@ makes claims about. Point at a different path with:
 ```toml
 # settings.toml
 [coverage.overrides]
-file = "somewhere-else/coverage-overrides.toml"   # relative to sut_dir
+file = "somewhere-else/coverage-overrides.toml"   # relative to the repo root
 ```
 
 An explicitly configured path that doesn't exist is a load error, not a

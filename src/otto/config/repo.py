@@ -250,15 +250,11 @@ class Repo:
     """Parsed `[monitor]` table — optional TLS cert/key for the dashboard server."""
 
     def __post_init__(self) -> None:
-        # ``${sut_dir}`` expands as a plain string substitution in
-        # ``_expand_string`` *before* ``RepoPath`` validation runs. If
-        # ``sut_dir`` were left relative, that expansion would hand
-        # ``anchor_to_repo`` an already repo-prefixed relative string, which
-        # it would then anchor a *second* time (e.g. ``myrepo/myrepo/pylib``).
-        # Making it absolute here — before ``parse_settings`` — means both the
-        # ``${sut_dir}`` spelling and a bare relative path land on the same
-        # correct location. Deliberately ``.absolute()``, not ``.resolve()``:
-        # this must not collapse symlinks or ``..`` (see ``anchor_to_repo``).
+        # ``anchor_path`` needs an absolute root to anchor relative settings
+        # paths against, so ``sut_dir`` is made absolute here, before
+        # ``parse_settings`` runs. Deliberately ``.absolute()``, not
+        # ``.resolve()``: this must not collapse symlinks or ``..`` (see
+        # ``anchor_to_repo``).
         self.sut_dir = self.sut_dir.absolute()
         self.parse_settings()
 
@@ -616,14 +612,14 @@ class Repo:
         settings_text = self.read_settings()
         self.settings = tomli.loads(settings_text)  # raw — coverage/reservation read it
 
-        expanded = self._expand_recursive(self.settings)
-        model = SettingsModel.model_validate(expanded, context={"sut_dir": self.sut_dir})
+        model = SettingsModel.model_validate(self.settings, context={"sut_dir": self.sut_dir})
 
         self.name = model.name
         self.version = Version(model.version)
         self.labs = list(model.labs)
-        # valid_labs are lab *names*, not paths — populate from the raw dict so
-        # they are NOT ${sut_dir}-expanded (the model still validates them as a
+        # valid_labs are lab *names*, not paths — populate from the raw dict
+        # directly rather than through the model, so they are never coerced
+        # into RepoPath/anchored (the model still validates them as a
         # list[str]). Preserves the pre-pydantic behavior.
         self.valid_labs = list(self.settings.get("valid_labs", []))
         self.libs = list(model.libs)
@@ -684,39 +680,23 @@ class Repo:
 
     @property
     def reservation_settings(self) -> dict[str, Any]:
-        """Return the ``[reservations]`` settings sub-dict with ${sut_dir} expanded.
+        """Return the raw ``[reservations]`` settings sub-dict.
 
-        Returns an empty dict when the section is absent. Every string value
-        (including nested tables) has ``${sut_dir}`` substituted so the
-        reservation backend can use the same path-expansion convention as
-        the other repo settings.
+        Returns an empty dict when the section is absent. Values are the
+        literal parsed TOML — no path expansion or anchoring is applied.
         """
-        raw = self.settings.get("reservations", {}) or {}
-        return self._expand_recursive(raw)
+        return self.settings.get("reservations", {}) or {}
 
     @property
     def lab_settings(self) -> dict[str, Any]:
-        """Return the ``[lab]`` settings sub-dict with ``${sut_dir}`` expanded.
+        """Return the raw ``[lab]`` settings sub-dict.
 
         Returns an empty dict when the section is absent, so the host-source
         factory falls back to the built-in ``json`` backend over this repo's
-        ``labs`` search paths.
+        ``labs`` search paths. Values are the literal parsed TOML — no path
+        expansion or anchoring is applied.
         """
-        raw = self.settings.get("lab", {}) or {}
-        return self._expand_recursive(raw)
-
-    def _expand_recursive(
-        self,
-        value: Any,
-    ) -> Any:
-        """Recursively walk a dict/list, expanding every string via :meth:`_expand_string`."""
-        if isinstance(value, str):
-            return self._expand_string(value)
-        if isinstance(value, dict):
-            return {k: self._expand_recursive(v) for k, v in value.items()}
-        if isinstance(value, list):
-            return [self._expand_recursive(v) for v in value]
-        return value
+        return self.settings.get("lab", {}) or {}
 
     def add_libs_to_pythonpath(self) -> None:
         """Add configured library directories to the PYTHONPATH."""
@@ -765,26 +745,6 @@ class Repo:
         """Import all test files (uncontained; :mod:`otto.bootstrap` wraps per-file)."""
         for test_file in self.iter_test_files():
             self.import_test_file(test_file)
-
-    def _expand_string(
-        self,
-        field: str,
-    ) -> str:
-        """
-        Expand a string value from the settings file with variable values.
-
-        The special strings are:
-        - `"${sut_dir}"`: Replaced with the `Repo.sut_dir` value.
-
-        Parameters
-        ----------
-        field : Raw string from `otto` settings TOML file.
-
-        Returns
-        -------
-        `str` object after all supported substitutions.
-        """
-        return field.replace("${sut_dir}", f"{self.sut_dir}")
 
     async def set_git_description(self) -> None:
         """Populate ``_git_description`` from ``git describe`` output.

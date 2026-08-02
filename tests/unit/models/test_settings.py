@@ -399,7 +399,6 @@ def test_settings_validates_every_in_tree_fixture():
         import tomli as tomllib
     for name in ("repo1", "repo2", "repo3"):
         raw = (Path("tests") / name / ".otto" / "settings.toml").read_text()
-        # ${sut_dir} left as-is; it doesn't affect top-level key validation
         SettingsModel.model_validate(tomllib.loads(raw))
 
 

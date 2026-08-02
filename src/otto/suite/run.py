@@ -318,7 +318,7 @@ async def _post_run_coverage(repos: "list[Repo]", log_dir: Path, opts: RunOption
         cov_repo = get_cov_repo(repos)
         repo_root = cov_repo.sut_dir if cov_repo is not None else None
         cov_config = get_cov_config(repos)
-        tier_configs = load_tiers(cov_config, repo_root) if cov_repo is not None else None
+        tier_configs = load_tiers(cov_config) if cov_repo is not None else None
         extra_markers = list(cov_config.get("exclusions", {}).get("markers") or [])
         thresholds = load_report_thresholds(cov_config) if cov_repo is not None else None
         ticket_spec = load_ticket_spec(cov_config) if cov_repo is not None else None

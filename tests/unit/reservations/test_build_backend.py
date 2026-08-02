@@ -100,9 +100,10 @@ class TestRegisteredBackend:
         from otto.reservations.registry import RESERVATION_BACKENDS
 
         class FakeBackend:
-            def __init__(self, *, api_key: str = "", url=None):
+            def __init__(self, *, api_key: str = "", url=None, repo_dir=None):
                 self.api_key = api_key
                 self.url = url
+                self.repo_dir = repo_dir
 
             def get_reserved_resources(self, username):
                 return set()
@@ -126,6 +127,7 @@ class TestRegisteredBackend:
             assert isinstance(backend, FakeBackend)
             assert backend.api_key == "secret"
             assert backend.url == "https://api.example"
+            assert backend.repo_dir == tmp_path
         finally:
             RESERVATION_BACKENDS.unregister("fake-test")
 
@@ -134,8 +136,9 @@ class TestRegisteredBackend:
         from otto.reservations.registry import RESERVATION_BACKENDS
 
         class FakeBackend:
-            def __init__(self, *, api_key: str = ""):
+            def __init__(self, *, api_key: str = "", repo_dir=None):
                 self.api_key = api_key
+                self.repo_dir = repo_dir
 
             def get_reserved_resources(self, username):
                 return set()
@@ -154,12 +157,43 @@ class TestRegisteredBackend:
             )
             assert isinstance(backend, FakeBackend)
             assert backend.api_key == "secret"
+            assert backend.repo_dir == tmp_path
         finally:
             RESERVATION_BACKENDS.unregister("fake-test-2")
 
     def test_unknown_backend_name_raises(self, tmp_path):
         with pytest.raises(ValueError, match="Unknown reservation backend"):
             build_backend({"backend": "mystery"}, tmp_path)
+
+
+class TestCustomBackendRepoDir:
+    def test_custom_backend_receives_repo_dir(self, tmp_path):
+        """Custom reservation backends get repo_dir, like custom lab backends."""
+        from otto.reservations import build_backend, register_reservation_backend
+        from otto.reservations.registry import RESERVATION_BACKENDS
+
+        seen: dict[str, object] = {}
+
+        class RecordingBackend:
+            def __init__(self, **kwargs):
+                seen.update(kwargs)
+
+            def get_reserved_resources(self, username):
+                return set()
+
+            def who_reserved(self, resource):
+                return []
+
+            def backend_name(self):
+                return "recording"
+
+        register_reservation_backend("recording-test", RecordingBackend)
+        try:
+            build_backend({"backend": "recording-test"}, tmp_path)
+        finally:
+            RESERVATION_BACKENDS.unregister("recording-test")
+
+        assert seen["repo_dir"] == tmp_path
 
 
 class TestBuiltinBypassFix:

@@ -48,7 +48,7 @@ def _make_sut(
     otto_dir = sut_dir / ".otto"
     otto_dir.mkdir()
     (otto_dir / "settings.toml").write_text(
-        f'name = "{name}"\nversion = "{version}"\ntests = ["${{sut_dir}}/tests"]\n{extra_toml}'
+        f'name = "{name}"\nversion = "{version}"\ntests = ["tests"]\n{extra_toml}'
     )
     return sut_dir
 
@@ -177,7 +177,7 @@ class TestRegisteredSuites:
 class TestGetLabPanel:
     def test_lists_lab_names_from_host_source(self, tmp_path):
         """The default json backend's lab names render as bulleted entries."""
-        sut_dir = _make_sut(tmp_path, extra_toml='labs = ["${sut_dir}/labdata"]\n')
+        sut_dir = _make_sut(tmp_path, extra_toml='labs = ["labdata"]\n')
         labdata = sut_dir / "labdata"
         labdata.mkdir()
         (labdata / "lab.json").write_text('{"hosts": [{"labs": ["alpha", "beta"]}]}')
@@ -390,7 +390,7 @@ class TestExternalRepoIntegration:
         sut_dir.mkdir()
         (sut_dir / ".otto").mkdir()
         (sut_dir / ".otto" / "settings.toml").write_text(
-            'name = "external"\nversion = "0.1.0"\ntests = ["${sut_dir}/tests"]\n'
+            'name = "external"\nversion = "0.1.0"\ntests = ["tests"]\n'
         )
         tests_dir = sut_dir / "tests"
         tests_dir.mkdir()

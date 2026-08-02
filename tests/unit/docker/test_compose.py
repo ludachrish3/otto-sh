@@ -75,11 +75,11 @@ def _make_repo(
         f"\n"
         f"[[docker.images]]\n"
         f'name = "api"\n'
-        f'dockerfile = "${{sut_dir}}/docker/Dockerfile"\n'
-        f'context = "${{sut_dir}}/docker"\n'
+        f'dockerfile = "docker/Dockerfile"\n'
+        f'context = "docker"\n'
         f"\n"
         f"[[docker.composes]]\n"
-        f'path = "${{sut_dir}}/docker/compose.yml"\n'
+        f'path = "docker/compose.yml"\n'
         f'default_host = "{default_host}"\n'
         f"services = {services_toml}\n"
     )

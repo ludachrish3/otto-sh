@@ -436,7 +436,7 @@ class DependenciesSpec(OttoModel):
 
 
 class SettingsModel(OttoModel):
-    """Boundary model for a repo's ``.otto/settings.toml`` (post ``${sut_dir}`` expansion).
+    """Boundary model for a repo's ``.otto/settings.toml``.
 
     ``extra='forbid'`` turns a typo'd top-level key into an error.
     """

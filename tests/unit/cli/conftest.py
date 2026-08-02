@@ -142,7 +142,7 @@ def _make_lab_fs(tmp_path: Path) -> tuple[Path, Path]:
     otto_dir = sut_dir / ".otto"
     otto_dir.mkdir()
     (otto_dir / "settings.toml").write_text(
-        'name = "test_repo"\nversion = "1.0.0"\nlabs = ["${sut_dir}/../lab_data"]\n'
+        'name = "test_repo"\nversion = "1.0.0"\nlabs = ["../lab_data"]\n'
     )
 
     return sut_dir, lab_data_dir

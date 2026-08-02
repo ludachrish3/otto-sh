@@ -155,8 +155,6 @@ def load_override_config(
             that does not exist is an error, not a no-op.
     """
     raw_key = (cov_config.get("overrides") or {}).get("file")
-    if raw_key:
-        raw_key = raw_key.replace("${sut_dir}", f"{sut_dir}")
     path = anchor_path(Path(raw_key), sut_dir) if raw_key else sut_dir / DEFAULT_OVERRIDES_RELPATH
     if not path.is_file():
         if raw_key:

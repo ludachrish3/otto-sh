@@ -199,7 +199,8 @@ coexist cleanly. The only behaviour change is for bare relative values in the
 CWD group — which is the bug being fixed, and which never resolved stably.
 
 Phase 3 is breaking. Given the silent-skip idioms in §1, the migration must
-fail loudly rather than degrade:
+fail loudly rather than degrade — **superseded by §11a**, which drops the
+rejection entirely (no users to migrate):
 
 - Reject `${sut_dir}` inside any repo-anchored field with an error naming the
   key and stating the fix: *"drop it — relative paths resolve against the repo
@@ -227,10 +228,9 @@ Also in phase 3: collapse the duplicate substitution copies at
 - **Coexistence**: a `${sut_dir}`-prefixed value and its bare-relative
   equivalent resolve identically (phase 1-2 only).
 - **Multi-repo**: two repos in `OTTO_SUT_DIRS`, each anchoring to its own root.
-- **Loud rejection** (phase 3): `${sut_dir}` in an anchored field raises, with
-  the offending key in the message.
-- **Passthrough untouched**: `${sut_dir}` inside `[lab.<backend>]` and
-  `ssh_options` still expands after phase 3.
+- ~~**Loud rejection** (phase 3)~~ / ~~**Passthrough untouched**~~ — both
+  superseded by §11a. Phase 3 removes the variable everywhere and diagnoses
+  nothing; the test is that `${sut_dir}` survives as a literal path segment.
 
 Existing fixtures (`tests/repo1`, `tests/repo3`, `tests/custom_hosts`) use
 `${sut_dir}` throughout. They stay valid through phases 1-2; phase 3 migrates
@@ -263,10 +263,86 @@ them, which doubles as the end-to-end proof the new form works.
 Phase 1 delivers the correctness win and can land independently. Phase 3 is the
 only breaking piece and can be deferred or dropped without stranding 1-2.
 
+### 11a. Phase 3 supersedes §6 — full removal (decided 2026-08-01)
+
+**Phase 3 removes `${sut_dir}` entirely rather than narrowing it.** Chris made
+this call after phases 1-2 landed, on evidence that did not exist when §6 was
+written. §6's conclusion ("retained, and documented as valid only here") is
+**superseded**; its analysis of *why* the passthrough tables are untypable
+remains accurate and still explains what capability is being given up.
+
+What changed:
+
+- **The duplicate copies grew rather than shrank.** §6 assumed three
+  hand-rolled `str.replace` sites. Phase 2 added two more (`coverage/collect.py`
+  for `build_dir`, `coverage/overrides.py` for the overrides file) while fixing
+  unrelated bugs — because each raw-dict reader must re-implement the
+  substitution itself. Five copies of one rule is the argument against keeping
+  the rule.
+- **Nothing uses the forms only `${sut_dir}` can express.** A repo-wide sweep
+  found zero values embedding the variable inside a larger string; the only
+  instance of the `sqlite:///${sut_dir}/lab.db` shape is the example phase 2
+  wrote into the docs. Every real occurrence is a whole-value path, which a
+  bare relative path now expresses exactly. No custom lab or reservation
+  backend exists outside `src/otto/examples/`.
+- **The variable is now redundant for the raw-dict readers too.** §6 reasoned
+  that the Path B readers needed it. Phase 2 gave all of them `anchor_path`, so
+  a bare relative path resolves correctly there as well.
+- **Keeping it preserves a live hazard.** Substitution runs *before* validation,
+  which is precisely what produced phase 1's double-anchor regression
+  (`myrepo/myrepo/pylib`). Removing the substitution pass removes that failure
+  mode structurally rather than guarding against it.
+
+Capability consequences, and how phase 3 answers them:
+
+- **Custom lab backends** already receive `repo_dir=` and can anchor their own
+  kwargs. No action needed.
+- **Custom reservation backends** do not (`reservations/__init__.py` passes only
+  `url` and `**extra_kwargs`), so removal would leave them with no way to reach
+  the repo root. Phase 3 therefore passes `repo_dir=` to them as well, making
+  the two backend contracts symmetric. This is a breaking change to the custom
+  reservation-backend constructor signature, accepted because it is bundled with
+  an already-breaking change and no such backend exists outside the examples.
+- **`ssh_options` values** (notably `known_hosts`) lose their only repo-relative
+  spelling. otto passes them to asyncssh verbatim and asyncssh does not expand a
+  user-supplied `known_hosts`, so such values must become absolute. **Open
+  item:** `known_hosts` and `client_keys` are otto-declared field names, not
+  opaque `extra` keys, so otto *could* anchor them explicitly by name — a
+  deliberate per-field decision, not the path-shaped-string heuristic §6
+  rejects. Phase 3 does not do this; it documents the absolute-path
+  requirement. Revisit if anyone actually wants a committed per-repo
+  `known_hosts`.
+
+**Migration diagnostics — resolved to nothing.** An earlier draft of this
+section required a parse-time rejection naming the offending key, on the
+grounds that the §1 silent-skip idioms would otherwise swallow a leftover
+`${sut_dir}` as a literal directory name. That rejection is not built: otto has
+no users, so its only reachable input is otto's own test corpus, which Task 1
+migrated. A migration diagnostic with nobody to migrate is dead code, and the
+"loud failure" it buys is one otto's own tests already provide. `${sut_dir}`
+therefore survives parsing as a literal path segment, and paths containing it
+fail — loudly where a path is opened, silently where the caller is one of the
+§1 skip idioms. Revisit only if otto acquires users before this ships.
+
 ## 12. Open items for the plan
 
-- Hard error vs. one-release deprecation warning in phase 3 (§8).
+- ~~Hard error vs. one-release deprecation warning in phase 3 (§8).~~
+  **Resolved:** neither — no migration diagnostic at all (§11a). There are no
+  users to migrate, so both options are dead code.
 - Behaviour of `expanduser()` on an unresolvable `~user` — needs a defined,
-  tested outcome rather than whatever the stdlib currently does.
-- Whether to pass `repo_dir=` to custom reservation backends (§6, note 1) as a
-  separate follow-up.
+  tested outcome rather than whatever the stdlib currently does. Still open;
+  `Path.expanduser()` raises `RuntimeError`, which pydantic does not wrap, so
+  it escapes `cli/init.py`'s `_validate_settings` (which catches only
+  `ValidationError`) as a traceback.
+- ~~Whether to pass `repo_dir=` to custom reservation backends (§6, note 1) as a
+  separate follow-up.~~ **Resolved:** yes, in phase 3 (§11a) — removal makes it
+  required for symmetry with lab backends.
+- Whether otto should anchor the otto-declared `ssh_options` path fields
+  (`known_hosts`, `client_keys`) by name (§11a). Phase 3 documents the
+  absolute-path requirement instead.
+- **Structural:** `[coverage]` and the other passthrough tables reach runtime as
+  the raw settings dict, so anchoring exists there only where hand-written. Four
+  separate overclaim/anchoring defects in phase 2 traced to this seam. Removing
+  `${sut_dir}` deletes the *substitution* duplication but not the *anchoring*
+  duplication. Worth its own follow-up: a single expanded-and-anchored settings
+  view the raw readers consume.

@@ -19,7 +19,7 @@ name = "{name}"
 version = "0.1.0"
 lab_data_type = "json"
 {labs_line}
-tests = ["${{sut_dir}}/tests"]
+tests = ["tests"]
 """
 
 SUITE_SRC = """\

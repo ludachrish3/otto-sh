@@ -571,10 +571,9 @@ class TestBuildDirPathAnchoring:
     ``dict[str, Any]`` value read raw from ``cov_config`` — it never passes
     through the pydantic model's ``RepoPath``, so it must be anchored by hand
     at the point it's read to obey the documented path-resolution convention
-    (docs/guide/setup/repo-setup.md ``### Path resolution``): ``${sut_dir}``
-    substitution, then ``~`` expansion, then repo-root anchoring for a still-
-    relative value. Regression coverage for the settings-path-anchoring-
-    phase2 gap.
+    (docs/guide/setup/repo-setup.md ``### Path resolution``): ``~`` expansion,
+    then repo-root anchoring for a still-relative value. Regression coverage
+    for the settings-path-anchoring-phase2 gap.
     """
 
     @staticmethod
@@ -654,23 +653,6 @@ class TestBuildDirPathAnchoring:
         meta = self._collect(tmp_path, repo, host, cov_config)
         assert meta["sut_dir"] == str(build_dir.resolve())
 
-    def test_sut_dir_prefixed_build_dir_matches_bare_relative(self, tmp_path):
-        """``${sut_dir}`` expands in ``build_dir``, resolving to the same
-        place as the bare relative spelling.
-        """
-        repo_root = tmp_path / "repo3"
-        (repo_root / "build").mkdir(parents=True)
-
-        repo = MagicMock()
-        repo.name = "repo3"
-        repo.sut_dir = repo_root
-
-        host = self._zephyr_host(element="sprout_cov")
-        cov_config = {"embedded": {"extension": "cov_ext", "build_dir": "${sut_dir}/build"}}
-
-        meta = self._collect(tmp_path, repo, host, cov_config)
-        assert meta["sut_dir"] == str((repo_root / "build").resolve())
-
     # ── per-version ``builds.<ver>.build_dir`` ──────────────────────────────
 
     def test_per_version_relative_build_dir_anchors_to_repo_root_not_cwd(
@@ -725,28 +707,6 @@ class TestBuildDirPathAnchoring:
 
         meta = self._collect(tmp_path, repo, host, cov_config)
         assert meta["source_roots"]["sprout"] == str(build_dir.resolve())
-
-    def test_per_version_sut_dir_prefixed_build_dir_matches_bare_relative(self, tmp_path):
-        """``${sut_dir}`` expands in the per-version ``build_dir``, resolving
-        to the same place as the bare relative spelling.
-        """
-        repo_root = tmp_path / "repo3"
-        (repo_root / "build" / "v3_7").mkdir(parents=True)
-
-        repo = MagicMock()
-        repo.name = "repo3"
-        repo.sut_dir = repo_root
-
-        host = self._zephyr_host(element="sprout", os_version="3.7")
-        cov_config = {
-            "embedded": {
-                "extension": "cov_ext",
-                "builds": {"3.7": {"build_dir": "${sut_dir}/build/v3_7"}},
-            },
-        }
-
-        meta = self._collect(tmp_path, repo, host, cov_config)
-        assert meta["source_roots"]["sprout"] == str((repo_root / "build" / "v3_7").resolve())
 
 
 # ── Capture tail — fail loud (no swallowing inside collect_coverage) ──────────

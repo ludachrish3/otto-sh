@@ -26,7 +26,7 @@ def test_partial_block_keeps_other_default() -> None:
 @pytest.mark.asyncio
 async def test_run_coverage_report_stamps_thresholds_into_store_json(tmp_path) -> None:
     out = tmp_path / "report"
-    tier_configs = load_tiers({"tiers": {"nightly": {"kind": "e2e", "precedence": 1}}}, None)
+    tier_configs = load_tiers({"tiers": {"nightly": {"kind": "e2e", "precedence": 1}}})
     store = await run_coverage_report(
         [],
         out,

@@ -20,7 +20,7 @@ def _write_repo(tmp_path, name, version="1.0.0", *, required=(), optional=()) ->
     opt = ", ".join(f'"{e}"' for e in optional)
     (repo / ".otto" / "settings.toml").write_text(
         f'name = "{name}"\nversion = "{version}"\n'
-        f'libs = ["${{sut_dir}}"]\ninit = ["{name}_init"]\n\n'
+        f'libs = ["."]\ninit = ["{name}_init"]\n\n'
         f"[dependencies]\nrequired = [{req}]\noptional = [{opt}]\n"
     )
     (repo / f"{name}_init.py").write_text(
@@ -126,7 +126,7 @@ def test_no_dependencies_table_registers_normally(tmp_path, monkeypatch, order_f
     root = tmp_path / "solo"
     (root / ".otto").mkdir(parents=True)
     (root / ".otto" / "settings.toml").write_text(
-        'name = "solo"\nversion = "1.0.0"\nlibs = ["${sut_dir}"]\ninit = ["solo_init"]\n'
+        'name = "solo"\nversion = "1.0.0"\nlibs = ["."]\ninit = ["solo_init"]\n'
     )
     (root / "solo_init.py").write_text(
         "import os, pathlib\n"
