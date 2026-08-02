@@ -74,6 +74,7 @@ async def assert_reachable(element: str, ip: str) -> None:
 PORT_BLOCKS: tuple[tuple[int, int, str], ...] = (
     (15000, 15099, "tests/e2e/test_tunnel_e2e.py"),
     (15100, 15199, "tests/e2e/tunnel_stability/ (make stability-tunnel)"),
+    (15200, 15299, "tests/e2e/chaos/ (make chaos)"),
 )
 
 

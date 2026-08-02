@@ -10,6 +10,13 @@ These tests cover:
   branches — listener-wait ``ConnectionError`` (lines 709-712),
   forward+connect ``ConnectionError`` (lines 722-725), and listen-task timeout
   (lines 750-757).
+
+- ``TestNcGetTunneledCancellation`` (chaos hardening Plan 4, Task 7): external
+  cancellation mid-GET must cancel+reap the remote ``nc -Nl`` listener, not
+  leak it for ``listener_timeout`` seconds (30s by default — longer than the
+  10s teardown deadline; ``todo/chaos-teardown-followups.md`` §1). Mirrors
+  ``test_transfer_nc_put.py::TestNcPutCancellation`` for the reversed-listener
+  GET path.
 """
 
 import asyncio
@@ -616,3 +623,74 @@ class TestGetFilesNcTunneled:
         assert len(progress_calls) == 2
         assert progress_calls[0] == (5, 10)
         assert progress_calls[1] == (10, 10)
+
+
+# ============================================================================
+# TestNcGetTunneledCancellation — chaos hardening Plan 4, Task 7
+# ============================================================================
+
+
+class TestNcGetTunneledCancellation:
+    """External cancellation mid-GET must reap the remote ``nc -Nl`` listener.
+
+    ``_get_files_nc_tunneled``'s inner ``_get_one`` spawns the remote listener
+    (``nc -Nl -w <listener_timeout> <port> < <src>``) as an ``asyncio.Task``
+    and only joins it on its normal success / ``ConnectionError`` / timeout
+    branches. A caller-side cancellation skips all of those, so — mirroring
+    ``test_transfer_nc_put.py::TestNcPutCancellation`` for the put path's
+    ``_attempt`` — ``_get_one`` must cancel the listener task and reap the
+    remote ``nc -l`` itself. Pre-fix there is no ``except
+    asyncio.CancelledError`` handler at all in ``_get_one``, so the listener
+    is left running until its own ``-w`` timeout (30s default), which
+    outlives the 10s teardown deadline (``todo/chaos-teardown-followups.md``
+    §1; chaos spec success-criterion #1).
+    """
+
+    @pytest.mark.asyncio
+    async def test_cancellation_reaps_listener(self, tmp_path: Path) -> None:
+        src_remote = Path("/remote/data.bin")
+        dst_dir = tmp_path / "dst"
+        dst_dir.mkdir()
+
+        listener_started = asyncio.Event()
+
+        async def exec_side_effect(cmd: str, timeout: "float | None" = None, **kw: object):
+            if "-Nl" in cmd:
+                # The remote listener "runs" until its task is cancelled.
+                listener_started.set()
+                await asyncio.Event().wait()
+            return _ok("9000\n")
+
+        exec_cmd = AsyncMock(side_effect=exec_side_effect)
+        ft = _make_ft(exec_cmd, has_tunnel=True)
+        ft._connections.forward_port = AsyncMock(return_value=15000)
+
+        reap_calls: list[int] = []
+
+        async def fake_reap(port: int) -> None:
+            reap_calls.append(port)
+
+        async def block_forever(*args: object, **kwargs: object) -> None:
+            await asyncio.Event().wait()
+
+        # _wait_for_remote_listener blocks forever, so the cancellation lands
+        # after listen_task is spawned but before the forward/connect step —
+        # the window the fix targets.
+        with (
+            patch.object(ft, "_reap_nc_listener", new=fake_reap),
+            patch.object(
+                NcFileTransfer,
+                "_wait_for_remote_listener",
+                new=AsyncMock(side_effect=block_forever),
+            ),
+        ):
+            task = asyncio.create_task(ft._get_files_nc_tunneled([src_remote], dst_dir))
+            await asyncio.wait_for(listener_started.wait(), timeout=2.0)
+            await asyncio.sleep(0)  # let _get_one reach _wait_for_remote_listener
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+        assert reap_calls == [9000], (
+            f"cancellation must reap the remote nc GET listener, got {reap_calls}"
+        )

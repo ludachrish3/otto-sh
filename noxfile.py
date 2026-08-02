@@ -200,6 +200,51 @@ def tests_embedded(session: nox.Session) -> None:
     )
 
 
+@nox_uv.session(python=[PRIMARY_PYTHON], uv_groups=["dev"])
+def chaos(session: nox.Session) -> None:
+    """Tier-3 chaos lane, unix legs (opt-in; run via `make chaos`).
+
+    Bed-hostile by design: scenarios interrupt/SIGKILL real otto subprocesses
+    mid-flight on a leased veggies host, blackhole SSH over the data-plane
+    link, and soft-reboot the leased host. Requires the lab VMs and EXCLUSIVE
+    bed use — never co-run with any other bed lane. No coverage: these runs
+    exist to hunt teardown leaks, not to measure lines.
+    """
+    session.run(
+        "pytest",
+        "tests/e2e/chaos",
+        "-m",
+        "chaos and not embedded",
+        "--no-cov",
+        "-p",
+        "no:cacheprovider",
+        _junitxml(session, "nox-chaos"),
+        *session.posargs,
+    )
+
+
+@nox_uv.session(python=[PRIMARY_PYTHON], uv_groups=["dev"])
+def chaos_embedded(session: nox.Session) -> None:
+    """Tier-3 chaos lane, zephyr console leg (opt-in; run via `make chaos-embedded`).
+
+    Separate from `chaos` on purpose: the console-client-death scenario
+    reproduces the trigger class of the 2026-08-01 fat-board wedge, and a
+    failure can require a manual zephyr bed restart. Run it deliberately,
+    never as a rider.
+    """
+    session.run(
+        "pytest",
+        "tests/e2e/chaos",
+        "-m",
+        "chaos and embedded",
+        "--no-cov",
+        "-p",
+        "no:cacheprovider",
+        _junitxml(session, "nox-chaos-embedded"),
+        *session.posargs,
+    )
+
+
 @nox_uv.session(python=PYTHON_VERSIONS, uv_groups=["dev"])
 def tests_all(session: nox.Session) -> None:
     """Run the full suite — unit + integration + hops — under each supported Python.

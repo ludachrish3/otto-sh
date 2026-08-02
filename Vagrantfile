@@ -212,6 +212,28 @@ Vagrant.configure("2") do |config|
         # Set timezone to Chicago
         sudo timedatectl set-timezone America/Chicago
 
+        # Bound a hung shutdown to 90s instead of systemd's 30-minute default.
+        #
+        # VirtualBox Guest Additions (vboxadd.service / vboxadd-service.service)
+        # can wedge their stop in an UNINTERRUPTIBLE D-state kernel call during
+        # vboxsf teardown. SIGKILL cannot reap a D-state process, so their finite
+        # TimeoutStopSec=5min does not actually bound them: systemd's only escape
+        # is reboot.target's JobTimeoutSec, which defaults to 30 minutes with
+        # JobTimeoutAction=reboot-force. Observed 2026-08-02 on a test VM: a
+        # reboot stalled for exactly 30 minutes (sshd stopped within a second, so
+        # the box answered ping but refused SSH the whole time) before systemd
+        # logged "Forcibly rebooting: job timed out" and the kernel came back in
+        # 7 seconds. Shortening the timeout turns that into a ~2-minute reboot
+        # cycle and bounds ANY future hung shutdown, whatever unit is at fault.
+        # Required by the tier-3 chaos lane's reboot scenarios (make chaos).
+        mkdir -p /etc/systemd/system/reboot.target.d
+        {
+            echo '[Unit]'
+            echo '# Managed by the Vagrantfile global provisioner (rationale there).'
+            echo 'JobTimeoutSec=90'
+        } > /etc/systemd/system/reboot.target.d/override.conf
+        systemctl daemon-reload
+
         # Clean up
         apt clean
     SHELL

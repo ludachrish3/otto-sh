@@ -227,10 +227,12 @@ markers = [
     "timeout(seconds): fail the test if it exceeds the given number of seconds",
     "retry(n): retry the test up to n times on failure before reporting it as failed",
     "stability: heavy stability/soak tests — excluded from `make coverage`; run via `make stability` / `make stability-embedded`",
+    "chaos: tier-3 chaos-lane scenario (tests/e2e/chaos) — bed-hostile (reboots, SSH blackholes), excluded from every default gate like stability; opt-in via make chaos / make chaos-embedded",
     "concurrency: fast, no-VM SessionManager concurrency/soak tests — run via `make stability-unit`; stays in coverage",
     "e2e: end-to-end-tier test, auto-stamped from tests/e2e/ (level axis; orthogonal to the integration/embedded resource markers)",
     "soak: heavy browser-driven replay stress test (tests/e2e/monitor/dashboard/test_replay_soak.py) — excluded from `make dashboard`'s default -m selection and from noxfile.py's `dashboard` session (keep both in sync); chromium-only (`make dashboard-soak`, or -m soak --browser chromium — the test itself skips on other engines)",
     "no_bundle_page: browser test whose page deliberately renders none of our bundles (e.g. an access-key-refusal HTML hint page) — opts out of tests/_fixtures/_ts_coverage.py's zero-match guard without disabling collection",
+    "no_hygiene_bracket: chaos-lane test that manages its own BedHygiene bracket (reboot races the autouse after-probe)",
 ]
 
 # NB: coverage.py config lives in .coveragerc, not here — that file is shared

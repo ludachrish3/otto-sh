@@ -703,6 +703,7 @@ class NcFileTransfer(UnixFileTransfer):
             _logger.debug(f"{self._name}: NC get (tunneled) {src} -> {dst}")
 
             port = await self._find_free_port()
+            listen_task: asyncio.Task[CommandResult] | None = None
             try:
                 # Remote listener sends file data to the first connecting
                 # client. `-w` bounds the wait for that client so an orphaned
@@ -776,6 +777,29 @@ class NcFileTransfer(UnixFileTransfer):
                         ),
                     )
                 return Result(Status.Success, value=dst)
+            except asyncio.CancelledError:
+                # External cancellation mid-transfer skips listen_task's
+                # normal join points (the ConnectionError / timeout / success
+                # branches above). Cancel it and reap the remote `nc -l` so
+                # it doesn't linger until its `-w` timeout — mirrors the put
+                # path's `_attempt` handler (todo/chaos-teardown-followups.md
+                # §1: pre-fix this listener outlived the 10s teardown
+                # deadline by up to 20s). compensate() holds any FURTHER
+                # cancellation until the reap resolves (chaos spec: shielded
+                # compensating actions) — without it a second Ctrl+C tears
+                # the reap and strands the listener after all.
+                if listen_task is not None and not listen_task.done():
+                    # Imported here, not at module scope: otto.lifecycle is
+                    # only needed once a compensating action actually runs,
+                    # and a top-level import drags it onto every CLI --help
+                    # path (import-budget guard).
+                    from ...lifecycle import compensate
+
+                    await compensate(
+                        self._cancel_and_reap(listen_task, port),
+                        what=f"{self._name}: nc get listener reap (port {port})",
+                    )
+                raise
             finally:
                 self._release_port(port)
 
@@ -823,7 +847,7 @@ class NcFileTransfer(UnixFileTransfer):
             await asyncio.wait_for(writer.wait_closed(), timeout=1.0)
 
     async def _cancel_and_reap(self, listen_task: "asyncio.Task[CommandResult]", port: int) -> None:
-        """Join a cancelled put's listener task, then reap the remote ``nc -l``.
+        """Join a cancelled listener task (get or put path), then reap the remote ``nc -l``.
 
         ``suppress(Exception)``, not ``BaseException``: this runs inside
         ``compensate()``'s shield, so a genuine ``CancelledError`` landing

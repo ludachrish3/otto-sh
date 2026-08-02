@@ -3,12 +3,18 @@
 Run in the no-VM unit gate. G1 proves the integration/ auto-stamp hook fires;
 G2 proves no VM-only marker leaks into the unit tier. G3 proves the e2e/
 auto-stamp mirror. G4 proves no catch-all nox session sweeps the bed-hostile
-stability tier into a parallel run.
+stability tier into a parallel run. G5 proves every chaos-lane module carries
+both the `chaos` and `stability` markers. G6 proves the two positive
+stability Make legs (and the `repeat` soak, which isn't path-restricted
+either) can't co-select the chaos lane.
 """
 
 import ast
+import re
 from itertools import pairwise
 from pathlib import Path
+
+import pytest
 
 _TESTS = Path(__file__).resolve().parents[1]  # tests/
 _UNIT = _TESTS / "unit"
@@ -120,6 +126,79 @@ def test_catchall_nox_sessions_exclude_stability():
     assert catchall, "no catch-all -m expressions found in noxfile.py (guard misparse?)"
     offenders = [expr for expr in catchall if "not stability" not in expr]
     assert not offenders, f"catch-all nox marker expressions missing 'not stability': {offenders}"
+
+
+def _module_pytestmark_names(tree: ast.Module) -> set[str]:
+    """Marker names stamped via a module-level ``pytestmark`` assignment.
+
+    Collects both the plain-attribute form (``pytest.mark.chaos``) and the
+    called form (``pytest.mark.timeout(300)``, ``pytest.mark.xdist_group(...)``)
+    — ``ast.walk`` over the assign node visits a ``Call``'s ``func`` too, so
+    both shapes land in the same walk.
+    """
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if not (
+            isinstance(node, ast.Assign)
+            and any(isinstance(t, ast.Name) and t.id == "pytestmark" for t in node.targets)
+        ):
+            continue
+        for mark in ast.walk(node):
+            if (
+                isinstance(mark, ast.Attribute)
+                and isinstance(mark.value, ast.Attribute)
+                and isinstance(mark.value.value, ast.Name)
+                and mark.value.value.id == "pytest"
+                and mark.value.attr == "mark"
+            ):
+                names.add(mark.attr)
+    return names
+
+
+def test_chaos_modules_carry_chaos_and_stability():
+    """G5: every module under tests/e2e/chaos declares BOTH markers.
+
+    The lane's exclusion from default gates rides entirely on the module-level
+    ``stability`` stamp (every catch-all already says ``not stability``); the
+    positive ``chaos`` stamp is what the opt-in lane selects. A module missing
+    either silently joins gates it must never join, or silently drops out of
+    the lane. AST-scan pytestmark like the e2e resource-marker rule does at
+    runtime — this guard runs in the no-VM unit gate, so it fires on every PR.
+    """
+    chaos_dir = Path(__file__).parents[2] / "tests" / "e2e" / "chaos"
+    if not chaos_dir.is_dir():
+        pytest.skip("tests/e2e/chaos not created yet")
+    offenders = []
+    for mod in sorted(chaos_dir.glob("test_*.py")):
+        tree = ast.parse(mod.read_text())
+        marks = _module_pytestmark_names(tree)
+        missing = {"chaos", "stability"} - marks
+        if missing:
+            offenders.append(f"{mod.name}: missing {sorted(missing)}")
+    assert not offenders, "chaos modules missing required markers:\n  " + "\n  ".join(offenders)
+
+
+def test_stability_make_legs_exclude_chaos():
+    """G6: the positive stability selectors must not co-select the chaos lane.
+
+    ``stability-unix`` (``stability and integration and not embedded and not
+    hops``) and ``stability-embedded`` (``stability and embedded``) would both
+    match a double-stamped chaos module; chaos scenarios reboot and blackhole
+    the bed, so riding a stability soak would wreck it mid-run. G4 covers
+    noxfile catch-alls; this covers the Makefile legs that aren't. ``repeat``
+    is included too: unlike the coverage-gated Make legs, it isn't
+    path-restricted to tests/unit (it runs the full local suite — unit,
+    integration, e2e — under pytest-repeat), so its ``-m`` expression is a
+    catch-all in the same sense as noxfile's G4 targets and needs the same
+    exclusion.
+    """
+    makefile = (Path(__file__).parents[2] / "Makefile").read_text()
+    for leg in ("stability-unix", "stability-embedded", "repeat"):
+        recipe = makefile.split(f"\n{leg}:", 1)[1].split("\n\n", 1)[0]
+        m_exprs = re.findall(r'-m\s+"([^"]+)"', recipe)
+        assert m_exprs, f"{leg}: no -m expression found (recipe reshaped? update G6)"
+        offenders = [e for e in m_exprs if "not chaos" not in e]
+        assert not offenders, f"{leg}: -m expressions missing 'not chaos': {offenders}"
 
 
 def test_e2e_conftest_autostamps_e2e():

@@ -313,6 +313,7 @@ what you want to exercise:
 | Embedded / Zephyr (resource) | `make coverage-embedded` / `make nox-embedded` | zephyr VM |
 | Multi-hop only | `uv run pytest -m hops` | three VMs |
 | Stability / soak | `make stability` (or `stability-unit` / `stability-unix` / `stability-tunnel` / `stability-embedded`) | lab VMs (`-unit` needs none) |
+| Chaos lane (tier 3, opt-in — interrupt/SIGKILL/reboot scenarios + BedHygiene) | `make chaos` / `make chaos-embedded` | leased veggies host (+ zephyr board for the embedded leg) |
 | Everything (the dev-VM contract) | `make all` | lab VMs |
 | Cross-Python matrix | `make nox-unit` (quick, no VMs) / `make nox` (full on 3.10 + 3.14, hostless on the middle versions) / `make nox-full` (full, all Pythons) | `nox`/`nox-full` need VMs |
 

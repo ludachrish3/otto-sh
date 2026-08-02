@@ -9,7 +9,7 @@
 # on -j.
 .NOTPARALLEL:
 
-.PHONY: help all ci nox nox-full nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-python coverage-unit coverage-integration coverage-unix coverage-embedded coverage-hostless coverage-ts coverage-ts-unit docs docs-lint docs-html docs-inventories docs-media doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts check check-python check-ts format format-python format-ts schema monitor-fixtures clean changelog release stability stability-unit stability-unix stability-tunnel stability-embedded repeat vm-health qemu-restart import-snapshot hyperfine profile browsers dashboard dashboard-all dashboard-soak web-install web web-dev test-ts web-clean wheel-check
+.PHONY: help all ci nox nox-full nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-python coverage-unit coverage-integration coverage-unix coverage-embedded coverage-hostless coverage-ts coverage-ts-unit docs docs-lint docs-html docs-inventories docs-media doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts check check-python check-ts format format-python format-ts schema monitor-fixtures clean changelog release stability stability-unit stability-unix stability-tunnel stability-embedded chaos chaos-embedded repeat vm-health qemu-restart import-snapshot hyperfine profile browsers dashboard dashboard-all dashboard-soak web-install web web-dev test-ts web-clean wheel-check
 
 # Bump component for `make release`. Override on the command line:
 #   make release BUMP=minor
@@ -639,7 +639,7 @@ stability-unit: ## Run no-VM SessionManager concurrency/soak tests by marker. JU
 stability-unix: ## Real telnet/SSH soak against the Unix Vagrant VMs (incl. multi-hop). Requires lab VMs. JUnit XML in reports/junit/stability-unix/. Override iterations with COUNT=N (default 10).
 	@$(SAY) "pytest soak: real telnet/SSH on the Unix VMs (x$(STABILITY_UNIX_COUNT), leak detector on)"
 	@OTTO_DETECT_ASYNCIO_LEAKS=1 uv run pytest \
-	    -m "stability and integration and not embedded and not hops" \
+	    -m "stability and integration and not embedded and not hops and not chaos" \
 	    --count=$(STABILITY_UNIX_COUNT) \
 	    -p no:cacheprovider \
 	    --no-cov \
@@ -658,11 +658,19 @@ stability-tunnel: ## Tunnel soak against the live bed (churn/concurrency/traffic
 stability-embedded: ## Cross-OS stability contract against real telnet/SSH targets (Zephyr). Requires Vagrant lab up. JUnit XML lands in reports/junit/stability-embedded/. Override iterations with COUNT=N (default 1).
 	@$(SAY) "pytest soak: cross-OS contract incl. Zephyr (x$(STABILITY_EMBEDDED_COUNT), leak detector on)"
 	@OTTO_DETECT_ASYNCIO_LEAKS=1 uv run pytest \
-	    -m "stability and embedded" \
+	    -m "stability and embedded and not chaos" \
 	    -p no:cacheprovider \
 	    --no-cov \
 	    --count=$(STABILITY_EMBEDDED_COUNT) \
 	    $(call junitxml,stability-embedded)
+
+chaos: ## Tier-3 chaos lane, unix legs: interrupt/SIGKILL/reboot scenarios on a leased bed host. Requires lab VMs and EXCLUSIVE bed use (never co-run with other bed lanes). JUnit XML in reports/junit/nox-chaos/.
+	@$(SAY) "pytest chaos: tier-3 scenarios on the live bed (unix legs, leak detector on)"
+	@OTTO_DETECT_ASYNCIO_LEAKS=1 uv run nox -s chaos
+
+chaos-embedded: ## Tier-3 chaos lane, zephyr console leg (console-client-death). Can wedge a board — run deliberately; a failure may need a zephyr bed restart. JUnit XML in reports/junit/nox-chaos-embedded/.
+	@$(SAY) "pytest chaos: zephyr console scenarios (leak detector on)"
+	@OTTO_DETECT_ASYNCIO_LEAKS=1 uv run nox -s chaos_embedded
 
 stability: ## Run the full stability/soak suite: no-VM concurrency, then real telnet/SSH (Unix + embedded). Runs all tiers even if an earlier one is RED. Requires lab VMs for tiers 2-3. Override iterations with COUNT=N.
 	@$(SAY) "Tier 1 — unit-level concurrency"
@@ -696,7 +704,7 @@ stability: ## Run the full stability/soak suite: no-VM concurrency, then real te
 repeat: ## Run the full local suite (unit + integration + e2e) under pytest-repeat (excludes `browser` — see note above M_HOSTLESS; run its soak separately). Local only; requires VMs. JUnit XML in reports/junit/repeat/. Override COUNT=N (default 10).
 	@$(SAY) "pytest soak: full local suite, no browser (x$(COUNT), leak detector on)"
 	@OTTO_DETECT_ASYNCIO_LEAKS=1 uv run pytest \
-	    -m "not browser" \
+	    -m "not browser and not chaos" \
 	    --count=$(COUNT) \
 	    -p no:cacheprovider \
 	    --no-cov \
@@ -899,6 +907,7 @@ help: ## Show this help message
 	@printf '  \033[36m%-30s\033[0m %s\n' 'coverage-*'   'pinned Python + coverage    (bare coverage = BOTH languages: coverage-python, gated 95, + coverage-ts merged; hostless gated 90)'
 	@printf '  \033[36m%-30s\033[0m %s\n' 'nox-*'        'every suffix, all Pythons   (bare nox = full on primary + hostless on rest; nox-full = full matrix)'
 	@printf '  \033[36m%-30s\033[0m %s\n' 'stability-*'  'pytest-repeat soak          (unit · unix · tunnel · embedded; bare stability = all tiers)'
+	@printf '  \033[36m%-30s\033[0m %s\n' 'chaos / chaos-embedded' 'tier-3 chaos lane (opt-in, bed-hostile; unix legs · zephyr console)'
 	@printf '  \033[36m%-30s\033[0m %s\n' 'repeat'       'soak the full unit suite (pytest-repeat)'
 	@awk 'BEGIN { FS=":.*?## "; n=split("Build & Release|Quality|Docs|Lab|Dev",order,"|") } /^[a-zA-Z_-]+:.*## \(/ { d=$$2; s=d; sub(/\).*/,"",s); sub(/^\(/,"",s); sub(/^\([^)]*\) */,"",d); items[s]=items[s] sprintf("  \033[36m%-16s\033[0m %s\n",$$1,d) } END { for(i=1;i<=n;i++) if(order[i] in items) printf "\n\033[1m%s\033[0m\n%s",order[i],items[order[i]] }' \
 		$(MAKEFILE_LIST)
