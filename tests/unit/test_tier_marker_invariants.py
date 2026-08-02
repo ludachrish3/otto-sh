@@ -6,7 +6,12 @@ auto-stamp mirror. G4 proves no catch-all nox session sweeps the bed-hostile
 stability tier into a parallel run. G5 proves every chaos-lane module carries
 both the `chaos` and `stability` markers. G6 proves the two positive
 stability Make legs (and the `repeat` soak, which isn't path-restricted
-either) can't co-select the chaos lane.
+either) can't co-select the chaos lane. G7 proves the resource-slice legs
+(Makefile `M_UNIX`/`M_EMBEDDED` and nox's `tests_unix`/`tests_embedded`) —
+which share a resource marker (`integration`/`embedded`) with the chaos lane
+and, like the stability legs G6 covers, are bare positive selectors no
+catch-all's `not stability` protects — exclude BOTH bed-hostile tiers, not
+just one.
 """
 
 import ast
@@ -199,6 +204,46 @@ def test_stability_make_legs_exclude_chaos():
         assert m_exprs, f"{leg}: no -m expression found (recipe reshaped? update G6)"
         offenders = [e for e in m_exprs if "not chaos" not in e]
         assert not offenders, f"{leg}: -m expressions missing 'not chaos': {offenders}"
+
+
+def test_resource_slice_legs_exclude_stability_and_chaos():
+    """G7: the resource-slice legs must exclude BOTH bed-hostile tiers.
+
+    ``M_UNIX`` (Makefile, backing ``coverage-unix`` / nox's ``tests_unix``)
+    and ``M_EMBEDDED`` (backing ``coverage-embedded`` / ``tests_embedded``)
+    are bare positive selectors on the same resource marker
+    (``integration``/``embedded``) the chaos lane's modules are also stamped
+    with — no catch-all's ``not stability`` (G4) protects them, the same gap
+    G6 closed for the stability legs. Without ``not stability and not chaos``
+    on both, a resource-slice run co-selects chaos scenarios that soft-reboot
+    the leased host and blackhole SSH mid-suite. Covers the Makefile vars
+    directly (parsed like G6's recipe scrape) and the two nox sessions (via
+    G4's ``_nox_marker_expressions()`` scraper) — both hand-editable
+    surfaces, so both need their own pin.
+    """
+    makefile = (Path(__file__).parents[2] / "Makefile").read_text()
+    for var in ("M_UNIX", "M_EMBEDDED"):
+        m = re.search(rf"^{var} := (.+)$", makefile, re.MULTILINE)
+        assert m, f"{var} definition not found in Makefile (reshaped? update G7)"
+        expr = m.group(1)
+        missing = [clause for clause in ("not stability", "not chaos") if clause not in expr]
+        assert not missing, f"{var} missing {missing}: {expr!r}"
+
+    # Distinguish tests_unix's and tests_embedded's expressions from the
+    # other -m expressions in noxfile.py (several share the substrings
+    # "integration"/"embedded") by their leading clause: tests_unix's starts
+    # with a bare positive "integration", tests_embedded's is bare
+    # "embedded" (as opposed to e.g. chaos_embedded's "chaos and embedded",
+    # whose leading clause is "chaos").
+    exprs = _nox_marker_expressions()
+    unix_exprs = [e for e in exprs if e.split(" and ")[0].strip() == "integration"]
+    embedded_exprs = [e for e in exprs if e.split(" and ")[0].strip() == "embedded"]
+    assert unix_exprs, "no nox -m expr led by 'integration' (tests_unix reshaped? update G7)"
+    assert embedded_exprs, "no nox -m expr led by 'embedded' (tests_embedded reshaped? update G7)"
+    for label, found in (("tests_unix", unix_exprs), ("tests_embedded", embedded_exprs)):
+        for expr in found:
+            missing = [clause for clause in ("not stability", "not chaos") if clause not in expr]
+            assert not missing, f"{label} -m expression missing {missing}: {expr!r}"
 
 
 def test_e2e_conftest_autostamps_e2e():

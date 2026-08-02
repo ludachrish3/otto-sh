@@ -172,12 +172,17 @@ def tests_unix(session: nox.Session) -> None:
     """Run the Unix-VM integration suite (incl. multi-hop) under each Python.
 
     Requires the dev VM with Vagrant hosts up; not run in CI. No coverage gate
-    is enforced — a single environment exercises only a slice of otto.
+    is enforced — a single environment exercises only a slice of otto. Bare
+    positive selector, so `not stability and not chaos` are both required
+    here rather than riding a catch-all's exclusion: tests/e2e/chaos/ shares
+    the `integration` marker with this slice, so without the exclusion this
+    session would co-select chaos scenarios that soft-reboot the leased host
+    and blackhole SSH mid-suite (mirrors the Makefile's `M_UNIX`).
     """
     session.run(
         "pytest",
         "-m",
-        "integration and not embedded",
+        "integration and not embedded and not stability and not chaos",
         _junitxml(session, "nox-unix"),
         *session.posargs,
     )
@@ -189,12 +194,17 @@ def tests_embedded(session: nox.Session) -> None:
 
     Requires the Vagrant lab (zephyr VM) up; not run in CI. Serialization is
     handled by the per-device xdist_group + console lock in
-    tests/integration/host/conftest.py, so no -n0 is forced. No coverage gate.
+    tests/integration/host/conftest.py, so no -n0 is forced. No coverage
+    gate. Bare positive selector, so `not stability and not chaos` are both
+    required here rather than riding a catch-all's exclusion:
+    tests/e2e/chaos/ shares the `embedded` marker with this slice (the
+    console-client-death scenario), so without the exclusion this session
+    would co-select it (mirrors the Makefile's `M_EMBEDDED`).
     """
     session.run(
         "pytest",
         "-m",
-        "embedded",
+        "embedded and not stability and not chaos",
         _junitxml(session, "nox-embedded"),
         *session.posargs,
     )

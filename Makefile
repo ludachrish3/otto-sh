@@ -86,8 +86,18 @@ STABILITY_TUNNEL_CYCLES := $(if $(filter command line,$(origin CYCLES)),$(CYCLES
 #     embedded — Zephyr/QEMU under the zephyr VM
 #     hostless — needs no testbed at all (what CI gates on): tests/unit + the
 #                no-VM e2e tests. Mirrors noxfile.py tests_hostless.
-M_UNIX := integration and not embedded
-M_EMBEDDED := embedded
+# Both resource legs share a marker (`integration`/`embedded`) with the
+# tier-3 chaos lane (tests/e2e/chaos/ is stamped `chaos` + `stability` + one
+# of these two), and both are bare POSITIVE selectors — no catch-all's
+# `not stability` protects them. Without `not stability and not chaos` here,
+# `make coverage-unix` / `coverage-embedded` (and their nox twins) co-select
+# chaos scenarios that soft-reboot the leased host and blackhole SSH
+# mid-suite. `not stability` alone was the pre-existing gap (already true of
+# the plain stability soak); `not chaos` closes the same hole for the newer
+# chaos lane in the same change. See
+# tests/unit/test_tier_marker_invariants.py's G7.
+M_UNIX := integration and not embedded and not stability and not chaos
+M_EMBEDDED := embedded and not stability and not chaos
 M_HOSTLESS := not integration and not embedded and not stability and not browser
 
 # `browser` (Playwright) tests always run as their own pytest process — sync

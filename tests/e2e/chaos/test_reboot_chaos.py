@@ -36,6 +36,7 @@ pytestmark = [
     pytest.mark.chaos,
     pytest.mark.stability,
     pytest.mark.integration,
+    pytest.mark.hops,  # genuinely multi-host (carrot+tomato), like the two other multi-host modules
     pytest.mark.no_hygiene_bracket,  # after-probe would race the boot; each test brackets manually
     pytest.mark.xdist_group("chaos_lane"),
     pytest.mark.timeout(900),  # a real reboot cycle is minutes; live-bed rule: generous
