@@ -1,9 +1,10 @@
-"""Shared utilities: status enums, CLI overlay sentinels, and async helpers."""
+"""Shared utilities: status enums, CLI overlay sentinels, async helpers, and path helpers."""
 
 import functools
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
 from typing import (
     Any,
     Literal,
@@ -13,6 +14,20 @@ from typing import (
     get_args,
     get_origin,
 )
+
+
+def anchor_path(value: Path, root: Path) -> Path:
+    """Expand ``~``, then anchor a still-relative path to *root*.
+
+    ``settings.toml`` is committed and shared team-wide, so a CWD-relative
+    value in it can never resolve stably. Absolute paths (including
+    ``~``-rooted ones, already expanded here) pass through untouched.
+
+    Deliberately does not ``resolve()``: that would collapse symlinks and
+    change path identity for repos reached through symlinked checkouts.
+    """
+    value = value.expanduser()
+    return value if value.is_absolute() else root / value
 
 
 def split_on(values: list[str] | str, sep: str = ",") -> list[str]:

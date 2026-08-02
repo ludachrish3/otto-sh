@@ -63,7 +63,13 @@ def _settings_paths(root: Path) -> dict[str, list[Path]] | None:
     performs (plain ``str.replace``, no other variables). Returns ``None`` when
     the settings file is absent or fails to parse, so callers fall back to the
     conventional path instead of erroring.
+
+    Applies phase 1 anchoring: bare relative paths (including those starting
+    with ``~``) are anchored to *root*, matching the behavior of
+    :func:`otto.utils.anchor_path`.
     """
+    from ..utils import anchor_path
+
     settings_path = root / ".otto" / "settings.toml"
     if not settings_path.is_file():
         return None
@@ -77,7 +83,8 @@ def _settings_paths(root: Path) -> dict[str, list[Path]] | None:
         values = data.get(key, [])
         if not isinstance(values, list):
             continue
-        resolved[key] = [Path(str(v).replace("${sut_dir}", sut_dir)) for v in values]
+        paths = [Path(str(v).replace("${sut_dir}", sut_dir)) for v in values]
+        resolved[key] = [anchor_path(p, root) for p in paths]
     return resolved
 
 

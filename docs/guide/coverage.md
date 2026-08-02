@@ -123,7 +123,7 @@ color = "green"                # CSS color name or "#RRGGBB"; per-kind default i
 [coverage.tiers.unit]
 kind = "unit"
 precedence = 2
-harvest_dirs = ["build"]     # swept for .gcda at report time; "${sut_dir}" expands
+harvest_dirs = ["build"]     # swept for .gcda at report time; relative to the repo root
 color = "yellow"
 
 [coverage.tiers.manual]
@@ -143,7 +143,7 @@ Each `[coverage.tiers.<name>]` block:
 | `kind` | One of `e2e`, `unit`, `manual`. Selects the collection machinery — see {ref}`coverage-tier-kinds`. |
 | `precedence` | Integer; lower wins the winner-take-all row coloring when multiple tiers cover the same line. |
 | `color` | Optional CSS named color or `#RRGGBB` hex, validated at settings load. Defaults to a per-`kind` color when omitted (`e2e` = green, `unit` = yellow, `manual` = orange). |
-| `harvest_dirs` | `unit`-kind only: build directories swept for `.gcda` at report time. `"${sut_dir}"` expands to the repo's SUT directory; relative paths resolve against the repo root. |
+| `harvest_dirs` | `unit`-kind only: build directories swept for `.gcda` at report time. Relative paths resolve against the repo root (see {doc}`setup/repo-setup`). |
 | `max_age` | `manual`-kind only: `"<days>d"` (e.g. `"180d"`); enables the *aging* flag (see {ref}`coverage-validity`). Optional, off by default. |
 
 Tier **names are free-form** and multiple tiers may share a `kind` —

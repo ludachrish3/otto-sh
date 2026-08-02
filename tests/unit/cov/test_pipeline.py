@@ -522,6 +522,52 @@ class TestUnitHarvest:
         (frec,) = [f for f in store.files() if f.path.name == "f.c"]
         assert frec.lines[1].hits.for_tier("unit") == 5
 
+    @pytest.mark.asyncio
+    async def test_tilde_harvest_dir_expands_via_home(self, tmp_path, monkeypatch):
+        """A ``~``-prefixed ``harvest_dirs`` entry expands against ``HOME`` before
+        repo-anchoring (path-resolution convention, docs/guide/setup/repo-setup.md).
+
+        Without the fix, ``~`` is never expanded and the entry is anchored
+        literally under ``repo_root / "~" / "unit_build"``, which never exists —
+        the harvest dir is silently skipped and no unit coverage loads.
+        """
+        from otto.coverage.merge import merger as merger_mod
+
+        repo = _init_repo(tmp_path)
+        home = tmp_path / "home"
+        home.mkdir()
+        monkeypatch.setenv("HOME", str(home))
+        hdir = home / "unit_build"
+        hdir.mkdir()
+        (hdir / "f.gcda").write_bytes(b"")
+        (hdir / "f.gcno").write_bytes(b"")
+
+        src = repo / "f.c"
+
+        async def fake_capture(self, gcda_dir, gcno_dir, output, toolchain=None):
+            # Resolved against HOME, not repo_root/"~"/... .
+            assert gcda_dir == hdir
+            assert gcno_dir == hdir
+            output.write_text(f"TN:\nSF:{src}\nDA:1,5\nend_of_record\n")
+            return output
+
+        monkeypatch.setattr(merger_mod.LcovMerger, "capture", fake_capture)
+
+        cov_config = {
+            "tiers": {
+                "unit": {"kind": "unit", "precedence": 1, "harvest_dirs": ["~/unit_build"]},
+            }
+        }
+        store = await run_coverage_report(
+            [],
+            tmp_path / "report",
+            repo_root=repo,
+            tier_configs=load_tiers(cov_config),
+        )
+        assert store is not None
+        (frec,) = [f for f in store.files() if f.path.name == "f.c"]
+        assert frec.lines[1].hits.for_tier("unit") == 5
+
 
 @pytest.mark.asyncio
 async def test_duplicate_capture_across_sources_registers_one_run(tmp_path):

@@ -18,9 +18,9 @@ Create `.otto/settings.toml` in your repo root:
 name = "my_project"
 version = "1.0.0"
 
-labs  = ["${sut_dir}/../lab_data"]
-libs  = ["${sut_dir}/pylib"]
-tests = ["${sut_dir}/tests"]
+labs  = ["../lab_data"]
+libs  = ["pylib"]
+tests = ["tests"]
 init  = ["my_instructions", "my_shared_options"]
 
 # Optional: product preferences applied to every host this repo touches.
@@ -30,12 +30,43 @@ init  = ["my_instructions", "my_shared_options"]
 ssh_options = { connect_timeout = 5.0, keepalive_interval = 30 }
 ```
 
-### Variable expansion
+### Path resolution
 
-`${sut_dir}` is replaced with the absolute path to the repo root at load
-time.  Use it to keep paths relative and portable.  Expansion runs
-inside every settings table, including string values nested under
-`[host_preferences]`.
+Every path that otto itself interprets is expanded with `~` (your home
+directory), and if it is still relative it resolves against **the repo
+root** — the directory containing `.otto/`.  Absolute paths are used as
+written.  (`ssh_options` values, merged `host_preferences` fields, and the
+remote `[coverage] gcda_remote_dir` are opaque to otto — they are handled
+by whatever consumes them, not by otto's settings layer.)
+
+```toml
+tests    = ["tests"]                     # <repo>/tests
+libs     = ["../shared/pylib"]           # <repo>/../shared/pylib
+tls_cert = "~/.config/otto/tls/cert.pem" # [monitor] table: $HOME/.config/otto/tls/cert.pem
+```
+
+This file is committed and shared by everyone working on the repo, so a
+path is never interpreted relative to the directory you happen to run
+`otto` from.  Use `~` when you deliberately want a per-user location,
+such as TLS material.
+
+When several repos are active at once (`OTTO_SUT_DIRS`), each
+`settings.toml` resolves against its own repo root — the same text means
+the right thing in every repo.
+
+#### `${sut_dir}`
+
+`${sut_dir}` expands to the absolute path of the repo root, in every
+settings table.  For the settings above it is redundant — a plain
+relative path already resolves there — but it remains useful in the
+tables otto passes through to a backend without interpreting them
+(`[lab.<backend>]`, `[reservations.<backend>]`, and `ssh_options`),
+where otto cannot know which values are paths:
+
+```toml
+[lab.sqlbackend]
+db_url = "sqlite:///${sut_dir}/lab.db"
+```
 
 ### Field reference
 

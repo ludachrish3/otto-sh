@@ -62,6 +62,28 @@ class TestJsonBackend:
         with pytest.raises(ValueError, match="requires a 'path'"):
             build_backend({"backend": "json"}, tmp_path)
 
+    def test_tilde_path_expands_via_home(self, tmp_path, monkeypatch):
+        """A ``~``-prefixed path expands against ``HOME`` before repo-anchoring
+        (path-resolution convention, docs/guide/setup/repo-setup.md).
+
+        Without the fix, ``~`` is never expanded and the path is anchored
+        literally under ``repo_dir / "~" / "reservations.json"``, which never
+        exists — the backend raises on first read.
+        """
+        home = tmp_path / "home"
+        home.mkdir()
+        _write_reservations(home)
+        repo_dir = tmp_path / "repo"
+        repo_dir.mkdir()
+        monkeypatch.setenv("HOME", str(home))
+
+        backend = build_backend(
+            {"backend": "json", "json": {"path": "~/reservations.json"}},
+            repo_dir=repo_dir,
+        )
+        assert isinstance(backend, JsonReservationBackend)
+        assert backend.get_reserved_resources("anyone") == set()
+
     def test_url_forwarded_and_ignored(self, tmp_path):
         """url= forwards cleanly; the JSON backend ignores it."""
         f = _write_reservations(tmp_path)

@@ -565,6 +565,190 @@ class TestCollectEmbedded:
         assert meta["source_roots"]["sprout44"] == str(build44.resolve())
 
 
+class TestBuildDirPathAnchoring:
+    """``[coverage.embedded] build_dir`` (and the per-version
+    ``[coverage.embedded.builds.<ver>] build_dir``) is a passthrough
+    ``dict[str, Any]`` value read raw from ``cov_config`` — it never passes
+    through the pydantic model's ``RepoPath``, so it must be anchored by hand
+    at the point it's read to obey the documented path-resolution convention
+    (docs/guide/setup/repo-setup.md ``### Path resolution``): ``${sut_dir}``
+    substitution, then ``~`` expansion, then repo-root anchoring for a still-
+    relative value. Regression coverage for the settings-path-anchoring-
+    phase2 gap.
+    """
+
+    @staticmethod
+    def _zephyr_host(**kwargs):
+        from otto.host.embedded_host import ZephyrHost
+        from otto.host.toolchain import Toolchain
+
+        kwargs.setdefault("ip", "192.0.2.33")
+        kwargs.setdefault("transfer", "console")
+        kwargs.setdefault(
+            "toolchain",
+            Toolchain(
+                sysroot=Path("/opt/sdk/arm-zephyr-eabi"),
+                gcov=Path("bin/arm-zephyr-eabi-gcov"),
+                lcov=Path("/usr/bin/lcov"),
+            ),
+        )
+        return ZephyrHost(**kwargs)
+
+    def _collect(self, tmp_path, repo, host, cov_config):
+        cov_dir = tmp_path / "cov"
+        cov_dir.mkdir()
+        embedded_collect = AsyncMock(return_value={host.id: cov_dir / host.id})
+        with (
+            patch("otto.coverage.config.get_cov_config", return_value=cov_config),
+            patch("otto.config.all_hosts", return_value=[host]),
+            patch("otto.coverage.fetcher.embedded.collect_embedded_coverage", new=embedded_collect),
+            patch("otto.coverage.config.get_cov_repo", return_value=repo),
+            patch("otto.coverage.capture.produce.produce_captures", new=AsyncMock(return_value=[])),
+        ):
+            asyncio.run(collect_coverage(cov_dir, repos=[repo]))
+        return json.loads((cov_dir / ".otto_cov_meta.json").read_text())
+
+    # ── single ``build_dir`` fallback ────────────────────────────────────────
+
+    def test_relative_build_dir_anchors_to_repo_root_not_cwd(self, tmp_path, monkeypatch):
+        """A bare relative ``build_dir`` resolves under the repo root
+        (``cov_repo.sut_dir``), never the process CWD.
+
+        Without the fix, ``Path(build_dir).resolve()`` resolves relative to
+        wherever ``otto cov`` happens to be invoked from.
+        """
+        repo_root = tmp_path / "repo3"
+        (repo_root / "build").mkdir(parents=True)
+        elsewhere = tmp_path / "elsewhere"
+        elsewhere.mkdir()
+        monkeypatch.chdir(elsewhere)
+
+        repo = MagicMock()
+        repo.name = "repo3"
+        repo.sut_dir = repo_root
+
+        host = self._zephyr_host(element="sprout_cov")
+        cov_config = {"embedded": {"extension": "cov_ext", "build_dir": "build"}}
+
+        meta = self._collect(tmp_path, repo, host, cov_config)
+        assert meta["sut_dir"] == str((repo_root / "build").resolve())
+
+    def test_tilde_build_dir_expands_via_home(self, tmp_path, monkeypatch):
+        """A ``~``-rooted ``build_dir`` expands against ``HOME``, hermetically
+        via a monkeypatched HOME so the test doesn't depend on the real
+        user's home directory.
+        """
+        home = tmp_path / "home"
+        home.mkdir()
+        monkeypatch.setenv("HOME", str(home))
+        build_dir = home / "covbuild"
+        build_dir.mkdir()
+
+        repo = MagicMock()
+        repo.name = "repo3"
+        repo.sut_dir = tmp_path / "repo3"
+
+        host = self._zephyr_host(element="sprout_cov")
+        cov_config = {"embedded": {"extension": "cov_ext", "build_dir": "~/covbuild"}}
+
+        meta = self._collect(tmp_path, repo, host, cov_config)
+        assert meta["sut_dir"] == str(build_dir.resolve())
+
+    def test_sut_dir_prefixed_build_dir_matches_bare_relative(self, tmp_path):
+        """``${sut_dir}`` expands in ``build_dir``, resolving to the same
+        place as the bare relative spelling.
+        """
+        repo_root = tmp_path / "repo3"
+        (repo_root / "build").mkdir(parents=True)
+
+        repo = MagicMock()
+        repo.name = "repo3"
+        repo.sut_dir = repo_root
+
+        host = self._zephyr_host(element="sprout_cov")
+        cov_config = {"embedded": {"extension": "cov_ext", "build_dir": "${sut_dir}/build"}}
+
+        meta = self._collect(tmp_path, repo, host, cov_config)
+        assert meta["sut_dir"] == str((repo_root / "build").resolve())
+
+    # ── per-version ``builds.<ver>.build_dir`` ──────────────────────────────
+
+    def test_per_version_relative_build_dir_anchors_to_repo_root_not_cwd(
+        self, tmp_path, monkeypatch
+    ):
+        """The per-version ``builds.<ver>.build_dir`` obeys the same
+        anchoring rule as the single fallback: relative values resolve under
+        the repo root, not the process CWD.
+        """
+        repo_root = tmp_path / "repo3"
+        (repo_root / "build" / "v3_7").mkdir(parents=True)
+        elsewhere = tmp_path / "elsewhere"
+        elsewhere.mkdir()
+        monkeypatch.chdir(elsewhere)
+
+        repo = MagicMock()
+        repo.name = "repo3"
+        repo.sut_dir = repo_root
+
+        host = self._zephyr_host(element="sprout", os_version="3.7")
+        cov_config = {
+            "embedded": {
+                "extension": "cov_ext",
+                "builds": {"3.7": {"build_dir": "build/v3_7"}},
+            },
+        }
+
+        meta = self._collect(tmp_path, repo, host, cov_config)
+        assert meta["source_roots"]["sprout"] == str((repo_root / "build" / "v3_7").resolve())
+
+    def test_per_version_tilde_build_dir_expands_via_home(self, tmp_path, monkeypatch):
+        """The per-version ``builds.<ver>.build_dir`` expands a ``~`` prefix
+        against ``HOME``, hermetically via a monkeypatched HOME.
+        """
+        home = tmp_path / "home"
+        home.mkdir()
+        monkeypatch.setenv("HOME", str(home))
+        build_dir = home / "v3_7"
+        build_dir.mkdir()
+
+        repo = MagicMock()
+        repo.name = "repo3"
+        repo.sut_dir = tmp_path / "repo3"
+
+        host = self._zephyr_host(element="sprout", os_version="3.7")
+        cov_config = {
+            "embedded": {
+                "extension": "cov_ext",
+                "builds": {"3.7": {"build_dir": "~/v3_7"}},
+            },
+        }
+
+        meta = self._collect(tmp_path, repo, host, cov_config)
+        assert meta["source_roots"]["sprout"] == str(build_dir.resolve())
+
+    def test_per_version_sut_dir_prefixed_build_dir_matches_bare_relative(self, tmp_path):
+        """``${sut_dir}`` expands in the per-version ``build_dir``, resolving
+        to the same place as the bare relative spelling.
+        """
+        repo_root = tmp_path / "repo3"
+        (repo_root / "build" / "v3_7").mkdir(parents=True)
+
+        repo = MagicMock()
+        repo.name = "repo3"
+        repo.sut_dir = repo_root
+
+        host = self._zephyr_host(element="sprout", os_version="3.7")
+        cov_config = {
+            "embedded": {
+                "extension": "cov_ext",
+                "builds": {"3.7": {"build_dir": "${sut_dir}/build/v3_7"}},
+            },
+        }
+
+        meta = self._collect(tmp_path, repo, host, cov_config)
+        assert meta["source_roots"]["sprout"] == str((repo_root / "build" / "v3_7").resolve())
+
+
 # ── Capture tail — fail loud (no swallowing inside collect_coverage) ──────────
 
 

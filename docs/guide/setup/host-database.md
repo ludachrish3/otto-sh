@@ -38,7 +38,7 @@ your `labs` setting. No `[lab]` block is required — a repo with just
 name = "my_project"
 version = "1.0.0"
 
-labs = ["${sut_dir}/lab_data"]
+labs = ["lab_data"]
 ```
 
 Writing it out explicitly is equivalent:

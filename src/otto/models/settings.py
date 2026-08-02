@@ -27,6 +27,11 @@ from pydantic import (
 )
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
+# anchor_path lives in ..utils (stdlib-only, imports nothing from otto) so
+# the runtime readers that need it (coverage, reservations) never have to
+# import this pydantic-heavy module just to anchor a path — see the
+# import-budget guard.
+from ..utils import anchor_path
 from .base import OttoModel
 from .dependencies import clauses_satisfiable, normalize_name, parse_dependency_entry
 from .options import (
@@ -51,17 +56,16 @@ def anchor_to_repo(v: Path, info: ValidationInfo) -> Path:
 
     The repo root arrives via pydantic's validation context, which
     ``Repo.parse_settings`` supplies as ``{"sut_dir": ...}``. With no
-    context the path is left relative so ``SettingsModel`` stays
+    context the path is expanded but left relative so ``SettingsModel`` stays
     independently validatable.
 
     Deliberately does not ``resolve()``: that would collapse symlinks and
     change path identity for repos reached through symlinked checkouts.
     """
-    v = v.expanduser()
-    if v.is_absolute():
-        return v
     sut_dir = (info.context or {}).get("sut_dir")
-    return Path(sut_dir) / v if sut_dir is not None else v
+    if sut_dir is None:
+        return v.expanduser()
+    return anchor_path(v, Path(sut_dir))
 
 
 RepoPath = Annotated[Path, AfterValidator(anchor_to_repo)]

@@ -28,7 +28,7 @@ Profiles are authorable two ways, both feeding the same registry:
 Add an `[os_profiles.<name>]` sub-table to `.otto/settings.toml`.  The only
 required key is `base` — the name of a registered host class.  Every other key
 is a raw field default merged beneath each matching host's own fields (with
-`${sut_dir}` expansion applied).
+`${sut_dir}` expansion applied — see {doc}`../setup/repo-setup`).
 
 Example — a profile for a specific Zephyr 3.7 FAT build:
 

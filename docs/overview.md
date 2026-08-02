@@ -101,15 +101,16 @@ test suites, run instructions, and lab data:
 name = "my_project"
 version = "1.0.0"
 
-labs  = ["${sut_dir}/../lab_data"]
-libs  = ["${sut_dir}/pylib"]
-tests = ["${sut_dir}/tests"]
+labs  = ["../lab_data"]
+libs  = ["pylib"]
+tests = ["tests"]
 init  = ["my_instructions"]
 ```
 
-`${sut_dir}` is replaced with the repository root at load time.  The `init`
-list names Python modules that otto imports at startup — this is where you
-register your instructions and shared options.
+Relative paths resolve against the repository root — see
+{doc}`guide/setup/repo-setup`.  The `init` list names Python modules that
+otto imports at startup — this is where you register your instructions and
+shared options.
 
 ### Instructions (`otto run`)
 

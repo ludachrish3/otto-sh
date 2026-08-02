@@ -32,6 +32,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from ..utils import anchor_path
 from .merge.lcov_loader import LCOVLoader
 from .merge.merger import LcovMerger
 from .merge.paths import (
@@ -604,9 +605,9 @@ class CoverageReporter:
             tier_run_id: int | None = None
             for idx, raw_hdir in enumerate(tier.harvest_dirs):
                 hdir = (
-                    self.repo_root / raw_hdir
-                    if self.repo_root is not None and not raw_hdir.is_absolute()
-                    else raw_hdir
+                    anchor_path(raw_hdir, self.repo_root)
+                    if self.repo_root is not None
+                    else raw_hdir.expanduser()
                 )
                 if not hdir.is_dir():
                     logger.warning(

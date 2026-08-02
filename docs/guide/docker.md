@@ -32,21 +32,24 @@ registry_url = "docker.io"   # optional; default. Non-default registries
 
 [[docker.images]]
 name = "api"                              # short logical name
-dockerfile = "${sut_dir}/docker/api.Dockerfile"
-context = "${sut_dir}/docker"
+dockerfile = "docker/api.Dockerfile"
+context = "docker"
 
 [[docker.images]]
 name = "db"
-dockerfile = "${sut_dir}/docker/db.Dockerfile"
-context = "${sut_dir}/docker"
+dockerfile = "docker/db.Dockerfile"
+context = "docker"
 build_args = { VERSION = "1.2.3" }       # optional; influences hash
 target = "prod"                          # optional multi-stage target
 
 [[docker.composes]]
-path = "${sut_dir}/docker/compose.yml"
+path = "docker/compose.yml"
 default_host = "pepper_seed"             # lab host id; CLI --on overrides
 services = ["api", "db"]                 # used for tab-completion only
 ```
+
+Relative paths resolve against the repo root — see
+{doc}`setup/repo-setup`.
 
 ### Per-lab (`lab.json`)
 

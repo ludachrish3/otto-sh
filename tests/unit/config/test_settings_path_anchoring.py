@@ -206,3 +206,25 @@ def test_monitor_tls_relative_anchors_to_repo_root(tmp_path, monkeypatch):
 
     assert repo.monitor_settings.tls_cert == sut / "certs" / "bundle.pem"
     assert repo.monitor_settings.tls_key is None
+
+
+def test_anchor_path_direct(tmp_path, monkeypatch):
+    """Direct test of the anchor_path helper covering relative, absolute, and ~."""
+    from otto.utils import anchor_path
+
+    root = tmp_path / "repo"
+    root.mkdir()
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    # Relative paths anchor to root
+    assert anchor_path(Path("lab_data"), root) == root / "lab_data"
+    assert anchor_path(Path("a/b/c"), root) == root / "a" / "b" / "c"
+
+    # Absolute paths pass through
+    assert anchor_path(Path("/abs/path"), root) == Path("/abs/path")
+
+    # Tilde-rooted paths expand to home, not anchored to root
+    assert anchor_path(Path("~/pylib"), root) == home / "pylib"
+    assert not str(anchor_path(Path("~/pylib"), root)).startswith(str(root))

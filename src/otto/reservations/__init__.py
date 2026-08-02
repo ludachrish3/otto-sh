@@ -7,6 +7,7 @@ See :mod:`otto.reservations.protocol` for the backend contract and
 from pathlib import Path
 from typing import Any
 
+from ..utils import anchor_path
 from .check import (
     MissingReservationError as MissingReservationError,
 )
@@ -117,9 +118,7 @@ def build_backend(
             raise ValueError(
                 "[reservations.json] requires a 'path' string pointing at the reservation file"
             )
-        path = Path(path_raw)
-        if not path.is_absolute():
-            path = repo_dir / path
+        path = anchor_path(Path(path_raw), repo_dir)
         return cls(url=url, path=path)  # type: ignore[no-any-return]
 
     # Custom backend: resolved by registered name (register_reservation_backend

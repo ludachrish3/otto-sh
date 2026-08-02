@@ -354,14 +354,14 @@ The settings file tells otto where to find your code:
 name = "my_project"
 version = "0.1.0"
 
-labs  = ["${sut_dir}/lab_data"]
-tests = ["${sut_dir}/tests"]
-libs  = ["${sut_dir}/pylib"]
+labs  = ["lab_data"]
+tests = ["tests"]
+libs  = ["pylib"]
 init  = ["my_project_instructions"]
 ```
 
-`${sut_dir}` is automatically replaced with the repository root directory at
-load time.
+Relative paths resolve against the repository root; `~` expands to your home
+directory.  See {doc}`guide/setup/repo-setup` for the full rule.
 
 | Field | Purpose |
 | ----- | ------- |

@@ -320,6 +320,7 @@ async def _write_metadata(
     """
     import json
 
+    from ..utils import anchor_path
     from .config import get_cov_repo
 
     cov_repo = get_cov_repo(repos)
@@ -353,7 +354,21 @@ async def _write_metadata(
     # resolve the correct .gcno tree per host. The single ``build_dir`` remains
     # supported as a legacy/fallback for single-version labs.
     embedded_cfg = cov_config.get("embedded") or {}
+
+    def _anchor_build_dir(raw: str) -> str:
+        """Anchor a raw ``build_dir`` value read from the config passthrough dict.
+
+        Applies the documented path-resolution convention (docs/guide/setup/
+        repo-setup.md ``### Path resolution``): ``${sut_dir}`` substitution,
+        then ``~`` expansion and repo-root anchoring for a still-relative
+        value.
+        """
+        raw = raw.replace("${sut_dir}", str(cov_repo.sut_dir))
+        return str(anchor_path(Path(raw), cov_repo.sut_dir))
+
     embedded_build_dir = embedded_cfg.get("build_dir")  # single legacy/fallback
+    if embedded_build_dir:
+        embedded_build_dir = _anchor_build_dir(embedded_build_dir)
     embedded_builds = embedded_cfg.get("builds") or {}  # {"3.7": {"build_dir": ...}}
 
     def _resolve_build_dir(host: object) -> str | None:
@@ -361,7 +376,7 @@ async def _write_metadata(
         if ver and ver in embedded_builds:
             bd = embedded_builds[ver].get("build_dir")
             if bd:
-                return bd
+                return _anchor_build_dir(bd)
         return embedded_build_dir
 
     source_roots: dict[str, str] = {}

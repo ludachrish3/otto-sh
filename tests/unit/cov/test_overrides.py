@@ -86,6 +86,46 @@ def test_commit_entry_loads_with_resolved_full_sha(tmp_path):
     assert entry.key == f"commit:{sha}"
 
 
+def test_tilde_overrides_file_expands_via_home(tmp_path, monkeypatch):
+    """A ``~``-prefixed ``[coverage.overrides] file`` expands against ``HOME``
+    before repo-anchoring (path-resolution convention, docs/guide/setup/repo-setup.md).
+
+    Without the fix, ``~`` is never expanded and the path is anchored
+    literally under ``sut_dir / "~" / "coverage-overrides.toml"``, which never
+    exists — an explicitly configured path that doesn't exist is a loud error.
+    """
+    root, sha = _repo(tmp_path)
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    override_path = home / "coverage-overrides.toml"
+    override_path.write_text(f'[[bench]]\ncommit = "{sha}"\nreason = "hand-tested"\n')
+
+    cfg = {**_TICKETS_CFG, "overrides": {"file": "~/coverage-overrides.toml"}}
+    result = load_override_config(cfg, root, [_manual_tier()])
+    assert result is not None
+    assert result.path == override_path
+
+
+def test_sut_dir_expands_in_overrides_file(tmp_path):
+    """``${sut_dir}`` expands in ``[coverage.overrides] file``, resolving to the
+    same path as the bare relative spelling (path-resolution convention,
+    docs/guide/setup/repo-setup.md).
+
+    Without the fix, ``${sut_dir}`` is never substituted in the raw ``file``
+    value and the literal string is anchored under the repo root, producing
+    ``<repo>/${sut_dir}/.otto/coverage-overrides.toml`` — which never exists.
+    """
+    root, sha = _repo(tmp_path)
+    _write(root, f'[[bench]]\ncommit = "{sha}"\nreason = "hand-tested"\n')
+
+    cfg = {**_TICKETS_CFG, "overrides": {"file": "${sut_dir}/.otto/coverage-overrides.toml"}}
+    result = load_override_config(cfg, root, [_manual_tier()])
+
+    assert result is not None
+    assert result.path == root / DEFAULT_OVERRIDES_RELPATH
+
+
 def test_ticket_entry_requires_as_of(tmp_path):
     root, _ = _repo(tmp_path)
     _write(root, '[[bench]]\nticket = "#1"\nreason = "r"\n')

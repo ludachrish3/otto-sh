@@ -25,9 +25,9 @@ def test_settings_scaffold_parses_via_settings_model(tmp_path: Path) -> None:
     model = SettingsModel.model_validate(data)  # adapt: match how Repo parses (see repo.py:532-561)
     assert model.name == "widget"
     # conventional paths pre-wired so later area scaffolds never edit settings
-    assert data["labs"] == ["${sut_dir}/lab_data"]
-    assert data["tests"] == ["${sut_dir}/tests"]
-    assert data["libs"] == ["${sut_dir}/pylib"]
+    assert data["labs"] == ["lab_data"]
+    assert data["tests"] == ["tests"]
+    assert data["libs"] == ["pylib"]
     assert data["init"] == ["widget_instructions"]
 
 
@@ -184,3 +184,37 @@ def test_existing_vscode_settings_left_byte_for_byte_untouched(tmp_path: Path) -
     assert (vscode / "settings.json").read_text() == original
     assert vscode / "settings.json" not in created
     assert vscode / "extensions.json" in created  # independent only-if-absent check
+
+
+def test_settings_paths_anchors_relative_and_tilde_paths(tmp_path: Path, monkeypatch) -> None:
+    """_settings_paths anchors bare relative paths to root and expands ~ to home."""
+    from otto.cli.init import _settings_paths
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    # Create settings.toml with bare relative and tilde paths
+    otto_dir = repo / ".otto"
+    otto_dir.mkdir(parents=True)
+    settings_file = otto_dir / "settings.toml"
+    settings_text = (
+        'name = "test"\nversion = "1.0.0"\n'
+        'labs = ["lab_data", "~/custom_labs"]\n'
+        'tests = ["tests"]\nlibs = ["pylib"]'
+    )
+    settings_file.write_text(settings_text)
+
+    paths = _settings_paths(repo)
+    assert paths is not None
+
+    # Bare relative paths should anchor to repo root
+    assert paths["labs"][0] == repo / "lab_data"
+    assert paths["tests"][0] == repo / "tests"
+    assert paths["libs"][0] == repo / "pylib"
+
+    # Tilde paths should expand to home, not anchor to repo root
+    assert paths["labs"][1] == home / "custom_labs"
+    assert not str(paths["labs"][1]).startswith(str(repo))

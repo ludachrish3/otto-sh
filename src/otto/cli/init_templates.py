@@ -20,12 +20,11 @@ SETTINGS_TEMPLATE = """\
 name = "{name}"
 version = "{version}"
 
-# Where otto looks for things, relative to this repo's root (${{sut_dir}}).
-# These conventional paths are pre-wired so `otto init --lab` etc. can add
-# areas later without editing this file.
-labs = ["${{sut_dir}}/lab_data"]   # directories searched for lab.json
-tests = ["${{sut_dir}}/tests"]     # defines where test discovery happens
-libs = ["${{sut_dir}}/pylib"]      # added to sys.path at startup
+# Where otto looks for things. Relative paths resolve against this repo's
+# root (the directory holding .otto/); "~" expands to your home directory.
+labs = ["lab_data"]   # directories searched for lab.json
+tests = ["tests"]     # defines where test discovery happens
+libs = ["pylib"]      # added to sys.path at startup
 init = ["{init_module}"]           # modules imported at startup (register instructions)
 
 # Restrict --lab/OTTO_LAB to an allowlist (default: any lab found in labs dirs).
