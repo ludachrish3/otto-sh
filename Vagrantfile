@@ -458,6 +458,13 @@ Vagrant.configure("2") do |config|
         # Needs the SDKs from dev-zephyr-sdk + the apt build deps above.
         dev.vm.provision "shell", name: "dev-zephyr-workspace", privileged: false, keep_color: true,
             inline: zephyr_workspace_matrix
+
+        # A local docker daemon so the chaos lane's loopback venue
+        # (OTTO_CHAOS_DOCKER=loopback — the same slice nightly.yml's
+        # chaos-docker job runs on a GitHub runner) is exercisable on the dev
+        # VM instead of being certifiable only post-push. Same provisioner the
+        # test VMs use, so the daemon/compose versions match the bed's.
+        provision_docker(dev, "dev")
     end
 
     # Three interchangeable Unix test VMs — carrot / tomato / pepper. Identical
