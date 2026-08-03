@@ -21,7 +21,6 @@ repeat per probe.
 
 import contextlib
 import getpass
-import os
 import uuid
 from collections.abc import Iterator
 from pathlib import Path
@@ -29,6 +28,7 @@ from pathlib import Path
 from otto.host.login_proxy import Cred
 from otto.host.options import SshOptions
 from otto.host.unix_host import UnixHost
+from tests._ambient_env import ambient
 from tests.integration.chaos._sshd import (
     LoopbackSshd,
     free_port,
@@ -39,7 +39,7 @@ from tests.integration.chaos._sshd import (
 
 def docker_venue() -> str:
     """Which docker chaos venue to target: ``"pepper"`` (default) or ``"loopback"``."""
-    return os.environ.get("OTTO_CHAOS_DOCKER", "pepper")
+    return ambient("OTTO_CHAOS_DOCKER", "pepper")
 
 
 def pepper_parent() -> UnixHost:

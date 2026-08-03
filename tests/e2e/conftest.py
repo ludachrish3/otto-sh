@@ -27,10 +27,11 @@ collection and run first — same reason the per-device embedded groups are
 stamped in ``tests/integration/host/conftest.py``.
 """
 
-import os
 from pathlib import Path
 
 import pytest
+
+from tests._ambient_env import ambient
 
 _E2E_ROOT = Path(__file__).parent
 _PRIMARY = {"hostless", "integration", "embedded"}
@@ -73,7 +74,7 @@ def _browser_group_key(nodeid: str, *, shard: bool) -> str:
 
 @pytest.hookimpl(tryfirst=True)
 def pytest_collection_modifyitems(config, items):  # type: ignore[no-untyped-def]
-    shard = os.environ.get("OTTO_BROWSER_SHARD") == "1"
+    shard = ambient("OTTO_BROWSER_SHARD") == "1"
     offenders: list[str] = []
     for item in items:
         if _E2E_ROOT not in item.path.parents:

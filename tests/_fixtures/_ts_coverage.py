@@ -24,6 +24,8 @@ from pathlib import Path
 import pytest
 from playwright.sync_api import CDPSession, Page
 
+from tests._ambient_env import ambient
+
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 RAW_DIR = _REPO_ROOT / "reports" / "ts-e2e-cov" / "raw"
 
@@ -116,7 +118,7 @@ def ts_coverage(request: pytest.FixtureRequest, sink: list[dict]) -> Iterator[No
     our bundles, e.g. the access-key refusal path's 403 hint HTML.
     """
     if (
-        not os.environ.get("OTTO_TS_COVERAGE")
+        not ambient("OTTO_TS_COVERAGE")
         or request.node.get_closest_marker("browser") is None
         or request.node.get_closest_marker("soak") is not None
     ):

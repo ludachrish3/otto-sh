@@ -340,6 +340,22 @@ returns.
 `uv run pytest -k <kw>` filters any run by keyword. Recover a wedged embedded bed
 with `make qemu-restart`; probe the whole lab with `make vm-health`.
 
+#### Adding a harness environment knob
+
+`tests/conftest.py` strips every `OTTO_*` variable from the environment at
+import time so ambient otto *product* configuration can never leak into a run.
+Harness knobs like `OTTO_CHAOS_DOCKER`, `OTTO_CHAOS_SEED`, `OTTO_CHAOS_BED_HOST`
+and `OTTO_TUNNEL_SOAK_CYCLES` are exempt — but only because they are declared in
+`tests/_ambient_env.py`, which is the single source of truth for that allowlist.
+
+Declare a new knob there and read it with `ambient("OTTO_...")`. Reading one
+straight from `os.environ` without declaring it does not raise; the variable is
+simply gone by the time the reader runs, so the knob silently does nothing and
+the run stays green while doing the wrong thing. That is issue #192: nightly's
+`OTTO_CHAOS_DOCKER=loopback` job spent months of runtime targeting the bed host
+instead, and the same bug had quietly disabled the chaos seed's reproduce path
+and `make stability-tunnel CYCLES=N`.
+
 ### Embedded coverage bed
 
 `sprout_cov` is the embedded coverage instance: an ARM `mps2_an385` Zephyr in the

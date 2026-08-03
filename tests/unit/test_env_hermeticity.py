@@ -19,11 +19,19 @@ from pathlib import Path
 
 import pytest
 
+from tests._ambient_env import AMBIENT_OPT_INS as AMBIENT_OPT_IN_NOTES
+from tests._ambient_env import ambient, ambient_opt_ins
+
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
-# Harness opt-ins legitimately read from the ambient environment; everything
-# else OTTO_-prefixed is otto *product* configuration and must not leak in.
-ALLOWED_AMBIENT = {"OTTO_DETECT_ASYNCIO_LEAKS", "OTTO_TS_COVERAGE", "OTTO_BROWSER_SHARD"}
+# Imported, never re-declared: a hand-copied second copy of the allowlist is
+# what let issue #192 through — the copy here can agree with itself while the
+# real strip in tests/conftest.py is missing an entry.
+AMBIENT_OPT_INS = ambient_opt_ins()
+
+# A distinct value per variable, so a probe assertion can't pass on a
+# coincidental collision with some reader's default.
+_PROBE_VALUES = {name: f"probe-{i}" for i, name in enumerate(sorted(AMBIENT_OPT_INS))}
 
 # Deliberately NOT OTTO_-prefixed: the guard under test would strip it.
 PROBE_FLAG = "_TEST_OTTO_HERMETICITY_PROBE"
@@ -36,18 +44,23 @@ def test_probe_ambient_otto_env_is_stripped():
     order-fragile: any earlier in-worker test that exports an ``OTTO_*``
     variable without cleanup would fail it spuriously — the guard strips
     the *ambient* env once at conftest import, not between tests."""
-    leaked = [k for k in os.environ if k.startswith("OTTO_") and k not in ALLOWED_AMBIENT]
+    leaked = [k for k in os.environ if k.startswith("OTTO_") and k not in AMBIENT_OPT_INS]
     assert leaked == [], (
         f"ambient otto configuration leaked into the test process: {leaked} "
         "(tests/conftest.py should have stripped these at import time)"
     )
-    # Positive pin (the subprocess below sets it): an allowlisted harness
-    # opt-in must SURVIVE the strip, or `make dashboard`'s OTTO_TS_COVERAGE gate
-    # silently collects nothing and `make coverage-ts` fails with an opaque
-    # empty-coverage error far downstream.
-    assert os.environ.get("OTTO_TS_COVERAGE") == "1", (
-        "allowlisted OTTO_TS_COVERAGE was stripped from the ambient env — the "
-        "browser TS-coverage gate would no-op"
+    # Positive pin (the subprocess below sets every one of them): EVERY
+    # declared harness opt-in must SURVIVE the strip. Each of these is read
+    # from the ambient environment by harness code, and each fails SILENTLY
+    # when stripped — the reader just sees its default and the run continues
+    # green against the wrong venue/seed/depth. That is how issue #192
+    # happened: OTTO_CHAOS_DOCKER was undeclared, so nightly's `loopback` job
+    # silently targeted the bed host pepper instead.
+    stripped = sorted(k for k in AMBIENT_OPT_INS if os.environ.get(k) != _PROBE_VALUES[k])
+    assert stripped == [], (
+        f"declared ambient opt-ins were stripped from the env: {stripped} — "
+        "each reader would silently fall back to its default (see "
+        "tests/_ambient_env.py for what each one drives)"
     )
 
 
@@ -68,9 +81,11 @@ def test_ambient_otto_env_cannot_leak_into_a_pytest_run():
         env={
             **os.environ,
             PROBE_FLAG: "1",
+            # Product configuration: must be stripped.
             "OTTO_SUT_DIRS": "/somewhere/else/tests/repo1",
             "OTTO_XDIR": "/somewhere/else/xdir",
-            "OTTO_TS_COVERAGE": "1",
+            # Every declared harness opt-in: must survive.
+            **_PROBE_VALUES,
         },
         cwd=str(PROJECT_ROOT),
         capture_output=True,
@@ -84,6 +99,32 @@ def test_ambient_otto_env_cannot_leak_into_a_pytest_run():
     )
     # Guard against silently passing on a deselected/skipped probe.
     assert "1 passed" in result.stdout, f"probe did not run:\n{result.stdout}"
+
+
+def test_reading_an_undeclared_opt_in_raises():
+    """``ambient()`` must refuse a name the strip does not spare.
+
+    This is the only loud moment available for the whole bug class. An
+    undeclared opt-in is gone from ``os.environ`` before its reader runs, so
+    every downstream symptom is a silent fallback to a default — a chaos run
+    against the wrong venue, a "reproduce with this seed" that reseeds, a
+    soak at the wrong depth. None of those fail anything. Raising here turns
+    "forgot to declare it" into an immediate error at the first read.
+    """
+    with pytest.raises(KeyError, match="not a declared ambient harness opt-in"):
+        ambient("OTTO_NOT_DECLARED")
+
+
+def test_every_declared_opt_in_documents_what_it_drives():
+    """A bare name in the registry is not enough to keep it honest.
+
+    The note is what tells the next person touching the strip which lane
+    breaks if they drop the entry — and what tells a reviewer whether a new
+    entry is a genuine harness knob or otto product configuration that has
+    no business surviving.
+    """
+    thin = sorted(name for name, note in AMBIENT_OPT_IN_NOTES.items() if len(note) < 40)
+    assert thin == [], f"declared opt-ins with no usable note: {thin}"
 
 
 def test_bootstrap_state_cannot_leak_between_tests():

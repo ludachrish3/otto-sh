@@ -6,13 +6,13 @@ Every knob is read HERE and nowhere else.
 
 import asyncio
 import contextlib
-import os
 import uuid
 
 from otto.logger.mode import LogMode
 from otto.tunnel import add_tunnel, discover_tunnels, remove_tunnel
+from tests._ambient_env import ambient
 
-SOAK_CYCLES = int(os.environ.get("OTTO_TUNNEL_SOAK_CYCLES", "5"))
+SOAK_CYCLES = int(ambient("OTTO_TUNNEL_SOAK_CYCLES", "5"))
 """Internal loop depth per soak test. `make stability-tunnel CYCLES=N` sets it."""
 
 ARM_SECONDS = 180  # auto-CONT well past the wedged phase's worst case

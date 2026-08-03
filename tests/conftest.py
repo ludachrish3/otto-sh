@@ -123,19 +123,18 @@ for _var in ("FORCE_COLOR", "CLICOLOR_FORCE", "PY_COLORS", "CLICOLOR"):
 # Strip everything OTTO_-prefixed at import time — this runs in the
 # controller and every xdist worker before any test code. Tests that need
 # otto env set their own values (monkeypatch / explicit subprocess env
-# dicts), which happens after this and is unaffected. Harness opt-ins
-# legitimately read from the ambient environment are exempt. Pinned by
-# tests/unit/test_env_hermeticity.py.
-# OTTO_TS_COVERAGE is a harness opt-in like OTTO_DETECT_ASYNCIO_LEAKS: `make
-# dashboard` sets it to arm the browser suites' CDP coverage collection
-# (tests/_fixtures/_ts_coverage.py), so it must survive this strip to reach the
-# fixture. OTTO_BROWSER_SHARD is the same kind of opt-in: CI's dashboard jobs
-# set it to relax the browser suites' single-worker pin to per-file xdist
-# groups (tests/e2e/conftest.py's grouping policy reads it at collection,
-# which happens after this strip). Keep in sync with
-# tests/unit/test_env_hermeticity.py's ALLOWED_AMBIENT.
-_OTTO_AMBIENT_ALLOWED = {"OTTO_DETECT_ASYNCIO_LEAKS", "OTTO_TS_COVERAGE", "OTTO_BROWSER_SHARD"}
-for _var in [k for k in os.environ if k.startswith("OTTO_") and k not in _OTTO_AMBIENT_ALLOWED]:
+# dicts), which happens after this and is unaffected.
+#
+# Harness opt-ins — knobs a Makefile target, a CI job, or a developer sets to
+# steer the harness rather than otto — are exempt, and are declared ONCE in
+# tests/_ambient_env.py alongside what each one drives. That module is the
+# allowlist; do not restate it here. A second copy is what let issue #192
+# through: the copy agreed with itself while the strip was missing an entry,
+# so nightly's `OTTO_CHAOS_DOCKER=loopback` job silently ran against the bed
+# host instead. Pinned by tests/unit/test_env_hermeticity.py.
+from tests._ambient_env import AMBIENT_OPT_INS, ambient
+
+for _var in [k for k in os.environ if k.startswith("OTTO_") and k not in AMBIENT_OPT_INS]:
     os.environ.pop(_var, None)
 
 import asyncio
@@ -453,7 +452,7 @@ def _report_leaked_transports(item) -> None:  # type: ignore[no-untyped-def]
     when no transport leaked. Print rather than raise: we want to *attribute*
     the leak, not fail the test that detected it.
     """
-    if not os.environ.get("OTTO_DETECT_ASYNCIO_LEAKS"):
+    if not ambient("OTTO_DETECT_ASYNCIO_LEAKS"):
         return
     leaks = scan_leaked_transports()
     if not leaks:

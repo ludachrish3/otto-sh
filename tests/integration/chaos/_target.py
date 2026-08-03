@@ -11,8 +11,9 @@ import asyncio
 import dataclasses
 import getpass
 import json
-import os
 from pathlib import Path
+
+from tests._ambient_env import ambient
 
 _REPO_E2E = Path(__file__).resolve().parents[2] / "repo_e2e"
 
@@ -129,4 +130,4 @@ def probe(target: ChaosTarget, command: str) -> "tuple[int, str]":
 
 
 def bed_host_override() -> "str | None":
-    return os.environ.get("OTTO_CHAOS_BED_HOST") or None
+    return ambient("OTTO_CHAOS_BED_HOST") or None

@@ -9,11 +9,13 @@ output surfaces it on failure, which is the reproduce path.
 import os
 import random
 
+from tests._ambient_env import ambient
+
 _ENV = "OTTO_CHAOS_SEED"
 
 
 def resolve_seed() -> int:
-    pinned = os.environ.get(_ENV)
+    pinned = ambient(_ENV)
     if pinned:
         return int(pinned)
     return int.from_bytes(os.urandom(4), "big")
