@@ -5,6 +5,62 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.2] - 2026-08-03
+
+### Added
+
+- provision docker on the dev VM for the loopback chaos venue
+- docker + extended-surface chaos, closing the chaos workstream
+- tier-3 chaos lane — BedHygiene oracle, seeded injection, live-bed scenarios
+- remove the ${sut_dir} template variable
+- tier-2 real-signal harness with lifecycle-owned monitor signals
+- truthful two-phase reboot with liveness-gated recovery
+- guarded teardown chains and shielded compensating actions
+- manual-testing coverage overrides and ticket reattribution
+- canonical run_command entry with two-stage SIGINT/SIGTERM teardown policy
+
+
+### Changed
+
+- lazy-export the settings specs; stop counting startup noise (#180)
+- defer the monitor runtime imports off the --help path (#180)
+
+
+### Dependencies
+
+- bump ty from 0.0.63 to 0.0.64
+- bump bump-my-version from 1.4.1 to 1.5.0
+- bump jsdom from 29.1.1 to 30.0.1 in /web
+- bump fastapi from 0.140.0 to 0.140.13
+- bump @types/node from 26.1.1 to 26.1.2 in /web
+- update uv-build requirement from <0.12.0 to <0.13.0
+- bump uvicorn from 0.51.0 to 0.52.0
+- bump shiki from 3.23.0 to 4.3.1 in /web
+- bump @biomejs/biome from 2.5.5 to 2.5.6 in /web
+- bump hypothesis from 6.161.2 to 6.163.0
+
+
+### Documentation
+
+- document the repo-root path convention; make it hold everywhere
+- document real life console hang
+- track the unraisable subprocess-transport flake + prompt-then-freeze reboot consideration
+- record bootstrap's accumulating discovery errors as a follow-up
+- chaos hardening spec + plan 1 (lifecycle core)
+
+
+### Fixed
+
+- close the post-timeout recovery leg for a lost connection
+- surface a lost SSH connection as a CommandResult, not a traceback
+- resource-slice legs exclude both bed-hostile tiers
+- anchor relative settings.toml paths to the repo root
+- await the react-aria breadcrumb collection in FilePage's crumbs test
+- reset otto.bootstrap's module caches between tests
+- keep otto.lifecycle off the CLI --help import paths (#180)
+- document otto.lifecycle, drop private-typed params from signatures
+
+
 ## [0.8.1] - 2026-07-31
 
 ### Added
@@ -1055,7 +1111,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - added GitHub templates
 - set up release management
 
-[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.8.1...HEAD
+[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.8.2...HEAD
+[0.8.2]: https://github.com/ludachrish3/otto-sh/compare/v0.8.1...v0.8.2
 [0.8.1]: https://github.com/ludachrish3/otto-sh/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/ludachrish3/otto-sh/compare/v0.7.4...v0.8.0
 [0.7.4]: https://github.com/ludachrish3/otto-sh/compare/v0.7.3...v0.7.4
