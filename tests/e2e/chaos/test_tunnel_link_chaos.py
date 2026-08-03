@@ -11,20 +11,18 @@ of the two hosts these scenarios actually dirty.
 """
 
 import contextlib
-import json
 import re
 import shlex
 import time
 
 import pytest
 
-from otto.link.derive import addressing_from_dict, resolve_declared_links
 from otto.logger.mode import LogMode
-from tests._fixtures.labdata import host_data, lab_data_path
+from tests._fixtures.labdata import host_data
 from tests._fixtures.tunnel_bed import cli_sut_dir, observe_tunnel_processes
-from tests.e2e.chaos._bed import run_probe
+from tests.e2e.chaos._bed import assert_eth2_netem_free, run_probe, tunnel_target, veggies_link_id
 from tests.integration.chaos._driver import BANNER, spawn_otto
-from tests.integration.chaos._target import ChaosTarget, make_bed_target
+from tests.integration.chaos._target import make_bed_target
 
 pytestmark = [
     pytest.mark.chaos,
@@ -128,60 +126,13 @@ def _leftover_tunnel_processes() -> list:
     return asyncio.run(observe_tunnel_processes())
 
 
-def _tunnel_target(sut_dir) -> ChaosTarget:
-    """ChaosTarget for CLI-driven tunnel commands against `cli_sut_dir`'s isolated SUT.
-
-    ``spawn_otto`` only ever reads ``target.sut_dir``/``target.lab`` (see
-    ``tests/integration/chaos/_driver.py::_otto_env``) — the ssh_* fields
-    exist to feed the asyncssh oracle in ``tests.integration.chaos._target``,
-    unused here since tunnel-process reconciliation goes through
-    ``observe_tunnel_processes``/``run_probe`` instead. Populated from
-    carrot's real creds anyway, for shape-parity with ``make_bed_target``.
-    """
-    carrot = host_data("carrot")
-    cred = carrot["creds"][0]
-    return ChaosTarget(
-        sut_dir=sut_dir,
-        lab="veggies",
-        host_id="carrot_seed",
-        ssh_host=carrot["ip"],
-        ssh_port=22,
-        ssh_username=cred["login"],
-        ssh_client_key=None,
-        ssh_password=cred["password"],
-    )
-
-
-def _veggies_link_id() -> str:
-    """The declared carrot_seed<->tomato_seed eth2 link's id.
-
-    Mirrors ``tests/e2e/chaos/test_connection_drop.py::_veggies_link_id``
-    verbatim: the raw ``tech1/lab.json`` has no literal ``"id"`` key on its
-    ``links`` entries -- ``Link.id`` is auto-derived at load time from the
-    sorted endpoint host ids (``otto.link.model.make_static_link_id``), so
-    this replicates the SAME load ``otto`` itself does
-    (``otto.link.derive.resolve_declared_links``) rather than a naive
-    ``data["links"][0]["id"]`` (which KeyErrors -- there is no such key).
-    """
-    data = json.loads(lab_data_path().read_text())
-    hosts = dict(addressing_from_dict(h) for h in data["hosts"])
-    loaded_ids = set(hosts)
-    links = resolve_declared_links(data["links"], hosts, source="lab.json", loaded_ids=loaded_ids)
-    link = links[0]  # tech1/lab.json declares exactly one link: carrot_seed:eth2<->tomato_seed:eth2
-    assert {link.a.host, link.b.host} == {"carrot_seed", "tomato_seed"}, (
-        f"expected the carrot<->tomato eth2 link at links[0], got {link!r} -- "
-        "tech1/lab.json's declared links changed shape"
-    )
-    return link.id
-
-
 @pytest.mark.no_hygiene_bracket  # multi-host; we reconcile + assert manually
 def test_sigkill_mid_tunnel_recovers_via_remove_all(tmp_path):
     """SIGKILL an `otto tunnel add` mid-launch; assert `tunnel remove --all
     --yes` reaps whatever daemons survived and the trio ends clean.
     """
     sut = cli_sut_dir(tmp_path)
-    target = _tunnel_target(sut)
+    target = tunnel_target(sut)
     p = spawn_otto(
         [
             "tunnel",
@@ -207,6 +158,11 @@ def test_sigkill_mid_tunnel_recovers_via_remove_all(tmp_path):
         assert rm.wait(timeout=120.0) == 0, rm.stderr_text()
         assert not _leftover_tunnel_processes(), "tunnel remove --all left survivors"
     finally:
+        # Belt for the assert-failure path: `_wait_for_stdout` above can raise
+        # before `p` is ever signaled/reaped, leaving the local subprocess
+        # running. SIGKILL it if it's still alive before doing anything else.
+        if p.proc.poll() is None:
+            p.signal(9)
         rm2_xdir = tmp_path / "rm2"
         rm2_xdir.mkdir()
         spawn_otto(["tunnel", "remove", "--all", "--yes"], xdir=rm2_xdir, target=target).wait(
@@ -315,8 +271,9 @@ def test_interrupt_during_rollback_still_reaps(tmp_path):
     is the precise one.
     """
     sut = cli_sut_dir(tmp_path)
-    target = _tunnel_target(sut)
+    target = tunnel_target(sut)
     carrot_ip = host_data("carrot")["interfaces"]["eth2"]["ip"]
+    p = None  # bound inside the try; finally must not assume it got there
     try:
         # Inside the try from the start: if the hold-port confirmation itself
         # fails (e.g. the bind-confirmation poll times out), the listener may
@@ -349,6 +306,11 @@ def test_interrupt_during_rollback_still_reaps(tmp_path):
             f"add_tunnel's own compensate()-shielded rollback left survivors: {survivors}"
         )
     finally:
+        # Belt for the assert-failure path: `_wait_for_stdout` above can raise
+        # before `p` is ever signaled/reaped, leaving the local subprocess
+        # running. SIGKILL it if it's still alive before doing anything else.
+        if p is not None and p.proc.poll() is None:
+            p.signal(9)
         _release_tcp_port("carrot")
         rm_xdir = tmp_path / "rollback_rm"
         rm_xdir.mkdir()
@@ -358,20 +320,12 @@ def test_interrupt_during_rollback_still_reaps(tmp_path):
         assert not _leftover_tunnel_processes(), "bed not clean after final reconciliation"
 
 
-def _assert_eth2_netem_free(what: str) -> None:
-    for elem in ("carrot", "tomato"):
-        out = run_probe(
-            elem, lambda h: h.exec("tc qdisc show dev eth2", timeout=30, log=LogMode.QUIET)
-        )
-        assert "netem" not in (out.value or ""), f"{elem}: netem survived {what}: {out.value!r}"
-
-
 @pytest.mark.no_hygiene_bracket  # multi-host; product's own repair --all + our manual reconcile
 def test_sigkill_mid_impair_recovers_via_repair_all(tmp_path):
     """SIGKILL an `otto link impair`; assert `otto link repair --all` restores
     impairment-free qdiscs on the trio.
     """
-    link_id = _veggies_link_id()
+    link_id = veggies_link_id()
     target = make_bed_target("carrot")
     p = spawn_otto(
         ["link", "impair", link_id, "--loss", "50", "--expire", "60"],
@@ -394,9 +348,14 @@ def test_sigkill_mid_impair_recovers_via_repair_all(tmp_path):
         rep = spawn_otto(["link", "repair", "--all"], xdir=rep_xdir, target=target)
         assert rep.wait(timeout=120.0) == 0, rep.stderr_text()
         # eth2 must be netem-free on both endpoints.
-        _assert_eth2_netem_free("repair --all")
+        assert_eth2_netem_free("repair --all")
     finally:
+        # Belt for the assert-failure path: `_wait_for_stdout` above can raise
+        # before `p` is ever signaled/reaped, leaving the local subprocess
+        # running. SIGKILL it if it's still alive before doing anything else.
+        if p.proc.poll() is None:
+            p.signal(9)
         rep2_xdir = tmp_path / "rep2"
         rep2_xdir.mkdir()
         spawn_otto(["link", "repair", "--all"], xdir=rep2_xdir, target=target).wait(timeout=120.0)
-        _assert_eth2_netem_free("the FINAL reconciliation repair --all")
+        assert_eth2_netem_free("the FINAL reconciliation repair --all")

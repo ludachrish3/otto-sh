@@ -10,6 +10,7 @@ design, so there is no need to fake either library here.
 from __future__ import annotations
 
 import asyncio
+import os
 import re
 import sys
 from pathlib import Path
@@ -17,6 +18,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from otto import lifecycle
 from otto.host import interact
 from otto.host.interact import (
     _ESCAPE_BYTE,
@@ -297,6 +299,240 @@ class TestRunBridge:
             )
 
         assert logged == ["welcome"]
+
+    @pytest.mark.asyncio
+    async def test_bridge_exit_uninstalls_sigwinch_and_joins_reader(self):
+        """Graceful remote-EOF exit: the SIGWINCH uninstaller runs, the real
+        stdin reader thread completes, and termios on the (PTY) stdin is
+        restored — the three login/terminal state guarantees the chaos spec
+        names and nothing previously asserted.
+
+        fd 0 is dup2'd onto a PTY slave for the duration of this test so the
+        reader thread's ``select.select([0], ...)`` genuinely blocks:
+        ``_spawn_stdin_reader`` selects on the LITERAL fd 0 (not
+        ``sys.stdin.fileno()``), and under plain pytest fd 0 is at EOF — the
+        thread would self-exit on its very first poll regardless of whether
+        the bridge ever joins it, making the join assertion below vacuous
+        without this. The original fd 0 is restored in the ``finally``
+        (saved via ``os.dup(0)`` first, closed once restored) so this test
+        can't leak a broken fd 0 into the rest of the module.
+        """
+        import pty
+        import termios
+
+        remote_chunks = [b"welcome\n"]
+        # Held open until the mid-bridge positive-control readings are taken
+        # below, so the bridge can't race ahead and finish (remote EOF) before
+        # we've proven the reader thread/raw-mode are genuinely still live.
+        finish_remote = asyncio.Event()
+
+        async def read_remote() -> bytes:
+            if remote_chunks:
+                return remote_chunks.pop(0)
+            await finish_remote.wait()
+            return b""
+
+        async def write_remote(data: bytes) -> None:
+            return None
+
+        events: list[str] = []
+
+        def install_sigwinch():
+            events.append("installed")
+            return lambda: events.append("uninstalled")
+
+        real_spawn = interact._spawn_stdin_reader
+        captured: list[asyncio.Future] = []
+
+        def spying_spawn(loop, queue, shutdown):
+            fut = real_spawn(loop, queue, shutdown)
+            captured.append(fut)
+            return fut
+
+        master_fd, slave_fd = pty.openpty()
+        saved_fd0 = os.dup(0)
+        try:
+            saved = termios.tcgetattr(slave_fd)
+            os.dup2(slave_fd, 0)
+
+            class _PtyStdin:
+                def isatty(self) -> bool:
+                    return True
+
+                def fileno(self) -> int:
+                    return 0
+
+            with (
+                patch.object(interact, "_spawn_stdin_reader", spying_spawn),
+                patch.object(interact.sys, "stdin", _PtyStdin()),
+                patch.object(interact.os, "write"),
+            ):
+                bridge_task = asyncio.create_task(
+                    _run_bridge(
+                        write_remote=write_remote,
+                        read_remote=read_remote,
+                        install_sigwinch=install_sigwinch,
+                        on_output_line=lambda _line: None,
+                    )
+                )
+                # Let the bridge actually start: raw mode engaged, reader
+                # thread spawned and genuinely blocked in select() on the
+                # real (dup2'd) fd 0, SIGWINCH installed.
+                await asyncio.sleep(0.05)
+
+                assert captured, "stdin reader thread never spawned"
+                # POSITIVE CONTROL: the thread is actually alive, still
+                # blocked in select() — proves the join assertion below is
+                # not vacuous (a thread that had already self-exited on a
+                # bogus EOF would show done() here too).
+                assert not captured[0].done(), (
+                    "stdin reader thread was not still blocked mid-bridge "
+                    "-- the join assertion below would be vacuous"
+                )
+                # POSITIVE CONTROL: raw mode really is engaged mid-bridge —
+                # proves the termios-restore assertion below is not vacuous.
+                assert termios.tcgetattr(slave_fd) != saved, (
+                    "raw mode was never engaged -- the termios-restore "
+                    "assertion below would be vacuous"
+                )
+
+                # Now let remote EOF arrive so the bridge can wind down.
+                finish_remote.set()
+                await bridge_task
+
+            assert events == ["installed", "uninstalled"], events
+            assert captured, "stdin reader thread never spawned"
+            # _run_bridge's finally already joined the reader thread
+            # (shielded, bounded at 0.5s) before returning — assert this
+            # IMMEDIATELY, no grace await and no polling: the property under
+            # test is that the join already completed by the time
+            # _run_bridge returned, not that it eventually completes.
+            assert captured[0].done(), "stdin reader thread never joined"
+            assert termios.tcgetattr(slave_fd) == saved, "termios not restored"
+        finally:
+            os.dup2(saved_fd0, 0)
+            os.close(saved_fd0)
+            os.close(master_fd)
+            os.close(slave_fd)
+
+    @pytest.mark.asyncio
+    async def test_cancelled_bridge_still_uninstalls_and_joins(self):
+        """A cancel mid-bridge (the SIGTERM-during-login shape after Plan 1's
+        signal translation) takes the same finally: uninstall + join +
+        restore all still happen, then the cancel propagates.
+
+        fd 0 is dup2'd onto a PTY slave for the duration of this test so the
+        reader thread's ``select.select([0], ...)`` genuinely blocks — see
+        ``test_bridge_exit_uninstalls_sigwinch_and_joins_reader``'s docstring
+        for why this is required (``_spawn_stdin_reader`` selects on the
+        literal fd 0, which is at EOF under plain pytest). Restored in the
+        ``finally``.
+
+        A CancelledError unwind is exactly the "exceptional unwind" shape
+        ``_force_restore_guard`` deliberately leaves its force-exit hook
+        registered for (see its docstring) — harmless in production (the
+        process exits right after) but, in-process here, a real leak into
+        ``lifecycle._force_exit_hooks`` that would otherwise haunt whatever
+        test happens to run next on this worker (mirroring the snapshot/
+        restore ``test_interact_force_restore.py``'s own forced-unwind test
+        already does for the same reason). Snapshot/truncate it too.
+        """
+        import pty
+        import termios
+
+        async def read_remote() -> bytes:
+            # Never returns — mirrors a remote that's still connected when
+            # the cancel lands.
+            await asyncio.Event().wait()
+            return b""  # pragma: no cover — unreachable, cancelled first
+
+        async def write_remote(data: bytes) -> None:
+            return None
+
+        events: list[str] = []
+
+        def install_sigwinch():
+            events.append("installed")
+            return lambda: events.append("uninstalled")
+
+        real_spawn = interact._spawn_stdin_reader
+        captured: list[asyncio.Future] = []
+
+        def spying_spawn(loop, queue, shutdown):
+            fut = real_spawn(loop, queue, shutdown)
+            captured.append(fut)
+            return fut
+
+        master_fd, slave_fd = pty.openpty()
+        saved_fd0 = os.dup(0)
+        hooks_before = len(lifecycle._force_exit_hooks)
+        try:
+            saved = termios.tcgetattr(slave_fd)
+            os.dup2(slave_fd, 0)
+
+            class _PtyStdin:
+                def isatty(self) -> bool:
+                    return True
+
+                def fileno(self) -> int:
+                    return 0
+
+            with (
+                patch.object(interact, "_spawn_stdin_reader", spying_spawn),
+                patch.object(interact.sys, "stdin", _PtyStdin()),
+                patch.object(interact.os, "write"),
+            ):
+                task = asyncio.create_task(
+                    _run_bridge(
+                        write_remote=write_remote,
+                        read_remote=read_remote,
+                        install_sigwinch=install_sigwinch,
+                        on_output_line=lambda _line: None,
+                    )
+                )
+                # Let the bridge actually start: install SIGWINCH, spawn the
+                # reader, and block inside asyncio.wait() on the two pumps.
+                await asyncio.sleep(0.05)
+
+                assert captured, "stdin reader thread never spawned"
+                # POSITIVE CONTROL: the thread is actually alive, still
+                # blocked in select() — proves the join assertion below is
+                # not vacuous.
+                assert not captured[0].done(), (
+                    "stdin reader thread was not still blocked mid-bridge "
+                    "-- the join assertion below would be vacuous"
+                )
+                # POSITIVE CONTROL: raw mode really is engaged mid-bridge —
+                # proves the termios-restore assertion below is not vacuous.
+                assert termios.tcgetattr(slave_fd) != saved, (
+                    "raw mode was never engaged -- the termios-restore "
+                    "assertion below would be vacuous"
+                )
+
+                task.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await task
+
+            assert events == ["installed", "uninstalled"], events
+
+            # The reader thread's join happens inside _run_bridge's finally
+            # (bounded at 0.5s) before the CancelledError re-propagates out
+            # of `await task` above — assert this IMMEDIATELY, no grace await
+            # and no polling: the property under test is that the join
+            # already completed by the time `await task` raised.
+            assert captured[0].done(), "stdin reader thread never joined"
+            assert termios.tcgetattr(slave_fd) == saved, "termios not restored"
+        finally:
+            # _force_restore_guard deliberately leaves its force-exit hook
+            # registered across this test's CancelledError unwind (see the
+            # docstring above) -- truncate it back so this test can't
+            # contaminate a later test's `lifecycle._force_exit_hooks`
+            # assertions on a shared xdist worker.
+            del lifecycle._force_exit_hooks[hooks_before:]
+            os.dup2(saved_fd0, 0)
+            os.close(saved_fd0)
+            os.close(master_fd)
+            os.close(slave_fd)
 
 
 # ---------------------------------------------------------------------------

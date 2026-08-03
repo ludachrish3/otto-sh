@@ -5,6 +5,7 @@ These mock the parent host's `exec`/`put` so no real docker is invoked.
 
 from __future__ import annotations
 
+import asyncio
 import getpass
 import logging
 import re
@@ -541,6 +542,54 @@ async def test_composed_tears_down_when_own_true(tmp_path):
     assert any(("compose" in c and " down" in c) for c in cmds), (
         "composed(own=True) must tear down even if stack was already up"
     )
+
+
+@pytest.mark.asyncio
+async def test_composed_teardown_survives_cancellation(tmp_path):
+    """A cancel landing during composed()'s finally must not half-tear the
+    stack: compose_down still completes, then the cancel re-raises
+    (spec: shielded compensating actions)."""
+    repo = _make_repo(tmp_path)
+    lab = _make_lab()
+    parent = lab.hosts["pepper_seed"]
+
+    down_started = asyncio.Event()
+    release_down = asyncio.Event()
+    down_commands: list[str] = []
+
+    async def exec_side_effect(cmd, *_, **__):
+        if "label=com.docker.compose.project=" in cmd and "service=" not in cmd:
+            return _ok("xyz\n")
+        if "config" in cmd and "--services" in cmd:
+            return _ok("api\n")
+        if "label=com.docker.compose.project=" in cmd and "service=" in cmd:
+            return _ok("xyz\n")
+        if "compose" in cmd and " down" in cmd:
+            down_started.set()
+            await release_down.wait()  # hold the down so a cancel CAN land mid-teardown
+            down_commands.append(cmd)
+        return _ok()
+
+    parent.exec.side_effect = exec_side_effect  # type: ignore[union-attr]
+
+    inside = asyncio.Event()
+    hold_body = asyncio.Event()
+
+    async def flow() -> None:
+        async with composed(repo, lab, own=True):
+            inside.set()
+            await hold_body.wait()
+
+    task = asyncio.ensure_future(flow())
+    await inside.wait()
+    task.cancel()  # cancel the body -> finally's compose_down starts
+    await down_started.wait()
+    task.cancel()  # second cancel lands MID-teardown: compensate must hold it
+    await asyncio.sleep(0)
+    release_down.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert down_commands, "compose down was torn mid-flight instead of completing"
 
 
 # ---------------------------------------------------------------------------

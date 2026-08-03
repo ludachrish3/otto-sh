@@ -357,9 +357,14 @@ class ShellSession(ABC):
                 self._read_until_pattern(compiled),
                 timeout=timeout,
             )
-        except (asyncio.IncompleteReadError, asyncssh.ConnectionLost):
-            # Same class of event either way — the transport is gone. expect()
-            # has no CommandResult to encode the failure into (unlike
+        except (asyncio.IncompleteReadError, asyncssh.ConnectionLost, BrokenPipeError):
+            # The try body above only reads, so BrokenPipeError has no
+            # reachable path here the way it does at the write-adjacent choke
+            # points (run_cmd, _recover_session): this is defensive symmetry
+            # with those (same triple-catch shape, same "the transport is
+            # gone" semantics), kept in case a future caller starts writing
+            # ahead of this read, not a currently-reachable write failure.
+            # expect() has no CommandResult to encode the failure into (unlike
             # run_cmd() below), so mark dead and let the caller see the
             # exception rather than inventing a return shape for it.
             self._alive = False
@@ -436,14 +441,24 @@ class ShellSession(ABC):
             # propagation and could leave the recover-marker write detached.
             self._needs_recovery = True
             raise
-        except (asyncio.IncompleteReadError, asyncssh.ConnectionLost) as exc:
-            # Same class of event either way — the transport is gone (EOF on
-            # the stream, or asyncssh's own keepalive giving up on a dead
-            # peer, e.g. a blackholed SSH connection). Give the caller the
-            # same truthful, already-rendered CommandResult shape rather than
-            # letting a raw traceback escape.
+        except (asyncio.IncompleteReadError, asyncssh.ConnectionLost, BrokenPipeError) as exc:
+            # Same class of event either way — the transport is gone: EOF on
+            # the stream, asyncssh's own keepalive giving up on a dead peer
+            # (e.g. a blackholed SSH connection), or a write landing on a
+            # channel that already died while idle (BrokenPipeError — e.g. a
+            # docker daemon restart killing the container between two
+            # commands, chaos spec Plan 5 Task 6: nothing was in flight to
+            # observe the death via a read, so it only surfaces on the next
+            # write). Give the caller the same truthful, already-rendered
+            # CommandResult shape rather than letting a raw traceback escape.
             self._alive = False
-            reason = "EOF" if isinstance(exc, asyncio.IncompleteReadError) else "connection lost"
+            reason = (
+                "EOF"
+                if isinstance(exc, asyncio.IncompleteReadError)
+                else "connection lost"
+                if isinstance(exc, asyncssh.ConnectionLost)
+                else "broken pipe"
+            )
             return CommandResult(
                 status=Status.Error,
                 value=f"Session died unexpectedly ({reason})",
@@ -613,8 +628,29 @@ class ShellSession(ABC):
         possible CPU starvation (see :meth:`otto.host.app_shell.AppShell._exit`)
         pass a larger budget so a load-slowed shell hand-back still confirms.
         """
+        import asyncssh
+
         logger.debug(f"{self._log_tag}: recover_session entry marker={self._recover_marker!r}")
-        await self._write("\x03")
+        try:
+            await self._write("\x03")
+        except (asyncio.IncompleteReadError, asyncssh.ConnectionLost, BrokenPipeError):
+            # This entry write is its OWN choke point, upstream of
+            # _confirm_recovered's: a dead-but-idle channel (e.g. a docker
+            # daemon restart killing the container between two commands) can
+            # raise BrokenPipeError right here, before confirm_live ever
+            # runs. Both call sites that reach _recover_session -- the
+            # post-timeout leg in run_cmd and the pre-flight leg in
+            # _ensure_ready -- have no CommandResult/exception boundary of
+            # their own for this, so mirror _confirm_recovered's handling:
+            # mark dead and return "" rather than letting a raw traceback
+            # escape (run_cmd's sibling `except (...BrokenPipeError)` clause
+            # on the same try can't see an exception raised inside this
+            # handler's body).
+            logger.debug(
+                f"{self._log_tag}: recover_session entry write failed; session marked dead"
+            )
+            self._alive = False
+            return ""
         await asyncio.sleep(0.1)
         return await self._confirm_recovered(deadline)
 
@@ -651,17 +687,24 @@ class ShellSession(ABC):
                 probe_timeout=_RECOVERY_PROBE_TIMEOUT,
                 deadline=deadline,
             )
-        except (asyncio.IncompleteReadError, asyncssh.ConnectionLost):
+        except (asyncio.IncompleteReadError, asyncssh.ConnectionLost, BrokenPipeError):
             # Same class of event as the EOF case: the transport is gone
             # mid-recovery (e.g. a blackholed connection's keepalive giving up
             # during the post-timeout Ctrl+C probe, or a still-dead connection
-            # being re-confirmed after a prior cancellation). This is the sole
-            # choke point every recovery caller funnels through -- the
+            # being re-confirmed after a prior cancellation) -- or the
+            # confirm-live probe write itself lands on a channel that already
+            # died while idle (BrokenPipeError; the confirm_live() call above
+            # writes via self._write, so a dead-but-idle channel surfaces
+            # here too, not just as a read failure). This is the choke point
+            # every recovery caller's CONFIRM leg funnels through -- the
             # post-timeout leg in run_cmd, the pre-flight leg in _ensure_ready
             # when _needs_recovery is set, and AppShell._exit's teardown (which
             # reaches both _recover_session and this method directly) -- so
             # widening it here closes all of them without touching
-            # send()/_ensure_initialized.
+            # send()/_ensure_initialized. (It is not the SOLE recovery choke
+            # point, though: _recover_session's own Ctrl+C entry write, just
+            # before this method runs, is guarded the same way at its own
+            # call site.)
             confirmed = False
 
         if not confirmed:
@@ -1092,16 +1135,36 @@ class HostSession:
             self, self._creds, user, password, prev, self._host_id, self._history_prefix
         )
         self._session.current_user = applied[-1].login or "root"
+        # Narrowed local: `self._creds` re-widens to `list[Cred] | None` once
+        # captured by the nested `_undo` closure below (attribute narrowing
+        # doesn't cross closure boundaries), so bind it here where the
+        # `is None` check above still narrows it.
+        creds = self._creds
         try:
             yield self
         finally:
-            for i, hop in enumerate(reversed(applied)):
-                via_login = applied[-i - 2].login if i + 1 < len(applied) else prev
-                # Full via cred (password/params intact), mirroring the forward
-                # path — keeps forward/undo symmetric for custom undo callables.
-                via = cred_for(self._creds, via_login) or Cred(login=via_login)
-                await run_undo(self, hop, via, self._host_id, self._history_prefix)
-            self._session.current_user = prev
+
+            async def _undo() -> None:
+                for i, hop in enumerate(reversed(applied)):
+                    via_login = applied[-i - 2].login if i + 1 < len(applied) else prev
+                    # Full via cred (password/params intact), mirroring the
+                    # forward path — keeps forward/undo symmetric for custom
+                    # undo callables.
+                    via = cred_for(creds, via_login) or Cred(login=via_login)
+                    await run_undo(self, hop, via, self._host_id, self._history_prefix)
+                self._session.current_user = prev
+
+            # Same contract as PosixPrivilege.as_user's shielded undo: hold a
+            # cancellation until every hop is unwound, then re-raise.
+            # Imported here, not at module scope: otto.lifecycle is only needed
+            # once a compensating action actually runs, and a top-level import
+            # drags it onto every CLI --help path (import-budget guard).
+            from ..lifecycle import compensate
+
+            await compensate(
+                _undo(),
+                what=f"{self._host_id}: session as_user undo to {prev or 'login user'!r}",
+            )
 
     async def run(
         self,

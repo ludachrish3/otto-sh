@@ -7,9 +7,13 @@ name: Nightly
 # Also runs the tier-2 real-signal chaos suite (tests/integration/chaos) once
 # per night, against a throwaway loopback sshd the suite starts and tears
 # down itself — real SIGINT/SIGTERM against real otto subprocesses, still no
-# Vagrant VMs in GHA. The manager interleaving above still runs via
-# FakeSession (mocked transports); the VM-dependent Python tiers are still
-# out.
+# Vagrant VMs in GHA. Also runs the tier-3 docker chaos slice
+# (tests/e2e/chaos/test_docker_chaos.py) once per night, over the same kind
+# of loopback sshd but wrapping the RUNNER's own docker daemon
+# (OTTO_CHAOS_DOCKER=loopback) rather than a bed host — real `docker
+# kill`/`pause`/`restart`/daemon-restart, safe only on a disposable runner.
+# The manager interleaving above still runs via FakeSession (mocked
+# transports); the VM-dependent Python tiers are still out.
 #
 # Deterministic gates (lint-python, typecheck-python, check-ts, docs) are
 # deliberately NOT duplicated here — they run on every push in ci.yml and
@@ -178,11 +182,45 @@ jobs:
       - name: Tier-2 real-signal chaos suite (loopback sshd)
         run: uv run pytest tests/integration/chaos -p no:cacheprovider --no-cov
 
+  # Docker chaos slice (tests/e2e/chaos/test_docker_chaos.py): real `docker
+  # kill`/`pause`/`restart`/daemon-restart against a real container, driven
+  # library-side (no otto subprocess, no signals) through a throwaway
+  # loopback sshd wrapping the runner's OWN docker daemon
+  # (OTTO_CHAOS_DOCKER=loopback — tests/e2e/chaos/_docker.py). No monitor
+  # scenarios live in this module, so unlike chaos-tier2 this job builds no
+  # React dashboard and installs no Node toolchain. Nightly-only: this is a
+  # tier-3 chaos module (excluded from every default gate via the `chaos`
+  # marker), and the loopback venue is docker-daemon-hostile by nature
+  # (kills/restarts a real daemon), so it only runs where that is safe to do
+  # — a disposable GitHub runner, never the dev VM or the lab bed.
+  chaos-docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v9.0.0
+        with:
+          enable-cache: true
+
+      - name: Set up Python 3.10
+        run: uv python install 3.10
+
+      - name: Install dependencies
+        run: uv sync --all-extras --dev
+
+      - name: Ensure sshd is available
+        run: command -v sshd || { sudo apt-get update && sudo apt-get install -y openssh-server; }
+
+      - name: Tier-3 docker chaos (loopback sshd, runner daemon)
+        run: OTTO_CHAOS_DOCKER=loopback uv run pytest tests/e2e/chaos/test_docker_chaos.py -p no:cacheprovider --no-cov
+
   # If any matrix cell fails, open (or update) a tracking issue so a flaky
   # nightly surfaces without anyone having to watch the Actions tab.
   report-failure:
     name: Open issue on failure
-    needs: [stability-matrix, unit-matrix, dashboard, chaos-tier2]
+    needs: [stability-matrix, unit-matrix, dashboard, chaos-tier2, chaos-docker]
     if: failure()
     runs-on: ubuntu-latest
     permissions:
@@ -191,14 +229,15 @@ jobs:
       - name: Write issue body
         run: |
           {
-            echo "The nightly run failed (stability, unit matrix, dashboard browser e2e, and/or the tier-2 chaos suite)."
+            echo "The nightly run failed (stability, unit matrix, dashboard browser e2e, and/or the tier-2/tier-3 chaos suites)."
             echo
             echo "- Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
             echo "- Commit: ${{ github.sha }}"
             echo
             echo "Check the matrix logs for the failing job (stability /"
-            echo "unit-matrix / dashboard / chaos-tier2), the Python version or"
-            echo "browser, and the pytest-repeat iteration that tripped the failure."
+            echo "unit-matrix / dashboard / chaos-tier2 / chaos-docker), the"
+            echo "Python version or browser, and the pytest-repeat iteration"
+            echo "that tripped the failure."
           } > issue-body.md
 
       - name: Create issue from file

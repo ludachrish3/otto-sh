@@ -42,6 +42,10 @@ class MockSession(ShellSession):
         # _read_until_pattern wakeup, mirroring how feed_eof() drives the
         # IncompleteReadError branch below.
         self._connection_lost_pending = False
+        # Set by feed_write_broken_pipe(); consumed (and cleared) by the next
+        # _write() call, simulating the idle-death-then-write shape (see
+        # feed_write_broken_pipe's docstring).
+        self._write_broken_pipe_pending = False
 
     async def _open(self) -> None:
         # Create paired streams: what the session writes to "stdin" can be read
@@ -50,6 +54,9 @@ class MockSession(ShellSession):
         # No real writer needed — we feed data directly into the StreamReader
 
     async def _write(self, data: str) -> None:
+        if self._write_broken_pipe_pending:
+            self._write_broken_pipe_pending = False
+            raise BrokenPipeError("Channel not open for sending")
         self.written.append(data)
 
     async def _read_until_pattern(self, pattern: re.Pattern[str]) -> str:
@@ -94,6 +101,19 @@ class MockSession(ShellSession):
         assert self._out_reader is not None
         self._connection_lost_pending = True
         self._out_reader.feed_data(b" ")
+
+    def feed_write_broken_pipe(self) -> None:
+        """Simulate the idle-death-then-write shape: the remote already died
+        while nothing was in flight (a docker daemon restart killing the
+        container between two separate commands, e.g.), so no read ever
+        observed it — the death is discovered on the NEXT write instead,
+        mirroring asyncssh's ``SSHClientChannel.write()`` raising a bare
+        ``BrokenPipeError('Channel not open for sending')`` synchronously
+        once ``_send_state != 'open'``. A different shape from feed_eof()'s
+        IncompleteReadError and feed_connection_lost()'s ConnectionLost
+        (both discovered mid-*read*), but the same class of event: the
+        transport is gone."""
+        self._write_broken_pipe_pending = True
 
 
 @pytest_asyncio.fixture
@@ -389,6 +409,61 @@ class TestTimeout:
         assert result.timed_out is True
         assert "timed out" in result.value.lower()
         # The dead transport is still recorded, so the session isn't reused.
+        assert not session.alive
+
+    @pytest.mark.asyncio
+    async def test_recovery_entry_write_broken_pipe_returns_truthful_result(
+        self, session: MockSession
+    ):
+        """I2: ``_recover_session``'s OWN entry write (Ctrl+C, sent before
+        ``_confirm_recovered`` ever runs) is a choke point of its own. A
+        dead-but-idle channel can raise ``BrokenPipeError`` right there --
+        mirroring the ``ConnectionLost``-during-recovery case above, an
+        exception raised inside run_cmd's ``except asyncio.TimeoutError:``
+        handler body is invisible to the sibling ``except
+        (asyncio.IncompleteReadError, asyncssh.ConnectionLost,
+        BrokenPipeError)`` clause on the SAME try (sibling-handler
+        blindness) -- so without a guard at the entry write itself, this
+        raises a raw traceback instead of the timeout's truthful
+        CommandResult.
+
+        Deterministic by construction: the broken-pipe flag is armed only
+        after the begin marker lands (so it can't fire on the initial framed
+        command write, already sent by then) and is consumed by the very
+        next ``_write()`` call -- recovery's Ctrl+C entry write, once the
+        command times out."""
+
+        async def simulate():
+            await asyncio.sleep(0.01)
+            session.feed(f"{session._begin_marker}\n")
+            # Never feed the END marker -- the command hangs, forcing
+            # recovery. Arm broken-pipe now for recovery's entry write.
+            session.feed_write_broken_pipe()
+
+        simulate_task = asyncio.create_task(simulate())
+
+        result = await session.run_cmd("sleep 999", timeout=0.1)
+        await simulate_task
+
+        assert result.status == Status.Error
+        assert result.retcode == -1
+        assert result.timed_out is True
+        assert "timed out" in result.value
+        assert not session.alive
+
+    @pytest.mark.asyncio
+    async def test_ensure_ready_preflight_recovery_write_broken_pipe(self, session: MockSession):
+        """The other ``_recover_session`` call site: ``_ensure_ready``'s
+        pre-flight recovery (``_needs_recovery=True`` after an external
+        cancellation, session.py:222) drives the exact same
+        ``_recover_session`` as the post-timeout leg above, so the same
+        entry-write guard covers it for free -- proven directly rather than
+        assumed."""
+        session._needs_recovery = True
+        session.feed_write_broken_pipe()
+
+        await session._ensure_ready()
+
         assert not session.alive
 
     @pytest.mark.asyncio
@@ -724,6 +799,31 @@ class TestSessionDeath:
         assert result.status == Status.Error
         assert result.retcode == -1
         assert "connection lost" in result.value.lower()
+        assert not session.alive
+
+    @pytest.mark.asyncio
+    async def test_write_broken_pipe_during_run_cmd_returns_error(self, session: MockSession):
+        """A session that dies *idle* — the remote goes away with nothing in
+        flight (e.g. a docker daemon restart killing the container between
+        two separate commands, chaos spec Plan 5 Task 6) — is discovered on
+        the NEXT write rather than a read: asyncssh's
+        ``SSHClientChannel.write()`` raises a bare
+        ``BrokenPipeError('Channel not open for sending')`` synchronously,
+        a different shape from the EOF/ConnectionLost cases above (both
+        discovered mid-*read*). Same contract regardless of shape: never a
+        raw traceback, always a truthful CommandResult, and the session
+        marked dead so the next call rebuilds — that SessionManager-level
+        rebuild-after-death behavior is already proven independent of *why*
+        the session died by
+        ``test_ensure_default_session_recreation_race``
+        (tests/unit/host/test_session_concurrency.py), so it is cited here
+        rather than duplicated."""
+        session.feed_write_broken_pipe()
+        result = await session.run_cmd("echo hello")
+
+        assert result.status == Status.Error
+        assert result.retcode == -1
+        assert "broken pipe" in result.value.lower()
         assert not session.alive
 
     @pytest.mark.asyncio
@@ -1218,6 +1318,52 @@ async def test_host_session_as_user_restores_previous():
     )
     async with hs.as_user("root"):
         assert shell.current_user == "root"
+    assert shell.current_user == "alice"
+
+
+@pytest.mark.asyncio
+async def test_host_session_as_user_undo_survives_cancellation():
+    """The named-session twin of PosixPrivilege.as_user's shielded undo: a
+    cancellation landing while the undo chain runs must still restore the
+    prior user before re-raising."""
+    from otto.host.login_proxy import Cred
+    from otto.host.session import HostSession
+
+    shell = AsyncMock(spec=ShellSession)
+    shell.current_user = "alice"
+    shell.expect.return_value = "Password:"
+
+    async def _yielding_send(*_a, **_k) -> None:
+        await asyncio.sleep(0)  # a real suspension per send, so a cancel CAN land mid-undo
+
+    shell.send.side_effect = _yielding_send
+    hs = HostSession(
+        "n",
+        shell,
+        lambda *_: None,
+        lambda *_: None,
+        lambda _: None,
+        creds=[Cred(login="root", password="rootpw")],
+        host_id="n",
+    )
+
+    inside = asyncio.Event()
+    release = asyncio.Event()
+
+    async def body() -> None:
+        async with hs.as_user("root"):
+            inside.set()
+            await release.wait()
+
+    task = asyncio.ensure_future(body())
+    await inside.wait()
+    task.cancel()  # lands at release.wait(); the finally-undo starts
+    await asyncio.sleep(0)
+    task.cancel()  # second cancel, mid-undo: must be held by compensate
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    sent = [c.args[0] for c in shell.send.await_args_list]
+    assert "exit\n" in sent, "the undo hop never ran — cancel tore the unwind"
     assert shell.current_user == "alice"
 
 

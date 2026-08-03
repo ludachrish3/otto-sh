@@ -37,8 +37,7 @@ def _fd_watermark() -> Iterator[None]:
     assert after <= before + _FD_TOLERANCE, f"fd leak: {before} -> {after}"
 
 
-@pytest.fixture(autouse=True)
-def _bed_hygiene_bracket(request, chaos_bed):
+def _hygiene_bracket_impl(request):
     """Snapshot/diff the leased host around EVERY scenario (spec: BedHygiene).
 
     Sync fixture with its own asyncio.run per side, over a fresh probe host
@@ -47,6 +46,11 @@ def _bed_hygiene_bracket(request, chaos_bed):
     add their own peer-side brackets; this fixture owns the leased host only.
     Opt out (reboot module's mid-reboot cases where the after-probe would
     race the boot) with @pytest.mark.no_hygiene_bracket + a manual bracket.
+
+    The bed lease is requested LAZILY (getfixturevalue after the opt-out
+    check) so `no_hygiene_bracket` tests — the embedded console module and
+    the docker module, which on the GitHub loopback venue has no bed route
+    at all — never instantiate the session lease.
     """
     import asyncio
 
@@ -61,6 +65,8 @@ def _bed_hygiene_bracket(request, chaos_bed):
         yield
         return
 
+    chaos_bed = request.getfixturevalue("chaos_bed")
+
     async def _snap():
         async with probe_host(chaos_bed.element) as host:
             return await snapshot_host(host)
@@ -70,6 +76,11 @@ def _bed_hygiene_bracket(request, chaos_bed):
     after = asyncio.run(_snap())
     leftovers = diff_snapshots(before, after)
     assert not leftovers, format_hygiene_report(chaos_bed.element, leftovers)
+
+
+@pytest.fixture(autouse=True)
+def _bed_hygiene_bracket(request):
+    yield from _hygiene_bracket_impl(request)
 
 
 @pytest.fixture

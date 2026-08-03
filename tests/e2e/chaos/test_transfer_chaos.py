@@ -85,6 +85,34 @@ def _assert_no_new_listener(element: str, before: list, what: str) -> None:
     raise AssertionError(f"{what}: orphaned nc listener beyond teardown deadline: {new}")
 
 
+def _reap_new_nc_listeners(element: str, before: list) -> None:
+    """Belt for the assert-failure path: SIGKILL any nc -l listener that
+    wasn't present at *before*, by PID, diffed the same way
+    `_assert_no_new_listener` diffs them -- not by `pkill -f` on a
+    destination-path token.
+
+    A `pkill -f` on `_REMOTE_PUT_DIR`/`_REMOTE_GET_SRC` looks argv-visible
+    but is a no-op: those tokens are redirect operands (`> {dst}` / `< {src}`
+    in `src/otto/host/transfer/nc.py`), which the shell consumes before
+    `execve` -- they land only in the transient `bash -c` wrapper's cmdline,
+    never in the `nc` process's own argv. Killing the wrapper doesn't touch
+    its already-forked `nc` child, which reparents to init and keeps the
+    port bound. `_NC_LISTENER_PROBE` (`pgrep -af "nc -l"`) matches `nc`
+    itself (`-l` IS in its argv), so PIDs pulled from it are the real
+    listener processes; killing those actually frees the port. Diffed
+    against *before* so a pre-existing listener (this bed's, or another
+    test's) is never touched.
+    """
+    new = [ln for ln in _nc_listeners(element) if ln not in before]
+    pids = [ln.split()[0] for ln in new if ln.split()]
+    if not pids:
+        return
+    run_probe(
+        element,
+        lambda h: h.exec(f"kill -9 {' '.join(pids)} || true", timeout=15, log=LogMode.QUIET),
+    )
+
+
 def test_sigint_mid_put_no_orphan_listener(chaos_bed, chaos_rng, tmp_path):
     big = tmp_path / "payload.bin"
     # Sparse file: same size, a fraction of the write cost of materializing
@@ -99,6 +127,7 @@ def test_sigint_mid_put_no_orphan_listener(chaos_bed, chaos_rng, tmp_path):
         lambda h: h.exec(f"mkdir -p {_REMOTE_PUT_DIR}", timeout=30, log=LogMode.QUIET),
     )
     before = _nc_listeners(chaos_bed.element)
+    p = None  # bound inside the try; finally must not assume it got there
     try:
         p = spawn_otto(
             [
@@ -124,10 +153,20 @@ def test_sigint_mid_put_no_orphan_listener(chaos_bed, chaos_rng, tmp_path):
         # No NEW listener may outlive the deadline.
         _assert_no_new_listener(chaos_bed.element, before, "PUT")
     finally:
+        # Belt for the assert-failure path: `p.wait_for_log` above can raise
+        # before `p` is ever signaled/reaped, leaving the local subprocess
+        # running. SIGKILL it if it's still alive before doing anything else.
+        if p is not None and p.proc.poll() is None:
+            p.signal(9)
         run_probe(
             chaos_bed.element,
             lambda h: h.exec(f"rm -rf {_REMOTE_PUT_DIR} || true", timeout=30, log=LogMode.QUIET),
         )
+        # Belt: an assertion failure above must not strand the remote
+        # `nc -l` listener (kill by PID, diffed against `before` -- see
+        # `_reap_new_nc_listeners`'s docstring for why a `pkill -f` on the
+        # destination-dir token can't do this).
+        _reap_new_nc_listeners(chaos_bed.element, before)
 
 
 def test_sigint_mid_get_no_orphan_listener(chaos_bed, chaos_rng, tmp_path):
@@ -143,6 +182,7 @@ def test_sigint_mid_get_no_orphan_listener(chaos_bed, chaos_rng, tmp_path):
         ),
     )
     before = _nc_listeners(chaos_bed.element)
+    p = None  # bound inside the try; finally must not assume it got there
     try:
         p = spawn_otto(
             [
@@ -176,7 +216,19 @@ def test_sigint_mid_get_no_orphan_listener(chaos_bed, chaos_rng, tmp_path):
             f"(of {_PAYLOAD_SIZE})"
         )
     finally:
+        # Belt for the assert-failure path: `p.wait_for_log` above can raise
+        # before `p` is ever signaled/reaped, leaving the local subprocess
+        # running. SIGKILL it if it's still alive before doing anything else.
+        if p is not None and p.proc.poll() is None:
+            p.signal(9)
         run_probe(
             chaos_bed.element,
             lambda h: h.exec(f"rm -f {_REMOTE_GET_SRC} || true", timeout=30, log=LogMode.QUIET),
         )
+        # Belt: an assertion failure above must not strand a remote `nc -l`
+        # listener (the tunneled GET path, not exercised on this direct-SSH
+        # bed per the module docstring's `has_tunnel` caveat, but harmless
+        # to guard defensively). Kill by PID, diffed against `before` -- see
+        # `_reap_new_nc_listeners`'s docstring for why a `pkill -f` on the
+        # redirect-operand token can't do this.
+        _reap_new_nc_listeners(chaos_bed.element, before)

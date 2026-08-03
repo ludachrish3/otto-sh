@@ -37,10 +37,9 @@ import time
 
 import pytest
 
-from otto.link.derive import addressing_from_dict, resolve_declared_links
 from otto.logger.mode import LogMode
-from tests._fixtures.labdata import host_data, lab_data_path
-from tests.e2e.chaos._bed import run_probe
+from tests._fixtures.labdata import host_data
+from tests.e2e.chaos._bed import run_probe, veggies_link_id
 from tests.e2e.chaos._seed import offset_in
 from tests.integration.chaos._driver import spawn_otto
 from tests.integration.chaos._target import ChaosTarget, make_bed_target
@@ -59,28 +58,6 @@ _RUN_TIMEOUT = 120.0
 _KEEPALIVE_INTERVAL = 2.0
 _KEEPALIVE_COUNT_MAX = 3
 _IMPAIR_EXPIRE = 60
-
-
-def _veggies_link_id() -> str:
-    """The declared carrot_seed<->tomato_seed eth2 link's id.
-
-    The raw ``tech1/lab.json`` has no literal ``"id"`` key on its ``links``
-    entries -- ``Link.id`` is auto-derived at load time from the sorted
-    endpoint host ids (``otto.link.model.make_static_link_id``), so this
-    replicates the SAME load ``otto`` itself does
-    (``otto.link.derive.resolve_declared_links``) rather than guessing the
-    computed string.
-    """
-    data = json.loads(lab_data_path().read_text())
-    hosts = dict(addressing_from_dict(h) for h in data["hosts"])
-    loaded_ids = set(hosts)
-    links = resolve_declared_links(data["links"], hosts, source="lab.json", loaded_ids=loaded_ids)
-    link = links[0]  # tech1/lab.json declares exactly one link: carrot_seed:eth2<->tomato_seed:eth2
-    assert {link.a.host, link.b.host} == {"carrot_seed", "tomato_seed"}, (
-        f"expected the carrot<->tomato eth2 link at links[0], got {link!r} -- "
-        "tech1/lab.json's declared links changed shape"
-    )
-    return link.id
 
 
 def _make_hop_target(tmp_path) -> ChaosTarget:
@@ -196,7 +173,7 @@ def test_ssh_blackhole_mid_command_is_survivable_and_repairs_clean(chaos_rng, tm
     from tests._fixtures.bed_hygiene import diff_snapshots, format_hygiene_report, snapshot_host
     from tests.e2e.chaos._bed import probe_host
 
-    link_id = _veggies_link_id()
+    link_id = veggies_link_id()
     veggies_target = make_bed_target("carrot")
 
     async def _snap(elem: str):
@@ -204,6 +181,7 @@ def test_ssh_blackhole_mid_command_is_survivable_and_repairs_clean(chaos_rng, tm
             return await snapshot_host(h)
 
     before = {e: asyncio.run(_snap(e)) for e in ("carrot", "tomato")}
+    p = None  # bound inside the try; finally must not assume it got there
     try:
         # 1) Start a long command against tomato over the carrot hop on eth2.
         run_xdir = tmp_path / "run"
@@ -249,12 +227,17 @@ def test_ssh_blackhole_mid_command_is_survivable_and_repairs_clean(chaos_rng, tm
         assert rc != 0, f"blackholed session should fail, not succeed\nstderr:\n{p.stderr_text()}"
         p.assert_no_process_group()
     finally:
+        # Belt for the assert-failure path: `p.wait_for_log` above can raise
+        # before `p` is ever signaled/reaped, leaving the local subprocess
+        # running. SIGKILL it if it's still alive before doing anything else.
+        if p is not None and p.proc.poll() is None:
+            p.signal(9)
         # 4) Repair unconditionally, both directions, and verify clean eth2 --
         #    even on assertion failure above.
         repair_xdir = tmp_path / "repair"
         repair_xdir.mkdir()
         rep = spawn_otto(["link", "repair", link_id], xdir=repair_xdir, target=veggies_target)
-        rep.wait(timeout=60.0)
+        assert rep.wait(timeout=60.0) == 0, rep.stderr_text()
 
         # Best-effort: the abandoned foreground `sleep 120` on tomato is not
         # otto-tagged (BedHygiene's diff below can't see it) and would

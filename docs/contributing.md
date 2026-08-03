@@ -290,6 +290,10 @@ and update `pyproject.toml` in the same commit.
 
 ## Running tests
 
+For the *why* behind this taxonomy — what each kind of test is for, and a
+decision guide for picking one — see {doc}`architecture/testing`; this
+section stays focused on the mechanics of running them.
+
 ```bash
 make coverage                 # run the full suite and enforce the coverage gate
 uv run pytest -k test_host    # run a subset by keyword
@@ -313,7 +317,8 @@ what you want to exercise:
 | Embedded / Zephyr (resource) | `make coverage-embedded` / `make nox-embedded` | zephyr VM |
 | Multi-hop only | `uv run pytest -m "hops and not stability"` | three VMs |
 | Stability / soak | `make stability` (or `stability-unit` / `stability-unix` / `stability-tunnel` / `stability-embedded`) | lab VMs (`-unit` needs none) |
-| Chaos lane (tier 3, opt-in — interrupt/SIGKILL/reboot scenarios + BedHygiene) | `make chaos` / `make chaos-embedded` | leased veggies host (+ zephyr board for the embedded leg) |
+| Chaos lane (tier 3, opt-in — interrupt/SIGKILL/reboot scenarios + BedHygiene, incl. docker kill/pause/restart/daemon-restart and privilege `as_user` interrupt) | `make chaos` / `make chaos-embedded` | leased veggies host, incl. pepper for docker (+ zephyr board for the embedded leg) |
+| Chaos lane, docker slice only (GitHub nightly, no lab needed) | automatic — `nightly.yml`'s `chaos-docker` job (`OTTO_CHAOS_DOCKER=loopback`) | none — loopback sshd wrapping the runner's own docker daemon |
 | Everything (the dev-VM contract) | `make all` | lab VMs |
 | Cross-Python matrix | `make nox-unit` (quick, no VMs) / `make nox` (full on 3.10 + 3.14, hostless on the middle versions) / `make nox-full` (full, all Pythons) | `nox`/`nox-full` need VMs |
 

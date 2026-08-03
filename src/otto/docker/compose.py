@@ -389,7 +389,20 @@ async def composed(
         yield hosts
     finally:
         if own or not was_up:
-            await compose_down(repo, lab, on=on, project_name=proj)
+            # Teardown is a compensating action: an interrupt landing while
+            # compose_down runs must not strand a half-torn stack (chaos
+            # spec: shielded compensating actions). compensate() holds the
+            # cancellation until the down completes (bounded by the teardown
+            # deadline), then re-raises it.
+            # Imported here, not at module scope: otto.lifecycle is only needed
+            # once a compensating action actually runs, and a top-level import
+            # drags it onto every CLI --help path (import-budget guard).
+            from ..lifecycle import compensate
+
+            await compensate(
+                compose_down(repo, lab, on=on, project_name=proj),
+                what=f"docker compose down {proj}",
+            )
 
 
 async def compose_ps(parent: Host) -> list[dict[str, Any]]:

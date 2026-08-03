@@ -2,15 +2,15 @@
 
 Consolidates the piecemeal leftover checks (chaos spec, Tier 3): otto-tagged
 tunnel daemons, impair timers, nc listeners, tc qdisc state, /tmp/otto*
-staging entries, and the shell-history digest — probed over a FRESH
-connection, snapshot before / diff after, failure naming the host and each
-leftover. Pre-existing dirt is snapshotted out (the tunnel_bed.py pattern):
-a dirty bed going in is never blamed on the scenario, and never masks a NEW
-leftover of the same kind.
+staging entries, shell-history digest, and docker container/network probes —
+probed over a FRESH connection, snapshot before / diff after, failure naming
+the host and each leftover. Pre-existing dirt is snapshotted out (the
+tunnel_bed.py pattern): a dirty bed going in is never blamed on the scenario,
+and never masks a NEW leftover of the same kind.
 
-Docker probes deliberately absent — they ride Plan 5 with the docker
-scenarios. Local-side leaks (transports, loops, fds) stay with the existing
-repo-wide detectors; this module is remote-state only.
+Docker probes run on Plan 5 scenarios; they tolerate docker-less hosts by
+collapsing to empty sets. Local-side leaks (transports, loops, fds) stay with
+the existing repo-wide detectors; this module is remote-state only.
 """
 
 import dataclasses
@@ -26,6 +26,15 @@ _QDISC_DEVS = ("eth1", "eth2")
 _NC_LISTENER_PROBE = 'pgrep -af "nc -l" | grep -v pgrep | grep -v "$$" || true'
 _STAGING_PROBE = "ls -d /tmp/otto-* /tmp/otto_* 2>/dev/null || true"
 _HISTORY_PROBE = "cat ~/.bash_history 2>/dev/null | sha256sum || true"
+# Docker accumulation probes (Plan 5). `-a` deliberately: exited containers
+# are accumulation too (the pile-up failure mode). Tolerant of docker-less
+# hosts — the guard collapses to empty output, never an error.
+_DOCKER_PS_PROBE = (
+    "command -v docker >/dev/null 2>&1 && docker ps -a --format '{{.ID}} {{.Names}}' || true"
+)
+_DOCKER_NET_PROBE = (
+    "command -v docker >/dev/null 2>&1 && docker network ls --format '{{.Name}}' || true"
+)
 _PROBE_TIMEOUT = 30
 
 
@@ -37,6 +46,8 @@ class HygieneSnapshot:
     qdiscs: dict  # netdev -> raw `tc qdisc show dev X` text (stripped)
     staging: frozenset  # /tmp/otto* entries
     history_digest: str  # sha256 line of ~/.bash_history
+    docker_containers: frozenset  # docker ps lines: "id names"
+    docker_networks: frozenset  # docker network names
 
 
 async def snapshot_host(host) -> HygieneSnapshot:
@@ -65,6 +76,12 @@ async def snapshot_host(host) -> HygieneSnapshot:
         qdiscs=qdiscs,
         staging=frozenset(line for line in (await _out(_STAGING_PROBE)).splitlines() if line),
         history_digest=await _out(_HISTORY_PROBE),
+        docker_containers=frozenset(
+            line for line in (await _out(_DOCKER_PS_PROBE)).splitlines() if line
+        ),
+        docker_networks=frozenset(
+            line for line in (await _out(_DOCKER_NET_PROBE)).splitlines() if line
+        ),
     )
 
 
@@ -91,6 +108,8 @@ def diff_snapshots(before: HygieneSnapshot, after: HygieneSnapshot) -> list:
         ("otto-impair timer", before.impair_timers, after.impair_timers),
         ("nc listener", before.nc_listeners, after.nc_listeners),
         ("staging entry", before.staging, after.staging),
+        ("docker container", before.docker_containers, after.docker_containers),
+        ("docker network", before.docker_networks, after.docker_networks),
     ):
         leftovers.extend(f"new {label}: {item}" for item in sorted(a - b))
     leftovers.extend(
