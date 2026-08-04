@@ -105,9 +105,46 @@ def capture_external_loggers(prefixes: Iterable[str]) -> None:
 
 def _stop_listener() -> None:
     """atexit-safe: stop the QueueListener once; a no-op if already stopped."""
-    if _state.listener is not None:
-        _state.listener.stop()
-        _state.listener = None
+    shutdown_listener()
+
+
+def shutdown_listener(*, join_timeout: float | None = None) -> None:
+    """Public flush-and-stop for exit paths that bypass atexit.
+
+    ``lifecycle``'s forced sync-phase exit (``os._exit``) skips interpreter
+    teardown, so buffered log lines would be lost without an explicit stop.
+    The listener is claimed (swapped out of module state) before it is
+    stopped, so a force-path watchdog racing atexit reduces to one stop and
+    one no-op — a plain read-swap under the GIL, adequate for exit paths,
+    not a general any-thread guarantee.
+
+    With *join_timeout* the flush is BOUNDED, for force paths that must
+    never hang: the sentinel is enqueued only if the queue's mutex is free
+    (a wedged producer must never wedge the exit), and the listener thread
+    is joined with the timeout instead of forever (a listener stuck on a
+    slow sink — e.g. NFS — forfeits its tail of buffered lines).
+    """
+    listener = _state.listener
+    _state.listener = None
+    if listener is None:
+        return
+    if join_timeout is None:
+        listener.stop()
+        return
+    queue_mutex = getattr(listener.queue, "mutex", None)
+    if queue_mutex is not None:
+        # Probe, don't block: enqueue_sentinel acquires this mutex. Its
+        # critical sections are tiny stdlib bookkeeping that cannot wedge,
+        # but the force path's contract is "never hang", so trade the flush
+        # away rather than trust that. (A live producer re-taking the mutex
+        # between release and enqueue only delays us microseconds.)
+        if not queue_mutex.acquire(blocking=False):
+            return
+        queue_mutex.release()
+    listener.enqueue_sentinel()
+    thread = listener._thread  # noqa: SLF001 — QueueListener has no bounded stop; join its (stable-since-3.2) thread directly
+    if thread is not None:
+        thread.join(timeout=join_timeout)
 
 
 def _print_output_dir() -> None:

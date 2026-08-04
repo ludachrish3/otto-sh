@@ -88,6 +88,32 @@ time (count work, not time, where possible); (c) double-SIGINT → immediate
 force; (d) no-signal run → handlers restored (assert on the guard's exit,
 positive control that they were installed mid-phase).
 
+### Wave-1 implementation notes (post-review, 2026-08-04)
+
+The formal review of the first implementation found the force path could
+self-deadlock in signal-handler context (same-thread lock reentrancy:
+`Timer.start`, `Lock.acquire`, and the listener flush all acquire locks the
+interrupted frame can hold — a permanent, signal-unrescuable hang of the
+exact mechanism whose job is "always gets out"). The landed design differs
+from a naive reading of the semantics above in four ways:
+
+1. **The force path runs on a watchdog thread**, spawned at `sync_phase`
+   entry (normal context) and woken through a self-pipe — `os.write` is the
+   only handler-side primitive. The handler itself only writes attributes,
+   writes bytes, and raises; it takes no locks and starts no threads.
+2. **The listener flush is bounded** (`shutdown_listener(join_timeout=...)`:
+   probe the queue mutex, join with timeout) — the force path trades
+   buffered log lines for a guaranteed exit, never the reverse.
+3. **`SyncPhaseInterrupt(KeyboardInterrupt)` carries the signal number**, so
+   the `128 + signum` contract survives the irreducible one-bytecode
+   entry/exit windows where the raise escapes `sync_phase` itself.
+4. **`install_handlers=False` is the seam** (mirroring `_CommandRun`'s): the
+   root test conftest forces it process-wide (a real install/restore cycle
+   disarms the harness's chained SIGINT faulthandler; opting back in via the
+   `real_sync_phase` fixture re-arms it in teardown), and
+   `_guarded_pytest_session` passes it off the main thread — library callers
+   degrade to an unguarded session, exactly like the async policy.
+
 ## The user contract (wave 2's acceptance criterion)
 
 A third-party command author writes a plain ``async def`` command on their own

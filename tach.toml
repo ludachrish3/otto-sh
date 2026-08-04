@@ -113,7 +113,10 @@ depends_on = ["otto.registry", "otto.link", "otto.config", "otto.models", "otto.
 
 [[modules]]
 path = "otto.lifecycle"
-depends_on = ["otto.config", "otto.context"]
+# otto.logger: sync_phase resolves shutdown_listener EAGERLY at entry so the
+# forced exit path (os._exit skips atexit) can flush the queue listener
+# without importing inside a signal handler.
+depends_on = ["otto.config", "otto.context", "otto.logger"]
 
 [[modules]]
 path = "otto.link"

@@ -121,3 +121,75 @@ def test_reset_detaches_captured_external_loggers(tmp_path):
     management.reset()
     assert not any(isinstance(h, logging.handlers.QueueHandler) for h in lg.handlers)
     assert lg.level == logging.NOTSET
+
+
+# ---------------------------------------------------------------------------
+# shutdown_listener's bounded flush (the sync_phase force path's only caller)
+#
+# The force-path call site wraps this in contextlib.suppress(Exception), so a
+# regression here (probe inverted, _thread rename, enqueue failure) would be
+# swallowed silently forever — these tests are the only loud surface it has.
+# ---------------------------------------------------------------------------
+
+
+class _CaptureHandler(logging.Handler):
+    def __init__(self):
+        super().__init__()
+        self.messages: list[str] = []
+
+    def emit(self, record):
+        self.messages.append(record.getMessage())
+
+
+def _record(msg: str) -> logging.LogRecord:
+    return logging.LogRecord("otto.flush", logging.INFO, __file__, 1, msg, None, None)
+
+
+def _listener_with_queued_record(msg: str):
+    import queue
+
+    capture = _CaptureHandler()
+    q: "queue.Queue[logging.LogRecord]" = queue.Queue(-1)
+    listener = logging.handlers.QueueListener(q, capture)
+    listener.start()
+    q.put(_record(msg))
+    management._state.listener = listener
+    return listener, q, capture
+
+
+def test_shutdown_listener_bounded_flush_drains_and_claims():
+    listener, _q, capture = _listener_with_queued_record("flush-me")
+    management.shutdown_listener(join_timeout=5.0)
+    assert capture.messages == ["flush-me"], "bounded flush must drain queued records"
+    assert management._state.listener is None, "the listener must be claimed out of module state"
+    thread = listener._thread
+    assert thread is None or not thread.is_alive(), "the listener thread must have stopped"
+    # Idempotent: a second call (force watchdog racing atexit) no-ops.
+    management.shutdown_listener(join_timeout=5.0)
+
+
+def test_shutdown_listener_bounded_flush_skips_when_queue_mutex_held():
+    listener, q, capture = _listener_with_queued_record("never-flushed")
+    # A wedged producer holds the queue mutex: the force path must abandon the
+    # flush (never the exit) — and must not enqueue the stop sentinel.
+    assert q.mutex.acquire(blocking=False)
+    try:
+        management.shutdown_listener(join_timeout=5.0)
+    finally:
+        q.mutex.release()
+    assert management._state.listener is None, "state is claimed even when the flush is skipped"
+    assert listener._thread is not None
+    assert listener._thread.is_alive(), (
+        "the listener must NOT have been stopped through a held mutex"
+    )
+    # Cleanup: drain and stop for real now that the mutex is free.
+    listener.stop()
+    assert capture.messages == ["never-flushed"]
+
+
+def test_stop_listener_unbounded_branch_still_stops():
+    listener, _q, capture = _listener_with_queued_record("atexit-path")
+    management._stop_listener()
+    assert capture.messages == ["atexit-path"]
+    assert management._state.listener is None
+    assert listener._thread is None, "the unbounded branch uses QueueListener.stop()"

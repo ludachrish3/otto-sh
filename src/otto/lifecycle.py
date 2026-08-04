@@ -16,9 +16,12 @@ delivery is exercised by the tier-2 subprocess tests (chaos plan 3).
 import asyncio
 import contextlib
 import logging
+import os
+import select
 import signal
 import sys
-from collections.abc import Callable, Coroutine
+import threading
+from collections.abc import Callable, Coroutine, Iterator
 from typing import Any, TypeVar
 
 R = TypeVar("R")
@@ -37,6 +40,11 @@ def register_force_exit_hook(hook: "Callable[[], None]") -> "Callable[[], None]"
     Returns an unregister callable; unregistering twice is a no-op. Hooks are
     last-resort **local** restoration (e.g. termios state) — they run after
     the event loop has closed, so they must be synchronous and idempotent.
+    They may also run on :func:`sync_phase`'s force-path watchdog thread
+    while the MAIN thread is suspended or wedged at an arbitrary bytecode
+    boundary, possibly holding stdio, logging, or import locks — so hooks
+    must acquire no lock the main thread could hold: os-level calls only
+    (``os.write``), no stdio ``print``, no ``logging``, no imports.
     """
     _force_exit_hooks.append(hook)
 
@@ -45,6 +53,229 @@ def register_force_exit_hook(hook: "Callable[[], None]") -> "Callable[[], None]"
             _force_exit_hooks.remove(hook)
 
     return _unregister
+
+
+_FORCE_FLUSH_JOIN = 2.0
+"""Bound (seconds) on the forced exit's log flush: the force path trades
+buffered log lines for a guaranteed exit, never the other way around."""
+
+
+class SyncPhaseInterrupt(KeyboardInterrupt):
+    """``KeyboardInterrupt`` raised by :func:`sync_phase`'s own handler.
+
+    A subclass so pytest and user teardown code observe a plain
+    ``KeyboardInterrupt``, while callers can recover WHICH signal fired —
+    including for the irreducible entry/exit windows where the raise escapes
+    ``sync_phase`` itself rather than the phase body, so the
+    ``128 + signum`` exit contract holds there too.
+    """
+
+    def __init__(self, signum: int) -> None:
+        super().__init__(signum)
+        self.signum = signum
+
+
+class SyncPhaseGuard:
+    """State handed back by :func:`sync_phase`; read after the phase returns.
+
+    ``interrupted_signum`` is ``None`` for an undisturbed phase, else the
+    first signal received (``signal.SIGINT`` / ``signal.SIGTERM``) — the
+    caller exits ``128 + interrupted_signum`` to match :func:`run_command`'s
+    contract.
+    """
+
+    def __init__(self, bound: float, what: str, shutdown_listener: "Callable[[], None]") -> None:
+        # Everything the signal handler and the watchdog need is resolved
+        # HERE, in normal execution context: a signal handler interrupts the
+        # main thread at an arbitrary bytecode boundary, possibly while it
+        # holds the import lock, a logging handler lock, or a stdio buffer
+        # lock — so handler code below may not import, may not use the
+        # logging module, and may not print. (Empirically found: a second
+        # SIGINT landing inside the phase's own print() made a printing
+        # force path raise reentrant-IO and lose its output; an import
+        # inside a handler can deadlock the force path outright, which would
+        # defeat the guard entirely.)
+        self._bound = bound
+        self._shutdown_listener = shutdown_listener
+        self._notice = (
+            f"\notto: interrupt received — finishing {what} teardown "
+            f"(bounded, {bound:g}s); interrupt again to force-exit\n"
+        ).encode()
+        self.interrupted_signum: "int | None" = None
+        self._closed = False
+        # Created by _start(); an inert guard (install_handlers=False) never
+        # owns a pipe or a thread.
+        self._wake_r = -1
+        self._wake_w = -1
+        self._watchdog: "threading.Thread | None" = None
+
+    def _start(self) -> None:
+        """Spawn the watchdog BEFORE any handler can fire (normal context).
+
+        The self-pipe is the only handler-to-watchdog channel: ``os.write``
+        is genuinely async-signal-safe, while every in-process alternative
+        (``Event.set``, ``Timer.start``, ``Lock.acquire``) can block on an
+        internal lock the interrupted frame already holds — a same-thread
+        deadlock of the exact mechanism whose one job is "always gets out".
+        """
+        self._wake_r, self._wake_w = os.pipe()
+        self._watchdog = threading.Thread(
+            target=self._watch, name="otto-sync-phase-watchdog", daemon=True
+        )
+        self._watchdog.start()
+
+    def _wake(self, byte: bytes) -> None:
+        with contextlib.suppress(OSError):
+            os.write(self._wake_w, byte)
+
+    def _read_wake(self, timeout: "float | None") -> "bytes | None":
+        """Next wake byte; ``b''`` on EOF (write end closed), ``None`` on timeout."""
+        ready, _, _ = select.select([self._wake_r], [], [], timeout)
+        if not ready:
+            return None
+        return os.read(self._wake_r, 1)
+
+    def _watch(self) -> None:
+        """Watchdog thread: owns the force path end to end.
+
+        Runs in ordinary thread context — never signal-handler context — so
+        the force path cannot self-deadlock against a lock held by the frame
+        a signal interrupted. It still assumes the MAIN thread may be wedged
+        at an arbitrary point holding arbitrary locks, so everything on the
+        force path is os-level or explicitly bounded (the listener flush is
+        claim-then-join with a timeout; see
+        ``logger.management.shutdown_listener``). ``os._exit`` is
+        deliberate: nothing else reliably preempts a wedged synchronous
+        teardown (there is no loop to cancel), and it skips atexit, hence
+        the explicit listener flush.
+        """
+        # State loop, NOT a fixed A-then-F sequence: two signals landing at
+        # the same eval checkpoint (e.g. supervisor SIGTERM + terminal
+        # SIGINT) can interleave the handlers so the nested one's b"F" is
+        # written BEFORE the outer one's b"A". A sequential reader would
+        # mistake that b"F" for a foreign byte and retire — permanently
+        # disarming the guard. Here b"F" forces regardless of arrival order,
+        # which is safe because the handler writes `interrupted_signum`
+        # before ANY wake byte, so the exit code below is always right.
+        armed = False
+        while True:
+            byte = self._read_wake(self._bound if armed else None)
+            if self._closed or byte in (b"", b"C"):  # phase completed in time
+                os.close(self._wake_r)
+                return
+            if byte == b"A":
+                armed = True  # the graceful-teardown deadline starts now
+                continue
+            # b"F" (second signal, whatever the interleaving) or None
+            # (deadline expiry after arming — unreachable unarmed, the
+            # pre-arm read has no timeout): force.
+            break
+        signum = self.interrupted_signum if self.interrupted_signum is not None else signal.SIGINT
+        _run_force_exit_hooks()
+        with contextlib.suppress(Exception):
+            self._shutdown_listener()
+        # _wake_r is deliberately left open here: this branch never returns,
+        # and os._exit reclaims every fd (uniform ownership: the watchdog
+        # closes the read end only on its retire paths).
+        os._exit(128 + signum)
+
+    def _close(self) -> None:
+        """Retire a started watchdog; called from ``sync_phase``'s finally."""
+        self._wake(b"C")
+        with contextlib.suppress(OSError):
+            os.close(self._wake_w)
+        # ident-check: if Thread.start() itself raised, joining the
+        # never-started thread would raise and mask the original error.
+        if self._watchdog is not None and self._watchdog.ident is not None:
+            self._watchdog.join(timeout=5.0)
+
+    def _on_signal(self, signum: int, _frame: Any) -> None:
+        # Handler-reentrancy-safe — the operative criterion for a CPython
+        # signal handler (which runs at a bytecode boundary on the main
+        # thread, NOT in POSIX async-signal context): acquire no lock the
+        # interrupted frame could hold. Attribute writes, os.write to the
+        # self-pipe/stderr, and raise — nothing else.
+        if self._closed:
+            # sync_phase is unwinding (or has left): the restored prior
+            # handler owns any later signal. Dropping this one beats raising
+            # into the caller's finally blocks.
+            return
+        if self.interrupted_signum is None:
+            self.interrupted_signum = signum
+            self._wake(b"A")  # start the watchdog's deadline countdown
+            with contextlib.suppress(OSError):
+                os.write(2, self._notice)
+            # Deliver the phase's own graceful-teardown path (pytest unwinds
+            # fixtures on KeyboardInterrupt); SIGTERM maps to the same path.
+            raise SyncPhaseInterrupt(signum)
+        self._wake(b"F")  # second signal: the watchdog force-exits at once
+
+
+@contextlib.contextmanager
+def sync_phase(
+    *,
+    deadline: "float | None" = None,
+    what: str = "synchronous phase",
+    install_handlers: bool = True,
+) -> "Iterator[SyncPhaseGuard]":
+    """Two-stage SIGINT/SIGTERM policy for a synchronous phase.
+
+    The sibling of :func:`run_command` for phases that own their own event
+    loops (the in-process pytest session): the first signal raises
+    ``KeyboardInterrupt`` (:class:`SyncPhaseInterrupt`) into the phase — its
+    graceful teardown — and arms the teardown deadline
+    (``OTTO_TEARDOWN_DEADLINE`` unless *deadline* is given); a second signal,
+    or the deadline expiring, makes a watchdog thread run the force-exit
+    hooks, flush the log listener (bounded), and ``os._exit(128 + signum)``.
+    The watchdog is spawned at entry in normal context so the force path
+    never executes in signal-handler context, where a single lock
+    acquisition can deadlock against the interrupted frame.
+
+    ``install_handlers=False`` yields an inert guard — no handlers, no
+    watchdog. This is the library/test seam (mirroring ``_CommandRun``'s),
+    and what callers on a non-main thread must use: signal handlers are a
+    main-thread-only facility, and installing (the default) off the main
+    thread raises ``RuntimeError``.
+
+    Handlers are restored on exit and the watchdog retired. Two irreducible
+    one-bytecode windows exist at entry and exit where the guard's handler
+    is live but the ``with`` frame cannot observe the raise; the escaping
+    :class:`SyncPhaseInterrupt` carries the signal number so callers can
+    still honor ``128 + signum``. A phase completing at the same instant
+    its deadline expires may still take the force path — same exit code,
+    hooks are idempotent, harmless.
+    """
+    from .logger.management import shutdown_listener
+
+    bound = _resolve_teardown_deadline() if deadline is None else deadline
+
+    def _bounded_flush() -> None:
+        # Resolved to a concrete callable here, in normal context; only the
+        # watchdog calls it, and only on the force path.
+        shutdown_listener(join_timeout=_FORCE_FLUSH_JOIN)
+
+    guard = SyncPhaseGuard(bound, what, _bounded_flush)
+    if not install_handlers:
+        yield guard
+        return
+    if threading.current_thread() is not threading.main_thread():
+        raise RuntimeError("sync_phase() must be entered from the main thread")
+    prior: "dict[int, Any]" = {}
+    try:
+        guard._start()  # noqa: SLF001 — sync_phase owns its guard's lifecycle
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            prior[sig] = signal.signal(sig, guard._on_signal)  # noqa: SLF001
+        yield guard
+    finally:
+        # Order matters: close the guard's ears first (making _on_signal a
+        # no-op), THEN restore handlers — built incrementally above, so an
+        # entry-window raise restores exactly what was installed — THEN
+        # retire the watchdog: cancel-last means a signal that armed it
+        # microseconds earlier is still caught by the closed check.
+        guard._closed = True  # noqa: SLF001
+        for sig, handler in prior.items():
+            signal.signal(sig, handler)
+        guard._close()  # noqa: SLF001
 
 
 def _run_force_exit_hooks() -> None:

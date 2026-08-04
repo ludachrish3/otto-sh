@@ -277,6 +277,14 @@ def _install_sigint_traceback_dump() -> None:
 
     if not hasattr(faulthandler, "register"):  # not available on Windows
         return
+    # Unregister-first makes this a true RE-ARM: `register` on an
+    # already-registered signal only updates options — it does NOT re-install
+    # the C-level handler after a `signal.signal` cycle clobbered it (proven
+    # empirically: a bare re-register left the dump disarmed; unregister
+    # clears the enabled flag so register re-saves and re-installs, and the
+    # chain still fires). `real_sync_phase`'s teardown depends on this.
+    # Unregistering a never-registered signal returns False, no error.
+    faulthandler.unregister(signal.SIGINT)
     faulthandler.register(
         signal.SIGINT,
         file=sys.stderr,
@@ -657,6 +665,16 @@ def _no_real_signal_handlers():
     test that runs afterward in the same process. This is exactly the kind
     of accidental cross-fixture entanglement a shared mutable fixture
     invites; a private, self-contained save/restore has no such surface.
+
+    ``sync_phase`` (the synchronous sibling policy) opens the SAME door
+    through a different frame: ``suite.run._guarded_pytest_session`` resolves
+    ``otto.lifecycle.sync_phase`` lazily and installs real SIGINT/SIGTERM
+    handlers by default, so any test that reaches ``run_suite``/
+    ``run_selection`` in-process would disarm the chained faulthandler
+    exactly like a bare ``run_command`` — hence the second patch below,
+    forcing ``install_handlers=False`` (an inert guard). Tests that must
+    prove REAL installation opt back in via the ``real_sync_phase`` fixture,
+    which re-arms the chain in teardown.
     """
     from otto import lifecycle
 
@@ -665,11 +683,48 @@ def _no_real_signal_handlers():
     def _factory(*, teardown_deadline, install_handlers=True):
         return real_command_run(teardown_deadline=teardown_deadline, install_handlers=False)
 
+    real_sync = lifecycle.sync_phase
+
+    def _inert_sync_phase(*, install_handlers=True, **kwargs):
+        return real_sync(install_handlers=False, **kwargs)
+
+    _inert_sync_phase._otto_real = real_sync  # real_sync_phase's road back
+
     lifecycle._CommandRun = _factory
+    lifecycle.sync_phase = _inert_sync_phase
     try:
         yield
     finally:
         lifecycle._CommandRun = real_command_run
+        lifecycle.sync_phase = real_sync
+
+
+@pytest.fixture
+def real_sync_phase():
+    """Opt-in: real ``sync_phase`` handler installation for THIS test.
+
+    Undoes ``_no_real_signal_handlers``' inerting patch (module attribute
+    only — test modules that imported ``sync_phase`` directly already hold
+    the real one) and, in teardown, re-arms this worker's chained SIGINT
+    faulthandler: a real install/restore cycle replaces faulthandler's
+    C-level registration with the plain Python-level restore, and only
+    re-running ``_install_sigint_traceback_dump`` re-arms the chain. Request
+    this fixture from ANY test that lets ``sync_phase`` install real
+    handlers in-process, whichever way it reaches it.
+
+    Yields the real ``sync_phase`` for tests that go through the lazy
+    module-attribute lookup (``suite.run._guarded_pytest_session``).
+    """
+    from otto import lifecycle
+
+    patched = lifecycle.sync_phase
+    real = getattr(patched, "_otto_real", patched)
+    lifecycle.sync_phase = real
+    try:
+        yield real
+    finally:
+        lifecycle.sync_phase = patched
+        _install_sigint_traceback_dump()
 
 
 # ---------------------------------------------------------------------------

@@ -18,9 +18,11 @@ coverage helpers) are imported lazily inside the functions that need them, so
 
 import contextlib
 import dataclasses
+import signal
+import threading
 from collections.abc import Iterator
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from ..config.repo import Repo
@@ -415,6 +417,48 @@ async def _post_run_coverage(repos: "list[Repo]", log_dir: Path, opts: RunOption
                         logger.info("Ticket export: %s", opts.cov_tickets_json)
 
 
+def _guarded_pytest_session(
+    *args: Any, **kwargs: Any
+) -> "tuple[_SessionOutcome | None, int | None]":
+    """Run one in-process pytest session under the sync-phase interrupt policy.
+
+    Returns ``(outcome, interrupted_signum)``. The first SIGINT/SIGTERM
+    reaches pytest as its normal graceful KeyboardInterrupt teardown (fixtures
+    unwind, suite fixtures release connections) with the teardown deadline
+    armed; a second signal or deadline expiry force-exits ``128 + signum``
+    (see :func:`otto.lifecycle.sync_phase`). ``outcome`` is ``None`` only if
+    KeyboardInterrupt escaped pytest itself (hard abort); a graceful
+    in-session interrupt still returns pytest's outcome, with the signal
+    reported alongside so callers exit ``128 + signum``.
+
+    Off the main thread (``run_suite``/``run_selection`` as plain library
+    calls from a worker thread) the session runs unguarded — signal handlers
+    are a main-thread-only facility, and the async policy degrades the same
+    way (``_CommandRun._main`` swallows ``add_signal_handler``'s refusal).
+    """
+    from otto.lifecycle import SyncPhaseInterrupt, sync_phase
+
+    guard = None
+    try:
+        with sync_phase(
+            what="pytest session",
+            install_handlers=threading.current_thread() is threading.main_thread(),
+        ) as g:
+            guard = g
+            outcome = _run_pytest_session(*args, **kwargs)
+            return outcome, g.interrupted_signum
+    except KeyboardInterrupt as exc:
+        # The guard's raise can escape sync_phase itself (its entry/exit
+        # windows), not just the phase body; SyncPhaseInterrupt carries the
+        # signal so 128+signum holds there too. A foreign KeyboardInterrupt
+        # (user code, no guard signal) keeps its pre-guard behavior.
+        if isinstance(exc, SyncPhaseInterrupt):
+            return None, exc.signum
+        if guard is None or guard.interrupted_signum is None:
+            raise  # not ours — a bare KeyboardInterrupt from user code
+        return None, guard.interrupted_signum
+
+
 def _run_pytest_session(
     targets: list[str],
     keyword: str | None,
@@ -586,7 +630,7 @@ def run_suite(
     with _session_context(log_dir):
         _pre_run_cov_dir_check(run_options)
         run_command(_pre_run_cov_clean(repos, run_options))
-        outcome = _run_pytest_session(
+        outcome, interrupted = _guarded_pytest_session(
             [suite_file],
             suite.__name__,
             _repo_confcutdir(suite_file, repos),
@@ -604,7 +648,13 @@ def run_suite(
         session_ctx = try_get_context()
         if session_ctx is not None:
             session_ctx.scope.rebuild_connections()
-        run_command(_post_run_coverage(repos, log_dir, run_options))
+        if interrupted is None:
+            run_command(_post_run_coverage(repos, log_dir, run_options))
+    if interrupted is not None or outcome is None:
+        # Match run_command's interrupt contract: an interrupted run exits
+        # 128+signum (not pytest's rc-2 masquerading as a test failure), and
+        # skips post-run coverage — interrupt means STOP.
+        raise SystemExit(128 + (interrupted if interrupted is not None else signal.SIGINT))
 
     return SuiteRunResult(
         exit_code=_final_exit_code(outcome.rc, outcome.unstable),
@@ -681,6 +731,11 @@ def run_selection(
     junit_paths: list[Path] = []
     last_report: Path | None = None
     any_unstable = False
+    # Bound before the loop: per_repo is non-empty today, but the post-loop
+    # `interrupted` checks must not turn into NameErrors if a guard/continue
+    # ever precedes the first session.
+    outcome: "_SessionOutcome | None" = None
+    interrupted: "int | None" = None
     with _session_context(log_dir):
         _pre_run_cov_dir_check(opts)
         run_command(_pre_run_cov_clean(repos, opts))
@@ -696,7 +751,7 @@ def run_selection(
             else:
                 results_path = opts.results or str(default_junit)
             sut_test_dirs = [p for r in repos for p in r.tests]
-            outcome = _run_pytest_session(
+            outcome, interrupted = _guarded_pytest_session(
                 targets,
                 None,
                 repo.sut_dir,
@@ -707,11 +762,15 @@ def run_selection(
                 log_dir,
                 label=f"selection:{repo.name}",
             )
-            worst = max(worst, _final_exit_code(outcome.rc, outcome.unstable))
-            junit_paths.append(Path(results_path))
-            any_unstable = any_unstable or outcome.unstable
-            if outcome.report is not None:
-                last_report = outcome.report
+            if outcome is not None:
+                worst = max(worst, _final_exit_code(outcome.rc, outcome.unstable))
+                junit_paths.append(Path(results_path))
+                any_unstable = any_unstable or outcome.unstable
+                if outcome.report is not None:
+                    last_report = outcome.report
+            if interrupted is not None:
+                # Interrupt means STOP: no further repos, no post-coverage.
+                break
 
         # Hosts the in-process pytest sessions registered were opened on
         # pytest's own (now-closed) event loops; drop that dead per-loop
@@ -720,7 +779,10 @@ def run_selection(
         session_ctx = try_get_context()
         if session_ctx is not None:
             session_ctx.scope.rebuild_connections()
-        run_command(_post_run_coverage(repos, log_dir, opts))
+        if interrupted is None:
+            run_command(_post_run_coverage(repos, log_dir, opts))
+    if interrupted is not None:
+        raise SystemExit(128 + interrupted)
 
     return SuiteRunResult(
         exit_code=worst,
