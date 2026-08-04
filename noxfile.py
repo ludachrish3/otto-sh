@@ -345,7 +345,7 @@ def dashboard(session: nox.Session, browser: str) -> None:
     )
 
 
-@nox_uv.session(uv_groups=["dev"])
+@nox_uv.session(uv_groups=["dev", "lint"])
 def lint(session: nox.Session) -> None:
     """Run ruff lint + format checks, then the architecture gates.
 

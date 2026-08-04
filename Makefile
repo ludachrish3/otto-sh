@@ -746,9 +746,9 @@ lint-python: ## (Quality) Run ruff lint + format checks (part of check-python)
 # todo/churn-and-design-review-2026-08-03.md §5.
 lint-arch: ## (Quality) Architecture gates: tach (module dependency contracts) + ast-grep (pattern rules)
 	@$(SAY) "tach: module dependency contracts (tach.toml)"
-	@uv run tach check
+	@uv run --group lint tach check
 	@$(SAY) "ast-grep: architecture pattern rules (.ast-grep/rules/)"
-	@uv run ast-grep scan src/otto
+	@uv run --group lint ast-grep scan src/otto
 
 # `biome check` = lint rules + formatting + ASSIST actions (organize-imports).
 # `biome lint` + `biome format` together are STRICTLY WEAKER: neither reports

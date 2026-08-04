@@ -122,7 +122,7 @@ class MonitorTarget:
     snmp: SnmpSource | None = field(default=None)
 
 
-async def _gather_cancelling_siblings(coros: "list[Coroutine[Any, Any, None]]") -> None:
+async def _gather_cancelling_siblings(coros: "Sequence[Coroutine[Any, Any, None]]") -> None:
     """Run *coros* concurrently; the first escape cancels every sibling.
 
     ``asyncio.gather`` alone re-raises the first exception while leaving the

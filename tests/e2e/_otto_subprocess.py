@@ -68,6 +68,12 @@ def run_otto(
         "PATH": os.environ.get("PATH", ""),
         "HOME": os.environ.get("HOME", ""),
         "OTTO_SUT_DIRS": str(sut_dirs),
+        # The child's in-process pytest sessions must never load tach's
+        # pytest11 plugin: its Rust extension sets a C-level Ctrl-C handler at
+        # import and panics (`MultipleHandlers`) when `otto test` runs
+        # consecutive sessions in one process (issue #193). The dev venv can
+        # carry tach (lint group), so block it here rather than trust the env.
+        "PYTEST_ADDOPTS": "-p no:tach",
         "COVERAGE_PROCESS_START": str(COVERAGERC),
         "PYTHONPATH": os.pathsep.join(
             [str(COVERAGE_BOOTSTRAP), os.environ.get("PYTHONPATH", "")]

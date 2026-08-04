@@ -1252,7 +1252,6 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
-    { name = "ast-grep-cli" },
     { name = "bump-my-version" },
     { name = "doc8" },
     { name = "git-cliff" },
@@ -1274,8 +1273,11 @@ dev = [
     { name = "sphinx", version = "9.0.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
     { name = "sphinx", version = "9.1.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "sphinx-immaterial" },
-    { name = "tach" },
     { name = "ty" },
+]
+lint = [
+    { name = "ast-grep-cli" },
+    { name = "tach" },
 ]
 
 [package.metadata]
@@ -1302,7 +1304,6 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "ast-grep-cli", specifier = ">=0.45.0" },
     { name = "bump-my-version", specifier = ">=1.3.0" },
     { name = "doc8", specifier = ">=1.1" },
     { name = "git-cliff", specifier = ">=2.13.1" },
@@ -1321,8 +1322,11 @@ dev = [
     { name = "ruff", specifier = ">=0.15.20" },
     { name = "sphinx", specifier = ">=8.0" },
     { name = "sphinx-immaterial" },
-    { name = "tach", specifier = ">=0.35.0" },
     { name = "ty", specifier = "==0.0.64" },
+]
+lint = [
+    { name = "ast-grep-cli", specifier = ">=0.45.0" },
+    { name = "tach", specifier = ">=0.35.0" },
 ]
 
 [[package]]

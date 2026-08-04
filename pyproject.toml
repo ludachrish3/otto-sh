@@ -149,6 +149,17 @@ dev = [
     "doc8>=1.1",
     "ty==0.0.64",
     "pyyaml>=6.0.3",
+]
+# Architecture-gate tools, kept OUT of the dev group on purpose: tach ships a
+# `pytest11` entry-point plugin whose Rust extension installs a C-level Ctrl-C
+# handler (ctrlc crate) at import — in any env where tach is installed it
+# auto-loads into every pytest process, and `otto test`'s consecutive
+# in-process sessions then panic with `MultipleHandlers` (issue #193). Test
+# envs must never see it; only `nox -s lint` / `make lint-arch` install this
+# group. The pytest-side guards (`-p no:tach` in addopts here and in the e2e
+# child env) cover envs that end up with both groups anyway (e.g. a dev venv
+# after `uv run --group lint`).
+lint = [
     "tach>=0.35.0",
     "ast-grep-cli>=0.45.0",
 ]
@@ -192,7 +203,11 @@ log_cli = true
 log_level = "INFO"
 log_format = "%(asctime)s [%(levelname)s] %(message)s"
 log_cli_date_format = "%Y-%m-%d %H:%M:%S.%f"
-addopts = "--doctest-modules --cov=otto --cov-context=test --cov-report term-missing --cov-report html -n auto --dist loadgroup"
+# `-p no:tach`: tach's pytest plugin must never load into otto's own harness —
+# its Rust extension sets a C-level SIGINT handler at import (invisible to the
+# root conftest's signal guards, and it displaces the chained faulthandler).
+# Harmless when tach isn't installed; load-bearing when it is (issue #193).
+addopts = "-p no:tach --doctest-modules --cov=otto --cov-context=test --cov-report term-missing --cov-report html -n auto --dist loadgroup"
 doctest_optionflags = ["NORMALIZE_WHITESPACE", "ELLIPSIS"]
 asyncio_default_fixture_loop_scope = "function"
 asyncio_mode = "strict"
