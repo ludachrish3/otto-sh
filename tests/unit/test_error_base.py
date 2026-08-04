@@ -5,6 +5,11 @@ convention" policy into a gate: each public exception class keeps its original
 stdlib root (so existing ``except ValueError`` / ``except RuntimeError``
 handlers stay correct) while also subclassing :class:`otto.errors.OttoError`,
 so one ``except OttoError`` clause catches anything otto raised.
+
+This file owns the RAISES half of the convention. The RETURNS half — public
+API returns a Result-family value, never a bare ``Status`` — is gated by
+``.ast-grep/rules/no-bare-status-return.yml`` (run by ``make lint-arch``).
+Both are documented in ``docs/architecture/utilities/results.md``.
 """
 
 import builtins

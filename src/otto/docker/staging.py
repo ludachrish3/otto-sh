@@ -24,7 +24,7 @@ from pathlib import Path
 
 from ..config.repo import DockerCompose, DockerImage
 from ..host.host import Host
-from ..utils import Status
+from ..result import CommandResult
 
 PARENT_ROOT = Path("/tmp/otto-docker")  # noqa: S108 — deliberate staging path
 
@@ -127,7 +127,10 @@ async def stage_compose_files(
     return out
 
 
-async def cleanup_project(parent: Host, project: str) -> Status:
-    """Remove the per-project staging tree on the parent. Best-effort."""
-    result = await parent.exec(f"rm -rf {shlex.quote(str(project_root(project)))}")
-    return result.status
+async def cleanup_project(parent: Host, project: str) -> CommandResult:
+    """Remove the per-project staging tree on the parent. Best-effort.
+
+    Returns the ``rm -rf``'s own :class:`~otto.result.CommandResult` — callers
+    that care check ``.is_ok``; best-effort callers ignore it.
+    """
+    return await parent.exec(f"rm -rf {shlex.quote(str(project_root(project)))}")

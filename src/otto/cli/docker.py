@@ -265,14 +265,16 @@ async def _down(
     for r in selected_repos:
         if not r.docker_settings.composes:
             continue
-        status = await compose_down(r, lab, on=on)
-        if status is Status.Skipped:
+        result = await compose_down(r, lab, on=on)
+        if result.status is Status.Skipped:
             rprint(f"[dim]{r.name}: nothing to tear down.")
-        elif status.is_ok:
+        elif result.is_ok:
             rprint(f"[green]{r.name}: stack down.")
         else:
             any_failed = True
-            rprint(f"[red]{r.name}: tear-down reported {status}.")
+            # `.status`, not the whole result: the line's text is the contract
+            # (a full CommandResult repr would dump the command and output).
+            rprint(f"[red]{r.name}: tear-down reported {result.status}.")
     if any_failed:
         raise typer.Exit(1)
 

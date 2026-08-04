@@ -814,11 +814,12 @@ def test_resolve_parent_non_unixhost_raises(tmp_path):
 
 @pytest.mark.asyncio
 async def test_compose_down_no_composes_skipped(tmp_path):
-    """Returns Status.Skipped immediately when the repo has no composes."""
+    """Returns a Skipped CommandResult immediately when the repo has no composes."""
     repo = _make_bare_repo(tmp_path)
     lab = _make_lab()
     result = await compose_down(repo, lab)
-    assert result is Status.Skipped
+    assert result.status is Status.Skipped
+    assert result.retcode == -1  # never ran
 
 
 @pytest.mark.asyncio
@@ -840,9 +841,9 @@ async def test_compose_down_failure_logs_error(tmp_path, caplog):
         result = await compose_down(repo, lab)
 
     assert any("compose down failed" in r.message for r in caplog.records)
-    # The function returns the failed Status — verify it didn't raise and the
-    # failure path is confirmed by the returned value
-    assert result is Status.Failed
+    # The function returns the failed CommandResult — verify it didn't raise and
+    # the failure path is confirmed by the returned value
+    assert result.status is Status.Failed
 
 
 @pytest.mark.asyncio
@@ -870,8 +871,8 @@ async def test_compose_down_swallows_host_close_error(tmp_path):
     result = await compose_down(repo, lab)
     # Prove the close() branch was actually exercised (not just skipped)
     noisy.close.assert_called_once()
-    # down command succeeded, so the returned status is Success
-    assert result is Status.Success
+    # down command succeeded, so the returned result is Success
+    assert result.status is Status.Success
 
 
 # ---------------------------------------------------------------------------

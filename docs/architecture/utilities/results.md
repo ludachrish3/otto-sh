@@ -45,8 +45,31 @@ A `@cli_exposed` host verb returning any `Result` gets these semantics on the
 CLI for free; returning a plain value exits `0`. See
 {doc}`../subsystems/hosts` for how verbs become CLI commands.
 
+## The convention, and its two gates
+
+Public otto API says what happened in exactly one of three ways:
+
+1. it **returns a `Result`-family value** ({class}`~otto.result.Result`,
+   {class}`~otto.result.CommandResult`, {class}`~otto.result.Results`);
+2. it **raises an {class}`~otto.errors.OttoError` subclass**; or
+3. it returns a plain value and **documents why** — the predicate and
+   accessor verbs (`exists`, `is_installed`, `is_uninstalled`, `ls`,
+   `read_file`) plus `login` (which returns `None`) are the whole list.
+
+`Status` is the vocabulary carried *inside* a result, **never a return type
+of its own**: a caller handed a bare `Status` cannot see the exit code, the
+command, or the output that explains it.
+
+Both halves are gated rather than documented-and-hoped:
+
+- **returns** — `.ast-grep/rules/no-bare-status-return.yml` fails any public
+  function in `src/otto` annotated `-> Status` (run by `make lint-arch`).
+- **raises** — `tests/unit/test_error_base.py` sweeps every public exception
+  class and fails on one that does not reach `OttoError`.
+
 ## Where the code lives
 
 - {mod}`otto.result` — `Result`, `CommandResult`, `Results`, and the
   exit-code derivation
+- {mod}`otto.errors` — `OttoError`, the root of the raised half
 - {mod}`otto.utils` — the shared `Status` vocabulary

@@ -33,6 +33,7 @@ from otto.suite.register import (
     _options_params,
     register_suite_class,
 )
+from tests._fixtures.dispatch import DispatchRunner
 
 runner = CliRunner()
 
@@ -53,8 +54,9 @@ def _ok_result(exit_code: int = 0):
     """A SuiteRunResult stub for faked library ``run_suite`` calls.
 
     The runner consumes the library ``run_suite`` (returning a
-    ``SuiteRunResult``) and raises ``typer.Exit`` on a non-zero exit code, so a
-    fake must return a result carrying an ``exit_code``.
+    ``SuiteRunResult``) and converts its ``exit_code`` into the
+    ``CommandResult`` the leaf-invoke renderer turns into a process exit
+    code, so a fake must return a result carrying an ``exit_code``.
     """
     from otto.suite.run import SuiteRunResult
 
@@ -423,7 +425,18 @@ class TestRunnerInvocation:
         assert "output_dir" in kw
 
     def test_runner_propagates_nonzero_exit_code(self):
-        """A non-zero SuiteRunResult.exit_code becomes a typer.Exit from the runner."""
+        """pytest's rc survives to the process exit code, verbatim.
+
+        Driven through the production dispatch seam (DispatchRunner): the
+        runner returns a CommandResult and the leaf-invoke renderer derives
+        the exit code from it, so a bare-app CliRunner — which never reaches
+        that wrapper — would report 0 and prove nothing.
+
+        What this pins is the OUTCOME (rc 5 verbatim, no extra output), not
+        the mechanism: a regression to ``raise typer.Exit(5)`` would also
+        exit 5 here. Keeping typer out of the suite runner is the
+        ``typer-exit-outside-cli`` ast-grep rule's job (zero baseline).
+        """
 
         class _SuiteFails:
             pass
@@ -436,9 +449,12 @@ class TestRunnerInvocation:
             return _ok_result(exit_code=5)
 
         with patch("otto.suite.run.run_suite", fake_run_suite):
-            result = runner.invoke(app, ["_SuiteFails"])
+            result = DispatchRunner().invoke(app, ["_SuiteFails"], spec_name="test")
 
-        assert result.exit_code == 5
+        # rc 5 (pytest's "no tests collected"), not a flattened 1
+        assert result.exit_code == 5, result.output
+        # And nothing extra printed: pytest already said everything.
+        assert result.output == ""
 
 
 # ── OttoOptionsPlugin ─────────────────────────────────────────────────────────

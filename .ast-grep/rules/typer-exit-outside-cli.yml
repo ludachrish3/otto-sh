@@ -2,7 +2,12 @@ id: typer-exit-outside-cli
 language: python
 severity: error
 message: typer.Exit outside src/otto/cli/ couples core code to the CLI framework. Raise a library exception (or return a Result) and translate at the CLI boundary.
-note: Baseline violations carry an ast-grep-ignore with a Tier pointer; do not add new ones.
+note: >
+  ZERO baseline violations as of the outcome-convention pass (2026-08-04).
+  The last one — otto/suite/register.py's suite runner — now returns a
+  CommandResult that the leaf-invoke renderer (cli/invoke.render_leaf_value)
+  turns into the process exit code, so no suppression remains anywhere.
+  Do not add new ones.
 files:
 - src/otto/**
 ignores:

@@ -22,6 +22,8 @@ import typer
 
 from ..params import build_options, options_params
 from ..registry import Registry
+from ..result import CommandResult
+from ..utils import Status
 
 if TYPE_CHECKING:
     from _typeshed import DataclassInstance
@@ -97,7 +99,7 @@ def register_suite_class(suite_class: type) -> None:
     _opts_cls = opts_cls
     _suite_cls = suite_class
 
-    def runner(**kw: Any) -> None:
+    def runner(**kw: Any) -> CommandResult:
         ctx = kw.pop("ctx")
         opts_instance = (
             build_options(_opts_cls, kw)
@@ -107,9 +109,8 @@ def register_suite_class(suite_class: type) -> None:
 
         # Call the suite-run library directly (class-first). The engine derives
         # the suite's source file itself (inspect.getfile) and returns a
-        # SuiteRunResult; translate a non-zero exit code into typer.Exit so the
-        # CLI/CI sees the failure. Lazy import keeps the pytest-touching engine
-        # off the import-time path.
+        # SuiteRunResult. Lazy import keeps the pytest-touching engine off the
+        # import-time path.
         from ..context import get_context
         from .run import RUN_OPTIONS_KEY, RunOptions, run_suite
 
@@ -121,10 +122,18 @@ def register_suite_class(suite_class: type) -> None:
             run_options=run_options,
             output_dir=get_context().output_dir,
         )
-        if result.exit_code != 0:
-            # baseline debt — Tier 2.3 retires this via the leaf-invoke renderer
-            # ast-grep-ignore: typer-exit-outside-cli
-            raise typer.Exit(code=result.exit_code)
+        # The leaf-invoke renderer (cli/invoke.render_leaf_value) derives the
+        # process exit code from this result's ssh-like retcode, so the suite
+        # runner never touches typer's exit machinery. `msg=""` and `value=""`
+        # keep the renderer SILENT — pytest already printed everything a user
+        # needs, and a message here would append a red line to every failing
+        # run. The retcode is pytest's own rc (1-5), passed through verbatim.
+        return CommandResult(
+            Status.Success if result.exit_code == 0 else Status.Failed,
+            value="",
+            command=f"pytest {_suite_cls.__name__}",
+            retcode=result.exit_code,
+        )
 
     runner.__signature__ = inspect.Signature(params)  # ty: ignore[unresolved-attribute]
     runner.__name__ = suite_class.__name__

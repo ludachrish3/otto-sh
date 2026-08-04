@@ -59,6 +59,16 @@ message rather than emitting a plausible-but-wrong report; an unreachable
 host is an error naming the host, not a skipped test. Graceful degradation
 is reserved for *listing* paths (help, completion); *dispatch* fails loud.
 
+## Outcomes have one shape
+
+Public API returns a {mod}`otto.result` family value, raises an
+{class}`~otto.errors.OttoError`, or returns a documented plain scalar —
+never a bare `Status`, which strands the caller with a verdict and no exit
+code, command, or output. Exit codes are *derived* from results at one seam
+(the leaf-invoke wrapper), so the CLI has no exit-code logic of its own to
+drift. Both halves are enforced: an ast-grep rule for the returns,
+a test sweep for the raises. ({doc}`utilities/results`)
+
 ## Logging: most-restrictive wins, and only for command I/O
 
 Sensitivity composes by `max`: if either the host or the call says `QUIET`

@@ -35,9 +35,9 @@ def _lib_ok_result():
     """A zero-exit SuiteRunResult for faked ``otto.suite.run.run_suite`` calls.
 
     The suite runner (``otto.suite.register``) now consumes the library
-    ``run_suite`` (returning a ``SuiteRunResult``) and raises ``typer.Exit`` on
-    a non-zero exit code, so a fake must hand back a result carrying
-    ``exit_code == 0``.
+    ``run_suite`` (returning a ``SuiteRunResult``) and converts its
+    ``exit_code`` into a ``CommandResult`` for the leaf-invoke renderer, so a
+    fake must hand back a result carrying ``exit_code == 0``.
     """
     from pathlib import Path
 

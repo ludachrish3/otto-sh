@@ -1,0 +1,27 @@
+id: no-bare-status-return
+language: python
+severity: error
+message: Function returns a bare `Status`. otto's outcome convention is a Result-family value (otto.result) or a raised OttoError — a naked enum drops the retcode, the output, and the diagnostic the caller needs.
+note: >
+  The returns half of the outcome convention, converted from prose into a gate
+  (the raises half is tests/unit/test_error_base.py). `Status` is the shared
+  VOCABULARY carried inside a result (docs/architecture/utilities/results.md),
+  never the return type itself: a caller handed a bare `Status` cannot see the
+  exit code, the command, or the output. Swept to zero when docker's
+  compose_down / cleanup_project converted — they were the last two, and were
+  a regression from an earlier Result-family shape, which is exactly the drift
+  this rule now prevents. Legacy `tuple[Status, str]` pairs (docker/build.py,
+  host/product.py) are the wider debt this rule deliberately does NOT cover
+  yet; tighten the regex when they convert.
+files:
+- src/otto/**
+rule:
+  kind: function_definition
+  all:
+  - has:
+      field: return_type
+      regex: "^['\"]?Status['\"]?$"
+  - not:
+      has:
+        field: name
+        regex: "^_"

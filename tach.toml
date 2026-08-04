@@ -75,7 +75,7 @@ depends_on = ["otto.utils", "otto.host", "otto._webassets", "otto.config", "otto
 
 [[modules]]
 path = "otto.docker"
-depends_on = ["otto.host", "otto.models", "otto.lifecycle", "otto.utils", "otto.config"]
+depends_on = ["otto.host", "otto.models", "otto.lifecycle", "otto.utils", "otto.config", "otto.result"]
 
 [[modules]]
 path = "otto.errors"
@@ -172,7 +172,7 @@ depends_on = ["otto.utils"]
 
 [[modules]]
 path = "otto.suite"
-depends_on = ["otto.context", "otto.config", "otto.lifecycle", "otto.registry", "otto.monitor", "otto.version", "otto.models", "otto.host", "otto.coverage", "otto.params", "otto.errors"]
+depends_on = ["otto.context", "otto.config", "otto.lifecycle", "otto.registry", "otto.monitor", "otto.version", "otto.models", "otto.host", "otto.coverage", "otto.params", "otto.errors", "otto.result", "otto.utils"]
 
 [[modules]]
 path = "otto.testing"

@@ -24,6 +24,7 @@ from ..config.repo import DockerCompose, Repo
 from ..host.docker_host import DockerContainerHost
 from ..host.host import Host
 from ..host.unix_host import UnixHost
+from ..result import CommandResult
 from ..utils import Status
 
 logger = logging.getLogger(__name__)
@@ -121,15 +122,14 @@ def _resolve_parent(
 
 async def _compose_cmd(
     parent: Host, project_name: str, files: list[str], action: str, *, extra: str = ""
-) -> tuple[Status, str]:
+) -> CommandResult:
     file_args = " ".join(f"-f {shlex.quote(f)}" for f in files)
     cmd = f"docker compose -p {shlex.quote(project_name)} {file_args} {action}"
     if extra:
         cmd += f" {extra}"
     # Unbounded on purpose: an image build/pull has no defensible bound, and a
     # made-up constant would be wrong on a slower builder. `inf` states that.
-    result = await parent.exec(cmd, timeout=float("inf"))
-    return result.status, result.value
+    return await parent.exec(cmd, timeout=float("inf"))
 
 
 async def _stack_already_up(parent: Host, project_name: str) -> bool:
@@ -239,17 +239,17 @@ async def compose_up(
         # a longer _NETWORK_RACE_RETRY_BACKOFF_S); a pre-`up` `docker network
         # prune` on the parent; or restart the daemon between runs.
         for attempt in range(2):
-            status, output = await _compose_cmd(parent, proj, remote_file_strs, "up -d")
-            if status.is_ok:
+            up = await _compose_cmd(parent, proj, remote_file_strs, "up -d")
+            if up.is_ok:
                 break
-            if attempt == 0 and _is_transient_network_race(output):
+            if attempt == 0 and _is_transient_network_race(up.value):
                 logger.debug(
                     rf"\[docker] {proj} hit a transient network race on up; "
                     f"retrying once after {_NETWORK_RACE_RETRY_BACKOFF_S}s"
                 )
                 await asyncio.sleep(_NETWORK_RACE_RETRY_BACKOFF_S)
                 continue
-            raise RuntimeError(f"docker compose up failed: {output}")
+            raise RuntimeError(f"docker compose up failed: {up.value}")
     else:
         logger.info(rf"\[docker] {proj} already running on {parent.id}; reusing")
 
@@ -260,12 +260,10 @@ async def compose_up(
         declared_services.extend(compose.services)
     declared_services = list(dict.fromkeys(declared_services))  # dedupe, preserve order
 
-    live_status, live_out = await _compose_cmd(
-        parent, proj, remote_file_strs, "config", extra="--services"
-    )
+    live = await _compose_cmd(parent, proj, remote_file_strs, "config", extra="--services")
     live_services: set[str] = set()
-    if live_status.is_ok:
-        live_services = {s.strip() for s in live_out.splitlines() if s.strip()}
+    if live.is_ok:
+        live_services = {s.strip() for s in live.value.splitlines() if s.strip()}
         if declared_services and set(declared_services) != live_services:
             logger.warning(
                 rf"\[docker] declared services {sorted(declared_services)} differ from "
@@ -310,7 +308,7 @@ async def compose_down(
     on: str | None = None,
     project_name: str | None = None,
     stop_timeout: int = 1,
-) -> Status:
+) -> CommandResult:
     """Tear down *repo*'s compose stack and unregister its container hosts.
 
     *stop_timeout* is the per-container graceful-shutdown grace period in
@@ -320,10 +318,16 @@ async def compose_down(
     teardown adds up fast (4 tests x 10s = 40s of wall time on the
     serialized ``docker_e2e`` group). Pass a larger value for stacks where
     graceful shutdown matters.
+
+    Returns the ``docker compose down`` command's
+    :class:`~otto.result.CommandResult`. A repo with no ``[[docker.composes]]``
+    yields a ``Status.Skipped`` result that never ran (``retcode`` ``-1``).
+    A failed tear-down is logged and returned, never raised — callers sweep
+    the rest of their repos.
     """
     settings = repo.docker_settings
     if not settings.composes:
-        return Status.Skipped
+        return CommandResult(Status.Skipped, value="", command="", retcode=-1)
 
     parent = _resolve_parent(repo, lab, on, list(settings.composes))
     proj = project_name or get_user_compose_project(repo.name)
@@ -333,15 +337,15 @@ async def compose_down(
     # See compose_up() for the staging-key rationale: keyed on the compose
     # project (suffix-aware) so concurrent stacks don't collide.
     remote_files = await stage_compose_files(parent, proj, list(settings.composes))
-    status, output = await _compose_cmd(
+    result = await _compose_cmd(
         parent,
         proj,
         [str(p) for p in remote_files],
         "down",
         extra=f"--timeout {int(stop_timeout)}",
     )
-    if not status.is_ok:
-        logger.error(rf"\[docker] compose down failed: {output}")
+    if not result.is_ok:
+        logger.error(rf"\[docker] compose down failed: {result.value}")
 
     # Unregister any hosts that came from this stack. Close each container
     # host first so its persistent session drains cleanly while
@@ -357,7 +361,7 @@ async def compose_down(
             except Exception as e:  # noqa: BLE001 — best-effort teardown, logs warning
                 logger.warning(rf"\[docker] error closing container host {hid}: {e}")
 
-    return status
+    return result
 
 
 @contextlib.asynccontextmanager

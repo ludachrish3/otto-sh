@@ -13,6 +13,7 @@ from otto.cli import docker as docker_cli
 from otto.config.lab import Lab
 from otto.config.repo import Repo
 from otto.host.unix_host import UnixHost
+from otto.result import CommandResult
 from otto.utils import Status
 
 
@@ -353,10 +354,12 @@ async def test_up_accepts_positional_handle_for_on(tmp_path):
 
 @pytest.mark.asyncio
 async def test_down_skipped(tmp_path):
-    """_down prints a dim 'nothing to tear down' line when status is Skipped."""
+    """_down prints a dim 'nothing to tear down' line on a Skipped result."""
     repo = _make_repo(tmp_path / "r1", name="myrepo", default_host="pepper_seed")
 
-    mock_compose_down = AsyncMock(return_value=Status.Skipped)
+    mock_compose_down = AsyncMock(
+        return_value=CommandResult(Status.Skipped, value="", command="", retcode=-1)
+    )
     mock_rprint = MagicMock()
 
     with (
@@ -374,10 +377,14 @@ async def test_down_skipped(tmp_path):
 
 @pytest.mark.asyncio
 async def test_down_success(tmp_path):
-    """_down prints a green 'stack down' line on Success."""
+    """_down prints a green 'stack down' line on a Success result."""
     repo = _make_repo(tmp_path / "r1", name="myrepo", default_host="pepper_seed")
 
-    mock_compose_down = AsyncMock(return_value=Status.Success)
+    mock_compose_down = AsyncMock(
+        return_value=CommandResult(
+            Status.Success, value="", command="docker compose down", retcode=0
+        )
+    )
     mock_rprint = MagicMock()
 
     with (
@@ -395,10 +402,14 @@ async def test_down_success(tmp_path):
 
 @pytest.mark.asyncio
 async def test_down_failed_exits(tmp_path):
-    """_down raises Exit(1) when compose_down returns Failed."""
+    """_down raises Exit(1) when compose_down returns a Failed result."""
     repo = _make_repo(tmp_path / "r1", name="myrepo", default_host="pepper_seed")
 
-    mock_compose_down = AsyncMock(return_value=Status.Failed)
+    mock_compose_down = AsyncMock(
+        return_value=CommandResult(
+            Status.Failed, value="boom", command="docker compose down", retcode=1
+        )
+    )
 
     with (
         patch.object(docker_cli, "_select_repos", return_value=[repo]),
