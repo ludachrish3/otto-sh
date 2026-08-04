@@ -26,6 +26,7 @@ otto.coverage.merge.paths
 otto.coverage.reporter
 otto.coverage.store
 otto.coverage.store.model
+otto.errors
 otto.host
 otto.host.binary_loader
 otto.host.builtin_hosts

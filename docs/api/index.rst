@@ -23,4 +23,5 @@ API Reference
    testing
    examples
    result
+   errors
    utils

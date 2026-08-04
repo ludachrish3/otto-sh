@@ -9,8 +9,10 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
+from ...errors import OttoError
 
-class GitUnavailableError(RuntimeError):
+
+class GitUnavailableError(OttoError, RuntimeError):
     """Raised when git cannot answer (not a repo / git missing)."""
 
 

@@ -14,6 +14,7 @@ otto.config.repo
 otto.config.version
 otto.console
 otto.context
+otto.errors
 otto.host
 otto.host.binary_loader
 otto.host.builtin_hosts

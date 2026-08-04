@@ -22,11 +22,11 @@ exclude = ["tests", "docs", "web", "scripts"]
 
 [[modules]]
 path = "otto.bootstrap"
-depends_on = ["otto.config"]
+depends_on = ["otto.config", "otto.errors"]
 
 [[modules]]
 path = "otto.cli"
-depends_on = ["otto.instructions", "otto.registry", "otto.logger", "otto.link", "otto.reservations", "otto.coverage", "otto.tunnel", "otto.utils", "otto.models", "otto.bootstrap", "otto.suite", "otto.monitor", "otto.host", "otto.docker", "otto.config", "otto.params", "otto.version", "otto.labs", "otto.result", "otto.lifecycle", "otto.context"]
+depends_on = ["otto.instructions", "otto.registry", "otto.logger", "otto.link", "otto.reservations", "otto.coverage", "otto.tunnel", "otto.utils", "otto.models", "otto.bootstrap", "otto.suite", "otto.monitor", "otto.host", "otto.docker", "otto.config", "otto.params", "otto.version", "otto.labs", "otto.result", "otto.lifecycle", "otto.context", "otto.errors"]
 
 [[modules]]
 path = "otto.config"
@@ -71,11 +71,14 @@ depends_on = ["otto.config", "otto.host", "otto.bootstrap"]
 
 [[modules]]
 path = "otto.coverage"
-depends_on = ["otto.utils", "otto.host", "otto._webassets", "otto.config", "otto.version"]
+depends_on = ["otto.utils", "otto.host", "otto._webassets", "otto.config", "otto.version", "otto.errors"]
 
 [[modules]]
 path = "otto.docker"
 depends_on = ["otto.host", "otto.models", "otto.lifecycle", "otto.utils", "otto.config"]
+
+[[modules]]
+path = "otto.errors"
 
 [[modules]]
 path = "otto.examples"
@@ -105,11 +108,12 @@ depends_on = [
     "otto.context",
     "otto.config",
     "otto.registry",
+    "otto.errors",
 ]
 
 [[modules]]
 path = "otto.labs"
-depends_on = ["otto.registry", "otto.link", "otto.config", "otto.models", "otto.host"]
+depends_on = ["otto.registry", "otto.link", "otto.config", "otto.models", "otto.host", "otto.errors"]
 
 [[modules]]
 path = "otto.lifecycle"
@@ -150,7 +154,7 @@ depends_on = [
 path = "otto.monitor"
 # NOTE: no otto.tunnel here — tunnel discovery is INJECTED via the
 # tunnel_source callable (collector.py:150). Keep it that way.
-depends_on = ["otto.host", "otto.models", "otto._webassets", "otto.result", "otto.link", "otto.filesystem", "otto.registry", "otto.logger", "otto.console"]
+depends_on = ["otto.host", "otto.models", "otto._webassets", "otto.result", "otto.link", "otto.filesystem", "otto.registry", "otto.logger", "otto.console", "otto.errors"]
 
 [[modules]]
 path = "otto.params"
@@ -160,7 +164,7 @@ path = "otto.registry"
 
 [[modules]]
 path = "otto.reservations"
-depends_on = ["otto.registry", "otto.utils", "otto.models", "otto.config"]
+depends_on = ["otto.registry", "otto.utils", "otto.models", "otto.config", "otto.errors"]
 
 [[modules]]
 path = "otto.result"
@@ -168,7 +172,7 @@ depends_on = ["otto.utils"]
 
 [[modules]]
 path = "otto.suite"
-depends_on = ["otto.context", "otto.config", "otto.lifecycle", "otto.registry", "otto.monitor", "otto.version", "otto.models", "otto.host", "otto.coverage", "otto.params"]
+depends_on = ["otto.context", "otto.config", "otto.lifecycle", "otto.registry", "otto.monitor", "otto.version", "otto.models", "otto.host", "otto.coverage", "otto.params", "otto.errors"]
 
 [[modules]]
 path = "otto.testing"
@@ -177,7 +181,7 @@ depends_on = ["otto.config", "otto.labs", "otto.reservations", "otto.host", "ott
 [[modules]]
 path = "otto.tunnel"
 # NOTE: no otto.link here (and none the other way) — see otto.link above.
-depends_on = ["otto.host", "otto.models", "otto.registry", "otto.lifecycle", "otto.logger"]
+depends_on = ["otto.host", "otto.models", "otto.registry", "otto.lifecycle", "otto.logger", "otto.errors"]
 
 [[modules]]
 path = "otto.utils"

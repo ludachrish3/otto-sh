@@ -24,6 +24,8 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from ..errors import OttoError
+
 if TYPE_CHECKING:
     from ..config.repo import Repo
     from .plugin import StabilityCollector
@@ -35,7 +37,7 @@ logger = logging.getLogger(__name__)
 RUN_OPTIONS_KEY = "otto_test_run_options"
 
 
-class NoTestsMatchedError(ValueError):
+class NoTestsMatchedError(OttoError, ValueError):
     """A ``--tests`` / ``-m`` selection resolved to nothing to run.
 
     Raised by :func:`run_selection` when the selection matched no repo — no

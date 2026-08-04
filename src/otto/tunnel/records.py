@@ -7,6 +7,7 @@ the collector consumes these through an injected callable composed in
 
 from typing import TYPE_CHECKING
 
+from ..errors import OttoError
 from ..models.monitor import TunnelRecord
 from .discovery import DiscoveredTunnel, discover_tunnels
 
@@ -14,7 +15,7 @@ if TYPE_CHECKING:
     from ..config.lab import Lab
 
 
-class TunnelScanFailedError(RuntimeError):
+class TunnelScanFailedError(OttoError, RuntimeError):
     """A discovery pass that reached no host at all.
 
     Raised instead of returning ``[]`` so a dead scan can never masquerade as

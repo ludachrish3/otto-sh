@@ -17,6 +17,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
 from typing import Any, Protocol, runtime_checkable
 
+from ..errors import OttoError
 from ..logger.mode import LogMode
 from ..registry import Registry, caller_module
 from .command_frame import BashFrame, SessionMarkers
@@ -91,7 +92,7 @@ class LoginProxy:
     undo: LoginProxyFn | None = None
 
 
-class LoginProxyError(ConnectionError):
+class LoginProxyError(OttoError, ConnectionError):
     """A proxy step failed or a chain could not be resolved."""
 
 

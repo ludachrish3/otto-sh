@@ -1,7 +1,9 @@
 """Typed coverage-pipeline errors carrying user-actionable messages."""
 
+from ..errors import OttoError
 
-class CoverageToolVersionError(RuntimeError):
+
+class CoverageToolVersionError(OttoError, RuntimeError):
     """The gcov tool used for capture cannot read this build's coverage format.
 
     geninfo probes the gcov tool and refuses when the ``.gcda``/``.gcno``
@@ -25,7 +27,7 @@ class CoverageToolVersionError(RuntimeError):
         )
 
 
-class CoverageConfigError(ValueError):
+class CoverageConfigError(OttoError, ValueError):
     """No ``[coverage]`` section is configured for the resolved repo(s).
 
     Raised by ``otto.coverage.collect.collect_coverage`` before any fetch is
@@ -34,7 +36,7 @@ class CoverageConfigError(ValueError):
     """
 
 
-class NoCoverageDataError(ValueError):
+class NoCoverageDataError(OttoError, ValueError):
     """No ``.gcda`` counters were retrieved from any matched host.
 
     Raised by ``otto.coverage.collect.collect_coverage`` after the Unix-fetch
@@ -45,7 +47,7 @@ class NoCoverageDataError(ValueError):
     """
 
 
-class CoverageDataMismatchError(RuntimeError):
+class CoverageDataMismatchError(OttoError, RuntimeError):
     """Fetched ``.gcda`` data does not match the current build's ``.gcno`` notes.
 
     gcov embeds a build stamp in both files; a (partial) rebuild of the

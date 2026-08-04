@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any, get_type_hints
 import typer
 from typing_extensions import override
 
+from ..errors import OttoError
 from ..params import build_options, options_params
 
 if TYPE_CHECKING:
@@ -155,7 +156,7 @@ def prepare_command_target(
 # ---------------------------------------------------------------------------
 
 
-class LabContextError(Exception):
+class LabContextError(OttoError):
     """A lab-context failure carrying its user-facing message + exit code.
 
     :func:`ensure_lab_context` raises this instead of printing directly, so a

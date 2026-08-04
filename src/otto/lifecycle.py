@@ -60,6 +60,10 @@ _FORCE_FLUSH_JOIN = 2.0
 buffered log lines for a guaranteed exit, never the other way around."""
 
 
+# Deliberately NOT rooted on otto.errors.OttoError: re-parenting onto an
+# Exception-rooted base would make this catchable by `except Exception`,
+# breaking the 128 + signum signal contract. It is the documented exception
+# to the OttoError rule.
 class SyncPhaseInterrupt(KeyboardInterrupt):
     """``KeyboardInterrupt`` raised by :func:`sync_phase`'s own handler.
 

@@ -16,6 +16,8 @@ import difflib
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from ..errors import OttoError
+
 if TYPE_CHECKING:
     from ..config.repo import CollectedTest, Repo
 
@@ -34,7 +36,7 @@ class SelectionMatch:
     targets: list[str]
 
 
-class UnknownSelectionError(ValueError):
+class UnknownSelectionError(OttoError, ValueError):
     """A requested test name matched nothing despite a non-empty test universe.
 
     Raised by :func:`resolve_selection` when at least one requested name went

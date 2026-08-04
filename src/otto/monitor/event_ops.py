@@ -11,10 +11,11 @@ surface's failure shape (HTTP 422; a raised ValueError in library code).
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
+from ..errors import OttoError
 from ..models.monitor import EventCreateBody, EventUpdateBody
 
 
-class EventValidationError(ValueError):
+class EventValidationError(OttoError, ValueError):
     """A semantically invalid event mutation (e.g. span end not after start)."""
 
 

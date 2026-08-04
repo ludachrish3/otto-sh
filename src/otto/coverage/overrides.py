@@ -18,6 +18,7 @@ from typing import Any, cast
 
 import tomli
 
+from ..errors import OttoError
 from ..utils import anchor_path
 from .attribution import NO_TICKET, UNCOMMITTED_TICKET
 from .capture import gitio
@@ -27,7 +28,7 @@ from .tiers import TierConfig
 logger = logging.getLogger(__name__)
 
 
-class OverrideConfigError(ValueError):
+class OverrideConfigError(OttoError, ValueError):
     """The override file (or its settings key) is malformed — raised loud."""
 
 

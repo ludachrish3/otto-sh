@@ -20,6 +20,8 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from ..errors import OttoError
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -107,7 +109,7 @@ class ReservationGate:
         return ReservationGateResult(checked=True, skipped=False, warning=None)
 
 
-class ReservationBackendError(Exception):
+class ReservationBackendError(OttoError):
     """Raised by backends when a query cannot be answered.
 
     Network outages, DB errors, malformed data files, and authentication
@@ -116,7 +118,7 @@ class ReservationBackendError(Exception):
     """
 
 
-class MissingReservationError(Exception):
+class MissingReservationError(OttoError):
     """Raised when the effective user does not hold every required resource.
 
     The message lists the missing resources and their current holders.  It

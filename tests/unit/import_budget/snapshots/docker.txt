@@ -19,6 +19,7 @@ otto.docker._context_hash
 otto.docker.build
 otto.docker.compose
 otto.docker.staging
+otto.errors
 otto.host
 otto.host.binary_loader
 otto.host.builtin_hosts

@@ -11,8 +11,10 @@ import string
 from dataclasses import dataclass
 from typing import Any
 
+from ..errors import OttoError
 
-class TicketConfigError(ValueError):
+
+class TicketConfigError(OttoError, ValueError):
     """``[coverage.tickets]`` is malformed — raised loud, never rendered."""
 
 

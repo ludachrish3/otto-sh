@@ -1,0 +1,4 @@
+errors
+======
+
+.. automodule:: otto.errors

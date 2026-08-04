@@ -24,6 +24,7 @@ from typing import Any
 
 import aiosqlite
 
+from ..errors import OttoError
 from ..filesystem import network_fs_type
 from .events import MonitorEvent
 from .session import SessionFrame
@@ -131,7 +132,7 @@ def event_insert_params(
     )
 
 
-class UnsupportedDBError(RuntimeError):
+class UnsupportedDBError(OttoError, RuntimeError):
     """Raised for any monitor database that is not schema v2.
 
     Legacy pre-session databases are deliberately unsupported (spec

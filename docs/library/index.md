@@ -407,7 +407,11 @@ by name first if you want to distinguish the two fail-loud sites.
 bare `except RuntimeError` if you want to distinguish them. Swallowing-and-logging
 these is exactly what the `otto test --cov` tail does — a coverage-collection
 failure must never turn an otherwise-green test run red — whereas `otto cov get`
-surfaces each as a clean, single-line error.
+surfaces each as a clean, single-line error. Every exception otto raises also
+subclasses `otto.errors.OttoError`, so a single `except OttoError` clause
+catches anything otto raised when you don't need to distinguish — with one
+deliberate exception: `SyncPhaseInterrupt` stays a plain `KeyboardInterrupt`
+by signal contract, so interrupt handling is never accidentally swallowed.
 
 ### `clean_after_fetch`
 

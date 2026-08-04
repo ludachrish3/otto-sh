@@ -6,8 +6,10 @@ trouble through these types so callers and the conformance suite can rely on a
 stable surface instead of backend-specific exceptions.
 """
 
+from ..errors import OttoError
 
-class LabRepositoryError(Exception):
+
+class LabRepositoryError(OttoError):
     """A host-source backend failed to satisfy a query.
 
     Raised for I/O, network, parse, or credential failures while loading or

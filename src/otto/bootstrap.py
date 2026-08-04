@@ -20,12 +20,14 @@ import importlib
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from .errors import OttoError
+
 if TYPE_CHECKING:
     from .config.repo import Repo
     from .models.settings import OttoEnvSettings
 
 
-class BootstrapError(Exception):
+class BootstrapError(OttoError):
     """One user file failed to load during bootstrap registration."""
 
     def __init__(self, sut_dir: Any, source: str, cause: BaseException) -> None:

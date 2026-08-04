@@ -18,10 +18,11 @@ import sqlite3
 from collections.abc import Iterator
 from datetime import datetime
 
+from ..errors import OttoError
 from .db import EVENT_INSERT_SQL, event_insert_params
 
 
-class ArchiveLockedError(RuntimeError):
+class ArchiveLockedError(OttoError, RuntimeError):
     """The archive's ``.lock`` is held — a live otto monitor is writing it."""
 
 

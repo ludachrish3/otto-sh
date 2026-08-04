@@ -38,6 +38,7 @@ from otto.models.base import OttoModel
 from otto.result import ShellResult
 from otto.utils import Status
 
+from ..errors import OttoError
 from .command_frame import _ANSI_RE
 from .host import DEFAULT_COMMAND_TIMEOUT
 
@@ -45,7 +46,7 @@ if TYPE_CHECKING:
     from .session import HostSession
 
 
-class ParseMismatch(ValueError):  # noqa: N818 — spec-mandated public name; an `Error` suffix would break the documented AppShell API
+class ParseMismatch(OttoError, ValueError):  # noqa: N818 — spec-mandated public name; an `Error` suffix would break the documented AppShell API
     """Output did not match the model's pattern (or the callable raised)."""
 
 
@@ -199,7 +200,7 @@ def apply_parse(spec: Any, text: str) -> Any:
     raise TypeError(f"unsupported parse spec: {spec!r}")
 
 
-class AppShellActiveError(RuntimeError):
+class AppShellActiveError(OttoError, RuntimeError):
     """A shell session already has an :class:`AppShell` attached.
 
     Raised by :meth:`~otto.host.session.ShellSession.run_cmd` while a shell is
@@ -209,7 +210,7 @@ class AppShellActiveError(RuntimeError):
     """
 
 
-class AppShellTimeoutError(TimeoutError):
+class AppShellTimeoutError(OttoError, TimeoutError):
     """The application REPL's prompt did not return within the timeout.
 
     A *state* failure (the REPL is left in an unknown state), distinct from a
