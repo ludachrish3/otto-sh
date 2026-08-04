@@ -25,7 +25,9 @@ does (see its ``_run_monitor``):
         collector = build_monitor_collector([host], db=db)
         server = MonitorServer(collector, host='0.0.0.0', port=8080)
 
-        collection = asyncio.create_task(collector.run(interval=timedelta(seconds=5)))
+        # spawn_collection opens the archive BEFORE the task exists — an
+        # in-task open races cancellation into a partial DB.
+        collection = await collector.spawn_collection(timedelta(seconds=5))
         try:
             print(f'Dashboard: {server.url}')
             await server.serve()  # blocks until server.stop() is called

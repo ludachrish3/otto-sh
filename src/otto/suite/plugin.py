@@ -392,7 +392,9 @@ class OttoPlugin:
         # connection (same race as suite.start_monitor — issues #136 etc.).
         # aiosqlite delivers each call's result on the calling loop, so a
         # connection opened on this session loop is safe to write from the
-        # class loops that drive run().
+        # class loops that drive run(). (spawn_collection() doesn't fit this
+        # cross-loop split; run()'s precondition still enforces the ordering
+        # loudly if this await is ever dropped.)
         await collector.init_db()
 
         OttoSuite._session_monitor_collector = collector  # noqa: SLF001 — intra-package write to OttoSuite class-level monitor collector slot

@@ -660,6 +660,9 @@ class TestCollectorLiveRun:
             db=db,
         )
 
+        # The Tier-0.7 seam: run() refuses an unopened DB (no lazy in-task
+        # open), so this drives the same path production does.
+        await collector.init_db()
         await collector.run(
             interval=timedelta(seconds=1),
             duration=timedelta(seconds=0),

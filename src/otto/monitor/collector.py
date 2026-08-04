@@ -278,14 +278,34 @@ class MetricCollector:
     async def init_db(self) -> None:
         """Open the persistent DB (no-op without a ``db`` at construction). See MetricDB.
 
-        Must be awaited before any DB writes.  Called automatically by
-        :meth:`run`; callers that skip ``run()`` (e.g. tests) should call
-        this explicitly.
+        Must be awaited before any DB writes — and must have COMPLETED before
+        :meth:`run` starts (run() checks and raises rather than opening
+        lazily in-task; see :meth:`spawn_collection`). Callers that skip
+        ``run()`` (e.g. tests) call this explicitly.
         """
         if self._db is not None or self._pending_db is None:
             return
         await self._pending_db.open()
         self._db = self._pending_db
+
+    async def spawn_collection(
+        self, interval: timedelta, duration: "timedelta | None" = None
+    ) -> "asyncio.Task[None]":
+        """Open the session archive, THEN spawn collection — the owning seam.
+
+        The open must complete before the collection task exists: an in-task
+        open can be cancelled mid-schema by a prompt stop, leaving a
+        partially-initialized DB that ``finalize()`` silently no-ops on
+        (the #136/#137/#142-#144 flake wave), and a locked/unsupported db
+        file dies inside the task, where supervising
+        ``gather(return_exceptions=True)`` patterns swallow it. This method
+        replaces the "open the DB before spawning" comment convention that
+        was previously replicated at every call site; :meth:`run` enforces
+        the ordering with a loud precondition, so a site that bypasses this
+        seam fails immediately instead of racing.
+        """
+        await self.init_db()
+        return asyncio.create_task(self.run(interval, duration=duration))
 
     async def close_db(self) -> None:
         """Close the persistent DB connection and release the file lock."""
@@ -412,7 +432,18 @@ class MetricCollector:
         if not self._targets:
             raise RuntimeError("Cannot start live collection: no hosts provided")
 
-        await self.init_db()
+        # Loud precondition, not a lazy in-task open: opening here would race
+        # cancellation (partial DB, silently no-op'd finalize — the
+        # #136/#137/#142-#144 class) and hide open() errors inside whatever
+        # supervises this task. spawn_collection() is the blessed seam;
+        # callers that drive run() on a different loop than the open (the
+        # suite plugin) await init_db() themselves first.
+        if self._db is None and self._pending_db is not None:
+            raise RuntimeError(
+                "Collector.run() started before its DB was opened — spawn via "
+                "spawn_collection() (or await init_db() first); an in-task "
+                "open races cancellation and can leave a partial archive"
+            )
 
         secs = interval.total_seconds()
         self._global_interval = secs

@@ -163,6 +163,9 @@ _SHORT_TYPE_ALIASES = {
     "datetime": "datetime.datetime",
     "timedelta": "datetime.timedelta",
     "asyncio.queues.Queue": "asyncio.Queue",
+    # The C-accelerated Task's __module__ is the private _asyncio; same
+    # misqualification class as _contextvars.Token below it.
+    "_asyncio.Task": "asyncio.Task",
     "_contextvars.Token": "contextvars.Token",
     "types.Annotated": "typing.Annotated",
     # Autodoc qualifies a bare ``Annotated`` with the module of its FIRST

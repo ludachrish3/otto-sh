@@ -401,14 +401,11 @@ async def _run_monitor(
     the connection is closed, so this must run *before* ``collector.close()``
     below), and finally the collector (and its DB) is closed.
     """
-    # Open the session archive BEFORE spawning the collection task: a Ctrl+C
-    # that lands while open() still runs inside the task would cancel it
-    # mid-schema, leaving a partial DB that finalize() no-ops on (the same
-    # race as suite.start_monitor — issues #136 etc.). A locked/unsupported
-    # --db also fails loud here instead of dying inside the task, where the
-    # gather(return_exceptions=True) below would swallow it.
-    await collector.init_db()
-    collection_task = asyncio.create_task(collector.run(interval=interval, duration=duration))
+    # spawn_collection owns the open-before-spawn ordering (issues #136 etc.:
+    # an in-task open races Ctrl+C into a partial DB; a locked/unsupported
+    # --db must fail loud here, not inside the task where the
+    # gather(return_exceptions=True) below would swallow it).
+    collection_task = await collector.spawn_collection(interval, duration=duration)
 
     try:
         await server.serve()

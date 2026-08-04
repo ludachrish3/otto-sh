@@ -21,6 +21,7 @@ the sessionized-producer cutover (spec 2026-07-12) — schema v2 round-tripping 
 covered by ``test_db_v2.py`` and ``test_export_producer.py`` instead.
 """
 
+import asyncio
 import itertools
 import sqlite3
 from contextlib import closing
@@ -407,3 +408,58 @@ class TestDisplayHost:
         assert server.origin == "http://10.0.0.1:9999"
         assert server.urls == [f"http://10.0.0.1:9999/?key={server.key}"]
         assert server.url == f"http://10.0.0.1:9999/?key={server.key}"
+
+
+class TestRunRequiresOpenedDb:
+    """run()'s open-before-spawn precondition — the Tier-0.7 owning seam.
+
+    Differential by construction: against the pre-seam code (which opened
+    the DB lazily inside run()), test_run_refuses_unopened_db fails — run()
+    would proceed and open in-task, the exact race behind the
+    #136/#137/#142-#144 flake wave.
+    """
+
+    @staticmethod
+    def _collector_with_target(db_path: str | None) -> MetricCollector:
+        # run() checks its DB precondition before touching any host, so a
+        # bare sentinel object is enough to get past the no-targets guard.
+        db = (
+            MetricDB(db_path, _anon_frame(), lab_json="{}", meta_json="{}")
+            if db_path is not None
+            else None
+        )
+        return MetricCollector(
+            hosts=[object()],  # type: ignore[list-item]
+            parsers=[PerCoreCpuParser()],
+            db=db,
+        )
+
+    @pytest.mark.asyncio
+    async def test_run_refuses_unopened_db(self, tmp_path):
+        collector = self._collector_with_target(str(tmp_path / "m.db"))
+        with pytest.raises(RuntimeError, match="spawn_collection"):
+            await collector.run(timedelta(seconds=60))
+
+    @pytest.mark.asyncio
+    async def test_spawn_collection_opens_before_the_task_exists(self, tmp_path):
+        collector = self._collector_with_target(str(tmp_path / "m.db"))
+        task = await collector.spawn_collection(timedelta(seconds=60))
+        try:
+            # The seam's whole contract: by the time the task object exists,
+            # the archive is open (no in-task open left to race cancellation).
+            assert collector._db is not None
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            await collector.close_db()
+        assert not task.cancelled() or task.cancelled()  # reaped either way
+
+    @pytest.mark.asyncio
+    async def test_run_without_db_skips_the_precondition(self):
+        # A db-less collector (live view only) must not trip the guard.
+        collector = self._collector_with_target(None)
+        task = asyncio.create_task(collector.run(timedelta(seconds=60)))
+        await asyncio.sleep(0)  # let run() pass its precondition checks
+        assert not task.done(), f"run() died early: {task.exception() if task.done() else None}"
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
