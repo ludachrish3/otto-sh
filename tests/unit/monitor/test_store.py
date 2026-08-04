@@ -104,3 +104,23 @@ class TestLogEventRing:
         store.append_log_event("host2", "syslog", _ev(1))
         store.append_log_event("host1", "syslog", _ev(2))  # already in series hosts
         assert store.hosts_from_series() == ["host1", "host2"]
+
+
+class TestSeriesBound:
+    """Per-series points are capped (memory backstop; the DB keeps everything)."""
+
+    def test_series_drops_oldest_at_cap(self):
+        from datetime import datetime, timedelta, timezone
+
+        from otto.models import MetricPoint
+        from otto.monitor.store import _SERIES_POINTS_MAX, MetricStore
+
+        t0 = datetime(2026, 8, 3, tzinfo=timezone.utc)
+        store = MetricStore()
+        for i in range(_SERIES_POINTS_MAX + 10):
+            point = MetricPoint(ts=t0 + timedelta(seconds=i), value=float(i))
+            store.append_point("h/x", point, label="x", chart="c")
+        pts = store.snapshot_series()["h/x"]
+        assert len(pts) == _SERIES_POINTS_MAX
+        assert pts[0].value == 10.0, "oldest ten aged out"
+        assert pts[-1].value == float(_SERIES_POINTS_MAX + 9)

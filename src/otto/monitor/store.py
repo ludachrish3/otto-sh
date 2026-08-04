@@ -14,6 +14,12 @@ from .parsers import LogEvent
 # Rows kept in memory per (host, tab) table — the DB keeps everything.
 _LOG_RING_MAX = 1000
 
+# Points kept in memory per series — the DB keeps everything, so only the
+# LIVE view and live exports age out (a ~27h horizon at 2 s ticks); a review
+# opened from the DB archive is always complete. Memory backstop for
+# multi-day live runs, which previously grew without bound.
+_SERIES_POINTS_MAX = 50_000
+
 
 class MetricStore:
     """In-memory series, chart map, and events for one collector."""
@@ -28,7 +34,7 @@ class MetricStore:
     def append_point(self, key: str, point: MetricPoint, *, label: str, chart: str) -> None:
         """Store one point, creating the series lazily, and record its chart group."""
         if key not in self.series:
-            self.series[key] = deque()
+            self.series[key] = deque(maxlen=_SERIES_POINTS_MAX)
         self.series[key].append(point)
         self.chart_map[label] = chart
 
