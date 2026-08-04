@@ -29,7 +29,6 @@ from ..link import (
     repair_all,
     repair_link,
 )
-from ..utils import async_typer_command
 
 link_app = typer.Typer(
     name="link",
@@ -93,7 +92,6 @@ def _print_impair_report(report: ImpairReport) -> None:
 
 
 @link_app.command()
-@async_typer_command
 async def impair(  # noqa: PLR0913 — CLI command params
     link: str = typer.Argument(..., help="Link id or name.", autocompletion=_link_completer),
     *,
@@ -188,7 +186,6 @@ def _print_repair_report(report: RepairReport) -> None:
 
 
 @link_app.command()
-@async_typer_command
 async def repair(
     link: str | None = typer.Argument(
         None, help="Link id or name.", autocompletion=_link_completer
@@ -272,7 +269,6 @@ def _selector_rows(state: LinkState) -> list[str]:
 
 
 @link_app.command(name="list")
-@async_typer_command
 async def list_links() -> None:
     """List every static link's current impairment state (spec §9)."""
     lab = get_lab()

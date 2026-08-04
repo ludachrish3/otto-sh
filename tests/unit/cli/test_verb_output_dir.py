@@ -50,3 +50,22 @@ def test_output_dir_flag_consistent_across_host_classes() -> None:
             per_verb.setdefault(cli_name, {})[cls_name] = flag
     for verb, per_class in sorted(per_verb.items()):
         assert len(set(per_class.values())) == 1, f"{verb} diverges across classes: {per_class}"
+
+
+def test_marker_survives_synthesis_to_the_resolved_callback() -> None:
+    """The opt-out must reach the RESOLVED command's callback, not just the source fn.
+
+    The leaf-invoke preamble reads ``__cli_output_dir__`` off
+    ``ctx.command.callback``. Since the ``@async_typer_command`` strip the
+    marker travels through typer's own callback shim alone
+    (``update_wrapper`` copies the registered function's ``__dict__``) — this
+    pin fails if a typer upgrade stops wrapping registered callbacks, which
+    would silently turn read-only verbs into output-dir creators.
+    """
+    from otto.cli.expose import _synthesize_command, iter_exposed_verbs
+
+    by_name = {cli: (attr, help_, fn) for cli, attr, help_, fn in iter_exposed_verbs()}
+    for verb, expected in (("ls", False), ("run", True)):
+        attr, help_, fn = by_name[verb]
+        cmd = _synthesize_command(verb, attr, help_, fn)
+        assert getattr(cmd.callback, "__cli_output_dir__", True) is expected, verb

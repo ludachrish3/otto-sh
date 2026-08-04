@@ -113,7 +113,7 @@ autodoc_default_options = {
 autodoc_typehints = "signature"
 
 # Sphinx 7.3+ auto-generates py:param cross-references; for TypeVar-typed
-# parameters (T/P/R in async_typer_command, do_for_all_hosts, is_literal) these
+# parameters (T in do_for_all_hosts, TypeVar in is_literal) these
 # emit spurious "py:param reference target not found" warnings that -W promotes
 # to errors. ref.param is the auto-generated param-name xref only — type/class
 # resolution (ref.class/func/meth/attr) stays fully enforced under nitpicky.

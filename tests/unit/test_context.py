@@ -250,35 +250,6 @@ def test_context_runtime_flags_default_and_override():
     assert OttoContext(lab=lab, log_command_output=False).log_command_output is False
 
 
-def test_async_typer_command_enters_and_exits_scope():
-    from otto.context import OttoContext, reset_context, set_context
-    from otto.utils import async_typer_command
-
-    ctx = OttoContext(lab=_lab_with("carrot"))
-    fake = _FakeHost("sentinel", connected=True)
-    ctx.scope.register(fake)
-    token = set_context(ctx)
-    try:
-
-        async def _cmd():
-            return "ok"
-
-        result = async_typer_command(_cmd)()
-        assert result == "ok"
-        assert fake.close_calls == 1  # wrapper entered ctx.scope; exit swept the connected host
-    finally:
-        reset_context(token)
-
-
-def test_async_typer_command_runs_without_active_context():
-    from otto.utils import async_typer_command
-
-    async def _cmd():
-        return 42
-
-    assert async_typer_command(_cmd)() == 42  # no context set → still runs, no scope
-
-
 def test_bare_accessors_delegate_to_active_context():
     import otto.config as cm
     from otto.context import OttoContext, reset_context, set_context

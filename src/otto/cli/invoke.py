@@ -549,9 +549,10 @@ def _wrap_invoke(cmd: Any, spec: "CommandSpec") -> Any:
         # invoke RESULT, not the callback: typer wraps every callback in its
         # own sync shim, so ``iscoroutinefunction(cmd.callback)`` is always
         # False, while the coroutine itself passes through untouched.
-        # Naturally idempotent: a leaf that self-wraps (``@async_typer_command``
-        # → ``run_command`` inside a sync wrapper) returns a plain value and
-        # is skipped — no double ``asyncio.run`` is reachable.
+        # Naturally idempotent: a leaf that self-bridges (``run_command``
+        # inside a sync wrapper — the retired ``@async_typer_command``
+        # migration pattern) returns a plain value and is skipped — no double
+        # ``asyncio.run`` is reachable.
         if inspect.iscoroutine(result):
             from ..lifecycle import run_command
 
@@ -656,9 +657,11 @@ def make_registry_group(child_registry: "Registry[Any]") -> "type[TyperGroup]":
     WHOLE resolved group (and therefore every child it lazily resolves, via
     ``wrap_leaf_callbacks``'s ``get_command`` recursion) with the preamble
     for the top-level spec (``"run"`` / ``"test"``). This keeps ``run_app`` /
-    ``suite_app`` usable standalone (e.g. in unit tests that invoke them
-    directly via ``CliRunner`` without going through the full ``otto`` root
-    app) while ``otto run smoke`` / ``otto test TestX`` still get the
+    ``suite_app`` usable standalone without going through the full ``otto``
+    root app (unit tests drive them through the same seam via
+    ``tests/_fixtures/dispatch.DispatchRunner``; note a plain ``async def``
+    leaf needs that wrapper — bare, it fails loudly with an un-awaited
+    coroutine) while ``otto run smoke`` / ``otto test TestX`` still get the
     preamble when dispatched for real.
     """
     from typer.core import TyperGroup

@@ -15,6 +15,7 @@ a safe driver for it.
 """
 
 import asyncio
+import functools
 import inspect
 
 import pytest
@@ -22,15 +23,14 @@ import typer
 
 from otto.cli.invoke import wrap_leaf_callbacks
 from otto.cli.registry import CommandSpec, resolve_spec_command
-from otto.utils import async_typer_command
 
 
 @pytest.fixture
 def run_command_recorder(monkeypatch):
     """Count run_command entries while still executing the coroutine.
 
-    Patches ``otto.lifecycle.run_command`` — both the bridge and
-    ``async_typer_command`` resolve it lazily from the module at call time,
+    Patches ``otto.lifecycle.run_command`` — both the bridge and a
+    self-bridging wrapper resolve it lazily from the module at call time,
     so every policy entry in this process lands here.
     """
     from otto import lifecycle
@@ -104,18 +104,26 @@ def test_async_function_loader_bridged_without_self_wrap(run_command_recorder, c
 
 @pytest.mark.usefixtures("_quiet_preamble")
 def test_self_wrapped_leaf_enters_policy_exactly_once(run_command_recorder, capsys):
-    """Migration safety: an @async_typer_command leaf is not double-bridged.
+    """A leaf that already bridges itself into the policy is not double-bridged.
 
-    The self-wrap returns a plain value from a sync callback, so the bridge's
-    coroutine check skips it — one run_command entry, not two (a second would
-    be a nested asyncio.run, a hard error).
+    The retired ``@async_typer_command`` migration pattern — and any
+    third-party sync wrapper that drives ``run_command`` itself — returns a
+    plain value from a sync callback, so the bridge's coroutine check skips
+    it: one run_command entry, not two (a second would be a nested
+    asyncio.run, a hard error).
     """
     app = typer.Typer()
 
     async def _body() -> None:
         typer.echo("legacy ran")
 
-    app.command("legacy")(async_typer_command(_body))
+    @functools.wraps(_body)
+    def _self_bridged() -> None:
+        from otto import lifecycle
+
+        return lifecycle.run_command(_body())
+
+    app.command("legacy")(_self_bridged)
 
     spec = CommandSpec(name="legacy", loader=app, lab_free=True, output_dir=False)
     cmd = _wrapped(spec)

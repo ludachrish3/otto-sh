@@ -1,4 +1,9 @@
-"""``otto tunnel`` CLI: --hosts parsing helpers, add/list/remove rendering."""
+"""``otto tunnel`` CLI: --hosts parsing helpers, add/list/remove rendering.
+
+Commands are plain ``async def`` leaves bridged by the leaf-invoke wrapper,
+so app-level tests drive ``tunnel_app`` through the production dispatch seam
+(``DispatchRunner``); direct-call tests ``await`` the command functions.
+"""
 
 import json
 from pathlib import Path
@@ -7,7 +12,6 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 import typer
-from typer.testing import CliRunner
 
 from otto.cli import tunnel as tunnel_cli
 from otto.cli.tunnel import (
@@ -27,8 +31,9 @@ from otto.tunnel import (
     TunnelDiscovery,
     TunnelHop,
 )
+from tests._fixtures.dispatch import DispatchRunner
 
-runner = CliRunner()
+runner = DispatchRunner()
 
 
 # ── --hosts parsing helpers (moved verbatim from otto.cli.link) ─────────────
@@ -252,20 +257,22 @@ async def _boom_runtime_error(*_a, **_k):
     raise RuntimeError("host 'test1' is missing socat and/or bash (required for tunnels)")
 
 
-def test_add_command_renders_value_error_and_exits_1_not_traceback(monkeypatch, capsys):
+@pytest.mark.asyncio
+async def test_add_command_renders_value_error_and_exits_1_not_traceback(monkeypatch, capsys):
     monkeypatch.setattr(tunnel_cli, "get_lab", object)
     monkeypatch.setattr(tunnel_cli, "add_tunnel", _boom_value_error)
     with pytest.raises(typer.Exit) as exc:
-        tunnel_cli.add(hosts="test1,test2", port=161, protocol="udp", dest=None)
+        await tunnel_cli.add(hosts="test1,test2", port=161, protocol="udp", dest=None)
     assert exc.value.exit_code == 1
     assert "already exists" in capsys.readouterr().out
 
 
-def test_add_command_renders_runtime_error_and_exits_1(monkeypatch, capsys):
+@pytest.mark.asyncio
+async def test_add_command_renders_runtime_error_and_exits_1(monkeypatch, capsys):
     monkeypatch.setattr(tunnel_cli, "get_lab", object)
     monkeypatch.setattr(tunnel_cli, "add_tunnel", _boom_runtime_error)
     with pytest.raises(typer.Exit) as exc:
-        tunnel_cli.add(hosts="test1,test2", port=161, protocol="udp", dest=None)
+        await tunnel_cli.add(hosts="test1,test2", port=161, protocol="udp", dest=None)
     assert exc.value.exit_code == 1
     assert "missing socat" in capsys.readouterr().out
 
@@ -491,11 +498,12 @@ def test_list_uncertain_tunnel_appends_question_mark():
 # ── `remove` ─────────────────────────────────────────────────────────────────
 
 
-def test_remove_command_renders_value_error_and_exits_1_not_traceback(monkeypatch, capsys):
+@pytest.mark.asyncio
+async def test_remove_command_renders_value_error_and_exits_1_not_traceback(monkeypatch, capsys):
     monkeypatch.setattr(tunnel_cli, "get_lab", object)
     monkeypatch.setattr(tunnel_cli, "remove_tunnel", _boom_value_error)
     with pytest.raises(typer.Exit) as exc:
-        tunnel_cli.remove(tunnel_id="tun-abc-161", all_=False, yes=False)
+        await tunnel_cli.remove(tunnel_id="tun-abc-161", all_=False, yes=False)
     assert exc.value.exit_code == 1
     assert "already exists" in capsys.readouterr().out
 

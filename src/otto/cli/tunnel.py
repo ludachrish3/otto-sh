@@ -19,7 +19,7 @@ from ..tunnel import (
     remove_all_tunnels,
     remove_tunnel,
 )
-from ..utils import async_typer_command, complete_separated_list
+from ..utils import complete_separated_list
 
 if TYPE_CHECKING:
     from ..config.repo import Repo
@@ -165,7 +165,6 @@ def _fmt_via(tunnel: "Tunnel") -> str:
 
 
 @tunnel_app.command()
-@async_typer_command
 async def add(
     hosts: str = typer.Option(
         ...,
@@ -202,7 +201,6 @@ async def add(
 
 
 @tunnel_app.command(name="list")
-@async_typer_command
 async def list_tunnels() -> None:
     """List live tunnels (observed truth; spec §9)."""
     from rich.table import Table
@@ -248,7 +246,6 @@ async def list_tunnels() -> None:
 
 
 @tunnel_app.command()
-@async_typer_command
 async def remove(
     tunnel_id: str | None = typer.Argument(None, autocompletion=_tunnel_id_completer),
     all_: bool = typer.Option(False, "--all", help="Reap every otto tunnel."),

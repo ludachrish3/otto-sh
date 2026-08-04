@@ -209,18 +209,19 @@ def _synthesize_command(
     """Build a vendored-click ``Command`` for *cli_name* via a throwaway Typer.
 
     The Typer-native way to convert a function — no hand-written click types.
+    The async body runs under the command lifecycle via the leaf-invoke
+    wrapper's coroutine bridge (``cli/invoke._wrap_invoke``), which wraps
+    these synthesized verbs as ``HostGroup`` resolves them.
     """
-    from ..utils import async_typer_command
-
     cmd_fn = make_method_command(attr_name, sample_func, cli_name)
     # Propagate the verb's per-invocation output-dir preference onto the command
     # callback so the leaf-invoke preamble (which reads `__cli_output_dir__` off
     # `ctx.command.callback`) honours read-only verbs (exists/ls/…) that opt out.
-    # functools.wraps in async_typer_command carries the marker through, but set
-    # it on cmd_fn BEFORE wrapping so the wrapper inherits it.
+    # Typer's own callback shim functools-wraps cmd_fn, carrying the marker
+    # through to the resolved command's callback.
     cmd_fn.__cli_output_dir__ = getattr(sample_func, "__cli_output_dir__", True)  # ty: ignore[unresolved-attribute]
     tmp = typer.Typer()
-    tmp.command(name=cli_name, help=help_text or None)(async_typer_command(cmd_fn))
+    tmp.command(name=cli_name, help=help_text or None)(cmd_fn)
     converted: Any = typer.main.get_command(tmp)
     return converted.commands[cli_name] if hasattr(converted, "commands") else converted
 

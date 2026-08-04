@@ -181,12 +181,6 @@ depends_on = ["otto.host", "otto.models", "otto.registry", "otto.lifecycle", "ot
 
 [[modules]]
 path = "otto.utils"
-depends_on = [
-    # DEBT: async_typer_command lazily imports run_command (utils.py:115) —
-    # it is CLI glue in the dependency floor; moves to cli/ with the utils
-    # split (Tier 2.4), taking this edge with it.
-    "otto.lifecycle",
-]
 
 [[modules]]
 path = "otto.version"

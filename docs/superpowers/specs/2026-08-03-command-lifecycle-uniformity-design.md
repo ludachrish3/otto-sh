@@ -1,7 +1,8 @@
 # Command lifecycle uniformity: one policy, free for every command, composable for `otto test`
 
 **Date:** 2026-08-03
-**Status:** agreed direction; implementation in waves (wave 1 = the `otto test` gap)
+**Status:** implemented — wave 1 (`sync_phase`), wave 2 (the bridge), and
+wave 3 (the `@async_typer_command` strip + deletion) all landed 2026-08-04
 **Context:** churn/design review Tier 0.4 (`todo/churn-and-design-review-2026-08-03.md`);
 Chris's question: should the CLI command-registration decorator own signal/lifecycle
 setup so third-party commands get first-party safety guarantees for free, with an
@@ -173,12 +174,28 @@ full policy. Pinned by `tests/unit/cli/test_lifecycle_bridge.py`, including
 the loud failure mode outside otto's dispatch; documented in
 `docs/guide/extending-cli.md` §"The command lifecycle comes free".
 
-Still open (the module-by-module strip): `@async_typer_command` remains at
-the first-party sites — `cli/link.py` ×3, `cli/tunnel.py` ×3,
-`cli/expose.py` (host verbs), `cli/docker.py` (dynamic subs), `cli/run.py`
-(the `@instruction` lane) — because their unit tests drive the sub-apps
-standalone, outside the wrapper, and rely on the self-wrap. Stripping each
-module means moving its tests onto the dispatched path (or accepting the
-loud-failure contract there); after the last strip,
-`async_typer_command` leaves `otto.utils` and takes the
-`utils → lifecycle` tach DEBT edge with it (Tier 2.4).
+### Wave-3 implementation notes (the strip, 2026-08-04)
+
+All first-party `@async_typer_command` sites are stripped — `cli/link.py` ×3,
+`cli/tunnel.py` ×3, `cli/expose.py` (host-verb synthesis), `cli/docker.py`
+(dynamic subs), `cli/run.py` (the `@instruction` lane) — and
+`async_typer_command` is deleted from `otto.utils`, taking the
+`utils → lifecycle` tach DEBT edge with it (the Tier 2.4 adjacency).
+
+The test-migration vehicle is `tests/_fixtures/dispatch.DispatchRunner`:
+typer's `CliRunner` with the invoked app swapped for its dispatched form
+(`resolve_spec_command` + `wrap_leaf_callbacks` on a `lab_free` spec), so
+sub-app unit tests exercise command bodies under the real bridge with
+runner ergonomics (isolation, stdin, `Result`) unchanged. Help- and
+usage-error-only tests keep the bare `CliRunner` — those paths exit during
+parse, before `Command.invoke`, so they never depended on the self-wrap.
+Two details worth keeping:
+
+- The `__cli_output_dir__` opt-out marker (expose read-only verbs, docker
+  `ps`) survives the strip because typer's own callback shim
+  `functools.wraps` the registered function — probed before the change, and
+  the marker now travels one layer, not two.
+- The bridge's idempotence pin (`test_lifecycle_bridge.py`) now uses a local
+  self-bridging wrapper: the property outlives the migration decorator (any
+  third-party sync wrapper that drives `run_command` itself must not be
+  double-bridged).

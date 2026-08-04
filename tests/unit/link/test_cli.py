@@ -1,8 +1,11 @@
-"""``otto link`` CLI: impair/repair/list rendering + completion."""
+"""``otto link`` CLI: impair/repair/list rendering + completion.
+
+Commands are plain ``async def`` leaves bridged by the leaf-invoke wrapper,
+so these tests drive ``link_app`` through the production dispatch seam
+(``DispatchRunner``) rather than a bare ``CliRunner``.
+"""
 
 from unittest.mock import AsyncMock, patch
-
-from typer.testing import CliRunner
 
 from otto.cli.link import _link_completer, link_app
 from otto.link import (
@@ -13,10 +16,11 @@ from otto.link import (
     LinkState,
     Placement,
 )
+from tests._fixtures.dispatch import DispatchRunner
 
 from .test_manage_impair import INPATH, LINK
 
-runner = CliRunner()
+runner = DispatchRunner()
 
 
 class TestImpairCommand:

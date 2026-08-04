@@ -28,7 +28,7 @@ from ..docker import (
     get_user_compose_project,
 )
 from ..host.unix_host import UnixHost
-from ..utils import Status, async_typer_command
+from ..utils import Status
 
 logger = logging.getLogger(__name__)
 
@@ -317,9 +317,11 @@ async def _ps(
 
 # Read-only docker subcommands (`ps`) produce no artifacts → opt them out of
 # the per-command output dir. The leaf-invoke preamble reads `__cli_output_dir__`
-# off the command callback (default True); `functools.wraps` in
-# async_typer_command carries the marker through to the wrapper. This keeps
-# `_NO_OUTPUT_DIR_SUBCOMMANDS` the single source of truth for the policy.
+# off the command callback (default True); typer's own callback shim
+# functools-wraps the registered function, carrying the marker through. This
+# keeps `_NO_OUTPUT_DIR_SUBCOMMANDS` the single source of truth for the policy.
+# The async bodies run under the command lifecycle via the leaf-invoke
+# wrapper's coroutine bridge (cli/invoke._wrap_invoke) at dispatch.
 _DOCKER_SUBCOMMANDS: dict[str, Any] = {
     "build": _build,
     "up": _up,
@@ -329,4 +331,4 @@ _DOCKER_SUBCOMMANDS: dict[str, Any] = {
 for _sub_name, _sub_fn in _DOCKER_SUBCOMMANDS.items():
     if _sub_name in _NO_OUTPUT_DIR_SUBCOMMANDS:
         _sub_fn.__cli_output_dir__ = False
-    docker_app.command(name=_sub_name)(async_typer_command(_sub_fn))
+    docker_app.command(name=_sub_name)(_sub_fn)

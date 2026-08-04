@@ -13,7 +13,6 @@ from rich.table import Table
 
 from ..instructions import INSTRUCTIONS, InstructionEntry
 from ..result import CommandResult
-from ..utils import async_typer_command
 from .invoke import make_registry_group, prepare_command_target
 
 P = ParamSpec("P")
@@ -114,10 +113,13 @@ def instruction(*args: Any, options: type | None = None, **kwargs: Any) -> Calla
 
     def decorator(
         func: Callable[P, Coroutine[Any, Any, CommandResult]],
-    ) -> Callable[P, CommandResult]:
+    ) -> Callable[P, Coroutine[Any, Any, CommandResult]]:
+        # No self-wrapping: the registered async handler runs under the command
+        # lifecycle via the leaf-invoke wrapper's coroutine bridge
+        # (cli/invoke._wrap_invoke) when `otto run <name>` dispatches it.
         target = prepare_command_target(func, options)
         app = typer.Typer()
-        new_instruction = app.command(*args, **kwargs)(async_typer_command(target))
+        new_instruction = app.command(*args, **kwargs)(target)
 
         # Mirror Typer's own name derivation (typer.main.get_command_name):
         # explicit name (positional or name= kwarg) wins, else the function

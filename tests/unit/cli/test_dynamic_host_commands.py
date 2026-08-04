@@ -20,6 +20,7 @@ from otto.host.host import DEFAULT_COMMAND_TIMEOUT
 from otto.host.unix_host import UnixHost
 from otto.result import CommandResult, Result, Results
 from otto.utils import Arg, Opt, Status, cli_exposed
+from tests._fixtures.dispatch import DispatchRunner
 
 
 def test_cli_exposed_sets_markers_with_dashed_default_name():
@@ -238,11 +239,9 @@ def test_positional_scalar_arg_routes_correctly():
         ctx.obj = host
 
     cmd_fn = make_method_command("greet", greet)
-    from otto.utils import async_typer_command
+    app.command("greet")(cmd_fn)
 
-    app.command("greet")(async_typer_command(cmd_fn))
-
-    r = CliRunner().invoke(app, ["greet", "Alice"])
+    r = DispatchRunner().invoke(app, ["greet", "Alice"], spec_name="host")
     assert r.exit_code == 0, r.output
     assert seen["name"] == "Alice"
 
@@ -283,11 +282,9 @@ def test_variadic_then_scalar_routes_correctly():
         ctx.obj = host
 
     cmd_fn = make_method_command("transfer", transfer)
-    from otto.utils import async_typer_command
+    app.command("transfer")(cmd_fn)
 
-    app.command("transfer")(async_typer_command(cmd_fn))
-
-    r = CliRunner().invoke(app, ["transfer", "A", "B", "DEST"])
+    r = DispatchRunner().invoke(app, ["transfer", "A", "B", "DEST"], spec_name="host")
     assert r.exit_code == 0, r.output
     assert seen["sources"] == ["A", "B"]
     assert seen["dest"] == "DEST"
@@ -455,11 +452,11 @@ def test_login_as_user_flag_dispatches_end_to_end(monkeypatch):
             return
         ctx.obj = host
 
-    r = CliRunner().invoke(app, ["h1", "login", "--as-user", "mysql"])
+    r = DispatchRunner().invoke(app, ["h1", "login", "--as-user", "mysql"])
     assert r.exit_code == 0, r.output
     assert captured["as_user"] == "mysql"
 
-    r2 = CliRunner().invoke(app, ["h1", "login"])
+    r2 = DispatchRunner().invoke(app, ["h1", "login"])
     assert r2.exit_code == 0, r2.output
     assert captured["as_user"] is None
 
@@ -554,7 +551,7 @@ def test_end_to_end_dispatch_through_host_group(monkeypatch):
         ctx.obj = host
 
     # hard: bool = False → Annotated[bool, typer.Option()] → --hard/--no-hard flag
-    res = CliRunner().invoke(app, ["u1", "reboot", "--hard"])
+    res = DispatchRunner().invoke(app, ["u1", "reboot", "--hard"])
     assert res.exit_code == 0, res.output
     assert reboot_calls == [True]
     assert close_calls == [None]
@@ -728,11 +725,11 @@ def test_ls_path_stays_positional_and_power_state_positional(monkeypatch):
             return
         ctx.obj = host
 
-    res_ls = CliRunner().invoke(app, ["h1", "ls", "/var/log", "--all"])
+    res_ls = DispatchRunner().invoke(app, ["h1", "ls", "/var/log", "--all"])
     assert res_ls.exit_code == 0, res_ls.output
     assert captured["ls"] == ("/var/log", True)
 
-    res_power = CliRunner().invoke(app, ["h1", "power", "on"])
+    res_power = DispatchRunner().invoke(app, ["h1", "power", "on"])
     assert res_power.exit_code == 0, res_power.output
     assert captured["power"] == "on"
 
@@ -956,13 +953,13 @@ def test_opt_name_rename_dispatches_end_to_end(monkeypatch):
             return
         ctx.obj = host
 
-    r = CliRunner().invoke(app, ["h1", "frob", "--dest", "/other"])
+    r = DispatchRunner().invoke(app, ["h1", "frob", "--dest", "/other"])
     assert r.exit_code == 0, r.output
     assert captured["dest_dir"] == "/other"
 
     # The auto-derived --dest-dir flag must no longer be recognized: Opt(name=...)
     # fully replaces (not appends to) the synthesized decl.
-    r_old = CliRunner().invoke(app, ["h1", "frob", "--dest-dir", "/other"])
+    r_old = DispatchRunner().invoke(app, ["h1", "frob", "--dest-dir", "/other"])
     assert r_old.exit_code != 0
 
 
@@ -1077,6 +1074,6 @@ def test_run_accepts_infinite_timeout(monkeypatch):
             return
         ctx.obj = host
 
-    r = CliRunner().invoke(app, ["h1", "run", "--timeout", "inf", "echo hi"])
+    r = DispatchRunner().invoke(app, ["h1", "run", "--timeout", "inf", "echo hi"])
     assert r.exit_code == 0, r.output
     assert captured["timeout"] == float("inf")

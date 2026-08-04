@@ -25,8 +25,14 @@ from otto.host.unix_host import UnixHost
 from otto.logger.mode import LogMode
 from otto.result import Result
 from otto.utils import Status
+from tests._fixtures.dispatch import DispatchRunner
 
-runner = CliRunner()
+# The dynamic verbs are plain ``async def`` leaves bridged by the leaf-invoke
+# wrapper, so host_app invocations go through the production dispatch seam;
+# root-``app`` invocations use the plain CliRunner (the root dispatch already
+# wraps its own leaves).
+runner = DispatchRunner()
+root_runner = CliRunner()
 
 
 # ── Shared helpers ────────────────────────────────────────────────────────────
@@ -176,7 +182,7 @@ class TestHostCallback:
             patch("otto.logger.management.create_output_dir") as p_create,
             patch.object(host_module, "get_host", return_value=mock_host),
         ):
-            runner.invoke(app, ["--lab", "x", "host", "router1", "run", "ls"])
+            root_runner.invoke(app, ["--lab", "x", "host", "router1", "run", "ls"])
 
         p_create.assert_called_once_with("host", "run")
 

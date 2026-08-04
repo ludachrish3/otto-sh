@@ -1,14 +1,12 @@
-"""Shared utilities: status enums, CLI overlay sentinels, async helpers, and path helpers."""
+"""Shared utilities: status enums, CLI overlay sentinels, and path helpers."""
 
-import functools
-from collections.abc import Callable, Coroutine
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import (
     Any,
     Literal,
-    ParamSpec,
     TypeVar,
     Union,
     get_args,
@@ -97,26 +95,6 @@ def _get_literal_values(
             values += _get_literal_values(arg)
         return values
     raise ValueError(f"{type_} is {origin}, not a Literal or Union of Literals")
-
-
-P = ParamSpec("P")
-R = TypeVar("R")
-
-
-def async_typer_command(f: Callable[P, Coroutine[Any, Any, R]]) -> Callable[P, R]:
-    """Wrap an async Typer command so it runs under otto's command lifecycle.
-
-    Delegates to :func:`otto.lifecycle.run_command`: host-scope entry, the
-    two-stage SIGINT/SIGTERM policy, and the bounded teardown deadline.
-    """
-
-    @functools.wraps(f)
-    def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
-        from .lifecycle import run_command
-
-        return run_command(f(*args, **kwargs))
-
-    return wrapper
 
 
 @dataclass(frozen=True)

@@ -22,8 +22,14 @@ from otto.cli.run import INSTRUCTIONS, instruction, run_app
 from otto.host.unix_host import UnixHost
 from otto.result import CommandResult
 from otto.utils import Status
+from tests._fixtures.dispatch import DispatchRunner
 
-runner = CliRunner()
+# Instruction handlers are plain ``async def`` functions bridged by the
+# leaf-invoke wrapper, so run_app invocations go through the production
+# dispatch seam; root-``app`` invocations use the plain CliRunner (the root
+# dispatch already wraps its own leaves).
+runner = DispatchRunner()
+root_runner = CliRunner()
 
 
 # ── Help / no-args behaviour ──────────────────────────────────────────────────
@@ -71,7 +77,7 @@ class TestRunCallback:
             patch("otto.cli.invoke.ensure_lab_context"),
             patch("otto.logger.management.create_output_dir") as p_create,
         ):
-            result = runner.invoke(app, ["--lab", "x", "run", "_test_cmd_cb"])
+            result = root_runner.invoke(app, ["--lab", "x", "run", "_test_cmd_cb"])
 
         assert result.exit_code == 0, result.output
         p_create.assert_called_once_with("run", "_test_cmd_cb")
@@ -98,7 +104,7 @@ class TestRunCallback:
             patch("otto.cli.invoke.ensure_lab_context"),
             patch("otto.logger.management.create_output_dir") as p_create,
         ):
-            result = runner.invoke(app, ["--lab", "x", "run", "_unit_test_preamble"])
+            result = root_runner.invoke(app, ["--lab", "x", "run", "_unit_test_preamble"])
 
         assert result.exit_code == 0, result.output
         p_create.assert_called_once_with("run", "_unit_test_preamble")
@@ -127,7 +133,7 @@ class TestInstructionDecorator:
         assert "_unit_test_instruction" in INSTRUCTIONS
 
     def test_decorated_instruction_is_invocable(self):
-        """A decorated async instruction can be invoked synchronously via CliRunner."""
+        """A decorated async instruction can be invoked via the dispatch seam."""
 
         @instruction("_unit_test_noop")
         async def _noop() -> CommandResult:
@@ -212,8 +218,8 @@ class TestInstructionExecution:
 
     Mock boundary: management.create_output_dir (filesystem I/O, patched by
     no_logger_output_dir autouse fixture) and UnixHost methods (network I/O).
-    The @instruction decorator, async_typer_command wrapper, and Typer argument
-    parsing all run for real.
+    The @instruction decorator, the leaf-invoke coroutine bridge, and Typer
+    argument parsing all run for real.
     """
 
     def test_instruction_body_executes(self):
