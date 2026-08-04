@@ -683,7 +683,7 @@ def test_completer_cache_miss_filters_by_selected_lab(tmp_path):
             }
         )
     )
-    repo = SimpleNamespace(labs=[lab], docker_settings=None)
+    repo = SimpleNamespace(labs=[lab], docker_settings=None, lab_settings={}, sut_dir=tmp_path)
     with (
         patch("otto.config.get_completion_names", return_value=None),
         patch("otto.config.get_repos", return_value=[repo]),

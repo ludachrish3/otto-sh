@@ -1,5 +1,6 @@
 """Host-dict factory: build and validate ``RemoteHost`` instances from raw config dicts."""
 
+from dataclasses import dataclass
 from typing import Any
 
 from ..models.host import HostSpec
@@ -61,6 +62,62 @@ def _merge_host_dict(
     return merged
 
 
+@dataclass(frozen=True, slots=True)
+class HostIdentity:
+    """Who a host dict *is*, resolved without constructing the host.
+
+    The fields every caller needs to enumerate or address a host — nothing
+    that requires transports, creds, or sessions.
+    """
+
+    id: str
+    """Byte-identical to the ``.id`` of the host this dict would build."""
+
+    ip: str
+    """Validated management address (a profile may supply it, so read it here)."""
+
+    element: str
+    """Validated element name (feeds positional-handle synthesis)."""
+
+    element_id: int | None
+    """Validated element index, or None."""
+
+    docker_capable: bool
+    """Whether the host declares (or its profile defaults) docker capability."""
+
+
+def host_identity(host_data: dict[str, Any]) -> HostIdentity:
+    """Resolve a raw host dict's identity WITHOUT building the host.
+
+    Applies the same ``os_profile`` merge and the same pydantic validation
+    :func:`create_host_from_dict` applies, then composes the id through
+    :func:`~otto.host.remote_host.make_host_id` — so the result is
+    byte-identical to the constructed host's, which naive string-formatting
+    of the raw dict is NOT: a JSON ``3.0`` element_id formats as ``"3.0"``
+    where the host reports ``3``, and a profile that defaults ``board`` /
+    ``slot`` / ``element_id`` / ``element`` is invisible to the raw dict
+    entirely. Completion that offered a raw-derived id would offer ids that
+    do not dispatch.
+
+    Raises the same errors as :func:`validate_host_dict` (``ValueError``,
+    including ``pydantic.ValidationError``) — callers enumerating a whole
+    fleet are expected to skip entries that fail.
+    """
+    selector = host_data.get("os_type", "unix")
+    profile = build_os_profile(selector)
+    spec_cls = build_host_spec(profile.base)
+    merged = _merge_host_dict(host_data, None, profile, spec_cls)
+    merged["os_type"] = selector
+    spec = spec_cls.model_validate(merged)
+    return HostIdentity(
+        id=make_host_id(spec.element, spec.element_id, spec.board, spec.slot),
+        ip=spec.ip,
+        element=spec.element,
+        element_id=spec.element_id,
+        docker_capable=bool(getattr(spec, "docker_capable", False)),
+    )
+
+
 def create_host_from_dict(
     host_data: dict[str, Any],
     preferences: dict[str, dict[str, Any]] | None = None,
@@ -81,12 +138,11 @@ def create_host_from_dict(
     flat_prefs: dict[str, list[str]] | None = None
     option_defaults: dict[str, dict[str, Any]] | None = None
     if preferences:
-        host_id = make_host_id(
-            host_data["element"],
-            host_data.get("element_id"),
-            host_data.get("board"),
-            host_data.get("slot"),
-        )
+        # Match selectors against the id the host will actually REPORT, not a
+        # raw-dict rendering of it — they diverge under profile-defaulted
+        # identity fields and non-int element_ids (see host_identity). Costs
+        # one extra validation pass, and only when preferences exist.
+        host_id = host_identity(host_data).id
         flat_prefs = select_preferences(preferences, host_id)
         option_defaults = select_option_defaults(preferences, host_id)
 

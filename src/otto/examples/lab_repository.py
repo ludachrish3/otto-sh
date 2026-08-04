@@ -29,14 +29,16 @@ Direct usage:
 'east'
 >>> len(lab.hosts)
 1
+>>> [s.id for s in repo.list_host_summaries()]
+['router1', 'router2']
 """
 
 from pathlib import Path
 from typing import Any
 
 from ..config.lab import Lab
-from ..host.factory import create_host_from_dict
-from ..labs import LabNotFoundError
+from ..host.factory import create_host_from_dict, host_identity
+from ..labs import HostSummary, LabNotFoundError
 
 # A tiny built-in dataset so the sample works out of the box (doctests +
 # conformance). Each value is a list of host dicts as they'd appear in a
@@ -111,3 +113,38 @@ class ExampleLabRepository:
     def list_labs(self) -> list[str]:
         """Return a sorted list of all lab names in this backend's dataset."""
         return sorted(self._labs)
+
+    def list_host_summaries(self) -> list[HostSummary]:
+        """Enumerate hosts without building them — the optional fast path.
+
+        Implementing :class:`~otto.labs.protocol.SupportsHostSummaries` is
+        what makes ``otto host <TAB>`` and tunnel path-narrowing cheap for a
+        custom backend. It is optional: drop this method and otto falls back
+        to ``list_labs`` + ``load_lab``, which still works.
+
+        Note the ids come from :func:`~otto.host.factory.host_identity`, not
+        from formatting the record by hand — that is what guarantees an id
+        offered by completion is one ``load_lab`` will actually produce. And
+        note the per-record ``try``: enumeration feeds tab completion, so one
+        bad record must be skipped, never raised.
+        """
+        by_id: dict[str, HostSummary] = {}
+        for name, hosts in self._labs.items():
+            for host_data in hosts:
+                try:
+                    identity = host_identity(host_data)
+                except (ValueError, TypeError):
+                    continue
+                existing = by_id.get(identity.id)
+                if existing is not None:
+                    existing.labs.append(name)
+                    continue
+                by_id[identity.id] = HostSummary(
+                    id=identity.id,
+                    labs=[name],
+                    ip=identity.ip,
+                    element=identity.element,
+                    element_id=identity.element_id,
+                    docker_capable=identity.docker_capable,
+                )
+        return sorted(by_id.values(), key=lambda s: s.id)

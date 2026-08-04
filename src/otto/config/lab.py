@@ -247,18 +247,23 @@ def logical_indices(hosts: "Iterable[Any]") -> dict[str, int]:
 
     Ordered by ``element_id`` ascending (``id`` tie-break); only groups with more
     than one member are numbered (a unique element is absent from the map).
-    Duck-typed on ``element``/``element_id``/``id``; non-``RemoteHost`` or
-    empty-``element`` hosts are skipped. THE single source of truth for logical
-    positions, shared by ``Lab._assign_logical_indices`` (stamping) and completion
-    (handles), so the CLI's positional handles always match ``resolve_handle``.
+    Accepts a :class:`~otto.host.remote_host.RemoteHost` or a
+    :class:`~otto.labs.protocol.HostSummary` (completion numbers hosts it has
+    only summarized, never built) — anything else, and any empty-``element``
+    entry, is skipped. That exclusion is load-bearing: built-in hosts and
+    synthesized container hosts are not remote hosts and must never take a
+    positional handle. THE single source of truth for logical positions, shared
+    by ``Lab._assign_logical_indices`` (stamping) and completion (handles), so
+    the CLI's positional handles always match ``resolve_handle``.
     """
     from collections import defaultdict
 
     from ..host.remote_host import RemoteHost, slug
+    from ..labs import HostSummary
 
     groups: "dict[str, list[Any]]" = defaultdict(list)
     for host in hosts:
-        if isinstance(host, RemoteHost) and host.element:
+        if isinstance(host, (RemoteHost, HostSummary)) and host.element:
             groups[slug(host.element)].append(host)
     positions: dict[str, int] = {}
     for members in groups.values():

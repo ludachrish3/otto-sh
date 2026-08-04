@@ -35,7 +35,7 @@ def _repo(tmp_path: Path) -> SimpleNamespace:
             }
         )
     )
-    return SimpleNamespace(labs=[labs_dir])
+    return SimpleNamespace(labs=[labs_dir], lab_settings={}, sut_dir=labs_dir.parent)
 
 
 def test_collect_host_ids_includes_logical_handles(tmp_path):

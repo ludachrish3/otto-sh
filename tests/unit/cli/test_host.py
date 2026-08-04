@@ -487,7 +487,11 @@ def _write_hosts_json(path: Path, hosts: list[dict]) -> Path:
 def _fake_repo(*lab_paths: Path) -> SimpleNamespace:
     """Stand-in for :class:`Repo` that only exposes the attribute the
     completer actually reads (``labs``)."""
-    return SimpleNamespace(labs=list(lab_paths))
+    return SimpleNamespace(
+        labs=list(lab_paths),
+        lab_settings={},
+        sut_dir=lab_paths[0].parent if lab_paths else Path(),
+    )
 
 
 class TestHostIdCompleter:

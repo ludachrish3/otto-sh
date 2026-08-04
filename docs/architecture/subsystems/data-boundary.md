@@ -78,6 +78,14 @@ register a name via {func}`otto.labs.register_lab_repository`.
 against the contract, and `otto.examples.lab_repository` is a copyable
 reference implementation. See {doc}`../../guide/setup/host-database`.
 
+Naming a host is a separate, cheaper query than loading one: tab completion
+and tunnel narrowing go through {func}`otto.labs.host_summaries`, which uses a
+backend's optional `SupportsHostSummaries` fast path when it has one and
+otherwise falls back to `list_labs` + `load_lab`. Either way the ids come from
+the backend, so a custom host source drives completion — before this seam
+existed, completion read `lab.json` directly and a custom backend contributed
+nothing to it.
+
 Merging is part of loading: `--lab` may be passed multiple times and the
 resulting `Lab` objects merge, so a shared lab file and a personal overlay
 compose without editing either.

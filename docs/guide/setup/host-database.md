@@ -28,6 +28,23 @@ two read-only methods:
 Configuration is supplied at construction time, so a backend is built once and
 then queried.
 
+### One optional capability
+
+`list_host_summaries() -> list[HostSummary]`
+: Enumerate hosts *without building them*, for tab completion and tunnel
+  path-narrowing. Implementing
+  [`SupportsHostSummaries`](../../api/labs.rst) is purely an optimization —
+  otto detects it structurally, and a backend that omits it still gets
+  completion, because otto falls back to `list_labs()` + `load_lab()`.
+
+  If you do implement it, every id you return **must** be an id `load_lab()`
+  would produce, or completion offers names that cannot dispatch. Derive ids
+  with [`host_identity`](../../api/host/factory.rst) rather than formatting
+  your records by hand: it applies the same profile merge and validation the
+  host factory applies, which hand-formatting silently gets wrong (a numeric
+  field arriving as `3.0`, or an `os_profile` that supplies `board`/`slot`).
+  `assert_lab_repository_conforms` checks this for you.
+
 ## Quick start: the built-in JSON source
 
 The default backend is `"json"`: it reads `lab.json` from each directory in
@@ -194,7 +211,8 @@ registry machinery behind this and every other seam otto can be extended at.
 
 ## Writing a custom backend
 
-A backend is any class satisfying the two-method protocol. Otto ships a small,
+A backend is any class satisfying the two required methods (plus, optionally,
+`list_host_summaries`). Otto ships a small,
 dependency-free reference implementation —
 [`otto.examples.lab_repository.ExampleLabRepository`](../../api/examples.rst) — that
 you can copy from `src/otto/examples/lab_repository.py` as a starting point. It

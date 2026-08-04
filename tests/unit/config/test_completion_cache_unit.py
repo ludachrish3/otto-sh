@@ -606,6 +606,9 @@ def _make_fake_repo(tmp_path: Path) -> MagicMock:
     fake_repo.libs = []
     fake_repo.tests = []
     fake_repo.labs = [tmp_path / "lab"]
+    # A repo that declares no [lab] block — the host source is the built-in
+    # json backend over `labs`, which is what these tests exercise.
+    fake_repo.lab_settings = {}
     return fake_repo
 
 

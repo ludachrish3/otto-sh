@@ -37,8 +37,15 @@ class TestThing(OttoSuite):
 
 
 def _repo(*, labs: list[Path] | None = None, tests: list[Path] | None = None):
-    """A stand-in exposing only the .labs / .tests the collectors read."""
-    return SimpleNamespace(labs=labs or [], tests=tests or [])
+    """A stand-in Repo. `lab_settings={}` means "declares no [lab] block", so
+    the host source is the built-in json backend over `labs` — what a real
+    repo without a custom backend looks like."""
+    return SimpleNamespace(
+        labs=labs or [],
+        tests=tests or [],
+        lab_settings={},
+        sut_dir=(labs or [Path()])[0],
+    )
 
 
 def test_collect_lab_names_reads_lab_tags(tmp_path: Path) -> None:

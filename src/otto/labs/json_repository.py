@@ -7,12 +7,14 @@ from typing import TYPE_CHECKING, Any
 
 from ..host.factory import (
     create_host_from_dict,
+    host_identity,
     validate_host_dict,
 )
 from .errors import (
     LabNotFoundError,
     LabRepositoryError,
 )
+from .protocol import HostSummary
 
 if TYPE_CHECKING:
     # Deferred: otto.config.lab imports this module (for the built-in "json"
@@ -203,6 +205,57 @@ class JsonFileLabRepository:
 
         logger.debug(f"Loaded lab '{name}' with {len(lab.hosts)} hosts")
         return lab
+
+    def list_host_summaries(self) -> list[HostSummary]:
+        """Every host across the configured lab files, without building hosts.
+
+        The :class:`~otto.labs.protocol.SupportsHostSummaries` fast path.
+        Each id comes from :func:`~otto.host.factory.host_identity`, which
+        applies the same profile merge and validation
+        :func:`~otto.host.factory.create_host_from_dict` applies — so an id
+        offered by completion is one that dispatches. Deriving ids by
+        formatting the raw JSON instead would silently diverge (a float
+        ``element_id``, or a profile that defaults ``board``/``slot``).
+
+        Best-effort, like :meth:`list_labs`: a malformed file or host entry
+        is skipped rather than raised — these feed completion, which must
+        never crash the shell. Hosts listed in several lab files merge by
+        id, unioning their ``labs``.
+        """
+        by_id: dict[str, HostSummary] = {}
+
+        try:
+            lab_files = self._find_lab_files()
+        except FileNotFoundError:
+            return []
+
+        for lab_file in lab_files:
+            try:
+                hosts_data = self._load_lab_file(lab_file)["hosts"]
+            except LabRepositoryError:
+                continue
+            for host_data in hosts_data:
+                if not isinstance(host_data, dict):
+                    continue
+                try:
+                    identity = host_identity(host_data)
+                except (ValueError, TypeError):
+                    continue
+                labs = [lab for lab in host_data.get("labs", []) if isinstance(lab, str)]
+                existing = by_id.get(identity.id)
+                if existing is not None:
+                    existing.labs.extend(lab for lab in labs if lab not in existing.labs)
+                    continue
+                by_id[identity.id] = HostSummary(
+                    id=identity.id,
+                    labs=labs,
+                    ip=identity.ip,
+                    element=identity.element,
+                    element_id=identity.element_id,
+                    docker_capable=identity.docker_capable,
+                )
+
+        return sorted(by_id.values(), key=lambda s: s.id)
 
     def list_labs(self) -> list[str]:
         """List all lab names referenced by hosts across the configured paths.

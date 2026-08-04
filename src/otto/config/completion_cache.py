@@ -124,6 +124,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, Union, get_args, get_origin
 
 if TYPE_CHECKING:
+    from ..labs import HostSummary
     from .repo import Repo
 
 
@@ -782,56 +783,71 @@ def collect_reservation_usernames(repos: list["Repo"]) -> list[str]:
     return []
 
 
-def _read_lab_hosts(lab_file: Path) -> list[dict[str, Any]]:
-    """Best-effort read of a lab.json's ``hosts`` array ([] on any problem).
+def repo_host_summaries(repo: "Repo") -> list["HostSummary"]:
+    """Every host *repo*'s configured host source knows — best-effort.
 
-    Completion must never crash on bad user data, so malformed shapes are
-    silently empty here (the real loader raises with full diagnostics). Kept
-    stdlib-only (json) so the completion fast path stays import-light.
+    Goes through the repo's own ``[lab]`` backend rather than reading its
+    ``lab.json`` files directly, so a project with a custom host source gets
+    completion from it (previously a custom backend contributed nothing here
+    — completion only ever saw ``lab.json``).
+
+    Scoped PER REPO, which preserves what completion did before: each repo
+    contributed the hosts under its own ``labs`` paths, and the container ids
+    synthesized below pair a repo's ``[docker]`` composes with its own
+    docker-capable parents. Note this is NOT how dispatch selects a backend —
+    ``cli/invoke`` builds ONE backend from the FIRST repo declaring ``[lab]``
+    — so with two repos both declaring one, completion enumerates both while
+    dispatch honours only the first. Reconciling the two selection rules is
+    its own change.
+
+    Never raises: an unregistered backend, malformed settings, or a backend
+    that explodes yields an empty list, because every caller is a completion
+    path that must not crash the shell. Logged at WARNING, not DEBUG: a
+    transiently-unreachable custom backend would otherwise write an EMPTY host
+    list into a cache that is then served for the next 24 hours, silently.
     """
+    from ..labs import build_lab_repository, host_summaries
+
     try:
-        data = json.loads(lab_file.read_text())
-    except (OSError, json.JSONDecodeError):
+        repository = build_lab_repository(
+            repo.lab_settings, repo.sut_dir, search_paths=list(repo.labs)
+        )
+        return host_summaries(repository)
+    except Exception as e:  # noqa: BLE001 — completion never crashes the shell
+        logging.getLogger(__name__).warning(
+            rf"\[completion] could not enumerate hosts for {repo.sut_dir}: {e}"
+        )
         return []
-    if not isinstance(data, dict):
-        return []
-    hosts = data.get("hosts", [])
-    return hosts if isinstance(hosts, list) else []
 
 
 def collect_docker_capable_host_ids(repos: list["Repo"]) -> list[str]:
-    """Enumerate host IDs whose ``lab.json`` host entry has ``docker_capable: true``.
+    """Enumerate host IDs that can host containers (``docker_capable``).
 
     Used as the completion source for ``otto docker --on <TAB>`` and any
     other surface that should be limited to docker-capable parents.
     Mirrors :func:`collect_host_ids` (no :func:`otto.bootstrap.bootstrap` call
     needed; safe in the completion fast path).
-    """
-    from ..host.factory import create_host_from_dict, validate_host_dict
 
+    The flag is read from the resolved host identity, so a host whose
+    ``os_profile`` defaults ``docker_capable`` counts here — it always did in
+    :func:`collect_host_ids`, which read the constructed host, and the two
+    now agree.
+    """
     ids: set[str] = set()
     for repo in repos:
-        for lab_path in repo.labs:
-            for host_data in _read_lab_hosts(lab_path / LAB_FILENAME):
-                if not isinstance(host_data, dict):
-                    continue
-                if not host_data.get("docker_capable"):
-                    continue
-                try:
-                    validate_host_dict(host_data)
-                    host = create_host_from_dict(host_data)
-                except (ValueError, TypeError):
-                    continue
-                ids.add(host.id)
+        for summary in repo_host_summaries(repo):
+            if summary.docker_capable:
+                ids.add(summary.id)
     return sorted(ids)
 
 
 def collect_host_ids(repos: list["Repo"], lab_names: list[str] | None = None) -> list[str]:
     """Enumerate every host ID reachable via the configured lab search paths.
 
-    Reads each repo's ``labs`` directories for a ``lab.json`` file and
-    builds :class:`UnixHost` objects via the existing factory so the
-    resulting IDs match what ``get_host`` will look up at runtime. Also
+    Enumerates each repo's configured host source (see
+    :func:`repo_host_summaries`), whose ids are resolved through the same
+    validation the host factory applies, so the resulting IDs match what
+    ``get_host`` will look up at runtime. Also
     synthesizes container host IDs of the form ``<parent>.<project>.<service>``
     from each repo's ``[docker]`` settings so declared container hosts
     are tab-completable before they're actually brought up.
@@ -858,7 +874,6 @@ def collect_host_ids(repos: list["Repo"], lab_names: list[str] | None = None) ->
     silently skipped — completion must never crash on bad user data.
     """
     from ..host.builtin_hosts import builtin_host_ids
-    from ..host.factory import create_host_from_dict, validate_host_dict
     from ..host.remote_host import slug
     from .lab import logical_indices
 
@@ -867,33 +882,24 @@ def collect_host_ids(repos: list["Repo"], lab_names: list[str] | None = None) ->
     # Seed with the built-in hosts otto injects into every lab (e.g. `local`) so
     # they are tab-completable in every repo, mirroring load_lab's injection.
     ids: set[str] = set(builtin_host_ids())
-    # Every constructed host across all repos, keyed by id (dedup). Logical
+    # Every summarized host across all repos, keyed by id (dedup). Logical
     # positions are derived from this combined set (once, below) so a group
-    # split across repos' lab.json files is still numbered as one group —
+    # split across repos' host sources is still numbered as one group —
     # matching how a real Lab merges hosts from multiple sources before
     # stamping.
-    built: dict[str, Any] = {}
+    summarized: dict[str, "HostSummary"] = {}
     for repo in repos:
-        # Map of host_id -> docker_capable flag, scoped to this repo's labs.
-        # Populated as we walk lab.json so we can synthesize container
-        # ids in the same pass.
+        # Docker-capable ids scoped to THIS repo, so the container ids
+        # synthesized below pair each repo's composes with its own parents.
         docker_capable_ids: list[str] = []
-        for lab_path in repo.labs:
-            for host_data in _read_lab_hosts(lab_path / LAB_FILENAME):
-                if not isinstance(host_data, dict):
-                    continue
-                # Lab filter: keep only hosts tagged with a requested lab.
-                if wanted is not None and wanted.isdisjoint(host_data.get("labs", [])):
-                    continue
-                try:
-                    validate_host_dict(host_data)
-                    host = create_host_from_dict(host_data)
-                except (ValueError, TypeError):
-                    continue
-                ids.add(host.id)
-                built[host.id] = host
-                if getattr(host, "docker_capable", False):
-                    docker_capable_ids.append(host.id)
+        for summary in repo_host_summaries(repo):
+            # Lab filter: keep only hosts tagged with a requested lab.
+            if wanted is not None and wanted.isdisjoint(summary.labs):
+                continue
+            ids.add(summary.id)
+            summarized[summary.id] = summary
+            if summary.docker_capable:
+                docker_capable_ids.append(summary.id)
 
         docker = getattr(repo, "docker_settings", None)
         if docker is None or not docker.composes:
@@ -920,11 +926,11 @@ def collect_host_ids(repos: list["Repo"], lab_names: list[str] | None = None) ->
     # Logical handles (<slug(element)><position>) alongside canonical ids, so
     # `otto host <TAB>` offers exactly what Lab.resolve_handle would resolve at
     # runtime — logical_indices is the single shared source (see lab.py).
-    positions = logical_indices(built.values())
-    for host in built.values():
-        pos = positions.get(host.id)
+    positions = logical_indices(summarized.values())
+    for summary in summarized.values():
+        pos = positions.get(summary.id)
         if pos is not None:
-            ids.add(f"{slug(host.element)}{pos}")
+            ids.add(f"{slug(summary.element)}{pos}")
 
     return sorted(ids)
 
@@ -932,8 +938,9 @@ def collect_host_ids(repos: list["Repo"], lab_names: list[str] | None = None) ->
 def _read_lab_links(lab_file: Path) -> list[dict[str, Any]]:
     """Best-effort read of a lab.json's ``links`` array ([] on any problem).
 
-    Mirrors :func:`_read_lab_hosts`: completion must never crash on bad user
-    data, so malformed shapes are silently empty here.
+    Completion must never crash on bad user data, so malformed shapes are
+    silently empty here. Links have no repository seam yet — hosts moved to
+    ``LabRepository`` enumeration, this stayed a direct read.
     """
     try:
         data = json.loads(lab_file.read_text())
@@ -983,26 +990,33 @@ def collect_link_ids(repos: list["Repo"]) -> list[str]:
 
 
 def collect_lab_names(repos: list["Repo"]) -> list[str]:
-    """Enumerate every lab name referenced across the configured lab.json files.
+    """Enumerate every lab name each repo's host source can provide.
 
     A lab is a *tag* on hosts (each host's ``labs`` array), not a directory,
-    so the names come straight from the built-in json backend's
-    :meth:`~otto.labs.json_repository.JsonFileLabRepository.list_labs` over
-    the aggregated ``labs`` search paths — the same source ``otto --list-labs``
-    uses. Data-only (no host construction, no user code), so it is safe in the
-    completion fast path as well as the cache writer. Malformed files are
-    skipped by ``list_labs`` itself; any unexpected error yields ``[]`` so
-    completion never crashes.
-    """
-    from ..labs.json_repository import JsonFileLabRepository
+    so the names come from every repo's configured backend via the required
+    :meth:`~otto.labs.protocol.LabRepository.list_labs` — not from reading
+    ``lab.json``, which would leave a custom host source with no ``--lab``
+    completion and, worse, empty ``hosts_by_lab`` buckets on the warm path
+    while the cold path offered its hosts.
 
-    search_paths: list[Path] = []
+    Data-only (no host construction, no user code), so it is safe in the
+    completion fast path as well as the cache writer. A backend that fails is
+    skipped; any unexpected error yields ``[]`` so completion never crashes.
+    """
+    from ..labs import build_lab_repository
+
+    names: set[str] = set()
     for repo in repos:
-        search_paths.extend(repo.labs)
-    try:
-        return JsonFileLabRepository(search_paths=search_paths).list_labs()
-    except Exception:  # noqa: BLE001 — completion must degrade, never crash
-        return []
+        try:
+            repository = build_lab_repository(
+                repo.lab_settings, repo.sut_dir, search_paths=list(repo.labs)
+            )
+            names.update(repository.list_labs())
+        except Exception as e:  # noqa: BLE001, PERF203 — per-repo resilience: one bad backend must not deny the rest
+            logging.getLogger(__name__).warning(
+                rf"\[completion] could not list labs for {repo.sut_dir}: {e}"
+            )
+    return sorted(names)
 
 
 def collect_host_ids_by_lab(repos: list["Repo"]) -> dict[str, list[str]]:

@@ -24,7 +24,7 @@ Usage::
 
 from ..config.lab import Lab
 from ..host.remote_host import RemoteHost
-from ..labs import LabNotFoundError, LabRepository
+from ..labs import HostSummary, LabNotFoundError, LabRepository, SupportsHostSummaries
 from ..reservations import ReservationBackend, SupportsUsernameCompletion
 from ..suite.expect import ExpectCollector
 
@@ -150,7 +150,76 @@ def assert_lab_repository_conforms(
                     False, f"LabRepository: expected lab {n!r} to load, got {type(e).__name__}: {e}"
                 )
 
+    # Optional capability: only checked when the backend advertises it (the
+    # same shape as SupportsUsernameCompletion for reservation backends).
+    if isinstance(repo, SupportsHostSummaries) and names_ok:
+        _expect_host_summaries_conform(c, repo, names)
+
     c.raise_if_failures()
+
+
+def _expect_host_summaries_conform(
+    c: ExpectCollector,
+    repo: "SupportsHostSummaries",
+    names: list[str],
+) -> None:
+    """Check the optional ``SupportsHostSummaries`` capability's contract.
+
+    The load-bearing rule is the LAST one: every summarized id must be an id
+    ``load_lab`` actually produces. A fast path that derives ids by a
+    different route than host construction offers completions that do not
+    dispatch — worse than offering none.
+    """
+    try:
+        summaries = repo.list_host_summaries()
+    except Exception as e:  # noqa: BLE001 — conformance check, any failure is a violation
+        c.expect(
+            False, f"SupportsHostSummaries: list_host_summaries() raised {type(e).__name__}: {e}"
+        )
+        return
+
+    if not isinstance(summaries, list):
+        c.expect(
+            False,
+            f"SupportsHostSummaries: must return a list, got {type(summaries).__name__}",
+        )
+        return
+
+    seen: set[str] = set()
+    for s in summaries:
+        if not isinstance(s, HostSummary):
+            c.expect(
+                False,
+                f"SupportsHostSummaries: entries must be HostSummary, got {type(s).__name__}",
+            )
+            continue
+        c.expect(
+            bool(s.id) and isinstance(s.id, str),
+            f"SupportsHostSummaries: every summary needs a non-empty str id, got {s.id!r}",
+        )
+        c.expect(
+            s.id not in seen,
+            f"SupportsHostSummaries: duplicate id {s.id!r} — hosts in several labs "
+            f"must merge into one summary with both labs",
+        )
+        seen.add(s.id)
+
+    constructed: set[str] = set()
+    for n in names:
+        if not isinstance(n, str):
+            continue
+        try:
+            constructed |= set(repo.load_lab(n).hosts)  # ty: ignore[unresolved-attribute]
+        except Exception:  # noqa: BLE001, S112 — load failures are reported by the caller's own rules
+            continue
+    # Built-ins (``local``) are injected by lab loading, not by the backend,
+    # so the summary set is only required to be a SUBSET of what loads.
+    missing = sorted(seen - constructed)
+    c.expect(
+        not missing,
+        f"SupportsHostSummaries: ids {missing} are offered by list_host_summaries() but "
+        f"no load_lab() produces them — completion would offer ids that cannot dispatch",
+    )
 
 
 def assert_reservation_backend_conforms(

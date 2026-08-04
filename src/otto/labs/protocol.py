@@ -1,5 +1,6 @@
 """``LabRepository`` protocol — the DB-agnostic interface all lab-repository backends satisfy."""
 
+from dataclasses import dataclass, field
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -65,4 +66,66 @@ class LabRepository(Protocol):
         list[str]
             Lab names (every element a ``str``).
         """
+        ...
+
+
+@dataclass(frozen=True)
+class HostSummary:
+    """Identity and addressing for one host, without constructing it.
+
+    What tab completion and tunnel path-narrowing need to *name* and *reach*
+    a host. Deliberately small: anything requiring creds, interfaces,
+    transports, or options is a job for
+    :meth:`~otto.labs.protocol.LabRepository.load_lab`, not for a second host
+    model growing here.
+
+    ``frozen=True`` blocks attribute rebinding, not mutation of ``labs`` —
+    producers deliberately append to it while merging a host that appears in
+    several labs, before the summary is handed out. (A consequence: a summary
+    is not hashable. Key collections by ``.id``.)
+    """
+
+    id: str
+    """The host's canonical id — byte-identical to the built host's ``.id``."""
+
+    labs: list[str] = field(default_factory=list)
+    """Lab names this host belongs to."""
+
+    ip: str = ""
+    """Management address, or ``""`` when the backend does not expose one."""
+
+    element: str = ""
+    """Element name, used to synthesize positional handles (``dut1``)."""
+
+    element_id: int | None = None
+    """Element index within its element group, or None."""
+
+    docker_capable: bool = False
+    """Whether the host can host containers (drives ``otto docker --on``)."""
+
+
+@runtime_checkable
+class SupportsHostSummaries(Protocol):
+    """Optional capability: enumerate hosts without constructing them.
+
+    A backend that can answer "which hosts exist, and what are their ids /
+    labs / addresses" more cheaply than a full :meth:`LabRepository.load_lab`
+    implements this; otto detects it structurally and uses it for tab
+    completion and tunnel narrowing.
+
+    Implementing it is OPTIONAL and purely an optimization: a backend that
+    omits it still gets completion, because
+    :func:`otto.labs.host_summaries` falls back to ``list_labs`` +
+    ``load_lab``. The fallback is always correct, just slower.
+
+    An implementation MUST return ids byte-identical to the ones
+    ``load_lab`` would report for the same hosts — an id that does not
+    round-trip is worse than no completion, because it offers the user
+    something that will not dispatch. Backends over raw records should reach
+    for :func:`otto.host.factory.host_identity`, which applies the same
+    profile merge and validation the host factory applies.
+    """
+
+    def list_host_summaries(self) -> list[HostSummary]:
+        """Every host this backend knows, across every lab."""
         ...

@@ -75,34 +75,23 @@ def _l2_reachable(host_id: str, ip_by_host: dict[str, str]) -> list[str]:
 
 
 def _ip_by_host(repos: list["Repo"]) -> dict[str, str]:
-    """Best-effort ``{host_id: ip}`` map read straight from each repo's lab.json.
+    """Best-effort ``{host_id: ip}`` map from each repo's configured host source.
 
-    Feeds :func:`_l2_reachable`'s completion narrowing. Reuses the same
-    per-host construction :func:`~otto.config.completion_cache.collect_host_ids`
-    relies on (``create_host_from_dict``), so ids line up with what the base
-    completer offers, while also keeping each host's top-level ``ip`` field
-    around. Malformed / unvalidatable entries are silently skipped — this
-    only ever feeds a narrowing that falls back to the full host list on any
-    error, so it must never raise on bad user data.
+    Feeds :func:`_l2_reachable`'s completion narrowing. Goes through the same
+    enumeration :func:`~otto.config.completion_cache.collect_host_ids` uses, so
+    ids line up with what the base completer offers — and, unlike the old
+    read-lab.json-directly path, a project with a custom host source narrows
+    too. This runs on every TAB after a comma, so it deliberately avoids
+    building hosts. Malformed entries are silently skipped: the caller falls
+    back to the unnarrowed host list on any error, so this must never raise.
     """
-    from ..config.completion_cache import LAB_FILENAME, _read_lab_hosts
-    from ..host.factory import create_host_from_dict, validate_host_dict
+    from ..config.completion_cache import repo_host_summaries
 
     ip_by_host: dict[str, str] = {}
     for repo in repos:
-        for lab_path in repo.labs:
-            for host_data in _read_lab_hosts(lab_path / LAB_FILENAME):
-                if not isinstance(host_data, dict):
-                    continue
-                ip = host_data.get("ip")
-                if not isinstance(ip, str) or not ip:
-                    continue
-                try:
-                    validate_host_dict(host_data)
-                    host = create_host_from_dict(host_data)
-                except (ValueError, TypeError):
-                    continue
-                ip_by_host[host.id] = ip
+        for summary in repo_host_summaries(repo):
+            if summary.ip:
+                ip_by_host[summary.id] = summary.ip
     return ip_by_host
 
 

@@ -11,6 +11,10 @@ register a name via :func:`otto.labs.register_lab_repository` from an
 
 .. autofunction:: otto.labs.register_lab_repository
 
+.. autofunction:: otto.labs.host_summaries
+
+.. autofunction:: otto.labs.list_host_ids
+
 .. autoexception:: otto.labs.LabNotFoundError
 
 .. automodule:: otto.labs.protocol

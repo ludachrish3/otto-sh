@@ -17,7 +17,7 @@ def _repo_with_hosts(tmp_path: Path, hosts: list[dict]) -> SimpleNamespace:
     lab = tmp_path / "lab"
     lab.mkdir(parents=True, exist_ok=True)
     (lab / "lab.json").write_text(json.dumps({"hosts": hosts}))
-    return SimpleNamespace(labs=[lab])
+    return SimpleNamespace(labs=[lab], lab_settings={}, sut_dir=tmp_path)
 
 
 _CARROT = {

@@ -47,8 +47,11 @@ depends_on = [
     # retiring repo.py's backward import and the sys.modules dodge.)
     "otto.cli",
     "otto.labs",
-    # DEBT: completion_cache builds full hosts to read .id (config/models
-    # review Q4); shrink with LabRepository.list_host_ids (Tier 1.4).
+    # DEBT: survives on fleet.py's DEFAULT_COMMAND_TIMEOUT (Tier 1.7),
+    # lab.py's RemoteHost/slug/builtin_hosts, and repo.py's os_profile
+    # registration. completion_cache's host-CONSTRUCTION import is gone —
+    # it enumerates through LabRepository now — leaving only the
+    # import-light builtin_hosts and the term/transfer registries.
     "otto.host",
     "otto.logger",
     # completion_cache reads SUITES; acceptable direction once INSTRUCTIONS
