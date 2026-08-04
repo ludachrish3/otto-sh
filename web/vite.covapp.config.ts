@@ -15,12 +15,20 @@ function classicScript(): Plugin {
     enforce: "post",
     generateBundle(_opts, bundle) {
       const html = bundle["covapp.html"];
-      if (html && html.type === "asset") {
-        html.fileName = "index.html";
-        html.source = String(html.source)
-          .replaceAll(' type="module"', " defer")
-          .replaceAll(" crossorigin", "");
+      if (!html || html.type !== "asset") {
+        // A Vite/Rolldown upgrade renaming the bundle key must FAIL the
+        // build: silently skipping the rewrite ships an index.html-less
+        // bundle whose module scripts never load over file://.
+        throw new Error(
+          `otto-classic-script: expected asset "covapp.html" in the bundle, ` +
+            `found [${Object.keys(bundle).join(", ")}] — the classic-script ` +
+            `rewrite did not run, covapp would not load over file://`,
+        );
       }
+      html.fileName = "index.html";
+      html.source = String(html.source)
+        .replaceAll(' type="module"', " defer")
+        .replaceAll(" crossorigin", "");
     },
   };
 }
