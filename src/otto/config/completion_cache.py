@@ -611,15 +611,14 @@ def collect_current_commands() -> tuple[list[dict[str, Any]], list[dict[str, Any
     """Read the currently-registered instructions and suites with options.
 
     Must be called after :func:`otto.bootstrap.bootstrap` has finished
-    populating ``otto.cli.run.INSTRUCTIONS`` and ``otto.suite.register.SUITES``.
-    Returns empty lists for any source that hasn't been loaded (e.g. no init
-    modules → ``otto.cli.run`` never imported → no instructions).
+    populating ``otto.instructions.INSTRUCTIONS`` and
+    ``otto.suite.register.SUITES``. A source that never loaded simply has an
+    empty registry (no init modules → no ``@instruction()`` ran → no entries).
 
     Each item is ``{"name": str, "options": list[dict]}``; a command whose
     options can't be fully serialized is cached with ``options: []`` so
     the name still completes even though the per-option flags don't.
     """
-    import sys
 
     def _entries_to_dicts(entries: list[tuple[str, Any]]) -> list[dict[str, Any]]:
         out: list[dict[str, Any]] = []
@@ -631,15 +630,10 @@ def collect_current_commands() -> tuple[list[dict[str, Any]], list[dict[str, Any
             out.append({"name": name, "options": options if options is not None else []})
         return out
 
-    instructions: list[dict[str, Any]] = []
-    run_mod = sys.modules.get("otto.cli.run")
-    if run_mod is not None:
-        instructions = _entries_to_dicts(run_mod.INSTRUCTIONS.items())
-
-    # Unlike otto.cli.run (guarded above via sys.modules to sidestep a real
-    # circular-import hazard at bootstrap time), otto.suite.register has no
-    # such hazard — it's safe to import directly here.
+    from ..instructions import INSTRUCTIONS
     from ..suite.register import SUITES
+
+    instructions: list[dict[str, Any]] = _entries_to_dicts(INSTRUCTIONS.items())
 
     suites: list[dict[str, Any]] = _entries_to_dicts(SUITES.items())
 

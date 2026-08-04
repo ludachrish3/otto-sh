@@ -310,7 +310,7 @@ class TestGetInstructionsPanel:
     def _fake_registry(self, *entries: tuple[str, str]) -> MagicMock:
         """Build a fake INSTRUCTIONS-shaped registry from (cmd_name, module) pairs.
 
-        Mirrors ``otto.cli.run.InstructionEntry``'s ``.name`` / ``.module``
+        Mirrors ``otto.instructions.InstructionEntry``'s ``.name`` / ``.module``
         fields consumed by ``get_instructions_panel``.
         """
         items = []
@@ -327,7 +327,7 @@ class TestGetInstructionsPanel:
         sut_dir = _make_sut(tmp_path, extra_toml='init = ["my_instructions"]\n')
         repo = Repo(sut_dir=sut_dir)
         fake = self._fake_registry(("do-something", "my_instructions.cmd"))
-        with patch("otto.cli.run.INSTRUCTIONS", fake):
+        with patch("otto.instructions.INSTRUCTIONS", fake):
             text = _render(repo.get_instructions_panel())
         assert "do-something" in text
 
@@ -335,7 +335,7 @@ class TestGetInstructionsPanel:
         sut_dir = _make_sut(tmp_path, extra_toml='init = ["my_instructions"]\n')
         repo = Repo(sut_dir=sut_dir)
         fake = self._fake_registry(("foreign-command", "other_repo.cmd"))
-        with patch("otto.cli.run.INSTRUCTIONS", fake):
+        with patch("otto.instructions.INSTRUCTIONS", fake):
             text = _render(repo.get_instructions_panel())
         assert "foreign-command" not in text
         assert "no instructions found" in text
@@ -345,7 +345,7 @@ class TestGetInstructionsPanel:
         sut_dir = _make_sut(tmp_path, extra_toml='init = ["my_instructions"]\n')
         repo = Repo(sut_dir=sut_dir)
         fake = self._fake_registry(("explicit-name", "my_instructions.cmd"))
-        with patch("otto.cli.run.INSTRUCTIONS", fake):
+        with patch("otto.instructions.INSTRUCTIONS", fake):
             text = _render(repo.get_instructions_panel())
         assert "explicit-name" in text
         assert "func-name" not in text
@@ -355,7 +355,7 @@ class TestGetInstructionsPanel:
         sut_dir = _make_sut(tmp_path, extra_toml='init = ["my_instructions"]\n')
         repo = Repo(sut_dir=sut_dir)
         fake = self._fake_registry(("top-level-cmd", "my_instructions"))
-        with patch("otto.cli.run.INSTRUCTIONS", fake):
+        with patch("otto.instructions.INSTRUCTIONS", fake):
             text = _render(repo.get_instructions_panel())
         assert "top-level-cmd" in text
 
@@ -363,7 +363,7 @@ class TestGetInstructionsPanel:
         sut_dir = _make_sut(tmp_path, extra_toml='init = ["my_instructions"]\n')
         repo = Repo(sut_dir=sut_dir)
         fake = self._fake_registry()
-        with patch("otto.cli.run.INSTRUCTIONS", fake):
+        with patch("otto.instructions.INSTRUCTIONS", fake):
             text = _render(repo.get_instructions_panel())
         assert "no instructions found" in text
 

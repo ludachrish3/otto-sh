@@ -321,7 +321,7 @@ class Repo:
         """
         from rich.text import Text
 
-        from ..cli.run import INSTRUCTIONS  # lazy import — avoids circular dependency
+        from ..instructions import INSTRUCTIONS  # lazy import — keeps repo import-light
 
         instruction_names: list[str] = [
             entry.name

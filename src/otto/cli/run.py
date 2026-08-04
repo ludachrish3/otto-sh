@@ -1,6 +1,5 @@
 """``otto run`` subcommand: decorator and Typer app for user-defined run instructions."""
 
-import dataclasses
 from collections.abc import Callable, Coroutine
 from typing import (
     Annotated,
@@ -12,30 +11,13 @@ import typer
 from rich import print as rprint
 from rich.table import Table
 
-from ..registry import Registry
+from ..instructions import INSTRUCTIONS, InstructionEntry
 from ..result import CommandResult
 from ..utils import async_typer_command
 from .invoke import make_registry_group, prepare_command_target
 
 P = ParamSpec("P")
 
-
-@dataclasses.dataclass(frozen=True)
-class InstructionEntry:
-    """One registered instruction: its Typer sub-app + defining module."""
-
-    name: str
-    sub_app: typer.Typer
-    module: str
-
-
-# ---------------------------------------------------------------------------
-# Module-level registry — populated by @instruction() as init modules are
-# imported during startup; consumed lazily by run_app's RegistryBackedGroup.
-# ---------------------------------------------------------------------------
-INSTRUCTIONS: Registry[InstructionEntry] = Registry(
-    "instruction", register_hint="@otto.instruction()"
-)
 
 # `cls=` is set here (module scope, after INSTRUCTIONS exists) rather than via
 # a later app.info mutation, so run_app resolves every child instruction
