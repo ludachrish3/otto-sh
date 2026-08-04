@@ -142,6 +142,7 @@ import contextlib
 import gc
 import logging
 import sys
+import types
 import weakref
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -168,6 +169,24 @@ from tests._fixtures._transport_leaks import (
     install_transport_tracker,
     scan_leaked_transports,
 )
+
+# ---------------------------------------------------------------------------
+# tach pytest-plugin stub (process-global sys.modules identity → root conftest)
+#
+# tach ships a `pytest11` entry-point plugin whose Rust extension installs a
+# C-level Ctrl-C handler (ctrlc crate) at import and PANICS (MultipleHandlers)
+# if the module is ever re-imported in one process (issue #193). The harness
+# addopts' `-p no:tach` blocks it for the OUTER run, but pytester's
+# `runpytest_inprocess` sessions parse their own isolated rootdir config (no
+# addopts) and pytester's SysModulesSnapshot evicts the module between tests —
+# so in any venv that carries the `lint` dependency group, the second pytester
+# test would re-import the extension and panic. Pre-seeding an empty stub at
+# conftest import makes every nested `import tach.pytest_plugin` resolve to a
+# hookless module: no ctrlc handler, no re-init, and the stub predates every
+# pytester snapshot so restores keep it. Harmless when tach isn't installed.
+# ---------------------------------------------------------------------------
+if "tach.pytest_plugin" not in sys.modules:
+    sys.modules["tach.pytest_plugin"] = types.ModuleType("tach.pytest_plugin")
 
 _logger = logging.getLogger(__name__)
 
