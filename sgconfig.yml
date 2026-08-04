@@ -1,0 +1,6 @@
+# ast-grep configuration (Makefile: lint-arch). Rules encode otto-specific
+# architecture patterns that neither ruff (no plugin API) nor tach (no
+# scope sensitivity) can express. Policy background:
+# todo/churn-and-design-review-2026-08-03.md §5.
+ruleDirs:
+- .ast-grep/rules

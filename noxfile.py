@@ -347,9 +347,17 @@ def dashboard(session: nox.Session, browser: str) -> None:
 
 @nox_uv.session(uv_groups=["dev"])
 def lint(session: nox.Session) -> None:
-    """Run ruff lint + format checks."""
+    """Run ruff lint + format checks, then the architecture gates.
+
+    The architecture legs mirror `make lint-arch`: tach validates the module
+    dependency contracts in tach.toml (a ratchet baseline — see its header);
+    ast-grep enforces the scope-sensitive pattern rules in .ast-grep/rules/.
+    This session is what CI's lint-python job runs, so the gates bind on push.
+    """
     session.run("ruff", "check", ".")
     session.run("ruff", "format", "--check", ".")
+    session.run("tach", "check")
+    session.run("ast-grep", "scan", "src/otto")
 
 
 @nox_uv.session(uv_groups=["dev"])

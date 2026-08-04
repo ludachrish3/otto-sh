@@ -1,0 +1,27 @@
+id: models-no-module-scope-config-import
+language: python
+severity: error
+message: models/ may import otto.config only lazily (inside a function body). A module-scope import recreates the models<->config cycle.
+note: >
+  The runtime edge is allowed and declared in tach.toml (otto.models ->
+  otto.config, "ALLOWED LAZILY ONLY"); this rule pins the scope restriction
+  tach cannot see. TYPE_CHECKING-guarded imports are exempt (the if_statement
+  carve-out below).
+files:
+- src/otto/models/**
+rule:
+  all:
+  - any:
+    - pattern: from ..config import $$$IMPORTS
+    - pattern: from ..config.$MOD import $$$IMPORTS
+    - pattern: from otto.config import $$$IMPORTS
+    - pattern: from otto.config.$MOD import $$$IMPORTS
+    - pattern: import otto.config
+  - not:
+      inside:
+        kind: function_definition
+        stopBy: end
+  - not:
+      inside:
+        kind: if_statement
+        stopBy: end

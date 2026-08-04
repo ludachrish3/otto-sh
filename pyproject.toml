@@ -149,6 +149,8 @@ dev = [
     "doc8>=1.1",
     "ty==0.0.64",
     "pyyaml>=6.0.3",
+    "tach>=0.35.0",
+    "ast-grep-cli>=0.45.0",
 ]
 
 [tool.doc8]

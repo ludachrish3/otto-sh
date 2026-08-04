@@ -60,3 +60,9 @@ src/otto/_webassets/*/
 web/node_modules/
 # vitest v8 coverage output (text + HTML), from `make coverage-ts-unit`.
 web/coverage/
+
+# SDD process artifacts — untracked going forward (2026-08-03): docs/superpowers
+# had grown to ~143k lines (>4x the published docs) and inflated every churn
+# metric and diff review. Already-tracked files under it keep working normally
+# until a decided sweep; git history retains everything regardless.
+docs/superpowers/

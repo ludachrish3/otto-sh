@@ -527,7 +527,9 @@ def _resolve_tester(name: str | None, email: str | None) -> dict[str, str]:
     when unset. CLI-supplied values always win over both defaults.
     """
     import getpass
-    import subprocess
+
+    # ast-grep-ignore: coverage-git-through-gitio
+    import subprocess  # baseline debt — Tier 0.5: route through gitio (hardening + SUT-dir CWD)
 
     resolved_name = name or getpass.getuser()
     resolved_email = email

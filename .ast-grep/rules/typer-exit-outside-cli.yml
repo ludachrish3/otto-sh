@@ -1,0 +1,13 @@
+id: typer-exit-outside-cli
+language: python
+severity: error
+message: typer.Exit outside src/otto/cli/ couples core code to the CLI framework. Raise a library exception (or return a Result) and translate at the CLI boundary.
+note: Baseline violations carry an ast-grep-ignore with a Tier pointer; do not add new ones.
+files:
+- src/otto/**
+ignores:
+- src/otto/cli/**
+# examples/ are demonstration CLIs — typer.Exit is the point there, not a leak.
+- src/otto/examples/**
+rule:
+  pattern: typer.Exit($$$ARGS)

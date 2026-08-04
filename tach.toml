@@ -1,0 +1,186 @@
+# Module-boundary contracts, enforced by `tach check` (Makefile: lint-arch).
+#
+# This file is the RATCHET BASELINE recorded from the real import graph on
+# 2026-08-03 (tach sync), including known-bad edges — marked "DEBT:" below with
+# a pointer to the finding in todo/churn-and-design-review-2026-08-03.md.
+# The contract is: no NEW cross-module edge may appear without editing this
+# file in the same PR; DEBT edges are removed here as their fixes land.
+#
+# Maintain BY HAND. `tach sync` REWRITES this file and strips every comment —
+# never run it to "fix" a check failure; add or (preferably) question the edge.
+#
+# End state: forbid_circular_dependencies = true. Blocked today by the cycles
+# marked below (host<->docker, config<->cli, config<->context, host<->context).
+#
+# Note tach counts function-scope (lazy) imports as edges, same as module
+# scope. Scope-sensitive rules (e.g. "models may import config lazily but
+# never at module scope") are enforced by ast-grep instead — see
+# .ast-grep/rules/.
+
+source_roots = ["src"]
+exclude = ["tests", "docs", "web", "scripts"]
+
+[[modules]]
+path = "otto.bootstrap"
+depends_on = ["otto.config"]
+
+[[modules]]
+path = "otto.cli"
+depends_on = ["otto.registry", "otto.logger", "otto.link", "otto.reservations", "otto.coverage", "otto.tunnel", "otto.utils", "otto.models", "otto.bootstrap", "otto.suite", "otto.monitor", "otto.host", "otto.docker", "otto.config", "otto.params", "otto.version", "otto.labs", "otto.result", "otto.lifecycle", "otto.context"]
+
+[[modules]]
+path = "otto.config"
+depends_on = [
+    "otto.utils",
+    "otto.models",
+    # DEBT: repo.py git-description properties trigger run_command from a
+    # property getter (cross-cutting review Q8); reconsider with the repo.py
+    # split (Tier 2.5).
+    "otto.lifecycle",
+    "otto.result",
+    "otto.context",
+    # DEBT: the surviving core->cli backward edges — repo.py:324 (INSTRUCTIONS),
+    # completion_cache.py:682/735 (+ the sys.modules dodge at :635). Remove
+    # this edge when INSTRUCTIONS moves to core beside SUITES (Tier 1.5).
+    "otto.cli",
+    "otto.labs",
+    # DEBT: completion_cache builds full hosts to read .id (config/models
+    # review Q4); shrink with LabRepository.list_host_ids (Tier 1.4).
+    "otto.host",
+    "otto.logger",
+    # completion_cache reads SUITES; acceptable direction once INSTRUCTIONS
+    # joins it in core — revisit with Tier 1.5.
+    "otto.suite",
+    "otto.link",
+    "otto.reservations",
+    "otto.bootstrap",
+]
+
+[[modules]]
+path = "otto.console"
+
+[[modules]]
+path = "otto.context"
+# NOTE: context<->config and context<->host are known cycles held apart by
+# lazy imports (context.py:178-184). Dropping `timeout` from run_on_all_hosts
+# (Tier 1.7) removes the host edge's worst justification.
+depends_on = ["otto.config", "otto.host", "otto.bootstrap"]
+
+[[modules]]
+path = "otto.coverage"
+depends_on = ["otto.utils", "otto.host", "otto._webassets", "otto.config", "otto.version"]
+
+[[modules]]
+path = "otto.docker"
+depends_on = ["otto.host", "otto.models", "otto.lifecycle", "otto.utils", "otto.config"]
+
+[[modules]]
+path = "otto.examples"
+depends_on = ["otto.reservations", "otto.host", "otto.monitor", "otto.labs", "otto.config", "otto.context"]
+
+[[modules]]
+path = "otto.filesystem"
+
+[[modules]]
+path = "otto.host"
+depends_on = [
+    "otto.logger",
+    "otto.models",
+    "otto.lifecycle",
+    # DEBT: half of the host<->docker cycle — docker_host.py:251 lazily calls
+    # compose_up. The compose bridge belongs above both packages.
+    "otto.docker",
+    "otto.console",
+    "otto.result",
+    "otto.utils",
+    # DEBT: half of the host<->context cycle — interact imports try_get_context
+    # at module scope (context.py:178 documents the workaround).
+    "otto.context",
+    "otto.config",
+    "otto.registry",
+]
+
+[[modules]]
+path = "otto.labs"
+depends_on = ["otto.registry", "otto.link", "otto.config", "otto.models", "otto.host"]
+
+[[modules]]
+path = "otto.lifecycle"
+depends_on = ["otto.config", "otto.context"]
+
+[[modules]]
+path = "otto.link"
+# NOTE: no otto.tunnel here — the packages are fully decoupled via
+# otto.host.daemon (July finding a1/a3, FIXED). Keep it that way.
+depends_on = ["otto.lifecycle", "otto.logger", "otto.registry", "otto.models", "otto.host"]
+
+[[modules]]
+path = "otto.logger"
+depends_on = ["otto.console"]
+
+[[modules]]
+path = "otto.models"
+depends_on = [
+    "otto.utils",
+    "otto.link",
+    # ALLOWED LAZILY ONLY: to_runtime() bodies import config.repo at function
+    # scope. The module-scope ban is enforced by ast-grep
+    # (models-no-module-scope-config-import) since tach cannot distinguish
+    # scope.
+    "otto.config",
+    "otto.logger",
+    # DEBT: settings.py:329 lazily imports coverage.colors.validate_color —
+    # a leaf validator living in a subsystem; move it below models.
+    "otto.coverage",
+    # DEBT: models/__init__.py imports host.os_profile BEFORE .host as an
+    # import-order hack (todo/registry_builtin_registration_symmetry.md).
+    "otto.host",
+]
+
+[[modules]]
+path = "otto.monitor"
+# NOTE: no otto.tunnel here — tunnel discovery is INJECTED via the
+# tunnel_source callable (collector.py:150). Keep it that way.
+depends_on = ["otto.host", "otto.models", "otto._webassets", "otto.result", "otto.link", "otto.filesystem", "otto.registry", "otto.logger", "otto.console"]
+
+[[modules]]
+path = "otto.params"
+
+[[modules]]
+path = "otto.registry"
+
+[[modules]]
+path = "otto.reservations"
+depends_on = ["otto.registry", "otto.utils", "otto.models", "otto.config"]
+
+[[modules]]
+path = "otto.result"
+depends_on = ["otto.utils"]
+
+[[modules]]
+path = "otto.suite"
+depends_on = ["otto.context", "otto.config", "otto.lifecycle", "otto.registry", "otto.monitor", "otto.version", "otto.models", "otto.host", "otto.coverage", "otto.params"]
+
+[[modules]]
+path = "otto.testing"
+depends_on = ["otto.config", "otto.labs", "otto.reservations", "otto.host", "otto.suite"]
+
+[[modules]]
+path = "otto.tunnel"
+# NOTE: no otto.link here (and none the other way) — see otto.link above.
+depends_on = ["otto.host", "otto.models", "otto.registry", "otto.lifecycle", "otto.logger"]
+
+[[modules]]
+path = "otto.utils"
+depends_on = [
+    # DEBT: async_typer_command lazily imports run_command (utils.py:115) —
+    # it is CLI glue in the dependency floor; moves to cli/ with the utils
+    # split (Tier 2.4), taking this edge with it.
+    "otto.lifecycle",
+]
+
+[[modules]]
+path = "otto.version"
+
+[[modules]]
+path = "otto._webassets"

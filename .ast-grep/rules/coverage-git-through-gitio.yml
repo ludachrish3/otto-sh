@@ -1,0 +1,14 @@
+id: coverage-git-through-gitio
+language: python
+severity: error
+message: Coverage code must reach git through capture/gitio.py — it owns argv hardening, error translation, and the spawn budget. A raw subprocess call bypasses all three.
+note: See the coverage review §4 in todo/churn-and-design-review-2026-08-03.md; the cli/cov.py baseline site is Tier 0.5.
+files:
+- src/otto/coverage/**
+- src/otto/cli/cov.py
+ignores:
+- src/otto/coverage/capture/gitio.py
+rule:
+  any:
+  - pattern: import subprocess
+  - pattern: from subprocess import $$$IMPORTS

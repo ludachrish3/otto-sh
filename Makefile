@@ -9,7 +9,7 @@
 # on -j.
 .NOTPARALLEL:
 
-.PHONY: help all ci nox nox-full nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-python coverage-unit coverage-integration coverage-unix coverage-embedded coverage-hostless coverage-ts coverage-ts-unit docs docs-lint docs-html docs-inventories docs-media doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts check check-python check-ts format format-python format-ts schema monitor-fixtures clean changelog release stability stability-unit stability-unix stability-tunnel stability-embedded chaos chaos-embedded repeat vm-health qemu-restart import-snapshot hyperfine profile browsers dashboard dashboard-all dashboard-soak web-install web web-dev test-ts web-clean wheel-check
+.PHONY: help all ci nox nox-full nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-python coverage-unit coverage-integration coverage-unix coverage-embedded coverage-hostless coverage-ts coverage-ts-unit docs docs-lint docs-html docs-inventories docs-media doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts lint-arch check check-python check-ts format format-python format-ts schema monitor-fixtures clean changelog release stability stability-unit stability-unix stability-tunnel stability-embedded chaos chaos-embedded repeat vm-health qemu-restart import-snapshot hyperfine profile browsers dashboard dashboard-all dashboard-soak web-install web web-dev test-ts web-clean wheel-check
 
 # Bump component for `make release`. Override on the command line:
 #   make release BUMP=minor
@@ -739,6 +739,17 @@ lint-python: ## (Quality) Run ruff lint + format checks (part of check-python)
 	@uv run ruff check .
 	@uv run ruff format --check .
 
+# lint-arch enforces the architecture rules ruff cannot express: tach.toml is
+# the module-dependency ratchet baseline (its comments explain every DEBT
+# edge and forbid `tach sync` as a "fix"); .ast-grep/rules/ hold the
+# scope-sensitive pattern rules. Policy background:
+# todo/churn-and-design-review-2026-08-03.md §5.
+lint-arch: ## (Quality) Architecture gates: tach (module dependency contracts) + ast-grep (pattern rules)
+	@$(SAY) "tach: module dependency contracts (tach.toml)"
+	@uv run tach check
+	@$(SAY) "ast-grep: architecture pattern rules (.ast-grep/rules/)"
+	@uv run ast-grep scan src/otto
+
 # `biome check` = lint rules + formatting + ASSIST actions (organize-imports).
 # `biome lint` + `biome format` together are STRICTLY WEAKER: neither reports
 # an assist action, so unsorted imports pass both and fail `biome check`. That
@@ -797,7 +808,7 @@ typecheck-ts: $(WEB_NODE_MODULES) ## (Quality) Type-check web/ with tsc --noEmit
 
 check: check-python check-ts ## (Quality) ALL static analysis (Python + TS): sub-targets check-python + check-ts
 
-check-python: lint-python typecheck-python ## (Quality) All Python static analysis: ruff (lint+format) + ty
+check-python: lint-python typecheck-python lint-arch ## (Quality) All Python static analysis: ruff (lint+format) + ty + architecture gates (lint-arch)
 
 # The vendored-source leg is deliberately part of check-ts rather than a
 # post-build gate like check_airgap.sh / check_brand_tokens.sh: it reads the

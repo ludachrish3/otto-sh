@@ -122,6 +122,8 @@ def register_suite_class(suite_class: type) -> None:
             output_dir=get_context().output_dir,
         )
         if result.exit_code != 0:
+            # baseline debt — Tier 2.3 retires this via the leaf-invoke renderer
+            # ast-grep-ignore: typer-exit-outside-cli
             raise typer.Exit(code=result.exit_code)
 
     runner.__signature__ = inspect.Signature(params)  # ty: ignore[unresolved-attribute]
