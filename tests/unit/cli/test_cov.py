@@ -839,43 +839,75 @@ class TestResolveCovSettingsExtraMarkers:
 
 
 class TestResolveTester:
-    def test_explicit_overrides_win(self, monkeypatch):
+    def test_explicit_overrides_win(self, monkeypatch, tmp_path):
         # Should not even consult getpass/git when both are supplied.
         monkeypatch.setattr("getpass.getuser", lambda: pytest.fail("should not be called"))
-        tester = cov_module._resolve_tester("Bob", "bob@x.com")
+        monkeypatch.setattr(
+            "otto.coverage.capture.gitio.config_value",
+            lambda *a: pytest.fail("should not be called"),
+        )
+        tester = cov_module._resolve_tester("Bob", "bob@x.com", tmp_path)
         assert tester == {"name": "Bob", "email": "bob@x.com"}
 
-    def test_defaults_from_getpass_and_git_config(self, monkeypatch):
+    def test_defaults_from_getpass_and_git_config(self, monkeypatch, tmp_path):
         monkeypatch.setattr("getpass.getuser", lambda: "alice")
-
-        class FakeProc:
-            returncode = 0
-            stdout = "alice@example.com\n"
-
-        monkeypatch.setattr("subprocess.run", lambda *a, **k: FakeProc())
-        tester = cov_module._resolve_tester(None, None)
+        monkeypatch.setattr(
+            "otto.coverage.capture.gitio.config_value", lambda root, key: "alice@example.com"
+        )
+        tester = cov_module._resolve_tester(None, None, tmp_path)
         assert tester == {"name": "alice", "email": "alice@example.com"}
 
-    def test_omits_email_when_git_config_unset(self, monkeypatch):
+    def test_omits_email_when_git_config_unset(self, monkeypatch, tmp_path):
         monkeypatch.setattr("getpass.getuser", lambda: "alice")
-
-        class FakeProc:
-            returncode = 1
-            stdout = ""
-
-        monkeypatch.setattr("subprocess.run", lambda *a, **k: FakeProc())
-        tester = cov_module._resolve_tester(None, None)
+        monkeypatch.setattr("otto.coverage.capture.gitio.config_value", lambda root, key: None)
+        tester = cov_module._resolve_tester(None, None, tmp_path)
         assert tester == {"name": "alice"}
         assert "email" not in tester
 
-    def test_name_override_with_default_email(self, monkeypatch):
-        class FakeProc:
-            returncode = 0
-            stdout = "carol@example.com\n"
+    def test_omits_email_when_git_unavailable(self, monkeypatch, tmp_path):
+        # Identity defaulting must degrade, not crash, on a box without git.
+        from otto.coverage.capture.gitio import GitUnavailableError
 
-        monkeypatch.setattr("subprocess.run", lambda *a, **k: FakeProc())
-        tester = cov_module._resolve_tester("Carol", None)
+        monkeypatch.setattr("getpass.getuser", lambda: "alice")
+
+        def boom(root, key):
+            raise GitUnavailableError("git executable not found")
+
+        monkeypatch.setattr("otto.coverage.capture.gitio.config_value", boom)
+        tester = cov_module._resolve_tester(None, None, tmp_path)
+        assert tester == {"name": "alice"}
+
+    def test_name_override_with_default_email(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(
+            "otto.coverage.capture.gitio.config_value", lambda root, key: "carol@example.com"
+        )
+        tester = cov_module._resolve_tester("Carol", None, tmp_path)
         assert tester == {"name": "Carol", "email": "carol@example.com"}
+
+    def test_email_reads_sut_repo_not_cwd(self, monkeypatch, tmp_path):
+        # Regression (Tier 0.5): the pre-gitio implementation ran
+        # `git config user.email` in the process CWD, so `otto cov get` from
+        # outside the SUT silently read the wrong repo's identity.
+        import subprocess
+
+        env = {
+            "HOME": str(tmp_path),
+            "PATH": "/usr/bin:/bin",
+            "GIT_CONFIG_NOSYSTEM": "1",
+        }
+
+        def make_repo(name: str, email: str) -> Path:
+            root = tmp_path / name
+            root.mkdir()
+            for args in (["init", "-q"], ["config", "user.email", email]):
+                subprocess.run(["git", *args], cwd=root, check=True, env=env)
+            return root
+
+        sut = make_repo("sut", "sut@example.com")
+        elsewhere = make_repo("elsewhere", "wrong@example.com")
+        monkeypatch.chdir(elsewhere)
+        tester = cov_module._resolve_tester(None, None, sut)
+        assert tester["email"] == "sut@example.com"
 
 
 # ── get command — validation errors ──────────────────────────────────────────
@@ -1687,14 +1719,18 @@ class TestCaptureAnnotations:
     def test_e2e_kind_keeps_ticket_and_note_but_no_tester(self):
         from otto.cli.cov import _capture_annotations
 
-        tester, ticket, note = _capture_annotations("e2e", "CI-77", "nightly run", "Al", "al@x")
+        tester, ticket, note = _capture_annotations(
+            "e2e", "CI-77", "nightly run", "Al", "al@x", Path("/nonexistent")
+        )
         assert tester is None
         assert (ticket, note) == ("CI-77", "nightly run")
 
     def test_manual_kind_resolves_tester(self, monkeypatch):
         import otto.cli.cov as cov_mod
 
-        monkeypatch.setattr(cov_mod, "_resolve_tester", lambda n, e: {"name": n, "email": e})
-        tester, ticket, note = cov_mod._capture_annotations("manual", "T-1", None, "Al", "al@x")
+        monkeypatch.setattr(cov_mod, "_resolve_tester", lambda n, e, d: {"name": n, "email": e})
+        tester, ticket, note = cov_mod._capture_annotations(
+            "manual", "T-1", None, "Al", "al@x", Path("/nonexistent")
+        )
         assert tester == {"name": "Al", "email": "al@x"}
         assert (ticket, note) == ("T-1", None)

@@ -33,7 +33,7 @@ def _term_completer(ctx: typer.Context, incomplete: str) -> list[str]:  # noqa: 
     """Completion source for ``--term``: registered term backends.
 
     Prefers the completion-cache snapshot (populated by the slow path so custom
-    per-repo backends complete without re-running user code — see WS#4 Task 10);
+    per-repo backends complete without re-running user code);
     falls back to the live registry, where otto's built-ins are always present.
     """
     from ..config import get_completion_names
@@ -54,7 +54,7 @@ def _transfer_completer(ctx: typer.Context, incomplete: str) -> list[str]:  # no
     Same cache-then-live strategy as :func:`_term_completer`. The unified
     transfer registry spans both host families; ``otto host`` operates on a unix
     host, so only backends whose ``host_families`` include ``'unix'`` are offered.
-    Cached entries are ``{"name": str, "host_families": [...]}`` (see Task 10).
+    Cached entries are ``{"name": str, "host_families": [...]}``.
     """
     from ..config import get_completion_names
 

@@ -33,6 +33,7 @@ from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 # import-budget guard.
 from ..utils import anchor_path
 from .base import OttoModel
+from .color import validate_color
 from .dependencies import clauses_satisfiable, normalize_name, parse_dependency_entry
 from .options import (
     FtpOptionsSpec,
@@ -326,8 +327,6 @@ class CoverageTierSpec(OttoModel):
     def _validate_color(cls, v: str | None) -> str | None:
         if v is None:
             return v
-        from ..coverage.colors import validate_color
-
         return validate_color(v)
 
     @field_validator("max_age")

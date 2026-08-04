@@ -379,7 +379,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
     async def _login(self, as_user: str | None = None) -> None:
         """Open an interactive shell inside the container via the parent's SSH conn.
 
-        ``as_user`` (Task 9) is not supported here — a container exec has no
+        ``as_user`` is not supported here — a container exec has no
         login-proxy chain of its own; passing it raises loudly rather than
         being silently ignored.
         """

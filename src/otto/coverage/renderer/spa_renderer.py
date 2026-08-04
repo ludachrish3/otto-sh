@@ -1,9 +1,9 @@
-"""SpaRenderer: emit the covapp SPA coverage report (Plan C).
+"""SpaRenderer: emit the covapp SPA coverage report.
 
-The pivot renderer — this is what makes the built ``covapp`` bundle (Task 2)
+The pivot renderer — this is what makes the built ``covapp`` bundle
 THE coverage report. It copies the static bundle (``index.html`` + ``dist/``)
-into the report directory and writes the JS data chunks (Task 1's
-``spa_data.emit_chunks``) that bundle consumes at ``file://`` or any served
+into the report directory and writes the JS data chunks (``spa_data.emit_chunks``)
+that bundle consumes at ``file://`` or any served
 subpath (spec §2 — no server, no ES modules, no network fetches).
 
 Mirrors the retired Jinja renderer's missing-dist degrade

@@ -367,7 +367,7 @@ async def _serve_review(
 ) -> None:
     """Serve a previously saved format:1 export (no live collection).
 
-    ``archive_path`` (Task 5) is the ``.db`` file event mutations persist to
+    ``archive_path`` is the ``.db`` file event mutations persist to
     when the review source is a SQLite archive; ``None`` for a ``.json``
     source, which stays permanently read-only.
     """

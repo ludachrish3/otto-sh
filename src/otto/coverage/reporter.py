@@ -64,7 +64,7 @@ produced by merging the supplied ``.gcda`` directories with lcov.
 
 @dataclass(frozen=True)
 class CollectionInputs:
-    """The collection-model inputs to :class:`CoverageReporter` (Task 10).
+    """The collection-model inputs to :class:`CoverageReporter`.
 
     All fields are optional; an all-default instance (the constructor
     default) selects the legacy, purely ``.gcda``-driven behavior — every
@@ -219,7 +219,7 @@ class CoverageReporter:
             always use the full path.
         thresholds: Render thresholds from ``[coverage.report]``; defaults
             to ``Thresholds()``.
-        ticket_spec: Compiled ``[coverage.tickets]`` pattern (Task 1). ``None``
+        ticket_spec: Compiled ``[coverage.tickets]`` pattern. ``None``
             (the default) is the "feature absent" signal: no git log walk
             runs, no line or ``store.tickets`` entry is annotated, and the
             coverage numbers themselves are unchanged. When set,
@@ -426,7 +426,7 @@ class CoverageReporter:
                     run_id = store.add_run(tier=tier_name)
                     loader.load(tier_path, tier_name, run_id=run_id)
 
-            # 3b. Collection-model inputs (Task 10). No-ops for legacy
+            # 3b. Collection-model inputs. No-ops for legacy
             #     callers: every step is gated on the new constructor
             #     arguments being present. Cross-source dedupe is a
             #     *key* hoist, not a load-order hoist: the manual store's
@@ -506,7 +506,7 @@ class CoverageReporter:
             await localhost.close()
 
     # ------------------------------------------------------------------
-    # Collection-model steps (Task 10) — each is a no-op unless the
+    # Collection-model steps — each is a no-op unless the
     # relevant constructor argument is supplied.
     # ------------------------------------------------------------------
 
@@ -938,7 +938,7 @@ async def run_coverage_report(  # noqa: PLR0913 — wide entry point: each kwarg
     collection-model paths, which each pass it straight through to
     :class:`CoverageReporter`.
 
-    *ticket_spec* is the compiled ``[coverage.tickets]`` pattern (Task 1);
+    *ticket_spec* is the compiled ``[coverage.tickets]`` pattern;
     ``None`` (the default) is the feature-absent signal — no git log walk
     runs. Ticket attribution needs a git *repo_root* to walk, which only the
     collection-model path resolves, so *ticket_spec* is forwarded there only;

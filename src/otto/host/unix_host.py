@@ -533,7 +533,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
           already be in non-echo mode. Hop tunnels are honored via the
           same port-forward helper the regular telnet path uses.
 
-        ``as_user`` (Task 9): land the interactive session on this login
+        ``as_user``: land the interactive session on this login
         instead of ``self._connections.login_target``, replaying any
         login-proxy hops (:func:`~otto.host.login_proxy.resolve_chain`)
         over the bridge after authentication but before the stdin/stdout

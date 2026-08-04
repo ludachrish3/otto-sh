@@ -181,6 +181,17 @@ def rev_parse_commit(repo_root: Path, rev: str) -> str:
     return _run(["rev-parse", "--verify", f"{rev}^{{commit}}"], repo_root).strip()
 
 
+def config_value(repo_root: Path, key: str) -> str | None:
+    """Return the git config value for *key* as seen from *repo_root*, or None.
+
+    Runs in *repo_root* so the repo's own local config wins — a caller's
+    process CWD (which may be a different repo, or no repo) never leaks into
+    the answer. rc=1 (key unset) is a normal outcome, not an error.
+    """
+    out = _run(["config", key], repo_root, ok_codes=(0, 1)).strip()
+    return out or None
+
+
 def rev_list_first_parent(repo_root: Path) -> list[str]:
     """Every first-parent commit sha reachable from HEAD, newest first.
 

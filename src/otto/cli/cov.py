@@ -519,29 +519,26 @@ class _GetError(_CovError):
     """
 
 
-def _resolve_tester(name: str | None, email: str | None) -> dict[str, str]:
+def _resolve_tester(name: str | None, email: str | None, sut_dir: Path) -> dict[str, str]:
     """Resolve tester identity for a manual capture (spec decision 15).
 
     ``name`` defaults to :func:`getpass.getuser`; ``email`` defaults to
-    ``git config user.email`` and is omitted entirely (not annotated empty)
-    when unset. CLI-supplied values always win over both defaults.
+    ``git config user.email`` read *in the SUT repo* (so the identity comes
+    from the repo being tested, not whatever repo the process CWD happens to
+    be in) and is omitted entirely (not annotated empty) when unset or when
+    git is unavailable. CLI-supplied values always win over both defaults.
     """
     import getpass
 
-    # ast-grep-ignore: coverage-git-through-gitio
-    import subprocess  # baseline debt — Tier 0.5: route through gitio (hardening + SUT-dir CWD)
+    from ..coverage.capture.gitio import GitUnavailableError, config_value
 
     resolved_name = name or getpass.getuser()
     resolved_email = email
     if not resolved_email:
-        proc = subprocess.run(
-            ["git", "config", "user.email"],  # noqa: S607
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if proc.returncode == 0:
-            resolved_email = proc.stdout.strip()
+        try:
+            resolved_email = config_value(sut_dir, "user.email")
+        except GitUnavailableError:
+            resolved_email = None
 
     tester: dict[str, str] = {"name": resolved_name}
     if resolved_email:
@@ -555,14 +552,15 @@ def _capture_annotations(
     note: str | None,
     tester_name: str | None,
     tester_email: str | None,
+    sut_dir: Path,
 ) -> tuple[dict[str, str] | None, str | None, str | None]:
     """Resolve the (tester, ticket, note) annotations for a capture run.
 
     Ticket and note annotate every tier kind (run-contexts spec §4);
     tester attribution stays manual-only — an automated run has no human
-    session to attribute.
+    session to attribute. *sut_dir* scopes the tester's git-identity default.
     """
-    tester = _resolve_tester(tester_name, tester_email) if kind == "manual" else None
+    tester = _resolve_tester(tester_name, tester_email, sut_dir) if kind == "manual" else None
     return tester, ticket, note
 
 
@@ -725,7 +723,7 @@ async def _do_get(
     cov_dir = output_dir / "cov"
 
     tester, produce_ticket, produce_note = _capture_annotations(
-        resolved_tier.kind, ticket, note, tester_name, tester_email
+        resolved_tier.kind, ticket, note, tester_name, tester_email, cov_repo.sut_dir
     )
 
     # One canonical collection call (fetch → metadata sidecar → per-board

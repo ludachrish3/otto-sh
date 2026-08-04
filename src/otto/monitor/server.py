@@ -58,8 +58,8 @@ logger = logging.getLogger(__name__)
 def _dist_index_path() -> Path:
     """Return the built React dashboard's ``index.html``, or raise a fix-it error.
 
-    The Phase 2 React port (``web/``) is the only frontend as of the Task 9
-    cutover — the legacy static dashboard was deleted. ``make web`` (vite
+    The React port (``web/``) is the only frontend — the legacy static
+    dashboard was deleted at the cutover. ``make web`` (vite
     build) writes the bundle to ``_STATIC_DIR / "dist"``, already covered by
     the ``/static`` mount (so ``/static/dist/*`` resolves without a second
     mount). A missing build here means a developer/CI environment skipped
@@ -317,7 +317,7 @@ def _build_app(  # noqa: C901 — FastAPI route-factory; complexity is route cou
 
         ``editable`` tells the UI whether marking is possible at all: live
         mode always is, and a review document is only if it was loaded from a
-        ``--db`` archive (Task 5) — an ``archive_path`` is set so a mutation
+        ``--db`` archive — an ``archive_path`` is set so a mutation
         has somewhere to persist. A ``.json`` review has no such target and
         stays permanently read-only.
         """
@@ -488,7 +488,7 @@ def _build_app(  # noqa: C901 — FastAPI route-factory; complexity is route cou
     ) -> JSONResponse:
         """Review-mode mirror of ``_apply_live_update`` — same merge rule, archive write.
 
-        The SAME ``event_ops.merge_update`` Task 3 wired into the live path
+        The SAME ``event_ops.merge_update`` that is wired into the live path
         (Chris's dedup directive): only the write target (archive_edit vs. the
         collector) and the "existing event" source (the document's
         ``EventRecord`` vs. a live ``MonitorEvent``) differ.

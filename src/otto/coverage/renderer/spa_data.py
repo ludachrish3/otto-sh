@@ -328,7 +328,7 @@ def _build_ticket_summaries(
     # ticket -> display path -> tier -> asserted count, mirroring
     # per_tier_file_of — lets a ticket-scoped file row report the SUBSET of
     # asserted lines the ticket actually owns in that file, not the file's
-    # whole-repo asserted_per_tier (review finding F1: without this, a
+    # whole-repo asserted_per_tier (without this, a
     # scoped stats bag would carry whole-file override provenance against a
     # ticket-scoped denominator).
     asserted_file_of: dict[str, dict[str, dict[str, int]]] = {}

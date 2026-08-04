@@ -44,7 +44,7 @@ class ResolvedDependency:
 
 @dataclass(frozen=True)
 class _StatusOutcome:
-    """Intermediate product of the status pass (Task 5 builds ordering on top)."""
+    """Intermediate product of the status pass; the ordering pass builds on it."""
 
     errors: list[DependencyError]
     warnings: list[BootstrapWarning]

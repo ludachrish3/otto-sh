@@ -192,8 +192,8 @@ class SessionRow:
     """One session read back from a v2 archive, with all of its rows.
 
     Row tuples deliberately mirror the SQL column order rather than being
-    modeled — this is the review-path reader, consumed by the producer
-    (Task 3), not a public API surface.
+    modeled — this is the review-path reader, consumed by the producer;
+    not a public API surface.
     """
 
     id: str

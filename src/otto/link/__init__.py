@@ -25,7 +25,7 @@ from .placement import FlowDirection, Placement
 # `otto link` CLI actually calls it. Every other importer of otto.link (8 of
 # the 9 CLI surfaces, via otto.models.host -> otto.link.IMPAIRERS) never
 # touches these names, so re-export them lazily to keep those surfaces out of
-# manage's import weight (reviewer finding on Task 8, 2026-07-10).
+# manage's import weight (2026-07-10 review finding).
 if TYPE_CHECKING:
     from .manage import (
         AppliedPlacement,

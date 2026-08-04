@@ -129,9 +129,8 @@ depends_on = [
     # scope.
     "otto.config",
     "otto.logger",
-    # DEBT: settings.py:329 lazily imports coverage.colors.validate_color —
-    # a leaf validator living in a subsystem; move it below models.
-    "otto.coverage",
+    # (models -> coverage edge removed 2026-08-03: validate_color moved to
+    # otto.models.color, closing the layer inversion.)
     # DEBT: models/__init__.py imports host.os_profile BEFORE .host as an
     # import-order hack (todo/registry_builtin_registration_symmetry.md).
     "otto.host",

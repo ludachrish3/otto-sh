@@ -289,3 +289,22 @@ class TestEveryPorcelainCallIsPinned:
         assert not offenders, "porcelain git calls bypassing the config pin:\n" + "\n".join(
             offenders
         )
+
+
+# ── config_value ──────────────────────────────────────────────────────────────
+
+
+def test_config_value_reads_repo_local_config(tmp_path: Path) -> None:
+    root, _ = _make_repo(tmp_path)
+    subprocess.run(
+        ["git", "config", "user.email", "repo@example.com"],
+        cwd=root,
+        check=True,
+        env=_git_env(tmp_path),
+    )
+    assert gitio_module.config_value(root, "user.email") == "repo@example.com"
+
+
+def test_config_value_unset_key_is_none_not_error(tmp_path: Path) -> None:
+    root, _ = _make_repo(tmp_path)
+    assert gitio_module.config_value(root, "otto.no-such-key") is None

@@ -315,8 +315,8 @@ async def _write_metadata(
 ) -> None:
     """Write ``.otto_cov_meta.json`` so ``otto cov report`` can find source roots and toolchains.
 
-    Moved verbatim from the ``otto.cli.test`` coverage-metadata helper
-    (library-extraction Task 15). Behavior is identical to the original.
+    Moved verbatim from the ``otto.cli.test`` coverage-metadata helper during
+    the library-first extraction. Behavior is identical to the original.
     """
     import json
 

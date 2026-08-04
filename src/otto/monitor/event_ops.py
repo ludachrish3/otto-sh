@@ -1,7 +1,7 @@
-"""Shared event-mutation semantics for every otto surface (Plan 5c).
+"""Shared event-mutation semantics for every otto surface.
 
 One home for the rules that must not fork between the live collector path,
-the review-archive path (Task 5), the suite's programmatic marks (Task 5b),
+the review-archive path, the suite's programmatic marks,
 and any future CLI command: how a create resolves an omitted timestamp, how
 a partial update merges onto an existing event, and when a span's ordering
 is invalid. Callers translate :class:`EventValidationError` into their own

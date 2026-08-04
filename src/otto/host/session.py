@@ -447,7 +447,7 @@ class ShellSession(ABC):
             # (e.g. a blackholed SSH connection), or a write landing on a
             # channel that already died while idle (BrokenPipeError — e.g. a
             # docker daemon restart killing the container between two
-            # commands, chaos spec Plan 5 Task 6: nothing was in flight to
+            # commands — the chaos-hardening write-path case: nothing was in flight to
             # observe the death via a read, so it only surfaces on the next
             # write). Give the caller the same truthful, already-rendered
             # CommandResult shape rather than letting a raw traceback escape.
@@ -1419,7 +1419,7 @@ class SessionManager:
         hop, the resolved direct cred's login (the account the transport
         actually authenticated as). The via login is resolved to its FULL
         cred (``cred_for(self._creds, via_login) or Cred(login=via_login)``),
-        symmetric with ``perform_switch`` and the Task 6 undo path: no
+        symmetric with ``perform_switch`` and its undo path: no
         registered proxy reads ``ctx.via.password`` today (the built-in
         ``su`` ignores ``via`` entirely), but a future custom proxy that
         needs the via account's password gets it rather than a silent None.

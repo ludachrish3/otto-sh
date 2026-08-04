@@ -1,0 +1,17 @@
+id: no-plan-coordinates
+language: python
+severity: error
+message: Comment or docstring references an SDD plan coordinate ("Task N" / "plan §" / "review finding FN"). The plans are purged (git tag plans-archive-2026-08-03) — restate the rationale in place, or cite the surviving spec by filename.
+note: >
+  Citing a SPEC section (e.g. "spec §9" near a module that names its design
+  doc) is fine — specs are tracked decision records. Plan coordinates are
+  not resolvable by any reader and die at merge, per the policy in
+  todo/churn-and-design-review-2026-08-03.md §5.4. Swept to zero 2026-08-03.
+files:
+- src/otto/**
+rule:
+  any:
+  - kind: comment
+    regex: '\b(Task \d+|plan §|review finding F\d)'
+  - kind: string
+    regex: '\b(Task \d+|plan §|review finding F\d)'

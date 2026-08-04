@@ -4,7 +4,7 @@ Two capabilities, one commented TOML file (design spec 2026-07-30): asserted
 manual coverage (top-level tables named after ``kind="manual"`` tiers) and
 break-glass ticket reattribution (the reserved ``[[reattribute]]`` table).
 This module loads and validates the file — every rule loud at load, never
-rendered around — and applies asserted entries to a store (Task 6).
+rendered around — and applies asserted entries to a store.
 
 Entry ids are assigned in table first-appearance order, entries within a
 table in file order (the TOML parser groups array-of-tables by key, so

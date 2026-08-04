@@ -2,12 +2,8 @@
 
 import pytest
 
-from otto.coverage.colors import (
-    CSS_COLOR_NAMES,
-    DEFAULT_TIER_COLORS,
-    STATE_COLORS,
-    validate_color,
-)
+from otto.coverage.colors import DEFAULT_TIER_COLORS, STATE_COLORS
+from otto.models.color import CSS_COLOR_NAMES, validate_color
 
 
 def test_hex_colors_accepted() -> None:
