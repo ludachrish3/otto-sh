@@ -145,8 +145,8 @@ class TestStockBuiltins:
 @_ALL_ZEPHYR
 class TestSingleConsole:
     """An embedded target exposes a single shell console.
-    :meth:`EmbeddedHost.open_session` documents that opening a second named
-    session is not concurrency-safe — the Zephyr telnet backend
+    :class:`EmbeddedHost`'s module docs ("One console.") document that opening
+    a second named session is not concurrency-safe — the Zephyr telnet backend
     (``CONFIG_SHELL_BACKEND_TELNET``) accepts only one client at a time.
     These tests pin down the observed behavior so a silent regression — a
     second connection being accepted and working, or worse, succeeding but

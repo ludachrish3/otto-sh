@@ -32,20 +32,22 @@ from typing import TYPE_CHECKING, NoReturn, cast
 from typing_extensions import override
 
 from ..logger.mode import LogMode
-from .host import BaseHost
+from ..result import CommandResult
+from ..utils import Status
+from .host import BaseHost, is_dry_run
 from .login_proxy import Cred
 
 if TYPE_CHECKING:
     from asyncssh import SSHClientConnection
 
     from ..config.lab import Lab
-    from ..result import CommandResult
     from .connections import ConnectionManager
+    from .host import Expect
     from .interface import Interface
     from .options import SnmpOptions
     from .power import PowerController
     from .product import Product
-    from .session import SessionManager
+    from .session import HostSession, SessionManager
     from .transport import SshHopTransport
 
 logger = logging.getLogger(__name__)
@@ -236,14 +238,39 @@ class RemoteHost(BaseHost):
     _session_mgr: "SessionManager"
     _lab: "Lab | None"
 
-    async def verify_connection(self) -> "CommandResult":  # pragma: no cover
-        """Verify the host connection by running a diagnostic command.
+    async def _probe_connection(self) -> None:
+        """Open this family's transport channel(s) without running a command.
 
-        Subclasses override this to run an OS-appropriate probe (e.g. ``uname``
-        on Unix, a Zephyr kernel-info command on embedded). Called by
-        :meth:`is_reachable` to decide whether the host is up.
+        The family-specific half of :meth:`verify_connection`: Unix dispatches
+        on ``term`` (and warms the FTP control channel when ``transfer`` is
+        ``ftp``); embedded opens its single telnet console. Failure is signalled
+        by raising — the template's ``except`` turns it into a
+        ``Status.Error`` result.
         """
-        raise NotImplementedError from None
+        # The message IS the diagnostic: verify_connection's template converts
+        # this raise into a CommandResult whose value is str(e), so a bare
+        # NotImplementedError would surface as an EMPTY error message.
+        raise NotImplementedError(
+            f"{type(self).__name__} must implement _probe_connection"
+        ) from None
+
+    async def verify_connection(self) -> CommandResult:
+        """Attempt to connect without running any commands.
+
+        Called by :meth:`is_reachable` to decide whether the host is up (the
+        live reachability path) and by dry-run mode to validate connectivity.
+        The probe itself is family-specific (``_probe_connection``); this
+        template owns the logging and the ``CommandResult`` shape.
+        """
+        try:
+            await self._probe_connection()
+            self._log_command("[DRY RUN] Connection verified")
+            return CommandResult(
+                status=Status.Success, value="Connection successful", command="connect", retcode=0
+            )
+        except Exception as e:  # noqa: BLE001 — verify_connection probes all failure modes
+            self._log_command(f"[DRY RUN] Connection FAILED: {e}")
+            return CommandResult(status=Status.Error, value=str(e), command="connect", retcode=1)
 
     ####################
     #  Connection state / lifecycle
@@ -262,6 +289,115 @@ class RemoteHost(BaseHost):
         except Exception:  # noqa: BLE001 — reachability probe, any failure means unreachable
             return False
         return result.status.is_ok
+
+    @override
+    async def close(self) -> None:
+        # Sessions first, transports second — and the transports MUST close
+        # even when a session refuses to (chaos spec: teardown chain
+        # robustness, docs/superpowers/specs/2026-07-30-chaos-hardening-design.md).
+        # The session failure still propagates afterwards.
+        try:
+            await self._session_mgr.close_all()
+        finally:
+            await self._connections.close()
+
+    ####################
+    #  Session delegation (shared by every remote family)
+    ####################
+
+    @override
+    async def _run_one(
+        self,
+        cmd: str,
+        timeout: float,
+        expects: "list[Expect] | None" = None,
+        log: LogMode = LogMode.NORMAL,
+    ) -> CommandResult:
+        """Execute a single command on the host via the **persistent shell session**.
+
+        Called by :meth:`run` for both the single-string and list forms. The session
+        is stateful: working directory changes (``cd``), exported environment variables,
+        and other shell state persist between calls, just as they would in an
+        interactive terminal.
+
+        Limitations:
+            - **Sequential only.** The session is a single shell — calling ``run()``
+              concurrently from multiple coroutines will corrupt the session output.
+              Use :meth:`exec` instead when you need concurrent execution (where
+              the family supports it — embedded targets share one console).
+            - **Stateful.** Commands affect each other; a ``cd`` in one call changes
+              the directory for the next.
+
+        Args:
+            cmd: Shell command to run. Passed to the remote shell as-is.
+            expects: Optional list of ``(pattern, response)`` tuples for interactive
+                prompts (e.g. sudo password, confirmation dialogs). Each pattern is
+                matched against output as it arrives; the corresponding response is
+                sent automatically.
+            timeout: Seconds before the command is considered hung. On expiry,
+                Ctrl+C is sent and ``Status.Error`` is returned. Pass
+                ``float("inf")`` for a deliberately unbounded command.
+
+        Returns:
+            A :class:`~otto.result.CommandResult`; ``value`` holds the output.
+            Exit code 0 → ``Status.Success``; non-zero → ``Status.Failed``.
+        """
+        if is_dry_run():
+            return self._dry_run_result(cmd)
+        return await self._session_mgr.run_cmd(
+            cmd, expects=expects, timeout=timeout, log=self._effective_log(log)
+        )
+
+    @override
+    async def open_session(self, name: str) -> "HostSession":
+        """Open a named persistent shell session.
+
+        Unlike :meth:`~otto.host.host.BaseHost.run`, which uses a single default session,
+        this method
+        creates an additional named session that can run commands concurrently
+        with the default session (or other named sessions).
+
+        The session is established eagerly — any connection errors surface here.
+        Call :meth:`~otto.host.session.HostSession.close` when done, or use the async context
+        manager protocol::
+
+            async with await host.open_session("monitor") as mon:
+                result = await mon.run("stat /tmp/file.bin")
+
+        Args:
+            name: Identifier for this session. Reusing an existing name returns
+                the existing session if it is still alive, or replaces it if dead.
+
+        Returns:
+            A :class:`~otto.host.session.HostSession` proxy exposing ``run``, ``send``,
+            ``expect``, and ``close``.
+
+        See Also:
+            :meth:`~otto.host.host.BaseHost.exec`: stateless alternative for one-off commands.
+            :meth:`~otto.host.host.BaseHost.run`: default persistent session.
+        """
+        if is_dry_run():
+            self._log_command(f"[DRY RUN] open_session({name!r})")
+        return await self._session_mgr.open_session(name)
+
+    @override
+    async def send(self, text: str, log: LogMode = LogMode.NORMAL) -> None:
+        """Send raw text to the host's persistent session."""
+        effective = self._effective_log(log)
+        if is_dry_run():
+            if effective is not LogMode.NEVER:
+                self._log_command(f"[DRY RUN] send({text!r})")
+            return
+        await self._session_mgr.send(text, log=effective)
+
+    @override
+    async def _expect_one(
+        self,
+        pattern: str | re.Pattern[str],
+        timeout: float,
+    ) -> str:
+        """Wait for a pattern in the host's session output stream."""
+        return await self._session_mgr.expect(pattern, timeout)
 
     ####################
     #  Dest dir resolution

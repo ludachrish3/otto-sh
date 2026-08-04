@@ -13,7 +13,10 @@ What makes an embedded target different from a Unix host:
 - **One console.** A Zephyr device exposes a *single* shell over telnet. There
   is no second channel to run commands out-of-band, so ``exec`` shares
   the one persistent session with ``run`` and is therefore **not**
-  concurrency-safe (it is on :class:`~otto.host.unix_host.UnixHost`).
+  concurrency-safe (it is on :class:`~otto.host.unix_host.UnixHost`). For the
+  same reason, prefer the default session (``run``) over ``open_session`` —
+  a second named session opens a second telnet connection to the device,
+  which most RTOS shell backends do not accept concurrently.
 - **No bash.** No ``$?``, no command substitution, no ``scp``/``ftp``/``nc``.
   Command framing and file transfer cannot reuse the Unix machinery.
 - **Telnet only.** The shell is reached over telnet (optionally through an SSH
@@ -44,7 +47,6 @@ The interactive bridge (``_login``) currently raises
 :class:`NotImplementedError`.
 """
 
-import re
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, NoReturn, cast
@@ -72,8 +74,6 @@ from .power import PowerController, power_control_from_spec
 from .product import Product
 from .remote_host import OsType, RemoteHost
 from .session import (
-    Expect,
-    HostSession,
     SessionManager,
 )
 from .toolchain import Toolchain
@@ -391,27 +391,9 @@ class EmbeddedHost(RemoteHost):
     ####################
 
     @override
-    async def verify_connection(self) -> CommandResult:
-        """Attempt to open the telnet shell without running commands (dry-run)."""
-        try:
-            await self._connections.telnet()
-            self._log_command("[DRY RUN] Connection verified")
-            return CommandResult(
-                status=Status.Success, value="Connection successful", command="connect", retcode=0
-            )
-        except Exception as e:  # noqa: BLE001 — verify_connection probes all failure modes
-            self._log_command(f"[DRY RUN] Connection FAILED: {e}")
-            return CommandResult(status=Status.Error, value=str(e), command="connect", retcode=1)
-
-    @override
-    async def close(self) -> None:
-        # Sessions first, transports second — and the transports MUST close
-        # even when a session refuses to (chaos-hardening teardown rule,
-        # mirroring UnixHost.close). The session failure still propagates.
-        try:
-            await self._session_mgr.close_all()
-        finally:
-            await self._connections.close()
+    async def _probe_connection(self) -> None:
+        """Open the single telnet console — the embedded connect probe."""
+        await self._connections.telnet()
 
     ####################
     #  Command execution
@@ -431,26 +413,6 @@ class EmbeddedHost(RemoteHost):
         ) from None
 
     @override
-    async def _run_one(
-        self,
-        cmd: str,
-        timeout: float,
-        expects: list[Expect] | None = None,
-        log: LogMode = LogMode.NORMAL,
-    ) -> CommandResult:
-        """Execute a single command on the embedded host via the persistent shell session.
-
-        Like ``UnixHost._run_one``, the session is stateful and **sequential
-        only** — the embedded target has a single console, so concurrent
-        ``run()`` calls would corrupt the session.
-        """
-        if is_dry_run():
-            return self._dry_run_result(cmd)
-        return await self._session_mgr.run_cmd(
-            cmd, expects=expects, timeout=timeout, log=self._effective_log(log)
-        )
-
-    @override
     async def _exec_one(
         self,
         cmd: str,
@@ -466,38 +428,6 @@ class EmbeddedHost(RemoteHost):
         workflows.
         """
         return await self._session_mgr.run_cmd(cmd, timeout=timeout, log=self._effective_log(log))
-
-    @override
-    async def open_session(self, name: str) -> HostSession:
-        """Open a named persistent shell session.
-
-        Note: an embedded target has a single console. Opening a second named
-        session opens a second telnet connection to the device, which most
-        RTOS shell backends do not accept concurrently. Prefer the default
-        session via ``run``.
-        """
-        if is_dry_run():
-            self._log_command(f"[DRY RUN] open_session({name!r})")
-        return await self._session_mgr.open_session(name)
-
-    @override
-    async def send(self, text: str, log: LogMode = LogMode.NORMAL) -> None:
-        """Send raw text to the host's persistent session."""
-        effective = self._effective_log(log)
-        if is_dry_run():
-            if effective is not LogMode.NEVER:
-                self._log_command(f"[DRY RUN] send({text!r})")
-            return
-        await self._session_mgr.send(text, log=effective)
-
-    @override
-    async def _expect_one(
-        self,
-        pattern: str | re.Pattern[str],
-        timeout: float,
-    ) -> str:
-        """Wait for a pattern in the host's session output stream."""
-        return await self._session_mgr.expect(pattern, timeout)
 
     def _require_loader(self) -> BinaryLoader:
         """Return this host's binary loader, or fail loud if none is declared."""

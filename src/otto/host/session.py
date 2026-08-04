@@ -1220,7 +1220,10 @@ class HostSession:
         return await _run_cmds_with_budget(_run_sc, resolved, timeout)
 
     async def send(self, text: str, log: LogMode = LogMode.NORMAL) -> None:
-        """Send raw text to this session's stdin. See :meth:`~otto.host.unix_host.UnixHost.send`."""
+        """Send raw text to this session's stdin.
+
+        See :meth:`~otto.host.remote_host.RemoteHost.send`.
+        """
         mode = log
         if mode is not LogMode.NEVER:
             self._log_command(text.rstrip(), mode)

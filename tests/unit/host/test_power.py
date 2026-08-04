@@ -304,6 +304,30 @@ async def test_remote_is_reachable_reflects_verify_connection(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_probe_less_remote_subclass_fails_with_a_named_error():
+    """verify_connection's template must convert a missing probe into a
+    DIAGNOSABLE Error result, not an empty one.
+
+    The template's ``except`` turns the abstract ``_probe_connection`` raise
+    into ``CommandResult(Error, value=str(e))`` — a bare ``NotImplementedError``
+    would surface as an empty message, which is exactly wrong for the one
+    audience that hits this path (subclass authors who forgot the override).
+    """
+    from otto.host.remote_host import RemoteHost
+
+    class ProbeLess(RemoteHost):
+        def _log_command(self, msg, log=None):
+            pass
+
+    host = ProbeLess()
+    result = await host.verify_connection()
+    assert result.status is Status.Error
+    assert "ProbeLess" in result.value
+    assert "_probe_connection" in result.value
+    assert await host.is_reachable() is False
+
+
+@pytest.mark.asyncio
 async def test_wait_until_up_returns_true_when_reachable(monkeypatch):
     from otto.host.local_host import LocalHost
 

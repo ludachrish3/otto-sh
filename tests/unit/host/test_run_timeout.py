@@ -425,7 +425,13 @@ class TestExpectSurfaceConsistency:
             )
 
     def test_no_subclass_overrides_expect(self):
-        """expect is final; family behavior belongs in _expect_one."""
+        """expect is final; family behavior belongs in _expect_one.
+
+        The hook check is MRO-aware (not ``vars``): since the Tier-1.1 dedup
+        the remote families inherit one ``_expect_one`` from ``RemoteHost``,
+        and what matters is that the family hook is overridden somewhere below
+        ``BaseHost`` — never that each leaf class carries its own copy.
+        """
         from otto.host.docker_host import DockerContainerHost
         from otto.host.embedded_host import EmbeddedHost
         from otto.host.host import BaseHost
@@ -433,7 +439,9 @@ class TestExpectSurfaceConsistency:
 
         for cls in (LocalHost, UnixHost, EmbeddedHost, DockerContainerHost):
             assert "expect" not in vars(cls), f"{cls.__name__} must override _expect_one"
-            assert "_expect_one" in vars(cls), f"{cls.__name__} must implement _expect_one"
+            assert cls._expect_one is not BaseHost._expect_one, (
+                f"{cls.__name__} must provide _expect_one below BaseHost"
+            )
             assert BaseHost.expect is cls.expect
 
     @pytest.mark.asyncio

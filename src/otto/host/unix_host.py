@@ -42,7 +42,6 @@ here as ``UnixHost``.
 # Possibly make the homegrown TelnetClient class mirror asyncssh? that could really help with design symmetry.  # noqa: E501 — TODO comment
 import asyncio
 import logging
-import re
 import socket
 from dataclasses import (
     dataclass,
@@ -100,8 +99,6 @@ from .privilege import PosixPrivilege
 from .product import Product
 from .remote_host import OsType, RemoteHost
 from .session import (
-    Expect,
-    HostSession,
     SessionManager,
 )
 from .telnet import TelnetClient
@@ -479,34 +476,15 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
             return s.getsockname()[0]
 
     @override
-    async def verify_connection(self) -> CommandResult:
-        """Attempt to connect without running any commands. Used by dry-run mode."""
-        try:
-            if self.term == "ssh":
-                await self._connections.ssh()
-            else:
-                await self._connections.telnet()
+    async def _probe_connection(self) -> None:
+        """Open this host's term channel (ssh or telnet); warm FTP when configured."""
+        if self.term == "ssh":
+            await self._connections.ssh()
+        else:
+            await self._connections.telnet()
 
-            if self.transfer == "ftp":
-                await self._connections.ftp()
-
-            self._log_command("[DRY RUN] Connection verified")
-            return CommandResult(
-                status=Status.Success, value="Connection successful", command="connect", retcode=0
-            )
-        except Exception as e:  # noqa: BLE001 — verify_connection probes all failure modes
-            self._log_command(f"[DRY RUN] Connection FAILED: {e}")
-            return CommandResult(status=Status.Error, value=str(e), command="connect", retcode=1)
-
-    @override
-    async def close(self) -> None:
-        # Sessions first, transports second — and the transports MUST close
-        # even when a session refuses to (chaos spec: teardown chain
-        # robustness). The session failure still propagates afterwards.
-        try:
-            await self._session_mgr.close_all()
-        finally:
-            await self._connections.close()
+        if self.transfer == "ftp":
+            await self._connections.ftp()
 
     ####################
     #  Command execution
@@ -606,48 +584,6 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
             await client.close()
 
     @override
-    async def _run_one(
-        self,
-        cmd: str,
-        timeout: float,
-        expects: list[Expect] | None = None,
-        log: LogMode = LogMode.NORMAL,
-    ) -> CommandResult:
-        """Execute a single command on the remote host via the **persistent shell session**.
-
-        Called by :meth:`run` for both the single-string and list forms. The session
-        is stateful: working directory changes (``cd``), exported environment variables,
-        and other shell state persist between calls, just as they would in an
-        interactive terminal.
-
-        Limitations:
-            - **Sequential only.** The session is a single shell — calling ``run()``
-              concurrently from multiple coroutines will corrupt the session output.
-              Use :meth:`exec` instead when you need concurrent execution.
-            - **Stateful.** Commands affect each other; a ``cd`` in one call changes
-              the directory for the next.
-
-        Args:
-            cmd: Shell command to run. Passed to the remote shell as-is.
-            expects: Optional list of ``(pattern, response)`` tuples for interactive
-                prompts (e.g. sudo password, confirmation dialogs). Each pattern is
-                matched against output as it arrives; the corresponding response is
-                sent automatically.
-            timeout: Seconds before the command is considered hung. On expiry,
-                Ctrl+C is sent and ``Status.Error`` is returned. Pass
-                ``float("inf")`` for a deliberately unbounded command.
-
-        Returns:
-            A :class:`~otto.result.CommandResult`; ``value`` holds the output.
-            Exit code 0 → ``Status.Success``; non-zero → ``Status.Failed``.
-        """
-        if is_dry_run():
-            return self._dry_run_result(cmd)
-        return await self._session_mgr.run_cmd(
-            cmd, expects=expects, timeout=timeout, log=self._effective_log(log)
-        )
-
-    @override
     async def _exec_one(
         self,
         cmd: str,
@@ -703,57 +639,6 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
             with expect support.
         """
         return await self._session_mgr.exec(cmd, timeout=timeout, log=self._effective_log(log))
-
-    @override
-    async def open_session(self, name: str) -> HostSession:
-        """Open a named persistent shell session.
-
-        Unlike :meth:`~otto.host.host.BaseHost.run`, which uses a single default session,
-        this method
-        creates an additional named session that can run commands concurrently
-        with the default session (or other named sessions).
-
-        The session is established eagerly — any connection errors surface here.
-        Call :meth:`~otto.host.session.HostSession.close` when done, or use the async context
-        manager protocol::
-
-            async with await host.open_session("monitor") as mon:
-                result = await mon.run("stat /tmp/file.bin")
-
-        Args:
-            name: Identifier for this session. Reusing an existing name returns
-                the existing session if it is still alive, or replaces it if dead.
-
-        Returns:
-            A :class:`~otto.host.session.HostSession` proxy exposing ``run``, ``send``,
-            ``expect``, and ``close``.
-
-        See Also:
-            :meth:`~otto.host.host.BaseHost.exec`: stateless alternative for one-off commands.
-            :meth:`~otto.host.host.BaseHost.run`: default persistent session.
-        """
-        if is_dry_run():
-            self._log_command(f"[DRY RUN] open_session({name!r})")
-        return await self._session_mgr.open_session(name)
-
-    @override
-    async def send(self, text: str, log: LogMode = LogMode.NORMAL) -> None:
-        """Send raw text to the host's persistent session."""
-        effective = self._effective_log(log)
-        if is_dry_run():
-            if effective is not LogMode.NEVER:
-                self._log_command(f"[DRY RUN] send({text!r})")
-            return
-        await self._session_mgr.send(text, log=effective)
-
-    @override
-    async def _expect_one(
-        self,
-        pattern: str | re.Pattern[str],
-        timeout: float,
-    ) -> str:
-        """Wait for a pattern in the host's session output stream."""
-        return await self._session_mgr.expect(pattern, timeout)
 
     ####################
     #  File transfer

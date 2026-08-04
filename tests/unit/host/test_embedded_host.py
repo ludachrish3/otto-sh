@@ -411,9 +411,10 @@ class TestClose:
     @pytest.mark.asyncio
     async def test_close_closes_transports_when_session_close_raises(self):
         """A wedged session must not leak the raw transports behind it: the
-        failure propagates, but _connections.close() still runs — the same
-        chaos-hardening teardown rule UnixHost.close carries. Regression for
-        the divergence where the unix fix was never mirrored here."""
+        failure propagates, but _connections.close() still runs — the
+        chaos-hardening teardown rule now owned once by RemoteHost.close
+        (this test was the regression guard for the divergence era, when the
+        unix fix was hand-mirrored here and once missed)."""
         h = EmbeddedHost(
             ip="192.0.2.1",
             element="sprout",
