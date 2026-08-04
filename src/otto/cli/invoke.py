@@ -529,7 +529,7 @@ def command_preamble(ctx: typer.Context) -> None:
 
 
 def _wrap_invoke(cmd: Any, spec: "CommandSpec") -> Any:
-    """Wrap a single leaf command's ``invoke`` with the preamble (idempotent)."""
+    """Wrap a single leaf command's ``invoke``: preamble + async-leaf bridge (idempotent)."""
     if getattr(cmd, "_otto_preambled", False):
         return cmd
     cmd._otto_preambled = True  # noqa: SLF001 — own marker attribute on the command object
@@ -540,7 +540,23 @@ def _wrap_invoke(cmd: Any, spec: "CommandSpec") -> Any:
         # down the click context chain, but the spec must reflect THIS leaf.
         inner_ctx.meta["_otto_command_spec"] = spec
         command_preamble(inner_ctx)
-        return original_invoke(inner_ctx)
+        result = original_invoke(inner_ctx)
+        # The lifecycle bridge (wave 2 of the command-lifecycle-uniformity
+        # spec): a plain ``async def`` leaf — typer never awaits callbacks, so
+        # its invoke returns the coroutine object — runs under the full
+        # command policy (host-scope entry, two-stage interrupts, teardown
+        # deadline) with REGISTRATION as the only opt-in. Detection is on the
+        # invoke RESULT, not the callback: typer wraps every callback in its
+        # own sync shim, so ``iscoroutinefunction(cmd.callback)`` is always
+        # False, while the coroutine itself passes through untouched.
+        # Naturally idempotent: a leaf that self-wraps (``@async_typer_command``
+        # → ``run_command`` inside a sync wrapper) returns a plain value and
+        # is skipped — no double ``asyncio.run`` is reachable.
+        if inspect.iscoroutine(result):
+            from ..lifecycle import run_command
+
+            return run_command(result)
+        return result
 
     cmd.invoke = _invoke_with_preamble
     return cmd
@@ -585,6 +601,27 @@ def wrap_leaf_callbacks(cmd: Any, spec: "CommandSpec") -> Any:
         return _wrap_invoke(cmd, spec)
 
     cmd._otto_preambled = True  # noqa: SLF001 — own marker attribute on the command object
+
+    # A GROUP's own callback can never reach the lifecycle bridge: the
+    # vendored click fork runs it via an unbound class call and DISCARDS its
+    # return value (TyperGroup.invoke → super().invoke), so an ``async def``
+    # group callback would silently no-op with exit 0 — the exact failure
+    # class the bridge exists to kill. Reject it loudly at wrap time. One
+    # ``__wrapped__`` level only (typer's get_callback update_wrapper's the
+    # registered function): that is exactly what typer will call
+    # synchronously, so the check cannot false-positive on a user's own
+    # sync-bridging decorator.
+    group_cb = getattr(cmd, "callback", None)
+    if group_cb is not None and inspect.iscoroutinefunction(
+        getattr(group_cb, "__wrapped__", group_cb)
+    ):
+        raise TypeError(
+            f"async group callback on command group {cmd.name!r}: typer discards a "
+            "group callback's return value, so it runs outside otto's lifecycle "
+            "bridge and would silently do nothing — write group/root callbacks "
+            "as plain `def` (only leaf commands may be `async def`)"
+        )
+
     for sub in cmd.commands.values():
         wrap_leaf_callbacks(sub, spec)
 

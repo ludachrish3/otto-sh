@@ -109,6 +109,28 @@ A `register_cli_command()` loader can be one of three things:
   ...)`) so that `otto --help` never imports `otto.cli.run`, `otto.cli.test`,
   or any other subcommand module it isn't showing the details of.
 
+## The command lifecycle comes free
+
+Registration is the only opt-in. Write commands as plain `async def`
+functions — on your own Typer app or as bare-function loaders — and otto's
+dispatch runs each invocation under the full command lifecycle: host-scope
+entry (hosts opened during the command are swept when it exits), the
+two-stage SIGINT/SIGTERM interrupt policy, and the bounded teardown deadline.
+There is no decorator to remember and nothing to import from `otto.lifecycle`;
+the leaf-invoke wrapper detects the coroutine a plain `async def` leaf
+produces and bridges it through the policy. Synchronous commands are invoked
+as-is. Two edges to know about:
+
+- **Group callbacks must be plain `def`.** Typer discards a group callback's
+  return value, so an `async def` callback on a `typer.Typer` app (shared
+  option plumbing) can never reach the bridge — otto rejects one loudly at
+  registration-dispatch time rather than letting it silently do nothing.
+- An `async def` command driven *outside* otto's dispatch (for example, a
+  `CliRunner` test invoking your Typer app directly) fails visibly — the
+  command body never runs and Python warns about the un-awaited coroutine —
+  instead of silently running without the policy. Drive tests through the
+  registered command, or await the function yourself.
+
 ## Where registration happens
 
 Registration must run **before** the root Typer group is consulted, which

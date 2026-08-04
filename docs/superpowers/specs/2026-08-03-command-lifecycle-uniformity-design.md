@@ -151,3 +151,34 @@ unconditional. Natural companion: generalizing `_render_result` into the same
 wrapper (Tier 2.3) — one seam then owns preamble, lifecycle, and rendering.
 Out of scope here: `config/repo.py`'s property-triggered `run_command`
 (Tier 2.5 owns it).
+
+### Wave-2 implementation notes (2026-08-04)
+
+The bridge landed in `_wrap_invoke` with one refinement over the sketch
+above: detection is on the **invoke result**, not a callback marker. Typer
+wraps every callback in its own sync shim, so `iscoroutinefunction` on the
+leaf callback is always False (the registered function IS reachable one
+`__wrapped__` level down — the mechanism the group-callback rejection uses —
+so callback detection was possible, but result-detection is layer-independent
+and idempotent for free) — the un-awaited coroutine a plain ``async def``
+produces flows back through `Command.invoke`, where the wrapper bridges it
+into `run_command`. Group/root callbacks can never reach the bridge (typer
+discards their return value), so `wrap_leaf_callbacks` REJECTS an
+``async def`` group callback loudly at wrap time. This is naturally idempotent (a
+self-wrapped leaf returns a plain value and is skipped), so no marker
+protocol was needed and the user contract holds today: a registered Typer
+app's plain ``async def`` leaves, and bare async function loaders (the
+`resolve_spec_command` function lane no longer self-wraps), run under the
+full policy. Pinned by `tests/unit/cli/test_lifecycle_bridge.py`, including
+the loud failure mode outside otto's dispatch; documented in
+`docs/guide/extending-cli.md` §"The command lifecycle comes free".
+
+Still open (the module-by-module strip): `@async_typer_command` remains at
+the first-party sites — `cli/link.py` ×3, `cli/tunnel.py` ×3,
+`cli/expose.py` (host verbs), `cli/docker.py` (dynamic subs), `cli/run.py`
+(the `@instruction` lane) — because their unit tests drive the sub-apps
+standalone, outside the wrapper, and rely on the self-wrap. Stripping each
+module means moving its tests onto the dispatched path (or accepting the
+loud-failure contract there); after the last strip,
+`async_typer_command` leaves `otto.utils` and takes the
+`utils → lifecycle` tach DEBT edge with it (Tier 2.4).

@@ -482,9 +482,10 @@ async def init_command(
 ) -> None:
     """Scaffold a new otto repo, or validate an existing one's setup.
 
-    Registered as a bare-function loader (``"otto.cli.init:init_command"``),
-    so ``resolve_spec_command`` wraps it with ``async_typer_command`` — same
-    as every other otto leaf command — which requires a coroutine function.
+    Registered as a bare-function loader (``"otto.cli.init:init_command"``);
+    as a plain ``async def`` it runs under the full command lifecycle via the
+    leaf-invoke wrapper's coroutine bridge (``cli/invoke._wrap_invoke``) —
+    registration is the only opt-in.
     """
     root = path.resolve()
     if not root.is_dir():

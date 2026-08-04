@@ -200,14 +200,27 @@ def test_collision_is_loud_and_names_both_origins():
     assert "overwrite=True" not in msg
 
 
-def test_cli_command_decorator_registers_and_runs():
-    @cli_command(name="greet", help="Greet.")
+def test_cli_command_decorator_registers_and_runs(monkeypatch):
+    @cli_command(name="greet", help="Greet.", lab_free=True)
     async def greet(who: str = "world") -> None:
         """Greet someone."""
         typer.echo(f"hello {who}")
 
     spec = CLI_COMMANDS.get("greet")
-    cmd = resolve_spec_command(spec)
+    # Drive the PRODUCTION dispatch shape: resolve + wrap_leaf_callbacks. An
+    # async leaf is deliberately inert outside the wrapper since the wave-2
+    # lifecycle bridge (resolve_spec_command no longer self-wraps loaders) —
+    # tests/unit/cli/test_lifecycle_bridge.py pins that loud-failure contract.
+    import types
+
+    from otto import bootstrap as bootstrap_mod
+    from otto.cli.invoke import wrap_leaf_callbacks
+
+    def _clean_bootstrap():
+        return types.SimpleNamespace(errors=[])
+
+    monkeypatch.setattr(bootstrap_mod, "bootstrap", _clean_bootstrap)
+    cmd = wrap_leaf_callbacks(resolve_spec_command(spec), spec)
 
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf), pytest.raises(SystemExit) as ei:

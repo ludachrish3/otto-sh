@@ -15,9 +15,11 @@ runner = CliRunner()
 
 def _app() -> typer.Typer:
     app = typer.Typer()
-    # Registered commands run through the root app, which wraps every leaf via
-    # async_typer_command (see registry.py / resolve_spec_command). Mirror that
-    # here so a bare-app CliRunner invocation can drive the async command body.
+    # Registered commands run through the root app, whose leaf-invoke wrapper
+    # bridges plain async leaves through run_command (cli/invoke._wrap_invoke).
+    # A bare-app CliRunner invocation bypasses that wrapper, so self-wrap here
+    # to drive the async command body (tests/unit/cli/test_lifecycle_bridge.py
+    # covers the production bridge itself).
     # NB: a Typer() app with exactly one registered command collapses to that
     # command directly (Typer 0.26 single-command behavior) — no "init"
     # subcommand token is expected on the invoked argv.

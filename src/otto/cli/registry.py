@@ -18,7 +18,6 @@ import typer
 from typer.models import TyperInfo
 
 from ..registry import Registry, caller_module
-from ..utils import async_typer_command
 from .invoke import prepare_command_target
 
 
@@ -203,7 +202,13 @@ def resolve_spec_command(spec: CommandSpec) -> Any:
         converted.name = spec.name
         return converted
     tmp = typer.Typer()
-    tmp.command(spec.name, help=spec.help)(async_typer_command(prepare_command_target(loader)))
+    # No self-wrapping here: an async function loader is bridged through
+    # run_command by the leaf-invoke wrapper (_wrap_invoke's coroutine-result
+    # bridge) when the root dispatch wraps this resolved command — the same
+    # contract a registered Typer app's plain ``async def`` leaves get. A
+    # resolved-but-unwrapped command invoked outside otto's dispatch fails
+    # loudly (un-awaited coroutine) instead of running without the policy.
+    tmp.command(spec.name, help=spec.help)(prepare_command_target(loader))
     leaf_converted: Any = typer.main.get_command(tmp)
     return (
         leaf_converted.commands[spec.name]
