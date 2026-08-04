@@ -528,9 +528,9 @@ def _reset_otto_logger_retention():
 def _reset_bootstrap_state():
     """Clear ``otto.bootstrap``'s discovery/registration caches between tests.
 
-    ``bootstrap()`` memoizes into four module globals, and ``_discovery_errors``
-    is an append-only list folded into *every* later result
-    (``errors = list(_discovery_errors)``). So one test that drives the CLI with
+    ``bootstrap()`` memoizes into three module globals; discovery errors ride
+    the cached ``_discovered`` tuple itself (the old append-only
+    ``_discovery_errors`` global is gone). So one test that drives the CLI with
     ``OTTO_SUT_DIRS`` pointing at a scratch repo — ``test_init_prompts``'s
     epilogue tests do exactly that — records a framed "no .otto/settings.toml"
     error that outlives the ``monkeypatch.setenv`` restoring the var. Every

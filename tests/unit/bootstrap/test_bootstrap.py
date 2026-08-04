@@ -1,5 +1,6 @@
 """bootstrap(): phases, idempotence, containment framing."""
 
+import pathlib
 import textwrap
 
 import pytest
@@ -56,7 +57,7 @@ def test_broken_test_file_is_contained_and_framed(tmp_path, monkeypatch):
 
 def test_discover_runs_no_user_code(tmp_path, monkeypatch):
     monkeypatch.setenv("OTTO_SUT_DIRS", _write_repo(tmp_path, broken_test=True))
-    _env, repos = bs.discover()  # broken test file must NOT explode discovery
+    _env, repos, _errors = bs.discover()  # broken test file must NOT explode discovery
     assert len(repos) == 1
 
 
@@ -82,8 +83,23 @@ def test_malformed_settings_toml_is_contained_and_framed(tmp_path, monkeypatch):
 
 def test_discover_contains_settings_errors_without_raising(tmp_path, monkeypatch):
     monkeypatch.setenv("OTTO_SUT_DIRS", _write_bad_toml_repo(tmp_path))
-    _env, repos = bs.discover()  # malformed config data must NOT explode discovery
+    _env, repos, _errors = bs.discover()  # malformed config data must NOT explode discovery
     assert repos == []
+
+
+def test_invalidate_recovers_from_fixed_repo(tmp_path, monkeypatch):
+    """The embedder recovery path (todo/bootstrap-discovery-errors-accumulate.md):
+    fix the repo, invalidate(), re-bootstrap — the stale error is gone because
+    errors now ride the cached discovery tuple instead of a parallel global."""
+    bad = _write_bad_toml_repo(tmp_path)
+    monkeypatch.setenv("OTTO_SUT_DIRS", bad)
+    assert bs.bootstrap().errors
+    # Fix the same repo in place, then invalidate: recomputed discovery must
+    # not carry the prior failure.
+    fixed_toml = 'name = "fixed"\nversion = "1.0.0"\n'
+    (pathlib.Path(bad) / ".otto" / "settings.toml").write_text(fixed_toml)
+    bs.invalidate()
+    assert bs.bootstrap().errors == []
 
 
 def test_reset_clears_discovery_errors(tmp_path, monkeypatch):

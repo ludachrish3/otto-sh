@@ -634,7 +634,7 @@ def entry() -> None:
         # payload, so the parent treats it as a miss and keeps the static floor.
         code = 1
         with contextlib.suppress(Exception):
-            _env, repos = bs.discover()
+            _env, repos, _errors = bs.discover()
             dump_collected_test_names(repos)
             code = 0
         raise SystemExit(code)
@@ -644,7 +644,7 @@ def entry() -> None:
         # failure just leaves the cache unset and falls through to the
         # slow path below.
         with contextlib.suppress(Exception):
-            _env, repos = bs.discover()
+            _env, repos, _errors = bs.discover()
             bs.set_completion_names(read_cache(repos))
 
     if bs.get_completion_names() is None:

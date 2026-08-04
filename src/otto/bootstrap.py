@@ -64,13 +64,12 @@ class BootstrapResult:
     warnings: list[BootstrapWarning] = field(default_factory=list)
 
 
-_discovered: "tuple[OttoEnvSettings, list[Repo]] | None" = None
-_discovery_errors: list[BootstrapError] = []
+_discovered: "tuple[OttoEnvSettings, list[Repo], list[BootstrapError]] | None" = None
 _result: BootstrapResult | None = None
 _completion_names: dict[str, Any] | None = None
 
 
-def discover() -> "tuple[OttoEnvSettings, list[Repo]]":
+def discover() -> "tuple[OttoEnvSettings, list[Repo], list[BootstrapError]]":
     """Phase 1: env + repo discovery (settings parse only — no user code). Cached.
 
     Per-repo config-data failures (unreadable or malformed ``settings.toml``)
@@ -79,6 +78,10 @@ def discover() -> "tuple[OttoEnvSettings, list[Repo]]":
     ``bootstrap().errors`` (help degrades, real dispatch fails loud).
     Env-level failures (bad ``OTTO_SUT_DIRS`` / OTTO_* values) still raise —
     with no environment there is nothing to degrade to.
+
+    The errors ride the cached tuple itself: recomputing discovery (after
+    :func:`invalidate`) necessarily recomputes them, so a stale error cannot
+    outlive the discovery that produced it.
     """
     global _discovered  # noqa: PLW0603 — module-level singleton/cache
     if _discovered is None:
@@ -87,12 +90,13 @@ def discover() -> "tuple[OttoEnvSettings, list[Repo]]":
 
         env = load_otto_env()
         repos: list[Repo] = []
+        errors: list[BootstrapError] = []
         for sut_dir in env.sut_dirs:
             try:
                 repos.append(Repo(sut_dir=sut_dir))
             except Exception as e:  # noqa: PERF203,BLE001 — containment seam: per-item resilience, ANY config-data failure becomes a framed error
-                _discovery_errors.append(BootstrapError(sut_dir, str(TOML_SETTINGS_PATH), e))
-        _discovered = (env, repos)
+                errors.append(BootstrapError(sut_dir, str(TOML_SETTINGS_PATH), e))
+        _discovered = (env, repos, errors)
     return _discovered
 
 
@@ -101,8 +105,8 @@ def bootstrap() -> BootstrapResult:
     global _result  # noqa: PLW0603 — module-level singleton/cache
     if _result is not None:
         return _result
-    env, repos = discover()
-    errors: list[BootstrapError] = list(_discovery_errors)
+    env, repos, discovery_errors = discover()
+    errors: list[BootstrapError] = list(discovery_errors)
     from .config.dependencies import resolve_dependencies
 
     resolution = resolve_dependencies(repos)
@@ -134,10 +138,20 @@ def get_completion_names() -> "dict[str, Any] | None":
     return _completion_names
 
 
-def _reset() -> None:
-    """Clear all bootstrap state (test hook)."""
-    global _discovered, _discovery_errors, _result, _completion_names  # noqa: PLW0603 — module-level singleton/cache
+def invalidate() -> None:
+    """Drop every cached bootstrap result so the next call recomputes.
+
+    The supported recovery path for long-lived embedders: fix the repo or the
+    environment, call ``invalidate()``, and re-run :func:`bootstrap` — the
+    prior discovery's errors are discarded together with the discovery that
+    produced them.
+    """
+    global _discovered, _result, _completion_names  # noqa: PLW0603 — module-level singleton/cache
     _discovered = None
-    _discovery_errors = []
     _result = None
     _completion_names = None
+
+
+def _reset() -> None:
+    """Clear all bootstrap state (test hook; alias of :func:`invalidate`)."""
+    invalidate()
