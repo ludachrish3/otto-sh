@@ -13,8 +13,8 @@ network links) count. Management edges (``local:*``, hop-derived
 faint management line passing behind a node is honest and unobtrusive, not
 clutter -- and are deliberately excluded. An earlier round of this
 investigation counted them anyway and it inverted the ranking of every
-candidate layout (see ``docs/superpowers/plans/2026-07-14-topology-layout-
-redesign.md``).
+candidate layout (recorded in the 2026-07-14 topology-layout-redesign plan,
+archived at git tag ``plans-archive-2026-08-03``).
 
 This budget runs HERE, in the browser lane, not in vitest, because
 ``routeEdge`` (``web/src/topo/routing.ts``) routes against React Flow's

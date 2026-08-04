@@ -1,6 +1,6 @@
-// Generic per-line source grid (Task 5 brief) — covapp-agnostic, reusable
-// outside covapp, the second (and per the plan, LAST) sanctioned new ui/**
-// component after TreeView.tsx. Deliberately API-consistent with that
+// Generic per-line source grid — covapp-agnostic, reusable outside covapp,
+// the second (and per the sanctioned-set rule in web/README.md, LAST)
+// sanctioned new ui/** component after TreeView.tsx. Deliberately API-consistent with that
 // sibling: a caller-supplied `columns` array drives one shared CSS grid
 // template (header row + every body row), a `cells`/render-per-column
 // contract (TreeView's `renderCells`), and the outer bordered "card" chrome

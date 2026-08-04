@@ -1,6 +1,6 @@
 // Topology graph model (spec 2026-07-11): reachability cascade + node/edge
-// derivation. Pure. The layout redesign (docs/superpowers/plans/2026-07-14-
-// topology-layout-redesign.md) inverted which structure places a node:
+// derivation. Pure. The 2026-07-14 layout redesign inverted which
+// structure places a node:
 // `layoutTopo` (topo/layout.ts) now derives every node's COLUMN from the
 // DATA-PLANE (`declared`-link) graph alone -- the hop skeleton places
 // nothing. `TopoNode.depth` is still computed here (walking the hop chain

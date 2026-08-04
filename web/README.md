@@ -75,3 +75,13 @@ about something inside `src/components/**` (or another vendored path) that
 looks like an unused-variable-shaped complaint, this is why — don't turn the
 flags back on; that would just make the next `untitledui add` un-vendorable
 without a hand-edit.
+
+## Authored `ui/` components — the sanctioned-set rule
+
+`web/src/ui/` holds otto-authored building blocks. The set is closed by
+decision, not convention: the coverage-SPA work (2026-07) capped authored
+additions at `TreeView` and `CodeView` so the vendored Untitled UI layer
+stays the default answer for new UI. Adding a new `ui/**` component is an
+explicit decision to widen that set — say so in the PR and update this
+paragraph. (Decision history lives in the plans archive,
+git tag `plans-archive-2026-08-03`.)

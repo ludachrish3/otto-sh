@@ -1,9 +1,8 @@
-// TypeScript mirrors of the data contract Task 1's spa_data.py emits (see
-// docs/superpowers/plans/2026-07-25-coverage-spa.md, "The data contract").
+// TypeScript mirrors of the data contract spa_data.py emits.
 // Field names are verbatim Python dict keys (snake_case), NOT camelCased —
 // these types describe the wire payload exactly as JSON.parse hands it
-// back, with no renaming layer in between. Tasks 3-7 import these names, so
-// treat them as a frozen interface, not house style.
+// back, with no renaming layer in between. The rest of covapp imports these
+// names, so treat them as a frozen interface, not house style.
 
 /** `IndexPayload["format"]` / `FileChunk["stamp"]`-adjacent format marker.
  * Mirrors `OTTO_COV_DATA_FORMAT` in spa_data.py — bump both together or

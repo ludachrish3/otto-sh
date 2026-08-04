@@ -1,5 +1,4 @@
-// Boot layer for the covapp classic-script data lane (see
-// docs/superpowers/plans/2026-07-25-coverage-spa.md, Task 2). Two classic
+// Boot layer for the covapp classic-script data lane. Two classic
 // scripts feed this module: covapp.html loads `cov_data/index.js`
 // (`window.__OTTO_COV__ = {...}`) BEFORE the app bundle so getIndex()/
 // dataGuard() never race a script tag; per-file chunks arrive later, on
