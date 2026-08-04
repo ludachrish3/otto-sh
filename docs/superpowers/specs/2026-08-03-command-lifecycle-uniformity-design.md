@@ -88,6 +88,32 @@ time (count work, not time, where possible); (c) double-SIGINT → immediate
 force; (d) no-signal run → handlers restored (assert on the guard's exit,
 positive control that they were installed mid-phase).
 
+## The user contract (wave 2's acceptance criterion)
+
+A third-party command author writes a plain ``async def`` command on their own
+Typer app and registers it — nothing else:
+
+```python
+app = typer.Typer()
+
+@app.command()
+async def deploy(target: str): ...   # plain async def
+
+register_cli_command(name="deploy-tool", loader="my_pkg.cli:app", help="...")
+```
+
+Registration IS the opt-in. The leaf-invoke wrapper detects coroutine
+callbacks (``iscoroutinefunction``) and bridges them through ``run_command``
+(idempotence-marked; leaves already self-wrapped are skipped). The
+``@instruction`` lane already meets this bar today — the decorator wraps
+handlers with ``async_typer_command`` internally, so instruction authors get
+the full policy with zero knowledge of it; wave 2 extends the same property
+to registered Typer apps. End state: ``@async_typer_command`` leaves the
+public surface — one way to get a lifecycle'd command. Failure mode inverts
+from silent to loud: a bare ``async def`` outside otto's dispatch fails
+visibly (un-awaited coroutine) instead of running with missing safety.
+Docs cost: one paragraph on the extension-points page.
+
 ## Wave 2 (follow-up, pairs with Tier 2.3): policy-at-the-wrapper
 
 Move the `run_command` entry from per-function `@async_typer_command` into
