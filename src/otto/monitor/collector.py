@@ -17,7 +17,7 @@ import asyncio
 import copy
 import json
 import logging
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Coroutine, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Protocol
@@ -120,6 +120,25 @@ class MonitorTarget:
     host: "RemoteHost"
     parsers: dict[str, MetricParser] = field(default_factory=lambda: copy.deepcopy(DEFAULT_PARSERS))
     snmp: SnmpSource | None = field(default=None)
+
+
+async def _gather_cancelling_siblings(coros: "list[Coroutine[Any, Any, None]]") -> None:
+    """Run *coros* concurrently; the first escape cancels every sibling.
+
+    ``asyncio.gather`` alone re-raises the first exception while leaving the
+    other tasks running (orphaned — nothing holds a handle to cancel them).
+    This wrapper owns the task handles: on any exit path (a child exception,
+    cancellation from outside, or normal completion) every still-running
+    sibling is cancelled and awaited before control leaves, so no loop can
+    outlive its supervisor. The original failure still propagates.
+    """
+    tasks = [asyncio.create_task(c) for c in coros]
+    try:
+        await asyncio.gather(*tasks)
+    finally:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 class MetricCollector:
@@ -425,23 +444,19 @@ class MetricCollector:
                     self._collect_bucket(entries, bucket_secs),
                 )
 
-        # Known dormant risk (no shipped parser sets .interval yet, so this
-        # gather has exactly one bucket loop today — plus _tunnel_loop below
-        # whenever a tunnel source is wired, making it a genuine second
-        # concurrent coroutine): if a loop ever escapes with a processing
-        # exception (parser.parse or a DB write raising — collection errors
-        # are contained per-tick inside _collect_bucket and _tunnel_pass
-        # alike), gather() re-raises without cancelling siblings, and the
-        # CLI's collection_task.cancel() is a no-op on the already-failed
-        # task — the orphaned loop(s) would keep polling until process exit.
-        # Symmetric either direction: a bucket escape orphans the tunnel
-        # loop, and a tunnel-pass DB-write escape orphans the bucket loops.
-        # First real multi-bucket activation (or tunnel-loop hardening)
-        # should address this (cancel siblings on first exception).
+        # Supervised, not bare-gathered: if any loop escapes with a
+        # processing exception (parser.parse or a DB write raising —
+        # collection errors are contained per-tick inside _collect_bucket
+        # and _tunnel_pass alike), every sibling loop is cancelled before
+        # the failure propagates. A bare gather() re-raises WITHOUT
+        # cancelling siblings, and the CLI's collection_task.cancel() is a
+        # no-op on the already-failed task — the orphaned loop(s) kept
+        # polling until process exit. Symmetric either direction: a bucket
+        # escape orphans the tunnel loop and vice versa.
         loops = [_bucket_loop(s, e) for s, e in buckets.items()]
         if self._tunnel_source is not None:
             loops.append(self._tunnel_loop(secs, start, duration))
-        await asyncio.gather(*loops)
+        await _gather_cancelling_siblings(loops)
 
     async def _tunnel_pass(self) -> None:
         """One discovery pass: scan, diff, persist-then-publish on change."""
