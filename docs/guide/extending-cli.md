@@ -261,8 +261,12 @@ Inside the command body, return whatever your logic produces. If it's a
 `Result` (or `CommandResult`/`Results`), otto derives the process exit code
 from it using the same polymorphic, ssh-like rules `otto host <name> <verb>`
 uses — see [Exit codes](hosts/index.md#exit-codes) in the host guide for the
-full table. A plain (non-`Result`) return value is printed as-is and the
-process exits `0`.
+full table; a failing result exits the process non-zero. A plain
+(non-`Result`) return value is printed as-is and the process exits `0`.
+Returning `None` renders nothing — a side-effect-only command stays silent
+unless it prints its own output. This contract is enforced at the
+leaf-invoke wrapper (the same seam that runs the preamble and the lifecycle
+bridge), so it holds identically for registered commands and instructions.
 
 ## See also
 

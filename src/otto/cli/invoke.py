@@ -529,6 +529,74 @@ def command_preamble(ctx: typer.Context) -> None:
         present_reservation_gate(ctx)
 
 
+RENDER_POLICY_KEY = "_otto_render_policy"
+
+
+@dataclasses.dataclass(frozen=True)
+class RenderPolicy:
+    """Per-invocation presentation a leaf installs on ``ctx.meta`` for the wrapper."""
+
+    success: str | None = None
+    """Message rendered (green) for an ok, non-command Result."""
+
+    none_message: str | None = None
+    """Message rendered (green) when the leaf returns None; None = silent."""
+
+
+def render_leaf_value(value: Any, policy: "RenderPolicy | None" = None) -> None:
+    """Render a leaf command's return value and signal failure via exit code.
+
+    Implements the documented "Return values" contract
+    (``docs/guide/extending-cli.md``) for every registered command and
+    instruction: an ``otto.result`` family value derives the process exit code
+    from its own ``exit_code`` (the ssh-like rules); any other non-``None``
+    value is printed as-is, exit 0. ``None`` renders nothing by default —
+    every side-effect-only first-party leaf returns it, so a leaf that wants a
+    completion message must say so via :class:`RenderPolicy` (installed on
+    ``ctx.meta[RENDER_POLICY_KEY]``, e.g. by the ``otto host`` verb bodies).
+    """
+    from rich import print as rprint
+
+    from ..result import CommandResult, Result, Results
+
+    success = policy.success if policy else None
+
+    if isinstance(value, Result):
+        is_command = isinstance(value, (CommandResult, Results))
+        if value.is_ok:
+            if is_command:
+                pass  # command output already streamed during execution
+            elif success:
+                rprint(f"[green]{success}[/green]")
+            elif isinstance(value.value, dict):
+                for src, entry in value.value.items():
+                    rprint(f"{src} -> {entry.value}")
+            elif isinstance(value.value, list):
+                for item in value.value:
+                    rprint(item)
+            elif value.value is not None:
+                rprint(value.value)
+            return
+        if value.msg:
+            rprint(f"[red]{value.msg}[/red]")
+        if isinstance(value.value, dict):
+            for entry in value.value.values():
+                if isinstance(entry, Result) and not entry.is_ok and entry.msg:
+                    rprint(f"[red]{entry.msg}[/red]")
+        elif isinstance(value, Results):
+            for entry in value:
+                if not entry.is_ok and entry.msg:
+                    rprint(f"[red]{entry.msg}[/red]")
+        raise typer.Exit(value.exit_code)
+
+    if value is None:
+        if policy is not None and policy.none_message is not None:
+            rprint(f"[green]{policy.none_message}[/green]")
+        return
+
+    rprint(value)  # documented third-party plain-value fallback, exit 0
+
+
 def _wrap_invoke(cmd: Any, spec: "CommandSpec") -> Any:
     """Wrap a single leaf command's ``invoke``: preamble + async-leaf bridge (idempotent)."""
     if getattr(cmd, "_otto_preambled", False):
@@ -557,7 +625,12 @@ def _wrap_invoke(cmd: Any, spec: "CommandSpec") -> Any:
         if inspect.iscoroutine(result):
             from ..lifecycle import run_command
 
-            return run_command(result)
+            result = run_command(result)
+        # Rendering happens AFTER the bridge (on the awaited value), never on
+        # --help paths (help exits during parse, before ``Command.invoke``),
+        # and a leaf that raises (typer.Exit, SystemExit(128+n) from the
+        # policy) never reaches it.
+        render_leaf_value(result, inner_ctx.meta.get(RENDER_POLICY_KEY))
         return result
 
     cmd.invoke = _invoke_with_preamble

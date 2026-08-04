@@ -15,6 +15,8 @@ from typing import TYPE_CHECKING, Any
 import typer
 from typing_extensions import override
 
+from .invoke import RENDER_POLICY_KEY, RenderPolicy
+
 if TYPE_CHECKING:
     from typer.core import TyperGroup
 
@@ -30,52 +32,6 @@ def collect_exposed_methods(cls: type) -> dict[str, str]:
         if getattr(fn, "__cli_exposed__", False):
             out[getattr(fn, "__cli_name__", attr_name)] = attr_name
     return out
-
-
-def _render_result(result: Any, success: str | None = None) -> None:
-    """Render a host-verb result and signal failure via exit code.
-
-    First-party verbs return the ``otto.result`` family (exit code comes from
-    ``result.exit_code``); ``None`` means side-effect-only success. Any other
-    value is the documented third-party fallback: printed as-is, exit 0.
-    """
-    from rich import print as rprint
-
-    from otto.result import CommandResult, Result, Results
-
-    if isinstance(result, Result):
-        is_command = isinstance(result, (CommandResult, Results))
-        if result.is_ok:
-            if is_command:
-                pass  # command output already streamed during execution
-            elif success:
-                rprint(f"[green]{success}[/green]")
-            elif isinstance(result.value, dict):
-                for src, entry in result.value.items():
-                    rprint(f"{src} -> {entry.value}")
-            elif isinstance(result.value, list):
-                for item in result.value:
-                    rprint(item)
-            elif result.value is not None:
-                rprint(result.value)
-            return
-        if result.msg:
-            rprint(f"[red]{result.msg}[/red]")
-        if isinstance(result.value, dict):
-            for entry in result.value.values():
-                if isinstance(entry, Result) and not entry.is_ok and entry.msg:
-                    rprint(f"[red]{entry.msg}[/red]")
-        elif isinstance(result, Results):
-            for entry in result:
-                if not entry.is_ok and entry.msg:
-                    rprint(f"[red]{entry.msg}[/red]")
-        raise typer.Exit(result.exit_code)
-
-    if result is None:
-        rprint(f"[green]{success}[/green]" if success else "[green]done[/green]")
-        return
-
-    rprint(result)  # documented third-party plain-value fallback, exit 0
 
 
 def make_method_command(
@@ -98,7 +54,7 @@ def make_method_command(
     binding = build_cli_binding(sample_func)
     verb = cli_name if cli_name is not None else attr_name
 
-    async def _cmd(ctx: typer.Context, **kw: Any) -> None:
+    async def _cmd(ctx: typer.Context, **kw: Any) -> Any:
         from .host import resolve_cli_host
 
         host = resolve_cli_host(ctx)
@@ -139,7 +95,15 @@ def make_method_command(
             raise typer.Exit(1) from None
         finally:
             await host.close()
-        _render_result(result, success)
+        # Presentation is per-invocation state: `success` comes off the RESOLVED
+        # host's bound method (`__cli_success__` is per-class — "Module loaded."
+        # vs "Binary loaded." for the same verb name), so it cannot be a static
+        # marker. Install it on ctx.meta (shared by-reference down the context
+        # chain) for the leaf-invoke wrapper's `render_leaf_value`, and return
+        # the raw result for it to render. `none_message=success or "done"`
+        # preserves the host verbs' historical None rendering.
+        ctx.meta[RENDER_POLICY_KEY] = RenderPolicy(success=success, none_message=success or "done")
+        return result
 
     ctx_param = inspect.Parameter(
         "ctx", inspect.Parameter.POSITIONAL_OR_KEYWORD, annotation=typer.Context

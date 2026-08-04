@@ -174,6 +174,39 @@ full policy. Pinned by `tests/unit/cli/test_lifecycle_bridge.py`, including
 the loud failure mode outside otto's dispatch; documented in
 `docs/guide/extending-cli.md` §"The command lifecycle comes free".
 
+### Tier 2.3 companion implementation notes (2026-08-04)
+
+The rendering half landed at the same seam: `_wrap_invoke` now calls
+`render_leaf_value` (the generalization of `expose._render_result`) on the
+post-bridge value, so ONE wrapper owns preamble, lifecycle, and rendering.
+The documented "Return values" contract is thereby real for registered
+commands and instructions — a returned `Result`/`CommandResult`/`Results`
+derives the process exit code from its own `exit_code` (previously typer's
+standalone main discarded the value: silent exit 0), and a plain non-`None`
+value prints with exit 0. Two deliberate choices:
+
+- **`None` is silent by default.** Every side-effect-only first-party leaf
+  returns `None`; a default completion line would grow a spurious "done" on
+  every otto command. A leaf that wants one opts in via `RenderPolicy`
+  (`none_message=`).
+- **Presentation travels per-invocation via `ctx.meta[RENDER_POLICY_KEY]`**
+  (the `_otto_command_spec` idiom — `ctx.meta` is shared by-reference down
+  the context chain). It cannot be a static marker: `__cli_success__` is
+  read off the RESOLVED host's bound method and differs per class for the
+  same verb name (e.g. "Module loaded." vs "Binary loaded."). Rendering runs
+  AFTER the bridge (on the awaited value), never on `--help` paths, and a
+  leaf that raises (`typer.Exit`, `SystemExit(128+n)`) never reaches it.
+  Ordering consequence for host verbs: diagnostics from the lifecycle's
+  host-scope teardown now print BEFORE the green success/"done" line (the
+  old in-body render printed first), and an interrupt landing during
+  teardown suppresses the render entirely — both are the more truthful
+  ordering (the success line now really means "everything, including
+  teardown, completed").
+
+Pinned by `tests/unit/cli/test_leaf_render.py`; the `otto host` verb bodies
+migrated onto the seam (install a `RenderPolicy`, return the raw result) in
+the companion commit, retiring `expose._render_result`.
+
 ### Wave-3 implementation notes (the strip, 2026-08-04)
 
 All first-party `@async_typer_command` sites are stripped — `cli/link.py` ×3,

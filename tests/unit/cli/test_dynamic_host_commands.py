@@ -11,14 +11,13 @@ from typer.testing import CliRunner
 
 from otto.cli.expose import (
     HostGroup,
-    _render_result,
     collect_exposed_methods,
     exposed_cli_names,
     make_method_command,
 )
 from otto.host.host import DEFAULT_COMMAND_TIMEOUT
 from otto.host.unix_host import UnixHost
-from otto.result import CommandResult, Result, Results
+from otto.result import Result
 from otto.utils import Arg, Opt, Status, cli_exposed
 from tests._fixtures.dispatch import DispatchRunner
 
@@ -85,6 +84,7 @@ async def test_make_method_command_dispatches_kwargs_and_closes():
 
     class _Ctx:
         obj = host
+        meta: ClassVar[dict] = {}  # real typer.Context always carries .meta
 
     @cli_exposed
     async def reboot(self, hard: bool = False): ...
@@ -93,30 +93,49 @@ async def test_make_method_command_dispatches_kwargs_and_closes():
     await cmd(_Ctx(), hard=True)
     assert seen["hard"] is True
     host.close.assert_awaited_once()
+    # The verb body installs the wrapper's render policy on ctx.meta — the
+    # direct pin of the expose-side default (no __cli_success__ → "done").
+    from otto.cli.invoke import RENDER_POLICY_KEY, RenderPolicy
+
+    assert _Ctx.meta[RENDER_POLICY_KEY] == RenderPolicy(success=None, none_message="done")
 
 
-@pytest.mark.asyncio
-async def test_make_method_command_failure_result_exits_nonzero():
+def test_make_method_command_failure_result_exits_nonzero(monkeypatch):
+    """A host verb returning a failing Result exits non-zero (and still closes).
+
+    Through the real dispatch seam: the verb body installs a RenderPolicy and
+    returns the raw Result; the leaf-invoke wrapper's render derives the exit
+    code from it.
+    """
+    close_calls: list[None] = []
+
     class _Host:
         id = "h1"
-        close = AsyncMock()
 
+        @cli_exposed
         async def reboot(self, hard: bool = False):
             return Result(Status.Failed, msg="did not come back")
 
+        async def close(self):
+            close_calls.append(None)
+
+    import otto.host.os_profile as op
+
+    monkeypatch.setattr(op, "HOST_CLASSES", {"h": _Host})
+    monkeypatch.setattr("otto.cli.expose.host_class_for_id", lambda hid: _Host)
+    app = typer.Typer(name="host", cls=HostGroup)
     host = _Host()
 
-    class _Ctx:
-        obj = host
+    @app.callback(invoke_without_command=True)
+    def main(ctx: typer.Context, host_id: str = typer.Argument("")):
+        if ctx.resilient_parsing:
+            return
+        ctx.obj = host
 
-    @cli_exposed
-    async def reboot(self, hard: bool = False): ...
-
-    cmd = make_method_command("reboot", reboot)
-    with pytest.raises(typer.Exit) as ei:
-        await cmd(_Ctx(), hard=False)
-    assert ei.value.exit_code == 1
-    host.close.assert_awaited_once()
+    r = DispatchRunner().invoke(app, ["h1", "reboot"])
+    assert r.exit_code == 1, r.output
+    assert "did not come back" in r.output
+    assert close_calls == [None]
 
 
 @pytest.mark.asyncio
@@ -126,6 +145,7 @@ async def test_make_method_command_unsupported_method_errors():
 
     class _Ctx:
         obj = host
+        meta: ClassVar[dict] = {}  # real typer.Context always carries .meta
 
     @cli_exposed
     async def flash_firmware(self, path: str): ...
@@ -133,78 +153,6 @@ async def test_make_method_command_unsupported_method_errors():
     cmd = make_method_command("flash_firmware", flash_firmware)
     with pytest.raises(typer.Exit):
         await cmd(_Ctx(), path="/some/file")
-
-
-# ---------------------------------------------------------------------------
-# _render_result
-# ---------------------------------------------------------------------------
-
-
-def _exit_code(result, success=None):
-    try:
-        _render_result(result, success)
-    except typer.Exit as e:
-        return e.exit_code
-    return 0
-
-
-def test_command_retcode_passthrough():
-    res = Results.collect([CommandResult(Status.Failed, value="", command="exit 42", retcode=42)])
-    assert _exit_code(res) == 42
-
-
-def test_command_never_ran_exits_255():
-    assert _exit_code(CommandResult(Status.Error, command="x", retcode=-1)) == 255
-
-
-def test_status_mapping_for_plain_results():
-    assert _exit_code(Result(Status.Error, msg="boom")) == 2
-    assert _exit_code(Result(Status.Failed, msg="no")) == 1
-    assert _exit_code(Result(Status.Skipped)) == 0
-
-
-def test_ok_result_prints_success_message(capsys):
-    _render_result(Result(Status.Success), success="Transfer complete.")
-    assert "Transfer complete." in capsys.readouterr().out
-
-
-def test_ok_transfer_mapping_prints_per_file_lines(capsys):
-    per_file = {Path("a.bin"): Result(Status.Success, value=Path("/dst/a.bin"))}
-    _render_result(Result(Status.Success, value=per_file))
-    out = capsys.readouterr().out
-    assert "a.bin" in out
-    assert "/dst/a.bin" in out
-
-
-def test_failed_mapping_prints_per_entry_diagnostics(capsys):
-    per_file = {Path("b.bin"): Result(Status.Error, msg="b.bin: reset")}
-    with pytest.raises(typer.Exit):
-        _render_result(Result(Status.Error, value=per_file, msg="1 file failed"))
-    assert "b.bin: reset" in capsys.readouterr().out
-
-
-def test_command_results_print_nothing_on_ok(capsys):
-    _render_result(Results.collect([CommandResult(Status.Success, retcode=0)]))
-    assert capsys.readouterr().out == ""
-
-
-def test_command_results_print_per_entry_diagnostics_on_failure(capsys):
-    res = Results.collect(
-        [CommandResult(Status.Error, value="", command="x", retcode=3, msg="boom")]
-    )
-    with pytest.raises(typer.Exit):
-        _render_result(res)
-    assert "boom" in capsys.readouterr().out
-
-
-def test_plain_value_fallback(capsys):
-    assert _exit_code(["third", "party"]) == 0
-    assert "third" in capsys.readouterr().out
-
-
-def test_none_prints_done(capsys):
-    _render_result(None)
-    assert "done" in capsys.readouterr().out
 
 
 # ---------------------------------------------------------------------------
@@ -899,6 +847,7 @@ async def test_make_method_command_not_implemented_exits_cleanly(capsys):
 
     class _Ctx:
         obj = host
+        meta: ClassVar[dict] = {}  # real typer.Context always carries .meta
 
     @cli_exposed
     async def login(self): ...
@@ -991,33 +940,47 @@ def test_cli_mode_755_is_octal_not_decimal():
     assert parse_file_mode(captured["raw"]).value != 755  # ...never decimal
 
 
-@pytest.mark.asyncio
-async def test_cli_bad_octal_mode_exits_nonzero_with_the_parse_message():
+def test_cli_bad_octal_mode_exits_nonzero_with_the_parse_message(monkeypatch):
     """`--mode 789` must fail the command, not transfer with a default mode."""
+    from collections.abc import Sequence
+
+    close_calls: list[None] = []
 
     class _Host:
         id = "h1"
-        close = AsyncMock()
 
-        async def put(self, src_files, dest_dir, mode=None, show_progress=True):
+        @cli_exposed
+        async def put(
+            self,
+            src_files: Annotated[str | Sequence[str], Arg(variadic=True, elem_type=str)],
+            dest_dir: str,
+            mode: str | None = None,
+        ):
             from otto.host.transfer.base import aggregate_transfer, parse_file_mode
 
             check = parse_file_mode(mode)
             return aggregate_transfer({f: Result(check.status, msg=check.msg) for f in src_files})
 
+        async def close(self):
+            close_calls.append(None)
+
+    import otto.host.os_profile as op
+
+    monkeypatch.setattr(op, "HOST_CLASSES", {"h": _Host})
+    monkeypatch.setattr("otto.cli.expose.host_class_for_id", lambda hid: _Host)
+    app = typer.Typer(name="host", cls=HostGroup)
     host = _Host()
 
-    class _Ctx:
-        obj = host
+    @app.callback(invoke_without_command=True)
+    def main(ctx: typer.Context, host_id: str = typer.Argument("")):
+        if ctx.resilient_parsing:
+            return
+        ctx.obj = host
 
-    @cli_exposed
-    async def put(self, src_files, dest_dir, mode=None): ...
-
-    cmd = make_method_command("put", put)
-    with pytest.raises(typer.Exit) as ei:
-        await cmd(_Ctx(), src_files=[Path("a.bin")], dest_dir=Path("/opt"), mode="789")
-    assert ei.value.exit_code == 2  # Status.Error
-    host.close.assert_awaited_once()
+    r = DispatchRunner().invoke(app, ["h1", "put", "a.bin", "/opt", "--mode", "789"])
+    assert r.exit_code == 2, r.output  # Status.Error
+    assert "invalid octal mode" in r.output  # the parse message reaches the user
+    assert close_calls == [None]
 
 
 # ---------------------------------------------------------------------------

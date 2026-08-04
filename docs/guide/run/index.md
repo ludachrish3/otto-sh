@@ -46,7 +46,10 @@ async def deploy(
 
 The function:
 
-- Must be `async` and return a `Result` (or `None`)
+- Must be `async` and return a `Result` (or `None`). A returned `Result`'s
+  exit code is honored: a failing result exits the process non-zero, under
+  the same "Return values" rules as any registered command
+  ({doc}`../extending-cli`); `None` renders nothing
 - Is imported at startup because the module is listed in `init`
 - Gets its own `--help` page automatically from the docstring and type
   annotations
