@@ -405,8 +405,13 @@ class EmbeddedHost(RemoteHost):
 
     @override
     async def close(self) -> None:
-        await self._session_mgr.close_all()
-        await self._connections.close()
+        # Sessions first, transports second — and the transports MUST close
+        # even when a session refuses to (chaos-hardening teardown rule,
+        # mirroring UnixHost.close). The session failure still propagates.
+        try:
+            await self._session_mgr.close_all()
+        finally:
+            await self._connections.close()
 
     ####################
     #  Command execution

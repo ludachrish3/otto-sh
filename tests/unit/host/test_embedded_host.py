@@ -407,6 +407,27 @@ class TestDelegation:
 # ---------------------------------------------------------------------------
 
 
+class TestClose:
+    @pytest.mark.asyncio
+    async def test_close_closes_transports_when_session_close_raises(self):
+        """A wedged session must not leak the raw transports behind it: the
+        failure propagates, but _connections.close() still runs — the same
+        chaos-hardening teardown rule UnixHost.close carries. Regression for
+        the divergence where the unix fix was never mirrored here."""
+        h = EmbeddedHost(
+            ip="192.0.2.1",
+            element="sprout",
+            log=LogMode.QUIET,
+            command_frame=ZephyrFrame(),
+        )
+        h._session_mgr.close_all = AsyncMock(side_effect=RuntimeError("session wedged"))
+        conn_close = AsyncMock()
+        h._connections.close = conn_close
+        with pytest.raises(RuntimeError, match="session wedged"):
+            await h.close()
+        conn_close.assert_awaited_once()
+
+
 class TestVerifyConnection:
     @pytest.mark.asyncio
     async def test_success(self, host: EmbeddedHost):
