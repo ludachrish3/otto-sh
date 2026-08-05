@@ -5,6 +5,7 @@ import re
 from pathlib import Path
 
 from otto.coverage.renderer.spa_data import (
+    OTTO_COV_DATA_FORMAT,
     build_index_payload,
     emit_chunks,
     make_stamp,
@@ -53,7 +54,7 @@ class TestIndexPayload:
             prefix=None,
             stamp="20260725T140200Z-1a2b3c4d",
         )
-        assert payload["format"] == 2
+        assert payload["format"] == OTTO_COV_DATA_FORMAT
         assert payload["stamp"] == "20260725T140200Z-1a2b3c4d"
         assert payload["thresholds"] == {"high": 90.0, "medium": 75.0}
         assert payload["stat_types"] == ["line", "branch", "decision"]
@@ -548,10 +549,10 @@ class TestOverrideProvenance:
     `Stats.lines.asserted_per_tier`/`asserted_only`, and per-ticket
     `asserted` counts (manual-overrides spec §3/§5/§9)."""
 
-    def test_data_format_is_2(self, tmp_path):
+    def test_data_format_matches_the_module_constant(self, tmp_path):
         store = CoverageStore(tier_order=["system"])
         payload = build_index_payload(store, project_name="P", prefix=None, stamp="S")
-        assert payload["format"] == 2
+        assert payload["format"] == OTTO_COV_DATA_FORMAT
 
     def test_line_json_carries_asserted_map_and_omits_when_empty(self, tmp_path):
         out = tmp_path / "report"

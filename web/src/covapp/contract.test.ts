@@ -1,7 +1,8 @@
 // TypeScript side of the per-ticket Python<->TypeScript contract.
 //
-// `types.ts`'s ticket interfaces, `TicketsPage`'s sentinel-id literals and
-// the `window` chunk-callback names are all hand-maintained mirrors of what
+// The data-format version, `types.ts`'s ticket interfaces, `TicketsPage`'s
+// sentinel-id literals and the `window` chunk-callback names are all
+// hand-maintained mirrors of what
 // `src/otto/coverage/renderer/spa_data.py` emits, with no compiler tying
 // the two languages together. Both sides assert against one shared table,
 // `tests/_fixtures/covapp_ticket_contract.json`; the Python half is
@@ -17,11 +18,13 @@ import { describe, expect, it } from "vitest";
 
 import { SENTINEL_TICKET_IDS } from "./pages/TicketsPage";
 import type { TicketChunk, TicketSummary, TicketTotals } from "./types";
+import { EXPECTED_DATA_FORMAT } from "./types";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const contract = JSON.parse(
   readFileSync(join(here, "../../../tests/_fixtures/covapp_ticket_contract.json"), "utf-8"),
 ) as {
+  data_format: number;
   sentinel_ticket_ids: string[];
   /** Spelled out rather than `Record<string, string>`: the callback NAMES
    * are the whole API between the emitted classic scripts and this bundle,
@@ -82,6 +85,19 @@ describe("covapp ticket contract (shared with the Python emitter)", () => {
     ["TicketChunk.files[]", TICKET_CHUNK_FILE_KEYS, contract.ticket_chunk_file_keys],
   ])("%s declares exactly the contract's keys", (_name, declared, expected) => {
     expect(Object.keys(declared).sort()).toEqual([...expected].sort());
+  });
+
+  it("the expected data format matches the Python emitter's", () => {
+    // dataGuard() renders GuardScreen instead of the report when a payload's
+    // `format` differs from this build's, so a one-sided bump ships either a
+    // report that renders nothing or a bundle that rejects every existing
+    // report. Prose said "bump both together or never"; this enforces it.
+    expect(
+      EXPECTED_DATA_FORMAT,
+      "types.ts disagrees with tests/_fixtures/covapp_ticket_contract.json. A format " +
+        "bump must move ALL THREE together: OTTO_COV_DATA_FORMAT (spa_data.py), " +
+        "EXPECTED_DATA_FORMAT (types.ts), and data_format in the fixture",
+    ).toBe(contract.data_format);
   });
 
   it("sentinel ticket ids match the Python constants", () => {

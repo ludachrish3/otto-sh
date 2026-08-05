@@ -20,10 +20,11 @@ coverage stays valid. Fixed with a `--no-index`-safe pin (`_pin` cannot be reuse
 config-hostile regression test that sets the keys *globally* and parametrises one at a time,
 and an AST guard so a new porcelain call cannot skip the pins.
 
-**Cross-language drift.** All three mirrors now pin to one shared table
+**Cross-language drift.** Four mirrors now pin to one shared table
 (`tests/_fixtures/covapp_ticket_contract.json`), asserted from both languages, following the
-`format_outage_cases.json` precedent. The Python half reads its keys off real emitted
-payloads; the TS half adds a compile-time layer via `Record<keyof X, true>`.
+`format_outage_cases.json` precedent: the emitted-key sets, the sentinel ticket ids, the
+window callback names, and (2026-08-05) the `format` version. The Python half reads its keys
+off real emitted payloads; the TS half adds a compile-time layer via `Record<keyof X, true>`.
 
 **Per-file per-tier counts.** `TicketChunk.files[]` now carries a per-tier breakdown, so a
 ticket-scoped subtree renders real tier rows instead of one aggregate row. The composed

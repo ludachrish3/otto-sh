@@ -15,6 +15,7 @@ import {
   StampMismatchError,
 } from "./data";
 import type { FileChunk, IndexPayload, TicketChunk } from "./types";
+import { EXPECTED_DATA_FORMAT } from "./types";
 
 function emptyStats() {
   return {
@@ -27,7 +28,7 @@ function emptyStats() {
 
 function makeIndex(overrides: Partial<IndexPayload> = {}): IndexPayload {
   return {
-    format: 2,
+    format: EXPECTED_DATA_FORMAT,
     stamp: "stamp-1",
     generated_at: "2026-07-25 00:00 UTC",
     otto_version: "0.0.0",

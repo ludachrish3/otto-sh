@@ -9,6 +9,7 @@ import type { ReactNode } from "react";
 import { FocusProvider } from "./focus";
 import { ToastProvider } from "./Toast";
 import type { IndexPayload, RunJson, Stats } from "./types";
+import { EXPECTED_DATA_FORMAT } from "./types";
 
 // jsdom (pinned for this project) doesn't implement `CSS.escape`
 // (https://github.com/jsdom/jsdom/issues/3363), which react-aria's
@@ -67,7 +68,7 @@ export function makeRun(overrides: Partial<RunJson> = {}): RunJson {
  * AppShell.test.tsx used before this migration. */
 export function makeIndex(overrides: Partial<IndexPayload> = {}): IndexPayload {
   return {
-    format: 2,
+    format: EXPECTED_DATA_FORMAT,
     stamp: "stamp-1",
     generated_at: "2026-07-25 00:00 UTC",
     otto_version: "0.0.0",

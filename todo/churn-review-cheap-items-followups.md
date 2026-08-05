@@ -94,6 +94,37 @@ squash stays one thing.
   deliberately excludes. Rare (a declared link usually names interfaces), and
   the fix is a repository seam for links rather than a wider summary.
 
+## From `test(cov): gate the data-format version both languages hand-mirror`
+
+An inventory of what is still hand-mirrored between `src/otto/coverage/**` and
+`web/src/covapp/**`, ranked. Everything below is unpinned by any test.
+
+1. **`CoverageState`** — `types.ts`'s `"uncovered"|"excluded"|"stale"|"aging"`
+   vs `STATE_COLORS`'s keys in `coverage/colors.py`. A CLOSED set, mirrored by
+   hand, and `types.ts` says so in a comment. `test_colors.py` only validates
+   the colour VALUES. Adding a fifth state Python-side leaves the TS
+   `Record<CoverageState, string>` silently short. Best candidate for the next
+   contract row.
+2. **`IndexPayload`'s 18 top-level keys** — only the ticket sub-payloads are
+   pinned, so adding or renaming a top-level key is undetected.
+3. **`FileChunk` / `LineJson` keys** — unpinned, and `LineJson.state` is a
+   second copy of the state vocabulary from (1).
+4. **`RunJson` / `OverrideJson` / `RunContrib` / `Stats` / `DirNode` /
+   `FileNode`** — unpinned.
+5. **The `cov_data/` path layout** — `covapp.html` and `data.ts` hard-code
+   `./cov_data/index.js` / `files/` / `tickets/` against `spa_data.py`'s
+   emitter. Caught only by the browser lane driving a real report.
+
+Also: the TS half asserts `chunk_callbacks.file` and `.ticket` are installed
+on `window` but never `.index` (`__OTTO_COV__`), which `data.ts` reads as a
+hard-coded property. Pre-existing.
+
+Not mirrored, correctly out of scope: `STORE_FORMAT_VERSION`,
+`CAPTURE_FORMAT_VERSION`, `TICKET_EXPORT_FORMAT` (no TS references at all).
+The monitor side is covered by a stronger mechanism — `types.gen.ts` codegen
+plus a `git diff --exit-code` drift gate — except `stream.ts`'s `ARRAY_FIELDS`
+string literals.
+
 ## Cross-cutting
 
 - **`typer.main.get_command_name` does not strip leading dashes.** A function
