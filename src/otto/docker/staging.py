@@ -58,9 +58,19 @@ async def stage_image_context(
     remote_dir = image_build_dir(project, image.name)
 
     # Wipe and recreate to avoid mixing leftover files from an earlier build.
-    await parent.exec(
+    # Checked, because `&&` makes a failed rm skip the mkdir silently and the
+    # `tar -xf` below OVERLAYS rather than replaces: docker build would then
+    # see a context still holding a file the user deleted locally, and produce
+    # a wrong image under a context hash that says it is right. Build staging
+    # is keyed on the repo name (unlike compose staging, keyed on the
+    # suffix-bearing project), so two users on one parent really do collide here.
+    prepared = await parent.exec(
         f"rm -rf {shlex.quote(str(remote_dir))} && mkdir -p {shlex.quote(str(remote_dir))}"
     )
+    if not prepared.status.is_ok:
+        raise RuntimeError(
+            f"failed to prepare the build-context dir {remote_dir} on the parent: {prepared.value}"
+        )
 
     with tempfile.NamedTemporaryFile(
         prefix=f"otto-docker-{image.name}-",
@@ -114,12 +124,20 @@ async def stage_compose_files(
     Returns the absolute paths on the parent in the same order.
     """
     base = compose_dir(project)
-    await parent.exec(f"rm -rf {shlex.quote(str(base))} && mkdir -p {shlex.quote(str(base))}")
+    prepared = await parent.exec(
+        f"rm -rf {shlex.quote(str(base))} && mkdir -p {shlex.quote(str(base))}"
+    )
+    if not prepared.status.is_ok:
+        raise RuntimeError(
+            f"failed to prepare the compose staging dir {base} on the parent: {prepared.value}"
+        )
 
     out: list[Path] = []
     for idx, compose in enumerate(composes):
         sub = base / str(idx)
-        await parent.exec(f"mkdir -p {shlex.quote(str(sub))}")
+        made = await parent.exec(f"mkdir -p {shlex.quote(str(sub))}")
+        if not made.status.is_ok:
+            raise RuntimeError(f"failed to create {sub} on the parent: {made.value}")
         put_result = await parent.put([compose.path], sub)
         if not put_result.is_ok:
             raise RuntimeError(f"failed to stage compose file {compose.path}: {put_result.msg}")

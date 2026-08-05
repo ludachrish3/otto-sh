@@ -132,12 +132,31 @@ async def _compose_cmd(
     return await parent.exec(cmd, timeout=float("inf"))
 
 
-async def _stack_already_up(parent: Host, project_name: str) -> bool:
-    """Return True if any container is running under *project_name* on *parent*."""
+async def _stack_already_up(parent: Host, project_name: str) -> bool | None:
+    """True/False if any container runs under *project_name*, ``None`` if unknown.
+
+    Three states, because the two callers want opposite things from a failed
+    ``docker ps`` and folding it into False served only one of them:
+
+    - :func:`compose_up` treats unknown as "not up" and runs ``up -d``, which
+      is convergent, so the wrong guess costs nothing. Raising there would
+      turn a probe hiccup into a hard failure on a path that self-heals.
+    - :func:`composed` cannot do that: it uses the answer to decide whether
+      the stack was someone ELSE's and only tears down what it brought up.
+      Unknown read as False means "nobody had it", so the teardown yanks a
+      stack an outer fixture is holding — precisely what that contract
+      promises not to do. It raises instead.
+    """
     result = await parent.exec(
         f"docker ps -q --filter label=com.docker.compose.project={shlex.quote(project_name)}"
     )
-    return result.status.is_ok and bool(result.value.strip())
+    if not result.status.is_ok:
+        logger.warning(
+            rf"\[docker] could not tell whether {project_name} was already running on "
+            f"{parent.id}: {result.value}"
+        )
+        return None
+    return bool(result.value.strip())
 
 
 async def _resolve_container_id(
@@ -166,6 +185,15 @@ async def _resolve_container_id(
             cid = result.value.strip().splitlines()
             if cid:
                 return cid[0]
+        else:
+            # Not folded silently into "not visible yet": a permission-denied
+            # or timed-out `docker ps` is a different problem from a slow
+            # daemon, and compose_up's "none resolved" error tells the user to
+            # read these warnings.
+            logger.warning(
+                rf"\[docker] looking up {project_name}/{service} on {parent.id} "
+                f"failed: {result.value}"
+            )
         if attempt < _CONTAINER_ID_RESOLVE_ATTEMPTS - 1:
             await asyncio.sleep(_CONTAINER_ID_RESOLVE_BACKOFF_S)
     return None
@@ -225,7 +253,62 @@ async def compose_up(
     remote_files = await stage_compose_files(parent, proj, list(settings.composes))
     remote_file_strs = [str(p) for p in remote_files]
 
-    if not await _stack_already_up(parent, proj):
+    # `is True`, so an UNKNOWN answer (a failed probe) means we run the
+    # convergent `up -d` rather than assuming the stack is there.
+    brought_up_here = await _stack_already_up(parent, proj) is not True
+    try:
+        return await _up_and_register(
+            repo, lab, parent, proj, remote_file_strs, brought_up_here=brought_up_here
+        )
+    except BaseException:
+        # Every raise below this point happens AFTER `up -d` has run, and the
+        # caller cannot clean up what it never received: `composed()` arms its
+        # try/finally only on a successful return, and a direct caller has no
+        # handle either. Silently returning {} used to be accidentally safe
+        # for `composed()` — it entered the try and tore the stack down — so
+        # failing loud without this would be strictly worse than the bug.
+        # Only what WE started; a stack that was already up is someone else's.
+        if brought_up_here:
+            await _rollback_partial_up(repo, lab, parent, proj)
+        raise
+
+
+async def _rollback_partial_up(repo: Repo, lab: Lab, parent: UnixHost, proj: str) -> None:
+    """Best-effort teardown of a stack ``compose_up`` started but cannot hand over.
+
+    Never raises and never masks: the caller is already propagating the real
+    error, and a failed rollback must not replace it. It is reported, though —
+    residue the user has to clean up by hand deserves to be named.
+    """
+    try:
+        result = await compose_down(repo, lab, on=parent.id, project_name=proj)
+    except Exception as e:  # noqa: BLE001 — a rollback may not mask the real error
+        # .error, not .exception: the traceback the user needs belongs to the
+        # error we are propagating, not to the rollback that failed after it.
+        logger.error(  # noqa: TRY400 — see above
+            rf"\[docker] {proj} could not be rolled back on {parent.id} and is still "
+            f"up: {e}"
+        )
+        return
+    if not result.is_ok:
+        logger.error(
+            rf"\[docker] {proj} could not be rolled back on {parent.id} and is still "
+            f"up: {result.value}"
+        )
+
+
+async def _up_and_register(
+    repo: Repo,
+    lab: Lab,
+    parent: UnixHost,
+    proj: str,
+    remote_file_strs: list[str],
+    *,
+    brought_up_here: bool,
+) -> dict[str, DockerContainerHost]:
+    """Bring the stack up and register its containers — the rollbackable half."""
+    settings = repo.docker_settings
+    if brought_up_here:
         logger.info(rf"\[docker] composing {proj} on {parent.id}")
         # `up -d` is convergent, so a transient libnetwork race (network
         # Created then reported "not found" when the container attaches) is
@@ -272,7 +355,30 @@ async def compose_up(
                 rf"\[docker] declared services {sorted(declared_services)} differ from "
                 f"compose-listed services {sorted(live_services)} for {proj}"
             )
+    elif declared_services:
+        # A cross-check only: the declared list is authoritative, so losing the
+        # comparison costs a warning, not the stack.
+        logger.warning(
+            rf"\[docker] could not list {proj}'s services to cross-check the declared "
+            f"ones: {live.value}"
+        )
+    else:
+        # Nothing declared AND nothing listed: `services` below would be empty,
+        # the registration loop would not run, and compose_up would return {} —
+        # which `otto docker up` prints as "0 container(s) registered" in green,
+        # exit 0. A stack that is UP and unusable must not report success.
+        raise RuntimeError(
+            f"listing {proj}'s services on {parent.id} failed and the project declares "
+            f"none of its own, so no container host can be registered — add "
+            f"`services = [...]` to [[docker.composes]] to name them: {live.value}"
+        )
+
     services = declared_services or sorted(live_services)
+    if not services:
+        raise RuntimeError(
+            f"compose stack {proj} is up on {parent.id} but names no services, so there "
+            "is nothing to register — check the compose file's `services:` block"
+        )
 
     hosts: dict[str, DockerContainerHost] = {}
     for service in services:
@@ -300,6 +406,18 @@ async def compose_up(
         lab.hosts.pop(host.id, None)
         lab.add_host(host)
         hosts[service] = host
+
+    if not hosts:
+        # Same silent-success shape as the empty-`services` case above, reached
+        # the other way: every service resolved to no running container. The
+        # usual cause is that they all exited immediately — a container that is
+        # not running is not a host otto can drive.
+        raise RuntimeError(
+            f"none of compose stack {proj}'s {len(services)} service(s) resolved to a "
+            f"running container on {parent.id}, so no host was registered — the usual "
+            f"cause is that they all exited immediately; see the per-service warnings "
+            f"above, then `docker compose -p {proj} logs` on {parent.id}"
+        )
 
     return hosts
 
@@ -339,7 +457,22 @@ async def compose_down(
 
     # See compose_up() for the staging-key rationale: keyed on the compose
     # project (suffix-aware) so concurrent stacks don't collide.
-    remote_files = await stage_compose_files(parent, proj, list(settings.composes))
+    #
+    # Caught, not propagated: staging now raises when it cannot prepare its
+    # dirs, and this function's contract is that a failed tear-down is
+    # RETURNED. Letting it raise would stop `otto docker down` mid-sweep with
+    # repos 2..n still up, and inside `composed()`'s finally it would replace
+    # the body's real exception with teardown noise — the thing compensate()
+    # exists to prevent.
+    try:
+        remote_files = await stage_compose_files(parent, proj, list(settings.composes))
+    except RuntimeError as e:
+        # .error, not .exception: this is returned as a failed CommandResult,
+        # so the caller decides how loud to be about it.
+        logger.error(  # noqa: TRY400 — see above
+            rf"\[docker] cannot stage compose files to tear {proj} down: {e}"
+        )
+        return CommandResult(Status.Failed, value=str(e), command="", retcode=1)
     result = await _compose_cmd(
         parent,
         proj,
@@ -389,7 +522,19 @@ async def composed(
     parent = _resolve_parent(repo, lab, on, list(repo.docker_settings.composes))
     proj = project_name or get_user_compose_project(repo.name)
 
-    was_up = await _stack_already_up(parent, proj)
+    # Only consulted when `own` is False (see the gate in the finally below),
+    # so do not pay for the probe — or fail on it — when the caller has
+    # already said it owns the stack.
+    was_up = False
+    if not own:
+        probed = await _stack_already_up(parent, proj)
+        if probed is None:
+            raise RuntimeError(
+                f"cannot tell whether {proj} was already running on {parent.id}, so "
+                "composed() cannot promise to leave a peer's stack alone; pass "
+                "own=True to tear down unconditionally"
+            )
+        was_up = probed
 
     hosts = await compose_up(repo, lab, on=on, project_name=proj, build=build)
     try:
@@ -416,9 +561,20 @@ async def compose_ps(parent: Host) -> list[dict[str, Any]]:
     """Return a list of dicts describing running containers on *parent*.
 
     Uses ``docker ps --format '{{json .}}'`` so the output is structured.
+
+    Best-effort by contract, like :func:`~otto.link.manage.read_link_states`:
+    ``otto docker ps`` builds ONE table across every docker-capable host, so a
+    single unreachable daemon must not hide the rest of the fleet. It does
+    warn, though — an empty list is otherwise indistinguishable from a host
+    that simply has no containers, which is the same silent-wrong shape this
+    module is being swept for.
     """
     result = await parent.exec("docker ps --format '{{json .}}'")
     if not result.status.is_ok:
+        logger.warning(
+            rf"\[docker] could not list containers on {parent.id} — reporting none "
+            f"for it: {result.value}"
+        )
         return []
     out: list[dict[str, Any]] = []
     for raw_line in result.value.splitlines():
@@ -428,6 +584,7 @@ async def compose_ps(parent: Host) -> list[dict[str, Any]]:
         try:
             out.append(json.loads(line))
         except json.JSONDecodeError:
+            logger.debug(rf"\[docker] unparseable `docker ps` row on {parent.id}: {line!r}")
             continue
     return out
 

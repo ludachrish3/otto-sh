@@ -21,6 +21,7 @@ from otto.config.repo import (
 from otto.docker.compose import (
     _resolve_parent,
     _safe_username,
+    _stack_already_up,
     compose_down,
     compose_ps,
     compose_up,
@@ -439,8 +440,12 @@ async def test_compose_up_polls_for_container_id_after_start(tmp_path, monkeypat
 
 @pytest.mark.asyncio
 async def test_compose_up_resolve_gives_up_after_bounded_polls(tmp_path, monkeypatch):
-    """If the container never becomes visible, resolve gives up after a bounded
-    number of polls (no infinite wait) and the service is skipped."""
+    """Bounded polling (no infinite wait) — and a stack where NOTHING resolves fails.
+
+    The bounded-poll count is the subject; the raise is the point. A stack
+    that came up but registered no host used to return {}, which
+    `otto docker up` printed as "0 container(s) registered" in green, exit 0.
+    """
     monkeypatch.setattr("otto.docker.compose._CONTAINER_ID_RESOLVE_BACKOFF_S", 0.0, raising=False)
     monkeypatch.setattr("otto.docker.compose._CONTAINER_ID_RESOLVE_ATTEMPTS", 3, raising=False)
     repo = _make_repo(tmp_path)
@@ -463,9 +468,43 @@ async def test_compose_up_resolve_gives_up_after_bounded_polls(tmp_path, monkeyp
 
     parent.exec.side_effect = exec_side_effect  # type: ignore[union-attr]
 
-    hosts = await compose_up(repo, lab)
-    assert "api" not in hosts
+    with pytest.raises(RuntimeError, match="1 service\\(s\\) resolved to a running"):
+        await compose_up(repo, lab)
     assert resolve_calls == 3, "must poll exactly _CONTAINER_ID_RESOLVE_ATTEMPTS times then stop"
+
+
+@pytest.mark.asyncio
+async def test_compose_up_still_skips_one_unresolvable_service_among_several(tmp_path, monkeypatch):
+    """One service failing to resolve is a warning, not a failure.
+
+    The counterpart to the test above, and the line between them: registering
+    SOME hosts is a usable stack, registering NONE is not. Without this, the
+    "no hosts" guard could be satisfied by making any unresolved service fatal,
+    which would turn a one-shot sidecar into a broken `otto docker up`.
+    """
+    monkeypatch.setattr("otto.docker.compose._CONTAINER_ID_RESOLVE_BACKOFF_S", 0.0, raising=False)
+    monkeypatch.setattr("otto.docker.compose._CONTAINER_ID_RESOLVE_ATTEMPTS", 2, raising=False)
+    repo = _make_repo(tmp_path, services=("api", "sidecar"))
+    lab = _make_lab()
+    parent = lab.hosts["pepper_seed"]
+
+    async def exec_side_effect(cmd, *_, **__):
+        if "label=com.docker.compose.project=" in cmd and "service=" not in cmd:
+            return _ok("")
+        if "compose" in cmd and " up -d" in cmd:
+            return _ok()
+        if "config" in cmd and "--services" in cmd:
+            return _ok("api\nsidecar\n")
+        if "service=api" in cmd:
+            return _ok("cid-api\n")
+        if "service=sidecar" in cmd:
+            return _ok("")  # never visible
+        return _ok()
+
+    parent.exec.side_effect = exec_side_effect  # type: ignore[union-attr]
+
+    hosts = await compose_up(repo, lab)
+    assert set(hosts) == {"api"}
 
 
 @pytest.mark.asyncio
@@ -891,3 +930,344 @@ def test_safe_username_keyerror_returns_anon():
     """Falls back to 'anon' when getpass.getuser() raises KeyError."""
     with patch("otto.docker.compose.getpass.getuser", side_effect=KeyError("no user")):
         assert _safe_username() == "anon"
+
+
+# ---------------------------------------------------------------------------
+# Absorbed failures: every one either fails loud or says so out loud
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_compose_up_fails_when_services_cannot_be_listed_and_none_declared(tmp_path):
+    """The worst shape in the module: a failed stack reported as success.
+
+    With no declared services, a failed `config --services` left `services`
+    empty, the registration loop never ran, and compose_up returned {} —
+    which `otto docker up` prints as "0 container(s) registered", exit 0.
+    """
+    repo = _make_repo(tmp_path, services=())
+    lab = _make_lab()
+    parent = lab.hosts["pepper_seed"]
+
+    async def exec_side_effect(cmd, *_, **__):
+        if "config" in cmd and "--services" in cmd:
+            return _fail("cannot connect to the docker daemon")
+        if "label=com.docker.compose.project=" in cmd and "service=" not in cmd:
+            return _ok("")
+        return _ok()
+
+    parent.exec.side_effect = exec_side_effect  # type: ignore[union-attr]
+
+    with pytest.raises(RuntimeError, match="declares none of its own"):
+        await compose_up(repo, lab)
+
+
+@pytest.mark.asyncio
+async def test_compose_up_only_warns_when_the_cross_check_fails(tmp_path, caplog):
+    """With services declared, the live listing is a cross-check, not the source.
+
+    Losing it must cost a warning rather than the stack — the declared list is
+    authoritative, so registration can proceed on it alone.
+    """
+    repo = _make_repo(tmp_path, services=("api",))
+    lab = _make_lab()
+    parent = lab.hosts["pepper_seed"]
+
+    async def exec_side_effect(cmd, *_, **__):
+        if "config" in cmd and "--services" in cmd:
+            return _fail("daemon hiccup")
+        if "label=com.docker.compose.project=" in cmd and "service=" in cmd:
+            return _ok("cid-api\n")
+        if "label=com.docker.compose.project=" in cmd:
+            return _ok("")
+        return _ok()
+
+    parent.exec.side_effect = exec_side_effect  # type: ignore[union-attr]
+
+    with caplog.at_level(logging.WARNING, logger="otto.docker.compose"):
+        hosts = await compose_up(repo, lab)
+
+    assert set(hosts) == {"api"}
+    assert any(
+        "cross-check" in r.message
+        and r.levelno == logging.WARNING
+        and r.name == "otto.docker.compose"
+        for r in caplog.records
+    ), caplog.text
+
+
+@pytest.mark.asyncio
+async def test_stack_already_up_reports_unknown_rather_than_no(caplog):
+    """An unanswerable `docker ps` is not the same as "nobody had it".
+
+    Three states rather than a raise, because the two callers want opposite
+    things: compose_up treats unknown as "not up" and runs the convergent
+    `up -d` (a wrong guess costs nothing there), while composed() cannot
+    guess at all — see the two tests below.
+    """
+    parent = _wire_parent_mock(_capable_host())
+    parent.exec.return_value = _fail("cannot connect to the docker daemon")  # type: ignore[union-attr]
+
+    with caplog.at_level(logging.WARNING, logger="otto.docker.compose"):
+        assert await _stack_already_up(parent, "otto-repo1-vagrant") is None
+    assert any(
+        "could not tell whether" in r.message and r.levelno == logging.WARNING
+        for r in caplog.records
+    ), caplog.text
+
+
+@pytest.mark.asyncio
+async def test_composed_refuses_to_guess_whose_stack_it_is(tmp_path):
+    """`composed(own=False)` cannot honour its contract on an unknown answer.
+
+    It tears down only what it brought up; unknown read as "nobody had it"
+    means the teardown yanks a stack an outer fixture is holding — precisely
+    what the docstring promises not to do.
+    """
+    repo = _make_repo(tmp_path)
+    lab = _make_lab()
+    parent = lab.hosts["pepper_seed"]
+
+    async def exec_side_effect(cmd, *_, **__):
+        if "label=com.docker.compose.project=" in cmd and "service=" not in cmd:
+            return _fail("cannot connect to the docker daemon")
+        return _ok()
+
+    parent.exec.side_effect = exec_side_effect  # type: ignore[union-attr]
+
+    with pytest.raises(RuntimeError, match="cannot tell whether"):
+        async with composed(repo, lab):
+            pass
+
+
+@pytest.mark.asyncio
+async def test_composed_does_not_even_probe_when_it_owns_the_stack(tmp_path):
+    """`own=True` discards the answer, so it must not be paid for — or fail on.
+
+    The gate is `if own or not was_up`, so with own=True the probe's value is
+    dead. Failing the whole flow on a transient `docker ps` for a value nobody
+    reads is the shape this sweep is supposed to remove, not add.
+    """
+    repo = _make_repo(tmp_path)
+    lab = _make_lab()
+    parent = lab.hosts["pepper_seed"]
+    project_probes = 0
+
+    async def exec_side_effect(cmd, *_, **__):
+        nonlocal project_probes
+        if "label=com.docker.compose.project=" in cmd and "service=" not in cmd:
+            project_probes += 1
+            return _fail("cannot connect to the docker daemon")
+        if "config" in cmd and "--services" in cmd:
+            return _ok("api\n")
+        if "service=api" in cmd:
+            return _ok("cid-api\n")
+        return _ok()
+
+    parent.exec.side_effect = exec_side_effect  # type: ignore[union-attr]
+
+    async with composed(repo, lab, own=True) as hosts:
+        assert set(hosts) == {"api"}
+    # compose_up's own probe still runs (unknown -> convergent `up -d`), but
+    # composed() adds none of its own.
+    assert project_probes == 1, "composed(own=True) must not probe for a value it discards"
+
+
+@pytest.mark.asyncio
+async def test_compose_ps_warns_when_a_daemon_cannot_be_reached(caplog):
+    """Still best-effort — `otto docker ps` tables the whole fleet — but LOUD.
+
+    An empty list is otherwise indistinguishable from a host that simply has
+    no containers running.
+    """
+    host = _capable_host()
+    _wire_parent_mock(host)
+    host.exec.return_value = _fail("cannot connect to the docker daemon")  # type: ignore[union-attr]
+
+    with caplog.at_level(logging.WARNING, logger="otto.docker.compose"):
+        result = await compose_ps(host)
+
+    assert result == []
+    # The host id is the entire point of this warning in a fleet-wide table.
+    assert any(
+        "could not list containers" in r.message
+        and host.id in r.message
+        and r.levelno == logging.WARNING
+        and r.name == "otto.docker.compose"
+        for r in caplog.records
+    ), caplog.text
+
+
+@pytest.mark.asyncio
+async def test_stage_image_context_fails_when_the_dir_cannot_be_prepared(tmp_path):
+    """`rm -rf && mkdir` is the invariant "no leftovers", and it was unchecked.
+
+    `&&` means a failed rm skips the mkdir silently, and the later `tar -xf`
+    OVERLAYS rather than replaces — so docker build would see a context still
+    holding a file the user deleted locally and produce a wrong image under a
+    context hash that says it is right.
+    """
+    from otto.config.repo import DockerImage
+    from otto.docker.staging import stage_image_context
+
+    df = tmp_path / "Dockerfile"
+    df.write_text("FROM alpine\n")
+    image = DockerImage(name="api", dockerfile=df, context=tmp_path)
+    parent = _wire_parent_mock(_capable_host())
+
+    async def exec_side_effect(cmd, *_, **__):
+        if cmd.startswith("rm -rf "):
+            return _fail("permission denied")
+        return _ok()
+
+    parent.exec.side_effect = exec_side_effect  # type: ignore[union-attr]
+
+    with pytest.raises(RuntimeError, match="prepare the build-context dir"):
+        await stage_image_context(parent, "repo1", image)
+
+
+@pytest.mark.asyncio
+async def test_stage_compose_files_fails_when_the_dir_cannot_be_prepared(tmp_path):
+    """Same unchecked wipe-and-recreate, compose side."""
+    from otto.docker.staging import stage_compose_files
+
+    compose_path = tmp_path / "compose.yml"
+    compose_path.write_text("services: {}\n")
+    compose = _make_repo(tmp_path / "r", services=("api",)).docker_settings.composes[0]
+    parent = _wire_parent_mock(_capable_host())
+
+    async def exec_side_effect(cmd, *_, **__):
+        if cmd.startswith("rm -rf "):
+            return _fail("read-only filesystem")
+        return _ok()
+
+    parent.exec.side_effect = exec_side_effect  # type: ignore[union-attr]
+
+    with pytest.raises(RuntimeError, match="prepare the compose staging dir"):
+        await stage_compose_files(parent, "otto-repo1", [compose])
+
+
+@pytest.mark.asyncio
+async def test_stage_compose_files_fails_when_a_numbered_subdir_cannot_be_made(tmp_path):
+    """The per-file `mkdir -p` was discarded too; a failure here means the
+    subsequent `put` lands somewhere unintended or not at all."""
+    from otto.docker.staging import stage_compose_files
+
+    compose = _make_repo(tmp_path / "r", services=("api",)).docker_settings.composes[0]
+    parent = _wire_parent_mock(_capable_host())
+
+    async def exec_side_effect(cmd, *_, **__):
+        if cmd.startswith("mkdir -p ") and cmd.rstrip().endswith("/0"):
+            return _fail("no space left on device")
+        return _ok()
+
+    parent.exec.side_effect = exec_side_effect  # type: ignore[union-attr]
+
+    with pytest.raises(RuntimeError, match="failed to create"):
+        await stage_compose_files(parent, "otto-repo1", [compose])
+
+
+@pytest.mark.asyncio
+async def test_compose_up_rolls_back_a_stack_it_started_before_raising(tmp_path):
+    """Failing loud must not be worse than the silent {} it replaced.
+
+    Every raise in compose_up happens AFTER `up -d`, and no caller can clean
+    up what it never received: `composed()` arms its try/finally only on a
+    successful return. The old silent {} was accidentally safe there — it
+    entered the try and tore the stack down — so raising without a rollback
+    would strand a definitely-running stack.
+    """
+    repo = _make_repo(tmp_path)
+    lab = _make_lab()
+    parent = lab.hosts["pepper_seed"]
+    downs = 0
+
+    async def exec_side_effect(cmd, *_, **__):
+        nonlocal downs
+        if "label=com.docker.compose.project=" in cmd and "service=" not in cmd:
+            return _ok("")  # not already up -> WE bring it up
+        if "config" in cmd and "--services" in cmd:
+            return _ok("api\n")
+        if "service=api" in cmd:
+            return _ok("")  # never resolves -> the "no hosts" raise
+        if "compose" in cmd and " down" in cmd:
+            downs += 1
+        return _ok()
+
+    parent.exec.side_effect = exec_side_effect  # type: ignore[union-attr]
+
+    with pytest.raises(RuntimeError, match="resolved to a running container"):
+        await compose_up(repo, lab)
+    assert downs == 1, "a stack compose_up started must not survive its own failure"
+
+
+@pytest.mark.asyncio
+async def test_compose_up_does_not_roll_back_someone_elses_stack(tmp_path):
+    """The other half of the rollback rule: only tear down what WE started."""
+    repo = _make_repo(tmp_path)
+    lab = _make_lab()
+    parent = lab.hosts["pepper_seed"]
+    downs = 0
+
+    async def exec_side_effect(cmd, *_, **__):
+        nonlocal downs
+        if "label=com.docker.compose.project=" in cmd and "service=" not in cmd:
+            return _ok("existing-cid\n")  # already up: someone else's
+        if "config" in cmd and "--services" in cmd:
+            return _ok("api\n")
+        if "service=api" in cmd:
+            return _ok("")
+        if "compose" in cmd and " down" in cmd:
+            downs += 1
+        return _ok()
+
+    parent.exec.side_effect = exec_side_effect  # type: ignore[union-attr]
+
+    with pytest.raises(RuntimeError, match="resolved to a running container"):
+        await compose_up(repo, lab)
+    assert downs == 0, "a stack that was already up belongs to whoever brought it up"
+
+
+@pytest.mark.asyncio
+async def test_compose_up_fails_when_the_stack_names_no_services_at_all(tmp_path):
+    """`services: {}` with nothing declared: up, and nothing to register."""
+    repo = _make_repo(tmp_path, services=())
+    lab = _make_lab()
+    parent = lab.hosts["pepper_seed"]
+
+    async def exec_side_effect(cmd, *_, **__):
+        if "label=com.docker.compose.project=" in cmd and "service=" not in cmd:
+            return _ok("")
+        if "config" in cmd and "--services" in cmd:
+            return _ok("   \n")  # succeeds, lists nothing
+        return _ok()
+
+    parent.exec.side_effect = exec_side_effect  # type: ignore[union-attr]
+
+    with pytest.raises(RuntimeError, match="names no services"):
+        await compose_up(repo, lab)
+
+
+@pytest.mark.asyncio
+async def test_compose_down_returns_a_failure_when_staging_cannot_be_prepared(tmp_path):
+    """compose_down's contract is that a failed tear-down is RETURNED.
+
+    Staging now raises, and letting that propagate would stop
+    `otto docker down` mid-sweep with the remaining repos still up — and,
+    inside `composed()`'s finally, replace the body's real exception with
+    teardown noise.
+    """
+    repo = _make_repo(tmp_path)
+    lab = _make_lab()
+    parent = lab.hosts["pepper_seed"]
+
+    async def exec_side_effect(cmd, *_, **__):
+        if cmd.startswith("rm -rf "):
+            return _fail("read-only file system")
+        return _ok()
+
+    parent.exec.side_effect = exec_side_effect  # type: ignore[union-attr]
+
+    result = await compose_down(repo, lab)
+    assert not result.is_ok
+    assert "read-only file system" in result.value

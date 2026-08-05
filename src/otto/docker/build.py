@@ -48,6 +48,14 @@ def image_latest_tag(registry_url: str, project: str, image: DockerImage) -> str
 
 
 async def _image_exists(parent: Host, full_tag: str) -> bool:
+    """Whether *full_tag* is already built on *parent*.
+
+    The one absorbed failure in this module that is deliberately kept: a
+    daemon error is indistinguishable here from "no such image", and folding
+    both into False means otto REBUILDS. That is correct-but-slow, the safe
+    direction — the alternative, treating an unanswerable query as "cached",
+    would skip a build the user asked for.
+    """
     result = await parent.exec(f"docker image inspect {shlex.quote(full_tag)}")
     return result.status.is_ok
 

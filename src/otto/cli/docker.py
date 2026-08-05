@@ -244,9 +244,18 @@ async def _up(
             continue
         hosts = await compose_up(r, lab, on=on, build=not no_build)
         proj = get_user_compose_project(r.name)
-        rprint(f"[green]{r.name} ({proj}): {len(hosts)} container(s) registered:")
+        # compose_up now raises rather than registering NOTHING, but a PARTIAL
+        # registration is still a usable stack and still returns — so say so
+        # in yellow instead of reporting "3 container(s) registered" in the
+        # same green as a complete one.
+        declared = {s for c in r.docker_settings.composes for s in c.services}
+        missing = sorted(declared - set(hosts))
+        colour = "yellow" if missing else "green"
+        rprint(f"[{colour}]{r.name} ({proj}): {len(hosts)} container(s) registered:")
         for host in hosts.values():
             rprint(f"  - {host.id}  →  {host.container_id[:12]}")
+        if missing:
+            rprint(f"[yellow]  not registered: {', '.join(missing)} (see the warnings above)")
 
 
 async def _down(

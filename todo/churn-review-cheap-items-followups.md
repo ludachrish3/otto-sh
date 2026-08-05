@@ -4,6 +4,13 @@ Surfaced by the per-item opus reviews. Each is out of scope for the cheap item
 that found it — recorded here rather than folded in, so the scope of each
 squash stays one thing.
 
+## STATUS
+
+The docker section is addressed by
+`fix(docker): stop absorbing exec failures into empty successes`. Everything
+else is open. Two NEW items came out of that commit's own review, at the end.
+
+
 ## From `fix(completion): hash every test source the --tests scan can read`
 
 - **`Repo.iter_test_files` is a third, narrower reader of the same tests dirs.**
@@ -125,7 +132,7 @@ The monitor side is covered by a stronger mechanism — `types.gen.ts` codegen
 plus a `git diff --exit-code` drift gate — except `stream.ts`'s `ARRAY_FIELDS`
 string literals.
 
-## From `fix(docker): a cached image whose :latest cannot be re-pointed`
+## From `fix(docker): a cached image whose :latest cannot be re-pointed` — DONE
 
 The same silent-failure family, elsewhere in `otto/docker/**`. All
 pre-existing; none is deliberate unless noted.
@@ -161,3 +168,19 @@ pre-existing; none is deliberate unless noted.
   named `_foo` derives the command name `-foo`, not `foo`. Harmless for real
   instructions; it silently makes some name-derivation assertions in
   `tests/unit/cli/test_run.py` (~199, ~211) vacuous.
+
+## From `fix(docker): stop absorbing exec failures into empty successes`
+
+- **`otto docker up` has no `any_failed` accumulator.** `_build` and `_down`
+  in `cli/docker.py` sweep every selected repo and report at the end; `_up`
+  raises out of the first failing repo, so repos 2..n are neither brought up
+  nor reported. Three new raises in `compose_up` make that reachable far more
+  often than before. Give `_up` the same shape as its siblings.
+
+- **`host/docker_host.py` runs the same absorbed queries, one module over.**
+  It issues the same `docker ps -q --filter label=...` that `compose.py` now
+  reports honestly, and still folds a failure into `""` — so `is_running()`
+  returns False for a host whose daemon merely hiccuped, and tunnel discovery
+  silently skips it. Its `_ensure_running` recovers loudly, so the damage is
+  confined to the read-only paths. It also discards two staging `rm -rf`
+  results, the same shape fixed in `docker/staging.py`.
