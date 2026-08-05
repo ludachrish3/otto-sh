@@ -14,9 +14,10 @@ import inspect
 from collections.abc import Callable
 from logging import getLogger
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, get_type_hints
+from typing import TYPE_CHECKING, Any, NoReturn, get_type_hints
 
 import typer
+from rich.markup import escape
 from typing_extensions import override
 
 from ..errors import OttoError
@@ -173,6 +174,48 @@ class LabContextError(OttoError):
         self.message = message
         self.exit_code = exit_code
         self.rich = rich
+
+
+def print_error(message: object) -> None:
+    """Print *message* as a user-facing error, with rich markup ESCAPED.
+
+    The one place a CLI command renders a failure, so the escaping happens
+    once instead of at a dozen call sites that each had to remember it.
+    ``coverage/`` and ``suite/run.py`` reached the same conclusion
+    independently and call :func:`rich.markup.escape` inline at ten more
+    sites; consolidating those is a separate pass, not a claim to make here.
+
+    Escaping is load-bearing, not hygiene. Rich reads ``[word]`` as a style
+    tag and DELETES it, so ``list[str]`` prints as ``list``, an install hint
+    like ``otto-sh[monitor]`` prints as ``otto-sh`` — a runnable command for
+    the wrong thing — and a pydantic detail like
+    ``[type=missing, input_value={}]`` vanishes entirely. Every message that
+    reaches here interpolates something a user, a path, or a library supplied,
+    so none can be assumed bracket-free. Numeric subscripts (``argv[1]``)
+    happen to survive; that is not a rule worth relying on.
+
+    Lives here rather than in ``otto.console`` because every render site is a
+    CLI one, and ``otto.cli`` deliberately does not depend on that module.
+    """
+    from rich import print as rprint
+
+    rprint(f"[red]{escape(str(message))}[/red]")
+
+
+def fail(message: object, code: int = 1) -> "NoReturn":
+    """Render *message* as a user-facing error and exit with *code*.
+
+    The exiting half of :func:`print_error`: one place that decides what a
+    failing command looks like, so a new command cannot accidentally ship an
+    unescaped one (``.ast-grep/rules/error-render-through-helper.yml`` keeps
+    that true).
+    """
+    print_error(message)
+    # `from None`: typer.Exit is a control-flow signal, not a consequence of
+    # whatever was caught. Chaining it would attach a __cause__ that click's
+    # standalone mode discards anyway, and one converted site (expose.py) had
+    # asked for exactly this suppression explicitly.
+    raise typer.Exit(code) from None
 
 
 def report_lab_context_error(err: "LabContextError") -> None:
@@ -336,7 +379,8 @@ def ensure_lab_context(ctx: typer.Context) -> "OttoContext":
         )
     except (ValueError, LabRepositoryError) as e:
         raise LabContextError(
-            f"[bold red]Host source unavailable:[/bold red] {e}", exit_code=1
+            f"[bold red]Host source unavailable:[/bold red] {escape(str(e))}",
+            exit_code=1,
         ) from e
 
     lab = load_lab(opts.labs, preferences=merged_host_preferences, repository=lab_repository)
@@ -367,7 +411,7 @@ def ensure_lab_context(ctx: typer.Context) -> "OttoContext":
         )
     except ReservationBackendError as e:
         raise LabContextError(
-            f"[bold red]Reservation backend unavailable:[/bold red] {e}\n"
+            f"[bold red]Reservation backend unavailable:[/bold red] {escape(str(e))}\n"
             f"Pass [bold]--skip-reservation-check[/bold] / [bold]-R[/bold] to proceed without the check.",  # noqa: E501 — long rich markup string
             exit_code=1,
         ) from e
@@ -446,7 +490,7 @@ def present_reservation_gate(ctx: typer.Context) -> None:
     if outcome.warning:
         from rich import print as rprint
 
-        rprint(f"[bold red]{outcome.warning}[/bold red]")
+        rprint(f"[bold red]{escape(outcome.warning)}[/bold red]")
 
 
 def ensure_lab_session(ctx: typer.Context, spec: "CommandSpec") -> None:
@@ -578,15 +622,15 @@ def render_leaf_value(value: Any, policy: "RenderPolicy | None" = None) -> None:
                 rprint(value.value)
             return
         if value.msg:
-            rprint(f"[red]{value.msg}[/red]")
+            print_error(value.msg)
         if isinstance(value.value, dict):
             for entry in value.value.values():
                 if isinstance(entry, Result) and not entry.is_ok and entry.msg:
-                    rprint(f"[red]{entry.msg}[/red]")
+                    print_error(entry.msg)
         elif isinstance(value, Results):
             for entry in value:
                 if not entry.is_ok and entry.msg:
-                    rprint(f"[red]{entry.msg}[/red]")
+                    print_error(entry.msg)
         raise typer.Exit(value.exit_code)
 
     if value is None:

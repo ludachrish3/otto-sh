@@ -1,0 +1,52 @@
+id: error-render-through-helper
+language: python
+severity: error
+message: Red-markup f-string interpolates unescaped text. Use `otto.cli.invoke.print_error` / `fail`, or wrap the interpolation in `rich.markup.escape`.
+note: >
+  Rich reads `[word]` as a style tag and DELETES it. Every one of these
+  messages interpolates something a user, a path, or a library supplied, so
+  none can be assumed bracket-free — `list[str]` prints as `list`, an install
+  hint like `otto-sh[monitor]` prints as `otto-sh` (a runnable command for the
+  wrong thing), and a pydantic detail like
+  `[type=missing, input_value={}, input_type=dict]` vanishes entirely, taking
+  with it the only text that says what the user actually wrote. Numeric
+  subscripts (`argv[1]`) happen to survive; that is not a rule worth relying
+  on, and the difference is invisible at the call site.
+
+  Converted from prose to a gate because it had already gone wrong twice: a
+  missing-extra error whose whole purpose was to name
+  `pip install 'otto-sh[monitor]'` printed `pip install 'otto-sh'`, and a
+  lab-settings error deleted both the `[lab]` section name and the pydantic
+  detail. No test noticed either, because the EXCEPTION was perfect — the
+  damage happens in the renderer, which is also why the fix is a helper
+  rather than "remember to escape".
+
+  Matched on the STRING, not on a `print` call, so it also catches a message
+  built at a raise site and rendered later (`LabContextError` does exactly
+  that). Three deliberate exemptions, all by construct rather than by path —
+  a path exemption is how the first version of this rule managed to skip the
+  file holding the live bug:
+
+  - A plain (non-f) string carries only otto's own literals, so `[red]…[/red]`
+    with nothing interpolated is fine.
+  - An f-string whose interpolations are all `escape(...)` is fine; that is
+    what `print_error` itself does, and what a site keeping deliberate
+    `[bold]` emphasis around foreign text should do.
+  - Colours other than red are untouched: today they carry otto's own
+    literals. If a `[yellow]` warning ever interpolates foreign text it has
+    the same hazard and this rule will not see it.
+rule:
+  kind: string
+  all:
+  - regex: "^r?f"
+  - regex: "\\[(bold )?red\\]"
+  - has:
+      # stopBy: end is load-bearing — `has` walks only DIRECT children by
+      # default, and both the interpolation and its inner call sit deeper, so
+      # without it this rule matches nothing at all and passes silently.
+      stopBy: end
+      kind: interpolation
+      not:
+        has:
+          stopBy: end
+          pattern: escape($$$E)

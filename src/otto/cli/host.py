@@ -16,6 +16,7 @@ from ..host.remote_host import RemoteHost
 from ..host.unix_host import UnixHost
 from .callbacks import list_hosts_callback
 from .expose import HostGroup
+from .invoke import print_error
 
 
 def _host_id_completer(ctx: typer.Context, incomplete: str) -> list[str]:
@@ -86,7 +87,7 @@ def _resolve_host(host_id: str) -> UnixHost:
     try:
         return get_host(host_id)
     except KeyError:
-        rprint(f"[red]Error:[/red] No host with ID '{host_id}'.")
+        print_error(f"No host with ID {host_id!r}.")
         rprint("Available hosts:")
         # include_local: `local` IS a valid `otto host` target — this listing
         # enumerates addressable hosts, not the fleet.

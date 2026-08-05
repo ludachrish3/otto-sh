@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 import typer
 from typing_extensions import override
 
-from .invoke import RENDER_POLICY_KEY, RenderPolicy
+from .invoke import RENDER_POLICY_KEY, RenderPolicy, fail
 
 if TYPE_CHECKING:
     from typer.core import TyperGroup
@@ -47,8 +47,6 @@ def make_method_command(
     omitted it falls back to *attr_name* so callers that only know the Python
     name still produce a useful message.
     """
-    from rich import print as rprint
-
     from .param_synth import build_cli_binding
 
     binding = build_cli_binding(sample_func)
@@ -60,10 +58,7 @@ def make_method_command(
         host = resolve_cli_host(ctx)
         method = getattr(host, attr_name, None)
         if method is None or not callable(method):
-            rprint(
-                f"[red]Error:[/red] host {getattr(host, 'id', '?')!r} does not support {verb!r}."
-            )
-            raise typer.Exit(1)
+            fail(f"host {getattr(host, 'id', '?')!r} does not support {verb!r}.")
         call_kw = dict(binding.excluded)
         for name, value in kw.items():
             conv = binding.converters.get(name)
@@ -88,11 +83,7 @@ def make_method_command(
         try:
             result = await method(**call_kw)
         except NotImplementedError as e:
-            rprint(
-                f"[red]Error:[/red] host {getattr(host, 'id', '?')!r} does not "
-                f"support {verb!r}: {e}"
-            )
-            raise typer.Exit(1) from None
+            fail(f"host {getattr(host, 'id', '?')!r} does not support {verb!r}: {e}")
         finally:
             await host.close()
         # Presentation is per-invocation state: `success` comes off the RESOLVED

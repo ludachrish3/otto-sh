@@ -20,6 +20,7 @@ from ..tunnel import (
     remove_tunnel,
 )
 from ..utils import complete_separated_list
+from .invoke import fail, print_error
 
 if TYPE_CHECKING:
     from ..config.repo import Repo
@@ -179,8 +180,7 @@ async def add(
         # Known, expected failures (unknown host, ambiguous/empty interface,
         # an "already exists" conflict, missing carrier tools, a bad protocol):
         # a normal user outcome, never a traceback.
-        rprint(f"[red]{e}[/red]")
-        raise typer.Exit(1) from e
+        fail(e)
     t = added.tunnel
     rprint(
         f"[green]added[/green] {t.id} "
@@ -260,14 +260,13 @@ async def remove(
         else:
             report = await remove_tunnel(lab, tunnel_id or "")
     except (ValueError, RuntimeError) as e:
-        rprint(f"[red]{e}[/red]")
-        raise typer.Exit(1) from e
+        fail(e)
     record_tunnel_ids(get_repos(), [])  # invalidate; next scan refreshes
     removed = ", ".join(report.removed_ids) if report.removed_ids else "(none found)"
     rprint(f"[green]removed[/green] {removed}")
     if report.survivors:
         pretty = ", ".join(f"{h}/{pid}" for h, pid in report.survivors)
-        rprint(f"[red]still running after kill:[/red] {pretty}")
+        print_error(f"still running after kill: {pretty}")
         raise typer.Exit(1)
     if report.unreachable:
         rprint(f"[yellow]could not reach:[/yellow] {', '.join(report.unreachable)}")

@@ -17,6 +17,7 @@ from pathlib import Path
 
 import typer
 from rich import print as rprint
+from rich.markup import escape
 
 from ..reservations import (
     MissingReservationError,
@@ -26,6 +27,7 @@ from ..reservations import (
     check_reservations,
     required_resources,
 )
+from .invoke import fail
 
 reservation_app = typer.Typer(
     name="reservation",
@@ -73,7 +75,7 @@ def _reservation_gate(ctx: typer.Context) -> ReservationGate | None:
             cwd_fallback=Path.cwd(),
         )
     except ReservationBackendError as e:
-        rprint(f"[bold red]Reservation backend unavailable:[/bold red] {e}")
+        rprint(f"[bold red]Reservation backend unavailable:[/bold red] {escape(str(e))}")
         raise typer.Exit(1) from e
     ctx.meta["otto_reservation"] = gate
     return gate
@@ -139,7 +141,6 @@ def check(ctx: typer.Context) -> None:
     try:
         check_reservations(lab, username, backend)
     except MissingReservationError as e:
-        rprint(f"[red]{e}[/red]")
-        raise typer.Exit(1) from e
+        fail(e)
 
     rprint("[green]OK — all required resources are reserved.[/green]")

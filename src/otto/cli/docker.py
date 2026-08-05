@@ -29,6 +29,7 @@ from ..docker import (
 )
 from ..host.unix_host import UnixHost
 from ..utils import Status
+from .invoke import fail, print_error
 
 logger = logging.getLogger(__name__)
 
@@ -108,11 +109,10 @@ def _select_repos(repo_name: str | None, on: str | None = None) -> list[Repo]:
     lab = get_lab()
 
     if on is not None and on not in lab.hosts:
-        rprint(
-            f"[red]--on {on!r} is not a host in the active lab {lab.name!r}. "
+        fail(
+            f"--on {on!r} is not a host in the active lab {lab.name!r}. "
             f"Available hosts: {sorted(lab.hosts)}"
         )
-        raise typer.Exit(1)
 
     docker_repos = [
         r for r in get_repos() if r.docker_settings.composes or r.docker_settings.images
@@ -120,8 +120,7 @@ def _select_repos(repo_name: str | None, on: str | None = None) -> list[Repo]:
     if repo_name is not None:
         matches = [r for r in docker_repos if r.name == repo_name]
         if not matches:
-            rprint(rf"[red]No loaded repo named {repo_name!r} with a \[docker] section.")
-            raise typer.Exit(1)
+            fail(f"No loaded repo named {repo_name!r} with a [docker] section.")
         docker_repos = matches
 
     applicable: list[Repo] = []
@@ -166,11 +165,10 @@ def _canonicalize_on(lab: Lab, on: str | None) -> str | None:
         return None
     host = lab.resolve_handle(on)
     if host is None:
-        rprint(
-            f"[red]--on {on!r} is not a host in the active lab {lab.name!r}. "
+        fail(
+            f"--on {on!r} is not a host in the active lab {lab.name!r}. "
             f"Available hosts: {sorted(lab.hosts)}"
         )
-        raise typer.Exit(1)
     return host.id
 
 
@@ -211,7 +209,7 @@ async def _build(
                 rprint(f"[green]{r.name}/{name}: built → {res.value}")
             else:
                 any_failed = True
-                rprint(f"[red]{r.name}/{name}: FAILED\n{res.value}")
+                print_error(f"{r.name}/{name}: FAILED\n{res.value}")
     if any_failed:
         raise typer.Exit(1)
 
@@ -286,7 +284,7 @@ async def _down(
             any_failed = True
             # `.status`, not the whole result: the line's text is the contract
             # (a full CommandResult repr would dump the command and output).
-            rprint(f"[red]{r.name}: tear-down reported {result.status}.")
+            print_error(f"{r.name}: tear-down reported {result.status}.")
     if any_failed:
         raise typer.Exit(1)
 
@@ -309,8 +307,7 @@ async def _ps(
         # handle (e.g. dut1), same as `otto host`.
         host = lab.resolve_handle(on)
         if not isinstance(host, UnixHost) or not host.docker_capable:
-            rprint(f"[red]{on!r} is not a docker-capable lab host.")
-            raise typer.Exit(1)
+            fail(f"{on!r} is not a docker-capable lab host.")
         parents = [host]
     else:
         parents = [h for h in lab.hosts.values() if isinstance(h, UnixHost) and h.docker_capable]

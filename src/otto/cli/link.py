@@ -30,6 +30,7 @@ from ..link import (
     repair_link,
 )
 from .completers import lab_scoped_host_ids, selected_lab_names
+from .invoke import fail, print_error
 
 link_app = typer.Typer(
     name="link",
@@ -162,8 +163,7 @@ async def impair(  # noqa: PLR0913 — CLI command params
     try:
         params = _parse_params(given)
     except ValueError as e:
-        rprint(f"[red]{e}[/red]")
-        raise typer.Exit(2) from e
+        fail(e, 2)
     if all(v is None for v in given.values()):
         rprint("[red]impair needs at least one parameter option (--delay/--loss/--rate/...).[/red]")
         raise typer.Exit(2)
@@ -175,16 +175,14 @@ async def impair(  # noqa: PLR0913 — CLI command params
         try:
             selector = Selector(port, proto)
         except ValueError as e:
-            rprint(f"[red]{e}[/red]")
-            raise typer.Exit(2) from e
+            fail(e, 2)
     lab = get_lab()
     try:
         report = await impair_link(
             lab, link, params, from_host=from_host, expire=expire, selector=selector
         )
     except (ValueError, RuntimeError) as e:
-        rprint(f"[red]{e}[/red]")
-        raise typer.Exit(1) from e
+        fail(e)
     _print_impair_report(report)
 
 
@@ -230,8 +228,7 @@ async def repair(
         try:
             selector = Selector(port, proto)
         except ValueError as e:
-            rprint(f"[red]{e}[/red]")
-            raise typer.Exit(2) from e
+            fail(e, 2)
     lab = get_lab()
     if all_:
         reports, failures = await repair_all(lab)
@@ -239,14 +236,13 @@ async def repair(
         if failures:
             rprint("[red]failures:[/red]")
             for failure in failures:
-                rprint(f"  [red]{failure}[/red]")
+                print_error(f"  {failure}")
             raise typer.Exit(1)
         return
     try:
         report = await repair_link(lab, link or "", selector=selector)
     except (ValueError, RuntimeError) as e:
-        rprint(f"[red]{e}[/red]")
-        raise typer.Exit(1) from e
+        fail(e)
     _print_repair_report(report)
 
 

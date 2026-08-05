@@ -244,3 +244,32 @@ to `otto run` and `@cli_command` rather than applied to every leaf:
   and a third-party command that declares `lab_free=True` without doing so is
   waved through. A real host-touching axis would need the context to record
   whether a scope was ever entered.
+
+## From `fix(cli): render every user-facing error through one escaping helper`
+
+- **The gate is red-only.** `[green]`, `[yellow]` and `[dim]` renders are
+  untouched, and today they carry otto's own literals — but a `[yellow]`
+  warning built from a host id has the identical hazard and nothing catches
+  it. Widening means deciding whether every coloured f-string in the tree
+  must escape, which is a bigger call than this commit's.
+
+- **Rich Table CELLS parse markup too.** `cli/init.py`'s validation table puts
+  `"\n".join(problems)` — foreign text — straight into `add_row`. Same class,
+  invisible to a rule that matches on a red f-string.
+
+- **`otto.console.CONSOLE` would silently disable the gate.** The rule binds
+  to the f-string, so it survives a `CONSOLE.print` switch — but a message
+  assembled into a variable first, or built with `+`, escapes it. The rule
+  catches the shapes that exist, not every shape possible.
+
+- **Ten more inline `escape()` calls already existed** in `coverage/` and
+  `suite/run.py`, reached independently. They are correct but they are a
+  second mechanism; folding them onto `print_error` (or a non-CLI sibling)
+  would leave one.
+
+- **`typer.echo` sites are a separate, safe dialect.** `cli/monitor.py` prints
+  a pydantic ValidationError through `typer.echo` (no markup, so the
+  `[type=missing, ...]` detail survives). That is correct today but it is a
+  second way of saying "this failed", with different colouring and a different
+  stream — the error-dialect unification (review Tier 2.3) still has work
+  left after this commit.
