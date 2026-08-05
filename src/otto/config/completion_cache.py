@@ -102,10 +102,14 @@ Fingerprint
 
 sha256 over ``(path, mtime_ns, size)`` triples for every file whose change
 would alter the registered name sets: each SUT's ``settings.toml``, every
-``.py`` file under any ``init`` module, every ``test_*.py`` in a configured
-``tests`` directory, and every ``lab.json`` under a configured ``labs``
-search path. File contents are never read, so the fingerprint is cheap to
-compute even when SUTs are large.
+``.py`` file under any ``init`` module, every test file (pytest's default
+``python_files``, plus ``conftest.py``) anywhere under a configured ``tests``
+directory or on the path from one up to the SUT root, and every ``lab.json``
+under a configured ``labs`` search path. File contents are never read, so the
+fingerprint is cheap to compute even when SUTs are large.
+
+A repo that overrides pytest's ``python_files`` is the known gap — see
+:func:`_cache_ttl_seconds`.
 
 A stale fingerprint is always safe: the fast path is skipped, the slow path
 runs as normal and rewrites the cache afterward.
@@ -129,6 +133,7 @@ import os
 import tempfile
 import time
 import types
+from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, Union, get_args, get_origin
 
@@ -148,6 +153,24 @@ CACHE_FILENAME = "completion_cache.json"
 SCHEMA_VERSION = 11
 
 LAB_FILENAME = "lab.json"
+
+# pytest's default ``python_files``. One home, two readers: `collect_test_names`
+# decides which files to PARSE for names, and `compute_fingerprint` decides
+# which files to STAT for invalidation. Those two sets must be the same set —
+# a file the scan reads but the digest ignores is a name the cache can serve
+# forever after it stops being true.
+#
+# `Repo.iter_test_files` is a THIRD reader and deliberately not one of these:
+# it IMPORTS what it returns (to populate SUITES), so widening it would change
+# which user modules otto execs at bootstrap — a behavior change, not a glob
+# fix. It keeps its own narrow top-level `test_*.py`.
+TEST_FILE_PATTERNS = ("test_*.py", "*_test.py")
+
+# Fingerprint-only: conftest.py holds no collectable test of its own, so the
+# static scan never parses it, but `pytest_generate_tests` and parametrizing
+# fixtures live there and DO change the collected set stored under
+# COLLECTED_TESTS_KEY (which is keyed by this same digest).
+CONFTEST_FILENAME = "conftest.py"
 
 # Cache entries older than this (seconds) are treated as a miss. Forces the
 # slow path to run periodically so annotation / option changes that don't
@@ -316,16 +339,59 @@ def _cache_ttl_seconds(repos: list["Repo"]) -> int:
     fingerprint cannot see — see :data:`UNFINGERPRINTED_CACHE_TTL_SECONDS`.
 
     Applies to the main completion entry only. The collected-test-name cache
-    keeps the long TTL: its content tracks test files, whose top-level
-    ``test_*.py`` mtimes the fingerprint does hash. (That coverage is not
-    total — ``compute_fingerprint`` globs one pattern at the top level while
-    ``collect_test_names`` walks recursively for two, and ``conftest.py`` is
-    not hashed at all — but the gap is a file-source invalidation hole to
-    close directly, not something a TTL should paper over.)
+    keeps the long TTL: its content tracks test files, and the fingerprint
+    hashes them under the default layout — the same ``TEST_FILE_PATTERNS`` the
+    scan reads, recursively, plus every ``conftest.py`` under the tests dirs
+    and on the path up to the SUT root.
+
+    Not total, and the residue is named rather than papered over: a repo that
+    overrides pytest's ``python_files`` collects from filenames neither reader
+    knows about, and no pytest config file is hashed either, so such a repo's
+    collected set can be a full TTL stale. Closing that means reading the
+    repo's pytest config on the completion fast path — a separate decision,
+    not something this TTL should absorb.
     """
     if _has_unfingerprinted_source(repos):
         return UNFINGERPRINTED_CACHE_TTL_SECONDS
     return CACHE_TTL_SECONDS
+
+
+def _match_py_files(test_dir: Path, patterns: tuple[str, ...]) -> set[Path]:
+    """Paths under *test_dir* whose name matches *patterns*, in ONE walk.
+
+    Recursive, because a test tree is a tree: otto's own ``tests/`` has 405
+    test files and not one of them at the top level, so a non-recursive glob
+    contributes nothing at all for a repo laid out that way.
+
+    One ``rglob`` per pattern would be one full recursive ``scandir`` per
+    pattern. Every pattern here ends in ``.py``, so a single walk plus a name
+    match is set-identical for a third of the directory round-trips (6.0 ms →
+    2.9 ms on otto's own tests/) — and this runs twice per ``--tests`` TAB,
+    where round-trips are what cost on a network filesystem. ``fnmatchcase``
+    rather than ``fnmatch``: the latter normalizes case per-platform, which
+    would silently widen the match on a case-insensitive filesystem.
+    """
+    return {p for p in test_dir.rglob("*.py") if any(fnmatchcase(p.name, q) for q in patterns)}
+
+
+def _test_sources(test_dir: Path, sut_dir: Path) -> set[Path]:
+    """Every path whose edit can change a ``--tests`` name under *test_dir*.
+
+    A set, because ``test_a_test.py`` matches both patterns. Paths that do not
+    exist are fine and wanted — :func:`_hash_file` records them as ``missing:``,
+    so the digest moves when one appears.
+    """
+    found = _match_py_files(test_dir, (*TEST_FILE_PATTERNS, CONFTEST_FILENAME))
+    # conftest.py ABOVE the tests dir counts too. `Repo.collect_tests` passes
+    # the tests dirs as pytest args with the SUT as rootdir, so a conftest
+    # anywhere between them is loaded, and a `pytest_generate_tests` there
+    # parametrizes what lands in the collected set.
+    for ancestor in test_dir.parents:
+        if ancestor == sut_dir or sut_dir in ancestor.parents:
+            found.add(ancestor / CONFTEST_FILENAME)
+        if ancestor == sut_dir:
+            break
+    return found
 
 
 def _hash_file(h: "hashlib._Hash", path: Path) -> None:
@@ -363,7 +429,7 @@ def compute_fingerprint(repos: list["Repo"]) -> str:
 
         for test_dir in repo.tests:
             if test_dir.is_dir():
-                for t in sorted(test_dir.glob("test_*.py")):
+                for t in sorted(_test_sources(test_dir, repo.sut_dir)):
                     _hash_file(h, t)
 
         # Host-ID sources: lab.json under each configured lab search path.
@@ -1173,7 +1239,7 @@ def collect_test_names(repos: list["Repo"]) -> list[str]:
         for test_dir in repo.tests:
             if not test_dir.exists():
                 continue
-            for path in (*test_dir.rglob("test_*.py"), *test_dir.rglob("*_test.py")):
+            for path in sorted(_match_py_files(test_dir, TEST_FILE_PATTERNS)):
                 try:
                     tree = ast.parse(path.read_text(), filename=str(path))
                 except (OSError, SyntaxError):

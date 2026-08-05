@@ -150,6 +150,97 @@ def test_read_cache_applies_the_short_ttl_to_a_custom_backend(tmp_path: Path, mo
     assert cc.read_cache([custom]) is not None, "a 1-minute-old entry must still serve"
 
 
+# ── Fingerprint coverage of the --tests sources ──────────────────────────────
+
+
+def _tests_repo(tmp_path: Path) -> MagicMock:
+    """A repo rooted at *tmp_path* whose only tests dir is ``<tmp>/tests``."""
+    repo = MagicMock()
+    repo.sut_dir = tmp_path
+    repo.init = []
+    repo.libs = []
+    repo.labs = []
+    repo.tests = [tmp_path / "tests"]
+    (tmp_path / "tests").mkdir(parents=True, exist_ok=True)
+    return repo
+
+
+@pytest.mark.parametrize(
+    "relpath",
+    [
+        "tests/test_top.py",  # the one shape the pre-fix top-level glob caught
+        "tests/unit/test_nested.py",  # otto's layout: 405 test files, 0 at the top
+        "tests/unit/b_test.py",  # pytest's second default python_files pattern
+        "tests/unit/conftest.py",  # parametrization the collected set can see
+        "conftest.py",  # ABOVE the tests dir — pytest loads it, rootdir is the SUT
+    ],
+)
+def test_fingerprint_moves_when_a_test_source_appears(tmp_path: Path, relpath: str) -> None:
+    """A file the ``--tests`` completer can learn a name from must be hashed.
+
+    Otherwise the cached name-set outlives the files it was derived from: the
+    digest never moves, so the entry is served until its 24h TTL expires, and
+    the shell offers tests that no longer exist (or omits ones that do).
+    """
+    repo = _tests_repo(tmp_path)
+    before = cc.compute_fingerprint([repo])
+
+    path = tmp_path / relpath
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("def test_new(): pass\n")
+
+    assert cc.compute_fingerprint([repo]) != before, (
+        f"adding {relpath} left the digest unchanged — the cache cannot self-invalidate"
+    )
+
+
+def test_fingerprint_ignores_non_test_files(tmp_path: Path) -> None:
+    """The digest tracks test SOURCES, not the whole tree — an accepted trade.
+
+    Hashing everything under ``tests/`` would invalidate completion on any
+    fixture-data churn, which is the opposite failure: a full bootstrap behind
+    a TAB keystroke that had a perfectly good entry. The cost of the trade is
+    real — a helper module defining a base class that ``Test*`` inherits does
+    change what pytest collects, and no digest here moves for it.
+    """
+    repo = _tests_repo(tmp_path)
+    before = cc.compute_fingerprint([repo])
+
+    (tmp_path / "tests" / "unit").mkdir(parents=True)
+    (tmp_path / "tests" / "unit" / "helper.py").write_text("def test_ignored(): pass\n")
+    (tmp_path / "tests" / "fixture.json").write_text("{}")
+
+    assert cc.compute_fingerprint([repo]) == before
+
+
+def test_fingerprint_and_static_scan_read_the_same_patterns(tmp_path: Path) -> None:
+    """Lockstep: every file the scan parses for a name also moves the digest.
+
+    The two used to disagree (``glob("test_*.py")`` vs a recursive walk over
+    two patterns), which is exactly how a name-set outlives its source. This
+    asserts through ``compute_fingerprint`` itself, not through the helper
+    they share: pointing the digest back at a narrower glob while leaving the
+    helper in place is the cheapest possible regression, and asserting on the
+    helper would sail straight past it.
+    """
+    repo = _tests_repo(tmp_path)
+    (tmp_path / "tests" / "unit").mkdir(parents=True)
+
+    for i, pattern in enumerate(cc.TEST_FILE_PATTERNS):
+        before = cc.compute_fingerprint([repo])
+        path = tmp_path / "tests" / "unit" / pattern.replace("*", f"case{i}")
+        path.write_text(f"def test_case{i}(): pass\n")
+
+        # The scan takes a name from this file...
+        assert f"test_case{i}" in cc.collect_test_names([repo]), (
+            f"{pattern} yields no name — the digest assertion below would be vacuous"
+        )
+        # ...so writing it must move the digest.
+        assert cc.compute_fingerprint([repo]) != before, (
+            f"the scan reads {pattern} but the fingerprint does not stat it"
+        )
+
+
 def test_write_cache_skips_empty_repos(tmp_path: Path, monkeypatch) -> None:
     """Writing for empty repos must be a no-op — no file, no poisoned entry."""
     monkeypatch.setenv("OTTO_XDIR", str(tmp_path))
