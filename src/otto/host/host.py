@@ -910,9 +910,11 @@ class BaseHost(ABC):
         non-ok :class:`~otto.result.Result`; an empty list is a successful no-op.
         """
         for product in self.products:
-            status, msg = await product.stage(cast("Host", self))
-            if not status.is_ok:
-                return Result(status, msg=msg)
+            result = await product.stage(cast("Host", self))
+            if not result.is_ok:
+                # Returned whole: a product's CommandResult carries the retcode
+                # and output that the CLI turns into an exit code.
+                return result
         return Result(Status.Success)
 
     @cli_exposed
@@ -928,9 +930,9 @@ class BaseHost(ABC):
         if stage_only or not stage_result.is_ok:
             return stage_result
         for product in self.products:
-            status, msg = await product.install(cast("Host", self))
-            if not status.is_ok:
-                return Result(status, msg=msg)
+            result = await product.install(cast("Host", self))
+            if not result.is_ok:
+                return result
         return Result(Status.Success)
 
     @cli_exposed
@@ -942,9 +944,9 @@ class BaseHost(ABC):
         """
         first_failure: Result | None = None
         for product in self.products:
-            status, msg = await product.uninstall(cast("Host", self))
-            if not status.is_ok and first_failure is None:
-                first_failure = Result(status, msg=msg)
+            result = await product.uninstall(cast("Host", self))
+            if not result.is_ok and first_failure is None:
+                first_failure = result
         return first_failure if first_failure is not None else Result(Status.Success)
 
     @cli_exposed(output_dir=False)

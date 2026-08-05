@@ -10,10 +10,18 @@ note: >
   exit code, the command, or the output. Swept to zero when docker's
   compose_down / cleanup_project converted — they were the last two, and were
   a regression from an earlier Result-family shape, which is exactly the drift
-  this rule now prevents. The legacy `tuple[Status, str]` pairs in
-  host/product.py are the wider debt this rule deliberately does NOT cover
-  yet; tighten the regex to `\bStatus\b` when they convert (docker/build.py's
-  pair converted 2026-08-04, leaving product.py the last one).
+  this rule now prevents. The regex matches `Status` ANYWHERE in a return
+  annotation, so composites are covered too: `tuple[Status, str]`,
+  `dict[str, tuple[Status, str]]`, `Status | None`, `list[Status]`. The last
+  legacy pairs (docker/build.py, host/product.py) converted 2026-08-04, so
+  the baseline is zero for every shape that names `Status` directly. Being
+  syntactic, it cannot see through a type alias (`Pair = tuple[Status, str]`;
+  `-> Pair` is invisible) — none exists today, and the fix for one would be
+  to inline it, not to loosen this.
+  Note ast-grep is syntactic: `otto/config/dependencies.py` defines an
+  unrelated `Status` Literal, currently used only by private functions. If
+  one is ever made public this rule will fire on it wrongly — rename that
+  alias rather than loosening this.
 files:
 - src/otto/**
 rule:
@@ -21,7 +29,7 @@ rule:
   all:
   - has:
       field: return_type
-      regex: "^['\"]?Status['\"]?$"
+      regex: "\\bStatus\\b"
   - not:
       has:
         field: name

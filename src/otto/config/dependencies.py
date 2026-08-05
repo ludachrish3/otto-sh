@@ -17,7 +17,12 @@ if TYPE_CHECKING:
     from .repo import Repo
     from .version import Version
 
-Status = Literal["satisfied", "missing", "incompatible", "ambiguous"]
+# Named DepStatus, not Status: the core `otto.utils.Status` enum is a
+# different thing entirely, and the outcome-convention gate
+# (.ast-grep/rules/no-bare-status-return.yml) matches the bare name in a
+# return annotation — a collision here would fire it on correct code with
+# advice that makes no sense for a resolution verdict.
+DepStatus = Literal["satisfied", "missing", "incompatible", "ambiguous"]
 
 _MIN_CONFLICTING_ENTRIES = 2
 """Below this, a single declared entry was already proven satisfiable at settings-parse time."""
@@ -37,7 +42,7 @@ class ResolvedDependency:
     """Raw clause text (``""`` = any version)."""
 
     required: bool
-    status: Status
+    status: DepStatus
     provider_version: "Version | None"
     """The providing repo's version; ``None`` for ``missing``/``ambiguous``."""
 
@@ -120,7 +125,7 @@ def _resolve_one(
     required_edges: set[tuple[int, int]],
     soft_edges: list[tuple[int, int]],
     satisfied_optionals: list[tuple[int, int, "ParsedDependency"]],
-) -> "tuple[Status, Version | None]":
+) -> "tuple[DepStatus, Version | None]":
     """Status + provider version for one dep; append its error/warning/edge."""
     repo = repos[i]
     candidates = providers.get(dep.normalized, [])

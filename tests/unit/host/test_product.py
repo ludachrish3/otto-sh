@@ -7,7 +7,7 @@ import pytest
 from otto.host.login_proxy import Cred
 from otto.host.product import FileProduct, Product
 from otto.logger.mode import LogMode
-from otto.result import Result
+from otto.result import CommandResult, Result
 from otto.utils import Status
 
 
@@ -15,10 +15,10 @@ class _DummyFileProduct(FileProduct):
     """FileProduct with the abstract halves stubbed so it can instantiate."""
 
     async def install(self, host):
-        return Status.Success, ""
+        return Result(Status.Success)
 
     async def uninstall(self, host):
-        return Status.Success, ""
+        return Result(Status.Success)
 
     async def is_installed(self, host):
         return True
@@ -45,9 +45,12 @@ async def test_fileproduct_stage_delegates_to_host_put():
 
     p = _DummyFileProduct(artifact=Path("/builds/app.bin"), dest_dir=Path("/opt"))
     host = AsyncMock()
-    host.put.return_value = Result(Status.Success, value={})
-    status, _msg = await p.stage(host)
-    assert status is Status.Success
+    put_result = Result(Status.Success, value={})
+    host.put.return_value = put_result
+    result = await p.stage(host)
+    # Returned unchanged — the transfer's own per-file mapping reaches the
+    # caller instead of being flattened to a status and a message.
+    assert result is put_result
     host.put.assert_awaited_once_with(Path("/builds/app.bin"), Path("/opt"))
 
 
@@ -76,23 +79,34 @@ def test_products_can_be_injected_at_construction():
 
 
 class _FakeProduct(Product):
-    def __init__(self, name, *, installed=False, fail_on=None):
+    def __init__(self, name, *, installed=False, fail_on=None, result=None):
         self.name = name
         self._installed = installed
         self.fail_on = fail_on
+        # When set, returned verbatim by the failing verb — lets a test assert
+        # the caller propagates the object rather than rebuilding one from it.
+        self.result = result
         self.calls: list[str] = []
 
     async def stage(self, host):
         self.calls.append("stage")
-        return (Status.Error, "boom") if self.fail_on == "stage" else (Status.Success, "")
+        return (
+            Result(Status.Error, msg="boom") if self.fail_on == "stage" else Result(Status.Success)
+        )
 
     async def install(self, host):
         self.calls.append("install")
-        return (Status.Error, "boom") if self.fail_on == "install" else (Status.Success, "")
+        if self.fail_on != "install":
+            return Result(Status.Success)
+        return self.result if self.result is not None else Result(Status.Error, msg="boom")
 
     async def uninstall(self, host):
         self.calls.append("uninstall")
-        return (Status.Error, "boom") if self.fail_on == "uninstall" else (Status.Success, "")
+        return (
+            Result(Status.Error, msg="boom")
+            if self.fail_on == "uninstall"
+            else Result(Status.Success)
+        )
 
     async def is_installed(self, host):
         return self._installed
@@ -193,10 +207,10 @@ async def test_install_under_dry_run_does_not_transfer(tmp_path):
 
     class _StageOnlyProduct(FileProduct):
         async def install(self, host):
-            return Status.Success, ""
+            return Result(Status.Success)
 
         async def uninstall(self, host):
-            return Status.Success, ""
+            return Result(Status.Success)
 
         async def is_installed(self, host):
             return False
@@ -209,3 +223,25 @@ async def test_install_under_dry_run_does_not_transfer(tmp_path):
         result = await host.install(stage_only=True)
     assert result.is_ok
     assert not dest.exists()  # LocalHost.put was a dry-run no-op
+
+
+@pytest.mark.asyncio
+async def test_install_propagates_the_products_result_whole():
+    """A product's own CommandResult reaches the caller intact.
+
+    This is the property the Result conversion exists for, and the one a
+    ``return Result(result.status, msg=result.msg)`` rebuild would silently
+    destroy while keeping every other assertion in this file green: the
+    retcode of the command that actually failed becomes the process exit
+    code, instead of being flattened to the Status's own value.
+    """
+    failing = CommandResult(
+        Status.Error, value="tar: bad header", command="tar xzf app.tgz", retcode=7
+    )
+    p = _FakeProduct("a", fail_on="install", result=failing)
+
+    result = await _host_with([p]).install()
+
+    assert result is failing, "the product's result object, not a rebuild"
+    assert result.exit_code == 7, "the command's retcode, not Status.Error.value (2)"
+    assert result.command == "tar xzf app.tgz"

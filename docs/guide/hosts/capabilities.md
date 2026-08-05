@@ -94,15 +94,21 @@ the project-specific halves:
 
     from pathlib import Path
     from otto.host import FileProduct
-    from otto.utils import Status
 
     class MyApp(FileProduct):
         async def install(self, host):
-            return (await host.run(f"tar xzf {self.artifact.name}", )).status, ""
+            return await host.run(f"tar xzf {self.artifact.name}")
         async def uninstall(self, host):
-            return (await host.run("rm -rf /opt/myapp")).status, ""
+            return await host.run("rm -rf /opt/myapp")
         async def is_installed(self, host):
             return (await host.run("test -d /opt/myapp")).status.is_ok
+
+`stage`, `install`, and `uninstall` return a `Result` — usually just whatever
+`host.run` / `host.put` handed back. The *failing* product's result is
+returned whole, so the command's own retcode and output reach the process exit
+code; a run where every product succeeds collapses to a bare success, since
+with several products there is no single result to hand back.
+`is_installed` is a plain predicate.
 
 ### Injecting products
 

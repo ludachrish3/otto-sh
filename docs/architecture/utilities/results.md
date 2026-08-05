@@ -56,6 +56,11 @@ Public otto API says what happened in exactly one of three ways:
    accessor verbs (`exists`, `is_installed`, `is_uninstalled`, `ls`,
    `read_file`) plus `login` (which returns `None`) are the whole list.
 
+The extension surfaces follow it too: a {class}`~otto.host.product.Product`'s
+`stage` / `install` / `uninstall` return a `Result` — usually the one
+`host.run` or `host.put` already produced, so the command's retcode and output
+reach the process exit code rather than being flattened on the way out.
+
 `Status` is the vocabulary carried *inside* a result, **never a return type
 of its own**: a caller handed a bare `Status` cannot see the exit code, the
 command, or the output that explains it.
@@ -63,7 +68,9 @@ command, or the output that explains it.
 Both halves are gated rather than documented-and-hoped:
 
 - **returns** — `.ast-grep/rules/no-bare-status-return.yml` fails any public
-  function in `src/otto` annotated `-> Status` (run by `make lint-arch`).
+  function in `src/otto` whose return annotation mentions `Status` anywhere,
+  including inside a composite: `tuple[Status, str]`, `Status | None`,
+  `dict[str, tuple[Status, str]]` (run by `make lint-arch`).
 - **raises** — `tests/unit/test_error_base.py` sweeps every public exception
   class and fails on one that does not reach `OttoError`.
 

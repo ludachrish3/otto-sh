@@ -32,7 +32,7 @@ from typing import TYPE_CHECKING
 
 from typing_extensions import override
 
-from ..utils import Status
+from ..result import Result
 
 if TYPE_CHECKING:
     from .host import Host
@@ -48,17 +48,22 @@ class Product(ABC):
     Not a file path: a product may be multi-file or installed from a repo."""
 
     @abstractmethod
-    async def stage(self, host: "Host") -> tuple[Status, str]:
-        """Transfer/place this product's artifacts onto *host* (no install)."""
+    async def stage(self, host: "Host") -> Result:
+        """Transfer/place this product's artifacts onto *host* (no install).
+
+        Return any :class:`~otto.result.Result` — a bare one, or the
+        :class:`~otto.result.CommandResult` of the command that did the work,
+        whose retcode and output then reach the CLI's exit code untouched.
+        """
         ...
 
     @abstractmethod
-    async def install(self, host: "Host") -> tuple[Status, str]:
+    async def install(self, host: "Host") -> Result:
         """Install this product's already-staged artifacts on *host*."""
         ...
 
     @abstractmethod
-    async def uninstall(self, host: "Host") -> tuple[Status, str]:
+    async def uninstall(self, host: "Host") -> Result:
         """Remove this product from *host*."""
         ...
 
@@ -94,12 +99,9 @@ class FileProduct(Product):
             self.name = self.artifact.name
 
     @override
-    async def stage(self, host: "Host") -> tuple[Status, str]:
-        # host.put now returns a per-file transfer Result; collapse it to this
-        # method's (Status, str) contract until the product lifecycle is
-        # converted to the Result family in a later pass.
-        result = await host.put(self.artifact, self.dest_dir)
-        return result.status, result.msg
+    async def stage(self, host: "Host") -> Result:
+        """Transfer the artifact, returning ``host.put``'s result unchanged."""
+        return await host.put(self.artifact, self.dest_dir)
 
 
 ProductProvider = Callable[["Host"], Iterable[Product] | None]
