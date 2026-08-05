@@ -1,0 +1,187 @@
+{
+  "_comment": [
+    "Shared Python<->TypeScript contract for the covapp coverage report.",
+    "web/src/covapp/types.ts re-declares, by hand and with no compiler in",
+    "between, the shape of everything spa_data.py emits: the data-format",
+    "version, every payload's keys, the closed per-line state vocabulary",
+    "(vs STATE_COLORS in coverage/colors.py), the sentinel ticket ids as TS",
+    "string literals, the window callback names the emitted chunk scripts",
+    "invoke, and the cov_data/ directory layout data.ts fetches from. This",
+    "table is the single source of truth for all of them, asserted from BOTH",
+    "sides -- Python by tests/unit/cov/test_covapp_contract.py (against real",
+    "emitted payloads, never a copied list) and TypeScript by",
+    "web/src/covapp/contract.test.ts (against `Record<keyof X, true>`, so the",
+    "compiler catches a drifting interface before the runtime check does).",
+    "A drift on either side fails exactly one suite and names the divergent",
+    "language. Same shape as the format_outage_cases.json precedent."
+  ],
+  "data_format": 2,
+  "sentinel_ticket_ids": [
+    "(no ticket)",
+    "(uncommitted)"
+  ],
+  "chunk_callbacks": {
+    "index": "__OTTO_COV__",
+    "file": "__OTTO_COV_FILE__",
+    "ticket": "__OTTO_COV_TICKET__"
+  },
+  "ticket_summary_keys": [
+    "asserted",
+    "chunk",
+    "covered",
+    "id",
+    "owned",
+    "per_tier",
+    "uncovered",
+    "url"
+  ],
+  "ticket_totals_keys": [
+    "asserted",
+    "covered",
+    "owned",
+    "per_tier",
+    "uncovered"
+  ],
+  "ticket_chunk_keys": [
+    "files",
+    "id",
+    "stamp"
+  ],
+  "ticket_chunk_file_keys": [
+    "asserted",
+    "asserted_only",
+    "covered",
+    "missing",
+    "owned",
+    "path",
+    "per_tier"
+  ],
+  "coverage_states": [
+    "aging",
+    "excluded",
+    "stale",
+    "uncovered"
+  ],
+  "index_payload_keys": [
+    "format",
+    "generated_at",
+    "otto_version",
+    "overrides",
+    "project_name",
+    "run_contrib",
+    "runs",
+    "stamp",
+    "stat_types",
+    "state_colors",
+    "thresholds",
+    "tickets",
+    "tickets_totals",
+    "tier_colors",
+    "tier_labels",
+    "tier_order",
+    "total_lines",
+    "tree"
+  ],
+  "run_json_keys": [
+    "aging",
+    "base_commit",
+    "board",
+    "captured_at",
+    "dirty_remap",
+    "host",
+    "id",
+    "label",
+    "labs",
+    "note",
+    "tester",
+    "ticket",
+    "tier"
+  ],
+  "override_json_keys": [
+    "as_of",
+    "id",
+    "key",
+    "reason",
+    "tier"
+  ],
+  "run_contrib_keys": [
+    "files",
+    "lines",
+    "revoked"
+  ],
+  "stats_keys": [
+    "branches",
+    "ctx_lines",
+    "flags",
+    "lines"
+  ],
+  "line_stat_bucket_keys": [
+    "asserted_only",
+    "asserted_per_tier",
+    "hit",
+    "per_tier",
+    "total"
+  ],
+  "stat_bucket_keys": [
+    "hit",
+    "per_tier",
+    "total"
+  ],
+  "dir_node_keys": [
+    "dirs",
+    "files",
+    "name",
+    "stats"
+  ],
+  "file_node_keys": [
+    "chunk",
+    "name",
+    "path",
+    "stats"
+  ],
+  "thresholds_keys": [
+    "high",
+    "medium"
+  ],
+  "file_chunk_keys": [
+    "chunk",
+    "excluded",
+    "lines",
+    "path",
+    "source",
+    "stamp"
+  ],
+  "line_json_keys": [
+    "asserted",
+    "branches",
+    "hits",
+    "run",
+    "stale_run",
+    "state",
+    "ticket"
+  ],
+  "cov_data_layout": {
+    "index": "index.js",
+    "files_dir": "files",
+    "tickets_dir": "tickets"
+  },
+  "tester_keys": [
+    "email",
+    "name"
+  ],
+  "branch_json_keys": [
+    "block",
+    "branch",
+    "hits",
+    "reachable"
+  ],
+  "stats_flags_keys": [
+    "aging",
+    "excluded",
+    "stale"
+  ],
+  "line_states": [
+    "aging",
+    "stale"
+  ]
+}

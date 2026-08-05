@@ -6,10 +6,11 @@ squash stays one thing.
 
 ## STATUS
 
-Addressed so far: the whole docker section; 3 of the 4 completion items
-(`python_files`, the dot-dir walk, the directory match); and 2 of the 5 cli
-items (the `@cli_command` hole, the sugar-vs-seam bypass). New items from the
-follow-up commits' own reviews are at the end.
+Addressed so far: the whole docker section; the whole covapp cross-language
+inventory; 3 of the 4 completion items (`python_files`, the dot-dir walk, the
+directory match); and 2 of the 5 cli items (the `@cli_command` hole, the
+sugar-vs-seam bypass). New items from the follow-up commits' own reviews are
+at the end.
 
 
 ## From `fix(completion): hash every test source the --tests scan can read` — 3 of 4 DONE
@@ -102,10 +103,12 @@ follow-up commits' own reviews are at the end.
   deliberately excludes. Rare (a declared link usually names interfaces), and
   the fix is a repository seam for links rather than a wider summary.
 
-## From `test(cov): gate the data-format version both languages hand-mirror`
+## From `test(cov): gate the data-format version both languages hand-mirror` — DONE
 
-An inventory of what is still hand-mirrored between `src/otto/coverage/**` and
-`web/src/covapp/**`, ranked. Everything below is unpinned by any test.
+An inventory of what WAS still hand-mirrored between `src/otto/coverage/**`
+and `web/src/covapp/**`, ranked. All of it is now pinned by the shared
+contract, along with four more its own review found (`Tester`, `BranchJson`,
+`Stats.flags`, and `LineJson.state`'s value domain).
 
 1. **`CoverageState`** — `types.ts`'s `"uncovered"|"excluded"|"stale"|"aging"`
    vs `STATE_COLORS`'s keys in `coverage/colors.py`. A CLOSED set, mirrored by
