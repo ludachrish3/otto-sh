@@ -124,6 +124,12 @@ Each image is tagged with a hash of:
 `docker image inspect <tag>:<hash>` is consulted before every build. A
 match short-circuits the build; `--rebuild` forces it.
 
+Every build also tags the image `:latest`, and a short-circuited build
+re-points `:latest` at the cached digest — that is the tag your `compose.yml`
+should name. If the re-tag fails, the image is reported as a build **failure**
+rather than as cached: `:latest` would otherwise still resolve to a previous
+build, and the stack would come up on the wrong image with nothing to say so.
+
 ## Scope and constraints
 
 - Builds run on the parent only; there is no local-build path.

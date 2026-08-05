@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from otto.config.repo import DockerImage, DockerSettings
+from otto.docker._context_hash import context_hash
 from otto.docker.build import (
     _build_one,
     image_full_tag,
@@ -94,6 +95,50 @@ async def test_build_one_skipped_when_image_exists(tmp_path):
     # Must NOT have called `docker build`.
     cmds = [c.args[0] for c in parent.exec.call_args_list]
     assert not any(c.startswith("docker build ") for c in cmds), cmds
+    # The re-tag's DIRECTION, spelled out: `docker tag <full> <latest>` with the
+    # arguments swapped re-points the CONTEXT-HASH tag at the previous build,
+    # which makes the build cache itself lie — and it is invisible to a test
+    # that only asserts `:latest` still exists.
+    full = image_full_tag("docker.io", "repo1", img, context_hash(img))
+    latest = image_latest_tag("docker.io", "repo1", img)
+    assert f"docker tag {full} {latest}" in cmds, cmds
+
+
+@pytest.mark.asyncio
+async def test_build_one_fails_when_the_cached_latest_retag_fails(tmp_path):
+    """A cached image whose `:latest` could not be re-pointed is NOT a skip.
+
+    `:latest` is the tag a user's compose.yml names. If `docker tag` fails
+    (daemon error, image pruned between the inspect and the tag) and the
+    result is discarded, otto reports "cached -> <tag>" while the stack comes
+    up on a PREVIOUS build — a wrong-image run with nothing reporting a
+    failure anywhere.
+    """
+    parent = _mock_parent()
+    img = _img(tmp_path)
+    tag_failure = _fail("no such image", command="docker tag full latest")
+
+    async def exec_side_effect(cmd, *_, **__):
+        if cmd.startswith("docker image inspect"):
+            return _ok()  # cached: take the skip path
+        if cmd.startswith("docker tag "):
+            return tag_failure
+        return _ok()
+
+    parent.exec.side_effect = exec_side_effect
+
+    settings = DockerSettings(registry_url="docker.io", images=(img,), composes=())
+    res = await _build_one(parent, "repo1", settings, img, rebuild=False)
+
+    assert not res.is_ok, "compose_up gates on is_ok; a truthy skip would build on nothing"
+    # Identity, not field-by-field equality: a rebuilt summary carrying
+    # status/value/command/retcode passes every per-field assertion while
+    # silently dropping `timed_out`, which is exactly how you tell a wedged
+    # daemon from a rejected tag without string-matching the output.
+    assert res is tag_failure
+    # Still no build: the image really was cached.
+    cmds = [c.args[0] for c in parent.exec.call_args_list]
+    assert not any(c.startswith("docker build ") for c in cmds), cmds
 
 
 @pytest.mark.asyncio
@@ -139,18 +184,20 @@ async def test_rebuild_forces_build_even_when_image_exists(tmp_path):
 async def test_build_failure_propagates(tmp_path):
     parent = _mock_parent()
     img = _img(tmp_path)
+    build_failure = _fail("syntax error in dockerfile", command="docker build ...")
 
     async def exec_side_effect(cmd, *_, **__):
         if cmd.startswith("docker image inspect"):
             return _fail()
         if cmd.startswith("docker build "):
-            return _fail("syntax error in dockerfile", command=cmd)
+            return build_failure
         return _ok()
 
     parent.exec.side_effect = exec_side_effect
 
     settings = DockerSettings(registry_url="docker.io", images=(img,), composes=())
     res = await _build_one(parent, "repo1", settings, img, rebuild=False)
+    assert res is build_failure, "the build's own result, not a summary of it"
     assert res.status is not Status.Success
     # The failing build's own result comes back whole: its captured output is
     # in value, and the command/retcode the old tuple discarded survive.

@@ -125,6 +125,36 @@ The monitor side is covered by a stronger mechanism — `types.gen.ts` codegen
 plus a `git diff --exit-code` drift gate — except `stream.ts`'s `ARRAY_FIELDS`
 string literals.
 
+## From `fix(docker): a cached image whose :latest cannot be re-pointed`
+
+The same silent-failure family, elsewhere in `otto/docker/**`. All
+pre-existing; none is deliberate unless noted.
+
+- **`compose.py`'s `docker compose config --services` is guarded by
+  `if live.is_ok:` with no else and no log.** A repo declaring only
+  `path` + `default_host` has no `services`, so on failure
+  `declared_services or sorted(live_services)` is `[]`, the registration loop
+  never runs, and `compose_up` returns `{}`. `otto docker up` prints
+  "0 container(s) registered" and exits 0 — a failed stack reported as
+  success. The worst of the set.
+- **`_stack_already_up` folds a failed `docker ps` into `False`.** A transient
+  blip during `composed()` makes `was_up` False, so the `finally` tears down a
+  stack an outer fixture is holding — the exact thing the "don't yank the
+  stack from peers" comment promises not to do.
+- **`staging.py`'s `rm -rf … && mkdir -p …` results are discarded** (build
+  tree and compose tree). Build staging is keyed on `repo.name` while compose
+  staging is deliberately keyed on the suffix-bearing project name, so two
+  users on one parent DO collide on the build path. A partial `rm -rf`
+  short-circuits the `mkdir`, and the later `tar -xf` overlays rather than
+  replaces — `docker build` then sees a context still holding a file the user
+  deleted, producing a wrong image under a hash that says it is right.
+- **`compose_ps` returns `[]` on a failed `docker ps`** — a host whose daemon
+  is down renders identically to one with no containers.
+- `cleanup_project`'s discard IS deliberate and documented, and the chaos
+  lane's hygiene bracket catches residue independently.
+- `_image_exists` folding any failure into "not cached" is the fail-safe
+  direction (rebuild is correct-but-slow) but is undocumented.
+
 ## Cross-cutting
 
 - **`typer.main.get_command_name` does not strip leading dashes.** A function

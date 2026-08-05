@@ -64,9 +64,10 @@ async def _build_one(
 
     Returns the build's own :class:`~otto.result.CommandResult`. ``value``
     carries the full tag on a fresh or cached build; a failure returns the
-    ``docker build`` result whole, so ``value`` holds the captured output and
-    ``command`` / ``retcode`` / ``timed_out`` survive. ``value`` is the payload
-    slot on every branch — ``msg`` stays empty, per its contract.
+    failing result whole — the ``docker build``, or on the cached path the
+    ``docker tag`` that re-points ``:latest`` — so ``value`` holds the captured
+    output and ``command`` / ``retcode`` / ``timed_out`` survive. ``value`` is
+    the payload slot on every branch — ``msg`` stays empty, per its contract.
     """
     hash_hex = context_hash(image)
     full_tag = image_full_tag(settings.registry_url, project, image, hash_hex)
@@ -74,8 +75,21 @@ async def _build_one(
 
     if not rebuild and await _image_exists(parent, full_tag):
         logger.info(rf"\[docker] {full_tag}: already built, skipping")
-        # Make sure :latest also points at the cached digest.
-        await parent.exec(f"docker tag {shlex.quote(full_tag)} {shlex.quote(latest_tag)}")
+        # Make sure :latest also points at the cached digest — and say so if it
+        # does not. Discarding this result reported "cached -> <tag>" while
+        # :latest still resolved to a PREVIOUS build, and :latest is the tag a
+        # user compose.yml names, so the stack would come up on the wrong image
+        # with nothing anywhere reporting a failure.
+        tagged = await parent.exec(f"docker tag {shlex.quote(full_tag)} {shlex.quote(latest_tag)}")
+        if not tagged.status.is_ok:
+            # Named here because neither caller renders `command`: without this
+            # the transcript reads "already built, skipping" and then FAILED
+            # with the daemon's message, and nothing says the failing step was
+            # the re-tag rather than a build that never ran.
+            logger.error(rf"\[docker] {full_tag}: could not re-point {latest_tag}")
+            # Whole, like the build branch below: `value` carries the daemon's
+            # output and command/retcode survive for the caller to render.
+            return tagged
         # retcode -1: no build ran (is_ok short-circuits exit_code to 0).
         # The tag goes in `value`, never `msg`: msg is documented as a human
         # diagnostic, empty on success, and every CommandResult an exec
@@ -139,11 +153,11 @@ async def build_images(
     Returns:
         Mapping of image name to a :class:`~otto.result.CommandResult`. The
         status is :attr:`~otto.utils.Status.Skipped` for images that already
-        existed, :attr:`~otto.utils.Status.Success` for fresh builds, and a
-        failure status otherwise. ``value`` is the full tag on success/skip;
-        on failure the parent's own result is returned whole, so ``value``
-        holds the captured build output and ``command`` / ``retcode`` are
-        preserved.
+        existed *and whose* ``:latest`` *was re-pointed at them*,
+        :attr:`~otto.utils.Status.Success` for fresh builds, and a failure
+        status otherwise. ``value`` is the full tag on success/skip; on
+        failure the parent's own result is returned whole, so ``value`` holds
+        the captured output and ``command`` / ``retcode`` are preserved.
     """
     settings = repo.docker_settings
     if not settings.images:
