@@ -1,8 +1,9 @@
 # git-cliff configuration for otto-sh.
 #
 # Renders CHANGELOG.md in Keep a Changelog format from Conventional
-# Commits. Run via `uvx --from git-cliff git-cliff ...` (the `make
-# changelog` target wraps it).
+# Commits. Run via `make changelog`, which puts the project venv's
+# git-cliff on PATH (git-cliff is a declared dev dependency) and
+# regenerates the WHOLE file — released sections included.
 
 [changelog]
 # Header sits above all release sections. Mirrors the prose that was in
@@ -18,6 +19,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 # One block per release. `version` is "Unreleased" for unreleased commits
 # (when --tag is not passed) or the value passed via --tag.
+#
+# Each bullet carries its conventional-commit SCOPE and, when the commit
+# marked itself `type(scope)!:` or wrote a `BREAKING CHANGE:` footer, a
+# **BREAKING** badge. Both were previously dropped: the `!` was inert (a
+# `fix(cli)!:` rendered as an ordinary "Fixed" bullet, indistinguishable from
+# a routine fix), and without the scope a reader could not tell which
+# subsystem a line was about.
+#
+# The badge is inline rather than a section of its own because a breaking
+# change is orthogonal to Keep a Changelog's Added/Changed/Fixed axis — a
+# `feat!` is still an addition — and hoisting it would either duplicate the
+# entry or hide it from the group a reader is scanning.
+#
+# The badge is deliberately BARE: it does not carry the `BREAKING CHANGE:`
+# footer's text. git-cliff's `commit.breaking_description` is not that text —
+# it stops at the first continuation line shaped like `Token: value` and
+# ignores every footer after the first. On otto's own history that renders
+# `... the lab database file is now lab.json with the shape` and stops dead
+# (the next line begins `{"hosts":`), and it drops two of the three migration
+# notes on ad0edab3 entirely. A truncated migration instruction under a
+# **BREAKING** badge is worse than none, so the badge sends the reader to the
+# commit rather than paraphrasing it wrongly.
 body = """
 
 {% if version -%}
@@ -29,7 +52,9 @@ body = """
 ### {{ group | upper_first }}
 
 {% for commit in commits -%}
-- {{ commit.message | split(pat="\\n") | first | trim }}
+- {% if commit.breaking %}**BREAKING** {% endif %}\
+{%- if commit.scope %}**{{ commit.scope }}**: {% endif %}\
+{{- commit.message | split(pat="\\n") | first | trim }}
 {% endfor %}
 {% endfor %}
 """
@@ -60,12 +85,14 @@ trim = true
 conventional_commits = true
 filter_unconventional = false
 split_commits = false
-# Strip the trailing "(#NN)" PR reference from squash-merge subjects.
-# git-cliff's body template would otherwise render it twice (once from
-# the message, once from commit.remote.pr_number).
-commit_preprocessors = [
-  { pattern = ' \\(#\\d+\\)$', replace = "" },
-]
+# No preprocessors. A rule here used to strip the trailing "(#NN)" PR
+# reference from squash-merge subjects, on the theory that the body template
+# would otherwise print it twice — once from the message and once from
+# `commit.remote.pr_number`. The template never referenced `commit.remote`,
+# so there was no second copy, and the rule never fired anyway: its pattern
+# was anchored with `$` against the whole message, which ends in a newline
+# (and usually a body). 42 bullets in CHANGELOG.md still carry their `(#NN)`,
+# which is the useful behaviour; the rule is gone rather than repaired.
 
 # Map Conventional Commit types into Keep a Changelog sections.
 # `group` is the section heading; `default_scope` lets dependabot's
@@ -81,8 +108,8 @@ commit_parsers = [
   { message = "^refactor", group = "Changed" },
   { message = "^revert", group = "Changed" },
   { message = "^docs", group = "Documentation" },
+  # `^chore\(deps` already matches `chore(deps-dev)`; no separate rule needed.
   { message = "^chore\\(deps", group = "Dependencies" },
-  { message = "^chore\\(deps-dev", group = "Dependencies" },
   { message = "^build\\(deps", group = "Dependencies" },
   { message = "^chore", group = "Maintenance" },
   # Skip non-user-facing categories. Flip any of these to a group if you'd

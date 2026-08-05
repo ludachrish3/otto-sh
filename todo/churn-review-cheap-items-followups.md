@@ -73,10 +73,15 @@ items from the follow-up commits' own reviews are at the end.
   raises for `except Exception`. The sweep also grew three missing halves
   (declaration completeness, aliased bases, vacuous `Exception` rows).
 
-- **A `!` in a conventional-commit type is inert in the changelog.**
-  `cliff.toml` maps `^fix` to "Fixed" with no breaking-change parser, so
-  `fix(cli)!:` renders as an ordinary bullet. Either teach cliff the marker or
-  stop implying the changelog will carry it.
+- **DONE** — **A `!` in a conventional-commit type is inert in the changelog.**
+  Taught cliff the marker (both spellings — `type(scope)!:` and a
+  `BREAKING CHANGE:` footer), plus the scope, which was also being dropped.
+  The footer's TEXT is deliberately not rendered — see the section below.
+  `CHANGELOG.md` regenerated so the reformat lands in a reviewed commit
+  instead of inside a release. Pinned by
+  `tests/unit/test_changelog_rendering.py`, which drives the real renderer
+  over a synthetic repo, and now also pins every type→section mapping and
+  every dropped type.
 
 - **DONE** — **`SupportsHostSummaries` conformance checks ids, not completeness.**
   `testing/conformance.py`'s `_expect_host_summaries_conform` only asserts the
@@ -349,6 +354,45 @@ to `otto run` and `@cli_command` rather than applied to every leaf:
   subset is the ~63 `RuntimeError` sites (live/operational failures, where a
   caller most plausibly wants "was that otto?") rather than the 179
   `ValueError` ones.
+
+## From `fix(changelog): a breaking change reaches the changelog`
+
+- **★ The `BREAKING CHANGE:` footer text still does not reach any reader.**
+  I rendered it and backed it out: git-cliff's `commit.breaking_description`
+  is not the footer. It stops at the first continuation line shaped like
+  `Token: value` and ignores every footer after the first. On otto's own
+  history that truncated `e4b18336` mid-sentence (`...is now lab.json with
+  the shape`, next line `{"hosts": [...]}`) and dropped two of `ad0edab3`'s
+  three migration notes — `repo_dir keyword` and `load_tiers` appear nowhere
+  in the rendered file. It also OVER-includes in the other direction, since
+  the description runs to the next footer token and swallowed a
+  test-methodology paragraph into `0ef6c0d5`'s bullet.
+
+  A correct version has to parse `commit.body` itself: take everything from
+  the first `BREAKING CHANGE:` to the end, keep the paragraph breaks. That
+  needs `trim = false` plus explicit `{%-`/`-%}` control throughout the
+  template (with `trim = true`, an indented continuation renders at column 0).
+  Worth doing — the footer is the only place a migration instruction is
+  written — but it is a template rewrite, not a clause.
+
+  Note `.github/workflows/release.yml` generates the GitHub Release notes
+  with the same `cliff.toml` via `git-cliff-action`, so whatever lands here
+  lands there too.
+
+- **The footer template fails outright on a repo with no tags.** It reads
+  `releases[0].previous.version` to build the Unreleased compare link, and
+  git-cliff aborts the whole render — not just the footer — when nothing is
+  tagged. Harmless for otto (it has tags) but it is why the rendering test has
+  to seed a `v0.1.0`, and it would bite anyone lifting `cliff.toml` as a
+  template. A `{% if %}` guard would cost one line.
+
+- **DONE** — **prose predating the generated changelog.** Both stale sites
+  fixed: `docs/contributing.md` (PR checklist asking for an `## [Unreleased]`
+  entry that `make changelog` erases, and crediting bump-my-version with
+  promoting it) and `.github/pull_request_template.md`, which carried the same
+  instruction and is the copy that auto-populates every PR. Swept the rest —
+  `docs/release_process.md`, `pyproject.toml` and the spec files were already
+  correct.
 
 ## Observed flake (not caused by this wave)
 

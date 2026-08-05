@@ -173,8 +173,8 @@ ci: ## (Build & Release) Run pipeline without VM-dependent tests (used by GitHub
 		&& $(MAKE) build
 
 changelog: export PATH := $(VENV_BIN):$(PATH)
-changelog: ## (Build & Release) Regenerate CHANGELOG.md from conventional commit history (Unreleased only — does not touch released sections)
-	@$(SAY) "git-cliff → CHANGELOG.md (Unreleased)"
+changelog: ## (Build & Release) Regenerate the WHOLE of CHANGELOG.md from conventional commit history (released sections included — the file is generated, never hand-edited)
+	@$(SAY) "git-cliff → CHANGELOG.md (whole file, released sections included)"
 	@git-cliff -o CHANGELOG.md
 
 # WARNING: `make -n release` is NOT side-effect-free — the recipe is one

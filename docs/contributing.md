@@ -271,8 +271,8 @@ git branch -d <your-branch>
 - [ ] `make all` passes locally
 - [ ] Branch is rebased on the latest `main`
 - [ ] Related issue linked (`Closes #N`)
-- [ ] `CHANGELOG.md` updated under `## [Unreleased]` for user-facing changes
-- [ ] No manual edits to the version string
+- [ ] Commit subject reads as the changelog entry it will become (see below)
+- [ ] No manual edits to `CHANGELOG.md` or the version string
 
 ## Version management
 
@@ -281,12 +281,42 @@ Versioning is owned by maintainers and driven by
 Do not hand-edit the `version` field in `pyproject.toml` — your PR will
 be asked to revert the change.
 
-For user-facing changes, add an entry to `CHANGELOG.md` under the
-`## [Unreleased]` section. The format follows
-[Keep a Changelog](https://keepachangelog.com/en/1.1.0/) (`Added`,
-`Changed`, `Fixed`, `Removed`). When a release is cut, the maintainer
-runs `bump-my-version` to promote `[Unreleased]` to a numbered version
-and update `pyproject.toml` in the same commit.
+`CHANGELOG.md` is **generated, not written**: `make changelog` regenerates
+the whole file from Conventional Commit history via `cliff.toml`, so a hand
+edit is erased at the next release. Your commit subject IS your changelog
+entry — write it that way:
+
+- the type picks the section, and **an unmapped type is dropped, not
+  defaulted** — the config ends in a catch-all skip, so a commit that lands
+  in no rule simply never appears:
+
+  | type | section |
+  | --- | --- |
+  | `feat` | Added |
+  | `fix` | Fixed |
+  | `perf`, `refactor`, `revert` | Changed |
+  | `docs` | Documentation |
+  | `chore(deps…)`, `build(deps…)` | Dependencies |
+  | `chore(…)` | Maintenance |
+  | `ci`, `test`, `style`, `chore(release)` | *dropped* |
+  | anything else — including `build(…)` with a non-`deps` scope | *dropped* |
+
+- the scope is printed in bold before the subject, so `fix(cli): …` renders
+  as **cli**: …, and a missing scope leaves the reader guessing;
+- a breaking change — `type(scope)!:` or a `BREAKING CHANGE:` footer — earns
+  a **BREAKING** badge. The badge is bare: the footer's TEXT is not copied
+  into the bullet, because git-cliff's `breaking_description` truncates at
+  the first `Token: value` continuation line and ignores every footer after
+  the first, which mangled real entries. Write the footer for someone
+  upgrading anyway — it is what a reader finds when the badge sends them to
+  the commit.
+
+The rendering is pinned by `tests/unit/test_changelog_rendering.py`, which
+runs the real renderer over a synthetic repo. The committed file is
+regenerated when a release is cut (`make release` runs `make changelog` at
+the new version), so between releases its `## [Unreleased]` section lags
+whatever has landed since — that is expected, and a reason not to hand-patch
+it.
 
 ## Running tests
 

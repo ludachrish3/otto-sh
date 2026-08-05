@@ -14,5 +14,5 @@ Closes #
 - [ ] `make all` passes locally
 - [ ] Branch is rebased on the latest `main`
 - [ ] Commits follow the conventional commit format
-- [ ] `CHANGELOG.md` updated under `## [Unreleased]` (if user-facing)
+- [ ] Commit subject reads as its changelog entry — `CHANGELOG.md` is generated from it, never hand-edited
 - [ ] Version string not modified manually (maintainer bumps via `make release`)
