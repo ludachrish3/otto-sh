@@ -7,6 +7,8 @@ so these tests drive ``link_app`` through the production dispatch seam
 
 from unittest.mock import AsyncMock, patch
 
+from rich import get_console
+
 from otto.cli.link import _link_completer, link_app
 from otto.link import (
     AppliedPlacement,
@@ -16,6 +18,7 @@ from otto.link import (
     LinkState,
     Placement,
 )
+from otto.link.model import Link, LinkEndpoint
 from tests._fixtures.dispatch import DispatchRunner
 
 from .test_manage_impair import INPATH, LINK
@@ -115,6 +118,100 @@ class TestListCommand:
         assert result.exit_code == 0
         assert "delay 50ms" in result.output
         assert "partial scan" in result.output
+
+    @staticmethod
+    def _list_output(state: LinkState) -> str:
+        with (
+            patch("otto.cli.link.get_lab", return_value=object()),
+            patch("otto.cli.link.read_link_states", AsyncMock(return_value=[state])),
+        ):
+            result = runner.invoke(link_app, ["list"])
+        assert result.exit_code == 0, result.output
+        return result.output
+
+    def test_unimpairable_row_states_the_reason_once(self) -> None:
+        """Every implicit link lands in this branch, so on a lab that declares
+        no links the whole table used to be a column of bare `n/a`.
+
+        Once, not in both direction cells: the live refusals are full
+        sentences ("...it is the management interface otto reaches the host
+        through (self-lockout)") and printing them twice on one soft-wrapped
+        line is unreadable."""
+        reason = "'sprout' has no named interface"
+        output = self._list_output(
+            LinkState(
+                link=LINK,
+                impairable=False,
+                unreachable=False,
+                by_direction={},
+                refusal=reason,
+            )
+        )
+        assert f"not impairable: {reason}" in output
+        assert output.count(reason) == 1
+        assert "a->b: n/a" in output
+
+    def test_brackets_in_user_data_survive_every_row(self) -> None:
+        """`eth0[dataplane]` is a legal netdev name and rich reads `[dataplane]`
+        as a style tag, printing `eth0` — an interface that does not exist, in
+        the message whose only job is to name the one at fault.
+
+        Nothing validates a link `name`, a host id or an interface against
+        `[`. Same hazard as 1fbef92c, one column over; the negative control
+        below is what keeps this from being a tautology."""
+        bracketed = Link(
+            a=LinkEndpoint(host="gw", interface="eth0[dataplane]"),
+            b=LinkEndpoint(host="dut", interface="eth1"),
+            name="wan[primary]",
+        )
+        output = self._list_output(
+            LinkState(
+                link=bracketed,
+                impairable=False,
+                unreachable=False,
+                by_direction={},
+                refusal="refusing to impair 'eth0[dataplane]' on 'gw' — [bold] mgmt",
+            )
+        )
+        assert "wan[primary]" in output
+        assert "eth0[dataplane]" in output
+        assert "[bold] mgmt" in output
+
+        # The partial-scan warning keeps markup ON — its emphasis is otto's own
+        # — so its interpolated ids are escaped instead. Same exposure, other
+        # remedy; both need proving.
+        output = self._list_output(
+            LinkState(
+                link=bracketed,
+                impairable=True,
+                unreachable=True,
+                by_direction={FlowDirection.A_TO_B: None, FlowDirection.B_TO_A: None},
+            )
+        )
+        # On the WARNING line, not merely somewhere in the output — the row
+        # above prints the same id through the markup=False path, and asserting
+        # on the whole capture passes with the escape removed.
+        (warning,) = [ln for ln in output.splitlines() if "partial scan" in ln]
+        assert "wan[primary]" in warning
+
+        # Negative control: rich really does eat these when markup is on.
+        console = get_console()
+        with console.capture() as cap:
+            console.print("eth0[dataplane]", soft_wrap=True)
+        assert "eth0[dataplane]" not in cap.get()
+
+    def test_unimpairable_row_without_a_reason_prints_no_extra_row(self) -> None:
+        """`refusal` defaults to None, and a LinkState built by anything but
+        `_link_state` (a third-party caller, a future backend) must not render
+        the string `None` at the user — nor lose its row, which is why the
+        `n/a` cells are asserted rather than just the absence of `None`."""
+        output = self._list_output(
+            LinkState(link=LINK, impairable=False, unreachable=False, by_direction={})
+        )
+        assert "a->b: n/a" in output
+        assert "b->a: n/a" in output
+        assert "not impairable" not in output
+        assert "None" not in output
 
 
 from otto.link import DirectionState, Selector

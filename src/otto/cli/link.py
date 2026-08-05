@@ -10,6 +10,7 @@ refusals) lives in the library — this module only parses CLI strings via the
 import typer
 from rich import get_console
 from rich import print as rprint
+from rich.markup import escape
 
 from ..config import get_lab, get_repos
 from ..config.completion_cache import collect_link_ids
@@ -259,6 +260,11 @@ def _dir_text(state: LinkState, direction: FlowDirection) -> str:
     return "-"
 
 
+def _row(text: str) -> None:
+    """Print one `list` row verbatim: no markup parsing, no width wrapping."""
+    get_console().print(text, markup=False, soft_wrap=True)
+
+
 def _selector_rows(state: LinkState) -> list[str]:
     """One indented row per selector, a->b first, sorted by (port, proto)."""
     rows: list[str] = []
@@ -288,22 +294,36 @@ async def list_links() -> None:
             b_text = _dir_text(state, FlowDirection.B_TO_A)
         else:
             a_text = b_text = "n/a"
+        # markup=False, not escape(): NOTHING on these rows is otto markup —
+        # every field is a link name, a host id or a netdev, all user-supplied
+        # and none validated against `[`. Rich would read `eth0[dataplane]` as
+        # a style tag and print `eth0`, naming an interface that does not
+        # exist. Same hazard as 1fbef92c, one column over; disabling the
+        # parser is total where remembering to escape each field is not.
         # soft_wrap=True: rich's global console otherwise wraps at its
         # detected width (80 cols under CliRunner/no-tty, since COLUMNS isn't
         # set in CI) — long link ids/selector rows would get mangled
         # mid-line without it.
-        get_console().print(
+        _row(
             f"{link.id}  {link.a.host}@{link.a.interface or '-'} <-> "
             f"{link.b.host}@{link.b.interface or '-'}  via {via}  "
-            f"a->b: {a_text}  b->a: {b_text}",
-            soft_wrap=True,
+            f"a->b: {a_text}  b->a: {b_text}"
         )
+        if state.refusal:
+            # Once, on its own row, rather than in both direction cells: every
+            # implicit link lands here, so on a lab that declares no links this
+            # was the whole table saying only "n/a" — and the live refusals
+            # (mgmt interface, hop transit) are full sentences that would be
+            # printed twice on one line.
+            _row(f"  not impairable: {state.refusal}")
         for row in _selector_rows(state):
-            get_console().print(row, soft_wrap=True)
+            _row(row)
     unreachable_ids = sorted(state.link.id for state in states if state.unreachable)
     if unreachable_ids:
+        # Markup ON here — the emphasis is otto's own, and the interpolation
+        # is escaped rather than turning the parser off for the whole line.
         get_console().print(
             f"[yellow bold]partial scan[/yellow bold] — could not fully read: "
-            f"{', '.join(unreachable_ids)}",
+            f"{escape(', '.join(unreachable_ids))}",
             soft_wrap=True,
         )

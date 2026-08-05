@@ -361,8 +361,35 @@ dataplane  carrot_seed@eth1.100 <-> tomato_seed@eth1.200  via pepper_seed  a->b:
   not otto's` for a root qdisc otto did not generate, `-` for a clean
   (unimpaired) placement, or `?` when that placement's host couldn't be
   reached this pass — absence there means "unknown," not "clean."
-- A link that structurally can't be impaired shows `n/a` in both direction
-  columns rather than attempting to resolve a placement.
+- A link that can't be impaired shows `n/a` in both direction columns and
+  states why on its own indented row:
+
+  ```text
+  dut--gw  gw@- <-> dut@-  via -  a->b: n/a  b->a: n/a
+    not impairable: 'gw', 'dut' has no named interface
+  ```
+
+  Every *implicit* link lands here, so on a lab that declares no links of its
+  own this is the entire table — a bare `n/a` explained none of it. The reason
+  covers both the structural refusals (no named interface, the local host as
+  an endpoint) and the live ones found during the scan (management interface,
+  hop transit); see [Safety](#safety).
+
+  The structural half is also available on its own, as
+  `otto.link.placement.impairment_refusal(link)` — no lab, no `await`, no live
+  address fetch — because `find_link` resolving a link and `impair` being able
+  to act on it are different questions. It takes the directions you mean, and
+  they matter: a link between one interfaced host and one bare host is refused
+  both ways but accepted for `--from` the interfaced end.
+
+  :::{warning}
+  Impairing such a half-interfaced link with `--from` currently strands it.
+  `list` reports the link `n/a` in both columns (it asks about both
+  directions, and one is refused), `repair --all` skips it for the same
+  reason, and `repair <link>` refuses outright — so the impairment is live,
+  invisible, and clearable only by hand with `tc`. Give both endpoints a named
+  interface before impairing them.
+  :::
 
 If any link's state came back partial (at least one placement host was
 unreachable), `list` still prints every row it *could* read, then adds a
@@ -505,7 +532,10 @@ await repair_link(lab, "edge", selector=Selector(5201, "tcp"))
 value is a `DirectionState` (`whole: ImpairmentParams | None`, `scoped: dict[Selector,
 ImpairmentParams]`, `foreign: bool` — at most one of `whole`/`scoped` is
 ever populated, since the two are exclusive per placement) or `None` when
-that direction's host couldn't be read this pass.
+that direction's host couldn't be read this pass. When `impairable` is
+`False`, `by_direction` is empty and `refusal: str | None` carries the reason
+— the string `list` prints — covering both the structural refusals and the
+live ones.
 
 `find_link`, `repair_all`, and the
 `ImpairReport`/`RepairReport`/`LinkState`/`Selector`/`DirectionState`/`ScopedState`

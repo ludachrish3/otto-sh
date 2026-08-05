@@ -25,6 +25,10 @@ class FlowDirection(enum.Enum):
     B_TO_A = "b->a"
 
 
+BOTH_DIRECTIONS = frozenset(FlowDirection)
+"""Every direction — what a bare ``impair``/``repair``/``list`` asks for."""
+
+
 @dataclass(frozen=True, slots=True)
 class Placement:
     """Where one direction's impairment lands: a netdev on a host."""
@@ -109,6 +113,56 @@ def ensure_not_hop_transit(
                 f"it carries the management path to {dependent_id!r} "
                 "(hop transit; self-lockout)"
             )
+
+
+def impairment_refusal(
+    link: Link, directions: Collection[FlowDirection] = BOTH_DIRECTIONS
+) -> str | None:
+    """Why *link* cannot be impaired in *directions*, or ``None`` if it can.
+
+    The structural half of ``otto.link.manage._resolve_placements``, pulled
+    out so the same rule can be ASKED rather than only discovered by catching
+    the ValueError it raises — no lab, no await, no live address fetch, so it
+    is callable from a completer or a table renderer.
+
+    It exists because "``find_link`` resolves it" and "a command can act on
+    it" are different questions, and the gap is not small: EVERY implicit link
+    fails here. ``implicit_links`` builds endpoints with no named interface,
+    and a hop-less host's edge goes to the local host — so an N-host lab
+    resolves at least N ids that no command can act on, whatever it declares.
+    Answering that from a docstring cost one wrong turn already; answering it
+    from a function means ``otto link list`` can print the reason, and any
+    future caller gets the same answer as the placement layer instead of its
+    own approximation.
+
+    *directions* is not decoration: :func:`~otto.link.placement.endpoint_placements`
+    refuses per
+    direction, so a link between one interfaced host and one bare host is
+    refused for ``--all`` yet impairable with ``--from`` the interfaced end.
+    Dropping the parameter would make this predicate say "never" about a link
+    ``impair`` accepts.
+
+    In-path links (``link.impair`` set) are judged only on the local-host
+    rule. Their placements come from the middlebox's live address table, so
+    every other refusal they face — including the empty-``ip`` endpoint that
+    :func:`~otto.link.placement.inpath_placements` rejects — needs data this
+    function does not have.
+    """
+    for end in (link.a, link.b):
+        if end.host == BUILTIN_LOCAL_HOST_ID:
+            return f"{end.host!r} is otto's own path to the bed"
+    if link.impair == BUILTIN_LOCAL_HOST_ID:
+        return f"the middlebox {link.impair!r} is otto's own path to the bed"
+    if link.impair:
+        return None
+    origins = {
+        FlowDirection.A_TO_B: link.a,
+        FlowDirection.B_TO_A: link.b,
+    }
+    unnamed = [origins[d].host for d in origins if d in directions and origins[d].interface is None]
+    if unnamed:
+        return f"{', '.join(repr(h) for h in unnamed)} has no named interface"
+    return None
 
 
 def endpoint_placements(link: Link, directions: Collection[FlowDirection]) -> list[Placement]:

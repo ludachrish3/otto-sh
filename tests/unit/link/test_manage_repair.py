@@ -6,7 +6,7 @@ import pytest
 from otto.link.manage import read_link_states, repair_all, repair_link
 from otto.link.model import Link, LinkEndpoint
 from otto.link.params import ImpairmentParams, Selector
-from otto.link.placement import FlowDirection
+from otto.link.placement import FlowDirection, impairment_refusal
 from otto.link.sentinel import encode_impair_sentinel, encode_impair_sentinel_v2
 from otto.result import CommandResult
 
@@ -120,13 +120,53 @@ class TestReadStates:
         assert a.scoped == {}
 
     @pytest.mark.asyncio
-    async def test_unimpairable_link_marked_not_error(self) -> None:
+    async def test_unimpairable_link_carries_a_reason_naming_every_bad_endpoint(self) -> None:
+        """The flag alone made `list` print a bare `n/a`, which on a lab with no
+        declared links was the whole output and explained nothing.
+
+        Asking the predicate rather than catching the placement layer's
+        ValueError is what makes the cell useful: that exception stops at the
+        FIRST bad endpoint, so a user fixing `carrot_seed` would rerun and be
+        told about `tomato_seed`. Both are named here."""
         bare = Link(
             a=LinkEndpoint(host="carrot_seed"), b=LinkEndpoint(host="tomato_seed"), name="bare"
         )
         lab, *_ = _bed(link=bare)
         (state,) = await read_link_states(lab)
         assert not state.impairable
+        assert state.refusal is not None
+        assert "no named interface" in state.refusal
+        assert "carrot_seed" in state.refusal
+        assert "tomato_seed" in state.refusal
+
+    @pytest.mark.asyncio
+    async def test_live_refusal_is_reported_with_its_reason(self) -> None:
+        """The other half of `refusal`, and the half a pure predicate CANNOT
+        answer: the management-interface and hop-transit checks read each
+        placement host's live address table.
+
+        Its own guard, because the structural short-circuit above now returns
+        before the `try` — so without this the `except ValueError` branch is
+        never entered by any test, and could return `refusal=None` (or raise)
+        unnoticed.
+        """
+        # eth1 IS carrot's management address (10.10.200.11, per CARROT_ADDR),
+        # so placing an impairment there would sever otto's path to the host.
+        mgmt = Link(
+            a=LinkEndpoint(host="carrot_seed", interface="eth1", ip="10.10.200.11"),
+            b=LinkEndpoint(host="tomato_seed", interface="eth1.200", ip="10.10.202.12"),
+            name="mgmt-edge",
+        )
+        lab, carrot, *_ = _bed(link=mgmt)
+        assert impairment_refusal(mgmt) is None, "positive control: structurally fine"
+
+        (state,) = await read_link_states(lab)
+        assert not state.impairable
+        assert state.refusal is not None
+        assert "management interface" in state.refusal
+        assert "eth1" in state.refusal
+        # ...and it really did take a live look to find that out.
+        assert "ip -o addr show" in carrot.commands
 
     @pytest.mark.asyncio
     async def test_unreachable_host_direction_is_none(self) -> None:

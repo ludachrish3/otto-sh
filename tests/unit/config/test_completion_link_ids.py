@@ -17,7 +17,7 @@ import pytest
 
 from otto.config.completion_cache import collect_link_ids
 from otto.labs.json_repository import JsonFileLabRepository
-from otto.link.placement import FlowDirection, endpoint_placements, ensure_not_local_link
+from otto.link.placement import BOTH_DIRECTIONS, endpoint_placements, ensure_not_local_link
 
 _CARROT = {
     "ip": "1.1.1.1",
@@ -33,7 +33,6 @@ _TOMATO = {
     "creds": [{"login": "u", "password": "p"}],
     "interfaces": {"eth1": "10.0.0.2"},
 }
-_BOTH_DIRECTIONS = frozenset({FlowDirection.A_TO_B, FlowDirection.B_TO_A})
 
 
 def _repo_with_lab(
@@ -48,10 +47,16 @@ def _repo_with_lab(
 
 
 def _impairable(link) -> bool:
-    """Exactly what `otto link impair` requires beyond find_link resolving."""
+    """Exactly what `otto link impair` requires beyond find_link resolving.
+
+    Deliberately NOT `impairment_refusal`: this is the oracle for a property
+    of `collect_link_ids`, and re-deriving it from the functions that actually
+    refuse keeps it independent of the predicate. `impairment_refusal`'s own
+    agreement with these two is pinned in `tests/unit/link/test_impairability`.
+    """
     try:
         ensure_not_local_link(link)
-        endpoint_placements(link, _BOTH_DIRECTIONS)
+        endpoint_placements(link, BOTH_DIRECTIONS)
     except ValueError:
         return False
     return True

@@ -19,7 +19,7 @@ from .params import (
     parse_rate,
     parse_time_ms,
 )
-from .placement import FlowDirection, Placement
+from .placement import BOTH_DIRECTIONS, FlowDirection, Placement, impairment_refusal
 
 # .manage pulls in otto.host.daemon (+ otto.link.sentinel); only the future
 # `otto link` CLI actually calls it. Every other importer of otto.link (8 of
@@ -41,6 +41,7 @@ if TYPE_CHECKING:
     )
 
 __all__ = [
+    "BOTH_DIRECTIONS",
     "IMPAIRERS",
     "AppliedPlacement",
     "DirectionState",
@@ -62,6 +63,7 @@ __all__ = [
     "equivalent",
     "find_link",
     "impair_link",
+    "impairment_refusal",
     "make_link_id",
     "make_static_link_id",
     "parse_percent",

@@ -24,12 +24,14 @@ from .impairer import FIRST_SELECTOR_BAND, MAX_SELECTORS, LinkImpairer, ScopedSt
 from .model import Link
 from .params import ImpairmentParams, Selector, equivalent
 from .placement import (
+    BOTH_DIRECTIONS,
     FlowDirection,
     Placement,
     endpoint_placements,
     ensure_not_hop_transit,
     ensure_not_local_link,
     ensure_not_mgmt,
+    impairment_refusal,
     inpath_placements,
     parse_ip_addr,
 )
@@ -46,7 +48,7 @@ if TYPE_CHECKING:
     from ..config.lab import Lab
 
 _IMPAIR_HOST_TIMEOUT = 30.0
-_BOTH = frozenset({FlowDirection.A_TO_B, FlowDirection.B_TO_A})
+_BOTH = BOTH_DIRECTIONS
 _ADDR_SHOW_COMMAND = "ip -o addr show"
 
 
@@ -109,9 +111,24 @@ class LinkState:
     unreachable: bool = False
     """``True`` when at least one placement host couldn't be reached to read state."""
 
+    refusal: str | None = None
+    """Why, when ``impairable`` is False — so ``otto link list`` can say it
+    rather than leaving the user to infer it from a bare ``n/a``.
+
+    Appended rather than placed next to ``impairable`` it explains: this is a
+    public dataclass, and inserting a field mid-order silently rebinds any
+    positional construction instead of failing."""
+
 
 def find_link(lab: Any, ident: str) -> Link:
     """Resolve *ident* (a link id or its ``name``) against ``lab.static_links()``.
+
+    Resolving is NOT the same as being actionable, and the gap is wide: every
+    IMPLICIT link resolves here and none can be impaired (no named interface,
+    or an endpoint on the local host). Ask
+    :func:`~otto.link.placement.impairment_refusal` before assuming a resolved
+    link can be acted on — a completer that offered everything this accepts
+    would offer mostly guaranteed errors.
 
     Raises a :class:`ValueError` listing every known id when *ident* matches
     neither, so a typo'd CLI argument gets a usable hint.
@@ -747,7 +764,24 @@ async def _link_state(lab: Any, link: Link) -> LinkState:
 
     Structural refusals and unreachable hosts are reported as flags, never
     raised (spec §9 — ``list`` never dies).
+
+    The structural question is ASKED first rather than only inferred from the
+    ValueError it would raise, because the two answers differ in the only way
+    a table cell cares about: the predicate names EVERY endpoint at fault and
+    nothing else, while ``endpoint_placements`` raises on the first one and
+    prefixes the link id already printed in the row. The ``except ValueError``
+    below still stands — the live refusals (management interface, hop transit,
+    an in-path placement) are not structural and only a scan can find them.
+
+    ``_BOTH`` is spelled out rather than left to the predicate's default —
+    same value, but the directions are what make the answer true: the
+    predicate refuses PER DIRECTION, and ``list`` reads both, so a
+    half-interfaced link is correctly reported unimpairable here while
+    ``impair --from <the interfaced end>`` still works.
     """
+    refusal = impairment_refusal(link, _BOTH)
+    if refusal is not None:
+        return LinkState(link, {}, impairable=False, refusal=refusal)
     try:
         placements = await _resolve_placements(lab, link, _BOTH)
         by_direction: dict[FlowDirection, DirectionState | None] = {}
@@ -766,8 +800,11 @@ async def _link_state(lab: Any, link: Link) -> LinkState:
                 unreachable = True
                 by_direction[placement.direction] = None
         return LinkState(link, by_direction, impairable=True, unreachable=unreachable)
-    except ValueError:
-        return LinkState(link, {}, impairable=False, unreachable=False)
+    except ValueError as e:
+        # A refusal only a scan can find: the management-interface and
+        # hop-transit checks read each placement host's live address table,
+        # and an in-path link's placements are derived from the middlebox's.
+        return LinkState(link, {}, impairable=False, refusal=str(e), unreachable=False)
     except RuntimeError:
         return LinkState(link, {}, impairable=True, unreachable=True)
 

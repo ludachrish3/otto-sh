@@ -8,9 +8,9 @@ squash stays one thing.
 
 Addressed so far: the whole docker section; the whole covapp cross-language
 inventory; 3 of the 4 completion items (`python_files`, the dot-dir walk, the
-directory match); and 2 of the 5 cli items (the `@cli_command` hole, the
-sugar-vs-seam bypass). New items from the follow-up commits' own reviews are
-at the end.
+directory match); 2 of the 5 cli items (the `@cli_command` hole, the
+sugar-vs-seam bypass); and the impairability half of the link section. New
+items from the follow-up commits' own reviews are at the end.
 
 
 ## From `fix(completion): hash every test source the --tests scan can read` — 3 of 4 DONE
@@ -86,22 +86,49 @@ at the end.
   O(labs × hosts) host constructions (~18 ms for 200 hosts in one lab), since
   the fallback loads every lab.
 
-## From `fix(completion): scope link completion to the lab`
+## From `fix(completion): scope link completion to the lab` — 1 of 2 DONE
 
-- **Implicit links are unimpairable, and nothing says so where it would be
-  read.** `implicit_links` builds endpoints with `interface=None`, which
-  `endpoint_placements` refuses, and hop-less hosts edge to `local`, which
-  `ensure_not_local_link` refuses. So `find_link` resolves ids that no
-  command can act on. `otto link list` surfaces this as `impairable=False`,
-  but `find_link`'s own docstring does not, and it cost a wrong turn here.
-  Worth either a note on `find_link` or an `impairable` helper on `Link`.
+- ~~**Implicit links are unimpairable, and nothing says so where it would be
+  read.**~~ DONE — `impairment_refusal` in `link/placement.py`, carried on
+  `LinkState.refusal` and printed by `otto link list`.
 
 - **A declared link between two interface-less hosts is offered but not
-  impairable.** `_resolve_endpoint` leaves `interface=None` when a host
-  declares no `interfaces` map, so `endpoint_placements` refuses it.
-  Completion cannot see that without interface data, which `HostSummary`
-  deliberately excludes. Rare (a declared link usually names interfaces), and
-  the fix is a repository seam for links rather than a wider summary.
+  impairable.** CONFIRMED reachable, not just theoretical: `_resolve_endpoint`
+  leaves `interface=None` when a host declares no `interfaces` map, and such a
+  link loads, resolves through `find_link`, is offered by `otto link impair
+  <TAB>`, and can never be impaired. `collect_link_ids`' `provenance !=
+  IMPLICIT` filter is a proxy for impairability with exactly this hole.
+
+  I attempted the obvious fix inside the F7 squash — resolve each raw entry
+  through the real loader (`resolve_declared_links` + `addressing_from_dict`)
+  and filter on `impairment_refusal` — and BACKED IT OUT. It works, and its
+  review proved four regressions that make it its own item, not a rider:
+
+  1. **Completion goes dark for the whole repo** when an `os_profile` is
+     registered by an `[init]` module. `addressing_from_dict` resolves through
+     the profile registry, and the completion path deliberately runs WITHOUT
+     `bootstrap()` (`completion_cache.py:1170` says so). Every host record
+     then raises, is suppressed, and every link is skipped — silently.
+     `otto host <TAB>` survives this because host ids are cached; link ids
+     have no cache entry and are computed live on every TAB.
+  2. **Cross-REPO links are dropped.** `cli/invoke.py` aggregates every
+     repo's `labs` into ONE `JsonFileLabRepository`, so a link declared in
+     repo A between a host in A and a host in B resolves. Per-repo addressing
+     cannot see that.
+  3. **One-sided links are dropped.** `endpoint_placements` refuses per
+     direction, so a link between an interfaced host and a bare one is dead
+     for the default but alive under `impair --from <interfaced end>`.
+     (`impairment_refusal` now takes `directions` for exactly this; a filter
+     would have to ask about each direction separately, not about the link.)
+  4. **Duplicate host id across lab files resolves the wrong way.**
+     `json_repository` keeps the FIRST record and warns; a dict built by
+     iteration keeps the LAST. That re-opens this very hole in the
+     over-offering direction.
+
+  So the real fix is the repository seam for links that the original note
+  called for — one place that resolves links the way the loader does, usable
+  by both dispatch and completion — not a second resolver in the completer.
+  Until then the completer must stay profile-independent.
 
 ## From `test(cov): gate the data-format version both languages hand-mirror` — DONE
 
@@ -286,6 +313,26 @@ to `otto run` and `@cli_command` rather than applied to every leaf:
 - **The deadline is per-repo, not per-invocation.** Five repos each with a
   stalled backend cost 5 × the deadline before completion gives up. Fine at
   the current 2s for realistic workspaces; worth revisiting if the value grows.
+
+## From `feat(link): say why a link cannot be impaired`
+
+- **`repair_link` can never repair a one-sided link it just impaired.**
+  `impair --from <interfaced end>` succeeds on a link whose other endpoint has
+  no named interface, but `repair_link` asks `_directions(link, None)` = both
+  and so hits the refusal; `repair_all` skips it via `except ValueError`. The
+  impairment is then only clearable by hand. Pre-existing, surfaced by making
+  the direction rule explicit. Fix is probably for `repair` to repair whatever
+  directions are actually placeable rather than demanding both.
+
+- **`inpath_placements` has a structural refusal the predicate cannot see.**
+  `_facing_netdev` rejects an endpoint with an empty `ip`, and that IS
+  reachable: `host_identity` validates the PROFILE-MERGED dict while
+  `addressing_from_dict` reads `host_data.get("ip", "")` from the RAW one, so
+  a host whose `ip` comes from its `os_profile` defaults validates fine and
+  yields `HostAddressing(ip="")` → `LinkEndpoint(ip="")`. Contrived (the
+  profile would have to give every host the same ip) but not impossible, and
+  `impairment_refusal` would call such an in-path link impairable while the
+  scan refuses it. The raw-vs-merged split is the interesting half.
 
 ## Observed flake (not caused by this wave)
 
