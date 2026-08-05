@@ -5,6 +5,7 @@ import contextlib
 import importlib
 import logging
 import os
+import shlex
 import sys
 from dataclasses import (
     dataclass,
@@ -139,6 +140,144 @@ class CollectedTest:
     name: str
     path: Path
     cls_name: str | None
+
+
+#: pytest's own ``python_files`` default, used when nothing overrides it.
+DEFAULT_PYTHON_FILES: tuple[str, ...] = ("test_*.py", "*_test.py")
+
+#: Every filename pytest looks for, in ITS order — `_pytest.config.findpaths`'s
+#: `config_names`. The FIRST one that counts as pytest's config wins outright;
+#: pytest does not fall through to the next file when a key is absent there,
+#: and neither may we. A leftover `[tool.pytest.ini_options]` in a pyproject.toml
+#: next to a `pytest.ini` is ignored by pytest, and honouring it would blind
+#: both readers of the tests dirs to every real test.
+PYTEST_CONFIG_NAMES: tuple[str, ...] = (
+    "pytest.toml",
+    ".pytest.toml",
+    "pytest.ini",
+    ".pytest.ini",
+    "pyproject.toml",
+    "tox.ini",
+    "setup.cfg",
+)
+
+
+def pytest_config_paths(sut_dir: Path) -> list[Path]:
+    """Every path :func:`configured_python_files` may read, existing or not.
+
+    Non-existent paths are included on purpose: the completion fingerprint
+    hashes these, and a "missing" entry is what lets the digest move when
+    someone ADDS a ``pytest.ini``.
+    """
+    return [sut_dir / name for name in PYTEST_CONFIG_NAMES]
+
+
+def _split_patterns(raw: object) -> list[str]:
+    """Normalize a ``python_files`` value to a list of globs.
+
+    TOML mode gives a real list; ini mode gives one string, which pytest
+    splits with :func:`shlex.split` (the option's type is ``args``), so a
+    quoted pattern containing a space survives.
+    """
+    if raw is None:
+        return []
+    if isinstance(raw, (list, tuple)):
+        return [str(x).strip() for x in raw if str(x).strip()]
+    return shlex.split(str(raw))
+
+
+def _ini_section(path: Path, section: str) -> dict[str, str] | None:
+    """Return the named section of an ini/cfg file, or None if it has none.
+
+    ``interpolation=None`` because pytest parses these with ``iniconfig``,
+    which does not interpolate: a perfectly legal
+    ``python_files = test_%d_*.py`` would otherwise raise
+    ``InterpolationSyntaxError`` out of the completion fast path. ``str(path)``
+    because ``ConfigParser.read`` treats a non-str, non-PathLike argument as a
+    file DESCRIPTOR — a stray test double there opens fd 1 and closes stdout.
+    """
+    import configparser
+
+    parser = configparser.ConfigParser(interpolation=None)
+    try:
+        parser.read(str(path))
+        if not parser.has_section(section):
+            return None
+        return dict(parser.items(section))
+    except (OSError, configparser.Error):
+        return None
+
+
+def _load_pytest_config(path: Path) -> dict[str, Any] | None:
+    """Return the settings *path* contributes, or None if pytest ignores it.
+
+    A deliberate mirror of pytest's ``load_config_dict_from_file``. Returning
+    an EMPTY dict is meaningfully different from returning None: an empty
+    ``pytest.ini`` still counts as pytest's config and stops the search, which
+    is exactly the case that makes a neighbouring pyproject.toml irrelevant.
+    """
+    name, suffix = path.name, path.suffix
+    if suffix == ".ini":
+        section = _ini_section(path, "pytest")
+        if section is not None:
+            return dict(section)
+        # `pytest.ini` / `.pytest.ini` are pytest's config even when empty.
+        return {} if name in ("pytest.ini", ".pytest.ini") else None
+    if suffix == ".cfg":
+        section = _ini_section(path, "tool:pytest")
+        return dict(section) if section is not None else None
+    if suffix == ".toml":
+        try:
+            data = tomli.loads(path.read_text())
+        except (OSError, tomli.TOMLDecodeError, UnicodeDecodeError):
+            return None
+        if name in ("pytest.toml", ".pytest.toml"):
+            table = data.get("pytest", {})
+            return dict(table) if table else None
+        tool_pytest = data.get("tool", {}).get("pytest", {})
+        if not isinstance(tool_pytest, dict):
+            return None
+        # [tool.pytest] (native TOML, pytest 9's recommended form) wins over
+        # the older [tool.pytest.ini_options]; pytest errors when both exist,
+        # and completion is not the place to raise about it.
+        native = {k: v for k, v in tool_pytest.items() if k != "ini_options"}
+        if native:
+            return native
+        ini_options = tool_pytest.get("ini_options")
+        return dict(ini_options) if isinstance(ini_options, dict) else None
+    return None
+
+
+def configured_python_files(sut_dir: Path) -> list[str]:
+    """Return *sut_dir*'s pytest ``python_files``, or pytest's own defaults.
+
+    Static read, no collection — the same shape as
+    :meth:`Repo.configured_markers`. Both readers of a repo's tests dirs use
+    this (the ``--tests`` name scan and the fingerprint that invalidates it),
+    because a project collecting ``check_*.py`` and a completer that only
+    knows ``test_*.py`` disagree about which tests exist.
+
+    Takes a directory rather than a ``Repo`` because that is all it needs, and
+    because the completion callers reach it from repo-SHAPED objects.
+
+    Two deliberate divergences from pytest, both in the safe direction:
+    only *sut_dir* is searched (pytest walks up from the args to find a
+    rootdir), and a ``python_files`` set outside it therefore falls back to
+    the defaults.
+    """
+    for name in PYTEST_CONFIG_NAMES:
+        path = sut_dir / name
+        if not path.is_file():
+            continue
+        config = _load_pytest_config(path)
+        if config is None:
+            continue  # pytest would not treat this file as its config
+        if "python_files" not in config:
+            return list(DEFAULT_PYTHON_FILES)
+        # Present-but-empty is not the same as absent: `python_files = []`
+        # tells pytest to collect nothing, and the completer must agree.
+        return _split_patterns(config["python_files"])
+    return list(DEFAULT_PYTHON_FILES)
 
 
 @dataclass

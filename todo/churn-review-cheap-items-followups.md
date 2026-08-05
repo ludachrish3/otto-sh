@@ -6,12 +6,12 @@ squash stays one thing.
 
 ## STATUS
 
-The docker section is addressed by
-`fix(docker): stop absorbing exec failures into empty successes`. Everything
-else is open. Two NEW items came out of that commit's own review, at the end.
+Addressed so far: the whole docker section, and 3 of the 4 completion items
+(`python_files`, the dot-dir walk, the directory match). Everything else is
+open. New items from the follow-up commits' own reviews are at the end.
 
 
-## From `fix(completion): hash every test source the --tests scan can read`
+## From `fix(completion): hash every test source the --tests scan can read` — 3 of 4 DONE
 
 - **`Repo.iter_test_files` is a third, narrower reader of the same tests dirs.**
   `config/repo.py:716` still does a non-recursive `glob("test_*.py")`, so a
@@ -184,3 +184,28 @@ pre-existing; none is deliberate unless noted.
   silently skips it. Its `_ensure_running` recovers loudly, so the damage is
   confined to the read-only paths. It also discards two staging `rm -rf`
   results, the same shape fixed in `docker/staging.py`.
+
+## From `fix(completion): honour a repo's pytest python_files`
+
+- **`python_classes` / `python_functions` are still hardcoded.** The AST scan
+  matches `Test*` classes and `test*` functions literally, so a repo that
+  overrides either collects names the completer cannot see — the same shape
+  as the `python_files` gap just closed, one config key over. Harder than
+  `python_files` was: pytest matches those two by prefix OR glob depending on
+  whether the pattern contains glob characters.
+
+- **otto does not replicate pytest's rootdir/inifile discovery.** Only the SUT
+  root is consulted, so a config living elsewhere (a monorepo whose pytest.ini
+  sits above the SUT) falls back to the defaults. That IS the safe direction,
+  but it is a divergence worth knowing about.
+
+- **pytest FOLLOWS symlinked directories; both completion readers do not.** A
+  tests tree assembled by symlink is neither offered nor hashed, so its names
+  go stale for a full TTL. Pre-existing (`rglob` did not follow them either),
+  but the walk now claims to walk like pytest, so it is a named divergence
+  rather than an accident.
+
+- **A repo that NARROWS `norecursedirs` is pruned too aggressively.** Setting
+  `norecursedirs = .*` makes pytest collect from `tests/build/`, which these
+  readers now skip — completer blind and digest blind, the same shape as the
+  `python_files` gap. One config key over, same fix shape.

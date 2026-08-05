@@ -103,13 +103,17 @@ Fingerprint
 sha256 over ``(path, mtime_ns, size)`` triples for every file whose change
 would alter the registered name sets: each SUT's ``settings.toml``, every
 ``.py`` file under any ``init`` module, every test file (pytest's default
-``python_files``, plus ``conftest.py``) anywhere under a configured ``tests``
-directory or on the path from one up to the SUT root, and every ``lab.json``
-under a configured ``labs`` search path. File contents are never read, so the
-fingerprint is cheap to compute even when SUTs are large.
+``python_files`` — or the repo's own override of it — plus ``conftest.py``)
+anywhere under a configured ``tests`` directory or on the path from one up to
+the SUT root, every ``lab.json`` under a configured ``labs`` search path, and
+every file pytest would read settings from (``python_files`` decides which
+files count, so it is a source in its own right). File contents are never
+read, so the fingerprint is cheap to compute even when SUTs are large.
 
-A repo that overrides pytest's ``python_files`` is the known gap — see
-:func:`_cache_ttl_seconds`.
+Hashing a whole ``pyproject.toml`` for one key means a version bump or a lint
+tweak also invalidates completion. That is the conservative direction and the
+opposite of the trade made for ``tests/`` — accepted here because the file is
+one stat, and being wrong about ``python_files`` blinds both readers.
 
 A stale fingerprint is always safe: the fast path is skipped, the slow path
 runs as normal and rewrites the cache afterward.
@@ -137,8 +141,10 @@ from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, Union, get_args, get_origin
 
+from .repo import configured_python_files, pytest_config_paths
+
 if TYPE_CHECKING:
-    from collections.abc import Collection
+    from collections.abc import Collection, Sequence
 
     from ..labs import HostSummary
     from .repo import Repo
@@ -156,17 +162,36 @@ SCHEMA_VERSION = 11
 
 LAB_FILENAME = "lab.json"
 
-# pytest's default ``python_files``. One home, two readers: `collect_test_names`
-# decides which files to PARSE for names, and `compute_fingerprint` decides
-# which files to STAT for invalidation. Those two sets must be the same set —
-# a file the scan reads but the digest ignores is a name the cache can serve
-# forever after it stops being true.
+# One home, two readers: `collect_test_names` decides which files to PARSE for
+# names, and `compute_fingerprint` decides which files to STAT for
+# invalidation. Those two sets must be the same set — a file the scan reads but
+# the digest ignores is a name the cache can serve forever after it stops being
+# true. Both now ask the REPO, because a project that overrides pytest's
+# `python_files` collects from filenames the defaults never match.
 #
 # `Repo.iter_test_files` is a THIRD reader and deliberately not one of these:
 # it IMPORTS what it returns (to populate SUITES), so widening it would change
 # which user modules otto execs at bootstrap — a behavior change, not a glob
 # fix. It keeps its own narrow top-level `test_*.py`.
-TEST_FILE_PATTERNS = ("test_*.py", "*_test.py")
+
+# Directories pytest's default `norecursedirs` skips, minus the two patterns
+# handled by prefix/suffix in `_is_norecurse_dir`.
+_NORECURSE_NAMES = frozenset(
+    {
+        # pytest's default `norecursedirs`, minus the two entries handled as
+        # patterns in `_is_norecurse_dir` (`*.egg` and `.*`).
+        "_darcs",
+        "build",
+        "CVS",
+        "dist",
+        "node_modules",
+        "venv",
+        "{arch}",
+        # NOT part of norecursedirs — pytest skips it with its own hardcoded
+        # check, one `scandir` per package dir that nothing would collect from.
+        "__pycache__",
+    }
+)
 
 # Fingerprint-only: conftest.py holds no collectable test of its own, so the
 # static scan never parses it, but `pytest_generate_tests` and parametrizing
@@ -342,48 +367,71 @@ def _cache_ttl_seconds(repos: list["Repo"]) -> int:
 
     Applies to the main completion entry only. The collected-test-name cache
     keeps the long TTL: its content tracks test files, and the fingerprint
-    hashes them under the default layout — the same ``TEST_FILE_PATTERNS`` the
-    scan reads, recursively, plus every ``conftest.py`` under the tests dirs
-    and on the path up to the SUT root.
+    hashes them — the same ``python_files`` the scan reads (the repo's own,
+    where it configures one), recursively, plus every ``conftest.py`` under
+    the tests dirs and on the path up to the SUT root, plus the pytest config
+    files that decide which of those patterns apply.
 
-    Not total, and the residue is named rather than papered over: a repo that
-    overrides pytest's ``python_files`` collects from filenames neither reader
-    knows about, and no pytest config file is hashed either, so such a repo's
-    collected set can be a full TTL stale. Closing that means reading the
-    repo's pytest config on the completion fast path — a separate decision,
-    not something this TTL should absorb.
+    Not total, and the residue is named rather than papered over: pytest
+    FOLLOWS symlinked directories and both readers here do not, so a tests
+    tree assembled by symlink is neither offered nor hashed; and a repo that
+    narrows pytest's ``norecursedirs`` collects from directories these readers
+    prune.
     """
     if _has_unfingerprinted_source(repos):
         return UNFINGERPRINTED_CACHE_TTL_SECONDS
     return CACHE_TTL_SECONDS
 
 
-def _match_py_files(test_dir: Path, patterns: tuple[str, ...]) -> set[Path]:
-    """Paths under *test_dir* whose name matches *patterns*, in ONE walk.
+def _match_py_files(test_dir: Path, patterns: "Sequence[str]") -> set[Path]:
+    """FILES under *test_dir* whose name matches *patterns*, in ONE pruned walk.
 
     Recursive, because a test tree is a tree: otto's own ``tests/`` has 405
     test files and not one of them at the top level, so a non-recursive glob
     contributes nothing at all for a repo laid out that way.
 
-    One ``rglob`` per pattern would be one full recursive ``scandir`` per
-    pattern. Every pattern here ends in ``.py``, so a single walk plus a name
-    match is set-identical for a third of the directory round-trips (6.0 ms →
-    2.9 ms on otto's own tests/) — and this runs twice per ``--tests`` TAB,
-    where round-trips are what cost on a network filesystem. ``fnmatchcase``
-    rather than ``fnmatch``: the latter normalizes case per-platform, which
-    would silently widen the match on a case-insensitive filesystem.
+    ``os.walk`` rather than ``rglob``, for three reasons that all matter on
+    the completion fast path (this runs twice per ``--tests`` TAB):
+
+    - It PRUNES the directories pytest's own ``norecursedirs`` skips. ``rglob``
+      descended into ``.venv`` / ``.tox`` / ``.git``; a venv living under a
+      tests dir measured 83 ms warm, for files pytest would never collect.
+    - One walk, not one per pattern. Every pattern ends in ``.py``, so a
+      single traversal plus a name match is set-identical to N ``rglob``s for
+      a fraction of the directory round-trips — which is what costs on a
+      network filesystem.
+    - It yields files and directories separately, so a DIRECTORY named
+      ``test_x.py`` is no longer matched and stat'd as though it were a file.
+
+    ``fnmatchcase`` rather than ``fnmatch``: the latter normalizes case
+    per-platform, which would silently widen the match on a case-insensitive
+    filesystem.
     """
-    return {p for p in test_dir.rglob("*.py") if any(fnmatchcase(p.name, q) for q in patterns)}
+    found: set[Path] = set()
+    for root, dirs, files in os.walk(test_dir):
+        dirs[:] = [d for d in dirs if not _is_norecurse_dir(d)]
+        base = Path(root)
+        found.update(base / name for name in files if any(fnmatchcase(name, q) for q in patterns))
+    return found
 
 
-def _test_sources(test_dir: Path, sut_dir: Path) -> set[Path]:
+def _is_norecurse_dir(name: str) -> bool:
+    """Mirror of pytest's default ``norecursedirs``.
+
+    ``*.egg .* _darcs build CVS dist node_modules venv {arch}`` — pytest never
+    collects from these, so neither reader should walk them.
+    """
+    return name.startswith(".") or name.endswith(".egg") or name in _NORECURSE_NAMES
+
+
+def _test_sources(test_dir: Path, sut_dir: Path, patterns: "Sequence[str]") -> set[Path]:
     """Every path whose edit can change a ``--tests`` name under *test_dir*.
 
     A set, because ``test_a_test.py`` matches both patterns. Paths that do not
     exist are fine and wanted — :func:`_hash_file` records them as ``missing:``,
     so the digest moves when one appears.
     """
-    found = _match_py_files(test_dir, (*TEST_FILE_PATTERNS, CONFTEST_FILENAME))
+    found = _match_py_files(test_dir, [*patterns, CONFTEST_FILENAME])
     # conftest.py ABOVE the tests dir counts too. `Repo.collect_tests` passes
     # the tests dirs as pytest args with the SUT as rootdir, so a conftest
     # anywhere between them is loaded, and a `pytest_generate_tests` there
@@ -429,9 +477,17 @@ def compute_fingerprint(repos: list["Repo"]) -> str:
             if not resolved:
                 h.update(f"unresolved:{init_mod}\n".encode())
 
+        # The pytest config files themselves: `python_files` decides which
+        # files below even count, so an edit to it must move the digest as
+        # surely as an edit to a test. Missing ones hash as "missing:", which
+        # is what lets ADDING a pytest.ini invalidate the cache.
+        for cfg in pytest_config_paths(repo.sut_dir):
+            _hash_file(h, cfg)
+
+        patterns = configured_python_files(repo.sut_dir)
         for test_dir in repo.tests:
             if test_dir.is_dir():
-                for t in sorted(_test_sources(test_dir, repo.sut_dir)):
+                for t in sorted(_test_sources(test_dir, repo.sut_dir, patterns)):
                     _hash_file(h, t)
 
         # Host-ID sources: lab.json under each configured lab search path.
@@ -1240,7 +1296,9 @@ def collect_host_ids_by_lab(repos: list["Repo"]) -> dict[str, list[str]]:
 def collect_test_names(repos: list["Repo"]) -> list[str]:
     """Statically discover test names for ``otto test --tests`` completion.
 
-    Parses every ``test_*.py`` / ``*_test.py`` under each repo's test dirs with
+    Parses every file matching the repo's pytest ``python_files`` (its own, if
+    it configures one — see :func:`~otto.config.repo.configured_python_files`)
+    under each repo's test dirs with
     :mod:`ast` — no import, no collection, no user code — and returns the base
     names of top-level ``def test_*`` / ``async def test_*`` functions plus, for
     each ``Test*`` class, its ``test_*`` methods (emitted both bare and as
@@ -1252,17 +1310,19 @@ def collect_test_names(repos: list["Repo"]) -> list[str]:
     of which are visible to a source scan. So a *parametrized-only* id or a
     dynamically generated test will not appear here — those still need
     ``--list-tests`` — but every statically-defined test name does, without
-    ever executing test code at tab time. Kept in lockstep with pytest's
-    default ``python_files`` / ``python_classes`` / ``python_functions``.
+    ever executing test code at tab time. ``python_files`` is read from the
+    repo's pytest config; ``python_classes`` / ``python_functions`` are still
+    assumed to be pytest's defaults.
     """
     import ast
 
     names: set[str] = set()
     for repo in repos:
+        patterns = configured_python_files(repo.sut_dir)
         for test_dir in repo.tests:
             if not test_dir.exists():
                 continue
-            for path in sorted(_match_py_files(test_dir, TEST_FILE_PATTERNS)):
+            for path in sorted(_match_py_files(test_dir, patterns)):
                 try:
                     tree = ast.parse(path.read_text(), filename=str(path))
                 except (OSError, SyntaxError):

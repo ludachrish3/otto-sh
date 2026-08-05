@@ -13,6 +13,7 @@ option entirely.
 import inspect
 import json
 import time
+from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Annotated
 from unittest.mock import MagicMock
@@ -21,6 +22,7 @@ import pytest
 import typer
 
 from otto.config import completion_cache as cc
+from otto.config.repo import PYTEST_CONFIG_NAMES, configured_python_files
 
 
 def test_read_cache_returns_none_for_empty_repos(tmp_path: Path, monkeypatch) -> None:
@@ -226,7 +228,7 @@ def test_fingerprint_and_static_scan_read_the_same_patterns(tmp_path: Path) -> N
     repo = _tests_repo(tmp_path)
     (tmp_path / "tests" / "unit").mkdir(parents=True)
 
-    for i, pattern in enumerate(cc.TEST_FILE_PATTERNS):
+    for i, pattern in enumerate(configured_python_files(tmp_path)):
         before = cc.compute_fingerprint([repo])
         path = tmp_path / "tests" / "unit" / pattern.replace("*", f"case{i}")
         path.write_text(f"def test_case{i}(): pass\n")
@@ -964,3 +966,276 @@ def test_collect_skips_invalid_host_dict(tmp_path: Path) -> None:
     repo = _make_fake_repo(tmp_path)
 
     assert cc.collect_docker_capable_host_ids([repo]) == []
+
+
+# ── pytest's python_files override ───────────────────────────────────────────
+
+
+def _write(sut_dir: Path, filename: str, body: str) -> None:
+    sut_dir.mkdir(parents=True, exist_ok=True)
+    (sut_dir / filename).write_text(body)
+
+
+#: (id, {filename: body}, expected patterns). Each case is ALSO checked against
+#: the real pytest in `test_python_files_matches_what_pytest_itself_collects`,
+#: so "expected" is not just my reading of the docs.
+_CONFIG_CASES: list[tuple[str, dict[str, str], list[str]]] = [
+    ("none", {}, ["test_*.py", "*_test.py"]),
+    ("pytest_ini", {"pytest.ini": "[pytest]\npython_files = check_*.py\n"}, ["check_*.py"]),
+    (
+        "dot_pytest_ini",
+        {".pytest.ini": "[pytest]\npython_files = check_*.py\n"},
+        ["check_*.py"],
+    ),
+    (
+        "pytest_toml",
+        {"pytest.toml": '[pytest]\npython_files = ["check_*.py"]\n'},
+        ["check_*.py"],
+    ),
+    (
+        "pyproject_ini_options",
+        {"pyproject.toml": '[tool.pytest.ini_options]\npython_files = ["check_*.py"]\n'},
+        ["check_*.py"],
+    ),
+    (
+        "pyproject_native_toml",
+        {"pyproject.toml": '[tool.pytest]\npython_files = ["check_*.py"]\n'},
+        ["check_*.py"],
+    ),
+    ("tox_ini", {"tox.ini": "[pytest]\npython_files = check_*.py\n"}, ["check_*.py"]),
+    (
+        "setup_cfg",
+        {"setup.cfg": "[tool:pytest]\npython_files = check_*.py\n"},
+        ["check_*.py"],
+    ),
+    # The regression this matrix exists for: pytest stops at the FIRST file
+    # that counts as its config and never falls through on a missing key, so a
+    # leftover pyproject table next to a pytest.ini is ignored entirely.
+    # Reading it instead blinds both readers to every real test.
+    (
+        "pytest_ini_wins_over_pyproject",
+        {
+            "pytest.ini": "[pytest]\ntestpaths = tests\n",
+            "pyproject.toml": '[tool.pytest.ini_options]\npython_files = ["check_*.py"]\n',
+        },
+        ["test_*.py", "*_test.py"],
+    ),
+    (
+        "empty_pytest_ini_still_counts",
+        {
+            "pytest.ini": "",
+            "tox.ini": "[pytest]\npython_files = check_*.py\n",
+        },
+        ["test_*.py", "*_test.py"],
+    ),
+    # A tox.ini with no [pytest] section is NOT pytest's config, so the search
+    # continues past it — the mirror image of the case above.
+    (
+        "tox_without_pytest_section_is_skipped",
+        {
+            "tox.ini": "[tox]\nenvlist = py310\n",
+            "setup.cfg": "[tool:pytest]\npython_files = check_*.py\n",
+        },
+        ["check_*.py"],
+    ),
+    # Quoted pattern with a space: pytest splits ini "args" with shlex.
+    (
+        "shlex_quoted_pattern",
+        {"pytest.ini": '[pytest]\npython_files = "my check*.py" other*.py\n'},
+        ["my check*.py", "other*.py"],
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    ("files", "expected"),
+    [(files, expected) for _id, files, expected in _CONFIG_CASES],
+    ids=[case_id for case_id, _f, _e in _CONFIG_CASES],
+)
+def test_python_files_is_read_the_way_pytest_reads_it(
+    tmp_path: Path, files: dict[str, str], expected: list[str]
+) -> None:
+    for name, body in files.items():
+        _write(tmp_path, name, body)
+    assert configured_python_files(tmp_path) == expected
+
+
+@pytest.mark.parametrize(
+    ("files", "expected"),
+    [(files, expected) for _id, files, expected in _CONFIG_CASES],
+    ids=[case_id for case_id, _f, _e in _CONFIG_CASES],
+)
+def test_python_files_matches_what_pytest_itself_collects(
+    tmp_path: Path, files: dict[str, str], expected: list[str]
+) -> None:
+    """Differential: otto's answer must agree with the REAL pytest, per case.
+
+    The precedence rules here are subtle enough that a table of expectations
+    written from the docs is worth exactly nothing — the first version of this
+    reader fell through on a missing key, which no amount of re-reading the
+    docs revealed. So every case above is also run through a real pytest
+    collection, and the two must select the same files.
+    """
+    import subprocess
+    import sys
+
+    for name, body in files.items():
+        _write(tmp_path, name, body)
+    tests = tmp_path / "tests"
+    tests.mkdir()
+    (tests / "test_default.py").write_text("def test_default(): pass" + chr(10))
+    (tests / "check_alt.py").write_text("def test_alt(): pass" + chr(10))
+
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "--collect-only",
+            "-q",
+            "--no-header",
+            "-p",
+            "no:cacheprovider",
+        ],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    collected = {
+        line.split("::")[0].split("/")[-1] for line in proc.stdout.splitlines() if "::" in line
+    }
+    otto_selects = {
+        name
+        for name in ("test_default.py", "check_alt.py")
+        if any(fnmatchcase(name, pat) for pat in configured_python_files(tmp_path))
+    }
+    assert otto_selects == collected, proc.stdout
+
+
+def test_explicitly_empty_python_files_is_not_the_default(tmp_path: Path) -> None:
+    """`python_files = []` tells pytest to collect nothing; absent means defaults."""
+    _write(tmp_path, "pyproject.toml", "[tool.pytest.ini_options]\npython_files = []\n")
+    assert configured_python_files(tmp_path) == []
+
+
+def test_a_percent_in_python_files_does_not_explode(tmp_path: Path) -> None:
+    """pytest parses ini files with iniconfig, which does no interpolation.
+
+    configparser's default BasicInterpolation would raise
+    InterpolationSyntaxError straight out of the completion fast path — and
+    `cli/main.py` suppresses only OSError around the cache write, so it would
+    traceback on every command, not just on TAB.
+    """
+    _write(tmp_path, "pytest.ini", "[pytest]\npython_files = test_%d_*.py\n")
+    assert configured_python_files(tmp_path) == ["test_%d_*.py"]
+
+
+def test_overridden_python_files_reach_both_readers(tmp_path: Path) -> None:
+    """The whole point: the scan NAMES it and the digest STATS it.
+
+    Verified live against pytest before this landed — with
+    ``python_files = check_*.py test_*.py``, pytest collects
+    ``check_alt.py::test_alt`` while otto's completer offered nothing and its
+    digest never moved, so the stale name-set survived its full 24h TTL.
+    """
+    _write(tmp_path, "pytest.ini", "[pytest]\npython_files = check_*.py test_*.py\n")
+    repo = _tests_repo(tmp_path)
+    (tmp_path / "tests" / "unit").mkdir(parents=True)
+
+    before = cc.compute_fingerprint([repo])
+    (tmp_path / "tests" / "unit" / "check_alt.py").write_text("def test_alt(): pass\n")
+
+    assert "test_alt" in cc.collect_test_names([repo]), "the scan must honour python_files"
+    assert cc.compute_fingerprint([repo]) != before, "the digest must honour it too"
+
+
+def test_editing_the_pytest_config_itself_moves_the_digest(tmp_path: Path) -> None:
+    """`python_files` decides which files count, so it is a source in its own right.
+
+    Without this, adding ``python_files = check_*.py`` to a pyproject.toml
+    changes what the completer should offer while the digest sits still.
+    """
+    repo = _tests_repo(tmp_path)
+    before = cc.compute_fingerprint([repo])
+    _write(tmp_path, "pytest.ini", "[pytest]\npython_files = check_*.py test_*.py\n")
+    assert cc.compute_fingerprint([repo]) != before
+
+
+def test_the_walk_prunes_what_pytest_never_collects(tmp_path: Path) -> None:
+    """`.venv` / `.tox` / `build` under a tests dir are pytest's norecursedirs.
+
+    rglob descended into them: a venv tree measured 83 ms warm, on a path that
+    runs twice per TAB, for files pytest would never collect — and whose
+    mtimes would then invalidate completion for no reason.
+    """
+    repo = _tests_repo(tmp_path)
+    tests = tmp_path / "tests"
+    before = cc.compute_fingerprint([repo])
+
+    for skipped in (".venv/lib", ".tox/py310", "build", "node_modules", "sub.egg"):
+        d = tests / skipped
+        d.mkdir(parents=True)
+        (d / "test_vendored.py").write_text("def test_vendored(): pass\n")
+
+    assert cc.compute_fingerprint([repo]) == before, "pruned dirs must not move the digest"
+    assert "test_vendored" not in cc.collect_test_names([repo])
+
+
+def test_a_directory_named_like_a_test_file_is_not_a_test_source(tmp_path: Path) -> None:
+    """`rglob` matched directories too, and `_hash_file` folded their mtime in,
+    so writing an unrelated file INSIDE one moved the digest."""
+    repo = _tests_repo(tmp_path)
+    (tmp_path / "tests" / "test_dirname.py").mkdir(parents=True)
+    before = cc.compute_fingerprint([repo])
+    (tmp_path / "tests" / "test_dirname.py" / "payload.txt").write_text("x")
+    assert cc.compute_fingerprint([repo]) == before
+
+
+@pytest.mark.parametrize("name", sorted(PYTEST_CONFIG_NAMES))
+def test_every_pytest_config_file_is_in_the_digest(tmp_path: Path, name: str) -> None:
+    """Each of the seven, not just the one the other tests happen to write.
+
+    `python_files` decides which files below even count, so every file pytest
+    might read it from is a fingerprint source. Dropping any one of them from
+    `pytest_config_paths` leaves a repo configured that way permanently stale.
+    """
+    repo = _tests_repo(tmp_path)
+    before = cc.compute_fingerprint([repo])
+    (tmp_path / name).write_text("# pytest config" + chr(10))
+    assert cc.compute_fingerprint([repo]) != before, f"{name} is not a digest source"
+
+
+@pytest.mark.parametrize(
+    ("dirname", "pruned"),
+    [
+        (".venv", True),
+        (".tox", True),
+        (".git", True),
+        ("sub.egg", True),
+        ("_darcs", True),
+        ("build", True),
+        ("CVS", True),
+        ("dist", True),
+        ("node_modules", True),
+        ("venv", True),
+        ("{arch}", True),
+        ("__pycache__", True),
+        # Near-misses that pytest DOES collect from — pruning these would
+        # blind both readers, which is the same failure in the other direction.
+        ("builds", False),
+        ("mybuild", False),
+        ("egg", False),
+        ("arch", False),
+        ("unit", False),
+    ],
+)
+def test_norecursedirs_table_matches_pytest(dirname: str, pruned: bool) -> None:
+    """The full default list, table-checked, including the near-misses.
+
+    pytest matches `norecursedirs` as fnmatch PATTERNS against the basename;
+    this reproduces `*.egg` and `.*` as suffix/prefix checks and the rest as
+    literals, so the table is the only thing that would catch a future edit
+    dropping one — or widening a literal into a prefix.
+    """
+    assert cc._is_norecurse_dir(dirname) is pruned

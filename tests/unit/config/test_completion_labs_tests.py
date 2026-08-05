@@ -36,7 +36,12 @@ class TestThing(OttoSuite):
 """
 
 
-def _repo(*, labs: list[Path] | None = None, tests: list[Path] | None = None):
+def _repo(
+    *,
+    labs: list[Path] | None = None,
+    tests: list[Path] | None = None,
+    sut_dir: Path | None = None,
+):
     """A stand-in Repo. `lab_settings={}` means "declares no [lab] block", so
     the host source is the built-in json backend over `labs` — what a real
     repo without a custom backend looks like."""
@@ -44,7 +49,10 @@ def _repo(*, labs: list[Path] | None = None, tests: list[Path] | None = None):
         labs=labs or [],
         tests=tests or [],
         lab_settings={},
-        sut_dir=(labs or [Path()])[0],
+        # NOT Path("."): `collect_test_names` reads the SUT's pytest config
+        # for `python_files`, so a CWD-relative default would read otto's own
+        # pyproject.toml out of whatever directory pytest ran from.
+        sut_dir=sut_dir or (labs or tests or [Path()])[0],
     )
 
 
