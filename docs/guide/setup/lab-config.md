@@ -97,6 +97,13 @@ the element with no board, but `slot` never appears without a board.
 host's id** — and, transitively, the id of any declared {ref}`link
 <lab-links>` whose `endpoints[].host` names it.
 
+An `os_profile` can supply any of those four fields as a default, so a host
+record that names no `board` may still get one — and a different id than the
+record alone suggests.  Values are also coerced before the id is built, so a
+JSON `3.0` becomes `3`.  When authoring a link endpoint, take the id from
+`otto host <TAB>` (or `otto --show-lab`) rather than composing it by eye: an
+endpoint naming an id no host answers to fails the lab load.
+
 When the same `element` string appears more than once in a lab, disambiguate
 with distinct `element` strings, an `element_id`, or `board`/`slot` — any of
 these changes the resulting id.  Two hosts that still resolve to the same id

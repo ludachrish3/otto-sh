@@ -8,10 +8,11 @@ every rule here unit-testable without a lab.
 import logging
 from collections.abc import Collection, Mapping
 from dataclasses import dataclass, field
+from difflib import get_close_matches
 from typing import Any
 
 from ..host.builtin_hosts import BUILTIN_LOCAL_HOST_ID
-from ..host.remote_host import make_host_id
+from ..host.factory import host_identity
 from ..models.link import LinkSpec
 from .model import Link, LinkEndpoint, Provenance
 
@@ -31,15 +32,24 @@ def addressing_from_dict(host_data: dict[str, Any]) -> tuple[str, HostAddressing
     """``(host_id, HostAddressing)`` from a raw lab.json host dict.
 
     Applies the interface string-shorthand (a bare string value is the ip),
-    mirroring ``InterfaceSpec``'s coercion — this reads *raw* dicts so
-    cross-lab (dangling) endpoints resolve without constructing hosts.
+    mirroring ``InterfaceSpec``'s coercion — it takes dicts rather than hosts
+    so cross-lab (dangling) endpoints resolve without constructing hosts.
+
+    The id comes from :func:`~otto.host.factory.host_identity`, NOT from
+    formatting the raw fields: it must equal the id ``lab.hosts`` is keyed by,
+    or a declared link either fails to resolve against a host that plainly
+    exists, or resolves to an endpoint naming a host that does not. Hand
+    derivation diverges under a float ``element_id`` (``dut3.0`` vs ``dut3``)
+    and under any ``os_profile`` that defaults ``board`` / ``slot`` /
+    ``element_id`` / ``element`` — invisible in the raw dict.
+
+    Consequently this is NOT a pure reader of self-contained data: it resolves
+    through the ``os_profile`` / ``command_frame`` registries and validates.
+    A record naming a profile or frame the current process never registered
+    RAISES, and callers enumerating whole files must skip such records rather
+    than let one deny the rest.
     """
-    host_id = make_host_id(
-        host_data["element"],
-        host_data.get("element_id"),
-        host_data.get("board"),
-        host_data.get("slot"),
-    )
+    host_id = host_identity(host_data).id
     raw = host_data.get("interfaces", {})
     interfaces = {
         name: (entry if isinstance(entry, str) else entry.get("ip", ""))
@@ -54,7 +64,13 @@ def _resolve_endpoint(
 ) -> LinkEndpoint:
     addressing = hosts.get(host_id)
     if addressing is None:
-        raise ValueError(f"unknown host {host_id!r} (no such host in any lab file)")
+        # Name the near-miss: a link endpoint written by hand is easy to get
+        # subtly wrong (an id whose board/slot come from an os_profile, or a
+        # numeric field rendered as `3.0`), and "no such host" for a host that
+        # is plainly in the file is a dead end without this.
+        close = get_close_matches(host_id, sorted(hosts), n=3)
+        hint = f" — did you mean {', '.join(repr(c) for c in close)}?" if close else ""
+        raise ValueError(f"unknown host {host_id!r} (no such host in any lab file){hint}")
     if interface is not None:
         if interface not in addressing.interfaces:
             known = ", ".join(sorted(addressing.interfaces)) or "<none defined>"

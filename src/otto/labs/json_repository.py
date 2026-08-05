@@ -163,19 +163,34 @@ class JsonFileLabRepository:
 
         from ..link.derive import addressing_from_dict, resolve_declared_links
 
+        # Only declared links consume `addressing`, and resolving an id costs a
+        # full profile-merge + validation per record across EVERY lab file — so
+        # a lab that declares no links (the default `otto init` writes, and the
+        # common case) skips the walk entirely rather than paying for a map
+        # nothing reads.
+        #
         # Guard: all_hosts_data spans ALL lab files, including entries never
         # validated (they belong to other labs) — skip shapes that can't
         # produce an id rather than crash link resolution on someone else's typo.
         # The requested lab's own hosts were already validated above, so any
         # exception here belongs to an unrelated lab's malformed record.
         addressing: dict[str, Any] = {}
-        for h in all_hosts_data:
-            if not (isinstance(h, dict) and isinstance(h.get("element"), str)):
+        for h in all_hosts_data if all_links_data else ():
+            # Only the dict check: an `element` guard would ALSO skip a record
+            # whose element comes from its os_profile, and that record's host
+            # does load — so a link naming it would fail against a host that
+            # plainly exists. The except below covers a genuinely element-less
+            # record, which now raises rather than KeyError-ing.
+            if not isinstance(h, dict):
                 continue
             try:
                 host_id, host_addressing = addressing_from_dict(h)
-            except Exception:  # noqa: BLE001 — per-item resilience, see guard above
-                logger.debug(f"Skipping malformed cross-lab host record: {h!r}")
+            except Exception as e:  # noqa: BLE001 — per-item resilience, see guard above
+                # Log the reason: this now also fires for a WELL-FORMED record
+                # whose os_profile / command_frame is registered by init modules
+                # this process never loaded, and the downstream symptom is a
+                # confusing "unknown host" for a host that is right there.
+                logger.debug(f"Skipping unresolvable host record {h!r}: {e}")
                 continue
             if host_id in addressing and addressing[host_id] != host_addressing:
                 logger.warning(

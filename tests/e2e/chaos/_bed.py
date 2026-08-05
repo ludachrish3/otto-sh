@@ -79,7 +79,17 @@ def veggies_link_id() -> str:
     rather than guessing the computed string.
     """
     data = json.loads(lab_data_path().read_text())
-    hosts = dict(addressing_from_dict(h) for h in data["hosts"])
+    # Skip records this process cannot resolve, mirroring JsonFileLabRepository:
+    # addressing_from_dict validates through the profile/frame registries, and
+    # tech1/lab.json's `sprout27` declares `command_frame: zephyr-inline`, which
+    # only a SUT repo's init modules register — never the pytest process.
+    hosts = {}
+    for h in data["hosts"]:
+        try:
+            host_id, addressing = addressing_from_dict(h)
+        except Exception:  # noqa: BLE001, S112 — one unresolvable record must not deny the rest
+            continue
+        hosts[host_id] = addressing
     loaded_ids = set(hosts)
     links = resolve_declared_links(data["links"], hosts, source="lab.json", loaded_ids=loaded_ids)
     link = links[0]  # tech1/lab.json declares exactly one link: carrot_seed:eth2<->tomato_seed:eth2
