@@ -147,7 +147,10 @@ input.
 
 The values are cached with the same policy as host ids (otto's completion cache,
 invalidated by the settings fingerprint and `--clear-autocomplete-cache`), because
-enumerating users can be slow and the list changes rarely. A cold cache yields
+enumerating users can be slow and the list changes rarely. The fingerprint is a
+stat over files, and a reservation backend's user list lives outside any of
+them — so a repo that configures one falls back to a short cache lifetime
+(minutes, not a day) rather than waiting for a file to change. A cold cache yields
 no suggestions and refreshes on the next normal run — completion never blocks on
 the backend.
 

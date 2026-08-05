@@ -46,6 +46,110 @@ def test_read_cache_returns_none_for_empty_repos(tmp_path: Path, monkeypatch) ->
     assert cc.read_cache([]) is None
 
 
+# ── Effective TTL: a non-file host source has no invalidation signal ─────────
+
+
+def _ttl_repo(tmp_path: Path, lab_settings: dict | None = None) -> MagicMock:
+    """A repo whose [lab] block is exactly *lab_settings* (None = no block)."""
+    repo = MagicMock()
+    repo.sut_dir = tmp_path / "sut"
+    repo.labs = []
+    repo.init = []
+    repo.libs = []
+    repo.tests = []
+    repo.lab_settings = {} if lab_settings is None else lab_settings
+    repo.reservation_settings = {}
+    return repo
+
+
+def test_json_backends_keep_the_long_ttl(tmp_path: Path) -> None:
+    """No [lab] block, or an explicit json one, means a lab.json fingerprint."""
+    assert cc._cache_ttl_seconds([]) == cc.CACHE_TTL_SECONDS
+    assert cc._cache_ttl_seconds([_ttl_repo(tmp_path)]) == cc.CACHE_TTL_SECONDS
+    assert cc._cache_ttl_seconds([_ttl_repo(tmp_path, {"backend": "json"})]) == cc.CACHE_TTL_SECONDS
+
+
+def test_a_reservation_backend_also_shortens_the_ttl(tmp_path: Path) -> None:
+    """The `usernames` field has the identical constant-digest problem.
+
+    The built-in json reservation backend implements no username completion,
+    so that field is populated exclusively by custom — typically networked —
+    backends, and the fingerprint tracks only settings.toml for them.
+    """
+    repo = _ttl_repo(tmp_path)
+    repo.reservation_settings = {"backend": "acme"}
+    assert cc._cache_ttl_seconds([repo]) == cc.UNFINGERPRINTED_CACHE_TTL_SECONDS
+
+
+def test_a_custom_backend_shortens_the_ttl(tmp_path: Path) -> None:
+    """A non-file host source's digest never moves, so the TTL is the only bound."""
+    repos = [_ttl_repo(tmp_path, {"backend": "cmdb"})]
+    assert cc._cache_ttl_seconds(repos) == cc.UNFINGERPRINTED_CACHE_TTL_SECONDS
+    assert cc.UNFINGERPRINTED_CACHE_TTL_SECONDS < cc.CACHE_TTL_SECONDS
+
+    # One custom repo among json ones is enough — the cache entry is shared.
+    mixed = [_ttl_repo(tmp_path), _ttl_repo(tmp_path, {"backend": "cmdb"})]
+    assert cc._cache_ttl_seconds(mixed) == cc.UNFINGERPRINTED_CACHE_TTL_SECONDS
+
+
+def test_a_repo_double_without_lab_settings_reads_as_json(tmp_path: Path) -> None:
+    """A MagicMock's auto-attribute must not be mistaken for a custom backend.
+
+    Guards the isinstance(...) check in _uses_non_json_lab_backend: without it,
+    every mock-based repo double in the suite would silently take the short TTL.
+    """
+    bare = MagicMock(spec=["sut_dir", "labs"])
+    bare.labs = []
+    assert cc._cache_ttl_seconds([bare]) == cc.CACHE_TTL_SECONDS
+
+    automocked = MagicMock()  # .lab_settings.get(...) returns a MagicMock
+    automocked.labs = []
+    assert cc._cache_ttl_seconds([automocked]) == cc.CACHE_TTL_SECONDS
+
+
+def test_read_cache_applies_the_short_ttl_to_a_custom_backend(tmp_path: Path, monkeypatch) -> None:
+    """An entry inside the long TTL but past the short one is served or not, by backend."""
+    monkeypatch.setenv("OTTO_XDIR", str(tmp_path))
+    json_repo = _ttl_repo(tmp_path)
+    cache_file = cc._cache_path()
+    assert cache_file is not None
+    cache_file.parent.mkdir(parents=True, exist_ok=True)
+
+    six_hours_ago = int(time.time()) - 6 * 60 * 60
+    entry = {
+        "schema_version": cc.SCHEMA_VERSION,
+        "generated_at": six_hours_ago,
+        "instructions": [],
+        "suites": [],
+        "hosts": [],
+        "hosts_by_lab": {},
+        "docker_hosts": [],
+        "term_backends": [],
+        "transfer_backends": [],
+        "usernames": [],
+        "commands": [],
+        "labs": [],
+        "tests": [],
+    }
+    cache_file.write_text(json.dumps({cc.compute_fingerprint([json_repo]): entry}))
+
+    # Same fingerprint inputs (labs=[] either way), different backend verdict.
+    assert cc.read_cache([json_repo]) is not None, "6h is well inside the 24h TTL"
+
+    custom = _ttl_repo(tmp_path, {"backend": "cmdb"})
+    assert cc.compute_fingerprint([custom]) == cc.compute_fingerprint([json_repo]), (
+        "positive control: the digest is identical — only the TTL differs"
+    )
+    assert cc.read_cache([custom]) is None, "6h is past the short TTL"
+
+    # ...and a FRESH entry is still served to that same custom repo, so the
+    # short TTL bounds staleness rather than disabling the cache (which would
+    # put a full bootstrap behind every TAB).
+    entry["generated_at"] = int(time.time()) - 60
+    cache_file.write_text(json.dumps({cc.compute_fingerprint([custom]): entry}))
+    assert cc.read_cache([custom]) is not None, "a 1-minute-old entry must still serve"
+
+
 def test_write_cache_skips_empty_repos(tmp_path: Path, monkeypatch) -> None:
     """Writing for empty repos must be a no-op — no file, no poisoned entry."""
     monkeypatch.setenv("OTTO_XDIR", str(tmp_path))

@@ -109,6 +109,15 @@ compute even when SUTs are large.
 
 A stale fingerprint is always safe: the fast path is skipped, the slow path
 runs as normal and rewrites the cache afterward.
+
+A *constant* fingerprint is the failure mode worth knowing about. A repo whose
+``[lab]`` backend is not the built-in json one, or which configures a
+``[reservations]`` backend, keeps its inventory somewhere no stat can see —
+so edits to it never move the digest, even though the repo may still have a
+``lab.json`` on disk for other reasons. Those repos fall back to a short TTL
+(``UNFINGERPRINTED_CACHE_TTL_SECONDS``) rather than the usual day, which is the
+only staleness bound available without querying the backend on the completion
+fast path.
 """
 
 import contextlib
@@ -144,6 +153,20 @@ LAB_FILENAME = "lab.json"
 # slow path to run periodically so annotation / option changes that don't
 # move any tracked file's mtime still eventually refresh.
 CACHE_TTL_SECONDS = 24 * 60 * 60
+
+# The TTL that applies when a repo's completion data comes from somewhere the
+# fingerprint cannot stat: a custom [lab] host source, or any [reservations]
+# backend (the built-in json one supplies no usernames, so that field is
+# always custom-backend data). Such a source contributes real completion data
+# but NO invalidation signal — the digest never moves however much the
+# inventory changes — so the TTL is the only staleness floor, and a day is far
+# too long for live inventory.
+#
+# Deliberately NOT a backend-supplied revision token: `compute_fingerprint`
+# runs on the completion fast path, and querying a possibly-networked backend
+# there is exactly the cost this cache exists to avoid — it would make every
+# TAB keystroke depend on the inventory service being reachable.
+UNFINGERPRINTED_CACHE_TTL_SECONDS = 5 * 60
 
 
 # --- Collected (pytest-accurate) test-name cache, for --tests completion -----
@@ -247,6 +270,64 @@ def clear_cache() -> bool:
         return True
 
 
+def _has_unfingerprinted_source(repos: list["Repo"]) -> bool:
+    """Report whether any repo's completion data comes from outside the digest.
+
+    Two such sources, both pure dict reads of already-parsed settings — no
+    pydantic, no backend construction, no I/O, so this is safe on the
+    completion fast path:
+
+    - a ``[lab] backend`` other than ``"json"`` (hosts, lab names). ``backend``
+      defaults to ``"json"`` (:class:`~otto.models.settings.LabConfigSpec`), so
+      an absent ``[lab]`` block reads as json.
+    - any ``[reservations]`` backend (``--as-user`` names). The built-in json
+      reservation backend does not implement username completion at all, so
+      that field is populated *exclusively* by custom, typically networked
+      backends — the same constant-digest problem, one field over.
+
+    Switching either backend rewrites ``settings.toml``, whose mtime IS in the
+    digest, so a repo can never inherit a cache entry written under a
+    different backend choice. That invariant is what makes an entry-wide (not
+    per-repo) TTL correct.
+
+    Known limitation: a repo may re-register ``"json"`` with a replacement
+    class (``register_lab_repository("json", ..., overwrite=True)``), which
+    this cannot see without constructing the backend. ``build_lab_repository``
+    hardcodes the ``cls(search_paths=...)`` contract for that name, so a
+    replacement is deliberately impersonating the file backend; it inherits
+    file-backed invalidation and ``--clear-autocomplete-cache``.
+    """
+    for repo in repos:
+        backend = getattr(repo, "lab_settings", {}).get("backend", "json")
+        if isinstance(backend, str) and backend != "json":
+            return True
+        # `isinstance(..., dict)` for the same reason as the `str` check above:
+        # a test double's auto-attribute is truthy but is not settings.
+        reservations = getattr(repo, "reservation_settings", None)
+        if isinstance(reservations, dict) and reservations:
+            return True
+    return False
+
+
+def _cache_ttl_seconds(repos: list["Repo"]) -> int:
+    """Effective completion-cache TTL for *repos*.
+
+    Shortened when any repo's completion data comes from a source the
+    fingerprint cannot see — see :data:`UNFINGERPRINTED_CACHE_TTL_SECONDS`.
+
+    Applies to the main completion entry only. The collected-test-name cache
+    keeps the long TTL: its content tracks test files, whose top-level
+    ``test_*.py`` mtimes the fingerprint does hash. (That coverage is not
+    total — ``compute_fingerprint`` globs one pattern at the top level while
+    ``collect_test_names`` walks recursively for two, and ``conftest.py`` is
+    not hashed at all — but the gap is a file-source invalidation hole to
+    close directly, not something a TTL should paper over.)
+    """
+    if _has_unfingerprinted_source(repos):
+        return UNFINGERPRINTED_CACHE_TTL_SECONDS
+    return CACHE_TTL_SECONDS
+
+
 def _hash_file(h: "hashlib._Hash", path: Path) -> None:
     try:
         st = path.stat()
@@ -287,8 +368,9 @@ def compute_fingerprint(repos: list["Repo"]) -> str:
 
         # Host-ID sources: lab.json under each configured lab search path.
         # Adding these to the fingerprint lets the cache self-invalidate on
-        # edits. (Future DB-backed sources will need a different staleness
-        # signal — likely a pure TTL or DB revision token.)
+        # edits. A non-file backend has no such signal — its digest never
+        # moves — so it falls back to a short TTL instead
+        # (_cache_ttl_seconds / UNFINGERPRINTED_CACHE_TTL_SECONDS).
         for lab_path in repo.labs:
             _hash_file(h, lab_path / LAB_FILENAME)
 
@@ -475,7 +557,7 @@ def read_cache(repos: list["Repo"]) -> dict[str, Any] | None:
     generated_at = entry.get("generated_at")
     if not isinstance(generated_at, (int, float)):
         return None
-    if time.time() - generated_at > CACHE_TTL_SECONDS:
+    if time.time() - generated_at > _cache_ttl_seconds(repos):
         return None
     instructions = entry.get("instructions")
     suites = entry.get("suites")
@@ -1030,16 +1112,40 @@ def collect_host_ids_by_lab(repos: list["Repo"]) -> dict[str, list[str]]:
     ``lab_names``). Keeping buckets to true membership also means a bogus lab
     name resolves to exactly the built-ins on both the warm and cold paths.
 
-    Written by the slow-path cache writer only, so the per-lab rescan of
-    ``lab.json`` is not on any latency-sensitive path.
+    Written by the slow-path cache writer only. Even so it enumerates ONCE and
+    groups by membership rather than calling :func:`collect_host_ids` per lab:
+    that shape was O(labs²) backend queries for a non-file host source, which
+    the short TTL for those sources (see :func:`_cache_ttl_seconds`) would
+    have made a recurring cost rather than a once-a-day one.
     """
     from ..host.builtin_hosts import builtin_host_ids
+    from ..host.remote_host import slug
+    from .lab import logical_indices
 
     builtins = set(builtin_host_ids())
-    return {
-        lab: [h for h in collect_host_ids(repos, lab_names=[lab]) if h not in builtins]
-        for lab in collect_lab_names(repos)
-    }
+    # Seed every known lab so one whose hosts all fail to enumerate still gets
+    # an (empty) bucket, keeping this shape identical to the per-lab form.
+    by_lab: dict[str, dict[str, "HostSummary"]] = {lab: {} for lab in collect_lab_names(repos)}
+    for repo in repos:
+        for summary in repo_host_summaries(repo):
+            if summary.id in builtins:
+                continue
+            for lab in summary.labs:
+                by_lab.setdefault(lab, {})[summary.id] = summary
+
+    buckets: dict[str, list[str]] = {}
+    for lab, summaries in by_lab.items():
+        ids = set(summaries)
+        # Logical handles are scoped to the lab, exactly as the per-lab
+        # collect_host_ids(lab_names=[lab]) call computed them: a group is
+        # "repeated" relative to the hosts in THIS lab, not the whole fleet.
+        positions = logical_indices(summaries.values())
+        for summary in summaries.values():
+            pos = positions.get(summary.id)
+            if pos is not None:
+                ids.add(f"{slug(summary.element)}{pos}")
+        buckets[lab] = sorted(ids)
+    return buckets
 
 
 def collect_test_names(repos: list["Repo"]) -> list[str]:
