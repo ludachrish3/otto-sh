@@ -61,13 +61,18 @@ is reserved for *listing* paths (help, completion); *dispatch* fails loud.
 
 ## Outcomes have one shape
 
-Public API returns a {mod}`otto.result` family value, raises an
-{class}`~otto.errors.OttoError`, or returns a documented plain scalar —
-never a bare `Status`, which strands the caller with a verdict and no exit
-code, command, or output. Exit codes are *derived* from results at one seam
-(the leaf-invoke wrapper), so the CLI has no exit-code logic of its own to
-drift. Both halves are enforced: an ast-grep rule for the returns,
-a test sweep for the raises. ({doc}`utilities/results`)
+Public API returns a {mod}`otto.result` family value, raises, or returns a
+documented plain scalar — never a bare `Status`, which strands the caller
+with a verdict and no exit code, command, or output. Exit codes are
+*derived* from results at one seam (the leaf-invoke wrapper), so the CLI has
+no exit-code logic of its own to drift.
+
+The returns half is enforced by an ast-grep rule. The raises half is a
+NAMING rule, not a raising rule: every exception otto *defines* is an
+{class}`~otto.errors.OttoError` (a test sweep enforces that), while an
+ordinary rejected argument is still a bare `ValueError`. So `except
+OttoError` asks "was this otto's own named failure?", not "did otto raise?".
+({doc}`utilities/results`)
 
 ## Logging: most-restrictive wins, and only for command I/O
 

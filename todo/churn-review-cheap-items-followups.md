@@ -61,12 +61,17 @@ items from the follow-up commits' own reviews are at the end.
   reach `otto run` without passing the check. Airtight enforcement would live
   in `InstructionEntry.__post_init__` or `make_registry_group.get_command`.
 
-- **`raise TypeError` vs the OttoError convention.** `errors.py` says "every
-  exception otto raises subclasses `OttoError`", but
-  `tests/unit/test_error_base.py` sweeps class DEFINITIONS, not raise sites,
-  and `src/` has ~40 bare stdlib raises. Either the prose should say "every
-  exception otto DEFINES" or the sweep should grow a raise-site rule. Same
-  decay pattern the churn review's P5 describes.
+- **DONE** — **`raise TypeError` vs the OttoError convention.** Resolved the
+  prose way, not the rule way: the real count is **330** bare stdlib raise
+  sites, not ~40 (179 `ValueError`, 63 `RuntimeError`, 42
+  `NotImplementedError`, 16 `TypeError`, …), so a raise-site rule is a
+  workstream and a count ratchet would be a metric target. `errors.py`,
+  `docs/library/index.md`, `docs/architecture/principles.md` and
+  `docs/architecture/utilities/results.md` now say DEFINES and spell out
+  exactly what each catch clause does and does not reach — 284/330 sites and
+  15/24 named classes for `except (ValueError, RuntimeError)`, all but five
+  raises for `except Exception`. The sweep also grew three missing halves
+  (declaration completeness, aliased bases, vacuous `Exception` rows).
 
 - **A `!` in a conventional-commit type is inert in the changelog.**
   `cliff.toml` maps `^fix` to "Fixed" with no breaking-change parser, so
@@ -333,6 +338,17 @@ to `otto run` and `@cli_command` rather than applied to every leaf:
   profile would have to give every host the same ip) but not impossible, and
   `impairment_refusal` would call such an in-path link impairable while the
   scan refuses it. The raw-vs-merged split is the interesting half.
+
+## From `docs(errors): the OttoError convention says what it means`
+
+- **The RAISES convention is gated at class-definition level only.** A public
+  function raising a bare `ValueError` is still ordinary, so `except OttoError`
+  covers otto's named failures and nothing else. Making it cover every raise
+  means naming 330 sites, most of which are argument validation where a bare
+  `ValueError` is the right answer. If it is ever wanted, the tractable
+  subset is the ~63 `RuntimeError` sites (live/operational failures, where a
+  caller most plausibly wants "was that otto?") rather than the 179
+  `ValueError` ones.
 
 ## Observed flake (not caused by this wave)
 

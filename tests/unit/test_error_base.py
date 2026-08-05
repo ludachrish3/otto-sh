@@ -1,10 +1,27 @@
-"""The OttoError invariant: every public exception otto raises is an OttoError.
+"""The OttoError invariant: every public exception otto DEFINES is an OttoError.
 
 Converts the churn-and-design review's "every subsystem names its outcome
 convention" policy into a gate: each public exception class keeps its original
 stdlib root (so existing ``except ValueError`` / ``except RuntimeError``
 handlers stay correct) while also subclassing :class:`otto.errors.OttoError`,
-so one ``except OttoError`` clause catches anything otto raised.
+so one ``except OttoError`` clause catches all of them at once.
+
+DEFINES, not raises. otto also raises plain stdlib exceptions at several
+hundred sites — rejecting an argument with a bare ``ValueError`` is ordinary
+and is not going to change — so ``except OttoError`` means "one of otto's
+named failures", never "anything otto raised". The gate is scoped to the
+claim that is actually true; the docstrings that claimed the wider one have
+been corrected.
+
+Four properties, and the last two exist because the first two together let a
+new error through. The sweep proves a class reaches ``OttoError``; ``CASES``
+proves a class keeps its stdlib root. But nothing made a NEW class appear in
+``CASES``, and a ``CASES`` row declaring bare ``Exception`` asserts nothing —
+every exception is an ``Exception``. So ``class FooError(OttoError)`` passed
+both while being uncatchable by any ``except ValueError`` in a caller's code,
+and ``(FooError, Exception)`` "fixed" it without changing anything. Seven
+classes genuinely have no stdlib root; they are now listed by name, which is
+what lets the assertion fail for the eighth.
 
 This file owns the RAISES half of the convention. The RETURNS half — public
 API returns a Result-family value, never a bare ``Status`` — is gated by
@@ -68,11 +85,35 @@ CASES: list[tuple[type[BaseException], type[BaseException]]] = [
 ]
 
 
+DELIBERATELY_ROOTLESS: frozenset[type[BaseException]] = frozenset(
+    {
+        # Nothing generic to keep: these never existed as a stdlib type a
+        # caller could already be catching, so `Exception` in CASES is their
+        # honest answer rather than an unfilled slot. Listing them is what
+        # makes the `is not Exception` assertion below able to fail: every
+        # exception IS an Exception, so an undeclared `(Foo, Exception)` row
+        # asserts nothing at all.
+        BootstrapError,
+        DependencyError,
+        LabContextError,
+        LabRepositoryError,
+        LabNotFoundError,
+        ReservationBackendError,
+        MissingReservationError,
+    }
+)
+
+
 @pytest.mark.parametrize(("cls", "stdlib_root"), CASES, ids=[cls.__name__ for cls, _ in CASES])
 def test_public_exception_is_ottoerror_and_keeps_stdlib_root(cls, stdlib_root):
     """Re-parenting added OttoError without disturbing the original stdlib root."""
     assert issubclass(cls, OttoError)
     assert issubclass(cls, stdlib_root)
+    assert stdlib_root is not Exception or cls in DELIBERATELY_ROOTLESS, (
+        f"{cls.__name__} declares a stdlib_root of bare Exception, which every "
+        "exception satisfies — give it the root it actually keeps, or add it to "
+        "DELIBERATELY_ROOTLESS to say it has none on purpose"
+    )
 
 
 def test_sync_phase_interrupt_stays_outside_ottoerror():
@@ -106,26 +147,44 @@ _SWEEP_EXCLUSIONS = frozenset(
 )
 
 
-def _base_names(node) -> set[str]:
+def _import_aliases(tree) -> dict[str, str]:
+    """``{local name: original name}`` for this module's ``from X import Y as Z``.
+
+    Load-bearing: bases are resolved by NAME, so without this
+    ``from ..errors import OttoError as _Base`` then ``class E(_Base)`` is
+    invisible to BOTH sweeps below — the class is public and OttoError-rooted
+    at runtime, but ``_Base`` is neither a stdlib seed nor a known family
+    member, so it never joins the family and never has to declare anything.
+    """
+    import ast
+
+    aliases: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                if alias.asname:
+                    aliases[alias.asname] = alias.name
+    return aliases
+
+
+def _base_names(node, aliases: dict[str, str]) -> set[str]:
     import ast
 
     names: set[str] = set()
     for base in node.bases:
         if isinstance(base, ast.Name):
-            names.add(base.id)
+            names.add(aliases.get(base.id, base.id))
         elif isinstance(base, ast.Attribute):
             names.add(base.attr)
     return names
 
 
-def test_every_public_exception_in_src_is_ottoerror_rooted():
-    """AST sweep: no public Exception-family class under src/otto escapes OttoError.
+def _sweep_src() -> tuple[set[str], set[str], dict[str, str]]:
+    """``(family, rooted, file_by_class)`` for every class under ``src/otto``.
 
-    Statically walks every module, fixpoints the exception family from the
+    Statically walks every module and fixpoints the exception family from the
     stdlib seeds (so grandchildren like ``DependencyError(BootstrapError)``
-    count), then requires each PUBLIC member to reach ``OttoError`` through
-    its base chain or appear in the explicit exclusion list. Private
-    (``_``-prefixed) classes are internal control-flow signals and exempt.
+    count), then fixpoints which of those reach ``OttoError``.
     """
     import ast
     from pathlib import Path
@@ -135,14 +194,23 @@ def test_every_public_exception_in_src_is_ottoerror_rooted():
 
     bases_by_class: dict[str, set[str]] = {}
     file_by_class: dict[str, str] = {}
+    collisions: list[str] = []
     for py in sorted(src.rglob("*.py")):
         tree = ast.parse(py.read_text(encoding="utf-8"))
+        aliases = _import_aliases(tree)
         for node in ast.walk(tree):
             if isinstance(node, ast.ClassDef) and node.bases:
-                # First definition wins on a (non-exception) name collision;
-                # exception class names are unique across src/otto today.
-                bases_by_class.setdefault(node.name, _base_names(node))
-                file_by_class.setdefault(node.name, str(py.relative_to(src)))
+                rel = str(py.relative_to(src))
+                if node.name in bases_by_class:
+                    collisions.append(f"{node.name} ({file_by_class[node.name]} and {rel})")
+                bases_by_class.setdefault(node.name, _base_names(node, aliases))
+                file_by_class.setdefault(node.name, rel)
+    # Resolution is by bare name across the whole tree, so the FIRST definition
+    # of a duplicated name wins and the second becomes invisible — a non-
+    # exception `Product` would hide an exception `Product` from every gate
+    # here. There are no duplicates today; this keeps that a fact rather than
+    # a comment, since the failure mode is silence.
+    assert not collisions, f"class names must be unique across src/otto: {sorted(collisions)}"
 
     # Fixpoint 1: which classes are exception-family?
     family: set[str] = set()
@@ -164,6 +232,17 @@ def test_every_public_exception_in_src_is_ottoerror_rooted():
                 rooted.add(name)
                 changed = True
 
+    return family, rooted, file_by_class
+
+
+def test_every_public_exception_in_src_is_ottoerror_rooted():
+    """AST sweep: no public Exception-family class under src/otto escapes OttoError.
+
+    Requires each PUBLIC member of the family to reach ``OttoError`` through
+    its base chain or appear in the explicit exclusion list. Private
+    (``_``-prefixed) classes are internal control-flow signals and exempt.
+    """
+    family, rooted, file_by_class = _sweep_src()
     offenders = sorted(
         f"{name} ({file_by_class[name]})"
         for name in family
@@ -181,3 +260,33 @@ def test_every_public_exception_in_src_is_ottoerror_rooted():
     assert {"BootstrapError", "DependencyError", "LoginProxyError"} <= family
     assert "SyncPhaseInterrupt" in family
     assert "SyncPhaseInterrupt" not in rooted
+
+
+def test_every_ottoerror_subclass_declares_its_stdlib_root():
+    """The completeness half: CASES must name every public OttoError subclass.
+
+    Without this, `class FooError(OttoError)` passes the sweep above (it does
+    reach OttoError) while carrying no stdlib root at all — so the "existing
+    ``except ValueError`` handlers keep working" half of the convention, the
+    half that is invisible from the class statement, is silently not true for
+    it. Proven: adding such a class to ``errors.py`` left this whole file
+    green before this test existed.
+
+    The reverse direction is the anti-vacuity control rather than a drift
+    check: a rename or deletion cannot reach it (CASES holds imported class
+    OBJECTS, so the module fails at collection first), but a sweep that stops
+    finding classes — a broken walk, a moved `src` — empties `public` and
+    fails here instead of passing with nothing to check.
+    """
+    _, rooted, file_by_class = _sweep_src()
+    public = {n for n in rooted if not n.startswith("_") and n != "OttoError"}
+    declared = {cls.__name__ for cls, _ in CASES}
+
+    undeclared = sorted(f"{n} ({file_by_class[n]})" for n in public - declared)
+    assert not undeclared, (
+        "OttoError subclasses missing from CASES — add each with the stdlib "
+        f"root it keeps (Exception if it deliberately has none): {undeclared}"
+    )
+    assert not sorted(declared - public), (
+        f"CASES names classes the sweep cannot find in src/otto: {sorted(declared - public)}"
+    )

@@ -51,10 +51,18 @@ Public otto API says what happened in exactly one of three ways:
 
 1. it **returns a `Result`-family value** ({class}`~otto.result.Result`,
    {class}`~otto.result.CommandResult`, {class}`~otto.result.Results`);
-2. it **raises an {class}`~otto.errors.OttoError` subclass**; or
+2. it **raises** — a named {class}`~otto.errors.OttoError` subclass when the
+   failure is one otto has a name for, otherwise the plain stdlib exception
+   that fits (rejecting an argument with a bare `ValueError` is ordinary and
+   is not going to change); or
 3. it returns a plain value and **documents why** — the predicate and
    accessor verbs (`exists`, `is_installed`, `is_uninstalled`, `ls`,
    `read_file`) plus `login` (which returns `None`) are the whole list.
+
+The naming, not the raising, is what the convention governs: of otto's 330
+bare stdlib raises, 152 sit in a public function today, and `except
+OttoError` is a question about otto's *named* failures rather than a
+catch-all. {mod}`otto.errors` says what each clause does and does not reach.
 
 The extension surfaces follow it too: a {class}`~otto.host.product.Product`'s
 `stage` / `install` / `uninstall` return a `Result` — usually the one
@@ -72,7 +80,13 @@ Both halves are gated rather than documented-and-hoped:
   including inside a composite: `tuple[Status, str]`, `Status | None`,
   `dict[str, tuple[Status, str]]` (run by `make lint-arch`).
 - **raises** — `tests/unit/test_error_base.py` sweeps every public exception
-  class and fails on one that does not reach `OttoError`.
+  class and fails on one that does not reach `OttoError`, on one that is not
+  declared in its `CASES` table, and on one declared with a `stdlib_root` of
+  bare `Exception` without being listed as deliberately rootless (that row
+  would otherwise assert nothing, since every exception is an `Exception`).
+
+  Note the scope: the gate is about the exceptions otto *defines*. It says
+  nothing about raise sites, and deliberately so — see above.
 
 ## Where the code lives
 

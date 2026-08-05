@@ -407,11 +407,21 @@ by name first if you want to distinguish the two fail-loud sites.
 bare `except RuntimeError` if you want to distinguish them. Swallowing-and-logging
 these is exactly what the `otto test --cov` tail does — a coverage-collection
 failure must never turn an otherwise-green test run red — whereas `otto cov get`
-surfaces each as a clean, single-line error. Every exception otto raises also
+surfaces each as a clean, single-line error. Every exception otto *defines* also
 subclasses `otto.errors.OttoError`, so a single `except OttoError` clause
-catches anything otto raised when you don't need to distinguish — with one
-deliberate exception: `SyncPhaseInterrupt` stays a plain `KeyboardInterrupt`
-by signal contract, so interrupt handling is never accidentally swallowed.
+catches all of them when you don't need to distinguish — with one deliberate
+exception: `SyncPhaseInterrupt` stays a plain `KeyboardInterrupt` by signal
+contract, so interrupt handling is never accidentally swallowed.
+
+`except OttoError` is not the same as "anything otto raised", though. otto
+also raises plain stdlib exceptions at 330 sites — a rejected argument is
+usually a bare `ValueError` rather than a named class — so `OttoError` covers
+otto's two dozen *named* failures and no more. No single clause catches
+everything: `except Exception` misses the five `SystemExit` raises (three of
+them in public API — `run_command`, `run_suite`, `run_selection`), and
+`except (ValueError, RuntimeError)` reaches only 15 of the 24 named classes,
+since seven are rooted at plain `Exception` and two under `OSError`. See
+{mod}`otto.errors` for the full breakdown.
 
 ### `clean_after_fetch`
 
