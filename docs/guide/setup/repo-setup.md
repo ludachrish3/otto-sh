@@ -100,13 +100,16 @@ libs
   libraries.  Defaults to `[]`.
 
 tests
-: Defines where test discovery happens: a list of directories scanned for
-  `test_*.py` files.  Each matching file is imported at startup, which
-  auto-registers any `Test`-prefixed `OttoSuite` subclass as an `otto test`
-  subcommand and makes its plain `test_*` functions collectible by pytest.
-  Selection runs (`otto test --tests NAME[,NAME...]` or `otto test -m
-  EXPRESSION` with no suite name) collect from these same directories, one
-  pytest session per repo.  Defaults to `[]`.
+: Defines where test discovery happens, in two different senses.  Every
+  `test_*.py` at the **top level** of a listed directory is imported at
+  startup, which auto-registers any `Test`-prefixed `OttoSuite` subclass as
+  an `otto test` subcommand — that scan is *not* recursive, because these
+  files are executed on every otto command (list a subdirectory too if you
+  keep suites there).  Selection runs (`otto test --tests NAME[,NAME...]` or
+  `otto test -m EXPRESSION` with no suite name) hand the same directories to
+  pytest, one session per repo, and pytest recurses as usual — so a plain
+  `test_*` function in a subdirectory runs without being imported here.
+  Defaults to `[]`.  See {doc}`../test` for the reasoning.
 
 init
 : List of Python module names (dot-separated) to import at startup.  Use
@@ -155,8 +158,8 @@ occurs:
 3. **Apply settings** -- For each repo, otto:
    - Adds `libs` directories to `sys.path`
    - Imports modules listed in `init` (this registers instructions)
-   - Auto-imports all `test_*.py` files from `tests` directories (this
-     registers suites)
+   - Auto-imports each `test_*.py` at the top level of a `tests` directory
+     (this registers suites; it does not recurse — see above)
 
 4. **Lab loading** -- Otto builds the host source via `build_lab_repository`
    (selected by `[lab] backend`, defaulting to the built-in `json` source over

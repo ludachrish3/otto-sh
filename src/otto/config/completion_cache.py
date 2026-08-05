@@ -171,9 +171,10 @@ LAB_FILENAME = "lab.json"
 # `python_files` collects from filenames the defaults never match.
 #
 # `Repo.iter_test_files` is a THIRD reader and deliberately not one of these:
-# it IMPORTS what it returns (to populate SUITES), so widening it would change
-# which user modules otto execs at bootstrap — a behavior change, not a glob
-# fix. It keeps its own narrow top-level `test_*.py`.
+# it EXECUTES what it returns, at bootstrap, on every otto command. Its
+# narrowness is a contract rather than an oversight — see its docstring for
+# the reasoning and for the `tests`-list escape hatch. Do not "fix" it to
+# match these two.
 
 # Directories pytest's default `norecursedirs` skips, minus the two patterns
 # handled by prefix/suffix in `_is_norecurse_dir`.

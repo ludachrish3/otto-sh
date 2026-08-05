@@ -86,7 +86,33 @@ rule). Registration:
 3. Creates a runner function with the matching signature
 4. Adds the suite as a subcommand of `otto test`
 
-This all happens at import time when otto scans your `tests` directories.
+This all happens at import time, and *where* otto looks is narrower than
+where pytest does — deliberately.
+
+:::{important}
+otto registers suites from the **top level** of each directory in `tests`:
+`tests/test_device.py` yes, `tests/device/test_device.py` no. To nest, add
+the subdirectory to the list — `tests` is a top-level key in
+`.otto/settings.toml` and takes several paths:
+
+```toml
+# .otto/settings.toml
+tests = ["tests", "tests/device"]
+```
+
+The reason is blast radius, not speed. These files are **executed** at
+bootstrap on every otto command so that `__init_subclass__` fires, and a
+failure in any of them exits non-zero for *every* command — so one broken
+test file stops `otto host list`. Listing the directories keeps that surface
+one you chose.
+
+This bounds *registration* only. `otto test` hands the same directories to
+pytest, which recurses as usual, so a nested `test_*` function still runs and
+still completes under `--tests` — including the methods of a nested `Test*`
+`OttoSuite`. Only the `otto test <Suite>` subcommand needs the file at the
+top level of a listed directory.
+:::
+
 Auto-registration is one seam among many; see
 {doc}`Extension points <../architecture/subsystems/extension-points>` for the
 registry machinery behind this and every other way otto can be extended.

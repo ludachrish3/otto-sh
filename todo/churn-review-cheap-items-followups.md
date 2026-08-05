@@ -15,13 +15,18 @@ items from the follow-up commits' own reviews are at the end.
 
 ## From `fix(completion): hash every test source the --tests scan can read` — 3 of 4 DONE
 
-- **`Repo.iter_test_files` is a third, narrower reader of the same tests dirs.**
-  `config/repo.py:716` still does a non-recursive `glob("test_*.py")`, so a
-  `Test*` OttoSuite defined in `tests/unit/test_foo.py` or in `foo_test.py` is
-  never registered in `SUITES`. Pre-existing, and NOT a glob fix: that reader
-  *imports* what it returns, so widening it changes which user modules otto
-  execs at bootstrap. Needs a decision, and a test that a nested suite becomes
-  runnable, before anything moves.
+- **DONE (decided: stays narrow)** — **`Repo.iter_test_files` is a third,
+  narrower reader of the same tests dirs.** Decision: the non-recursive
+  top-level `test_*.py` scan is now a documented CONTRACT rather than an
+  accident. It is the only one of the three readers that EXECUTES what it
+  returns, at bootstrap, on every otto command; recursion would hand otto the
+  whole test tree, where one import error becomes a startup error and one slow
+  import makes `otto host list` slow. `tests` is a list, so nesting stays
+  available as an opt-in (`tests = ["tests", "tests/device"]`) — verified, and
+  pinned from both sides in `tests/unit/suite/test_suite_registration_scope.py`.
+  The docs said "otto scans your `tests` directories", which reads as
+  recursive; `docs/guide/test.md` and `docs/guide/setup/repo-setup.md` now
+  state the rule and separate registration from pytest collection.
 
 - **A repo that overrides pytest's `python_files` still goes stale.** Neither
   `collect_test_names` nor `compute_fingerprint` knows about a `python_files`
@@ -393,6 +398,75 @@ to `otto run` and `@cli_command` rather than applied to every leaf:
   instruction and is the copy that auto-populates every PR. Swept the rest —
   `docs/release_process.md`, `pyproject.toml` and the spec files were already
   correct.
+
+## From `docs(suite): registration reads the top level, and says so`
+
+- **A nested `Test*` OttoSuite is still silently unavailable.** The boundary is
+  now documented and tested, but a user who puts a suite in
+  `tests/device/test_x.py` gets click's bare "No such command" with no hint
+  that the file was never imported. Naming it would need a recursive AST scan
+  for `OttoSuite` subclasses, which is only affordable on the FAILURE path
+  (a bootstrap-time warning would have to parse every nested test file on
+  every command, and warning merely on "there are test files in
+  subdirectories" would fire for nearly every repo, since pytest tests live
+  there legitimately). The natural seam is `make_registry_group.get_command`
+  returning None.
+
+- **`import_test_file` keys its module name on the FILE STEM alone.**
+  `_otto_suite_{stem}`, and it returns early when that name is already in
+  `sys.modules` — so two repos that both have `tests/test_device.py` silently
+  register only the first one's suites, and in-process test runs inherit
+  whichever ran earlier. It bit the new test here (a tmp copy of repo1 whose
+  `test_device.py` was a no-op because repo1's own had already been imported
+  in that worker) and it is the same hazard
+  `test_import_and_register.clean_registry` was written for. A path-derived
+  name would fix it; the early return is load-bearing for idempotence, so it
+  needs the name to be unique rather than the check removed.
+
+- **★ Bootstrap's containment seam does not contain `pytest.importorskip`.**
+  `bootstrap.py:126` catches `Exception`, but a module-level
+  `pytest.importorskip` (or `pytest.skip(allow_module_level=True)`) raises
+  `_pytest.outcomes.Skipped`, whose MRO is `(Skipped, OutcomeException,
+  BaseException)` — verified here. So a registered test file guarding an
+  optional dependency tracebacks straight out of `entry()` on EVERY otto
+  command, and the module docstring's promise ("one broken file becomes a
+  framed BootstrapError instead of bricking the process") is false for the
+  most mainstream way a test file declines to load. Widening the `except`
+  needs care — it must not swallow `KeyboardInterrupt` or
+  `SyncPhaseInterrupt` — so it is its own change, but this is the strongest
+  argument for keeping `iter_test_files` narrow and deserves a fix, not just
+  a citation.
+
+- **Collection registers nested suites as a side effect.** `collect_tests`
+  runs `pytest.main` in process, which IMPORTS every collected module, so a
+  nested suite does reach `SUITES` — under pytest's own module name, long
+  after the `otto test` group was built, so it never becomes a subcommand. It
+  also inserts the collected files' parent dirs into `sys.path` (pytest
+  importmode=prepend). Harmless in dispatch, and inside otto's own suite the
+  root conftest's `_isolate_sys_path` plus the autouse `_isolate_suites` roll
+  both back — which is exactly the machinery
+  `tests/unit/suite/test_import_and_register.py`'s `clean_registry` fixture
+  documents. It is still why the collection test here uses a bare tmp repo:
+  not leakage, but not depending on machinery the test is not about.
+
+## Reported by the F10 review, not verified here
+
+Outside the F10 change; recorded with their evidence level stated.
+
+- **`otto test --tests <name>` panics when `tach` is installed in the venv.**
+  `collect_tests` does `sys.modules.clear(); sys.modules.update(saved)`, which
+  unloads the plugins its own inner session imported; the next
+  `_guarded_pytest_session` re-imports `tach.extension`, whose Rust module
+  init re-registers a Ctrl-C handler → `pyo3_runtime.PanicException: Error
+  setting Ctrl-C handler: MultipleHandlers`. Contributing cause:
+  `--override-ini addopts=` strips the `-p no:tach` that `pyproject.toml`
+  installs. Reproduced by the reviewer on every run from the worktree venv;
+  workaround `PYTEST_ADDOPTS="-p no:tach"`. Mechanism read from code.
+
+- **`otto test <Suite>` reports 3× the true pass count.** A 1-method suite
+  prints `3 passed`, a 2-method suite `6 passed`, while junit records 1 and 2
+  and a side-effect counter confirms one execution. Reporting only, but
+  user-facing. Root cause not established.
 
 ## Observed flake (not caused by this wave)
 

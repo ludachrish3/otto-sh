@@ -369,7 +369,7 @@ directory.  See {doc}`guide/setup/repo-setup` for the full rule.
 | `version` | Semantic version string |
 | `labs` | Paths to directories containing lab JSON files |
 | `libs` | Python package directories added to `PYTHONPATH` at startup |
-| `tests` | Defines where test discovery happens: directories scanned for `test_*.py` files (triggers suite registration) |
+| `tests` | Where test discovery happens. Each directory's **top-level** `test_*.py` files are imported at startup, registering their `Test*` `OttoSuite` subclasses; pytest itself recurses normally when tests are run ([details](guide/test.md#suite-registration)) |
 | `init` | Python modules imported at startup (registers instructions and shared options) |
 
 ```{tip}

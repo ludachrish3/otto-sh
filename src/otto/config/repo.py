@@ -853,7 +853,46 @@ class Repo:
             importlib.import_module(mod)
 
     def iter_test_files(self) -> list[Path]:
-        """Return every ``test_*.py`` under this repo's configured tests dirs, sorted."""
+        r"""Top-level ``test_*.py`` in each configured tests dir, sorted.
+
+        Deliberately NOT recursive, and deliberately not pytest's
+        ``python_files`` — this is the third and narrowest of the three
+        readers of a repo's tests dirs, and the only one that EXECUTES what it
+        returns. :meth:`import_test_files` execs each of these during
+        :func:`otto.bootstrap.bootstrap`, on every otto command (completion
+        skips it on a cache hit), to trigger ``OttoSuite.__init_subclass__``.
+
+        The reason is blast radius, NOT cost. Importing is cheap — measured at
+        well under a millisecond per file after the first — and the same
+        startup path already rglobs and ``ast.parse``\ s the WHOLE tree in
+        ``completion_cache.collect_test_names``, an order of magnitude more
+        work than recursion here would add. What differs is exec versus parse.
+        A file listed here runs its module body, and
+        ``cli.invoke.fail_loud_on_bootstrap_errors`` turns any failure into a
+        non-zero exit for EVERY command, so one broken test file bricks
+        ``otto host list``. Worse, containment is not even complete: a
+        module-level ``pytest.importorskip`` raises ``Skipped``, which is a
+        ``BaseException``, and bootstrap's ``except Exception`` does not catch
+        it — a repo with one optional-dependency test file tracebacks out of
+        every command. Recursion would point all of that at the user's whole
+        test tree rather than at a handful of files they chose.
+
+        The escape hatch is that ``tests`` is a LIST — a repo keeping suites
+        under ``tests/device/`` adds that directory (``tests = ["tests",
+        "tests/device"]``) and its suites register. That keeps nesting an
+        opt-in. The middle design — rglob, ``ast.parse``, import only files
+        that statically declare a ``class Test*`` — would be nearly free given
+        the parse already happens, and is worth revisiting if the opt-in
+        proves to be a papercut; it narrows the blast radius but does not
+        remove it, since a suite file can still fail at import.
+
+        This bounds REGISTRATION only. ``otto test`` hands the same
+        directories to pytest (:meth:`collect_tests`), which recurses
+        normally, so a nested ``test_*`` function still runs and still
+        completes under ``--tests`` — including the methods of a nested
+        ``Test*`` OttoSuite. Only the ``otto test <Suite>`` SUBCOMMAND needs
+        the file to be reachable here.
+        """
         found: list[Path] = []
         for test_dir in self.tests:
             if test_dir.is_dir():
