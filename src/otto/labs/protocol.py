@@ -118,10 +118,15 @@ class SupportsHostSummaries(Protocol):
     :func:`otto.labs.host_summaries` falls back to ``list_labs`` +
     ``load_lab``. The fallback is always correct, just slower.
 
-    An implementation MUST return ids byte-identical to the ones
-    ``load_lab`` would report for the same hosts — an id that does not
+    An implementation MUST agree with ``load_lab`` in three ways, all checked
+    by :func:`otto.testing.assert_lab_repository_conforms`: every id
+    byte-identical to the one ``load_lab`` reports (an id that does not
     round-trip is worse than no completion, because it offers the user
-    something that will not dispatch. Backends over raw records should reach
+    something that will not dispatch); every host ``load_lab`` produces
+    summarized, or completion silently stops offering it; and every FIELD
+    equal to the built host's. The fields have defaults so this dataclass
+    will let you omit them, but each drives a surface — see the class
+    docstring above. Backends over raw records should reach
     for :func:`otto.host.factory.host_identity`, which applies the same
     profile merge and validation the host factory applies.
     """

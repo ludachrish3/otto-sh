@@ -22,6 +22,8 @@ Usage::
         assert_reservation_backend_conforms(MyBackend(), known_user="alice", known_resources=["r1"])
 """
 
+from typing import Any
+
 from ..config.lab import Lab
 from ..host.remote_host import RemoteHost
 from ..labs import HostSummary, LabNotFoundError, LabRepository, SupportsHostSummaries
@@ -165,10 +167,25 @@ def _expect_host_summaries_conform(
 ) -> None:
     """Check the optional ``SupportsHostSummaries`` capability's contract.
 
-    The load-bearing rule is the LAST one: every summarized id must be an id
-    ``load_lab`` actually produces. A fast path that derives ids by a
-    different route than host construction offers completions that do not
-    dispatch — worse than offering none.
+    Three rules, in ascending order of what they cost a user to get wrong:
+
+    - Every summarized id must be one ``load_lab`` actually produces. A fast
+      path deriving ids by a different route than host construction offers
+      completions that do not dispatch — worse than offering none.
+    - Every constructed host must be summarized. The reverse direction, and
+      the reason it matters is that nothing else notices: the completer just
+      quietly stops offering that host.
+    - Every FIELD must agree with the constructed host. A summary is not an
+      id lookup — ``labs`` drives ``--lab``-scoped completion, ``element``
+      and ``element_id`` drive the positional handles (``dut1``),
+      ``docker_capable`` gates ``otto docker --on``, and ``ip`` drives tunnel
+      narrowing. A backend that fills in only ``id`` passed every earlier
+      version of this check while silently breaking four surfaces.
+
+    All three are scoped to labs that actually LOADED. A lab whose load
+    raises (a host naming an ``os_profile`` this process never registered,
+    say) is reported by the caller's own rules; letting its hosts count here
+    made the first rule report every one of them as undispatchable.
     """
     try:
         summaries = repo.list_host_summaries()
@@ -204,22 +221,96 @@ def _expect_host_summaries_conform(
         )
         seen.add(s.id)
 
-    constructed: set[str] = set()
+    constructed: dict[str, Any] = {}
+    labs_of: dict[str, set[str]] = {}
+    loaded: set[str] = set()
     for n in names:
         if not isinstance(n, str):
             continue
         try:
-            constructed |= set(repo.load_lab(n).hosts)  # ty: ignore[unresolved-attribute]
+            hosts = repo.load_lab(n).hosts  # ty: ignore[unresolved-attribute]
         except Exception:  # noqa: BLE001, S112 — load failures are reported by the caller's own rules
             continue
-    # Built-ins (``local``) are injected by lab loading, not by the backend,
-    # so the summary set is only required to be a SUBSET of what loads.
-    missing = sorted(seen - constructed)
+        loaded.add(n)
+        for host_id, host in hosts.items():
+            constructed[host_id] = host
+            labs_of.setdefault(host_id, set()).add(n)
+
+    # Only summaries belonging to a lab that loaded are comparable; a summary
+    # for a lab that raised tells us nothing about the backend's id derivation.
+    comparable = {
+        s.id
+        for s in summaries
+        if isinstance(s, HostSummary) and (not s.labs or set(s.labs) & loaded)
+    }
+    undispatchable = sorted(comparable - set(constructed))
     c.expect(
-        not missing,
-        f"SupportsHostSummaries: ids {missing} are offered by list_host_summaries() but "
-        f"no load_lab() produces them — completion would offer ids that cannot dispatch",
+        not undispatchable,
+        f"SupportsHostSummaries: ids {undispatchable} are offered by list_host_summaries() "
+        f"but no load_lab() produces them — completion would offer ids that cannot dispatch",
     )
+
+    # No built-in exemption: ``local`` is injected by ``config.lab.load_lab``,
+    # never by a backend, so it is not in `constructed` to begin with. Excusing
+    # it would only ever excuse a backend that defines its OWN ``local`` —
+    # which otto explicitly allows, and which ``otto.labs.host_summaries``
+    # deliberately refuses to filter, so the two paths would disagree on
+    # exactly the id that comment says must not be dropped.
+    unsummarized = sorted(set(constructed) - seen)
+    c.expect(
+        not unsummarized,
+        f"SupportsHostSummaries: load_lab() produces {unsummarized} but "
+        f"list_host_summaries() omits them — completion would silently stop offering them",
+    )
+
+    for summary in summaries:
+        if not isinstance(summary, HostSummary):
+            continue
+        host = constructed.get(summary.id)
+        if host is None:
+            continue
+        for field, summarized, built in (
+            ("ip", summary.ip, getattr(host, "ip", "") or ""),
+            ("element", summary.element, getattr(host, "element", "") or ""),
+            # Compared by (type, value): `7 == 7.0` and `False == 0` in
+            # Python, and a float element_id is precisely the divergence
+            # `host_identity` exists to prevent (`dut3.0` vs `dut3`).
+            (
+                "element_id",
+                (type(summary.element_id), summary.element_id),
+                (type(getattr(host, "element_id", None)), getattr(host, "element_id", None)),
+            ),
+            (
+                "docker_capable",
+                summary.docker_capable,
+                bool(getattr(host, "docker_capable", False)),
+            ),
+        ):
+            c.expect(
+                summarized == built,
+                f"SupportsHostSummaries: {summary.id!r}.{field} is {summarized!r} in the "
+                f"summary but {built!r} on the constructed host",
+            )
+        produced_in = labs_of.get(summary.id, set())
+        claimed = set(summary.labs)
+        c.expect(
+            claimed >= produced_in,
+            f"SupportsHostSummaries: {summary.id!r}.labs is {sorted(claimed)} but "
+            f"load_lab() produced it for {sorted(produced_in)} — "
+            f"--lab-scoped completion would drop it",
+        )
+        # And the other direction, which is the load-bearing rule again at a
+        # different granularity: completion buckets by `labs`, so claiming a
+        # lab that does not contain the host offers an id `-l <that lab>`
+        # cannot dispatch. Restricted to labs that loaded, for the same reason
+        # everything else here is.
+        overclaimed = sorted((claimed & loaded) - produced_in)
+        c.expect(
+            not overclaimed,
+            f"SupportsHostSummaries: {summary.id!r}.labs claims {overclaimed} but "
+            f"load_lab() does not produce it there — `otto host -l <lab> <TAB>` would "
+            f"offer an id that cannot dispatch",
+        )
 
 
 def assert_reservation_backend_conforms(

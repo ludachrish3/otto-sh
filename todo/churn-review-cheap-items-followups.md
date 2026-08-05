@@ -73,14 +73,14 @@ at the end.
   `fix(cli)!:` renders as an ordinary bullet. Either teach cliff the marker or
   stop implying the changelog will carry it.
 
-- **`SupportsHostSummaries` conformance checks ids, not completeness.**
+- **DONE** — **`SupportsHostSummaries` conformance checks ids, not completeness.**
   `testing/conformance.py`'s `_expect_host_summaries_conform` only asserts the
   summarized ids are a subset of `load_lab`'s. Any field a completer starts
   depending on (the `hop` idea explored and dropped in the link-completion
   work would have been the first) can be silently absent from a third-party
   backend with the conformance suite still green.
 
-- **`repo_host_summaries` has no timeout.** It catches every exception, so a
+- **DONE (the timeout; the fallback cost stands)** — **`repo_host_summaries` has no timeout.** It catches every exception, so a
   custom backend that FAILS is contained — but one that HANGS hangs the TAB.
   Measured fallback cost for a non-`SupportsHostSummaries` backend is
   O(labs × hosts) host constructions (~18 ms for 200 hosts in one lab), since
@@ -273,3 +273,30 @@ to `otto run` and `@cli_command` rather than applied to every leaf:
   second way of saying "this failed", with different colouring and a different
   stream — the error-dialect unification (review Tier 2.3) still has work
   left after this commit.
+
+## From `fix(labs): a host summary must agree with the host it summarizes`
+
+- **The non-`SupportsHostSummaries` fallback is still O(labs × hosts) host
+  CONSTRUCTIONS.** `host_summaries` loads every lab when a backend does not
+  implement the capability (~18 ms for 200 hosts in one lab, multiplied by
+  lab count). The new deadline bounds the damage but does not remove it; the
+  fix is to make the capability easier to implement than to skip, which the
+  strengthened conformance rules now at least make honest about what it costs.
+
+- **The deadline is per-repo, not per-invocation.** Five repos each with a
+  stalled backend cost 5 × the deadline before completion gives up. Fine at
+  the current 2s for realistic workspaces; worth revisiting if the value grows.
+
+## Observed flake (not caused by this wave)
+
+- **`tests/unit/test_lifecycle_sync_phase.py::test_second_signal_forces_immediately`**
+  failed once during `make coverage` on 2026-08-05 with
+  `assert 'FORCE-HOOK' in 'PHASE-EXITED\n'`, and passed on a re-run plus five
+  targeted runs. It spawns a child and races two SIGINTs: the second has to
+  land while teardown is still running, and under a loaded `make coverage`
+  (xdist + the browser lane) the teardown can finish first. Verified unrelated
+  to the commit it appeared under — the child imports only `otto.lifecycle`,
+  and the change touched `completion_cache` / `conformance` — but the test is
+  timing-dependent by construction and will recur. A deterministic fix would
+  have the child block teardown on a marker the parent releases, rather than
+  relying on the second signal winning a race.

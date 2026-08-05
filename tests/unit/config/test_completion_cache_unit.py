@@ -1239,3 +1239,117 @@ def test_norecursedirs_table_matches_pytest(dirname: str, pruned: bool) -> None:
     dropping one — or widening a literal into a prefix.
     """
     assert cc._is_norecurse_dir(dirname) is pruned
+
+
+# ── A host source that STALLS must not wedge the shell ───────────────────────
+
+
+def test_a_hanging_host_source_is_bounded_not_waited_on(monkeypatch, caplog) -> None:
+    """Failing was already contained; stalling was not.
+
+    A custom `[lab]` backend is allowed to be a networked CMDB — that is the
+    documented reason this cache exists — but on a cold cache the enumeration
+    really runs, and an unreachable service would otherwise hang the user's
+    TAB with no feedback until they interrupt it.
+    """
+    import logging
+    import threading
+    import time
+
+    monkeypatch.setattr(cc, "HOST_SUMMARY_DEADLINE_SECONDS", 0.05)
+    entered = threading.Event()
+
+    def _never_returns(_repo, _abandoned=None):
+        entered.set()
+        time.sleep(30)  # pragma: no cover — the point is that we do not wait
+
+    monkeypatch.setattr(cc, "_enumerate_host_summaries", _never_returns)
+    monkeypatch.setattr(cc, "_SUMMARY_MEMO", {})
+    repo = MagicMock()
+    repo.sut_dir = Path("/nowhere-hang")
+
+    started = time.monotonic()
+    with caplog.at_level(logging.WARNING, logger="otto.config.completion_cache"):
+        result = cc.repo_host_summaries(repo)
+    elapsed = time.monotonic() - started
+
+    assert result == []
+    assert entered.is_set(), "positive control: the enumeration must actually have started"
+    # Tight against the 0.05s patched deadline: a 5s bound would pass even
+    # if the deadline were 4.9s, leaving the caplog line to carry the test.
+    assert elapsed < 1, f"waited {elapsed:.1f}s on a hanging backend"
+    assert any("did not answer within" in r.message for r in caplog.records), caplog.text
+
+
+def test_a_working_host_source_is_untouched_by_the_deadline(monkeypatch) -> None:
+    """The bound must not cost the normal path its answer."""
+    from otto.labs import HostSummary
+
+    expected = [HostSummary(id="carrot_seed", labs=["veggies"])]
+    monkeypatch.setattr(cc, "_enumerate_host_summaries", lambda _repo, _abandoned=None: expected)
+    monkeypatch.setattr(cc, "_SUMMARY_MEMO", {})
+    repo = MagicMock()
+    repo.sut_dir = Path("/nowhere-ok")
+    assert cc.repo_host_summaries(repo) == expected
+
+
+def test_one_enumeration_per_repo_however_many_collectors_ask(monkeypatch) -> None:
+    """Three collectors enumerate the same repo on one cache-write pass.
+
+    Un-memoized, a stalled backend cost three deadlines — and worse, could
+    time out for one collector and not another, writing a cache where
+    `otto host <TAB>` is full and `otto docker --on <TAB>` is empty, served
+    for the whole TTL.
+    """
+    from otto.labs import HostSummary
+
+    calls = 0
+
+    def _count(_repo, _abandoned=None):
+        nonlocal calls
+        calls += 1
+        return [HostSummary(id="carrot_seed", labs=["veggies"])]
+
+    monkeypatch.setattr(cc, "_enumerate_host_summaries", _count)
+    monkeypatch.setattr(cc, "_SUMMARY_MEMO", {})
+    repo = MagicMock()
+    repo.sut_dir = Path("/memo")
+
+    for _ in range(3):
+        assert [s.id for s in cc.repo_host_summaries(repo)] == ["carrot_seed"]
+    assert calls == 1, f"enumerated {calls} times for one repo"
+
+
+def test_the_deadline_is_overridable_for_a_merely_slow_backend(monkeypatch) -> None:
+    """Giving up costs the user ALL host completion until the backend speeds up.
+
+    A module constant would leave an affected team no recourse, so the bound
+    is an env var — otherwise the fix for "my CMDB takes 3s" is "patch otto".
+    """
+    monkeypatch.delenv(cc.HOST_SUMMARY_DEADLINE_ENV_VAR, raising=False)
+    assert cc._host_summary_deadline() == cc.HOST_SUMMARY_DEADLINE_SECONDS
+
+    monkeypatch.setenv(cc.HOST_SUMMARY_DEADLINE_ENV_VAR, "7.5")
+    assert cc._host_summary_deadline() == 7.5
+
+    # Garbage and non-positive values fall back rather than disabling the bound.
+    for bad in ("", "soon", "0", "-1"):
+        monkeypatch.setenv(cc.HOST_SUMMARY_DEADLINE_ENV_VAR, bad)
+        assert cc._host_summary_deadline() == cc.HOST_SUMMARY_DEADLINE_SECONDS, bad
+
+
+def test_a_backend_that_explodes_does_not_reach_the_terminal(monkeypatch, capsys) -> None:
+    """`_bounded` runs `work` on a thread, so an escape hits threading.excepthook
+    and prints a full traceback to the user's terminal mid-TAB — which is
+    exactly what this function's "never crashes the shell" contract forbids."""
+
+    def _explodes(_repo, _abandoned=None):
+        raise KeyboardInterrupt  # a BaseException: `except Exception` misses it
+
+    monkeypatch.setattr(cc, "_enumerate_host_summaries", _explodes)
+    monkeypatch.setattr(cc, "_SUMMARY_MEMO", {})
+    repo = MagicMock()
+    repo.sut_dir = Path("/boom")
+
+    assert cc.repo_host_summaries(repo) == []
+    assert "Traceback" not in capsys.readouterr().err

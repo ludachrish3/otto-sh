@@ -144,7 +144,8 @@ from typing import TYPE_CHECKING, Annotated, Any, Union, get_args, get_origin
 from .repo import configured_python_files, pytest_config_paths
 
 if TYPE_CHECKING:
-    from collections.abc import Collection, Sequence
+    import threading
+    from collections.abc import Callable, Collection, Sequence
 
     from ..labs import HostSummary
     from .repo import Repo
@@ -989,6 +990,77 @@ def collect_reservation_usernames(repos: list["Repo"]) -> list[str]:
     return []
 
 
+#: Default seconds completion will wait for a host source before giving up.
+#: A custom `[lab]` backend is allowed to be a networked CMDB, and the
+#: documented reason this cache exists is to keep that off the TAB path — but
+#: on a cold cache the enumeration DOES run, and an unreachable service would
+#: otherwise wedge the shell with no feedback until the user interrupts it.
+#: Failing is already contained (an empty list); stalling was not.
+HOST_SUMMARY_DEADLINE_SECONDS = 2.0
+
+#: Escape hatch for a backend that is SLOW rather than broken. Giving up on
+#: one of those costs the user all host completion until it gets faster, and
+#: a module constant leaves an affected team no recourse. Read straight from
+#: the environment rather than through OttoEnvSettings, which pulls
+#: pydantic_settings + dotenv (26 modules) onto the fast path.
+HOST_SUMMARY_DEADLINE_ENV_VAR = "OTTO_COMPLETION_HOST_TIMEOUT"
+
+
+def _host_summary_deadline() -> float:
+    raw = os.environ.get(HOST_SUMMARY_DEADLINE_ENV_VAR)
+    if not raw:
+        return HOST_SUMMARY_DEADLINE_SECONDS
+    try:
+        value = float(raw)
+    except ValueError:
+        return HOST_SUMMARY_DEADLINE_SECONDS
+    return value if value > 0 else HOST_SUMMARY_DEADLINE_SECONDS
+
+
+def _bounded(
+    work: "Callable[[threading.Event], list[HostSummary]]", repo: "Repo"
+) -> list["HostSummary"]:
+    """Run *work*, giving up after :func:`_host_summary_deadline`.
+
+    A daemon thread, so a backend still blocked at process exit cannot keep
+    the completion process alive. Deliberately NOT ``signal.alarm``: that is
+    main-thread-only and would trample whatever handler the caller installed.
+
+    *work* is handed an ``abandoned`` event, set when the deadline passes, so
+    a probe that finishes LATE can keep quiet — otherwise its own warning
+    lands in the middle of whatever command the main thread has moved on to.
+
+    Catches ``BaseException``, not ``Exception``: the containment that keeps
+    completion from crashing the shell lives in the callee, and an escape
+    here would reach ``threading.excepthook`` and print a full traceback to
+    the user's terminal mid-TAB.
+    """
+    import threading
+
+    deadline = _host_summary_deadline()
+    box: list[list[HostSummary]] = []
+    abandoned = threading.Event()
+
+    def _run() -> None:
+        with contextlib.suppress(BaseException):  # see the docstring
+            box.append(work(abandoned))
+
+    thread = threading.Thread(target=_run, daemon=True)
+    thread.start()
+    thread.join(deadline)
+    if thread.is_alive():
+        abandoned.set()
+        logging.getLogger(__name__).warning(
+            rf"\[completion] host source for {repo.sut_dir} did not answer within "
+            f"{deadline}s — offering no hosts for it. Raise "
+            f"{HOST_SUMMARY_DEADLINE_ENV_VAR} if it is merely slow."
+        )
+        return []
+    # `or []` rather than `box[0]`: a work() returning None would otherwise
+    # hand every caller a None to iterate.
+    return (box[0] if box else None) or []
+
+
 def repo_host_summaries(repo: "Repo") -> list["HostSummary"]:
     """Every host *repo*'s configured host source knows — best-effort.
 
@@ -1006,12 +1078,34 @@ def repo_host_summaries(repo: "Repo") -> list["HostSummary"]:
     dispatch honours only the first. Reconciling the two selection rules is
     its own change.
 
-    Never raises: an unregistered backend, malformed settings, or a backend
-    that explodes yields an empty list, because every caller is a completion
-    path that must not crash the shell. Logged at WARNING, not DEBUG: a
+    Never raises, and never hangs: an unregistered backend, malformed
+    settings, or a backend that explodes yields an empty list, because every
+    caller is a completion path that must not crash the shell — and one that
+    STALLS is bounded by :data:`HOST_SUMMARY_DEADLINE_SECONDS` rather than
+    left to wedge the user's TAB. Logged at WARNING, not DEBUG: a
     transiently-unreachable custom backend would otherwise write an EMPTY host
     list into a cache that is then served for the next 24 hours, silently.
     """
+    key = str(getattr(repo, "sut_dir", repo))
+    cached = _SUMMARY_MEMO.get(key)
+    if cached is None:
+        cached = _bounded(lambda abandoned: _enumerate_host_summaries(repo, abandoned), repo)
+        _SUMMARY_MEMO[key] = cached
+    return cached
+
+
+#: Per-process memo, keyed by SUT dir. Three collectors enumerate the same
+#: repo on one cache-write pass; without this a stalled backend cost three
+#: deadlines and — worse — could time out for one collector and not another,
+#: writing a cache where `otto host <TAB>` is full and
+#: `otto docker --on <TAB>` is empty. Process-lifetime only, like the cache
+#: itself; nothing invalidates it because nothing lives long enough to need to.
+_SUMMARY_MEMO: dict[str, list["HostSummary"]] = {}
+
+
+def _enumerate_host_summaries(
+    repo: "Repo", abandoned: "threading.Event | None" = None
+) -> list["HostSummary"]:
     from ..labs import build_lab_repository, host_summaries
 
     try:
@@ -1020,9 +1114,10 @@ def repo_host_summaries(repo: "Repo") -> list["HostSummary"]:
         )
         return host_summaries(repository)
     except Exception as e:  # noqa: BLE001 — completion never crashes the shell
-        logging.getLogger(__name__).warning(
-            rf"\[completion] could not enumerate hosts for {repo.sut_dir}: {e}"
-        )
+        if abandoned is None or not abandoned.is_set():
+            logging.getLogger(__name__).warning(
+                rf"\[completion] could not enumerate hosts for {repo.sut_dir}: {e}"
+            )
         return []
 
 

@@ -37,13 +37,29 @@ then queried.
   otto detects it structurally, and a backend that omits it still gets
   completion, because otto falls back to `list_labs()` + `load_lab()`.
 
-  If you do implement it, every id you return **must** be an id `load_lab()`
-  would produce, or completion offers names that cannot dispatch. Derive ids
-  with [`host_identity`](../../api/host/factory.rst) rather than formatting
-  your records by hand: it applies the same profile merge and validation the
-  host factory applies, which hand-formatting silently gets wrong (a numeric
-  field arriving as `3.0`, or an `os_profile` that supplies `board`/`slot`).
-  `assert_lab_repository_conforms` checks this for you.
+  If you do implement it, a summary must agree with the host `load_lab()`
+  builds — in three ways, all checked by `assert_lab_repository_conforms`:
+
+  - **Every id you return must be one `load_lab()` produces**, or completion
+    offers names that cannot dispatch. Derive ids with
+    [`host_identity`](../../api/host/factory.rst) rather than formatting your
+    records by hand: it applies the same profile merge and validation the host
+    factory applies, which hand-formatting silently gets wrong (a numeric
+    field arriving as `3.0`, or an `os_profile` that supplies `board`/`slot`).
+  - **Every host `load_lab()` produces must be summarized.** Otherwise
+    completion simply stops offering it, and nothing anywhere says so.
+  - **Every FIELD must match**, not just `id`. `HostSummary`'s fields have
+    defaults so the dataclass will let you omit them, but each one drives a
+    surface: `labs` scopes `otto host -l <lab> <TAB>` (and must be exactly the
+    labs that contain the host — claiming one it is not in offers an id that
+    cannot dispatch there), `element` and `element_id` synthesize the
+    positional handles (`dut1`), `docker_capable` gates `otto docker --on`,
+    and `ip` drives tunnel narrowing.
+
+  Otto also bounds how long it will wait for your backend during completion
+  (2 seconds by default). If yours is legitimately slower, raise
+  `OTTO_COMPLETION_HOST_TIMEOUT`; otto logs a warning naming it rather than
+  hanging the user's shell.
 
 ## Quick start: the built-in JSON source
 
