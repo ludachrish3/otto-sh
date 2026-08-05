@@ -170,7 +170,7 @@ def docker_lab(docker_parent) -> Lab:
 def built_image(docker_parent, docker_repo):
     """Ensure the repo1 ``api`` image is built once for this module."""
     results = _run(build_images(docker_repo, docker_parent, rebuild=False))
-    assert results["api"][0] in (Status.Success, Status.Skipped), results
+    assert results["api"].status in (Status.Success, Status.Skipped), results
     return results
 
 

@@ -69,19 +69,19 @@ def repo1():
 async def test_build_succeeds(parent, repo1):
     results = await build_images(repo1, parent, rebuild=True)
     assert "api" in results
-    status, msg = results["api"]
-    assert status is Status.Success, f"build failed: {msg}"
+    res = results["api"]
+    assert res.status is Status.Success, f"build failed: {res.value}"
 
 
 @pytest.mark.asyncio(loop_scope="module")
 async def test_build_skips_when_image_exists(parent, repo1):
     # First build (force) → fresh build.
     first = await build_images(repo1, parent, rebuild=True)
-    assert first["api"][0] is Status.Success
+    assert first["api"].status is Status.Success
 
     # Second build without --rebuild → must short-circuit on `docker image inspect`.
     second = await build_images(repo1, parent, rebuild=False)
-    assert second["api"][0] is Status.Skipped
+    assert second["api"].status is Status.Skipped
 
 
 @pytest.mark.asyncio(loop_scope="module")

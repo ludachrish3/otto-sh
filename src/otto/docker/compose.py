@@ -209,9 +209,12 @@ async def compose_up(
         from .build import build_images
 
         results = await build_images(repo, parent, rebuild=False)
-        for name, (status, msg) in results.items():
-            if not status.is_ok:
-                raise RuntimeError(f"build for image {name!r} failed before compose up: {msg}")
+        for name, res in results.items():
+            if not res.is_ok:
+                # value, not msg: the captured build output is the diagnosis.
+                raise RuntimeError(
+                    f"build for image {name!r} failed before compose up: {res.value}"
+                )
 
     from .staging import stage_compose_files
 

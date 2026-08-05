@@ -20,12 +20,15 @@ from otto.result import CommandResult, Result
 from otto.utils import Status
 
 
-def _ok(out: str = "") -> CommandResult:
-    return CommandResult(Status.Success, value=out, command="", retcode=0)
+def _ok(out: str = "", command: str = "") -> CommandResult:
+    return CommandResult(Status.Success, value=out, command=command, retcode=0)
 
 
-def _fail(out: str = "boom") -> CommandResult:
-    return CommandResult(Status.Failed, value=out, command="", retcode=1)
+def _fail(out: str = "boom", command: str = "") -> CommandResult:
+    # `command` is carried so the fake matches what a real exec produces —
+    # otherwise a test cannot tell "returned the result whole" from "rebuilt
+    # a summary", which is exactly the property _build_one now promises.
+    return CommandResult(Status.Failed, value=out, command=command, retcode=1)
 
 
 def _mock_parent():
@@ -84,9 +87,10 @@ async def test_build_one_skipped_when_image_exists(tmp_path):
     parent.exec.side_effect = exec_side_effect
 
     settings = DockerSettings(registry_url="docker.io", images=(img,), composes=())
-    status, msg = await _build_one(parent, "repo1", settings, img, rebuild=False)
-    assert status is Status.Skipped
-    assert msg.startswith("repo1-api:")
+    res = await _build_one(parent, "repo1", settings, img, rebuild=False)
+    assert res.status is Status.Skipped
+    assert res.value.startswith("repo1-api:")
+    assert res.msg == "", "msg is a diagnostic slot; the tag is the payload"
     # Must NOT have called `docker build`.
     cmds = [c.args[0] for c in parent.exec.call_args_list]
     assert not any(c.startswith("docker build ") for c in cmds), cmds
@@ -105,7 +109,8 @@ async def test_build_one_runs_when_image_missing(tmp_path):
     parent.exec.side_effect = exec_side_effect
 
     settings = DockerSettings(registry_url="docker.io", images=(img,), composes=())
-    status, _msg = await _build_one(parent, "repo1", settings, img, rebuild=False)
+    res = await _build_one(parent, "repo1", settings, img, rebuild=False)
+    status = res.status
     assert status is Status.Success
     cmds = [c.args[0] for c in parent.exec.call_args_list]
     assert any(c.startswith("docker build ") for c in cmds), cmds
@@ -122,7 +127,8 @@ async def test_rebuild_forces_build_even_when_image_exists(tmp_path):
     parent.exec.return_value = _ok()  # everything succeeds
 
     settings = DockerSettings(registry_url="docker.io", images=(img,), composes=())
-    status, _ = await _build_one(parent, "repo1", settings, img, rebuild=True)
+    res = await _build_one(parent, "repo1", settings, img, rebuild=True)
+    status = res.status
     assert status is Status.Success
     cmds = [c.args[0] for c in parent.exec.call_args_list]
     # Critical: we must have built even though inspect would have succeeded.
@@ -138,12 +144,18 @@ async def test_build_failure_propagates(tmp_path):
         if cmd.startswith("docker image inspect"):
             return _fail()
         if cmd.startswith("docker build "):
-            return _fail("syntax error in dockerfile")
+            return _fail("syntax error in dockerfile", command=cmd)
         return _ok()
 
     parent.exec.side_effect = exec_side_effect
 
     settings = DockerSettings(registry_url="docker.io", images=(img,), composes=())
-    status, msg = await _build_one(parent, "repo1", settings, img, rebuild=False)
-    assert status is not Status.Success
-    assert "syntax error" in msg
+    res = await _build_one(parent, "repo1", settings, img, rebuild=False)
+    assert res.status is not Status.Success
+    # The failing build's own result comes back whole: its captured output is
+    # in value, and the command/retcode the old tuple discarded survive.
+    assert "syntax error" in res.value
+    # The failing result comes back WHOLE. `!= 0` would be vacuous: retcode
+    # defaults to -1, so a rebuilt-and-summarized result would pass it.
+    assert res.retcode == 1
+    assert res.command.startswith("docker build ")

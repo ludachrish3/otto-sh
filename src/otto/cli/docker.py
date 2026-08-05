@@ -201,14 +201,17 @@ async def _build(
             continue
         parent = _resolve_parent_for_repo(r, lab, on)
         results = await build_images(r, parent, image_names=image, rebuild=rebuild)
-        for name, (status, msg) in results.items():
-            if status is Status.Skipped:
-                rprint(f"[dim]{r.name}/{name}: cached → {msg}")
-            elif status is Status.Success:
-                rprint(f"[green]{r.name}/{name}: built → {msg}")
+        for name, res in results.items():
+            # `value` on every branch: the tag on ok, the captured build output
+            # on failure. Never `msg` — an exec-produced CommandResult leaves
+            # it empty, so reading it here would print nothing at all.
+            if res.status is Status.Skipped:
+                rprint(f"[dim]{r.name}/{name}: cached → {res.value}")
+            elif res.status is Status.Success:
+                rprint(f"[green]{r.name}/{name}: built → {res.value}")
             else:
                 any_failed = True
-                rprint(f"[red]{r.name}/{name}: FAILED\n{msg}")
+                rprint(f"[red]{r.name}/{name}: FAILED\n{res.value}")
     if any_failed:
         raise typer.Exit(1)
 

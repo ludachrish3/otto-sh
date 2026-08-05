@@ -754,12 +754,19 @@ async def test_compose_up_build_failure_raises(tmp_path):
     repo = _make_repo(tmp_path)
     lab = _make_lab()
 
-    # build_images returns dict[str, tuple[Status, str]]; a non-ok status trips the branch
-    fake_results = {"api": (Status.Failed, "push access denied")}
+    # build_images returns dict[str, CommandResult]; a non-ok result trips the branch
+    fake_results = {
+        "api": CommandResult(
+            Status.Failed, value="push access denied", command="docker build", retcode=1
+        )
+    }
 
     with (
         patch("otto.docker.build.build_images", new=AsyncMock(return_value=fake_results)),
-        pytest.raises(RuntimeError, match="build for image"),
+        # Matches the PAYLOAD, not just the prefix: a value/msg inversion
+        # would still produce "build for image 'api' failed before compose
+        # up: " and pass a prefix-only match.
+        pytest.raises(RuntimeError, match="push access denied"),
     ):
         await compose_up(repo, lab, build=True)
 

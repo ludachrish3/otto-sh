@@ -63,7 +63,7 @@ async def stack(pepper_lease):
     lab.hosts[parent.id] = parent
 
     build_results = await build_images(repo, parent, rebuild=False)
-    assert build_results["api"][0] in (Status.Success, Status.Skipped)
+    assert build_results["api"].status in (Status.Success, Status.Skipped)
     hosts = await compose_up(repo, lab, on=parent.id)
     try:
         yield hosts["api"]

@@ -176,7 +176,17 @@ async def test_build_success(tmp_path):
     repo = _make_repo_with_image(tmp_path / "r1", name="myrepo", default_host="pepper_seed")
 
     mock_rprint = MagicMock()
-    mock_build = AsyncMock(return_value={"myimage": (Status.Success, "sha256:abc")})
+    mock_build = AsyncMock(
+        return_value={
+            "myimage": CommandResult(
+                Status.Success,
+                value="sha256:abc",
+                msg="sha256:abc",
+                command="docker build",
+                retcode=0,
+            )
+        }
+    )
 
     with (
         patch.object(docker_cli, "_select_repos", return_value=[repo]),
@@ -198,7 +208,13 @@ async def test_build_skipped(tmp_path):
     repo = _make_repo_with_image(tmp_path / "r1", name="myrepo", default_host="pepper_seed")
 
     mock_rprint = MagicMock()
-    mock_build = AsyncMock(return_value={"myimage": (Status.Skipped, "already exists")})
+    mock_build = AsyncMock(
+        return_value={
+            "myimage": CommandResult(
+                Status.Skipped, value="already exists", msg="already exists", command="", retcode=-1
+            )
+        }
+    )
 
     with (
         patch.object(docker_cli, "_select_repos", return_value=[repo]),
@@ -219,7 +235,13 @@ async def test_build_failed_exits(tmp_path):
     """_build raises Exit(1) when build_images returns Failed for an image."""
     repo = _make_repo_with_image(tmp_path / "r1", name="myrepo", default_host="pepper_seed")
 
-    mock_build = AsyncMock(return_value={"myimage": (Status.Failed, "build error")})
+    mock_build = AsyncMock(
+        return_value={
+            "myimage": CommandResult(
+                Status.Failed, value="build error", command="docker build", retcode=1
+            )
+        }
+    )
 
     with (
         patch.object(docker_cli, "_select_repos", return_value=[repo]),

@@ -12,6 +12,7 @@ from collections.abc import Iterable
 
 from ..config.repo import DockerImage, DockerSettings, Repo
 from ..host.host import Host
+from ..result import CommandResult
 from ..utils import Status
 from ._context_hash import context_hash
 from .staging import stage_image_context
@@ -58,8 +59,15 @@ async def _build_one(
     image: DockerImage,
     *,
     rebuild: bool,
-) -> tuple[Status, str]:
-    """Build a single image on *parent*. Returns (status, full_tag_or_msg)."""
+) -> CommandResult:
+    """Build a single image on *parent*.
+
+    Returns the build's own :class:`~otto.result.CommandResult`. ``value``
+    carries the full tag on a fresh or cached build; a failure returns the
+    ``docker build`` result whole, so ``value`` holds the captured output and
+    ``command`` / ``retcode`` / ``timed_out`` survive. ``value`` is the payload
+    slot on every branch — ``msg`` stays empty, per its contract.
+    """
     hash_hex = context_hash(image)
     full_tag = image_full_tag(settings.registry_url, project, image, hash_hex)
     latest_tag = image_latest_tag(settings.registry_url, project, image)
@@ -68,7 +76,12 @@ async def _build_one(
         logger.info(rf"\[docker] {full_tag}: already built, skipping")
         # Make sure :latest also points at the cached digest.
         await parent.exec(f"docker tag {shlex.quote(full_tag)} {shlex.quote(latest_tag)}")
-        return Status.Skipped, full_tag
+        # retcode -1: no build ran (is_ok short-circuits exit_code to 0).
+        # The tag goes in `value`, never `msg`: msg is documented as a human
+        # diagnostic, empty on success, and every CommandResult an exec
+        # produces leaves it empty — so `value` is the one slot a caller can
+        # read on every branch.
+        return CommandResult(Status.Skipped, value=full_tag, command="", retcode=-1)
 
     logger.info(rf"\[docker] building {full_tag}")
     remote_ctx = await stage_image_context(parent, project, image)
@@ -99,8 +112,10 @@ async def _build_one(
     # made-up constant would be wrong on a slower builder. `inf` states that.
     result = await parent.exec(cmd, timeout=float("inf"))
     if not result.status.is_ok:
-        return result.status, result.value
-    return Status.Success, full_tag
+        # Whole, not summarized: the caller wants the build output, and the
+        # retcode/command are diagnostics the tuple used to discard.
+        return result
+    return CommandResult(Status.Success, value=full_tag, command=cmd, retcode=0)
 
 
 async def build_images(
@@ -109,7 +124,7 @@ async def build_images(
     *,
     image_names: Iterable[str] | None = None,
     rebuild: bool = False,
-) -> dict[str, tuple[Status, str]]:
+) -> dict[str, CommandResult]:
     """Build all (or selected) images for *repo* on *parent*.
 
     Args:
@@ -122,11 +137,13 @@ async def build_images(
             always invoke ``docker build``.
 
     Returns:
-        Mapping of image name to ``(Status, message_or_tag)``. Status is
-        :attr:`~otto.utils.Status.Skipped` for images that already existed,
-        :attr:`~otto.utils.Status.Success` for fresh builds, and a failure status
-        otherwise. The message is the full tag on success/skip, or the
-        captured stderr on failure.
+        Mapping of image name to a :class:`~otto.result.CommandResult`. The
+        status is :attr:`~otto.utils.Status.Skipped` for images that already
+        existed, :attr:`~otto.utils.Status.Success` for fresh builds, and a
+        failure status otherwise. ``value`` is the full tag on success/skip;
+        on failure the parent's own result is returned whole, so ``value``
+        holds the captured build output and ``command`` / ``retcode`` are
+        preserved.
     """
     settings = repo.docker_settings
     if not settings.images:
@@ -138,7 +155,7 @@ async def build_images(
         else list(settings.images)
     )
 
-    results: dict[str, tuple[Status, str]] = {}
+    results: dict[str, CommandResult] = {}
     for image in selected:
         results[image.name] = await _build_one(
             parent,

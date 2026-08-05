@@ -10,9 +10,10 @@ note: >
   exit code, the command, or the output. Swept to zero when docker's
   compose_down / cleanup_project converted — they were the last two, and were
   a regression from an earlier Result-family shape, which is exactly the drift
-  this rule now prevents. Legacy `tuple[Status, str]` pairs (docker/build.py,
-  host/product.py) are the wider debt this rule deliberately does NOT cover
-  yet; tighten the regex when they convert.
+  this rule now prevents. The legacy `tuple[Status, str]` pairs in
+  host/product.py are the wider debt this rule deliberately does NOT cover
+  yet; tighten the regex to `\bStatus\b` when they convert (docker/build.py's
+  pair converted 2026-08-04, leaving product.py the last one).
 files:
 - src/otto/**
 rule:
