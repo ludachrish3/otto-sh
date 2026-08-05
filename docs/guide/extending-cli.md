@@ -125,6 +125,16 @@ as-is. Two edges to know about:
   return value, so an `async def` callback on a `typer.Typer` app (shared
   option plumbing) can never reach the bridge — otto rejects one loudly at
   registration-dispatch time rather than letting it silently do nothing.
+- **Instructions must be `async def`.** `@instruction()` rejects a plain `def`
+  outright ({doc}`run/index`) rather than registering a command that quietly
+  runs outside the policy. `@cli_command()` is **not** gated the same way yet
+  — a sync one is still invoked as-is, and the same silent failure applies to
+  it: a sync command that calls `ctx.all_hosts()` registers those hosts into a
+  scope that is never entered, so nothing sweeps them. Write lab-touching
+  commands as `async def` until that gate exists.
+- **`async def` is necessary, not sufficient.** The interrupt policy is
+  delivered through the event loop, so a command body that blocks it never
+  sees Ctrl-C — put local blocking work in {func}`asyncio.to_thread`.
 - An `async def` command driven *outside* otto's dispatch (for example, a
   `CliRunner` test invoking your Typer app directly) fails visibly — the
   command body never runs and Python warns about the un-awaited coroutine —

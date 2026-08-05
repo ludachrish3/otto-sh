@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 
 @instruction()
-def install_repo2(
+async def install_repo2(
     debug: Annotated[
         bool,
         typer.Option(

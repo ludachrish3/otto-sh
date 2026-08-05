@@ -49,7 +49,17 @@ The function:
 - Must be `async` and return a `Result` (or `None`). A returned `Result`'s
   exit code is honored: a failing result exits the process non-zero, under
   the same "Return values" rules as any registered command
-  ({doc}`../extending-cli`); `None` renders nothing
+  ({doc}`../extending-cli`); `None` renders nothing. `async` is enforced, not
+  merely advised — a plain `def` raises `TypeError` at decoration, because
+  only a coroutine reaches the lifecycle bridge that sweeps the instruction's
+  hosts and turns an interrupt into a clean exit
+- Must not *block* that bridge either. `async def` is necessary, not
+  sufficient: the interrupt policy is delivered through the event loop, so a
+  body that never yields to it — a bare `subprocess.run(...)`, a
+  `time.sleep(...)` — is exactly as uninterruptible as a sync one, and Ctrl-C
+  will appear to do nothing until it finishes. Lab work belongs in
+  `await host.run(...)`; local blocking work belongs in
+  {func}`asyncio.to_thread`. A body with nothing to await at all is fine
 - Is imported at startup because the module is listed in `init`
 - Gets its own `--help` page automatically from the docstring and type
   annotations

@@ -118,6 +118,9 @@ def test_instructions_scaffold_creates_shared_options_module(tmp_path: Path) -> 
     src = (tmp_path / "pylib" / "widget_instructions" / "__init__.py").read_text()
     assert "from widget_options import RepoOptions" in src
     assert "@instruction(options=_Options)" in src
+    # The decorator rejects a sync handler, so scaffolding one would make
+    # `otto init` emit a repo that cannot import.
+    assert "async def smoke" in src
 
 
 def test_options_module_scaffold_is_idempotent_either_order(tmp_path: Path) -> None:

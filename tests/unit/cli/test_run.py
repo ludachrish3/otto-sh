@@ -147,6 +147,36 @@ class TestInstructionDecorator:
         result = runner.invoke(run_app, ["_unit_test_noop"])
         assert result.exit_code == 0
 
+    def test_sync_handler_is_rejected_at_decoration(self):
+        """A plain `def` instruction must not register.
+
+        It would register and run perfectly happily — and never enter the
+        command lifecycle, because the leaf bridge detects the coroutine a
+        leaf RETURNS and a sync body returns a value. So its hosts are never
+        swept and an interrupt never becomes a clean exit.
+
+        Rejected rather than auto-wrapped in a coroutine, and the difference
+        was measured: `run_command` installs its SIGINT handler with
+        `loop.add_signal_handler`, so the handler is a LOOP CALLBACK. A body
+        that blocks the loop means the signal is not merely un-actionable, it
+        is unobserved — a SIGINT 0.5s into a 3s blocking body was still
+        unseen when `_main` reached its `interrupted is not None` check, so
+        the run returned the body's value instead of raising SystemExit(130),
+        and the "interrupted — cleaning up" banner printed 2.6s late. Wrapping
+        would have bought the form of the policy and none of its substance.
+        """
+        with pytest.raises(TypeError, match=r"_unit_test_sync.*async def"):
+
+            @instruction("_unit_test_sync_rejected")
+            def _unit_test_sync() -> CommandResult:  # pragma: no cover — never called
+                return CommandResult(Status.Success, value="", command="true", retcode=0)
+
+        # Raised BEFORE registration: a half-registered instruction that
+        # `otto run --list-instructions` advertises but cannot dispatch would
+        # trade a clear import-time error for a confusing runtime one. This
+        # fails if the check is ever moved below INSTRUCTIONS.register.
+        assert "_unit_test_sync_rejected" not in INSTRUCTIONS
+
 
 # ── Name derivation (must mirror typer.main.get_command_name exactly) ────────
 

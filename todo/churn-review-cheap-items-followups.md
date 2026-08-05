@@ -34,3 +34,37 @@ squash stays one thing.
   writes inside it move the digest. No crash on either side (the scan's
   `read_text` raises `IsADirectoryError` ⊂ `OSError`, already caught). Cosmetic
   — costs a `stat` per candidate to filter.
+
+## From `fix(cli)!: an instruction must be async def`
+
+- **`@cli_command` has the same hole and is not gated.** A sync
+  `@cli_command` that calls `ctx.all_hosts()` registers every host into a
+  scope that is never entered, so nothing sweeps them — the identical silent
+  failure `@instruction` now rejects, and the guide's own canonical example
+  (`docs/guide/extending-cli.md`) is a lab-touching `ping`. The line that
+  actually carries the weight is not "instruction vs cli_command" but
+  `lab_free`: `@cli_command(lab_free=True)` is a defensible sync exemption,
+  a lab-bound one is not. Documented as a caveat for now; gating it needs a
+  sweep of in-tree sync leaves first.
+
+- **The invariant is enforced at the sugar, not the seam.**
+  `INSTRUCTIONS.register(InstructionEntry(...))` and `@run_app.command()` both
+  reach `otto run` without passing the check. Airtight enforcement would live
+  in `InstructionEntry.__post_init__` or `make_registry_group.get_command`.
+
+- **`raise TypeError` vs the OttoError convention.** `errors.py` says "every
+  exception otto raises subclasses `OttoError`", but
+  `tests/unit/test_error_base.py` sweeps class DEFINITIONS, not raise sites,
+  and `src/` has ~40 bare stdlib raises. Either the prose should say "every
+  exception otto DEFINES" or the sweep should grow a raise-site rule. Same
+  decay pattern the churn review's P5 describes.
+
+- **A `!` in a conventional-commit type is inert in the changelog.**
+  `cliff.toml` maps `^fix` to "Fixed" with no breaking-change parser, so
+  `fix(cli)!:` renders as an ordinary bullet. Either teach cliff the marker or
+  stop implying the changelog will carry it.
+
+- **`typer.main.get_command_name` does not strip leading dashes.** A function
+  named `_foo` derives the command name `-foo`, not `foo`. Harmless for real
+  instructions; it silently makes some name-derivation assertions in
+  `tests/unit/cli/test_run.py` (~199, ~211) vacuous.

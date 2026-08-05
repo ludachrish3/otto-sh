@@ -1,5 +1,6 @@
 """``otto run`` subcommand: decorator and Typer app for user-defined run instructions."""
 
+import inspect
 from collections.abc import Callable, Coroutine
 from typing import (
     Annotated,
@@ -72,6 +73,19 @@ def main(
 def instruction(*args: Any, options: type | None = None, **kwargs: Any) -> Callable[..., Any]:
     """Register an async function as an ``otto run`` subcommand.
 
+    The handler must be ``async def`` — a plain ``def`` raises :exc:`TypeError`
+    at decoration, because only a coroutine reaches the lifecycle bridge that
+    sweeps the instruction's hosts and converts an interrupt into a clean
+    exit. ``async def`` is necessary, not sufficient: the interrupt policy is
+    driven by the event loop, so a body that blocks it (a bare
+    ``subprocess.run``, ``time.sleep``) is no more interruptible than a sync
+    one. Lab work belongs in ``await host.…``; local blocking work belongs in
+    ``asyncio.to_thread``.
+
+    Enforced at the sugar, not at the seam: registering an ``InstructionEntry``
+    into ``INSTRUCTIONS`` directly, or hanging a command off ``run_app``, still
+    reaches ``otto run`` without passing this check.
+
     When *options* is a dataclass, the decorator expands its fields (including
     inherited ones) into individual CLI flags — exactly like ``OttoSuite``'s
     auto-registration does for suite options.  The original function must
@@ -114,6 +128,26 @@ def instruction(*args: Any, options: type | None = None, **kwargs: Any) -> Calla
     def decorator(
         func: Callable[P, Coroutine[Any, Any, CommandResult]],
     ) -> Callable[P, Coroutine[Any, Any, CommandResult]]:
+        # Checked on `func` itself, with no ``__wrapped__`` unwrap: unlike the
+        # group-callback guard in cli/invoke.wrap_leaf_callbacks, which sees a
+        # callback typer has already update_wrapper'd, this runs before typer
+        # touches anything, so `func` IS the user's function. Stricter than the
+        # bridge's own contract (which accepts anything RETURNING a coroutine)
+        # and deliberately so: a sync instruction already died at runtime the
+        # moment it used ctx or options=, since both _inject_ctx and
+        # _wrap_with_options `await func(...)`. This makes a partial, late,
+        # confusing failure into a total, early, explained one.
+        if not inspect.iscoroutinefunction(func):
+            raise TypeError(
+                f"instruction {getattr(func, '__name__', repr(func))!r} must be "
+                "`async def`: the leaf-invoke bridge detects the COROUTINE a leaf "
+                "returns, so a plain `def` registers and runs but never enters the "
+                "command lifecycle — hosts it opens are not swept, and SIGINT/SIGTERM "
+                "are not turned into a clean exit. A body with nothing to await is "
+                "still correct as `async def`; a wrapper around an async function "
+                "should itself be `async def` and await it."
+            )
+
         # No self-wrapping: the registered async handler runs under the command
         # lifecycle via the leaf-invoke wrapper's coroutine bridge
         # (cli/invoke._wrap_invoke) when `otto run <name>` dispatches it.
