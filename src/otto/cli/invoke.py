@@ -597,6 +597,40 @@ def render_leaf_value(value: Any, policy: "RenderPolicy | None" = None) -> None:
     rprint(value)  # documented third-party plain-value fallback, exit 0
 
 
+def _require_async_leaf(cmd: Any, spec: "CommandSpec") -> None:
+    """Refuse a sync leaf under a command whose lane demands coroutines.
+
+    Only a coroutine reaches the bridge below, so a sync leaf runs with no
+    host-scope entry and no interrupt policy. ``@instruction`` checks this at
+    its own decorator, but that is the SUGAR: a directly-registered
+    ``InstructionEntry``, an ``@run_app.command()``, and a sub-group added
+    with ``add_typer`` all reach ``otto run`` without passing it.
+
+    Checked HERE — at invocation — rather than where commands resolve, and
+    that placement is the whole point. ``TyperGroup.format_commands`` resolves
+    every child to render a help table, so a resolve-time check makes
+    ``otto run --help`` traceback for a user whose plugin ships one bad leaf,
+    hiding the very list that would identify it. Completion has the same
+    problem and would additionally false-positive on the synthesized stubs the
+    cache serves. Invocation happens on exactly one path, reaches every leaf
+    however it was registered, and cannot fire on a read-only one.
+
+    One ``__wrapped__`` level, matching the group-callback guard: that is the
+    function typer will actually call.
+    """
+    callback = getattr(cmd, "callback", None)
+    if callback is None:
+        return
+    if inspect.iscoroutinefunction(getattr(callback, "__wrapped__", callback)):
+        return
+    raise TypeError(
+        f"{spec.name} command {getattr(cmd, 'name', '?')!r} is a plain `def`: only a "
+        "coroutine reaches otto's lifecycle bridge, so its hosts are never swept and "
+        "an interrupt never becomes a clean exit. Write it as `async def` — a body "
+        "with nothing to await is still correct."
+    )
+
+
 def _wrap_invoke(cmd: Any, spec: "CommandSpec") -> Any:
     """Wrap a single leaf command's ``invoke``: preamble + async-leaf bridge (idempotent)."""
     if getattr(cmd, "_otto_preambled", False):
@@ -605,6 +639,10 @@ def _wrap_invoke(cmd: Any, spec: "CommandSpec") -> Any:
     original_invoke = cmd.invoke
 
     def _invoke_with_preamble(inner_ctx: Any) -> Any:
+        # Before the preamble, so a refused command creates no output dir and
+        # loads no lab.
+        if spec.async_leaves:
+            _require_async_leaf(cmd, spec)
         # Restamp on the leaf's own (inner) ctx: ctx.meta is shared by-reference
         # down the click context chain, but the spec must reflect THIS leaf.
         inner_ctx.meta["_otto_command_spec"] = spec
@@ -737,6 +775,7 @@ def make_registry_group(child_registry: "Registry[Any]") -> "type[TyperGroup]":
     leaf needs that wrapper — bare, it fails loudly with an un-awaited
     coroutine) while ``otto run smoke`` / ``otto test TestX`` still get the
     preamble when dispatched for real.
+
     """
     from typer.core import TyperGroup
 

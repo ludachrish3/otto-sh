@@ -111,27 +111,36 @@ A `register_cli_command()` loader can be one of three things:
 
 ## The command lifecycle comes free
 
-Registration is the only opt-in. Write commands as plain `async def`
+Registration is the only opt-in. Write commands as `async def`
 functions — on your own Typer app or as bare-function loaders — and otto's
 dispatch runs each invocation under the full command lifecycle: host-scope
 entry (hosts opened during the command are swept when it exits), the
 two-stage SIGINT/SIGTERM interrupt policy, and the bounded teardown deadline.
 There is no decorator to remember and nothing to import from `otto.lifecycle`;
 the leaf-invoke wrapper detects the coroutine a plain `async def` leaf
-produces and bridges it through the policy. Synchronous commands are invoked
-as-is. Two edges to know about:
+produces and bridges it through the policy. A sync command is invoked as-is,
+with none of it. The edges to know about:
 
 - **Group callbacks must be plain `def`.** Typer discards a group callback's
   return value, so an `async def` callback on a `typer.Typer` app (shared
   option plumbing) can never reach the bridge — otto rejects one loudly at
   registration-dispatch time rather than letting it silently do nothing.
-- **Instructions must be `async def`.** `@instruction()` rejects a plain `def`
-  outright ({doc}`run/index`) rather than registering a command that quietly
-  runs outside the policy. `@cli_command()` is **not** gated the same way yet
-  — a sync one is still invoked as-is, and the same silent failure applies to
-  it: a sync command that calls `ctx.all_hosts()` registers those hosts into a
-  scope that is never entered, so nothing sweeps them. Write lab-touching
-  commands as `async def` until that gate exists.
+- **`@instruction()` rejects every plain `def`.** `otto run` is the lab-work
+  lane, and the rule is re-applied when a leaf is INVOKED — so registering an
+  `InstructionEntry` straight into `INSTRUCTIONS`, hanging a command off
+  `run_app` with `@run_app.command()`, or adding a sub-group with `add_typer`
+  all reach the same check rather than routing around the decorator.
+- **`@cli_command()` rejects a sync handler unless `lab_free=True`.** Note
+  what `lab_free` actually means: otto will not load a lab, open a session or
+  run the reservation gate for you. It is *not* a promise that the command
+  touches no hosts — `otto monitor` is `lab_free=True` and calls
+  `all_hosts()`. So read the exemption as "I take responsibility for the
+  lifecycle myself", which is what monitor does; if you do not, write the
+  command `async def` and let the bridge do it.
+- **Other registration routes are not gated yet.** A sync leaf on a
+  `typer.Typer` app loader, or a bare sync function passed to
+  `register_cli_command()`, still dispatches as-is. otto's own `otto test`
+  and `otto cov` leaves are in that category on purpose.
 - **`async def` is necessary, not sufficient.** The interrupt policy is
   delivered through the event loop, so a command body that blocks it never
   sees Ctrl-C — put local blocking work in {func}`asyncio.to_thread`.

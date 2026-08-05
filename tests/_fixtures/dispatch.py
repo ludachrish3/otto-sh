@@ -46,9 +46,13 @@ class DispatchRunner(CliRunner):
         color: bool = False,
         *,
         spec_name: str | None = None,
+        async_leaves: bool = False,
         **extra: Any,
     ) -> Result:
         """Invoke *app* (a Typer app or plain/async function loader) dispatched.
+
+        *async_leaves* mirrors the real ``run`` registration, whose leaves must
+        all be coroutines.
 
         *spec_name* names the ``CommandSpec`` (and so the resolved command);
         it defaults to the Typer app's own name. Function loaders (which have
@@ -60,7 +64,13 @@ class DispatchRunner(CliRunner):
         name = spec_name or (app.info.name if isinstance(app, typer.Typer) else None)
         if name is None:
             raise TypeError("spec_name= is required for a non-Typer (function) loader")
-        spec = CommandSpec(name=name, loader=app, lab_free=True, output_dir=False)
+        spec = CommandSpec(
+            name=name,
+            loader=app,
+            lab_free=True,
+            output_dir=False,
+            async_leaves=async_leaves,
+        )
         cmd = wrap_leaf_callbacks(resolve_spec_command(spec), spec)
         with (
             # CliRunner.invoke's only use of `app` is `_get_command(app)`;

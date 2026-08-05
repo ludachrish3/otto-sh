@@ -6,9 +6,10 @@ squash stays one thing.
 
 ## STATUS
 
-Addressed so far: the whole docker section, and 3 of the 4 completion items
-(`python_files`, the dot-dir walk, the directory match). Everything else is
-open. New items from the follow-up commits' own reviews are at the end.
+Addressed so far: the whole docker section; 3 of the 4 completion items
+(`python_files`, the dot-dir walk, the directory match); and 2 of the 5 cli
+items (the `@cli_command` hole, the sugar-vs-seam bypass). New items from the
+follow-up commits' own reviews are at the end.
 
 
 ## From `fix(completion): hash every test source the --tests scan can read` — 3 of 4 DONE
@@ -42,9 +43,9 @@ open. New items from the follow-up commits' own reviews are at the end.
   `read_text` raises `IsADirectoryError` ⊂ `OSError`, already caught). Cosmetic
   — costs a `stat` per candidate to filter.
 
-## From `fix(cli)!: an instruction must be async def`
+## From `fix(cli)!: an instruction must be async def` — 2 of 5 DONE
 
-- **`@cli_command` has the same hole and is not gated.** A sync
+- **DONE** — **`@cli_command` has the same hole and is not gated.** A sync
   `@cli_command` that calls `ctx.all_hosts()` registers every host into a
   scope that is never entered, so nothing sweeps them — the identical silent
   failure `@instruction` now rejects, and the guide's own canonical example
@@ -54,7 +55,7 @@ open. New items from the follow-up commits' own reviews are at the end.
   a lab-bound one is not. Documented as a caveat for now; gating it needs a
   sweep of in-tree sync leaves first.
 
-- **The invariant is enforced at the sugar, not the seam.**
+- **DONE** — **The invariant is enforced at the sugar, not the seam.**
   `INSTRUCTIONS.register(InstructionEntry(...))` and `@run_app.command()` both
   reach `otto run` without passing the check. Airtight enforcement would live
   in `InstructionEntry.__post_init__` or `make_registry_group.get_command`.
@@ -209,3 +210,34 @@ pre-existing; none is deliberate unless noted.
   `norecursedirs = .*` makes pytest collect from `tests/build/`, which these
   readers now skip — completer blind and digest blind, the same shape as the
   `python_files` gap. One config key over, same fix shape.
+
+## From `fix(cli): a lab-bound command must be async, at the decorator AND the seam`
+
+A sweep of the whole dispatch tree (21 leaves) while scoping that change found
+the sync lab-bound leaves otto has ON PURPOSE, which is why the rule is scoped
+to `otto run` and `@cli_command` rather than applied to every leaf:
+
+- **`otto test <Suite>` leaves are sync**, because `pytest.main` is. The suite
+  run therefore does NOT go through `run_command` — that is Tier 0.4 of the
+  churn review ("the longest, most host-holding phase has no two-stage
+  interrupt policy"), still open, and the reason a blanket seam rule would
+  have had to be lied to.
+- **`otto cov report/get/clean` are sync and self-bridge**, each calling
+  `run_command` in its own body. Converting them to `async def` and letting
+  the leaf wrapper drive them would finish the lifecycle migration for the
+  last three first-party leaves; it is a real behaviour change to three
+  commands, so it wants its own item.
+
+- **`register_cli_command(name, sync_func)` is still ungated**, and so is any
+  sync leaf on a `typer.Typer` app loader — the symmetric hole to
+  `INSTRUCTIONS.register`, which IS now covered. Closing it means the same
+  `async_leaves` flag on more registrations, but first it needs the same
+  in-tree sweep: `otto test` and `otto cov` are exactly those shapes.
+
+- **`lab_free` is not the axis it reads as.** It means "otto will not load a
+  lab, open a session, or run the gate for you" — not "touches no hosts".
+  `otto monitor` is `lab_free=True`, sync, and calls `all_hosts()` itself. So
+  the `@cli_command` exemption really means "I drive the lifecycle myself",
+  and a third-party command that declares `lab_free=True` without doing so is
+  waved through. A real host-touching axis would need the context to record
+  whether a scope was ever entered.

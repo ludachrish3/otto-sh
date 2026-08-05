@@ -242,3 +242,51 @@ def test_command_spec_is_frozen():
     spec = CommandSpec(name="x", loader=None)
     with pytest.raises(Exception):  # noqa: B017, PT011 — dataclasses.FrozenInstanceError
         spec.name = "y"  # ty: ignore[invalid-assignment]
+
+
+# ── The lab-bound-must-be-async rule ─────────────────────────────────────────
+
+
+def test_lab_bound_cli_command_rejects_a_sync_handler():
+    """The same hole `@instruction` closed, one decorator over.
+
+    A sync `@cli_command` that calls `ctx.all_hosts()` registers every host
+    into a scope that is never entered, so nothing sweeps them — and the
+    guide's own canonical example is a lab-touching `ping`.
+    """
+    with pytest.raises(TypeError, match=r"lab-bound command.*async def"):
+
+        @cli_command(name="_unit_sync_labbound")
+        def _unit_sync_labbound() -> None:  # pragma: no cover — never registered
+            pass
+
+    assert "_unit_sync_labbound" not in CLI_COMMANDS
+
+
+def test_lab_free_cli_command_may_be_sync():
+    """The other side of the line, and the reason it is `lab_free` and not
+    "which decorator": a command that touches no hosts has nothing to sweep,
+    so sync is exactly right for it."""
+
+    @cli_command(name="_unit_sync_labfree", lab_free=True)
+    def _unit_sync_labfree() -> None:
+        pass
+
+    assert "_unit_sync_labfree" in CLI_COMMANDS
+
+
+def test_run_is_registered_with_async_leaves_and_test_is_not():
+    """The flag on the REAL registration, which the seam tests cannot see.
+
+    They build a local lane app and pass `async_leaves=True` themselves, so
+    dropping it from `builtin_commands.py` left the entire suite green while
+    `otto run` silently stopped enforcing anything.
+
+    `test` deliberately does NOT carry it: every `otto test <Suite>` leaf is
+    sync because `pytest.main` is.
+    """
+    from otto.cli.builtin_commands import register_builtin_commands
+
+    register_builtin_commands()
+    assert CLI_COMMANDS.get("run").async_leaves is True
+    assert CLI_COMMANDS.get("test").async_leaves is False

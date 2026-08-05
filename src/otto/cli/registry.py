@@ -43,6 +43,20 @@ class CommandSpec:
     gate: bool = True
     """Whether invocations run the reservation gate (ignored when ``lab_free``)."""
 
+    async_leaves: bool = False
+    """True when every leaf under this command must be ``async def``.
+
+    Set for ``run``: an instruction is the lab-work lane, and only a coroutine
+    reaches the lifecycle bridge. Enforced at INVOCATION (see
+    ``cli/invoke._wrap_invoke``) rather than at registration, so the routes
+    ``@instruction``'s own check cannot see — a directly-registered
+    ``InstructionEntry``, ``@run_app.command()``, a sub-group added with
+    ``add_typer`` — are all covered by the one seam every executed leaf
+    passes through.
+
+    NOT set for ``test``: every ``otto test <Suite>`` leaf is sync, because
+    ``pytest.main`` is."""
+
     origin: str = ""
     """Module that registered the command (auto-captured) — used in collisions."""
 
@@ -65,6 +79,7 @@ def register_cli_command(
     lab_free: bool = False,
     output_dir: bool = True,
     gate: bool = True,
+    async_leaves: bool = False,
 ) -> None:
     """Register a top-level ``otto`` command or group.
 
@@ -88,6 +103,7 @@ def register_cli_command(
         lab_free=lab_free,
         output_dir=output_dir,
         gate=gate,
+        async_leaves=async_leaves,
         origin=origin,
     )
     CLI_COMMANDS.register(name, spec, origin=origin)
@@ -108,9 +124,30 @@ def cli_command(
     parameter is injected (hidden from the CLI), and ``options=`` expands a
     pydantic-dataclass into flags. The command name defaults to the function
     name with underscores dashed.
+
+    A LAB-BOUND command must be ``async def``; a ``lab_free=True`` one may be
+    sync. Only a coroutine reaches the lifecycle bridge, so a sync lab-bound
+    command leaks the hosts it opens and ignores the interrupt policy.
+
+    ``lab_free`` is the best axis available here, not a perfect one: it means
+    "otto will not load a lab, open a session or run the gate for you", NOT
+    "touches no hosts" — ``otto monitor`` is lab-free, sync, and calls
+    ``all_hosts()`` itself. Read the exemption as "I drive the lifecycle
+    myself", which is exactly what monitor does. ``async def`` is in turn
+    necessary and not sufficient: a body that blocks the event loop is no more
+    interruptible than a sync one (see :func:`~otto.cli.run.instruction`).
     """
 
     def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
+        if not lab_free and not inspect.iscoroutinefunction(func):
+            raise TypeError(
+                f"lab-bound command {getattr(func, '__name__', repr(func))!r} must be "
+                "`async def`: only a coroutine reaches otto's lifecycle bridge, so a "
+                "plain `def` runs with its hosts never swept and an interrupt never "
+                "turned into a clean exit. Write it as `async def` — a body with "
+                "nothing to await is still correct — or, if it touches no lab hosts, "
+                "register it with lab_free=True, where sync is exactly right."
+            )
         target = prepare_command_target(func, options)
         cmd_name = name or getattr(func, "__name__", repr(func)).replace("_", "-")
         doc_line = ((func.__doc__ or "").strip().splitlines() or [""])[0]

@@ -82,9 +82,10 @@ def instruction(*args: Any, options: type | None = None, **kwargs: Any) -> Calla
     one. Lab work belongs in ``await host.…``; local blocking work belongs in
     ``asyncio.to_thread``.
 
-    Enforced at the sugar, not at the seam: registering an ``InstructionEntry``
-    into ``INSTRUCTIONS`` directly, or hanging a command off ``run_app``, still
-    reaches ``otto run`` without passing this check.
+    This is the sugar's check. The same rule is re-applied when ``otto run``
+    INVOKES a leaf (``CommandSpec.async_leaves``), so a directly-registered
+    ``InstructionEntry``, an ``@run_app.command()``, or a sub-group added with
+    ``add_typer`` cannot route around it.
 
     When *options* is a dataclass, the decorator expands its fields (including
     inherited ones) into individual CLI flags — exactly like ``OttoSuite``'s

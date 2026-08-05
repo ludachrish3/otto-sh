@@ -14,7 +14,14 @@ def register_builtin_commands() -> None:
     if "run" in CLI_COMMANDS:
         return
     register_cli_command(
-        "run", "otto.cli.run:run_app", help="Run a registered instruction on the lab."
+        "run",
+        "otto.cli.run:run_app",
+        help="Run a registered instruction on the lab.",
+        # Every leaf under `otto run` must be `async def`. @instruction checks
+        # its own callers, but a directly-registered InstructionEntry, an
+        # @run_app.command(), or a sub-group added with add_typer all reach
+        # here without passing it; this covers them at invocation.
+        async_leaves=True,
     )
     register_cli_command(
         "test", "otto.cli.test:suite_app", help="Run a registered OttoSuite test suite."

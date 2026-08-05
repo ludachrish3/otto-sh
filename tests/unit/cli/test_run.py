@@ -20,6 +20,7 @@ from typer.testing import CliRunner
 
 from otto.cli.run import INSTRUCTIONS, instruction, run_app
 from otto.host.unix_host import UnixHost
+from otto.instructions import InstructionEntry
 from otto.result import CommandResult
 from otto.utils import Status
 from tests._fixtures.dispatch import DispatchRunner
@@ -68,8 +69,11 @@ class TestRunCallback:
     def test_log_dir_set_for_subcommand(self):
         from otto.cli.main import app
 
+        # async, because `otto run`'s leaves must be: this stub used to be a
+        # plain `def`, which is exactly the `@run_app.command()` bypass the
+        # seam guard now closes.
         @run_app.command("_test_cmd_cb")
-        def _test_cmd_cb():
+        async def _test_cmd_cb():
             pass
 
         with (
@@ -578,3 +582,123 @@ async def test_inject_ctx_supplies_active_context():
         assert seen["value"] == 5
     finally:
         reset_context(token)
+
+
+class TestInstructionSeamGuard:
+    """`@instruction` guards the SUGAR; three other routes reach `otto run`.
+
+    A directly-registered `InstructionEntry`, an `@run_app.command()`, and a
+    sub-group added with `add_typer` all dispatch without ever passing the
+    decorator — so the rule also lives at invocation, which is the one path
+    every executed leaf takes however it was registered.
+
+    Everything here is built on a LOCAL Typer app rather than the module-global
+    `run_app`: registering a deliberately-broken command on the shared app
+    would poison it for every later test in the process.
+    """
+
+    @staticmethod
+    def _lane() -> "typer.Typer":
+        """A stand-in for `run_app`: same group class, same async-leaf lane."""
+        from otto.cli.invoke import make_registry_group
+        from otto.instructions import INSTRUCTIONS as REGISTRY
+
+        app = typer.Typer(name="run", cls=make_registry_group(REGISTRY))
+
+        @app.callback()
+        def _cb() -> None:
+            """Keep the app a GROUP: a single-command, callback-free Typer
+            flattens into a bare leaf on resolve (see extending-cli.md)."""
+
+        return app
+
+    def _dispatch(self, app, args):
+        return runner.invoke(app, args, spec_name="run", async_leaves=True)
+
+    def test_a_sync_command_hung_off_the_app_is_refused(self):
+        app = self._lane()
+
+        @app.command("_seam_static")
+        def _seam_static():  # pragma: no cover — never invoked
+            pass
+
+        result = self._dispatch(app, ["_seam_static"])
+        assert isinstance(result.exception, TypeError), result.exception
+        assert "'_seam_static'" in str(result.exception)
+
+    def test_a_sync_leaf_in_an_added_sub_group_is_refused(self):
+        """`add_typer` is the group form of the bypass above.
+
+        A resolve-time guard missed this: the sub-group is a plain TyperGroup,
+        so nothing re-entered the check when its children resolved, and the
+        sync leaf ran outside the bridge with exit 0.
+        """
+        app = self._lane()
+        sub = typer.Typer()
+
+        @sub.command("leaf")
+        def _seam_nested():  # pragma: no cover — never invoked
+            pass
+
+        app.add_typer(sub, name="_seam_group")
+
+        result = self._dispatch(app, ["_seam_group", "leaf"])
+        assert isinstance(result.exception, TypeError), result.exception
+        assert "'leaf'" in str(result.exception)
+
+    def test_a_sync_entry_registered_directly_is_refused(self):
+        from otto.instructions import INSTRUCTIONS as REGISTRY
+
+        sub = typer.Typer()
+
+        @sub.command("_seam_registered")
+        def _seam_registered():  # pragma: no cover — never invoked
+            pass
+
+        REGISTRY.register(
+            "_seam_registered",
+            InstructionEntry(name="_seam_registered", sub_app=sub, module=__name__),
+            origin=__name__,
+        )
+        try:
+            result = self._dispatch(self._lane(), ["_seam_registered"])
+        finally:
+            REGISTRY.unregister("_seam_registered")
+        assert isinstance(result.exception, TypeError), result.exception
+        assert "'_seam_registered'" in str(result.exception)
+
+    def test_an_async_leaf_still_dispatches_and_runs(self):
+        """Positive control — and it asserts the BODY ran.
+
+        `exit_code == 0` alone cannot tell "ran" from "returned a coroutine
+        nobody awaited", which is exactly the failure the bridge exists to
+        prevent.
+        """
+        app = self._lane()
+        ran: list[str] = []
+
+        @app.command("_seam_async")
+        async def _seam_async() -> None:
+            ran.append("yes")
+
+        result = self._dispatch(app, ["_seam_async"])
+        assert result.exit_code == 0, result.output
+        assert ran == ["yes"]
+
+    def test_help_still_renders_when_a_leaf_is_sync(self):
+        """The guard must not fire on a read-only path.
+
+        `TyperGroup.format_commands` resolves EVERY child to build the help
+        table, so a resolve-time check made `otto run --help` traceback for a
+        user whose plugin ships one bad leaf — hiding the very list that would
+        identify it. Checking at invocation cannot reach a help render.
+        """
+        app = self._lane()
+
+        @app.command("_seam_help_sync")
+        def _seam_help_sync():  # pragma: no cover — never invoked
+            pass
+
+        result = self._dispatch(app, ["--help"])
+        assert result.exit_code == 0, result.output
+        assert "_seam_help_sync" in result.output
