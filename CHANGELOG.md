@@ -5,6 +5,53 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.3] - 2026-08-05
+
+### Added
+
+- one seam owns preamble, lifecycle, and rendering
+- lifecycle bridge at the leaf-invoke wrapper — registration is the opt-in (wave 2)
+- sync_phase — two-stage interrupt policy for the pytest session (Tier 0.4)
+- tach + ast-grep architecture gates (lint-arch), bound on push via nox lint
+
+
+### Changed
+
+- the product lifecycle returns Results, and the gate closes
+- build results are CommandResults, not (Status, str) pairs
+- name hosts through the host source, not through lab.json
+- one outcome convention — Result-family returns, gated
+- OttoError root — re-parent otto's public exceptions
+- RemoteHost absorbs the duplicated session-delegation methods
+- finish the lifecycle migration — strip and delete async_typer_command
+- move the INSTRUCTIONS registry to otto.instructions (Tier 1.5)
+
+
+### Documentation
+
+- lifecycle uniformity — codify the user contract (plain async def + registration = full policy)
+- command lifecycle uniformity — policy at the leaf-invoke wrapper, sync_phase primitive for otto test
+- purge SDD execution plans; keep specs (83-audit: 1 deletable)
+- top-2 TODO refactor feedback + repo-wide churn/design review
+
+
+### Fixed
+
+- resolve declared links against the id lab.hosts is keyed by
+- bound cache staleness for sources the fingerprint cannot see
+- appease Biome's warning tier in the classicScript guard
+- one owning seam for open-DB-before-spawn (Tier 0.7)
+- classicScript fails the build when the bundle key vanishes (Tier 0.8)
+- stub tach.pytest_plugin for nested pytester sessions
+- resolve the three main-push failure classes from issue #193
+- discovery errors ride the cached tuple; public invalidate() (Tier 0.6)
+- first loop escape cancels sibling collection loops (Tier 0.3)
+- bound the SSE subscriber queues and the in-memory series
+- EmbeddedHost.close() closes transports even when a session refuses
+- burn down the architecture gates' initial findings
+- declare harness env opt-ins so the strip stops eating them
+
+
 ## [0.8.2] - 2026-08-03
 
 ### Added
@@ -1111,7 +1158,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - added GitHub templates
 - set up release management
 
-[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.8.2...HEAD
+[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.8.3...HEAD
+[0.8.3]: https://github.com/ludachrish3/otto-sh/compare/v0.8.2...v0.8.3
 [0.8.2]: https://github.com/ludachrish3/otto-sh/compare/v0.8.1...v0.8.2
 [0.8.1]: https://github.com/ludachrish3/otto-sh/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/ludachrish3/otto-sh/compare/v0.7.4...v0.8.0
