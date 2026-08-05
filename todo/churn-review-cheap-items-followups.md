@@ -64,6 +64,38 @@ squash stays one thing.
   `fix(cli)!:` renders as an ordinary bullet. Either teach cliff the marker or
   stop implying the changelog will carry it.
 
+- **`SupportsHostSummaries` conformance checks ids, not completeness.**
+  `testing/conformance.py`'s `_expect_host_summaries_conform` only asserts the
+  summarized ids are a subset of `load_lab`'s. Any field a completer starts
+  depending on (the `hop` idea explored and dropped in the link-completion
+  work would have been the first) can be silently absent from a third-party
+  backend with the conformance suite still green.
+
+- **`repo_host_summaries` has no timeout.** It catches every exception, so a
+  custom backend that FAILS is contained — but one that HANGS hangs the TAB.
+  Measured fallback cost for a non-`SupportsHostSummaries` backend is
+  O(labs × hosts) host constructions (~18 ms for 200 hosts in one lab), since
+  the fallback loads every lab.
+
+## From `fix(completion): scope link completion to the lab`
+
+- **Implicit links are unimpairable, and nothing says so where it would be
+  read.** `implicit_links` builds endpoints with `interface=None`, which
+  `endpoint_placements` refuses, and hop-less hosts edge to `local`, which
+  `ensure_not_local_link` refuses. So `find_link` resolves ids that no
+  command can act on. `otto link list` surfaces this as `impairable=False`,
+  but `find_link`'s own docstring does not, and it cost a wrong turn here.
+  Worth either a note on `find_link` or an `impairable` helper on `Link`.
+
+- **A declared link between two interface-less hosts is offered but not
+  impairable.** `_resolve_endpoint` leaves `interface=None` when a host
+  declares no `interfaces` map, so `endpoint_placements` refuses it.
+  Completion cannot see that without interface data, which `HostSummary`
+  deliberately excludes. Rare (a declared link usually names interfaces), and
+  the fix is a repository seam for links rather than a wider summary.
+
+## Cross-cutting
+
 - **`typer.main.get_command_name` does not strip leading dashes.** A function
   named `_foo` derives the command name `-foo`, not `foo`. Harmless for real
   instructions; it silently makes some name-derivation assertions in

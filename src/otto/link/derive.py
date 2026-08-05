@@ -99,13 +99,19 @@ def _validate_impair(
         )
 
 
-def _raw_endpoint_host_ids(entry: object) -> list[str]:
+def raw_endpoint_host_ids(entry: object) -> list[str]:
     """Best-effort endpoint host ids from a *raw* link entry, before validation.
 
     Used only to decide relevance (does this link touch the requested lab?), so
     it must never raise: a non-dict entry, a non-list ``endpoints``, or a
     non-dict endpoint yields no ids — an unrelated lab's malformed link is then
     treated as non-relevant and skipped rather than crashing the load.
+
+    Public because relevance has two callers that must agree:
+    :func:`resolve_declared_links` decides which links a lab LOADS, and
+    ``otto.config.completion_cache.collect_link_ids`` decides which it OFFERS.
+    A completer applying its own version of this rule offers links the loader
+    then refuses.
     """
     if not isinstance(entry, dict):
         return []
@@ -144,7 +150,7 @@ def resolve_declared_links(
     for idx, entry in enumerate(link_data):
         # Relevance is read from the raw entry BEFORE strict validation, so an
         # unrelated lab's malformed link is filtered out before it can raise.
-        if not any(host_id in loaded_ids for host_id in _raw_endpoint_host_ids(entry)):
+        if not any(host_id in loaded_ids for host_id in raw_endpoint_host_ids(entry)):
             logger.debug(f"Skipping unrelated-lab link at index {idx} in {source}: {entry!r}")
             continue
         try:

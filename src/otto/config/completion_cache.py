@@ -138,6 +138,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, Union, get_args, get_origin
 
 if TYPE_CHECKING:
+    from collections.abc import Collection
+
     from ..labs import HostSummary
     from .repo import Repo
 
@@ -1100,40 +1102,61 @@ def _read_lab_links(lab_file: Path) -> list[dict[str, Any]]:
     return links if isinstance(links, list) else []
 
 
-def collect_link_ids(repos: list["Repo"]) -> list[str]:
-    """Enumerate static link ids/names for ``otto link`` completion.
+def collect_link_ids(
+    repos: list["Repo"], *, loaded_ids: "Collection[str] | None" = None
+) -> list[str]:
+    """Enumerate DECLARED static link ids/names for ``otto link`` completion.
 
-    Each id is the declared ``name`` if set, else the ``lo--hi`` static id.
-    Pure lab-data derivation (sync, no live scan).
+    Each id is the declared ``name`` if set, else the ``lo--hi`` static id,
+    built by :func:`~otto.link.model.make_static_link_id` rather than by
+    re-spelling its format here. The two agree today — plain string sort
+    matches sorting by ``(host, interface)`` whenever the hosts differ — so
+    this is drift insurance, bought at the price of one import, in a module
+    whose hand-derived host ids already drifted once (6576a6b4).
 
-    Reuses :func:`collect_host_ids`'s repo/lab-file iteration, but reads raw
-    ``links`` entries with no host construction/validation: an entry's
-    completion id is either its declared ``name`` or the sorted ``a--b`` pair
-    of its two endpoint host ids — exactly
-    :func:`~otto.link.model.make_static_link_id`'s no-name form (the ids here
-    are already the resolved host ids a raw ``links`` entry names, so no
-    element/board resolution is needed). Malformed entries (missing/short
-    endpoints, non-dict shapes) are silently skipped — completion must never
-    crash on bad user data.
+    *loaded_ids*, when given, is the selected lab's host-id set, and an entry
+    is offered only if an endpoint is in it — the SAME rule, through the same
+    :func:`~otto.link.derive.raw_endpoint_host_ids` helper,
+    :func:`~otto.link.derive.resolve_declared_links` applies when deciding
+    which links a lab loads. Without it a repo's every lab file contributes,
+    and under ``-l <lab>`` completion offers links ``find_link`` will refuse.
+
+    IMPLICIT links are deliberately NOT offered, though ``find_link`` accepts
+    them: they are unimpairable by construction, so offering them would be
+    offering guaranteed errors. ``implicit_links`` builds endpoints with no
+    named interface, which ``endpoint_placements`` refuses ("not impairable,
+    spec §4"), and a hop-less host's edge is to ``local``, which
+    ``ensure_not_local_link`` refuses outright as otto's own path to the bed.
+    ``repair_all`` skips them for the same reason, and ``otto link list``
+    reports them ``impairable=False``.
+
+    Lab-data only — sync, no live scan, no host construction. Declared links
+    are read raw because links have no repository seam yet (hosts moved to
+    ``LabRepository`` enumeration; this stayed a direct read), so malformed
+    entries are silently skipped: completion must never crash on bad data.
     """
+    from ..link.derive import raw_endpoint_host_ids
+    from ..link.model import LinkEndpoint, make_static_link_id
+
     ids: set[str] = set()
     for repo in repos:
         for lab_path in repo.labs:
             for entry in _read_lab_links(lab_path / LAB_FILENAME):
                 if not isinstance(entry, dict):
                     continue
+                if loaded_ids is not None and not any(
+                    host_id in loaded_ids for host_id in raw_endpoint_host_ids(entry)
+                ):
+                    continue
                 name = entry.get("name")
                 if isinstance(name, str) and name:
                     ids.add(name)
                     continue
-                endpoints = entry.get("endpoints")
-                if not isinstance(endpoints, list) or len(endpoints) != 2:  # noqa: PLR2004
+                hosts = raw_endpoint_host_ids(entry)
+                if len(hosts) != 2 or not all(h for h in hosts):  # noqa: PLR2004
                     continue
-                hosts = [ep.get("host") for ep in endpoints if isinstance(ep, dict)]
-                if len(hosts) != 2 or not all(isinstance(h, str) and h for h in hosts):  # noqa: PLR2004
-                    continue
-                lo, hi = sorted(hosts)
-                ids.add(f"{lo}--{hi}")
+                a, b = (LinkEndpoint(host=h) for h in hosts)
+                ids.add(make_static_link_id(a, b, None))
     return sorted(ids)
 
 

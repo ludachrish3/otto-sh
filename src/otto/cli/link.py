@@ -29,6 +29,7 @@ from ..link import (
     repair_all,
     repair_link,
 )
+from .completers import lab_scoped_host_ids, selected_lab_names
 
 link_app = typer.Typer(
     name="link",
@@ -47,9 +48,19 @@ def link_callback(ctx: typer.Context) -> None:
         return
 
 
-def _link_completer(ctx: typer.Context, incomplete: str) -> list[str]:  # noqa: ARG001
+def _link_completer(ctx: typer.Context, incomplete: str) -> list[str]:
+    """Offer the selected lab's declared links, matching what dispatch loads.
+
+    Dispatch resolves through ``get_lab()``, which honours ``-l``/``--lab``/
+    ``OTTO_LAB``, and a lab holds only the links touching its own hosts. So
+    the completer scopes the same way — via the cached per-lab host map, the
+    same source ``otto host <TAB>`` uses — rather than offering every lab
+    file's links and letting ``find_link`` refuse most of them.
+    """
     try:
-        ids = collect_link_ids(get_repos())
+        labs = selected_lab_names(ctx)
+        loaded_ids = set(lab_scoped_host_ids(ctx)) if labs else None
+        ids = collect_link_ids(get_repos(), loaded_ids=loaded_ids)
     except Exception:  # noqa: BLE001 — completion never crashes the shell
         ids = []
     return sorted(i for i in ids if i.startswith(incomplete))
