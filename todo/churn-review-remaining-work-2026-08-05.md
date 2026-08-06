@@ -160,12 +160,63 @@ promoted here because they affect users today.
 
 | # | Bug | Effort |
 | --- | --- | --- |
-| 2.1 | **★ `pytest.importorskip` escapes bootstrap containment.** `bootstrap.py:126` catches `Exception`, but `Skipped`'s MRO is `(Skipped, OutcomeException, BaseException)`. One optional-dependency test file makes **every** otto command traceback. The module docstring promises the opposite. Widening the `except` must not swallow `KeyboardInterrupt` or `SyncPhaseInterrupt`. | S–M |
+| 2.1 | **FIXED 2026-08-06.** All four containment seams (three in `bootstrap.py`, one in `completion_cache.collect_cli_commands`) now catch `BaseException` and re-raise via `otto.errors.is_containable`, so no otto command tracebacks on a declining module — the user gets one framed `warning:` line and a clean exit 1. That the declined load still gates dispatch is **by decision, not omission**: see 2b. | done |
 | 2.2 | **`otto test --tests <name>` panics when `tach` is in the venv.** `collect_tests` clears `sys.modules`; the next session re-imports `tach.extension`, whose Rust init re-registers a Ctrl-C handler → `PanicException: MultipleHandlers`. Self-inflicted by the gate wave. CI is safe (test envs exclude the `lint` group); a lint-synced dev venv is not. Workaround `PYTEST_ADDOPTS="-p no:tach"`. | S |
 | 2.3 | **`otto test <Suite>` reports 3× the true pass count.** 1-method suite prints `3 passed`; junit records 1. Reporting only, but user-facing. Root cause not established. | S–M |
 | 2.4 | **`otto docker up` has no `any_failed` accumulator.** `_build`/`_down` sweep every repo and report at the end; `_up` raises out of the first failing repo. `decbec97` added three new raises to `compose_up`, making this far more reachable than when it was filed. Give `_up` its siblings' shape. | S |
 | 2.5 | **`repair_link` can never repair a one-sided link it just impaired.** `impair --from <interfaced end>` succeeds; `repair_link` asks for both directions and hits the refusal. Fix is for repair to repair whatever directions are *placeable*. | S |
 | 2.6 | **`import_test_file` keys its module name on the file STEM alone** (`_otto_suite_{stem}`, early return if present). Two repos with `tests/test_device.py` silently register only the first. The early return is load-bearing for idempotence — make the name path-derived, don't remove the check. | S |
+
+---
+
+### 2b. A module that declines to load gates dispatch — DECIDED 2026-08-06, not debt
+
+The question was whether a pytest *skip* outcome at module level
+(`pytest.importorskip("torch")`) should be downgraded to a `BootstrapWarning`
+("rendered at startup, never gates dispatch") instead of a `BootstrapError`
+that makes every command exit 1.
+
+**Chris ruled: fail loud.** "It is unexpected for tests to fail registration,
+and the user should be made aware of that fact." The deciding weight is the
+silent-miss trade-off: a declined file's suites never register, so a warning
+path would let `otto test <Suite>` quietly not find them — and the containment
+fix already guarantees the loud path is *clean* (one framed `warning:` line
+naming the file and the missing module, one summary line, exit 1, zero
+traceback). A repo that wants an optional-dependency suite to coexist with a
+working CLI should guard registration itself rather than decline the whole
+module.
+
+Recorded here so a future pass does not "helpfully" soften it. If this ever
+reopens, the earlier analysis is in git history at this section (the
+warn-route mechanics: detect the skip outcome via `sys.modules.get("pytest")`
+so the composition root never imports pytest itself).
+
+---
+
+### 2a. The fourth containment seam — FIXED 2026-08-06 with 2.1
+
+`completion_cache.py`'s `collect_cli_commands` seam had the identical hole on
+**third-party loader modules**. It was briefly deferred as "unreproduced"; that
+was wrong, and a review reproduced it in minutes. It is worse than the test-file
+case: `entry()` reaches `collect_cli_commands()` as a call ARGUMENT to
+`write_cache`, so the surrounding `suppress(OSError)` never sees the `Skipped`,
+and it tracebacks out of **every** command — `otto --help` included — as well as
+into the shell mid-TAB.
+
+Fixed, gated by
+`tests/unit/config/test_completion_cache_unit.py::test_declining_loader_module_does_not_escape_collect_cli_commands`
+(proven red against the pre-fix seam). Needed a new `otto.config -> otto.errors`
+tach edge, hand-declared in `tach.toml` with its rationale — **never `tach
+sync`**. For the record, that edge is unremarkable: `otto.errors` is a
+zero-import leaf and nine top-level modules already depend on it (bootstrap,
+cli, coverage, host, labs, monitor, reservations, suite, tunnel); eighteen do
+not, so `otto.config` was never singled out.
+
+Two `contextlib.suppress(Exception)` sites in `cli/main.py` (:636, :645) were
+probed and are genuinely safe: `read_cache` is json + fingerprint work with no
+user code, and `dump_collected_test_names` goes through pytest's own collection,
+which handles `Skipped` itself (verified end-to-end — exit 0, empty payload,
+zero tracebacks against a declining repo).
 
 ---
 

@@ -1353,3 +1353,42 @@ def test_a_backend_that_explodes_does_not_reach_the_terminal(monkeypatch, capsys
 
     assert cc.repo_host_summaries(repo) == []
     assert "Traceback" not in capsys.readouterr().err
+
+
+def test_declining_loader_module_does_not_escape_collect_cli_commands(monkeypatch, tmp_path):
+    """A third-party loader module that DECLINES to load must not brick every command.
+
+    ``collect_cli_commands`` imports each non-otto command's ``"pkg.mod:attr"``
+    loader. A module-level ``pytest.importorskip`` there raises ``Skipped`` —
+    rooted at ``BaseException``, so an ``except Exception`` seam misses it. It
+    escapes ``entry()`` as a call ARGUMENT to ``write_cache``, outside the
+    ``suppress(OSError)``, and tracebacks out of EVERY command including
+    ``otto --help``, and into the shell mid-TAB.
+    """
+    import sys
+
+    from otto.cli.registry import CLI_COMMANDS, CommandSpec
+
+    mod = tmp_path / "declining_loader.py"
+    mod.write_text("import pytest\npytest.importorskip('otto_no_such_optional_dep')\napp = None\n")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.delitem(sys.modules, "declining_loader", raising=False)
+
+    spec = CommandSpec(
+        name="probecmd", loader="declining_loader:app", help="probe", origin="thirdparty.pkg"
+    )
+    # Registered through the registry's own dicts so the entry disappears with the
+    # test; `collect_cli_commands` skips anything whose origin starts with "otto.".
+    monkeypatch.setitem(CLI_COMMANDS._entries, "probecmd", spec)
+    monkeypatch.setitem(CLI_COMMANDS._origins, "probecmd", "thirdparty.pkg")
+
+    try:
+        out = cc.collect_cli_commands()
+    except BaseException as exc:  # the escape IS the defect under test
+        raise AssertionError(
+            f"collect_cli_commands() let {type(exc).__name__} escape: {exc!r}"
+        ) from exc
+    # Contained: the command still appears, name-only, with no child metadata.
+    entry = next(e for e in out if e["name"] == "probecmd")
+    assert "commands" not in entry
+    assert "options" not in entry

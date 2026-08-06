@@ -141,6 +141,7 @@ from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, Union, get_args, get_origin
 
+from ..errors import is_containable
 from .repo import configured_python_files, pytest_config_paths
 
 if TYPE_CHECKING:
@@ -960,7 +961,18 @@ def collect_cli_commands() -> list[dict[str, Any]]:
                     commands = _serialize_cli_children(loader)
                     if commands:
                         entry["commands"] = commands
-        except Exception as e:  # noqa: BLE001 — containment seam: cache stays name-only, dispatch reports loudly
+        # Containment seam: the cache stays name-only, dispatch reports loudly.
+        #
+        # BaseException, not Exception: this imports a THIRD-PARTY loader module,
+        # so a module-level `pytest.importorskip` there raises `Skipped` — not an
+        # `Exception` — straight past this seam and out of `entry()`, which
+        # reaches `collect_cli_commands()` as a call ARGUMENT, so the
+        # `suppress(OSError)` around the cache write never sees it. That
+        # tracebacks out of EVERY command, `otto --help` included, and into the
+        # shell mid-TAB. See `otto.errors.UNCONTAINABLE`.
+        except BaseException as e:
+            if not is_containable(e):
+                raise
             log.debug(f"completion-cache: no child metadata for {spec.name!r}: {e!r}")
         out.append(entry)
     return out

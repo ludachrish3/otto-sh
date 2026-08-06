@@ -20,7 +20,7 @@ import importlib
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from .errors import OttoError
+from .errors import OttoError, is_containable
 
 if TYPE_CHECKING:
     from .config.repo import Repo
@@ -111,7 +111,9 @@ def discover() -> DiscoveryResult:
         for sut_dir in env.sut_dirs:
             try:
                 repos.append(Repo(sut_dir=sut_dir))
-            except Exception as e:  # noqa: PERF203,BLE001 — containment seam: per-item resilience, ANY config-data failure becomes a framed error
+            except BaseException as e:  # noqa: PERF203 — containment seam: per-item resilience, ANY config-data failure becomes a framed error
+                if not is_containable(e):
+                    raise
                 errors.append(BootstrapError(sut_dir, str(TOML_SETTINGS_PATH), e))
         _discovered = DiscoveryResult(env=env, repos=repos, errors=errors)
     return _discovered
@@ -134,12 +136,16 @@ def bootstrap() -> BootstrapResult:
         for mod in repo.init:
             try:
                 importlib.import_module(mod)
-            except Exception as e:  # noqa: PERF203,BLE001 — containment seam: per-item resilience, ANY user-code failure becomes a framed error
+            except BaseException as e:  # noqa: PERF203 — containment seam: per-item resilience, ANY user-code failure becomes a framed error
+                if not is_containable(e):
+                    raise
                 errors.append(BootstrapError(repo.sut_dir, mod, e))
         for test_file in repo.iter_test_files():
             try:
                 repo.import_test_file(test_file)
-            except Exception as e:  # noqa: PERF203,BLE001 — containment seam: per-item resilience, ANY user-code failure becomes a framed error
+            except BaseException as e:  # noqa: PERF203 — containment seam: per-item resilience, ANY user-code failure becomes a framed error
+                if not is_containable(e):
+                    raise
                 errors.append(BootstrapError(repo.sut_dir, test_file.name, e))
     _result = BootstrapResult(env=env, repos=repos, errors=errors, warnings=resolution.warnings)
     return _result

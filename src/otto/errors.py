@@ -37,7 +37,77 @@ The one deliberate exception is
 :class:`~otto.lifecycle.SyncPhaseInterrupt`: it is a ``KeyboardInterrupt``,
 and any ``Exception``-rooted base would make it catchable by ``except
 Exception`` — which is exactly what its signal contract forbids.
+
+That last point cuts both ways, and :data:`UNCONTAINABLE` below is the other
+edge. A *containment seam* — code that runs user modules and turns one bad
+file into a framed error rather than a crash — cannot filter on ``except
+Exception``, because the most common way a user module declines to load does
+not raise one. ``pytest.importorskip`` and ``pytest.skip(...,
+allow_module_level=True)`` raise ``Skipped``; ``pytest.fail()`` raises
+``Failed``; ``pytest.xfail()`` raises ``XFailed``. All three sit under
+``OutcomeException``, which is rooted at ``BaseException`` rather than
+``Exception`` — the ``pytrace`` argument has nothing to do with it. Only
+``pytest.exit()``'s ``Exit`` is an ``Exception``, which is why the old seams
+caught that one and nothing else: the boundary was an accident, not a design.
+A seam that catches only ``Exception`` therefore lets a single
+optional-dependency test file traceback out of every otto command. Such a
+seam should catch ``BaseException`` and re-raise what :func:`is_containable`
+rejects.
 """
+
+#: Exceptions a containment seam must re-raise rather than frame.
+#:
+#: These mean "this process or task is being torn down", not "this user file is
+#: broken", so absorbing them would be worse than the crash a seam prevents: a
+#: user's Ctrl-C during bootstrap would become a framed ``failed to load`` line
+#: and otto would carry on regardless.
+#:
+#: ``KeyboardInterrupt`` covers :class:`~otto.lifecycle.SyncPhaseInterrupt` by
+#: subclassing — the signal contract holds here for free, which is precisely
+#: why that class is rooted where it is.
+#:
+#: ``GeneratorExit`` is here for a specific reason, not for symmetry:
+#: :func:`otto.context.open_context` is an ``@asynccontextmanager`` — an async
+#: generator — with ``bootstrap()`` in its body. Swallowing a ``GeneratorExit``
+#: raised while that generator is being closed would risk ``RuntimeError:
+#: generator ignored GeneratorExit``.
+#:
+#: ``asyncio.CancelledError`` is deliberately ABSENT, and the reason is NOT
+#: "no event loop is running" — ``open_context`` and
+#: ``otto.config.get_repos`` both reach ``bootstrap()`` from async callers.
+#: It is that ``bootstrap()`` contains no ``await``: cancellation is delivered
+#: at a suspension point, and this seam has none, so a ``CancelledError`` can
+#: only get here by a user module body raising it explicitly — which is user
+#: code failing, and is framed like any other. Listing it would also import
+#: ``asyncio`` into the composition root, which ``otto.bootstrap`` does not do
+#: today; ``test_composition_root_does_not_import_asyncio`` pins that, so if
+#: the premise changes the decision gets revisited instead of rotting.
+#:
+#: :meta hide-value:
+#:     Sphinx renders an attribute's repr as a Python literal block, and
+#:     ``(<class 'KeyboardInterrupt'>, ...)`` does not lex as Python — under
+#:     ``-W`` that highlighting failure is a build error. The names are in the
+#:     prose above, so the repr adds nothing.
+UNCONTAINABLE: tuple[type[BaseException], ...] = (
+    KeyboardInterrupt,
+    SystemExit,
+    GeneratorExit,
+)
+
+
+def is_containable(exc: BaseException) -> bool:
+    """Return True when a containment seam may frame *exc* instead of re-raising.
+
+    The inverse of membership in :data:`UNCONTAINABLE`. Use as::
+
+        try:
+            run_user_code()
+        except BaseException as e:
+            if not is_containable(e):
+                raise
+            errors.append(FramedError(..., e))
+    """
+    return not isinstance(exc, UNCONTAINABLE)
 
 
 class OttoError(Exception):

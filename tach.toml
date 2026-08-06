@@ -31,6 +31,10 @@ depends_on = ["otto.instructions", "otto.registry", "otto.logger", "otto.link", 
 [[modules]]
 path = "otto.config"
 depends_on = [
+    # completion_cache's containment seam imports `is_containable` to tell a
+    # user module that DECLINED to load from one that broke. otto.errors is a
+    # zero-import leaf, so this cannot invert layering or create a cycle.
+    "otto.errors",
     "otto.utils",
     "otto.models",
     # DEBT: repo.py git-description properties trigger run_command from a

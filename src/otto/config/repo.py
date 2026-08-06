@@ -870,12 +870,19 @@ class Repo:
         A file listed here runs its module body, and
         ``cli.invoke.fail_loud_on_bootstrap_errors`` turns any failure into a
         non-zero exit for EVERY command, so one broken test file bricks
-        ``otto host list``. Worse, containment is not even complete: a
-        module-level ``pytest.importorskip`` raises ``Skipped``, which is a
-        ``BaseException``, and bootstrap's ``except Exception`` does not catch
-        it — a repo with one optional-dependency test file tracebacks out of
-        every command. Recursion would point all of that at the user's whole
-        test tree rather than at a handful of files they chose.
+        ``otto schema export``. Recursion would point all of that at the user's
+        whole test tree rather than at a handful of files they chose.
+
+        Containment used to be incomplete on top of that: a module-level
+        ``pytest.importorskip`` raises ``Skipped``, which is rooted at
+        ``BaseException``, so bootstrap's ``except Exception`` let a repo with
+        one optional-dependency test file traceback out of every command — and
+        out of shell completion, into the user's terminal mid-TAB. The seams
+        now catch ``BaseException`` and re-raise via
+        :func:`otto.errors.is_containable`, so declining to load is framed like
+        any other load failure. The blast-radius argument above is unchanged:
+        containment turns a crash into a non-zero exit, it does not make the
+        file harmless.
 
         The escape hatch is that ``tests`` is a LIST — a repo keeping suites
         under ``tests/device/`` adds that directory (``tests = ["tests",
