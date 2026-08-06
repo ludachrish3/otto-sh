@@ -556,16 +556,17 @@ def _reset_bootstrap_state():
     """Clear ``otto.bootstrap``'s discovery/registration caches between tests.
 
     ``bootstrap()`` memoizes into three module globals; discovery errors ride
-    the cached ``_discovered`` tuple itself (the old append-only
-    ``_discovery_errors`` global is gone). So one test that drives the CLI with
-    ``OTTO_SUT_DIRS`` pointing at a scratch repo — ``test_init_prompts``'s
-    epilogue tests do exactly that — records a framed "no .otto/settings.toml"
-    error that outlives the ``monkeypatch.setenv`` restoring the var. Every
-    later test on that worker then trips ``fail_loud_on_bootstrap_errors()``,
-    which exits **1** before Click can report the missing ``--lab``, so the
-    ``TestArgumentValidation`` / ``TestLabFreeFlags`` "must exit 2" tests fail
-    with a bare ``SystemExit(1)`` and no usage message. It only reproduced
-    under xdist (~1 run in 3, load-dependent) because it needs the poisoning
+    the cached ``_discovered`` :class:`~otto.bootstrap.DiscoveryResult` itself
+    (the old append-only ``_discovery_errors`` global is gone). So one test
+    that drives the CLI with ``OTTO_SUT_DIRS`` pointing at a scratch repo —
+    ``test_init_prompts``'s epilogue tests do exactly that — records a framed
+    "no .otto/settings.toml" error that outlives the ``monkeypatch.setenv``
+    restoring the var. Every later test on that worker then trips
+    ``fail_loud_on_bootstrap_errors()``, which exits **1** before Click can
+    report the missing ``--lab``, so the ``TestArgumentValidation`` /
+    ``TestLabFreeFlags`` "must exit 2" tests fail with a bare
+    ``SystemExit(1)`` and no usage message. It only reproduced under xdist
+    (~1 run in 3, load-dependent) because it needs the poisoning
     test and the victims to land on the same worker in that order.
 
     Root conftest, not ``tests/unit/cli``: these are process-global module

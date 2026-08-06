@@ -76,7 +76,7 @@ def get_env() -> "OttoEnvSettings":
     """Return the startup environment settings (bootstraps discovery lazily)."""
     from ..bootstrap import discover
 
-    return discover()[0]
+    return discover().env
 
 
 def get_completion_names() -> dict[str, Any] | None:

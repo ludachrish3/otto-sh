@@ -57,6 +57,21 @@ class BootstrapWarning:
 
 
 @dataclass(frozen=True)
+class DiscoveryResult:
+    """Everything phase 1 produced: environment, repos, contained errors.
+
+    Separate from :class:`BootstrapResult` rather than reused: ``warnings``
+    comes from the dependency pass, which runs inside :func:`bootstrap` after
+    discovery has returned, so a shared type would carry a field that is
+    structurally always empty on this path.
+    """
+
+    env: "OttoEnvSettings"
+    repos: list["Repo"]
+    errors: list[BootstrapError] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
 class BootstrapResult:
     """Everything bootstrap produced: environment, repos, contained errors."""
 
@@ -66,12 +81,12 @@ class BootstrapResult:
     warnings: list[BootstrapWarning] = field(default_factory=list)
 
 
-_discovered: "tuple[OttoEnvSettings, list[Repo], list[BootstrapError]] | None" = None
+_discovered: "DiscoveryResult | None" = None
 _result: BootstrapResult | None = None
 _completion_names: dict[str, Any] | None = None
 
 
-def discover() -> "tuple[OttoEnvSettings, list[Repo], list[BootstrapError]]":
+def discover() -> DiscoveryResult:
     """Phase 1: env + repo discovery (settings parse only — no user code). Cached.
 
     Per-repo config-data failures (unreadable or malformed ``settings.toml``)
@@ -81,7 +96,7 @@ def discover() -> "tuple[OttoEnvSettings, list[Repo], list[BootstrapError]]":
     Env-level failures (bad ``OTTO_SUT_DIRS`` / OTTO_* values) still raise —
     with no environment there is nothing to degrade to.
 
-    The errors ride the cached tuple itself: recomputing discovery (after
+    The errors ride the cached result itself: recomputing discovery (after
     :func:`invalidate`) necessarily recomputes them, so a stale error cannot
     outlive the discovery that produced it.
     """
@@ -98,7 +113,7 @@ def discover() -> "tuple[OttoEnvSettings, list[Repo], list[BootstrapError]]":
                 repos.append(Repo(sut_dir=sut_dir))
             except Exception as e:  # noqa: PERF203,BLE001 — containment seam: per-item resilience, ANY config-data failure becomes a framed error
                 errors.append(BootstrapError(sut_dir, str(TOML_SETTINGS_PATH), e))
-        _discovered = (env, repos, errors)
+        _discovered = DiscoveryResult(env=env, repos=repos, errors=errors)
     return _discovered
 
 
@@ -107,8 +122,9 @@ def bootstrap() -> BootstrapResult:
     global _result  # noqa: PLW0603 — module-level singleton/cache
     if _result is not None:
         return _result
-    env, repos, discovery_errors = discover()
-    errors: list[BootstrapError] = list(discovery_errors)
+    discovered = discover()
+    env, repos = discovered.env, discovered.repos
+    errors: list[BootstrapError] = list(discovered.errors)
     from .config.dependencies import resolve_dependencies
 
     resolution = resolve_dependencies(repos)
