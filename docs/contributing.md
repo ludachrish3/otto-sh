@@ -153,10 +153,12 @@ See {doc}`guide/monitor` for the frontend dev workflow.
 #### Web quality gates
 
 `web/` carries the same lint / format / type-check / coverage discipline as
-the Python side, via [Biome](https://biomejs.dev/) (lint + format), `tsc`,
-and [vitest](https://vitest.dev/) with v8 coverage. Every quality aspect
-follows the same language-parity shape: a `-python` sub-target, a `-ts`
-sub-target, and a bare umbrella that runs both:
+the Python side. For which tool performs each kind of check on each side,
+and where each gate binds (`make` target, `nox` session, CI job), see
+{doc}`architecture/quality-gates` — that page is the single inventory, so
+this section stays about invocation. Every quality aspect follows the same
+language-parity shape: a `-python` sub-target, a `-ts` sub-target, and a
+bare umbrella that runs both:
 
 | Aspect       | Python                    | TS                          | Both              |
 | ------------ | ------------------------- | ---------------------------- | ----------------- |

@@ -26,6 +26,7 @@ registries, same CLI listing and completion, same error messages
 | a power controller | `register_power_controller` | {doc}`../../guide/hosts/extending-backends` |
 | products on hosts | `register_product_provider` | {doc}`../../guide/hosts/capabilities` |
 | a host source (lab repository) | {func}`otto.labs.register_lab_repository` | {doc}`../../guide/setup/host-database` |
+| fast completion for a host source | optional {class}`~otto.labs.protocol.SupportsHostSummaries` on the repository | {doc}`../../guide/setup/host-database` |
 | a reservation backend | `register_reservation_backend` | {doc}`../../guide/reservations` |
 | per-host monitor parsers | `register_host_parsers` | {doc}`../../guide/monitor` |
 | SNMP metric descriptors | `register_snmp_metric` | {doc}`../../guide/monitor` |
@@ -50,6 +51,28 @@ way to give a whole project consistent CLI flags ({doc}`../../guide/run/options`
 - **Schema visibility.** Data-side extensions (profiles, preferences, custom
   settings tables) surface in `otto schema export`, so editors validate them
   ({doc}`data-boundary`).
+
+### Contract changes worth re-reading
+
+Four rules tightened after these seams were first written, and a third-party
+author who last read this page before then should know all four — each one
+converts a mistake that used to pass quietly into one that says so:
+
+- A {class}`~otto.host.product.Product`'s `stage`, `install`, and `uninstall`
+  return a {class}`~otto.result.Result` where they used to return a
+  `(status, message)` tuple, so the retcode and output of whatever did the
+  work now reach the CLI's exit code untouched instead of being flattened to
+  a pair. (`is_installed` is unchanged, and still returns `bool`.)
+- An `@instruction()` handler must be `async def`; the decorator raises
+  `TypeError` on a plain `def` rather than registering a leaf that would run
+  outside the command lifecycle.
+- A `@cli_command()` handler must be `async def` too, unless it is registered
+  `lab_free=True` — and that exemption means "I drive the lifecycle myself",
+  not "I touch no hosts".
+- A registered command's returned `Result` now derives the process exit code
+  (`cli/invoke.render_leaf_value`); it used to be discarded, so a command
+  that returned a failing `Result` still exited `0`
+  ({doc}`../lifecycle`).
 
 ## Seams and their guides
 

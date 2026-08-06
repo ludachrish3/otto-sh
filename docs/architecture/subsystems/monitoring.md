@@ -100,6 +100,39 @@ preamble: live collection (`--live`) runs the reservation gate; reviewing a
 saved `<source>` reads a local file and is gate-exempt by design
 ({doc}`../lifecycle`).
 
+**Opening the archive, then collecting.** `spawn_collection()` is the seam
+that owns that ordering: it awaits `init_db()` and only then creates the
+collection task. {meth}`~otto.monitor.collector.MetricCollector.run`
+**refuses** an unopened DB — it raises a loud precondition rather than
+opening lazily in-task. That refusal is the fix for a five-issue flake wave
+(#136/#137/#142-#144): an in-task open can be cancelled mid-schema, leaving a
+partial archive that `finalize()` then silently no-ops on, and its failures
+die inside a task whose supervising `gather(return_exceptions=True)` swallows
+them. The rule used to be a comment repeated at every call site; now it lives
+in one method with the precondition behind it, so a caller that bypasses the
+seam fails at once instead of racing. Two suite-side callers legitimately
+await `init_db()` themselves instead, for different reasons: the session
+plugin opens on the session loop because the *classes* drive `run()` on their
+own loops, a cross-loop split `spawn_collection()` does not express; and
+`OttoSuite.start_monitor` opens before spawning because its spawn happens
+inside a task, where `spawn_collection()` would put the open back into
+cancellable context — the very thing the seam exists to prevent. Both are
+still covered by `run()`'s precondition, which is what makes them safe to
+write by hand.
+
+**Bounded live buffers.** Both live-side buffers have ceilings, because a
+multi-day run previously grew without one. Each SSE subscriber queue is
+bounded (`SUBSCRIBER_QUEUE_MAX`, 1024 payloads) and overflow **drops the
+oldest**, so a tab that stops draining — frozen renderer, half-dead
+connection — can no longer grow memory at the live bed's ~90 fragments per
+tick; each {class}`~otto.monitor.store.MetricStore` series is a `deque`
+capped at `_SERIES_POINTS_MAX` (50,000 points, roughly 27 hours at two-second
+ticks). Dropping is safe because of the SSE reconnect resync: the dashboard
+re-hydrates from `GET /api/monitor_sessions` on every reconnect, so a gap in
+the stream is *recovered* rather than replayed. Only the live view and live
+exports age out — the DB keeps everything, so a review opened from a `.db`
+archive is always complete.
+
 ## Where the code lives
 
 - {mod}`otto.monitor.factory` — `build_monitor_collector`, `MonitorTarget`,

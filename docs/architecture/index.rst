@@ -7,8 +7,9 @@ explains how to *use* each functional area; each page here explains the
 moving parts behind one, and the two link across rather than repeat each
 other.
 
-Start with the overview, the shared command lifecycle, and the test
-strategy, then jump to the area you are changing. The extensibility pages
+Start with the overview, the shared command lifecycle, the test strategy,
+and the quality gates that enforce all of it, then jump to the area you are
+changing. The extensibility pages
 describe the registry machinery every seam shares; the utilities are the
 cross-cutting spines; the principles are the recurring design rules.
 
@@ -19,6 +20,7 @@ cross-cutting spines; the principles are the recurring design rules.
    overview
    lifecycle
    testing
+   quality-gates
 
 .. toctree::
    :caption: Design by area

@@ -30,6 +30,16 @@ digraph lifecycle {
 }
 ```
 
+The teardown node's "exit code derived from the Result" is newer than the
+rest of that picture: a command's return value became the process exit code
+only once the leaf-invoke wrapper took over rendering. The seam is
+`render_leaf_value` in `otto/cli/invoke.py`, which runs on the value the
+lifecycle bridge awaited. A returned `Result` supplies its own `exit_code`.
+`None` — what every side-effect-only first-party leaf returns — renders
+**nothing** and exits `0`, unless the leaf installed a `RenderPolicy` with a
+`none_message`; any other value prints as-is and exits `0`
+({doc}`../guide/extending-cli`).
+
 The front door looks like this — and every terminal block in these docs is
 **captured from the real CLI at build time** (a scaffolded demo repo, real
 `--help` output, real completion candidates), so what you see here is what
@@ -92,6 +102,51 @@ the option is `+`-separated so each segment completes in turn:
 ```{raw} html
 :file: ../_static/generated/termynal/complete-lab-names.html
 ```
+
+## Interrupts: two stages, one exit code
+
+Ctrl-C is decided in one place. Every command body reaches the event loop
+through {func}`otto.lifecycle.run_command`, and the first SIGINT or SIGTERM
+it sees is **graceful**: the body task is cancelled, a status line goes to
+stderr, and the `HostScope` sweep closes remote sessions properly. The
+teardown deadline (`OTTO_TEARDOWN_DEADLINE`, 10 seconds by default) starts
+counting at that *first signal*, so it is one budget shared by the body's
+cancellation unwind and the sweep that follows it — not an allowance granted
+to the sweep alone. A body that is slow to unwind spends the sweep's time.
+A second signal, or that deadline expiring,
+**abandons** it: whatever teardown was still awaiting is dropped, the
+registered force-exit hooks run once the loop has closed, and the process
+raises `SystemExit(128 + signum)` — 130 for SIGINT, 143 for SIGTERM. Both
+stages land on the same exit code; only how much cleanup happened differs, so
+a supervisor reads the interrupt identically either way.
+
+Registration is the whole opt-in. A leaf never mentions `otto.lifecycle`: the
+invoke wrapper detects the coroutine a plain `async def` leaf returned and
+bridges it through `run_command()`, so a third-party command gets host-scope
+entry, the two-stage policy, and the bounded teardown for free — the same
+policy the first-party commands run under
+({doc}`../guide/extending-cli`).
+
+A phase that owns its *own* event loop cannot be wrapped that way, and
+{func}`otto.lifecycle.sync_phase` is its sibling: the same two stages, but
+delivered by a real signal handler that raises `KeyboardInterrupt` into the
+phase and a watchdog thread that force-exits `128 + signum` if the phase
+does not finish inside the deadline. The watchdog is **armed by the first
+signal, not by phase entry** — its pre-arm read blocks with no timeout — so
+this is not a wall-clock cap on the phase. An uninterrupted `otto test` runs
+as long as its suite takes; the deadline only bounds how long an
+*interrupted* one may keep unwinding. It has exactly one caller — the
+in-process pytest session behind `otto test` (`otto/suite/run.py`), where
+stage one is pytest's own fixture unwind, which releases the suite's host
+connections. That *composes* the primitive rather than escaping it: the exit
+contract is identical, only the graceful path belongs to pytest instead of
+to the scope.
+
+`async def` is necessary but not sufficient. The async handler is installed
+with `loop.add_signal_handler`, which makes it a loop callback — so a body
+that blocks the loop (a bare `subprocess.run`, a `time.sleep`) is exactly as
+uninterruptible as a synchronous one, and neither stage can fire until it
+returns. Local blocking work belongs in {func}`asyncio.to_thread`.
 
 ## OttoContext: the per-invocation runtime
 

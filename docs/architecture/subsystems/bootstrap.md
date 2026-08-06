@@ -43,7 +43,17 @@ accepts, because there is no second validator to drift. A repo that passes
 
 - {mod}`otto.bootstrap` — the two-phase composition root: discovery (env +
   every repo's `settings.toml`) and contained registration (each repo's
-  `libs`, `init` modules, and test files)
+  `libs`, `init` modules, and test files). Phase 1 is
+  {func}`~otto.bootstrap.discover`, and its
+  {class}`~otto.bootstrap.DiscoveryResult` carries three fields — `env`,
+  `repos`, and the `errors` for repos whose settings would not parse — which
+  phase 2 folds into the {class}`~otto.bootstrap.BootstrapResult` alongside
+  its own. {func}`~otto.bootstrap.invalidate` drops every cached result and
+  is the supported recovery path for a long-lived embedder: fix the repo or
+  the environment, invalidate, bootstrap again. That is also why the errors
+  ride the cached result rather than a parallel module global — recomputing
+  discovery necessarily recomputes them, so a stale error cannot outlive the
+  discovery that produced it
 - `otto.cli.init` — the `otto init` areas (settings, schemas, lab, tests,
   instructions): detect / validate / scaffold, reusing bootstrap's own
   ingestion code

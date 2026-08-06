@@ -125,8 +125,13 @@ stays as the always-available floor, so `--tests` completion is never empty.
   inventory: loud duplicates, did-you-mean lookups, attribution
 - {mod}`otto.cli.registry` — `CommandSpec`, the CLI command registry, and
   lazy dispatch
-- {mod}`otto.cli.run` / {mod}`otto.suite.register` — the `INSTRUCTIONS` and
-  `SUITES` registrations (`@instruction()`, `OttoSuite.__init_subclass__`)
+- `otto.instructions` — the `INSTRUCTIONS` registry itself, deliberately
+  CLI-free (its `typer.Typer` field is a `TYPE_CHECKING`-only annotation) so
+  core readers — `Repo`'s instruction panel, the completion cache — see the
+  registered set without importing `otto.cli`
+- {mod}`otto.cli.run` / {mod}`otto.suite.register` — the `@instruction()`
+  decorator and the `SUITES` registration
+  (`OttoSuite.__init_subclass__`)
 - `otto.config.completion_cache` — the completion fast path's cache
 - the host-side registries live beside the strategy they select:
   {mod}`otto.host.os_profile`, {mod}`otto.host.connections`,
