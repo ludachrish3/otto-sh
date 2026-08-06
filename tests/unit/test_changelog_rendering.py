@@ -125,13 +125,28 @@ def rendered(tmp_path_factory) -> str:
         (repo / f"f{i}").write_text("x")
         _git(repo, "add", "-A")
         _git(repo, "commit", "-q", "-m", subject)
-    return subprocess.run(
-        [cliff, "--config", str(CLIFF), "--unreleased"],
+    # --offline is not optional. git-cliff fetches api.github.com whenever the
+    # config declares a `[remote.*]` section, and PANICS (exit 101, and it
+    # writes the reason to a stderr this call used to discard) on any failure
+    # — including the routine 403 an unauthenticated caller gets from a
+    # rate-limited shared CI egress IP. That is exactly how this test broke
+    # CI on three Pythons the day it landed. `cliff.toml` no longer declares
+    # one, so this is belt-and-braces: it keeps a re-added `[remote.github]`
+    # from silently turning a unit test into a network test.
+    proc = subprocess.run(
+        [cliff, "--config", str(CLIFF), "--offline", "--unreleased"],
         cwd=repo,
         capture_output=True,
         text=True,
-        check=True,
-    ).stdout
+        check=False,
+    )
+    # Not check=True: CalledProcessError's message omits stderr, and stderr is
+    # where git-cliff puts the panic. Diagnosing the CI failure above took a
+    # long detour for exactly that reason.
+    assert proc.returncode == 0, (
+        f"git-cliff exited {proc.returncode}\n--- stderr ---\n{proc.stderr}"
+    )
+    return proc.stdout
 
 
 def test_a_bang_marks_the_entry_breaking(rendered: str) -> None:
@@ -197,3 +212,23 @@ def test_every_dropped_type_stays_out(rendered: str, subject: str) -> None:
     """Including the terminal `.*` skip, which is what makes an unmapped type
     (`build(makefile)`, `chore(release)`) vanish rather than land somewhere."""
     assert subject not in rendered
+
+
+def test_the_config_declares_no_remote() -> None:
+    """A `[remote.*]` section makes every render hit api.github.com.
+
+    git-cliff fetches `/commits` and `/pulls` whenever one is configured, and
+    turns any non-200 — including the 403 a rate-limited unauthenticated
+    caller gets — into a Rust panic rather than an error. That reaches
+    `make changelog`, `make release` and the release-notes workflow, none of
+    which pass a token, so all three would fail on a cold cache. The template
+    writes its GitHub URLs as literal strings and reads no remote context, so
+    the section earned nothing; this keeps it from coming back by accident.
+    """
+    declared = [
+        line for line in CLIFF.read_text().splitlines() if line.lstrip().startswith("[remote.")
+    ]
+    # Line-start, not a substring search: the config explains this decision in
+    # a comment that names `[remote.github]`, and a substring check would be
+    # satisfied by its own rationale.
+    assert not declared, declared

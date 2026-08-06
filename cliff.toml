@@ -127,6 +127,22 @@ filter_commits = false
 tag_pattern = "v[0-9]*"
 sort_commits = "newest"
 
-[remote.github]
-owner = "ludachrish3"
-repo = "otto-sh"
+# NO `[remote.github]`, deliberately. Declaring it makes git-cliff fetch
+# `/repos/<owner>/<repo>/commits` and `/pulls` from api.github.com on EVERY
+# render, and it PANICS (Rust exit 101, empty stderr) on any failure —
+# including the plain 403 an unauthenticated caller gets when rate-limited.
+# GitHub Actions runners share outbound IPs, so that 403 is routine there: it
+# broke CI on 3.11/3.12/3.14 while 3.10 got through, and the machines that
+# never saw it were the ones with a warm `~/.cache/git-cliff`.
+#
+# It bought nothing. This template renders the compare/tag links as literal
+# strings and never touches git-cliff's `remote` / `github` context, so
+# removing the block leaves both `git-cliff -o CHANGELOG.md` and the release
+# workflow's `--latest --strip header` byte-identical — verified both ways.
+# `make changelog`, `make release` and that workflow were all one rate-limit
+# away from a panic for no rendered benefit.
+#
+# If a future template DOES want PR numbers or contributor handles, add the
+# block back together with a token (`GITHUB_TOKEN`), and expect the render to
+# need the network — then `tests/unit/test_changelog_rendering.py` must keep
+# passing `--offline`, which it already does.
