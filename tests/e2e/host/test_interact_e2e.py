@@ -19,9 +19,10 @@ Running::
         -m integration -v --override-ini 'addopts='
 
 Tests are split into two xdist groups — ``interact_e2e_ssh`` and
-``interact_e2e_telnet`` — so pytest-xdist can run the ssh and telnet
-parametrizations concurrently on separate workers without racing on the
-shared Vagrant VMs.
+``interact_e2e_telnet`` — so pytest-xdist keeps the ssh and telnet
+parametrizations on separate workers. Both drive the *same* VM, so the
+pool lease (see :func:`leased_carrot`) is what actually keeps them from
+racing each other and the rest of the suite on it.
 """
 
 from __future__ import annotations
@@ -29,19 +30,23 @@ from __future__ import annotations
 import contextlib
 import re
 import time
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
 
+from tests._fixtures._host_pool import lease_unix_host
 from tests.e2e.host._pty_driver import InteractiveOttoSession
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 REPO1_DIR = PROJECT_ROOT / "tests" / "repo1"
 
-HOST_ID = "carrot_seed"
+# One source of truth: the element leased and the host driven can never drift.
+ELEMENT = "carrot"
+HOST_ID = f"{ELEMENT}_seed"
 # UnixHost._generate_name returns "{ne} {board}" — the banner and every
 # log preamble written by _SessionLogFile use this, NOT the host id.
-HOST_NAME = "carrot seed"
+HOST_NAME = f"{ELEMENT} seed"
 ROUND_TRIP_TOKEN = "otto_login_marker"
 
 _LOG_LINE_RE = re.compile(
@@ -69,7 +74,36 @@ def _login_argv(term: str) -> list[str]:
 
 
 @pytest.fixture(scope="class")
-def login_session(request, tmp_path_factory):
+def leased_carrot(tmp_path_factory) -> Iterator[str]:
+    """Hold the Unix-pool lease on carrot for the whole class.
+
+    ``otto host <id> login`` is the *human-facing* bridge: it hands over a
+    real interactive shell and deliberately does NOT neutralize ``HISTFILE``
+    (a person's own login must keep recording their history). So every
+    session this module opens appends what it types — ``echo
+    otto_login_marker``, ``stty size`` — to carrot's ``~/.bash_history``
+    when bash flushes at exit.
+
+    Harmless on its own, but ``test_shell_history_e2e`` digests that exact
+    file before and after its measurement window to prove otto stays out of
+    it, and the bed caps the file at ``HISTFILESIZE`` lines, so a single
+    concurrent append rotates lines out and moves the sha256 of the whole
+    file. That module leases its host; before this fixture existed this one
+    did not, and living in its own ``xdist_group`` under ``-n auto --dist
+    loadgroup`` is precisely what let the two run at once.
+
+    Leasing a *named* host rather than whichever is free — the
+    single-candidate idiom ``tests/e2e/chaos/test_docker_chaos.py`` uses for
+    pepper — because ``HOST_ID`` and ``HOST_NAME`` are baked into the banner
+    and log-preamble assertions here. Blocks until carrot is free.
+    """
+    lock_dir = tmp_path_factory.getbasetemp().parent
+    with lease_unix_host(lock_dir, [ELEMENT]) as element:
+        yield element
+
+
+@pytest.fixture(scope="class")
+def login_session(request, tmp_path_factory, leased_carrot):
     """Run one full ``otto host login`` round-trip and return the resulting log.
 
     Parametrized indirectly by the caller's ``term`` parameter. Returns a
@@ -212,7 +246,9 @@ class TestHostLoginSigwinch:
     signal — the primary coverage target is the otto-side handler code.
     """
 
-    def test_resize_triggers_remote_side_update(self, tmp_path: Path, term: str):
+    def test_resize_triggers_remote_side_update(self, tmp_path: Path, term: str, leased_carrot):
+        # Opens its own session rather than reusing `login_session`, so it has
+        # to take the same lease itself — see `leased_carrot` for why.
         xdir = tmp_path / "xdir"
         with InteractiveOttoSession(
             _login_argv(term),
