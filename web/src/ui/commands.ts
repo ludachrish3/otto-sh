@@ -52,7 +52,7 @@ export interface Command {
   run: () => void;
 }
 
-// The follow-window presets, moved here from AppBar (Task 7 re-imports) so
+// The follow-window presets, moved here from AppBar so
 // the palette rows and the AppBar ButtonGroup share one definition.
 export const LIVE_WINDOW_PRESETS = [
   { id: "5m", label: "5m", ms: 300_000 },
@@ -152,7 +152,7 @@ export function useCommands(): Command[] {
         run: toggleTheme,
       },
     );
-    // Plan 5c marking rows: add-event/sweep-span are available in either
+    // Event-marking rows: add-event/sweep-span are available in either
     // mode (both just prep a draft/gesture); mark-now/start-span/end-span
     // are live-only (a review session has no "now" to mark and no in-flight
     // span to start/end). Every row is gated on `editable` (spec §Marking) —

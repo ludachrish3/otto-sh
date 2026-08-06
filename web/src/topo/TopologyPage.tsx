@@ -169,7 +169,7 @@ export function TopologyPage() {
   // session.endMs — which, in live mode, only ever advances when SOME host
   // ticks. If every host in the lab goes silent at once (a wedged collector,
   // or a single-host lab), endMs freezes too and every host reads "ok"
-  // forever (Plan 5b final review, Finding I4).
+  // forever.
   const tickMs =
     mode === "live" && session?.meta.interval != null ? session.meta.interval * 1000 : null;
   const now = useNow(tickMs);

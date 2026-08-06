@@ -5,7 +5,7 @@
 // — "Historical"/"No data" were redundant (ReviewBar badge, EmptyState)
 // and live connection loss now renders as the Reconnecting banner
 // (ReconnectingBanner.tsx), which replaced the status cluster as the
-// `connection` state's one render site (Task 9).
+// `connection` state's one render site.
 import {
   Command,
   DotsVertical,

@@ -1,7 +1,7 @@
-// Generic expandable/sortable tree grid (Task 4 brief) — covapp-agnostic,
-// reusable outside covapp. Props are a pinned, verbatim contract (a second
-// consumer, Task 5's CodeView, is compared against it for consistency), so
-// treat the exported names/shapes as frozen, not house style.
+// Generic expandable/sortable tree grid — covapp-agnostic, reusable outside
+// covapp. Props are a pinned, verbatim contract (a second consumer,
+// CodeView, is compared against it for consistency), so treat the exported
+// names/shapes as frozen, not house style.
 //
 // Library choice: this does NOT use react-aria-components' Tree/TreeItem.
 // That pair models a single-column ARIA tree collection (one row of mixed

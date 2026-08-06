@@ -1,5 +1,5 @@
-// Shiki-based syntax highlighting for the file page's source view (Task 5
-// brief). ONLY the fine-grained entry points are imported — never the root
+// Shiki-based syntax highlighting for the file page's source view.
+// ONLY the fine-grained entry points are imported — never the root
 // "shiki" package, whose default engine pulls in oniguruma/WASM. The
 // covapp CSP (Global Constraints) is `script-src 'self'` with no
 // `'wasm-unsafe-eval'`/`'unsafe-eval'`, and this build's bundle ceiling

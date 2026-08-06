@@ -193,6 +193,8 @@ def _canonical_rate_bps(rate: str | None) -> int | None:
     return round(float(m.group("num")) * _RATE_UNITS_BPS[m.group("unit")])
 
 
+# PERMANENT(no-tuple-return): dedup key; the variadic tuple is the value, not a bundle.
+# ast-grep-ignore: no-tuple-return
 def canonical_key(params: ImpairmentParams) -> tuple[int | None, ...]:
     """Spelling-independent identity for *params* — compare MEANING, not text.
 

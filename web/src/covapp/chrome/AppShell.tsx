@@ -1,10 +1,10 @@
-// Shared chrome for every covapp page (Task 3 brief). DOM/anatomy
-// reference: docs/superpowers/specs/assets/2026-07-24-coverage-ui/
-// file-page.html lines 178-197 (⋮ menu with keyboard-shortcuts item +
-// coverage-key sections) — recreated with React + Tailwind semantic tokens,
-// not the mockup's literal CSS. Menu usage pattern mirrors
-// web/src/shell/AppBar.tsx (Dropdown.Root > ButtonUtility trigger >
-// Dropdown.Popover > Dropdown.Menu > Dropdown.Section/Item/Separator).
+// Shared chrome for every covapp page. DOM/anatomy reference:
+// docs/superpowers/specs/assets/2026-07-24-coverage-ui/file-page.html lines
+// 178-197 (⋮ menu with keyboard-shortcuts item + coverage-key sections) —
+// recreated with React + Tailwind semantic tokens, not the mockup's literal
+// CSS. Menu usage pattern mirrors web/src/shell/AppBar.tsx (Dropdown.Root >
+// ButtonUtility trigger > Dropdown.Popover > Dropdown.Menu >
+// Dropdown.Section/Item/Separator).
 //
 // AppShell reads tier/state legend data + project_name straight from
 // getIndex() rather than via props: App.tsx only ever mounts AppShell once
@@ -43,8 +43,8 @@ export interface AppShellProps {
  * no `label` prop makes DropdownItem fall through to rendering `children`
  * (see dropdown.tsx), which is how the swatch gets in there at all.
  *
- * `className="opacity-100 cursor-default"` (Task 7, ledger-sanctioned
- * adjacent fix): the vendored `DropdownItem` applies
+ * `className="opacity-100 cursor-default"`: the vendored `DropdownItem`
+ * applies
  * `state.isDisabled && "cursor-not-allowed opacity-50"` ahead of any
  * caller `className` in its own `cx()` call (see dropdown.tsx) — `cx` is
  * `tailwind-merge`, which keeps the LAST conflicting utility in a class
@@ -87,7 +87,7 @@ function KeyRow({
   );
 }
 
-/** App-bar pin (Task 7 spec §4, `contexts-page.html`'s `.focus-chip`
+/** App-bar pin (spec §4, `contexts-page.html`'s `.focus-chip`
  * anatomy): tier dot + label + ✕. Brand-tinted (`bg-brand-primary_alt`/
  * `border-fg-brand-primary_alt`/`text-brand-secondary`) — the same violet
  * tokens `RunsPage.tsx`'s active tier chip and "Focus this context" button
@@ -129,8 +129,8 @@ function FocusChip({
   );
 }
 
-/** `FocusChip`'s ticket-context counterpart (Task 12) — same tier-dot +
- * label + ✕ anatomy, but never tier-colored: a ticket has no single tier of
+/** `FocusChip`'s ticket-context counterpart — same tier-dot + label + ✕
+ * anatomy, but never tier-colored: a ticket has no single tier of
  * its own (its lines can span every tier), so its dot is always the neutral
  * `bg-fg-quaternary` swatch `FocusChip` only falls back to when a context's
  * OWN tier color is unavailable. */
@@ -164,7 +164,7 @@ function TicketChip({ id, onClear }: { id: string; onClear: () => void }) {
  * per-context row, ✓ marking whichever is active. A real `onAction`
  * (Dropdown.Item's activation handler), not a raw `onClick` — same as
  * every other actionable item in this menu. Reused as-is for the "Pin
- * ticket" section below (Task 12) — the shape (active/dotColor/label/
+ * ticket" section below — the shape (active/dotColor/label/
  * testId/onAction) is generic; a ticket row just never supplies a
  * `dotColor`. */
 function FocusMenuItem({
@@ -198,7 +198,7 @@ function FocusMenuItem({
   );
 }
 
-/** One disabled row per manual-testing override entry (Task 11, ⋮ menu
+/** One disabled row per manual-testing override entry (the ⋮ menu's
  * "Overrides" section) — informational, same `isDisabled` `Dropdown.Item`
  * pattern `KeyRow` above uses, but shaped for an `OverrideJson` rather than
  * a fixed tier/state swatch: a DASHED tier dot (never solid — mirrors
@@ -289,12 +289,12 @@ export function AppShell({ crumbs, title, meta, stats, children }: AppShellProps
   // label string) via the same `groupContexts` every other page uses.
   const contexts = index ? groupContexts(index) : [];
   const focusedContext = contexts.find((ctx) => ctx.label === focus) ?? null;
-  // Task 12: the ticket pin switcher, which lives in its own app-bar search
-  // box (TicketSearch) rather than the ⋮ menu — an empty `tickets.json` (no
+  // The ticket pin switcher lives in its own app-bar search box
+  // (TicketSearch) rather than the ⋮ menu — an empty `tickets.json` (no
   // `[coverage.tickets]` attribution anywhere in this report) hides the box
   // rather than showing an empty, useless one.
   const tickets = index?.tickets ?? [];
-  // Task 11 (manual-overrides spec §6): the ⋮ menu's "Overrides" section and
+  // Manual-overrides spec §6: the ⋮ menu's "Overrides" section and
   // the toggle row both only exist when the report actually carries at
   // least one asserted entry — an empty `overrides` list means nothing to
   // hide, so both stay absent rather than showing a useless empty section
@@ -319,10 +319,9 @@ export function AppShell({ crumbs, title, meta, stats, children }: AppShellProps
             <span>otto coverage</span>
             {index && <span className="text-quaternary">· {index.project_name}</span>}
           </div>
-          {/* Top-level page nav (Task 10: neither this nor the Runs link
-              existed before — both are added together here). `#/tickets`
-              sits outside the `#/coverage/...` namespace deliberately (see
-              App.tsx) so it can never collide with a real directory path. */}
+          {/* Top-level page nav. `#/tickets` sits outside the
+              `#/coverage/...` namespace deliberately (see App.tsx) so it can
+              never collide with a real directory path. */}
           <nav data-testid="app-nav" className="flex items-center gap-1 text-xs font-medium">
             <a
               href="#/runs"
@@ -340,7 +339,7 @@ export function AppShell({ crumbs, title, meta, stats, children }: AppShellProps
             </a>
           </nav>
           {overrides.length > 0 && (
-            // Always-visible indicator (Task 11, spec §6) — the ⋮ menu's
+            // Always-visible indicator (spec §6) — the ⋮ menu's
             // "Overrides" section (below) holds the actual listing; this is
             // just "something is being asserted here", visible without
             // opening the menu at all. Dashed border echoes `AssertedChip`/
@@ -417,20 +416,20 @@ export function AppShell({ crumbs, title, meta, stats, children }: AppShellProps
                   ))}
                 </Dropdown.Section>
                 {(overrides.length > 0 || hideAsserted) && (
-                  // Task 11 (manual-overrides spec §6): the row shows when
-                  // the report carries at least one asserted entry — see
-                  // `overrides`' doc comment above — OR when `hideAsserted`
-                  // is already true (F3 fix): a hand-typed `?asserted=1`
-                  // deep link on a no-overrides report must not blank the
-                  // tickets/coverage data with no visible control to clear
-                  // it, so the toggle stays reachable even though the
-                  // report itself has nothing to hide. The always-visible
-                  // badge above stays gated on `overrides.length > 0` only —
-                  // it announces "overrides are active", which isn't true
-                  // here. The toggle row reuses `FocusMenuItem` (no
-                  // `dotColor`, same as "All contexts") rather than a
-                  // bespoke checkbox component, so it reads as one more menu
-                  // action among the others instead of a one-off control.
+                  // Manual-overrides spec §6: the row shows when the report
+                  // carries at least one asserted entry — see `overrides`'
+                  // doc comment above — OR when `hideAsserted` is already
+                  // true: a hand-typed `?asserted=1` deep link on a
+                  // no-overrides report must not blank the tickets/coverage
+                  // data with no visible control to clear it, so the toggle
+                  // stays reachable even though the report itself has
+                  // nothing to hide. The always-visible badge above stays
+                  // gated on `overrides.length > 0` only — it announces
+                  // "overrides are active", which isn't true here. The
+                  // toggle row reuses `FocusMenuItem` (no `dotColor`, same
+                  // as "All contexts") rather than a bespoke checkbox
+                  // component, so it reads as one more menu action among the
+                  // others instead of a one-off control.
                   <>
                     <Dropdown.Separator />
                     <Dropdown.Section>

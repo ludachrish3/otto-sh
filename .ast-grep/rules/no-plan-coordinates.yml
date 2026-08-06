@@ -1,17 +1,48 @@
 id: no-plan-coordinates
 language: python
 severity: error
-message: Comment or docstring references an SDD plan coordinate ("Task N" / "plan §" / "review finding FN"). The plans are purged (git tag plans-archive-2026-08-03) — restate the rationale in place, or cite the surviving spec by filename.
+message: Comment or docstring references an SDD plan coordinate ("Task N" / "Plan N" / "plan §" / "review finding FN"). The plans are purged (git tag plans-archive-2026-08-03) — restate the rationale in place, or cite the surviving spec by filename.
 note: >
   Citing a SPEC section (e.g. "spec §9" near a module that names its design
   doc) is fine — specs are tracked decision records. Plan coordinates are
   not resolvable by any reader and die at merge, per the policy in
-  todo/churn-and-design-review-2026-08-03.md §5.4. Swept to zero 2026-08-03.
+  todo/churn-and-design-review-2026-08-03.md §5.4.
+  Swept to zero 2026-08-05, after the original 2026-08-03 sweep missed 8 sites:
+  the pattern had no `Plan <n>` alternative at all (otto's monitor work was
+  organized as "Plan 5a/5b/5c"), and its literal spaces could not match prose
+  the formatter had wrapped mid-phrase (`(Task\n      5)` in monitor/server.py).
+  Both are why the alternation now uses `\s+` throughout.
+
+  FIVE spellings this regex does NOT catch. They are shared with the -ts and
+  -tsx siblings, and are owed one follow-up covering all three rule files
+  together (todo/churn-review-remaining-work-2026-08-05.md §1c):
+    1. plural "Tasks 4-6" / "Tasks 5/6" — "Task\s+\d+" cannot match the "s".
+    2. letter "Plan C" — "Plan\s+\d+" requires a digit.
+    3. lowercase "chaos plan 3" — the alternation is case-sensitive, and only
+       the "plan §" branch is lowercase. This one bit src/otto specifically:
+       lifecycle.py cited "chaos plan 3", i.e. the purged
+       2026-07-31-chaos-plan3-real-signal-integration.md.
+    4. hyphenated, no whitespace, EITHER case: "task-12-report.md" AND
+       "pre-Task-11". Writing this class up as "lowercase" is what let the
+       capitalized form outlive three rounds of cleanup — see the provenance
+       note in the -ts sibling.
+    5. a coordinate WRAPPED across two line comments. Python is the LUCKY
+       language here: a docstring is ONE node spanning every wrapped line, so
+       "\s+" already bridges it. The -ts/-tsx siblings cannot be fixed the
+       same way — there each "//" line is its own node, a node BOUNDARY no
+       single-node regex reaches.
+  None of the five is gated here, and src/otto shipped two of them through the
+  2026-08-05 sweep and both reviews of it: "Plan C" in
+  coverage/renderer/spa_data.py (class 2) and "chaos plan 3" in lifecycle.py
+  (class 3, and not even a known class until then). Both are fixed; a
+  whole-tree re-scan is what found them, not this rule. Widening 1-4 is a
+  policy change to a gate other work depends on, so it belongs in the
+  follow-up with 5, not in a drive-by edit.
 files:
 - src/otto/**
 rule:
   any:
   - kind: comment
-    regex: '\b(Task \d+|plan §|review finding F\d)'
+    regex: '\b(Task\s+\d+|Plan\s+\d+[a-z]?|plan\s+§|review\s+finding\s+F\d)'
   - kind: string
-    regex: '\b(Task \d+|plan §|review finding F\d)'
+    regex: '\b(Task\s+\d+|Plan\s+\d+[a-z]?|plan\s+§|review\s+finding\s+F\d)'

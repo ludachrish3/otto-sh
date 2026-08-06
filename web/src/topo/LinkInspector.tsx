@@ -36,9 +36,9 @@
 // bookkeeping — not a chrome offset, not a fitView padding that has to be kept
 // equal to w-96 by hand. The layout engine already knows how wide this is.
 //
-// Task 8's migration deliberately does NOT reach for the vendored `Table`
-// (react-aria-components' Table/Row/Cell collection API) for this fact list —
-// it is a handful of fixed label/value pairs, not a sortable/selectable
+// The Untitled UI migration deliberately does NOT reach for the vendored
+// `Table` (react-aria-components' Table/Row/Cell collection API) for this fact
+// list — it is a handful of fixed label/value pairs, not a sortable/selectable
 // dataset, so a real `<table>` would be the wrong tool same as before.
 import { useEffect } from "react";
 

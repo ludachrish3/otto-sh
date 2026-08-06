@@ -1,11 +1,10 @@
 // web/src/shell/EventEditor.tsx
-// The event editor slide-over (spec 2026-07-18 §UI surfaces, Plan 5c Task
-// 9): draft targets create, edit targets send a full-field PATCH. Composed
-// from the vendored slideout-menu's individually-exported pieces (Dialog/
-// Modal/ModalOverlay + SlideoutMenu.Header/Content/Footer), same rationale
-// as EventsPanel.tsx's header comment -- the all-in-one `SlideoutMenu`
-// wrapper puts `data-testid` on the outer backdrop ModalOverlay, not the
-// visible Dialog panel.
+// The event editor slide-over (spec 2026-07-18 §UI surfaces): draft targets
+// create, edit targets send a full-field PATCH. Composed from the vendored
+// slideout-menu's individually-exported pieces (Dialog/Modal/ModalOverlay +
+// SlideoutMenu.Header/Content/Footer), same rationale as EventsPanel.tsx's
+// header comment -- the all-in-one `SlideoutMenu` wrapper puts `data-testid`
+// on the outer backdrop ModalOverlay, not the visible Dialog panel.
 import { X } from "@untitledui/icons";
 import { useEffect, useState } from "react";
 import {
@@ -30,9 +29,9 @@ import { type EventDraft, useUiStore } from "../ui/uiStore";
 // mirrors AUTO_EVENT_COLORS (otto/monitor/events.py: start/pass/fail =
 // #888888/#2ca02c/#d62728) plus two extra chart hues for manual marking.
 // Not exported (knip's unused-exports check) -- nothing outside this module
-// consumes it yet; the brief's snippet marked it `export` in anticipation of
-// a future consumer, but Task 9 has none, and a dead export is exactly what
-// that gate is there to catch.
+// consumes it yet; an earlier draft marked it `export` in anticipation of a
+// future consumer that never arrived, and a dead export is exactly what that
+// gate is there to catch.
 const EVENT_COLOR_SWATCHES = [
   "#888888",
   "#7c5cff",

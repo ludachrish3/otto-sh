@@ -816,6 +816,8 @@ def _atomic_write_json(cache_path: Path, obj: dict[str, Any]) -> None:
 # ---------------------------------------------------------------------------
 
 
+# DEBT(no-tuple-return): two independent command lists.
+# ast-grep-ignore: no-tuple-return
 def collect_current_commands() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Read the currently-registered instructions and suites with options.
 

@@ -326,6 +326,8 @@ def _extract_real_tickets(spec: TicketSpec, message: str, sha: str) -> list[str]
     return [i for i in ids if i not in _RESERVED_TICKET_IDS]
 
 
+# DEBT(no-tuple-return): three unrelated maps in one return.
+# ast-grep-ignore: no-tuple-return
 def attribute_tickets(
     repo_root: Path,
     line_counts: dict[str, int],

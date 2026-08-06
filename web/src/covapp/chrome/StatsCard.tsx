@@ -1,4 +1,4 @@
-// Tier x Line/Branch/Decision matrix (Task 3 brief; DOM/anatomy reference:
+// Tier x Line/Branch/Decision matrix (DOM/anatomy reference:
 // docs/superpowers/specs/assets/2026-07-24-coverage-ui/file-page.html's
 // `.stats` table / `.pct`/`.frac`/`tr.all`/`.tierdot`) — recreated with
 // Tailwind utilities over the vendored semantic tokens, not the mockup's
@@ -18,20 +18,21 @@ export interface TierStatRow {
    * exactOptionalPropertyTypes a bare `?` would reject that value and push
    * nine call sites into conditional spreads to say the same thing. */
   dotColor?: string | undefined;
-  /** `null` (Task 12 fix round 1: a composed ctx+ticket row on
-   * DirectoryPage's tree) mirrors `branch`/`decision`'s "no data"
-   * rendering — the ctx numerator (`ctx_lines`, whole-file) and the
-   * ticket denominator (scoped to the ticket's own lines) are no longer
-   * commensurable once both filters compose at tree granularity, so
-   * showing ANY computed percentage there would be a plausible-looking
-   * but out-of-range number, not an approximation. Every pre-Task-12
-   * caller still passes a tuple — this is purely additive. */
+  /** `null` (a composed ctx+ticket row on DirectoryPage's tree) mirrors
+   * `branch`/`decision`'s "no data" rendering — the ctx numerator
+   * (`ctx_lines`, whole-file) and the ticket denominator (scoped to the
+   * ticket's own lines) are no longer commensurable once both filters
+   * compose at tree granularity, so showing ANY computed percentage
+   * there would be a plausible-looking but out-of-range number, not an
+   * approximation. Every other caller still passes a tuple — the `null`
+   * case is purely additive. */
   line: [number, number] | null;
-  /** `null` (Task 7: the focused-context single row) mirrors `decision`'s
+  /** `null` (the focused-context single row) mirrors `decision`'s
    * "no data" rendering — v4's `run_hits` is per-line only (Global
    * Constraints' documented data limitation: per-run branch contribution
    * isn't stored), so a focused row has nothing to show here. Every
-   * pre-Task-7 caller still passes a tuple — this is purely additive. */
+   * unfocused caller still passes a tuple — the `null` case is purely
+   * additive. */
   branch: [number, number] | null;
   /** `null` when this stat type has no data for this row (e.g. decision
    * counts aren't rolled up onto tree nodes) — rendered as a muted
@@ -45,7 +46,7 @@ export interface StatsCardProps {
   rows: TierStatRow[];
   thresholds: Thresholds;
   /** First column header text — "Tier" for the normal per-tier matrix,
-   * "Context" for Task 7's focused single-row variant.
+   * "Context" for the focused single-row variant.
    * @default "Tier" */
   keyColumnLabel?: string;
 }
@@ -74,7 +75,7 @@ function StatCell({
 }
 
 /** Shared by the Branch and Decision columns: both can be `null` ("no
- * data" for this row — Task 7's focused single row has no branch data
+ * data" for this row — the focused single row has no branch data
  * per-run, and decision counts were never rolled up onto tree nodes in the
  * first place), rendered identically muted rather than as a bogus 0%. */
 function NullableStatCell({

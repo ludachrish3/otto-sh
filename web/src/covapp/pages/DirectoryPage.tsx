@@ -1,9 +1,9 @@
-// The covapp directory page (Task 4 brief). DOM/anatomy reference:
+// The covapp directory page. DOM/anatomy reference:
 // docs/superpowers/specs/assets/2026-07-24-coverage-ui/directory-page.html —
 // recreated with React + Tailwind semantic tokens + ui/TreeView, not the
-// mockup's literal CSS. One superseded detail per the brief: the mockup's
+// mockup's literal CSS. One deliberate divergence from that mockup: its
 // floating coverage-key panel is gone from this page — the key lives in
-// AppShell's ⋮ menu (Task 3), already wired.
+// AppShell's ⋮ menu instead.
 
 import { File02, Folder } from "@untitledui/icons";
 import { type ReactNode, useEffect, useState } from "react";
@@ -159,7 +159,7 @@ function FlagsCell({
   );
 }
 
-/** Branch %'s under-focus replacement (Task 7 spec §4): "—", no minibar —
+/** Branch %'s under-focus replacement (spec §4): "—", no minibar —
  * v4 doesn't store per-run branch contribution (Global Constraints'
  * documented data limitation), so there's nothing to recompute here. Same
  * "na" text color `PCT_TEXT`/`PctCell` already use for a real no-data
@@ -168,7 +168,7 @@ function NaCell() {
   return <span className="text-quaternary">—</span>;
 }
 
-/** `focusedLabel`/`focusedTier` (Task 7): when a context is focused, every
+/** `focusedLabel`/`focusedTier`: when a context is focused, every
  * row recomputes from `stats.ctx_lines[focusedLabel]` instead of the
  * node's overall hit/total — Lines and Line % (with its minibar, same
  * `PctCell`) show the focused count; the focused context's OWN tier column
@@ -178,13 +178,13 @@ function NaCell() {
  * pinned); Branch % becomes `NaCell` ("—", no bar — branch isn't tracked
  * per-run at all). Flags stay node-wide (not context-scoped) either way.
  *
- * `ticketActive` (Task 12): when a ticket is pinned and NO context is
- * focused, `row`'s `stats` is already the TICKET-SCOPED one (the caller
- * builds `roots` from the scoped tree, not the original) — Lines/Line % read
- * it directly, same shape as the plain unfocused cells below. Branch % and
- * every per-tier column become `NaCell` ("no data") rather than dividing a
- * whole-file branch/per-tier count by the new, much smaller ticket-scoped
- * total: neither is tracked per-ticket at all (a `TicketChunk` carries only
+ * `ticketActive`: when a ticket is pinned and NO context is focused, `row`'s
+ * `stats` is already the TICKET-SCOPED one (the caller builds `roots` from
+ * the scoped tree, not the original) — Lines/Line % read it directly, same
+ * shape as the plain unfocused cells below. Branch % and every per-tier
+ * column become `NaCell` ("no data") rather than dividing a whole-file
+ * branch/per-tier count by the new, much smaller ticket-scoped total:
+ * neither is tracked per-ticket at all (a `TicketChunk` carries only
  * owned/covered LINE counts), so showing a real-looking percentage computed
  * from mismatched numerator/denominator sources would read as a correctness
  * bug, not an approximation — the same reasoning `focusedLabel`'s branch
@@ -192,14 +192,13 @@ function NaCell() {
  * granularity" reason. When a context IS ALSO focused (`focusedLabel !==
  * null`) while a ticket is pinned, composing the two is declined the same
  * honest way — the `ticketActive` check nested inside the `focusedLabel`
- * branch below returns all-`NaCell` rather than computing anything; see
- * its own "Fix round 1" comment for why (`stats.ctx_lines` is a
- * whole-file numerator with no per-line ticket+run cross-tab to restrict
- * it to the ticket's owned lines, so dividing it by the ticket-scoped
- * `stats.lines.total` would read as a correctness bug, not an
- * approximation).
+ * branch below returns all-`NaCell` rather than computing anything; see its
+ * own comment for why (`stats.ctx_lines` is a whole-file numerator with no
+ * per-line ticket+run cross-tab to restrict it to the ticket's owned lines,
+ * so dividing it by the ticket-scoped `stats.lines.total` would read as a
+ * correctness bug, not an approximation).
  *
- * `hideAsserted` (Task 11, default `false` — byte-identical when omitted):
+ * `hideAsserted` (default `false` — byte-identical when omitted):
  * subtracts `stats.lines.asserted_only`/`asserted_per_tier[tier]` from the
  * plain (no context, no per-run numerator) Lines/Line %/tier-% cells —
  * mirroring `tierRows` (format.ts) exactly, since these are the same
@@ -219,20 +218,20 @@ function renderCellsFor(
     const stats = rowStats(row);
 
     if (focusedLabel !== null) {
-      // Fix round 1 (task-12-report.md, IMPORTANT): when a ticket is ALSO
-      // active, `stats.lines.total` is the TICKET-scoped denominator (the
-      // caller builds `roots` from the scoped tree), but `stats.ctx_lines`
-      // is still a whole-file numerator — no per-line ticket+run cross-tab
-      // exists at tree granularity to restrict it to the ticket's owned
-      // lines. Dividing the two produced a plausible-looking but
-      // out-of-range percentage (a real fixture: 10 whole-file ctx hits
-      // over a 3-line ticket scope read "333.3%") — decline honestly
-      // instead, the same "not tracked at this granularity" treatment
-      // Branch % already gets on its own, one line below. Contrast
-      // FilePage's `ticketFileRow`, which recomputes this EXACTLY under
-      // the same compose because it already has one file's full per-line
-      // data — this decline is specific to the tree's coarser data, not a
-      // general "compose is unsupported" rule.
+      // When a ticket is ALSO active, `stats.lines.total` is the
+      // TICKET-scoped denominator (the caller builds `roots` from the
+      // scoped tree), but `stats.ctx_lines` is still a whole-file
+      // numerator — no per-line ticket+run cross-tab exists at tree
+      // granularity to restrict it to the ticket's owned lines. Dividing
+      // the two produced a plausible-looking but out-of-range percentage
+      // (a real fixture: 10 whole-file ctx hits over a 3-line ticket scope
+      // read "333.3%") — decline honestly instead, the same "not tracked
+      // at this granularity" treatment Branch % already gets on its own,
+      // one line below. Contrast FilePage's `ticketFileRow`, which
+      // recomputes this EXACTLY under the same compose because it already
+      // has one file's full per-line data — this decline is specific to
+      // the tree's coarser data, not a general "compose is unsupported"
+      // rule.
       if (ticketActive) {
         const cells: ReactNode[] = [
           <NaCell key="lines" />,
@@ -395,7 +394,7 @@ export function DirectoryPage({ index, segments }: DirectoryPageProps) {
   const [, navigate] = useHashLocation();
   const { focus, ticket, hideAsserted } = useFocus();
 
-  // Ticket context (Task 12): resolved/loaded here, unconditionally, BEFORE
+  // Ticket context: resolved/loaded here, unconditionally, BEFORE
   // the `node === null` guard below — same reasoning as `useFocus()` itself
   // (Rules of Hooks: this component's own guard can return early on some
   // renders but not others, so every hook must run regardless of whether
@@ -459,7 +458,7 @@ export function DirectoryPage({ index, segments }: DirectoryPageProps) {
     ticketChunkState.reason === "other";
   const ticketReady = ticketSummary !== undefined && ticketChunkState.status === "ready";
 
-  // Denominator scoping (Task 12, spec §6.3): keeps only the files/dirs the
+  // Denominator scoping (spec §6.3): keeps only the files/dirs the
   // pinned ticket touched, recomputing each one's line total/hit against the
   // ticket's OWN lines — never a passthrough of the whole-repo numbers. A
   // `null` scopeTreeToTicket result (the ticket touched nothing in THIS
@@ -516,11 +515,11 @@ export function DirectoryPage({ index, segments }: DirectoryPageProps) {
           hideAsserted,
         ),
         title: "Coverage — this node and below",
-        // Fix round 1 (task-12-report.md, IMPORTANT): when BOTH a context
-        // and a ticket are active, `ticketTreeRow(..., focusedContext)`
-        // (not `focusedTreeRow`) — its `ctx` argument makes it decline the
-        // Line cell honestly (see its own doc comment) instead of dividing
-        // a whole-file ctx numerator by the ticket-scoped denominator.
+        // When BOTH a context and a ticket are active, `ticketTreeRow(...,
+        // focusedContext)` (not `focusedTreeRow`) — its `ctx` argument
+        // makes it decline the Line cell honestly (see its own doc
+        // comment) instead of dividing a whole-file ctx numerator by the
+        // ticket-scoped denominator.
         rows: focusedContext
           ? ticketReady
             ? ticketTreeRow(index, effectiveNode, ticketSummary?.id ?? "", focusedContext)
@@ -572,9 +571,9 @@ export function DirectoryPage({ index, segments }: DirectoryPageProps) {
         // that quietly removes files must always say so, in one plain row —
         // shown even when `hiddenCount` is 0, so "a ticket is pinned but
         // hid nothing here" is just as visible as "it hid 142 files".
-        // Singular/plural "file"/"files" (fix round 1, Minor): "1 files
-        // hidden" has no singular form. "1 ticket pinned" needs no such
-        // handling — exactly one ticket can ever be pinned at a time.
+        // Singular/plural "file"/"files": "1 files hidden" has no singular
+        // form. "1 ticket pinned" needs no such handling — exactly one
+        // ticket can ever be pinned at a time.
         <p data-testid="ticket-scope-banner" className="mt-2 text-xs text-quaternary">
           {fmtCount(hiddenCount)} file{hiddenCount === 1 ? "" : "s"} hidden · 1 ticket pinned
         </p>

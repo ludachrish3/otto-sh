@@ -260,6 +260,8 @@ class OttoPlugin:
         if last_exc is not None:
             raise last_exc
 
+    # PERMANENT(no-tuple-return): pytest dictates this hook's return shape.
+    # ast-grep-ignore: no-tuple-return
     def pytest_report_teststatus(
         self,
         report: pytest.TestReport,

@@ -124,7 +124,7 @@ export function loadFileChunk(chunk: string): Promise<FileChunk> {
   });
 }
 
-// --- Per-ticket chunks (Task 10; stamp check added in fix round 1) --------
+// --- Per-ticket chunks ----------------------------------------------------
 // loadFileChunk's counterpart for `cov_data/tickets/<chunk>.js` /
 // `window.__OTTO_COV_TICKET__` — kept as an entirely separate pending/cache
 // map + callback rather than folded into the file-chunk lane above (the two

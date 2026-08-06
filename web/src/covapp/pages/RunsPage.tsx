@@ -1,11 +1,11 @@
-// The covapp runs & contexts page (Task 6 brief). DOM/anatomy reference:
+// The covapp runs & contexts page. DOM/anatomy reference:
 // docs/superpowers/specs/assets/2026-07-24-coverage-ui/contexts-page.html —
 // recreated with React + Tailwind semantic tokens, not the mockup's literal
 // CSS. Groups `payload.runs` into `Context`s (contexts.ts) — the common case
 // is a multi-host run (one label, several hosts) sharing one row.
 //
 // "Focus this context" (per-context detail) dispatches the real
-// `setFocus(label)` from `focus.ts` (Task 7) — pins the app-bar chip
+// `setFocus(label)` from `focus.ts` — pins the app-bar chip
 // (AppShell.tsx), fires a toast, and re-scopes every page's stats card,
 // including this one's (below): focused, it shows the same single Context
 // row DirectoryPage.tsx/FilePage.tsx do instead of the per-tier matrix.
@@ -73,7 +73,7 @@ function FilterChip({
 }) {
   // No vendored pill-toggle fits this shape (a single-select chip row) — a
   // hand-rolled button on tokens, matching contexts-page.html's `.chipbtn`
-  // anatomy, per the Task 6 brief.
+  // anatomy.
   return (
     <button
       type="button"
@@ -454,10 +454,10 @@ export function RunsPage({ index }: RunsPageProps) {
         </>
       }
       stats={{
-        // Task 11 fix round (review I1): this card is the repo-wide root
-        // rollup, same as DirectoryPage's root — it must narrow/suffix under
-        // `hideAsserted` exactly like that page does, or the two silently
-        // disagree about "whole repo" coverage while the toggle is on.
+        // This card is the repo-wide root rollup, same as DirectoryPage's
+        // root — it must narrow/suffix under `hideAsserted` exactly like
+        // that page does, or the two silently disagree about "whole repo"
+        // coverage while the toggle is on.
         scope: withHideAssertedSuffix(
           focusedContext ? `focused: ${focusedContext.label}` : "all contexts",
           hideAsserted,

@@ -25,20 +25,20 @@ import { appendToIndex } from "./seriesIndex";
  *    assumes is ASCENDING and binary-searches. A NaN entry there doesn't
  *    crash anything; `tsMs[mid] <= t` is always false for NaN, so the search
  *    silently misbehaves and slices the wrong window from then on.
- *  - a malformed event/log_event row would land in `session.events`/
- *    `logEvents` unfiltered (Plan 5b final-review Finding [2]): it renders
- *    "Invalid Date" in EventsPanel, is invisible on charts (a NaN `fromMs`
- *    fails every overlap comparison in `eventMarkers`), and — since the
- *    import path (exportDoc.ts) already drops the same row — silently
- *    DISAPPEARS again on the next resync. One rule, applied at both
- *    boundaries via this same `dropInvalidTimestamps`, closes that gap: a
- *    bad row behaves identically whether it arrives via Import or SSE.
+ *  - a malformed event/log_event row would land in
+ *    `session.events`/`logEvents` unfiltered: it renders "Invalid Date" in
+ *    EventsPanel, is invisible on charts (a NaN `fromMs` fails every overlap
+ *    comparison in `eventMarkers`), and — since the import path
+ *    (exportDoc.ts) already drops the same row — silently DISAPPEARS again
+ *    on the next resync. One rule, applied at both boundaries via this same
+ *    `dropInvalidTimestamps`, closes that gap: a bad row behaves identically
+ *    whether it arrives via Import or SSE.
  *  - an `EventRecord` with a valid `timestamp` but a malformed
  *    `end_timestamp` (a span whose end can't be parsed) would pass this
  *    filter, then produce a NaN `toMs` wherever `end_timestamp` is read
  *    (charts/options.ts's `eventMarkers`, EventsPanel.tsx) — NaN fails every
  *    overlap comparison, so the span silently vanishes from every chart,
- *    un-warned (Finding [3]). `dropInvalidTimestamps`'s `endTimestamp`
+ *    un-warned. `dropInvalidTimestamps`'s `endTimestamp`
  *    selector below closes that gap too, on both boundaries.
  * Filtered ONCE here — the point a fragment enters the store — rather than
  * in every reader.

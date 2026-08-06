@@ -120,11 +120,10 @@ export function OverviewPage() {
                         </span>
                         {health.status === "down" ? (
                           <span className="text-xs font-medium text-status-error">
-                            {/* formatOutage (Task 5), not formatSpan: the down
+                            {/* formatOutage, not formatSpan: the down
                                 threshold (HEALTH_K x cadence) is reachable in
                                 seconds, and formatSpan alone prints "0m" for
-                                any outage under a minute (Minor 5, 5b
-                                follow-ups review). */}
+                                any outage under a minute. */}
                             down · {formatOutage(health.outageMs)}
                           </span>
                         ) : health.status === "ok" && headline ? (

@@ -1,5 +1,5 @@
 // Pure log-event table bookkeeping (no DOM, no zustand) — re-homed against
-// the format:1 stack (Task 12) from the legacy src/logevents.ts. Only the
+// the format:1 stack from the legacy src/logevents.ts. Only the
 // pieces SubjectPage.tsx's log-table tabs still use survive the port:
 // `appendRows` (the legacy zustand store's incremental SSE-batch append) and
 // `MAX_TABLE_ROWS`-as-append-cap had no caller left once src/store.ts was

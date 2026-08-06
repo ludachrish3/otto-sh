@@ -136,8 +136,8 @@ def snapshot_lab(hosts: Sequence[RemoteHost], declared: list[Link]) -> LabSnapsh
     A link is exported only when **both** endpoints resolve to a host in this
     snapshot, mirroring the fixture generator's ``_implicit_links``. That
     drops the ``local`` edge ``implicit_links`` gives every hop-less host: the
-    local root is the frontend's own synthesized node (Plan 4 topology), never
-    a ``RemoteHost``, so a ``local`` endpoint in the document would be a
+    local root is a node the frontend's topology view synthesizes for itself,
+    never a ``RemoteHost``, so a ``local`` endpoint in the document would be a
     phantom. The same filter drops a declared link naming an unknown host.
 
     Args:

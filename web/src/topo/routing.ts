@@ -63,12 +63,14 @@ const FAN_STEP = 28;
 /** The width of the invisible `react-flow__edge-interaction` path — that, not
  * the 2px visible stroke, is what the pointer actually hits. React Flow's own
  * default is 20px, but LinkEdge.tsx widens it to 28px (margin hardening for
- * Firefox/WebKit hit-testing near the fitted zoom threshold — see LinkEdge.tsx
- * and task-12b-report.md), passing this constant through so the two can never
- * drift apart again. Two parallel edges whose centrelines are closer than half
- * of it share one hit target: the one painted last wins, and the other becomes
- * unclickable, its inspector and hover card unreachable. This is not a
- * cosmetic threshold, and `toporouting.test.ts` pins it. */
+ * Firefox/WebKit hit-testing near the fitted zoom threshold — see that file's
+ * comment on the `BaseEdge` render, and `FIT_PADDING`'s comment in
+ * TopologyPage.tsx for the fit-scale arithmetic behind the threshold), passing
+ * this constant through so the two can never drift apart again. Two parallel
+ * edges whose centrelines are closer than half of it share one hit target: the
+ * one painted last wins, and the other becomes unclickable, its inspector and
+ * hover card unreachable. This is not a cosmetic threshold, and
+ * `toporouting.test.ts` pins it. */
 export const INTERACTION_WIDTH = 28;
 
 /** How much of the gutter to leave unused on the far side when clamping the

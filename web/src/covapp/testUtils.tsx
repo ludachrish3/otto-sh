@@ -1,9 +1,9 @@
-// Shared vitest fixtures for covapp tests (Task 4 cleanup, ledger-sanctioned
-// deferred-minor from Task 3): App.test.tsx and AppShell.test.tsx each
-// hand-rolled their own emptyStats()/makeIndex()/CSS.escape polyfill —
-// identical boilerplate, duplicated. This module is the one copy; every
-// covapp test file that needs a fixture IndexPayload imports from here
-// instead of re-declaring it.
+// Shared vitest fixtures for covapp tests. App.test.tsx and
+// AppShell.test.tsx each hand-rolled their own
+// emptyStats()/makeIndex()/CSS.escape polyfill — identical boilerplate,
+// duplicated. This module is the one copy; every covapp test file that
+// needs a fixture IndexPayload imports from here instead of
+// re-declaring it.
 import type { ReactNode } from "react";
 
 import { FocusProvider } from "./focus";
@@ -38,9 +38,9 @@ export function emptyStats(overrides: Partial<Stats> = {}): Stats {
   };
 }
 
-/** A minimal-but-valid `RunJson` (Task 6 migration: contexts.test.ts and
- * RunsPage.test.tsx both build several of these per test — DirectoryPage.
- * test.tsx hand-rolled two before this, unshared). `id` defaults to 1 so a
+/** A minimal-but-valid `RunJson` — contexts.test.ts and RunsPage.test.tsx
+ * both build several of these per test, and DirectoryPage.test.tsx
+ * hand-rolled two before this existed. `id` defaults to 1 so a
  * single-call site doesn't need to think about it; give every run in a
  * multi-run fixture an explicit `id` (it's also the `run_contrib` lookup
  * key). Pass `overrides` to replace any field wholesale. */
@@ -90,13 +90,13 @@ export function makeIndex(overrides: Partial<IndexPayload> = {}): IndexPayload {
   };
 }
 
-/** Task 7 migration: `useFocus()` now requires a `FocusProvider` ancestor
- * (same "throws without a provider" contract `Toast.tsx`'s `useToast()`
- * already has), and `FocusProvider` itself calls `useToast()` — so every
- * covapp test that renders a component reachable from `AppShell` (i.e. all
- * of them) needs both providers mounted above it. Pass as RTL's `render`
- * `wrapper` option (`render(ui, { wrapper: Providers })`) rather than
- * hand-wrapping JSX at each call site. */
+/** `useFocus()` requires a `FocusProvider` ancestor (same "throws without
+ * a provider" contract `Toast.tsx`'s `useToast()` already has), and
+ * `FocusProvider` itself calls `useToast()` — so every covapp test that
+ * renders a component reachable from `AppShell` (i.e. all of them) needs
+ * both providers mounted above it. Pass as RTL's `render` `wrapper` option
+ * (`render(ui, { wrapper: Providers })`) rather than hand-wrapping JSX at
+ * each call site. */
 export function Providers({ children }: { children: ReactNode }) {
   return (
     <ToastProvider>

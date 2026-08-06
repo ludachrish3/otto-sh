@@ -59,6 +59,8 @@ async def _scan_hosts(hosts: list[Any]) -> tuple[list[tuple[str, Observation]], 
     verify primitive for the manage layer, which scans just a chain's hosts.
     """
 
+    # DEBT(no-tuple-return): observations plus an error string.
+    # ast-grep-ignore: no-tuple-return
     async def scan(host: Any) -> tuple[list[tuple[str, Observation]], str | None]:
         try:
             # Hosts with a liveness probe (docker containers) are asked first:
@@ -94,6 +96,8 @@ async def _scan_hosts(hosts: list[Any]) -> tuple[list[tuple[str, Observation]], 
     return observations, unreachable
 
 
+# DEBT(no-tuple-return): observations plus error list; converts with scan().
+# ast-grep-ignore: no-tuple-return
 async def discover_observations(lab: "Lab") -> tuple[list[tuple[str, Observation]], list[str]]:
     """Every tagged tunnel process across the lab's ``has_bash`` hosts."""
     hosts = [h for h in lab.hosts.values() if getattr(h, "has_bash", False)]

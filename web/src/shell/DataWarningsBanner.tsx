@@ -1,11 +1,10 @@
-// Render site for reviewStore's `warnings` channel (Plan 5b final-review
-// Finding [1]). Before this component existed, "drop and warn" was, in
-// practice, "drop silently": exportDoc.ts and reviewStore.ts both WRITE
-// `state.warnings` (a session's own duplicate ids, a dropped bad-timestamp
-// metric/event/log_event row — see data/exportDoc.ts's
-// dropInvalidTimestamps), but nothing ever READ it. A live run dropping 500
-// malformed metric rows left a chart with holes and zero signal anywhere;
-// the only trace was a store field nothing displayed.
+// Render site for reviewStore's `warnings` channel. Before this component
+// existed, "drop and warn" was, in practice, "drop silently": exportDoc.ts
+// and reviewStore.ts both WRITE `state.warnings` (a session's own duplicate
+// ids, a dropped bad-timestamp metric/event/log_event row — see
+// data/exportDoc.ts's dropInvalidTimestamps), but nothing ever READ it. A
+// live run dropping 500 malformed metric rows left a chart with holes and
+// zero signal anywhere; the only trace was a store field nothing displayed.
 //
 // Built from FeaturedIcon + Untitled UI's semantic warning tokens, the same
 // way SubjectHealthBanner.tsx does — no dark: variant needed (the tokens

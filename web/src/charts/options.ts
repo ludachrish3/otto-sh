@@ -135,7 +135,7 @@ export function zoomToRange(startPct: number, endPct: number, window: TimeRange)
   };
 }
 
-/** `+`/`-` zoom buttons (Task 11): new span = span×factor about the window's
+/** `+`/`-` zoom buttons: new span = span×factor about the window's
  * own center — factor 0.5 zooms in, 2 zooms out. Returns null (skip) once the
  * zoomed-in span would fall below the same 1000ms floor ChartPanel's drag-zoom
  * debounce already treats as noise (MIN_ZOOM_DELTA_MS). */
@@ -269,10 +269,10 @@ export function eventOverlay(
         },
         // Stack overlapping events' labels instead of colliding: each lane
         // sits LANE_LABEL_STEP_PX further down from the region's top edge.
-        // color/fontSize (Task 11): markArea labels used to inherit
-        // ECharts' default label color regardless of theme — illegible
-        // against a dark surface. theme.ink is the same token buildStackOption's
-        // tooltip textStyle already uses for dark-mode-safe text.
+        // color/fontSize: markArea labels used to inherit ECharts' default
+        // label color regardless of theme — illegible against a dark surface.
+        // theme.ink is the same token buildStackOption's tooltip textStyle
+        // already uses for dark-mode-safe text.
         label: {
           position: ["50%", lane * LANE_LABEL_STEP_PX],
           color: theme.ink,
@@ -380,13 +380,13 @@ export function buildStackOption(args: {
       // y-value label — on exactly that chart.
       axisPointer: { show: false },
     },
-    // Task 11: the wheel is freed for page scroll (it used to fight it —
+    // The wheel is freed for page scroll (it used to fight it —
     // zoomOnMouseWheel/moveOnMouseWheel both false), and pan is Ctrl-drag —
     // ECharts' modifier set has no meta key, so Ctrl is the one pan gesture
-    // available on every platform (documented in Task 14). +/- buttons
-    // (SubjectPage) cover zoom instead of the wheel.
+    // available on every platform (documented in docs/guide/monitor.md).
+    // +/- buttons (SubjectPage) cover zoom instead of the wheel.
     //
-    // `zoomLock: true` (Task 13, found only by driving a REAL browser — the
+    // `zoomLock: true` (found only by driving a REAL browser — the
     // vitest suite mocks ECharts entirely and can't see this): an "inside"
     // dataZoom's `zoomOnMouseWheel`/`moveOnMouseWheel` flags only gate
     // whether it actually DISPATCHES a zoom/pan action on wheel — they do
@@ -409,7 +409,7 @@ export function buildStackOption(args: {
     // ever see it.
     //
     // `moveOnMouseMove: "ctrl"` below is now DECLARATIVE only, not the
-    // actual pan mechanism — a second Task 13 finding: this dataZoom's own
+    // actual pan mechanism — a second browser-lane finding: this dataZoom's own
     // percent-range pan is structurally a no-op here regardless (its
     // `[0, 100]` always equals `xAxis.min`/`max`'s current window, so there
     // is never room within its own extent to shift). ChartPanel.tsx
@@ -427,10 +427,10 @@ export function buildStackOption(args: {
         zoomLock: true,
       },
     ],
-    // Task 12 (Monitor Plan 5c): a `lineX` brush select, armed by ChartPanel
-    // via takeGlobalCursor — dragging across the plot draws this ghost
-    // rectangle, and brushEnd routes the selected range to either a
-    // zoom-select or a sweep-to-mark, depending on whether marking is armed.
+    // A `lineX` brush select, armed by ChartPanel via takeGlobalCursor —
+    // dragging across the plot draws this ghost rectangle, and brushEnd
+    // routes the selected range to either a zoom-select or a sweep-to-mark,
+    // depending on whether marking is armed.
     brush: {
       xAxisIndex: 0,
       // Ghost styling for the in-flight sweep; series stay fully painted

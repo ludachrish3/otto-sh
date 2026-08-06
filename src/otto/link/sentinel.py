@@ -58,6 +58,8 @@ def encode_impair_sentinel_v2(link_id: str, netdev: str, selector: Selector) -> 
     )
 
 
+# DEBT(no-tuple-return): three parsed fields; callers index into it.
+# ast-grep-ignore: no-tuple-return
 def parse_impair_sentinel(token: str) -> tuple[str, str, Selector | None] | None:
     """Decode a v1 OR v2 token to ``(link_id, netdev, selector)``; ``None`` if not ours.
 

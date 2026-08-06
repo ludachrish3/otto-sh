@@ -1,0 +1,70 @@
+id: no-tuple-return
+language: python
+severity: error
+message: Public function returns a bare tuple. Multiple return values belong in a frozen dataclass (or a Result-family value) — adding a field to a dataclass is non-breaking, adding a tuple element breaks every unpacking site, and callers end up indexing `[0]`.
+note: >
+  The house rule ("callables return dataclasses") converted from prose into a
+  gate, and the sibling of no-bare-status-return. The prose version failed the
+  way this repo's prose always fails: `refactor(docker)!: build results are
+  CommandResults, not (Status, str) pairs` (9f1731c3) states the rule verbatim
+  while converting docker away from tuples — and two days later 5475ff27
+  WIDENED bootstrap.discover() from a 2-tuple to a 3-tuple, paying the exact
+  cost the rule names ("both cli/main.py unpacks updated"), with a
+  BootstrapResult dataclass sitting 14 lines above it in the same file. One
+  call site had already decayed to `discover()[0]`. That is the whole argument
+  for gating this rather than writing it down again.
+
+  Scope is the OUTERMOST return position only: `-> tuple[A, B]` and
+  `-> tuple[A, B] | None` are multiple-return-values and fire;
+  `-> list[tuple[str, T]]`, `-> dict[str, tuple[int, int]]` and
+  `-> Iterable[tuple[...]]` do NOT, because a tuple nested in a container is
+  the mapping-items pair idiom (registry.items(), dict.items()) rather than a
+  crammed return. Banning every `tuple[` would fire on registry.items() and on
+  pytest_report_teststatus — whose signature pytest DICTATES — and a rule that
+  must be suppressed wholesale on correct code stops being read.
+
+  Private functions (`_name`) are exempt, same as no-bare-status-return: the
+  rule is about otto's published interfaces, where a tuple is a compatibility
+  trap for a third party.
+
+  BASELINE IS NOT ZERO, unlike its sibling. 18 public sites existed when this
+  landed on 2026-08-05; each carries an inline
+  `# ast-grep-ignore: no-tuple-return` with a one-line reason, and
+  tests/unit/test_tuple_return_debt.py holds the enumerated list so the set can
+  only SHRINK — adding a site fails the gate, and fixing one without removing
+  its entry fails the test. 6 of the 18 are argued as permanent (a version sort
+  key, a composite dict key, an immutable id sequence, a dedup key, a sqlite
+  parameter row, and the pytest hook); the other 12 are debt, tracked in
+  todo/churn-review-remaining-work-2026-08-05.md.
+
+  The regex admits ONE optional leading quote, and that is not cosmetic: this
+  repo bans `from __future__ import annotations` (it trips Sphinx `-W`), so a
+  quoted string is the only forward-reference spelling available, and 125
+  return annotations under src/otto are written that way. The rule's own
+  motivating defect was one of them — bootstrap.discover()'s pre-refactor
+  signature was literally
+  `def discover() -> "tuple[OttoEnvSettings, list[Repo], list[BootstrapError]]":`
+  — so the first spelling of this rule could not see the case it was written
+  for. Widening was a no-op on the tree (18 hits before and after; the only two
+  quoted tuple returns left are private and exempt), which is precisely why it
+  had to be proven against a planted quoted signature rather than a hit count.
+
+  Beyond that the match is still TEXT on the annotation, so it cannot see
+  through a type alias (`Pair = tuple[int, str]`; `-> Pair` is invisible). None
+  exists today, and the fix for one would be to inline it, not to loosen this.
+  tests/unit/test_tuple_return_debt.py is what makes the composite gate whole:
+  its `_sites()` walks the real AST and strips quotes before matching, so the
+  baseline half never depended on this regex's spelling — it caught the quoted
+  form the whole time. Two gates over one fact, reached two different ways.
+files:
+- src/otto/**
+rule:
+  kind: function_definition
+  all:
+  - has:
+      field: return_type
+      regex: '^["'']?(tuple|Tuple)\['
+  - not:
+      has:
+        field: name
+        regex: "^_"

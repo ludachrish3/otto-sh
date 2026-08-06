@@ -3,7 +3,7 @@
 // the CURRENT sessions[] (client-side, no endpoint — spec §14) — rebuilt
 // fresh via documentFromSessions rather than the raw boot-time document, so
 // a live export stays truthful after streamed chart_map/meta/event updates
-// (Plan 5b final review, Finding I2 — see exportDoc.ts's sessionToRecord).
+// (see exportDoc.ts's sessionToRecord).
 import { type ReactNode, useCallback, useEffect, useRef } from "react";
 
 import { documentFromSessions } from "../data/exportDoc";

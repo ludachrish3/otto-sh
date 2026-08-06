@@ -62,7 +62,7 @@ export interface CodeLine {
    * return `undefined` for the rows that need no extra style, so "computed to
    * nothing" and "omitted" are the same thing to this field. */
   style?: CSSProperties | undefined;
-  /** Content for the leading ticket-gutter column (Task 11 — the slot
+  /** Content for the leading ticket-gutter column (the slot
    * `gridTemplateFor`'s doc comment below reserved for this). `undefined`
    * for a line with no ticket attribution, in which case the column
    * renders its historical bare `aria-hidden` placeholder div — so a
@@ -71,7 +71,7 @@ export interface CodeLine {
    * caller today; CodeView itself has no opinion on what the content is. */
   ticketGutter?: ReactNode;
   /** Whether this row falls inside the active `?lines=` deep-link range
-   * (Task 11, FilePage's `parseLinesRange`) — rendered as
+   * (FilePage's `parseLinesRange`) — rendered as
    * `data-highlighted="true"` on the row div, omitted entirely otherwise
    * (never `"false"`), so a plain attribute-presence check is enough for
    * callers to detect it either way. */
@@ -99,15 +99,15 @@ export interface CodeViewProps {
   /** Width of the leading ticket-gutter column (`CodeLine.ticketGutter`) —
    * defaults to `"0px"`, the same collapsed width this column has always
    * had, so a caller that never sets `ticketGutter` on any line (or omits
-   * this prop entirely) gets a byte-identical grid template to before
-   * Task 11. FilePage passes a real width only when at least one line in
+   * this prop entirely) gets a byte-identical grid template to before the
+   * gutter existed. FilePage passes a real width only when at least one line in
    * the file actually carries a ticket. `| undefined` for the same reason as
    * `renderExpansion` above: the default applies either way. */
   ticketGutterWidth?: string | undefined;
 }
 
 /** `[ticketGutterWidth, ...column widths, "1fr", "66px"].join(" ")` — the
- * ticket gutter (Task 11 — collapsed to `"0px"` until a caller supplies a
+ * ticket gutter (collapsed to `"0px"` until a caller supplies a
  * real width, kept as a genuine grid column from the start so wiring it up
  * later was a one-line width change, not a template rewrite) leads, the
  * source column flexes, and the runs/expansion toggle owns a fixed

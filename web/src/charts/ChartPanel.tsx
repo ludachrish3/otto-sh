@@ -24,11 +24,11 @@ const HEIGHT_PX = 280;
 const ZOOM_DEBOUNCE_MS = 200;
 const MIN_ZOOM_DELTA_MS = 1000;
 
-// Task 12 (Monitor Plan 5c): arms a single-shot lineX brush select. Dispatched
-// once after init AND after every notMerge setOption — arming is instance-
-// level (echarts' `takeGlobalCursor`, not part of the option object), so a
-// whole-model rebuild silently drops it unless re-issued (see the option
-// effect below).
+// Arms a single-shot lineX brush select. Dispatched once after init AND
+// after every notMerge setOption — arming is instance-level (echarts'
+// `takeGlobalCursor`, not part of the option object), so a whole-model
+// rebuild silently drops it unless re-issued (see the option effect
+// below).
 const BRUSH_ARM_ACTION: BrushArmAction = {
   type: "takeGlobalCursor",
   key: "brush",
@@ -44,7 +44,7 @@ export interface SetOptionOpts {
   lazyUpdate?: boolean;
 }
 
-/** Arms the single-shot lineX brush cursor (Task 12). */
+/** Arms the single-shot lineX brush cursor. */
 export interface BrushArmAction {
   type: "takeGlobalCursor";
   key: "brush";
@@ -148,23 +148,23 @@ export function ChartPanel(props: {
       if (latest.current.sweepArmed) latest.current.onSweep?.(range);
       else latest.current.onZoom?.(range);
     });
-    // Ctrl-drag pan (Task 13 no-op risk #2) is implemented by hand here,
-    // bypassing both the brush and ECharts' own dataZoom entirely — two
-    // independent defects, both found only by driving a real browser (the
-    // vitest suite mocks ECharts and can't see either):
+    // Ctrl-drag pan is implemented by hand here, bypassing both the brush and
+    // ECharts' own dataZoom entirely — two independent defects, both found
+    // only by driving a real browser (the vitest suite mocks ECharts and
+    // can't see either):
     //
-    // (1) An armed global brush cursor (takeGlobalCursor, Task 12) captures
-    //     every plain drag on this chart, including a Ctrl-held one — a
-    //     probe confirmed a Ctrl-drag came back as a ZOOM without any
-    //     mitigation, proof the brush was handling it, not dataZoom. The
-    //     brief's documented mitigation (toggling the brush cursor off via
-    //     `takeGlobalCursor`/`brushType:false` on Ctrl keydown/up) DID stop
-    //     that in isolation, but is not what ships here: the capture-phase
-    //     `stopPropagation()` below (needed anyway for defect (2)) already
-    //     keeps every Ctrl-held mousedown from ever reaching the brush's own
-    //     zrender listener, which makes toggling the brush's armed state
-    //     redundant — shipping both would be two mechanisms solving the same
-    //     half of the problem. Only this one is in the code.
+    // (1) An armed global brush cursor (takeGlobalCursor, see
+    //     BRUSH_ARM_ACTION above) captures every plain drag on this chart,
+    //     including a Ctrl-held one — a probe confirmed a Ctrl-drag came back
+    //     as a ZOOM without any mitigation, proof the brush was handling it,
+    //     not dataZoom. The obvious mitigation (toggling the brush cursor off
+    //     via `takeGlobalCursor`/`brushType:false` on Ctrl keydown/up) DID
+    //     stop that in isolation, but is not what ships here: the
+    //     capture-phase `stopPropagation()` below (needed anyway for defect
+    //     (2)) already keeps every Ctrl-held mousedown from ever reaching the
+    //     brush's own zrender listener, which makes toggling the brush's
+    //     armed state redundant — shipping both would be two mechanisms
+    //     solving the same half of the problem. Only this one is in the code.
     // (2) With the brush out of the way, dataZoom's OWN "inside" pan is
     //     STILL a no-op: `xAxis.min`/`max` here are always set to the
     //     currently-shown window (buildStackOption), so dataZoom's percent
@@ -296,8 +296,8 @@ export function ChartPanel(props: {
     // makes the imperative setOption() call above — same reasoning as
     // data-echarts-window-to below (see its comment). SubjectPage's
     // `data-point-count` (ChartSection's render body) merely echoes the
-    // `series` PROP every render, whether or not THIS effect re-ran — Task 6
-    // follow-up's bug was exactly that gap: widening the live window
+    // `series` PROP every render, whether or not THIS effect re-ran — a
+    // shipped bug was exactly that gap: widening the live window
     // (setWindow) re-slices `series` and bumps `data-point-count` on every
     // SubjectPage render regardless, but the option memo (gated on
     // `revKey`/`range`/... — see ChartSection in SubjectPage.tsx) didn't
@@ -337,18 +337,19 @@ export function ChartPanel(props: {
     );
     // Stamped HERE, inside the effect that actually made the imperative
     // setOption() call above — deliberately NOT echoed from a render-body
-    // prop. A Task 13 review found that SubjectPage's `data-window-to`
+    // prop. A browser-lane review found that SubjectPage's `data-window-to`
     // (on the outer <section>, in ChartSection's render body) merely
     // reflects the `window_` prop every render, regardless of whether this
     // effect ever ran — so a browser spec asserting on it could not
     // distinguish "ECharts' axis actually advanced" from "React re-rendered
     // with a new prop" and could not fail even when this effect's own dep
-    // list was broken (the exact Task 11 regression). This attribute is the
-    // one genuinely gated on this effect firing with these bounds.
-    // data-echarts-marker-count (Task 11, used by Task 13): same reasoning —
-    // stamped from the imperative path that actually handed these markers to
-    // ECharts, not echoed from the `markers` prop in a render body.
-    // data-echarts-window-from (Task 13): the companion lower bound. Without
+    // list was broken (the exact dep-list regression `data-echarts-point-
+    // count`'s comment above describes). This attribute is the one genuinely
+    // gated on this effect firing with these bounds.
+    // data-echarts-marker-count: same reasoning — stamped from the
+    // imperative path that actually handed these markers to ECharts, not
+    // echoed from the `markers` prop in a render body.
+    // data-echarts-window-from: the companion lower bound. Without
     // it a browser spec can prove the window MOVED (via -window-to alone)
     // but not that a pan gesture left its WIDTH unchanged (vs. a zoom, which
     // also moves -window-to) — proving that needs both ends of the range

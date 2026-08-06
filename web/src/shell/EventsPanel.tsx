@@ -1,8 +1,8 @@
 // Events slide-over (UX spec §11): reverse-chron list; a row jumps the
-// charts to its time (±15 min, clamped). Marking/editing (Plan 5c, Task
-// 10): live+editable sessions get an inline compose row (Mark/Start/Stop,
-// mirroring MarkControl's flows); review+editable sessions get an "Add
-// event…" button opening the shared EventEditor draft target (Task 9).
+// charts to its time (±15 min, clamped). Marking/editing: live+editable
+// sessions get an inline compose row (Mark/Start/Stop, mirroring
+// MarkControl's flows); review+editable sessions get an "Add event…"
+// button opening the shared EventEditor draft target.
 // Per-row affordances (edit / End now) apply only to id'd (real, non-
 // synthetic) events -- there is nothing on the server to address a
 // synthetic negative id by.
@@ -69,7 +69,7 @@ function EventsComposeRow(props: {
 
   const spanOpen = openSpan?.sessionId === session.id;
 
-  // Same catch shape as MarkControl's submit (Task 8): the caller (this
+  // Same catch shape as MarkControl's submit: the caller (this
   // control) owns the error surface, one inline slot shared by both flows.
   const run = async (action: (text: string) => Promise<void>) => {
     if (!label.trim()) return;

@@ -13,6 +13,8 @@ if TYPE_CHECKING:
 BUILTIN_LOCAL_HOST_ID = "local"
 
 
+# PERMANENT(no-tuple-return): immutable homogeneous sequence, deliberately not a list.
+# ast-grep-ignore: no-tuple-return
 def builtin_host_ids() -> tuple[str, ...]:
     """Return the host IDs otto injects into every lab (for completion / enumeration)."""
     return (BUILTIN_LOCAL_HOST_ID,)

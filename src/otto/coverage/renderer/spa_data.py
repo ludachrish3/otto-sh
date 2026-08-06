@@ -1,4 +1,4 @@
-"""Emit the JS data chunks the coverage SPA (Plan C) consumes.
+"""Emit the JS data chunks the coverage SPA consumes.
 
 This is the pure-Python half of the SPA report: it turns a
 :class:`~otto.coverage.store.model.CoverageStore` into

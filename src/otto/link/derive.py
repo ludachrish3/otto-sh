@@ -28,6 +28,8 @@ class HostAddressing:
     """Interface name -> address (values already flattened to strings)."""
 
 
+# DEBT(no-tuple-return): resolved id plus its addressing.
+# ast-grep-ignore: no-tuple-return
 def addressing_from_dict(host_data: dict[str, Any]) -> tuple[str, HostAddressing]:
     """``(host_id, HostAddressing)`` from a raw lab.json host dict.
 

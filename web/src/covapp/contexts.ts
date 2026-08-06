@@ -1,4 +1,4 @@
-// Context grouping (Task 6 brief): the runs & contexts page treats every
+// Context grouping: the runs & contexts page treats every
 // `RunJson` sharing a `label` as ONE context — the common case is a
 // multi-host run (same otto test invocation, several hosts/DUTs), but a
 // unit harvest or a one-off manual capture is just a context with a single

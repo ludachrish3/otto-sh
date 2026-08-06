@@ -125,12 +125,12 @@ export function deriveElements(hosts: HostSnapshot[], explicit: ElementRecord[])
  * Exported: fragment.ts's applyFragment reuses this SAME function for the
  * live path's metrics/events/log_events, rather than a parallel filter, so
  * a NaN timestamp is dropped-and-warned identically whether it arrives via
- * Import or SSE (Plan 5b final-review Finding [2]).
+ * Import or SSE.
  *
  * `endTimestamp`, when passed, reads a record's own end-of-span timestamp
  * (only `EventRecord.end_timestamp` has one — a SPAN event's end) and
  * applies the SAME drop rule to it: a span whose start parses fine but
- * whose end doesn't is not a usable span (Finding [3]) — half a span is as
+ * whose end doesn't is not a usable span — half a span is as
  * useless to every reader (`eventMarkers`'s overlap check, `assignLanes`)
  * as a fully malformed one, so it is dropped and warned exactly like a bad
  * `timestamp`, not silently left to produce a NaN `toMs` downstream. */
@@ -166,11 +166,11 @@ function normalizeSession(raw: SessionRecord, warnings: string[]): NormalizedSes
   const links = raw.lab?.links ?? [];
   const explicitElements = raw.lab?.elements ?? [];
   // A session's OWN time anchors are fail-loud, not warn-and-drop: there is
-  // no sane fallback for a session's own start (and, when present, end) —
-  // a silently anchorless session is exactly the failure this guards
-  // against (Plan 5b follow-up #5). Individual metric/event/log rows are
-  // different: the SESSION is still well-formed with one bad sample
-  // dropped, so those warn instead (dropInvalidTimestamps above).
+  // no sane fallback for a session's own start (and, when present, end) — a
+  // silently anchorless session is exactly the failure this guards against.
+  // Individual metric/event/log rows are different: the SESSION is still
+  // well-formed with one bad sample dropped, so those warn instead
+  // (dropInvalidTimestamps above).
   const startMs = parseTs(raw.start);
   if (Number.isNaN(startMs)) {
     throw new ExportParseError(
@@ -239,18 +239,18 @@ function normalizeSession(raw: SessionRecord, warnings: string[]): NormalizedSes
 }
 
 /** Inverse of `normalizeSession` — rebuilds a wire-shape `SessionRecord` from
- * a `NormalizedSession`. Backs live export (Plan 5b final review, Finding
- * I2): `applyFragment` (fragment.ts) only ever updates the fields on the
- * `NormalizedSession` it's given — `events`/`chart_map`/`meta` are REPLACED
- * there, never written back onto the raw document object the shell booted
- * with (only `metrics` happens to survive, by accidental array aliasing —
- * `normalizeSession` hands out the SAME array reference and `applyFragment`
- * pushes into it in place). A live export re-serializing the stale raw
- * document would silently drop every post-boot chart_map/meta update and
- * every post-boot event — routine mid-run, since the producer ships
- * chart_map/meta whenever a new series label first reports. Rebuilding
- * from `sessions[]` (the state every live tick actually keeps current) makes
- * a live export truthful structurally, not by relying on that aliasing. */
+ * a `NormalizedSession`. Backs live export: `applyFragment` (fragment.ts)
+ * only ever updates the fields on the `NormalizedSession` it's given —
+ * `events`/`chart_map`/`meta` are REPLACED there, never written back onto the
+ * raw document object the shell booted with (only `metrics` happens to
+ * survive, by accidental array aliasing — `normalizeSession` hands out the
+ * SAME array reference and `applyFragment` pushes into it in place). A live
+ * export re-serializing the stale raw document would silently drop every
+ * post-boot chart_map/meta update and every post-boot event — routine
+ * mid-run, since the producer ships chart_map/meta whenever a new series
+ * label first reports. Rebuilding from `sessions[]` (the state every live
+ * tick actually keeps current) makes a live export truthful structurally, not
+ * by relying on that aliasing. */
 function sessionToRecord(session: NormalizedSession): SessionRecord {
   return {
     id: session.id,

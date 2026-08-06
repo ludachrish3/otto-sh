@@ -237,9 +237,9 @@ def _build_app(  # noqa: C901 — FastAPI route-factory; complexity is route cou
 
     # The served review body is cached (a --db archive's document can hold many
     # sessions; re-serializing per request is waste) but no longer immutable:
-    # a review-mode event mutation (Plan 5c) patches `document` in place and
-    # refreshes this cache. A dict holder rather than a bare nonlocal keeps the
-    # closure reads/writes obvious.
+    # a review-mode event mutation patches `document` in place and refreshes
+    # this cache. A dict holder rather than a bare nonlocal keeps the closure
+    # reads/writes obvious.
     _document_state: dict[str, str | None] = {
         "body": document_json(document) if document is not None else None
     }
@@ -681,10 +681,10 @@ class MonitorServer:
     * ``mode="review"`` — serves a pre-built ``document`` (a
       ``format:1`` :class:`~otto.models.monitor.MonitorExport`, e.g. read back
       from a ``--db`` session archive). ``source_name`` is the human-facing
-      origin (a file path) reported by ``/api/mode``. ``archive_path`` (Task
-      5), when given, is a ``.db`` archive event mutations persist to and
-      patch ``document`` in place for; omitted (the ``.json`` case) leaves
-      review mode permanently read-only.
+      origin (a file path) reported by ``/api/mode``. ``archive_path``, when
+      given, is a ``.db`` archive event mutations persist to and patch
+      ``document`` in place for; omitted (the ``.json`` case) leaves review
+      mode permanently read-only.
 
     Call ``await serve()`` from an async context to run the server.
     Call ``stop()`` from any thread to trigger a graceful shutdown, or

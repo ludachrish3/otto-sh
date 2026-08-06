@@ -1,4 +1,4 @@
-"""Per-mutation read-write event edits against a v2 session archive (Plan 5c).
+"""Per-mutation read-write event edits against a v2 session archive.
 
 Review mode holds no standing write connection — archives are cold files.
 Each mutation opens the archive read-write under the same ``.lock`` flock a

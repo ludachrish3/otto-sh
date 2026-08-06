@@ -9,7 +9,7 @@ import { create } from "zustand";
 
 import { loadTheme, saveTheme, type Theme } from "../theme";
 
-// Plan 5c marking: the compose-row shape shared by the palette's "Add
+// Event marking: the compose-row shape shared by the palette's "Add
 // event…" draft and (eventually) EventsPanel's own compose row — ONE shape,
 // two producers, so marking.ts's blankDraft and the editor that consumes it
 // never have to reconcile two slightly different drafts.
@@ -31,16 +31,16 @@ export type EventEditorTarget =
 interface UiState {
   paletteOpen: boolean;
   theme: Theme;
-  /** Plan 5c marking: the event editor's target, or null when closed. */
+  /** Event marking: the event editor's target, or null when closed. */
   eventEditor: EventEditorTarget | null;
-  /** Plan 5c marking: true while "Sweep span on chart" is armed, awaiting
+  /** Event marking: true while "Sweep span on chart" is armed, awaiting
    * the user's chart drag. useGlobalShortcuts' Escape disarms it before
    * anything else runs (spec §Global shortcuts). */
   sweepArmed: boolean;
-  /** Plan 5c marking: the in-progress span started via "Start span…", or
+  /** Event marking: the in-progress span started via "Start span…", or
    * null. Drives "End span"'s enabled state (commands.ts). */
   openSpan: { sessionId: string; eventId: number } | null;
-  /** Plan 5c marking: which inline popover ("Mark now…" vs "Start span…")
+  /** Event marking: which inline popover ("Mark now…" vs "Start span…")
    * is open, or null. */
   markPopover: "mark" | "start" | null;
   actions: {

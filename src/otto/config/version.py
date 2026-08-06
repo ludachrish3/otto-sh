@@ -69,6 +69,8 @@ class Version:
         return f"{self.major}.{self.minor}.{self.patch}{self.extra or ''}"
 
     @property
+    # PERMANENT(no-tuple-return): the tuple IS the value; ordering by (major, minor, patch).
+    # ast-grep-ignore: no-tuple-return
     def key(self) -> tuple[int, int, int]:
         """The comparison triple — constraint matching deliberately ignores ``extra``."""
         return (self.major, self.minor, self.patch)

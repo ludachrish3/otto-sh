@@ -1,8 +1,8 @@
 // Session state for both modes: the imported/hydrated document, the active
 // session, and the viewed time range. The legacy Plotly-era live store
-// (store.ts) was deleted (Task 12) rather than merged into this one — the
-// live hookup (Plan 5b) grows sessions in place here via appendFragment(s)
-// instead, so there is only ever this one store.
+// (store.ts) was deleted rather than merged into this one — the live hookup
+// grows sessions in place here via appendFragment(s) instead, so there is
+// only ever this one store.
 import { create } from "zustand";
 
 import type { MonitorHistoricalExportDocument, MonitorSessionFragment } from "../api/export.gen";
@@ -61,15 +61,15 @@ interface ReviewActions {
    * when `activeSessionId` still resolves against the NEW snapshot: a
    * transient network blip must not silently discard a user's paused/pinned
    * view (pause — reviewStore's togglePause — exists specifically to
-   * protect that state; Plan 5b final review, Finding I3). If the monitor
-   * SERVER RESTARTED while the tab was open, though, the reconnect resync
-   * delivers a genuinely fresh session set that may no longer contain the
-   * old id at all — preserving a `range`/`activeSessionId` that points at
-   * nothing left the shell stuck in its empty state until a manual reload
-   * (Plan 5b follow-ups #3). So this falls back to `sessions[0]` + `range:
-   * null`, exactly like a fresh import, ONLY in that case. Returns false
-   * (and sets importError, keeping any previously loaded data) on failure,
-   * same contract as importMonitorSessions. */
+   * protect that state). If the monitor SERVER RESTARTED while the tab was
+   * open, though, the reconnect resync delivers a genuinely fresh session
+   * set that may no longer contain the old id at all — preserving a
+   * `range`/`activeSessionId` that points at nothing left the shell stuck
+   * in its empty state until a manual reload.
+   * So this falls back to `sessions[0]` + `range: null`, exactly like a
+   * fresh import, ONLY in that case. Returns false (and sets importError,
+   * keeping any previously loaded data) on failure, same contract as
+   * importMonitorSessions. */
   resyncMonitorSessions: (text: string, sourceName: string) => boolean;
   /** Append a live-stream fragment to the session it addresses. A no-op if
    * that session isn't currently held (e.g. it hasn't loaded yet). */
@@ -84,7 +84,7 @@ interface ReviewActions {
   clearImportError: () => void;
   /** Which server mode the shell booted against — set once from `/api/mode`. */
   setMode: (mode: "live" | "review" | null) => void;
-  /** From /api/mode (Plan 5c): whether this server accepts event mutations
+  /** From /api/mode: whether this server accepts event mutations
    * (live, or a .db-sourced review). Gates every marking affordance. */
   setEditable: (editable: boolean) => void;
   /** Append one message to the warnings channel (rendered by
@@ -129,7 +129,7 @@ export interface ReviewState {
   activeSessionId: string | null;
   range: TimeRange | null;
   mode: "live" | "review" | null;
-  /** From `/api/mode` (Plan 5c): whether this server accepts event
+  /** From `/api/mode`: whether this server accepts event
    * mutations. Default false until the boot fetch resolves. */
   editable: boolean;
   connection: "connecting" | "live" | "disconnected";
@@ -310,9 +310,9 @@ export function useActiveSession(): NormalizedSession | null {
 /** Derived, never stored: "paused" and "the user picked a custom range" are
  * ONE concept (see `togglePause`'s doc comment) — a zustand selector renders
  * exactly as stably as a stored field, and deriving it makes the two
- * structurally unable to disagree (unlike a separate boolean, which Task 9
- * proved CAN drift out of sync with `range`, e.g. via a chart drag-zoom's
- * direct `setRange` call). */
+ * structurally unable to disagree (unlike a separate boolean, which a
+ * shipped bug proved CAN drift out of sync with `range`, e.g. via a chart
+ * drag-zoom's direct `setRange` call). */
 export function useIsPaused(): boolean {
   return useReviewStore((s) => s.mode === "live" && s.range !== null);
 }

@@ -1,5 +1,5 @@
-// covapp-local toast (Task 3 brief) — component-sourcing policy caps NEW
-// `ui/**` components at TreeView/CodeView (Plan C's Global Constraints), so
+// covapp-local toast — the component-sourcing policy caps NEW `ui/**`
+// components at TreeView/CodeView (Global Constraints), so
 // this small one-off lives under `covapp/`, not `ui/`. Single toast slot
 // (not a queue/stack): a fresh show() replaces whatever is currently
 // visible and restarts the dismiss timer, matching the mockup's one-line

@@ -15,7 +15,7 @@ export function useGlobalShortcuts(commands: Command[]): void {
   const sweepArmed = useUiStore((s) => s.sweepArmed);
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      // Plan 5c marking: Escape disarming an armed chart-sweep gesture takes
+      // Escape disarming an armed chart-sweep gesture takes
       // priority over everything else below — including the palette/search
       // chords — so it's checked first and unconditionally returns.
       if (e.key === "Escape" && sweepArmed) {

@@ -44,8 +44,8 @@ import { useUiStore } from "../ui/uiStore";
 import { SeriesPanel } from "./SeriesPanel";
 
 // The selected live-window preset is DERIVED from `windowMs`, never stored
-// separately (Task 6/7: same "derive, don't store" lesson as
-// reviewStore's `useIsPaused` — a stored copy of a derived value drifts).
+// separately (same "derive, don't store" lesson as reviewStore's
+// `useIsPaused` — a stored copy of a derived value drifts).
 function selectedWindowId(windowMs: number): string {
   return LIVE_WINDOW_PRESETS.find((p) => p.ms === windowMs)?.id ?? "15m";
 }
@@ -60,8 +60,8 @@ export function SubjectPage() {
   const setWindow = useReviewStore((s) => s.actions.setWindow);
   const editable = useReviewStore((s) => s.editable);
   const dark = useIsDark();
-  // Plan 5c marking (Task 12): "Sweep span on chart" — armed via MarkControl/
-  // the palette (uiStore's armSweep), consumed here so a brush drag on ANY
+  // Event marking's "Sweep span on chart" — armed via MarkControl/the
+  // palette (uiStore's armSweep), consumed here so a brush drag on ANY
   // chart opens the event editor instead of zooming.
   const sweepArmed = useUiStore((s) => s.sweepArmed);
   const { disarmSweep, openEventEditor } = useUiStore((s) => s.actions);
@@ -76,20 +76,19 @@ export function SubjectPage() {
   const tree = useMemo(() => (session ? buildSeriesTree(session, id) : []), [session, id]);
   const allKeys = tree.flatMap((c) => c.series.map((s) => s.key));
 
-  // Log tables (Plan 5b final review, Finding I6): session.logEvents.map(...)
-  // + groupRowsFromData re-map EVERY log row this session has ever held into
-  // fresh objects, on every SubjectPage render — the 500-row-per-tab cap
-  // (data/logevents.ts) only applies AFTER that full pass. A live tick
-  // re-renders this page whenever ANY fragment lands (even a metrics-only
-  // one that never touches logEvents at all), so a chatty log tab paid this
-  // cost on every tick regardless of whether it grew. Memoized on the
-  // session's identity + logEvents.length: fragment.ts pushes new rows onto
-  // `session.logEvents` IN PLACE (same array reference for the session's
-  // whole lifetime — see the "mutated in place" note on session.metrics
-  // elsewhere in this file), so the reference itself can never be a useMemo
-  // dependency; `.length` is the cheap, correct proxy for "rows were
-  // actually appended" (an append-only array, same reasoning as `allKeys`
-  // above).
+  // Log tables: session.logEvents.map(...) + groupRowsFromData re-map EVERY
+  // log row this session has ever held into fresh objects, on every
+  // SubjectPage render — the 500-row-per-tab cap (data/logevents.ts) only
+  // applies AFTER that full pass. A live tick re-renders this page whenever
+  // ANY fragment lands (even a metrics-only one that never touches logEvents
+  // at all), so a chatty log tab paid this cost on every tick regardless of
+  // whether it grew. Memoized on the session's identity + logEvents.length:
+  // fragment.ts pushes new rows onto `session.logEvents` IN PLACE (same
+  // array reference for the session's whole lifetime — see the "mutated in
+  // place" note on session.metrics elsewhere in this file), so the reference
+  // itself can never be a useMemo dependency; `.length` is the cheap,
+  // correct proxy for "rows were actually appended" (an append-only array,
+  // same reasoning as `allKeys` above).
   const logEventsLength = session?.logEvents.length ?? 0;
   // biome-ignore lint/correctness/useExhaustiveDependencies: session is read inside for its (in-place-mutated, reference-stable) logEvents array — session?.id + logEventsLength are the stable proxies for "rows changed" (see comment above)
   const grouped = useMemo(() => {
@@ -112,9 +111,9 @@ export function SubjectPage() {
   // host with zero data at the moment its page was opened stayed
   // `checked = ∅` forever, however much data later streamed in, until the
   // user navigated away and back (a fresh mount re-seeds `checked` from
-  // whatever `tree` looks like AT THAT POINT). Plan 5b Task 13's replay
-  // soak caught this live end-to-end: open a fresh host's page before its
-  // first tick lands, then stream ~180k points at it — SeriesPanel's
+  // whatever `tree` looks like AT THAT POINT). A live-streaming replay soak
+  // caught this end-to-end: open a fresh host's page before its first tick
+  // lands, then stream ~180k points at it — SeriesPanel's
   // checkboxes appear (tree keeps growing, that part was always live), but
   // every one stays silently unchecked and no chart ever renders.
   // `allKeys.length` is a cheap, CORRECT growth signal specifically because
@@ -170,23 +169,22 @@ export function SubjectPage() {
   // `window_` (liveRange's rolling slice). Passing `range` here scanned all
   // of `session.metrics` and handed ECharts every point since session start
   // on every render (unbounded growth on a long-running session), and made
-  // `data-point-count` report total-ever rather than points-in-window (Task
-  // 13's browser lane asserts chart growth/freezing through that attribute).
+  // `data-point-count` report total-ever rather than points-in-window (the
+  // browser lane asserts chart growth/freezing through that attribute).
   const points = collectSeriesPoints(session, tree, checked, window_);
   const markers = eventMarkers(session.events, window_);
 
   const host = session.lab.hosts.find((h) => h.id === id);
   // Pass the DERIVED window, not the raw (possibly-null) `range` — same fix
-  // as `points` above (Task 9 applied it to collectSeriesPoints; this call
-  // site was missed — Plan 5b final review, Finding I6). Passing `range`
-  // scanned every sample this subject has EVER reported on every live tick
-  // while following (range is null then), and made the "N series · M
-  // samples in range" summary below report total-ever instead of the
-  // window it claims to describe.
+  // as `points` above (the same fix reached `collectSeriesPoints` first and
+  // this call site was missed). Passing `range` scanned every sample this
+  // subject has EVER reported on every live tick while following (range is
+  // null then), and made the "N series · M samples in range" summary below
+  // report total-ever instead of the window it claims to describe.
   const metrics = metricsForSubject(session, id, window_);
   const labels = [...new Set(metrics.map((m) => m.label))].sort();
 
-  // Brush-select sweep (Task 12): the chart hands back the raw dragged
+  // Brush-select sweep: the chart hands back the raw dragged
   // range, unclamped — a brush drag can only ever select within the axis
   // bounds it's drawn against, unlike a +/- zoom button's derived range.
   const onSweep = (r: TimeRange) => {
@@ -436,7 +434,7 @@ function ChartSection(props: {
    * idempotent so the double-clamp is harmless). */
   bounds: TimeRange;
   onZoom: (range: TimeRange) => void;
-  /** Plan 5c marking (Task 12): forwarded straight through to ChartPanel — see
+  /** Event marking: forwarded straight through to ChartPanel — see
    * SubjectPage's own `sweepArmed`/`onSweep` for the wiring. */
   sweepArmed: boolean;
   onSweep: (range: TimeRange) => void;
@@ -490,36 +488,35 @@ function ChartSection(props: {
   // independent of this (expensive, revKey-gated) full rebuild. See
   // ChartPanel.tsx and options.ts's windowPatch.
   //
-  // `windowMs` IS tracked, though, and deliberately NOT via `window_.from`/
-  // `window_.to` (Task 6 follow-up's bug + fix). Two different things move
-  // the derived `window_` while following: (a) session.endMs advancing on
-  // every live tick — a pure SLIDE, harmless to skip here, because points
-  // that age out of view were already excluded and new ones for THIS
-  // chart's own series arrive via `revKey`; and (b) the user picking a
-  // wider/narrower preset (the presets tab row in this page's title
-  // row -> reviewStore's `setWindow`) — a WIDTH change, which pulls previously-excluded points
-  // back into `series` (collectSeriesPoints re-slices against the new
-  // window in SubjectPage's render body) that this memo must actually bake
-  // in, not just widen the axis around. `revKey` doesn't move for that
-  // (the series' own data didn't change, only which slice of it is in
-  // range), and neither does `range` (still null — the view is still
-  // following, by design; see reviewStore's setWindow doc comment). Nothing
-  // else in this dep list was going to fire a rebuild, so the points would
-  // silently stay stale until this chart's series next ticked on its own —
-  // exactly the bug the browser lane's data-echarts-point-count assertion
-  // pins (test_live_shell.py). `windowMs` is the right proxy for (b)
-  // because it changes ONLY on that rare, user-initiated action; `window_.to`
-  // would also satisfy (b) but reintroduces (a) — it advances on every
-  // single live tick (any host's, via the shared session.endMs) — which
-  // would defeat the whole point of gating the expensive rebuild on
-  // `revKey` in the first place. See chart_memo.test.tsx for both directions
-  // pinned as mutation-proof tests.
+  // `windowMs` IS tracked, though, and deliberately NOT via
+  // `window_.from`/`window_.to`. Two different things move the derived
+  // `window_` while following: (a) session.endMs advancing on every live tick
+  // — a pure SLIDE, harmless to skip here, because points that age out of view
+  // were already excluded and new ones for THIS chart's own series arrive via
+  // `revKey`; and (b) the user picking a wider/narrower preset (the presets
+  // tab row in this page's title row -> reviewStore's `setWindow`) — a WIDTH
+  // change, which pulls previously-excluded points back into `series`
+  // (collectSeriesPoints re-slices against the new window in SubjectPage's
+  // render body) that this memo must actually bake in, not just widen the axis
+  // around. `revKey` doesn't move for that (the series' own data didn't
+  // change, only which slice of it is in range), and neither does `range`
+  // (still null — the view is still following, by design; see reviewStore's
+  // setWindow doc comment). Nothing else in this dep list was going to fire a
+  // rebuild, so the points would silently stay stale until this chart's series
+  // next ticked on its own — exactly the bug the browser lane's
+  // data-echarts-point-count assertion pins (test_live_shell.py). `windowMs`
+  // is the right proxy for (b) because it changes ONLY on that rare,
+  // user-initiated action; `window_.to` would also satisfy (b) but
+  // reintroduces (a) — it advances on every single live tick (any host's, via
+  // the shared session.endMs) — which would defeat the whole point of gating
+  // the expensive rebuild on `revKey` in the first place. See
+  // chart_memo.test.tsx for both directions pinned as mutation-proof tests.
   // biome-ignore lint/correctness/useExhaustiveDependencies: see comment above — deliberately partial
   const option = useMemo(
     () => buildStackOption({ unit, yTitle, series, window: window_, events: markers, theme }),
     [revKey, range, dark, sessionEvents, checked, windowMs],
   );
-  // data-point-count/data-window-to: the browser lane (Task 13) asserts
+  // data-point-count/data-window-to: the browser lane asserts
   // growth/freezing off these instead of reading canvas pixels — a live tick
   // or a pause must be provable without decoding what ECharts actually
   // painted. Deliberately NOT part of the memo above: they must always
@@ -533,7 +530,7 @@ function ChartSection(props: {
     >
       <h2 className="mb-1 text-sm font-medium text-secondary">{chartLabel}</h2>
       <div className="relative">
-        {/* Left-edge overlay column (Task 11): wheel no longer zooms (it
+        {/* Left-edge overlay column: wheel no longer zooms (it
             scrolls the page again), so +/- buttons are the click-driven zoom
             gesture. Same math as a drag-zoom — zoomAbout about the window's
             center, then clampRange to the session's bounds — skipped

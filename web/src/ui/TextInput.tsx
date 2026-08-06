@@ -14,15 +14,15 @@ import { InputBase } from "@/components/base/input/input";
 // directly instead — it's also exported from that same vendored module,
 // and (unlike `Input`) spreads any prop it doesn't recognize straight onto
 // the `<input>` it renders. Composed here (not hand-edited) per
-// web/README.md's never-hand-edit rule — see Task 3's report. (The review
-// range's own from/to fields moved off this component entirely in Task 7 —
-// RangePicker.tsx uses vendored `InputDateBase` at minute granularity.)
+// web/README.md's never-hand-edit rule. (The review range's own from/to
+// fields no longer use this component at all — RangePicker.tsx uses
+// vendored `InputDateBase` at minute granularity.)
 //
-// `onKeyDown` (Plan 5c Task 8): MarkControl's label field submits on Enter —
+// `onKeyDown`: MarkControl's label field submits on Enter —
 // InputBase already accepts (and spreads) arbitrary native input props
 // including onKeyDown; this wrapper just needed to expose it in its own
-// whitelist. Extending rather than hand-rolling a second input here per this
-// task's brief (TextInput is authored, not vendored).
+// whitelist. Extended rather than hand-rolling a second input here —
+// TextInput is authored, not vendored, so extending it is allowed.
 export function TextInput({
   label,
   type = "text",

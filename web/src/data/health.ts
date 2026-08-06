@@ -2,7 +2,7 @@
 // (samples, selected range, cadences). Nothing is stored — "last known
 // status" means last known WITHIN THE SELECTED RANGE, so narrowing the
 // range re-evaluates it. The same functions also drive live mode's
-// unreachable-dimming (Plan 5b): OverviewPage passes a live `nowMs` from
+// unreachable-dimming: OverviewPage passes a live `nowMs` from
 // data/clock.ts instead of leaving it to default to the session's endMs.
 import type { DerivedElement, NormalizedSession, TimeRange } from "./exportDoc";
 

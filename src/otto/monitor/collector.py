@@ -435,9 +435,18 @@ class MetricCollector:
         # Loud precondition, not a lazy in-task open: opening here would race
         # cancellation (partial DB, silently no-op'd finalize — the
         # #136/#137/#142-#144 class) and hide open() errors inside whatever
-        # supervises this task. spawn_collection() is the blessed seam;
-        # callers that drive run() on a different loop than the open (the
-        # suite plugin) await init_db() themselves first.
+        # supervises this task. spawn_collection() is the blessed seam. Two
+        # suite-side callers await init_db() themselves instead, for reasons
+        # spawn_collection() cannot express — and this precondition is what
+        # keeps both honest:
+        #   - suite/plugin.py's session fixture: opens on the SESSION loop
+        #     because the per-class tasks drive run() on their own loops
+        #     (aiosqlite delivers on the calling loop, so the cross-loop split
+        #     is deliberate).
+        #   - suite/suite.py's OttoSuite.start_monitor: SAME loop, but its
+        #     spawn happens inside _run(), itself a task — spawn_collection()
+        #     there would put the open back in cancellable task context,
+        #     exactly what this guard exists to prevent.
         if self._db is None and self._pending_db is not None:
             raise RuntimeError(
                 "Collector.run() started before its DB was opened — spawn via "

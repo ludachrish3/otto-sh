@@ -1,5 +1,5 @@
 // web/src/data/eventApi.ts
-// The dashboard's ONLY mutation surface (Plan 5c). One rule for both modes:
+// The dashboard's ONLY mutation surface. One rule for both modes:
 // every 2xx response is applied locally as a synthetic fragment through
 // applyFragment's existing upsert — in live mode the SSE echo then delivers
 // the same record again and the upsert-by-id makes it a no-op, so ordering
@@ -75,10 +75,9 @@ export async function createEvent(
 }
 
 /**
- * Not yet wired to any control in this task — Task 10 (EventsPanel's
- * "End now" button) is its first caller. Part of the mutation client's
- * full surface per Task 6's spec; kept here rather than split across
- * tasks so the module matches the wire contract in one piece.
+ * Closes an open span event. Called by EventsPanel's per-row "End now"
+ * action and by marking.ts's "End span" flow. Lives here with the rest of
+ * the mutation client so the module matches the wire contract in one piece.
  */
 export async function endEvent(sessionId: string, eventId: number): Promise<EventRecord> {
   const res = await request(`${base(sessionId)}/${eventId}/end`, jsonInit("POST", {}));

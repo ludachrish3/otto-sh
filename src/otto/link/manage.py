@@ -738,6 +738,8 @@ async def repair_link(lab: "Lab", ident: str, *, selector: Selector | None = Non
     return RepairReport(link.id, cleared, timers_cancelled)
 
 
+# DEBT(no-tuple-return): reports plus skipped ids.
+# ast-grep-ignore: no-tuple-return
 async def repair_all(lab: "Lab") -> tuple[list[RepairReport], list[str]]:
     """Repair every static link in *lab*; never raises.
 

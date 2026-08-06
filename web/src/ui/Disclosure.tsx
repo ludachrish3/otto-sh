@@ -3,8 +3,9 @@
 // other ui/ primitives (open-code Untitled UI: React Aria + Tailwind).
 //
 // No free-tier Untitled UI component covers this shape (a disclosure/
-// accordion section), so this stays hand-authored — Task 8 only restyles it
-// onto Untitled UI's semantic tokens (bg-primary/text-quaternary/
+// accordion section), so this stays hand-authored — the Untitled UI
+// migration only restyled it onto Untitled UI's semantic tokens
+// (bg-primary/text-quaternary/
 // border-secondary/hover:bg-primary_hover, same vocabulary the vendored
 // components use) in place of the old gray-N + dark: pairs. Untitled UI's
 // theme.css keys those tokens off a single `.dark-mode` class swap (see

@@ -49,7 +49,7 @@ interface DataPlaneBackbone {
   resolveDock: (id: string) => string;
 }
 
-/** Rule 1+2: subtract management (Task 3's `isManagementElement`), then
+/** Rule 1+2: subtract management (`isManagementElement`), then
  * iteratively peel data-plane (`declared`-only) degree-1 elements out of the
  * backbone and record where each got docked.
  *
@@ -167,7 +167,7 @@ function median(values: number[]): number {
  * either way. Do not credit this guard with sprawl's stability; that credit
  * belongs to the strict `<` in `branchSign`. (An earlier draft of this
  * comment, and the design doc, both made that false claim -- corrected in
- * Task 7 review.)
+ * review.)
  *
  * This is a deliberately round, non-fixture-tuned number, not a value fit to
  * either measured graph -- picked for what it means (a 2:1 split is
@@ -318,7 +318,7 @@ function layerBackbone(
  * columns with 75 element-link crossings; see the design doc). The pipeline,
  * in order:
  *
- * 1. Subtract management (Task 3's `isManagementElement` / `managementIds`)
+ * 1. Subtract management (`isManagementElement` / `managementIds`)
  *    -- management nodes get column 0, their own leftmost band, regardless
  *    of the data-plane structure below.
  * 2. Peel leaf services and dock them into their attachment's column
@@ -329,19 +329,21 @@ function layerBackbone(
  *    (unsigned, all-downstream) layering otherwise (`layerBackbone`).
  *
  * Row order within a column and y-coordinates are NOT this function's
- * concern -- `layoutTopo` still does today's slot/id row order and top-down
- * `row * ROW_H` placement; the barycentric row-sort and centred coordinate
- * assignment the design doc also calls for are later phases.
+ * concern: `layoutTopo` owns both, and both now live further down this file.
+ * `rowOrder` gives each column its initial slot/id order, `barycentricRowSort`
+ * reorders it against the data-plane links, and `coordinateAssignment`
+ * replaces the top-down `row * ROW_H` grid with a neighbour-derived, centred
+ * y. The numbers below predate those two stages -- see the caveat there.
  *
  * Measured (chromium/firefox/webkit, identical; `dp_crossings`/`dp_swallowed`,
  * data-plane edges only), THIS function's column assignment combined with
- * `layoutTopo`'s unchanged `rowOrder`+top-aligned grid (Tasks 5/6's
- * barycentric row-sort and centred coordinate assignment are NOT yet
- * applied, and would reduce these further -- the reference prototype's own
+ * `layoutTopo`'s unchanged `rowOrder`+top-aligned grid (`barycentricRowSort`
+ * and `coordinateAssignment` below were NOT yet applied when these numbers
+ * were taken, and would reduce them further -- the reference prototype's own
  * numbers for the full pipeline, 12/3, are not reachable by this function
  * alone): isp-core 75->15 crossings / 0->0 swallowed; sprawl 21->13
- * crossings / 3->0 swallowed. See task-4-report.md for the full before/after
- * and the confidence-guard decision. */
+ * crossings / 3->0 swallowed. See `DECISIVE_RATIO`'s own comment for the
+ * confidence-guard decision. */
 export function dataPlaneColumns(
   nodes: TopoNode[],
   edges: TopoEdge[],
@@ -410,7 +412,7 @@ function adjacentColumnNeighbors(
  * plain alphabetical order). Management links (`local:*`, `implicit` hop
  * edges, `reports-for`) must NOT drag row order around -- the management
  * plane is an overlay, not the skeleton, and letting it vote would defeat
- * the whole point of Task 4's redesign.
+ * the whole point of this redesign.
  *
  * Ported from the reference prototype's `barycentricRowSort`
  * (`.../scratchpad/layout-prototype/preview/variants.ts`), scoped to
@@ -548,7 +550,7 @@ function barycentricRowSort(byColumn: Map<number, TopoNode[]>, edges: TopoEdge[]
  * A node with no data-plane neighbour in the ADJACENT column falls back to the
  * median y of its SAME-COLUMN data-plane neighbours. Without that fallback a
  * DOCKED LEAF is stranded: `hss-01`'s only declared link is to `core-02`, which
- * Task 4 docks into `hss-01`'s own column, so it has no cross-column
+ * the peel/dock step places in `hss-01`'s own column, so it has no cross-column
  * neighbour at all, gets no target, and sits at its stale grid y while every
  * node around it is pulled toward its own neighbours -- measured, that left
  * `hss-01` at y=0 with `core-02` at y=1320, 12 rows from the node it hangs off,

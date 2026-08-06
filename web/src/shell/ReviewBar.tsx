@@ -18,14 +18,14 @@ export function ReviewBar() {
   const bounds = session ? sessionBounds(session) : null;
 
   // UX spec §12: "Review bar (per-view context row, historical only)". Live
-  // mode gets its own follow/pause chrome in AppBar instead (Task 9) — the
+  // mode gets its own follow/pause chrome in AppBar instead — the
   // HISTORICAL tag + range picker here would otherwise contradict the
   // "Live"/pause-toggle chrome rendering at the same time. This hiding was
   // reverted (commit 7a9e849) only because bootstrap.ts set mode="live"
   // before a boot hydrate had actually succeeded, so an empty live server
   // claimed to be live and broke the dashboard Playwright suite; that root
   // cause is now fixed (mode is set only after a successful hydrate — see
-  // bootstrap.ts), so hiding is safe to restore (Plan 5b final review, C1).
+  // bootstrap.ts), so hiding is safe to restore.
   if (!session || !bounds || mode === "live") return null;
 
   return (

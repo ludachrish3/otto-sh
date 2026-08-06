@@ -748,7 +748,7 @@ lint-arch: ## (Quality) Architecture gates: tach (module dependency contracts) +
 	@$(SAY) "tach: module dependency contracts (tach.toml)"
 	@uv run --group lint tach check
 	@$(SAY) "ast-grep: architecture pattern rules (.ast-grep/rules/)"
-	@uv run --group lint ast-grep scan src/otto
+	@uv run --group lint ast-grep scan src/otto web/src
 
 # `biome check` = lint rules + formatting + ASSIST actions (organize-imports).
 # `biome lint` + `biome format` together are STRICTLY WEAKER: neither reports

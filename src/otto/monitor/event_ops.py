@@ -30,6 +30,8 @@ class ResolvedEventFields:
     end_timestamp: datetime | None
 
 
+# DEBT(no-tuple-return): (start, end) pair; wants a frozen dataclass.
+# ast-grep-ignore: no-tuple-return
 def resolve_create(body: EventCreateBody) -> tuple[datetime, datetime | None]:
     """Resolve a create body to concrete ``(timestamp, end_timestamp)``.
 

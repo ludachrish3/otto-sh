@@ -1,9 +1,10 @@
-// Deliberately minimal (spec §12.4 defers bindings, Task 3 brief): lists
-// exactly the two bindings this plan implements. Modal scaffolding mirrors
-// web/src/ui/CommandMenu.tsx's react-aria stack (ModalOverlay + Modal +
-// Dialog), simplified — no autocomplete/menu, just a static list. Escape
-// closes via ModalOverlay's built-in dismiss-on-Escape behavior (same as
-// CommandMenu's palette).
+// Deliberately minimal (spec §12.4 defers bindings): lists exactly the three
+// bindings in `BINDINGS` below, which is everything covapp binds — "?"
+// (AppShell's app-wide handler), "/" (TicketSearch's SEARCH_BINDING) and Esc.
+// Modal scaffolding mirrors web/src/ui/CommandMenu.tsx's react-aria stack
+// (ModalOverlay + Modal + Dialog), simplified — no autocomplete/menu, just a
+// static list. Escape closes via ModalOverlay's built-in dismiss-on-Escape
+// behavior (same as CommandMenu's palette).
 import { Dialog, Modal, ModalOverlay } from "react-aria-components";
 
 import { Kbd } from "../../ui/Kbd";

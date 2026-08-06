@@ -1,4 +1,4 @@
-// Ticket context (Task 12 brief): a report-wide DENOMINATOR filter —
+// Ticket context: a report-wide DENOMINATOR filter —
 // deliberately the OPPOSITE arithmetic direction from run focus (focus.tsx's
 // `?ctx=`, which narrows the NUMERATOR: only that run's hits count, but all
 // code stays in view). Pinning a ticket (`?ticket=<id>`, also focus.tsx)
@@ -151,7 +151,7 @@ function aggregateDirStats(stats: Stats, dirs: DirNode[], files: FileNode[]): St
   };
 }
 
-/** Pure recursive filter (Task 12 brief): keeps only the files/directories a
+/** Pure recursive filter: keeps only the files/directories a
  * pinned ticket actually touched, recomputing each surviving file's
  * `stats.lines` denominator (total) AND numerator (hit) against the
  * ticket's OWN line set (`scopeFileStats`) and each surviving directory's
@@ -244,18 +244,18 @@ export function ticketChunkToFileLines(chunk: TicketChunk): {
  * `Context`, a ticket has no single tier of its own (design §6.1: a
  * ticket's lines can span every tier).
  *
- * Optional `ctx` (Task 12 fix round 1, IMPORTANT): when a context is ALSO
- * focused, `line` declines to `null` ("no data", same treatment `branch`/
- * `decision` already get) rather than dividing `stats.ctx_lines[ctx.label]`
- * (a whole-file numerator) by `node.stats.lines.total` (the ticket-scoped
- * denominator) — the two aren't commensurable at tree granularity (no
- * per-line ticket+run cross-tab exists without loading every scoped file's
- * own `FileChunk`), so the honest answer is "we don't know", never a
- * plausible-looking but out-of-range percentage (a real fixture: 10
- * whole-file ctx hits over a 3-line ticket scope reads "333.3%" if computed
- * naively). Contrast `ticketFileRow` below, whose OWN composed case
- * recomputes exactly — it already has one file's full per-line data, which
- * this tree-level function does not. */
+ * Optional `ctx`: when a context is ALSO focused, `line` declines to `null`
+ * ("no data", same treatment `branch`/`decision` already get) rather than
+ * dividing `stats.ctx_lines[ctx.label]` (a whole-file numerator) by
+ * `node.stats.lines.total` (the ticket-scoped denominator) — the two aren't
+ * commensurable at tree granularity (no per-line ticket+run cross-tab
+ * exists without loading every scoped file's own `FileChunk`), so the
+ * honest answer is "we don't know", never a plausible-looking but
+ * out-of-range percentage (a real fixture: 10 whole-file ctx hits over a
+ * 3-line ticket scope reads "333.3%" if computed naively). Contrast
+ * `ticketFileRow` below, whose OWN composed case recomputes exactly — it
+ * already has one file's full per-line data, which this tree-level function
+ * does not. */
 export function ticketTreeRow(
   index: IndexPayload,
   node: DirNode,
@@ -270,7 +270,7 @@ export function ticketTreeRow(
     // tier dot. It was previously spelled `dotColor: undefined`, which under
     // `exactOptionalPropertyTypes` is a different thing from omitting it.
     //
-    // `hideAsserted` (Task 11, default `false` — byte-identical when
+    // `hideAsserted` (default `false` — byte-identical when
     // omitted): subtracts `asserted_only` (lines with no real, non-override
     // evidence at all) the same way `tierRows`'s "all tiers" row does — the
     // scoped `node.stats.lines` already carries the ticket's own subset of
@@ -323,7 +323,7 @@ export function ticketTreeRow(
  * `focusedFileRow` use); without `ctx`, "any tier recorded a hit" (mirrors
  * `chunkTierRows`'s "hit if any tier count > 0") is enough.
  *
- * `hideAsserted` (Task 11, default `false` — byte-identical when omitted)
+ * `hideAsserted` (default `false` — byte-identical when omitted)
  * only narrows the NON-`ctx` "any tier hit" test — mirroring
  * `chunkTierRows`'s per-line recompute (a tier counts only if its hit isn't
  * override-sourced, per `LineJson.asserted`). The `ctx` branch needs no

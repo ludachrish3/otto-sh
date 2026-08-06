@@ -357,7 +357,7 @@ def lint(session: nox.Session) -> None:
     session.run("ruff", "check", ".")
     session.run("ruff", "format", "--check", ".")
     session.run("tach", "check")
-    session.run("ast-grep", "scan", "src/otto")
+    session.run("ast-grep", "scan", "src/otto", "web/src")
 
 
 @nox_uv.session(uv_groups=["dev"])

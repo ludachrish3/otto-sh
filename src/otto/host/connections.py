@@ -275,6 +275,8 @@ class ConnectionManager:
         return self._creds[0].login if self._creds else ""
 
     @property
+    # DEBT(no-tuple-return): a (user, password) pair; wants a frozen dataclass.
+    # ast-grep-ignore: no-tuple-return
     def credentials(self) -> tuple[str, str | None]:
         """(username, password) for TRANSPORT auth — the resolved direct cred.
 

@@ -97,12 +97,12 @@ export function startStream(
         // replay what we missed. The snapshot is the truth and already contains it —
         // no sequence numbers, no replay buffer, no way to disagree about history.
         //
-        // Known gap (Plan 5b follow-ups #4, see bootstrap.ts's `startStream`
-        // call for the full note): a point published strictly between this
-        // resync's fetch response and `connect()` below re-opening the
-        // EventSource is neither in that response nor replayed once the
-        // stream reopens. Same small window as the initial boot hydrate,
-        // recurring on every reconnect. Not closed here.
+        // Known gap (see bootstrap.ts's `startStream` call for the full note):
+        // a point published strictly between this resync's fetch response and
+        // `connect()` below re-opening the EventSource is neither in that
+        // response nor replayed once the stream reopens. Same small window as
+        // the initial boot hydrate, recurring on every reconnect. Not closed
+        // here.
         void (opts.resync?.() ?? Promise.resolve()).finally(() => {
           if (!stopped) connect();
         });

@@ -1,7 +1,7 @@
-// The covapp file page (Task 5 brief). DOM/anatomy reference:
+// The covapp file page. DOM/anatomy reference:
 // docs/superpowers/specs/assets/2026-07-24-coverage-ui/file-page.html —
 // recreated with React + Tailwind semantic tokens + ui/CodeView, not the
-// mockup's literal CSS. Loads its own FileChunk (Task 2's `loadFileChunk`)
+// mockup's literal CSS. Loads its own FileChunk (`loadFileChunk`, data.ts)
 // on mount — the tree's rolled-up `Stats` (what DirectoryPage reads) has no
 // per-line granularity, only the chunk does.
 import { ChevronDown, File02 } from "@untitledui/icons";
@@ -49,7 +49,7 @@ export function rowClassFor(
   return "s-unc";
 }
 
-/** `rowClassFor`'s under-focus counterpart (Task 7 spec §4): excluded still
+/** `rowClassFor`'s under-focus counterpart (spec §4): excluded still
  * wins; otherwise a line tints by the FOCUSED CONTEXT's tier iff any of
  * its member run ids recorded a hit (`lineHasMemberHit`, shared with
  * `focusedFileRow` in format.ts) — no aging/stale distinction here (those
@@ -83,8 +83,8 @@ function tierStyleFor(rowClass: string, index: IndexPayload): CSSProperties | un
   };
 }
 
-/** Task 12, the file page's own divergence from DirectoryPage's tree (spec
- * §6.3, verbatim): a pinned ticket DIMS lines it doesn't own here, rather
+/** The file page's own divergence from DirectoryPage's tree (spec §6.3,
+ * verbatim): a pinned ticket DIMS lines it doesn't own here, rather
  * than hiding them — you cannot read code with lines removed from the
  * middle of it. Applied via `style.opacity`, layered on top of
  * `tierStyleFor`'s own inline style (never via `rowClass` itself — that
@@ -110,8 +110,8 @@ function ownedByTicket(line: LineJson | undefined, ticketId: string): boolean {
   return line?.ticket?.includes(ticketId) ?? false;
 }
 
-/** `rowClassFor`'s hide-asserted input adjustment (Task 11) — deliberately
- * NOT a change inside `rowClassFor` itself (its own doc comment: exported
+/** `rowClassFor`'s hide-asserted input adjustment — deliberately NOT a
+ * change inside `rowClassFor` itself (its own doc comment: exported
  * standalone so its precedence table stays unit-testable independent of
  * this page's rendering). A tier whose sole hits are override-sourced
  * (`lineAssertedIn`) gets its `hits[tier]` zeroed before `rowClassFor` ever
@@ -249,7 +249,7 @@ function BranchPill({
 }
 
 /** Shared by `buildCells`/`buildCellsFocused` — branch pills render
- * UNCHANGED under focus (Task 7 spec §4: branch data isn't per-run, v4's
+ * UNCHANGED under focus (spec §4: branch data isn't per-run, v4's
  * `run_hits` is line-only, so there's nothing context-specific to show
  * here either way). */
 function branchesCell(line: LineJson | undefined, index: IndexPayload): ReactNode {
@@ -266,7 +266,7 @@ function branchesCell(line: LineJson | undefined, index: IndexPayload): ReactNod
   );
 }
 
-/** `hideAsserted` (Task 11, default `false` — byte-identical when omitted):
+/** `hideAsserted` (default `false` — byte-identical when omitted):
  * a tier column whose SOLE hits are override-sourced (`lineAssertedIn`)
  * renders as a plain zero — `HitCell`'s muted "·" glyph, same as a real
  * uncovered cell — instead of the dashed asserted pill, so hiding asserted
@@ -334,8 +334,8 @@ function buildCellsFocused(
   return cells;
 }
 
-/** Leading gutter cell for one row's ticket chip(s) (Task 11, design
- * §6.2) — `undefined` when this line carries none, which `CodeView`
+/** Leading gutter cell for one row's ticket chip(s) (design §6.2) —
+ * `undefined` when this line carries none, which `CodeView`
  * renders as its historical bare placeholder (see `CodeLine.ticketGutter`'s
  * doc comment there), so a report with no `[coverage.tickets]` attribution
  * anywhere stays byte-identical to before this feature existed. Multiple
@@ -463,16 +463,15 @@ export interface LineRange {
 const LINES_PARAM = /^(\d+)(?:-(\d+))?$/;
 
 /** Parses the `?lines=A-B` (or bare `?lines=A`) deep link (design §6.2) via
- * `parseHashQuery()` (`focus.tsx`) — never wouter's own `useSearch()`/
- * `location.search`, per that module's header comment on why `?ctx=` (and
- * now `?lines=`) must live inside the hash fragment. Task 10's Tickets-page
- * missing-line ranges, and anyone hand-editing the URL, are the two
- * sources; both get the SAME forgiving contract, verbatim from the brief:
- * a non-numeric value, a reversed range, or either bound outside `[1,
- * totalLines]` is ignored (returns `null`) rather than thrown — these
- * links arrive from outside this component, not from data this app itself
- * validated. Exported for direct unit testing, same pattern as
- * `rowClassFor` above. */
+ * `parseHashQuery()` (`focus.tsx`) — never wouter's own
+ * `useSearch()`/`location.search`, per that module's header comment on why
+ * `?ctx=` (and now `?lines=`) must live inside the hash fragment. The
+ * Tickets page's missing-line ranges, and anyone hand-editing the URL, are
+ * the two sources; both get the SAME forgiving contract: a non-numeric
+ * value, a reversed range, or either bound outside `[1, totalLines]` is
+ * ignored (returns `null`) rather than thrown — these links arrive from
+ * outside this component, not from data this app itself validated. Exported
+ * for direct unit testing, same pattern as `rowClassFor` above. */
 export function parseLinesRange(totalLines: number): LineRange | null {
   const raw = parseHashQuery().get("lines");
   if (raw === null) return null;
@@ -499,8 +498,8 @@ export interface FilePageProps {
 export function FilePage({ index, segments, node }: FilePageProps) {
   const [state, setState] = useState<LoadState>({ status: "loading" });
   const [openLines, setOpenLines] = useState<Set<number>>(new Set());
-  // `?lines=` deep-link target (Task 11) — re-parsed per chunk load (below),
-  // never a lazy `useState` initializer: this same `FilePage` instance
+  // `?lines=` deep-link target — re-parsed per chunk load (below), never a
+  // lazy `useState` initializer: this same `FilePage` instance
   // persists across a directory-tree navigation from one file to another
   // (App.tsx's wildcard route re-renders it with a new `node` rather than
   // remounting, exactly why the load effect below already keys on
@@ -513,7 +512,7 @@ export function FilePage({ index, segments, node }: FilePageProps) {
   // that doesn't resolve here just renders unfocused instead of crashing.
   const focusedContext = focus ? groupContexts(index).find((c) => c.label === focus) : undefined;
   const memberRunIds = focusedContext ? new Set(focusedContext.runs.map((r) => r.id)) : undefined;
-  // `ticket` (Task 12) is already validated against `index.tickets` by
+  // `ticket` is already validated against `index.tickets` by
   // `FocusProvider`/`resolveTicket` before it ever reaches here — no second
   // lookup needed, unlike `focusedContext` above (which derives display
   // fields `focus`, a bare label string, doesn't carry).
@@ -550,7 +549,7 @@ export function FilePage({ index, segments, node }: FilePageProps) {
   }, [node.chunk]);
 
   // Scrolls the FIRST highlighted row into view, once per resolved
-  // `?lines=` target (Task 11, design §6.2). `?.` guards jsdom, which has
+  // `?lines=` target (design §6.2). `?.` guards jsdom, which has
   // no `scrollIntoView` implementation at all under this project's pinned
   // version (throws "is not a function") rather than a harmless no-op —
   // every other DOM method this codebase calls under test tolerates jsdom's
@@ -601,8 +600,8 @@ export function FilePage({ index, segments, node }: FilePageProps) {
       focusedContext && memberRunIds
         ? rowClassForFocus(line, excluded, memberRunIds, focusedContext.tier)
         : rowClassFor(lineForRowClass(line, hideAsserted), excluded, index.tier_order);
-    // Task 12: dim (never hide) a line the pinned ticket doesn't own —
-    // orthogonal to `rowClass`'s coverage-state tinting above, so an
+    // Dim (never hide) a line the pinned ticket doesn't own — orthogonal
+    // to `rowClass`'s coverage-state tinting above, so an
     // excluded/stale/aging/blank line dims exactly the same as a hit one.
     const dimmed = ticket !== null && !ownedByTicket(line, ticket);
     return {
@@ -637,12 +636,12 @@ export function FilePage({ index, segments, node }: FilePageProps) {
   const allRow = rows.at(-1);
   // `chunkTierRows`' own "all tiers" row always carries a real tuple here
   // (never `null` — that's only ever produced by DirectoryPage's composed
-  // ctx+ticket row, Task 12 fix round 1); `?.` narrows the TYPE (TierStatRow.
+  // ctx+ticket row); `?.` narrows the TYPE (TierStatRow.
   // line is now nullable for that other caller), not an actual runtime case
   // this line needs to handle.
   const totalLines = allRow?.line?.[1] ?? 0;
   const coveredLines = allRow?.line?.[0] ?? 0;
-  // Ticket scoping (Task 12) composes with run focus: `ticketFileRow`
+  // Ticket scoping composes with run focus: `ticketFileRow`
   // computes an exact owned/hit count directly from this file's own
   // per-line data (unlike DirectoryPage's tree, no placeholder counts are
   // involved) — passing `focusedContext` when both are active makes the

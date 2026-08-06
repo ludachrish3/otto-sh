@@ -1,8 +1,9 @@
 // Rendered by App.tsx instead of the router whenever dataGuard() != "ok"
-// (or a lazily-loaded chunk rejects with StampMismatchError — Tasks 4-6
-// route that case here too). Built from the vendored empty-state (same
-// component monitor's own EmptyState.tsx uses) per the component-sourcing
-// policy: vendored UUI first, before anything covapp-local.
+// (or a lazily-loaded chunk rejects with StampMismatchError — the tree and
+// file pages route that case here too). Built from the vendored empty-state
+// (same component monitor's own EmptyState.tsx uses) per the
+// component-sourcing policy: vendored UUI first, before anything
+// covapp-local.
 import { EmptyState } from "@/components/application/empty-state/empty-state";
 
 type GuardReason = "missing data" | "unsupported data format" | "report changed on disk";

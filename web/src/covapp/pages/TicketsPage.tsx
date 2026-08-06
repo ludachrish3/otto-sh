@@ -1,5 +1,5 @@
-// The covapp tickets page (Task 10 brief). Lists per-ticket coverage
-// rollups (`IndexPayload.tickets` — commit-message attribution, Task 9),
+// The covapp tickets page. Lists per-ticket coverage rollups
+// (`IndexPayload.tickets`, built from commit-message attribution),
 // sorted worst-covered-first by default so the least-tested owned work
 // floats to the top regardless of ticket age. `#/tickets` sits outside the
 // `#/coverage/...` namespace deliberately (App.tsx) so it can never collide
@@ -60,7 +60,7 @@ function buildRowGrid(tierOrder: string[]): string {
  * covapp. Branch/decision are always "no data" — `tickets_totals` carries
  * line counts only (no per-ticket branch data exists to dedupe).
  *
- * `hideAsserted` (Task 11, default `false` — byte-identical when omitted):
+ * `hideAsserted` (default `false` — byte-identical when omitted):
  * subtracts `tickets_totals.asserted[tier]` (the DEDUPED per-tier
  * override-sourced count, mirroring `total_asserted` alongside
  * `total_per_tier` in `spa_data.py`) from each tier row's numerator — that
@@ -69,15 +69,14 @@ function buildRowGrid(tierOrder: string[]): string {
  *
  * The "all tiers" row's `line` DECLINES to `null` ("no data", the same
  * `ticketTreeRow` precedent for a composed row with nothing honest to say)
- * instead of subtracting anything, fix round (review I2): `tickets_totals`
- * carries no DEDUPED "lines with NO real evidence in ANY tier" count —
- * summing the per-tier `asserted` values would double-count a line
- * asserted in more than one tier, which is the normal case here (§2: a
- * commit can name several tickets, and by the same token a line can be
- * asserted in more than one tier). Only the per-tier rows above are honest
- * without that deduped total; the StatsCard's scope line still says
- * " · asserted hidden" (never silent) so "no data" here isn't mistaken for
- * "nothing changed". */
+ * instead of subtracting anything: `tickets_totals` carries no DEDUPED
+ * "lines with NO real evidence in ANY tier" count — summing the per-tier
+ * `asserted` values would double-count a line asserted in more than one
+ * tier, which is the normal case here (§2: a commit can name several
+ * tickets, and by the same token a line can be asserted in more than one
+ * tier). Only the per-tier rows above are honest without that deduped
+ * total; the StatsCard's scope line still says " · asserted hidden" (never
+ * silent) so "no data" here isn't mistaken for "nothing changed". */
 function ticketStatsRows(index: IndexPayload, hideAsserted = false): TierStatRow[] {
   const totals = index.tickets_totals;
   const rows: TierStatRow[] = index.tier_order.map((tier) => ({
@@ -130,8 +129,9 @@ export function fmtLineRange([start, end]: [number, number]): string {
   return start === end ? String(start) : `${start}-${end}`;
 }
 
-/** The two synthetic rows (task-14 brief): `(no ticket)` for a commit that
- * named no ticket, `(uncommitted)` for a working-tree line never
+/** The two synthetic ticket ids the Python side mints (`NO_TICKET` and
+ * `UNCOMMITTED_TICKET` in `coverage/attribution.py`): `(no ticket)` for a
+ * commit that named no ticket, `(uncommitted)` for a working-tree line never
  * committed. Used only for the subtle visual de-emphasis below — they are
  * otherwise ordinary `TicketSummary` rows (never `url`-linked, never
  * excluded from sort or search) all the way from `reporter.py` through
@@ -139,13 +139,13 @@ export function fmtLineRange([start, end]: [number, number]): string {
 export const SENTINEL_TICKET_IDS = new Set(["(no ticket)", "(uncommitted)"]);
 
 /** A ticket with a `url` renders as a link; one without renders as plain
- * text (task-10 brief, verbatim). Both variants carry the SAME
- * `data-testid="ticket-id"` — the id text itself is what every consumer
- * (sort assertions, search assertions) reads, independent of which variant
- * rendered. A synthetic sentinel id (task-14 brief) renders italic/muted
- * instead of the usual bold-primary treatment — a purely cosmetic hint that
- * this row isn't a real ticket, never a behavioral special case: it still
- * sorts, searches, and expands exactly like any other row. */
+ * text. Both variants carry the SAME `data-testid="ticket-id"` — the id
+ * text itself is what every consumer (sort assertions, search assertions)
+ * reads, independent of which variant rendered. A `SENTINEL_TICKET_IDS` id
+ * renders italic/muted instead of the usual bold-primary treatment — a
+ * purely cosmetic hint that this row isn't a real ticket, never a
+ * behavioral special case: it still sorts, searches, and expands exactly
+ * like any other row. */
 function TicketIdCell({ ticket }: { ticket: TicketSummary }) {
   const isSentinel = SENTINEL_TICKET_IDS.has(ticket.id);
   const className = cx(

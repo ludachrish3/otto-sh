@@ -1,16 +1,16 @@
-// The historical review range picker: ONE Untitled UI-style card that
-// replaces the old preset ButtonGroup + two datetime-local inputs + Apply +
-// Reset (see ReviewBar.tsx). Deliberately does NOT vendor Untitled UI's own
+// The historical review range picker: ONE Untitled UI-style card that replaces
+// the old preset ButtonGroup + two datetime-local inputs + Apply + Reset (see
+// ReviewBar.tsx). Deliberately does NOT vendor Untitled UI's own
 // `date-range-picker.tsx` — that file is DAY granularity with wall-clock
-// presets (Today / This week / Last year / an "All time" starting in the
-// year 2000). A review range lives inside one run (minutes to hours), so a
-// day-granularity calendar cannot express e.g. a ten-minute session's
-// 12:03 -> 12:09. Instead this composes their EXPORTED pieces — RangeCalendar,
+// presets (Today / This week / Last year / an "All time" starting in the year
+// 2000). A review range lives inside one run (minutes to hours), so a
+// day-granularity calendar cannot express e.g. a ten-minute session's 12:03 ->
+// 12:09. Instead this composes their EXPORTED pieces — RangeCalendar,
 // InputDateBase, Button — the same way date-range-picker.tsx does, with our
 // own session-relative presets and minute granularity. That is the one
-// deliberate exception on this branch (see task-7-brief.md): a functional
-// necessity, not a preference, and it is still composition (their pieces,
-// unmodified), not a fork (no hand-written Tailwind imitating what they ship).
+// deliberate exception to that rule: a functional necessity, not a preference,
+// and it is still composition (their pieces, unmodified), not a fork (no
+// hand-written Tailwind imitating what they ship).
 
 import type { CalendarDateTime } from "@internationalized/date";
 import { Calendar as CalendarIcon } from "@untitledui/icons";

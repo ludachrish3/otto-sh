@@ -139,6 +139,8 @@ def cred_for(creds: list[Cred], login: str) -> Cred | None:
     return next((c for c in creds if c.login == login), None)
 
 
+# DEBT(no-tuple-return): target credential plus hop chain.
+# ast-grep-ignore: no-tuple-return
 def resolve_chain(creds: list[Cred], target_login: str) -> tuple[Cred, list[Cred]]:
     """Resolve the direct-auth cred and the hop list for *target_login*.
 

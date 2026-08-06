@@ -1,5 +1,5 @@
-// Percentage math + tree lookup shared by every covapp chrome/page (Task 3
-// brief). Thresholds are ALWAYS an argument, never a module-level constant —
+// Percentage math + tree lookup shared by every covapp chrome/page.
+// Thresholds are ALWAYS an argument, never a module-level constant —
 // they come from `IndexPayload.thresholds` (store v4, Global Constraints),
 // so a report with different thresholds colors correctly without a code
 // change.
@@ -39,10 +39,14 @@ export function fmtPct(p: number | null): string {
   return `${(Math.round(p * 10) / 10).toFixed(1)}%`;
 }
 
-/** Trivial today (the tree already carries a rolled-up `Stats` per node),
- * kept as a named seam so callers don't reach into `.stats` directly —
- * Tasks 4-7 read stats through this function, not the field, in case a
- * later task needs to derive rather than read (e.g. focus-mode filtering). */
+/** Trivial today (the tree already carries a rolled-up `Stats` per node), and
+ * UNUSED in production: nothing outside `stats.test.ts` calls it, and every
+ * page reads `.stats` off the node directly (DirectoryPage and RunsPage both
+ * hand `node.stats` straight to `tierRows`). It was added as a named seam for
+ * a later change that needs to DERIVE stats rather than read them — focus-mode
+ * filtering is the motivating case — so it is an intention, not a boundary,
+ * and reaching for `.stats` violates nothing. Kept deliberately rather than
+ * deleted; adopting it is what would make it a seam. */
 export function nodeStats(node: DirNode | FileNode): Stats {
   return node.stats;
 }

@@ -1,6 +1,10 @@
-// Minimal shared formatting + page-glue helpers (Task 3 brief; `crumbsFor`/
-// `tierRows` moved here in Task 4 so both App.tsx's remaining FilePlaceholder
-// and DirectoryPage.tsx share one implementation instead of two copies).
+// Minimal shared formatting + page-glue helpers. The ones with more than one
+// caller are here because no single page owns them and the pairs DIFFER:
+// `crumbsFor` is called by DirectoryPage and FilePage, `tierRows` by
+// DirectoryPage and RunsPage. A shared module beats parking each in whichever
+// page happened to want it first. The rest — `chunkTierRows`, `focusedFileRow`
+// — have exactly one caller today (FilePage) and sit here for cohesion with
+// the row shapes above, not because they are shared.
 // `meta` stays a plain `ReactNode` prop on AppShell rather than growing a
 // `metaLine()` builder — there is nothing today that composing a handful of
 // `<b>{n}</b> label` spans inline in each page's glue code doesn't already
@@ -49,7 +53,7 @@ export function crumbsFor(projectName: string, segments: string[]): Crumb[] {
  * decode it. Encoding the whole path in one shot instead of per-segment
  * would also escape the "/" separators themselves, collapsing a
  * multi-segment path into one unrecognizable segment — hence splitting
- * first. Moved here from DirectoryPage.tsx (Task 6) so RunsPage.tsx's
+ * first. Moved here from DirectoryPage.tsx so RunsPage.tsx's
  * top-files links share the same implementation instead of a second private
  * copy — DirectoryPage.tsx now imports this instead of declaring its own. */
 export function encodePath(path: string): string {
@@ -57,19 +61,21 @@ export function encodePath(path: string): string {
 }
 
 /** Every tier row's decision cell is `null` ("no data"): `Stats` (types.ts)
- * carries no per-tier decision bucket — decision counts are a file-view
- * concept (paired branch blocks), computed from a loaded `FileChunk` in
- * Tasks 5-6, not rolled up onto tree nodes. Always appends the "all tiers"
- * summary row (key "all") — StatsCard's implicit contract: that row is
+ * carries no per-tier decision bucket, and nothing in covapp derives one.
+ * Decision coverage (paired branch blocks) would be a file-view concept, but
+ * `chunkTierRows` below declines it too even with a loaded `FileChunk`'s real
+ * per-line data in hand — so a decision cell reads "no data" everywhere in
+ * this app, not just on tree nodes. Always appends the "all tiers" summary
+ * row (key "all") — StatsCard's implicit contract: that row is
  * caller-supplied, not synthesized inside StatsCard itself.
  *
- * `hideAsserted` (Task 11, default `false` — every existing call site stays
+ * `hideAsserted` (default `false` — every existing call site stays
  * byte-identical): subtracts each tier's own override-sourced count
  * (`stats.lines.asserted_per_tier[tier]`) from that tier's numerator, and
  * `stats.lines.asserted_only` (lines with NO real, non-override evidence at
  * all) from the all-tiers row's numerator — the tree has no per-line
  * granularity to recompute "hit in a tier not asserted for that line" the
- * way `chunkTierRows` does, so the rollup fields Task 9 already carries are
+ * way `chunkTierRows` does, so the rollup fields `Stats` already carries are
  * the honest tree-level equivalent. Denominators (`stats.lines.total`)
  * never change — hiding asserted coverage narrows what counts as PROVEN,
  * never what's coverable. */
@@ -96,7 +102,7 @@ export function tierRows(index: IndexPayload, stats: Stats, hideAsserted = false
   return rows;
 }
 
-/** StatsCard's focused-context variant (Task 7 spec §4): a single
+/** StatsCard's focused-context variant (spec §4): a single
  * `{key: "ctx"}` row in place of `tierRows`'s per-tier matrix — line =
  * `stats.ctx_lines[ctx.label]` (hit lines credited to this context, within
  * whatever tree node `stats` came from) over that node's line total;
@@ -135,7 +141,8 @@ export function lineHasMemberHit(line: LineJson | undefined, memberRunIds: Set<n
  * counts as "hit" for this context iff `lineHasMemberHit` (the same
  * per-run membership test `FilePage.tsx`'s row tinting uses), over the
  * same `lineTotal` `chunkTierRows` uses (every key in `chunk.lines`,
- * including past-EOF ones — Task 1's emitter pins those still count). */
+ * including past-EOF ones — the report emitter pins that those still
+ * count). */
 export function focusedFileRow(index: IndexPayload, chunk: FileChunk, ctx: Context): TierStatRow[] {
   const memberIds = new Set(ctx.runs.map((r) => r.id));
   const lineTotal = Object.keys(chunk.lines).length;
@@ -155,11 +162,11 @@ export function focusedFileRow(index: IndexPayload, chunk: FileChunk, ctx: Conte
   ];
 }
 
-/** File-page counterpart to `tierRows` (Task 5 brief): the tree's rolled-up
+/** File-page counterpart to `tierRows`: the tree's rolled-up
  * `Stats` has no per-file granularity to read a StatsCard from, so this
  * computes the same Line/Branch/"All tiers" matrix directly from a loaded
  * `FileChunk` instead — hit-vs-total over every key in `chunk.lines`
- * (INCLUDING out-of-range keys past the source's actual EOF; Task 1's
+ * (INCLUDING out-of-range keys past the source's actual EOF; the report
  * emitter pins that those still count, and this mirrors it rather than
  * filtering them out), decision always `null` (branch-pair "decision"
  * coverage isn't derived here, same as `tierRows`). A line counts as "hit"
@@ -168,7 +175,7 @@ export function focusedFileRow(index: IndexPayload, chunk: FileChunk, ctx: Conte
  * {key:"all", label:"All tiers"} row itself — StatsCard's implicit
  * contract (see `tierRows`) that row is always caller-supplied.
  *
- * `hideAsserted` (Task 11, default `false` — byte-identical to before this
+ * `hideAsserted` (default `false` — byte-identical to before this
  * feature when omitted): a line counts as "hit" for a tier only if that
  * tier REALLY hit it — recorded evidence, not just an override
  * (`line.asserted` carries the tier iff its sole hits are override-sourced,
@@ -195,8 +202,9 @@ export function chunkTierRows(
     // promises.
     const assertedTiers = hideAsserted ? Object.keys(line.asserted ?? {}) : [];
     const really = (tier: string) => (line.hits[tier] ?? 0) > 0 && !assertedTiers.includes(tier);
-    // Matches the pre-Task-11 all-tiers test exactly (`Object.values(line.
-    // hits).some(n => n > 0)`): every key `line.hits` actually carries, NOT
+    // Matches the all-tiers test this function used before `hideAsserted`
+    // existed (`Object.values(line.hits).some(n => n > 0)`) exactly: every
+    // key `line.hits` actually carries, NOT
     // narrowed to `index.tier_order` — a hit under a tier the report no
     // longer displays a column for still counts toward "some tier hit this
     // line", same as before.
@@ -250,7 +258,7 @@ export function keyColumnLabel({ ticket, context }: { ticket: boolean; context: 
 
 /** Appends " · asserted hidden" to a StatsCard's `scope` string while
  * `hideAsserted` is active — the ONE place every page's scope-line
- * construction routes through (Task 11, manual-overrides spec §6: a
+ * construction routes through (manual-overrides spec §6: a
  * denominator/numerator narrowing must never be silent, the same standing
  * requirement `DirectoryPage.tsx`'s ticket-scope banner already honors for
  * the ticket filter). A no-op when `hideAsserted` is `false` — every scope

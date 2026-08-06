@@ -210,8 +210,8 @@ def _dedupe_chart_map(doc: dict[str, Any]) -> None:
     separately even though they are byte-identical. ``json-schema-to-typescript``
     then has no ``$ref`` telling it these are the same type, so it synthesizes
     two names for two structurally-identical objects: ``ChartMap`` and
-    ``ChartMap1`` (spec 2026-07-10, Plan 5b follow-ups #9 — cosmetic, but real
-    drift-gate noise every time either model's schema shifts nearby).
+    ``ChartMap1`` (spec 2026-07-10 — cosmetic, but real drift-gate noise every
+    time either model's schema shifts nearby).
 
     The clean fix would promote ``chart_map`` to a real shared submodel type —
     but that changes its RUNTIME type from a plain ``dict`` to a pydantic model

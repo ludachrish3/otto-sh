@@ -98,13 +98,15 @@ export function LinkEdge(props: EdgeProps) {
           TopologyPage's `flow` useMemo would be a silent no-op. Widened from
           the library default (20px, "a 20px invisible path" per this repo's
           own docs) to INTERACTION_WIDTH (28px) as margin hardening: commit
-          b486272 (see FIT_PADDING in TopologyPage.tsx and
-          task-12b-report.md) proved the fitted zoom sits close enough to a
+          b486272 proved the fitted zoom sits close enough to a
           deterministic Firefox/WebKit hit-test threshold that a ~4px
           chrome-height change above the canvas -- well within the range
           future toolbar/tab tweaks could plausibly introduce -- was enough
-          to flip it, via the FIT_PADDING/fit-scale coupling documented
-          there. Imported from routing.ts rather than a second literal here
+          to flip it, via the FIT_PADDING/fit-scale coupling. `FIT_PADDING`'s
+          own comment in TopologyPage.tsx carries that arithmetic: at the
+          post-1045210 canvas height of 529px the fitted zoom fell 0.368167 ->
+          0.361736, and shaving 4px off the bottom reserve restored it.
+          Imported from routing.ts rather than a second literal here
           so this render prop and the fan-separation guards it must clear
           (toporouting.test.ts) can never disagree again. This only widens
           BaseEdge's separate `react-flow__edge-interaction` path (rendered

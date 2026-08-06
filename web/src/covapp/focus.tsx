@@ -1,4 +1,4 @@
-// Report-wide context-focus filter (Task 7): a single pinned run-label the
+// Report-wide context-focus filter: a single pinned run-label the
 // app-bar chip / ⋮ menu / DirectoryPage / FilePage / RunsPage all recompute
 // against. State lives in the HASH-EMBEDDED route query
 // (`#/coverage/path?ctx=<label>`) — deliberately NOT the real pre-`#`
@@ -42,8 +42,8 @@ import { useToast } from "./Toast";
 import type { IndexPayload } from "./types";
 
 const CTX_PARAM = "ctx";
-// Task 12: the ticket-context (denominator) filter's own hash-query param
-// and storage key — a SECOND, entirely independent pinned value sharing
+// The ticket-context (denominator) filter's own hash-query param and
+// storage key — a SECOND, entirely independent pinned value sharing
 // this module's hash-query/localStorage machinery (boot precedence,
 // Back/Forward stamping, "unknown value treated as cleared") rather than a
 // parallel implementation, but never sharing STATE with `focus`/CTX_PARAM:
@@ -53,7 +53,7 @@ const CTX_PARAM = "ctx";
 // one must never read or write the other's param/storage key.
 const TICKET_PARAM = "ticket";
 
-// Task 11 (manual-overrides spec §6): a THIRD independent pinned value —
+// Manual-overrides spec §6: a THIRD independent pinned value —
 // "hide asserted coverage" — sharing this module's hash-query/localStorage
 // machinery (boot precedence, Back/Forward stamping) exactly like `ticket`
 // above, but a plain boolean rather than an id resolved against report data,
@@ -106,9 +106,9 @@ export function parseHashQuery(): URLSearchParams {
  * Passes `window.history.state` through (NOT `null`) so a REWRITE never
  * clobbers `HISTORY_STAMP_KEY` (below) if the current entry already
  * carries one — required for `FocusProvider`'s Back/Forward detection to
- * survive its own reconciliation writes (task-9-report.md's fix-round:
- * the entry this function rewrites is often the exact one
- * `stampCurrentEntry` is about to mark, or already has). */
+ * survive its own reconciliation writes (the entry this function rewrites
+ * is often the exact one `stampCurrentEntry` is about to mark, or already
+ * has). */
 function replaceHash(next: string): void {
   const url = new URL(window.location.href);
   url.hash = next;
@@ -151,7 +151,7 @@ function pushHash(next: string): void {
  * Back/Forward-vs-in-app-navigation discriminator its "survive
  * navigation" effect needs. See that effect's doc comment for why a
  * `popstate`/`history.length`-based heuristic (this module's first
- * attempt, task-9-report.md) is NOT reliable and this replaces it. */
+ * attempt) is NOT reliable and this replaces it. */
 const HISTORY_STAMP_KEY = "ottoCov";
 
 interface StampedState {
@@ -261,14 +261,14 @@ export function useHashLocation(): [string, (to: string, opts?: { replace?: bool
 export interface UseFocusResult {
   focus: string | null;
   setFocus: (label: string | null) => void;
-  /** Task 12: the pinned ticket id (`?ticket=<id>`), or `null` — resolved/
+  /** The pinned ticket id (`?ticket=<id>`), or `null` — resolved/
    * persisted exactly like `focus` above (same boot precedence, same
    * Back/Forward stamping), just against `index.tickets` instead of
    * `groupContexts(index)`, and via its own, entirely independent param/
    * storage key so it can never clear (or be cleared by) `focus`. */
   ticket: string | null;
   setTicket: (id: string | null) => void;
-  /** Task 11: whether asserted (override-sourced) coverage is currently
+  /** Whether asserted (override-sourced) coverage is currently
    * hidden from every stat recompute/cell that consumes it — resolved/
    * persisted exactly like `ticket` above (same boot precedence, same
    * Back/Forward stamping), but via its own, entirely independent param/
@@ -290,10 +290,9 @@ function resolveLabel(label: string | null, index: IndexPayload | null): string 
   return known ? label : null;
 }
 
-/** `resolveLabel`'s ticket counterpart (Task 12) — same "unknown/stale
- * value degrades to cleared, never a crash" contract, checked against
- * `index.tickets` (Task 9's per-ticket rollups) instead of
- * `groupContexts(index)`. */
+/** `resolveLabel`'s ticket counterpart — same "unknown/stale value degrades
+ * to cleared, never a crash" contract, checked against `index.tickets` (the
+ * report's per-ticket rollups) instead of `groupContexts(index)`. */
 function resolveTicket(id: string | null, index: IndexPayload | null): string | null {
   if (id === null || index === null) return null;
   const known = index.tickets.some((t) => t.id === id);
@@ -343,11 +342,11 @@ export function FocusProvider({ children }: { children: ReactNode }) {
   const index = getIndex();
   const { show } = useToast();
   const [focus, setFocusState] = useState<string | null>(() => initialFocus(index));
-  // Task 12: a second, independent piece of state — never derived from or
-  // combined with `focus` above (see this module's header comment on why
-  // ctx/ticket must compose rather than share a slot).
+  // A second, independent piece of state — never derived from or combined
+  // with `focus` above (see this module's header comment on why ctx/ticket
+  // must compose rather than share a slot).
   const [ticket, setTicketState] = useState<string | null>(() => initialTicket(index));
-  // Task 11: a THIRD, independent piece of state — never derived from or
+  // A THIRD, independent piece of state — never derived from or
   // combined with `focus`/`ticket` above (see this module's header comment
   // and `ASSERTED_PARAM`'s doc comment on why hide-asserted must compose
   // with both rather than share a slot).
@@ -422,17 +421,17 @@ export function FocusProvider({ children }: { children: ReactNode }) {
   // an entry before this module has processed a hashchange for it at
   // least once).
   //
-  // This replaces an EARLIER version of this discriminator (task-9-report.md,
-  // first fix round) that combined `popstate` + "did `history.length`
-  // grow" — provably wrong, found by review: a push made from MID-STACK
-  // (i.e. after at least one Back) TRUNCATES the forward entries it
-  // replaces, so `history.length` does not reliably grow on a push either
-  // — e.g. pin (push B) -> navigate (push C) -> Back once (now at B, C
-  // still "forward") -> click any link (push D, which drops C and appends
-  // D: length unchanged) got misread as a Back/Forward and silently
-  // cleared the pin. The `history.state` stamp has no such failure mode:
-  // it doesn't infer from a COUNT that can coincidentally match, it reads
-  // a durable per-entry marker this module itself wrote.
+  // This replaces an EARLIER version of this discriminator that combined
+  // `popstate` + "did `history.length` grow" — provably wrong, found by
+  // review: a push made from MID-STACK (i.e. after at least one Back)
+  // TRUNCATES the forward entries it replaces, so `history.length` does not
+  // reliably grow on a push either — e.g. pin (push B) -> navigate (push C)
+  // -> Back once (now at B, C still "forward") -> click any link (push D,
+  // which drops C and appends D: length unchanged) got misread as a
+  // Back/Forward and silently cleared the pin. The `history.state` stamp
+  // has no such failure mode: it doesn't infer from a COUNT that can
+  // coincidentally match, it reads a durable per-entry marker this module
+  // itself wrote.
   //
   // Landing on an entry this module has genuinely never seen (a fresh
   // push, OR a Back/Forward far enough to reach a pre-app entry that
@@ -459,7 +458,7 @@ export function FocusProvider({ children }: { children: ReactNode }) {
   // place instead means every navigation while focused costs exactly one
   // Back-button stop, and it always already carries the right `?ctx=`.
   //
-  // Ticket (Task 12) mirrors every branch below independently — its own
+  // The pinned ticket mirrors every branch below independently — its own
   // `resolveTicket`/`ticketStorageKey`/`TICKET_PARAM`, compared against its
   // own `ticket` state — so a landing that changes ctx but not ticket (or
   // vice versa) only touches the one that actually changed, and the
@@ -468,14 +467,13 @@ export function FocusProvider({ children }: { children: ReactNode }) {
   // `URLSearchParams`'s ordinary contract) rather than two separate writes
   // racing each other.
   //
-  // Fix round 1 (task-12-report.md, Minor): `replaceHashQuery` itself is
-  // guarded internally (a no-op mutate never actually writes — see its own
-  // doc comment), so calling it unconditionally here was never a
-  // CORRECTNESS bug, only pointless work (constructing a `URLSearchParams`,
-  // running both `if` checks, serializing back to a string) on every
-  // navigation while NEITHER filter is pinned — the overwhelmingly common
-  // case. Restoring the outer guard (present pre-Task-12 for `ctx` alone)
-  // skips that work entirely rather than relying on the callee to no-op it.
+  // `replaceHashQuery` itself is guarded internally (a no-op mutate never
+  // actually writes — see its own doc comment), so calling it
+  // unconditionally here was never a CORRECTNESS bug, only pointless work
+  // (constructing a `URLSearchParams`, running both `if` checks,
+  // serializing back to a string) on every navigation while NEITHER filter
+  // is pinned — the overwhelmingly common case. The outer guard here skips
+  // that work entirely rather than relying on the callee to no-op it.
   useEffect(() => {
     function onHashChange() {
       if (isKnownEntry()) {
@@ -539,8 +537,8 @@ export function FocusProvider({ children }: { children: ReactNode }) {
 
   // `setTicket`'s own `setHashQuery`/`localStorage` calls only ever touch
   // `TICKET_PARAM`/`ticketStorageKey` — never `CTX_PARAM`/`storageKey` — so
-  // pinning/clearing a ticket can never clear (or be cleared by) `focus`,
-  // the compose guarantee Task 12 requires.
+  // pinning/clearing a ticket can never clear (or be cleared by) `focus` —
+  // the compose guarantee this module's header comment describes.
   const setTicket = useCallback(
     (id: string | null) => {
       const resolved = resolveTicket(id, index);
@@ -559,7 +557,7 @@ export function FocusProvider({ children }: { children: ReactNode }) {
     [index, show],
   );
 
-  // Task 11: mirrors `setTicket`'s shape exactly — its own `setHashQuery`/
+  // Mirrors `setTicket`'s shape exactly — its own `setHashQuery`/
   // `localStorage` calls only ever touch `ASSERTED_PARAM`/`assertedStorageKey`,
   // never `focus`'s or `ticket`'s, so toggling hide-asserted can never clear
   // (or be cleared by) either.

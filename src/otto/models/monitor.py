@@ -523,12 +523,11 @@ class MonitorSessionFragment(RowModel):
 
     A fragment is a *partial* :class:`SessionRecord`: every payload field is
     optional and carries the SAME name and type as its counterpart there, so the
-    client appends rather than translates. This is deliberate — Plan 5a lost
-    three fix waves to a rename across a lenient boundary model
-    (``MonitorMeta.metrics`` vs ``SessionMeta.charts``), invisible to the type
-    checker because both sides were ``str`` at the seam. The strongest defence is
-    not a mapping function but the absence of a second model: these ARE the
-    payload's models.
+    client appends rather than translates. This is deliberate — a rename across
+    a lenient boundary model once cost three fix waves (``MonitorMeta.metrics``
+    vs ``SessionMeta.charts``), invisible to the type checker because both sides
+    were ``str`` at the seam. The strongest defence is not a mapping function but
+    the absence of a second model: these ARE the payload's models.
 
     ``deleted_event_ids`` is the one thing a partial record cannot express by
     presence, so it is explicit. Event *updates* need no separate kind — the

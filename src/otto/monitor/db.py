@@ -106,6 +106,8 @@ EVENT_INSERT_SQL = (
 )
 
 
+# PERMANENT(no-tuple-return): sqlite DB-API parameter row; the driver's contract.
+# ast-grep-ignore: no-tuple-return
 def event_insert_params(
     session_id: str,
     *,

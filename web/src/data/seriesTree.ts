@@ -46,8 +46,8 @@ export function buildSeriesTree(session: NormalizedSession, subjectId: string): 
   // i.e. every live tick, for however long the page stays open — so an
   // O(total session points) scan here is the exact same fatal cliff
   // metricsForSubject/healthForHosts were switched to the index to avoid
-  // (see seriesIndex.ts's header); a sustained live stream (Plan 5b Task 13's
-  // replay soak) reliably found the main thread falling permanently behind
+  // (see seriesIndex.ts's header); a sustained live stream (a replay soak
+  // against a real browser) reliably found the main thread falling behind
   // once session.metrics reached ~10^5 points, well before any real run
   // would generate that much.
   // subjectId itself is always scanned: an element can carry its OWN

@@ -1,8 +1,7 @@
-// covapp shell (Task 2 scaffold; Task 3 wraps routes in AppShell; Task 4
-// wires in the real DirectoryPage; Task 6 wires in the real RunsPage). App
-// renders GuardScreen instead of the router whenever dataGuard() != "ok" —
-// the classic `cov_data/index.js` script (loaded before the app bundle, see
-// covapp.html) either never ran or produced a payload this build can't read.
+// covapp shell. App renders GuardScreen instead of the router whenever
+// dataGuard() != "ok" — the classic `cov_data/index.js` script (loaded
+// before the app bundle, see covapp.html) either never ran or produced a
+// payload this build can't read.
 //
 // "/coverage" and "/coverage/*" share one dispatcher (CoverageRoute):
 // `findNode` resolves the (possibly decoded, possibly empty) path segments

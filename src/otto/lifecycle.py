@@ -10,7 +10,9 @@ skip this entirely), and owns the two-stage SIGINT/SIGTERM interrupt policy
 Unit tests drive the state machine by calling ``_CommandRun._on_signal``
 directly (``install_handlers=False``): installing real handlers in-process
 would replace the test harness's chained SIGINT faulthandler. Real signal
-delivery is exercised by the tier-2 subprocess tests (chaos plan 3).
+delivery is exercised by the tier-2 subprocess tests in
+tests/integration/chaos/, which signal a real otto process over a loopback
+sshd rather than calling the handler.
 """
 
 import asyncio

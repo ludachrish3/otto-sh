@@ -39,6 +39,8 @@ class BinaryLoader(ABC):
         ...
 
     @abstractmethod
+    # DEBT(no-tuple-return): (ok, detail) is a Result in disguise.
+    # ast-grep-ignore: no-tuple-return
     def check_loaded(self, output: str) -> tuple[bool, str]:
         """Return ``(ok, reason)`` from a load command's output.
 
@@ -73,6 +75,8 @@ class LlextHexLoader(BinaryLoader):
         return f"llext load_hex {name} {payload.hex()}"
 
     @override
+    # DEBT(no-tuple-return): sibling implementation of the same ABC method.
+    # ast-grep-ignore: no-tuple-return
     def check_loaded(self, output: str) -> tuple[bool, str]:
         ok = "Successfully loaded extension" in output
         return (True, "") if ok else (False, output.strip())

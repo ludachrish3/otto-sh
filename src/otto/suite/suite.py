@@ -586,8 +586,8 @@ class OttoSuite(Generic[TOptions]):
         the session-wide collector started by ``otto test --monitor``.
 
         Validates through the same seam as every other marking surface
-        (:class:`~otto.models.monitor.EventCreateBody`, Plan 5c) — a blank
-        label, a non-``#rrggbb`` color, or an unknown dash style raises
+        (:class:`~otto.models.monitor.EventCreateBody`) — a blank label, a
+        non-``#rrggbb`` color, or an unknown dash style raises
         ``pydantic.ValidationError`` (a ``ValueError`` subclass) synchronously,
         at the call site, before the collector is ever touched. Call sites
         still ``await`` the result (``await self.add_monitor_event(...)``) —
@@ -595,7 +595,7 @@ class OttoSuite(Generic[TOptions]):
         immediately even if the caller forgets to await it, rather than
         silently vanishing into an unawaited coroutine.
         """
-        # Same rules as every other marking surface (Plan 5c, one seam):
+        # Same rules as every other marking surface (one seam):
         # constructing the body IS the validation — pydantic.ValidationError
         # (a ValueError) surfaces bad input at the call site instead of
         # persisting a style the dashboard cannot render.
