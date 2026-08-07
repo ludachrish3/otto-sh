@@ -868,18 +868,41 @@ class TestResolveTester:
         assert tester == {"name": "alice"}
         assert "email" not in tester
 
-    def test_omits_email_when_git_unavailable(self, monkeypatch, tmp_path):
-        # Identity defaulting must degrade, not crash, on a box without git.
-        from otto.coverage.capture.gitio import GitUnavailableError
+    @pytest.mark.parametrize("failure", ["not_a_repo", "command_failed"])
+    def test_omits_email_when_git_cannot_answer(self, monkeypatch, tmp_path, failure):
+        # Identity defaulting must degrade, not crash, when the sut is not a
+        # repo or `git config` itself fails — both mean "no email to read".
+        from otto.coverage.capture.gitio import GitCommandFailedError, NotAGitRepoError
 
+        exc = NotAGitRepoError if failure == "not_a_repo" else GitCommandFailedError
         monkeypatch.setattr("getpass.getuser", lambda: "alice")
 
         def boom(root, key):
-            raise GitUnavailableError("git executable not found")
+            raise exc("git config user.email failed (rc=128): ...")
 
         monkeypatch.setattr("otto.coverage.capture.gitio.config_value", boom)
         tester = cov_module._resolve_tester(None, None, tmp_path)
         assert tester == {"name": "alice"}
+
+    def test_missing_git_propagates_rather_than_reading_as_no_email(self, monkeypatch, tmp_path):
+        """A box without git is an ENVIRONMENT error, not "this tester has no email".
+
+        Swallowing it here was the conflation the taxonomy split apart.
+        Nothing in ``cov get`` reaches this with git absent — the
+        ``head_commit`` preflight has already proven git runs — so the
+        propagation lands on the top-level CLI handler, which is where an
+        unrunnable git belongs.
+        """
+        from otto.coverage.capture.gitio import GitMissingError
+
+        monkeypatch.setattr("getpass.getuser", lambda: "alice")
+
+        def boom(root, key):
+            raise GitMissingError("git executable not found")
+
+        monkeypatch.setattr("otto.coverage.capture.gitio.config_value", boom)
+        with pytest.raises(GitMissingError):
+            cov_module._resolve_tester(None, None, tmp_path)
 
     def test_name_override_with_default_email(self, monkeypatch, tmp_path):
         monkeypatch.setattr(

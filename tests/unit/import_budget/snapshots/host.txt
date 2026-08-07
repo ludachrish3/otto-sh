@@ -26,6 +26,7 @@ otto.host.connections
 otto.host.docker_host
 otto.host.embedded_filesystem
 otto.host.embedded_host
+otto.host.errors
 otto.host.factory
 otto.host.file_ops
 otto.host.host

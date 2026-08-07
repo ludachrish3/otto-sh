@@ -18,6 +18,7 @@ local and remote machines.
    session
    app_shell
    connections
+   errors
    login_proxy
    transport
    telnet

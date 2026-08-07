@@ -8,24 +8,37 @@ before any broad ``except ValueError`` / ``except RuntimeError`` clause in
 the same ``try`` — the first lexical match wins.
 
 DEFINES, not raises, and the difference is not small: otto also raises plain
-stdlib exceptions at 330 sites — an argument otto validates and rejects is
+stdlib exceptions at 301 sites — an argument otto validates and rejects is
 usually a bare ``ValueError``, not a named class. ``except OttoError``
-therefore means "one of otto's two dozen NAMED failures", not "anything otto
+therefore means "one of otto's 34 NAMED failures", not "anything otto
 raised".
 
 There is no one clause that catches everything, and it is worth being exact
 rather than offering a comforting near-miss:
 
-* ``except Exception`` catches all but five raises. The five are
-  ``SystemExit``, and three of them are in public library API —
+* ``except Exception`` catches all but six raises. Five are ``SystemExit``,
+  and three of THOSE are in public library API —
   :func:`otto.lifecycle.run_command`, :func:`otto.suite.run.run_suite` and
   ``run_selection``. A caller who wraps those and expects a broad guard to
-  hold gets a process exit instead.
-* ``except (ValueError, RuntimeError)`` covers 284 of the 330 raise sites,
-  but only 15 of the 25 named classes. Seven are rooted at plain
+  hold gets a process exit instead. The sixth is
+  :class:`~otto.lifecycle.SyncPhaseInterrupt`, a ``KeyboardInterrupt`` on
+  purpose (see below).
+* ``except (ValueError, RuntimeError)`` covers 254 of the 301 raise sites,
+  and 23 of the 34 named classes. Of the other 11, seven are rooted at plain
   ``Exception`` (the bootstrap, lab-context, lab-repository and reservation
-  errors), and three sit under ``OSError`` (``AppShellTimeoutError``,
-  ``LoginProxyError``, ``WaitTimeoutError``).
+  errors) and four sit under ``OSError`` (``AppShellTimeoutError``,
+  ``LoginProxyError``, ``RetryAttemptTimeoutError``, ``WaitTimeoutError``) —
+  23 + 7 + 4 = 34, so the split accounts for every named class.
+
+Those counts are measured, not maintained by arithmetic: a *raise site* is a
+``raise`` of a name that is a BUILTIN exception type (so ``typer.Exit`` and
+otto's own classes are excluded from the 301), and it is *covered* when that
+builtin is rooted at ``ValueError`` or ``RuntimeError`` — which is why the 42
+``NotImplementedError`` raises count as covered. Re-measure by walking the
+AST of ``src/otto``; do not adjust these by hand. The 2026-08-07 error-taxonomy
+wave is why the site count FELL: 37 bare ``RuntimeError`` raises in link,
+tunnel, docker and transfer became named classes, which moves them out of the
+301 and into the 34.
 
 So: catch by NAME what you intend to handle, use ``except OttoError`` when
 "was this otto's own failure?" is the question, and treat ``except

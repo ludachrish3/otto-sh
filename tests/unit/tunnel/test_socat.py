@@ -5,6 +5,7 @@ import pytest
 from otto.host.daemon import launch_command
 from otto.tunnel.discovery import DISCOVERY_PS_COMMAND
 from otto.tunnel.socat import (
+    NoFreePortError,
     egress_socat_args,
     ingress_socat_args,
     parse_listening_ports,
@@ -74,5 +75,8 @@ class TestPorts:
         assert pick_free_port(used) == 49154
 
     def test_exhaustion_raises(self) -> None:
-        with pytest.raises(RuntimeError):
+        # NoFreePortError, still a RuntimeError so `otto tunnel add`'s
+        # `except (ValueError, RuntimeError)` renders it unchanged.
+        with pytest.raises(NoFreePortError):
             pick_free_port(set(range(49152, 65536)))
+        assert issubclass(NoFreePortError, RuntimeError)

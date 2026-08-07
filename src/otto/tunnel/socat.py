@@ -10,7 +10,18 @@ from typing import ClassVar
 
 from typing_extensions import override
 
+from ..errors import OttoError
 from .carrier import TunnelCarrier, register_carrier
+
+
+class NoFreePortError(OttoError, RuntimeError):
+    """Every port in the carrier range is taken — a pure-local exhaustion.
+
+    No host is involved (the range is scanned against a set the caller
+    already gathered), which is why this is its own class rather than one of
+    the :mod:`otto.host.errors` pair.
+    """
+
 
 # Old-stable socat address keywords only (compatible down to procps/socat on
 # Linux 2.6.32). ``fork`` lets one listener serve repeated datagrams/connections;
@@ -77,7 +88,7 @@ def pick_free_port(used: set[int], lo: int = 49152, hi: int = 65535) -> int:
     for port in range(lo, hi + 1):
         if port not in used:
             return port
-    raise RuntimeError(f"no free TCP port in [{lo}, {hi}]")
+    raise NoFreePortError(f"no free TCP port in [{lo}, {hi}]")
 
 
 class SocatCarrier(TunnelCarrier):

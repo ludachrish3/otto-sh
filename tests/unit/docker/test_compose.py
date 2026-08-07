@@ -1244,7 +1244,9 @@ async def test_compose_up_fails_when_the_stack_names_no_services_at_all(tmp_path
 
     parent.exec.side_effect = exec_side_effect  # type: ignore[union-attr]
 
-    with pytest.raises(RuntimeError, match="names no services"):
+    # ValueError: nothing on the parent failed — the compose file declares no
+    # services, the same class of refusal as _resolve_parent's own raises.
+    with pytest.raises(ValueError, match="names no services"):
         await compose_up(repo, lab)
 
 

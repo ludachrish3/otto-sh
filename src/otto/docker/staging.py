@@ -23,10 +23,25 @@ import tempfile
 from pathlib import Path
 
 from ..config.repo import DockerCompose, DockerImage
+from ..host.errors import HostCommandError, HostUnreachableError
 from ..host.host import Host
 from ..result import CommandResult
 
 PARENT_ROOT = Path("/tmp/otto-docker")  # noqa: S108 — deliberate staging path
+
+
+def _staging_failure(
+    result: CommandResult, message: str
+) -> HostUnreachableError | HostCommandError:
+    """Pick the error type for a failed staging command; the text is the caller's.
+
+    A command killed by its timeout never delivered a verdict, so it is an
+    unreachable-host failure; anything else ran on the parent and reported
+    the failure itself. Only for :meth:`~otto.host.host.Host.exec` results —
+    ``put`` returns a plain :class:`~otto.result.Result`, which carries no
+    ``timed_out`` to ask about.
+    """
+    return HostUnreachableError(message) if result.timed_out else HostCommandError(message)
 
 
 def project_root(project: str) -> Path:
@@ -68,8 +83,9 @@ async def stage_image_context(
         f"rm -rf {shlex.quote(str(remote_dir))} && mkdir -p {shlex.quote(str(remote_dir))}"
     )
     if not prepared.status.is_ok:
-        raise RuntimeError(
-            f"failed to prepare the build-context dir {remote_dir} on the parent: {prepared.value}"
+        raise _staging_failure(
+            prepared,
+            f"failed to prepare the build-context dir {remote_dir} on the parent: {prepared.value}",
         )
 
     with tempfile.NamedTemporaryFile(
@@ -92,7 +108,7 @@ async def stage_image_context(
 
         put_result = await parent.put([tmp_path], remote_dir)
         if not put_result.is_ok:
-            raise RuntimeError(f"failed to stage build context to parent: {put_result.msg}")
+            raise HostCommandError(f"failed to stage build context to parent: {put_result.msg}")
 
         # Extract on parent. Unbounded on purpose: this command's duration IS
         # the transfer (extracting the just-uploaded build context), which
@@ -105,7 +121,9 @@ async def stage_image_context(
             timeout=float("inf"),
         )
         if not result.status.is_ok:
-            raise RuntimeError(f"failed to extract build context on parent: {result.value}")
+            # No timed-out arm: the timeout above is `inf` by design, so this
+            # can only be the untar itself reporting failure.
+            raise HostCommandError(f"failed to extract build context on parent: {result.value}")
     finally:
         tmp_path.unlink(missing_ok=True)
 
@@ -128,8 +146,9 @@ async def stage_compose_files(
         f"rm -rf {shlex.quote(str(base))} && mkdir -p {shlex.quote(str(base))}"
     )
     if not prepared.status.is_ok:
-        raise RuntimeError(
-            f"failed to prepare the compose staging dir {base} on the parent: {prepared.value}"
+        raise _staging_failure(
+            prepared,
+            f"failed to prepare the compose staging dir {base} on the parent: {prepared.value}",
         )
 
     out: list[Path] = []
@@ -137,10 +156,10 @@ async def stage_compose_files(
         sub = base / str(idx)
         made = await parent.exec(f"mkdir -p {shlex.quote(str(sub))}")
         if not made.status.is_ok:
-            raise RuntimeError(f"failed to create {sub} on the parent: {made.value}")
+            raise _staging_failure(made, f"failed to create {sub} on the parent: {made.value}")
         put_result = await parent.put([compose.path], sub)
         if not put_result.is_ok:
-            raise RuntimeError(f"failed to stage compose file {compose.path}: {put_result.msg}")
+            raise HostCommandError(f"failed to stage compose file {compose.path}: {put_result.msg}")
         out.append(sub / compose.path.name)
     return out
 

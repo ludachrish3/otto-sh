@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from otto.host.connections import ConnectionManager
+from otto.host.errors import HostCommandError, HostUnreachableError
 from otto.host.options import NcOptions
 from otto.host.transfer import NcFileTransfer
 from otto.result import CommandResult
@@ -52,6 +53,14 @@ def _fail(output: str = "") -> CommandResult:
     return CommandResult(command="", value=output, status=Status.Failed, retcode=1)
 
 
+def _timed_out(output: str = "") -> CommandResult:
+    """A probe killed by its timeout — retcode -1, which is why it needs a flag.
+
+    ``retcode`` cannot express this: -1 also means "never ran" and "skipped".
+    """
+    return CommandResult(command="", value=output, status=Status.Failed, retcode=-1, timed_out=True)
+
+
 # ============================================================================
 # Port-finding strategies
 # ============================================================================
@@ -70,7 +79,19 @@ class TestFindFreePortSs:
     async def test_failure_raises(self):
         mock_exec = AsyncMock(return_value=_fail("ss: command not found"))
         ft = make_ft(nc_port_strategy="ss", exec_cmd=mock_exec)
-        with pytest.raises(RuntimeError, match="ss port scan failed"):
+        with pytest.raises(HostCommandError, match="ss port scan failed"):
+            await ft._find_free_port()
+
+    @pytest.mark.asyncio
+    async def test_timed_out_scan_is_unreachable_not_a_command_failure(self):
+        """A scan that never came back says nothing about the host's ports.
+
+        Same message either way — the TYPE is what tells a caller whether to
+        look at the remote sockets or at the connection to the host.
+        """
+        mock_exec = AsyncMock(return_value=_timed_out(""))
+        ft = make_ft(nc_port_strategy="ss", exec_cmd=mock_exec)
+        with pytest.raises(HostUnreachableError, match="ss port scan failed"):
             await ft._find_free_port()
 
 
@@ -86,7 +107,7 @@ class TestFindFreePortNetstat:
     async def test_failure_raises(self):
         mock_exec = AsyncMock(return_value=_fail(""))
         ft = make_ft(nc_port_strategy="netstat", exec_cmd=mock_exec)
-        with pytest.raises(RuntimeError, match="netstat port scan failed"):
+        with pytest.raises(HostCommandError, match="netstat port scan failed"):
             await ft._find_free_port()
 
 
@@ -117,7 +138,14 @@ class TestFindFreePortPython:
     async def test_both_fail(self):
         mock_exec = AsyncMock(side_effect=[_fail(""), _fail("")])
         ft = make_ft(nc_port_strategy="python", exec_cmd=mock_exec)
-        with pytest.raises(RuntimeError, match="python port discovery failed"):
+        with pytest.raises(HostCommandError, match="python port discovery failed"):
+            await ft._find_free_port()
+
+    @pytest.mark.asyncio
+    async def test_both_time_out(self):
+        mock_exec = AsyncMock(side_effect=[_timed_out(""), _timed_out("")])
+        ft = make_ft(nc_port_strategy="python", exec_cmd=mock_exec)
+        with pytest.raises(HostUnreachableError, match="python port discovery failed"):
             await ft._find_free_port()
 
 
@@ -133,7 +161,7 @@ class TestFindFreePortProc:
     async def test_failure_raises(self):
         mock_exec = AsyncMock(return_value=_fail(""))
         ft = make_ft(nc_port_strategy="proc", exec_cmd=mock_exec)
-        with pytest.raises(RuntimeError, match="/proc/net/tcp port scan failed"):
+        with pytest.raises(HostCommandError, match="/proc/net/tcp port scan failed"):
             await ft._find_free_port()
 
 
@@ -207,10 +235,10 @@ class TestFindFreePortAuto:
 
     @pytest.mark.asyncio
     async def test_all_fail_raises(self):
-        """All strategies fail — raises RuntimeError."""
+        """All strategies fail — raises HostCommandError naming each attempt."""
         mock_exec = AsyncMock(return_value=_fail("nope"))
         ft = make_ft(nc_port_strategy="auto", exec_cmd=mock_exec)
-        with pytest.raises(RuntimeError, match="All port-finding strategies failed"):
+        with pytest.raises(HostCommandError, match="All port-finding strategies failed"):
             await ft._find_free_port()
 
 

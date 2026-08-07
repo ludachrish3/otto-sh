@@ -2,7 +2,11 @@
 
 Everything is synchronous and side-effect-free on the repo (read-only
 commands only).  Callers pass the sut repo root; a non-repo raises
-:class:`GitUnavailableError` with a clean message.
+:class:`GitUnavailableError` with a clean message — specifically
+:class:`NotAGitRepoError`, one of the three subclasses every failure here is
+classified into (:class:`GitMissingError`, :class:`NotAGitRepoError`,
+:class:`GitCommandFailedError`) so a caller can dispatch on the TYPE instead
+of matching the message text.
 """
 
 import subprocess
@@ -13,7 +17,33 @@ from ...errors import OttoError
 
 
 class GitUnavailableError(OttoError, RuntimeError):
-    """Raised when git cannot answer (not a repo / git missing)."""
+    """Raised when git cannot answer (not a repo / git missing).
+
+    The family root, and still what a caller that does not care WHY should
+    catch. Every raise from the two runners below is one of the three
+    subclasses; only :func:`log_walk_u0`'s join-mismatch (a data-integrity
+    failure of a git call that SUCCEEDED) raises this class directly.
+    """
+
+
+class GitMissingError(GitUnavailableError):
+    """No ``git`` executable on PATH — an environment error, not a repo answer.
+
+    Never means "absent from the repo": a caller that folds this into a
+    None/False "not found" answer reports every path as new.
+    """
+
+
+class NotAGitRepoError(GitUnavailableError):
+    """The command's cwd is not inside a git work tree."""
+
+
+class GitCommandFailedError(GitUnavailableError):
+    """git ran inside a work tree and exited outside its ``ok_codes``.
+
+    The ordinary "git says no" outcome: an unresolvable rev, a path absent
+    at that rev, a sha not in the object database.
+    """
 
 
 _CONFIG_PIN: list[str] = ["-c", "diff.mnemonicprefix=false"]
@@ -116,6 +146,80 @@ def _pin_no_index(*rest: str) -> list[str]:
     return [*_CONFIG_PIN, "diff", "--no-index", *_NO_INDEX_FLAG_PIN, *rest]
 
 
+_WORK_TREE_PROBE: list[str] = ["rev-parse", "--is-inside-work-tree"]
+"""Argv of the failure-path classification probe; see :func:`_translate_failure`."""
+
+
+def _inside_work_tree(cwd: Path) -> bool:
+    """Ask git whether *cwd* is inside a work tree (failure paths only).
+
+    Goes through :func:`_run_raw` like every other call in this module, NOT
+    straight to ``subprocess``: ``_run_raw`` is the chokepoint the spawn-budget
+    guards monkeypatch (``tests/unit/cov/test_git_spawn_budget.py``,
+    ``test_attribution.py``'s anti-vacuity control), and a spawn that bypasses
+    it is a spawn those guards cannot see — the instrument has to keep
+    counting every process, including the ones on failure paths.
+
+    ``ok_codes`` admits 128 (and 1) so that "not a repo" is a normal ANSWER
+    here rather than a failure that would re-enter classification. Runs only
+    after a primary call already failed, so the success path the budget bounds
+    is untouched.
+    """
+    try:
+        out = _run_raw(_WORK_TREE_PROBE, cwd, (0, 1, 128))
+    except GitUnavailableError:
+        # git vanished between the primary call and this probe, or exited with
+        # an rc nobody anticipated. Either way the probe cannot answer, and
+        # the primary failure's own story is the better one to keep.
+        return True
+    # rc 0 with "false" means cwd is inside a .git DIRECTORY rather than a work
+    # tree, which is what the question asks; anything else (rc 128, empty) is a
+    # no.
+    return out.strip() == b"true"
+
+
+def _translate_failure(
+    args: list[str], cwd: Path | None, proc: "subprocess.CompletedProcess[bytes]"
+) -> GitUnavailableError:
+    """Classify a non-ok git exit into the right :class:`GitUnavailableError`.
+
+    The discriminator is a second git call, NOT the stderr text. git
+    translates its own messages, so a ``"not a git repository" in str(e)``
+    test — what every caller of this module used to do — silently stops
+    discriminating under any non-English ``LC_MESSAGES``, and the fallback
+    that follows is then chosen for the wrong reason. ``rev-parse
+    --is-inside-work-tree`` answers the same question in an exit code.
+
+    A ``cwd`` of ``None`` (the ``--no-index`` diffs) has no directory to ask
+    about, so it can only be a command failure.
+
+    The probe never classifies ITSELF (``args != _WORK_TREE_PROBE``), and that
+    guard is load-bearing rather than tidy: the probe runs through
+    ``_run_raw``, so a probe exiting outside its own ``ok_codes`` would arrive
+    back here and run the probe again, forever.
+    """
+    stderr = proc.stderr.decode(errors="replace")
+    message = f"git {' '.join(args)} failed (rc={proc.returncode}): {stderr.strip()}"
+    if cwd is not None and args != _WORK_TREE_PROBE and not _inside_work_tree(cwd):
+        return NotAGitRepoError(message)
+    return GitCommandFailedError(message)
+
+
+def _spawn_failure(cwd: Path | None) -> GitUnavailableError:
+    """Classify a ``FileNotFoundError`` raised while SPAWNING git.
+
+    Two unrelated causes land on that one exception, and only one of them is
+    about git: a missing executable, or a *cwd* that does not exist —
+    ``subprocess`` fails the chdir before it ever execs. The second used to be
+    reported as "git executable not found", which was merely misleading while
+    every caller swallowed it, and became a propagating lie once
+    :func:`blob_sha` started re-raising :class:`GitMissingError`.
+    """
+    if cwd is not None and not cwd.is_dir():
+        return NotAGitRepoError(f"{cwd} is not a directory")
+    return GitMissingError("git executable not found")
+
+
 def _run_raw(args: list[str], cwd: Path | None, ok_codes: tuple[int, ...] = (0,)) -> bytes:
     """Run git and return raw stdout bytes; translate subprocess errors uniformly."""
     try:
@@ -127,12 +231,9 @@ def _run_raw(args: list[str], cwd: Path | None, ok_codes: tuple[int, ...] = (0,)
             check=False,
         )
     except FileNotFoundError as e:
-        raise GitUnavailableError("git executable not found") from e
+        raise _spawn_failure(cwd) from e
     if proc.returncode not in ok_codes:
-        stderr = proc.stderr.decode(errors="replace")
-        raise GitUnavailableError(
-            f"git {' '.join(args)} failed (rc={proc.returncode}): {stderr.strip()}"
-        )
+        raise _translate_failure(args, cwd, proc)
     return proc.stdout
 
 
@@ -159,12 +260,9 @@ def _run_raw_input(
             check=False,
         )
     except FileNotFoundError as e:
-        raise GitUnavailableError("git executable not found") from e
+        raise _spawn_failure(cwd) from e
     if proc.returncode not in ok_codes:
-        stderr = proc.stderr.decode(errors="replace")
-        raise GitUnavailableError(
-            f"git {' '.join(args)} failed (rc={proc.returncode}): {stderr.strip()}"
-        )
+        raise _translate_failure(args, cwd, proc)
     return proc.stdout
 
 
@@ -177,7 +275,7 @@ def rev_parse_commit(repo_root: Path, rev: str) -> str:
     """Resolve *rev* (full/abbreviated sha, ref) to a full commit sha.
 
     ``^{commit}`` peels tags and rejects non-commit objects; ``--verify``
-    makes an unknown or ambiguous *rev* a loud :class:`GitUnavailableError`
+    makes an unknown or ambiguous *rev* a loud :class:`GitCommandFailedError`
     instead of echoing the input back.
     """
     return _run(["rev-parse", "--verify", f"{rev}^{{commit}}"], repo_root).strip()
@@ -218,9 +316,12 @@ def blob_sha(repo_root: Path, relpath: Path, rev: str = "HEAD") -> str | None:
     """
     try:
         return _run(["rev-parse", f"{rev}:./{relpath.as_posix()}"], repo_root).strip()
-    except GitUnavailableError as e:
-        if "not a git repository" in str(e):
-            raise
+    except (NotAGitRepoError, GitMissingError):
+        # An unusable git ENVIRONMENT is not "this path is absent at this
+        # rev". Folding either into None makes every file look new (and
+        # git-missing used to do exactly that, silently).
+        raise
+    except GitCommandFailedError:
         return None
 
 
@@ -247,9 +348,11 @@ def blob_exists(repo_root: Path, sha: str) -> bool:
     """Return True if a blob exists in the repository."""
     try:
         _run(["cat-file", "-e", sha], repo_root)
-    except GitUnavailableError as e:
-        if "not a git repository" in str(e):
-            raise
+    except (NotAGitRepoError, GitMissingError):
+        # See :func:`blob_sha`: an unusable git environment must not read as
+        # "this blob is absent".
+        raise
+    except GitCommandFailedError:
         return False
     return True
 
@@ -376,9 +479,11 @@ def diff_tree_u0(repo_root: Path, base: str) -> str:
     when ``repo_root`` is nested inside a larger repository.
 
     Raises:
-        GitUnavailableError: *base* is not a resolvable commit here
+        GitCommandFailedError: *base* is not a resolvable commit here
             (GC'd after a squash-merge, or absent from a shallow clone).
-            Callers fall back to the per-file blob chain.
+            Callers fall back to the per-file blob chain — which is why the
+            classification matters: a NotAGitRepoError/GitMissingError from
+            the same call must NOT take that fallback.
 
     Pinned against hostile ambient config (``_pin``) — see
     :func:`diff_worktree_file_u0`.

@@ -35,7 +35,12 @@ import pytest
 
 from otto.bootstrap import BootstrapError, DependencyError
 from otto.cli.invoke import LabContextError
-from otto.coverage.capture.gitio import GitUnavailableError
+from otto.coverage.capture.gitio import (
+    GitCommandFailedError,
+    GitMissingError,
+    GitUnavailableError,
+    NotAGitRepoError,
+)
 from otto.coverage.errors import (
     CoverageConfigError,
     CoverageDataMismatchError,
@@ -46,9 +51,11 @@ from otto.coverage.overrides import OverrideConfigError
 from otto.coverage.tickets import TicketConfigError
 from otto.errors import OttoError
 from otto.host.app_shell import AppShellActiveError, AppShellTimeoutError, ParseMismatch
+from otto.host.errors import HostCommandError, HostUnreachableError
 from otto.host.login_proxy import LoginProxyError
 from otto.labs.errors import LabNotFoundError, LabRepositoryError
 from otto.lifecycle import SyncPhaseInterrupt
+from otto.link.manage import LinkCommandFailedError, LinkHostUnreachableError
 from otto.monitor.archive_edit import ArchiveLockedError
 from otto.monitor.db import UnsupportedDBError
 from otto.monitor.event_ops import EventValidationError
@@ -57,6 +64,7 @@ from otto.suite._retry import RetryAttemptTimeoutError
 from otto.suite.run import NoTestsMatchedError
 from otto.suite.selection import UnknownSelectionError
 from otto.tunnel.records import TunnelScanFailedError
+from otto.tunnel.socat import NoFreePortError
 from otto.utils import WaitTimeoutError
 from tests._fixtures.paths import PROJECT_ROOT
 
@@ -65,6 +73,9 @@ CASES: list[tuple[type[BaseException], type[BaseException]]] = [
     (DependencyError, Exception),
     (LabContextError, Exception),
     (GitUnavailableError, RuntimeError),
+    (GitMissingError, RuntimeError),
+    (NotAGitRepoError, RuntimeError),
+    (GitCommandFailedError, RuntimeError),
     (CoverageToolVersionError, RuntimeError),
     (CoverageConfigError, ValueError),
     (NoCoverageDataError, ValueError),
@@ -72,6 +83,8 @@ CASES: list[tuple[type[BaseException], type[BaseException]]] = [
     (OverrideConfigError, ValueError),
     (TicketConfigError, ValueError),
     (ParseMismatch, ValueError),
+    (HostUnreachableError, RuntimeError),
+    (HostCommandError, RuntimeError),
     (AppShellActiveError, RuntimeError),
     (AppShellTimeoutError, TimeoutError),
     (WaitTimeoutError, TimeoutError),
@@ -87,6 +100,9 @@ CASES: list[tuple[type[BaseException], type[BaseException]]] = [
     (RetryAttemptTimeoutError, TimeoutError),
     (UnknownSelectionError, ValueError),
     (TunnelScanFailedError, RuntimeError),
+    (NoFreePortError, RuntimeError),
+    (LinkHostUnreachableError, RuntimeError),
+    (LinkCommandFailedError, RuntimeError),
 ]
 
 

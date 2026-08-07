@@ -506,7 +506,9 @@ class TestExclusivityAndForeign:
     async def test_bare_impair_against_foreign_root_refuses(self) -> None:
         lab, carrot, _, _ = _bed()
         carrot.qdisc_texts = ["qdisc htb 8001: root refcnt 2 r2q 10\n"]
-        with pytest.raises(RuntimeError, match="foreign qdisc otto did not create"):
+        # ValueError, like every other structural refusal in this module —
+        # otto is declining, nothing failed. See repair_all's skip.
+        with pytest.raises(ValueError, match="foreign qdisc otto did not create"):
             await impair_link(lab, "edge", ImpairmentParams(delay_ms=50.0), from_host="carrot_seed")
         assert not carrot.sudo_commands
 

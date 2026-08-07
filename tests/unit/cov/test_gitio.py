@@ -9,7 +9,10 @@ import pytest
 
 from otto.coverage.capture import gitio as gitio_module
 from otto.coverage.capture.gitio import (
+    GitCommandFailedError,
+    GitMissingError,
     GitUnavailableError,
+    NotAGitRepoError,
     blob_exists,
     blob_sha,
     cat_blob,
@@ -217,6 +220,64 @@ def test_rev_parse_commit_non_commit_raises(tmp_path: Path) -> None:
     path, _ = _make_repo(tmp_path)
     with pytest.raises(GitUnavailableError):
         rev_parse_commit(path, "not-a-ref")
+
+
+class TestFailureClassification:
+    """Every failure out of the two runners carries WHICH failure it was.
+
+    Callers used to ask ``"not a git repository" in str(e)``, which is git's
+    English message and nothing more: under any other ``LC_MESSAGES`` the
+    test silently stops discriminating and every caller takes its
+    command-failed branch. The type is the answer now, and the probe that
+    produces it (``rev-parse --is-inside-work-tree``) is an exit code.
+    """
+
+    def test_git_not_on_path_is_gitmissingerror(self, tmp_path: Path, monkeypatch) -> None:
+        monkeypatch.setenv("PATH", str(tmp_path))  # a directory holding no git
+        with pytest.raises(GitMissingError):
+            head_commit(tmp_path)
+
+    def test_outside_a_work_tree_is_notagitrepoerror(self, tmp_path: Path) -> None:
+        with pytest.raises(NotAGitRepoError):
+            head_commit(tmp_path)
+
+    def test_failing_command_inside_a_repo_is_gitcommandfailederror(self, tmp_path: Path) -> None:
+        root, _ = _make_repo(tmp_path)
+        with pytest.raises(GitCommandFailedError):
+            rev_parse_commit(root, "no-such-ref")
+
+    def test_blob_sha_propagates_a_missing_git(self, tmp_path: Path, monkeypatch) -> None:
+        """The masked-as-absent defect: a missing git used to return None here.
+
+        ``blob_sha`` answers "the sha at this rev, or None if the path is not
+        there" — so folding an unrunnable git into None reported every file
+        in the tree as new, with no message anywhere.
+        """
+        root, _ = _make_repo(tmp_path)
+        monkeypatch.setenv("PATH", str(tmp_path))
+        with pytest.raises(GitMissingError):
+            blob_sha(root, Path("a.txt"))
+
+    def test_nonexistent_cwd_is_notagitrepoerror_not_a_missing_git(self, tmp_path: Path) -> None:
+        """`subprocess` fails the chdir before it execs, so this raises the SAME
+        FileNotFoundError a missing git does — and the arm used to report it as
+        "git executable not found".
+
+        Merely misleading while every caller swallowed it; a propagating lie
+        once blob_sha started re-raising GitMissingError, since a typo'd
+        repo_root would now abort a capture claiming git is not installed.
+        """
+        missing = tmp_path / "no-such-dir"
+        with pytest.raises(NotAGitRepoError, match="is not a directory"):
+            head_commit(missing)
+
+    def test_blob_sha_still_returns_none_for_a_path_absent_at_the_rev(self, tmp_path: Path) -> None:
+        root, _ = _make_repo(tmp_path)
+        assert blob_sha(root, Path("never-existed.c")) is None
+
+    def test_blob_exists_still_returns_false_for_an_unknown_sha(self, tmp_path: Path) -> None:
+        root, _ = _make_repo(tmp_path)
+        assert blob_exists(root, "0" * 40) is False
 
 
 def test_rev_list_first_parent_newest_first(tmp_path: Path) -> None:

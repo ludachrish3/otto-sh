@@ -50,9 +50,12 @@ class AnchorResolver:
         self._fallback_index: dict[str, AnchorResult] | None = None
         try:
             self._tree = parse_multifile_u0(gitio.diff_tree_u0(repo_root, base_commit))
-        except gitio.GitUnavailableError as e:
-            if "not a git repository" in str(e):
-                raise
+        except (gitio.NotAGitRepoError, gitio.GitMissingError):
+            # Neither is "this base_commit is gone", and the fallback below
+            # runs the SAME gitio calls: it would die anyway, several frames
+            # deeper inside hash_objects, with worse context.
+            raise
+        except gitio.GitCommandFailedError:
             shallow_hint = (
                 " (shallow clone — deepen with `git fetch --unshallow` to recover history)"
                 if gitio.is_shallow(repo_root)

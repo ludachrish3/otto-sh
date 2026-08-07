@@ -232,11 +232,21 @@ async def repair(
             fail(e, 2)
     lab = get_lab()
     if all_:
-        reports, failures = await repair_all(lab)
-        rprint(f"[green]repaired[/green] {len(reports)} link(s)")
-        if failures:
+        sweep = await repair_all(lab)
+        rprint(f"[green]repaired[/green] {len(sweep.repaired)} link(s)")
+        if sweep.skipped:
+            # Named, and deliberately BEFORE the failures block so it prints
+            # even on the success path: a skip used to be a silent `continue`,
+            # so a link carrying a foreign qdisc made `repair --all` report
+            # "repaired 0 link(s)" and exit 0 with nothing said about it.
+            # Exit code unchanged — declining a link otto never impaired is
+            # not a failure.
+            rprint(f"[yellow]skipped[/yellow] {len(sweep.skipped)} link(s):")
+            for skip in sweep.skipped:
+                print_error(f"  {skip}")
+        if sweep.failures:
             rprint("[red]failures:[/red]")
-            for failure in failures:
+            for failure in sweep.failures:
                 print_error(f"  {failure}")
             raise typer.Exit(1)
         return
@@ -250,6 +260,14 @@ async def repair(
 def _dir_text(state: LinkState, direction: FlowDirection) -> str:
     dstate: DirectionState | None = state.by_direction.get(direction)
     if dstate is None:
+        # Three ways to have no shape, and they are not the same news: "!"
+        # this direction's host answered and the read failed (the message is
+        # on its own row below), "?" nobody answered, "-" never read.
+        # read_errors is consulted FIRST and per direction — `unreachable` is
+        # link-wide, so on a link with one endpoint down and the other's tc
+        # broken it would otherwise claim "?" for both cells.
+        if direction in state.read_errors:
+            return "!"
         return "?" if state.unreachable else "-"
     if dstate.foreign:
         return "foreign qdisc — not otto's"
@@ -263,6 +281,23 @@ def _dir_text(state: LinkState, direction: FlowDirection) -> str:
 def _row(text: str) -> None:
     """Print one `list` row verbatim: no markup parsing, no width wrapping."""
     get_console().print(text, markup=False, soft_wrap=True)
+
+
+def _read_error_rows(state: LinkState) -> list[str]:
+    """One row per DISTINCT read failure, naming the directions it hit.
+
+    Deduped by message, not printed per direction: the whole-link failure
+    path (placement resolution itself failed, so neither direction has a
+    shape) records the same message under both keys, and these are full
+    sentences naming a host and a command — the `refusal` row above avoids
+    printing one twice for exactly this reason.
+    """
+    by_message: dict[str, list[str]] = {}
+    for direction in (FlowDirection.A_TO_B, FlowDirection.B_TO_A):
+        message = state.read_errors.get(direction)
+        if message is not None:
+            by_message.setdefault(message, []).append(direction.value)
+    return [f"  read failed ({', '.join(dirs)}): {msg}" for msg, dirs in by_message.items()]
 
 
 def _selector_rows(state: LinkState) -> list[str]:
@@ -316,6 +351,10 @@ async def list_links() -> None:
             # (mgmt interface, hop transit) are full sentences that would be
             # printed twice on one line.
             _row(f"  not impairable: {state.refusal}")
+        for row in _read_error_rows(state):
+            # Same treatment as `refusal`, and for the same reason: each is a
+            # full sentence naming a host and a command, not a table cell.
+            _row(row)
         for row in _selector_rows(state):
             _row(row)
     unreachable_ids = sorted(state.link.id for state in states if state.unreachable)
@@ -325,5 +364,16 @@ async def list_links() -> None:
         get_console().print(
             f"[yellow bold]partial scan[/yellow bold] — could not fully read: "
             f"{escape(', '.join(unreachable_ids))}",
+            soft_wrap=True,
+        )
+    read_failed_ids = sorted(state.link.id for state in states if state.read_failed)
+    if read_failed_ids:
+        # A SECOND summary line, not a widening of the one above: these hosts
+        # answered. Folding them into "could not fully read" is what sent an
+        # operator to check the network for a link whose host simply has no
+        # working tc.
+        get_console().print(
+            f"[yellow bold]read failed[/yellow bold] — host reachable, read command failed: "
+            f"{escape(', '.join(read_failed_ids))}",
             soft_wrap=True,
         )

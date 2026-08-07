@@ -50,7 +50,6 @@ DEBT: dict[tuple[str, str], str] = {
     ("host/connections.py", "credentials"): "(user, password) pair",
     ("host/login_proxy.py", "resolve_chain"): "target credential plus hop chain",
     ("link/derive.py", "addressing_from_dict"): "resolved id plus addressing",
-    ("link/manage.py", "repair_all"): "reports plus skipped ids",
     ("link/sentinel.py", "parse_impair_sentinel"): "three parsed fields",
     ("monitor/event_ops.py", "resolve_create"): "(start, end) pair",
     ("tunnel/discovery.py", "scan"): "observations plus an error string",

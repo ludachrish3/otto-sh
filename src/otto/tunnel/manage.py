@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, TypeGuard
 
 from ..host.daemon import kill_command, launch_command
+from ..host.errors import HostCommandError, HostUnreachableError
 from ..logger.mode import LogMode
 from .carrier import DEFAULT_CARRIER, TunnelCarrier, build_carrier
 from .discovery import (
@@ -78,7 +79,7 @@ async def _container_ip(container: Any) -> str:
     )
     result = await container.parent.exec(cmd, timeout=_TUNNEL_HOST_TIMEOUT, log=LogMode.QUIET)
     if result.timed_out:
-        raise RuntimeError(
+        raise HostUnreachableError(
             f"host {container.parent.id!r} timed out inspecting container {container.id!r}"
         )
     ip = result.value.strip() if result.is_ok else ""
@@ -105,7 +106,7 @@ async def _resolve_one(lab: "Lab", spec: EndpointSpec) -> ResolvedHop:
         try:
             running = await asyncio.wait_for(host.is_running(), _TUNNEL_HOST_TIMEOUT)
         except asyncio.TimeoutError as e:
-            raise RuntimeError(
+            raise HostUnreachableError(
                 f"host {host.parent.id!r} timed out probing container {host_id!r}"
             ) from e
         if not running:
@@ -298,9 +299,11 @@ async def _require_tools(host: Any, carrier: TunnelCarrier) -> None:
         carrier.requirements_command, timeout=_TUNNEL_HOST_TIMEOUT, log=LogMode.QUIET
     )
     if result.timed_out:
-        raise RuntimeError(f"host {host.id!r} timed out checking for {carrier.tools_description}")
+        raise HostUnreachableError(
+            f"host {host.id!r} timed out checking for {carrier.tools_description}"
+        )
     if not any(line.strip() == "ok" for line in result.value.splitlines()):
-        raise RuntimeError(
+        raise HostCommandError(
             f"host {host.id!r} is missing {carrier.tools_description} (required for tunnels)"
         )
 
@@ -318,7 +321,7 @@ async def _probe_used_ports(resolved: list[ResolvedHop]) -> set[int]:
             FREE_PORT_PROBE_COMMAND, timeout=_TUNNEL_HOST_TIMEOUT, log=LogMode.QUIET
         )
         if result.timed_out:
-            raise RuntimeError(f"host {r.hop.host!r} timed out probing for free ports")
+            raise HostUnreachableError(f"host {r.hop.host!r} timed out probing for free ports")
         return parse_listening_ports(result.value) if result.is_ok else set()
 
     return set().union(*await asyncio.gather(*(probe(r) for r in resolved)))
@@ -357,7 +360,7 @@ async def _verify_chain(
 
 def _raise_launch_failure(resolved: list[ResolvedHop], proc: "_ProcSpec", result: Any) -> None:
     """Raise for a launch that ran but reported failure (TRY301: kept out of the try body)."""
-    raise RuntimeError(
+    raise HostCommandError(
         f"host {_proc_host_name(resolved, proc)!r} failed to launch "
         f"{proc.direction.value}/{proc.role.value}: {result.value!r}"
     )
@@ -365,7 +368,9 @@ def _raise_launch_failure(resolved: list[ResolvedHop], proc: "_ProcSpec", result
 
 def _raise_launch_timeout(resolved: list[ResolvedHop], proc: "_ProcSpec") -> None:
     """Raise for a launch ``exec`` that timed out (TRY301: kept out of the try body)."""
-    raise RuntimeError(f"host {_proc_host_name(resolved, proc)!r} timed out spawning the tunnel")
+    raise HostUnreachableError(
+        f"host {_proc_host_name(resolved, proc)!r} timed out spawning the tunnel"
+    )
 
 
 def _raise_verify_failure(tunnel: Tunnel, missing: set[ProcKey], unreachable: list[str]) -> None:
@@ -377,7 +382,7 @@ def _raise_verify_failure(tunnel: Tunnel, missing: set[ProcKey], unreachable: li
     unreachable_note = (
         f" (unreachable during verify: {', '.join(unreachable)})" if unreachable else ""
     )
-    raise RuntimeError(
+    raise HostCommandError(
         f"tunnel {tunnel.id!r} failed post-add verify — not running: {pretty}{unreachable_note}"
     )
 

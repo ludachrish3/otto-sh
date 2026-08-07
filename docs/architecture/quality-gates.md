@@ -25,7 +25,7 @@ on that side.
 | Type checking | `ty` (pinned `==0.0.64`) | `tsc --noEmit` via `scripts/typecheck_web.sh` (vendored Untitled UI diagnostics filtered) |
 | Unused code / deps | ruff (`F401`, `ARG`, …) | `knip` — unused files, exports, dependencies |
 | Module layering | `tach` against `tach.toml` | — none today |
-| Scoped pattern rules | `ast-grep` against `.ast-grep/rules/` — thirteen Python rules | `ast-grep` — two rules (`no-plan-coordinates-ts`, `-tsx`), scoped to `web/src/**` |
+| Scoped pattern rules | `ast-grep` against `.ast-grep/rules/` — fourteen Python rules | `ast-grep` — two rules (`no-plan-coordinates-ts`, `-tsx`), scoped to `web/src/**` |
 | Import cost | `scripts/import_budget.py` — module-count caps, snapshots, denylist | — (knip covers dependencies only) |
 | Tests | `pytest` (+ `xdist`, `repeat`, `hypothesis`) | `vitest` |
 | Coverage floor | `coverage.py` / `pytest-cov` — 95 for the full local run, 90 for the hostless CI slice | `@vitest/coverage-v8` for the unit floor; the browser leg is folded in by `monocart-coverage-reports` and the merged report gated by `nyc` |
@@ -51,7 +51,7 @@ every comment, converting a documented debt list into a blessed one.
 
 ### The ast-grep rules
 
-`.ast-grep/rules/` holds fifteen rules, all `severity: error`. The scan roots
+`.ast-grep/rules/` holds sixteen rules, all `severity: error`. The scan roots
 are `src/otto web/src tests` — tests/ joined in the test-infra remediation
 (2026-08-06) so that *test-suite* pattern rules can exist — and the
 discipline that keeps that widening safe is that every rule carries an
@@ -64,6 +64,7 @@ fixture SUT repos (`tests/repo1..repo3`, `repo_broken`, `repo_e2e`) and
 | `coverage-git-through-gitio` | `src/otto/coverage/**`, `src/otto/cli/cov.py` |
 | `error-render-through-helper` | `src/otto/**` — explicit since tests/ joined the scan roots (it always meant shipped renderers) |
 | `models-no-module-scope-config-import` | `src/otto/models/**` |
+| `no-bare-runtimeerror-in-libraries` | `src/otto/link/**`, `src/otto/tunnel/**`, `src/otto/docker/**`, `src/otto/host/transfer/**` — four packages signalled unreachable-host, command-failed and structural-refusal through one stdlib type, so no consumer could tell them apart; 37 sites converted to `otto.host.errors`' pair, package domain classes, or `ValueError` in the wave that landed the rule |
 | `no-bare-status-return` | `src/otto/**` |
 | `no-handrolled-deadline-poll` | `src/otto/**` + `tests/**` minus fixture repos — poll-until-deadline grew 21 copies in three incompatible shapes with divergent expiry behavior; `otto.utils.wait_for` / `wait_for_async` is the one spelling, and expiry always raises (silent expiry is the defect class); `src/otto/host/shell_liveness.py` is ignored as the sanctioned fused probe-response primitive |
 | `no-parents-arithmetic-in-tests` | `tests/**` minus fixture repos — `Path(__file__).parents[N]` encodes the file's own depth, so moving the file silently re-anchors every path built from it; import `TESTS_ROOT`/`PROJECT_ROOT` from `tests/_fixtures/paths.py` (the one sanctioned derivation point) |

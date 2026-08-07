@@ -79,16 +79,34 @@ class TestRepairCommand:
         assert result.exit_code == 2
 
     def test_repair_all_failures_exit_1(self) -> None:
+        from otto.link import RepairAllReport
+
+        sweep = RepairAllReport(failures=["lnk-abc: host down"])
         with (
             patch("otto.cli.link.get_lab", return_value=object()),
-            patch(
-                "otto.cli.link.repair_all",
-                AsyncMock(return_value=([], ["lnk-abc: host down"])),
-            ),
+            patch("otto.cli.link.repair_all", AsyncMock(return_value=sweep)),
         ):
             result = runner.invoke(link_app, ["repair", "--all"])
         assert result.exit_code == 1
         assert "lnk-abc: host down" in result.output
+
+    def test_repair_all_names_skipped_links_without_failing(self) -> None:
+        """A skip used to be a silent `continue`: a link carrying a foreign
+        qdisc made `repair --all` print "repaired 0 link(s)", exit 0, and say
+        nothing at all about the link it had declined to touch."""
+        from otto.link import RepairAllReport
+
+        sweep = RepairAllReport(
+            skipped=["lnk-abc: carrot_seed/eth1.100 has a foreign qdisc otto did not create"]
+        )
+        with (
+            patch("otto.cli.link.get_lab", return_value=object()),
+            patch("otto.cli.link.repair_all", AsyncMock(return_value=sweep)),
+        ):
+            result = runner.invoke(link_app, ["repair", "--all"])
+        assert result.exit_code == 0, result.output
+        assert "skipped 1 link(s)" in result.output
+        assert "foreign qdisc otto did not create" in result.output
 
 
 class TestListCommand:
@@ -304,6 +322,96 @@ class TestScopedCli:
         assert "  a->b  5201/tcp  delay 200ms" in result.output
         # rows sort by (port, proto): 53/udp before 5201/tcp, not insertion order
         assert result.output.index("53/udp") < result.output.index("5201/tcp")
+
+    def test_list_distinguishes_a_failed_read_from_an_unreachable_host(self) -> None:
+        """ "?" and "!" are different news and get different summary lines.
+
+        A host that answered and failed the read must not be listed under
+        "could not fully read" — that is the network-fault story, and it is
+        the wrong place to send someone whose host simply has no working tc.
+        """
+        broken = LinkState(
+            link=LINK,
+            impairable=True,
+            unreachable=False,
+            by_direction={FlowDirection.A_TO_B: None},
+            read_errors={
+                FlowDirection.A_TO_B: (
+                    "'tc qdisc show dev eth1.100' failed on 'carrot_seed': not found"
+                )
+            },
+        )
+        with (
+            patch("otto.cli.link.get_lab", return_value=object()),
+            patch("otto.cli.link.read_link_states", AsyncMock(return_value=[broken])),
+        ):
+            result = runner.invoke(link_app, ["list"])
+        assert result.exit_code == 0, result.output
+        assert "a->b: !" in result.output
+        assert (
+            "read failed (a->b): 'tc qdisc show dev eth1.100' failed on 'carrot_seed'"
+            in result.output
+        )
+        assert "host reachable, read command failed" in result.output
+        assert "partial scan" not in result.output
+
+    def test_list_gives_each_direction_its_own_cell_and_story(self) -> None:
+        """One endpoint down, the other's tc broken — the shape a link-wide
+        read_error string could not render: `unreachable` is per LINK, so it
+        claimed "?" for both cells."""
+        mixed = LinkState(
+            link=LINK,
+            impairable=True,
+            unreachable=True,
+            by_direction={FlowDirection.A_TO_B: None, FlowDirection.B_TO_A: None},
+            read_errors={FlowDirection.B_TO_A: "'tc qdisc show' failed on 'tomato_seed': nope"},
+        )
+        with (
+            patch("otto.cli.link.get_lab", return_value=object()),
+            patch("otto.cli.link.read_link_states", AsyncMock(return_value=[mixed])),
+        ):
+            result = runner.invoke(link_app, ["list"])
+        assert result.exit_code == 0, result.output
+        assert "a->b: ?  b->a: !" in result.output
+        assert "read failed (b->a): 'tc qdisc show' failed on 'tomato_seed'" in result.output
+        # Both summary lines fire — the link really is both things at once.
+        assert "partial scan" in result.output
+        assert "host reachable, read command failed" in result.output
+
+    def test_list_prints_a_whole_link_read_failure_once_not_per_direction(self) -> None:
+        """Placement resolution failing records the SAME message under both
+        directions; these are full sentences and one of them is enough."""
+        both = LinkState(
+            link=LINK,
+            impairable=True,
+            read_errors={
+                FlowDirection.A_TO_B: "'ip -o addr show' failed on 'carrot_seed': nope",
+                FlowDirection.B_TO_A: "'ip -o addr show' failed on 'carrot_seed': nope",
+            },
+        )
+        with (
+            patch("otto.cli.link.get_lab", return_value=object()),
+            patch("otto.cli.link.read_link_states", AsyncMock(return_value=[both])),
+        ):
+            result = runner.invoke(link_app, ["list"])
+        assert result.output.count("ip -o addr show' failed on 'carrot_seed'") == 1
+        assert "read failed (a->b, b->a):" in result.output
+
+    def test_list_still_marks_an_unreachable_host_with_a_question_mark(self) -> None:
+        gone = LinkState(
+            link=LINK,
+            impairable=True,
+            unreachable=True,
+            by_direction={FlowDirection.A_TO_B: None},
+        )
+        with (
+            patch("otto.cli.link.get_lab", return_value=object()),
+            patch("otto.cli.link.read_link_states", AsyncMock(return_value=[gone])),
+        ):
+            result = runner.invoke(link_app, ["list"])
+        assert "a->b: ?" in result.output
+        assert "partial scan" in result.output
+        assert "read failed" not in result.output
 
 
 class TestCompleter:

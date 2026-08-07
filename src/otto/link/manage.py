@@ -3,7 +3,11 @@
 Reads go through ``host.exec`` (no privilege needed); mutations through
 ``host.run(cmd, sudo=host.current_user != "root")``. Every host call passes
 ``timeout=_IMPAIR_HOST_TIMEOUT`` and a down host is a loud, host-named
-``RuntimeError`` — never a skip (spec §9, dev-VM rule).
+:class:`LinkHostUnreachableError` — never a skip (spec §9, dev-VM rule). A
+host that ANSWERS and reports failure is the other class,
+:class:`LinkCommandFailedError`; both subclass ``RuntimeError``, so a caller
+that only wants "something went wrong" is unaffected, but ``list`` and the
+timer-cancel hygiene step both act on the difference.
 
 These four functions — :func:`impair_link`, :func:`repair_link`,
 :func:`repair_all`, :func:`read_link_states` — plus :func:`find_link` ARE the
@@ -17,8 +21,10 @@ from dataclasses import dataclass
 from dataclasses import field as dc_field
 from typing import TYPE_CHECKING, Any
 
+from ..errors import OttoError
 from ..host.builtin_hosts import BUILTIN_LOCAL_HOST_ID
 from ..host.daemon import kill_command, launch_command
+from ..host.errors import exec_or_raise
 from ..logger.mode import LogMode
 from .impairer import FIRST_SELECTOR_BAND, MAX_SELECTORS, LinkImpairer, ScopedState, build_impairer
 from .model import Link
@@ -52,6 +58,30 @@ _BOTH = BOTH_DIRECTIONS
 _ADDR_SHOW_COMMAND = "ip -o addr show"
 
 
+class LinkHostUnreachableError(OttoError, RuntimeError):
+    """A placement host could not be reached, or never answered in time.
+
+    Nothing was learned about the netdev's qdisc state — which is why
+    ``list`` reports the link as unreachable and why the best-effort
+    timer-cancel step is allowed to skip on it.
+    """
+
+
+class LinkCommandFailedError(OttoError, RuntimeError):
+    """The host answered and the command failed (or the result was wrong).
+
+    A reachable host whose ``tc``/``ps`` is broken, a mutation that did not
+    take, a post-apply verify that observed the wrong shape. Distinct from
+    :class:`LinkHostUnreachableError` because it is a real failure about a
+    reachable host, never a scan the caller may quietly skip.
+
+    Domain-named rather than reusing
+    :class:`~otto.host.errors.HostCommandError`: an ``except`` around
+    ``impair_link`` should be able to mean "link work failed" without also
+    catching every unrelated host command a future implementation runs.
+    """
+
+
 @dataclass(frozen=True, slots=True)
 class AppliedPlacement:
     """One placement's post-verify impairment state."""
@@ -81,6 +111,36 @@ class RepairReport:
     link_id: str
     cleared: list[Placement] = dc_field(default_factory=list)
     timers_cancelled: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class RepairAllReport:
+    """Outcome of :func:`repair_all`: repaired, failed, and declined.
+
+    A dataclass rather than the ``(reports, failures)`` tuple this used to
+    return, because the third bucket is exactly the widening
+    ``.ast-grep/rules/no-tuple-return.yml`` exists to stop — its own motivating
+    defect was a 2-tuple grown to a 3-tuple, breaking every unpacking site.
+    Adding a field here breaks nobody.
+    """
+
+    repaired: list[RepairReport] = dc_field(default_factory=list)
+    """One entry per link whose impairment was cleared and verified gone."""
+
+    failures: list[str] = dc_field(default_factory=list)
+    """``"<link id>: <why>"`` per link that FAILED to repair — host down, a
+    command that errored, a clear that did not take. These set the exit code."""
+
+    skipped: list[str] = dc_field(default_factory=list)
+    """``"<link id>: <why>"`` per link otto DECLINED to touch — no named
+    interface, a local link, a management-interface refusal, a foreign qdisc.
+
+    Reported rather than merely skipped: this bucket used to be a bare
+    ``continue``, so ``repair --all`` against a link carrying a foreign qdisc
+    printed ``repaired 0 link(s)`` and exited 0, saying nothing about the one
+    link it had refused. Naming them is verbose on a lab full of implicit
+    links (every one lands here) and that is the accepted cost — a sweep that
+    silently does nothing is the worse failure."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,6 +179,30 @@ class LinkState:
     public dataclass, and inserting a field mid-order silently rebinds any
     positional construction instead of failing."""
 
+    read_errors: dict[FlowDirection, str] = dc_field(default_factory=dict)
+    """Per-direction message when that direction's read failed on a host that
+    ANSWERED.
+
+    Distinct from :attr:`unreachable`, and the distinction is the point: a
+    host replying "``tc``: command not found" was reached, so reporting it as
+    unreachable sends the operator to look at the network instead of at the
+    host's tooling. Both leave :attr:`by_direction` at ``None`` for that
+    direction; only this one carries a message to print.
+
+    Per DIRECTION, not per link, because the two directions land on different
+    hosts: one endpoint down and the other's ``tc`` broken is a real shape,
+    and a single link-wide string had to pick one story for both cells. The
+    whole-link failure path (placement resolution itself failed, so neither
+    direction has a shape) records the same message under both keys; the CLI
+    dedupes by message when it prints.
+
+    Appended for the same reason :attr:`refusal` was — see above."""
+
+    @property
+    def read_failed(self) -> bool:
+        """True when any direction's read failed on a reachable host."""
+        return bool(self.read_errors)
+
 
 def find_link(lab: Any, ident: str) -> Link:
     """Resolve *ident* (a link id or its ``name``) against ``lab.static_links()``.
@@ -142,18 +226,20 @@ def find_link(lab: Any, ident: str) -> Link:
 
 
 async def _exec(host: Any, cmd: str) -> Any:
-    """Run a read-only *cmd* on *host*; timeout/transport errors are host-named."""
-    try:
-        result = await host.exec(cmd, timeout=_IMPAIR_HOST_TIMEOUT, log=LogMode.QUIET)
-    except (OSError, ConnectionError) as e:
-        raise RuntimeError(f"host {host.id!r} unreachable running {cmd!r}: {e!r}") from e
-    if result.timed_out:
-        raise RuntimeError(
-            f"host {host.id!r} unreachable running {cmd!r}: timed out after {_IMPAIR_HOST_TIMEOUT}s"
-        )
-    if not result.is_ok:
-        raise RuntimeError(f"{cmd!r} failed on {host.id!r}: {result.msg or result.value}")
-    return result
+    """Run a read-only *cmd* on *host*; timeout/transport errors are host-named.
+
+    The shared :func:`~otto.host.errors.exec_or_raise` sequence with this
+    package's OWN pair of errors substituted — transport, then timed-out, then
+    non-ok. The messages are unchanged because they are where that helper's
+    pattern came from.
+    """
+    return await exec_or_raise(
+        host,
+        cmd,
+        timeout=_IMPAIR_HOST_TIMEOUT,
+        unreachable=LinkHostUnreachableError,
+        failed=LinkCommandFailedError,
+    )
 
 
 async def _root_run(host: Any, cmd: str) -> Any:
@@ -170,9 +256,11 @@ async def _root_run(host: Any, cmd: str) -> Any:
             cmd, sudo=need_sudo, timeout=_IMPAIR_HOST_TIMEOUT, log=LogMode.QUIET
         )
     except (OSError, ConnectionError) as e:
-        raise RuntimeError(f"host {host.id!r} unreachable running {cmd!r}: {e!r}") from e
+        raise LinkHostUnreachableError(
+            f"host {host.id!r} unreachable running {cmd!r}: {e!r}"
+        ) from e
     if results[0].timed_out:
-        raise RuntimeError(
+        raise LinkHostUnreachableError(
             f"host {host.id!r} unreachable running {cmd!r}: timed out after {_IMPAIR_HOST_TIMEOUT}s"
         )
     return results[0]
@@ -295,9 +383,18 @@ async def _read_state(host: Any, impairer: LinkImpairer, netdev: str) -> ScopedS
 
 
 def _ensure_not_foreign(host: Any, netdev: str, state: ScopedState) -> None:
-    """Refuse to mutate a root qdisc otto did not generate (spec §1)."""
+    """Refuse to mutate a root qdisc otto did not generate (spec §1).
+
+    A ``ValueError``, matching this module's convention for a STRUCTURAL
+    refusal (``find_link``, ``_directions``, the exclusivity raises): nothing
+    failed, otto is declining. That is what makes :func:`repair_all` skip the
+    link rather than collect it as a failure — a foreign qdisc was never
+    otto's impairment, so "repair every link" has nothing to do here. The
+    single-link paths still refuse loudly: the CLI catches ``ValueError`` and
+    ``RuntimeError`` alike.
+    """
     if state.kind == "foreign":
-        raise RuntimeError(
+        raise ValueError(
             f"{host.id}/{netdev} has a foreign qdisc otto did not create — "
             "refusing to modify it (clear it manually with tc if it is expendable)"
         )
@@ -326,13 +423,24 @@ async def _cancel_timers(
     ``everything=True`` reaps every v1 AND v2 timer (bare repair). Otherwise
     ``selector=None`` matches only v1 whole-link timers (today's exact
     semantics — scoped state can't hold v1 timers, exclusivity guarantees
-    it) and ``selector=S`` matches only S's own v2 timer. Best-effort: a
-    scan failure returns 0 rather than raising — cancellation is a hygiene
-    step, not the operation itself.
+    it) and ``selector=S`` matches only S's own v2 timer.
+
+    Best-effort ONLY against an unreachable host: cancellation is a hygiene
+    step, not the operation itself, and every caller's next ``_exec`` on the
+    same host raises loudly anyway. A reachable host whose ``ps`` FAILED is
+    not hygiene — it means the scan cannot see the timers that are about to
+    fire against state this call is changing — so that propagates, as does
+    any bare ``RuntimeError`` from the host stack beneath.
+
+    Deliberately NOT widened the way :func:`_link_state`'s read arms were:
+    this is a MUTATING path, where raising IS the right answer. The outcome is
+    unchanged either way — the caller's very next ``_read_state`` hits the
+    same dead session and raises — so the only difference is that the failure
+    now names the step that actually failed rather than the one after it.
     """
     try:
         result = await _exec(host, IMPAIR_PS_COMMAND)
-    except RuntimeError:
+    except LinkHostUnreachableError:
         return 0
     pids = [
         t.pid
@@ -437,7 +545,7 @@ def _verify_scoped(
             ", ".join(f"{s.describe()} [{p.describe()}]" for s, p in observed_map.items())
             or observed.kind
         )
-        raise RuntimeError(
+        raise LinkCommandFailedError(
             f"post-apply verify failed on {host.id}/{placement.netdev}: "
             f"expected [{exp_text}], observed [{obs_text}]"
         )
@@ -542,7 +650,7 @@ def _raise_verify_mismatch(
     observed: ImpairmentParams | None,
 ) -> None:
     """Raise for a post-apply verify mismatch (TRY301: kept out of the try body)."""
-    raise RuntimeError(
+    raise LinkCommandFailedError(
         f"post-apply verify failed on {host.id}/{placement.netdev}: "
         f"expected [{_describe_state(expected)}], observed [{_describe_state(observed)}]"
     )
@@ -710,7 +818,7 @@ async def repair_link(lab: "Lab", ident: str, *, selector: Selector | None = Non
             await _root_run(host, impairer.clear_command(placement.netdev))
             still = await _read_state(host, impairer, placement.netdev)
             if still.kind != "clean":
-                raise RuntimeError(
+                raise LinkCommandFailedError(
                     f"repair failed on {host.id}/{placement.netdev}: impairment still present"
                 )
             cleared.append(placement)
@@ -731,41 +839,53 @@ async def repair_link(lab: "Lab", ident: str, *, selector: Selector | None = Non
                 await _root_run(host, cmd)
         still = await _read_state(host, impairer, placement.netdev)
         if selector in still.selectors or still.kind in ("whole", "foreign"):
-            raise RuntimeError(
+            raise LinkCommandFailedError(
                 f"repair failed on {host.id}/{placement.netdev}: impairment still present"
             )
         cleared.append(placement)
     return RepairReport(link.id, cleared, timers_cancelled)
 
 
-# DEBT(no-tuple-return): reports plus skipped ids.
-# ast-grep-ignore: no-tuple-return
-async def repair_all(lab: "Lab") -> tuple[list[RepairReport], list[str]]:
+async def repair_all(lab: "Lab") -> RepairAllReport:
     """Repair every static link in *lab*; never raises.
 
     A link that structurally can't be impaired (:class:`ValueError` — no
-    named interface, local-link, mgmt refusal, ...) is silently skipped: it
-    was never impaired in the first place. A link whose repair fails for a
-    live reason (:class:`RuntimeError` — host down, command failed) is
-    collected into *failures* instead of aborting the rest.
+    named interface, local-link, mgmt refusal, a FOREIGN qdisc otto did not
+    create) is SKIPPED and named: it was never impaired in the first place,
+    so a sweep has nothing to do about it, but a sweep that declines a link
+    must say so. A link whose repair fails for a live reason
+    (:class:`RuntimeError` — host down, command failed) is collected into
+    :attr:`~RepairAllReport.failures` instead of aborting the rest.
     """
-    reports: list[RepairReport] = []
-    failures: list[str] = []
+    report = RepairAllReport()
     for link in lab.static_links():
         try:
-            reports.append(await repair_link(lab, link.id))
-        except ValueError:  # noqa: PERF203 — per-item resilience
-            continue
+            report.repaired.append(await repair_link(lab, link.id))
+        except ValueError as e:  # noqa: PERF203 — per-item resilience
+            report.skipped.append(f"{link.id}: {e}")
         except RuntimeError as e:
-            failures.append(f"{link.id}: {e}")
-    return reports, failures
+            report.failures.append(f"{link.id}: {e}")
+    return report
 
 
 async def _link_state(lab: Any, link: Link) -> LinkState:
     """Read one link's impairment state.
 
-    Structural refusals and unreachable hosts are reported as flags, never
-    raised (spec §9 — ``list`` never dies).
+    Structural refusals, unreachable hosts and failed reads are reported as
+    flags/messages, never raised (spec §9 — ``list`` never dies). The last
+    two are separate fields because they send the operator to different
+    places: :attr:`LinkState.unreachable` means the host never answered,
+    :attr:`LinkState.read_errors` means it answered and the read failed.
+
+    "Never dies" is why the read arms end at bare ``RuntimeError`` rather
+    than at this module's two classes. The host stack underneath still
+    raises unnamed ``RuntimeError``s that no rule in
+    ``.ast-grep/rules/`` covers — a dead session
+    (``host/session.py``), a declared-but-not-running container
+    (``host/docker_host.py``), an unresolvable hop
+    (``host/remote_host.py``) — and this function is the last place that can
+    catch them: ``read_link_states`` promises never to raise per link, and
+    ``otto link list`` has no ``try`` of its own.
 
     The structural question is ASKED first rather than only inferred from the
     ValueError it would raise, because the two answers differ in the only way
@@ -788,6 +908,7 @@ async def _link_state(lab: Any, link: Link) -> LinkState:
         placements = await _resolve_placements(lab, link, _BOTH)
         by_direction: dict[FlowDirection, DirectionState | None] = {}
         unreachable = False
+        read_errors: dict[FlowDirection, str] = {}
         for placement in placements:
             host = _host(lab, placement.host_id)
             impairer = _impairer_for(host)
@@ -798,17 +919,50 @@ async def _link_state(lab: Any, link: Link) -> LinkState:
                     scoped={sel: params for sel, (_band, params) in state.selectors.items()},
                     foreign=state.kind == "foreign",
                 )
-            except RuntimeError:
+            except LinkHostUnreachableError:
                 unreachable = True
                 by_direction[placement.direction] = None
-        return LinkState(link, by_direction, impairable=True, unreachable=unreachable)
+            except LinkCommandFailedError as e:
+                # The host ANSWERED. Reporting this as unreachable — which is
+                # what one shared `except RuntimeError` did — points the
+                # operator at the network when the fault is the host's own tc
+                # (missing, wrong version, unprivileged).
+                read_errors.setdefault(placement.direction, str(e))
+                by_direction[placement.direction] = None
+            except RuntimeError as e:
+                # Deliberately WIDE, and it must stay that way: the arm above
+                # covers what THIS module raises, but the host stack below it
+                # raises unnamed RuntimeErrors no rule scopes (dead session,
+                # container not running, unresolvable hop). Narrowing here let
+                # those escape `read_link_states`, which promises never to
+                # raise per link. Filed as a read failure rather than as
+                # unreachable: whether the host answered is exactly what such
+                # an error does NOT tell us, and the cell that claims less is
+                # the safer wrong answer.
+                read_errors.setdefault(placement.direction, str(e))
+                by_direction[placement.direction] = None
+        return LinkState(
+            link,
+            by_direction,
+            impairable=True,
+            unreachable=unreachable,
+            read_errors=read_errors,
+        )
     except ValueError as e:
         # A refusal only a scan can find: the management-interface and
         # hop-transit checks read each placement host's live address table,
         # and an in-path link's placements are derived from the middlebox's.
         return LinkState(link, {}, impairable=False, refusal=str(e), unreachable=False)
-    except RuntimeError:
+    except LinkHostUnreachableError:
         return LinkState(link, {}, impairable=True, unreachable=True)
+    except RuntimeError as e:
+        # Placement resolution failed, so NEITHER direction has a shape —
+        # both keys get the same message and the CLI dedupes when printing.
+        # Same two cases as the per-placement arms, one level up:
+        # LinkCommandFailedError (a reachable host whose `ip addr` failed is
+        # not an unreachable host) and any bare RuntimeError the host stack
+        # raised on the way (see this function's docstring).
+        return LinkState(link, {}, impairable=True, read_errors=dict.fromkeys(_BOTH, str(e)))
 
 
 async def read_link_states(lab: "Lab") -> list[LinkState]:

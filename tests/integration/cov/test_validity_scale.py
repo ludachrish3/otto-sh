@@ -58,4 +58,9 @@ def test_fold_gcd_base_is_batched(tmp_path, monkeypatch):
         )[1],
     )
     tl.fold()
-    assert len(calls) <= 6, [" ".join(c) for c in calls]
+    # 7, was 6: the GC'd base makes diff_tree_u0 fail, and failure
+    # classification now spends one extra spawn (`rev-parse
+    # --is-inside-work-tree`) deciding not-a-repo vs command-failed —
+    # through the counted chokepoint, so this budget SEES it (a failure-path
+    # spawn the instrument cannot see is a spawn no budget bounds).
+    assert len(calls) <= 7, [" ".join(c) for c in calls]

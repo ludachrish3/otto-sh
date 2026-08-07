@@ -133,7 +133,7 @@ depends_on = ["otto.config", "otto.context", "otto.logger"]
 path = "otto.link"
 # NOTE: no otto.tunnel here — the packages are fully decoupled via
 # otto.host.daemon (July finding a1/a3, FIXED). Keep it that way.
-depends_on = ["otto.lifecycle", "otto.logger", "otto.registry", "otto.models", "otto.host"]
+depends_on = ["otto.lifecycle", "otto.logger", "otto.registry", "otto.models", "otto.host", "otto.errors"]
 
 [[modules]]
 path = "otto.logger"

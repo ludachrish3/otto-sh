@@ -22,6 +22,7 @@ from typing import Any
 from ..config.lab import Lab
 from ..config.repo import DockerCompose, Repo
 from ..host.docker_host import DockerContainerHost
+from ..host.errors import HostCommandError
 from ..host.host import Host
 from ..host.unix_host import UnixHost
 from ..result import CommandResult
@@ -240,7 +241,7 @@ async def compose_up(
         for name, res in results.items():
             if not res.is_ok:
                 # value, not msg: the captured build output is the diagnosis.
-                raise RuntimeError(
+                raise HostCommandError(
                     f"build for image {name!r} failed before compose up: {res.value}"
                 )
 
@@ -335,7 +336,7 @@ async def _up_and_register(
                 )
                 await asyncio.sleep(_NETWORK_RACE_RETRY_BACKOFF_S)
                 continue
-            raise RuntimeError(f"docker compose up failed: {up.value}")
+            raise HostCommandError(f"docker compose up failed: {up.value}")
     else:
         logger.info(rf"\[docker] {proj} already running on {parent.id}; reusing")
 
@@ -367,7 +368,7 @@ async def _up_and_register(
         # the registration loop would not run, and compose_up would return {} —
         # which `otto docker up` prints as "0 container(s) registered" in green,
         # exit 0. A stack that is UP and unusable must not report success.
-        raise RuntimeError(
+        raise HostCommandError(
             f"listing {proj}'s services on {parent.id} failed and the project declares "
             f"none of its own, so no container host can be registered — add "
             f"`services = [...]` to [[docker.composes]] to name them: {live.value}"
@@ -375,7 +376,10 @@ async def _up_and_register(
 
     services = declared_services or sorted(live_services)
     if not services:
-        raise RuntimeError(
+        # ValueError, not a host error: nothing on the parent failed. The
+        # compose file simply declares no services, which is the same class of
+        # refusal as _resolve_parent's "no docker host specified".
+        raise ValueError(
             f"compose stack {proj} is up on {parent.id} but names no services, so there "
             "is nothing to register — check the compose file's `services:` block"
         )
@@ -412,7 +416,7 @@ async def _up_and_register(
         # the other way: every service resolved to no running container. The
         # usual cause is that they all exited immediately — a container that is
         # not running is not a host otto can drive.
-        raise RuntimeError(
+        raise HostCommandError(
             f"none of compose stack {proj}'s {len(services)} service(s) resolved to a "
             f"running container on {parent.id}, so no host was registered — the usual "
             f"cause is that they all exited immediately; see the per-service warnings "
@@ -529,7 +533,7 @@ async def composed(
     if not own:
         probed = await _stack_already_up(parent, proj)
         if probed is None:
-            raise RuntimeError(
+            raise HostCommandError(
                 f"cannot tell whether {proj} was already running on {parent.id}, so "
                 "composed() cannot promise to leave a peer's stack alone; pass "
                 "own=True to tear down unconditionally"

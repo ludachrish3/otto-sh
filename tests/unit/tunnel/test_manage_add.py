@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 
+from otto.host.errors import HostCommandError, HostUnreachableError
 from otto.result import CommandResult
 from otto.tunnel import manage
 from otto.tunnel.discovery import DISCOVERY_PS_COMMAND
@@ -329,7 +330,7 @@ class TestPortProbe:
         lab, calls, _tunnel = _pair()
         lab.hosts["b"].probe_timeout = True
 
-        with pytest.raises(RuntimeError, match="host 'b' timed out probing"):
+        with pytest.raises(HostUnreachableError, match="host 'b' timed out probing"):
             asyncio.run(add_tunnel(lab, [("a", None), ("b", None)], port=8080))
 
         assert all(not cmd.startswith(_LAUNCH_PREFIX) for _h, cmd in calls)
@@ -341,7 +342,7 @@ class TestRequireTools:
         lab, calls, _tunnel = _pair()
         lab.hosts["b"].tools_ok = False
 
-        with pytest.raises(RuntimeError, match="host 'b' is missing socat"):
+        with pytest.raises(HostCommandError, match="host 'b' is missing socat"):
             asyncio.run(add_tunnel(lab, [("a", None), ("b", None)], port=8080))
 
         assert all(cmd != FREE_PORT_PROBE_COMMAND for _h, cmd in calls)
@@ -371,7 +372,7 @@ class TestRollback:
             ),
         ]
 
-        with pytest.raises(RuntimeError, match="host 'a' failed to launch"):
+        with pytest.raises(HostCommandError, match="host 'a' failed to launch"):
             asyncio.run(add_tunnel(lab, [("a", None), ("b", None)], port=8080))
 
         assert not any(cmd.startswith("kill ") for cmd in a.commands)
@@ -399,7 +400,7 @@ class TestRollback:
         incomplete = _full_ps(tunnel, "b", carrier_fwd, carrier_rev, omit=frozenset({missing_key}))
         b.ps_texts = ["", incomplete]
 
-        with pytest.raises(RuntimeError, match=r"not running: .*b/rev/ingress") as exc_info:
+        with pytest.raises(HostCommandError, match=r"not running: .*b/rev/ingress") as exc_info:
             asyncio.run(manage.add_tunnel(lab, [("a", None), ("b", None)], port=8080))
 
         assert "b/rev/ingress" in str(exc_info.value)
@@ -449,7 +450,7 @@ class TestRollback:
         b.ps_texts = ["", _ps_line(tunnel, Direction.FWD, Role.EGRESS, 1, carrier_fwd, 999)]
         a.ps_texts = ["", ""]
 
-        with pytest.raises(RuntimeError, match="host 'b' timed out spawning"):
+        with pytest.raises(HostUnreachableError, match="host 'b' timed out spawning"):
             asyncio.run(add_tunnel(lab, [("a", None), ("b", None)], port=8080))
 
         launch_idx = next(i for i, (_h, cmd) in enumerate(calls) if cmd.startswith(_LAUNCH_PREFIX))
@@ -519,7 +520,7 @@ class TestInternals:
         # satisfied": failure text that merely CONTAINS the substring "ok"
         # (e.g. "not ok", "broken") must not pass the fail-fast tools check.
         host = FakeHost("a", ip="10.0.0.1", tools_output="tools not ok")
-        with pytest.raises(RuntimeError, match="missing socat and/or bash"):
+        with pytest.raises(HostCommandError, match="missing socat and/or bash"):
             asyncio.run(_require_tools(host, SocatCarrier()))
 
     def test_require_tools_accepts_a_bare_ok_line_among_noise(self) -> None:
@@ -533,7 +534,7 @@ class TestInternals:
         # raising asyncio.TimeoutError — _require_tools must still convert
         # that into the same host-named message it always raised.
         host = FakeHost("a", ip="10.0.0.1", tools_timeout=True)
-        with pytest.raises(RuntimeError, match="host 'a' timed out checking for socat"):
+        with pytest.raises(HostUnreachableError, match="host 'a' timed out checking for socat"):
             asyncio.run(_require_tools(host, SocatCarrier()))
 
     def test_probe_used_ports_gathers_across_hosts(self) -> None:
@@ -592,7 +593,7 @@ class TestInternals:
         tunnel = Tunnel(protocol="tcp", service_port=8080, path=(TunnelHop("a"), TunnelHop("b")))
         missing: set = {("b", Direction.REV, Role.INGRESS)}
 
-        with pytest.raises(RuntimeError, match="unreachable during verify: b"):
+        with pytest.raises(HostCommandError, match="unreachable during verify: b"):
             manage._raise_verify_failure(tunnel, missing, ["b"])
 
 

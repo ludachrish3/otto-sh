@@ -2,8 +2,13 @@
 
 The counter wraps gitio._run_raw, the single chokepoint every helper
 funnels through. Budget: resolver construction = 1 (tree diff) with +1
-allowed for the shallow probe on the fallback path; per-file resolves
+allowed for the shallow probe on the fallback path, and +1 more for the
+work-tree probe that classifies the tree diff's failure; per-file resolves
 on the tree path spawn ZERO except the existence stat (not git).
+
+That third spawn is why the chokepoint matters more than the number: it is
+a FAILURE-path spawn, and it goes through `_run_raw` so this counter can see
+it at all. A budget that only counts the happy path bounds nothing.
 """
 
 import subprocess
@@ -11,6 +16,7 @@ from pathlib import Path
 
 import pytest
 
+from otto.coverage.anchor import AnchorResolver
 from otto.coverage.capture import gitio
 from otto.coverage.capture.model import Capture, CaptureFileCov
 from otto.coverage.store.model import CoverageStore
@@ -74,6 +80,28 @@ def big_repo(tmp_path: Path):
         files=files,
     )
     return root, cap
+
+
+def test_failure_path_classification_probe_is_counted(counted_git, big_repo):
+    """The work-tree probe must be VISIBLE to this counter, not invisible.
+
+    It classifies a failed git call (not-a-repo vs. the command itself
+    failing) and it runs through ``_run_raw`` for exactly that reason: a spawn
+    that goes straight to ``subprocess`` is a spawn no budget guard can bound,
+    and failure paths are precisely where an unnoticed per-file spawn would
+    hide. So the number here going UP is the point — what would be wrong is a
+    failure path the instrument cannot see.
+
+    Fallback construction is three spawns: the tree diff that fails against an
+    unresolvable base, the probe that classifies that failure, and the shallow
+    probe behind the degradation warning.
+    """
+    root, _cap = big_repo
+    counted_git.clear()
+    AnchorResolver(root, "0" * 40)
+    spawned = [" ".join(c) for c in counted_git]
+    assert len(counted_git) == 3, spawned
+    assert gitio._WORK_TREE_PROBE in counted_git, spawned
 
 
 def test_fold_spawns_constant_git_calls(counted_git, big_repo):

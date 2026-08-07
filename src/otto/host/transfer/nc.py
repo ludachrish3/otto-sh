@@ -19,6 +19,7 @@ from typing_extensions import override
 
 from ...result import CommandResult, Result
 from ...utils import Status, WaitTimeoutError, wait_for_async
+from ..errors import HostCommandError, HostUnreachableError
 from .base import (
     NcListenerCheck,
     NcPortStrategy,
@@ -89,6 +90,20 @@ _NC_FORWARD_SETUP_TIMEOUT = 5.0
 _NC_CLOSE_TIMEOUT = 2.0
 
 _logger = logging.getLogger(__name__)
+
+
+def _probe_failure(timed_out: bool, message: str) -> HostUnreachableError | HostCommandError:
+    """Pick the error type for a failed control-plane probe; the text is the caller's.
+
+    Every port-finding strategy runs a shell script through ``_control_run``
+    and reads its exit code, which cannot tell a script that SAID no from one
+    that was killed by its timeout — ``retcode == -1`` also means "never ran".
+    ``timed_out`` is the field that can, and the two answers send a caller
+    somewhere different: an exhausted port range is about the remote host's
+    sockets, a timeout is about reaching it at all.
+    """
+    return HostUnreachableError(message) if timed_out else HostCommandError(message)
+
 
 # ---------------------------------------------------------------------------
 # Shell script templates for port-finding strategies
@@ -448,12 +463,21 @@ class NcFileTransfer(UnixFileTransfer):
         strategies resolve in one round-trip. If the probe's chosen strategy
         somehow fails on execution, fall back to the full cascade — keeps
         the original robustness guarantee.
+
+        The cascade exists to survive a host that LACKS a tool, so an
+        unreachable host is not a cascade case and stops it: the next strategy
+        will not get an answer either, and trying all four burns four more
+        timeouts before reporting the wrong cause ("all port-finding
+        strategies failed", a HostCommandError, for a host that never
+        answered). Both catch sites re-raise it ahead of their collector arm.
         """
         if self._resolved_port_strategy is None:
             await self.prepare()
         if self._resolved_port_strategy is not None:
             try:
                 return await self._find_free_port_with(self._resolved_port_strategy)
+            except HostUnreachableError:
+                raise
             except (RuntimeError, ValueError) as e:
                 _logger.debug(
                     f"{self._name}: cached port strategy "
@@ -466,11 +490,13 @@ class NcFileTransfer(UnixFileTransfer):
                 port = await self._find_free_port_with(strategy)
                 self._resolved_port_strategy = strategy
                 _logger.debug(f"{self._name}: cached port strategy '{strategy}'")
-            except (RuntimeError, ValueError) as e:  # noqa: PERF203 — per-item resilience
+            except HostUnreachableError:  # noqa: PERF203 — per-item resilience
+                raise
+            except (RuntimeError, ValueError) as e:
                 errors.append(f"{strategy}: {e}")
             else:
                 return port
-        raise RuntimeError(
+        raise HostCommandError(
             f"All port-finding strategies failed on {self._name}: " + "; ".join(errors)
         )
 
@@ -497,31 +523,35 @@ class NcFileTransfer(UnixFileTransfer):
         script = _SS_PORT_SCRIPT.format(base_port=self._nc_port, reserved=self._reserved_str())
         result = await self._control_run(script)
         if result.retcode != 0:
-            raise RuntimeError(f"ss port scan failed: {result.value}")
+            raise _probe_failure(result.timed_out, f"ss port scan failed: {result.value}")
         return int(result.value.strip())
 
     async def _find_free_port_netstat(self) -> int:
         script = _NETSTAT_PORT_SCRIPT.format(base_port=self._nc_port, reserved=self._reserved_str())
         result = await self._control_run(script)
         if result.retcode != 0:
-            raise RuntimeError(f"netstat port scan failed: {result.value}")
+            raise _probe_failure(result.timed_out, f"netstat port scan failed: {result.value}")
         return int(result.value.strip())
 
     async def _find_free_port_python(self) -> int:
         """Try ``python``, then ``python3`` for the bind-to-0 one-liner."""
         last_output = ""
+        last_timed_out = False
         for exe in ("python", "python3"):
             result = await self._control_run(f'{exe} -c "{_PYTHON_PORT_CMD}"')
             if result.retcode == 0:
                 return int(result.value.strip())
             last_output = result.value
-        raise RuntimeError(f"python port discovery failed: {last_output}")
+            last_timed_out = result.timed_out
+        raise _probe_failure(last_timed_out, f"python port discovery failed: {last_output}")
 
     async def _find_free_port_proc(self) -> int:
         script = _PROC_PORT_SCRIPT.format(base_port=self._nc_port, reserved=self._reserved_str())
         result = await self._control_run(script)
         if result.retcode != 0:
-            raise RuntimeError(f"/proc/net/tcp port scan failed: {result.value}")
+            raise _probe_failure(
+                result.timed_out, f"/proc/net/tcp port scan failed: {result.value}"
+            )
         return int(result.value.strip())
 
     async def _find_free_port_custom(self) -> int:
@@ -529,7 +559,7 @@ class NcFileTransfer(UnixFileTransfer):
             raise ValueError("nc_port_strategy is 'custom' but nc_port_cmd is None")
         result = await self._control_run(self._nc_port_cmd)
         if result.retcode != 0:
-            raise RuntimeError(f"Custom port command failed: {result.value}")
+            raise _probe_failure(result.timed_out, f"Custom port command failed: {result.value}")
         return int(result.value.strip())
 
     def _release_port(self, port: int) -> None:

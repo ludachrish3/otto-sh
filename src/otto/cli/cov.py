@@ -362,7 +362,7 @@ def report(
     cov_dirs = [d / "cov" for d in output_dirs]
     report_dir = report_dir.resolve()
 
-    from ..coverage.capture.gitio import GitUnavailableError
+    from ..coverage.capture.gitio import GitUnavailableError, NotAGitRepoError
     from ..lifecycle import run_command
 
     try:
@@ -400,14 +400,21 @@ def report(
         # literal bracket.
         logger.error(escape_markup(str(e)))  # noqa: TRY400 — deliberately no traceback: user-facing cause + remedy
         raise typer.Exit(1) from e
-    except GitUnavailableError as e:
-        # A [coverage] section resolved a repo_root, but it is not a git repo
-        # (or git is missing): the base_commit-anchored capture features can't
-        # run. Name the cause and the git-less escape hatch — clean line, no traceback.
+    except NotAGitRepoError as e:
+        # A [coverage] section resolved a repo_root that is not a git repo:
+        # the base_commit-anchored capture features can't run. This hardcoded
+        # message used to also cover a missing git and an ordinary git
+        # failure, and told both the wrong story; the type now says which it
+        # is, so the wording is finally true by construction.
         logger.error(  # noqa: TRY400 — deliberately no traceback: user-facing cause + remedy
             "not a git repository — base_commit-anchored capture features unavailable; "
             "use --tier NAME=PATH"
         )
+        raise typer.Exit(1) from e
+    except GitUnavailableError as e:
+        # git missing, or a git command that failed inside a real repo: echo
+        # what git said rather than mislabelling it as "not a git repository".
+        logger.error(escape_markup(str(e)))  # noqa: TRY400 — deliberately no traceback: git's own message is the cause
         raise typer.Exit(1) from e
     except ValueError as e:
         # A malformed committed manual capture (load_manual_captures wraps the
@@ -528,19 +535,33 @@ def _resolve_tester(name: str | None, email: str | None, sut_dir: Path) -> dict[
     ``name`` defaults to :func:`getpass.getuser`; ``email`` defaults to
     ``git config user.email`` read *in the SUT repo* (so the identity comes
     from the repo being tested, not whatever repo the process CWD happens to
-    be in) and is omitted entirely (not annotated empty) when unset or when
-    git is unavailable. CLI-supplied values always win over both defaults.
+    be in) and is omitted entirely (not annotated empty) when the key is
+    unset or ``git config`` itself fails. CLI-supplied values always win over
+    both defaults.
+
+    Note ``config_value`` runs WITHOUT ``--local``, so a *sut_dir* that is not
+    a repo still reads ``~/.gitconfig`` and answers rc 0 — the
+    NotAGitRepoError arm below is defensive, not a path a non-repo takes.
+    Reading the ambient identity there is the intended behaviour (it is the
+    human running the capture), so this does not want narrowing.
+
+    A MISSING git propagates instead: "otto cannot run git" is an
+    environment error, not evidence that the tester has no email, and
+    swallowing it here is what let it be reported as the latter. In the
+    ``cov get`` flow it is unreachable anyway — the ``head_commit`` preflight
+    has already proven git runs — so the top-level CLI handler is the right
+    place for the case where it is not.
     """
     import getpass
 
-    from ..coverage.capture.gitio import GitUnavailableError, config_value
+    from ..coverage.capture.gitio import GitCommandFailedError, NotAGitRepoError, config_value
 
     resolved_name = name or getpass.getuser()
     resolved_email = email
     if not resolved_email:
         try:
             resolved_email = config_value(sut_dir, "user.email")
-        except GitUnavailableError:
+        except (NotAGitRepoError, GitCommandFailedError):
             resolved_email = None
 
     tester: dict[str, str] = {"name": resolved_name}

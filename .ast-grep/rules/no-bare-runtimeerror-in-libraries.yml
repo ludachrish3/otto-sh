@@ -1,0 +1,54 @@
+id: no-bare-runtimeerror-in-libraries
+language: python
+severity: error
+message: Bare `RuntimeError` in a library module. Raise a named error a consumer can dispatch on — the shared `otto.host.errors` pair (HostUnreachableError / HostCommandError), the package's own domain class, or a `ValueError` if this is a structural refusal rather than a failure.
+note: >
+  link, tunnel, docker and transfer each signalled three different conditions
+  through one stdlib type — host unreachable, command ran and failed,
+  structural refusal — so no consumer could tell them apart, and several
+  didn't try. The read path in `otto.link` is what this cost: one
+  `except RuntimeError` around the qdisc read reported a REACHABLE host whose
+  `tc` had failed as unreachable, sending the operator to check the network
+  for a fault that was the host's own tooling, and discarding tc's message
+  entirely. `_cancel_timers` had the same shape, silently skipping a failed
+  timer scan as "hygiene".
+
+  BASELINE IS ZERO, and it landed at `severity: error` with no warning phase
+  and no count ratchet: the plan's staged promotion was dropped once the
+  fix-with-gate ruling made converting all 37 sites part of the same change.
+  A ratchet whose target is zero on the day it lands is a ratchet with
+  nothing to ratchet.
+
+  t0 = 37, rule-measured on the pristine tree (link/manage 10, tunnel/manage
+  8, tunnel/socat 1, docker/staging 6, docker/compose 6, transfer/nc 6). The
+  churn review counted ~36 and missed `tunnel/socat.py`'s
+  `pick_free_port` exhaustion — which is the argument for measuring a
+  baseline with the rule rather than by reading, and the reason this note
+  records the instrument. 35 of the 37 became OttoError subclasses; the other
+  two became `ValueError`, because each module's own convention already spells
+  a structural refusal that way: `link._ensure_not_foreign` (a qdisc otto did
+  not create was never otto's to modify) and `compose._up_and_register`'s
+  no-services check (the compose file declares nothing; the parent is fine).
+
+  Scoped to the four packages the review measured, not `src/otto/**`. A
+  `RuntimeError` in `otto.cli` is a different question — typer's vendored
+  click makes `typer.Exit` a `RuntimeError` subclass, so the CLI's
+  `except (ValueError, RuntimeError)` clauses are load-bearing there and
+  reasoning about that scope needs its own pass. No ignores: nothing under
+  `src/otto` is fixture or example input.
+
+  The pattern matches the `raise X(...) from e` form too — verified against
+  the planted probe, since 3 of the 37 sites were written that way and a rule
+  blind to them would have measured 34 and called it done.
+files:
+- src/otto/link/**
+- src/otto/tunnel/**
+- src/otto/docker/**
+- src/otto/host/transfer/**
+rule:
+  any:
+  - pattern: raise RuntimeError($$$ARGS)
+  # The no-call form: a bare `raise RuntimeError` carries no message at all
+  # and matches no call pattern — zero in scope at landing, pinned so it
+  # stays that way (final-review finding).
+  - pattern: 'raise RuntimeError'

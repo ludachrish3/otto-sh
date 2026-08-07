@@ -356,7 +356,7 @@ bypasses of `lab_data_path`.
 transfer currently signal three different conditions through one stdlib type
 (review §6.2).
 **Mechanism:** `.ast-grep/rules/no-bare-runtimeerror-in-libraries.yml` —
-`severity: warning` until Wave 10 completes, then error; `files:
+`severity: error`; `files:
 [src/otto/link/**, src/otto/tunnel/**, src/otto/docker/**, src/otto/host/transfer/**]`,
 
 ```yaml
@@ -364,11 +364,17 @@ rule:
   pattern: raise RuntimeError($$$ARGS)
 ```
 
-Companion count-ratchet while warning-severity: extend the
-`test_tuple_return_debt.py`-style guard with per-module baselines
-(link 10, tunnel 8, transfer 6, docker 12) that may only decrease. Scanner carries an
-embedded positive control (inline source with a `raise RuntimeError` must be flagged).
-**Red today:** ~36 in scoped dirs. **Landing:** rule Wave 10a; promotion Wave 10c.
+The plan's staged promotion (warning first, then a per-module count-ratchet, then
+error) was DROPPED at landing: the fix-with-gate ruling makes converting every site
+part of the same squash, so the baseline is zero on the day the rule lands and a
+ratchet has nothing left to ratchet. The positive control is a planted probe under
+`src/otto/link/`, scanned and removed — paired with an out-of-scope probe under
+`src/otto/host/` (non-transfer) that must NOT fire; both were run.
+**Red at t0:** **37**, rule-measured on the pristine tree (link/manage 10,
+tunnel/manage 8, tunnel/socat 1, docker/staging 6, docker/compose 6, transfer/nc 6).
+The review's ~36 missed `tunnel/socat.py`'s `pick_free_port` — which is the argument
+for measuring a baseline WITH the rule rather than by reading.
+**Landing:** Wave 10, one squash, straight to error. **Now:** 0.
 
 ### G11. Ambient-env hermeticity pin covers every conftest chain
 
@@ -915,17 +921,93 @@ concurrent session and landed earlier in `bef943aa` — see review §10 correcti
       owns converting it; revisit only if Wave 16's timing hardening gives a
       reason.
 
-### Wave 10 — Error taxonomy (item 10; G10) — a/b/c, **Effort: M total**
-- [ ] 10a: `gitio` split (`GitMissingError`/`NotAGitRepoError`/`GitCommandFailedError`
-      under `GitUnavailableError`); convert the 3 string-match sites + `cli/cov.py:540`;
-      land G10 rule at warning + count-ratchet guard.
-- [ ] 10b: `link/` errors (`LinkHostUnreachableError`/`LinkCommandFailedError`, both
-      `(OttoError, RuntimeError)` so existing catches keep working); fix the read path
-      (`unreachable=True` only on unreachable; `_cancel_timers` distinguishes;
-      `_ensure_not_foreign` → ValueError per the module's own convention). Ratchet:
-      link baseline 10 → 0.
-- [ ] 10c: shared `HostCommandError` + `run_or_raise(host, cmd)` helper; tunnel/docker/
-      transfer adopt; promote G10 to error; retire the count-ratchet.
+### Wave 10 — Error taxonomy (item 10; G10) — DONE, landed as ONE squash
+**Files:** `src/otto/coverage/capture/gitio.py`, `src/otto/coverage/anchor.py`,
+`src/otto/cli/cov.py`, NEW `src/otto/host/errors.py` (+ `docs/api/host/errors.rst`),
+`src/otto/link/manage.py`, `src/otto/cli/link.py`, `src/otto/tunnel/manage.py`,
+`src/otto/tunnel/socat.py`, `src/otto/docker/staging.py`, `src/otto/docker/compose.py`,
+`src/otto/host/transfer/nc.py`, `src/otto/errors.py` (census), `tach.toml`
+(`otto.link` -> `otto.errors`), the rule file, `docs/architecture/quality-gates.md`.
+The plan's a/b/c split was dropped for the same reason the rule's warning phase was:
+the fix-with-gate ruling puts the conversion and the gate in one squash, so there is
+nothing an intermediate commit could be green against.
+- [x] **`gitio` split** — `GitMissingError` / `NotAGitRepoError` /
+      `GitCommandFailedError` under `GitUnavailableError`, classified at the one
+      chokepoint the two runners share, via a failure-path-only
+      `rev-parse --is-inside-work-tree` probe. The three
+      `"not a git repository" in str(e)` string matches are gone: git TRANSLATES its
+      messages, so that test silently stops discriminating under any non-English
+      `LC_MESSAGES` and every caller then takes its command-failed branch. Two masked
+      defects fell out and are fixed — `blob_sha`/`blob_exists` folded a MISSING git
+      into "absent" (a box without git reported every file in the tree as new, with no
+      message anywhere), and `cli/cov.py`'s `_resolve_tester` read the same thing as
+      "this tester has no email". Both propagate now; only a genuine git-said-no still
+      degrades. `cov report`'s hardcoded "not a git repository" line is finally true by
+      construction (it sits on the `NotAGitRepoError` arm), with a new generic arm
+      echoing what git actually said. Mutation-proven: reverting the classifier to
+      always-GitCommandFailedError fails 5 tests across `tests/unit/cov` and
+      `tests/unit/cli/test_cov.py`. The classification probe runs through `_run_raw`
+      like every other call, NOT straight to `subprocess`: that is the chokepoint the
+      spawn-budget guards monkeypatch, and a failure-path spawn they cannot see is a
+      spawn no budget bounds (a new test pins the probe as counted; the recursion
+      guard is that the probe never classifies itself). A nonexistent `cwd` raises the
+      same `FileNotFoundError` a missing git does, and used to be reported as "git
+      executable not found" — harmless while callers swallowed it, a propagating lie
+      once `blob_sha` started re-raising; it is a `NotAGitRepoError` now.
+- [x] **`link/` read path** — `LinkHostUnreachableError` / `LinkCommandFailedError`,
+      both `(OttoError, RuntimeError)`, so the CLI's `except (ValueError,
+      RuntimeError)` clauses are untouched — those must stay wide, since typer's
+      vendored click makes `typer.Exit` a `RuntimeError` subclass. NEW
+      `LinkState.read_error`: a reachable host whose `tc` failed rendered exactly like
+      a host that was down (`?` plus "partial scan"), sending the operator to check
+      the network for a fault that was the host's own tooling, and discarding tc's
+      message; it now renders `!`, its own row, and its own summary line.
+      `_cancel_timers` skips only on unreachable — a failed `ps` on a REACHABLE host
+      means otto cannot see the timers about to fire against the state it is midway
+      through changing, which is not hygiene. `_ensure_not_foreign` refuses with
+      `ValueError`, so `repair --all` now SKIPS a foreign qdisc (never otto's
+      impairment) instead of collecting it as a failure; `repair <id>` still refuses
+      loudly. Mutation-proven: folding the read failure back into `unreachable` fails
+      the new test. The read arms end at bare `RuntimeError`, NOT at the two new
+      classes, and that width is load-bearing: the host stack below raises unnamed
+      RuntimeErrors no rule scopes (`host/session.py`'s dead session,
+      `host/docker_host.py`'s not-running container, `host/remote_host.py`'s
+      unresolvable hop), and narrowing let them propagate out of `read_link_states`,
+      which promises never to raise per link — `otto link list` has no `try` of its
+      own. `read_errors` is a per-DIRECTION dict, not one link-wide string: the two
+      directions land on different hosts, so one endpoint down and the other's `tc`
+      broken is a real shape that a single field had to pick one story for.
+      `repair_all` returns a `RepairAllReport` dataclass with a third `skipped`
+      bucket that the CLI names — a foreign qdisc used to be a bare `continue`, so
+      the sweep printed "repaired 0 link(s)" and exited 0 saying nothing about the
+      link it declined. Widening the old 2-tuple instead would have been the exact
+      defect `no-tuple-return` was written for; converting it retires a DEBT entry.
+- [x] **Shared host pair + the rest** — NEW `otto.host.errors` with
+      `HostUnreachableError` / `HostCommandError` as PEERS (neither implies the other)
+      plus `exec_or_raise`, which is link `_exec`'s proven order (transport,
+      timed-out, not-ok) — and which link `_exec` now IS, passing its own two classes
+      in as the `unreachable`/`failed` arguments. The classes are parameters because
+      the sequence is what repeats while the taxonomy belongs to the caller. No
+      tunnel/docker/transfer site adopts it: each owns a message the helper's pattern
+      cannot produce (`_require_tools` says "timed out checking for socat", and tests
+      output text rather than `is_ok`), and the brief was to change the TYPE, not the
+      text. The timed-out split is a real fix in transfer — nc's port strategies
+      read `retcode`, which cannot tell a scan that SAID no from one killed by its
+      timeout (`-1` also means "never ran"), so every site holding a `CommandResult`
+      now asks `timed_out`; `put` keeps one arm because a bare `Result` has no such
+      field. `socat.pick_free_port` gets `NoFreePortError` (pure-local range
+      exhaustion, no host involved). `compose`'s no-services check became a
+      `ValueError` — nothing on the parent failed.
+- [x] **Census re-measured, not adjusted** (`src/otto/errors.py`). The counting method
+      was RECOVERED by reproducing the original numbers at the commit that wrote them
+      (`1393b087`): a raise site is a `raise` of a BUILTIN exception name, and it is
+      covered when that builtin is `ValueError`/`RuntimeError`-rooted (which is why the
+      42 `NotImplementedError` raises count) — that method reproduces 330/284 there
+      exactly. Now: 301 sites, 254 covered, 34 named classes, 23 catchable, 7 rootless,
+      4 under `OSError` (23+7+4=34). Two claims were already stale and are corrected
+      rather than carried forward: the OSError list omitted `RetryAttemptTimeoutError`
+      (a `TimeoutError`), and "all but five raises" missed `SyncPhaseInterrupt`, a
+      `KeyboardInterrupt` that `except Exception` also does not catch — six.
 
 ### Wave 11 — Registry-guard invalidation (item 11)
 **Files:** `tests/conftest.py:1283-1312,:1441-1442`,
