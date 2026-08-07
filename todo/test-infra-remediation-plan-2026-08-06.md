@@ -428,20 +428,34 @@ across Waves 3-4 — partly THIS wave de-faking coverage (unit tests no longer s
 ambient `repo1` for part of the session, so incidental `otto/config` discovery
 branches stopped executing); expected, not to be chased. **Landing:** Wave 4.
 
-### G12. Skip policy: lanes that must never skip, pinned
+### G12. Skip policy: lanes that must never skip, pinned — LANDED (Wave 13)
 
 **Policy:** chaos and embedded-coverage e2e lanes fail loud or pass — a skip in those
 trees is a retired lane hiding behind green (house host-down rule, extended to
 build/config absence).
-**Mechanism:** meta-test `tests/unit/test_no_skip_lanes.py`: AST-scan
-`tests/e2e/chaos/**` and `tests/e2e/cov/**` for `pytest.skip` / `pytest.mark.skip` /
-`skipif` — assert zero. (chaos is already zero — the pin preserves it; cov has 2 sites
-converted to hard-fail in the same wave.) Embedded positive control included.
-**Red today:** 2 (`test_embedded_coverage_e2e.py:58,:168`; plus
-`tests/repo3/tests/test_embedded_coverage.py:182` — repo3 is fixture data, out of
-scope, but the *runner* of that lane gains a config-presence hard-fail).
-**Landing:** Wave 13 (with the skip→fail conversions and the stale
-`test_tier_marker_invariants.py:175` dir-check fixed to `assert chaos_dir.is_dir()`).
+**Mechanism, as landed:** meta-test `tests/unit/test_no_skip_lanes.py`: AST scan of
+`tests/e2e/chaos/**` and `tests/e2e/cov/**` (rglob, subdirs included) for
+`pytest.skip` / `pytest.importorskip` / `pytest.mark.skip` / `pytest.mark.skipif`
+plus the bare `mark.skip` / `mark.skipif` usage-site arms (fable's condition:
+they catch `from pytest import mark` and `mark = pytest.mark` rebindings), plus a
+ban on `from pytest import skip|skipif|importorskip` (the alias alley that would
+make bare `skip(...)` invisible to a dotted scan) — assert zero. Tripwire, not
+proof system: five stated blind spots in docstring + gates row, grepped zero at
+landing. Anti-vacuity:
+an empty or moved lane FAILS the scan (`assert files`) — the same stale-skip shape
+the tier-marker fix below retires. Embedded positive control asserts the detector
+sees every spelling. repo3's own skip stays: fixture SUT data, the standard
+tests-scoped carve-out; the *runner* is what hard-fails.
+**Red measured:** 2 (`test_embedded_coverage_e2e.py:52,:152` — the plan's draft line
+numbers 58/168 had drifted), both converted to `pytest.fail` naming the missing
+config key / unbuilt artifact and where to fix it; chaos was already zero (the pin
+preserves it). The runner PASSED live in the same day's gate run, so the fail
+branches fire only where the lane is hollow.
+**Also landed:** `test_tier_marker_invariants.py`'s stale `pytest.skip("tests/e2e/
+chaos not created yet")` dir-guard → `assert chaos_dir.is_dir()` (the tree has
+existed since chaos-hardening; the skip would have hidden a moved lane forever).
+**Mutations:** planted chaos-lane skip red; conversion revert red; detector blinded
+to mark forms → positive control red; lane path broken → vacuity assert red.
 
 ### G13. Lane truthfulness: addopts overrides keep the tach guard; CI arms TS coverage
 
@@ -1092,10 +1106,11 @@ frame down — and was fixed in-wave (masking-only: best-effort exit when the bo
 is already failing, loud exit on a clean body because a wedged REPL is the
 caller's business; both pinned).
 
-### Wave 13 — Skip-policy pins (G12) + embedded-coverage hard-fail
-Per G12, all in one squash: `test_no_skip_lanes.py` lands (proven red pre-fix on the 2
-cov sites), the 2 skip→fail conversions in `test_embedded_coverage_e2e.py`, and the
-tier-marker stale-skip fix.
+### Wave 13 — Skip-policy pins (G12) + embedded-coverage hard-fail — LANDED
+As landed, one squash: `test_no_skip_lanes.py` (proven red pre-fix on the 2 cov
+sites, exact inventory in G12 above), the 2 skip→fail conversions, and the
+tier-marker stale-skip fix. Details, measured red, and the four mutation proofs are
+recorded in the G12 section.
 
 ### Wave 14 — Harness silent-degradation sweep (review §5.4–5.6 remainder)
 **Files/items, one squash:** CliRunner shield (`tests/conftest.py:1247-1253`) — replace

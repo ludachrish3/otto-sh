@@ -20,8 +20,6 @@ import re
 from itertools import pairwise
 from pathlib import Path
 
-import pytest
-
 from tests._fixtures.paths import PROJECT_ROOT, TESTS_ROOT
 
 _UNIT = TESTS_ROOT / "unit"
@@ -173,8 +171,10 @@ def test_chaos_modules_carry_chaos_and_stability():
     runtime — this guard runs in the no-VM unit gate, so it fires on every PR.
     """
     chaos_dir = TESTS_ROOT / "e2e" / "chaos"
-    if not chaos_dir.is_dir():
-        pytest.skip("tests/e2e/chaos not created yet")
+    # Not a skip: the tree has existed since the chaos-hardening work landed,
+    # so its absence now means the lane moved and this guard is scanning
+    # nothing — the stale "not created yet" skip would hide that forever.
+    assert chaos_dir.is_dir(), "tests/e2e/chaos vanished — the G5 marker guard is scanning nothing"
     offenders = []
     for mod in sorted(chaos_dir.glob("test_*.py")):
         tree = ast.parse(mod.read_text())

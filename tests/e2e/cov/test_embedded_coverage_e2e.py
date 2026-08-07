@@ -16,7 +16,8 @@ path; only the real CLI does, and only over the real multi-hop transport:
   *without* being mistaken for a Unix coverage target in the meta (it is
   excluded from coverage by the ``[coverage].hosts`` regex, not inference).
 
-Requirements (else the test SKIPS, never fails spuriously):
+Requirements (else the test FAILS LOUD, naming what is missing — G12: a
+bed-certifying lane never skips):
     - the zephyr VM up with ``sprout_cov`` running (``zephyr-qemu-cov.service``);
     - the repo3 coverage product built into ``[coverage.embedded].build_dir``
       (see ``tests/repo3/product/README.md``).
@@ -49,13 +50,18 @@ def _extension_artifact() -> Path:
     build_dir = cfg.get("build_dir")
     ext = cfg.get("extension", "cov_ext")
     if not build_dir:
-        pytest.skip("[coverage.embedded].build_dir not configured")
+        pytest.fail(
+            "[coverage.embedded].build_dir is not configured in "
+            "tests/repo3/.otto/settings.toml — this lane fails loud rather "
+            "than retiring behind a skip (G12): configure the build dir or "
+            "deselect the lane, don't hollow it."
+        )
     return Path(build_dir) / "zephyr" / f"{ext}.stripped.llext"
 
 
 @pytest.fixture
 def clean_sprout_cov():
-    """Skip unless ``sprout_cov`` answers, and clear any loaded extension.
+    """Fail loud unless ``sprout_cov`` answers, and clear any loaded extension.
 
     Populates the active :class:`~otto.context.OttoContext` with the
     ``basil`` hop (as the integration host conftest does) so the embedded
@@ -149,7 +155,11 @@ def test_embedded_coverage_cli_e2e(clean_sprout_cov, tmp_path):
     """`otto test --cov` + report against the live sprout_cov yields product coverage."""
     artifact = _extension_artifact()
     if not artifact.exists():
-        pytest.skip(f"product not built: {artifact} (see tests/repo3/product/README.md)")
+        pytest.fail(
+            f"embedded-coverage product not built: {artifact} — build it per "
+            "tests/repo3/product/README.md; this lane fails loud rather than "
+            "skipping (G12), a skip here certified nothing."
+        )
 
     report_dir = tmp_path / "report"
     cov_dir = tmp_path / "cov"
