@@ -817,6 +817,13 @@ class BaseHost(ABC):
         call that doesn't pass its own ``timeout=``); falls back to the shell
         class's :attr:`~otto.host.app_shell.AppShell.cmd_timeout` when omitted.
         """
+        # Function-level, not module scope: connections → login_proxy → host
+        # is a runtime import cycle back to this module. Hoisted above the
+        # try (with the host label) so neither can raise inside the finally,
+        # where they would mask the body's exception.
+        from .connections import teardown_step
+
+        host_name = self.name
         name = f"__appshell_{shell_cls.__name__.lower()}_{uuid.uuid4().hex[:6]}__"
         session = await self.open_session(name)
         try:
@@ -826,7 +833,8 @@ class BaseHost(ABC):
             async with shell_cls.attach(session, timeout=timeout) as shell:
                 yield shell
         finally:
-            await session.close()
+            with teardown_step(host_name, "app-shell session close"):
+                await session.close()
 
     async def send(
         self,

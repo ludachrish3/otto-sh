@@ -801,3 +801,74 @@ async def test_login_ssh_runs_docker_exec():
     expected_cmd = f"docker exec -it {shlex.quote(h.container_id)} /bin/sh"
     assert "command" in call_kwargs
     assert expected_cmd in call_kwargs["command"]
+
+
+# ---------------------------------------------------------------------------
+# Staging-dir cleanup is best-effort (G15: no awaited exec in a bare finally)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_put_cleanup_failure_is_warned_not_raised(tmp_path, caplog):
+    """A transfer that WORKED must not fail because the staging rm -rf died."""
+    parent = _mock_parent()
+    f = tmp_path / "payload.bin"
+    f.write_bytes(b"x")
+    h = _make_container(parent)
+
+    def exec_side_effect(cmd, *_, **__):
+        if "rm -rf" in cmd:
+            raise RuntimeError("parent vanished during cleanup")
+        return _ok()
+
+    parent.exec.side_effect = exec_side_effect
+
+    with caplog.at_level("WARNING", logger="otto.host.connections"):
+        status, _ = _sm(await h.put([f], Path("/srv/in")))
+
+    assert status == Status.Success
+    assert any("staging-dir removal teardown failed" in r.message for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_put_cleanup_failure_does_not_mask_the_bodys_error(tmp_path):
+    """The finally's rm -rf raising must not replace the transfer's own exception.
+
+    This is the exact shape behind gate G15: pre-fix, the caller debugged
+    "cleanup also died" while the real failure was the staging transport.
+    """
+    parent = _mock_parent()
+    f = tmp_path / "payload.bin"
+    f.write_bytes(b"x")
+    h = _make_container(parent)
+    parent.put.side_effect = RuntimeError("staging transport died")
+
+    def exec_side_effect(cmd, *_, **__):
+        if "rm -rf" in cmd:
+            raise RuntimeError("cleanup also died")
+        return _ok()
+
+    parent.exec.side_effect = exec_side_effect
+
+    with pytest.raises(RuntimeError, match="staging transport died"):
+        await h.put([f], Path("/srv/in"))
+
+
+@pytest.mark.asyncio
+async def test_get_cleanup_failure_is_warned_not_raised(tmp_path, caplog):
+    """get() mirrors put(): a failed staging rm -rf is a warning, not the outcome."""
+    parent = _mock_parent()
+    h = _make_container(parent)
+
+    def exec_side_effect(cmd, *_, **__):
+        if "rm -rf" in cmd:
+            raise RuntimeError("parent vanished during cleanup")
+        return _ok()
+
+    parent.exec.side_effect = exec_side_effect
+
+    with caplog.at_level("WARNING", logger="otto.host.connections"):
+        status, _ = _sm(await h.get([Path("/var/log/syslog")], tmp_path))
+
+    assert status == Status.Success
+    assert any("staging-dir removal teardown failed" in r.message for r in caplog.records)

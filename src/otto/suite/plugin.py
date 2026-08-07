@@ -396,6 +396,10 @@ class OttoPlugin:
         await collector.init_db()
 
         OttoSuite._session_monitor_collector = collector  # noqa: SLF001 — intra-package write to OttoSuite class-level monitor collector slot
+        # Imported before the try: an ImportError inside the finally would
+        # mask the suite body's own exception.
+        from ..host.connections import teardown_step
+
         try:
             yield
         finally:
@@ -414,7 +418,8 @@ class OttoPlugin:
                 if monitor_db is not None:
                     await monitor_db.finalize(end)
                 logger.info(f"Monitor data written to {db_path}")
-            await collector.close()
+            with teardown_step("suite monitor", "collector close"):
+                await collector.close()
             OttoSuite._session_monitor_collector = None  # noqa: SLF001 — intra-package clear of OttoSuite class-level monitor collector slot
 
     @pytest_asyncio.fixture(

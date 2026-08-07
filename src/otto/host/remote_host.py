@@ -299,6 +299,11 @@ class RemoteHost(BaseHost):
         try:
             await self._session_mgr.close_all()
         finally:
+            # NOT teardown_step-wrapped: this close is close()'s own result,
+            # not cleanup after some other operation — its loud-failure
+            # contract (either chain's failure propagates; the other chain
+            # still runs) is pinned by test_unix_host.py's close-chain sweep.
+            # ast-grep-ignore: no-awaited-close-in-finally
             await self._connections.close()
 
     ####################

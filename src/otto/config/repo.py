@@ -1005,6 +1005,7 @@ class Repo:
         Returns:
             A ``CommandResult`` containing the command's exit status and output.
         """
+        from ..host.connections import teardown_step
         from ..host.local_host import LocalHost
         from ..logger.mode import LogMode
 
@@ -1012,7 +1013,8 @@ class Repo:
         try:
             return (await host.run(f"git -C {self.sut_dir} {cmd}")).only
         finally:
-            await host.close()
+            with teardown_step(self.name, "git-helper host close"):
+                await host.close()
 
 
 def get_repos(

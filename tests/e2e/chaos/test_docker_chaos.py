@@ -99,7 +99,7 @@ def _run(coro):
     (``DockerContainerHost.close()``'s documented contract, docker_host.py)
     — closing ``docker_parent`` first would sever that mid-drain. And each
     close is individually guarded (log-and-continue, the same idiom as
-    ``ConnectionManager.close()``'s ``_teardown_step``): a raising close()
+    ``ConnectionManager.close()``'s ``teardown_step``): a raising close()
     must not skip the remaining hosts, and — since this whole pass runs in
     the ``finally`` below — must never override a real exception propagating
     out of ``coro`` with mere teardown noise.

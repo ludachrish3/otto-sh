@@ -36,6 +36,7 @@ from typing_extensions import override
 from ..logger.mode import LogMode
 from ..result import CommandResult, Result
 from ..utils import Arg, Opt, Status, cli_exposed
+from .connections import teardown_step
 from .file_ops import PosixFileOps
 from .host import BaseHost, Host, is_dry_run
 from .privilege import PosixPrivilege
@@ -460,6 +461,9 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         await self._ensure_running()
 
         stage = self._stage_dir(self.container_id)
+        # Bound before the try: nothing evaluated inside the finally may
+        # raise ahead of the teardown guard and mask the body's exception.
+        host_name = self.name
         try:
             mkdir = await self.parent.exec(f"mkdir -p {shlex.quote(str(stage))}")
             if not mkdir.status.is_ok:
@@ -521,7 +525,8 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
                                 )
             return aggregate_transfer(per_file)
         finally:
-            await self.parent.exec(f"rm -rf {shlex.quote(str(stage))}")
+            with teardown_step(host_name, "staging-dir removal"):
+                await self.parent.exec(f"rm -rf {shlex.quote(str(stage))}")
 
     @override
     @cli_exposed(success="Download complete.")
@@ -550,6 +555,9 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         await self._ensure_running()
 
         stage = self._stage_dir(self.container_id)
+        # Bound before the try: nothing evaluated inside the finally may
+        # raise ahead of the teardown guard and mask the body's exception.
+        host_name = self.name
         try:
             mkdir = await self.parent.exec(f"mkdir -p {shlex.quote(str(stage))}")
             if not mkdir.status.is_ok:
@@ -598,7 +606,8 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
             per_file = {f: staged_map.get(stage / f.name, fallback) for f in files}
             return aggregate_transfer(per_file)
         finally:
-            await self.parent.exec(f"rm -rf {shlex.quote(str(stage))}")
+            with teardown_step(host_name, "staging-dir removal"):
+                await self.parent.exec(f"rm -rf {shlex.quote(str(stage))}")
 
     def rebuild_connections(self) -> None:
         """Drop any persistent session so the next call reopens it.

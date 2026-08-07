@@ -647,6 +647,9 @@ class RecordingHost(BaseHost):
     def __init__(self, session):
         self._session = session
         self.opened_names = []
+        # Part of the BaseHost contract (close labels, power messages);
+        # app_shell's session-close teardown_step names the host with it.
+        self.name = "recording-host"
 
     @override
     async def open_session(self, name):
@@ -811,3 +814,54 @@ async def test_per_session_override_is_not_clobbered_by_the_default():
     await sh.cmd("1+1")
     # cmd() passed no timeout, so it must use the session's 120.0 — not the class default.
     assert session.expect.await_args.args[1] == 120.0
+
+
+# =========================================================================== #
+# attach()'s exit teardown (G15 family — `_exit` is invisible to the rules)
+# =========================================================================== #
+
+
+@pytest.mark.asyncio
+async def test_attach_body_error_is_not_masked_by_a_failing_exit(monkeypatch, caplog):
+    """A dead-transport _exit must not replace the body's own exception.
+
+    The dominant masking case: the caller's with-block raises because the app
+    or transport wedged, and _exit's quit/recovery against that same dead
+    transport raises too. Pre-fix, attach's bare `finally: await
+    shell._exit()` reported the exit noise instead of the body's error.
+    """
+
+    async def dying_exit(self):
+        raise ConnectionResetError("quit went to a dead transport")
+
+    monkeypatch.setattr(DemoShell, "_exit", dying_exit)
+    host, session = _recording_demo()
+
+    with (
+        caplog.at_level("WARNING", logger="otto.host.connections"),
+        pytest.raises(RuntimeError, match="app wedged"),
+    ):
+        async with host.app_shell(DemoShell):
+            raise RuntimeError("app wedged")
+
+    assert any("DemoShell: app-shell exit teardown failed" in r.message for r in caplog.records)
+    assert session.closed is True
+
+
+@pytest.mark.asyncio
+async def test_attach_clean_body_keeps_a_failing_exit_loud(monkeypatch):
+    """On a clean body, a failed exit still raises — the session may be
+    parked inside the REPL, and a caller-owned attach needs to hear that."""
+
+    async def dying_exit(self):
+        raise ConnectionResetError("quit went nowhere")
+
+    monkeypatch.setattr(DemoShell, "_exit", dying_exit)
+    host, session = _recording_demo()
+
+    with pytest.raises(ConnectionResetError, match="quit went nowhere"):
+        async with host.app_shell(DemoShell):
+            pass
+
+    # app_shell's own wrapped teardown still closed the session behind it.
+    assert session.closed is True

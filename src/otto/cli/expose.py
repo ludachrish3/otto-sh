@@ -80,12 +80,19 @@ def make_method_command(
             accepted = set(method_sig.parameters)
             call_kw = {k: v for k, v in call_kw.items() if k in kw or k in accepted}
         success = getattr(method, "__cli_success__", None)
+        # Import and label bound before the try: nothing evaluated inside the
+        # finally may raise ahead of the teardown guard and mask the verb's
+        # own failure.
+        from ..host.connections import teardown_step
+
+        host_label = str(getattr(host, "id", "host"))
         try:
             result = await method(**call_kw)
         except NotImplementedError as e:
             fail(f"host {getattr(host, 'id', '?')!r} does not support {verb!r}: {e}")
         finally:
-            await host.close()
+            with teardown_step(host_label, "post-verb host close"):
+                await host.close()
         # Presentation is per-invocation state: `success` comes off the RESOLVED
         # host's bound method (`__cli_success__` is per-class — "Module loaded."
         # vs "Binary loaded." for the same verb name), so it cannot be a static

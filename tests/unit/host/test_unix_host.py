@@ -2075,3 +2075,81 @@ class TestSshExecKillEscalation:
         # reap attempt and blow the outer 5.0s wait_for above instead of
         # completing. At the patched 0.2s it finishes in well under a second.
         assert elapsed < 1.0
+
+
+# ---------------------------------------------------------------------------
+# interactive() telnet teardown (G15: no awaited close in a bare finally)
+# ---------------------------------------------------------------------------
+
+
+class _FakeInteractiveTelnetClient:
+    """Stands in for the dedicated interactive TelnetClient interactive() builds."""
+
+    last: "_FakeInteractiveTelnetClient | None" = None
+    connect_error: Exception | None = None
+    close_error: Exception | None = None
+
+    def __init__(self, **kwargs):
+        self.close_attempted = False
+        type(self).last = self
+
+    async def connect(self, interactive: bool = False) -> None:
+        if type(self).connect_error is not None:
+            raise type(self).connect_error
+
+    async def close(self) -> None:
+        self.close_attempted = True
+        if type(self).close_error is not None:
+            raise type(self).close_error
+
+
+@pytest.fixture
+def telnet_host(monkeypatch) -> UnixHost:
+    """Telnet-term host whose interactive client and login pump are test-local fakes."""
+    _FakeInteractiveTelnetClient.last = None
+    _FakeInteractiveTelnetClient.connect_error = None
+    _FakeInteractiveTelnetClient.close_error = None
+    monkeypatch.setattr("otto.host.unix_host.TelnetClient", _FakeInteractiveTelnetClient)
+    monkeypatch.setattr("otto.host.unix_host.run_telnet_login", AsyncMock())
+    return UnixHost(
+        ip="10.0.0.1",
+        element="box",
+        creds=[Cred(login="user", password="pass")],
+        term="telnet",
+        log=LogMode.QUIET,
+    )
+
+
+class TestInteractiveTelnetTeardown:
+    @pytest.mark.asyncio
+    async def test_close_failure_does_not_mask_the_connect_error(self, telnet_host, caplog):
+        """The login failure is the story; the dead client's close is a footnote."""
+        _FakeInteractiveTelnetClient.connect_error = RuntimeError("telnet connect refused")
+        _FakeInteractiveTelnetClient.close_error = OSError("close blew up")
+
+        with (
+            caplog.at_level("WARNING", logger="otto.host.connections"),
+            pytest.raises(RuntimeError, match="telnet connect refused"),
+        ):
+            await telnet_host._login()
+
+        client = _FakeInteractiveTelnetClient.last
+        assert client is not None
+        assert client.close_attempted
+        assert any(
+            "interactive telnet client close teardown failed" in r.message for r in caplog.records
+        )
+
+    @pytest.mark.asyncio
+    async def test_close_failure_after_a_clean_session_is_warned_not_raised(
+        self, telnet_host, caplog
+    ):
+        """A session the user finished normally must not fail on teardown noise."""
+        _FakeInteractiveTelnetClient.close_error = OSError("close blew up")
+
+        with caplog.at_level("WARNING", logger="otto.host.connections"):
+            await telnet_host._login()
+
+        assert any(
+            "interactive telnet client close teardown failed" in r.message for r in caplog.records
+        )

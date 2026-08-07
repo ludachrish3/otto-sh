@@ -15,6 +15,7 @@ just one.
 """
 
 import ast
+import contextlib
 import re
 from itertools import pairwise
 from pathlib import Path
@@ -262,5 +263,10 @@ def test_e2e_conftest_autostamps_e2e():
             self.added.append(getattr(marker, "name", str(marker)))
 
     item = _FakeItem(e2e_root / "config" / "test_example.py")
-    e2e.pytest_collection_modifyitems(config=None, items=[item])
+    # The e2e hook is a wrapper (wrapper=True): the stamp runs pre-yield, the
+    # offender re-append post-yield — drive both halves like pluggy would.
+    gen = e2e.pytest_collection_modifyitems(config=None, items=[item])
+    next(gen)
+    with contextlib.suppress(StopIteration):
+        gen.send(None)
     assert "e2e" in item.added

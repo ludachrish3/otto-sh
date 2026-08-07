@@ -111,6 +111,7 @@ async def produce_captures(
         otto.coverage.capture.gitio.GitUnavailableError: If *repo_root*
             is not a git repository.
     """
+    from ...host.connections import teardown_step
     from ...host.local_host import LocalHost
 
     toolchains = read_cov_toolchains([cov_dir])
@@ -150,6 +151,7 @@ async def produce_captures(
             capture.save(capture_path)
             written.append(capture_path)
     finally:
-        await localhost.close()
+        with teardown_step("coverage capture", "localhost close"):
+            await localhost.close()
 
     return written

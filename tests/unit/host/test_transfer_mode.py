@@ -414,6 +414,9 @@ async def test_docker_put_chmods_inside_the_container(monkeypatch):
     monkeypatch.setattr(type(host), "container_id", property(lambda self: "abc123"))
     monkeypatch.setattr(host, "exec", fake_exec, raising=False)
     monkeypatch.setattr(host, "_ensure_running", AsyncMock(), raising=False)
+    # __new__ skips __init__, which is what stamps the BaseHost-contract
+    # `name`; the staging-cleanup teardown_step labels the host with it.
+    monkeypatch.setattr(host, "name", "parent:abc123", raising=False)
 
     result = await host.put([src], dest_dir, mode="755")
 

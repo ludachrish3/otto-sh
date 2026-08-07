@@ -1,0 +1,47 @@
+id: no-awaited-exec-in-finally
+language: python
+severity: error
+message: Awaited remote exec in a bare `finally` — when the body is already failing, a raising cleanup replaces the real exception with transport noise. Wrap the await in `teardown_step` (otto.host.connections) or hand the coroutine to `otto.lifecycle.compensate`.
+note: >
+  A `finally:` that awaits a remote command has two failure modes the bare
+  form gets wrong (2026-08-06 review §6.4, gate G15). If the try body raised
+  — the transfer failed, the host died — the cleanup exec runs against the
+  same broken transport and its exception REPLACES the body's: the caller
+  debugs "rm -rf timed out" instead of the transfer failure that caused it.
+  If the body succeeded, a failed cleanup fails an operation that worked.
+  Both want the same shape: best-effort, log-and-continue —
+  `teardown_step` — or, when the cleanup must survive cancellation too,
+  `lifecycle.compensate` (chaos spec: shielded compensating actions).
+
+  t0 = 2, rule-measured on the pristine tree (docker_host.py put and get,
+  the staging-dir `rm -rf` on the parent), both fixed in this wave;
+  baseline is zero.
+
+  "Bare" is literal: the rule exempts an await already under any `with`
+  inside the `finally` (`not inside with_statement, stopping at the
+  finally_clause`), because the sanctioned fix IS a with-wrapper and would
+  otherwise still match. The exemption is syntactic — `with timer():`
+  would silence it as readily as `with teardown_step(...)` — accepted
+  because the wrapper's name is visible at the site for a reviewer, and a
+  non-guarding `with` around teardown I/O has no precedent in this tree.
+  No ignores: the helper's own home (`otto.host.connections`) needs no
+  carve-out — its close chain's steps are each under `with
+  teardown_step(...)`, and its one try/finally holds only a synchronous
+  transport close, so nothing there matches a finally-scoped await rule;
+  rule-verified zero hits at landing.
+  The rule keys on the `.exec` spelling — awaited cleanup under other
+  names (`_exit`, `_close_writer_bounded`, `wait_closed`, `.run`) is
+  invisible to it and stays a review concern (the plan's G15 section
+  records the known sites).
+files:
+- src/otto/**
+rule:
+  pattern: await $X.exec($$$ARGS)
+  inside:
+    kind: finally_clause
+    stopBy: end
+  not:
+    inside:
+      kind: with_statement
+      stopBy:
+        kind: finally_clause

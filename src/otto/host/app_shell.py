@@ -40,6 +40,7 @@ from otto.utils import Status
 
 from ..errors import OttoError
 from .command_frame import _ANSI_RE
+from .connections import teardown_step
 from .host import DEFAULT_COMMAND_TIMEOUT
 
 if TYPE_CHECKING:
@@ -348,7 +349,20 @@ class AppShell:
         await shell._enter()
         try:
             yield shell
-        finally:
+        except BaseException:
+            # The body is already failing — commonly a dead transport — and
+            # _exit's quit/recovery against that same transport raising here
+            # would REPLACE the body's exception with exit noise (the G15
+            # masking shape, spelled `_exit` so the finally-await rules
+            # cannot see it). Best-effort: the body's error is the story.
+            # On the clean path below a failed exit stays LOUD on purpose —
+            # it means the session may still be parked inside the REPL,
+            # which a caller-owned attach needs to hear (see the note
+            # above); app_shell() discards the session either way.
+            with teardown_step(cls.__name__, "app-shell exit"):
+                await shell._exit()
+            raise
+        else:
             await shell._exit()
 
     async def _enter(self) -> None:

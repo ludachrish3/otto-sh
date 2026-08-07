@@ -77,6 +77,7 @@ from .connections import (
     ConnectionManager,
     TermContext,
     build_term_backend,
+    teardown_step,
 )
 from .file_ops import PosixFileOps
 from .host import (
@@ -573,6 +574,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
             connect_port=connect_port,
             prompt=None,
         )
+        host_name = self.name
         try:
             await client.connect(interactive=True)
             await run_telnet_login(
@@ -583,7 +585,8 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
                 host_id=self.id,
             )
         finally:
-            await client.close()
+            with teardown_step(host_name, "interactive telnet client close"):
+                await client.close()
 
     @override
     async def _exec_one(

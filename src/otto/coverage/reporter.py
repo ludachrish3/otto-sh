@@ -332,6 +332,7 @@ class CoverageReporter:
         Returns:
             A populated :class:`~otto.coverage.store.model.CoverageStore` with all coverage data.
         """
+        from ..host.connections import teardown_step
         from ..host.local_host import LocalHost
 
         localhost = LocalHost()
@@ -503,7 +504,8 @@ class CoverageReporter:
             return store
 
         finally:
-            await localhost.close()
+            with teardown_step("coverage report", "localhost close"):
+                await localhost.close()
 
     # ------------------------------------------------------------------
     # Collection-model steps — each is a no-op unless the

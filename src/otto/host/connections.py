@@ -66,12 +66,22 @@ logger = logging.getLogger(__name__)
 
 
 @contextlib.contextmanager
-def _teardown_step(name: str, step: str) -> "Iterator[None]":
-    """Guard one close-chain step: log-and-continue so a raising step can't skip the rest.
+def teardown_step(name: str, step: str) -> "Iterator[None]":
+    """Guard one teardown step: log-and-continue, so cleanup can't mask real failures.
 
-    Exception only — CancelledError still propagates: an abandoned teardown
-    (second Ctrl+C / deadline expiry) stops the chain loudly rather than
-    pretending to finish it (chaos spec: teardown chain robustness).
+    Wraps a best-effort cleanup action — a close, a remote ``rm -rf`` — so its
+    failure is a warning (``"{name}: {step} teardown failed: {e}"``), not the
+    operation's outcome: if the body being cleaned up after already raised,
+    the primary exception survives; if it succeeded, a failed cleanup doesn't
+    fail it retroactively. This is the wrapper the
+    ``no-awaited-exec-in-finally`` / ``no-awaited-close-in-finally``
+    architecture gates point at; :func:`otto.lifecycle.compensate` is the
+    alternative when the cleanup must also survive cancellation.
+
+    Catches ``Exception`` only — ``CancelledError`` still propagates: an
+    abandoned teardown (second Ctrl+C / deadline expiry) stops the chain
+    loudly rather than pretending to finish it (chaos spec: teardown chain
+    robustness).
     """
     try:
         yield
@@ -497,11 +507,11 @@ class ConnectionManager:
         telnet, self._telnet_conn = self._telnet_conn, None
 
         if sftp:
-            with _teardown_step(self._name, "sftp"):
+            with teardown_step(self._name, "sftp"):
                 sftp.exit()
 
         if ssh:
-            with _teardown_step(self._name, "ssh"):
+            with teardown_step(self._name, "ssh"):
                 # asyncssh's ``wait_closed()`` returns when the SSH session
                 # finishes — but in some teardown paths (notably hopped
                 # connections where the parent tunnel survives the child) the
@@ -524,15 +534,15 @@ class ConnectionManager:
                         asyncio_transport.close()
 
         if ftp:
-            with _teardown_step(self._name, "ftp"):
+            with teardown_step(self._name, "ftp"):
                 await ftp.quit()
 
         if telnet:
-            with _teardown_step(self._name, "telnet"):
+            with teardown_step(self._name, "telnet"):
                 await telnet.close()
 
         if self._hop is not None:
-            with _teardown_step(self._name, "hop"):
+            with teardown_step(self._name, "hop"):
                 await self._hop.close()
 
         # NOTE: the asyncssh zombie ``_SelectorSocketTransport`` is handled

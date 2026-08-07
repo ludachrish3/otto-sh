@@ -408,6 +408,10 @@ async def _run_monitor(
     # gather(return_exceptions=True) below would swallow it).
     collection_task = await collector.spawn_collection(interval, duration=duration)
 
+    # Imported before the try: an ImportError inside the finally would mask
+    # serve()'s own exception.
+    from ..host.connections import teardown_step
+
     try:
         await server.serve()
     finally:
@@ -416,4 +420,5 @@ async def _run_monitor(
         await asyncio.gather(collection_task, return_exceptions=True)
         if db is not None:
             await db.finalize(datetime.now(tz=timezone.utc))
-        await collector.close()
+        with teardown_step("monitor", "collector close"):
+            await collector.close()

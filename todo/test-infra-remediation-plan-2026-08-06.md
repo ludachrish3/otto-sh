@@ -493,29 +493,44 @@ severity: error
 **Red today:** 2 testids (`status-text`, `status-dot`) + 5 bare-digit sites.
 **Landing:** Wave 15, fix-with-gate.
 
-### G15. No awaited remote cleanup in a bare `finally`
+### G15. No awaited remote cleanup in a bare `finally` — LANDED (Wave 12)
 
 **Policy:** cleanup I/O in a bare `finally` replaces the primary exception with
-transport noise — use `_teardown_step` / `lifecycle.compensate`.
-**Mechanism:** `.ast-grep/rules/no-awaited-exec-in-finally.yml` — `severity: error`,
-`files: [src/otto/**]`, ignores `src/otto/host/connections.py` (the helper's home) —
-relational rule:
+transport noise — wrap it in `teardown_step` (public since this wave,
+`otto.host.connections`) or hand the coroutine to `lifecycle.compensate`.
+**Mechanism, as landed:** per-arm severity forced two rule files (one severity per
+rule doc): `.ast-grep/rules/no-awaited-exec-in-finally.yml` (`severity: error`) and
+`no-awaited-close-in-finally.yml` (`severity: warning`, BY DESIGN never promoted —
+a close can be the operation's own completion; the warning is the reviewer's cue to
+decide once, at the site). Both arms are relational **plus a bare-vs-wrapped
+discriminator the plan draft missed**: a `with teardown_step(...):` around the await
+still sits INSIDE the `finally_clause`, so without `not: inside: with_statement
+(stopBy: finally_clause)` the sanctioned fix would itself match. The exemption is
+syntactic (any `with` silences it) — accepted and documented in the rule note.
 
 ```yaml
 rule:
-  pattern: await $X.exec($$$ARGS)
-  inside:
-    kind: finally_clause
-    stopBy: end
+  pattern: await $X.exec($$$ARGS)   # close arm: await $X.close($$$ARGS)
+  inside: {kind: finally_clause, stopBy: end}
+  not:
+    inside: {kind: with_statement, stopBy: {kind: finally_clause}}
 ```
 
-plus a second `any:` arm for `await $X.close($$$)` at `severity: warning` (legitimate
-direct closes exist; the warning arm is a review prompt, not a ban — do not promote).
-Verify the `_teardown_step`/`compensate` call sites do NOT match (they wrap the await
-in a `with`/function call — confirm against `compose.py:542` before landing; if the
-grammar match is unstable, narrow to the `.exec` arm only).
-**Red today:** 2 error (`docker_host.py:523,:600`) + 1 warning (`unix_host.py:583`).
-**Landing:** Wave 12, fix-with-gate for the error arm.
+No `ignores:`: connections.py needed no carve-out (its close chain is with-wrapped
+by construction — rule-verified zero hits). `compensate(...)` call sites don't match
+(`compose.py`'s teardown confirmed): the `.exec` lives un-awaited inside the call.
+**Red measured (rule, pristine tree):** 2 error (`docker_host.py:524,:601` put/get
+staging `rm -rf`) — plan's count held; **9 warning, not the plan's 1** (the
+read-count missed cli/expose, cli/monitor, suite/plugin, config/repo,
+coverage/produce, coverage/reporter, host/host app-shell, host/remote_host).
+Triage: 8 wrapped in-wave; `RemoteHost.close`'s transport close judged the arm's
+legitimate case — it is `close()`'s OWN result, its loud-failure contract is pinned
+by `test_unix_host.py`'s close-chain sweep (wrapping it turned that sweep red), and
+it carries the arm's one site-level `ast-grep-ignore` with that reasoning.
+The warning arm is non-blocking by construction — `ast-grep scan` fails only
+on errors — so warning-site regressions surface in lint output, not as a red
+gate; the per-site pins guard the error-arm sites and the helper's contract.
+**Landed:** Wave 12, fix-with-gate; zero unreviewed sites at landing.
 
 ### Deliberately NOT gated (and why)
 
@@ -1026,16 +1041,56 @@ nothing an intermediate commit could be green against.
       discovery sees the new registry. Red pre-fix, green post-fix; whole
       tests/unit green (5129) with no measurable slowdown.
 
-### Wave 12 — Collection-crash + finally-await (items 12; G15)
-**Files:** `tests/e2e/conftest.py:105-108` (defer: collect offenders in
-`pytest_collection_modifyitems`, report + fail via a session-fixture/`pytest_configure`
--safe path per the dashboard conftest's documented pattern),
-`src/otto/host/docker_host.py:523,:600`, `src/otto/host/unix_host.py:583` (adopt
-`_teardown_step`/`compensate`); land G15 in this squash — `.exec` arm at error (prove
-red pre-fix: 2 hits), `.close` arm at warning by design (never promoted).
-- [ ] Reproduce the controller crash once with a deliberately mistagged e2e test under
-      `-n 2` (scratch clone, not the dev repo) — then verify the deferred report names
-      the offender instead.
+### Wave 12 — Collection-crash + finally-await (items 12; G15) — LANDED
+**As landed.** The e2e resource-marker rule no longer raises `pytest.UsageError`
+from `pytest_collection_modifyitems` (an xdist CONTROLLER crash under the repo's
+`-n auto` — reproduced: `INTERNALERROR`, `xdist/dsession.py:217 assert not
+crashitem`, and the crash blames whichever INNOCENT item the dead worker held).
+Enforcement is deferred: the collection hook (now a tryfirst *wrapper*) stamps
+violations on the offending item (`pytest.StashKey`) and — the interim review's
+MAJOR — RE-APPENDS offenders that `-m`/`-k` filtering removed, because a test
+mistagged hostless+integration is otherwise deselected into permanent silence on
+the hostless lane, the only lane CI runs. A tryfirst `pytest_runtest_setup` hook
+(not an autouse fixture — the review showed a higher-scoped fixture failure would
+swallow the message, and a mistagged test should not pay session fixtures or
+touch a testbed first) fails the item with the rule's own message — xdist-safe by
+construction. Decision logic extracted as the pure `_resource_marker_violations`
+(the `_browser_group_key` pattern). The deliberate trade, documented at the hook:
+`--collect-only` no longer aborts — a run precondition must not fire when nothing
+runs (#196 doctrine) — while no marker expression can hide an offender from a
+running lane, and skip/xfail marks cannot hide the failure either — the hook
+preempts `_pytest.skipping`'s tryfirst setup hook (later conftest registration
+runs first), verified empirically at landing (fable's find: the draft claimed
+the opposite as a residual).
+Pins: `tests/unit/test_resource_marker_policy.py` (truth table);
+`tests/e2e/test_marker_rule_deferral.py` (pytester-subprocess nested sessions over a
+runtime copy of the REAL conftest — proven red pre-fix under `-n 2` with the exact
+controller-crash signature, which satisfies the scratch-repro checkbox without
+touching the dev repo; the `--collect-only`-is-clean pin, red pre-fix at
+`ExitCode.USAGE_ERROR`, with positive collected-probe asserts; and the
+deselection pin, proven red against the fixture-based first draft — offender
+deselected, 1 error instead of 2 — before the re-append landed).
+Product: `teardown_step` promoted public; 2 error + 8 warning sites wrapped, 1
+recorded legitimate — inventory, triage and the remote_host chaos-sweep story in
+the G15 section above. Masking pins: docker put/get staging cleanup (3 tests),
+unix interactive telnet close (2), `teardown_step`'s own swallow/warn +
+cancellation-passthrough contract (2). All guards mutation-proven on the committed
+tree (M1 UsageError revert, M2 stamp drop, M3 report-hook blind, M4 count weaken, M5/M6
+site unwraps — each also re-fires the rule — M7 BaseException widen, M8 planted
+probe shapes incl. with-exemption and out-of-scope silence).
+Recorded residuals (same defect family, invisible to the two rules' `.exec`/
+`.close` spellings; left for a chain-shaped pass): `cli/monitor.py`'s teardown
+finally runs `db.finalize` before the wrapped collector close, so a raising
+finalize still skips the close; `suite/plugin.py`'s finally is the identical twin
+— `monitor_db.finalize` (and the `output.write_text` branch) run ahead of the
+wrapped close, and a raise there also skips clearing the
+`OttoSuite._session_monitor_collector` slot; `transfer/nc.py:778,985`
+(`_close_writer_bounded`) and `:855` (`server.wait_closed`) are bare finally
+awaits under names the rules cannot see. `app_shell.attach`'s `_exit` was the
+worst of these — it defeated this wave's own `app_shell` session-close wrap one
+frame down — and was fixed in-wave (masking-only: best-effort exit when the body
+is already failing, loud exit on a clean body because a wedged REPL is the
+caller's business; both pinned).
 
 ### Wave 13 — Skip-policy pins (G12) + embedded-coverage hard-fail
 Per G12, all in one squash: `test_no_skip_lanes.py` lands (proven red pre-fix on the 2
@@ -1147,3 +1202,6 @@ are the design principles the gates mechanize, quotable in review:
 - Two claims to verify at implementation time (flagged in place): ruff's current
   default `raises-require-match-for` list (G4), and ast-grep's `finally_clause` node
   name / relational-match stability for G15 (fall back to the `.exec`-only arm).
+  G15 verified at landing: `finally_clause` + rule-object `stopBy` both stable; the
+  draft's real gap was different — the fix idiom itself matches without a
+  bare-vs-wrapped `not: inside: with_statement` arm (see G15).

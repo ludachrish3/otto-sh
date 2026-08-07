@@ -1,0 +1,43 @@
+id: no-awaited-close-in-finally
+language: python
+severity: warning
+message: Awaited close in a bare `finally` — if the body raised, a raising close masks it. Wrap it in `teardown_step` (otto.host.connections) unless the close outcome IS the operation's own result; this arm is a review prompt, not a ban.
+note: >
+  Companion arm to no-awaited-exec-in-finally, held at `severity: warning`
+  BY DESIGN — do not promote (gate G15). A remote exec in a finally is
+  always cleanup, so that arm is an error; a `.close()` can be either
+  cleanup (wrap it) or the operation's own completion (leave it, and this
+  warning is the reviewer's cue to say so at the site). The warning exists
+  so the choice is made once, on purpose, at review time — not silently by
+  omission.
+
+  t0 = 9, rule-measured on the pristine tree — the plan's read-count said
+  1 (unix_host.py's interactive telnet close) and missed eight: cli/expose
+  (post-verb host close), cli/monitor and suite/plugin (collector close),
+  config/repo, coverage/capture/produce and coverage/reporter (LocalHost
+  close — which delegates to close_all() and CAN raise), host/host
+  (app-shell session close), host/remote_host (transport chain). The
+  2026-08-07 triage wrapped eight — each reports over an
+  already-determined body outcome — and judged host/remote_host's the
+  arm's own legitimate case: RemoteHost.close()'s transport close is
+  close()'s OWN result, whose loud-failure contract (either chain's
+  failure propagates; the other chain still runs) is pinned by
+  test_unix_host.py's close-chain sweep — wrapping it there turned that
+  sweep red. It carries the site-level ast-grep-ignore with that
+  reasoning, the one suppression this arm has. Baseline: zero unreviewed.
+
+  Same bare-`finally` definition and `with`-exemption as the error arm,
+  and no ignores for the same measured reason (the helper's home has zero
+  bare sites).
+files:
+- src/otto/**
+rule:
+  pattern: await $X.close($$$ARGS)
+  inside:
+    kind: finally_clause
+    stopBy: end
+  not:
+    inside:
+      kind: with_statement
+      stopBy:
+        kind: finally_clause

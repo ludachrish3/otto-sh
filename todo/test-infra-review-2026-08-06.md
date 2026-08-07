@@ -538,7 +538,7 @@ no retry, so the two directions of one backend have different failure semantics.
 `src/otto/host/docker_host.py:523`, `:600`, `src/otto/host/unix_host.py:583`: cleanup
 `exec`/`close` in a bare `finally` — the situations where the body raises are precisely
 those where the cleanup also raises, replacing the real exception with transport noise.
-House tools exist and are used elsewhere (`host/connections.py:_teardown_step`;
+House tools exist and are used elsewhere (`host/connections.py:teardown_step`;
 `lifecycle.compensate()` at `docker/compose.py:542-554`, `tunnel/manage.py:486`,
 `link/manage.py:669`, `nc.py:1017`).
 

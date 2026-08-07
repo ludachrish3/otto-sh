@@ -10,7 +10,7 @@ import asyncio
 
 import pytest
 
-from otto.host.connections import ConnectionManager
+from otto.host.connections import ConnectionManager, teardown_step
 from tests._fixtures.chaos import ChaosPoints, ConnectionDropped, sweep_cancellation
 
 _STEPS = ["sftp", "ssh", "ftp", "telnet", "hop"]
@@ -118,3 +118,23 @@ async def test_close_logs_the_failing_step(caplog):
     with caplog.at_level("WARNING", logger="otto.host.connections"):
         await _manager(points).close()
     assert any("ftp" in r.message and "box" in r.message for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# teardown_step's own contract (public since G15 pointed every adopter at it)
+# ---------------------------------------------------------------------------
+
+
+def test_teardown_step_swallows_the_step_error_and_warns(caplog):
+    with (
+        caplog.at_level("WARNING", logger="otto.host.connections"),
+        teardown_step("box", "probe-step"),
+    ):
+        raise ConnectionDropped("socket already gone")
+    assert any("box: probe-step teardown failed" in r.message for r in caplog.records)
+
+
+def test_teardown_step_lets_cancellation_through():
+    """Force-abandon contract: a cancelled teardown stops loudly, not politely."""
+    with pytest.raises(asyncio.CancelledError), teardown_step("box", "probe-step"):
+        raise asyncio.CancelledError
