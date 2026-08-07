@@ -203,7 +203,9 @@ def test_roundtrip_and_strictness(repo: Path, tmp_path: Path) -> None:
     assert raw["files"]["f.c"]["branches"]["3"][1] == [0, 1, None]
     raw["surprise"] = True
     out.write_text(json.dumps(raw))
-    with pytest.raises(ValidationError):
+    # The unknown top-level key is what must be refused — not, say, a shape
+    # complaint about the branch triples we just hand-edited around.
+    with pytest.raises(ValidationError, match=r"(?m)^surprise\n\s+Extra inputs are not permitted"):
         Capture.load(out)
 
 

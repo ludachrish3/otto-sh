@@ -181,7 +181,10 @@ Wave 5a, fix-with-gate.
 
 **Policy:** with `extra='forbid'` models, *any* validation error satisfies a bare
 raises — baseline-dict drift silently retargets the test.
-**Mechanism:** ruff, `.ruff.toml` — add (PT011 is already selected via `ALL`):
+**Mechanism:** ruff, `.ruff.toml` — add (PT011 is already selected via `ALL`).
+*(Block below as originally proposed — SUPERSEDED by the landed form; see the
+Red-today note: the landed config is the extend- form with a `*ValidationError`
+glob, and the bare `"ValidationError"` entry below is documented-dead.)*
 
 ```toml
 [lint.flake8-pytest-style]
@@ -195,7 +198,27 @@ raises-require-match-for = [
 ]
 ```
 
-**Red today:** 52 sites (inventory in review §4.4).
+**Red today:** 71 sites, ruff-verified with the landed config (t0 on `b21c37a4`).
+[Wave 5b corrections, in order: the review §4.4 inventory said 52 — a grep
+undercount vs ruff's AST (multi-line and qualified forms); the pydantic-only
+config measured 66; interim review then showed a bare short-name entry is DEAD
+(PT011 compares resolved qualified names) and the landed
+`raises-extend-require-match-for = ["*ValidationError"]` glob also catches
+jsonschema's ValidationError and otto's own EventValidationError — 5 more bare
+sites, 71 total. Heaviest files match the review's list; counts are higher.]
+**Stated residual (found during the Wave 5b burn-down, NOT fixed there):** a
+pre-existing `match=` that names only a bare field can be BLIND — pydantic's error
+rendering echoes the input dict via `input_value=...`, so `match="tls_key"` passes
+even when the model rejects for a completely different reason (proven by mutation
+at `tests/unit/models/test_settings.py:625`; suspect siblings: `:632` and the
+bare-field matches in `test_settings_coverage.py`). PT011 cannot see this (a match
+is present). The robust form is `(?m)^<loc>\n\s+<reason>`, pinning both halves.
+Goes to the review checklist; sweep the pre-existing bare-field matches in Wave 16
+alongside the other semantic-strengthening work. Raises-shape escapes (verified,
+latent — zero in-tree uses today): tuple arguments `raises((ValidationError, X))`
+and variable indirection `exc = ValidationError; raises(exc)` are invisible to
+PT011; alias imports, keyword form, attribute form, and locally-defined
+`*ValidationError` classes ARE caught.
 **Landing:** Wave 5b, fix-with-gate in one mechanical squash (each site gains a
 `match=` naming the field/constraint under test — this is what converts them from
 "model rejects something" to "model rejects *this*").
@@ -698,12 +721,17 @@ G3's baseline note), `test_cov.py:337,:350` (assert the error message via the mo
       the two parenthesized-`with` sites).
 
 ### Wave 5b — ValidationError match= burn-down (item 5 second half; G4)
-**Files:** `.ruff.toml` + the 52 sites (review §4.4 inventory).
-- [ ] Add the `[lint.flake8-pytest-style]` block; run ruff — the emitted PT011 list is
-      the burn-down inventory (record the count, expected ~52, for the commit message).
-- [ ] Fix mechanically in the same squash, one `match=` per site naming the field/
-      constraint under test. No `--fix` exists for this. **Effort: M** (mechanical but
-      each match string requires reading the model).
+**Files:** `.ruff.toml` + the 71 sites (ruff-verified; review §4.4's 52 was a grep
+undercount — see G4's Red-today note).
+- [x] Add the `[lint.flake8-pytest-style]` block; run ruff — the emitted PT011 list is
+      the burn-down inventory (final measured t0 = 71, not the review's ~52; see G4's
+      Red-today note for the 52 → 66 → 71 evolution). Landed as the extend- form with
+      a `*ValidationError` glob — no hand-copied stdlib mirror to drift on upgrades.
+- [x] Fix mechanically in the same squash, one `match=` per site naming the field/
+      constraint under test. No `--fix` exists for this. Dominant landed form:
+      `(?m)^<full.dotted.loc>\n\s+<constraint message>` — pinning WHICH field and WHY
+      (pydantic's `input_value=` echo makes bare field-name matches blind; see the
+      stated residual).
 
 ### Wave 6 — Test-boilerplate consolidation, high-leverage pair (item 6; G8 + G9)
 **Files:** `tests/e2e/_otto_subprocess.py` (add `extra_argv_prefix`, `cwd` params), the
@@ -842,7 +870,11 @@ asserts the readers reached the churn loop. **Added during Wave 5a (review §4.1
 first bullet, which no wave had claimed):** `tests/unit/cov/test_anchor.py:193,197,
 202,207,212` — the five parity-only tests (`lazy == batched` is their only assertion,
 so a resolver returning `unverifiable` for everything passes all five) each gain the
-semantic outcome assert for their named scenario alongside parity. **Effort: M.**
+semantic outcome assert for their named scenario alongside parity. **Added during
+Wave 5b:** sweep the pre-existing bare-field `match=` sites that pydantic's
+`input_value=` echo renders blind (see G4's stated residual — test_settings.py:625
+proven by mutation; :632 and test_settings_coverage.py's bare-field matches suspect)
+to the two-halves `(?m)^<loc>\n\s+<reason>` form. **Effort: M.**
 
 ### Wave 17 — Test-fixture library build-out (items 16 + §7.4/§7.5 tail; **Effort: M–L**, divisible)
 `tests/_fixtures/gitrepo.py` (hermetic `git_env` + `TmpGitRepo`; migrate 20 files);

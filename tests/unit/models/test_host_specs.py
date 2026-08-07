@@ -45,20 +45,22 @@ def test_toolchain_spec_coerces_str_paths():
 
 
 def test_toolchain_spec_forbids_unknown():
-    with pytest.raises(ValidationError):
+    with pytest.raises(ValidationError, match=r"sysrot\s+Extra inputs are not permitted"):
         ToolchainSpec(sysrot="/x")  # typo
 
 
 def test_hostspec_requires_ip_and_element():
-    with pytest.raises(ValidationError) as exc:
+    with pytest.raises(ValidationError, match=r"element\s+Field required") as exc:
         HostSpec(ip="10.0.0.1")  # missing element
     assert "element" in str(exc.value)
 
 
 def test_hostspec_forbids_unknown_field():
-    with pytest.raises(ValidationError) as exc:
+    # Anchored loc line: the substring assert this used to carry could not
+    # discriminate — "lab" is a substring of the real field "labs" AND of
+    # element="lab"'s input_value echo; only the ^lab$ line pins the typo'd key.
+    with pytest.raises(ValidationError, match=r"(?m)^lab\n\s+Extra inputs are not permitted"):
         HostSpec(ip="10.0.0.1", element="lab", lab=["x"])  # typo: lab vs labs
-    assert "lab" in str(exc.value)
 
 
 def test_hostspec_accepts_labs_and_coerces_resources_to_set():
@@ -95,7 +97,7 @@ def test_common_host_kwargs_builds_nested_when_set():
 
 
 def test_unix_spec_requires_creds():
-    with pytest.raises(ValidationError) as exc:
+    with pytest.raises(ValidationError, match=r"creds\s+Field required") as exc:
         UnixHostSpec(ip="10.0.0.1", element="lab")  # creds required for unix
     assert "creds" in str(exc.value)
 
@@ -151,7 +153,7 @@ def test_unix_spec_builds_nested_options_and_snmp():
 
 
 def test_unix_spec_rejects_embedded_only_field():
-    with pytest.raises(ValidationError):
+    with pytest.raises(ValidationError, match=r"filesystem\s+Extra inputs are not permitted"):
         UnixHostSpec(
             ip="1.1.1.1",
             element="lab",
@@ -176,7 +178,7 @@ def test_embedded_spec_absent_filesystem_keeps_runtime_default():
 
 def test_embedded_spec_rejects_unknown_filesystem():
     # Now caught at validate-time by the field_validator, not at to_host().
-    with pytest.raises(ValidationError) as exc:
+    with pytest.raises(ValidationError, match="is not a registered filesystem") as exc:
         EmbeddedHostSpec(ip="192.0.2.1", element="dut", filesystem="bogusfs")
     assert "bogusfs" in str(exc.value)
 
@@ -195,7 +197,7 @@ def test_embedded_spec_accepts_registered_filesystem():
 
 
 def test_hostspec_rejects_unregistered_command_frame():
-    with pytest.raises(ValidationError) as exc:
+    with pytest.raises(ValidationError, match="is not a registered frame") as exc:
         UnixHostSpec(
             ip="10.0.0.1",
             element="lab",
@@ -206,7 +208,7 @@ def test_hostspec_rejects_unregistered_command_frame():
 
 
 def test_embedded_spec_rejects_unix_only_field():
-    with pytest.raises(ValidationError):
+    with pytest.raises(ValidationError, match=r"docker_capable\s+Extra inputs are not permitted"):
         EmbeddedHostSpec(ip="192.0.2.1", element="dut", docker_capable=True)
 
 
@@ -259,7 +261,7 @@ def test_hostspec_interfaces_accepts_ipv6():
 
 
 def test_hostspec_interfaces_rejects_non_ip_value():
-    with pytest.raises(ValidationError) as exc:
+    with pytest.raises(ValidationError, match="is not a valid IP") as exc:
         HostSpec(ip="10.0.0.1", element="lab", interfaces={"mgmt": "not-an-ip"})
     assert "mgmt" in str(exc.value)
 
@@ -370,7 +372,7 @@ def test_spec_rejects_products_as_lab_data():
     """``products`` is repo-logic-applied, not lab data — lab.json must not
     declare it (extra='forbid' rejects the key).
     """
-    with pytest.raises(ValidationError):
+    with pytest.raises(ValidationError, match=r"products\s+Extra inputs are not permitted"):
         UnixHostSpec(
             ip="10.0.0.1", element="lab", creds=[{"login": "u", "password": "p"}], products=[]
         )
@@ -691,7 +693,7 @@ class TestCredSpec:
             _cred_spec([{"login": "a", "password": "x"}], user="ghost")
 
     def test_creds_required_on_unix_host(self):
-        with pytest.raises(ValidationError):
+        with pytest.raises(ValidationError, match=r"creds\s+Field required"):
             UnixHostSpec.model_validate(CRED_BASE)
 
 
@@ -719,7 +721,9 @@ class TestInterfaceSpec:
             UnixHostSpec.model_validate(self._host({"eth1": {"ip": "not-an-ip"}}))
 
     def test_unknown_interface_key_rejected(self):
-        with pytest.raises(ValidationError):
+        with pytest.raises(
+            ValidationError, match=r"interfaces\.eth1\.mac\s+Extra inputs are not permitted"
+        ):
             UnixHostSpec.model_validate(self._host({"eth1": {"ip": "10.0.0.5", "mac": "x"}}))
 
     def test_runtime_host_gets_interface_objects(self):

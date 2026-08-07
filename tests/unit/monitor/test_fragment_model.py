@@ -77,5 +77,5 @@ class TestFragmentSpeaksFormat1:
         assert frag.events[0].id == 3
 
     def test_session_is_required(self) -> None:
-        with pytest.raises(ValidationError):
+        with pytest.raises(ValidationError, match=r"\nsession\n\s*Field required"):
             MonitorSessionFragment.model_validate({"format": 1})

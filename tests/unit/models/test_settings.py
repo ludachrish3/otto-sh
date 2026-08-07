@@ -1,3 +1,4 @@
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -107,13 +108,18 @@ def test_docker_image_spec_stringifies_scalar_build_args():
 
 
 def test_docker_spec_forbids_unknown_top_level_key():
-    with pytest.raises(ValidationError):
+    with pytest.raises(
+        ValidationError, match=r"(?m)^registy_url\n\s+Extra inputs are not permitted"
+    ):
         DockerSettingsSpec.model_validate({"registy_url": "x"})  # typo
 
 
 def test_docker_image_spec_requires_name_dockerfile_context():
-    with pytest.raises(ValidationError):
+    # Two independent searches, not one ordered pattern: a legitimate field
+    # reorder in DockerImageSpec must not fail this test.
+    with pytest.raises(ValidationError, match=r"(?m)^dockerfile\n\s+Field required") as exc:
         DockerImageSpec.model_validate({"name": "api"})  # missing dockerfile/context
+    assert re.search(r"(?m)^context\n\s+Field required", str(exc.value))
 
 
 # ---------------------------------------------------------------------------
@@ -141,7 +147,7 @@ def test_os_profile_spec_requires_base_and_collects_defaults():
 
 
 def test_os_profile_spec_missing_base_raises():
-    with pytest.raises(ValidationError):
+    with pytest.raises(ValidationError, match=r"(?m)^base\n\s+Field required"):
         OsProfileSpec.model_validate({"os_name": "Zephyr"})
 
 
@@ -169,7 +175,7 @@ def test_reservation_config_keeps_open_backend_subtable():
 
 
 def test_reservation_config_rejects_non_string_backend():
-    with pytest.raises(ValidationError):
+    with pytest.raises(ValidationError, match=r"(?m)^backend\n\s+Input should be a valid string"):
         ReservationConfigSpec.model_validate({"backend": 3})
 
 
@@ -200,14 +206,17 @@ def test_reservation_file_naive_expires_treated_as_utc():
 
 
 def test_reservation_file_rejects_bad_version():
-    with pytest.raises(ValidationError):
+    with pytest.raises(ValidationError, match=r"(?m)^version\n\s+Input should be 1"):
         ReservationFile.model_validate({"version": 2, "reservations": []})
 
 
 def test_reservation_file_rejects_malformed_expires():
     # a bad timestamp surfaces as ValidationError (the validator must not swallow
     # the underlying ValueError from datetime.fromisoformat).
-    with pytest.raises(ValidationError):
+    with pytest.raises(
+        ValidationError,
+        match=r"(?m)^reservations\.0\.expires\n\s+Value error, Invalid isoformat string",
+    ):
         ReservationFile.model_validate(
             {
                 "version": 1,
@@ -217,7 +226,10 @@ def test_reservation_file_rejects_malformed_expires():
 
 
 def test_reservation_file_rejects_non_string_resources():
-    with pytest.raises(ValidationError):
+    with pytest.raises(
+        ValidationError,
+        match=r"(?m)^reservations\.0\.resources\.0\n\s+Input should be a valid string",
+    ):
         ReservationFile.model_validate(
             {
                 "version": 1,
@@ -236,13 +248,16 @@ def _minimal() -> dict:
 
 
 def test_settings_requires_name_and_version():
-    with pytest.raises(ValidationError) as exc:
+    with pytest.raises(ValidationError, match=r"(?m)^version\n\s+Field required") as exc:
         SettingsModel.model_validate({"name": "repo1"})  # no version
     assert "version" in str(exc.value)
 
 
 def test_settings_rejects_bad_version_format():
-    with pytest.raises(ValidationError):
+    with pytest.raises(
+        ValidationError,
+        match=r"(?m)^version\n\s+Value error, version '1\.0' must be MAJOR\.MINOR\.PATCH",
+    ):
         SettingsModel.model_validate({"name": "r", "version": "1.0"})  # not X.Y.Z
 
 
@@ -267,7 +282,9 @@ def test_settings_allows_legacy_lab_data_type_and_typed_coverage():
 
 
 def test_settings_forbids_unknown_top_level_key():
-    with pytest.raises(ValidationError) as exc:
+    with pytest.raises(
+        ValidationError, match=r"(?m)^labz\n\s+Extra inputs are not permitted"
+    ) as exc:
         SettingsModel.model_validate({**_minimal(), "labz": []})  # typo: labs
     assert "labz" in str(exc.value)
 
@@ -645,5 +662,7 @@ def test_coverage_overrides_block_absent_is_none():
 def test_coverage_overrides_unknown_key_fails():
     from otto.models.settings import CoverageSettingsSpec
 
-    with pytest.raises(ValidationError):
+    with pytest.raises(
+        ValidationError, match=r"(?m)^overrides\.path\n\s+Extra inputs are not permitted"
+    ):
         CoverageSettingsSpec.model_validate({"overrides": {"path": "x"}})

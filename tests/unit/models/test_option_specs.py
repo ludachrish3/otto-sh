@@ -35,9 +35,12 @@ class _Sample(OttoModel):
 
 
 def test_otto_model_forbids_unknown_fields():
-    with pytest.raises(ValidationError) as exc:
+    # extra='forbid' surfaces the offending key — pin it, so a complaint about
+    # some *other* field can never stand in for the rejection under test.
+    with pytest.raises(
+        ValidationError, match=r"(?m)^nope\n\s+Extra inputs are not permitted"
+    ) as exc:
         _Sample(x=1, nope=2)
-    # extra='forbid' surfaces the offending key
     assert "nope" in str(exc.value)
 
 
@@ -66,7 +69,9 @@ def test_socks_forward_from_dict_and_positional():
 
 
 def test_forward_rejects_unknown_key():
-    with pytest.raises(ValidationError):
+    # A pydantic *dataclass* reports an unknown kwarg as unexpected_keyword_argument
+    # rather than extra_forbidden; pin both the key and that wording.
+    with pytest.raises(ValidationError, match=r"(?m)^bogus\n\s+Unexpected keyword argument"):
         LocalPortForward(listen_host="x", listen_port=1, dest_host="y", dest_port=2, bogus=3)
 
 
@@ -100,7 +105,9 @@ def test_ssh_spec_builds_forwards_and_extra():
 
 
 def test_ssh_spec_rejects_unknown_top_level_key():
-    with pytest.raises(ValidationError) as exc:
+    with pytest.raises(
+        ValidationError, match=r"(?m)^connet_timeout\n\s+Extra inputs are not permitted"
+    ) as exc:
         SshOptionsSpec(connet_timeout=5.0)  # typo
     assert "connet_timeout" in str(exc.value)
 
@@ -162,7 +169,9 @@ def test_nc_spec_defaults_match_runtime():
 
 
 def test_nc_spec_rejects_unknown_key():
-    with pytest.raises(ValidationError):
+    # ``extra`` itself is the rejected key (otto-owned spec, no passthrough
+    # table) — not a complaint about something nested inside it.
+    with pytest.raises(ValidationError, match=r"(?m)^extra\n\s+Extra inputs are not permitted"):
         NcOptionsSpec(extra={"x": 1})  # otto-owned: no passthrough
 
 
@@ -181,7 +190,7 @@ def test_snmp_spec_defaults_and_address():
 
 
 def test_snmp_spec_rejects_bad_version():
-    with pytest.raises(ValidationError):
+    with pytest.raises(ValidationError, match=r"(?m)^version\n\s+Input should be '1' or '2c'"):
         SnmpOptionsSpec(version="3")
 
 

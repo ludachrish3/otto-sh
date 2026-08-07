@@ -43,7 +43,7 @@ class TestMetricPoint:
 
     def test_extra_forbidden(self):
         # MetricPoint is OttoModel — a stray key is an error, not silently dropped.
-        with pytest.raises(ValidationError):
+        with pytest.raises(ValidationError, match=r"\njunk\n\s*Extra inputs are not permitted"):
             MetricPoint(ts=datetime(2024, 3, 1, 10, tzinfo=_UTC), value=1.0, junk=2)
 
 
@@ -93,7 +93,7 @@ class TestMetricRecord:
         assert rec.label == "X"
 
     def test_missing_required_field_raises(self):
-        with pytest.raises(ValidationError):
+        with pytest.raises(ValidationError, match=r"\nlabel\n\s*Field required"):
             MetricRecord.model_validate({"timestamp": "2024-03-01T10:00:00", "value": 1.0})
 
 
@@ -126,7 +126,7 @@ class TestEventRecord:
         assert rec.end_timestamp == datetime(2024, 3, 1, 10, 5, tzinfo=_UTC)
 
     def test_missing_timestamp_raises(self):
-        with pytest.raises(ValidationError):
+        with pytest.raises(ValidationError, match=r"\ntimestamp\n\s*Field required"):
             EventRecord.model_validate({"label": "no ts"})
 
 
@@ -283,11 +283,11 @@ class TestExportDocument:
 
     def test_format_field_is_required(self):
         # A legacy (unversioned) document must fail loud, not default to format 1.
-        with pytest.raises(ValidationError):
+        with pytest.raises(ValidationError, match=r"\nformat\n\s*Field required"):
             MonitorExport.model_validate({"sessions": []})
 
     def test_unknown_format_rejected(self):
-        with pytest.raises(ValidationError):
+        with pytest.raises(ValidationError, match=r"\nformat\n\s*Input should be 1\b"):
             MonitorExport.model_validate({"format": 2, "sessions": []})
 
     def test_read_back_is_lenient(self):
@@ -300,13 +300,19 @@ class TestExportDocument:
     def test_link_provenance_validated(self):
         raw = self._doc()
         raw["sessions"][0]["lab"]["links"][0]["provenance"] = "tunnel"
-        with pytest.raises(ValidationError):
+        with pytest.raises(
+            ValidationError,
+            match=r"links\.0\.provenance\n\s*Input should be 'implicit' or 'declared'",
+        ):
             MonitorExport.model_validate(raw)
 
     def test_link_needs_exactly_two_endpoints(self):
         raw = self._doc()
         raw["sessions"][0]["lab"]["links"][0]["endpoints"].append({"host": "x"})
-        with pytest.raises(ValidationError):
+        with pytest.raises(
+            ValidationError,
+            match=r"links\.0\.endpoints\n\s*List should have at most 2 items",
+        ):
             MonitorExport.model_validate(raw)
 
     def test_open_session_and_optional_fields_omitted(self):
@@ -340,17 +346,23 @@ class TestExportDocument:
     def test_link_needs_at_least_two_endpoints(self):
         raw = self._doc()
         raw["sessions"][0]["lab"]["links"][0]["endpoints"] = [{"host": "x"}]
-        with pytest.raises(ValidationError):
+        with pytest.raises(
+            ValidationError,
+            match=r"links\.0\.endpoints\n\s*List should have at least 2 items",
+        ):
             MonitorExport.model_validate(raw)
 
     def test_element_type_validated(self):
         raw = self._doc()
         raw["sessions"][0]["lab"]["elements"][0]["type"] = "virtual"
-        with pytest.raises(ValidationError):
+        with pytest.raises(
+            ValidationError,
+            match=r"elements\.0\.type\n\s*Input should be 'physical' or 'logical'",
+        ):
             MonitorExport.model_validate(raw)
 
     def test_host_element_required(self):
         raw = self._doc()
         del raw["sessions"][0]["lab"]["hosts"][0]["element"]
-        with pytest.raises(ValidationError):
+        with pytest.raises(ValidationError, match=r"hosts\.0\.element\n\s*Field required"):
             MonitorExport.model_validate(raw)

@@ -31,7 +31,7 @@ def test_resolve_create_keeps_explicit_pair() -> None:
 
 
 def test_resolve_create_rejects_end_before_resolved_now() -> None:
-    with pytest.raises(EventValidationError):
+    with pytest.raises(EventValidationError, match="end_timestamp must be after timestamp"):
         resolve_create(EventCreateBody(label="x", end_timestamp=T0))  # T0 is in the past
 
 
@@ -47,5 +47,5 @@ def test_merge_explicit_null_end_clears() -> None:
 
 def test_merge_rejects_start_moved_past_kept_end() -> None:
     moved = (T1 + timedelta(minutes=1)).isoformat()
-    with pytest.raises(EventValidationError):
+    with pytest.raises(EventValidationError, match="end_timestamp must be after timestamp"):
         merge_update(EventUpdateBody.model_validate({"timestamp": moved}), **EXISTING)

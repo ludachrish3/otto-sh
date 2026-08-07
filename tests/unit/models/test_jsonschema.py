@@ -205,9 +205,9 @@ class TestSelectorEnums:
         vt_schema = build_schemas()["unix-host"]["properties"]["valid_transfers"]
         jsonschema.validate("scp", vt_schema)  # scalar OK
         jsonschema.validate(["scp", "sftp"], vt_schema)  # list OK
-        with pytest.raises(jsonschema.ValidationError):
+        with pytest.raises(jsonschema.ValidationError, match=r"'bogus' is not one of"):
             jsonschema.validate("bogus", vt_schema)  # out-of-enum scalar
-        with pytest.raises(jsonschema.ValidationError):
+        with pytest.raises(jsonschema.ValidationError, match=r"'bogus' is not one of"):
             jsonschema.validate(["bogus"], vt_schema)  # out-of-enum in list
 
 

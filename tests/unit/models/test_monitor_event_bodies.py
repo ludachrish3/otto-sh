@@ -53,7 +53,7 @@ class TestEventCreateBody:
     def test_unknown_field_rejected(self) -> None:
         # extra='forbid' (inherited from OttoModel) — a typo'd 'color' must
         # not silently vanish into an ignored field.
-        with pytest.raises(ValidationError):
+        with pytest.raises(ValidationError, match=r"\ncolour\n\s*Extra inputs are not permitted"):
             EventCreateBody.model_validate({"label": "deploy", "colour": "#ffffff"})
 
 
@@ -77,5 +77,5 @@ class TestEventUpdateBody:
         assert body.label is None
 
     def test_unknown_field_rejected(self) -> None:
-        with pytest.raises(ValidationError):
+        with pytest.raises(ValidationError, match=r"\ndashh\n\s*Extra inputs are not permitted"):
             EventUpdateBody.model_validate({"dashh": "dot"})

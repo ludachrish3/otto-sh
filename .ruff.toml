@@ -82,3 +82,14 @@ convention = "pep257"
 
 [lint.mccabe]
 max-complexity = 20
+
+[lint.flake8-pytest-style]
+# G4 (2026-08-06 test-infra review §4.4): with `extra='forbid'` models and
+# schemas, ANY validation error satisfies a bare `pytest.raises(ValidationError)`
+# — baseline-dict drift silently retargets the test. Every such raises must say
+# WHICH field/constraint it means via match=. The extend- form keeps ruff's
+# stdlib defaults intact (no hand-copied mirror to drift on upgrades); the glob
+# catches every *ValidationError ruff can resolve to a qualified name —
+# pydantic's AND jsonschema.exceptions' (a bare short name here would be dead:
+# PT011 compares resolved qualified names only).
+raises-extend-require-match-for = ["*ValidationError"]

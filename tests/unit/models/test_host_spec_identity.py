@@ -32,10 +32,10 @@ def test_board_that_slugs_empty_is_rejected():
 
 
 def test_negative_element_id_rejected():
-    with pytest.raises(ValidationError):
+    with pytest.raises(ValidationError, match=r"element_id\s+Value error, must be >= 0"):
         _spec(element_id=-1)
 
 
 def test_negative_slot_rejected():
-    with pytest.raises(ValidationError):
+    with pytest.raises(ValidationError, match=r"slot\s+Value error, must be >= 0"):
         _spec(board="blade", slot=-2)

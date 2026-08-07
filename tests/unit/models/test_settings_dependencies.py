@@ -44,7 +44,9 @@ def test_same_name_in_both_lists_rejected():
 
 
 def test_unknown_dependencies_key_rejected():
-    with pytest.raises(ValidationError):
+    with pytest.raises(
+        ValidationError, match=r"(?m)^dependencies\.requird\n\s+Extra inputs are not permitted"
+    ):
         _model(requird=["x"])  # typo'd key — extra='forbid'
 
 

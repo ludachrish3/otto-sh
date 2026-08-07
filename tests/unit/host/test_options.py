@@ -28,8 +28,9 @@ def test_local_port_forward_validates_and_is_frozen():
     with pytest.raises(dataclasses.FrozenInstanceError):
         fwd.listen_port = 9090  # type: ignore[misc]
 
-    # validates: a non-numeric port is rejected
-    with pytest.raises(ValidationError):
+    # validates: a non-numeric port is rejected. Built positionally, so pydantic
+    # reports the location as the argument index — "1" is listen_port.
+    with pytest.raises(ValidationError, match=r"(?m)^1\n\s+Input should be a valid integer"):
         LocalPortForward("localhost", "not-a-port", "web", 80)
 
 
@@ -313,7 +314,10 @@ class TestCreateHostFromDict:
         # the SshOptionsSpec deliberately omits. Under the Phase A 2b spec path
         # (``extra='forbid'``) such a misplaced key now raises a pydantic
         # ValidationError instead of being silently dropped.
-        with pytest.raises(ValidationError):
+        with pytest.raises(
+            ValidationError,
+            match=r"(?m)^ssh_options\.post_connect\n\s+Extra inputs are not permitted",
+        ):
             create_host_from_dict(
                 self._minimal(
                     ssh_options={

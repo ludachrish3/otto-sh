@@ -37,10 +37,12 @@ class TestLinkSpec:
         spec = LinkSpec.model_validate(entry)
         assert spec.endpoints[0].interface is None
 
-    @pytest.mark.parametrize("count", [1, 3])
-    def test_exactly_two_endpoints(self, count):
+    @pytest.mark.parametrize(("count", "bound"), [(1, "least"), (3, "most")])
+    def test_exactly_two_endpoints(self, count, bound):
         entry = _entry(endpoints=[{"host": f"h{i}"} for i in range(count)])
-        with pytest.raises(ValidationError):
+        with pytest.raises(
+            ValidationError, match=rf"endpoints\s+List should have at {bound} 2 items"
+        ):
             LinkSpec.model_validate(entry)
 
     def test_self_link_rejected(self):
@@ -58,7 +60,7 @@ class TestLinkSpec:
         LinkSpec.model_validate(entry)  # loopback cabling: legal
 
     def test_unknown_key_rejected(self):
-        with pytest.raises(ValidationError):
+        with pytest.raises(ValidationError, match=r"bandwidth\s+Extra inputs are not permitted"):
             LinkSpec.model_validate(_entry(bandwidth="10G"))
 
     def test_underscore_comment_keys_stripped(self):

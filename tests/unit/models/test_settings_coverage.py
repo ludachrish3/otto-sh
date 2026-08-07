@@ -60,7 +60,10 @@ def test_bad_max_age_rejected() -> None:
 
 
 def test_bad_kind_rejected() -> None:
-    with pytest.raises(ValidationError):
+    with pytest.raises(
+        ValidationError,
+        match=r"(?m)^coverage\.tiers\.x\.kind\n\s+Input should be 'e2e', 'unit' or 'manual'",
+    ):
         _settings({"tiers": {"x": {"kind": "smoke", "precedence": 1}}})
 
 
@@ -87,7 +90,13 @@ def test_report_rejects_medium_above_high() -> None:
 
 
 def test_report_rejects_out_of_range() -> None:
-    with pytest.raises(ValidationError):
+    with pytest.raises(
+        ValidationError,
+        match=r"(?m)^coverage\.report\.high\n\s+Input should be less than or equal to 100",
+    ):
         _settings({"report": {"high": 101}})
-    with pytest.raises(ValidationError):
+    with pytest.raises(
+        ValidationError,
+        match=r"(?m)^coverage\.report\.medium\n\s+Input should be greater than or equal to 0",
+    ):
         _settings({"report": {"medium": -1}})

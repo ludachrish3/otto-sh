@@ -112,7 +112,7 @@ class TestRegistry:
     def test_snmp_metric_is_frozen(self):
         m = get_snmp_metric(OID_SYS_UPTIME)
         assert m is not None
-        with pytest.raises(ValidationError):
+        with pytest.raises(ValidationError, match=r"\nscale\n\s*Instance is frozen"):
             m.scale = 2.0  # frozen → mutation rejected
 
 

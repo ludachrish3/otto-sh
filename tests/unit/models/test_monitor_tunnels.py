@@ -33,12 +33,15 @@ def test_tunnel_record_round_trips() -> None:
 
 
 def test_tunnel_record_rejects_single_hop() -> None:
-    with pytest.raises(ValidationError):
+    with pytest.raises(ValidationError, match=r"\nhops\n\s*List should have at least 2 items"):
         _record(hops=["edge-gw"])
 
 
 def test_tunnel_record_rejects_unknown_status() -> None:
-    with pytest.raises(ValidationError):
+    with pytest.raises(
+        ValidationError,
+        match=r"\nstatus\n\s*Input should be 'ok', 'degraded' or 'uncertain'",
+    ):
         _record(status="down")
 
 
@@ -58,7 +61,9 @@ def test_fragment_tunnels_absent_is_none_and_empty_is_empty() -> None:
 
 def test_link_snapshot_rejects_dynamic_provenance() -> None:
     """'dynamic' left the snapshot contract — tunnels are first-class now."""
-    with pytest.raises(ValidationError):
+    with pytest.raises(
+        ValidationError, match=r"\nprovenance\n\s*Input should be 'implicit' or 'declared'"
+    ):
         LinkSnapshot.model_validate(
             {
                 "id": "l1",

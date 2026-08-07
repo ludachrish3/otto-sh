@@ -26,7 +26,9 @@ def test_options_validates_constraints():
     class _Opts:
         count: int = pydantic.Field(default=1, gt=0)
 
-    with pytest.raises(pydantic.ValidationError):
+    with pytest.raises(
+        pydantic.ValidationError, match=r"(?m)^count\n\s+Input should be greater than 0"
+    ):
         _Opts(count=-1)
 
 

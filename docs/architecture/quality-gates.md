@@ -20,12 +20,12 @@ on that side.
 
 | Kind of check | Python | TypeScript |
 | --- | --- | --- |
-| Lint rules | `ruff check` (`select = ["ALL"]`, minus a documented ignore list) | `biome check --error-on-warnings` |
+| Lint rules | `ruff check` (`select = ["ALL"]`, minus a documented ignore list; `raises-extend-require-match-for` extends PT011 to pydantic's `ValidationError`, so a raises-check must name the field or constraint it means — with `extra='forbid'` models, a bare raises passes on *any* rejection) | `biome check --error-on-warnings` |
 | Formatting | `ruff format --check` | Biome — the *same* command (rules + format + **assists**) |
 | Type checking | `ty` (pinned `==0.0.64`) | `tsc --noEmit` via `scripts/typecheck_web.sh` (vendored Untitled UI diagnostics filtered) |
 | Unused code / deps | ruff (`F401`, `ARG`, …) | `knip` — unused files, exports, dependencies |
 | Module layering | `tach` against `tach.toml` | — none today |
-| Scoped pattern rules | `ast-grep` against `.ast-grep/rules/` — eight Python rules | `ast-grep` — two rules (`no-plan-coordinates-ts`, `-tsx`), scoped to `web/src/**` |
+| Scoped pattern rules | `ast-grep` against `.ast-grep/rules/` — nine Python rules | `ast-grep` — two rules (`no-plan-coordinates-ts`, `-tsx`), scoped to `web/src/**` |
 | Import cost | `scripts/import_budget.py` — module-count caps, snapshots, denylist | — (knip covers dependencies only) |
 | Tests | `pytest` (+ `xdist`, `repeat`, `hypothesis`) | `vitest` |
 | Coverage floor | `coverage.py` / `pytest-cov` — 95 for the full local run, 90 for the hostless CI slice | `@vitest/coverage-v8` for the unit floor; the browser leg is folded in by `monocart-coverage-reports` and the merged report gated by `nyc` |

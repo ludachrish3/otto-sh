@@ -85,7 +85,7 @@ class TestCreateHostFromDict:
             "element": "orange",
             "creds": [{"login": "vagrant", "password": "vagrant"}],
         }
-        with pytest.raises(ValidationError) as exc_info:
+        with pytest.raises(ValidationError, match=r"(?m)^ip\n\s+Field required") as exc_info:
             create_host_from_dict(host_data)
 
         assert "ip" in str(exc_info.value)
@@ -97,7 +97,7 @@ class TestCreateHostFromDict:
             "ip": "10.10.200.11",
             "element": "orange",
         }
-        with pytest.raises(ValidationError) as exc_info:
+        with pytest.raises(ValidationError, match=r"(?m)^creds\n\s+Field required") as exc_info:
             create_host_from_dict(host_data)
 
         assert "creds" in str(exc_info.value)
@@ -109,7 +109,7 @@ class TestCreateHostFromDict:
             "ip": "10.10.200.11",
             "creds": [{"login": "vagrant", "password": "vagrant"}],
         }
-        with pytest.raises(ValidationError) as exc_info:
+        with pytest.raises(ValidationError, match=r"(?m)^element\n\s+Field required") as exc_info:
             create_host_from_dict(host_data)
 
         assert "element" in str(exc_info.value)
@@ -314,7 +314,10 @@ class TestRepoLevelOptionDefaults:
 
     def test_unknown_field_in_defaults_table_raises(self):
         """Typos inside an options sub-table fail loudly via the spec validator."""
-        with pytest.raises(ValidationError) as exc_info:
+        with pytest.raises(
+            ValidationError,
+            match=r"(?m)^ssh_options\.totally_unknown_field\n\s+Extra inputs are not permitted",
+        ) as exc_info:
             create_host_from_dict(
                 self._base_host(),
                 preferences={".*": {"ssh_options": {"totally_unknown_field": 1}}},
@@ -917,7 +920,9 @@ class TestMergeAndValidation:
         assert host.os_type == "unix"  # absent os_type -> default selector stamped
 
     def test_validate_rejects_typo_with_pydantic_error(self):
-        with pytest.raises(ValidationError):
+        # ``lab`` (not ``labs``) is the key that must be named; the trailing 's'
+        # matters, so the pattern anchors the whole location line.
+        with pytest.raises(ValidationError, match=r"(?m)^lab\n\s+Extra inputs are not permitted"):
             validate_host_dict(
                 {
                     "ip": "10.0.0.1",
@@ -928,7 +933,12 @@ class TestMergeAndValidation:
             )  # 'lab' is a typo for 'labs'
 
     def test_validate_rejects_misplaced_ssh_options_on_embedded(self):
-        with pytest.raises(ValidationError):
+        # os_type must have dispatched to the *embedded* spec, and that spec must
+        # be the one refusing ``ssh_options``.
+        with pytest.raises(
+            ValidationError,
+            match=r"(?ms)for EmbeddedHostSpec.*^ssh_options\n\s+Extra inputs are not permitted",
+        ):
             validate_host_dict(
                 {
                     "ip": "192.0.2.1",

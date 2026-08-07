@@ -95,7 +95,9 @@ def test_lab_schema_still_rejects_unknown_top_level_key(lab_validator):
     from jsonschema.exceptions import ValidationError
 
     doc = {"hosts": [], "links": [], "routes": []}
-    with pytest.raises(ValidationError):
+    # The unknown key itself must be the rejection (the schema admits only
+    # declared keys plus ^_ comment keys) — not some other shape complaint.
+    with pytest.raises(ValidationError, match=r"'routes' does not match any of the regexes"):
         lab_validator.validate(doc)
 
 
