@@ -27,9 +27,8 @@ racing each other and the rest of the suite on it.
 
 from __future__ import annotations
 
-import contextlib
+import os
 import re
-import time
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -81,7 +80,8 @@ def leased_carrot(tmp_path_factory) -> Iterator[str]:
     real interactive shell and deliberately does NOT neutralize ``HISTFILE``
     (a person's own login must keep recording their history). So every
     session this module opens appends what it types — ``echo
-    otto_login_marker``, ``stty size`` — to carrot's ``~/.bash_history``
+    otto_login_marker``, up to three ``stty size`` probes — to carrot's
+    ``~/.bash_history``
     when bash flushes at exit.
 
     Harmless on its own, but ``test_shell_history_e2e`` digests that exact
@@ -137,13 +137,45 @@ def login_session(request, tmp_path_factory, leased_carrot):
         # Second match: the shell's response. Waiting for both guarantees
         # the round-trip actually completed before we disconnect, so
         # _LineBuffer has a chance to flush the response into session.log.
-        sess.expect(ROUND_TRIP_TOKEN.encode(), timeout=10)
         try:
-            sess.expect(ROUND_TRIP_TOKEN.encode(), timeout=5)
-        except TimeoutError:
-            # Shell prompt cursor-repaint can merge the echo and response
-            # into one line, leaving a single occurrence. That still
-            # proves the round-trip happened — drain briefly and continue.
+            first_seen = sess.expect(ROUND_TRIP_TOKEN.encode(), timeout=10)
+        except TimeoutError as exc:
+            pytest.fail(
+                f"round-trip over {term}: the command echo (first token "
+                f"occurrence) never came back — input is not reaching the "
+                f"remote shell.\n{exc}"
+            )
+        try:
+            sess.expect(ROUND_TRIP_TOKEN.encode(), timeout=10)
+        except TimeoutError as exc:
+            # Shell prompt cursor-repaint CAN merge echo and response into
+            # a single occurrence — but only by mangling the echo, in which
+            # case the first expect consumed the RESPONSE (what it matched
+            # carries no clean `echo <token>`) and the round trip is
+            # already proven; drain briefly and continue. If the first
+            # match really was the echo, a missing second occurrence means
+            # the shell never answered: input reached the remote but no
+            # output came back, and silently continuing would hand every
+            # dependent test a half-dead transcript.
+            if b"echo " + ROUND_TRIP_TOKEN.encode() in first_seen:
+                pytest.fail(
+                    f"round-trip over {term}: the shell response (second "
+                    f"token occurrence) never arrived; the echo was seen, "
+                    f"so input reached the remote but nothing came back.\n{exc}"
+                )
+            # The else-arm's premise is itself assertable: a RESPONSE is the
+            # token at line start (expect consumed through the token, so
+            # first_seen always ends with it — check what precedes). If the
+            # single occurrence was neither a clean echo nor a line-start
+            # response, nothing proves the round trip — fail classified
+            # rather than continue silent.
+            token = ROUND_TRIP_TOKEN.encode()
+            if not first_seen[: -len(token)].endswith((b"\r", b"\n")):
+                pytest.fail(
+                    f"round-trip over {term}: single token occurrence and it "
+                    f"was not a line-start response — cannot prove the round "
+                    f"trip completed.\n{first_seen!r}"
+                )
             sess.drain(0.2)
         sess.disconnect()
         disconnect_seen = sess.expect(f"[otto] disconnected from {HOST_NAME}.".encode(), timeout=10)
@@ -235,15 +267,18 @@ class TestHostLoginSigwinch:
 
     These lines only execute when SIGWINCH actually fires during an
     active interactive session, so the unit tests can't reach them.
-    Resizing the PTY master from the test triggers the kernel to deliver
-    SIGWINCH to the otto subprocess, which runs the ``install_sigwinch``
-    handler installed by :func:`_run_bridge`.
+    Resizing the PTY master delivers SIGWINCH to the otto subprocess ONLY
+    because the driver's shim made this PTY otto's controlling terminal —
+    without that (the driver's original state) the kernel signals nobody
+    and this test covers nothing, which is why the precondition is asserted
+    by name below. The handler is installed by :func:`_run_bridge`.
 
     For SSH this covers ``process.change_terminal_size`` at
     :func:`otto.host.interact.run_ssh_login`; for telnet it covers the
     NAWS subnegotiation at :func:`otto.host.interact.run_telnet_login`.
-    The remote-shell check (``stty size``) is a best-effort sanity
-    signal — the primary coverage target is the otto-side handler code.
+    The remote-shell check (``stty size``) is the assertion that the
+    resize reached the remote side — probed with retries because the
+    first probe can race the push landing.
     """
 
     def test_resize_triggers_remote_side_update(self, tmp_path: Path, term: str, leased_carrot):
@@ -258,22 +293,45 @@ class TestHostLoginSigwinch:
             rows=24,
         ) as sess:
             sess.expect(b"Press Ctrl+] to disconnect", timeout=30)
+            # The load-bearing precondition, asserted by name: without a
+            # controlling terminal the kernel delivers resize SIGWINCH to
+            # nobody, and everything below this line covers nothing (the
+            # pre-shim driver's permanent, silent state).
+            assert sess.foreground_pgid == os.getpgid(sess.pid), (
+                "driver child has no controlling terminal — the kernel "
+                "cannot deliver resize SIGWINCH"
+            )
             # Let the shell prompt stabilize so the resize lands mid-session,
             # not mid-login.
             sess.drain(0.3)
 
             sess.resize(132, 50)
-            # Give the otto signal-handler task a moment to run and for
-            # the remote side to process the update.
-            time.sleep(0.3)
-
-            sess.sendline("stty size")
-            # Remote reflection isn't the primary assertion — if the
-            # shell response merges with the echo due to cursor repaint,
-            # that's fine. The key is the otto-side handler ran without
-            # raising (otherwise the session would have crashed below).
-            with contextlib.suppress(TimeoutError):
-                sess.expect(b"50 132", timeout=5)
+            # The SIGWINCH forwarders leave no local artifact on success
+            # (they debug-log only on failure), so the remote's own report
+            # is the ONE observable that the resize landed: probe
+            # `stty size` until it reflects the new geometry. The first
+            # probe can race the window-change/NAWS push and report the
+            # stale 24x80 — each retry sends a fresh probe, and the
+            # expect's per-attempt timeout owns the pacing (a fused
+            # probe-response loop, not an interval poll). On exhaustion
+            # this FAILS naming the backend: it is the only assertion
+            # that the resize actually reached the remote side.
+            last_expiry: TimeoutError | None = None
+            for _ in range(3):
+                sess.sendline("stty size")
+                try:
+                    sess.expect(b"50 132", timeout=5)
+                    break
+                except TimeoutError as exc:
+                    last_expiry = exc
+            else:
+                # for/else: the failure is bound to LOOP EXHAUSTION, not to
+                # a sentinel element of the iterable a future edit can drop.
+                pytest.fail(
+                    f"resize never reached the remote shell over {term}: "
+                    f"three 'stty size' probes never reported the new "
+                    f"geometry (expected '50 132').\n{last_expiry}"
+                )
 
             sess.disconnect()
             sess.expect(b"disconnected from", timeout=10)

@@ -2,7 +2,9 @@
 
 ``InteractiveOttoSession`` spawns ``otto`` as a subprocess with a fresh
 pseudo-terminal wired to its stdin/stdout/stderr and set as its controlling
-terminal. That gives the child process a real TTY, so code paths guarded by
+terminal (via a post-exec ``TIOCSCTTY`` shim — see ``__enter__``; without a
+controlling terminal the kernel delivers resize SIGWINCH to nobody). That
+gives the child process a real TTY, so code paths guarded by
 ``sys.stdin.isatty()`` (raw mode, SIGWINCH forwarding, the stdin worker
 thread inside :mod:`otto.host.interact`) run for real under test instead of
 being skipped.
@@ -23,6 +25,7 @@ import select
 import signal
 import struct
 import subprocess
+import sys
 import termios
 import time
 from pathlib import Path
@@ -71,6 +74,15 @@ class InteractiveOttoSession:
         self._buf = bytearray()
 
     def __enter__(self) -> Self:
+        # The shim below makes exec failures surface as a traceback on the
+        # PTY (Popen itself always succeeds — python exists), which reads as
+        # an expect() timeout three layers from the cause. Name the one
+        # recurring shape up front instead.
+        if not os.access(OTTO_BIN, os.X_OK):
+            raise RuntimeError(
+                f"otto binary missing or not executable at {OTTO_BIN} — "
+                "run `uv sync` in this worktree"
+            )
         self._xdir.mkdir(parents=True, exist_ok=True)
 
         master_fd, slave_fd = pty.openpty()
@@ -85,8 +97,26 @@ class InteractiveOttoSession:
             term=os.environ.get("TERM", "xterm"),
             extra_env=self._extra_env,
         )
+        # setsid() alone (start_new_session=True) leaves the child with NO
+        # controlling terminal — an inherited slave fd never acquires one —
+        # and the kernel delivers resize SIGWINCH only to the controlling
+        # terminal's foreground process group, i.e. to nobody. This shim
+        # runs AFTER exec in the fresh child interpreter (a preexec_fn
+        # would run between fork and exec, where a lock held by any other
+        # thread deadlocks — PLW1509), makes the slave (fd 0) the session's
+        # controlling terminal, then execs otto in place — same pid, so
+        # wait()/killpg semantics are unchanged and resize() is actually
+        # seen by otto's install_sigwinch handler.
+        ctty_shim = (
+            "import fcntl, os, sys, termios; "
+            "fcntl.ioctl(0, termios.TIOCSCTTY, 0); "
+            "os.execvp(sys.argv[1], sys.argv[1:])"
+        )
+        # -S skips site processing for the SHIM only (its coverage bootstrap
+        # would be discarded by the exec anyway); otto's own interpreter runs
+        # site normally and still sees the env.
         self._proc = subprocess.Popen(
-            self._argv,
+            [sys.executable, "-S", "-c", ctty_shim, *self._argv],
             stdin=slave_fd,
             stdout=slave_fd,
             stderr=slave_fd,
@@ -127,6 +157,18 @@ class InteractiveOttoSession:
     def disconnect(self) -> None:
         """Send the Ctrl+] escape that ends an :mod:`otto.host.interact` session."""
         self.send(self._ESCAPE_BYTE)
+
+    @property
+    def foreground_pgid(self) -> int:
+        """The slave tty's foreground process group — 0 when the child has NO ctty.
+
+        The load-bearing precondition for :meth:`resize`: the kernel delivers
+        SIGWINCH only to the controlling terminal's foreground process group,
+        so a child that never acquired this PTY as its controlling terminal
+        (the pre-shim driver's permanent state) receives nothing, ever.
+        """
+        assert self._master_fd is not None
+        return os.tcgetpgrp(self._master_fd)
 
     def resize(self, cols: int, rows: int) -> None:
         """Resize the PTY. The kernel delivers SIGWINCH to the child session."""

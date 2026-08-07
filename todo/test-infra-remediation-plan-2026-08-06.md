@@ -867,19 +867,53 @@ task)` helper the API absorbed), rule file.
       `if started: break`); compound conditions and the dashboard harness's
       bounded cross-thread `wait_for` flag poll are the documented non-arms.
 
-### Wave 9 — Interact-e2e residuals (item 9) — **lease already landed in `bef943aa`**
+### Wave 9 — Interact-e2e residuals (item 9) — DONE
+**Files:** `tests/e2e/host/test_interact_e2e.py`, `tests/e2e/host/_pty_driver.py`.
 The host-lease fix (class-scoped `leased_carrot` via `lease_unix_host`, `ELEMENT`
 single-sourcing) was independently root-caused from the `make release` 3.14 failure by a
-concurrent session and is **committed** — see review §10 correction and the
-`project_release_314_shell_history_race` memory topic. Remaining work in the same file
-(review §3.2), foldable into Wave 16 if preferred:
-- [ ] Un-suppress the `stty size` expect at `test_interact_e2e.py:239` — it is the only
-      assertion that the resize reached the remote side; on timeout, fail naming the
-      backend (ssh vs telnet parametrization).
-- [ ] Replace the `time.sleep(0.3)` SIGWINCH settle with a bounded `wait_for` poll of
-      the session log once Wave 7 lands (sequence after 7a).
-- [ ] Same file `:107-113`: turn the expect-timeout-then-drain into a failure naming
-      which of the two token occurrences was missing.
+concurrent session and landed earlier in `bef943aa` — see review §10 correction and the
+`project_release_314_shell_history_race` memory topic. The three residuals (review
+§3.2) landed together, and un-suppressing exposed a fourth, deeper defect:
+- [x] **The suppressed `stty size` expect was hiding a test that covered nothing.**
+      Un-suppressed, it failed on BOTH backends: three probes over 15s all reported
+      the stale `24 80`. Root cause is the PTY driver, not the product:
+      `start_new_session=True` with an inherited slave fd gives the child NO
+      controlling terminal, and the kernel delivers resize SIGWINCH only to the
+      controlling terminal's foreground process group — i.e. to nobody, ever. The
+      SIGWINCH-forwarding branches this test exists to cover had never executed
+      under test (proven with a standalone handler-printing probe: zero signals
+      without a ctty, correct `50 132` with one). Fix in `_pty_driver.py`: a
+      post-exec `python -S -c` shim acquires the slave as controlling terminal
+      (`TIOCSCTTY` on fd 0) then `execvp`s otto in place — same pid, so
+      wait()/killpg semantics are unchanged, and thread-safe where a `preexec_fn`
+      is not (PLW1509 stays enforced). All driver consumers re-run green:
+      interact e2e (10), login-proxy e2e (7), chaos signal-login (2, re-run by
+      hand as well; that file is tier-2 and IS inside `make coverage` — the
+      `not chaos` exclusion is tier-3 `tests/e2e/chaos/` only).
+- [x] The `time.sleep(0.3)` settle + suppressed expect became one construct: the
+      SIGWINCH forwarders leave no local artifact on success (debug-log only on
+      failure), so there is nothing for a `wait_for` predicate to poll — the plan's
+      sketch was wrong on that point. The remote's own report is the one
+      observable: `stty size` probed up to three times, each attempt's `expect`
+      timeout owning the pacing (a fused probe-response loop per the Wave 7
+      pacing-owner classification, not an interval poll). On exhaustion it FAILS
+      naming the backend. Mutation-proven: dropping `sess.resize()` trips it.
+- [x] Round-trip token: both occurrences now fail loudly, naming which was
+      missing. First expect timeout → "the command echo (first token occurrence)
+      never came back". Second → discriminate via the consumed bytes: if the first
+      match carried a clean `echo <token>` the response is genuinely missing →
+      fail; if not, cursor-repaint mangled the echo and the first expect consumed
+      the RESPONSE, so the round trip is proven → drain and continue (the one
+      case the old silent path was right about). Mutation-proven both ways:
+      `> /dev/null` (echo seen, no response) and `true` (no token at all) each
+      trip the intended arm with the intended message.
+- [x] Ownership note (recorded at Wave 9's landing): the CHAOS-suite
+      suppress-around-expect (review §3.2 bullet 1,
+      `tests/e2e/chaos/test_tunnel_link_chaos.py`) is accepted AS-IS — its
+      suppress is documented best-effort behind hard rc/survivor asserts, and
+      Wave 7 deliberately widened it for the expiry-type migration. No wave
+      owns converting it; revisit only if Wave 16's timing hardening gives a
+      reason.
 
 ### Wave 10 — Error taxonomy (item 10; G10) — a/b/c, **Effort: M total**
 - [ ] 10a: `gitio` split (`GitMissingError`/`NotAGitRepoError`/`GitCommandFailedError`
