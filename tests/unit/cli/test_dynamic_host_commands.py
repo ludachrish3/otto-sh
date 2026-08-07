@@ -151,8 +151,9 @@ async def test_make_method_command_unsupported_method_errors():
     async def flash_firmware(self, path: str): ...
 
     cmd = make_method_command("flash_firmware", flash_firmware)
-    with pytest.raises(typer.Exit):
+    with pytest.raises(typer.Exit) as excinfo:
         await cmd(_Ctx(), path="/some/file")
+    assert excinfo.value.exit_code == 1  # fail()'s default user-facing error code
 
 
 # ---------------------------------------------------------------------------

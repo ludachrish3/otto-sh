@@ -39,6 +39,10 @@ def test_no_credless_host_is_sent_to_the_ssh_probe(monkeypatch):
     host there is exactly the 41cf70c crash. Such hosts must use the console
     probe instead."""
     hosts, seen = _route_probes(monkeypatch)
+    assert any("creds" not in h for h in hosts), (
+        "fixture sanity: expected some credential-less hosts in the lab data — "
+        "with none, every assertion below is skipped and this guard cannot fail"
+    )
     for host in hosts:
         if "creds" not in host:
             assert host["element"] not in seen["unix"], (

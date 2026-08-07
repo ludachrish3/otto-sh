@@ -148,23 +148,34 @@ language: python
 severity: error
 message: bind the excinfo and assert exit_code — typer.Exit() defaults to 0, so this passes on "failed successfully". `with pytest.raises(typer.Exit) as excinfo:` then `assert excinfo.value.exit_code == N`.
 note: >
-  Baseline 6 violations as of 2026-08-06 (test_bootstrap_gate.py:35,
-  test_monitor.py:299, test_leaf_render.py:225/:239,
-  test_dynamic_host_commands.py:154, test_monitor_cli.py:172). Fixed in the
-  same wave; zero suppressions expected — 15 of 21 sites already did this
-  right before the gate existed.
+  Baseline 7 violations as of 2026-08-06: the review's six
+  (test_bootstrap_gate.py:35, test_monitor.py:299,
+  test_leaf_render.py:225/:239, test_dynamic_host_commands.py:154,
+  test_monitor_cli.py:172) plus test_main.py:592, which its inventory
+  missed. Fixed in the same wave; zero suppressions expected — 15 of 22
+  sites already did this right before the gate existed.
+  [Wave 5a landing note: the statement-shaped pattern below is BLIND to
+  parenthesized multi-item `with (...)` blocks — where two of the seven
+  live — and a recount taken with that same blind pattern briefly
+  "corrected" this baseline to 5. The landed rule matches
+  `pytest.raises(typer.Exit)` inside a `with_item` instead (the `as` form
+  nests under an as_pattern and falls out), and the rule-verified pre-fix
+  count is 7. Never recount a spec with the instrument under test.]
 files:
 - tests/**
 ignores: [tests/repo1/**, tests/repo2/**, tests/repo3/**, tests/repo_broken/**, tests/repo_e2e/**, tests/firmware/**]
 rule:
-  pattern: |
-    with pytest.raises(typer.Exit):
-        $$$BODY
+  pattern: pytest.raises(typer.Exit)
+  inside:
+    kind: with_item
 ```
 
-(The `as $VAR` form has a different AST shape and does not match — exactly the
-discrimination wanted.)
-**Red today:** 6. **Landing:** Wave 5a, fix-with-gate.
+(The `as $VAR` form nests the call under an `as_pattern` — outside a bare
+`with_item` — and does not match: exactly the discrimination wanted. The plan
+originally spelled this as a statement-shaped `with pytest.raises(typer.Exit):`
+pattern; see the landing note for why that shape is blind.)
+**Red today:** 7 (rule-verified with the with_item form; see note). **Landing:**
+Wave 5a, fix-with-gate.
 
 ### G4. `pytest.raises(ValidationError)` requires `match=`
 
@@ -668,16 +679,23 @@ Either way the *pin* is the deliverable; the write becomes declared or scoped.
 ### Wave 5a — Cheap weak-test fixes (item 5 first half; G3)
 **Files:** the 7 precondition sites (`test_lab_health.py:37`, `test_lab_data_hops.py:36`
 — skip→fail + non-empty assert, `test_listing.py:415`,
-`test_gen_monitor_fixtures.py:121,:128,:246`, `test_tuple_return_debt.py:117`), the 6
-typer.Exit sites, `test_cov.py:337,:350` (assert the error message via the mock),
+`test_gen_monitor_fixtures.py:121,:128,:246`, `test_tuple_return_debt.py:117`, plus
+§4.3's `test_webassets_guard.py:61`, which was in the review's at-risk list but had
+dropped off this wave's — 8 precondition sites in all), the 7 typer.Exit sites (see
+G3's baseline note), `test_cov.py:337,:350` (assert the error message via the mock),
 `test_cli_registry.py:243` (FrozenInstanceError, drop noqa), new G3 rule file.
-- [ ] One-line `assert <collection>` preconditions; `test_lab_data_hops` becomes
-      fail-with-named-error when a tech has zero embedded hosts *and* the fixture is
-      expected to have them (tech2's legitimate absence gets an explicit parametrize
-      exclusion with a comment — not a skip).
-- [ ] typer.Exit sites: bind + `assert excinfo.value.exit_code == <N>` (read each
+- [x] One-line `assert <collection>` preconditions; `test_lab_data_hops` landed
+      stronger than planned: both techs stay parametrized under a two-sided assert
+      (`bool(embedded) == (tech in _EMBEDDED_TECHS)`), so tech1 losing its embedded
+      hosts fails loudly (the sweep accident) AND tech2 gaining embedded hosts
+      without joining the tuple fails loudly — no skip, no silent exclusion; every
+      surviving embedded host must also retain its hop (partial sweep = same
+      accident).
+- [x] typer.Exit sites: bind + `assert excinfo.value.exit_code == <N>` (read each
       command to pin the *right* N — bootstrap gate is 1; usage errors are 2).
-- [ ] Land G3 at error in this squash; prove red on the stashed pre-fix tree (6 hits).
+- [x] Land G3 at error in this squash; prove red on the stashed pre-fix tree (7 hits —
+      see G3's baseline note; an earlier statement-shaped pattern counted 5, blind to
+      the two parenthesized-`with` sites).
 
 ### Wave 5b — ValidationError match= burn-down (item 5 second half; G4)
 **Files:** `.ruff.toml` + the 52 sites (review §4.4 inventory).
@@ -790,6 +808,18 @@ into `tests/_fixtures/fd_watermark.py` (gc-collect-before-baseline semantics, th
 tunnel_stability variant wins) with the three conftests importing it; tunnel-reap
 teardown logs suppressed exceptions (`tunnel_stability/conftest.py:61-68`); the two
 default-reset autouse fixtures (`tests/conftest.py:543-580`) become snapshot-restore.
+**Added during Wave 5a (pre-existing, found by an ad-hoc single-process combo run):**
+cross-file isolation defect — `pytest -n0 tests/unit/cli/test_listing.py
+tests/unit/test_tuple_return_debt.py tests/unit/cli/test_cov.py` (or webassets_guard
+as the middle file) fails all three `TestCovGetValidation` message asserts:
+`cov get` exits 1 through some OTHER path with the patched `cov_module.logger.error`
+never called, i.e. the `patch("otto.config.get_repos")` seam is bypassed after
+`test_listing.py` has run in-process plus one more otto-source-loading module.
+Each pair passes; the triple fails; reproduced on pristine `a76ae1ad`. Likely a
+repos/cov-repo cache primed through a path the patch doesn't cover. The loadgroup
+gates never co-schedule these, so it is invisible today — root-cause it here (the
+sweep's business is exactly this class), and consider whether the single-process
+nightly isolation lane (#108 guard) should have caught it.
 
 ### Wave 15 — Web cannot-fail cluster (item 15; G14)
 **Files:** the 5 bare-digit sites, `shell.test.tsx:83-93` (rewrite against rendered
@@ -808,7 +838,11 @@ the mock, mechanical migration); `test_session.py:482` gains a positive control
 (assert the feed actually happened before asserting the verdict); the
 `test_collector_run.py` floors move to exact counts on a virtual clock;
 `test_connection_race.py` gains a contention positive-control; `test_console_lock.py`
-asserts the readers reached the churn loop. **Effort: M.**
+asserts the readers reached the churn loop. **Added during Wave 5a (review §4.1's
+first bullet, which no wave had claimed):** `tests/unit/cov/test_anchor.py:193,197,
+202,207,212` — the five parity-only tests (`lazy == batched` is their only assertion,
+so a resolver returning `unverifiable` for everything passes all five) each gain the
+semantic outcome assert for their named scenario alongside parity. **Effort: M.**
 
 ### Wave 17 — Test-fixture library build-out (items 16 + §7.4/§7.5 tail; **Effort: M–L**, divisible)
 `tests/_fixtures/gitrepo.py` (hermetic `git_env` + `TmpGitRepo`; migrate 20 files);

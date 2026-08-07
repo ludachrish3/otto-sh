@@ -222,8 +222,9 @@ def test_ok_transfer_mapping_prints_per_file_lines(capsys):
 
 def test_failed_mapping_prints_per_entry_diagnostics(capsys):
     per_file = {Path("b.bin"): Result(Status.Error, msg="b.bin: reset")}
-    with pytest.raises(typer.Exit):
+    with pytest.raises(typer.Exit) as excinfo:
         render_leaf_value(Result(Status.Error, value=per_file, msg="1 file failed"))
+    assert excinfo.value.exit_code == 2  # plain Result: exit_code == status.value (Error)
     assert "b.bin: reset" in capsys.readouterr().out
 
 
@@ -236,8 +237,9 @@ def test_command_results_print_per_entry_diagnostics_on_failure(capsys):
     res = Results.collect(
         [CommandResult(Status.Error, value="", command="x", retcode=3, msg="boom")]
     )
-    with pytest.raises(typer.Exit):
+    with pytest.raises(typer.Exit) as excinfo:
         render_leaf_value(res)
+    assert excinfo.value.exit_code == 3  # ssh-like: the failing command's own retcode
     assert "boom" in capsys.readouterr().out
 
 

@@ -347,7 +347,10 @@ def report(
         try:
             tier_specs: list[TierSpec] = _parse_tier_specs(tier)
         except typer.BadParameter as e:
-            logger.exception("Bad tier parameter")
+            # A --tier usage error (missing path, duplicate name): the message
+            # already names the offending value and the fix — print it clean,
+            # like every other user-facing error path in this command.
+            logger.error(escape_markup(str(e)))  # noqa: TRY400 — deliberately no traceback: user typo, message names the fix
             raise typer.Exit(1) from e
         # --tier never resolves settings (see precedence rule above), so
         # thresholds/ticket_spec/overrides stay None here — run_coverage_report

@@ -1,6 +1,7 @@
 """CLI command registry: spec storage, lazy loaders, collision policy."""
 
 import contextlib
+import dataclasses
 import io
 import sys
 
@@ -240,7 +241,7 @@ def test_spec_defaults():
 
 def test_command_spec_is_frozen():
     spec = CommandSpec(name="x", loader=None)
-    with pytest.raises(Exception):  # noqa: B017, PT011 — dataclasses.FrozenInstanceError
+    with pytest.raises(dataclasses.FrozenInstanceError):
         spec.name = "y"  # ty: ignore[invalid-assignment]
 
 

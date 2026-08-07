@@ -119,14 +119,18 @@ def test_drift_sessions_evolve():
 
 
 def test_no_credentials_anywhere():
-    for doc in build_all().values():
+    docs = build_all()
+    assert docs, "fixture sanity: build_all() produced nothing — the leak scan would be vacuous"
+    for doc in docs.values():
         text = dumps(doc)
         for needle in ("password", "creds", "login"):
             assert needle not in text, needle
 
 
 def test_size_caps():
-    for stem, doc in build_all().items():
+    docs = build_all()
+    assert docs, "fixture sanity: build_all() produced nothing — no sizes to cap"
+    for stem, doc in docs.items():
         assert len(dumps(doc)) < 3_500_000, stem
 
 
@@ -246,7 +250,9 @@ def test_tunnel_statuses_cover_all_values():
 def test_tunnel_hops_reference_known_hosts():
     """Every tunnel hop host id must resolve within its OWN fixture's
     lab.hosts -- a dangling hop can't be placed on the topology map."""
-    for stem, doc in build_all().items():
+    docs = build_all()
+    assert docs, "fixture sanity: build_all() produced nothing — no hops to resolve"
+    for stem, doc in docs.items():
         for s in doc.sessions:
             host_ids = {h.id for h in s.lab.hosts}
             for t in s.tunnels:

@@ -32,8 +32,9 @@ def test_gate_still_blocks_on_errors(monkeypatch):
     _install_result(
         monkeypatch, errors=[bs.DependencyError("x", "dependency 'y' is not satisfied")]
     )
-    with pytest.raises(typer.Exit):
+    with pytest.raises(typer.Exit) as excinfo:
         fail_loud_on_bootstrap_errors()
+    assert excinfo.value.exit_code == 1  # the gate's documented Exit(1)
 
 
 def test_dependency_error_framing():

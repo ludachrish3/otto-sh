@@ -335,7 +335,7 @@ class TestCovReportSuccess:
         assert names == ["unit", "system", "integration", "manual"]
 
     def test_report_non_system_tier_without_path_errors(self, cov_tree):
-        with patch.object(cov_module.logger, "error"):
+        with patch.object(cov_module.logger, "error") as mock_err:
             result = runner.invoke(
                 cov_app,
                 [
@@ -346,9 +346,11 @@ class TestCovReportSuccess:
                 ],
             )
         assert result.exit_code == 1
+        mock_err.assert_called_once()
+        assert "requires a path" in mock_err.call_args[0][0]
 
     def test_report_duplicate_tier_errors(self, cov_tree):
-        with patch.object(cov_module.logger, "error"):
+        with patch.object(cov_module.logger, "error") as mock_err:
             result = runner.invoke(
                 cov_app,
                 [
@@ -361,6 +363,8 @@ class TestCovReportSuccess:
                 ],
             )
         assert result.exit_code == 1
+        mock_err.assert_called_once()
+        assert "Duplicate --tier name" in mock_err.call_args[0][0]
 
 
 # ── report command — --tickets-json export ───────────────────────────────────

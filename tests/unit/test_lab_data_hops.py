@@ -17,6 +17,13 @@ import pytest
 from tests._fixtures.labdata import lab_data_path
 
 _TECHS = ("tech1", "tech2")
+# Which techs are EXPECTED to carry embedded hosts. tech2's lab is all-unix by
+# design, so it has no hops to preserve. Declared here rather than skipped at
+# runtime: a runtime "no embedded hosts" skip would also fire if a sweep
+# deleted tech1's embedded hosts, which is exactly the accident the guard
+# exists to catch — and the two-sided assert below fails loudly if tech2 ever
+# gains embedded hosts without joining this tuple.
+_EMBEDDED_TECHS = ("tech1",)
 
 
 @pytest.mark.parametrize("tech", _TECHS)
@@ -33,9 +40,16 @@ def test_no_unix_host_defines_a_hop(tech: str) -> None:
 def test_embedded_hops_are_preserved(tech: str) -> None:
     hosts = json.loads(lab_data_path(tech).read_text())["hosts"]
     embedded = [h for h in hosts if h.get("os_type", "unix") != "unix"]
-    if not embedded:
-        pytest.skip(f"{tech}: no embedded hosts — hop-preservation check not applicable")
-    # Every embedded host that needs a hop still declares one (regression guard
-    # against an over-eager sweep deleting the real basil hops).
-    hopped = [h["element"] for h in embedded if "hop" in h]
-    assert hopped, f"{tech}: expected embedded hosts to retain their (basil) hop"
+    expectation = (
+        "missing — the over-eager-sweep accident this guard exists to catch"
+        if tech in _EMBEDDED_TECHS
+        else "unexpectedly present — add the tech to _EMBEDDED_TECHS"
+    )
+    assert bool(embedded) == (tech in _EMBEDDED_TECHS), (
+        f"{tech}: embedded hosts {expectation} (found: {[h['element'] for h in embedded]!r})"
+    )
+    # EVERY embedded host still declares its hop (regression guard against an
+    # over-eager sweep deleting the real basil hops — a partial sweep is the
+    # same accident, so "at least one survived" is not good enough).
+    unhopped = [h["element"] for h in embedded if "hop" not in h]
+    assert not unhopped, f"{tech}: embedded hosts lost their (basil) hop: {unhopped}"

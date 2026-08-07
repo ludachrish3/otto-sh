@@ -51,7 +51,7 @@ every comment, converting a documented debt list into a blessed one.
 
 ### The ast-grep rules
 
-`.ast-grep/rules/` holds ten rules, all `severity: error`. The scan roots
+`.ast-grep/rules/` holds eleven rules, all `severity: error`. The scan roots
 are `src/otto web/src tests` — tests/ joined in the test-infra remediation
 (2026-08-06) so that *test-suite* pattern rules can exist — and the
 discipline that keeps that widening safe is that every rule carries an
@@ -70,6 +70,7 @@ fixture SUT repos (`tests/repo1..repo3`, `repo_broken`, `repo_e2e`) and
 | `no-retry-marker-in-otto-tests` | `tests/**` minus fixture repos — the first tests-scoped rule; fully armed (its one ratchet ignore died with the hop-transfer flake fix) |
 | `no-tuple-return` | `src/otto/**` |
 | `typer-exit-outside-cli` | `src/otto/**` (CLI exempt) |
+| `typer-exit-raises-must-assert-code` | `tests/**` minus fixture repos — a bare `pytest.raises(typer.Exit)` passes on the default exit code 0 ("failed successfully"); the rule forces binding the excinfo, and the bound form's exit-code assert is what actually pins refusal |
 
 Two carry a mechanism worth knowing about.
 

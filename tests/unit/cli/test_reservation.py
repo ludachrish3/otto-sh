@@ -16,10 +16,11 @@ from otto.reservations import (
     ResolvedIdentity,
 )
 
-# Catch what the production code raises: typer.Exit. Under typer >= 0.26 this is
-# typer's own vendored exception (typer._click.exceptions.Exit), which is NOT the
-# real click.exceptions.Exit — so catch the typer alias, not click's class.
-_Exit = typer.Exit
+# The raises-checks below catch what the production code raises: typer.Exit.
+# Under typer >= 0.26 that is typer's own vendored exception
+# (typer._click.exceptions.Exit), which is NOT the real click.exceptions.Exit —
+# spell the typer name, never click's class (and never a local alias: the
+# typer-exit-raises-must-assert-code gate can only see the literal spelling).
 
 
 def _make_ctx(meta: dict) -> typer.Context:
@@ -67,7 +68,7 @@ class _FakeBackend:
 def test_whoami_exits_1_when_no_identity(capsys):
     res = ReservationGate(backend=None, identity=None, skip_check=False)
     ctx = _make_ctx({"otto_reservation": res})
-    with pytest.raises(_Exit) as exc:
+    with pytest.raises(typer.Exit) as exc:
         whoami(ctx)
     assert exc.value.exit_code == 1
 
@@ -76,7 +77,7 @@ def test_whoami_exits_1_when_no_reservation_key(capsys):
     """Without the top-level callback, ctx.meta has no key — whoami exits 1 via identity=None path."""  # noqa: E501 — descriptive docstring
     ctx = _make_ctx({})
     # res = ctx.meta.get("otto_reservation") returns None → identity is None → Exit(1)
-    with pytest.raises(_Exit) as exc:
+    with pytest.raises(typer.Exit) as exc:
         whoami(ctx)
     assert exc.value.exit_code == 1
 
@@ -141,7 +142,7 @@ def test_check_exits_1_when_not_configured(capsys):
     ctx = _make_ctx(
         {"otto_reservation": ReservationGate(backend=None, identity=None, skip_check=False)}
     )
-    with pytest.raises(_Exit) as exc:
+    with pytest.raises(typer.Exit) as exc:
         check(ctx)
     assert exc.value.exit_code == 1
 
@@ -182,7 +183,7 @@ def test_check_exits_1_on_missing_reservation(capsys):
     lab = Lab(name="test_lab", resources={"r1"})
     with (
         patch("otto.config.get_lab", return_value=lab),
-        pytest.raises(_Exit) as exc,
+        pytest.raises(typer.Exit) as exc,
     ):
         check(ctx)
     assert exc.value.exit_code == 1
@@ -241,7 +242,7 @@ def test_check_without_lab_exits_with_usage_error(capsys):
 
     with (
         patch("otto.cli.invoke.ensure_lab_context", side_effect=err),
-        pytest.raises(_Exit) as exc,
+        pytest.raises(typer.Exit) as exc,
     ):
         check(ctx)
     assert exc.value.exit_code == 2

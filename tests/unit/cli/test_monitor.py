@@ -296,9 +296,10 @@ class TestTlsResolvedBeforeDbCreation:
             patch("otto.cli.monitor._resolve_monitor_tls", side_effect=typer.Exit(1)),
             # Source module, not otto.cli.monitor — see the note above.
             patch("otto.monitor.export.build_session_metric_db") as mock_build_db,
-            pytest.raises(typer.Exit),
+            pytest.raises(typer.Exit) as excinfo,
         ):
             monitor(ctx, live=True, db=db_file)
+        assert excinfo.value.exit_code == 1  # the injected TLS failure, not a success exit
         mock_build_db.assert_not_called()
         assert not db_file.exists()
 

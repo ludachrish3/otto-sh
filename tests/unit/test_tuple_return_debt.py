@@ -117,7 +117,9 @@ def test_each_baselined_site_carries_its_suppression(key):
 def test_no_orphan_suppressions():
     """An ignore comment with nothing to suppress is a lie about the code below it."""
     live = {(k[0], line) for k, lines in _sites().items() for line in lines}
-    for path in sorted(_SRC.rglob("*.py")):
+    paths = sorted(_SRC.rglob("*.py"))
+    assert paths, f"fixture sanity: no Python files under {_SRC} — the orphan scan would be vacuous"
+    for path in paths:
         rel = str(path.relative_to(_SRC))
         for index, line in enumerate(path.read_text().split("\n"), start=1):
             if _IGNORE in line:

@@ -1,0 +1,55 @@
+id: typer-exit-raises-must-assert-code
+language: python
+severity: error
+message: bind the excinfo and assert exit_code — typer.Exit() defaults to 0, so a bare raises passes on "failed successfully". Use `with pytest.raises(typer.Exit) as excinfo:` then `assert excinfo.value.exit_code == N`.
+note: >
+  `typer.Exit` is how EVERY CLI leaf terminates, success and failure alike
+  (a bare `raise typer.Exit` is exit 0). A raises-check that does not pin
+  the code therefore asserts only "the command ended", not "the command
+  refused" — the gate defect that motivated this rule (2026-08-06 review
+  §4.3, gate G3): the bootstrap gate's blocking test would have stayed
+  green if the gate started exiting 0.
+
+  Baseline 7 violations as of 2026-08-06 (the review's six —
+  test_bootstrap_gate.py:35, test_monitor.py:299, test_leaf_render.py:225
+  and :239, test_dynamic_host_commands.py:154, test_monitor_cli.py:172 —
+  plus test_main.py:592, which its inventory missed), fixed in the same
+  wave; zero suppressions expected — 20 of 27 sites already did this
+  right before the gate existed (counting test_reservation.py's five
+  sites, bound-and-asserting but spelled through a local
+  `_Exit = typer.Exit` alias the rule cannot see; they were de-aliased
+  in the same wave so the file's future raises-checks stay visible to
+  the gate). Two of the seven hide inside
+  parenthesized multi-item `with (...)` blocks, which is why the rule
+  matches the call inside a `with_item` rather than spelling out the
+  `with` statement: a statement-shaped pattern is blind to that form,
+  and ruff-format produces it as soon as a second context manager pushes
+  the line past 100 columns.
+
+  The `as excinfo` form nests the call under an `as_pattern`, so it falls
+  outside a bare `with_item` and does not match — binding is exactly the
+  discrimination wanted; asserting the RIGHT code after binding is review
+  discipline, since the correct N lives in the command under test, not in
+  the pattern. Known residuals, accepted rather than chased (no in-tree
+  uses after the same-wave de-aliasing above): a redundantly
+  parenthesized single item `with (pytest.raises(typer.Exit)):`,
+  extra-argument forms like `pytest.raises(typer.Exit, match=...)` or a
+  tuple of exception types, the functional `pytest.raises(typer.Exit, fn)`
+  call form, and aliased spellings (`from pytest import raises`,
+  `from typer import Exit`, `import typer as t`, or a local
+  `_Exit = typer.Exit`).
+files:
+- tests/**
+ignores:
+# Fixture SUT repos + firmware: user-example input data, not otto's tests
+# (sgconfig.yml discipline for tests-scoped rules).
+- tests/repo1/**
+- tests/repo2/**
+- tests/repo3/**
+- tests/repo_broken/**
+- tests/repo_e2e/**
+- tests/firmware/**
+rule:
+  pattern: pytest.raises(typer.Exit)
+  inside:
+    kind: with_item

@@ -60,6 +60,7 @@ def test_fake_extra_artifact_entry_would_be_caught():
 
 def test_registry_paths_live_under_the_glob():
     root = Path(_webassets.__file__).parent
+    assert _webassets.ALL, "fixture sanity: an empty registry would make this guard vacuous"
     for name, path in _webassets.ALL.items():
         assert path == root / name
 

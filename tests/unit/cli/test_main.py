@@ -589,8 +589,10 @@ class TestClearAutocompleteCache:
 
         from otto.cli.main import clear_autocomplete_cache_callback
 
-        with pytest.raises(typer.Exit):
+        with pytest.raises(typer.Exit) as excinfo:
             clear_autocomplete_cache_callback(True)
+        # The escape hatch exits SUCCESSFULLY after clearing — bare Exit is 0.
+        assert excinfo.value.exit_code == 0
         # rich hard-wraps long paths at the terminal width; unwrap before matching.
         return capsys.readouterr().out.replace("\n", "")
 

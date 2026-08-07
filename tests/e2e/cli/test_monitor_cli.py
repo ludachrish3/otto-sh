@@ -169,9 +169,11 @@ def test_live_requires_reservation_gate_before_host_selection() -> None:
 
     with (
         patch("otto.cli.monitor.all_hosts", side_effect=_fake_all_hosts),
-        pytest.raises(typer.Exit),
+        pytest.raises(typer.Exit) as excinfo,
     ):
         monitor(ctx, live=True)  # type: ignore[arg-type]
+
+    assert excinfo.value.exit_code == 1  # the no-hosts refusal, not a success exit
 
     assert order == ["gate", "hosts"]
     mock_res.evaluate.assert_called_once()

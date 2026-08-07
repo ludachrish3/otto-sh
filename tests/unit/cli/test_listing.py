@@ -415,6 +415,7 @@ class TestExternalRepoIntegration:
     def test_collected_paths_are_under_sut_dir(self, sut: tuple[Path, Repo]):
         sut_dir, repo = sut
         items = repo.collect_tests()
+        assert len(items) == 2  # collect_tests() returning [] must not pass silently
         for item in items:
             assert item.path.is_relative_to(sut_dir)
 
