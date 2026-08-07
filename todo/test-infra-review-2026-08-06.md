@@ -64,7 +64,7 @@ One additional finding arrived by an irregular route (§10): the interact-e2e te
 | # | Item | Sections | Effort |
 |---|---|---|---|
 | 1 | Retry mechanism overhaul: record reruns (or gate off in CI), fix the shipped double-run, re-arm per-attempt timeout, re-run fixtures or document why not, add tests for both implementations | §2 | M |
-| 2 | Fix the hop-nc hang the retry shields (`todo/hop_nc_transfer_flake.md`), then drop `retry(3)` per that file's own exit criterion | §2 | M |
+| 2 | ~~Fix the hop-nc hang the retry shields, then drop `retry(3)` per its todo's own exit criterion~~ **DONE (Wave 2)** — hang root-caused live (unbounded tunnel awaits behind the LISTEN-vs-accept window); todo file deleted per its exit criterion | §2 | M |
 | 3 | Probe-status honesty in chaos oracles: `_bed.py:140`, hygiene bracket, `snapshot_host` | §3.1 | S |
 | 4 | `OTTO_SUT_DIRS` import-time reinjection: declare or relocate; widen the ambient pin to cover integration conftests | §5.1 | S |
 | 5 | The ~13 one-line weak-test fixes: non-empty preconditions (7 sites) + `typer.Exit` exit-code asserts (6 sites) | §4.1–4.3 | S |

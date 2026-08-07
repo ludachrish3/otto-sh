@@ -10,7 +10,11 @@ note: >
   posture is that a flake gets a root cause (or a skip with a tracking
   issue that names the host/venue), never a retry — the review that
   produced this rule found every in-tree use was masking a diagnosable
-  defect (2026-08-06 review §2.1, gate G1).
+  defect (2026-08-06 review §2.1, gate G1). The last in-tree markers — the
+  hop-nc transfers — were root-caused (LISTEN-vs-accept race stalling an
+  unbounded tunnel await) and removed in Wave 2, so the ignore list below
+  is the fixture-repo discipline only: no ratchet entries, and nothing may
+  join it.
 
   The marker itself stays supported: it exists for USER suites, where a
   management-plane blip on real hardware is an environmental fact the test
@@ -37,10 +41,5 @@ ignores:
 - tests/repo_broken/**
 - tests/repo_e2e/**
 - tests/firmware/**
-# RATCHET(wave-2): two retry(3) markers gate the known-flaky nc-through-hop
-# transfers (todo/hop_nc_transfer_flake.md). Wave 2 of the 2026-08-06
-# remediation plan fixes the hang and deletes both markers AND this entry —
-# nothing else may join this list.
-- tests/integration/host/test_hop_integration.py
 rule:
   pattern: pytest.mark.retry

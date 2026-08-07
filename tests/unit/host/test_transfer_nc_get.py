@@ -7,9 +7,8 @@ These tests cover:
   done-future with ``(Status.Success, "")``.
 
 - ``_get_files_nc_tunneled`` (tunnel path): happy path plus three error
-  branches — listener-wait ``ConnectionError`` (lines 709-712),
-  forward+connect ``ConnectionError`` (lines 722-725), and listen-task timeout
-  (lines 750-757).
+  branches — listener-wait ``ConnectionError``, forward+connect
+  ``ConnectionError``, and listen-task timeout.
 
 - ``TestNcGetTunneledCancellation`` (chaos hardening Plan 4, Task 7): external
   cancellation mid-GET must cancel+reap the remote ``nc -Nl`` listener, not
@@ -438,7 +437,7 @@ class TestGetFilesNcTunneled:
 
     @pytest.mark.asyncio
     async def test_listener_wait_error_returns_status_error(self, tmp_path: Path) -> None:
-        """Lines 709-712: _wait_for_remote_listener raises ConnectionError → Status.Error."""
+        """_wait_for_remote_listener raises ConnectionError → Status.Error."""
         src_remote = Path("/remote/data.bin")
         dst_dir = tmp_path / "dst"
         dst_dir.mkdir()
@@ -476,7 +475,7 @@ class TestGetFilesNcTunneled:
 
     @pytest.mark.asyncio
     async def test_forward_connect_error_returns_status_error(self, tmp_path: Path) -> None:
-        """Lines 722-725: _connect_with_retry raises ConnectionError → Status.Error."""
+        """_connect_with_retry raises ConnectionError → Status.Error."""
         src_remote = Path("/remote/data.bin")
         dst_dir = tmp_path / "dst"
         dst_dir.mkdir()
@@ -513,17 +512,20 @@ class TestGetFilesNcTunneled:
             )
 
         assert status is Status.Error, msg
-        # Exact message from line 725.
+        # Exact message from the connect-failure branch.
         assert "nc listener on localhost:" in msg
         assert "not ready" in msg
 
     @pytest.mark.asyncio
     async def test_listen_task_timeout_returns_status_error(self, tmp_path: Path) -> None:
-        """Lines 750-757: listen_task exceeds listener_timeout → Status.Error with 'orphaned'.
+        """listen_task exceeds listener_timeout → Status.Error with 'orphaned'.
 
         The listen_task is the asyncio.Task wrapping the ``nc -Nl`` exec.
         We make the nc -Nl exec block forever (orphaned listener) so that the
-        ``asyncio.wait_for(listen_task, timeout=...)`` at line 746 fires.
+        ``asyncio.wait_for(listen_task, timeout=...)`` fires. ``_get_one``
+        retries the attempt once on a fresh port (the listener-readiness-race
+        recovery), so the streams are built fresh per attempt and the final
+        result is the SECOND attempt's identical error.
         """
         src_remote = Path("/remote/data.bin")
         dst_dir = tmp_path / "dst"
@@ -541,13 +543,12 @@ class TestGetFilesNcTunneled:
             # ss port-finding, warmup, etc.
             return _ok("9000\n")
 
-        fake_reader = FakeReader([b"x"])
         fake_writer = MagicMock()
         fake_writer.close = MagicMock()
         fake_writer.wait_closed = AsyncMock(return_value=None)
 
         exec_cmd = AsyncMock(side_effect=exec_side)
-        # Very short listener_timeout so the wait_for at line 746 fires quickly.
+        # Very short listener_timeout so the listen-task join fires quickly.
         ft = _make_ft(exec_cmd, has_tunnel=True, listener_timeout=0.05)
         ft._connections.forward_port = AsyncMock(return_value=15000)
 
@@ -558,7 +559,7 @@ class TestGetFilesNcTunneled:
             patch.object(
                 transfer_mod,
                 "_connect_with_retry",
-                AsyncMock(return_value=(fake_reader, fake_writer)),
+                AsyncMock(side_effect=lambda *a, **k: (FakeReader([b"x"]), fake_writer)),
             ),
         ):
             status, msg = _only(
@@ -576,7 +577,7 @@ class TestGetFilesNcTunneled:
 
     @pytest.mark.asyncio
     async def test_progress_handler_called_during_read(self, tmp_path: Path) -> None:
-        """Line 737: progress handler fires for each chunk inside the tunneled read loop."""
+        """Progress handler fires for each chunk inside the tunneled read loop."""
         src_remote = Path("/remote/data.bin")
         dst_dir = tmp_path / "dst"
         dst_dir.mkdir()
@@ -694,3 +695,297 @@ class TestNcGetTunneledCancellation:
         assert reap_calls == [9000], (
             f"cancellation must reap the remote nc GET listener, got {reap_calls}"
         )
+
+
+class TestNcGetStallBoundAndRetry:
+    """The GET face of the LISTEN-vs-accept race (the hop-nc transfer hang,
+    root-caused live in the 2026-08 test-infra Wave 2): an accepted-but-unserviced
+    forward parks ``read()`` forever (probed live: >20s), and a connection
+    dropped in the accept window closes cleanly at 0 bytes — a ghost success.
+    Reads are idle-bounded, the received size is verified, and ``_get_one``
+    retries once on a fresh port, mirroring ``_put_one``."""
+
+    def _ft(self, exec_side) -> NcFileTransfer:
+        ft = _make_ft(AsyncMock(side_effect=exec_side), has_tunnel=True)
+        ft._connections.forward_port = AsyncMock(return_value=15000)
+        return ft
+
+    @staticmethod
+    async def _exec_ok(cmd: str, timeout=None, **kw):
+        if "stat -c" in cmd:
+            return _ok("3\n")
+        return _ok("9000\n")
+
+    @pytest.mark.asyncio
+    async def test_a_stalled_read_fails_the_attempt_instead_of_hanging(self, tmp_path: Path):
+        src_remote = Path("/remote/data.bin")
+        dst_dir = tmp_path / "dst"
+        dst_dir.mkdir()
+
+        class _StalledReader:
+            async def read(self, _n: int) -> bytes:
+                await asyncio.Event().wait()  # accepted but never serviced
+                raise AssertionError("unreachable")  # pragma: no cover
+
+        fake_writer = MagicMock()
+        fake_writer.close = MagicMock()
+        fake_writer.wait_closed = AsyncMock(return_value=None)
+
+        with (
+            patch.object(transfer_mod, "_NC_STALL_TIMEOUT", 0.1),
+            patch.object(
+                NcFileTransfer, "_wait_for_remote_listener", new=AsyncMock(return_value=None)
+            ),
+            patch.object(
+                transfer_mod,
+                "_connect_with_retry",
+                AsyncMock(side_effect=lambda *a, **k: (_StalledReader(), fake_writer)),
+            ),
+        ):
+            # Outer bound = the pin's own harness: pre-fix code hangs forever.
+            status, msg = _only(
+                await asyncio.wait_for(
+                    self._ft(self._exec_ok)._get_files_nc_tunneled([src_remote], dst_dir),
+                    timeout=5.0,
+                ),
+                src_remote,
+            )
+
+        assert status is Status.Error
+        assert "no data for" in msg, msg
+
+    @pytest.mark.asyncio
+    async def test_a_short_read_is_an_error_not_a_ghost_success(self, tmp_path: Path):
+        """EOF at 0 of 3 expected bytes = the connection was dropped in the
+        accept window. Pre-fix this returned Success with an empty file."""
+        src_remote = Path("/remote/data.bin")
+        dst_dir = tmp_path / "dst"
+        dst_dir.mkdir()
+
+        fake_writer = MagicMock()
+        fake_writer.close = MagicMock()
+        fake_writer.wait_closed = AsyncMock(return_value=None)
+
+        with (
+            patch.object(
+                NcFileTransfer, "_wait_for_remote_listener", new=AsyncMock(return_value=None)
+            ),
+            patch.object(
+                transfer_mod,
+                "_connect_with_retry",
+                AsyncMock(side_effect=lambda *a, **k: (FakeReader([]), fake_writer)),
+            ),
+        ):
+            status, msg = _only(
+                await asyncio.wait_for(
+                    self._ft(self._exec_ok)._get_files_nc_tunneled([src_remote], dst_dir),
+                    timeout=5.0,
+                ),
+                src_remote,
+            )
+
+        assert status is Status.Error
+        assert "empty transfer" in msg, msg
+        assert "3 bytes" in msg, msg
+
+    @pytest.mark.asyncio
+    async def test_the_fresh_port_retry_recovers_the_race(self, tmp_path: Path):
+        """Attempt 1 loses the accept-window race (short read); attempt 2
+        delivers. The designed recovery — previously PUT-only — must turn
+        this into a Success with the full payload on disk."""
+        src_remote = Path("/remote/data.bin")
+        dst_dir = tmp_path / "dst"
+        dst_dir.mkdir()
+
+        fake_writer = MagicMock()
+        fake_writer.close = MagicMock()
+        fake_writer.wait_closed = AsyncMock(return_value=None)
+
+        attempts: list[FakeReader] = [FakeReader([]), FakeReader([b"abc"])]
+
+        with (
+            patch.object(
+                NcFileTransfer, "_wait_for_remote_listener", new=AsyncMock(return_value=None)
+            ),
+            patch.object(
+                transfer_mod,
+                "_connect_with_retry",
+                AsyncMock(side_effect=lambda *a, **k: (attempts.pop(0), fake_writer)),
+            ),
+        ):
+            status, msg = _only(
+                await asyncio.wait_for(
+                    self._ft(self._exec_ok)._get_files_nc_tunneled([src_remote], dst_dir),
+                    timeout=5.0,
+                ),
+                src_remote,
+            )
+
+        assert status is Status.Success, msg
+        assert (dst_dir / "data.bin").read_bytes() == b"abc"
+        assert not attempts, "both prepared attempts must have been consumed"
+
+
+class TestNcGetStallSemantics:
+    """GET twins of the stall-semantics pins (interim review finding 5): the
+    forward-setup bound and the wedged-close abort existed on GET but were
+    unpinned — the PUT twin alone leaves the GET copy free to regress — and
+    the size-check semantics (finding 4) are pinned in BOTH directions:
+    empty-vs-known-size fails, changed-size and unknown-size do not."""
+
+    def _ft(self, exec_side) -> NcFileTransfer:
+        ft = _make_ft(AsyncMock(side_effect=exec_side), has_tunnel=True)
+        ft._connections.forward_port = AsyncMock(return_value=15000)
+        return ft
+
+    @staticmethod
+    def _writer():
+        fake_writer = MagicMock()
+        fake_writer.close = MagicMock()
+        fake_writer.wait_closed = AsyncMock(return_value=None)
+        return fake_writer
+
+    @staticmethod
+    async def _exec_sized(cmd: str, timeout=None, **kw):
+        if "stat -c" in cmd:
+            return _ok("100\n")
+        return _ok("9000\n")
+
+    @staticmethod
+    async def _exec_stat_fails(cmd: str, timeout=None, **kw):
+        if "stat -c" in cmd:
+            return CommandResult(command=cmd, value="", status=Status.Error, retcode=1)
+        return _ok("9000\n")
+
+    @pytest.mark.asyncio
+    async def test_a_stalled_forward_setup_fails_the_attempt(self, tmp_path: Path):
+        src_remote = Path("/remote/data.bin")
+        dst_dir = tmp_path / "dst"
+        dst_dir.mkdir()
+
+        async def parked_forward(port: int) -> int:
+            await asyncio.Event().wait()
+            raise AssertionError("unreachable")  # pragma: no cover
+
+        ft = _make_ft(AsyncMock(side_effect=self._exec_sized), has_tunnel=True)
+        ft._connections.forward_port = parked_forward
+
+        with (
+            patch.object(transfer_mod, "_NC_FORWARD_SETUP_TIMEOUT", 0.1),
+            patch.object(
+                NcFileTransfer, "_wait_for_remote_listener", new=AsyncMock(return_value=None)
+            ),
+        ):
+            status, msg = _only(
+                await asyncio.wait_for(
+                    ft._get_files_nc_tunneled([src_remote], dst_dir), timeout=5.0
+                ),
+                src_remote,
+            )
+
+        assert status is Status.Error
+        assert "port-forward setup" in msg, msg
+
+    @pytest.mark.asyncio
+    async def test_a_wedged_close_is_aborted_not_leaked(self, tmp_path: Path):
+        src_remote = Path("/remote/data.bin")
+        dst_dir = tmp_path / "dst"
+        dst_dir.mkdir()
+
+        fake_writer = MagicMock()
+        fake_writer.close = MagicMock()
+
+        async def wedged_wait_closed():
+            await asyncio.Event().wait()
+
+        fake_writer.wait_closed = wedged_wait_closed
+        fake_writer.transport = MagicMock()
+
+        async def exec_three(cmd: str, timeout=None, **kw):
+            if "stat -c" in cmd:
+                return _ok("3\n")
+            return _ok("9000\n")
+
+        with (
+            patch.object(transfer_mod, "_NC_CLOSE_TIMEOUT", 0.1),
+            patch.object(
+                NcFileTransfer, "_wait_for_remote_listener", new=AsyncMock(return_value=None)
+            ),
+            patch.object(
+                transfer_mod,
+                "_connect_with_retry",
+                AsyncMock(side_effect=lambda *a, **k: (FakeReader([b"abc"]), fake_writer)),
+            ),
+        ):
+            status, msg = _only(
+                await asyncio.wait_for(
+                    self._ft(exec_three)._get_files_nc_tunneled([src_remote], dst_dir),
+                    timeout=5.0,
+                ),
+                src_remote,
+            )
+
+        assert status is Status.Success, msg
+        fake_writer.transport.abort.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_a_changed_remote_file_is_not_failed_by_the_stale_stat(self, tmp_path: Path):
+        """The pre-transfer stat is a snapshot; a growing/changed remote file
+        legitimately delivers a different byte count (review finding 4: the
+        first cut hard-failed any mismatch — a live log through a hop would
+        have errored where pre-fix it succeeded)."""
+        src_remote = Path("/remote/growing.log")
+        dst_dir = tmp_path / "dst"
+        dst_dir.mkdir()
+
+        with (
+            patch.object(
+                NcFileTransfer, "_wait_for_remote_listener", new=AsyncMock(return_value=None)
+            ),
+            patch.object(
+                transfer_mod,
+                "_connect_with_retry",
+                AsyncMock(side_effect=lambda *a, **k: (FakeReader([b"abc"]), self._writer())),
+            ),
+        ):
+            status, msg = _only(
+                await asyncio.wait_for(
+                    self._ft(self._exec_sized)._get_files_nc_tunneled([src_remote], dst_dir),
+                    timeout=5.0,
+                ),
+                src_remote,
+            )
+
+        assert status is Status.Success, msg
+        assert (dst_dir / "growing.log").read_bytes() == b"abc"
+
+    @pytest.mark.asyncio
+    async def test_an_unknown_size_cannot_vouch_so_the_empty_check_skips(self, tmp_path: Path):
+        """stat failure means no size is known — the empty-transfer check
+        deliberately skips rather than guesses. This residual ghost window
+        (empty file delivered when the stat failed) is a DOCUMENTED
+        acceptance; this pin keeps it deliberate, so closing it is a design
+        change, not a drive-by."""
+        src_remote = Path("/remote/unknown.bin")
+        dst_dir = tmp_path / "dst"
+        dst_dir.mkdir()
+
+        with (
+            patch.object(
+                NcFileTransfer, "_wait_for_remote_listener", new=AsyncMock(return_value=None)
+            ),
+            patch.object(
+                transfer_mod,
+                "_connect_with_retry",
+                AsyncMock(side_effect=lambda *a, **k: (FakeReader([]), self._writer())),
+            ),
+        ):
+            status, msg = _only(
+                await asyncio.wait_for(
+                    self._ft(self._exec_stat_fails)._get_files_nc_tunneled([src_remote], dst_dir),
+                    timeout=5.0,
+                ),
+                src_remote,
+            )
+
+        assert status is Status.Success, msg

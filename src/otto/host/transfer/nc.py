@@ -24,6 +24,7 @@ from .base import (
     NcPortStrategy,
     TransferContext,
     TransferProgressFactory,
+    TransferProgressHandler,
 )
 from .registry import register_transfer_backend
 from .unix_base import UnixFileTransfer
@@ -39,6 +40,53 @@ _NC_LISTENER_FAST_POLL_ITERS = (
 # too large = laggy progress. 64 blocks ≈ 512 KB gives smooth updates on a
 # 12 MB/s link while keeping the overhead negligible.
 _NC_DRAIN_EVERY = 64
+
+# Zero-progress window on the data-phase awaits. A connection that lands in
+# the remote listener's LISTEN-before-accept window is invisible from this
+# side: the TCP handshake completes into the kernel backlog (through an SSH
+# hop, asyncssh's local forward accepts immediately regardless), and a
+# data-phase await then parks with no deadline of its own. Probed live
+# 2026-08-07 against a listener holding that window open: GET's read() sat
+# >20s — the confirmed shape of the natural GET hang. PUT's small-payload
+# sends never reach a drain wait at all (everything fits under the
+# transport's high-water mark), so the PUT hang that motivated the old
+# retry markers is ATTRIBUTED, not proven, to the previously-unbounded
+# forward setup (now bounded below); PUT's drain guard is prophylactic for
+# large sends, where the probe showed the same indefinite park once buffers
+# filled.
+#
+# These are ZERO-PROGRESS windows, not throughput floors: drain() only
+# resolves at the transport's low-water mark, so a plain wait_for would
+# demand ~512 KiB (one _NC_DRAIN_EVERY window) per timeout — a ~100 KiB/s
+# minimum link rate that otto's own `link impair --rate` can shape well
+# below. _drain_stall_bounded therefore re-arms the window whenever the
+# write buffer shrank at all, and read() re-arms on any received block.
+# The buffer gauge moves in bursts gated by socket writability, so "zero
+# buffer change in a window" is not literally "zero bytes on the wire" —
+# this is a far narrower throughput floor, not strictly none.
+#
+# Sizing: every error path retries once on a fresh port, and the
+# integration wrapper (tests/integration/host/_transfer_retry.py) gives a
+# whole transfer 30s — the data-path bounds must fit twice with headroom:
+# 2 x (stall + forward setup + close) = 24s. Pinned by the budget pin in
+# tests/unit/host/test_transfer_nc_put.py.
+#
+# Containment, not elimination: the LISTEN-vs-accept window itself stays
+# open on every transfer. The todo's "probe past accept()" alternative is
+# inapplicable here — nc's listener serves exactly ONE accept, so a
+# throwaway readiness connect would consume it and take the data path.
+# The design is instead: bound every step, verify what arrived, retry once
+# on a fresh port.
+_NC_STALL_TIMEOUT = 5.0
+
+# Setup-step bound for creating the asyncssh local forward — a wedged hop
+# channel must fail the attempt, not hang it.
+_NC_FORWARD_SETUP_TIMEOUT = 5.0
+
+# Close-handshake bound; past it the transport is aborted (a stalled channel
+# never flushes, so its graceful close never completes — leaking the fd, the
+# buffered bytes, and through a hop the asyncssh forward channel).
+_NC_CLOSE_TIMEOUT = 2.0
 
 _logger = logging.getLogger(__name__)
 
@@ -588,6 +636,99 @@ class NcFileTransfer(UnixFileTransfer):
             )
         return None
 
+    async def _drain_stall_bounded(self, writer: asyncio.StreamWriter) -> None:
+        """Await ``drain()``, failing only on a ZERO-progress window.
+
+        ``drain()`` resolves when the transport un-pauses (write buffer back
+        under the low-water mark), so a plain ``wait_for`` would impose a
+        throughput floor, not a stall bound — a slow-but-healthy link (an
+        impaired lab link shapes well below 100 KiB/s) would false-fail.
+        Progress is measured directly instead: any window in which the write
+        buffer shrank at all re-arms the wait; only a window with no
+        observed movement raises. (The buffer gauge is burst-gated by
+        socket writability, so this is a narrow throughput floor rather
+        than strictly none.)
+        """
+        transport = writer.transport
+        last = transport.get_write_buffer_size()
+        while True:
+            try:
+                await asyncio.wait_for(writer.drain(), timeout=_NC_STALL_TIMEOUT)
+            except (asyncio.TimeoutError, TimeoutError):  # noqa: PERF203 — the retry loop IS the semantics
+                now = transport.get_write_buffer_size()
+                if now >= last:
+                    raise
+                last = now
+            else:
+                return
+
+    async def _close_writer_bounded(self, writer: asyncio.StreamWriter) -> None:
+        """Close *writer* without letting a wedged channel hang cleanup.
+
+        A stalled transport never flushes, so its graceful close never
+        completes — past the bound the transport is aborted, releasing the
+        fd, the buffered bytes, and (through a hop) the asyncssh forward
+        channel. An ``OSError`` from the close handshake of an
+        already-reset peer is logged, not raised: by this point the
+        payload's outcome has been decided by the read loop / size checks.
+        A healthy-but-glacial final flush (>2s for the sub-high-water tail)
+        is sacrificed by the abort as well; PUT's size verify catches that
+        and the attempt retries.
+        """
+        writer.close()
+        try:
+            await asyncio.wait_for(writer.wait_closed(), timeout=_NC_CLOSE_TIMEOUT)
+        except (asyncio.TimeoutError, TimeoutError):
+            transport = writer.transport
+            if transport is not None:
+                transport.abort()
+        except OSError as exc:
+            _logger.debug(f"{self._name}: nc writer close handshake raised {exc!r} (ignored)")
+
+    async def _send_file_stall_bounded(
+        self,
+        writer: asyncio.StreamWriter,
+        src: Path,
+        dst: Path,
+        total: int,
+        handler: TransferProgressHandler | None,
+    ) -> Result | None:
+        """Send *src* through *writer*, every drain zero-progress-bounded.
+
+        Returns ``None`` on success or the stall ``Result`` — the caller owns
+        listener cleanup. The writer is closed on the way out either way,
+        with the close handshake itself bounded (a stalled channel wedges
+        that too). See ``_NC_STALL_TIMEOUT`` for the race this guards.
+        """
+        bytes_done = 0
+        try:
+            with src.open("rb") as f:
+                blocks_since_drain = 0
+                while True:
+                    block = f.read(_NC_BLOCK_SIZE)
+                    if not block:
+                        break
+                    writer.write(block)
+                    bytes_done += len(block)
+                    blocks_since_drain += 1
+                    if blocks_since_drain >= _NC_DRAIN_EVERY:
+                        await self._drain_stall_bounded(writer)
+                        blocks_since_drain = 0
+                    if handler is not None:
+                        handler(str(src), str(dst), bytes_done, total)
+            await self._drain_stall_bounded(writer)
+        except (asyncio.TimeoutError, TimeoutError):
+            return Result(
+                Status.Error,
+                msg=(
+                    f"nc put to {dst}: no send progress for {_NC_STALL_TIMEOUT}s "
+                    f"with {bytes_done} bytes written — abandoning this attempt"
+                ),
+            )
+        finally:
+            await self._close_writer_bounded(writer)
+        return None
+
     async def _get_files_nc(
         self,
         src_files: list[Path],
@@ -687,20 +828,28 @@ class NcFileTransfer(UnixFileTransfer):
         The remote host runs ``nc -l <port> < <file>`` as a listener that
         sends file data.  Otto connects through an SSH port forward and
         reads the data — same tunnel mechanics as PUT, reversed data flow.
+
+        Every data-phase step carries a zero-progress bound (see
+        ``_NC_STALL_TIMEOUT``) and an empty transfer against a known
+        non-empty size is rejected, so the LISTEN-vs-accept race surfaces
+        as a fast, attributable error on the attempt — and ``_get_one``
+        then retries once on a fresh port, mirroring ``_put_one``.
         """
         await self._warmup_for_transfer(len(src_files))
         # Pre-fetch remote file sizes through `_control_run` — see
-        # `_get_files_nc` for the rationale.
-        sizes: dict[Path, int] = {}
+        # `_get_files_nc` for the rationale. None = the stat failed, so no
+        # size is known to vouch against. (A real empty file stats
+        # successfully as 0; both skip the empty-transfer check below, so
+        # the encoding distinguishes the WHY for the reader, not the
+        # behavior.)
+        sizes: dict[Path, int | None] = {}
         for src in src_files:
             stat_result = await self._control_run(f"stat -c %s {src}")
-            sizes[src] = int(stat_result.value.strip()) if stat_result.retcode == 0 else 0
+            sizes[src] = int(stat_result.value.strip()) if stat_result.retcode == 0 else None
 
-        async def _get_one(src: Path) -> Result:
-            dst = dest_dir / src.name
+        async def _attempt(src: Path, dst: Path) -> Result:
             total = sizes[src]
             handler = progress_factory() if progress_factory is not None else None
-            _logger.debug(f"{self._name}: NC get (tunneled) {src} -> {dst}")
 
             port = await self._find_free_port()
             listen_task: asyncio.Task[CommandResult] | None = None
@@ -727,7 +876,21 @@ class NcFileTransfer(UnixFileTransfer):
                     await asyncio.gather(listen_task, return_exceptions=True)
                     return Result(Status.Error, msg=f"Remote nc listener on port {port} not ready")
 
-                local_port = await self._connections.forward_port(port)
+                try:
+                    local_port = await asyncio.wait_for(
+                        self._connections.forward_port(port),
+                        timeout=_NC_FORWARD_SETUP_TIMEOUT,
+                    )
+                except (asyncio.TimeoutError, TimeoutError):
+                    listen_task.cancel()
+                    await asyncio.gather(listen_task, return_exceptions=True)
+                    return Result(
+                        Status.Error,
+                        msg=(
+                            f"nc get of {src}: SSH port-forward setup for remote "
+                            f"port {port} stalled beyond {_NC_FORWARD_SETUP_TIMEOUT}s"
+                        ),
+                    )
 
                 try:
                     reader, writer = await _connect_with_retry(
@@ -742,20 +905,59 @@ class NcFileTransfer(UnixFileTransfer):
                         Status.Error, msg=f"nc listener on localhost:{local_port} not ready"
                     )
 
+                bytes_done = 0
                 try:
-                    bytes_done = 0
                     with dst.open("wb") as f:
                         while True:
-                            block = await reader.read(_NC_BLOCK_SIZE)
+                            # Zero-progress bound: an accepted-but-unserviced
+                            # connection parks read() forever (probed live);
+                            # any received block re-arms the window.
+                            block = await asyncio.wait_for(
+                                reader.read(_NC_BLOCK_SIZE), timeout=_NC_STALL_TIMEOUT
+                            )
                             if not block:
                                 break
                             f.write(block)
                             bytes_done += len(block)
                             if handler is not None:
-                                handler(str(src), str(dst), bytes_done, total)
+                                handler(str(src), str(dst), bytes_done, total or 0)
+                except (asyncio.TimeoutError, TimeoutError):
+                    listen_task.cancel()
+                    await asyncio.gather(listen_task, return_exceptions=True)
+                    return Result(
+                        Status.Error,
+                        msg=(
+                            f"nc get of {src}: no data for {_NC_STALL_TIMEOUT}s "
+                            f"with {bytes_done} bytes received — abandoning this "
+                            f"attempt"
+                        ),
+                    )
                 finally:
-                    writer.close()
-                    await writer.wait_closed()
+                    await self._close_writer_bounded(writer)
+
+                # EOF at ZERO bytes when the remote file is known non-empty:
+                # the connection was dropped before the listener serviced it
+                # (a clean close from this side, indistinguishable from an
+                # empty send without the size). Deliberately narrow — a
+                # non-zero short read is NOT failed, because the stat is a
+                # pre-transfer snapshot and a growing/changing remote file
+                # legitimately delivers a different byte count; and an
+                # unknown size (stat failed → total is None) leaves nothing
+                # to vouch against, a residual accepted and pinned rather
+                # than guessed at. The narrowing also accepts a drop that
+                # delivered SOME bytes as Success (a re-stat-on-mismatch
+                # could split "file changed" from "dropped mid-transfer";
+                # deliberately not taken in this wave).
+                if total and bytes_done == 0:
+                    listen_task.cancel()
+                    await asyncio.gather(listen_task, return_exceptions=True)
+                    return Result(
+                        Status.Error,
+                        msg=(
+                            f"nc get of {src}: empty transfer (remote reports "
+                            f"{total} bytes; received 0 before EOF)"
+                        ),
+                    )
 
                 # Reader drained the socket to EOF; the remote nc should exit
                 # now. Bound the wait so an orphaned listener can't hang us —
@@ -802,6 +1004,18 @@ class NcFileTransfer(UnixFileTransfer):
                 raise
             finally:
                 self._release_port(port)
+
+        async def _get_one(src: Path) -> Result:
+            dst = dest_dir / src.name
+            _logger.debug(f"{self._name}: NC get (tunneled) {src} -> {dst}")
+            result = await _attempt(src, dst)
+            if not result.is_ok:
+                # One retry on the narrow listener-readiness race, on a fresh
+                # port — mirrors `_put_one`. A second failure is almost
+                # certainly a real problem and should propagate.
+                _logger.debug(f"{self._name}: NC get retry after: {result.msg}")
+                result = await _attempt(src, dst)
+            return result
 
         gathered = await asyncio.gather(
             *(_get_one(src) for src in src_files),
@@ -909,7 +1123,21 @@ class NcFileTransfer(UnixFileTransfer):
                 # pooled session instead of paying a fresh handshake each.
                 await self._wait_for_remote_listener(port)
                 if self._connections.has_tunnel:
-                    local_port = await self._connections.forward_port(port)
+                    try:
+                        local_port = await asyncio.wait_for(
+                            self._connections.forward_port(port),
+                            timeout=_NC_FORWARD_SETUP_TIMEOUT,
+                        )
+                    except (asyncio.TimeoutError, TimeoutError):
+                        listen_task.cancel()
+                        await asyncio.gather(listen_task, return_exceptions=True)
+                        return Result(
+                            Status.Error,
+                            msg=(
+                                f"nc put to {dst}: SSH port-forward setup for remote "
+                                f"port {port} stalled beyond {_NC_FORWARD_SETUP_TIMEOUT}s"
+                            ),
+                        )
                     connect_host = "localhost"
                     connect_port = local_port
                 else:
@@ -937,28 +1165,13 @@ class NcFileTransfer(UnixFileTransfer):
                     )
 
                 total = src.stat().st_size
-                bytes_done = 0
                 handler = progress_factory() if progress_factory is not None else None
 
-                try:
-                    with src.open("rb") as f:
-                        blocks_since_drain = 0
-                        while True:
-                            block = f.read(_NC_BLOCK_SIZE)
-                            if not block:
-                                break
-                            writer.write(block)
-                            bytes_done += len(block)
-                            blocks_since_drain += 1
-                            if blocks_since_drain >= _NC_DRAIN_EVERY:
-                                await writer.drain()
-                                blocks_since_drain = 0
-                            if handler is not None:
-                                handler(str(src), str(dst), bytes_done, total)
-                    await writer.drain()
-                finally:
-                    writer.close()
-                    await writer.wait_closed()
+                stall = await self._send_file_stall_bounded(writer, src, dst, total, handler)
+                if stall is not None:
+                    listen_task.cancel()
+                    await asyncio.gather(listen_task, return_exceptions=True)
+                    return stall
 
                 # The sender has pushed every byte and closed the socket, so
                 # the remote nc should see EOF and exit immediately. If it

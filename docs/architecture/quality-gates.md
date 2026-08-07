@@ -67,7 +67,7 @@ fixture SUT repos (`tests/repo1..repo3`, `repo_broken`, `repo_e2e`) and
 | `no-bare-status-return` | `src/otto/**` |
 | `no-plan-coordinates` | `src/otto/**` |
 | `no-plan-coordinates-ts` / `no-plan-coordinates-tsx` | `web/src/**` |
-| `no-retry-marker-in-otto-tests` | `tests/**` minus fixture repos — the first tests-scoped rule; one ratchet ignore (the hop-transfer file, deleted with its flake fix) |
+| `no-retry-marker-in-otto-tests` | `tests/**` minus fixture repos — the first tests-scoped rule; fully armed (its one ratchet ignore died with the hop-transfer flake fix) |
 | `no-tuple-return` | `src/otto/**` |
 | `typer-exit-outside-cli` | `src/otto/**` (CLI exempt) |
 

@@ -45,6 +45,28 @@ def _only(per_file: dict, src: Path) -> tuple[Status, str]:
     return r.status, r.msg
 
 
+class _FakeTransport:
+    """Transport stub: scripted write-buffer sizes + abort tracking.
+
+    ``buffer_sizes`` is consumed left-to-right by
+    ``get_write_buffer_size()``; the last value repeats — a constant list
+    models a fully stalled channel (zero progress), a decreasing list a
+    slow-but-moving one.
+    """
+
+    def __init__(self, buffer_sizes: list[int] | None = None) -> None:
+        self.buffer_sizes = list(buffer_sizes) if buffer_sizes else [0]
+        self.aborted = False
+
+    def get_write_buffer_size(self) -> int:
+        if len(self.buffer_sizes) > 1:
+            return self.buffer_sizes.pop(0)
+        return self.buffer_sizes[0]
+
+    def abort(self) -> None:
+        self.aborted = True
+
+
 class _FakeWriter:
     """Minimal ``asyncio.StreamWriter`` stand-in for nc put tests.
 
@@ -56,6 +78,7 @@ class _FakeWriter:
         self.written_bytes: int = 0
         self.drain_calls: list[int] = []
         self.closed: bool = False
+        self.transport = _FakeTransport()
         self._drain_delay = drain_delay
 
     def write(self, data: bytes) -> None:
@@ -722,3 +745,264 @@ class TestNcPutCancellationReap:
                 await outer
 
         reap.assert_not_awaited()
+
+
+class TestNcPutStallBound:
+    """The LISTEN-vs-accept race (the hop-nc transfer hang, root-caused live
+    in the 2026-08 test-infra Wave 2): a connection accepted into the kernel backlog
+    but never read parks ``drain()`` on flow control with no deadline —
+    probed live: >20s with zero progress through an SSH hop. Every
+    data-phase step must be idle-bounded so the stall fails THIS attempt
+    while the caller still has budget for the fresh-port retry."""
+
+    @pytest.mark.asyncio
+    async def test_a_stalled_drain_fails_the_attempt_instead_of_hanging(self, tmp_path: Path):
+        src = tmp_path / "payload.bin"
+        src.write_bytes(b"x" * (8192 * 128))
+
+        class _StalledWriter(_FakeWriter):
+            async def drain(self) -> None:
+                await asyncio.Event().wait()  # accepted-but-unread: never progresses
+
+        stalled_writer = _StalledWriter()
+
+        async def fake_connect(host: str, port: int, timeout: float = 2.0):
+            return None, stalled_writer
+
+        exec_cmd = AsyncMock(return_value=_ok("9000\n"))
+        ft = _make_ft(exec_cmd, has_tunnel=True)
+        ft._connections.forward_port = AsyncMock(return_value=15000)
+
+        with (
+            patch.object(transfer_mod, "_NC_STALL_TIMEOUT", 0.1),
+            patch.object(transfer_mod, "_connect_with_retry", new=fake_connect),
+            patch.object(
+                NcFileTransfer, "_wait_for_remote_listener", new=AsyncMock(return_value=None)
+            ),
+        ):
+            # The outer bound is the pin's own harness: pre-fix code hangs
+            # here forever, which must read as a fast failure, not a hang.
+            status, msg = _only(
+                await asyncio.wait_for(ft._put_files_nc([src], tmp_path / "dst"), timeout=5.0),
+                src,
+            )
+
+        assert status is Status.Error
+        assert "no send progress" in msg, msg
+        assert stalled_writer.closed, "the stalled writer must still be closed"
+
+    @pytest.mark.asyncio
+    async def test_a_stalled_forward_setup_fails_the_attempt(self, tmp_path: Path):
+        src = tmp_path / "payload.bin"
+        src.write_bytes(b"x" * 1024)
+
+        async def parked_forward(port: int) -> int:
+            await asyncio.Event().wait()
+            raise AssertionError("unreachable")  # pragma: no cover
+
+        exec_cmd = AsyncMock(return_value=_ok("9000\n"))
+        ft = _make_ft(exec_cmd, has_tunnel=True)
+        ft._connections.forward_port = parked_forward
+
+        with (
+            patch.object(transfer_mod, "_NC_FORWARD_SETUP_TIMEOUT", 0.1),
+            patch.object(
+                NcFileTransfer, "_wait_for_remote_listener", new=AsyncMock(return_value=None)
+            ),
+        ):
+            status, msg = _only(
+                await asyncio.wait_for(ft._put_files_nc([src], tmp_path / "dst"), timeout=5.0),
+                src,
+            )
+
+        assert status is Status.Error
+        assert "port-forward setup" in msg, msg
+
+
+class TestNcPutStallSemantics:
+    """The zero-progress semantics and cleanup guarantees of the stall bounds
+    (interim review findings 1, 3, 5): drain's bound must be an actual
+    zero-progress window (never a throughput floor), the final drain must be
+    guarded for payloads too small to hit the loop drain, a wedged close must
+    abort the transport (not leak fd + buffer), and the constants must fit
+    the integration wrapper's budget twice (once per attempt)."""
+
+    def _tunneled_ft(self) -> NcFileTransfer:
+        ft = _make_ft(AsyncMock(return_value=_ok("9000\n")), has_tunnel=True)
+        ft._connections.forward_port = AsyncMock(return_value=15000)
+        return ft
+
+    @pytest.mark.asyncio
+    async def test_a_slow_but_moving_link_is_not_a_stall(self, tmp_path: Path):
+        """drain() resolving slower than the window is NOT a stall while the
+        write buffer keeps shrinking — a plain wait_for here would impose a
+        throughput floor that an impaired lab link legitimately undercuts
+        (review finding 1: measured false-stall at 400 KiB/s)."""
+        src = tmp_path / "payload.bin"
+        src.write_bytes(b"x" * 1024)
+
+        class _SlowWriter(_FakeWriter):
+            async def drain(self) -> None:
+                # Parks past every (patched) window while the transport's
+                # buffer numbers keep decreasing — progress, not a stall —
+                # and resolves once the scripted buffer reaches zero, like
+                # a real transport crossing its low-water mark.
+                if self.transport.buffer_sizes == [0]:
+                    self.drain_calls.append(self.written_bytes)
+                    return
+                await asyncio.sleep(10)
+                raise AssertionError("unreachable")  # pragma: no cover
+
+        slow_writer = _SlowWriter()
+        slow_writer.transport = _FakeTransport([900, 700, 500, 300, 0])
+
+        async def fake_connect(host: str, port: int, timeout: float = 2.0):
+            return None, slow_writer
+
+        with (
+            patch.object(transfer_mod, "_NC_STALL_TIMEOUT", 0.1),
+            patch.object(transfer_mod, "_connect_with_retry", new=fake_connect),
+            patch.object(
+                NcFileTransfer, "_wait_for_remote_listener", new=AsyncMock(return_value=None)
+            ),
+            patch.object(NcFileTransfer, "_verify_nc_dest_size", new=AsyncMock(return_value=None)),
+        ):
+            status, msg = _only(
+                await asyncio.wait_for(
+                    self._tunneled_ft()._put_files_nc([src], tmp_path / "dst"), timeout=5.0
+                ),
+                src,
+            )
+
+        assert status is Status.Success, msg
+
+    @pytest.mark.asyncio
+    async def test_a_stalled_final_drain_fails_a_small_payload(self, tmp_path: Path):
+        """A payload under _NC_DRAIN_EVERY blocks never runs the loop drain —
+        the FINAL drain is then the only stall guard, and it was unpinned
+        (review finding 5: the one bound the live soak exercised)."""
+        src = tmp_path / "payload.bin"
+        src.write_bytes(b"x" * 1024)  # far below 64 blocks
+
+        class _StalledWriter(_FakeWriter):
+            async def drain(self) -> None:
+                await asyncio.Event().wait()
+
+        stalled_writer = _StalledWriter()
+        stalled_writer.transport = _FakeTransport([1024])  # never shrinks
+
+        async def fake_connect(host: str, port: int, timeout: float = 2.0):
+            return None, stalled_writer
+
+        with (
+            patch.object(transfer_mod, "_NC_STALL_TIMEOUT", 0.1),
+            patch.object(transfer_mod, "_connect_with_retry", new=fake_connect),
+            patch.object(
+                NcFileTransfer, "_wait_for_remote_listener", new=AsyncMock(return_value=None)
+            ),
+        ):
+            status, msg = _only(
+                await asyncio.wait_for(
+                    self._tunneled_ft()._put_files_nc([src], tmp_path / "dst"), timeout=5.0
+                ),
+                src,
+            )
+
+        assert status is Status.Error
+        assert "no send progress" in msg, msg
+
+    @pytest.mark.asyncio
+    async def test_a_wedged_close_is_aborted_not_leaked(self, tmp_path: Path):
+        """A stalled channel never completes its graceful close — the bounded
+        close must ABORT the transport (review finding 3: close()+suppress
+        left the fd open with 32 MB buffered)."""
+        src = tmp_path / "payload.bin"
+        src.write_bytes(b"x" * 1024)
+
+        class _WedgedCloseWriter(_FakeWriter):
+            async def wait_closed(self) -> None:
+                await asyncio.Event().wait()
+
+        wedged_writer = _WedgedCloseWriter()
+
+        async def fake_connect(host: str, port: int, timeout: float = 2.0):
+            return None, wedged_writer
+
+        with (
+            patch.object(transfer_mod, "_NC_CLOSE_TIMEOUT", 0.1),
+            patch.object(transfer_mod, "_connect_with_retry", new=fake_connect),
+            patch.object(
+                NcFileTransfer, "_wait_for_remote_listener", new=AsyncMock(return_value=None)
+            ),
+            patch.object(NcFileTransfer, "_verify_nc_dest_size", new=AsyncMock(return_value=None)),
+        ):
+            status, msg = _only(
+                await asyncio.wait_for(
+                    self._tunneled_ft()._put_files_nc([src], tmp_path / "dst"), timeout=5.0
+                ),
+                src,
+            )
+
+        assert status is Status.Success, msg
+        assert wedged_writer.closed
+        assert wedged_writer.transport.aborted, (
+            "a close that cannot complete must abort the transport, not leak it"
+        )
+
+    def test_data_path_bounds_fit_the_integration_budget_twice(self):
+        """Every error path retries once on a fresh port, so the data-path
+        bounds must fit twice inside the integration wrapper's transfer
+        budget with setup headroom — pins the MAGNITUDE of the constants
+        (review finding 5: 10.0 -> 1000.0 previously passed everything;
+        'do not paper with a longer timeout' had no teeth)."""
+        from tests.integration.host._transfer_retry import DEFAULT_TRANSFER_TIMEOUT
+
+        per_attempt = (
+            transfer_mod._NC_STALL_TIMEOUT
+            + transfer_mod._NC_FORWARD_SETUP_TIMEOUT
+            + transfer_mod._NC_CLOSE_TIMEOUT
+        )
+        assert 2 * per_attempt <= DEFAULT_TRANSFER_TIMEOUT, (
+            f"two attempts of bounded data-path steps ({2 * per_attempt}s) must fit "
+            f"the {DEFAULT_TRANSFER_TIMEOUT}s integration transfer budget — a bigger "
+            f"bound papers over the stall instead of surfacing it while retry "
+            f"budget remains"
+        )
+
+    @pytest.mark.asyncio
+    async def test_progress_once_does_not_rearm_forever(self, tmp_path: Path):
+        """The zero-progress baseline must ADVANCE: progress in window 1
+        followed by zero progress thereafter must still fail. Deleting
+        ``last = now`` re-arms forever off the stale baseline after a single
+        byte of progress — the unbounded hang back through the side door
+        (verification review, N1)."""
+        src = tmp_path / "payload.bin"
+        src.write_bytes(b"x" * 1024)
+
+        class _StalledAfterOneWindow(_FakeWriter):
+            async def drain(self) -> None:
+                await asyncio.Event().wait()
+
+        writer = _StalledAfterOneWindow()
+        # One real decrease (1000 -> 900), then frozen at 900 forever.
+        writer.transport = _FakeTransport([1000, 900])
+
+        async def fake_connect(host: str, port: int, timeout: float = 2.0):
+            return None, writer
+
+        with (
+            patch.object(transfer_mod, "_NC_STALL_TIMEOUT", 0.1),
+            patch.object(transfer_mod, "_connect_with_retry", new=fake_connect),
+            patch.object(
+                NcFileTransfer, "_wait_for_remote_listener", new=AsyncMock(return_value=None)
+            ),
+        ):
+            status, msg = _only(
+                await asyncio.wait_for(
+                    self._tunneled_ft()._put_files_nc([src], tmp_path / "dst"), timeout=5.0
+                ),
+                src,
+            )
+
+        assert status is Status.Error
+        assert "no send progress" in msg, msg

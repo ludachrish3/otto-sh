@@ -114,7 +114,7 @@ rule:
   pattern: pytest.mark.retry($$$N)
 ```
 
-**Red today:** 2 (the hop tests) — held by the temporary ignore, which Wave 2 deletes.
+**Red today:** 0 — the two hop-test markers were removed by Wave 2 (hang root-caused), and the temporary ignore is deleted; the rule is fully armed.
 **Landing:** Wave 1 (error severity immediately; the ignore is the ratchet).
 
 ### G2. Any retry mechanism must record its reruns and re-arm its timeout
@@ -501,13 +501,40 @@ plugin.py and tests/conftest.py so pytest's default `runtest` never double-runs.
 G1's ignore entry. **Effort: M** (root-cause per the todo's plan: bounded `wait_for` on
 the asyncssh channel with an asyncio-level deadline — do not paper with a longer
 timeout; memory rule: confirm root cause before fixing).
-- [ ] Reproduce the hang per the todo file's recipe (live bed; state expected duration
-      up front).
-- [ ] Fix; soak the two tests ×20 on the bed without the marker (integration lane,
-      serial — no heavy parallel load on the dev VM).
-- [ ] Remove `@pytest.mark.retry(3)` from both tests, delete
+- [x] Reproduce the hang per the todo file's recipe (live bed; state expected duration
+      up front). *(Reproduced DETERMINISTICALLY rather than by load-looping: a remote
+      listener holding LISTEN without ever calling accept() — the race window, held
+      open. Probe on tomato-via-carrot_seed: connect through the forward succeeded in
+      0.01s though the remote never reached accept(). GET's read() sat >20s — the
+      CONFIRMED shape of the natural GET hang. Honest split (interim review, finding
+      2): the 15-byte PUT payload never reaches a drain wait (all under the
+      transport's high-water mark), so the natural PUT hang is ATTRIBUTED — not
+      proven — to the previously-unbounded forward setup; the probe's PUT drain
+      stall required ~10 MiB buffered and covers the large-send mechanism.)*
+- [x] Fix; soak the two tests ×20 on the bed without the marker (integration lane,
+      serial — no heavy parallel load on the dev VM). *(Fix: every tunneled data-phase
+      step bounded — forward setup 5s; each drain/read a 5s ZERO-PROGRESS window
+      (progress re-arms it; a plain wait_for would be a ~100KiB/s throughput floor
+      that `link impair --rate` legitimately undercuts — interim review finding 1);
+      close handshake 2s then transport.abort() (finding 3: close()+suppress leaked
+      the fd + 32MB buffer); GET gains the fresh-port one-shot retry and an
+      empty-transfer-vs-known-size check (narrow by design: a non-zero short read is
+      NOT failed — the stat is a snapshot and growing files are legitimate, finding
+      4; unknown size skips, pinned as a documented residual). Bounds budget-pinned:
+      2 attempts of data-path bounds must fit the 30s integration wrapper. 14 new
+      unit tests; the original 5 red vs main, the semantics batch mutation-killed
+      bound by bound (9 mutations, incl. papering 5.0→1000.0 and the frozen
+      zero-progress baseline). Soak: 20/20 pairs passed with
+      DEBUG logs captured — ZERO retry-path entries, i.e. the race did not occur
+      naturally in 40 executions; the soak certifies the healthy path under the new
+      bounds, and the race path is certified by the deterministic probe + pins. This
+      is CONTAINMENT, not elimination: the LISTEN-vs-accept window stays open per
+      transfer, and the todo's probe-past-accept alternative is inapplicable — nc
+      serves exactly one accept, so a readiness connect would consume it.)*
+- [x] Remove `@pytest.mark.retry(3)` from both tests, delete
       `todo/hop_nc_transfer_flake.md` (its own exit criterion), delete the G1 ignore —
-      gate now fully armed.
+      gate now fully armed. *(Arming mutation-proved: a marker re-added to the hop
+      file trips the scan; clean after revert.)*
 
 ### Wave 3 — Probe-status honesty (item 3; G5)
 **Files:** `tests/e2e/chaos/_bed.py:140` (+ `:90-91` narrow the except-continue),
