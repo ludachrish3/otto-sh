@@ -33,6 +33,17 @@ def browser_tests_could_run(config: pytest.Config) -> bool:
     (``BROWSER_TEST_MARKERS``). An empty expression means nothing is
     filtered, so browser tests trivially survive.
     """
+    # Nothing executes under --collect-only, so the build these suites need in
+    # order to RUN cannot be missing yet — there is nothing to be missing for.
+    # Exiting here would veto a whole session on behalf of tests it never
+    # intended to start: issue #196, where the hermeticity guard's inner
+    # `--collect-only tests/e2e` (and any other enumeration of the tree) died
+    # rc=2 on every checkout without a `make web`, which is all six hostless CI
+    # lanes, the unit-repeat lane, and every fresh clone — `_webassets/*/` is
+    # gitignored, so only a dev tree that had built once ever looked green.
+    if config.option.collectonly:
+        return False
+
     markexpr = config.option.markexpr
     if not markexpr:
         return True
