@@ -12,13 +12,15 @@ note). Three lanes had done exactly that when this pin landed:
 ``tests_unit_repeat`` and the ``docs`` doctest leg in noxfile.py, and
 ``doctest-src`` in the Makefile (review 2026-08-06 §5.4, gate G13).
 
-Scope: exactly the two build files, ``noxfile.py`` and ``Makefile``. Two
-further ``--override-ini addopts=`` sites live in PRODUCT code
-(``src/otto/suite/run.py``, ``src/otto/config/repo.py``) and re-create the
-same exposure for otto's own in-process pytest sessions — a recorded live
-defect (todo/churn-review-cheap-items-followups.md, "otto test panics when
-tach is installed"). They are deliberately outside this pin, and travel with
-the Wave 1 suite work (todo/test-infra-remediation-plan-2026-08-06.md).
+Scope: the scanner covers exactly the two build files, ``noxfile.py`` and
+``Makefile``. Two further ``--override-ini addopts=`` sites live in PRODUCT
+code (``src/otto/suite/run.py``, ``src/otto/config/repo.py``) and re-created
+the same exposure for otto's own in-process pytest sessions — the recorded
+live defect "otto test panics when tach is installed"
+(todo/churn-review-cheap-items-followups.md). There the guard is not an
+addopts value but direct ``"-p", "no:tach"`` argv elements (matching
+repo.py's existing ``-p no:terminal`` idiom), so those files get the
+companion literal pin below rather than the scanner.
 
 The scanner is delimiter-aware line parsing, not "up to the next quote": the
 value ends at the partner of the quote that actually delimits it — the quote
@@ -80,6 +82,27 @@ def test_addopts_overrides_keep_the_tach_guard() -> None:
         "`-o addopts=...` must re-state `-p no:tach` (the conftest stub seeds "
         "too late to protect plugin load):\n  " + "\n  ".join(offenders)
     )
+
+
+def test_product_pytest_sessions_keep_the_tach_guard() -> None:
+    """The two in-product pytest sessions must pass ``-p no:tach`` as argv.
+
+    Both sites clear ``addopts`` (dropping pyproject's guard) before starting
+    an in-process pytest session, so each must re-assert the guard itself.
+    The pin requires the *adjacent argv pair* ``"-p", "no:tach"`` — a prose
+    mention in a comment (the plausible shape of an annotated removal, the
+    same trap this module's scanner was reviewed for) and a stray quoted
+    string elsewhere in the file both miss it. A commented-out copy of the
+    exact pair on one line would still match; that shape is accepted as
+    vanishingly unlikely rather than chased.
+    """
+    for rel in ("src/otto/suite/run.py", "src/otto/config/repo.py"):
+        text = (_REPO / rel).read_text()
+        assert re.search(r'"-p",\s*"no:tach",', text), (
+            f"{rel}: in-process pytest session lost its `-p no:tach` argv guard "
+            "(issue #193: tach's pytest plugin panics otto-started sessions; "
+            "`addopts=` overrides at these sites drop the pyproject guard)"
+        )
 
 
 def test_scanner_flags_a_guardless_override() -> None:

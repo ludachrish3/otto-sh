@@ -158,6 +158,7 @@ from otto.host.local_host import LocalHost
 from otto.host.login_proxy import Cred
 from otto.host.unix_host import UnixHost
 from otto.registry import Registry
+from otto.suite._retry import report_retries, retry_hookwrapper
 from tests._fixtures._coverage_preinit import (
     PREINIT_OUTCOME,
     active_pytest_cov,
@@ -188,39 +189,18 @@ from tests._fixtures._transport_leaks import (
 if "tach.pytest_plugin" not in sys.modules:
     sys.modules["tach.pytest_plugin"] = types.ModuleType("tach.pytest_plugin")
 
-_logger = logging.getLogger(__name__)
-
 
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_call(item: pytest.Item):
     """Implement ``@pytest.mark.retry(n)`` for dev pytest runs.
 
     Provides the marker under bare ``pytest`` — ``otto.suite.plugin.OttoPlugin``
-    only registers under ``otto test``. Used to gate known-flaky integration
-    tests (nc transfers through an SSH hop) — see
-    ``todo/hop_nc_transfer_flake.md`` for the underlying issue.
-
-    Implemented as a hookwrapper so the first attempt runs through the default
-    hook and retries override the outcome on success — a plain ``tryfirst``
-    impl would let the default re-run (and possibly fail) the test after a
-    retry succeeded.
+    only registers under ``otto test``. All retry semantics (per-attempt
+    timeout re-arm, JUnit/terminal rerun evidence, double-registration
+    safety) live in :func:`otto.suite._retry.retry_hookwrapper`, pinned by
+    ``tests/unit/suite/test_retry_semantics.py``.
     """
-    outcome = yield
-    retry_marker = item.get_closest_marker("retry")
-    if retry_marker is None or outcome.excinfo is None:
-        return
-    n = int(retry_marker.args[0]) if retry_marker.args else 1
-    first_exc = outcome.excinfo[1]
-    _logger.warning(f"retry: {item.nodeid} attempt 1/{n} failed: {first_exc}")
-    for attempt in range(1, n):
-        try:
-            item.runtest()
-        except Exception as exc:  # noqa: BLE001 — retry hook must catch any test exception to report and retry
-            _logger.warning(f"retry: {item.nodeid} attempt {attempt + 1}/{n} failed: {exc}")
-            outcome.force_exception(exc)
-            continue
-        outcome.force_result(None)
-        return
+    yield from retry_hookwrapper(item)
 
 
 def pytest_configure(config):  # type: ignore[no-untyped-def]
@@ -452,6 +432,7 @@ def pytest_runtest_teardown(item):
 
 
 def pytest_terminal_summary(terminalreporter):  # type: ignore[no-untyped-def]
+    report_retries(terminalreporter)
     if _loops_reaped:
         terminalreporter.write_line(
             f"loop-reaper: closed {_loops_reaped} orphaned pytest-asyncio event "

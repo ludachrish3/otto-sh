@@ -447,17 +447,19 @@ review → squash to main → empty-diff check → hand to Chris.
 ### Wave 0 — Gate infrastructure + lane truthfulness (G0 + G13)
 **Files:** `Makefile:751,:902`, `noxfile.py:158-167,:360,:378`, new
 `tests/unit/test_lane_invariants.py`, `sgconfig.yml` (comment update).
-- [ ] Widen ast-grep scan targets to include `tests` (both call sites); run scan — must
+- [x] Widen ast-grep scan targets to include `tests` (both call sites); run scan — must
       stay green (no tests-scoped rules yet).
-- [ ] Write `test_lane_invariants.py` (with embedded positive control); run it against
+- [x] Write `test_lane_invariants.py` (with embedded positive control); run it against
       the un-fixed noxfile/Makefile — all four legs must FAIL (record counts for the
       commit message).
-- [ ] Re-add `-p no:tach` to the three cleared-addopts lanes; guard now green.
-- [ ] Land the bundle-filter drift twin (G13 mechanism 2): `_ts_bundle_filter.py`,
+- [x] Re-add `-p no:tach` to the three cleared-addopts lanes; guard now green.
+- [x] Land the bundle-filter drift twin (G13 mechanism 2): `_ts_bundle_filter.py`,
       both conftest configure checks, falsifiability pins. (Replaces the original
       "set OTTO_TS_COVERAGE in nox" idea — make-only is documented design.)
-- [ ] Confirm one CI dashboard run trips nothing and the configure log shows the
-      suites collecting normally (the drift guard is silent when clean).
+- [x] Confirm one CI dashboard run trips nothing and the configure log shows the
+      suites collecting normally (the drift guard is silent when clean). *(Done via
+      the local dashboard lane in the Wave 0 gates — the same configure path, clean;
+      the CI leg re-confirms on Chris's push.)*
 
 ### Wave 1 — Retry overhaul (item 1; G1 + G2)
 **Files:** `src/otto/suite/plugin.py:240-261`, `tests/conftest.py:194-223`, new
@@ -472,14 +474,18 @@ prints a terminal-summary count, (c) catches `BaseException` subtypes that repre
 test failure (`Exception` + `_pytest.outcomes.Failed`) while letting
 `Skipped`/`KeyboardInterrupt` escape, (d) is invoked from a **wrapper** hook in both
 plugin.py and tests/conftest.py so pytest's default `runtest` never double-runs.
-- [ ] Write the four G2 meta-tests first; run them against the current implementations —
+- [x] Write the four G2 meta-tests first; run them against the current implementations —
       all four must FAIL (this is the review's verification, reproduced as pins; record
-      the failures for the commit message).
-- [ ] Implement `_retry.py`; rewire both hook sites to delegate; pins green.
-- [ ] G2 tests green; run the hop tests once under the new marker on the lab bed to
+      the failures for the commit message). *(Probe: 4 RED / skip-pin GREEN-by-design.)*
+- [x] Implement `_retry.py`; rewire both hook sites to delegate; pins green.
+- [x] G2 tests green; run the hop tests once under the new marker on the lab bed to
       confirm rerun evidence appears in JUnit (expected duration: minutes, live bed).
-- [ ] Land G1 rule (error, with the hop-file ignore + note pointing at Wave 2).
-- [ ] Rider (from Wave 0's review): re-state `-p no:tach` in the two PRODUCT
+      *(Both passed first-attempt in 2.4s — no natural flake this run, so no rerun
+      evidence to observe live; the JUnit/summary evidence path is pinned hermetically
+      by `test_retry_semantics.py`, incl. an async-body pin since every real retry
+      user is a pytest-asyncio test.)*
+- [x] Land G1 rule (error, with the hop-file ignore + note pointing at Wave 2).
+- [x] Rider (from Wave 0's review): re-state `-p no:tach` in the two PRODUCT
       `--override-ini addopts=` argv sites — `src/otto/suite/run.py:500` and
       `src/otto/config/repo.py:568` — otto's own in-process pytest sessions are the
       literal #193 trigger and this is a recorded live defect

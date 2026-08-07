@@ -565,6 +565,12 @@ class Repo:
                             "no:terminal",
                             "-p",
                             "no:cov",
+                            # tach's pytest plugin installs a C-level SIGINT
+                            # handler at import and panics on a second
+                            # in-process session (issue #193); this collect-only
+                            # session runs inside processes that may start more.
+                            "-p",
+                            "no:tach",
                             "--override-ini",
                             "addopts=",
                             "--override-ini",

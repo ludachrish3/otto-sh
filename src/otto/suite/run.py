@@ -498,6 +498,13 @@ def _run_pytest_session(
         "log_cli=false",
         "--override-ini",
         "addopts=",
+        # `addopts=` above drops the dev tree's `-p no:tach` guard along with
+        # everything else, so re-assert it directly: tach's pytest plugin
+        # installs a C-level SIGINT handler at import and panics on the second
+        # in-process pytest session (issue #193) — `otto test` runs one
+        # session per invocation of this function.
+        "-p",
+        "no:tach",
         # Cut conftest loading at the suite's repo root: the user repo's whole
         # conftest hierarchy loads; otto's own tests/conftest.py (which resets
         # logging management state) stays excluded for in-tree example repos

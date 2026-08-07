@@ -18,8 +18,9 @@ Additional hooks:
     stopping when the iteration or time limit is reached.
 
 ``pytest_runtest_call``
-    Implements ``@pytest.mark.retry(n)`` — retries the test body up to *n*
-    times on failure, stopping on the first success.
+    Implements ``@pytest.mark.retry(n)`` by delegating to the shared
+    ``otto.suite._retry`` hookwrapper — per-attempt timeout re-arm,
+    JUnit/terminal rerun evidence, and double-registration safety live there.
 
 ``pytest_runtest_logreport``
     In stability mode, accumulates per-test pass/fail counts into the
@@ -38,6 +39,8 @@ from typing import Any, cast
 import pytest
 import pytest_asyncio
 from _pytest.runner import call_and_report, show_test_item
+
+from otto.suite._retry import report_retries, retry_hookwrapper
 
 logger = logging.getLogger(__name__)
 
@@ -237,28 +240,21 @@ class OttoPlugin:
 
         return True
 
-    def pytest_runtest_call(self, item: pytest.Item) -> None:
-        """Implement ``@pytest.mark.retry(n)`` — retry the test body up to n times.
+    @pytest.hookimpl(hookwrapper=True)
+    def pytest_runtest_call(self, item: pytest.Item) -> Generator[None, Any, None]:
+        """Implement ``@pytest.mark.retry(n)`` via the shared hookwrapper.
 
-        Stops on the first success.  Re-raises the last exception if all
-        attempts fail.  Each failed attempt is logged at WARNING level.
+        A hookwrapper, not a plain impl: ``pytest_runtest_call`` is not
+        ``firstresult``, so a plain impl runs *alongside* pytest's default
+        runner — the body executed once more after a successful retry, and
+        that extra run decided the outcome. All retry semantics live in
+        ``otto.suite._retry.retry_hookwrapper``.
         """
-        retry_marker = item.get_closest_marker("retry")
-        if retry_marker is None:
-            return  # normal execution via other hooks
+        yield from retry_hookwrapper(item)
 
-        n: int = int(retry_marker.args[0]) if retry_marker.args else 1
-        last_exc: BaseException | None = None
-        for attempt in range(n):
-            try:
-                item.runtest()
-            except Exception as exc:  # noqa: PERF203,BLE001 — per-item resilience, retry must catch test exceptions
-                last_exc = exc
-                logger.warning(f"retry: {item.nodeid} attempt {attempt + 1}/{n} failed: {exc}")
-            else:
-                return  # success — stop retrying
-        if last_exc is not None:
-            raise last_exc
+    def pytest_terminal_summary(self, terminalreporter: Any) -> None:
+        """Name every retried test so a pass-after-retries stays visible."""
+        report_retries(terminalreporter)
 
     # PERMANENT(no-tuple-return): pytest dictates this hook's return shape.
     # ast-grep-ignore: no-tuple-return

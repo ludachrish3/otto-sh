@@ -242,7 +242,7 @@ markers = [
     "hostless: e2e test that needs no test bed (no Vagrant VMs, no docker daemon, no Zephyr) — deselect with -m 'not hostless'",
     "browser: needs a Playwright browser binary (make browsers) — additive resource refinement, deselect with -m 'not browser'",
     "timeout(seconds): fail the test if it exceeds the given number of seconds",
-    "retry(n): retry the test up to n times on failure before reporting it as failed",
+    "retry(n): re-run a failed test body until it passes, n TOTAL attempts (retry(2) = one retry); body must be idempotent — see tests/repo1 sample",
     "stability: heavy stability/soak tests — excluded from `make coverage`; run via `make stability` / `make stability-embedded`",
     "chaos: tier-3 chaos-lane scenario (tests/e2e/chaos) — bed-hostile (reboots, SSH blackholes), excluded from every default gate like stability; opt-in via make chaos / make chaos-embedded",
     "concurrency: fast, no-VM SessionManager concurrency/soak tests — run via `make stability-unit`; stays in coverage",

@@ -1,0 +1,46 @@
+id: no-retry-marker-in-otto-tests
+language: python
+severity: error
+message: otto's own tests must not use `@pytest.mark.retry` — fix the flake or quarantine it with a tracking issue; retry is a product feature for user suites, not a lid for ours.
+note: >
+  `retry(n)` re-runs the test body with the fixtures of the FAILED attempt
+  (only the call phase re-enters), so inside otto's suite it is a flake lid:
+  the failure signal is converted into a pass while the underlying race,
+  ordering assumption, or environment defect keeps drifting. The dev-suite
+  posture is that a flake gets a root cause (or a skip with a tracking
+  issue that names the host/venue), never a retry — the review that
+  produced this rule found every in-tree use was masking a diagnosable
+  defect (2026-08-06 review §2.1, gate G1).
+
+  The marker itself stays supported: it exists for USER suites, where a
+  management-plane blip on real hardware is an environmental fact the test
+  cannot fix. That is why the fixture SUT repos (user-example input data,
+  not otto's tests) are ignored — tests/repo1's sample documents the
+  feature, including the idempotent-body requirement its docstring states.
+
+  Scoped to tests/** rather than repo-wide so the implementation
+  (otto/suite/_retry.py) stays out of reach of the ban; the semantics pins
+  (tests/unit/suite/test_retry_semantics.py) ARE scanned and escape only
+  because their marker-bearing trees are built as string literals, which
+  this AST match does not see. Known residual: the pattern matches the
+  `pytest.mark.retry` attribute chain, so an aliased form (`from pytest
+  import mark`, `m = pytest.mark`, getattr) slips past — nobody aliases
+  pytest.mark by accident, so that risk is accepted rather than chased.
+files:
+- tests/**
+ignores:
+# Fixture SUT repos + firmware: user-example input data, not otto's tests
+# (sgconfig.yml discipline for tests-scoped rules).
+- tests/repo1/**
+- tests/repo2/**
+- tests/repo3/**
+- tests/repo_broken/**
+- tests/repo_e2e/**
+- tests/firmware/**
+# RATCHET(wave-2): two retry(3) markers gate the known-flaky nc-through-hop
+# transfers (todo/hop_nc_transfer_flake.md). Wave 2 of the 2026-08-06
+# remediation plan fixes the hang and deletes both markers AND this entry —
+# nothing else may join this list.
+- tests/integration/host/test_hop_integration.py
+rule:
+  pattern: pytest.mark.retry

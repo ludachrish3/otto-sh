@@ -25,7 +25,7 @@ on that side.
 | Type checking | `ty` (pinned `==0.0.64`) | `tsc --noEmit` via `scripts/typecheck_web.sh` (vendored Untitled UI diagnostics filtered) |
 | Unused code / deps | ruff (`F401`, `ARG`, …) | `knip` — unused files, exports, dependencies |
 | Module layering | `tach` against `tach.toml` | — none today |
-| Scoped pattern rules | `ast-grep` against `.ast-grep/rules/` — seven Python rules | `ast-grep` — two rules (`no-plan-coordinates-ts`, `-tsx`), scoped to `web/src/**` |
+| Scoped pattern rules | `ast-grep` against `.ast-grep/rules/` — eight Python rules | `ast-grep` — two rules (`no-plan-coordinates-ts`, `-tsx`), scoped to `web/src/**` |
 | Import cost | `scripts/import_budget.py` — module-count caps, snapshots, denylist | — (knip covers dependencies only) |
 | Tests | `pytest` (+ `xdist`, `repeat`, `hypothesis`) | `vitest` |
 | Coverage floor | `coverage.py` / `pytest-cov` — 95 for the full local run, 90 for the hostless CI slice | `@vitest/coverage-v8` for the unit floor; the browser leg is folded in by `monocart-coverage-reports` and the merged report gated by `nyc` |
@@ -51,13 +51,13 @@ every comment, converting a documented debt list into a blessed one.
 
 ### The ast-grep rules
 
-`.ast-grep/rules/` holds nine rules, all `severity: error`, all scoped to
-shipped source. The scan roots are `src/otto web/src tests` — tests/ joined
-in the test-infra remediation (2026-08-06) so that *test-suite* pattern
-rules can exist — and the discipline that keeps that widening safe is that
-every rule carries an explicit `files:` scope; a rule scoped to `tests/**`
-must also ignore the fixture SUT repos (`tests/repo1..repo3`, `repo_broken`,
-`repo_e2e`) and `tests/firmware`, which are user-example input data:
+`.ast-grep/rules/` holds ten rules, all `severity: error`. The scan roots
+are `src/otto web/src tests` — tests/ joined in the test-infra remediation
+(2026-08-06) so that *test-suite* pattern rules can exist — and the
+discipline that keeps that widening safe is that every rule carries an
+explicit `files:` scope; a rule scoped to `tests/**` must also ignore the
+fixture SUT repos (`tests/repo1..repo3`, `repo_broken`, `repo_e2e`) and
+`tests/firmware`, which are user-example input data:
 
 | Rule | Scope |
 | --- | --- |
@@ -67,6 +67,7 @@ must also ignore the fixture SUT repos (`tests/repo1..repo3`, `repo_broken`,
 | `no-bare-status-return` | `src/otto/**` |
 | `no-plan-coordinates` | `src/otto/**` |
 | `no-plan-coordinates-ts` / `no-plan-coordinates-tsx` | `web/src/**` |
+| `no-retry-marker-in-otto-tests` | `tests/**` minus fixture repos — the first tests-scoped rule; one ratchet ignore (the hop-transfer file, deleted with its flake fix) |
 | `no-tuple-return` | `src/otto/**` |
 | `typer-exit-outside-cli` | `src/otto/**` (CLI exempt) |
 

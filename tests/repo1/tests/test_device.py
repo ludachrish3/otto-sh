@@ -63,7 +63,16 @@ class TestDevice(OttoSuite[_Options]):
 
     @pytest.mark.retry(2)
     async def test_management_plane(self) -> None:
-        """Verify management-plane access (retried up to 2 times on flaky links)."""
+        """Verify management-plane access (2 total attempts on flaky links).
+
+        ``retry(n)`` re-runs only the test body — fixtures keep the failed
+        attempt's state — so a retried test's body must be idempotent: no
+        appends, counters, or one-shot consumption that a second run would
+        double. Reserve it for environmental flake (a management-plane blip
+        on real hardware), not for racy test logic. Reruns are recorded: a
+        ``retry_attempts`` property in JUnit XML, WARNING logs per failed
+        attempt, and a terminal summary of retried tests.
+        """
         self.logger.info("Testing management-plane connectivity")
         # Placeholder: replace with real management check
         assert True
