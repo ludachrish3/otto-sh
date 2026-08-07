@@ -39,6 +39,7 @@ from otto.monitor.session import new_frame
 from tests._fixtures._browser_guard import browser_tests_could_run
 from tests._fixtures._dashboard_harness import DashboardHarness
 from tests._fixtures._fake_collector import FakeCollector
+from tests._fixtures._ts_bundle_filter import bundle_filter_drift_reason
 from tests._fixtures._ts_coverage import ts_coverage, write_ts_coverage
 
 _FIXTURES = Path(__file__).resolve().parents[4] / "web" / "fixtures"
@@ -141,12 +142,18 @@ def pytest_configure(config: pytest.Config) -> None:
     if not browser_tests_could_run(config):
         return
     try:
-        _dist_index_path()
+        dist_index = _dist_index_path()
     except RuntimeError as exc:
         pytest.exit(str(exc), returncode=1)
     stale = _stale_dist_reason()
     if stale is not None:
         pytest.exit(stale, returncode=1)
+    # Bundle-filter drift twin: the in-fixture zero-match guard runs only when
+    # `make dashboard` arms OTTO_TS_COVERAGE, so CI's nox matrix never saw a
+    # vite output-layout change. This runs in every lane, armed or not.
+    drift = bundle_filter_drift_reason(dist_index.parent, "monitor dashboard")
+    if drift is not None:
+        pytest.exit(drift, returncode=1)
 
 
 @pytest.fixture(autouse=True)

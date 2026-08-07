@@ -35,6 +35,13 @@ note: >
   - Colours other than red are untouched: today they carry otto's own
     literals. If a `[yellow]` warning ever interpolates foreign text it has
     the same hazard and this rule will not see it.
+
+  The `files:` key is scope-preserving, not a fourth exemption: this rule
+  predates tests/ joining the scan roots (2026-08-06) and always meant
+  shipped renderers. Test code building red-markup strings renders through
+  its own capture, not otto's console path.
+files:
+- src/otto/**
 rule:
   kind: string
   all:

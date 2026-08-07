@@ -29,7 +29,7 @@ on that side.
 | Import cost | `scripts/import_budget.py` — module-count caps, snapshots, denylist | — (knip covers dependencies only) |
 | Tests | `pytest` (+ `xdist`, `repeat`, `hypothesis`) | `vitest` |
 | Coverage floor | `coverage.py` / `pytest-cov` — 95 for the full local run, 90 for the hostless CI slice | `@vitest/coverage-v8` for the unit floor; the browser leg is folded in by `monocart-coverage-reports` and the merged report gated by `nyc` |
-| Browser e2e | `pytest-playwright` — two suites (monitor dashboard, coverage report), three engines each (Chromium, Firefox, WebKit) | (same lane — `OTTO_TS_COVERAGE=1` arms CDP V8 collection during that same run) |
+| Browser e2e | `pytest-playwright` — two suites (monitor dashboard, coverage report), three engines each (Chromium, Firefox, WebKit) | (same lane — `OTTO_TS_COVERAGE=1` arms CDP V8 collection under `make dashboard` only; the bundle-filter **drift guard** runs at configure time in every lane, armed or not — `tests/_fixtures/_ts_bundle_filter.py`) |
 | Cross-language contract | `tests/_fixtures/covapp_contract.json`, asserted from both sides; `types.gen.ts` **and** `export.gen.ts` codegen + `git diff --exit-code` | (same two mechanisms) |
 | Vendored source | — (nothing vendored) | `scripts/check_untitledui_hash.sh` — did *we* edit it; `scripts/check_untitledui_drift.sh` — did *upstream* |
 | Built-bundle gates | — | `build_web_no_warnings.sh` (warnings are errors), `check_airgap.sh`, `check_brand_tokens.sh` |
@@ -52,12 +52,17 @@ every comment, converting a documented debt list into a blessed one.
 ### The ast-grep rules
 
 `.ast-grep/rules/` holds nine rules, all `severity: error`, all scoped to
-shipped source (never tests):
+shipped source. The scan roots are `src/otto web/src tests` — tests/ joined
+in the test-infra remediation (2026-08-06) so that *test-suite* pattern
+rules can exist — and the discipline that keeps that widening safe is that
+every rule carries an explicit `files:` scope; a rule scoped to `tests/**`
+must also ignore the fixture SUT repos (`tests/repo1..repo3`, `repo_broken`,
+`repo_e2e`) and `tests/firmware`, which are user-example input data:
 
 | Rule | Scope |
 | --- | --- |
 | `coverage-git-through-gitio` | `src/otto/coverage/**`, `src/otto/cli/cov.py` |
-| `error-render-through-helper` | no `files:` key — every Python file under the scan roots, which today means `src/otto/**` |
+| `error-render-through-helper` | `src/otto/**` — explicit since tests/ joined the scan roots (it always meant shipped renderers) |
 | `models-no-module-scope-config-import` | `src/otto/models/**` |
 | `no-bare-status-return` | `src/otto/**` |
 | `no-plan-coordinates` | `src/otto/**` |
@@ -162,6 +167,7 @@ job that enforces it on push.
 | pytest (hostless matrix) | `coverage-hostless` | `tests_hostless` | `tests` (3.10–3.14) |
 | test-isolation leak guard | `nox-unit-repeat` | `tests_unit_repeat` | `unit-repeat` |
 | import budget | `profile` (adds hyperfine) | via `tests_hostless` | `tests` — enforced by `tests/unit/import_budget/` |
+| build-lane invariants (addopts keeps `-p no:tach`) | via `coverage*` | via `tests_hostless` | `tests` — enforced by `tests/unit/test_lane_invariants.py` |
 | air-gap + brand tokens + type drift | `web` | — | `dashboard`, `docs` (both run `make web`) |
 | browser e2e | `dashboard` (Chromium; `dashboard-all` for all three) | `dashboard` (all three, serially) | `dashboard` (one parallel job per engine) |
 | docs | `docs` | `docs` | `docs` |

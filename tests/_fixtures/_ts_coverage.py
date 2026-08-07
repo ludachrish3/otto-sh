@@ -25,6 +25,7 @@ import pytest
 from playwright.sync_api import CDPSession, Page
 
 from tests._ambient_env import ambient
+from tests._fixtures._ts_bundle_filter import bundle_url_matches
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 RAW_DIR = _REPO_ROOT / "reports" / "ts-e2e-cov" / "raw"
@@ -52,7 +53,12 @@ def collect_ts_coverage(
     `Profiler.takePreciseCoverage` never actually returns, so it would be a
     no-op broadening, not a meaningfully different filter — but naming the
     exact bundle file keeps this list self-documenting as new bundles are
-    added, rather than silently widening to "anything under dist/".
+    added, rather than silently widening to "anything under dist/". The
+    predicate itself lives in ``tests/_fixtures/_ts_bundle_filter.py``,
+    shared with the browser conftests' configure-time drift guard so the two
+    cannot diverge (that twin exists because this function's zero-match guard
+    is armed only under ``make dashboard`` — see ``ts_coverage`` below — and
+    CI's nox-driven matrix would otherwise never run any bundle-drift check).
 
     Every armed chromium browser test loads one of our bundles EXCEPT a test
     explicitly marked ``@pytest.mark.no_bundle_page`` (e.g. the access-key
@@ -67,8 +73,7 @@ def collect_ts_coverage(
     client.send("Profiler.stopPreciseCoverage")
     matched = False
     for entry in data["result"]:
-        url = entry.get("url", "")
-        if "/assets/" in url or url.endswith("covapp.js"):
+        if bundle_url_matches(entry.get("url", "")):
             sink.append(entry)
             matched = True
     if not matched and not allow_no_match:

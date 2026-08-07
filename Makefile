@@ -748,7 +748,7 @@ lint-arch: ## (Quality) Architecture gates: tach (module dependency contracts) +
 	@$(SAY) "tach: module dependency contracts (tach.toml)"
 	@uv run --group lint tach check
 	@$(SAY) "ast-grep: architecture pattern rules (.ast-grep/rules/)"
-	@uv run --group lint ast-grep scan src/otto web/src
+	@uv run --group lint ast-grep scan src/otto web/src tests
 
 # `biome check` = lint rules + formatting + ASSIST actions (organize-imports).
 # `biome lint` + `biome format` together are STRICTLY WEAKER: neither reports
@@ -899,7 +899,10 @@ doctest:
 
 doctest-src:
 	@$(SAY) "pytest --doctest-modules src/otto"
-	@uv run pytest -p no:cacheprovider -o addopts="--doctest-modules" src/otto
+# `-p no:tach` re-stated: the -o override drops pyproject's addopts whole, and
+# this venv can carry tach after a `uv run --group lint` (issue #193). Pinned
+# by tests/unit/test_lane_invariants.py.
+	@uv run pytest -p no:cacheprovider -o addopts="--doctest-modules -p no:tach" src/otto
 
 # web-clean is a prerequisite because the built frontend IS a generated
 # artifact, and omitting it made this target quietly dishonest: a `make clean`

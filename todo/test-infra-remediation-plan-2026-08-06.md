@@ -347,15 +347,23 @@ scope, but the *runner* of that lane gains a config-presence hard-fail).
 
 **Policy:** an `-o addopts=` override that drops `-p no:tach` re-opens #193; a
 browser lane that never sets `OTTO_TS_COVERAGE` runs a drift guard that cannot fire.
-**Mechanism:**
+**Mechanism** *(dashboard leg revised at implementation time — the Makefile documents
+that `OTTO_TS_COVERAGE` is make-only BY DESIGN: ad-hoc/nox runs must not append raw
+coverage dumps outside make's rm+stamp protocol, so arming it in the nox session would
+contradict a written rationale. The drift check is decoupled from collection instead):*
 1. Fix: `noxfile.py:158-167` (`tests_unit_repeat`), `noxfile.py:378` (`docs`),
    `Makefile:902` (`doctest-src`) — every cleared addopts re-includes `-p no:tach`.
-2. Fix: `noxfile.py` dashboard session sets `OTTO_TS_COVERAGE=1`.
+2. Drift guard: extract the bundle predicate to `tests/_fixtures/_ts_bundle_filter.py`
+   (shared with `collect_ts_coverage`, so guard and filter cannot diverge); both browser
+   conftests' `pytest_configure` dist-gates gain a `bundle_filter_drift_reason` check —
+   it runs in EVERY lane that collects those suites (make, nox, CI), arms nothing, and
+   `pytest.exit`s with a named message on a vite output-layout change. Falsifiability
+   pins in `tests/unit/test_ts_bundle_filter.py` (drifted-layout control observed red).
 3. Pin: meta-test `tests/unit/test_lane_invariants.py` scans `noxfile.py` + `Makefile`
-   text: every occurrence of `addopts=` in an override must contain `-p no:tach`; the
-   dashboard session block must contain `OTTO_TS_COVERAGE`. (Text-scan of build files is
-   the established `webassets`-guard idiom; embedded positive control included.)
-**Red today:** 3 addopts sites + 1 dashboard session. **Landing:** Wave 0 (small,
+   text: every occurrence of `addopts=` in an override must contain `-p no:tach`.
+   (Text-scan of build files is the established `webassets`-guard idiom; embedded
+   positive control included.)
+**Red today:** 3 addopts sites + a CI-blind drift guard. **Landing:** Wave 0 (small,
 self-contained, immediately testable).
 
 ### G14. Web: a queried testid must exist in the source; no bare-digit textContent asserts
@@ -444,10 +452,12 @@ review → squash to main → empty-diff check → hand to Chris.
 - [ ] Write `test_lane_invariants.py` (with embedded positive control); run it against
       the un-fixed noxfile/Makefile — all four legs must FAIL (record counts for the
       commit message).
-- [ ] Re-add `-p no:tach` to the three cleared-addopts lanes; set `OTTO_TS_COVERAGE=1`
-      in the nox dashboard session; guard now green.
-- [ ] Confirm one CI dashboard run actually performs CDP collection (grep the job log
-      for the collector's output line) before calling G13 done.
+- [ ] Re-add `-p no:tach` to the three cleared-addopts lanes; guard now green.
+- [ ] Land the bundle-filter drift twin (G13 mechanism 2): `_ts_bundle_filter.py`,
+      both conftest configure checks, falsifiability pins. (Replaces the original
+      "set OTTO_TS_COVERAGE in nox" idea — make-only is documented design.)
+- [ ] Confirm one CI dashboard run trips nothing and the configure log shows the
+      suites collecting normally (the drift guard is silent when clean).
 
 ### Wave 1 — Retry overhaul (item 1; G1 + G2)
 **Files:** `src/otto/suite/plugin.py:240-261`, `tests/conftest.py:194-223`, new
@@ -469,6 +479,14 @@ plugin.py and tests/conftest.py so pytest's default `runtest` never double-runs.
 - [ ] G2 tests green; run the hop tests once under the new marker on the lab bed to
       confirm rerun evidence appears in JUnit (expected duration: minutes, live bed).
 - [ ] Land G1 rule (error, with the hop-file ignore + note pointing at Wave 2).
+- [ ] Rider (from Wave 0's review): re-state `-p no:tach` in the two PRODUCT
+      `--override-ini addopts=` argv sites — `src/otto/suite/run.py:500` and
+      `src/otto/config/repo.py:568` — otto's own in-process pytest sessions are the
+      literal #193 trigger and this is a recorded live defect
+      (`todo/churn-review-cheap-items-followups.md`, "otto test panics when tach is
+      installed"). Extend `test_lane_invariants.py` with a src-side leg when fixing;
+      its docstring already bounds today's pin to the two build files and names these
+      two sites.
 
 ### Wave 2 — Fix the hop-nc hang; drop the retries (item 2)
 **Files:** `src/otto/host/transfer/nc.py` (hop path), per

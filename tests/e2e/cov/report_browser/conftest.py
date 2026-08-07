@@ -15,6 +15,7 @@ import pytest
 from otto import _webassets
 from tests._fixtures._browser_guard import browser_tests_could_run
 from tests._fixtures._report_fixture import build_fixture_report
+from tests._fixtures._ts_bundle_filter import bundle_filter_drift_reason
 from tests._fixtures._ts_coverage import ts_coverage, write_ts_coverage
 
 _COVAPP_INDEX = _webassets.COVAPP / "index.html"
@@ -70,6 +71,11 @@ def pytest_configure(config: pytest.Config) -> None:
     stale = _stale_dist_reason()
     if stale is not None:
         pytest.exit(stale, returncode=1)
+    # Bundle-filter drift twin — see the dashboard conftest's pytest_configure:
+    # the in-fixture zero-match guard is make-armed only; this runs everywhere.
+    drift = bundle_filter_drift_reason(_COVAPP_INDEX.parent, "coverage report (covapp)")
+    if drift is not None:
+        pytest.exit(drift, returncode=1)
 
 
 @pytest.fixture(scope="session")

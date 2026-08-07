@@ -158,8 +158,12 @@ def tests_unit_repeat(session: nox.Session) -> None:
     session.run(
         "pytest",
         "tests/unit",
+        # Clearing addopts must still re-state `-p no:tach`: the override drops
+        # pyproject's entry whole, and that flag is the only thing protecting
+        # plugin LOAD from issue #193 (the conftest stub seeds too late).
+        # Pinned by tests/unit/test_lane_invariants.py.
         "-o",
-        "addopts=",
+        "addopts=-p no:tach",
         "--count=2",
         "--repeat-scope=session",
         _junitxml(session, "nox-unit-repeat"),
@@ -357,7 +361,7 @@ def lint(session: nox.Session) -> None:
     session.run("ruff", "check", ".")
     session.run("ruff", "format", "--check", ".")
     session.run("tach", "check")
-    session.run("ast-grep", "scan", "src/otto", "web/src")
+    session.run("ast-grep", "scan", "src/otto", "web/src", "tests")
 
 
 @nox_uv.session(uv_groups=["dev"])
@@ -375,4 +379,9 @@ def docs(session: nox.Session) -> None:
     # -E (fresh env) + -a (write all) so the build matches a clean checkout.
     session.run("sphinx-build", "-E", "-a", "-W", "-b", "html", "docs/", "docs/_build/html")
     session.run("sphinx-build", "-E", "-b", "doctest", "docs/", "docs/_build/doctest")
-    session.run("pytest", "-p", "no:cacheprovider", "-o", "addopts=--doctest-modules", "src/otto")
+    # `-p no:tach` re-stated: the override drops pyproject's addopts whole, and
+    # only an addopts/CLI `-p` protects plugin load (issue #193). Pinned by
+    # tests/unit/test_lane_invariants.py.
+    session.run(
+        "pytest", "-p", "no:cacheprovider", "-o", "addopts=--doctest-modules -p no:tach", "src/otto"
+    )
