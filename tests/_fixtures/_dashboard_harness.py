@@ -91,7 +91,10 @@ class DashboardHarness(Generic[C]):
             )
         except WaitTimeoutError:
             # Callers may key on the exception type; keep expiry a RuntimeError.
-            raise RuntimeError(never_started) from None
+            # Chain the recorded startup failure (if serve() got far enough to
+            # record one) so a timeout caused by a dead server names its cause
+            # instead of hiding it behind a bare deadline message.
+            raise RuntimeError(never_started) from self.server._startup_error
         return self
 
     def _serve(self) -> None:

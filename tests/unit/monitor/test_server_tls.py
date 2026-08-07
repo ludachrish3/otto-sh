@@ -69,8 +69,7 @@ class TestTlsServer:
         cert, key = _make_cert(tmp_path)
         server = MonitorServer(_collector(), host="127.0.0.1", port=0, tls_cert=cert, tls_key=key)
         task = asyncio.create_task(server.serve())
-        while not server.started:  # noqa: ASYNC110 — polling external uvicorn state; no event source available
-            await asyncio.sleep(0.05)
+        await server.wait_started()
         try:
             ctx = ssl.create_default_context(cafile=str(cert))
 
@@ -89,11 +88,11 @@ class TestTlsServer:
 
     @pytest.mark.asyncio
     async def test_serve_raises_instead_of_hanging_on_bad_cert(self, tmp_path):
-        """A garbage PEM must fail loud, not hang the ``while not server.started``
+        """A garbage PEM must fail loud, not hang the startup wait forever.
 
-        startup poll forever. ``uvicorn.Server.serve()`` dies inside its own
-        background task (``Config.load()`` -> ``ssl.SSLContext.load_cert_chain``
-        raises ``ssl.SSLError``) — the poll loop never observes that unless it
+        ``uvicorn.Server.serve()`` dies inside its own background task
+        (``Config.load()`` -> ``ssl.SSLContext.load_cert_chain`` raises
+        ``ssl.SSLError``) — a startup wait never observes that unless it
         checks the task itself. Bounded with ``asyncio.wait_for`` so a
         regression here times out loudly rather than wedging the test run.
         """

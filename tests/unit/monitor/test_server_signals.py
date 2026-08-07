@@ -24,10 +24,7 @@ from otto.monitor.server import MonitorServer
 async def _started_server() -> "tuple[MonitorServer, asyncio.Task[None]]":
     server = MonitorServer(MetricCollector(hosts=[]), host="127.0.0.1", port=0)
     task = asyncio.get_running_loop().create_task(server.serve())
-    while not server.started:
-        if task.done():
-            task.result()  # surface the startup failure instead of hanging
-        await asyncio.sleep(0.01)
+    await server.wait_started()
     return server, task
 
 

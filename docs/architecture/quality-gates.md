@@ -25,7 +25,7 @@ on that side.
 | Type checking | `ty` (pinned `==0.0.64`) | `tsc --noEmit` via `scripts/typecheck_web.sh` (vendored Untitled UI diagnostics filtered) |
 | Unused code / deps | ruff (`F401`, `ARG`, …) | `knip` — unused files, exports, dependencies |
 | Module layering | `tach` against `tach.toml` | — none today |
-| Scoped pattern rules | `ast-grep` against `.ast-grep/rules/` — twelve Python rules | `ast-grep` — two rules (`no-plan-coordinates-ts`, `-tsx`), scoped to `web/src/**` |
+| Scoped pattern rules | `ast-grep` against `.ast-grep/rules/` — thirteen Python rules | `ast-grep` — two rules (`no-plan-coordinates-ts`, `-tsx`), scoped to `web/src/**` |
 | Import cost | `scripts/import_budget.py` — module-count caps, snapshots, denylist | — (knip covers dependencies only) |
 | Tests | `pytest` (+ `xdist`, `repeat`, `hypothesis`) | `vitest` |
 | Coverage floor | `coverage.py` / `pytest-cov` — 95 for the full local run, 90 for the hostless CI slice | `@vitest/coverage-v8` for the unit floor; the browser leg is folded in by `monocart-coverage-reports` and the merged report gated by `nyc` |
@@ -51,7 +51,7 @@ every comment, converting a documented debt list into a blessed one.
 
 ### The ast-grep rules
 
-`.ast-grep/rules/` holds fourteen rules, all `severity: error`. The scan roots
+`.ast-grep/rules/` holds fifteen rules, all `severity: error`. The scan roots
 are `src/otto web/src tests` — tests/ joined in the test-infra remediation
 (2026-08-06) so that *test-suite* pattern rules can exist — and the
 discipline that keeps that widening safe is that every rule carries an
@@ -69,6 +69,7 @@ fixture SUT repos (`tests/repo1..repo3`, `repo_broken`, `repo_e2e`) and
 | `no-parents-arithmetic-in-tests` | `tests/**` minus fixture repos — `Path(__file__).parents[N]` encodes the file's own depth, so moving the file silently re-anchors every path built from it; import `TESTS_ROOT`/`PROJECT_ROOT` from `tests/_fixtures/paths.py` (the one sanctioned derivation point) |
 | `no-plan-coordinates` | `src/otto/**` |
 | `no-plan-coordinates-ts` / `no-plan-coordinates-tsx` | `web/src/**` |
+| `no-raw-started-poll` | `src/otto/**` + `tests/**` minus fixture repos — polling a started flag without a task-death guard turns a startup failure into an infinite hang; `MonitorServer.wait_started()` is the readiness API (its event is set on success AND failure, re-raising the recorded cause), and the wave retired every `noqa: ASYNC110` whose justification was "no event source available" |
 | `no-retry-marker-in-otto-tests` | `tests/**` minus fixture repos — the first tests-scoped rule; fully armed (its one ratchet ignore died with the hop-transfer flake fix) |
 | `no-tuple-return` | `src/otto/**` |
 | `otto-subprocess-env-through-helper` | `tests/**` minus fixture repos — a local `COVERAGE_PROCESS_START` dict is a fork of the subprocess env dance, and every fork that ever existed dropped the `-p no:tach` #193 scar key first; `tests/e2e/_otto_subprocess.py` is the one home |

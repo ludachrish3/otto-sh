@@ -15,6 +15,7 @@ import fcntl
 import json
 import os
 import socket
+import ssl
 import urllib.error
 import urllib.request
 from collections.abc import AsyncGenerator
@@ -148,8 +149,7 @@ async def _boot(
     instead and are responsible for closing it.
     """
     task = asyncio.create_task(server.serve())
-    while not server.started:  # noqa: ASYNC110 — polling external uvicorn state; no event source available
-        await asyncio.sleep(0.05)
+    await server.wait_started()
     return _RunningServer(server=server, collector=collector, document=document, _task=task)
 
 
@@ -179,8 +179,7 @@ async def live_server() -> AsyncGenerator[_RunningServer, None]:
         collector, host="127.0.0.1", port=0, mode="live", frame=frame, lab=LabSnapshot()
     )
     task = asyncio.create_task(server.serve())
-    while not server.started:  # noqa: ASYNC110 — polling external uvicorn state; no event source available
-        await asyncio.sleep(0.05)
+    await server.wait_started()
     try:
         yield _RunningServer(server=server, collector=collector)
     finally:
@@ -206,8 +205,7 @@ async def review_server() -> AsyncGenerator[_RunningServer, None]:
         archive_path=None,  # a .json review: Task 5 keeps this permanently read-only
     )
     task = asyncio.create_task(server.serve())
-    while not server.started:  # noqa: ASYNC110 — polling external uvicorn state; no event source available
-        await asyncio.sleep(0.05)
+    await server.wait_started()
     try:
         yield _RunningServer(server=server, collector=collector, document=document)
     finally:
@@ -215,20 +213,10 @@ async def review_server() -> AsyncGenerator[_RunningServer, None]:
         await task
 
 
-async def _wait_started(server: MonitorServer, task: "asyncio.Task[None]") -> None:
-    """Poll until serve() signals startup, surfacing a startup death instead
-    of spinning forever (mirrors serve()'s own task.done() guard)."""
-    while not server.started:
-        if task.done():
-            task.result()  # re-raises whatever killed serve()
-            raise RuntimeError("serve() returned before signalling startup")
-        await asyncio.sleep(0.05)
-
-
 async def _start_and_stop(server: MonitorServer) -> int:
     """Start the server, capture the bound port, then stop immediately."""
     task = asyncio.create_task(server.serve())
-    await _wait_started(server, task)
+    await server.wait_started()
 
     port = server._port
     server.stop()
@@ -255,10 +243,10 @@ class TestPortBinding:
         server_b = MonitorServer(_empty_collector(), host="127.0.0.1", port=0)
 
         task_a = asyncio.create_task(server_a.serve())
-        await _wait_started(server_a, task_a)
+        await server_a.wait_started()
 
         task_b = asyncio.create_task(server_b.serve())
-        await _wait_started(server_b, task_b)
+        await server_b.wait_started()
 
         port_a = server_a._port
         port_b = server_b._port
@@ -387,8 +375,7 @@ class TestDeleteEndpoint:
             collector, host="127.0.0.1", port=0, mode="live", frame=frame, lab=LabSnapshot()
         )
         task = asyncio.create_task(server.serve())
-        while not server.started:  # noqa: ASYNC110 — polling external uvicorn state; no event source available
-            await asyncio.sleep(0.05)
+        await server.wait_started()
 
         try:
             url = f"http://127.0.0.1:{server._port}/api/session/{frame.id}/event/9999?key={server.key}"
@@ -749,8 +736,7 @@ class TestDashboardRoute:
 
         server = MonitorServer(_empty_collector(), host="127.0.0.1", port=0)
         task = asyncio.create_task(server.serve())
-        while not server.started:  # noqa: ASYNC110 — polling external uvicorn state; no event source available
-            await asyncio.sleep(0.05)
+        await server.wait_started()
         try:
             url = f"http://127.0.0.1:{server._port}/?key={server.key}"
             resp = await asyncio.to_thread(urllib.request.urlopen, url)
@@ -785,8 +771,7 @@ class TestMonitorSessionsEndpoint:
             collector, host="127.0.0.1", port=0, mode="live", frame=frame, lab=LabSnapshot()
         )
         task = asyncio.create_task(server.serve())
-        while not server.started:  # noqa: ASYNC110 — polling external uvicorn state; no event source available
-            await asyncio.sleep(0.05)
+        await server.wait_started()
         try:
             await collector.push("r1", "cpu", 1.0)
             url = f"http://127.0.0.1:{server._port}/api/monitor_sessions?key={server.key}"
@@ -822,8 +807,7 @@ class TestMonitorSessionsEndpoint:
         # mode="live" default, no frame/lab.
         server = MonitorServer(collector, host="127.0.0.1", port=0)
         task = asyncio.create_task(server.serve())
-        while not server.started:  # noqa: ASYNC110 — polling external uvicorn state; no event source available
-            await asyncio.sleep(0.05)
+        await server.wait_started()
         try:
             url = f"http://127.0.0.1:{server._port}/api/monitor_sessions?key={server.key}"
             with pytest.raises(urllib.error.HTTPError) as exc_info:
@@ -848,8 +832,7 @@ class TestMonitorSessionsEndpoint:
             lab=LabSnapshot(),
         )
         task = asyncio.create_task(server.serve())
-        while not server.started:  # noqa: ASYNC110 — polling external uvicorn state; no event source available
-            await asyncio.sleep(0.05)
+        await server.wait_started()
         try:
             for path in ("/api/document", "/api/meta", "/api/data"):
                 url = f"http://127.0.0.1:{server._port}{path}?key={server.key}"
@@ -876,3 +859,95 @@ class TestMonitorSessionsEndpoint:
         finally:
             server.stop()
             await task
+
+
+class TestWaitStarted:
+    """The G7 readiness API: ``wait_started`` releases on failure, never hangs.
+
+    The serve()-raises path for a bad PEM lives in test_server_tls.py; these
+    pin the *waiter's* side — an external ``await server.wait_started()``
+    inherits the startup failure instead of polling a flag nothing will flip.
+    """
+
+    _FAILURE_TIMEOUT = 5.0  # bounds a regression to a loud timeout, not a wedged run
+
+    @pytest.mark.asyncio
+    async def test_reraises_bad_tls_pair(self, tmp_path):
+        cert = tmp_path / "cert.pem"
+        cert.write_text("this is not a certificate")
+        server = MonitorServer(
+            MetricCollector(hosts=[]), host="127.0.0.1", port=0, tls_cert=cert, tls_key=cert
+        )
+        task = asyncio.create_task(server.serve())
+        with pytest.raises(ssl.SSLError):
+            await asyncio.wait_for(server.wait_started(), timeout=self._FAILURE_TIMEOUT)
+        await asyncio.gather(task, return_exceptions=True)
+
+    @pytest.mark.asyncio
+    async def test_clean_return_before_started_raises_not_hangs(self, monkeypatch):
+        # A serve task that RETURNS without ever flipping `started` (no
+        # exception to re-raise) must still release waiters loudly — the
+        # guard the old test-side _wait_started helper carried.
+        async def _returns_immediately(inner_self, sockets=None):
+            return None
+
+        monkeypatch.setattr("uvicorn.Server.serve", _returns_immediately)
+        server = MonitorServer(MetricCollector(hosts=[]), host="127.0.0.1", port=0)
+        task = asyncio.create_task(server.serve())
+        with pytest.raises(RuntimeError, match="returned before signalling startup"):
+            await asyncio.wait_for(server.wait_started(), timeout=self._FAILURE_TIMEOUT)
+        await asyncio.gather(task, return_exceptions=True)
+
+    @pytest.mark.asyncio
+    async def test_serve_twice_refused(self, monkeypatch):
+        # The readiness latch and recorded startup outcome are single-shot:
+        # a second serve() on the same instance would hand waiters the FIRST
+        # lifecycle's outcome. Refused loudly instead.
+        async def _returns_immediately(inner_self, sockets=None):
+            return None
+
+        monkeypatch.setattr("uvicorn.Server.serve", _returns_immediately)
+        server = MonitorServer(MetricCollector(hosts=[]), host="127.0.0.1", port=0)
+        task = asyncio.create_task(server.serve())
+        with pytest.raises(RuntimeError, match="returned before signalling startup"):
+            await asyncio.wait_for(server.wait_started(), timeout=self._FAILURE_TIMEOUT)
+        await asyncio.gather(task, return_exceptions=True)
+        with pytest.raises(RuntimeError, match="serves once per lifetime"):
+            await server.serve()
+
+    @pytest.mark.asyncio
+    async def test_cancel_during_startup_releases_waiter(self):
+        # A serve task cancelled while the prologue is still waiting on
+        # uvicorn must release waiters with a loud RuntimeError — not
+        # re-raise CancelledError into a waiter that was never itself
+        # cancelled (which would poison the waiter's own cancellation
+        # state), and never strand it on an event nothing will set.
+        server = MonitorServer(MetricCollector(hosts=[]), host="127.0.0.1", port=0)
+        task = asyncio.create_task(server.serve())
+        # One yield: serve() runs its prologue up to the first true await
+        # (inside the startup wait), so the cancel lands INSIDE the guard.
+        await asyncio.sleep(0)
+        task.cancel()
+        with pytest.raises(RuntimeError, match="startup was cancelled"):
+            await asyncio.wait_for(server.wait_started(), timeout=self._FAILURE_TIMEOUT)
+        await asyncio.wait_for(
+            asyncio.gather(task, return_exceptions=True), timeout=self._FAILURE_TIMEOUT
+        )
+
+    @pytest.mark.asyncio
+    async def test_surfaces_port_already_in_use(self):
+        # Hold a bound, listening socket so uvicorn's bind fails with the
+        # SystemExit that serve() translates to RuntimeError — the exact
+        # failure the old polls turned into an infinite hang.
+        blocker = socket.socket()
+        try:
+            blocker.bind(("127.0.0.1", 0))
+            blocker.listen(1)
+            port = blocker.getsockname()[1]
+            server = MonitorServer(MetricCollector(hosts=[]), host="127.0.0.1", port=port)
+            task = asyncio.create_task(server.serve())
+            with pytest.raises(RuntimeError, match="already in use"):
+                await asyncio.wait_for(server.wait_started(), timeout=self._FAILURE_TIMEOUT)
+            await asyncio.gather(task, return_exceptions=True)
+        finally:
+            blocker.close()

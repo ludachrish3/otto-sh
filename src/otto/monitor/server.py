@@ -20,6 +20,7 @@ GET  /api/export/json  Download the current data as a ``format:1`` document
 
 import asyncio
 import contextlib
+import functools
 import json
 import logging
 import secrets
@@ -43,6 +44,7 @@ from .. import _webassets
 from ..console import CONSOLE
 from ..models import LabSnapshot, MonitorExport
 from ..models.monitor import EventCreateBody, EventRecord, EventUpdateBody, SessionRecord
+from ..utils import wait_for_async
 from . import archive_edit
 from .collector import MetricCollector
 from .event_ops import EventValidationError, merge_update, resolve_create
@@ -668,6 +670,49 @@ class _LifecycleOwnedServer(uvicorn.Server):
         yield
 
 
+async def _run_uvicorn_translated(server: uvicorn.Server, bind_host: str, port: int) -> None:
+    """Run ``server.serve()`` with the startup ``SystemExit`` translated.
+
+    uvicorn answers a failed startup (e.g. the requested port is already
+    bound) with ``sys.exit(STARTUP_FAILURE)``. A SystemExit raised inside a
+    Task is NOT stored on the task like a normal exception — ``Task.__step``
+    re-raises it into the event loop itself, so it detonates out of the
+    embedding application's ``asyncio.run()`` where no except around
+    ``serve()`` (and no ``task.result()`` in the startup wait) can ever catch
+    it. Translate it here, inside the coroutine, while it still unwinds
+    normally.
+    """
+    try:
+        await server.serve()
+    except SystemExit as exc:
+        raise RuntimeError(
+            f"monitor server failed to start on {bind_host}:{port} — is the port already in use?"
+        ) from exc
+
+
+async def _uvicorn_signalled_started(task: "asyncio.Task[None]", server: uvicorn.Server) -> bool:
+    """Startup-wait predicate: readiness, or a loud re-raise if serve() died.
+
+    ``started`` wins over task-death, matching the old poll's order: a serve
+    task that completed AFTER flipping the flag (the auth suite's stubbed
+    uvicorn does exactly that) is a started server, not a startup failure.
+    """
+    if server.started:
+        return True
+    if task.done():
+        # The serve task died before signalling startup (e.g. a bad TLS
+        # cert/key raises ssl.SSLError out of Config.load()) — left
+        # unchecked, the wait would poll `server.started` forever since
+        # nothing will ever flip it. task.result() re-raises whatever killed
+        # it, surfacing the real cause instead of a silent hang. A CLEAN
+        # return before startup (task.result() is None) must raise too, or
+        # this predicate would poll a done task forever — the guard the old
+        # test-side helper carried, now owed to every waiter.
+        task.result()
+        raise RuntimeError("monitor serve task returned before signalling startup")
+    return False
+
+
 class MonitorServer:
     """
     Wraps a FastAPI/uvicorn server for the monitoring dashboard.
@@ -736,6 +781,9 @@ class MonitorServer:
         )
         self._server: uvicorn.Server | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
+        self._ready = asyncio.Event()
+        self._startup_error: BaseException | None = None
+        self._serve_entered = False
 
     @property
     def key(self) -> str:
@@ -772,74 +820,123 @@ class MonitorServer:
         """True once the server is ready to accept connections."""
         return self._server is not None
 
+    async def wait_started(self) -> None:
+        """Block until the server accepts connections, or re-raise its startup failure.
+
+        The one sanctioned way to await readiness (gate G7): a raw
+        ``while not server.started`` poll converts a startup failure into an
+        infinite hang, because nothing ever flips the flag. ``serve()``
+        records whatever killed its startup and releases waiters either way;
+        on failure this re-raises that exact exception (``ssl.SSLError`` for
+        a bad PEM, the translated ``RuntimeError`` for an already-bound
+        port). Call with ``serve()`` already scheduled on the running loop —
+        a ``MonitorServer`` serves once per lifetime; construct a fresh one
+        to retry.
+        """
+        await self._ready.wait()
+        if self._startup_error is None:
+            return
+        error: BaseException = self._startup_error
+        if isinstance(error, asyncio.CancelledError):
+            # Never re-raise CancelledError into a task that was not itself
+            # cancelled: it poisons the waiter's cancellation state (and, on
+            # 3.11+, timeout/TaskGroup uncancel accounting), and otto reads
+            # CancelledError as the lifecycle teardown signal. The waiter
+            # gets a plain loud error; serve()'s own unwind kept the
+            # original, chained here as the cause.
+            error = RuntimeError("monitor server startup was cancelled")
+            error.__cause__ = self._startup_error
+        raise error
+
     # TODO: Catch keyboard interrupt or *something* to make monitoring end gracefully
     async def serve(self) -> None:
-        """Run the web server until stop() is called or the process exits."""
-        config = uvicorn.Config(
-            self._app,
-            host=self._bind_host,
-            port=self._port,
-            log_config=None,
-            ssl_certfile=str(self._tls_cert) if self._tls_cert else None,
-            ssl_keyfile=str(self._tls_key) if self._tls_key else None,
-        )
-        server = _LifecycleOwnedServer(config)
+        """Run the web server until stop() is called or the process exits.
 
-        async def run_uvicorn() -> None:
-            # uvicorn answers a failed startup (e.g. the requested port is
-            # already bound) with sys.exit(STARTUP_FAILURE). A SystemExit
-            # raised inside a Task is NOT stored on the task like a normal
-            # exception — Task.__step re-raises it into the event loop
-            # itself, so it detonates out of the embedding application's
-            # asyncio.run() where no except around serve() (and no
-            # task.result() below) can ever catch it. Translate it here,
-            # inside the coroutine, while it still unwinds normally.
-            try:
-                await server.serve()
-            except SystemExit as exc:
-                raise RuntimeError(
-                    f"monitor server failed to start on "
-                    f"{self._bind_host}:{self._port} — is the port already in use?"
-                ) from exc
-
-        # start the server in a background task
-        self._loop = asyncio.get_running_loop()
-        task = asyncio.create_task(run_uvicorn())
-
-        try:
-            # wait until uvicorn signals it's started
-            while not server.started:
-                if task.done():
-                    # The serve task died before signalling startup (e.g. a bad
-                    # TLS cert/key raises ssl.SSLError out of Config.load()) — left
-                    # unchecked, this loop would poll `server.started` forever
-                    # since nothing will ever flip it. task.result() re-raises
-                    # whatever killed it, surfacing the real cause instead of a
-                    # silent hang.
-                    task.result()
-                await asyncio.sleep(0.05)
-
-            # extract the port from the socket
-            self._port = server.servers[0].sockets[0].getsockname()[1]
-            all_urls = self.urls  # each carries the per-run ?key=<token> credential
-            # SECURITY: the access key must never be written to the on-disk log
-            # sinks. Print the keyed URL straight to the terminal via CONSOLE, which
-            # bypasses the file-backed 'otto' logger entirely (the same way
-            # management._print_output_dir emits the output dir) — logging it would
-            # persist a live credential to console.log / verbose.log on every run.
-            # Only a keyless origin goes to the logger for the on-disk audit trail.
-            if len(all_urls) == 1:
-                CONSOLE.print(f"Server running at {all_urls[0]}", highlight=False)
-            else:
-                CONSOLE.print("Server running at:", highlight=False)
-                for u in all_urls:
-                    CONSOLE.print(f"  {u}", highlight=False)
-            CONSOLE.print("Press Ctrl+C to stop", highlight=False)
-            logger.info(
-                f"Monitor dashboard started on {self.origin} (access key omitted from logs)"
+        One serve per ``MonitorServer`` lifetime — the readiness latch and
+        the recorded startup outcome are single-shot; construct a fresh
+        instance to retry.
+        """
+        # A plain bool set synchronously at entry, NOT `_ready.is_set()`:
+        # the event only trips when the first prologue FINISHES, so it would
+        # wave a second serve() through while the first is still starting up
+        # (two uvicorn tasks, clobbered _server/_startup_error).
+        if self._serve_entered:
+            raise RuntimeError(
+                "MonitorServer serves once per lifetime — construct a fresh instance"
             )
+        self._serve_entered = True
+        server: _LifecycleOwnedServer | None = None
+        task: "asyncio.Task[None] | None" = None
+        try:
+            try:
+                # EVERYTHING up to `self._server = server` sits inside this
+                # guard — config construction and task spawn included. Any
+                # exit of the startup phase without `_ready` set (including
+                # a cancellation delivered at the first await point) would
+                # strand every wait_started() waiter forever. The one case
+                # no in-function guard can cover: a serve task cancelled
+                # before its FIRST step runs no body code at all (Python
+                # throws into the created-but-never-started coroutine), so
+                # callers must not selectively cancel a never-stepped serve
+                # task while keeping its waiter alive. Safe in-tree: every
+                # teardown path cancels whole lifecycles, so the waiter
+                # (e.g. suite.start_monitor's own task) is cancelled too.
+                config = uvicorn.Config(
+                    self._app,
+                    host=self._bind_host,
+                    port=self._port,
+                    log_config=None,
+                    ssl_certfile=str(self._tls_cert) if self._tls_cert else None,
+                    ssl_keyfile=str(self._tls_key) if self._tls_key else None,
+                )
+                server = _LifecycleOwnedServer(config)
 
-            self._server = server
+                # start the server in a background task
+                self._loop = asyncio.get_running_loop()
+                task = asyncio.create_task(
+                    _run_uvicorn_translated(server, self._bind_host, self._port)
+                )
+
+                # Unbounded by design (float("inf") is the supported
+                # spelling): startup latency is uvicorn's to spend, and the
+                # task-death guard in the predicate is the loud exit for
+                # every failure path.
+                await wait_for_async(
+                    functools.partial(_uvicorn_signalled_started, task, server),
+                    float("inf"),
+                    interval=0.05,
+                    on_timeout="unreachable — the wait carries no deadline",
+                )
+
+                # extract the port from the socket
+                self._port = server.servers[0].sockets[0].getsockname()[1]
+                all_urls = self.urls  # each carries the per-run ?key=<token> credential
+                # SECURITY: the access key must never be written to the on-disk log
+                # sinks. Print the keyed URL straight to the terminal via CONSOLE, which
+                # bypasses the file-backed 'otto' logger entirely (the same way
+                # management._print_output_dir emits the output dir) — logging it would
+                # persist a live credential to console.log / verbose.log on every run.
+                # Only a keyless origin goes to the logger for the on-disk audit trail.
+                if len(all_urls) == 1:
+                    CONSOLE.print(f"Server running at {all_urls[0]}", highlight=False)
+                else:
+                    CONSOLE.print("Server running at:", highlight=False)
+                    for u in all_urls:
+                        CONSOLE.print(f"  {u}", highlight=False)
+                CONSOLE.print("Press Ctrl+C to stop", highlight=False)
+                logger.info(
+                    f"Monitor dashboard started on {self.origin} (access key omitted from logs)"
+                )
+
+                self._server = server
+            except BaseException as exc:
+                # Record the startup failure BEFORE releasing wait_started()
+                # waiters: an external awaiter must observe the failure and
+                # re-raise it, never hang on a flag nothing will flip.
+                self._startup_error = exc
+                raise
+            finally:
+                self._ready.set()
 
             # Shielded: a Task.cancel() on the *awaiting* coroutine delegates
             # straight to whatever Future it is suspended on — here, that
@@ -857,9 +954,13 @@ class MonitorServer:
             # wait for it. This second await is part of the command body's
             # unwind, so the lifecycle teardown deadline still bounds it and
             # a second signal (or expiry) forces past it — do NOT shield.
-            server.should_exit = True
-            with contextlib.suppress(asyncio.CancelledError):
-                await task
+            # Sentinel checks: a cancel delivered before the prologue built
+            # the server or spawned the task has nothing to tear down.
+            if server is not None:
+                server.should_exit = True
+            if task is not None:
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
             raise
 
     def stop(self) -> None:

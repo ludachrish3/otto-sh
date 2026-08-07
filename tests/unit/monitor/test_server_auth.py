@@ -229,8 +229,7 @@ class TestAccessKeyNeverLogged:
     async def test_key_does_not_appear_in_uvicorn_access_log(self, caplog):
         server = MonitorServer(_collector(), host="127.0.0.1", port=0)
         task = asyncio.create_task(server.serve())
-        while not server.started:  # noqa: ASYNC110 — polling external uvicorn state; no event source available
-            await asyncio.sleep(0.05)
+        await server.wait_started()
         try:
             with caplog.at_level(logging.INFO, logger="uvicorn.access"):
                 url = f"http://127.0.0.1:{server._port}/api/mode?key={server.key}"

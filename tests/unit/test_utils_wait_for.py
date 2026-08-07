@@ -246,6 +246,28 @@ def test_negative_and_nan_intervals_rejected_zero_allowed(clock):
     assert clock.sleeps[-2:] == [0, 0]
 
 
+def test_infinite_timeout_is_supported(clock):
+    # float("inf") is the sanctioned unbounded spelling — MonitorServer.
+    # serve()'s startup wait depends on it (its predicate carries the loud
+    # exit, so the wait itself carries no deadline). A future validator
+    # tightening that rejects non-finite timeouts must trip THIS pin and
+    # name that call site before it lands.
+    flips = iter([False, False, True])
+    wait_for(lambda: next(flips), float("inf"), interval=0.1, on_timeout="unreachable")
+    assert clock.sleeps[-2:] == [0.1, 0.1]  # never capped by min(remaining, interval)
+
+
+@pytest.mark.asyncio
+async def test_async_infinite_timeout_is_supported(async_clock):
+    flips = iter([False, False, True])
+
+    def ready() -> bool:
+        return next(flips)
+
+    await wait_for_async(ready, float("inf"), interval=0.1, on_timeout="unreachable")
+    assert async_clock.now == pytest.approx(0.2)
+
+
 @pytest.mark.asyncio
 async def test_async_schedule_and_awaitable_predicate(async_clock):
     probes: list[float] = []

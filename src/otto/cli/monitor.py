@@ -338,8 +338,9 @@ def _resolve_monitor_tls() -> "MonitorSettings | None":
     # truncated/wrong-format PEM passes is_file() cleanly and then kills
     # uvicorn's serve task deep inside MonitorServer.serve() (ssl.SSLError
     # out of Config.load()) — which used to hang the startup poll loop
-    # forever rather than surface anything (see MonitorServer.serve()'s
-    # task.done() check). Load the pair here, at the point we can still
+    # forever rather than surface anything (see the task-death check in
+    # server.py's _uvicorn_signalled_started). Load the pair here, at the
+    # point we can still
     # typer.echo + exit 1 cleanly, instead of ever falling back to HTTP.
     try:
         ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER).load_cert_chain(

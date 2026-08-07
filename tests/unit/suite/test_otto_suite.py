@@ -17,6 +17,7 @@ Tests verify:
 import asyncio
 import contextlib
 import json
+import socket
 import sys
 import urllib.request
 from dataclasses import dataclass
@@ -729,6 +730,47 @@ class TestStartMonitorArchive:
 
         (raw_session,) = read_sessions(str(out_path))
         assert raw_session.end is not None, "a clean stop_monitor() left end unstamped"
+
+
+class TestStartMonitorStartupFailure:
+    @pytest.mark.asyncio
+    async def test_failure_reaps_monitor_task_and_reraises(
+        self, tmp_path: Path, hermetic_monitor_dist: Path
+    ) -> None:
+        """A startup failure must not leave the dead serve task parked.
+
+        ``start_monitor()`` inherits the server's startup failure through
+        ``wait_started()`` (gate G7). On that path it must also reap the
+        ``_monitor_task`` it just spawned: left behind, a later
+        ``stop_monitor()`` would await the same dead task and surface the
+        identical failure a second time, and an unawaited dead task fires
+        "exception was never retrieved" at GC.
+        """
+        del hermetic_monitor_dist
+        suite = _make_suite(tmp_path)
+
+        # Hold a bound, listening socket so uvicorn's bind fails with the
+        # SystemExit the server translates to RuntimeError.
+        blocker = socket.socket()
+        try:
+            blocker.bind(("127.0.0.1", 0))
+            blocker.listen(1)
+            port = blocker.getsockname()[1]
+            with patch.object(MetricCollector, "run", _fake_collector_run):
+                with pytest.raises(RuntimeError, match="already in use"):
+                    await suite.start_monitor(
+                        hosts=[_make_unconnected_host("router1")],
+                        interval=1.0,
+                        port=port,
+                    )
+                assert suite._monitor_task is None, (
+                    "start_monitor() re-raised but left the dead serve task in _monitor_task"
+                )
+                # A cleanup-path stop_monitor() after the failure must be a
+                # quiet no-op for the task, not a second raise.
+                await suite.stop_monitor()
+        finally:
+            blocker.close()
 
 
 class TestStartMonitorLiveSessionWiring:

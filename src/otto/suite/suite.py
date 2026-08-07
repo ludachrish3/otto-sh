@@ -534,9 +534,20 @@ class OttoSuite(Generic[TOptions]):
 
         self._monitor_task = asyncio.create_task(_run())
 
-        # Wait until the server is ready to accept connections
-        while not self._monitor_server.started:  # noqa: ASYNC110 — polling external uvicorn state; no event source available
-            await asyncio.sleep(0.05)
+        # Wait until the server is ready to accept connections — or inherit
+        # its startup failure (bad TLS pair, bound port) instead of hanging on
+        # a flag nothing will ever flip (gate G7).
+        try:
+            await self._monitor_server.wait_started()
+        except BaseException:
+            # Reap the failed serve task before re-raising: left in
+            # _monitor_task, a later stop_monitor() would await it and
+            # surface the same failure a second time, and an unawaited dead
+            # task fires "exception was never retrieved" at GC.
+            task, self._monitor_task = self._monitor_task, None
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            raise
 
         url = self._monitor_server.url
         # SECURITY: `url` carries the per-run ?key=<token> access credential, so

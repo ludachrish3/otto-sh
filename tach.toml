@@ -161,7 +161,10 @@ depends_on = [
 path = "otto.monitor"
 # NOTE: no otto.tunnel here — tunnel discovery is INJECTED via the
 # tunnel_source callable (collector.py:150). Keep it that way.
-depends_on = ["otto.host", "otto.models", "otto._webassets", "otto.result", "otto.link", "otto.filesystem", "otto.registry", "otto.logger", "otto.console", "otto.errors"]
+# otto.utils: server.py's internal uvicorn wait runs through wait_for_async
+# (gate G6 — the one sanctioned poll spelling); utils is a foundational leaf
+# monitor already reached transitively via otto.host.
+depends_on = ["otto.host", "otto.models", "otto._webassets", "otto.result", "otto.link", "otto.filesystem", "otto.registry", "otto.logger", "otto.console", "otto.errors", "otto.utils"]
 
 [[modules]]
 path = "otto.params"

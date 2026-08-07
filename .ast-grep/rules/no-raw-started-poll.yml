@@ -1,0 +1,57 @@
+id: no-raw-started-poll
+language: python
+severity: error
+message: raw `while not X.started` readiness poll — await the readiness API instead (MonitorServer.wait_started() re-raises the startup failure; a flag poll turns it into an infinite hang).
+note: >
+  Polling a started flag without a task-death guard converts a startup
+  failure (bad TLS pair, already-bound port) into an infinite hang, because
+  nothing ever flips the flag (2026-08-06 review §3.5/§6.1, gate G7). Every
+  suppressed ruff ASYNC110 at these sites carried the same justification —
+  "no event source available" — and this wave built that event source:
+  MonitorServer.wait_started() blocks on an asyncio.Event that serve() sets
+  on success AND on failure, re-raising the recorded startup exception. The
+  zero remaining `noqa: ASYNC110` in the tree is part of this gate's
+  post-state.
+
+  Baseline: rule-measured t0 on the pre-fix tree = 14 sites (the review's
+  11 undercounted): server.py's own internal uvicorn wait (now expressed
+  through otto.utils.wait_for_async with a task-death predicate — uvicorn
+  exposes no event), suite/suite.py's monitor wait, and 12 test sites
+  across test_server{,_signals,_auth,_tls}.py — including the local
+  _wait_started(server, task) helper the API absorbed. All migrated in the
+  same wave.
+
+  The arms are a tripwire, not exhaustive: only the bare-attribute arm had
+  in-tree hits at t0; the other six pin natural respellings (negated call,
+  is/== False, is not True, parenthesized negation, and the drain-loop
+  `if X.started: break`), each verified zero-in-tree at landing. Known
+  unmatched spellings, each verified at landing: compound conditions
+  mixing the flag with another test (zero in tree), and bounded
+  cross-thread flag polls through otto.utils.wait_for
+  (tests/_fixtures/_dashboard_harness.py waits for the server from
+  OUTSIDE its event loop, where awaiting the asyncio event is not
+  thread-safe — a bounded, loudly-expiring poll is the honest
+  cross-thread spelling, and it is not a while-statement anyway).
+files:
+- src/otto/**
+- tests/**
+ignores:
+# Fixture SUT repos + firmware: user-example input data, not otto's code
+# (sgconfig.yml discipline for tests-scoped rules).
+- tests/repo1/**
+- tests/repo2/**
+- tests/repo3/**
+- tests/repo_broken/**
+- tests/repo_e2e/**
+- tests/firmware/**
+rule:
+  any:
+  - pattern: 'while not $S.started: $$$B'
+  - pattern: 'while not ($S.started): $$$B'
+  - pattern: 'while not $S.started(): $$$B'
+  - pattern: 'while $S.started is False: $$$B'
+  - pattern: 'while $S.started == False: $$$B'
+  - pattern: 'while $S.started is not True: $$$B'
+  # The drain-loop respelling: `while True: ... if X.started: break` hides
+  # the poll inside the loop body, out of reach of any while-header arm.
+  - pattern: 'if $S.started: break'

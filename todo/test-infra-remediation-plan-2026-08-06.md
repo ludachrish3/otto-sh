@@ -293,16 +293,16 @@ reply-wait timeout rather than an interval sleep. **Landing:** Wave 7, one squas
 **Policy:** polling a started flag without a `task.done()` check converts a startup
 failure into an infinite hang; after Wave 8 the flag is unnecessary everywhere.
 **Mechanism:** `.ast-grep/rules/no-raw-started-poll.yml` — `severity: error`,
-`files: [src/otto/**, tests/**]` (usual fixture ignores),
+`files: [src/otto/**, tests/**]` (usual fixture ignores), seven arms: the bare
+attribute form plus six zero-in-tree respellings (parenthesized negation, call
+spelling, `is False` / `== False` / `is not True`, and the drain-loop
+`if $S.started: break` that hides the poll from any while-header arm).
 
-```yaml
-rule:
-  pattern: |
-    while not $SERVER.started:
-        $$$BODY
-```
-
-**Red today:** 11 (suite/suite.py:538 + 10 test sites, review §3.5/§6.1).
+**Red today (rule-measured, landed arms):** 14 — not the review's 11 (it missed
+server.py's own internal poll, `test_server_signals.py`'s copy, and one
+`test_server.py` site). Known unmatched: compound flag+other conditions (zero
+in tree) and the dashboard harness's bounded cross-thread `wait_for` flag poll
+(awaiting the asyncio event is not thread-safe from outside the loop).
 **Landing:** Wave 8, fix-with-gate (the fix removes the pattern's reason to exist).
 
 ### G8. The otto-subprocess env dance lives in exactly one module
@@ -828,15 +828,44 @@ the `unix_host.py:811` do-while comment, now the helper's documented contract.
 - [x] G6 at error in this squash; t0 = 21 rule-measured (see the gate section for the
       composition and the review-26 correction).
 
-### Wave 8 — Readiness as an event (item 8; G7)
-**Files:** `src/otto/monitor/server.py` (expose `await server.started_event.wait()` or
-`async def start()` that raises on startup failure), `src/otto/suite/suite.py:538`,
-`tests/unit/monitor/test_server.py` (10 sites → `_wait_started` or the new API;
-`test_server_signals.py:27` fixed to raise), rule file.
-- [ ] Add the awaitable-started API with a startup-failure path test (bad TLS pair —
-      the exact `server.py:800` translation).
-- [ ] Fix `suite.py:538` (deadline + `task.done()` → `task.result()`); fix the 10 test
-      loops; land G7 at error in this squash (prove red pre-fix: 11 hits).
+### Wave 8 — Readiness as an event (item 8; G7) — DONE
+**Files:** `src/otto/monitor/server.py` (`async def wait_started()` — blocks on an
+`asyncio.Event` that `serve()` sets on success AND failure, re-raising the recorded
+startup exception, with a recorded `CancelledError` translated to `RuntimeError` so a
+never-cancelled waiter's own cancellation state stays clean; `serve()`'s ENTIRE
+prologue — config construction, task spawn, startup wait, port extraction — sits
+inside the record-and-release guard, so no startup-phase exit can strand a waiter,
+and a second `serve()` on the same instance is refused loudly (the latch and the
+recorded outcome are single-shot); the internal uvicorn wait runs through
+`wait_for_async` with a task-death predicate, since uvicorn itself exposes no event;
+a serve task that returns CLEANLY before signalling startup raises rather than
+letting the predicate poll a done task forever), `src/otto/suite/suite.py`
+(`await wait_started()`, and on failure the dead `_monitor_task` is reaped before
+the re-raise — a parked dead task double-raises in `stop_monitor()` and fires
+"never retrieved" at GC), the 12 test sites across
+`test_server{,_signals,_auth,_tls}.py` (including the local `_wait_started(server,
+task)` helper the API absorbed), rule file.
+- [x] Awaitable-started API + failure-path tests FROM THE WAITER'S SIDE
+      (`TestWaitStarted`): bad-TLS pair re-raises `ssl.SSLError`; an
+      already-bound port surfaces the `server.py` SystemExit→RuntimeError
+      translation; a clean pre-startup return raises instead of hanging; a
+      cancel landing inside the prologue releases the waiter with the
+      translated RuntimeError; serve-twice is refused; suite-side, a startup
+      failure re-raises out of `start_monitor()` with `_monitor_task` reaped.
+      Every `noqa: ASYNC110` in the tree carried the justification "no event
+      source available" and died with this wave (zero remain). One documented
+      residual: a serve task cancelled before its FIRST step runs no body code
+      at all (Python throws into the never-started coroutine), so no
+      in-function guard can release waiters — callers must not park a waiter
+      that outlives such a cancel (suite.py's waiter lives in the task that
+      spawned serve, so it dies with it).
+- [x] `suite.py` fixed; 12 test loops fixed; G7 at error in this squash. Prove-red
+      t0 rule-measured on the pre-fix tree: 14 hits, not the review's 11 (the
+      review missed server.py's own internal poll, `test_server_signals.py`, and
+      one `test_server.py` site). Seven arms (bare attr, parenthesized negation,
+      call spelling, `is False` / `== False` / `is not True`, drain-loop
+      `if started: break`); compound conditions and the dashboard harness's
+      bounded cross-thread `wait_for` flag poll are the documented non-arms.
 
 ### Wave 9 — Interact-e2e residuals (item 9) — **lease already landed in `bef943aa`**
 The host-lease fix (class-scoped `leased_carrot` via `lease_unix_host`, `ELEMENT`
