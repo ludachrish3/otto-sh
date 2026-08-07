@@ -20,14 +20,13 @@ from __future__ import annotations
 
 import os
 import subprocess
-import sys
 import uuid
 from pathlib import Path
 
 import pytest
 
 from tests._fixtures._host_pool import lease_unix_host
-from tests.e2e._otto_subprocess import assert_output_dir
+from tests.e2e._otto_subprocess import PROJECT_ROOT, REPO1, assert_output_dir, run_otto
 
 # Docker container hosts require an SSH-based UnixHost parent (see
 # DockerContainerHost._make_session: term must be 'ssh').  tomato_seed defaults
@@ -36,21 +35,11 @@ from tests.e2e._otto_subprocess import assert_output_dir
 _DOCKER_POOL = ("carrot", "pepper")
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-REPO1 = PROJECT_ROOT / "tests" / "repo1"
 REPO2 = PROJECT_ROOT / "tests" / "repo2"
-OTTO_BIN = Path(sys.executable).parent / "otto"
-COVERAGERC = PROJECT_ROOT / ".coveragerc"
-# Same subprocess-coverage bootstrap that test_completion_cache.py and
-# test_coverage_e2e.py use: prepending tests/_coverage_bootstrap to
-# PYTHONPATH makes each subprocess run sitecustomize.py, which calls
-# coverage.process_startup() so the otto subprocess's line execution
-# is merged into the parent test run's coverage data.
-COVERAGE_BOOTSTRAP = PROJECT_ROOT / "tests" / "_coverage_bootstrap"
 
 # Each test leases one docker-capable host from UNIX_POOL via the
 # ``docker_host`` fixture below, and runs ``otto`` as subprocesses under
-# subprocess coverage (COVERAGE_PROCESS_START).  These tests are pinned to a
+# subprocess coverage (see tests/e2e/_otto_subprocess.py).  These tests are pinned to a
 # single xdist worker via ``xdist_group("docker_e2e")``: spreading
 # subprocess-coverage docker tests across workers makes several workers
 # finalize coverage concurrently, which trips a coverage.py SQLite
@@ -74,37 +63,28 @@ def _run_otto(
     compose_suffix: str | None = None,
     timeout: int = 180,
 ) -> subprocess.CompletedProcess[str]:
-    """Run `otto <args>` as a subprocess with a clean environment.
+    """Run `otto -R --lab <lab> <args>` as a subprocess with a clean environment.
 
     *compose_suffix* gets baked into ``OTTO_COMPOSE_SUFFIX`` so every test
     can use a unique docker compose project name (e.g. ``otto-repo1-<uuid>``)
     and never collide with concurrent runs on the same docker host.
-    """
-    env: dict[str, str] = {
-        "PATH": os.environ.get("PATH", ""),
-        "HOME": os.environ.get("HOME", ""),
-        "OTTO_SUT_DIRS": sut_dirs,
-        # Subprocess coverage: coverage_bootstrap/sitecustomize.py runs
-        # coverage.process_startup() when this env var points at a config.
-        "COVERAGE_PROCESS_START": str(COVERAGERC),
-        "PYTHONPATH": os.pathsep.join(
-            [str(COVERAGE_BOOTSTRAP), os.environ.get("PYTHONPATH", "")]
-        ).rstrip(os.pathsep),
-    }
-    if xdir is not None:
-        env["OTTO_XDIR"] = str(xdir)
-    if compose_suffix is not None:
-        env["OTTO_COMPOSE_SUFFIX"] = compose_suffix
 
-    full_argv = [str(OTTO_BIN), "--lab", lab, "-R", *args]
-    return subprocess.run(
-        full_argv,
-        env=env,
-        capture_output=True,
-        text=True,
-        cwd=str(PROJECT_ROOT),
+    ``OTTO_SUT_DIRS`` goes through ``extra_env`` rather than the runner's
+    ``sut_dirs=``: the multi-repo tests pass an ``os.pathsep``-joined *string*
+    of two repo roots, which is not a single path.
+    """
+    extra_env: dict[str, str] = {"OTTO_SUT_DIRS": sut_dirs}
+    if compose_suffix is not None:
+        extra_env["OTTO_COMPOSE_SUFFIX"] = compose_suffix
+
+    return run_otto(
+        list(args),
+        xdir=xdir,
+        sut_dirs=None,
+        lab=lab,
+        extra_argv_prefix=["-R"],
+        extra_env=extra_env,
         timeout=timeout,
-        check=False,
     )
 
 

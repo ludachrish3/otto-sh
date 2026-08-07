@@ -19,10 +19,10 @@ actually type, it is not airtight static analysis.
 """
 
 import re
-from pathlib import Path
 
-_TESTS = Path(__file__).resolve().parents[1]  # tests/
-_ALLOWED = _TESTS / "_fixtures" / "_clock.py"
+from tests._fixtures.paths import TESTS_ROOT
+
+_ALLOWED = TESTS_ROOT / "_fixtures" / "_clock.py"
 
 # The absolute-time methods -- the ones whose numeric argument is
 # seconds-vs-ms ambiguous. fast_forward/run_for (relative ticks, ms) are fine.
@@ -31,12 +31,12 @@ _ABSOLUTE_TIME_CALL = re.compile(r"\.clock\.(install|pause_at|set_fixed_time|set
 
 def test_no_raw_absolute_clock_calls_outside_the_wrapper() -> None:
     offenders: list[str] = []
-    for path in sorted(_TESTS.rglob("*.py")):
+    for path in sorted(TESTS_ROOT.rglob("*.py")):
         if path == _ALLOWED:
             continue
         for lineno, line in enumerate(path.read_text().splitlines(), start=1):
             if _ABSOLUTE_TIME_CALL.search(line):
-                offenders.append(f"{path.relative_to(_TESTS.parent)}:{lineno}: {line.strip()}")
+                offenders.append(f"{path.relative_to(TESTS_ROOT.parent)}:{lineno}: {line.strip()}")
     assert not offenders, (
         "raw page.clock absolute-time call(s) found -- use tests/_fixtures/_clock.py's "
         "install_clock/pause_clock_at_ms instead (numeric time is epoch-SECONDS to "

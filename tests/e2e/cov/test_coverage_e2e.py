@@ -32,10 +32,8 @@ which deadlocks asyncssh transfers.
 from __future__ import annotations
 
 import json
-import os
 import shutil
 import subprocess
-import sys
 from pathlib import Path
 from typing import ClassVar
 
@@ -43,33 +41,18 @@ import pytest
 
 from otto import _webassets
 from otto.coverage.store.model import CoverageStore, FileRecord
-from tests.e2e._otto_subprocess import output_dirs
+from tests.e2e._otto_subprocess import REPO1, output_dirs, run_otto
 
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-REPO1_DIR = PROJECT_ROOT / "tests" / "repo1"
-PRODUCT_DIR = REPO1_DIR / "product"
-COVERAGERC = PROJECT_ROOT / ".coveragerc"
-COVERAGE_BOOTSTRAP = PROJECT_ROOT / "tests" / "_coverage_bootstrap"
-OTTO_BIN = Path(sys.executable).parent / "otto"
+PRODUCT_DIR = REPO1 / "product"
+
+# Every otto invocation in this module targets the veggies lab (carrot /
+# tomato / pepper) against the repo1 fixture SUT.
+_LAB = "veggies"
 
 
 # ---------------------------------------------------------------------------
-# Subprocess runner — mirrors the pattern in test_completion_cache.py
+# Subprocess runner — the shared harness plus a fail-loud wrapper
 # ---------------------------------------------------------------------------
-
-
-def _otto_env(xdir: Path) -> dict[str, str]:
-    """Env for an ``otto`` subprocess with subprocess-coverage enabled."""
-    return {
-        "PATH": os.environ.get("PATH", ""),
-        "HOME": os.environ.get("HOME", ""),
-        "OTTO_SUT_DIRS": str(REPO1_DIR),
-        "OTTO_XDIR": str(xdir),
-        "COVERAGE_PROCESS_START": str(COVERAGERC),
-        "PYTHONPATH": os.pathsep.join(
-            [str(COVERAGE_BOOTSTRAP), os.environ.get("PYTHONPATH", "")]
-        ).rstrip(os.pathsep),
-    }
 
 
 def _run_otto(
@@ -78,19 +61,11 @@ def _run_otto(
     xdir: Path,
     timeout: int,
 ) -> subprocess.CompletedProcess[str]:
-    """Run ``otto ARGV`` and fail loudly if it exits non-zero."""
-    result = subprocess.run(
-        [str(OTTO_BIN), *argv],
-        env=_otto_env(xdir),
-        capture_output=True,
-        text=True,
-        cwd=str(PROJECT_ROOT),
-        timeout=timeout,
-        check=False,
-    )
+    """Run ``otto --lab veggies ARGV`` and fail loudly if it exits non-zero."""
+    result = run_otto(argv, xdir=xdir, sut_dirs=REPO1, lab=_LAB, timeout=timeout)
     if result.returncode != 0:
         raise AssertionError(
-            f"otto {' '.join(argv)} exited {result.returncode}\n"
+            f"otto --lab {_LAB} {' '.join(argv)} exited {result.returncode}\n"
             f"--- stdout ---\n{result.stdout}\n"
             f"--- stderr ---\n{result.stderr}"
         )
@@ -168,7 +143,7 @@ def coverage_run(tmp_path_factory):
 
     # Stage 1 — run the suite and fetch .gcda files from the remotes.
     _run_otto(
-        ["-l", "veggies", "test", "--cov", "TestCoverageProduct"],
+        ["test", "--cov", "TestCoverageProduct"],
         xdir=xdir,
         timeout=600,
     )
@@ -179,7 +154,7 @@ def coverage_run(tmp_path_factory):
 
     # Stage 2 — render the HTML report and persist the store JSON.
     _run_otto(
-        ["-l", "veggies", "cov", "report", str(log_dir), "--dir", str(report_dir)],
+        ["cov", "report", str(log_dir), "--dir", str(report_dir)],
         xdir=xdir,
         timeout=120,
     )
@@ -607,14 +582,12 @@ def suite_run_exit_code(tmp_path_factory):
     xdir = tmp_dir / "xdir"
     xdir.mkdir()
 
-    return subprocess.run(
-        [str(OTTO_BIN), "-l", "veggies", "test", "TestCoverageProduct"],
-        env=_otto_env(xdir),
-        capture_output=True,
-        text=True,
-        cwd=str(PROJECT_ROOT),
+    return run_otto(
+        ["test", "TestCoverageProduct"],
+        xdir=xdir,
+        sut_dirs=REPO1,
+        lab=_LAB,
         timeout=600,
-        check=False,
     )
 
 
@@ -670,7 +643,7 @@ def polluted_run(tmp_path_factory):
     xdir.mkdir()
 
     _run_otto(
-        ["-l", "veggies", "test", "--cov", "TestCoverageProduct"],
+        ["test", "--cov", "TestCoverageProduct"],
         xdir=xdir,
         timeout=600,
     )
@@ -706,7 +679,7 @@ class TestPollutedBuildTree:
         report_dir = tmp_path / "report"
 
         result = _run_otto(
-            ["-l", "veggies", "cov", "report", str(log_dir), "--dir", str(report_dir)],
+            ["cov", "report", str(log_dir), "--dir", str(report_dir)],
             xdir=xdir,
             timeout=120,
         )
@@ -727,23 +700,12 @@ class TestPollutedBuildTree:
         for capture in legacy_dir.glob("cov/*/capture.json"):
             capture.unlink()
 
-        result = subprocess.run(
-            [
-                str(OTTO_BIN),
-                "-l",
-                "veggies",
-                "cov",
-                "report",
-                str(legacy_dir),
-                "--dir",
-                str(tmp_path / "report"),
-            ],
-            env=_otto_env(xdir),
-            capture_output=True,
-            text=True,
-            cwd=str(PROJECT_ROOT),
+        result = run_otto(
+            ["cov", "report", str(legacy_dir), "--dir", str(tmp_path / "report")],
+            xdir=xdir,
+            sut_dirs=REPO1,
+            lab=_LAB,
             timeout=120,
-            check=False,
         )
         combined = result.stdout + result.stderr
         assert result.returncode == 1, f"expected exit 1, got {result.returncode}:\n{combined}"

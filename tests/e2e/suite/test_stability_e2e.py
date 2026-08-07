@@ -20,52 +20,11 @@ Running::
         -m integration -v --override-ini 'addopts='
 """
 
-import os
-import subprocess
-import sys
 from pathlib import Path
 
 import pytest
 
-from tests.e2e._otto_subprocess import assert_output_dir
-
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-REPO1_DIR = PROJECT_ROOT / "tests" / "repo1"
-COVERAGERC = PROJECT_ROOT / ".coveragerc"
-COVERAGE_BOOTSTRAP = PROJECT_ROOT / "tests" / "_coverage_bootstrap"
-OTTO_BIN = Path(sys.executable).parent / "otto"
-
-
-def _otto_env(xdir: Path) -> dict[str, str]:
-    """Env for an ``otto`` subprocess with subprocess-coverage enabled."""
-    return {
-        "PATH": os.environ.get("PATH", ""),
-        "HOME": os.environ.get("HOME", ""),
-        "OTTO_SUT_DIRS": str(REPO1_DIR),
-        "OTTO_XDIR": str(xdir),
-        "COVERAGE_PROCESS_START": str(COVERAGERC),
-        "PYTHONPATH": os.pathsep.join(
-            [str(COVERAGE_BOOTSTRAP), os.environ.get("PYTHONPATH", "")]
-        ).rstrip(os.pathsep),
-    }
-
-
-def _run_otto(
-    argv: list[str],
-    *,
-    xdir: Path,
-    timeout: int = 60,
-) -> subprocess.CompletedProcess[str]:
-    """Run ``otto ARGV`` and return the result."""
-    return subprocess.run(
-        [str(OTTO_BIN), *argv],
-        env=_otto_env(xdir),
-        capture_output=True,
-        text=True,
-        cwd=str(PROJECT_ROOT),
-        timeout=timeout,
-        check=False,
-    )
+from tests.e2e._otto_subprocess import REPO1, assert_output_dir, run_otto
 
 
 @pytest.mark.integration
@@ -78,9 +37,11 @@ class TestStabilityE2E:
         xdir = tmp_path / "xdir"
         xdir.mkdir()
 
-        result = _run_otto(
-            ["-l", "veggies", "test", "--iterations", "3", "TestStabilityFixture"],
+        result = run_otto(
+            ["test", "--iterations", "3", "TestStabilityFixture"],
             xdir=xdir,
+            sut_dirs=REPO1,
+            lab="veggies",
         )
 
         combined = result.stdout + result.stderr
@@ -108,9 +69,11 @@ class TestStabilityE2E:
         xdir = tmp_path / "xdir"
         xdir.mkdir()
 
-        result = _run_otto(
-            ["-l", "veggies", "test", "TestStabilityFixture"],
+        result = run_otto(
+            ["test", "TestStabilityFixture"],
             xdir=xdir,
+            sut_dirs=REPO1,
+            lab="veggies",
         )
 
         assert result.returncode == 0, (

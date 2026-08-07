@@ -1,0 +1,52 @@
+id: otto-subprocess-env-through-helper
+language: python
+severity: error
+message: build subprocess env through tests/e2e/_otto_subprocess.py (run_otto / otto_subprocess_env / coverage_subprocess_env) — a local COVERAGE_PROCESS_START dict is a fork of the env dance, and forks drop the scar keys first.
+note: >
+  Every local copy of the otto-subprocess env dance that ever existed
+  drifted, and all of them dropped `PYTEST_ADDOPTS="-p no:tach"` — the
+  issue-#193 scar key that stops tach's Rust pytest plugin from panicking
+  (`MultipleHandlers`) when `otto test` runs consecutive in-process pytest
+  sessions (2026-08-06 review §7.1, gate G8). The copies did not know what
+  they were dropping BECAUSE it was a scar: self-evident keys survive
+  copying; keys whose reason lives in a comment elsewhere do not.
+
+  Baseline 14 copy files as of 2026-08-07 (the review's §7.1 said 10 — its
+  inventory predated two files and missed the unit-lane python-probe and
+  the chaos driver): 10 e2e test modules, the PTY driver, the chaos
+  driver, and tests/unit/host/test_lazy_network_imports.py (a plain-python
+  child, now served by coverage_subprocess_env). All migrated in the same
+  wave.
+
+  The pattern matches the dict-literal key form (including dict merges and
+  update() calls that contain a literal pair). Known residuals, accepted
+  rather than chased (each verified zero-in-tree): an assignment form
+  `env["COVERAGE_PROCESS_START"] = ...`, the kwargs form
+  `dict(COVERAGE_PROCESS_START=...)`, a variable holding the key name, the
+  single-quoted key spelling (ast-grep string patterns are
+  quote-style-sensitive; ruff format normalizes to double quotes, so that
+  spelling cannot survive the lint gate), and os.environ-mutating
+  spellings (those are separately banned in conftest/fixture scope by the
+  G11 guards).
+files:
+- tests/**
+ignores:
+# Fixture SUT repos + firmware: user-example input data, not otto's tests
+# (sgconfig.yml discipline for tests-scoped rules).
+- tests/repo1/**
+- tests/repo2/**
+- tests/repo3/**
+- tests/repo_broken/**
+- tests/repo_e2e/**
+- tests/firmware/**
+# The one sanctioned home of the dance, and the bootstrap that CONSUMES the
+# variable in the child process.
+- tests/e2e/_otto_subprocess.py
+- tests/_coverage_bootstrap/**
+rule:
+  # A dict pair is not a standalone Python expression, so the plain-pattern
+  # spelling the plan proposed does not parse — the context/selector form
+  # parses the pair inside a dict literal and matches the pair node itself.
+  pattern:
+    context: '{"COVERAGE_PROCESS_START": $VALUE}'
+    selector: pair

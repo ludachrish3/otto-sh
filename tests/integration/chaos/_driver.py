@@ -16,17 +16,13 @@ import dataclasses
 import os
 import re
 import subprocess
-import sys
 import time
 from collections.abc import Callable
 from pathlib import Path
 
-from ._target import ChaosTarget
+from tests.e2e._otto_subprocess import OTTO_BIN, PROJECT_ROOT, otto_subprocess_env
 
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-OTTO_BIN = Path(sys.executable).parent / "otto"
-_COVERAGERC = PROJECT_ROOT / ".coveragerc"
-_COV_BOOTSTRAP = PROJECT_ROOT / "tests" / "_coverage_bootstrap"
+from ._target import ChaosTarget
 
 BANNER = "cleaning up remote sessions"
 _POLL = 0.05
@@ -35,18 +31,17 @@ _POLL = 0.05
 def _otto_env(
     xdir: Path, target: ChaosTarget, extra_env: "dict[str, str] | None"
 ) -> "dict[str, str]":
-    env = {
-        "PATH": os.environ["PATH"],
-        "HOME": os.environ["HOME"],
-        "TERM": os.environ.get("TERM", "xterm-256color"),
-        "OTTO_XDIR": str(xdir),
-        "OTTO_SUT_DIRS": str(target.sut_dir),
-        "COVERAGE_PROCESS_START": str(_COVERAGERC),
-        "PYTHONPATH": f"{_COV_BOOTSTRAP}{os.pathsep}{os.environ.get('PYTHONPATH', '')}",
-    }
-    if extra_env:
-        env.update(extra_env)
-    return env
+    """The canonical otto child env, pointed at this chaos target's SUT repo.
+
+    TERM is inherited so the child sees the same terminal type the suite runs
+    under (the root conftest pins it to ``dumb``).
+    """
+    return otto_subprocess_env(
+        xdir=xdir,
+        sut_dirs=target.sut_dir,
+        term=os.environ.get("TERM", "xterm-256color"),
+        extra_env=extra_env,
+    )
 
 
 @dataclasses.dataclass

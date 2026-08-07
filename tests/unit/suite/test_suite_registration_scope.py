@@ -19,8 +19,9 @@ import pytest
 
 from otto.config.repo import Repo
 from otto.suite.register import SUITES
+from tests._fixtures.paths import TESTS_ROOT
 
-_REPO1_DIR = Path(__file__).parents[2] / "repo1"
+_REPO1_DIR = TESTS_ROOT / "repo1"
 
 
 @pytest.fixture

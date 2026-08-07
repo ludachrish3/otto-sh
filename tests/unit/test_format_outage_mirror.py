@@ -19,15 +19,13 @@ absurd-magnitude value.
 """
 
 import json
-from pathlib import Path
 
 import pytest
 
 from tests._fixtures._time_mirror import format_outage
+from tests._fixtures.paths import TESTS_ROOT
 
-_CASES = json.loads(
-    (Path(__file__).resolve().parents[1] / "_fixtures" / "format_outage_cases.json").read_text()
-)
+_CASES = json.loads((TESTS_ROOT / "_fixtures" / "format_outage_cases.json").read_text())
 
 
 @pytest.mark.parametrize(("ms", "text"), [(c["ms"], c["text"]) for c in _CASES])

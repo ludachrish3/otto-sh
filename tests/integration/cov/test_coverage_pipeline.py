@@ -27,6 +27,7 @@ from otto.coverage.reporter import CoverageReporter, discover_gcda_dirs
 from otto.host.local_host import LocalHost
 from otto.host.unix_host import UnixHost
 from otto.utils import Status
+from tests._fixtures.paths import TESTS_ROOT
 from tests.conftest import active_context
 
 
@@ -41,7 +42,7 @@ def configured_hosts(*hosts):
     return active_context(lab=lab)
 
 
-PRODUCT_DIR = Path(__file__).resolve().parents[2] / "repo1" / "product"
+PRODUCT_DIR = TESTS_ROOT / "repo1" / "product"
 REMOTE_INSTALL_DIR = "/opt/coverage_product"
 GCDA_REMOTE_DIR = "/var/coverage/product"
 

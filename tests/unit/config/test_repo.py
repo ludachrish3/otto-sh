@@ -6,9 +6,10 @@ import pytest
 
 from otto.config.repo import Repo
 from tests._fixtures.mockrepo import MockRepo
+from tests._fixtures.paths import TESTS_ROOT
 
 mock_repo: MockRepo = None
-tests_root = Path(__file__).parent.parent.parent
+tests_root = TESTS_ROOT
 
 
 def _write_repo(tmp_path: Path, settings_body: str) -> Path:

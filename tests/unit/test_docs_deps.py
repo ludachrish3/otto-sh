@@ -10,16 +10,16 @@ diverge, with a message telling the developer exactly what to fix.
 from __future__ import annotations
 
 import re
-from pathlib import Path
 
 try:
     import tomllib  # Python 3.11+
 except ModuleNotFoundError:  # Python 3.10
     import tomli as tomllib
 
-REPO_ROOT = Path(__file__).parents[2]
-PYPROJECT = REPO_ROOT / "pyproject.toml"
-DOCS_TABLE = REPO_ROOT / "docs" / "getting-started.md"
+from tests._fixtures.paths import PROJECT_ROOT
+
+PYPROJECT = PROJECT_ROOT / "pyproject.toml"
+DOCS_TABLE = PROJECT_ROOT / "docs" / "getting-started.md"
 
 # A dependency spec like ``aioftp>=0.27.2``: capture name and the >= floor.
 # An optional trailing constraint (e.g. a ceiling, ``typer>=0.24.0,<0.26``) is

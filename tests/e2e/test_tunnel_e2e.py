@@ -80,6 +80,7 @@ from otto.logger.mode import LogMode
 from otto.tunnel import add_tunnel, discover_tunnels, remove_tunnel
 from otto.tunnel.discovery import discover_observations
 from tests._fixtures.labdata import host_data
+from tests._fixtures.paths import TESTS_ROOT
 from tests._fixtures.tunnel_bed import (
     BIND_CONFIRM_TIMEOUT,
     LISTEN_TIMEOUT,
@@ -119,7 +120,7 @@ _PORT_FOREIGN = 45003
 # without the reader having to map a nodeid back to a file.
 _MODULE_ID = "tests/e2e/test_tunnel_e2e.py"
 
-REPO2_DIR = Path(__file__).resolve().parents[1] / "repo2"
+REPO2_DIR = TESTS_ROOT / "repo2"
 OLDOS_DOCKER_DIR = REPO2_DIR / "docker" / "oldos"
 OLDOS_COMPOSE_PROJECT = "otto-tunnel-e2e-oldos"
 

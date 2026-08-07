@@ -36,9 +36,9 @@ from pathlib import Path
 import pytest
 
 from tests._fixtures._host_pool import lease_unix_host
+from tests._fixtures.paths import PROJECT_ROOT
 from tests.e2e.host._pty_driver import InteractiveOttoSession
 
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
 REPO1_DIR = PROJECT_ROOT / "tests" / "repo1"
 
 # One source of truth: the element leased and the host driven can never drift.

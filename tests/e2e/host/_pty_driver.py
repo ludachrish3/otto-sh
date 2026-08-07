@@ -23,40 +23,13 @@ import select
 import signal
 import struct
 import subprocess
-import sys
 import termios
 import time
 from pathlib import Path
 
 from typing_extensions import Self
 
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-COVERAGE_BOOTSTRAP = PROJECT_ROOT / "tests" / "_coverage_bootstrap"
-COVERAGERC = PROJECT_ROOT / ".coveragerc"
-OTTO_BIN = Path(sys.executable).parent / "otto"
-
-
-def otto_subprocess_env(xdir: Path, *, sut_dirs: Path | None = None) -> dict[str, str]:
-    """Build the env dict for an ``otto`` subprocess under test.
-
-    Mirrors the pattern used by :mod:`tests.unit.cov.test_coverage_e2e`:
-    inherits ``PATH``/``HOME``, points ``OTTO_XDIR`` at a test-private
-    directory, and prepends the coverage bootstrap to ``PYTHONPATH`` so the
-    child's line execution is captured via ``coverage.process_startup()``.
-    """
-    env = {
-        "PATH": os.environ.get("PATH", ""),
-        "HOME": os.environ.get("HOME", ""),
-        "TERM": os.environ.get("TERM", "xterm"),
-        "OTTO_XDIR": str(xdir),
-        "COVERAGE_PROCESS_START": str(COVERAGERC),
-        "PYTHONPATH": os.pathsep.join(
-            [str(COVERAGE_BOOTSTRAP), os.environ.get("PYTHONPATH", "")]
-        ).rstrip(os.pathsep),
-    }
-    if sut_dirs is not None:
-        env["OTTO_SUT_DIRS"] = str(sut_dirs)
-    return env
+from tests.e2e._otto_subprocess import OTTO_BIN, PROJECT_ROOT, otto_subprocess_env
 
 
 class InteractiveOttoSession:
@@ -103,9 +76,15 @@ class InteractiveOttoSession:
         master_fd, slave_fd = pty.openpty()
         self._set_winsize(slave_fd, self._cols, self._rows)
 
-        env = otto_subprocess_env(self._xdir, sut_dirs=self._sut_dirs)
-        if self._extra_env:
-            env.update(self._extra_env)
+        # ``sut_dirs=None`` omits ``OTTO_SUT_DIRS`` (this driver has no default
+        # SUT repo); TERM is inherited so the child sees the same terminal type
+        # the suite runs under (the root conftest pins it to ``dumb``).
+        env = otto_subprocess_env(
+            xdir=self._xdir,
+            sut_dirs=self._sut_dirs,
+            term=os.environ.get("TERM", "xterm"),
+            extra_env=self._extra_env,
+        )
         self._proc = subprocess.Popen(
             self._argv,
             stdin=slave_fd,

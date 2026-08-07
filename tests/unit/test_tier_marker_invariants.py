@@ -21,9 +21,10 @@ from pathlib import Path
 
 import pytest
 
-_TESTS = Path(__file__).resolve().parents[1]  # tests/
-_UNIT = _TESTS / "unit"
-_NOXFILE = _TESTS.parent / "noxfile.py"
+from tests._fixtures.paths import PROJECT_ROOT, TESTS_ROOT
+
+_UNIT = TESTS_ROOT / "unit"
+_NOXFILE = PROJECT_ROOT / "noxfile.py"
 
 # Markers that mean "needs a VM" — must never appear on a unit-tier test.
 _VM_MARKERS = {"integration", "embedded", "hops"}
@@ -66,7 +67,7 @@ def _module_and_decorator_markers(path: Path) -> set[str]:
 def test_unit_tier_has_no_vm_markers():
     """G2: no test file under tests/unit/ references a VM-only marker."""
     offenders: list[str] = [
-        str(path.relative_to(_TESTS))
+        str(path.relative_to(TESTS_ROOT))
         for path in _UNIT.rglob("test_*.py")
         if _VM_MARKERS & _module_and_decorator_markers(path)
     ]
@@ -170,7 +171,7 @@ def test_chaos_modules_carry_chaos_and_stability():
     the lane. AST-scan pytestmark like the e2e resource-marker rule does at
     runtime — this guard runs in the no-VM unit gate, so it fires on every PR.
     """
-    chaos_dir = Path(__file__).parents[2] / "tests" / "e2e" / "chaos"
+    chaos_dir = TESTS_ROOT / "e2e" / "chaos"
     if not chaos_dir.is_dir():
         pytest.skip("tests/e2e/chaos not created yet")
     offenders = []
@@ -197,7 +198,7 @@ def test_stability_make_legs_exclude_chaos():
     catch-all in the same sense as noxfile's G4 targets and needs the same
     exclusion.
     """
-    makefile = (Path(__file__).parents[2] / "Makefile").read_text()
+    makefile = (PROJECT_ROOT / "Makefile").read_text()
     for leg in ("stability-unix", "stability-embedded", "repeat"):
         recipe = makefile.split(f"\n{leg}:", 1)[1].split("\n\n", 1)[0]
         m_exprs = re.findall(r'-m\s+"([^"]+)"', recipe)
@@ -221,7 +222,7 @@ def test_resource_slice_legs_exclude_stability_and_chaos():
     G4's ``_nox_marker_expressions()`` scraper) — both hand-editable
     surfaces, so both need their own pin.
     """
-    makefile = (Path(__file__).parents[2] / "Makefile").read_text()
+    makefile = (PROJECT_ROOT / "Makefile").read_text()
     for var in ("M_UNIX", "M_EMBEDDED"):
         m = re.search(rf"^{var} := (.+)$", makefile, re.MULTILINE)
         assert m, f"{var} definition not found in Makefile (reshaped? update G7)"

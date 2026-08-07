@@ -16,9 +16,10 @@ lazy __init__ exposed.)
 import os
 import subprocess
 import sys
-from pathlib import Path
 
-_REPO1 = Path(__file__).resolve().parents[2] / "repo1"
+from tests._fixtures.paths import TESTS_ROOT
+
+_REPO1 = TESTS_ROOT / "repo1"
 
 
 def test_config_first_import_with_repo_no_circular():

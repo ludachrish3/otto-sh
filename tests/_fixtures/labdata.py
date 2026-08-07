@@ -15,7 +15,7 @@ from typing import Any
 from otto.host.login_proxy import Cred
 from otto.host.unix_host import UnixHost
 
-_LAB_DATA_DIR = Path(__file__).parent / "lab_data"
+_LAB_DATA_DIR = Path(__file__).resolve().parent / "lab_data"
 
 
 def lab_data_dir() -> Path:

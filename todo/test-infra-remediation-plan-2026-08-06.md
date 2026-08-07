@@ -310,7 +310,12 @@ rule:
   pattern: '"COVERAGE_PROCESS_START": $VALUE'
 ```
 
-**Red today:** 10 copies (review §7.1). **Landing:** Wave 6, fix-with-gate.
+**Red today:** 14 copy files, rule-measured on the pre-fix tree (review §7.1's 10 was
+an undercount — it predated two files and missed the unit-lane python-probe and the
+chaos driver). [Wave 6 note: the pattern as proposed below does not PARSE — a dict
+pair is not a standalone Python expression; the landed rule uses the
+context/selector form (`context: '{"COVERAGE_PROCESS_START": $VALUE}'`,
+`selector: pair`).] **Landing:** Wave 6, fix-with-gate.
 
 ### G9. No `Path(__file__).parents[N]` arithmetic in tests
 
@@ -328,7 +333,11 @@ rule:
   - pattern: Path(__file__).resolve().parents[$N]
 ```
 
-**Red today:** ~49 sites incl. 3 direct bypasses of `lab_data_path`.
+**Red today:** 67 sites across 58 files, rule-measured with the landed 8-arm rule
+(the review estimated ~49; a grep said 47; the plan's two patterns measured 51; the
+qualified `pathlib.` spelling added 1; `.parent.parent` chain arms added 15 — most
+invisible to grep because ruff formats long chains across lines). Includes 3 direct
+bypasses of `lab_data_path`.
 **Landing:** Wave 6 (with the `TESTS_ROOT`/`PROJECT_ROOT` export; mechanical migration).
 
 ### G10. Library modules raise domain errors, not bare `RuntimeError`
@@ -735,15 +744,28 @@ undercount — see G4's Red-today note).
 
 ### Wave 6 — Test-boilerplate consolidation, high-leverage pair (item 6; G8 + G9)
 **Files:** `tests/e2e/_otto_subprocess.py` (add `extra_argv_prefix`, `cwd` params), the
-10 copy sites (delete), `tests/_fixtures/paths.py` (export `TESTS_ROOT`,
-`PROJECT_ROOT`), ~49 `parents[N]` sites, two new rule files.
-- [ ] Extend `run_otto`; migrate the 10 modules; delete local `_otto_env`/`_run_otto`
-      copies (~180 lines). The four `otto test`-spawning modules now carry `-p no:tach`
-      for the first time — run `test_stability_e2e.py` once on the bed to confirm no
-      #193 panic surfaces (it was latent, not hypothetical).
-- [ ] Export roots; migrate `parents[N]` sites (mechanical).
-- [ ] Land G8 + G9 at error in this squash; prove red on the stashed pre-fix tree
-      (10 and ~49 hits).
+14 copy sites (delete — see G8's corrected baseline), `tests/_fixtures/paths.py`
+(export `TESTS_ROOT`, `PROJECT_ROOT`), 67 `parents[N]`-class sites (see G9's corrected
+baseline), two new rule files.
+- [x] Extend `run_otto`; migrate the 14 modules (landed as three layered builders:
+      `coverage_subprocess_env` → `otto_subprocess_env` → `run_otto` — the PTY and
+      chaos drivers take the env builder, the unit-lane python-probe takes the
+      coverage-only one); delete local `_otto_env`/`_run_otto` copies (net -274 LOC
+      across the 14). Children in 13 files now carry `-p no:tach` for the first time —
+      `test_stability_e2e.py` ran on the bed: 2 passed, no #193 panic. *Old-vs-new env
+      reconstructed and diffed at every invocation site (implementers + reviewer,
+      independent harnesses): the scar key is the ONLY delta. Accepted argv/text
+      deltas, each probed neutral: `-R` precedes `--lab`; `-l`→`--lab`; chaos
+      PYTHONPATH trailing-separator normalization (empty-parent case only).*
+- [x] Export roots; migrate the 67 sites (mechanical; equivalence proven old==new per
+      site with a negative control; 3 `lab_data_path` bypasses routed through
+      labdata helpers).
+- [x] Land G8 + G9 at error in this squash; proven red on the pre-fix tree: 14 files
+      (G8) and 67 hits/58 files (G9). *G8's planned bare-pair pattern does not parse —
+      landed as context/selector; G9 landed with 8 arms after two draft residual
+      claims (qualified spelling, .parent chains) tested FALSE — grep cannot see
+      ruff-wrapped multi-line chains, which is why every count below a rule-measured
+      one was an undercount.*
 
 ### Wave 7 — `wait_for` primitive (item 7; G6) — a/b/c
 **Files:** `src/otto/utils.py` (+ unit tests `tests/unit/test_utils_wait_for.py`), then

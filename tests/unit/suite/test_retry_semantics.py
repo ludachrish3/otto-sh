@@ -44,7 +44,7 @@ from textwrap import dedent
 
 import pytest
 
-_REPO = Path(__file__).resolve().parents[3]
+from tests._fixtures.paths import PROJECT_ROOT
 
 # filterwarnings=error makes an exception ESCAPING the retry wrapper loud
 # (pluggy's PluggyTeardownRaisedWarning) — the dev suite runs that strict,
@@ -482,7 +482,7 @@ def test_otto_plugin_wires_retry_as_a_hookwrapper():
 def test_the_dev_conftest_wires_retry_as_a_hookwrapper():
     """The real bare-``pytest`` site, checked structurally (importing the
     root conftest outside a pytest session has side effects)."""
-    tree = ast.parse((_REPO / "tests" / "conftest.py").read_text())
+    tree = ast.parse((PROJECT_ROOT / "tests" / "conftest.py").read_text())
     hooks = {
         node.name: node
         for node in tree.body

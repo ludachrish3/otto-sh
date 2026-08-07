@@ -4,12 +4,12 @@ See ``docs/superpowers/specs/2026-06-29-import-budget-guard-design.md``.
 """
 
 import importlib.util
-from pathlib import Path
 
 import pytest
 
-_REPO_ROOT = Path(__file__).resolve().parents[3]
-_HARNESS_PATH = _REPO_ROOT / "scripts" / "import_budget.py"
+from tests._fixtures.paths import PROJECT_ROOT
+
+_HARNESS_PATH = PROJECT_ROOT / "scripts" / "import_budget.py"
 
 
 def _load_harness():

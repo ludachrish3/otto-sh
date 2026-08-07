@@ -21,12 +21,13 @@ todo/churn-review-remaining-work-2026-08-05.md.
 """
 
 import ast
-import pathlib
 import re
 
 import pytest
 
-_SRC = pathlib.Path(__file__).resolve().parents[2] / "src" / "otto"
+from tests._fixtures.paths import PROJECT_ROOT
+
+_SRC = PROJECT_ROOT / "src" / "otto"
 _OUTERMOST_TUPLE = re.compile(r"^(tuple|Tuple)\[")
 _IGNORE = "# ast-grep-ignore: no-tuple-return"
 

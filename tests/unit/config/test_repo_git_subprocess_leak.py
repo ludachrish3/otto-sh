@@ -26,11 +26,11 @@ import gc
 
 # Python stores the base transport here on 3.10:
 from asyncio.base_subprocess import BaseSubprocessTransport
-from pathlib import Path
 
 import pytest
 
 from otto.config.repo import Repo
+from tests._fixtures.paths import TESTS_ROOT
 
 
 def _live_subprocess_transports() -> list[BaseSubprocessTransport]:
@@ -83,7 +83,7 @@ class TestRepoGitSubprocessLeak:
         is what produces the ``RuntimeError: Event loop is closed``
         traceback the user saw on Ctrl+C.
         """
-        repo_path = Path(__file__).parent.parent.parent / "repo1"
+        repo_path = TESTS_ROOT / "repo1"
         repo = Repo(sut_dir=repo_path)
 
         _ = repo.commit  # triggers asyncio.run(set_commit_hash())
@@ -106,7 +106,7 @@ class TestRepoGitSubprocessLeak:
         """Same invariant for ``repo.description`` (the second ``asyncio.run``
         path in ``Repo``).
         """
-        repo_path = Path(__file__).parent.parent.parent / "repo1"
+        repo_path = TESTS_ROOT / "repo1"
         repo = Repo(sut_dir=repo_path)
 
         _ = repo.description
@@ -125,7 +125,7 @@ class TestRepoGitSubprocessLeak:
         """Guards against a partial fix that only closes the first call's
         LocalHost but keeps leaking on subsequent creations.
         """
-        repo_path = Path(__file__).parent.parent.parent / "repo1"
+        repo_path = TESTS_ROOT / "repo1"
 
         for _ in range(3):
             repo = Repo(sut_dir=repo_path)

@@ -10,13 +10,12 @@ hand-written stem list here would silently stop covering the next fixture
 someone adds — which is the whole defect class this file used to have.
 """
 
-from pathlib import Path
-
 import pytest
 
 from scripts.gen_monitor_fixtures import build_all, dumps
+from tests._fixtures.paths import PROJECT_ROOT
 
-_FIXTURE_DIR = Path(__file__).parents[3] / "web" / "fixtures"
+_FIXTURE_DIR = PROJECT_ROOT / "web" / "fixtures"
 
 
 @pytest.mark.parametrize("stem", sorted(build_all()))

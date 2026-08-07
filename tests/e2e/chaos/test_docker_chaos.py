@@ -20,7 +20,6 @@ import contextlib
 import dataclasses
 import logging
 from collections.abc import Iterator
-from pathlib import Path
 
 import pytest
 
@@ -40,6 +39,7 @@ from tests._fixtures.bed_hygiene import (
     format_hygiene_report,
     snapshot_host,
 )
+from tests._fixtures.paths import TESTS_ROOT
 from tests.e2e.chaos._docker import docker_venue, fresh_project, loopback_parent, pepper_parent
 from tests.e2e.chaos._seed import offset_in
 
@@ -54,7 +54,7 @@ pytestmark = [
     pytest.mark.timeout(300),
 ]
 
-REPO1_DIR = Path(__file__).parents[2] / "repo1"
+REPO1_DIR = TESTS_ROOT / "repo1"
 
 
 # Every host this module has live at any given moment: `docker_parent`

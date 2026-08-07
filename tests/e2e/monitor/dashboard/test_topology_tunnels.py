@@ -17,7 +17,6 @@ hydration specs only). The live spec drives ``live_stream_dash`` + a fake
 SSE tunnel publish, mirroring ``test_live_shell.py``.
 """
 
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -25,13 +24,14 @@ from playwright.sync_api import Locator, Page
 
 from tests._fixtures._dashboard_harness import DashboardHarness
 from tests._fixtures._fake_collector import FakeCollector
+from tests._fixtures.paths import PROJECT_ROOT
 
 pytestmark = [
     pytest.mark.hostless,
     pytest.mark.browser,
 ]
 
-FIXTURES = Path(__file__).resolve().parents[4] / "web" / "fixtures"
+FIXTURES = PROJECT_ROOT / "web" / "fixtures"
 
 
 def _import_fixture(page: Page, name: str) -> None:

@@ -24,22 +24,16 @@ Requirements (else the test SKIPS, never fails spuriously):
 
 from __future__ import annotations
 
-import os
 import subprocess
-import sys
 from pathlib import Path
 
 import pytest
 import tomli
 
 from otto.logger.mode import LogMode
-from tests.e2e._otto_subprocess import assert_output_dir
+from tests.e2e._otto_subprocess import PROJECT_ROOT, assert_output_dir, run_otto
 
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
 REPO3 = PROJECT_ROOT / "tests" / "repo3"
-OTTO_BIN = Path(sys.executable).parent / "otto"
-COVERAGERC = PROJECT_ROOT / ".coveragerc"
-COVERAGE_BOOTSTRAP = PROJECT_ROOT / "tests" / "_coverage_bootstrap"
 
 pytestmark = [pytest.mark.integration, pytest.mark.xdist_group("sprout_cov")]
 
@@ -119,28 +113,18 @@ def clean_sprout_cov():
 
 
 def _run_otto(*args: str, xdir: Path, timeout: int = 300) -> subprocess.CompletedProcess[str]:
-    env = {
-        "PATH": os.environ.get("PATH", ""),
-        "HOME": os.environ.get("HOME", ""),
-        "OTTO_SUT_DIRS": str(REPO3),
-        # Keep otto's run-log dirs under the test's tmp_path (auto-cleaned)
-        # rather than the default CWD (== PROJECT_ROOT), matching the sibling
-        # subprocess runners in test_coverage_e2e.py / test_docker_e2e_cli.py.
-        "OTTO_XDIR": str(xdir),
-        "COVERAGE_PROCESS_START": str(COVERAGERC),
-        "PYTHONPATH": os.pathsep.join(
-            [str(COVERAGE_BOOTSTRAP), os.environ.get("PYTHONPATH", "")]
-        ).rstrip(os.pathsep),
-    }
-    full_argv = [str(OTTO_BIN), "--lab", "embedded", "-R", *args]
-    return subprocess.run(
-        full_argv,
-        env=env,
-        capture_output=True,
-        text=True,
-        cwd=str(PROJECT_ROOT),
+    """Run ``otto -R --lab embedded ARGS`` against the repo3 fixture SUT.
+
+    *xdir* keeps otto's run-log dirs under the test's tmp_path (auto-cleaned)
+    rather than the default CWD (== the project root).
+    """
+    return run_otto(
+        list(args),
+        xdir=xdir,
+        sut_dirs=REPO3,
+        lab="embedded",
+        extra_argv_prefix=["-R"],
         timeout=timeout,
-        check=False,
     )
 
 

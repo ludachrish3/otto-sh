@@ -1,10 +1,11 @@
 """Integration tests for the completion cache fast path.
 
-These tests invoke ``python -m otto`` as a subprocess with the
+These tests invoke the installed ``otto`` entrypoint as a subprocess with the
 ``_OTTO_COMPLETE`` environment variable set, exercising the real
-shell-completion code path. Subprocess coverage is captured via
-``coverage.process_startup()`` (enabled by ``coverage_subprocess.pth``)
-and combined into the parent run by pytest-cov's ``parallel = true``.
+shell-completion code path.  (The installed entrypoint rather than ``python -m
+otto``: Click matches ``_OTTO_COMPLETE`` against ``sys.argv[0]``, which ``-m``
+sets to ``__main__``.)  The controlled environment and subprocess-coverage
+wiring come from :func:`tests.e2e._otto_subprocess.run_otto`.
 """
 
 from __future__ import annotations
@@ -12,26 +13,12 @@ from __future__ import annotations
 import json
 import os
 import subprocess
-import sys
 from pathlib import Path
 
 import pytest
 
 from otto.config.completion_cache import SCHEMA_VERSION
-from tests.e2e._otto_subprocess import assert_no_output_dir
-
-PROJECT_ROOT = Path(__file__).parent.parent.parent.parent
-REPO1 = PROJECT_ROOT / "tests" / "repo1"
-COVERAGERC = PROJECT_ROOT / ".coveragerc"
-# sitecustomize.py in this dir calls coverage.process_startup(); prepending
-# it to PYTHONPATH opts each subprocess into subprocess-coverage without
-# affecting the rest of the suite (a global .pth file deadlocks
-# test_coverage_e2e.py's asyncssh subprocesses).
-COVERAGE_BOOTSTRAP = PROJECT_ROOT / "tests" / "_coverage_bootstrap"
-# Use the installed `otto` entrypoint so Click sees sys.argv[0] == 'otto'
-# and reacts to _OTTO_COMPLETE. Running via `python -m otto` gives Click
-# the program name `__main__`, which it won't match against our env var.
-OTTO_BIN = Path(sys.executable).parent / "otto"
+from tests.e2e._otto_subprocess import REPO1, REPO_E2E, assert_no_output_dir, run_otto
 
 pytestmark = [pytest.mark.hostless, pytest.mark.xdist_group("completion_cache")]
 
@@ -44,23 +31,13 @@ def _run_otto(
     comp_cword: str | None = None,
     extra_env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    env = {
-        # Clean-ish environment: keep PATH/HOME but drop anything that
-        # might leak a user's real OTTO_* configuration into the test.
-        "PATH": os.environ.get("PATH", ""),
-        "HOME": os.environ.get("HOME", ""),
-        "OTTO_SUT_DIRS": str(REPO1),
-        # Subprocess coverage: coverage_subprocess.pth runs
-        # coverage.process_startup() when this env var points at a config.
-        "COVERAGE_PROCESS_START": str(COVERAGERC),
-        # Prepend the coverage bootstrap dir so sitecustomize.py runs
-        # coverage.process_startup() before otto imports anything.
-        "PYTHONPATH": os.pathsep.join(
-            [str(COVERAGE_BOOTSTRAP), os.environ.get("PYTHONPATH", "")]
-        ).rstrip(os.pathsep),
-    }
-    if xdir is not None:
-        env["OTTO_XDIR"] = str(xdir)
+    """Run ``otto ARGV`` against the repo1 fixture, optionally in completion mode.
+
+    *comp_words* / *comp_cword* add the trio a completing shell would export;
+    everything else (clean env, subprocess coverage, ``OTTO_XDIR``) comes from
+    the shared runner.
+    """
+    env: dict[str, str] = {}
     if comp_words is not None:
         env["_OTTO_COMPLETE"] = "complete_bash"
         env["COMP_WORDS"] = comp_words
@@ -68,15 +45,7 @@ def _run_otto(
     if extra_env:
         env.update(extra_env)
 
-    return subprocess.run(
-        [str(OTTO_BIN), *argv],
-        env=env,
-        capture_output=True,
-        text=True,
-        cwd=str(PROJECT_ROOT),
-        timeout=60,
-        check=False,
-    )
+    return run_otto(argv, xdir=xdir, sut_dirs=REPO1, extra_env=env)
 
 
 def _cache_file(xdir: Path) -> Path:
@@ -302,7 +271,7 @@ def test_fast_path_completes_plugin_group_children(tmp_path: Path) -> None:
     child metadata (closing the boundary previously documented in
     extending-cli.md).
     """
-    plugin_repo = {"OTTO_SUT_DIRS": str(PROJECT_ROOT / "tests" / "repo_e2e")}
+    plugin_repo = {"OTTO_SUT_DIRS": str(REPO_E2E)}
     seed = _run_otto(["--help"], xdir=tmp_path, extra_env=plugin_repo)
     assert seed.returncode == 0, seed.stderr
 

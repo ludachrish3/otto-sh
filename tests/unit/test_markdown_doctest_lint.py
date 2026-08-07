@@ -1,7 +1,8 @@
 import importlib.util
-from pathlib import Path
 
-_MODULE_PATH = Path(__file__).resolve().parents[2] / "scripts" / "lint_markdown_doctests.py"
+from tests._fixtures.paths import PROJECT_ROOT
+
+_MODULE_PATH = PROJECT_ROOT / "scripts" / "lint_markdown_doctests.py"
 
 
 def _load_linter():

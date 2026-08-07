@@ -27,7 +27,6 @@ exposes a shell — neither is in scope here.
 """
 
 import contextlib
-import os
 import signal
 import sqlite3
 import subprocess
@@ -39,12 +38,11 @@ import pytest
 
 from tests._fixtures._host_pool import UNIX_POOL, lease_unix_host
 from tests.e2e._otto_subprocess import (
-    COVERAGE_BOOTSTRAP,
-    COVERAGERC,
     OTTO_BIN,
     PROJECT_ROOT,
     REPO1,
     assert_output_dir,
+    otto_subprocess_env,
 )
 
 pytestmark = [pytest.mark.integration, pytest.mark.xdist_group("monitor_e2e")]
@@ -69,28 +67,17 @@ def _start_monitor(
 ) -> subprocess.Popen[str]:
     """Start ``otto --lab <lab> monitor <argv>`` as a non-blocking Popen.
 
-    Mirrors the subprocess-coverage env from ``_run_otto`` in the docker e2e
-    test so monitor subprocess runs contribute to the combined coverage report.
-    ``extra_env`` overlays additional variables (e.g. an init-module toggle
-    like ``OTTO_E2E_UPTIME_HOST``) onto the subprocess environment.
+    ``run_otto`` blocks, and monitor runs until interrupted, so this keeps its
+    own Popen — but the environment is the shared one from
+    :mod:`tests.e2e._otto_subprocess`, so monitor subprocess runs contribute to
+    the combined coverage report. ``extra_env`` overlays additional variables
+    (e.g. an init-module toggle like ``OTTO_E2E_UPTIME_HOST``) onto the
+    subprocess environment.
     """
-    env: dict[str, str] = {
-        "PATH": os.environ.get("PATH", ""),
-        "HOME": os.environ.get("HOME", ""),
-        "OTTO_SUT_DIRS": str(sut_dirs),
-        "OTTO_XDIR": str(xdir),
-        "COVERAGE_PROCESS_START": str(COVERAGERC),
-        "PYTHONPATH": os.pathsep.join(
-            [str(COVERAGE_BOOTSTRAP), os.environ.get("PYTHONPATH", "")]
-        ).rstrip(os.pathsep),
-    }
-    if extra_env:
-        env.update(extra_env)
-
     cmd: list[str] = [str(OTTO_BIN), "--lab", lab, "monitor", *argv]
     return subprocess.Popen(
         cmd,
-        env=env,
+        env=otto_subprocess_env(xdir=xdir, sut_dirs=sut_dirs, extra_env=extra_env),
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,

@@ -35,7 +35,7 @@ backstops the remaining blind spots at runtime.
 import ast
 from pathlib import Path
 
-TESTS_ROOT = Path(__file__).resolve().parents[1]
+from tests._fixtures.paths import TESTS_ROOT
 
 # Fixture SUT repos and firmware are user-example INPUT DATA, not harness
 # code — same exclusion set as the ast-grep tests/ scope (G0).

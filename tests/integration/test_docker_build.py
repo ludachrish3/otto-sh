@@ -9,8 +9,6 @@ Run with:
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 import pytest_asyncio
 
@@ -21,8 +19,9 @@ from otto.host.login_proxy import Cred
 from otto.host.unix_host import UnixHost
 from otto.utils import Status
 from tests._fixtures._host_pool import lease_unix_host
+from tests._fixtures.paths import TESTS_ROOT
 
-REPO1_DIR = Path(__file__).parent.parent / "repo1"
+REPO1_DIR = TESTS_ROOT / "repo1"
 
 # All docker integration tests share /tmp/otto-docker/repo1/ on pepper
 # (build-context staging dir). Pin them to one xdist worker so concurrent

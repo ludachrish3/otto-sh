@@ -20,6 +20,7 @@ from typer.testing import CliRunner
 
 from otto.cli.test import suite_app
 from otto.config.repo import CollectedTest, Repo, _test_run_syntax
+from tests._fixtures.paths import PROJECT_ROOT
 
 runner = CliRunner()
 
@@ -402,8 +403,7 @@ class TestExternalRepoIntegration:
     def test_sut_dir_is_outside_otto_root(self, sut: tuple[Path, Repo]):
         """Confirm the fixture actually creates an external repo."""
         sut_dir, _ = sut
-        otto_root = Path(__file__).parents[3]  # tests/unit/cli/ → project root
-        assert not sut_dir.is_relative_to(otto_root)
+        assert not sut_dir.is_relative_to(PROJECT_ROOT)
 
     def test_collected_paths_are_absolute(self, sut: tuple[Path, Repo]):
         _, repo = sut

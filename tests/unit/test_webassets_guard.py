@@ -15,9 +15,10 @@ from pathlib import Path
 import pytest
 
 from otto import _webassets
+from tests._fixtures.paths import PROJECT_ROOT
 from tests._fixtures.webassets import CONSUMERS
 
-REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+REPO_ROOT = PROJECT_ROOT
 WEBASSETS_GLOB = "src/otto/_webassets/*/"
 
 

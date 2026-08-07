@@ -9,10 +9,12 @@ host. Two ``OttoSuite`` classes share a marker, plus a plain pytest function
 
 from pathlib import Path
 
+from tests._fixtures.labdata import lab_data_dir
+
 # Reuse otto's own JSON lab fixture data (defines the "veggies" lab) so a
 # throwaway repo can satisfy the mandatory --lab flag without touching a real
 # host — none of these fixture suites request a host fixture.
-LAB_DATA_DIR = Path(__file__).resolve().parents[1] / "_fixtures" / "lab_data" / "tech1"
+LAB_DATA_DIR = lab_data_dir() / "tech1"
 
 SETTINGS = """\
 name = "{name}"

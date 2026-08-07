@@ -14,8 +14,10 @@ import json
 from pathlib import Path
 
 from tests._ambient_env import ambient
+from tests._fixtures.labdata import lab_data_path
+from tests._fixtures.paths import TESTS_ROOT
 
-_REPO_E2E = Path(__file__).resolve().parents[2] / "repo_e2e"
+_REPO_E2E = TESTS_ROOT / "repo_e2e"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -88,9 +90,7 @@ backend = "json"
 
 def make_bed_target(element: str) -> ChaosTarget:
     """Aim at a veggies bed host via the existing repo_e2e SUT (lab leg only)."""
-    lab_json_path = (
-        Path(__file__).resolve().parents[2] / "_fixtures" / "lab_data" / "tech1" / "lab.json"
-    )
+    lab_json_path = lab_data_path("tech1")
     lab_json = json.loads(lab_json_path.read_text())
     host = next(h for h in lab_json["hosts"] if h["element"] == element)
     cred = host["creds"][0]

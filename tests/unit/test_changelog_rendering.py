@@ -22,7 +22,9 @@ from pathlib import Path
 
 import pytest
 
-CLIFF = Path(__file__).parents[2] / "cliff.toml"
+from tests._fixtures.paths import PROJECT_ROOT
+
+CLIFF = PROJECT_ROOT / "cliff.toml"
 
 # One commit per shape the config has to tell apart.
 COMMITS = [

@@ -17,7 +17,6 @@ import ast
 import json
 import re
 from dataclasses import dataclass, field
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -25,6 +24,7 @@ import pytest
 from otto.result import CommandResult, Result
 from otto.utils import Status
 from tests._fixtures.bed_hygiene import ProbeFailedError, argv_pattern, snapshot_host
+from tests._fixtures.paths import TESTS_ROOT
 from tests.e2e.chaos import _bed
 from tests.e2e.chaos._bed import probe_text, run_probe, veggies_link_id
 from tests.e2e.chaos.conftest import _hygiene_bracket_impl
@@ -221,13 +221,12 @@ def test_argv_pattern_is_total_by_contract():
 # forms like `pkill -x -f` or `--full`, which no lane writes.
 # ---------------------------------------------------------------------------
 
-_LANE_FIXTURE = Path(__file__).parents[1] / "_fixtures" / "bed_hygiene.py"
+_LANE_FIXTURE = TESTS_ROOT / "_fixtures" / "bed_hygiene.py"
 
 
 def _lane_sources():
-    tests_root = Path(__file__).parents[1]
-    files = sorted((tests_root / "e2e" / "chaos").glob("*.py"))
-    files += sorted((tests_root / "integration" / "chaos").glob("*.py"))
+    files = sorted((TESTS_ROOT / "e2e" / "chaos").glob("*.py"))
+    files += sorted((TESTS_ROOT / "integration" / "chaos").glob("*.py"))
     files.append(_LANE_FIXTURE)
     return [(path, ast.parse(path.read_text())) for path in files]
 

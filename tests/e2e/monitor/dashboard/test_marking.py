@@ -28,17 +28,18 @@ import re
 import urllib.error
 import urllib.request
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
 import pytest
 from playwright.sync_api import Locator, Page, expect
+
+from tests._fixtures.paths import PROJECT_ROOT
 
 pytestmark = [
     pytest.mark.hostless,
     pytest.mark.browser,
 ]
 
-_FIXTURES = Path(__file__).resolve().parents[4] / "web" / "fixtures"
+_FIXTURES = PROJECT_ROOT / "web" / "fixtures"
 
 
 def _tid(page: Page, test_id: str) -> Locator:
@@ -590,7 +591,7 @@ def test_zz_shot_span_labels_both_themes(page: Page, shell_dash, tmp_path) -> No
     page.goto(f"{shell_dash.url}#/host/chassis-a_lc1")
     page.locator('[data-testid="chart-panel-cpu"] canvas').wait_for()
 
-    out_dir = Path(__file__).resolve().parents[4] / "reports" / "monitor-e2e-shots"
+    out_dir = PROJECT_ROOT / "reports" / "monitor-e2e-shots"
     out_dir.mkdir(parents=True, exist_ok=True)
 
     for theme_name, dark in (("light", False), ("dark", True)):

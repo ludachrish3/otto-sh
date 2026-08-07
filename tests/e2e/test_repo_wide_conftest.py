@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from tests._fixtures.labdata import lab_data_dir
 from tests.e2e._otto_subprocess import run_otto
 
 pytestmark = pytest.mark.hostless
@@ -11,7 +12,7 @@ pytestmark = pytest.mark.hostless
 # Reuse otto's own JSON lab fixture data (defines the "veggies" lab) so this
 # throwaway repo can satisfy the mandatory --lab flag without touching a real
 # host — TestConfcut itself requests no host fixture.
-LAB_DATA_DIR = Path(__file__).resolve().parents[1] / "_fixtures" / "lab_data" / "tech1"
+LAB_DATA_DIR = lab_data_dir() / "tech1"
 
 SETTINGS = """\
 name = "confrepo"

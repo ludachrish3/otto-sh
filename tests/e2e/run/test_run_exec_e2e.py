@@ -16,27 +16,19 @@ context table is only finalised once (avoids the "no such table: context"
 race introduced in 248d15b).
 """
 
-import os
 import subprocess
-import sys
 import uuid
 from pathlib import Path
 
 import pytest
 
 from tests._fixtures._host_pool import lease_unix_host
-from tests.e2e._otto_subprocess import assert_output_dir
+from tests.e2e._otto_subprocess import REPO1, assert_output_dir, run_otto
 
 # Docker container hosts require an SSH-based parent (DockerContainerHost
 # uses docker exec via the parent's SSH session).  tomato_seed defaults to
 # telnet, so restrict the pool to SSH-first peers.
 _DOCKER_POOL = ("carrot", "pepper")
-
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-REPO1 = PROJECT_ROOT / "tests" / "repo1"
-OTTO_BIN = Path(sys.executable).parent / "otto"
-COVERAGERC = PROJECT_ROOT / ".coveragerc"
-COVERAGE_BOOTSTRAP = PROJECT_ROOT / "tests" / "_coverage_bootstrap"
 
 pytestmark = [pytest.mark.integration, pytest.mark.xdist_group("run_exec_e2e")]
 
@@ -48,36 +40,26 @@ pytestmark = [pytest.mark.integration, pytest.mark.xdist_group("run_exec_e2e")]
 
 def _run_otto(
     *args: str,
-    sut_dirs: str = str(REPO1),
+    sut_dirs: Path = REPO1,
     lab: str = "veggies",
     xdir: Path | None = None,
     compose_suffix: str | None = None,
     timeout: int = 180,
 ) -> subprocess.CompletedProcess[str]:
-    """Run ``otto <args>`` as a subprocess with subprocess-coverage env."""
-    env: dict[str, str] = {
-        "PATH": os.environ.get("PATH", ""),
-        "HOME": os.environ.get("HOME", ""),
-        "OTTO_SUT_DIRS": sut_dirs,
-        "COVERAGE_PROCESS_START": str(COVERAGERC),
-        "PYTHONPATH": os.pathsep.join(
-            [str(COVERAGE_BOOTSTRAP), os.environ.get("PYTHONPATH", "")]
-        ).rstrip(os.pathsep),
-    }
-    if xdir is not None:
-        env["OTTO_XDIR"] = str(xdir)
-    if compose_suffix is not None:
-        env["OTTO_COMPOSE_SUFFIX"] = compose_suffix
+    """Run ``otto -R --lab <lab> <args>`` through the shared subprocess harness.
 
-    full_argv = [str(OTTO_BIN), "--lab", lab, "-R", *args]
-    return subprocess.run(
-        full_argv,
-        env=env,
-        capture_output=True,
-        text=True,
-        cwd=str(PROJECT_ROOT),
+    ``compose_suffix`` rides along as ``OTTO_COMPOSE_SUFFIX`` so each test's
+    docker stack is its own; the rest of the environment (subprocess coverage
+    + the otto keys) comes from ``run_otto``.
+    """
+    return run_otto(
+        list(args),
+        xdir=xdir,
+        sut_dirs=sut_dirs,
+        lab=lab,
+        extra_argv_prefix=["-R"],
+        extra_env=(None if compose_suffix is None else {"OTTO_COMPOSE_SUFFIX": compose_suffix}),
         timeout=timeout,
-        check=False,
     )
 
 

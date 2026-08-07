@@ -25,27 +25,19 @@ All tests are pinned to ``host_priv_e2e`` to serialise subprocess-coverage
 finalisation from a single worker.
 """
 
-import os
 import re
 import subprocess
-import sys
 from pathlib import Path
 
 import pytest
 
 from tests._fixtures._host_pool import UNIX_POOL as _UNIX_POOL
 from tests._fixtures._host_pool import lease_unix_host
-from tests.e2e._otto_subprocess import assert_output_dir, output_dirs
+from tests.e2e._otto_subprocess import REPO1, assert_output_dir, output_dirs, run_otto
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-REPO1 = PROJECT_ROOT / "tests" / "repo1"
-OTTO_BIN = Path(sys.executable).parent / "otto"
-COVERAGERC = PROJECT_ROOT / ".coveragerc"
-COVERAGE_BOOTSTRAP = PROJECT_ROOT / "tests" / "_coverage_bootstrap"
 
 # Lab that contains carrot/tomato/pepper (tech1 lab data).
 _LAB = "veggies"
@@ -60,38 +52,26 @@ pytestmark = [pytest.mark.integration, pytest.mark.xdist_group("host_priv_e2e")]
 
 def _run_otto(
     *args: str,
-    sut_dirs: str = str(REPO1),
+    sut_dirs: Path = REPO1,
     lab: str = _LAB,
     xdir: Path | None = None,
     timeout: int = 120,
 ) -> subprocess.CompletedProcess[str]:
-    """Run ``otto --lab <lab> -R <args>`` as a subprocess.
+    """Run ``otto -R --lab <lab> <args>`` through the shared subprocess harness.
 
     The ``-R`` flag bypasses the reservation gate, which is appropriate for
-    automated e2e tests that do not hold a named reservation.  Subprocess
-    coverage is wired via ``COVERAGE_PROCESS_START``.
+    automated e2e tests that do not hold a named reservation.  Both are root
+    options, so their relative order is immaterial.  Argv assembly and the
+    120 s default timeout are this module's; the environment (subprocess
+    coverage + the otto keys) comes from ``run_otto``.
     """
-    env: dict[str, str] = {
-        "PATH": os.environ.get("PATH", ""),
-        "HOME": os.environ.get("HOME", ""),
-        "OTTO_SUT_DIRS": sut_dirs,
-        "COVERAGE_PROCESS_START": str(COVERAGERC),
-        "PYTHONPATH": os.pathsep.join(
-            [str(COVERAGE_BOOTSTRAP), os.environ.get("PYTHONPATH", "")]
-        ).rstrip(os.pathsep),
-    }
-    if xdir is not None:
-        env["OTTO_XDIR"] = str(xdir)
-
-    full_argv = [str(OTTO_BIN), "--lab", lab, "-R", *args]
-    return subprocess.run(
-        full_argv,
-        env=env,
-        capture_output=True,
-        text=True,
-        cwd=str(PROJECT_ROOT),
+    return run_otto(
+        list(args),
+        xdir=xdir,
+        sut_dirs=sut_dirs,
+        lab=lab,
+        extra_argv_prefix=["-R"],
         timeout=timeout,
-        check=False,
     )
 
 

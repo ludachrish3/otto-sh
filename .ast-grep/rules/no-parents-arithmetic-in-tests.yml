@@ -1,0 +1,54 @@
+id: no-parents-arithmetic-in-tests
+language: python
+severity: error
+message: import TESTS_ROOT / PROJECT_ROOT from tests/_fixtures/paths.py (or the lab-data paths from tests/_fixtures/labdata.py) — Path(__file__).parents[N] depth arithmetic breaks silently when a file moves.
+note: >
+  A parents[N] count encodes the file's own depth in the tree; moving the
+  file one directory deeper silently re-anchors every path built from it
+  (2026-08-06 review, gate G9). tests/_fixtures/paths.py exports
+  TESTS_ROOT and PROJECT_ROOT and is the one sanctioned place that derives
+  them; tests/_fixtures/labdata.py exports the lab-data paths (three of
+  the baseline sites were direct bypasses of lab_data_path).
+
+  Baseline 67 sites across 58 files as of 2026-08-07, rule-measured on the
+  pre-fix tree with all eight arms, fixed in the same wave. That number
+  was reached the hard way: the review estimated ~49; a grep said 47; the
+  subscript-only arms measured 51; then two successive drafts of this
+  note declared the `pathlib.Path(__file__)` qualified spelling and
+  `.parent.parent` chains "residuals with no in-tree uses" — both claims
+  false when tested (1 and 15 live sites; line-based grep cannot see a
+  ruff-formatted MULTI-LINE chain, which is also why every count below a
+  rule-measured one was wrong). The remaining accepted residuals, each verified
+  zero-in-tree by AST scan or grep rather than asserted: a Path(__file__)
+  bound to a variable before the parents[]/.parent chain,
+  os.path.dirname(os.path.dirname(__file__)) nesting,
+  Path(os.path.abspath(__file__)).parents[N],
+  Path(__file__).absolute().parents[N], and a parent-dotdot join
+  (Path(__file__).parent joined with "..").
+files:
+- tests/**
+ignores:
+# Fixture SUT repos + firmware: user-example input data, not otto's tests
+# (sgconfig.yml discipline for tests-scoped rules).
+- tests/repo1/**
+- tests/repo2/**
+- tests/repo3/**
+- tests/repo_broken/**
+- tests/repo_e2e/**
+- tests/firmware/**
+# The two sanctioned derivation points the rule's message directs to.
+- tests/_fixtures/paths.py
+- tests/_fixtures/labdata.py
+rule:
+  any:
+  - pattern: Path(__file__).parents[$N]
+  - pattern: Path(__file__).resolve().parents[$N]
+  - pattern: pathlib.Path(__file__).parents[$N]
+  - pattern: pathlib.Path(__file__).resolve().parents[$N]
+  # Chains of length >= 2 are the same depth arithmetic in another spelling;
+  # a longer chain contains this two-step node, so these arms match any
+  # length. A single .parent (the file's own directory) stays legitimate.
+  - pattern: Path(__file__).parent.parent
+  - pattern: Path(__file__).resolve().parent.parent
+  - pattern: pathlib.Path(__file__).parent.parent
+  - pattern: pathlib.Path(__file__).resolve().parent.parent

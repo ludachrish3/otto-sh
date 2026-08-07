@@ -20,9 +20,7 @@ single worker.
 """
 
 import json
-import os
 import subprocess
-import sys
 import time
 import uuid
 from pathlib import Path
@@ -31,16 +29,11 @@ import pytest
 
 from tests._fixtures._host_pool import UNIX_POOL as _UNIX_POOL
 from tests._fixtures._host_pool import lease_unix_host
+from tests.e2e._otto_subprocess import REPO1, run_otto
 
 # ---------------------------------------------------------------------------
 # Constants (mirroring tests/e2e/host/test_host_transfer_e2e.py)
 # ---------------------------------------------------------------------------
-
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-REPO1 = PROJECT_ROOT / "tests" / "repo1"
-OTTO_BIN = Path(sys.executable).parent / "otto"
-COVERAGERC = PROJECT_ROOT / ".coveragerc"
-COVERAGE_BOOTSTRAP = PROJECT_ROOT / "tests" / "_coverage_bootstrap"
 
 # Lab that contains carrot/tomato/pepper (tech1 lab data).
 _LAB = "veggies"
@@ -57,28 +50,18 @@ def _run_on_host(host_id: str, command: str, xdir: Path) -> subprocess.Completed
     """Run *command* on *host_id* through the real ``otto`` entry-point.
 
     ``-R`` bypasses the (command-time) reservation gate, which is appropriate
-    for automated e2e tests that hold no named reservation. Subprocess
-    coverage is wired via ``COVERAGE_PROCESS_START``. Trimmed copy of
-    ``test_host_transfer_e2e._run_otto``.
+    for automated e2e tests that hold no named reservation (both it and
+    ``--lab`` are root options, so their relative order is immaterial). The
+    environment — subprocess coverage plus the otto keys — comes from the
+    shared ``run_otto`` harness.
     """
-    env: dict[str, str] = {
-        "PATH": os.environ.get("PATH", ""),
-        "HOME": os.environ.get("HOME", ""),
-        "OTTO_SUT_DIRS": str(REPO1),
-        "OTTO_XDIR": str(xdir),
-        "COVERAGE_PROCESS_START": str(COVERAGERC),
-        "PYTHONPATH": os.pathsep.join(
-            [str(COVERAGE_BOOTSTRAP), os.environ.get("PYTHONPATH", "")]
-        ).rstrip(os.pathsep),
-    }
-    return subprocess.run(
-        [str(OTTO_BIN), "--lab", _LAB, "-R", "host", host_id, "run", command],
-        env=env,
-        capture_output=True,
-        text=True,
-        cwd=str(PROJECT_ROOT),
+    return run_otto(
+        ["host", host_id, "run", command],
+        xdir=xdir,
+        sut_dirs=REPO1,
+        lab=_LAB,
+        extra_argv_prefix=["-R"],
         timeout=180,
-        check=False,
     )
 
 

@@ -1,5 +1,9 @@
-"""Centralized test sys.path setup that was copy-pasted across conftests.
+"""Centralized test path anchors and sys.path setup.
 
+``TESTS_ROOT`` / ``PROJECT_ROOT`` are THE path anchors for test code — G9 bans
+``Path(__file__).parents[N]`` arithmetic everywhere else under ``tests/``,
+because depth arithmetic breaks silently when a file moves; this module is the
+one sanctioned place that derives them (from its own known location).
 ``ensure_custom_hosts_on_path`` makes the repo's shared ``custom_hosts`` package
 importable (the third-party-style frame package SUT repos depend on).
 ``default_sut_dir`` names the ``repo1`` fixture SUT; the integration tree's
@@ -15,7 +19,9 @@ import sys
 from pathlib import Path
 
 # tests/  (this file lives at tests/_fixtures/paths.py)
-_TESTS_ROOT = Path(__file__).resolve().parents[1]
+TESTS_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = TESTS_ROOT.parent
+_TESTS_ROOT = TESTS_ROOT
 _CUSTOM_HOSTS = _TESTS_ROOT / "custom_hosts"
 _REPO1 = _TESTS_ROOT / "repo1"
 

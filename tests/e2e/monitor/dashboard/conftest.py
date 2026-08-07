@@ -41,11 +41,11 @@ from tests._fixtures._dashboard_harness import DashboardHarness
 from tests._fixtures._fake_collector import FakeCollector
 from tests._fixtures._ts_bundle_filter import bundle_filter_drift_reason
 from tests._fixtures._ts_coverage import ts_coverage, write_ts_coverage
+from tests._fixtures.paths import PROJECT_ROOT
 
-_FIXTURES = Path(__file__).resolve().parents[4] / "web" / "fixtures"
+_FIXTURES = PROJECT_ROOT / "web" / "fixtures"
 
-_REPO_ROOT = Path(__file__).resolve().parents[4]
-_WEB_SRC = _REPO_ROOT / "web" / "src"
+_WEB_SRC = PROJECT_ROOT / "web" / "src"
 
 
 def _stale_dist_reason() -> str | None:
@@ -83,7 +83,7 @@ def _stale_dist_reason() -> str | None:
     if newest_path is None or newest <= built:
         return None
     return (
-        f"The built dashboard is STALE: {newest_path.relative_to(_REPO_ROOT)} is newer "
+        f"The built dashboard is STALE: {newest_path.relative_to(PROJECT_ROOT)} is newer "
         f"than the bundle these tests serve. pytest does not build the web dist — run "
         f"`make web` first, or you will be testing the previous bundle (see issue #131)."
     )

@@ -34,9 +34,10 @@ greened the guard on the comment text (caught in review; pinned below).
 """
 
 import re
-from pathlib import Path
 
-_REPO = Path(__file__).resolve().parent.parent.parent
+from tests._fixtures.paths import PROJECT_ROOT
+
+_REPO = PROJECT_ROOT
 
 _QUOTES = ('"', "'")
 

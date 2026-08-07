@@ -1,6 +1,5 @@
 """Tests for the embedded (Zephyr LLEXT) coverage collector / decoder."""
 
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -16,8 +15,9 @@ from otto.coverage.fetcher.embedded import (
 from otto.host.embedded_host import EmbeddedHost
 from otto.result import CommandResult
 from otto.utils import Status
+from tests._fixtures.paths import TESTS_ROOT
 
-FIXTURES = Path(__file__).parent.parent / "fixtures" / "embedded_coverage"
+FIXTURES = TESTS_ROOT / "unit" / "fixtures" / "embedded_coverage"
 
 
 def _mock_embedded_host(host_id: str, console_output: str) -> MagicMock:

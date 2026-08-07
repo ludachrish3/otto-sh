@@ -12,11 +12,12 @@ the Makefile chain from drifting back to something weaker.
 
 import json
 import re
-from pathlib import Path
 
 import yaml
 
-_REPO = Path(__file__).resolve().parent.parent.parent
+from tests._fixtures.paths import PROJECT_ROOT
+
+_REPO = PROJECT_ROOT
 _MAKEFILE = (_REPO / "Makefile").read_text()
 
 

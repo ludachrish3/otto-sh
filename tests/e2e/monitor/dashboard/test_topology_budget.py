@@ -35,16 +35,16 @@ Budgets are pinned to TODAY's measured baseline and assert ``<=``, so later
 layout work ratchets them down (Task 7) rather than rewriting this test.
 """
 
-from pathlib import Path
-
 import pytest
+
+from tests._fixtures.paths import PROJECT_ROOT
 
 pytestmark = [
     pytest.mark.hostless,
     pytest.mark.browser,
 ]
 
-FIXTURES = Path(__file__).resolve().parents[4] / "web" / "fixtures"
+FIXTURES = PROJECT_ROOT / "web" / "fixtures"
 
 # Sample density for both the "swallowed" containment check and crossing
 # detection -- matches measure.ts's own CROSSING_SAMPLES constant and the

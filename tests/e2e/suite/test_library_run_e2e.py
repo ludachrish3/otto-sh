@@ -9,14 +9,13 @@ test regresses it directly, with the CLI layer entirely out of the picture.
 """
 
 import json
-import os
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 
-from tests.e2e._otto_subprocess import COVERAGE_BOOTSTRAP, COVERAGERC, PROJECT_ROOT, REPO_E2E
+from tests.e2e._otto_subprocess import PROJECT_ROOT, REPO_E2E, otto_subprocess_env
 
 pytestmark = pytest.mark.hostless
 
@@ -57,26 +56,19 @@ def _run_library_script(
 ) -> subprocess.CompletedProcess[str]:
     """Run :data:`_SCRIPT` as a plain ``python`` subprocess (no otto binary).
 
-    Follows the same env conventions as :func:`tests.e2e._otto_subprocess.run_otto`
-    (``OTTO_SUT_DIRS``, subprocess-coverage wiring) but drives ``sys.executable``
-    directly against a script file, since this is a library-only flow with no
-    CLI entry point involved.
+    Takes the exact env :func:`tests.e2e._otto_subprocess.run_otto` would build
+    (``OTTO_SUT_DIRS``, subprocess-coverage wiring, the ``-p no:tach`` scar —
+    the script's ``run_suite`` drives ``pytest.main`` in-process, which is the
+    #193 shape) but drives ``sys.executable`` against a script file, since this
+    is a library-only flow with no CLI entry point involved.
     """
     script_path = tmp_path / "run_suite_script.py"
     script_path.write_text(_SCRIPT)
 
-    env: dict[str, str] = {
-        "PATH": os.environ.get("PATH", ""),
-        "HOME": os.environ.get("HOME", ""),
-        "OTTO_SUT_DIRS": str(REPO_E2E),
-        "OTTO_TEST_OUTPUT_DIR": str(output_dir),
-        "COVERAGE_PROCESS_START": str(COVERAGERC),
-        "PYTHONPATH": os.pathsep.join(
-            [str(COVERAGE_BOOTSTRAP), os.environ.get("PYTHONPATH", "")]
-        ).rstrip(os.pathsep),
-    }
-    if extra_env:
-        env.update(extra_env)
+    env = otto_subprocess_env(
+        sut_dirs=REPO_E2E,
+        extra_env={"OTTO_TEST_OUTPUT_DIR": str(output_dir), **(extra_env or {})},
+    )
 
     return subprocess.run(
         [sys.executable, str(script_path)],

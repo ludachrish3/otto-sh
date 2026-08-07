@@ -19,15 +19,15 @@ import json
 import os
 import uuid
 from collections.abc import Iterator
-from pathlib import Path
 
 import pytest
 from playwright.sync_api import CDPSession, Page
 
 from tests._ambient_env import ambient
 from tests._fixtures._ts_bundle_filter import bundle_url_matches
+from tests._fixtures.paths import PROJECT_ROOT
 
-_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+_REPO_ROOT = PROJECT_ROOT
 RAW_DIR = _REPO_ROOT / "reports" / "ts-e2e-cov" / "raw"
 
 

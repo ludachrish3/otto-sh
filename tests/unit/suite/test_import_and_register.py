@@ -30,6 +30,7 @@ from typer.testing import CliRunner
 
 from otto.config.repo import Repo
 from otto.suite.register import SUITES
+from tests._fixtures.paths import TESTS_ROOT
 
 runner = CliRunner()
 
@@ -37,8 +38,7 @@ runner = CliRunner()
 # Paths
 # ---------------------------------------------------------------------------
 
-# tests/unit/suite/ → tests/unit/ → tests/ → repo1/
-_REPO1_DIR: Path = Path(__file__).parents[2] / "repo1"
+_REPO1_DIR: Path = TESTS_ROOT / "repo1"
 _REPO1_TESTS_DIR: Path = _REPO1_DIR / "tests"
 
 

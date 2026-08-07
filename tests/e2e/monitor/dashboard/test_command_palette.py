@@ -11,17 +11,17 @@ convention (``test_live_shell.py``, ``test_topology_tunnels.py`` each keep
 their own copy too).
 """
 
-from pathlib import Path
-
 import pytest
 from playwright.sync_api import Locator, Page, expect
+
+from tests._fixtures.paths import PROJECT_ROOT
 
 pytestmark = [
     pytest.mark.hostless,
     pytest.mark.browser,
 ]
 
-FIXTURES = Path(__file__).resolve().parents[4] / "web" / "fixtures"
+FIXTURES = PROJECT_ROOT / "web" / "fixtures"
 
 
 def _import_fixture(page: Page, name: str) -> None:

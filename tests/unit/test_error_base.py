@@ -57,6 +57,7 @@ from otto.suite._retry import RetryAttemptTimeoutError
 from otto.suite.run import NoTestsMatchedError
 from otto.suite.selection import UnknownSelectionError
 from otto.tunnel.records import TunnelScanFailedError
+from tests._fixtures.paths import PROJECT_ROOT
 
 CASES: list[tuple[type[BaseException], type[BaseException]]] = [
     (BootstrapError, Exception),
@@ -189,9 +190,8 @@ def _sweep_src() -> tuple[set[str], set[str], dict[str, str]]:
     count), then fixpoints which of those reach ``OttoError``.
     """
     import ast
-    from pathlib import Path
 
-    src = Path(__file__).parents[2] / "src" / "otto"
+    src = PROJECT_ROOT / "src" / "otto"
     assert src.is_dir(), src
 
     bases_by_class: dict[str, set[str]] = {}

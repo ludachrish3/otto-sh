@@ -34,10 +34,9 @@ from otto.coverage.store.model import (
     RunRecord,
     TicketRecord,
 )
+from tests._fixtures.paths import TESTS_ROOT
 
-CONTRACT = json.loads(
-    (Path(__file__).resolve().parents[2] / "_fixtures" / "covapp_contract.json").read_text()
-)
+CONTRACT = json.loads((TESTS_ROOT / "_fixtures" / "covapp_contract.json").read_text())
 
 
 def _ticket_store(tmp_path: Path) -> CoverageStore:

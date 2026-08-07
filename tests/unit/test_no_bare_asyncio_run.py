@@ -9,7 +9,9 @@ paths never swept their hosts). AST-based: docstring example snippets (e.g.
 import ast
 from pathlib import Path
 
-SRC = Path(__file__).resolve().parents[2] / "src" / "otto"
+from tests._fixtures.paths import PROJECT_ROOT
+
+SRC = PROJECT_ROOT / "src" / "otto"
 
 # The one module allowed to call asyncio.run: the lifecycle entry itself.
 ALLOWED = {SRC / "lifecycle.py"}
