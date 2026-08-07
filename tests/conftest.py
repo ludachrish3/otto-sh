@@ -1257,40 +1257,35 @@ def _clirunner_live_log_capture_guard():
         CliRunner.invoke = real_invoke
 
 
-_cached_registries: list[Registry] = []
-_cached_module_count: int = -1
-
-
 def _loaded_registries() -> list[Registry]:
     """Return every ``Registry`` reachable from a loaded ``otto.*`` module.
 
     Discovery is dynamic (scans ``sys.modules``) rather than a hand-maintained
     list, so a registry added in the future is isolated automatically without a
     matching test-side edit. Instances are de-duplicated by ``id`` because a
-    single registry is often re-exported from several modules. The result is
-    memoized and only re-scanned when ``sys.modules`` grows (a new module —
-    possibly carrying a new registry — was imported); registries are import-time
-    singletons that are never torn down, so this keeps the per-test snapshot cost
-    negligible across the ~15k-test unit run.
+    single registry is often re-exported from several modules.
+
+    Every call re-scans, DELIBERATELY uncached. The scan measures 0.2 ms with
+    all of otto imported (121 otto modules of 488 total) — noise against any
+    test body. The memo this replaces was keyed on ``len(sys.modules)``,
+    which is identity-blind: a test that imports one module and evicts
+    another leaves the count unchanged, so a brand-new ``Registry`` was
+    silently never isolated. ``test_registry_isolation_e2e.py`` pins the
+    completeness this bought (proven red against the cached version first).
     """
-    global _cached_registries, _cached_module_count  # noqa: PLW0603 — memoized discovery
-    module_count = len(sys.modules)
-    if module_count != _cached_module_count:
-        found: dict[int, Registry] = {}
-        for module in list(sys.modules.values()):
-            mod_name = getattr(module, "__name__", "")
-            if mod_name != "otto" and not mod_name.startswith("otto."):
-                continue
-            try:
-                members = vars(module)
-            except TypeError:  # pragma: no cover - namespace without __dict__
-                continue
-            for value in members.values():
-                if isinstance(value, Registry):
-                    found[id(value)] = value
-        _cached_module_count = module_count
-        _cached_registries = list(found.values())
-    return _cached_registries
+    found: dict[int, Registry] = {}
+    for module in list(sys.modules.values()):
+        mod_name = getattr(module, "__name__", "")
+        if mod_name != "otto" and not mod_name.startswith("otto."):
+            continue
+        try:
+            members = vars(module)
+        except TypeError:  # pragma: no cover - namespace without __dict__
+            continue
+        for value in members.values():
+            if isinstance(value, Registry):
+                found[id(value)] = value
+    return list(found.values())
 
 
 @pytest.fixture(autouse=True)

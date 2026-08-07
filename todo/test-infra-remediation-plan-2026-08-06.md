@@ -1009,15 +1009,22 @@ nothing an intermediate commit could be green against.
       (a `TimeoutError`), and "all but five raises" missed `SyncPhaseInterrupt`, a
       `KeyboardInterrupt` that `except Exception` also does not catch — six.
 
-### Wave 11 — Registry-guard invalidation (item 11)
-**Files:** `tests/conftest.py:1283-1312,:1441-1442`,
+### Wave 11 — Registry-guard invalidation (item 11) — DONE
+**Files:** `tests/conftest.py` (`_loaded_registries`),
 `tests/e2e/cli/test_registry_isolation_e2e.py`.
-Replace the `len(sys.modules)` cache key with an identity-safe one: cache keyed on the
-*set* of module names matching the scan filter (cheap frozenset compare), or drop the
-cache and re-scan (measure first — if a scan is <5ms the cache is not paying for its
-defect). Extend the e2e pin to assert discovery completeness: import a new module
-defining a Registry mid-test while evicting another, assert the new registry is
-snapshotted (this is the mutation that today's guard misses — proven red first).
+- [x] Measured first, as instructed: the full scan is 0.216 ms with all of
+      otto imported (121 otto modules of 488 total) — 25x under the 5 ms
+      keep-the-cache threshold, so the cache is DROPPED rather than re-keyed
+      (the frozenset key would have cost 0.03 ms per call to keep a memo
+      worth 0.2 ms; there is nothing to pay for). `_loaded_registries`
+      re-scans every call; the docstring records the measurement and the
+      identity-blindness of the `len(sys.modules)` key it replaces.
+- [x] Completeness pin, proven RED against the cached implementation first:
+      fabricate an `otto._registry_probe_w11` module carrying a fresh
+      Registry, evict one loaded otto module in the same test (module count
+      unchanged — the exact shape the count key was blind to), assert
+      discovery sees the new registry. Red pre-fix, green post-fix; whole
+      tests/unit green (5129) with no measurable slowdown.
 
 ### Wave 12 — Collection-crash + finally-await (items 12; G15)
 **Files:** `tests/e2e/conftest.py:105-108` (defer: collect offenders in
