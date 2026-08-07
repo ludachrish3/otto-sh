@@ -70,17 +70,36 @@ def version_callback(version: bool) -> None:
 
 
 def clear_autocomplete_cache_callback(value: bool) -> None:
-    """Delete the shell-completion cache file and exit when the flag is set."""
+    """Delete the shell-completion cache files and exit when the flag is set.
+
+    Two files live in that directory: the fingerprinted ``completion_cache.json``
+    and the remote-path sidecar. One flag clears both — a user reaching for the
+    escape hatch wants completion state gone, not one half of it.
+    """
     if not value:
         return
     from rich import print as rprint
 
     from ..config.completion_cache import _cache_path, clear_cache
+    from ..config.remote_completion_cache import REMOTE_CACHE_FILENAME, clear_remote_cache
 
     cache_path = _cache_path()
-    removed = clear_cache()
+    # Both calls run before anything is reported: `or` would short-circuit and
+    # leave the second cache on disk.
+    removed = [
+        path
+        for path, gone in (
+            (cache_path, clear_cache()),
+            (
+                cache_path.with_name(REMOTE_CACHE_FILENAME) if cache_path else None,
+                clear_remote_cache(),
+            ),
+        )
+        if gone
+    ]
     if removed:
-        rprint(f"Removed completion cache: {cache_path}")
+        for path in removed:
+            rprint(f"Removed completion cache: {path}")
     elif cache_path is None:
         rprint("No completion cache to clear (OTTO_XDIR is not set).")
     else:
@@ -486,7 +505,7 @@ def main(  # noqa: PLR0913 — CLI command params
             "--clear-autocomplete-cache",
             callback=clear_autocomplete_cache_callback,
             is_eager=True,
-            help="Delete the shell-completion cache file and exit.",
+            help="Delete the shell-completion cache files and exit.",
         ),
     ] = False,
     as_user: Annotated[

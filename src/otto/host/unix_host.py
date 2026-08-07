@@ -650,7 +650,12 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         self,
         src_files: Annotated[
             list[Path] | Path,
-            Arg(variadic=True, elem_type=Path, help="Remote file(s) to download."),
+            Arg(
+                variadic=True,
+                elem_type=Path,
+                help="Remote file(s) to download.",
+                remote_path="any",
+            ),
         ],
         dest_dir: Path,
         show_progress: Annotated[bool, Exclude] = True,
@@ -674,7 +679,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         src_files: Annotated[
             list[Path] | Path, Arg(variadic=True, elem_type=Path, help="Local file(s) to upload.")
         ],
-        dest_dir: Path,
+        dest_dir: Annotated[Path, Arg(remote_path="dir")],
         mode: Annotated[
             int | str | None,
             Opt(help="Octal permission bits for the uploaded file(s), e.g. 755, 0644, 0o4755."),

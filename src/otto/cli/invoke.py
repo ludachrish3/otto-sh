@@ -27,6 +27,8 @@ if TYPE_CHECKING:
     from _typeshed import DataclassInstance
     from typer.core import TyperGroup
 
+    from ..config.lab import Lab
+    from ..config.repo import Repo
     from ..context import OttoContext
     from ..registry import Registry
     from .registry import CommandSpec
@@ -303,42 +305,16 @@ def ensure_cli_session(ctx: typer.Context) -> None:
         logger.debug(f"{repo.sut_dir}: {repo.commit}")
 
 
-def ensure_lab_context(ctx: typer.Context) -> "OttoContext":
-    """Load the lab, build reservation state, and install the runtime context (idempotent).
+def build_lab_from_repos(repos: "list[Repo]", labnames: "str | list[str]") -> "Lab":
+    """Aggregate the repos' lab configuration and load the named lab(s).
 
-    Enforces ``--lab``, builds the lab repository, loads the lab, synthesizes
-    docker placeholder hosts, resolves reservation state (stashed on
-    ``ctx.meta['otto_reservation']``), and installs an ``OttoContext`` via
-    ``set_cli_context``. Guarded by ``ctx.meta['_otto_lab_ready']`` so repeated calls
-    are cheap. No banner, no logging init, no output dir — those belong to
-    :func:`ensure_cli_session` / :func:`command_preamble`.
+    The lab-construction slice of :func:`ensure_lab_context`, factored out so
+    completion (``otto.cli.remote_completion``) builds the identical lab the
+    real command would — same search paths, preference merge, and host-source
+    backend selection. Raises :class:`LabContextError` when the host source is
+    unavailable.
     """
-    from ..context import get_context
-
-    meta = ctx.meta
-    if meta.get("_otto_lab_ready"):
-        return get_context()
-
-    opts: RootOptions = meta["_otto_root_options"]
-
-    from ..config import get_repos, load_lab
-
-    # `--lab` is no longer a hard-required Typer option (so lab-free subcommands
-    # can run without it); enforce it here — before any lab side effects — for
-    # everything that does need a lab.
-    if not opts.labs:
-        # Raise (don't print): loud callers report via report_lab_context_error;
-        # the soft HostGroup probe swallows it silently. `rich=False` keeps the
-        # plain "Missing option '--lab'" usage text on stderr — matching click's
-        # own usage-error stream. (A *real* click.UsageError would escape Typer
-        # 0.26's vendored click fork uncaught, hence the manual message.)
-        raise LabContextError(
-            "Error: Missing option '--lab' / '-l' (env var: 'OTTO_LAB').",
-            exit_code=2,
-            rich=False,
-        )
-
-    repos = get_repos()
+    from ..config import load_lab
 
     # Extract + aggregate lab search paths across all repos (for the default
     # json backend).
@@ -383,7 +359,47 @@ def ensure_lab_context(ctx: typer.Context) -> "OttoContext":
             exit_code=1,
         ) from e
 
-    lab = load_lab(opts.labs, preferences=merged_host_preferences, repository=lab_repository)
+    return load_lab(labnames, preferences=merged_host_preferences, repository=lab_repository)
+
+
+def ensure_lab_context(ctx: typer.Context) -> "OttoContext":
+    """Load the lab, build reservation state, and install the runtime context (idempotent).
+
+    Enforces ``--lab``, builds the lab repository, loads the lab, synthesizes
+    docker placeholder hosts, resolves reservation state (stashed on
+    ``ctx.meta['otto_reservation']``), and installs an ``OttoContext`` via
+    ``set_cli_context``. Guarded by ``ctx.meta['_otto_lab_ready']`` so repeated calls
+    are cheap. No banner, no logging init, no output dir — those belong to
+    :func:`ensure_cli_session` / :func:`command_preamble`.
+    """
+    from ..context import get_context
+
+    meta = ctx.meta
+    if meta.get("_otto_lab_ready"):
+        return get_context()
+
+    opts: RootOptions = meta["_otto_root_options"]
+
+    from ..config import get_repos
+
+    # `--lab` is no longer a hard-required Typer option (so lab-free subcommands
+    # can run without it); enforce it here — before any lab side effects — for
+    # everything that does need a lab.
+    if not opts.labs:
+        # Raise (don't print): loud callers report via report_lab_context_error;
+        # the soft HostGroup probe swallows it silently. `rich=False` keeps the
+        # plain "Missing option '--lab'" usage text on stderr — matching click's
+        # own usage-error stream. (A *real* click.UsageError would escape Typer
+        # 0.26's vendored click fork uncaught, hence the manual message.)
+        raise LabContextError(
+            "Error: Missing option '--lab' / '-l' (env var: 'OTTO_LAB').",
+            exit_code=2,
+            rich=False,
+        )
+
+    repos = get_repos()
+
+    lab = build_lab_from_repos(repos, opts.labs)
 
     # Synthesize placeholder Docker container hosts from each repo's
     # `[docker]` settings. They appear in `--list-hosts` and tab-completion

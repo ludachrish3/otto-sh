@@ -1,6 +1,7 @@
 """Unit tests for the JSON reservation backend."""
 
 import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -8,6 +9,8 @@ import pytest
 from otto.reservations import (
     JsonReservationBackend,
     ReservationBackendError,
+    ReservationWindow,
+    SupportsReservationWindows,
 )
 
 
@@ -222,3 +225,50 @@ class TestErrors:
         )
         with pytest.raises(ReservationBackendError, match="Invalid reservation file"):
             backend.get_reserved_resources("alice")
+
+
+class TestGetReservationWindows:
+    def test_implements_windows_capability(self, tmp_path):
+        backend = _make_backend(tmp_path, {"version": 1, "reservations": []})
+        assert isinstance(backend, SupportsReservationWindows)
+
+    def test_windows_roundtrip_with_expiry(self, tmp_path):
+        future = datetime.now(tz=timezone.utc) + timedelta(hours=2)
+        backend = _make_backend(
+            tmp_path,
+            {
+                "version": 1,
+                "reservations": [
+                    {"user": "alice", "resources": ["r1", "r2"], "expires": future.isoformat()},
+                ],
+            },
+        )
+        windows = backend.get_reservation_windows("alice")
+        assert {w.resource for w in windows} == {"r1", "r2"}
+        for w in windows:
+            assert isinstance(w, ReservationWindow)
+            assert w.start.tzinfo is not None
+            assert w.end.tzinfo is not None
+            assert w.end == future
+
+    def test_windows_skip_expired_entries_and_other_users(self, tmp_path):
+        past = datetime.now(tz=timezone.utc) - timedelta(hours=1)
+        backend = _make_backend(
+            tmp_path,
+            {
+                "version": 1,
+                "reservations": [
+                    {"user": "alice", "resources": ["gone"], "expires": past.isoformat()},
+                    {"user": "bob", "resources": ["not-alices"]},
+                ],
+            },
+        )
+        assert backend.get_reservation_windows("alice") == []
+
+    def test_windows_open_ended_entry_gets_far_future_end(self, tmp_path):
+        backend = _make_backend(
+            tmp_path,
+            {"version": 1, "reservations": [{"user": "alice", "resources": ["r1"]}]},
+        )
+        (w,) = backend.get_reservation_windows("alice")
+        assert w.end.year >= 9999

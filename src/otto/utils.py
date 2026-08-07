@@ -114,6 +114,13 @@ class Arg:
     elem_type: type | None = None
     name: str | None = None
     help: str | None = None
+    remote_path: 'Literal["any", "dir"] | None' = None
+    """Complete this parameter as a path on the remote host (None = local).
+
+    ``"any"`` offers files and directories; ``"dir"`` offers directories only.
+    Consumed by ``otto.cli.param_synth``, which attaches the remote-path
+    completer; carries no typer import itself.
+    """
 
 
 @dataclass(frozen=True)
@@ -134,6 +141,13 @@ class Opt:
 
     Typer exposes only an inclusive ``min`` (no ``min_open``), so design the
     accepted range so an inclusive bound expresses it exactly.
+    """
+    remote_path: 'Literal["any", "dir"] | None' = None
+    """Complete this option as a path on the remote host (None = local).
+
+    ``"any"`` offers files and directories; ``"dir"`` offers directories only.
+    Consumed by ``otto.cli.param_synth``, which attaches the remote-path
+    completer; carries no typer import itself.
     """
 
 

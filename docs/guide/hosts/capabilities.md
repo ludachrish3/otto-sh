@@ -363,6 +363,26 @@ timeout: Annotated[
 ] = DEFAULT_COMMAND_TIMEOUT
 ```
 
+**`Arg(remote_path=...)` / `Opt(remote_path=...)`** — complete this parameter
+against the *remote* host's filesystem instead of the local one.  `"any"`
+offers files and directories, `"dir"` offers directories only.  Used by `get`
+(`src_files`, `"any"`) and `put` (`dest_dir`, `"dir"`); your own verbs can take
+a remote path the same way:
+
+```python
+src_files: Annotated[
+    list[Path] | Path,
+    Arg(variadic=True, elem_type=Path, remote_path="any"),
+]
+dest_dir: Annotated[Path, Arg(remote_path="dir")]
+```
+
+The marker only affects tab completion — see
+[Remote path completion](../cli-reference.md#remote-path-completion) for what
+completion offers and when it stays quiet.  It is rejected on a comma-list or
+`key=value` option (which render as a single string the completer can't split);
+mark a completable path list as `Arg(variadic=True, remote_path=...)` instead.
+
 **`Exclude`** — drop a parameter from the CLI entirely; the method receives its
 default value.  Use this for SDK-only parameters that make no sense as CLI
 flags — `run`'s `expects` and `log` are the canonical examples:

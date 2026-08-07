@@ -36,6 +36,8 @@ translate them into a fail-closed startup error with a clear hint about the
 ``--skip-reservation-check`` escape hatch.
 """
 
+from dataclasses import dataclass
+from datetime import datetime
 from typing import (
     Protocol,
     runtime_checkable,
@@ -128,4 +130,38 @@ class SupportsUsernameCompletion(Protocol):
 
     def list_usernames(self) -> list[str]:
         """Return all usernames the backend knows about, for completion."""
+        ...
+
+
+@dataclass(frozen=True)
+class ReservationWindow:
+    """One reservation a backend knows about: *resource* held over ``[start, end]``.
+
+    ``start`` and ``end`` must be timezone-aware.  A backend that does not
+    know when a booking began uses the epoch for ``start``; an open-ended
+    booking uses a far-future ``end``.
+    """
+
+    resource: str
+    start: datetime
+    end: datetime
+
+
+@runtime_checkable
+class SupportsReservationWindows(Protocol):
+    """Optional capability: report reservation windows (start/end per resource).
+
+    Implemented by backends that can say *when* a booking starts and ends,
+    not just whether it is currently held.  Otto detects it structurally
+    (``isinstance(backend, SupportsReservationWindows)``) and uses the window
+    edges to invalidate the remote-path completion cache the moment a booking
+    boundary passes (see ``otto.config.remote_completion_cache``).  Backends
+    that cannot report windows simply omit it and fall back to a flat-TTL
+    cache of
+    :meth:`ReservationBackend.get_reserved_resources
+    <otto.reservations.protocol.ReservationBackend.get_reserved_resources>`.
+    """
+
+    def get_reservation_windows(self, username: str) -> "list[ReservationWindow]":
+        """Return every active window ``username`` holds (expired entries omitted)."""
         ...

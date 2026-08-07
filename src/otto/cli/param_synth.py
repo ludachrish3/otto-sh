@@ -58,6 +58,22 @@ def parse_kv_dict(raw: str | None, val_type: type) -> dict[str, Any] | None:
     return out
 
 
+def _remote_completer(marker: "Arg | Opt | None") -> Any:
+    """Return the autocompletion callback for a ``remote_path``-marked param, else ``None``."""
+    kind = getattr(marker, "remote_path", None)
+    if kind is None:
+        return None
+
+    def _complete(ctx: typer.Context, incomplete: str) -> list[str]:
+        from . import remote_completion
+
+        # Late attribute lookup (not a from-import) so tests can monkeypatch
+        # remote_completion.remote_path_completer.
+        return remote_completion.remote_path_completer(ctx, incomplete, kind=kind)
+
+    return _complete
+
+
 @dataclass
 class CliBinding:
     """Typer-facing parameter list and metadata produced by ``build_cli_binding``.
@@ -139,7 +155,10 @@ def build_cli_binding(func: Callable[..., Any]) -> CliBinding:
         and converters for list/dict options.
 
     Raises:
-        ValueError: If more than one parameter is marked ``Arg(variadic=True)``.
+        ValueError: If more than one parameter is marked ``Arg(variadic=True)``,
+            or if a ``list``/``dict`` parameter carries ``Opt(remote_path=...)``
+            — that branch renders one comma/``key=value`` string, which a path
+            completer cannot meaningfully complete.
     """
     sig = inspect.signature(func)
     hints = get_type_hints(func, include_extras=True)
@@ -169,7 +188,12 @@ def build_cli_binding(func: Callable[..., Any]) -> CliBinding:
                     f"may be Arg(variadic=True)"
                 )
             elem = arg.elem_type or str
-            ann = Annotated[list[elem], typer.Argument(metavar=arg.name, help=arg.help)]
+            ann = Annotated[
+                list[elem],
+                typer.Argument(
+                    metavar=arg.name, help=arg.help, autocompletion=_remote_completer(arg)
+                ),
+            ]
             binding.params.append(
                 inspect.Parameter(
                     name,
@@ -188,6 +212,15 @@ def build_cli_binding(func: Callable[..., Any]) -> CliBinding:
 
         # --- list/dict OPTION (comma / key=value), forward-looking ---
         if origin in (list, dict) and arg is None:
+            if getattr(opt, "remote_path", None) is not None:
+                # This branch renders one comma/key=value STRING, so a path completer
+                # would complete the whole field, not the element under the cursor.
+                # Fail loud rather than accept a marker that silently does nothing.
+                raise ValueError(
+                    f"{getattr(func, '__name__', func)!r}: {name!r} — remote_path is not "
+                    f"supported on a comma-list/key=value option; use "
+                    f"Arg(variadic=True, remote_path=...) for a completable path list"
+                )
             elem = (get_args(base) or (str,))[-1]
             if origin is list:
                 binding.converters[name] = lambda raw, e=elem: parse_comma_list(raw, e)
@@ -214,13 +247,27 @@ def build_cli_binding(func: Callable[..., Any]) -> CliBinding:
         # --- scalar: normalize union, then arg/opt/inference ---
         norm = _normalize_scalar(base, (arg.elem_type if arg else (opt.elem_type if opt else None)))
         if arg is not None:  # explicit positional (e.g. defaulted scalar we keep positional)
-            ann = Annotated[norm, typer.Argument(metavar=arg.name, help=arg.help)]
+            ann = Annotated[
+                norm,
+                typer.Argument(
+                    metavar=arg.name, help=arg.help, autocompletion=_remote_completer(arg)
+                ),
+            ]
             kind = inspect.Parameter.POSITIONAL_OR_KEYWORD
         elif opt is not None:  # explicit option
             opt_decls = (opt.name,) if opt.name else ()
             # See the list/dict OPTION branch above for why `...` must precede
             # `*opt_decls` — `typer.Option`'s param_decls are varargs after `default`.
-            ann = Annotated[norm, typer.Option(..., *opt_decls, help=opt.help, min=opt.min)]
+            ann = Annotated[
+                norm,
+                typer.Option(
+                    ...,
+                    *opt_decls,
+                    help=opt.help,
+                    min=opt.min,
+                    autocompletion=_remote_completer(opt),
+                ),
+            ]
             kind = inspect.Parameter.KEYWORD_ONLY
         else:  # attach explicit Typer annotation so KEYWORD_ONLY wrappers still render correctly
             if default is inspect.Parameter.empty:

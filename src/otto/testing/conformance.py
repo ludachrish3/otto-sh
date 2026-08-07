@@ -22,12 +22,18 @@ Usage::
         assert_reservation_backend_conforms(MyBackend(), known_user="alice", known_resources=["r1"])
 """
 
+from datetime import datetime, timezone
 from typing import Any
 
 from ..config.lab import Lab
 from ..host.remote_host import RemoteHost
 from ..labs import HostSummary, LabNotFoundError, LabRepository, SupportsHostSummaries
-from ..reservations import ReservationBackend, SupportsUsernameCompletion
+from ..reservations import (
+    ReservationBackend,
+    ReservationWindow,
+    SupportsReservationWindows,
+    SupportsUsernameCompletion,
+)
 from ..suite.expect import ExpectCollector
 
 # Sentinels for "this name definitely does not exist" probes.
@@ -324,9 +330,10 @@ def assert_reservation_backend_conforms(
     Structural/type rules always run. When *known_user* and *known_resources*
     (resources that user is known to hold) are both given, round-trip
     consistency rules run too. The optional
-    :class:`~otto.reservations.SupportsUsernameCompletion` capability is checked
-    only when the backend implements it. Raises a single :class:`AssertionError`
-    aggregating every violated rule.
+    :class:`~otto.reservations.SupportsUsernameCompletion` and
+    :class:`~otto.reservations.SupportsReservationWindows` capabilities are
+    checked only when the backend implements them. Raises a single
+    :class:`AssertionError` aggregating every violated rule.
 
     Parameters
     ----------
@@ -439,6 +446,61 @@ def assert_reservation_backend_conforms(
                         f"ReservationBackend: round-trip — {u!r} holds {r!r} per "
                         f"who_reserved, but {r!r} not in get_reserved_resources({u!r})",
                     )
+
+    if isinstance(backend, SupportsReservationWindows):
+        windows = backend.get_reservation_windows(probe_user)
+        windows_ok = isinstance(windows, list)
+        c.expect(
+            windows_ok,
+            f"SupportsReservationWindows: get_reservation_windows() must return a list, "
+            f"got {type(windows).__name__}",
+        )
+        if windows_ok:
+            for w in windows:
+                is_window = isinstance(w, ReservationWindow)
+                c.expect(
+                    is_window,
+                    f"SupportsReservationWindows: entries must be ReservationWindow, "
+                    f"got {type(w).__name__}",
+                )
+                if not is_window:
+                    continue
+                c.expect(
+                    isinstance(w.resource, str) and w.resource != "",
+                    f"SupportsReservationWindows: resource must be a non-empty str, "
+                    f"got {w.resource!r}",
+                )
+                c.expect(
+                    w.start.tzinfo is not None and w.end.tzinfo is not None,
+                    f"SupportsReservationWindows: start/end must be timezone-aware "
+                    f"({w.resource!r})",
+                )
+                if w.start.tzinfo is not None and w.end.tzinfo is not None:
+                    c.expect(
+                        w.start <= w.end,
+                        f"SupportsReservationWindows: start <= end required "
+                        f"({w.resource!r}: {w.start} > {w.end})",
+                    )
+        # Only meaningful once every window is well-formed: a naive or
+        # non-ReservationWindow entry makes the comparison below either raise
+        # or report a difference the rules above already named.
+        if windows_ok and known_user is not None:
+            user_windows = backend.get_reservation_windows(known_user)
+            if isinstance(user_windows, list) and all(
+                isinstance(w, ReservationWindow)
+                and w.start.tzinfo is not None
+                and w.end.tzinfo is not None
+                for w in user_windows
+            ):
+                now = datetime.now(tz=timezone.utc)
+                active = {w.resource for w in user_windows if w.start <= now <= w.end}
+                flat = backend.get_reserved_resources(known_user)
+                c.expect(
+                    isinstance(flat, set) and active == flat,
+                    f"SupportsReservationWindows: resources with a window covering now "
+                    f"({sorted(active)!r}) must equal get_reserved_resources() "
+                    f"({sorted(flat) if isinstance(flat, set) else flat!r})",
+                )
 
     if isinstance(backend, SupportsUsernameCompletion):
         usernames = backend.list_usernames()

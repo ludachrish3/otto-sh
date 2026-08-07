@@ -1,6 +1,7 @@
 """Conformance helpers verified against otto's built-in backends + an error sample."""
 
 import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -9,6 +10,7 @@ from otto.labs import JsonFileLabRepository
 from otto.reservations import (
     JsonReservationBackend,
     NullReservationBackend,
+    ReservationWindow,
 )
 from otto.reservations.check import ReservationBackendError
 from otto.testing import (
@@ -161,6 +163,109 @@ class TestReservationBackendConformance:
                 known_resources=["lab-x"],
             )
         assert "ReservationBackend" in str(exc.value)
+
+
+_NOW = datetime.now(tz=timezone.utc)
+
+
+class _WindowedBackend:
+    """Minimal conforming backend that implements ``SupportsReservationWindows``.
+
+    ``get_reserved_resources`` derives the flat view from the windows (so the
+    two agree by construction) unless *flat* overrides it. The derivation skips
+    malformed entries deliberately: a test that violates one window rule must
+    surface as a *validator* failure, not as an AttributeError/TypeError raised
+    inside the fake before the validator ever runs.
+    """
+
+    def __init__(self, windows, flat=None):
+        self._windows = windows
+        self._flat = flat
+
+    def backend_name(self):
+        return "windowed-fake"
+
+    def get_reserved_resources(self, username):
+        if self._flat is not None:
+            return set(self._flat)
+        return {
+            w.resource
+            for w in self._windows
+            if isinstance(w, ReservationWindow)
+            and w.start.tzinfo is not None
+            and w.end.tzinfo is not None
+            and w.start <= _NOW <= w.end
+        }
+
+    def who_reserved(self, resource):
+        return ["alice"] if resource in self.get_reserved_resources("alice") else []
+
+    def get_reservation_windows(self, username):
+        return self._windows
+
+
+def _window(**overrides):
+    base = {
+        "resource": "r1",
+        "start": _NOW - timedelta(hours=1),
+        "end": _NOW + timedelta(hours=1),
+    }
+    base.update(overrides)
+    return ReservationWindow(**base)
+
+
+class TestReservationWindowsConformance:
+    """One test per validator rule, each violating only that rule."""
+
+    def test_conforming_backend_passes(self):
+        assert_reservation_backend_conforms(
+            _WindowedBackend([_window()]), known_user="alice", known_resources=["r1"]
+        )
+
+    def test_wrong_return_type_fails(self):
+        backend = _WindowedBackend([_window()])
+        backend.get_reservation_windows = lambda username: {"not": "a list"}
+        with pytest.raises(AssertionError, match="must return a list"):
+            assert_reservation_backend_conforms(backend)
+
+    def test_non_window_entry_fails(self):
+        backend = _WindowedBackend(["just-a-string"])
+        with pytest.raises(AssertionError, match="ReservationWindow"):
+            assert_reservation_backend_conforms(backend)
+
+    def test_empty_resource_fails(self):
+        with pytest.raises(AssertionError, match="non-empty str"):
+            assert_reservation_backend_conforms(_WindowedBackend([_window(resource="")]))
+
+    def test_naive_datetime_fails(self):
+        naive = _window(start=datetime(2026, 1, 1), end=datetime(2026, 1, 2))  # noqa: DTZ001
+        with pytest.raises(AssertionError, match="timezone-aware"):
+            assert_reservation_backend_conforms(_WindowedBackend([naive]))
+
+    def test_inverted_range_fails(self):
+        inverted = _window(start=_NOW + timedelta(hours=2), end=_NOW)
+        with pytest.raises(AssertionError, match="start <= end"):
+            assert_reservation_backend_conforms(_WindowedBackend([inverted]))
+
+    def test_flat_view_disagreement_fails(self):
+        backend = _WindowedBackend([_window()], flat={"something-else"})
+        with pytest.raises(AssertionError, match="get_reserved_resources"):
+            assert_reservation_backend_conforms(
+                backend, known_user="alice", known_resources=["something-else"]
+            )
+
+    def test_windowless_backend_skips_section(self):
+        class _Flat:
+            def backend_name(self):
+                return "flat-fake"
+
+            def get_reserved_resources(self, username):
+                return set()
+
+            def who_reserved(self, resource):
+                return []
+
+        assert_reservation_backend_conforms(_Flat())
 
 
 class TestReservationErrorContract:

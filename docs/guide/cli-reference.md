@@ -22,7 +22,7 @@ These options are available on every `otto` command:
 | `--list-hosts` | | | List host IDs in the loaded lab and exit |
 | `--show-lab` | | | Print full lab details and exit |
 | `--lab-depth` | | `3` | Nesting depth for `--show-lab` output — how deep the lab's host details are expanded (0 = unlimited) |
-| `--clear-autocomplete-cache` | | | Delete the shell-completion cache file and exit |
+| `--clear-autocomplete-cache` | | | Delete the shell-completion cache files and exit |
 | `--version` | | | Show version and exit |
 | `--install-completion` | | | Install shell completion and exit |
 | `--show-completion` | | | Print shell completion script and exit |
@@ -56,6 +56,58 @@ tests; that set warms itself from any real `otto test --list-tests` run, or
 from a one-time bounded collection on the first `--tests` TAB (see
 {doc}`test`).  `--clear-autocomplete-cache` drops the cache if it ever goes
 stale.
+
+### Remote path completion
+
+`otto host <HOST_ID> get` completes its source paths **on the remote host**,
+and `otto host <HOST_ID> put` completes its destination the same way —
+directories only, because that is the only thing a destination can be.  Every
+other path on those commands is local, and your shell completes it as usual.
+
+```console
+$ otto --lab my_lab host dut1 get /var/log/<TAB>
+/var/log/dmesg  /var/log/journal/  /var/log/syslog
+```
+
+Directories come back with a trailing `/`, so the next TAB descends into them.
+Dotfiles appear only once the fragment you typed itself starts with `.` (the
+usual shell convention), and a TAB with nothing typed lists the remote home
+directory.  Completion resolves the same host the command would, honouring
+`--hop` and `--term`, so it needs a lab selected (`--lab` or `OTTO_LAB`) just
+like the command does.
+
+Remote completion is deliberately narrow, and where it can't answer it stays
+**silent** — a TAB never prints an error onto your prompt.  It offers nothing
+when:
+
+- **the host isn't reached over SSH.**  Serial and telnet hosts complete no
+  remote paths in this release.
+- **you don't hold the lab's reservations.**  The same required-resource set
+  the command itself checks is verified *before* any host is contacted, and
+  `-R` / `--skip-reservation-check` does **not** bypass it — that flag's loud
+  warning has nowhere to print in the middle of a TAB, and a silent
+  break-glass is not one.  See {doc}`reservations`.
+- **the listing didn't come back in time.**  The remote `ls` runs under a hard
+  two-second budget; a slow or wedged host costs you the suggestions, not your
+  prompt.
+- **the directory can't be listed** — it doesn't exist, or you can't read it.
+  A failed listing is never remembered, so fixing the cause and pressing TAB
+  again asks the host afresh.
+
+Two short-lived caches keep repeated TABs quick: a directory listing is reused
+for 45 seconds per host and directory, and the reservation answer for up to
+two minutes — less when a booking of yours starts or ends sooner, since
+crossing a window edge invalidates it immediately (see
+[Reservation windows](reservations.md#reservation-windows-optional-capability)).
+Both live in `.otto/remote_completion_cache.json`, beside the main completion
+cache, and `--clear-autocomplete-cache` deletes both files.
+
+```{important}
+The cached reservation answer is read by tab completion and by nothing else.
+Every real command invocation queries the reservation backend live.  Accepting
+a two-minute-old answer is a fair trade for a key you just pressed
+deliberately; it is not a fair trade for a command recalled from history.
+```
 
 ## Output directories
 
@@ -268,7 +320,9 @@ otto host <HOST_ID> get SRC... DEST
 
 `SRC...` is one or more source paths (space-separated); `DEST` is the
 destination directory.  For `put`, sources are local paths; for `get`, sources
-are remote paths.
+are remote paths.  The remote side of each — `get`'s sources and `put`'s
+destination — completes against the host itself
+([Remote path completion](#remote-path-completion)).
 
 | Option | Default | Description |
 | ------ | ------- | ----------- |

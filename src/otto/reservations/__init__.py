@@ -42,6 +42,12 @@ from .protocol import (
     ReservationBackend as ReservationBackend,
 )
 from .protocol import (
+    ReservationWindow as ReservationWindow,
+)
+from .protocol import (
+    SupportsReservationWindows as SupportsReservationWindows,
+)
+from .protocol import (
     SupportsUsernameCompletion as SupportsUsernameCompletion,
 )
 from .registry import (

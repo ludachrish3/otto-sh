@@ -26,7 +26,16 @@ Protocol.  The contract is deliberately small — three read-only
 methods, no write methods of any kind.  Otto never mutates scheduler
 state.
 
+Two optional capabilities sit alongside it: a backend that can enumerate its
+users implements ``list_usernames`` and a backend that knows when bookings
+begin and end implements ``get_reservation_windows``.  Both are detected
+structurally with ``isinstance`` — implement the method or don't.
+
 .. autoclass:: otto.reservations.SupportsUsernameCompletion
+
+.. autoclass:: otto.reservations.SupportsReservationWindows
+
+.. autoclass:: otto.reservations.ReservationWindow
 
 .. automodule:: otto.reservations.protocol
 

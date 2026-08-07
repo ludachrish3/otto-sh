@@ -26,6 +26,26 @@ starting a run.
   build it on demand. Contention errors deliberately do *not* advertise
   `-R`; only backend-unreachable errors do ({doc}`../../guide/reservations`).
 
+- **The gate runs in completion too, on its own terms.** Remote-path tab
+  completion for `otto host <id> get` / `put` ({doc}`../../guide/cli-reference`)
+  contacts a lab host, so the same required-resource check runs first — before
+  the host is even constructed. Two deliberate differences from the command
+  path: `-R` does *not* bypass it (the loud skip warning has nowhere to print
+  mid-TAB, and a silent break-glass is not one), and a backend failure fails
+  closed to *no suggestions* rather than to an error, because a completer that
+  prints is a completer that corrupts the user's prompt.
+- **Windows are an optional capability, and only completion consumes them.**
+  A backend that can report booking start/end implements
+  {class}`~otto.reservations.protocol.SupportsReservationWindows`
+  (isinstance-detected, like `SupportsUsernameCompletion`), and completion uses
+  the edges to invalidate its cached reservation answer the moment a boundary
+  passes. Owner ruling: that cache is completion-only — command execution
+  always queries the backend live, because stale reservation data is an
+  acceptable trade for a deliberate TAB and never for a recalled command. A
+  unit test enforces that boundary by AST-scanning the tree: nothing but
+  `otto.cli.remote_completion` may import the cache, the
+  `--clear-autocomplete-cache` handler aside.
+
 Backends are a registry like everything else (`json`, `none` built in;
 custom schedulers register by name — {doc}`../subsystems/registries`), and
 {func}`otto.testing.assert_reservation_backend_conforms` verifies a custom

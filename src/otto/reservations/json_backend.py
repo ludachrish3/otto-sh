@@ -31,6 +31,7 @@ from typing import TYPE_CHECKING
 from pydantic import ValidationError
 
 from .check import ReservationBackendError
+from .protocol import ReservationWindow
 
 # Deferred: these models live in otto.models.settings, which subclasses
 # pydantic_settings.BaseSettings and so drags pydantic_settings + dotenv (26
@@ -38,6 +39,11 @@ from .check import ReservationBackendError
 # read (import budget). _load() imports them when it actually parses one.
 if TYPE_CHECKING:
     from ..models.settings import ReservationEntry, ReservationFile
+
+# The JSON format records only expiry, never start; the epoch stands in for
+# "held since forever", and an entry with no `expires` is open-ended.
+_EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
+_FAR_FUTURE = datetime(9999, 1, 1, tzinfo=timezone.utc)
 
 
 class JsonReservationBackend:
@@ -102,6 +108,25 @@ class JsonReservationBackend:
             if resource in entry.resources and entry.user not in holders:
                 holders.append(str(entry.user))
         return holders
+
+    def get_reservation_windows(self, username: str) -> "list[ReservationWindow]":
+        """Return windows for *username*'s active entries (expired ones are skipped).
+
+        Raises
+        ------
+        ReservationBackendError
+            If the file cannot be read or parsed.
+        """
+        windows: list[ReservationWindow] = []
+        for entry in self._active_entries():
+            if str(entry.user) != username:
+                continue
+            end = entry.expires if entry.expires is not None else _FAR_FUTURE
+            windows.extend(
+                ReservationWindow(resource=str(resource), start=_EPOCH, end=end)
+                for resource in entry.resources
+            )
+        return windows
 
     # ------------------------------------------------------------------
     # Internal
