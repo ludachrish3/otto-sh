@@ -38,6 +38,7 @@ import time
 import pytest
 
 from otto.logger.mode import LogMode
+from tests._fixtures.bed_hygiene import argv_pattern
 from tests._fixtures.labdata import host_data
 from tests.e2e.chaos._bed import run_probe, veggies_link_id
 from tests.e2e.chaos._seed import offset_in
@@ -252,7 +253,9 @@ def test_ssh_blackhole_mid_command_is_survivable_and_repairs_clean(chaos_rng, tm
         # that instead of the (invisible) trailing comment.
         run_probe(
             "tomato",
-            lambda h: h.exec("pkill -f 'sleep 120' || true", timeout=15, log=LogMode.QUIET),
+            lambda h: h.exec(
+                f"pkill -f '{argv_pattern('sleep 120')}' || true", timeout=15, log=LogMode.QUIET
+            ),
         )
 
         after = {e: asyncio.run(_snap(e)) for e in ("carrot", "tomato")}

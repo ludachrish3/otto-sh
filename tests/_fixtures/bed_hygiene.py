@@ -17,13 +17,43 @@ import dataclasses
 
 from otto.link.sentinel import IMPAIR_PS_COMMAND, parse_impair_ps
 from otto.logger.mode import LogMode
+from otto.result import Result
 from otto.tunnel.discovery import DISCOVERY_PS_COMMAND, parse_process_discovery
+
+
+def argv_pattern(needle: str) -> str:
+    """Bracket-trick ``needle`` for a ``pgrep -f``/``pkill -f`` pattern.
+
+    The remote side runs every probe through a shell whose OWN argv carries
+    the full command text — so a plain ``pkill -f 'sleep 313'`` matches (and
+    kills) its own wrapper shell, which dies mid-command and reports
+    ``Failed/retcode=-1``. Wrapping the first char in a regex class breaks
+    the adjacency inside the wrapper's argv (``[s]leep 313`` never matches
+    the literal text ``[s]leep 313``) while still matching the real target's
+    ``sleep 313``. Before the G5 probe contract these self-kills were
+    REPORTED as failures nobody read.
+
+    One spelling for the chaos lanes (tier-3 and tier-2 signal suite). Known
+    siblings still hand-rolling the pattern OUTSIDE these lanes are recorded
+    in the remediation plan's Wave 14 notes. Total by contract: the needle
+    must be non-empty and start with a character that is literal inside a
+    regex class — every real needle starts with a letter.
+    """
+    if not needle or not needle[0].isalnum():
+        raise ValueError(f"argv_pattern needs a needle starting alphanumeric, got {needle!r}")
+    return f"[{needle[0]}]{needle[1:]}"
+
 
 # Both bed netdevs matter: eth2 carries the declared data-plane link the
 # connection-drop scenario impairs; eth1 (mgmt) must stay impairment-free
 # ALWAYS — a qdisc appearing there means a placement guard failed.
 _QDISC_DEVS = ("eth1", "eth2")
-_NC_LISTENER_PROBE = 'pgrep -af "nc -l" | grep -v pgrep | grep -v "$$" || true'
+# Bracket-tricked so the probe's own wrapper shell can never appear in (or be
+# filtered from) the listener list: the old `| grep -v "$$"` self-filter also
+# dropped any REAL listener whose line contained the wrapper's pid as a
+# substring (e.g. wrapper pid 1520 vs a listener on port 15200) — the same
+# "oracle reads clean" class the G5 contract exists to kill.
+_NC_LISTENER_PROBE = f'pgrep -af "{argv_pattern("nc -l")}" || true'
 _STAGING_PROBE = "ls -d /tmp/otto-* /tmp/otto_* 2>/dev/null || true"
 _HISTORY_PROBE = "cat ~/.bash_history 2>/dev/null | sha256sum || true"
 # Docker accumulation probes (Plan 5). `-a` deliberately: exited containers
@@ -36,6 +66,37 @@ _DOCKER_NET_PROBE = (
     "command -v docker >/dev/null 2>&1 && docker network ls --format '{{.Name}}' || true"
 )
 _PROBE_TIMEOUT = 30
+
+
+class ProbeFailedError(RuntimeError):
+    """A bed probe itself failed — its answer is MISSING, not clean.
+
+    Raised instead of letting a non-ok ``host.exec`` result flow into an
+    oracle: a timed-out probe's ``value`` is the error text ("Command timed
+    out after 30s"), which the snapshot parsers happily turn into empty sets
+    and phantom entries — i.e. a clean-looking bed manufactured by the exact
+    failure (SSH blackhole, reboot) the chaos lane exists to create.
+    """
+
+
+def check_probe_result(host_name: str, result: Result) -> None:
+    """Raise :class:`ProbeFailedError` for a non-ok probe ``Result``.
+
+    The single spelling of the status check (G5): both ``snapshot_host`` and
+    the tier-3 ``run_probe``/``probe_text`` route through here. The check
+    binds the HELPERS — a factory that unwraps ``.value`` before returning
+    forfeits it, which is why the honesty pins also carry an AST scan over
+    the chaos lanes banning exactly that shape (and unbracketed pattern
+    kills). Consumer spellings outside those two scans remain review
+    territory, stated per the quality-gates page's blind-spot rule.
+    """
+    if result.is_ok:
+        return
+    command = getattr(result, "command", "") or "<no command recorded>"
+    raise ProbeFailedError(
+        f"probe on {host_name} failed (status={result.status.name}): "
+        f"{command!r} -> {result.value!r}"
+    )
 
 
 @dataclasses.dataclass(frozen=True)
@@ -51,10 +112,17 @@ class HygieneSnapshot:
 
 
 async def snapshot_host(host) -> HygieneSnapshot:
-    """Probe one host over its (fresh) connection; never mutates anything."""
+    """Probe one host over its (fresh) connection; never mutates anything.
+
+    Raises :class:`ProbeFailedError` (host- and probe-named) when any probe
+    comes back non-ok — a snapshot built from failed probes is not a
+    snapshot, and diffing one reports "clean" for the exact scenarios the
+    chaos lane manufactures.
+    """
 
     async def _out(cmd: str) -> str:
         result = await host.exec(cmd, timeout=_PROBE_TIMEOUT, log=LogMode.QUIET)
+        check_probe_result(getattr(host, "id", "<unknown host>"), result)
         return (result.value or "").strip()
 
     tunnel_raw = await _out(DISCOVERY_PS_COMMAND)

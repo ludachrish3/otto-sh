@@ -169,6 +169,7 @@ job that enforces it on push.
 | test-isolation leak guard | `nox-unit-repeat` | `tests_unit_repeat` | `unit-repeat` |
 | import budget | `profile` (adds hyperfine) | via `tests_hostless` | `tests` — enforced by `tests/unit/import_budget/` |
 | build-lane invariants (addopts keeps `-p no:tach`) | via `coverage*` | via `tests_hostless` | `tests` — enforced by `tests/unit/test_lane_invariants.py` |
+| probe-status honesty at the bed-probe helpers (`run_probe`/`probe_text`/`snapshot_host` raise on non-ok), plus AST scans over the chaos lanes banning the two consumer shapes found live: a factory unwrapping `.value` before the check can vet it, and a `pkill`/`pgrep -f` pattern not built by `argv_pattern`. Stated blind spots: factories imported from other modules; patterns assembled outside literals/f-strings | via `coverage*` | via `tests_hostless` | `tests` — enforced by `tests/unit/test_bed_oracle_honesty.py` |
 | air-gap + brand tokens + type drift | `web` | — | `dashboard`, `docs` (both run `make web`) |
 | browser e2e | `dashboard` (Chromium; `dashboard-all` for all three) | `dashboard` (all three, serially) | `dashboard` (one parallel job per engine) |
 | docs | `docs` | `docs` | `docs` |

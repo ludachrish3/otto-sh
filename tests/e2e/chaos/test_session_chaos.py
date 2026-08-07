@@ -25,7 +25,8 @@ import time
 import pytest
 
 from otto.logger.mode import LogMode
-from tests.e2e.chaos._bed import run_probe
+from tests._fixtures.bed_hygiene import argv_pattern
+from tests.e2e.chaos._bed import probe_text, run_probe
 from tests.integration.chaos._driver import BANNER, spawn_otto
 
 pytestmark = [
@@ -48,15 +49,9 @@ _SLEEP = "sleep 311"  # seeded-SIGINT test: PTY-HUP-reaped foreground child
 
 
 def _remote_pids(element: str, needle: str) -> list:
-    # bracket-trick first char so the probe's own shell never self-matches
-    pat = f"[{needle[0]}]{needle[1:]}"
-
-    async def _find(host):
-        result = await host.exec(f"pgrep -af '{pat}' || true", timeout=30, log=LogMode.QUIET)
-        out = result.value or ""
-        return [ln for ln in out.splitlines() if ln.strip()]
-
-    return run_probe(element, _find)
+    # bracket-trick so the probe's own shell never self-matches
+    out = probe_text(element, f"pgrep -af '{argv_pattern(needle)}' || true")
+    return [ln for ln in out.splitlines() if ln.strip()]
 
 
 def test_seeded_sigint_mid_command_cleans_up(chaos_bed, chaos_rng, tmp_path):
@@ -170,7 +165,8 @@ def test_nohup_remote_survives_graceful_teardown(chaos_bed, tmp_path):
         run_probe(
             chaos_bed.element,
             lambda h: h.exec(
-                "pkill -f 'sleep 313' || true; pkill -f 'sleep 314' || true",
+                f"pkill -f '{argv_pattern('sleep 313')}' || true; "
+                f"pkill -f '{argv_pattern('sleep 314')}' || true",
                 timeout=30,
                 log=LogMode.QUIET,
             ),

@@ -3,13 +3,14 @@ listener beyond the teardown deadline and characterize partial-file state.
 Forces the nc backend (``--transfer nc``) so the GET-path reap (Task 7's
 product fix) is exercised on whichever host was leased.
 
-Self-match note: the nc-listener probe mirrors
-``tests/_fixtures/bed_hygiene.py``'s ``_NC_LISTENER_PROBE`` exactly —
-``grep -v "$$"``, not merely ``grep -v pgrep``. The invoking shell's own
-command line embeds the literal search pattern ``"nc -l"`` and would
-otherwise self-match on a fresh, ever-different pid on EVERY probe,
-permanently poisoning the before/after diff with a spurious "new" line that
-is never a real orphaned listener.
+Self-match note: the nc-listener probe IS
+``tests/_fixtures/bed_hygiene.py``'s ``_NC_LISTENER_PROBE`` (imported, not
+mirrored — a verbatim copy here silently missed that module's move to the
+``argv_pattern`` bracket-trick, and the honesty scan caught it). The probe
+must never see the invoking shell's own command line, which embeds the
+search pattern and would otherwise self-match on a fresh, ever-different
+pid on EVERY probe, permanently poisoning the before/after diff with a
+spurious "new" line that is never a real orphaned listener.
 
 ``has_tunnel`` caveat (self-review finding, recorded here rather than swept
 under the rug): the leased veggies hosts (carrot/tomato/pepper) are reached
@@ -34,7 +35,8 @@ import time
 import pytest
 
 from otto.logger.mode import LogMode
-from tests.e2e.chaos._bed import run_probe
+from tests._fixtures.bed_hygiene import _NC_LISTENER_PROBE
+from tests.e2e.chaos._bed import probe_text, run_probe
 from tests.e2e.chaos._seed import offset_in
 from tests.integration.chaos._driver import BANNER, spawn_otto
 
@@ -46,9 +48,6 @@ pytestmark = [
     pytest.mark.timeout(300),
 ]
 
-# Mirrors tests/_fixtures/bed_hygiene.py's `_NC_LISTENER_PROBE` verbatim —
-# see the module docstring's "Self-match note".
-_NC_LISTENER_PROBE = 'pgrep -af "nc -l" | grep -v pgrep | grep -v "$$" || true'
 
 # 512 MiB: empirically calibrated against the live bed (2026-08-01) rather
 # than assumed — a 64 MiB payload (the original starting point) completed the
@@ -66,11 +65,8 @@ _REMOTE_GET_SRC = "/tmp/otto-chaos-src"
 
 
 def _nc_listeners(element: str) -> list:
-    async def _find(host):
-        out = (await host.exec(_NC_LISTENER_PROBE, timeout=30, log=LogMode.QUIET)).value or ""
-        return [ln for ln in out.splitlines() if ln.strip()]
-
-    return run_probe(element, _find)
+    out = probe_text(element, _NC_LISTENER_PROBE)
+    return [ln for ln in out.splitlines() if ln.strip()]
 
 
 def _assert_no_new_listener(element: str, before: list, what: str) -> None:
@@ -158,15 +154,21 @@ def test_sigint_mid_put_no_orphan_listener(chaos_bed, chaos_rng, tmp_path):
         # running. SIGKILL it if it's still alive before doing anything else.
         if p is not None and p.proc.poll() is None:
             p.signal(9)
-        run_probe(
-            chaos_bed.element,
-            lambda h: h.exec(f"rm -rf {_REMOTE_PUT_DIR} || true", timeout=30, log=LogMode.QUIET),
-        )
-        # Belt: an assertion failure above must not strand the remote
-        # `nc -l` listener (kill by PID, diffed against `before` -- see
-        # `_reap_new_nc_listeners`'s docstring for why a `pkill -f` on the
-        # destination-dir token can't do this).
-        _reap_new_nc_listeners(chaos_bed.element, before)
+        # Nested so a raising rm probe (post-G5 a dead probe raises) still
+        # reports loudly WITHOUT skipping the listener reap below it.
+        try:
+            run_probe(
+                chaos_bed.element,
+                lambda h: h.exec(
+                    f"rm -rf {_REMOTE_PUT_DIR} || true", timeout=30, log=LogMode.QUIET
+                ),
+            )
+        finally:
+            # Belt: an assertion failure above must not strand the remote
+            # `nc -l` listener (kill by PID, diffed against `before` -- see
+            # `_reap_new_nc_listeners`'s docstring for why a `pkill -f` on the
+            # destination-dir token can't do this).
+            _reap_new_nc_listeners(chaos_bed.element, before)
 
 
 def test_sigint_mid_get_no_orphan_listener(chaos_bed, chaos_rng, tmp_path):
@@ -221,14 +223,18 @@ def test_sigint_mid_get_no_orphan_listener(chaos_bed, chaos_rng, tmp_path):
         # running. SIGKILL it if it's still alive before doing anything else.
         if p is not None and p.proc.poll() is None:
             p.signal(9)
-        run_probe(
-            chaos_bed.element,
-            lambda h: h.exec(f"rm -f {_REMOTE_GET_SRC} || true", timeout=30, log=LogMode.QUIET),
-        )
-        # Belt: an assertion failure above must not strand a remote `nc -l`
-        # listener (the tunneled GET path, not exercised on this direct-SSH
-        # bed per the module docstring's `has_tunnel` caveat, but harmless
-        # to guard defensively). Kill by PID, diffed against `before` -- see
-        # `_reap_new_nc_listeners`'s docstring for why a `pkill -f` on the
-        # redirect-operand token can't do this.
-        _reap_new_nc_listeners(chaos_bed.element, before)
+        # Nested so a raising rm probe (post-G5 a dead probe raises) still
+        # reports loudly WITHOUT skipping the listener reap below it.
+        try:
+            run_probe(
+                chaos_bed.element,
+                lambda h: h.exec(f"rm -f {_REMOTE_GET_SRC} || true", timeout=30, log=LogMode.QUIET),
+            )
+        finally:
+            # Belt: an assertion failure above must not strand a remote `nc -l`
+            # listener (the tunneled GET path, not exercised on this direct-SSH
+            # bed per the module docstring's `has_tunnel` caveat, but harmless
+            # to guard defensively). Kill by PID, diffed against `before` -- see
+            # `_reap_new_nc_listeners`'s docstring for why a `pkill -f` on the
+            # redirect-operand token can't do this.
+            _reap_new_nc_listeners(chaos_bed.element, before)

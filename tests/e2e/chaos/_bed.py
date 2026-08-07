@@ -18,7 +18,9 @@ from pathlib import Path
 
 from otto.link.derive import addressing_from_dict, resolve_declared_links
 from otto.logger.mode import LogMode
+from otto.result import Result
 from tests._fixtures._host_pool import lease_unix_host
+from tests._fixtures.bed_hygiene import _PROBE_TIMEOUT, check_probe_result
 from tests._fixtures.labdata import host_data, lab_data_path
 from tests._fixtures.tunnel_bed import assert_reachable, build_bed_host
 from tests.integration.chaos._target import ChaosTarget, make_bed_target
@@ -57,13 +59,35 @@ def run_probe(element: str, coro_factory):
     tier-2 suite's ``probe()`` shape but with a full UnixHost, so oracles can
     use ``exec``/``run`` semantics (sudo, timeouts, QUIET logging) instead of
     raw asyncssh.
+
+    A non-ok :class:`~otto.result.Result` coming back from the factory RAISES
+    (host-named, status-quoted) instead of being returned — an oracle reading
+    ``.value`` off a dead probe would report "clean bed" for the exact
+    failures chaos manufactures (G5). The check can only vet what it sees:
+    factories must return the ``Result`` itself (or use :func:`probe_text`),
+    never unwrap ``.value`` before returning.
     """
 
     async def _go():
         async with probe_host(element) as host:
-            return await coro_factory(host)
+            out = await coro_factory(host)
+        if isinstance(out, Result):
+            check_probe_result(element, out)
+        return out
 
     return asyncio.run(_go())
+
+
+def probe_text(element: str, cmd: str, *, timeout: float = _PROBE_TIMEOUT) -> str:
+    """The one spelling for a checked text read off the bed.
+
+    ``run_probe`` + ``exec`` + the status check + ``.value`` unwrap in one
+    call, so probe-reading helpers cannot drift back to the unchecked
+    ``(result.value or "")`` shape that turned probe failures into clean
+    oracle answers.
+    """
+    out = run_probe(element, lambda h: h.exec(cmd, timeout=timeout, log=LogMode.QUIET))
+    return (out.value or "").strip()
 
 
 def veggies_link_id() -> str:
@@ -87,7 +111,10 @@ def veggies_link_id() -> str:
     for h in data["hosts"]:
         try:
             host_id, addressing = addressing_from_dict(h)
-        except Exception:  # noqa: BLE001, S112 — one unresolvable record must not deny the rest
+        except ValueError:
+            # ValueError (incl. pydantic.ValidationError) is host_identity's
+            # documented "profile/frame not registered here" contract; anything
+            # else is fixture-file corruption and must propagate.
             continue
         hosts[host_id] = addressing
     loaded_ids = set(hosts)
@@ -134,7 +161,5 @@ def assert_eth2_netem_free(what: str) -> None:
     hoist).
     """
     for elem in ("carrot", "tomato"):
-        out = run_probe(
-            elem, lambda h: h.exec("tc qdisc show dev eth2", timeout=30, log=LogMode.QUIET)
-        )
-        assert "netem" not in (out.value or ""), f"{elem}: netem survived {what}: {out.value!r}"
+        qdisc = probe_text(elem, "tc qdisc show dev eth2")
+        assert "netem" not in qdisc, f"{elem}: netem survived {what}: {qdisc!r}"

@@ -18,6 +18,8 @@ import time
 
 import pytest
 
+from tests._fixtures.bed_hygiene import argv_pattern
+
 from ._driver import BANNER, spawn_otto
 from ._target import probe
 
@@ -33,7 +35,7 @@ def _sleep_cmd(tag: str) -> str:
 
 
 def _remote_has(target, cmd: str) -> bool:
-    status, _ = probe(target, f"pgrep -f '[{cmd[0]}]{cmd[1:]}'")
+    status, _ = probe(target, f"pgrep -f '{argv_pattern(cmd)}'")
     return status == 0
 
 

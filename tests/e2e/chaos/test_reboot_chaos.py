@@ -22,10 +22,15 @@ import time
 
 import pytest
 
-from otto.logger.mode import LogMode
 from tests._fixtures.bed_hygiene import diff_snapshots, format_hygiene_report, snapshot_host
 from tests._fixtures.tunnel_bed import cli_sut_dir, observe_tunnel_processes
-from tests.e2e.chaos._bed import assert_eth2_netem_free, run_probe, tunnel_target, veggies_link_id
+from tests.e2e.chaos._bed import (
+    assert_eth2_netem_free,
+    probe_text,
+    run_probe,
+    tunnel_target,
+    veggies_link_id,
+)
 from tests.integration.chaos._driver import spawn_otto
 from tests.integration.chaos._target import make_bed_target
 
@@ -60,8 +65,7 @@ _LINK_IMPAIR_EXPIRE = "180"
 
 
 def _eth2_qdisc(elem: str) -> str:
-    out = run_probe(elem, lambda h: h.exec("tc qdisc show dev eth2", timeout=30, log=LogMode.QUIET))
-    return out.value or ""
+    return probe_text(elem, "tc qdisc show dev eth2")
 
 
 def _assert_eth2_netem(elem: str, *, expected: bool, what: str) -> None:
@@ -91,10 +95,7 @@ def test_happy_path_reboot_wait_recovers(chaos_bed, tmp_path):
     print(msg)  # noqa: T201 -- recorded down/up/recovery data point
     assert rc == 0, p.stderr_text()
     # Independent confirmation the host is genuinely usable post-reboot.
-    out = run_probe(
-        chaos_bed.element, lambda h: h.exec("echo POST-REBOOT", timeout=60, log=LogMode.QUIET)
-    )
-    assert "POST-REBOOT" in (out.value or "")
+    assert "POST-REBOOT" in probe_text(chaos_bed.element, "echo POST-REBOOT", timeout=60)
 
 
 def test_reboot_x_tunnel_survivors_reaped(tmp_path):

@@ -18,9 +18,16 @@ import time
 import pytest
 
 from otto.logger.mode import LogMode
+from tests._fixtures.bed_hygiene import argv_pattern
 from tests._fixtures.labdata import host_data
 from tests._fixtures.tunnel_bed import cli_sut_dir, observe_tunnel_processes
-from tests.e2e.chaos._bed import assert_eth2_netem_free, run_probe, tunnel_target, veggies_link_id
+from tests.e2e.chaos._bed import (
+    assert_eth2_netem_free,
+    probe_text,
+    run_probe,
+    tunnel_target,
+    veggies_link_id,
+)
 from tests.integration.chaos._driver import BANNER, spawn_otto
 from tests.integration.chaos._target import make_bed_target
 
@@ -187,18 +194,15 @@ def _hold_tcp_port(elem: str, ip: str, port: int) -> None:
     needle = f"{ip}:{port}"
     deadline = time.monotonic() + 10.0
     while time.monotonic() < deadline:
-        out = run_probe(
-            elem,
-            lambda h: h.exec("ss -H -t -a -n 2>/dev/null || true", timeout=15, log=LogMode.QUIET),
-        )
-        if needle in (out.value or ""):
+        out = probe_text(elem, "ss -H -t -a -n 2>/dev/null || true", timeout=15)
+        if needle in out:
             return
         time.sleep(0.2)
     raise AssertionError(f"{elem}: port-hold listener never bound to {needle}")
 
 
 def _release_tcp_port(elem: str) -> None:
-    cmd = f"pkill -f {shlex.quote(_HOLD_MARKER)} || true"
+    cmd = f"pkill -f {shlex.quote(argv_pattern(_HOLD_MARKER))} || true"
     run_probe(elem, lambda h: h.exec(cmd, timeout=15, log=LogMode.QUIET))
 
 
@@ -311,13 +315,17 @@ def test_interrupt_during_rollback_still_reaps(tmp_path):
         # running. SIGKILL it if it's still alive before doing anything else.
         if p is not None and p.proc.poll() is None:
             p.signal(9)
-        _release_tcp_port("carrot")
-        rm_xdir = tmp_path / "rollback_rm"
-        rm_xdir.mkdir()
-        spawn_otto(["tunnel", "remove", "--all", "--yes"], xdir=rm_xdir, target=target).wait(
-            timeout=120.0
-        )
-        assert not _leftover_tunnel_processes(), "bed not clean after final reconciliation"
+        # Nested so a raising release probe (post-G5 a dead probe raises)
+        # still reports loudly WITHOUT skipping the tunnel reconciliation.
+        try:
+            _release_tcp_port("carrot")
+        finally:
+            rm_xdir = tmp_path / "rollback_rm"
+            rm_xdir.mkdir()
+            spawn_otto(["tunnel", "remove", "--all", "--yes"], xdir=rm_xdir, target=target).wait(
+                timeout=120.0
+            )
+            assert not _leftover_tunnel_processes(), "bed not clean after final reconciliation"
 
 
 @pytest.mark.no_hygiene_bracket  # multi-host; product's own repair --all + our manual reconcile

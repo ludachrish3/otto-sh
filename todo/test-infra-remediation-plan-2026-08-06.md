@@ -197,14 +197,25 @@ unwritable at the helper.
 **Mechanism (contract, not lint):**
 1. `tests/e2e/chaos/_bed.py::run_probe` raises (host-named, status-quoted) on non-ok
    results instead of returning them; callers keep only the happy-path read.
-2. `tests/e2e/chaos/bed_hygiene.py::snapshot_host` asserts each probe's `is_ok` and
-   raises naming the host + probe on failure.
-3. Falsifiability pin (`tests/e2e/chaos/test_bed_oracle_honesty.py`, hostless-runnable
-   with a stub host): a probe returning `status=Error, value="Command timed out"` must
-   make `run_probe` raise and must make the hygiene bracket FAIL, not report clean.
+   ✅ DONE (Wave 3) — plus `probe_text` (checked exec+unwrap in one call), the single
+   `check_probe_result` spelling shared with `snapshot_host`.
+2. `tests/_fixtures/bed_hygiene.py::snapshot_host` (the plan's
+   `tests/e2e/chaos/bed_hygiene.py` path was a drift) asserts each probe's `is_ok` and
+   raises naming the host + probe on failure. ✅ DONE (Wave 3).
+3. Falsifiability pin — landed as `tests/unit/test_bed_oracle_honesty.py`, NOT the
+   planned `tests/e2e/chaos/` location: the chaos lane is opt-in-only, so a pin there
+   would itself be a guard that never runs; under tests/unit it runs in every default
+   gate. Stub-host probes through the REAL `probe_host` seam; each raising pin has an
+   embedded positive control. ✅ DONE (Wave 3).
    (This is the "prove the guard red" requirement made permanent.)
-**Red today:** `_bed.py:140` oracle + hygiene bracket (review §3.1) — pin 3 fails
-against the current code. **Landing:** Wave 3.
+**Red today: 0 — Wave 3 landed the contract.** t0 evidence: 4 defect demos passed
+against pre-fix code (run_probe handed back Error results; snapshot_host parsed the
+error text into empty/phantom fields; the hygiene bracket read dead probes on BOTH
+sides as a clean bed; `veggies_link_id` swallowed arbitrary corruption), and the pin
+file was collection-red. 9 targeted mutations each killed — including reintroducing
+the wave's own motivating defect at a consumer, which the first cut of the
+consumer-drift scan MISSED (named-factory shape) and which its mutation run then
+fixed. **Landing:** Wave 3.
 
 ### G6. No hand-rolled deadline polls — `wait_for` is the only spelling
 
@@ -537,17 +548,60 @@ timeout; memory rule: confirm root cause before fixing).
       file trips the scan; clean after revert.)*
 
 ### Wave 3 — Probe-status honesty (item 3; G5)
-**Files:** `tests/e2e/chaos/_bed.py:140` (+ `:90-91` narrow the except-continue),
-`tests/e2e/chaos/bed_hygiene.py:57-59`, consumers
-(`test_tunnel_link_chaos.py:351`, `test_reboot_chaos.py:62-73,:223,:230`,
-`test_connection_drop.py:258-262`, `test_reboot_chaos.py:151-153`), new
-`tests/e2e/chaos/test_bed_oracle_honesty.py`.
-- [ ] Write the falsifiability pin (stub host, Error-status probe) — must FAIL against
-      current `run_probe`/`snapshot_host` (record for the commit message).
-- [ ] Make `run_probe` raise host-named on non-ok; `snapshot_host` asserts per-probe
+**Files (as actually touched; the plan's `tests/e2e/chaos/bed_hygiene.py` path was a
+drift):** `tests/_fixtures/bed_hygiene.py` (contract + `argv_pattern` + nc-listener
+probe), `tests/e2e/chaos/_bed.py`, all seven tier-3 consumer modules
+(`test_harness.py`, `test_session_chaos.py`, `test_transfer_chaos.py`,
+`test_tunnel_link_chaos.py`, `test_connection_drop.py`, `test_reboot_chaos.py`, and
+`conftest.py`'s bracket transitively), `tests/integration/chaos/test_signal_run.py`
+(hand-rolled bracket-trick deduped), new `tests/unit/test_bed_oracle_honesty.py`,
+`docs/architecture/quality-gates.md`.
+- [x] Write the falsifiability pin (stub host, Error-status probe) — must FAIL against
+      current `run_probe`/`snapshot_host` (record for the commit message). *Done: 17
+      pins in `tests/unit/test_bed_oracle_honesty.py` (unit-lane, so they run in every
+      default gate); collection-red at t0 + 4 defect demos green against pre-fix code.*
+- [x] Make `run_probe` raise host-named on non-ok; `snapshot_host` asserts per-probe
       `is_ok`; update consumers (they get *simpler* — happy-path reads only); pin green.
-- [ ] Hand-probe the chaos bed once (gate blind spot rule: the chaos lane is never in
+      *Done: one `check_probe_result` spelling backs both; `probe_text` replaces every
+      value-unwrapping factory (session pids, transfer nc-listeners, qdisc reads,
+      harness round-trip); `veggies_link_id`'s except narrowed to ValueError. 9
+      mutations killed (incl. both consumer-drift scans against the exact
+      reintroductions the opus review used to demonstrate blindness — the factory
+      scan's first cut MISSED the named-factory shape and was fixed by its own
+      mutation run).*
+- [x] Opus-review riders, all landed in this squash: consumer-drift AST scans over
+      both chaos lanes (factory-`.value` ban incl. named local factories; pattern
+      kills must be built by `argv_pattern`) with embedded positive controls;
+      `argv_pattern` found live when the contract made session's cleanup
+      `pkill -f 'sleep 313'` raise — the pattern matched its own wrapper shell's argv
+      and self-killed, silently reported as Failed all along; the scan then caught
+      transfer's verbatim `_NC_LISTENER_PROBE` mirror (now imported from the one
+      authority, which also dropped the `grep -v "$$"` filter that could hide a real
+      listener whose line contained the wrapper's pid); sequential `finally` cleanups
+      nested so a raising probe reports without skipping siblings (tunnel_link
+      rollback, transfer ×2). Audited-not-changed: `test_privilege_chaos` (all
+      `.value` reads — 10 distinct sites — compared against literals/nonces, so a
+      dead probe fails loudly) and
+      `test_docker_chaos` (35 reads status-asserted inline; its autouse bracket DOES
+      ride the changed `snapshot_host`). Siblings OUTSIDE the chaos lanes for Wave
+      14's sweep — pattern kills still hand-rolled:
+      `tests/e2e/tunnel_stability/_harness.py:167` (result discarded under
+      `suppress(Exception)` — silently self-killing today), `test_tunnel_e2e.py:540`,
+      `test_link_impair_e2e.py:664,:711`; and verbatim mirrors of the OLD
+      `_NC_LISTENER_PROBE` spelling (with the real-listener-hiding `grep -v "$$"`
+      filter this wave removed from the authority) at
+      `tests/integration/host/test_session_stability_integration.py:275,:421,:453,:470`.
+- [x] Hand-probe the chaos bed once (gate blind spot rule: the chaos lane is never in
       default gates — run `nox -s chaos` legs touched, with Chris's bed coordination).
+      *Done for the non-reboot legs (harness, session, transfer, tunnel_link,
+      connection_drop), re-run after the opus riders. The reboot module's two
+      probe_text conversions ride the same helpers those legs certify; its
+      soft-reboot scenarios were NOT hand-run this wave (powering lab VMs stays a
+      Chris-coordinated act) — at the next coordinated bed session run `make chaos`
+      and watch two NEW red paths that are correct G5 outcomes: a post-reboot tomato
+      with eth2 not yet up now RAISES from `_eth2_qdisc` (pre-wave it read "netem
+      absent" off "Cannot find device eth2" and PASSED the expected=False assert),
+      and `test_docker_chaos`'s bracket now raises on a dead docker-parent probe.*
 
 ### Wave 4 — Ambient hermeticity (item 4; G11)
 **Files:** `tests/integration/conftest.py:32`, `tests/_fixtures/paths.py:33-35`,
