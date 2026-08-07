@@ -5,9 +5,22 @@ These tests require:
 - gcc and lcov installed on the dev VM
 """
 
+import asyncio
+import contextlib
+import json
+import os
+import socket
 from pathlib import Path
+from typing import Any
 
-from tests._fixtures.paths import ensure_sut_dirs
+import pytest
+import pytest_asyncio
+
+from otto.config.env import SUT_DIRS_ENV_VAR
+from otto.host.login_proxy import Cred
+from otto.host.unix_host import UnixHost
+from tests._fixtures.labdata import lab_data_path
+from tests._fixtures.paths import default_sut_dir
 
 _INTEGRATION_ROOT = Path(__file__).parent
 
@@ -27,22 +40,35 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker("integration")
 
 
-# Must be set before any otto imports -- config reads OTTO_SUT_DIRS at
-# import time to compute the module-level _repos singleton.
-ensure_sut_dirs()
+def _default_sut_dirs_env_impl():
+    """``OTTO_SUT_DIRS`` -> the ``repo1`` fixture SUT for this tree, at RUNTIME.
 
-import asyncio
-import contextlib
-import json
-import socket
-from typing import Any
+    History: this was a module-scope ``ensure_sut_dirs()`` call justified by
+    a "config reads OTTO_SUT_DIRS at import time" comment that stopped being
+    true — every reader (``bootstrap()``/``OttoEnvSettings``, spawned otto
+    subprocesses) reads the env lazily at call time, which a session-start
+    write fully precedes. Import-time env writes are banned (G11): they run
+    behind the root conftest's hermeticity strip's back, invisible to
+    monkeypatch and to any pin that never imports this tree's conftest —
+    which is how this one went uncertified for a year. ``setdefault`` +
+    restore keeps a pre-set value (another harness layer) authoritative.
 
-import pytest
-import pytest_asyncio
+    Plain generator (the ``_hygiene_bracket_impl`` pattern) so the unit-lane
+    pin can drive set-and-restore directly.
+    """
+    prior = os.environ.get(SUT_DIRS_ENV_VAR)
+    os.environ.setdefault(SUT_DIRS_ENV_VAR, default_sut_dir())
+    yield
+    if prior is None:
+        os.environ.pop(SUT_DIRS_ENV_VAR, None)
+    else:
+        os.environ[SUT_DIRS_ENV_VAR] = prior
 
-from otto.host.login_proxy import Cred
-from otto.host.unix_host import UnixHost
-from tests._fixtures.labdata import lab_data_path
+
+@pytest.fixture(scope="session", autouse=True)
+def _default_sut_dirs_env():
+    yield from _default_sut_dirs_env_impl()
+
 
 _LAB_DATA = lab_data_path()
 

@@ -101,6 +101,99 @@ def test_ambient_otto_env_cannot_leak_into_a_pytest_run():
     assert "1 passed" in result.stdout, f"probe did not run:\n{result.stdout}"
 
 
+# WHOLE TREE ROOTS, not one file each: a conftest CHAIN is per-file (a
+# single file's target imports only its own ancestors), while a TREE is a
+# set of chains — the review's spy plugin showed a one-file target loading
+# 3 of the suite's 14 conftests, leaving 11 deep conftests (unit/cli,
+# e2e/chaos, integration/host, ...) outside every leg. Collecting the tree
+# root imports every module and therefore every conftest in the tree
+# (measured: unit 2.5s, integration 0.5s, e2e 0.8s — cheap enough).
+# tests/integration's chain re-injected OTTO_SUT_DIRS for a year while the
+# (unit-only) pin above certified "hermetic".
+_TREE_COLLECT_TARGETS = {
+    "unit": "tests/unit",
+    "integration": "tests/integration",
+    "e2e": "tests/e2e",
+}
+
+
+@pytest.mark.parametrize("tree", sorted(_TREE_COLLECT_TARGETS))
+def test_conftest_chain_writes_no_ambient_env_at_collection(tree):
+    """Import-time env writes are visible at collection; runtime writes are not.
+
+    ``--collect-only`` imports every conftest in the tree but runs no
+    session fixture — so integration's sanctioned runtime ``OTTO_SUT_DIRS``
+    fixture stays invisible, while the banned import-time spelling (the
+    pre-Wave-4 ``ensure_sut_dirs()`` module call) trips the probe. The
+    polluted vars in the env prove the root strip still runs first on every
+    chain.
+    """
+    target = PROJECT_ROOT / _TREE_COLLECT_TARGETS[tree]
+    assert target.exists(), f"collect target for {tree!r} moved — update _TREE_COLLECT_TARGETS"
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "--collect-only",
+            "-q",
+            "--no-cov",
+            "-p",
+            "no:cacheprovider",
+            "-p",
+            "tests._collect_env_probe",
+            "-n0",
+            str(target),
+        ],
+        env={
+            **os.environ,
+            "OTTO_SUT_DIRS": "/polluted/tests/repo1",
+            "OTTO_XDIR": "/polluted/xdir",
+        },
+        cwd=str(PROJECT_ROOT),
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    assert "collect-env-probe: checked" in result.stdout, (
+        f"the collection probe never ran — vacuous pass:\n{result.stdout}\n{result.stderr}"
+    )
+    assert result.returncode != 7, (  # 7 = the probe's leak code, clear of pytest's own
+        f"{tree} conftest chain leaked ambient otto env at collection:\n"
+        f"{result.stdout}\n{result.stderr}"
+    )
+    assert result.returncode == 0, (
+        f"inner collect-only run broke (rc={result.returncode} — not a leak; "
+        f"collection/internal/usage/no-tests):\n{result.stdout}\n{result.stderr}"
+    )
+
+
+def test_integration_sut_dirs_fixture_sets_scoped_and_restores(monkeypatch):
+    """The sanctioned runtime replacement for the banned import-time write:
+    set at session start, gone (or restored) at session end — the property
+    that makes a fixture write hermetic where a module-scope write is not.
+    Drives the impl generator directly (the ``_impl`` pattern)."""
+    from tests.integration.conftest import _default_sut_dirs_env_impl
+
+    monkeypatch.delenv("OTTO_SUT_DIRS", raising=False)
+    gen = _default_sut_dirs_env_impl()
+    next(gen)
+    assert os.environ.get("OTTO_SUT_DIRS", "").endswith("repo1"), "default not applied"
+    with pytest.raises(StopIteration):
+        next(gen)
+    assert "OTTO_SUT_DIRS" not in os.environ, "teardown must remove what setup added"
+
+    # A pre-set value (another harness layer) stays authoritative and survives.
+    monkeypatch.setenv("OTTO_SUT_DIRS", "/pre-set/by/harness")
+    gen = _default_sut_dirs_env_impl()
+    next(gen)
+    assert os.environ["OTTO_SUT_DIRS"] == "/pre-set/by/harness"
+    with pytest.raises(StopIteration):
+        next(gen)
+    assert os.environ["OTTO_SUT_DIRS"] == "/pre-set/by/harness"
+
+
 def test_reading_an_undeclared_opt_in_raises():
     """``ambient()`` must refuse a name the strip does not spare.
 

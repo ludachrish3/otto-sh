@@ -1,14 +1,16 @@
-"""Centralized test sys.path / env setup that was copy-pasted across conftests.
+"""Centralized test sys.path setup that was copy-pasted across conftests.
 
 ``ensure_custom_hosts_on_path`` makes the repo's shared ``custom_hosts`` package
 importable (the third-party-style frame package SUT repos depend on).
-``ensure_sut_dirs`` points OTTO_SUT_DIRS at the ``repo1`` fixture SUT -- both must
-run before any ``otto`` import, so call them at conftest import time.
+``default_sut_dir`` names the ``repo1`` fixture SUT; the integration tree's
+session fixture points ``OTTO_SUT_DIRS`` at it — at RUNTIME, never at conftest
+import time (G11: module-scope env writes are banned; the old
+``ensure_sut_dirs()`` here was the live offender, re-injecting the variable
+after the root conftest's hermeticity strip).
 """
 
 from __future__ import annotations
 
-import os
 import sys
 from pathlib import Path
 
@@ -28,8 +30,3 @@ def ensure_custom_hosts_on_path() -> None:
 def default_sut_dir() -> str:
     """Path to the ``repo1`` fixture SUT used by the cov/integration suites."""
     return str(_REPO1)
-
-
-def ensure_sut_dirs() -> None:
-    """Default ``OTTO_SUT_DIRS`` to ``repo1`` if unset (must precede otto import)."""
-    os.environ.setdefault("OTTO_SUT_DIRS", default_sut_dir())

@@ -324,20 +324,50 @@ and to a pin that only collects `tests/unit` — the pin must exercise each top-
 tree, and module-scope env writes in test infrastructure are banned outside the root
 conftest's sanctioned block.
 **Mechanism (two parts):**
-1. Widen `test_probe_ambient_otto_env_is_stripped`: parametrize the inner subprocess
-   over one collect-only target per tree — `tests/unit/<file>`,
-   `tests/integration/<file>`, `tests/e2e/<file>` — so any conftest-chain injection
-   (like `ensure_sut_dirs()`) is visible to the probe. *Proven red first*: before the
-   Wave-4 fix, the integration-target parametrization must FAIL on `OTTO_SUT_DIRS`.
-2. New meta-guard `tests/unit/test_conftest_env_writes.py`: AST-walk every
-   `tests/**/conftest.py` + `tests/_fixtures/*.py`; any module-level (non-function)
-   `os.environ[...]`/`setdefault`/`putenv` outside the root conftest's registered block
-   fails, naming the file. AST, not regex — a quoted `os.environ` in a docstring must
-   not count (the quoted-annotation lesson). Embedded positive control included.
-**Red today:** `tests/integration/conftest.py:32` (and the `NO_COLOR`/`TERM` block at
-root — which is *sanctioned* and allowlisted with a comment, or moved to
-`pytest_configure` in the same wave; decide in-wave, default = move it).
-**Landing:** Wave 4.
+1. Per-tree collection pin (`test_conftest_chain_writes_no_ambient_env_at_collection`,
+   a NEW parametrized pin rather than a widening of the runtime probe): the WHOLE
+   TREE ROOT per tree (a conftest *chain* is per-file — the opus review's spy plugin
+   showed a one-file target importing 3 of the suite's 14 conftests, and verified an
+   escape through a deep conftest; tree-root `--collect-only` imports every module
+   and thus every conftest, measured ~3.8s for all three legs), inner run from a
+   polluted shell with the `tests._collect_env_probe` plugin asserting at
+   `collection_finish` — the moment when every conftest import has happened but no
+   session fixture has run, which is exactly the import-time/runtime boundary the
+   gate draws. Marker line in stdout = anti-vacuity control; leak (rc 7 — clear of
+   pytest's own exit codes; it was 3 at t0, which collides with INTERNAL_ERROR)
+   distinguished from a broken inner run (any other rc). ✅ DONE (Wave 4); proven red
+   first: the integration leg failed with `['OTTO_SUT_DIRS']`, rc=3, pre-fix.
+2. Meta-guard `tests/unit/test_conftest_env_writes.py`: AST scan of every non-fixture
+   `tests/**/conftest.py` + `tests/_fixtures/*.py`; module-scope (incl. class-body,
+   `if`/`for`-nested) env writes flagged, import aliases resolved, and module-scope
+   CALLS resolved one hop into scanned-set helpers (the live offender was exactly
+   `ensure_sut_dirs()` — a call whose write lives in another file). Embedded positive
+   controls for every banned and sanctioned shape. ✅ DONE (Wave 4); t0 red:
+   `['tests/integration/conftest.py:32']` exactly.
+**Fix landed:** the integration conftest's import-time `ensure_sut_dirs()` (whose
+"config reads OTTO_SUT_DIRS at import time" justification had gone stale — all
+readers are lazy) became a session-scoped autouse fixture (`_impl` pattern,
+set-with-restore, pinned directly); `ensure_sut_dirs` deleted from
+`tests/_fixtures/paths.py`. **In-wave decision:** the root `NO_COLOR`/`TERM` block
+STAYS in the root conftest (allowlisted as the one sanctioned block) rather than
+moving to `pytest_configure` — the block must precede the root conftest's own otto
+imports (module-level rich/click Consoles bake colour at import), which
+`pytest_configure` runs after.
+**Red today: 0 — Wave 4 landed the contract.** 8 mutation/escape runs, all killed —
+three only after forcing detector or pin fixes: an ALIASED reintroduction
+(`import os as _os`) walked through the first-cut detector (caught by the collection
+pin, then aliases became resolved, not stated); deleting the walker's descent
+survived because a redundant inner `ast.walk` hid it (restructured to
+single-descent, which also removed a nested-def false positive); and the opus
+review's ALIAS-BY-ASSIGNMENT write (`_env = os.environ`) in a DEEP conftest walked
+through BOTH first-cut gates (one-file pin targets never imported 11 of 14
+conftests; the detector didn't track assignment aliases) — both fixed, the exact
+escape now killed by both gates. Detector also gained `environb`/`__setitem__`/
+annotated-assign/bare-`putenv` shapes with controls, and states its two
+over-approximations. Coverage note: `make coverage` total dropped 95.89% → 95.69%
+across Waves 3-4 — partly THIS wave de-faking coverage (unit tests no longer see
+ambient `repo1` for part of the session, so incidental `otto/config` discovery
+branches stopped executing); expected, not to be chased. **Landing:** Wave 4.
 
 ### G12. Skip policy: lanes that must never skip, pinned
 
@@ -605,8 +635,9 @@ probe), `tests/e2e/chaos/_bed.py`, all seven tier-3 consumer modules
 
 ### Wave 4 — Ambient hermeticity (item 4; G11)
 **Files:** `tests/integration/conftest.py:32`, `tests/_fixtures/paths.py:33-35`,
-`tests/conftest.py:112-134` (colour block + `AMBIENT_OPT_INS`),
-`tests/unit/test_env_hermeticity.py`, new `tests/unit/test_conftest_env_writes.py`.
+`tests/conftest.py:112-138` (colour block at 112-115 + the `OTTO_*` strip at
+137-138 — together the sanctioned block), `tests/unit/test_env_hermeticity.py`, new
+`tests/unit/test_conftest_env_writes.py` + `tests/_collect_env_probe.py`.
 **Decision (default):** move `ensure_sut_dirs()` into a session-scoped autouse fixture
 in the integration conftest that sets the var via `os.environ` + registers teardown —
 *and* imports config lazily so the import-time singleton constraint is satisfied by
@@ -614,11 +645,25 @@ fixture ordering, not import order. If the `_repos` singleton makes that infeasi
 fall back to: keep the import-time write but declare it in `AMBIENT_OPT_INS` with a
 comment, so the pin sees it and the two-lane config divergence becomes explicit.
 Either way the *pin* is the deliverable; the write becomes declared or scoped.
-- [ ] Widen the hermeticity pin (3-tree parametrization); confirm the integration leg
-      FAILS pre-fix (proven red; record for the commit message).
-- [ ] Apply the chosen fix; pin green in all three trees.
-- [ ] Land `test_conftest_env_writes.py` (AST scan + positive control); move or
-      allowlist-with-comment the root colour/TERM block.
+- [x] Widen the hermeticity pin (3-tree parametrization); confirm the integration leg
+      FAILS pre-fix (proven red; record for the commit message). *Done as a NEW
+      collection-time pin (`--collect-only` + `tests/_collect_env_probe.py` plugin at
+      `collection_finish`) — the runtime probe can't draw the import-time/runtime
+      boundary, a collect-only run can. t0: integration leg red with
+      `['OTTO_SUT_DIRS']`, rc=3; unit/e2e legs green.*
+- [x] Apply the chosen fix; pin green in all three trees. *Default option taken: the
+      "import-time singleton" justification was STALE (all readers lazy), so a plain
+      session-scoped autouse fixture suffices — `_impl` pattern, set-with-restore,
+      teardown pinned directly (`test_integration_sut_dirs_fixture_sets_scoped_and_
+      restores`); `ensure_sut_dirs` deleted from paths.py.*
+- [x] Land `test_conftest_env_writes.py` (AST scan + positive control); move or
+      allowlist-with-comment the root colour/TERM block. *Guard t0-red at exactly
+      `['tests/integration/conftest.py:32']` via one-hop call resolution; aliases
+      resolved after a mutation escaped through them; single-descent walker after a
+      redundant ast.walk hid a dead branch AND false-flagged nested defs. Colour/TERM
+      block: ALLOWLISTED in place (root conftest = the one sanctioned block) — it
+      must precede the root conftest's own otto imports, which pytest_configure runs
+      after; move rejected.*
 
 ### Wave 5a — Cheap weak-test fixes (item 5 first half; G3)
 **Files:** the 7 precondition sites (`test_lab_health.py:37`, `test_lab_data_hops.py:36`
