@@ -37,7 +37,8 @@ line held only by prose has decayed"* — is the design brief.
 - **Fix-with-gate in one squash** (Chris, 2026-08-06, final ruling): each squash commit
   carries a gate *together with* its site fixes — the gate enters at `severity: error`
   and green because its red inventory is cleared in the same commit. Multi-sub-wave
-  burn-downs (G6, G10) enter at `severity: warning` with their first sub-wave and are
+  burn-downs (G10; originally also G6, whose a/b/c collapsed into one squash at
+  execution time) enter at `severity: warning` with their first sub-wave and are
   promoted to `error` by the sub-wave that clears the last site; no warning-severity
   rule survives the end of the program. G1 is the one error-with-ignore exception (a
   single commented ignore entry deleted by Wave 2).
@@ -254,29 +255,38 @@ fixed. **Landing:** Wave 3.
 ### G6. No hand-rolled deadline polls — `wait_for` is the only spelling
 
 **Policy:** poll-until-deadline has exactly one implementation
-(`otto.utils.wait_for` / `wait_for_async`); 26 hand-rolled copies in three incompatible
+(`otto.utils.wait_for` / `wait_for_async`); the hand-rolled copies in three incompatible
 shapes is how the sleep-first and silent-expiry variants were born.
-**Mechanism:** `.ast-grep/rules/no-handrolled-deadline-poll.yml`:
+**Mechanism:** `.ast-grep/rules/no-handrolled-deadline-poll.yml`, landed at
+`severity: error` (the a/b/c warning phasing collapsed into one fix-with-gate squash).
+*Neither of the plan's proposed arms survived contact:* the bare-assignment arm
+(`deadline = time.monotonic() + …`) over-matches host.py's two legitimate shared-budget
+splitters (deadline arithmetic with no poll loop), and the bare while-arm does not even
+parse (an incomplete statement — the same failure G8's proposed pattern had). The landed
+rule has twenty arms in three families — whole-condition `while clock < deadline`
+(both `time.monotonic()` and the `$C.time()` receiver shape, which covers `time.time()`,
+`loop.time()` and `asyncio.get_running_loop().time()`, in BOTH operand orders — `a < b`
+and `b > a` are different ASTs, and the reversed order is the first respelling an
+annoyed author reaches for), the same loop in elapsed-vs-budget spelling (zero in-tree
+uses; regression pins), and the do-while `if clock >= deadline` exit guard (the
+motivating unix_host shape, both orders). The elapsed-**if** form is deliberately not
+an arm: it is how cache-TTL freshness checks and work-loop budgets are legitimately
+spelled. The note frames the arms as a tripwire for natural spellings, not an
+exhaustive enumeration, and lists the known unmatched spellings with their verified
+in-tree status (compound conditions, bare-name clock imports, perf_counter,
+reversed-elapsed, count-based retries).
 
-```yaml
-id: no-handrolled-deadline-poll
-language: python
-severity: warning   # promoted to error by Wave 7c after migration
-message: hand-rolled deadline poll — use otto.utils.wait_for / wait_for_async (probe_first, on_timeout are parameters, not re-implementations).
-note: >
-  Baseline 26 sites as of 2026-08-06 across src/otto and tests (review §7.3).
-  Promote to error when the count is 0; the helper module itself is the only
-  sanctioned ignore.
-files: [src/otto/**, tests/**]
-ignores: [src/otto/utils.py, tests/repo1/**, tests/repo2/**, tests/repo3/**, tests/repo_broken/**, tests/repo_e2e/**, tests/firmware/**]
-rule:
-  any:
-  - pattern: deadline = time.monotonic() + $$$REST
-  - pattern: while time.monotonic() < $DEADLINE
-```
-
-**Red today:** 26. **Landing:** Wave 7a lands helper + rule (warning); 7b/7c migrate and
-promote.
+**Red today (rule-measured, landed arms):** 21 — not the review's 26. The corrected
+migratable inventory is 21 sites (5 product + 16 test); the review's five others are not
+predicate polls (host.py's two budget splitters, `_pty_driver.py`'s two
+select-with-remaining expect loops, `test_lifecycle_sync_phase.py`'s blocking-readline
+loop — the last inline-suppressed with the reason), and the rule's 21 hits are a
+different composition: 20 arm-visible migrated sites + the suppressed readline loop,
+while the 21st migrated site (`test_replay_soak`'s variable-bound quiescence poll) is
+arm-invisible and was found by classifying every clock call in tests.
+`src/otto/host/shell_liveness.py` is a sanctioned ignore alongside `utils.py`: its
+`confirm_live` is the product's own fused probe-response primitive, paced by the
+reply-wait timeout rather than an interval sleep. **Landing:** Wave 7, one squash.
 
 ### G7. No raw `while not X.started` readiness polls
 
@@ -767,25 +777,56 @@ baseline), two new rule files.
       ruff-wrapped multi-line chains, which is why every count below a rule-measured
       one was an undercount.*
 
-### Wave 7 — `wait_for` primitive (item 7; G6) — a/b/c
-**Files:** `src/otto/utils.py` (+ unit tests `tests/unit/test_utils_wait_for.py`), then
-the 7 product sites, then the ~19 test sites; rule file in 7a.
-**Interface (locked here):**
+### Wave 7 — `wait_for` primitive (item 7; G6) — landed as ONE squash
+**Files:** `src/otto/utils.py` (+ `tests/unit/test_utils_wait_for.py`, 23
+tests — 22 fake-clock + 1 real-loop smoke), the 5 product sites, the 16 test sites, the rule file.
+**Interface (locked; one recorded extension):**
 ```python
-def wait_for(predicate: Callable[[], bool], timeout: float, *, interval: float = 0.1,
+def wait_for(predicate: Callable[[], bool], timeout: float, *,
+             interval: float | Callable[[int], float] = 0.1,
              probe_first: bool = True, on_timeout: str | Callable[[], str]) -> None
 async def wait_for_async(...)  # same shape; awaits predicate if it returns Awaitable
 ```
-Raises `TimeoutError` with the rendered `on_timeout` message (mandatory — silent expiry
-is the defect class; there is no return-False mode). `probe_first=False` covers the
-do-while need documented at `unix_host.py:811` — port that comment into the helper's
-docstring.
-- [ ] 7a: helper + tests (incl. a fake-clock test for probe-first vs sleep-first
-      semantics) + G6 lands at warning (prove: 26 hits on the pre-helper tree).
-- [ ] 7b: product sites (host.py ×4, unix_host.py, nc.py ×2) — behavior-preserving;
-      the `unix_host.py:811` do-while comment moves to the call site's `probe_first`
-      argument.
-- [ ] 7c: test sites; promote G6 to error; delete the warning note.
+Raises `WaitTimeoutError` (a `TimeoutError` subclass — the helper's expiry stays
+distinguishable from a timeout raised by the predicate, so a wrapping
+`except WaitTimeoutError` can never swallow a probe's own timeout) with the rendered
+`on_timeout` message (mandatory — silent expiry is the defect class; there is no
+return-False mode). NaN timeouts and negative-or-NaN intervals are rejected loudly
+(NaN defeats both the expiry comparison and the sleep cap; zero stays legal — sleep(0)
+is the tight-poll yield mock-backed callers already use). *Extension over the locked shape:*
+`interval` also accepts a `sleep_index -> seconds` callable — nc.py's listener wait has
+a deliberate, constant-named fast-poll ramp (`_NC_LISTENER_FAST_POLL_ITERS`), and the
+alternatives were deleting a measured optimization or leaving the poll hand-rolled;
+preserve the computation, not the observed value. The final sleep is capped to the
+remaining budget with one last probe at the deadline edge (total wall time never
+overshoots `timeout`), and `probe_first=True` probes once even on an exhausted budget —
+the `unix_host.py:811` do-while comment, now the helper's documented contract.
+- [x] Helper + fake-clock tests (probe-first vs sleep-first schedules, capped final
+      sleep + edge probe, exhausted-budget edges, lazy `on_timeout`, ramp callable,
+      predicate-exception propagation; async twin incl. plain-bool predicates).
+- [x] Product sites — the review's "host.py ×4" was 2 (the other two are budget
+      splitters, not polls): `wait_until_up`/`wait_until_down` keep their bool API via
+      `try/except WaitTimeoutError`; `_confirm_recovered` converts its deadline-instant to
+      a remaining budget with `probe_first=True`; `_connect_with_retry` keeps its
+      per-attempt `min(1.0, max(0.1, remaining))` bound inside the predicate and
+      re-raises `ConnectionError from last_err`; `_wait_for_remote_listener` keeps its
+      ramp via the interval callable and its `ConnectionError` type.
+- [x] Test sites (16): trivial predicates, nonlocal value captures, predicate-raise for
+      child-death early failure (`_driver`, tunnel-link-chaos mirror, `_sshd`),
+      `probe_first=False` for the two deliberate sleep-first expiry waits
+      (link-impair), the one silent-expiry-by-design site wrapped in
+      `contextlib.suppress(WaitTimeoutError)` (monitor e2e — later assertions decide), and the
+      stateful quiescence closure (replay-soak). Accepted deltas recorded in the squash
+      message: AssertionError→WaitTimeoutError expiry types (audited: the one catcher
+      of the old type, a best-effort suppress around the chaos driver's stderr wait,
+      was widened to suppress both — early-death still raises AssertionError there);
+      the link-impair post-wait asserts removed (success implies them; messages moved
+      into on_timeout); the tighter final-sleep capping; and wait_until_up/down now
+      probing once even on an exhausted budget (the probe_first rationale, commented
+      at both call sites — reboot()'s worst case grows by one probe bound at the
+      budget edge instead of failing an up host unprobed).
+- [x] G6 at error in this squash; t0 = 21 rule-measured (see the gate section for the
+      composition and the review-26 correction).
 
 ### Wave 8 — Readiness as an event (item 8; G7)
 **Files:** `src/otto/monitor/server.py` (expose `await server.started_event.wait()` or

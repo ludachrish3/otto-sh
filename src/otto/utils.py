@@ -1,6 +1,10 @@
-"""Shared utilities: status enums, CLI overlay sentinels, and path helpers."""
+"""Shared utilities: status enums, CLI overlay sentinels, path helpers, and waiting."""
 
-from collections.abc import Callable
+import asyncio
+import inspect
+import math
+import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -12,6 +16,8 @@ from typing import (
     get_args,
     get_origin,
 )
+
+from .errors import OttoError
 
 
 def anchor_path(value: Path, root: Path) -> Path:
@@ -80,6 +86,146 @@ def complete_separated_list(candidates: list[str], incomplete: str, sep: str = "
     already = set(head.split(sep)) if found else set()
     prefix = head + found  # "" when the separator has not been typed yet
     return [prefix + c for c in candidates if c.startswith(frag) and c not in already]
+
+
+class WaitTimeoutError(OttoError, TimeoutError):
+    """Raised by :func:`wait_for` / :func:`wait_for_async` when the budget expires.
+
+    A dedicated subclass so callers can tell the helper's own expiry apart
+    from a ``TimeoutError`` raised *by the predicate* (which propagates
+    unchanged) — a bare ``except TimeoutError`` around a wait would conflate
+    the two. OttoError-rooted per the repo-wide raises convention
+    (``tests/unit/test_error_base.py``), keeping ``TimeoutError`` as its
+    stdlib root so both spellings catch it.
+    """
+
+
+def _render_on_timeout(on_timeout: str | Callable[[], str]) -> str:
+    return on_timeout if isinstance(on_timeout, str) else on_timeout()
+
+
+def _check_timeout(timeout: float) -> None:
+    # NaN poisons both the expiry comparison and the sleep cap into silently
+    # never firing — the same reason host.py's _validate_timeout rejects it.
+    if math.isnan(timeout):
+        raise ValueError("wait_for timeout must not be NaN")
+
+
+def _interval_at(interval: float | Callable[[int], float], sleep_index: int) -> float:
+    value = interval if isinstance(interval, int | float) else interval(sleep_index)
+    # Rejects negatives and NaN in one comparison (asyncio.sleep would
+    # silently treat a negative as 0 where time.sleep raises). Zero stays
+    # legal: sleep(0) is a yield, the deliberate spelling of a tight poll
+    # against an in-process condition (mock-backed tests rely on it).
+    if not value >= 0:
+        raise ValueError(
+            f"wait_for interval must be non-negative, got {value!r} (sleep {sleep_index})"
+        )
+    return value
+
+
+def wait_for(
+    predicate: Callable[[], bool],
+    timeout: float,
+    *,
+    interval: float | Callable[[int], float] = 0.1,
+    probe_first: bool = True,
+    on_timeout: str | Callable[[], str],
+) -> None:
+    """Poll *predicate* until it returns true, or raise :class:`WaitTimeoutError` at *timeout*.
+
+    The one sanctioned spelling of poll-until-deadline (gate G6): expiry always
+    raises :class:`WaitTimeoutError` (a ``TimeoutError`` subclass, so it stays
+    distinguishable from a timeout raised by the predicate itself) with the
+    rendered *on_timeout* message — there is no
+    return-``False`` mode, because silent expiry is the defect class this
+    replaces. Callers that genuinely want a boolean wrap the call in
+    ``try/except WaitTimeoutError``.
+
+    ``probe_first=True`` probes once *before* consulting the clock, so an
+    already-exhausted budget still gets exactly one probe: a caller whose
+    earlier phase consumed the whole budget landing right at the edge must not
+    fail unprobed — one clean success is a success no matter what the clock
+    says. ``probe_first=False`` sleeps one *interval* first, for conditions
+    that cannot possibly hold at t=0 (e.g. waiting out a scheduled expiry).
+
+    *interval* may be a callable mapping the 0-based index of the upcoming
+    sleep to its duration, for ramped polls (probe fast while the condition
+    usually turns true, back off after). The final sleep is capped to the
+    remaining budget, with one last probe at the deadline edge — the total
+    wall time never overshoots *timeout* by a full interval.
+
+    *on_timeout* may be a callable rendering the message lazily, so the
+    failure text can name the last-observed state; it is only invoked on
+    expiry. Exceptions raised by *predicate* propagate unchanged — a probe
+    that can detect "this can never succeed" (a dead child process, say)
+    should raise, not return ``False``. A predicate that must hand a value
+    back (the matched text, an opened connection) sets it via a
+    closure-captured variable before returning ``True``.
+    """
+
+    def probe() -> bool:
+        result = predicate()
+        if inspect.isawaitable(result):
+            # A coroutine object is truthy, so an async predicate handed to
+            # the sync twin would report instant success — the silent-success
+            # defect class this helper exists to kill. Close it (silencing
+            # the never-awaited warning) and refuse loudly.
+            if inspect.iscoroutine(result):
+                result.close()
+            raise TypeError("wait_for predicate returned an awaitable — use wait_for_async")
+        return result
+
+    _check_timeout(timeout)
+    deadline = time.monotonic() + timeout
+    if probe_first and probe():
+        return
+    sleeps = 0
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise WaitTimeoutError(_render_on_timeout(on_timeout))
+        time.sleep(min(_interval_at(interval, sleeps), remaining))
+        sleeps += 1
+        if probe():
+            return
+
+
+async def wait_for_async(
+    predicate: Callable[[], bool | Awaitable[bool]],
+    timeout: float,
+    *,
+    interval: float | Callable[[int], float] = 0.1,
+    probe_first: bool = True,
+    on_timeout: str | Callable[[], str],
+) -> None:
+    """Async twin of :func:`wait_for`; awaits *predicate* if it returns an awaitable.
+
+    Same shape and contract as :func:`wait_for` (see there for the
+    ``probe_first`` / *interval* / *on_timeout* semantics); the clock is the
+    running loop's (``loop.time()``), the sleep is ``asyncio.sleep``.
+    """
+    loop = asyncio.get_running_loop()
+
+    async def probe() -> bool:
+        result = predicate()
+        if inspect.isawaitable(result):
+            return await result
+        return result
+
+    _check_timeout(timeout)
+    deadline = loop.time() + timeout
+    if probe_first and await probe():
+        return
+    sleeps = 0
+    while True:
+        remaining = deadline - loop.time()
+        if remaining <= 0:
+            raise WaitTimeoutError(_render_on_timeout(on_timeout))
+        await asyncio.sleep(min(_interval_at(interval, sleeps), remaining))
+        sleeps += 1
+        if await probe():
+            return
 
 
 def _get_literal_values(

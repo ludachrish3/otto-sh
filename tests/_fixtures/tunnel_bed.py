@@ -15,13 +15,13 @@ import contextlib
 import json
 import shlex
 import socket
-import time
 import uuid
 from pathlib import Path
 
 from otto.host.unix_host import UnixHost
 from otto.logger.mode import LogMode
 from otto.tunnel.discovery import DISCOVERY_PS_COMMAND, parse_process_discovery
+from otto.utils import wait_for_async
 from tests._fixtures.labdata import host_data, make_host
 from tests.e2e._otto_subprocess import REPO1, run_otto
 
@@ -228,16 +228,20 @@ async def wait_for_udp_bound(
     listener spawn must be followed by this confirmation, not just trusted to
     already be up by the time a sender fires.
     """
-    deadline = time.monotonic() + timeout
     needle = f"{ip}:{port}"
-    while time.monotonic() < deadline:
+
+    async def _bound() -> bool:
         result = await host.exec(
             "ss -H -u -a -n 2>/dev/null || true", timeout=15, log=LogMode.QUIET
         )
-        if needle in (result.value or ""):
-            return
-        await asyncio.sleep(0.1)
-    raise AssertionError(f"host {host.id!r}: no UDP listener bound to {needle} within {timeout}s")
+        return needle in (result.value or "")
+
+    await wait_for_async(
+        _bound,
+        timeout,
+        interval=0.1,
+        on_timeout=f"host {host.id!r}: no UDP listener bound to {needle} within {timeout}s",
+    )
 
 
 async def spawn_udp_listener(host: UnixHost, port: int, outfile: str, timeout: float) -> None:
@@ -258,20 +262,26 @@ async def wait_for_listener_output(
     interval: float = POLL_INTERVAL,
 ) -> str:
     """Poll *outfile* on *host* until it holds ``"<source-ip> <payload>"``."""
-    deadline = time.monotonic() + timeout
     last = ""
-    while time.monotonic() < deadline:
+
+    async def _outfile_has_content() -> bool:
+        nonlocal last
         result = await host.exec(
             f"cat {shlex.quote(outfile)} 2>/dev/null || true", timeout=15, log=LogMode.QUIET
         )
         last = (result.value or "").strip()
-        if last:
-            return last
-        await asyncio.sleep(interval)
-    raise AssertionError(
-        f"host {host.id!r}: timed out after {timeout}s waiting for a datagram in "
-        f"{outfile!r}; last read: {last!r}"
+        return bool(last)
+
+    await wait_for_async(
+        _outfile_has_content,
+        timeout,
+        interval=interval,
+        on_timeout=lambda: (
+            f"host {host.id!r}: timed out after {timeout}s waiting for a datagram in "
+            f"{outfile!r}; last read: {last!r}"
+        ),
     )
+    return last
 
 
 async def remove_remote_file(host: UnixHost, path: str) -> None:

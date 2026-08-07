@@ -22,10 +22,10 @@ rather than offering a comforting near-miss:
   ``run_selection``. A caller who wraps those and expects a broad guard to
   hold gets a process exit instead.
 * ``except (ValueError, RuntimeError)`` covers 284 of the 330 raise sites,
-  but only 15 of the 24 named classes. Seven are rooted at plain
+  but only 15 of the 25 named classes. Seven are rooted at plain
   ``Exception`` (the bootstrap, lab-context, lab-repository and reservation
-  errors), and two sit under ``OSError`` (``AppShellTimeoutError``,
-  ``LoginProxyError``).
+  errors), and three sit under ``OSError`` (``AppShellTimeoutError``,
+  ``LoginProxyError``, ``WaitTimeoutError``).
 
 So: catch by NAME what you intend to handle, use ``except OttoError`` when
 "was this otto's own failure?" is the question, and treat ``except

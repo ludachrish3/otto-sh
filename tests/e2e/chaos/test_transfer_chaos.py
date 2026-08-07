@@ -35,6 +35,7 @@ import time
 import pytest
 
 from otto.logger.mode import LogMode
+from otto.utils import wait_for
 from tests._fixtures.bed_hygiene import _NC_LISTENER_PROBE
 from tests.e2e.chaos._bed import probe_text, run_probe
 from tests.e2e.chaos._seed import offset_in
@@ -71,14 +72,19 @@ def _nc_listeners(element: str) -> list:
 
 def _assert_no_new_listener(element: str, before: list, what: str) -> None:
     """Poll briefly past the 10s teardown deadline for any NEW nc -l to clear."""
-    deadline = time.monotonic() + 15.0
     new: list = []
-    while time.monotonic() < deadline:
+
+    def cleared() -> bool:
+        nonlocal new
         new = [ln for ln in _nc_listeners(element) if ln not in before]
-        if not new:
-            return
-        time.sleep(0.5)
-    raise AssertionError(f"{what}: orphaned nc listener beyond teardown deadline: {new}")
+        return not new
+
+    wait_for(
+        cleared,
+        15.0,
+        interval=0.5,
+        on_timeout=lambda: f"{what}: orphaned nc listener beyond teardown deadline: {new}",
+    )
 
 
 def _reap_new_nc_listeners(element: str, before: list) -> None:

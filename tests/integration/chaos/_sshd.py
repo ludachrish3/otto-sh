@@ -9,8 +9,9 @@ dev VM and on ubuntu-latest runners alike, no sudo, no system state.
 import shutil
 import socket
 import subprocess
-import time
 from pathlib import Path
+
+from otto.utils import WaitTimeoutError, wait_for
 
 _SSHD = shutil.which("sshd") or "/usr/sbin/sshd"
 _READY_TIMEOUT = 15.0
@@ -84,8 +85,8 @@ class LoopbackSshd:
             )
         finally:
             log.close()  # sshd holds its own fd now
-        deadline = time.monotonic() + _READY_TIMEOUT
-        while time.monotonic() < deadline:
+
+        def accepting() -> bool:
             if self._proc.poll() is not None:
                 raise RuntimeError(
                     f"loopback sshd died at startup (rc={self._proc.returncode}); "
@@ -93,15 +94,18 @@ class LoopbackSshd:
                 )
             try:
                 with socket.create_connection(("127.0.0.1", port), timeout=0.2):
-                    return
+                    return True
             except OSError:
-                time.sleep(0.05)
-        # Still alive but never bound: tear it down before raising, or a hung child
-        # outlives the fixture (conftest's stop() only runs once start() *returns*).
-        self._terminate()
-        raise RuntimeError(
-            f"loopback sshd not accepting on 127.0.0.1:{port} after {_READY_TIMEOUT}s"
-        )
+                return False
+
+        never_bound = f"loopback sshd not accepting on 127.0.0.1:{port} after {_READY_TIMEOUT}s"
+        try:
+            wait_for(accepting, _READY_TIMEOUT, interval=0.05, on_timeout=never_bound)
+        except WaitTimeoutError:
+            # Still alive but never bound: tear it down before raising, or a hung child
+            # outlives the fixture (conftest's stop() only runs once start() *returns*).
+            self._terminate()
+            raise RuntimeError(never_bound) from None
 
     def stop(self) -> None:
         self._terminate()

@@ -63,7 +63,6 @@ import random
 import re
 import shlex
 import subprocess
-import time
 import uuid
 from pathlib import Path
 
@@ -79,6 +78,7 @@ from otto.host.unix_host import UnixHost
 from otto.logger.mode import LogMode
 from otto.tunnel import add_tunnel, discover_tunnels, remove_tunnel
 from otto.tunnel.discovery import discover_observations
+from otto.utils import wait_for_async
 from tests._fixtures.labdata import host_data
 from tests._fixtures.paths import TESTS_ROOT
 from tests._fixtures.tunnel_bed import (
@@ -386,17 +386,21 @@ async def _wait_for_container_udp_bound(
     container: DockerContainerHost, ip: str, port: int, timeout: float = BIND_CONFIRM_TIMEOUT
 ) -> None:
     """Poll ``/proc/net/udp`` inside the container until *ip*:*port* is bound."""
-    deadline = time.monotonic() + timeout
     needle = _proc_net_udp_needle(ip, port)
-    while time.monotonic() < deadline:
+
+    async def _bound() -> bool:
         result = await container.exec(
             "cat /proc/net/udp 2>/dev/null || true", timeout=15, log=LogMode.QUIET
         )
-        if needle in (result.value or ""):
-            return
-        await asyncio.sleep(0.1)
-    raise AssertionError(
-        f"container {container.id!r}: no UDP listener bound to {ip}:{port} within {timeout}s"
+        return needle in (result.value or "")
+
+    await wait_for_async(
+        _bound,
+        timeout,
+        interval=0.1,
+        on_timeout=(
+            f"container {container.id!r}: no UDP listener bound to {ip}:{port} within {timeout}s"
+        ),
     )
 
 
@@ -408,20 +412,26 @@ async def _wait_for_container_file(
 ) -> str:
     """Poll a raw file inside the container (socat ``CREATE:`` writes bytes verbatim,
     no source-ip prefix like the python3 listener script)."""
-    deadline = time.monotonic() + timeout
     last = ""
-    while time.monotonic() < deadline:
+
+    async def _file_has_content() -> bool:
+        nonlocal last
         result = await container.exec(
             f"cat {shlex.quote(path)} 2>/dev/null || true", timeout=15, log=LogMode.QUIET
         )
         last = (result.value or "").strip()
-        if last:
-            return last
-        await asyncio.sleep(interval)
-    raise AssertionError(
-        f"container {container.id!r}: timed out after {timeout}s waiting for a datagram in "
-        f"{path!r}; last read: {last!r}"
+        return bool(last)
+
+    await wait_for_async(
+        _file_has_content,
+        timeout,
+        interval=interval,
+        on_timeout=lambda: (
+            f"container {container.id!r}: timed out after {timeout}s waiting for a datagram in "
+            f"{path!r}; last read: {last!r}"
+        ),
     )
+    return last
 
 
 @pytest.mark.asyncio

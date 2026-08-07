@@ -57,6 +57,7 @@ from otto.suite._retry import RetryAttemptTimeoutError
 from otto.suite.run import NoTestsMatchedError
 from otto.suite.selection import UnknownSelectionError
 from otto.tunnel.records import TunnelScanFailedError
+from otto.utils import WaitTimeoutError
 from tests._fixtures.paths import PROJECT_ROOT
 
 CASES: list[tuple[type[BaseException], type[BaseException]]] = [
@@ -73,6 +74,7 @@ CASES: list[tuple[type[BaseException], type[BaseException]]] = [
     (ParseMismatch, ValueError),
     (AppShellActiveError, RuntimeError),
     (AppShellTimeoutError, TimeoutError),
+    (WaitTimeoutError, TimeoutError),
     (LoginProxyError, ConnectionError),
     (LabRepositoryError, Exception),
     (LabNotFoundError, Exception),

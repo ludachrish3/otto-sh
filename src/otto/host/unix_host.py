@@ -67,7 +67,9 @@ from ..utils import (
     Exclude,
     Opt,
     Status,
+    WaitTimeoutError,
     cli_exposed,
+    wait_for_async,
 )
 from .capability import IMPAIRER_RESOLVER, TERM_RESOLVER, TRANSFER_RESOLVER
 from .command_frame import CommandFrame, build_command_frame
@@ -806,23 +808,30 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         # socket-activated stub) can accept and then stall immediately after.
         # Recovery = one clean command round-trip on the fresh post-rebuild
         # connection, retried until the deadline; a raising probe (refused,
-        # reset mid-handshake) is just "not yet", never an error. Do-while
-        # shape: always attempt at least one probe before consulting the
-        # clock — a deadline that has already elapsed by the time we get here
-        # (e.g. the up-wait consumed the whole budget landing right at the
-        # edge) must not fail the gate unprobed; one clean round-trip is a
-        # recovery no matter what the clock says.
-        loop = asyncio.get_running_loop()
-        while True:
+        # reset mid-handshake) is just "not yet", never an error.
+        async def shell_answered() -> bool:
             try:
                 result = await self.exec("true", timeout=_RECOVERY_PROBE_TIMEOUT, log=LogMode.QUIET)
             except Exception:  # noqa: BLE001 — probe failure means "not booted yet"; the deadline is the arbiter
-                result = None
-            if result is not None and result.status.is_ok:
-                return True
-            if loop.time() >= deadline:
                 return False
-            await asyncio.sleep(poll_interval)
+            return result.status.is_ok
+
+        # probe_first: a deadline that has already elapsed by the time we get
+        # here (e.g. the up-wait consumed the whole budget landing right at
+        # the edge) must not fail the gate unprobed — one clean round-trip is
+        # a recovery no matter what the clock says.
+        loop = asyncio.get_running_loop()
+        try:
+            await wait_for_async(
+                shell_answered,
+                max(0.0, deadline - loop.time()),
+                interval=poll_interval,
+                probe_first=True,
+                on_timeout=f"{self.name!r} shell never answered before the recovery deadline",
+            )
+        except WaitTimeoutError:
+            return False
+        return True
 
     @override
     @cli_exposed

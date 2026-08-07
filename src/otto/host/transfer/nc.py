@@ -18,7 +18,7 @@ import logging
 from typing_extensions import override
 
 from ...result import CommandResult, Result
-from ...utils import Status
+from ...utils import Status, WaitTimeoutError, wait_for_async
 from .base import (
     NcListenerCheck,
     NcPortStrategy,
@@ -184,18 +184,35 @@ async def _connect_with_retry(
 ) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
     """Connect to a TCP port, retrying on ConnectionRefused until *timeout*."""
     deadline = asyncio.get_running_loop().time() + timeout
-    while True:
+    connection: tuple[asyncio.StreamReader, asyncio.StreamWriter] | None = None
+    last_err: Exception | None = None
+
+    async def connected() -> bool:
+        nonlocal connection, last_err
         try:
-            return await asyncio.wait_for(
+            connection = await asyncio.wait_for(
                 asyncio.open_connection(host, port),
+                # Per-attempt bound: snappy (<= 1s) regardless of the overall
+                # budget, floored at 0.1s so an attempt near the deadline edge
+                # still gets a usable slice.
                 timeout=min(1.0, max(0.1, deadline - asyncio.get_running_loop().time())),
             )
-        except (ConnectionRefusedError, asyncio.TimeoutError, OSError) as err:  # noqa: PERF203 — per-item resilience
-            if asyncio.get_running_loop().time() >= deadline:
-                raise ConnectionError(
-                    f"Remote nc listener on {host}:{port} not ready within {timeout}s"
-                ) from err
-            await asyncio.sleep(retry_interval)
+        except (ConnectionRefusedError, asyncio.TimeoutError, OSError) as err:
+            last_err = err
+            return False
+        return True
+
+    try:
+        await wait_for_async(
+            connected,
+            timeout,
+            interval=retry_interval,
+            on_timeout=f"Remote nc listener on {host}:{port} not ready within {timeout}s",
+        )
+    except WaitTimeoutError as expiry:
+        raise ConnectionError(str(expiry)) from last_err
+    # wait_for_async only returns once `connected` stored the pair.
+    return cast("tuple[asyncio.StreamReader, asyncio.StreamWriter]", connection)
 
 
 class NcFileTransfer(UnixFileTransfer):
@@ -545,18 +562,20 @@ class NcFileTransfer(UnixFileTransfer):
         pay the full *interval* tax on the very first miss.
         """
         check = await self._get_listener_check_cmd(port)
-        deadline = asyncio.get_running_loop().time() + timeout
         fast_interval = min(0.05, interval)
-        iterations = 0
-        while asyncio.get_running_loop().time() < deadline:
-            result = await self._control_run(check)
-            if result.retcode == 0:
-                return
-            await asyncio.sleep(
-                fast_interval if iterations < _NC_LISTENER_FAST_POLL_ITERS else interval
+
+        async def listening() -> bool:
+            return (await self._control_run(check)).retcode == 0
+
+        try:
+            await wait_for_async(
+                listening,
+                timeout,
+                interval=lambda i: fast_interval if i < _NC_LISTENER_FAST_POLL_ITERS else interval,
+                on_timeout=f"Remote nc listener on port {port} not ready within {timeout}s",
             )
-            iterations += 1
-        raise ConnectionError(f"Remote nc listener on port {port} not ready within {timeout}s")
+        except WaitTimeoutError as expiry:
+            raise ConnectionError(str(expiry)) from None
 
     async def _get_listener_check_cmd(self, port: int) -> str:
         """Return the shell command string for checking a listener on *port*."""

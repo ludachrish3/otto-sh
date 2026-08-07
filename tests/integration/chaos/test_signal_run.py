@@ -14,10 +14,10 @@ shell's own command line never matches itself.
 import os
 import re
 import signal
-import time
 
 import pytest
 
+from otto.utils import wait_for
 from tests._fixtures.bed_hygiene import argv_pattern
 
 from ._driver import BANNER, spawn_otto
@@ -40,21 +40,21 @@ def _remote_has(target, cmd: str) -> bool:
 
 
 def _wait_remote_reaped(target, cmd: str, timeout: float = 15.0) -> None:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if not _remote_has(target, cmd):
-            return
-        time.sleep(0.2)
-    raise AssertionError(f"remote command survived teardown: {cmd!r}")
+    wait_for(
+        lambda: not _remote_has(target, cmd),
+        timeout,
+        interval=0.2,
+        on_timeout=f"remote command survived teardown: {cmd!r}",
+    )
 
 
 def _wait_remote_running(target, cmd: str, timeout: float = 20.0) -> None:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if _remote_has(target, cmd):
-            return
-        time.sleep(0.2)
-    raise AssertionError(f"remote command never appeared: {cmd!r}")
+    wait_for(
+        lambda: _remote_has(target, cmd),
+        timeout,
+        interval=0.2,
+        on_timeout=f"remote command never appeared: {cmd!r}",
+    )
 
 
 def _interrupt_mid_run(chaos_target, tmp_path, *, tag: str, sig: int, expected_rc: int) -> None:

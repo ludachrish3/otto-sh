@@ -16,10 +16,10 @@ import dataclasses
 import os
 import re
 import subprocess
-import time
 from collections.abc import Callable
 from pathlib import Path
 
+from otto.utils import wait_for
 from tests.e2e._otto_subprocess import OTTO_BIN, PROJECT_ROOT, otto_subprocess_env
 
 from ._target import ChaosTarget
@@ -69,28 +69,39 @@ class OttoProc:
 
     def _wait_for(self, read: "Callable[[], str]", pattern: str, timeout: float, what: str) -> str:
         rx = re.compile(pattern)
-        deadline = time.monotonic() + timeout
         text = ""
-        while time.monotonic() < deadline:
+        found = ""
+
+        def matched() -> bool:
+            nonlocal text, found
             text = read()
             m = rx.search(text)
             if m:
-                return m.group(0)
+                found = m.group(0)
+                return True
             if self.proc.poll() is not None:
                 # One last read: the process may have flushed on exit.
                 text = read()
                 m = rx.search(text)
                 if m:
-                    return m.group(0)
+                    found = m.group(0)
+                    return True
                 raise AssertionError(
                     f"otto exited (rc={self.proc.returncode}) before {what} matched {pattern!r}.\n"
                     f"--- stderr ---\n{self.stderr_text()}\n--- {what} ---\n{text}"
                 )
-            time.sleep(_POLL)
-        raise AssertionError(
-            f"{what} never matched {pattern!r} within {timeout}s.\n"
-            f"--- stderr ---\n{self.stderr_text()}\n--- {what} ---\n{text}"
+            return False
+
+        wait_for(
+            matched,
+            timeout,
+            interval=_POLL,
+            on_timeout=lambda: (
+                f"{what} never matched {pattern!r} within {timeout}s.\n"
+                f"--- stderr ---\n{self.stderr_text()}\n--- {what} ---\n{text}"
+            ),
         )
+        return found
 
     def wait_for_stderr(self, pattern: str, timeout: float) -> str:
         return self._wait_for(self.stderr_text, pattern, timeout, "stderr")

@@ -1,0 +1,106 @@
+id: no-handrolled-deadline-poll
+language: python
+severity: error
+message: hand-rolled deadline poll — use otto.utils.wait_for / wait_for_async (probe_first, a callable interval, and a callable on_timeout are parameters, not reasons to re-implement the loop).
+note: >
+  Poll-until-deadline grew 21 hand-rolled copies in three incompatible shapes
+  (check-first, sleep-first, do-while), with expiry behavior diverging across
+  raise/return-False/pytest.fail/silent (2026-08-06 review §7.3, gate G6).
+  otto.utils.wait_for / wait_for_async is the one spelling; expiry always
+  raises WaitTimeoutError with a rendered message, because silent expiry is
+  the defect class this gate exists for.
+
+  Baseline: the review counted 26 sites; the corrected migratable inventory
+  was 21 (5 product + 16 test sites), all migrated in the same wave. The
+  review's other five were not predicate polls: host.py's two shared-budget
+  splitters (deadline arithmetic across sequential phases — no loop),
+  _pty_driver.py's two select()-with-remaining-budget expect loops, and
+  test_lifecycle_sync_phase.py's blocking-readline loop (pacing comes from
+  the blocking read, not an interval sleep; inline-suppressed there with the
+  reason). shell_liveness.py's confirm_live is the product's own sanctioned
+  fused probe-response primitive (the reply-wait timeout is the pacing) and
+  is ignored below; utils.py itself is NOT ignored — the helper's own loop
+  is the remaining-form spelling no arm matches, and an arm-shaped poll
+  added there would be as wrong as anywhere. Rule-measured t0 on the pre-fix
+  tree: 21 hits — 20 of the migrated sites plus the suppressed lifecycle
+  read loop. The 21st migrated site (test_replay_soak's quiescence poll)
+  bound the clock to a variable first and no arm can see through that
+  indirection; it was found by classifying every clock call in tests, not by
+  this rule.
+
+  The arms are a tripwire for the natural spellings, not an exhaustive
+  enumeration — review owns the rest. Known unmatched spellings, each either
+  verified zero-in-tree at landing or live-and-legitimate: a clock value
+  bound to a variable before the comparison (the replay_soak shape; zero
+  left); the TWO-STATEMENT remaining form `remaining = deadline - clock()` +
+  `if remaining <= 0` (live legitimate uses: the pty/lifecycle fused read
+  loops, host.py's budget splitters, and wait_for's own loop — the inline
+  `while deadline - clock() > 0` respelling, which has no legitimate use, IS
+  an arm); the
+  elapsed-IF form `if clock() - start > budget` (live legitimate uses:
+  cache-TTL freshness checks and logger/management.py's cleanup budget — a
+  bound on a work loop, not a poll); compound while-conditions mixing a
+  clock comparison with another test (the one in-tree instance,
+  suite/plugin.py's iteration-AND-duration work loop, is not a poll, and a
+  relational arm would flag it); operand-reversed elapsed spellings;
+  bare-name clock imports (`from time import monotonic`) and
+  time.perf_counter(), both zero-in-tree and foreign to otto's style; and
+  count-based `for _ in range(N)` retry loops (a different primitive, out of
+  this gate's charter).
+files:
+- src/otto/**
+- tests/**
+ignores:
+# Fixture SUT repos + firmware: user-example input data, not otto's code
+# (sgconfig.yml discipline for tests-scoped rules).
+- tests/repo1/**
+- tests/repo2/**
+- tests/repo3/**
+- tests/repo_broken/**
+- tests/repo_e2e/**
+- tests/firmware/**
+# The product's fused probe-response primitive: its pacing is the reply-wait
+# (`expect(pattern, min(probe_timeout, remaining))`), not an interval sleep —
+# wait_for cannot express a per-probe timeout derived from remaining budget.
+- src/otto/host/shell_liveness.py
+rule:
+  any:
+  # Check-first / sleep-first: the whole while-condition is clock-vs-deadline,
+  # in either operand order (`a < b` and `b > a` are different ASTs, and the
+  # reversed order is the first respelling an annoyed author reaches for).
+  # `$C.time()` covers time.time(), loop.time() and
+  # asyncio.get_running_loop().time(); monotonic needs its own spelling.
+  - pattern: 'while time.monotonic() < $D: $$$B'
+  - pattern: 'while time.monotonic() <= $D: $$$B'
+  - pattern: 'while $C.time() < $D: $$$B'
+  - pattern: 'while $C.time() <= $D: $$$B'
+  - pattern: 'while $D > time.monotonic(): $$$B'
+  - pattern: 'while $D >= time.monotonic(): $$$B'
+  - pattern: 'while $D > $C.time(): $$$B'
+  - pattern: 'while $D >= $C.time(): $$$B'
+  # The same loop spelled as elapsed-vs-budget (no in-tree uses at landing;
+  # these arms pin the obvious respelling).
+  - pattern: 'while time.monotonic() - $S < $B2: $$$B'
+  - pattern: 'while time.monotonic() - $S <= $B2: $$$B'
+  - pattern: 'while $C.time() - $S < $B2: $$$B'
+  - pattern: 'while $C.time() - $S <= $B2: $$$B'
+  # And as inline remaining-vs-zero — the natural third respelling once both
+  # operand orders are blocked. (The TWO-STATEMENT remaining form stays a
+  # documented non-arm: it has live legitimate uses; this inline-while shape
+  # has none.)
+  - pattern: 'while $D - time.monotonic() > 0: $$$B'
+  - pattern: 'while $D - time.monotonic() >= 0: $$$B'
+  - pattern: 'while $D - $C.time() > 0: $$$B'
+  - pattern: 'while $D - $C.time() >= 0: $$$B'
+  # Do-while: `while True:` + a clock-vs-deadline exit guard (the motivating
+  # unix_host recovery shape), again in either operand order. The elapsed-if
+  # form is deliberately NOT an arm — it is how TTL freshness checks and
+  # work-loop budgets are legitimately spelled (see the note).
+  - pattern: 'if time.monotonic() >= $D: $$$B'
+  - pattern: 'if time.monotonic() > $D: $$$B'
+  - pattern: 'if $C.time() >= $D: $$$B'
+  - pattern: 'if $C.time() > $D: $$$B'
+  - pattern: 'if $D <= time.monotonic(): $$$B'
+  - pattern: 'if $D < time.monotonic(): $$$B'
+  - pattern: 'if $D <= $C.time(): $$$B'
+  - pattern: 'if $D < $C.time(): $$$B'

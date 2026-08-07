@@ -8,7 +8,6 @@ the collector is only ever touched from one loop.
 import asyncio
 import gc
 import threading
-import time
 from collections.abc import Coroutine
 from pathlib import Path
 from typing import Any, Generic, Literal, TypeVar
@@ -17,6 +16,7 @@ from otto.models import LabSnapshot, MonitorExport
 from otto.monitor.collector import MetricCollector
 from otto.monitor.server import MonitorServer
 from otto.monitor.session import SessionFrame
+from otto.utils import WaitTimeoutError, wait_for
 
 C = TypeVar("C", bound=MetricCollector)
 T = TypeVar("T")
@@ -81,11 +81,17 @@ class DashboardHarness(Generic[C]):
     def start(self) -> "DashboardHarness[C]":
         self._thread = threading.Thread(target=self._serve, name="dashboard-harness", daemon=True)
         self._thread.start()
-        deadline = time.monotonic() + _STARTUP_TIMEOUT
-        while not self.server.started:
-            if time.monotonic() > deadline:
-                raise RuntimeError(f"MonitorServer did not start within {_STARTUP_TIMEOUT}s")
-            time.sleep(0.02)
+        never_started = f"MonitorServer did not start within {_STARTUP_TIMEOUT}s"
+        try:
+            wait_for(
+                lambda: self.server.started,
+                _STARTUP_TIMEOUT,
+                interval=0.02,
+                on_timeout=never_started,
+            )
+        except WaitTimeoutError:
+            # Callers may key on the exception type; keep expiry a RuntimeError.
+            raise RuntimeError(never_started) from None
         return self
 
     def _serve(self) -> None:

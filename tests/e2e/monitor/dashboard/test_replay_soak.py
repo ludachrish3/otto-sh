@@ -38,6 +38,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from playwright.sync_api import Locator, Page, expect
 
+from otto.utils import wait_for
 from tests._fixtures._dashboard_harness import DashboardHarness
 from tests._fixtures._fake_collector import FakeCollector
 
@@ -77,21 +78,31 @@ def _wait_for_ingestion_to_settle(chart: Locator) -> None:
     """
     last: str | None = None
     stable_since = time.monotonic()
-    deadline = time.monotonic() + _SETTLE_TIMEOUT
-    while True:
+
+    def _count_held_still() -> bool:
+        # Two clocks, deliberately: the overall budget is wait_for's own
+        # deadline, while `stable_since` measures the QUIET WINDOW — how long
+        # the count has held still, restarted on every change. That second
+        # clock is state carried across probes, not a second poll loop, so it
+        # lives here in the predicate.
+        nonlocal last, stable_since
         current = chart.get_attribute("data-point-count")
         now = time.monotonic()
         if current != last:
             last = current
             stable_since = now
-        elif now - stable_since >= _SETTLE_QUIET_FOR:
-            return
-        if now > deadline:
-            raise AssertionError(
-                f"SSE ingestion never settled within {_SETTLE_TIMEOUT}s "
-                f"(data-point-count last seen: {current!r})"
-            )
-        time.sleep(0.1)
+            return False
+        return now - stable_since >= _SETTLE_QUIET_FOR
+
+    wait_for(
+        _count_held_still,
+        _SETTLE_TIMEOUT,
+        interval=0.1,
+        on_timeout=lambda: (
+            f"SSE ingestion never settled within {_SETTLE_TIMEOUT}s "
+            f"(data-point-count last seen: {last!r})"
+        ),
+    )
 
 
 def test_browser_stays_responsive_under_a_full_runs_data(

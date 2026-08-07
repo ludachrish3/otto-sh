@@ -30,12 +30,12 @@ import contextlib
 import signal
 import sqlite3
 import subprocess
-import time
 from pathlib import Path
 from typing import NamedTuple
 
 import pytest
 
+from otto.utils import WaitTimeoutError, wait_for
 from tests._fixtures._host_pool import UNIX_POOL, lease_unix_host
 from tests.e2e._otto_subprocess import (
     OTTO_BIN,
@@ -172,16 +172,25 @@ def _run_monitor_briefly(
 
     # Poll for up to 6 s, checking every 0.5 s — give the first collection tick
     # time to complete (SSH connect + shell commands + DB write).
-    deadline = time.monotonic() + 6.0
     rows_found = False
-    while time.monotonic() < deadline:
+
+    def _rows_landed_or_process_died() -> bool:
+        nonlocal rows_found
         if _has_metric_rows(db_path):
             rows_found = True
-            break
+            return True
         # Also check whether the process has already exited unexpectedly.
-        if proc.poll() is not None:
-            break
-        time.sleep(0.5)
+        return proc.poll() is not None
+
+    # Expiry is not a failure here — the assertions below (which read
+    # `rows_found`) decide; either way the monitor still gets shut down.
+    with contextlib.suppress(WaitTimeoutError):
+        wait_for(
+            _rows_landed_or_process_died,
+            6.0,
+            interval=0.5,
+            on_timeout=f"no metric rows in {db_path} within 6 s (monitor still running)",
+        )
 
     # ── Stop the monitor ────────────────────────────────────────────────────
     if proc.poll() is None:

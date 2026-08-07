@@ -82,6 +82,11 @@ def _wait_line(proc, marker, timeout=20.0):
     """Read stdout lines until *marker* appears; fail loudly on EOF/timeout."""
     deadline = time.monotonic() + timeout
     lines = []
+    # Not a wait_for poll: the pacing is the blocking readline() on a
+    # line-oriented child, so the clock is an inter-line budget (it cannot
+    # fire while the child is silent), and _finish() reading the same
+    # buffered stream afterwards forbids a select()-based bounded rewrite.
+    # ast-grep-ignore: no-handrolled-deadline-poll
     while time.monotonic() < deadline:
         line = proc.stdout.readline()
         if not line:

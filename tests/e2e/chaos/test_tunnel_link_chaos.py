@@ -13,11 +13,11 @@ of the two hosts these scenarios actually dirty.
 import contextlib
 import re
 import shlex
-import time
 
 import pytest
 
 from otto.logger.mode import LogMode
+from otto.utils import WaitTimeoutError, wait_for
 from tests._fixtures.bed_hygiene import argv_pattern
 from tests._fixtures.labdata import host_data
 from tests._fixtures.tunnel_bed import cli_sut_dir, observe_tunnel_processes
@@ -91,28 +91,37 @@ def _wait_for_stdout(p, pattern: str, timeout: float) -> str:
     `verbose.log` equivalent for `tunnel`/`link` invocations (see the
     `_WIDE_CONSOLE_ENV` comment above for why stdout, not the log file, is
     the only place these phase markers ever appear). Mirrors
-    `tests/integration/chaos/_driver.py::OttoProc._wait_for`'s polling shape.
+    `tests/integration/chaos/_driver.py::OttoProc._wait_for`'s `wait_for`
+    predicate shape.
     """
     rx = re.compile(pattern)
-    deadline = time.monotonic() + timeout
     text = ""
-    while time.monotonic() < deadline:
+
+    def matched() -> bool:
+        nonlocal text
         text = p.stdout_text()
         if rx.search(text):
-            return text
+            return True
         if p.proc.poll() is not None:
             # One last read: the process may have flushed on exit.
             text = p.stdout_text()
             if rx.search(text):
-                return text
+                return True
             raise AssertionError(
                 f"otto exited (rc={p.proc.returncode}) before stdout matched {pattern!r}.\n"
                 f"--- stdout ---\n{text}"
             )
-        time.sleep(0.05)
-    raise AssertionError(
-        f"stdout never matched {pattern!r} within {timeout}s.\n--- stdout ---\n{text}"
+        return False
+
+    wait_for(
+        matched,
+        timeout,
+        interval=0.05,
+        on_timeout=lambda: (
+            f"stdout never matched {pattern!r} within {timeout}s.\n--- stdout ---\n{text}"
+        ),
     )
+    return text
 
 
 _HOLD_SCRIPT = (
@@ -192,13 +201,12 @@ def _hold_tcp_port(elem: str, ip: str, port: int) -> None:
     cmd = f"setsid python3 -c {shlex.quote(script)} </dev/null >/dev/null 2>&1 &"
     run_probe(elem, lambda h: h.exec(cmd, timeout=15, log=LogMode.QUIET))
     needle = f"{ip}:{port}"
-    deadline = time.monotonic() + 10.0
-    while time.monotonic() < deadline:
-        out = probe_text(elem, "ss -H -t -a -n 2>/dev/null || true", timeout=15)
-        if needle in out:
-            return
-        time.sleep(0.2)
-    raise AssertionError(f"{elem}: port-hold listener never bound to {needle}")
+    wait_for(
+        lambda: needle in probe_text(elem, "ss -H -t -a -n 2>/dev/null || true", timeout=15),
+        10.0,
+        interval=0.2,
+        on_timeout=f"{elem}: port-hold listener never bound to {needle}",
+    )
 
 
 def _release_tcp_port(elem: str) -> None:
@@ -295,7 +303,10 @@ def test_interrupt_during_rollback_still_reaps(tmp_path):
         if p.proc.poll() is None:
             with contextlib.suppress(ProcessLookupError):
                 p.signal(2)  # SIGINT
-        with contextlib.suppress(AssertionError):
+        # Both failure modes of `wait_for_stderr` are suppressed: AssertionError
+        # (otto exited before the banner) and WaitTimeoutError (still running,
+        # banner never appeared within the budget -- `wait_for`'s expiry type).
+        with contextlib.suppress(AssertionError, WaitTimeoutError):
             # Best-effort: confirms the signal was actually handled, not a
             # hard requirement (the process may finish first on a very fast
             # bed, in which case the rc/survivors assertions below still hold).

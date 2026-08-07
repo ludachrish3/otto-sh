@@ -68,7 +68,6 @@ Host-down is a loud ``RuntimeError`` naming the unreachable VM -- never a
 
 import asyncio
 import contextlib
-import time
 
 import pytest
 import pytest_asyncio
@@ -90,6 +89,7 @@ from otto.link import (
 from otto.link.netem import parse_qdisc_show
 from otto.link.sentinel import IMPAIR_PS_COMMAND, parse_impair_ps
 from otto.logger.mode import LogMode
+from otto.utils import wait_for_async
 from tests._fixtures.labdata import host_data, make_host
 
 pytestmark = [
@@ -470,19 +470,24 @@ async def test_expire_self_heals(impair_lab: Lab) -> None:
         assert a_to_b is not None, "a->b direction unreadable"
         assert a_to_b.whole == ImpairmentParams(delay_ms=100.0)
 
-        deadline = time.monotonic() + _EXPIRE_POLL_MAX
-        healed = False
-        while time.monotonic() < deadline:
-            await asyncio.sleep(_EXPIRE_POLL_INTERVAL)
+        async def _a_to_b_healed() -> bool:
+            nonlocal edge_state
             states = await read_link_states(impair_lab)
             edge_state = next(s for s in states if s.link.id == "edge")
-            a_to_b = edge_state.by_direction[FlowDirection.A_TO_B]
-            if a_to_b is not None and a_to_b.whole is None and not a_to_b.scoped:
-                healed = True
-                break
-        assert healed, (
-            f"link 'edge' a->b did not self-heal within {_EXPIRE_POLL_MAX}s: "
-            f"{edge_state.by_direction!r}"
+            direction = edge_state.by_direction[FlowDirection.A_TO_B]
+            return direction is not None and direction.whole is None and not direction.scoped
+
+        # Sleep-first: the impairment cannot have expired at t=0 (the timer is
+        # still counting down), so the first probe is worth nothing.
+        await wait_for_async(
+            _a_to_b_healed,
+            _EXPIRE_POLL_MAX,
+            interval=_EXPIRE_POLL_INTERVAL,
+            probe_first=False,
+            on_timeout=lambda: (
+                f"link 'edge' a->b did not self-heal within {_EXPIRE_POLL_MAX}s: "
+                f"{edge_state.by_direction!r}"
+            ),
         )
 
         ps_result = await carrot.exec(
@@ -736,19 +741,27 @@ async def test_scoped_expire_clears_only_its_selector(impair_lab: Lab) -> None:
             selector=expire_sel,
             expire=_EXPIRE_SECONDS,
         )
-        deadline = time.monotonic() + _EXPIRE_POLL_MAX
         remaining: set = set()
-        while time.monotonic() < deadline:
-            await asyncio.sleep(_EXPIRE_POLL_INTERVAL)
+
+        async def _only_keep_survives() -> bool:
+            nonlocal remaining
             states = await read_link_states(impair_lab)
             edge_state = next(s for s in states if s.link.id == "edge")
             a = edge_state.by_direction[FlowDirection.A_TO_B]
             remaining = set(a.scoped) if isinstance(a, DirectionState) else set()
-            if remaining == {keep}:
-                break
-        assert remaining == {keep}, (
-            f"expected only {keep.describe()} to survive expiry, got "
-            f"{sorted(s.describe() for s in remaining)!r}"
+            return remaining == {keep}
+
+        # Sleep-first: the selector's expiry timer is still counting down at
+        # t=0, so the first probe is worth nothing.
+        await wait_for_async(
+            _only_keep_survives,
+            _EXPIRE_POLL_MAX,
+            interval=_EXPIRE_POLL_INTERVAL,
+            probe_first=False,
+            on_timeout=lambda: (
+                f"expected only {keep.describe()} to survive expiry, got "
+                f"{sorted(s.describe() for s in remaining)!r}"
+            ),
         )
         ps_result = await carrot.exec(
             IMPAIR_PS_COMMAND, timeout=_HOST_CMD_TIMEOUT, log=LogMode.QUIET

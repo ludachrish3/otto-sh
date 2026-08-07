@@ -35,7 +35,9 @@ from ..utils import (
     Exclude,
     Opt,
     Status,
+    WaitTimeoutError,
     cli_exposed,
+    wait_for_async,
 )
 
 if TYPE_CHECKING:
@@ -1113,21 +1115,38 @@ class BaseHost(ABC):
 
     async def wait_until_up(self, timeout: float, interval: float = 2.0) -> bool:
         """Poll :meth:`is_reachable` until reachable or *timeout*. Returns success."""
-        deadline = asyncio.get_running_loop().time() + timeout
-        while asyncio.get_running_loop().time() < deadline:
-            if await self.is_reachable():
-                return True
-            await asyncio.sleep(interval)
-        return False
+        # probe_first (the wait_for default, kept deliberately): an exhausted
+        # budget still probes once, so reboot()'s up-wait cannot fail a host
+        # that IS up just because the down phase consumed the whole budget —
+        # at the cost of one probe bound past the deadline in the worst case.
+        try:
+            await wait_for_async(
+                self.is_reachable,
+                timeout,
+                interval=interval,
+                on_timeout=f"{self.name!r} not reachable within {timeout}s",
+            )
+        except WaitTimeoutError:
+            return False
+        return True
 
     async def wait_until_down(self, timeout: float, interval: float = 2.0) -> bool:
         """Poll :meth:`is_reachable` until *not* reachable or *timeout*."""
-        deadline = asyncio.get_running_loop().time() + timeout
-        while asyncio.get_running_loop().time() < deadline:
-            if not await self.is_reachable():
-                return True
-            await asyncio.sleep(interval)
-        return False
+
+        async def unreachable() -> bool:
+            return not await self.is_reachable()
+
+        # probe_first kept for the same edge-of-budget reason as wait_until_up.
+        try:
+            await wait_for_async(
+                unreachable,
+                timeout,
+                interval=interval,
+                on_timeout=f"{self.name!r} still reachable after {timeout}s",
+            )
+        except WaitTimeoutError:
+            return False
+        return True
 
     async def _confirm_recovered(
         self,
