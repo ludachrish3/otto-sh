@@ -249,6 +249,11 @@ async def test_first_signal_schedules_deadline_and_expiry_forces():
     ctrl._on_signal(signal.SIGINT)
     loop = asyncio.get_running_loop()
     assert ctrl._deadline_handle is not None
+    # A countdown, so it does shrink under load — but what it asserts is that
+    # the handle was SCHEDULED (the docstring's "by scheduling shape, not by
+    # waiting"), and breaching either end needs the whole 1234 s deadline to
+    # elapse inside the test, which pytest-timeout ends long before. Not a
+    # discriminator on elapsed work, so not a serial_timing member.
     assert 0 < ctrl._deadline_handle.when() - loop.time() <= 1234.0
     ctrl._force.set()  # what the deadline callback would do
     with pytest.raises(_InterruptedCommand) as exc_info:

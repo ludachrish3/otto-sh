@@ -66,6 +66,7 @@ def _make_instant_host(name: str) -> MagicMock:
 
 
 class TestEngineIsExempt:
+    @pytest.mark.serial_timing
     @pytest.mark.asyncio
     async def test_metric_collector_ticks_faster_than_the_human_floor(self) -> None:
         """The engine is a mechanism, not a human-facing knob.

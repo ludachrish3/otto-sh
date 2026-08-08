@@ -246,8 +246,13 @@ def test_second_signal_forces_immediately(tmp_path):
     # ceiling is deliberately BELOW the product's recovery deadline — the
     # W14 rule (a harness bound must outlast it) applies to budgets that
     # must TOLERATE the documented path; this assert exists to REJECT it.
+    # Transcript rides along for the same reason as its mixed-signal sibling:
+    # the two paths are told apart by what the child printed, never by how
+    # slow it was, so a bare elapsed figure names the symptom and withholds
+    # the evidence.
     assert elapsed < 20.0, (
-        f"forced exit took {elapsed:.1f}s — deadline path, not the second-signal force"
+        f"forced exit took {elapsed:.1f}s — deadline path, not the second-signal "
+        f"force; child said:\n{out[-4000:]}"
     )
 
 
@@ -280,9 +285,17 @@ def test_mixed_signal_pair_forces_regardless_of_order(tmp_path):
     # FORCE-HOOK ... in time" was argument, not measurement — _finish's 60s
     # budget would have absorbed a 30s deadline-expiry run indistinguishably.
     # Same 20s rationale as test_second_signal_forces_immediately.
-    assert elapsed < 20.0, f"exit took {elapsed:.1f}s — deadline path, not the mixed-signal force"
+    # The child's whole transcript rides along: this bound separates two
+    # code paths, not two speeds, so "it was slow" is never the answer and
+    # the transcript (how many interrupt notices the handler wrote, whether
+    # teardown ever started) is what tells the two apart.
+    assert elapsed < 20.0, (
+        f"exit took {elapsed:.1f}s — deadline path, not the mixed-signal force; "
+        f"child said:\n{out[-4000:]}"
+    )
 
 
+@pytest.mark.serial_timing
 def test_silent_child_is_a_named_failure_within_budget(tmp_path):
     """A child that goes quiet WITHOUT exiting fails by name at the budget.
 

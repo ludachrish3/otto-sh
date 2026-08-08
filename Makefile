@@ -646,9 +646,15 @@ dashboard-all: ## Run the dashboard e2e on ALL engines (Chromium + Firefox + Web
 # module docstring for the measurement). The test itself now skips loudly
 # on any non-chromium `browser_name`, so this flag is belt-and-suspenders,
 # not the only guard.
+# -n0, not -n 1: the lane's only test is a serial_timing discriminator (it
+# bounds a DOM read's elapsed time), and the root conftest fails any such test
+# that lands in an xdist worker — `-n 1` is one worker, not no workers. The
+# usual exclusion+serial-leg pairing does not fit a single-test lane: the
+# non-serial leg would select nothing and pytest would exit 5. This lane was
+# already serial by intent, as the SAY line says; now it is serial in fact.
 dashboard-soak: $(DASHBOARD_DIST) ## Run the dashboard replay soak (Tier-3, `soak`-marked; NOT part of `make dashboard`/`make coverage`) — drives FakeCollector at max rate in-process, no VM. Chromium only (see comment above). JUnit XML lands in reports/junit/dashboard-soak/.
 	@$(SAY) "playwright soak: SSE replay (chromium, serial, no coverage)"
-	@$(TIMEOUT_CMD) uv run pytest tests/e2e/monitor/dashboard/test_replay_soak.py -m "browser and soak" --browser chromium -n 1 --no-cov --screenshot only-on-failure --output reports/playwright $(call junitxml,dashboard-soak)
+	@$(TIMEOUT_CMD) uv run pytest tests/e2e/monitor/dashboard/test_replay_soak.py -m "browser and soak" --browser chromium -n0 --no-cov --screenshot only-on-failure --output reports/playwright $(call junitxml,dashboard-soak)
 
 # Soak/stability + repeat targets disable coverage (--no-cov, overriding the
 # --cov in pytest addopts). Per-test `--cov-context=test` tracing adds overhead
@@ -658,11 +664,19 @@ dashboard-soak: $(DASHBOARD_DIST) ## Run the dashboard replay soak (Tier-3, `soa
 stability-unit: ## Run no-VM SessionManager concurrency/soak tests by marker. JUnit XML lands in reports/junit/stability-unit/. Override iterations with COUNT=N (default 50).
 	@$(SAY) "pytest soak: concurrency marker, no VMs (x$(STABILITY_UNIT_COUNT), leak detector on)"
 	@OTTO_DETECT_ASYNCIO_LEAKS=1 uv run pytest \
-	    -m concurrency \
+	    -m "concurrency and not serial_timing" \
 	    --count=$(STABILITY_UNIT_COUNT) \
 	    -p no:cacheprovider \
 	    --no-cov \
 	    $(call junitxml,stability-unit)
+	@$(SAY) "pytest soak: serial_timing discriminators, -n0 (x$(STABILITY_UNIT_COUNT))"
+	@OTTO_DETECT_ASYNCIO_LEAKS=1 uv run pytest \
+	    -m "serial_timing and concurrency" \
+	    --count=$(STABILITY_UNIT_COUNT) \
+	    -n0 \
+	    -p no:cacheprovider \
+	    --no-cov \
+	    $(call junitxml,stability-unit-serial)
 
 stability-unix: ## Real telnet/SSH soak against the Unix Vagrant VMs (incl. multi-hop). Requires lab VMs. JUnit XML in reports/junit/stability-unix/. Override iterations with COUNT=N (default 10).
 	@$(SAY) "pytest soak: real telnet/SSH on the Unix VMs (x$(STABILITY_UNIX_COUNT), leak detector on)"
@@ -673,12 +687,19 @@ stability-unix: ## Real telnet/SSH soak against the Unix Vagrant VMs (incl. mult
 	    --no-cov \
 	    $(call junitxml,stability-unix)
 
+# -n0 for the whole lane rather than an exclusion + serial leg. Every module
+# under tests/e2e/tunnel_stability carries xdist_group("link_tunnels_e2e") and
+# addopts sets --dist loadgroup, so all of these tests already land on ONE
+# worker with its siblings idle: sibling counterfeiting was never possible
+# here, and splitting the lane would only buy a second full live-bed
+# setup/teardown. Same reasoning as dashboard-soak below.
 stability-tunnel: ## Tunnel soak against the live bed (churn/concurrency/traffic/adversity/health/monitor-loop). Requires lab VMs. JUnit XML in reports/junit/stability-tunnel/. COUNT=N repeats the suite (default 1); CYCLES=N sets internal loop depth (default 5).
 	@$(SAY) "pytest soak: tunnels on the live bed (x$(STABILITY_TUNNEL_COUNT), $(STABILITY_TUNNEL_CYCLES) cycles/test)"
 	@OTTO_DETECT_ASYNCIO_LEAKS=1 OTTO_TUNNEL_SOAK_CYCLES=$(STABILITY_TUNNEL_CYCLES) uv run pytest \
 	    tests/e2e/tunnel_stability \
 	    -m "stability and hops" \
 	    --count=$(STABILITY_TUNNEL_COUNT) \
+	    -n0 \
 	    -p no:cacheprovider \
 	    --no-cov \
 	    $(call junitxml,stability-tunnel)

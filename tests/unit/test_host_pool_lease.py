@@ -6,6 +6,8 @@ import multiprocessing as mp
 import time
 from pathlib import Path
 
+import pytest
+
 from tests._fixtures._host_pool import UNIX_POOL, lease_unix_host
 
 
@@ -19,6 +21,7 @@ def test_two_leases_pick_distinct_hosts(tmp_path: Path) -> None:
         assert a != b  # second lease skips the busy first host
 
 
+@pytest.mark.serial_timing
 def test_lease_releases_on_exit(tmp_path: Path) -> None:
     with lease_unix_host(tmp_path, candidates=["carrot"]) as a:
         assert a == "carrot"

@@ -138,8 +138,8 @@ def _run_monitor_briefly(
     ``--live --hosts <host> --interval <interval> --db <db_path>`` (``--live``
     is required since spec 2026-07-12 made ``otto monitor`` require exactly
     one of ``--live``/``<source>`` — bare ``otto monitor <flags>`` is now a
-    usage error, exit 2), poll the DB for up to 6 s waiting for the first
-    collection tick, send SIGINT, and wait up to
+    usage error, exit 2), poll the DB for the first collection tick, send
+    SIGINT, and wait up to
     30 s for a clean exit — failing loudly (never skipping) if the live-bed
     process wedges. Returns the process's exit status and captured output so
     callers apply their own assertions.
@@ -170,8 +170,19 @@ def _run_monitor_briefly(
         extra_env=extra_env,
     )
 
-    # Poll for up to 6 s, checking every 0.5 s — give the first collection tick
-    # time to complete (SSH connect + shell commands + DB write).
+    # The poll deadline has to SCALE WITH `interval`, because that is also the
+    # per-tick command budget: at interval=5 a flat 6 s left the first tick's
+    # whole batch (SSH connect + ~10 parser commands + DB write) 1.2x of its
+    # own interval to finish in. That is thinner than any other margin in this
+    # repo, and it duly false-failed a gate run under concurrent load
+    # (`test_per_host_parser_scoping_via_init_module`, zero Uptime rows).
+    #
+    # This is a RUNAWAY GUARD, not a discriminator: nothing passes or fails
+    # because of where it sits — the assertions read `rows_found`, and the
+    # docstring's own promise is that raising it costs no wall-clock, since
+    # SIGINT fires the moment rows land. So it should be generous. Healthy
+    # observed cost at interval=5 is ~3 s; this leaves ~10x for contention.
+    poll_budget = 4.0 * interval + 10.0
     rows_found = False
 
     def _rows_landed_or_process_died() -> bool:
@@ -187,9 +198,12 @@ def _run_monitor_briefly(
     with contextlib.suppress(WaitTimeoutError):
         wait_for(
             _rows_landed_or_process_died,
-            6.0,
+            poll_budget,
             interval=0.5,
-            on_timeout=f"no metric rows in {db_path} within 6 s (monitor still running)",
+            on_timeout=(
+                f"no metric rows in {db_path} within {poll_budget:g} s "
+                f"(collection interval {interval} s; monitor still running)"
+            ),
         )
 
     # ── Stop the monitor ────────────────────────────────────────────────────

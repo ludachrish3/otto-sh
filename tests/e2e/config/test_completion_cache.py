@@ -390,6 +390,7 @@ def test_clear_autocomplete_cache_removes_file(tmp_path: Path) -> None:
     assert not cache_file.exists()
 
 
+@pytest.mark.serial_timing
 def test_ttl_expiry_invalidates_cache(tmp_path: Path) -> None:
     """Cache entries older than the TTL are treated as a miss."""
     import time as _time

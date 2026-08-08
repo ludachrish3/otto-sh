@@ -1237,6 +1237,7 @@ def test_norecursedirs_table_matches_pytest(dirname: str, pruned: bool) -> None:
 # ── A host source that STALLS must not wedge the shell ───────────────────────
 
 
+@pytest.mark.serial_timing
 def test_a_hanging_host_source_is_bounded_not_waited_on(monkeypatch, caplog) -> None:
     """Failing was already contained; stalling was not.
 

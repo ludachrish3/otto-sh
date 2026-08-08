@@ -183,6 +183,7 @@ def test_a_pass_after_retries_is_recorded_not_erased(tmp_path):
     assert "test_flaky: 3 attempts" in result.stdout
 
 
+@pytest.mark.serial_timing
 def test_a_retried_attempt_gets_a_fresh_timeout(tmp_path):
     """With ``timeout_func_only = true`` (the dev suite's config),
     pytest-timeout's alarm is already cancelled when the retry loop runs; the
@@ -209,6 +210,7 @@ def test_a_retried_attempt_gets_a_fresh_timeout(tmp_path):
     assert elapsed < 15, f"retried attempt was not bounded by its timeout ({elapsed:.1f}s)"
 
 
+@pytest.mark.serial_timing
 def test_the_timeout_markers_keyword_form_also_bounds_retries(tmp_path):
     """pytest-timeout honors ``@pytest.mark.timeout(timeout=1)`` — the keyword
     form — so the retry re-arm must read ``marker.kwargs`` too. The first cut
@@ -300,6 +302,7 @@ def test_an_xfail_on_the_first_attempt_is_not_retried(tmp_path):
     assert "retry_attempts" not in (tmp_path / "junit.xml").read_text()
 
 
+@pytest.mark.serial_timing
 def test_a_swallowing_body_cannot_eat_its_own_timeout(tmp_path):
     """The alarm must cross a body's ``except Exception:`` — the standard
     shape of exactly the flaky-network tests retry exists for. The first cut
@@ -418,6 +421,7 @@ def test_a_skip_on_a_retried_attempt_ends_the_loop(tmp_path):
     assert "retried tests (1)" in result.stdout, result.stdout
 
 
+@pytest.mark.serial_timing
 def test_a_retry_does_not_disarm_the_protocol_timer_for_teardown(tmp_path):
     """With pytest-timeout's protocol-scoped default (no ``func_only``), the
     outer timer is live during the retry loop; the per-attempt re-arm must

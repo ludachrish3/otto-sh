@@ -348,6 +348,7 @@ class TestCredentials:
         finally:
             await host.close()
 
+    @pytest.mark.serial_timing
     @pytest.mark.asyncio
     async def test_telnet_bad_credentials_fails_fast(self, monkeypatch):
         """A telnet login with a wrong password must raise a clear error

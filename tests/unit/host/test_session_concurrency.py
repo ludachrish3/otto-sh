@@ -125,6 +125,7 @@ class _SlowConnectFactory(_Factory):
 # ── Targeted concurrency tests ────────────────────────────────────────────────
 
 
+@pytest.mark.serial_timing
 @pytest.mark.asyncio
 @pytest.mark.timeout(10)
 async def test_exec_pool_connects_concurrently() -> None:
@@ -497,6 +498,7 @@ async def test_ensure_session_propagates_persistent_handshake_failure() -> None:
     await mgr.close_all()
 
 
+@pytest.mark.serial_timing
 @pytest.mark.asyncio
 @pytest.mark.timeout(5)
 async def test_ensure_session_retry_backoff_is_configurable() -> None:

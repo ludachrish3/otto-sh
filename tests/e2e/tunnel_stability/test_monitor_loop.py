@@ -57,6 +57,7 @@ async def _timed_pass(collector: MetricCollector) -> float:
     return time.monotonic() - started
 
 
+@pytest.mark.serial_timing
 @pytest.mark.asyncio
 async def test_loop_converges_with_churn_and_seam_parity(tunnel_lab, reap_tunnels) -> None:
     """After each churn settle, ONE pass converges the record set to the live
@@ -92,6 +93,7 @@ async def test_loop_converges_with_churn_and_seam_parity(tunnel_lab, reap_tunnel
     assert published, "collector never published a fragment"
 
 
+@pytest.mark.serial_timing
 @pytest.mark.asyncio
 async def test_loop_holds_last_known_under_wedge_then_reconverges(tunnel_lab, reap_tunnels) -> None:
     """SIGSTOP tomato's sshd listener mid-monitoring: ticks keep completing

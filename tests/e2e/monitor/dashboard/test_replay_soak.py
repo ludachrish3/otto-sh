@@ -105,6 +105,7 @@ def _wait_for_ingestion_to_settle(chart: Locator) -> None:
     )
 
 
+@pytest.mark.serial_timing
 def test_browser_stays_responsive_under_a_full_runs_data(
     page: Page, live_stream_dash: DashboardHarness[FakeCollector], browser_name: str
 ) -> None:

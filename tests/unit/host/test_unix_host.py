@@ -2005,6 +2005,7 @@ class TestSshExecKillEscalation:
     below would fail the test rather than let it hang the suite.
     """
 
+    @pytest.mark.serial_timing
     @pytest.mark.asyncio
     async def test_ssh_exec_escalates_to_kill_when_terminate_is_ignored(self, monkeypatch):
         # Patched where the name is *used* -- session.py binds its own

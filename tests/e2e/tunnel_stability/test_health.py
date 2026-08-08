@@ -75,6 +75,7 @@ async def _assert_black_hole() -> None:
     )
 
 
+@pytest.mark.serial_timing
 @pytest.mark.asyncio
 async def test_phantom_host_health_cycle(tunnel_lab, reap_tunnels) -> None:
     """CYCLES x { add-through-phantom fails loud + rolls back; discovery on
@@ -165,6 +166,7 @@ def _cli_sut_pinned_to_ssh(tmp_path: Path) -> Path:
     return sut
 
 
+@pytest.mark.serial_timing
 @pytest.mark.asyncio
 async def test_sigstop_wedge_uncertain_then_recovers(
     tunnel_lab, reap_tunnels, tmp_path: Path

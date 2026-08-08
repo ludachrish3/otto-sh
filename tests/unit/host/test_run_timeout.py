@@ -592,6 +592,7 @@ class TestExecBoundsTheWholeCommand:
     (e.g. ``ping``) runs forever regardless of ``timeout``.
     """
 
+    @pytest.mark.serial_timing
     @pytest.mark.asyncio
     async def test_steady_output_command_times_out_promptly(self, monkeypatch):
         """A command that never stops emitting output must still time out.

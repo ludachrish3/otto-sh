@@ -6,6 +6,8 @@ import multiprocessing as mp
 import time
 from pathlib import Path
 
+import pytest
+
 from otto.utils import wait_for
 from tests._fixtures._console_lock import console_access
 
@@ -45,6 +47,7 @@ def test_two_readers_hold_shared_concurrently(tmp_path):
     assert all(p.exitcode == 0 for p in ps), "readers did not hold SHARED concurrently"
 
 
+@pytest.mark.serial_timing
 def test_writer_not_starved_by_reader_churn(tmp_path):
     stop = mp.Event()
     cycles = mp.Value("i", 0)

@@ -279,6 +279,7 @@ class TestCollectorRun:
             if "timeout" in call.kwargs:
                 assert call.kwargs["timeout"] == 3.0
 
+    @pytest.mark.serial_timing
     @pytest.mark.asyncio
     async def test_slow_host_does_not_block_fast_host(self):
         """A slow host times out at the interval boundary, not indefinitely.
