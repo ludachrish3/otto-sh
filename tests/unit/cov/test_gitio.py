@@ -24,18 +24,7 @@ from otto.coverage.capture.gitio import (
     rev_list_first_parent,
     rev_parse_commit,
 )
-
-
-def _git_env(tmp_path: Path) -> dict[str, str]:
-    """Return a hermetic git environment for testing."""
-    return {
-        "GIT_AUTHOR_NAME": "t",
-        "GIT_AUTHOR_EMAIL": "t@x",
-        "GIT_COMMITTER_NAME": "t",
-        "GIT_COMMITTER_EMAIL": "t@x",
-        "HOME": str(tmp_path),
-        "PATH": "/usr/bin:/bin",
-    }
+from tests._fixtures.gitrepo import git_env
 
 
 def _make_repo(tmp_path: Path) -> tuple[Path, str]:
@@ -50,7 +39,7 @@ def _make_repo(tmp_path: Path) -> tuple[Path, str]:
             check=True,
             capture_output=True,
             text=True,
-            env=_git_env(tmp_path),
+            env=git_env(tmp_path),
         )
         return result.stdout
 
@@ -69,13 +58,14 @@ def _commit_all(repo_root: Path) -> str:
         cwd=repo_root,
         check=True,
         capture_output=True,
+        env=git_env(repo_root.parent),
     )
     subprocess.run(
         ["git", "commit", "-qm", "change"],
         cwd=repo_root,
         check=True,
         capture_output=True,
-        env=_git_env(repo_root.parent),
+        env=git_env(repo_root.parent),
     )
     return head_commit(repo_root)
 
@@ -91,7 +81,7 @@ def repo(tmp_path: Path) -> Path:
             cwd=root,
             check=True,
             capture_output=True,
-            env=_git_env(tmp_path),
+            env=git_env(tmp_path),
         )
 
     git("init", "-q")
@@ -132,12 +122,14 @@ def test_blob_sha_from_nested_subdir(repo: Path) -> None:
         cwd=repo,
         check=True,
         capture_output=True,
+        env=git_env(repo.parent),
     )
     subprocess.run(
         ["git", "-c", "user.name=t", "-c", "user.email=t@x", "commit", "-qm", "nest"],
         cwd=repo,
         check=True,
         capture_output=True,
+        env=git_env(repo.parent),
     )
 
     sha = blob_sha(nested, Path("product/main.c"))
@@ -361,7 +353,7 @@ def test_config_value_reads_repo_local_config(tmp_path: Path) -> None:
         ["git", "config", "user.email", "repo@example.com"],
         cwd=root,
         check=True,
-        env=_git_env(tmp_path),
+        env=git_env(tmp_path),
     )
     assert gitio_module.config_value(root, "user.email") == "repo@example.com"
 

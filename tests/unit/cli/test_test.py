@@ -27,6 +27,7 @@ from typer.testing import CliRunner
 from otto.cli.test import suite_app
 from otto.context import get_context
 from otto.suite.register import SUITES, register_suite_class
+from tests._fixtures.gitrepo import TmpGitRepo
 
 runner = CliRunner()
 
@@ -569,32 +570,10 @@ class TestInRunReportGeneration:
     @pytest.fixture
     def sut_repo(self, tmp_path):
         """A real tmp_path git repo standing in for the SUT checkout."""
-        import subprocess
-
-        root = tmp_path / "sut"
-        root.mkdir()
-
-        def git(*args: str) -> None:
-            subprocess.run(
-                ["git", *args],
-                cwd=root,
-                check=True,
-                capture_output=True,
-                env={
-                    "GIT_AUTHOR_NAME": "t",
-                    "GIT_AUTHOR_EMAIL": "t@x",
-                    "GIT_COMMITTER_NAME": "t",
-                    "GIT_COMMITTER_EMAIL": "t@x",
-                    "HOME": str(tmp_path),
-                    "PATH": "/usr/bin:/bin",
-                },
-            )
-
-        git("init", "-q")
-        (root / "f.c").write_text("int a;\nint b;\n")
-        git("add", "f.c")
-        git("commit", "-qm", "init")
-        return root
+        repo = TmpGitRepo(tmp_path / "sut")
+        repo.write("f.c", "int a;\nint b;\n")
+        repo.commit("init")
+        return repo.root
 
     def test_in_run_report_uses_configured_tiers(self, tmp_path, sut_repo):
         """``otto test --cov-report`` must render via the collection-model path,

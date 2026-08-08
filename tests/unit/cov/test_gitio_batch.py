@@ -12,14 +12,7 @@ from otto.coverage.capture.gitio import (
     hash_object,
     hash_objects,
 )
-
-_GIT_ENV = {
-    "GIT_AUTHOR_NAME": "t",
-    "GIT_AUTHOR_EMAIL": "t@x",
-    "GIT_COMMITTER_NAME": "t",
-    "GIT_COMMITTER_EMAIL": "t@x",
-    "PATH": "/usr/bin:/bin",
-}
+from tests._fixtures.gitrepo import git_env
 
 
 @pytest.fixture
@@ -33,7 +26,7 @@ def repo(tmp_path: Path) -> Path:
             cwd=root,
             check=True,
             capture_output=True,
-            env={**_GIT_ENV, "HOME": str(tmp_path)},
+            env=git_env(tmp_path),
         )
 
     git("init", "-q")
@@ -65,14 +58,14 @@ def test_cat_blobs_roundtrips_embedded_newlines_and_non_utf8(repo: Path) -> None
         cwd=repo,
         check=True,
         capture_output=True,
-        env={**_GIT_ENV, "HOME": str(repo.parent)},
+        env=git_env(repo.parent),
     )
     subprocess.run(
         ["git", "commit", "-qm", "bin"],
         cwd=repo,
         check=True,
         capture_output=True,
-        env={**_GIT_ENV, "HOME": str(repo.parent)},
+        env=git_env(repo.parent),
     )
     sha_a = hash_object(repo, repo / "a.c")
     sha_bin = hash_object(repo, repo / "bin.dat")

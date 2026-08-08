@@ -10,7 +10,6 @@ Covers:
 """
 
 import logging
-import subprocess
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -22,6 +21,7 @@ from otto.cli.cov import cov_app
 from otto.coverage.capture import produce as produce_module
 from otto.coverage.capture.model import Capture
 from otto.coverage.store.model import Thresholds
+from tests._fixtures.gitrepo import TmpGitRepo
 
 runner = CliRunner()
 
@@ -784,36 +784,10 @@ class TestResolveCovSettingsExtraMarkers:
         isn't a declared kind="manual" tier, so passing the wrong list here
         would make a well-formed [[bench]] entry look like an unknown
         table."""
-        import subprocess
-
-        sut_dir = tmp_path / "sut"
-        sut_dir.mkdir()
-        git_env = {
-            "GIT_AUTHOR_NAME": "t",
-            "GIT_AUTHOR_EMAIL": "t@x",
-            "GIT_COMMITTER_NAME": "t",
-            "GIT_COMMITTER_EMAIL": "t@x",
-            "PATH": "/usr/bin:/bin",
-            "HOME": str(tmp_path),
-        }
-
-        def _git(*args):
-            subprocess.run(
-                ["git", *args], cwd=sut_dir, check=True, capture_output=True, env=git_env
-            )
-
-        _git("init", "-q")
-        (sut_dir / "f.c").write_text("int a;\n")
-        _git("add", "f.c")
-        _git("commit", "-qm", "work")
-        sha = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            cwd=sut_dir,
-            check=True,
-            capture_output=True,
-            text=True,
-            env=git_env,
-        ).stdout.strip()
+        sut = TmpGitRepo(tmp_path / "sut")
+        sut_dir = sut.root
+        sut.write("f.c", "int a;\n")
+        sha = sut.commit("work")
 
         (sut_dir / ".otto").mkdir()
         (sut_dir / ".otto" / "coverage-overrides.toml").write_text(
@@ -915,20 +889,12 @@ class TestResolveTester:
         # Regression (Tier 0.5): the pre-gitio implementation ran
         # `git config user.email` in the process CWD, so `otto cov get` from
         # outside the SUT silently read the wrong repo's identity.
-        import subprocess
-
-        env = {
-            "HOME": str(tmp_path),
-            "PATH": "/usr/bin:/bin",
-            "GIT_CONFIG_NOSYSTEM": "1",
-        }
-
         def make_repo(name: str, email: str) -> Path:
-            root = tmp_path / name
-            root.mkdir()
-            for args in (["init", "-q"], ["config", "user.email", email]):
-                subprocess.run(["git", *args], cwd=root, check=True, env=env)
-            return root
+            repo = TmpGitRepo(tmp_path / name)
+            # Local (not global) config — the value the product must read back
+            # is the SUT repo's own, so it has to live in that repo's config.
+            repo.git("config", "user.email", email)
+            return repo.root
 
         sut = make_repo("sut", "sut@example.com")
         elsewhere = make_repo("elsewhere", "wrong@example.com")
@@ -956,30 +922,10 @@ class TestCovGetValidation:
         Needed by tests that must get *past* ``_do_get``'s git preflight (a
         non-git sut fails fast before the fetch) to exercise a later path.
         """
-        root = tmp_path / "sut"
-        root.mkdir()
-
-        def git(*args: str) -> None:
-            subprocess.run(
-                ["git", *args],
-                cwd=root,
-                check=True,
-                capture_output=True,
-                env={
-                    "GIT_AUTHOR_NAME": "t",
-                    "GIT_AUTHOR_EMAIL": "t@x",
-                    "GIT_COMMITTER_NAME": "t",
-                    "GIT_COMMITTER_EMAIL": "t@x",
-                    "HOME": str(tmp_path),
-                    "PATH": "/usr/bin:/bin",
-                },
-            )
-
-        git("init", "-q")
-        (root / "f.c").write_text("int a;\n")
-        git("add", "f.c")
-        git("commit", "-qm", "init")
-        return root
+        repo = TmpGitRepo(tmp_path / "sut")
+        repo.write("f.c", "int a;\n")
+        repo.commit("init")
+        return repo.root
 
     def test_no_coverage_config_exits_1(self):
         repo = self._repo(None)
@@ -1242,30 +1188,10 @@ class TestCovGetSuccess:
     @pytest.fixture
     def repo(self, tmp_path):
         """A real tmp_path git repo standing in for the SUT."""
-        root = tmp_path / "sut"
-        root.mkdir()
-
-        def git(*args: str) -> None:
-            subprocess.run(
-                ["git", *args],
-                cwd=root,
-                check=True,
-                capture_output=True,
-                env={
-                    "GIT_AUTHOR_NAME": "t",
-                    "GIT_AUTHOR_EMAIL": "t@x",
-                    "GIT_COMMITTER_NAME": "t",
-                    "GIT_COMMITTER_EMAIL": "t@x",
-                    "HOME": str(tmp_path),
-                    "PATH": "/usr/bin:/bin",
-                },
-            )
-
-        git("init", "-q")
-        (root / "f.c").write_text("int a;\nint b;\n")
-        git("add", "f.c")
-        git("commit", "-qm", "init")
-        return root
+        repo = TmpGitRepo(tmp_path / "sut")
+        repo.write("f.c", "int a;\nint b;\n")
+        repo.commit("init")
+        return repo.root
 
     @staticmethod
     def _repo_mock(sut_dir, coverage_cfg, name="sut"):

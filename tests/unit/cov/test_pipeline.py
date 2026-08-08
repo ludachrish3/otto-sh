@@ -19,14 +19,7 @@ from otto.coverage.reporter import (
     run_coverage_report,
 )
 from otto.coverage.tiers import load_tiers
-
-_GIT_ENV = {
-    "GIT_AUTHOR_NAME": "t",
-    "GIT_AUTHOR_EMAIL": "t@x",
-    "GIT_COMMITTER_NAME": "t",
-    "GIT_COMMITTER_EMAIL": "t@x",
-    "PATH": "/usr/bin:/bin",
-}
+from tests._fixtures.gitrepo import git_env
 
 
 class TestReadCovSourceRoot:
@@ -206,7 +199,7 @@ def _git(repo: Path, tmp_path: Path, *args: str) -> None:
         cwd=repo,
         check=True,
         capture_output=True,
-        env={**_GIT_ENV, "HOME": str(tmp_path)},
+        env=git_env(tmp_path),
     )
 
 

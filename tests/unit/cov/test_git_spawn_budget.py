@@ -21,6 +21,7 @@ from otto.coverage.capture import gitio
 from otto.coverage.capture.model import Capture, CaptureFileCov
 from otto.coverage.store.model import CoverageStore
 from otto.coverage.validity import apply_manual_capture
+from tests._fixtures.gitrepo import git_env
 
 N_FILES = 50
 
@@ -32,16 +33,7 @@ def _git(cwd: Path, *args: str) -> str:
         check=True,
         capture_output=True,
         text=True,
-        env={
-            "GIT_AUTHOR_NAME": "t",
-            "GIT_AUTHOR_EMAIL": "t@t",
-            "GIT_COMMITTER_NAME": "t",
-            "GIT_COMMITTER_EMAIL": "t@t",
-            "HOME": str(cwd),
-            "GIT_CONFIG_GLOBAL": "/dev/null",
-            "GIT_CONFIG_SYSTEM": "/dev/null",
-            "PATH": "/usr/bin:/bin",
-        },
+        env=git_env(cwd),
     ).stdout
 
 

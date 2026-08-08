@@ -2,23 +2,26 @@ import subprocess
 from pathlib import Path
 
 from otto.coverage.capture import gitio
+from tests._fixtures.gitrepo import TmpGitRepo, git_env
+
+
+def _git(repo: Path, *args: str) -> None:
+    subprocess.run(
+        ["git", *args],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        env=git_env(repo),
+    )
 
 
 def _init(tmp_path: Path) -> Path:
-    repo = tmp_path / "r"
-    repo.mkdir()
-    for args in (
-        ["init", "-q"],
-        ["config", "user.email", "t@example.com"],
-        ["config", "user.name", "t"],
-    ):
-        subprocess.run(["git", *args], cwd=repo, check=True)
-    return repo
+    return TmpGitRepo(tmp_path / "r").root
 
 
 def _commit(repo: Path, message: str) -> None:
-    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
-    subprocess.run(["git", "commit", "-q", "-m", message], cwd=repo, check=True)
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", message)
 
 
 def test_walk_is_newest_first_and_carries_subject_and_body(tmp_path):
@@ -77,11 +80,11 @@ def test_commit_body_with_delimiters_does_not_fabricate_records(tmp_path):
 
     # Create commit with control chars in BODY (via file to handle binary data)
     (repo / "a.c").write_text("line1\nline2\n")
-    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+    _git(repo, "add", "-A")
     # Use -F to pass message via file (allows control chars)
     msg_file = repo / ".git_msg"
     msg_file.write_bytes(b"c2\n\nbody with control\n\x1e A\x1fB\x1fC\x1fD")
-    subprocess.run(["git", "commit", "-q", "-F", str(msg_file)], cwd=repo, check=True)
+    _git(repo, "commit", "-q", "-F", str(msg_file))
     msg_file.unlink()
 
     walk = gitio.log_walk_u0(repo, ["a.c"])
@@ -149,7 +152,7 @@ def test_walk_follows_renames_with_m_flag(tmp_path):
     (repo / "old.c").write_text("line1\nline2\n")
     _commit(repo, "modify old.c")
     # Rename the file
-    subprocess.run(["git", "mv", "old.c", "new.c"], cwd=repo, check=True)
+    _git(repo, "mv", "old.c", "new.c")
     _commit(repo, "rename old.c to new.c")
     # Modify the renamed file
     (repo / "new.c").write_text("line1\nline2\nline3\n")
@@ -172,7 +175,7 @@ def test_name_status_walk_u0_is_unrestricted_and_finds_renames(tmp_path):
     repo = _init(tmp_path)
     (repo / "old.c").write_text("line1\n")
     _commit(repo, "create old.c")
-    subprocess.run(["git", "mv", "old.c", "new.c"], cwd=repo, check=True)
+    _git(repo, "mv", "old.c", "new.c")
     _commit(repo, "rename old.c to new.c")
 
     blocks = gitio.name_status_walk_u0(repo)

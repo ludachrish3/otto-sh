@@ -9,6 +9,18 @@ from pydantic import ValidationError
 
 from otto.coverage.capture.gitio import blob_sha, head_commit
 from otto.coverage.capture.model import Capture, build_capture, parse_info
+from tests._fixtures.gitrepo import git_env
+
+
+def _git(root: Path, home: Path, *args: str) -> None:
+    subprocess.run(
+        ["git", *args],
+        cwd=root,
+        check=True,
+        capture_output=True,
+        env=git_env(home),
+    )
+
 
 INFO = """TN:
 SF:{src}
@@ -41,20 +53,7 @@ def repo(tmp_path: Path) -> Path:
     root.mkdir()
 
     def git(*args: str) -> None:
-        subprocess.run(
-            ["git", *args],
-            cwd=root,
-            check=True,
-            capture_output=True,
-            env={
-                "GIT_AUTHOR_NAME": "t",
-                "GIT_AUTHOR_EMAIL": "t@x",
-                "GIT_COMMITTER_NAME": "t",
-                "GIT_COMMITTER_EMAIL": "t@x",
-                "HOME": str(tmp_path),
-                "PATH": "/usr/bin:/bin",
-            },
-        )
+        _git(root, tmp_path, *args)
 
     git("init", "-q")
     (root / "f.c").write_text("int a;\nint b;\nint c;\n")
@@ -126,13 +125,8 @@ def test_build_capture_nested_sut_dir(repo: Path, tmp_path: Path) -> None:
     # toplevel file — so a toplevel-relative lookup can neither find it nor
     # accidentally anchor a same-content blob.
     (nested / "main.c").write_text("int nested_only;\nint b;\nint c;\n")
-    subprocess.run(["git", "add", "nested"], cwd=repo, check=True, capture_output=True)
-    subprocess.run(
-        ["git", "-c", "user.name=t", "-c", "user.email=t@x", "commit", "-qm", "nest"],
-        cwd=repo,
-        check=True,
-        capture_output=True,
-    )
+    _git(repo, tmp_path, "add", "nested")
+    _git(repo, tmp_path, "-c", "user.name=t", "-c", "user.email=t@x", "commit", "-qm", "nest")
 
     info = _write_info(tmp_path, nested / "main.c")
     sut_dir = repo / "nested" / "sut"
@@ -160,25 +154,9 @@ def test_untracked_file_skipped(
 
 
 def test_gitignored_file_skipped(repo: Path, tmp_path: Path) -> None:
-    def git(*args: str) -> None:
-        subprocess.run(
-            ["git", *args],
-            cwd=repo,
-            check=True,
-            capture_output=True,
-            env={
-                "GIT_AUTHOR_NAME": "t",
-                "GIT_AUTHOR_EMAIL": "t@x",
-                "GIT_COMMITTER_NAME": "t",
-                "GIT_COMMITTER_EMAIL": "t@x",
-                "HOME": str(tmp_path),
-                "PATH": "/usr/bin:/bin",
-            },
-        )
-
     (repo / ".gitignore").write_text("gen.c\n")
-    git("add", ".gitignore")
-    git("commit", "-qm", "ignore gen.c")
+    _git(repo, tmp_path, "add", ".gitignore")
+    _git(repo, tmp_path, "commit", "-qm", "ignore gen.c")
     (repo / "gen.c").write_text("int g;\n")
 
     info = tmp_path / "x.info"

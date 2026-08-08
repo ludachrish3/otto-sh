@@ -14,6 +14,7 @@ from otto.coverage.validity import (
     load_capture_into_store,
     register_capture_run,
 )
+from tests._fixtures.gitrepo import git_env
 
 
 @pytest.fixture
@@ -27,14 +28,7 @@ def repo(tmp_path: Path) -> Path:
             cwd=root,
             check=True,
             capture_output=True,
-            env={
-                "GIT_AUTHOR_NAME": "t",
-                "GIT_AUTHOR_EMAIL": "t@x",
-                "GIT_COMMITTER_NAME": "t",
-                "GIT_COMMITTER_EMAIL": "t@x",
-                "HOME": str(tmp_path),
-                "PATH": "/usr/bin:/bin",
-            },
+            env=git_env(tmp_path),
         )
 
     git("init", "-q")
@@ -76,13 +70,7 @@ def test_edited_line_goes_stale(repo: Path) -> None:
         cwd=repo,
         check=True,
         capture_output=True,
-        env={
-            "GIT_AUTHOR_NAME": "t",
-            "GIT_AUTHOR_EMAIL": "t@x",
-            "GIT_COMMITTER_NAME": "t",
-            "GIT_COMMITTER_EMAIL": "t@x",
-            "PATH": "/usr/bin:/bin",
-        },
+        env=git_env(repo.parent),
     )
     store = CoverageStore(tier_order=["manual"])
     apply_manual_capture(store, cap, repo, max_age_days=None)
@@ -181,13 +169,7 @@ def _commit_edit(repo: Path, text: str) -> None:
         cwd=repo,
         check=True,
         capture_output=True,
-        env={
-            "GIT_AUTHOR_NAME": "t",
-            "GIT_AUTHOR_EMAIL": "t@x",
-            "GIT_COMMITTER_NAME": "t",
-            "GIT_COMMITTER_EMAIL": "t@x",
-            "PATH": "/usr/bin:/bin",
-        },
+        env=git_env(repo.parent),
     )
 
 

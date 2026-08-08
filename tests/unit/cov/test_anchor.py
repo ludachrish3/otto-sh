@@ -9,6 +9,7 @@ import pytest
 from otto.coverage.anchor import AnchorResolver
 from otto.coverage.capture import gitio
 from otto.coverage.capture.model import CaptureFileCov
+from tests._fixtures.gitrepo import git_env
 
 
 def _git(cwd: Path, *args: str) -> str:
@@ -18,16 +19,7 @@ def _git(cwd: Path, *args: str) -> str:
         check=True,
         capture_output=True,
         text=True,
-        env={
-            "GIT_AUTHOR_NAME": "t",
-            "GIT_AUTHOR_EMAIL": "t@t",
-            "GIT_COMMITTER_NAME": "t",
-            "GIT_COMMITTER_EMAIL": "t@t",
-            "HOME": str(cwd),
-            "GIT_CONFIG_GLOBAL": "/dev/null",
-            "GIT_CONFIG_SYSTEM": "/dev/null",
-            "PATH": "/usr/bin:/bin",
-        },
+        env=git_env(cwd),
     ).stdout
 
 

@@ -24,6 +24,7 @@ from otto.suite.run import (
     run_selection,
     run_suite,
 )
+from tests._fixtures.gitrepo import TmpGitRepo
 
 
 def test_suite_package_reexports_selection_api():
@@ -525,29 +526,14 @@ def test_post_run_coverage_populates_ticket_data_end_to_end(tmp_path, monkeypatc
     now populates ticket data, not just that a mock received a kwarg."""
     import asyncio
     import json
-    import subprocess
 
     from otto.coverage.merge import merger as merger_mod
     from otto.suite.run import _post_run_coverage
 
-    repo_root = tmp_path / "sut"
-    repo_root.mkdir()
-    git_env = {
-        "GIT_AUTHOR_NAME": "t",
-        "GIT_AUTHOR_EMAIL": "t@x",
-        "GIT_COMMITTER_NAME": "t",
-        "GIT_COMMITTER_EMAIL": "t@x",
-        "PATH": "/usr/bin:/bin",
-        "HOME": str(tmp_path),
-    }
-
-    def _git(*args):
-        subprocess.run(["git", *args], cwd=repo_root, check=True, capture_output=True, env=git_env)
-
-    _git("init", "-q")
-    (repo_root / "f.c").write_text("int a;\nint b;\n")
-    _git("add", "f.c")
-    _git("commit", "-qm", "fix PROJ-7")
+    sut = TmpGitRepo(tmp_path / "sut")
+    repo_root = sut.root
+    sut.write("f.c", "int a;\nint b;\n")
+    sut.commit("fix PROJ-7")
 
     hdir = tmp_path / "unit_build"
     hdir.mkdir()
@@ -607,38 +593,14 @@ def test_run_suite_overrides_threaded_from_settings(tmp_path, monkeypatch):
     """A well-formed override file on the repo's settings must reach
     run_coverage_report's overrides kwarg via the otto-test path, exactly
     as it already does via otto cov report's _resolve_cov_settings."""
-    import subprocess
-
     import otto.config
 
     log_dir = tmp_path / "log"
     log_dir.mkdir()
-    repo_root = tmp_path / "sut"
-    repo_root.mkdir()
-    git_env = {
-        "GIT_AUTHOR_NAME": "t",
-        "GIT_AUTHOR_EMAIL": "t@x",
-        "GIT_COMMITTER_NAME": "t",
-        "GIT_COMMITTER_EMAIL": "t@x",
-        "PATH": "/usr/bin:/bin",
-        "HOME": str(tmp_path),
-    }
-
-    def _git(*args):
-        subprocess.run(["git", *args], cwd=repo_root, check=True, capture_output=True, env=git_env)
-
-    _git("init", "-q")
-    (repo_root / "f.c").write_text("int a;\n")
-    _git("add", "f.c")
-    _git("commit", "-qm", "fix #1")
-    sha = subprocess.run(
-        ["git", "rev-parse", "HEAD"],
-        cwd=repo_root,
-        check=True,
-        capture_output=True,
-        text=True,
-        env=git_env,
-    ).stdout.strip()
+    sut = TmpGitRepo(tmp_path / "sut")
+    repo_root = sut.root
+    sut.write("f.c", "int a;\n")
+    sha = sut.commit("fix #1")
 
     overrides_dir = repo_root / ".otto"
     overrides_dir.mkdir()

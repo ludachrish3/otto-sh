@@ -13,6 +13,7 @@ from otto.coverage.attribution import (
 )
 from otto.coverage.capture import gitio
 from otto.coverage.tickets import build_ticket_spec
+from tests._fixtures.gitrepo import TmpGitRepo, git_env
 
 _MODIFY = """diff --git a/src/a.c b/src/a.c
 --- a/src/a.c
@@ -113,31 +114,30 @@ def test_empty_diff_is_empty():
     assert parse_commit_diff("") == {}
 
 
+def _git(repo: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", *args],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+        env=git_env(repo),
+    ).stdout
+
+
 def _repo(tmp_path: Path) -> Path:
-    repo = tmp_path / "r"
-    repo.mkdir()
-    for args in (
-        ["init", "-q"],
-        ["config", "user.email", "t@example.com"],
-        ["config", "user.name", "t"],
-    ):
-        subprocess.run(["git", *args], cwd=repo, check=True)
-    return repo
+    return TmpGitRepo(tmp_path / "r").root
 
 
 def _commit(repo: Path, message: str) -> str:
-    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
-    subprocess.run(["git", "commit", "-q", "-m", message], cwd=repo, check=True)
-    return subprocess.run(
-        ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=True
-    ).stdout.strip()
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", message)
+    return _head(repo)
 
 
 def _head(repo: Path) -> str:
     """Return the sha of the current HEAD commit."""
-    return subprocess.run(
-        ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=True
-    ).stdout.strip()
+    return _git(repo, "rev-parse", "HEAD").strip()
 
 
 def _make_ticket_repo(tmp_path: Path, message: str) -> Path:
@@ -198,7 +198,7 @@ def test_rename_is_followed_across_m_flag(tmp_path):
     repo = _repo(tmp_path)
     (repo / "old.c").write_text("".join(f"line{i}\n" for i in range(20)))
     first = _commit(repo, "c1")
-    subprocess.run(["git", "mv", "old.c", "new.c"], cwd=repo, check=True)
+    _git(repo, "mv", "old.c", "new.c")
     _commit(repo, "move it")
 
     got = attribute_lines(repo, {"new.c": 20})
@@ -220,7 +220,7 @@ def test_rename_with_edit_before_and_after_attributes_each_side_correctly(tmp_pa
     body = [f"line{i}\n" for i in range(25)]
     (repo / "old.c").write_text("".join(body))
     seed = _commit(repo, "seed")
-    subprocess.run(["git", "mv", "old.c", "new.c"], cwd=repo, check=True)
+    _git(repo, "mv", "old.c", "new.c")
     _commit(repo, "rename")
     body[5] = "post-rename edit\n"
     (repo / "new.c").write_text("".join(body))
@@ -249,9 +249,9 @@ def test_double_rename_is_followed_across_the_bounded_walk(tmp_path):
     body = [f"line{i}\n" for i in range(15)]
     (repo / "old1.c").write_text("".join(body))
     seed = _commit(repo, "seed")
-    subprocess.run(["git", "mv", "old1.c", "mid.c"], cwd=repo, check=True)
+    _git(repo, "mv", "old1.c", "mid.c")
     _commit(repo, "first rename")
-    subprocess.run(["git", "mv", "mid.c", "new.c"], cwd=repo, check=True)
+    _git(repo, "mv", "mid.c", "new.c")
     _commit(repo, "second rename")
 
     got = attribute_lines(repo, {"new.c": len(body)})
@@ -267,9 +267,9 @@ def test_expand_historical_paths_follows_double_rename(tmp_path):
     repo = _repo(tmp_path)
     (repo / "old1.c").write_text("x\n")
     _commit(repo, "seed")
-    subprocess.run(["git", "mv", "old1.c", "mid.c"], cwd=repo, check=True)
+    _git(repo, "mv", "old1.c", "mid.c")
     _commit(repo, "first rename")
-    subprocess.run(["git", "mv", "mid.c", "new.c"], cwd=repo, check=True)
+    _git(repo, "mv", "mid.c", "new.c")
     _commit(repo, "second rename")
 
     result = attribution._expand_historical_paths(repo, {"new.c"}, first_parent=True)
@@ -324,8 +324,8 @@ def _sign_with_ssh(repo: Path, tmp_path: Path) -> None:
     """
     key = tmp_path / "id_ed25519"
     subprocess.run(["ssh-keygen", "-t", "ed25519", "-N", "", "-f", str(key), "-q"], check=True)
-    subprocess.run(["git", "config", "gpg.format", "ssh"], cwd=repo, check=True)
-    subprocess.run(["git", "config", "user.signingkey", f"{key}.pub"], cwd=repo, check=True)
+    _git(repo, "config", "gpg.format", "ssh")
+    _git(repo, "config", "user.signingkey", f"{key}.pub")
 
 
 def test_attribution_survives_hostile_repo_local_git_config(tmp_path):
@@ -361,24 +361,20 @@ def test_attribution_survives_hostile_repo_local_git_config(tmp_path):
     _sign_with_ssh(repo, tmp_path)
 
     (repo / "a.c").write_text("one\ntwo\nthree\n")
-    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
-    subprocess.run(["git", "commit", "-q", "-S", "-m", "seed"], cwd=repo, check=True)
-    first = subprocess.run(
-        ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=True
-    ).stdout.strip()
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-S", "-m", "seed")
+    first = _head(repo)
 
     (repo / "a.c").write_text("one\nCHANGED\nthree\n")
-    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
-    subprocess.run(["git", "commit", "-q", "-S", "-m", "second"], cwd=repo, check=True)
-    second = subprocess.run(
-        ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=True
-    ).stdout.strip()
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-S", "-m", "second")
+    second = _head(repo)
 
     (repo / "a.c").write_text("one\nCHANGED\nDIRTY\n")  # uncommitted edit to line 3
 
-    subprocess.run(["git", "config", "diff.mnemonicprefix", "true"], cwd=repo, check=True)
-    subprocess.run(["git", "config", "log.showSignature", "true"], cwd=repo, check=True)
-    subprocess.run(["git", "config", "diff.external", "/bin/false"], cwd=repo, check=True)
+    _git(repo, "config", "diff.mnemonicprefix", "true")
+    _git(repo, "config", "log.showSignature", "true")
+    _git(repo, "config", "diff.external", "/bin/false")
 
     got = attribute_lines(repo, {"a.c": 3})
 
@@ -570,10 +566,10 @@ def test_bounded_walk_matches_unrestricted_walk_exactly_on_synthetic_history(tmp
     _commit(repo, "seed a.c and b_old.c")
 
     (repo / "a.c").write_text("a1\nCHANGED\n")
-    subprocess.run(["git", "mv", "b_old.c", "b_mid.c"], cwd=repo, check=True)
+    _git(repo, "mv", "b_old.c", "b_mid.c")
     _commit(repo, "edit a.c, first rename of b")
 
-    subprocess.run(["git", "mv", "b_mid.c", "b_new.c"], cwd=repo, check=True)
+    _git(repo, "mv", "b_mid.c", "b_new.c")
     # c_old.c: created and renamed within the same window (double rename setup for c too).
     (repo / "c_old.c").write_text("c1\nc2\nc3\n")
     _commit(repo, "second rename of b, create c_old.c")
@@ -581,7 +577,7 @@ def test_bounded_walk_matches_unrestricted_walk_exactly_on_synthetic_history(tmp
     b_body = [f"b{i}\n" for i in range(10)]
     b_body[3] = "post-rename b edit\n"
     (repo / "b_new.c").write_text("".join(b_body))
-    subprocess.run(["git", "mv", "c_old.c", "c_new.c"], cwd=repo, check=True)
+    _git(repo, "mv", "c_old.c", "c_new.c")
     _commit(repo, "edit b_new.c, rename c")
 
     # d.c: plain creation, no rename, added last.

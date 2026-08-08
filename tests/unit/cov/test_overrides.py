@@ -11,16 +11,7 @@ from otto.coverage.overrides import (
     load_override_config,
 )
 from otto.coverage.tiers import TierConfig
-
-_ENV = {
-    "GIT_AUTHOR_NAME": "t",
-    "GIT_AUTHOR_EMAIL": "t@t",
-    "GIT_COMMITTER_NAME": "t",
-    "GIT_COMMITTER_EMAIL": "t@t",
-    "GIT_CONFIG_GLOBAL": "/dev/null",
-    "GIT_CONFIG_SYSTEM": "/dev/null",
-    "PATH": "/usr/bin:/bin",
-}
+from tests._fixtures.gitrepo import git_env
 
 
 def _git(root: Path, *args: str) -> str:
@@ -30,7 +21,7 @@ def _git(root: Path, *args: str) -> str:
         check=True,
         capture_output=True,
         text=True,
-        env={**_ENV, "HOME": str(root)},
+        env=git_env(root),
     ).stdout
 
 

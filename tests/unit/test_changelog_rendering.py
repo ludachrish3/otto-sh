@@ -18,10 +18,10 @@ reading this repo's log would change its own subject matter every commit.
 
 import shutil
 import subprocess
-from pathlib import Path
 
 import pytest
 
+from tests._fixtures.gitrepo import TmpGitRepo
 from tests._fixtures.paths import PROJECT_ROOT
 
 CLIFF = PROJECT_ROOT / "cliff.toml"
@@ -76,25 +76,12 @@ DROPPED = [
 ]
 
 
-def _git(repo: Path, *args: str) -> str:
-    env = {
-        "GIT_AUTHOR_NAME": "t",
-        "GIT_AUTHOR_EMAIL": "t@t",
-        "GIT_COMMITTER_NAME": "t",
-        "GIT_COMMITTER_EMAIL": "t@t",
-        "GIT_AUTHOR_DATE": "2026-01-01T00:00:00Z",
-        "GIT_COMMITTER_DATE": "2026-01-01T00:00:00Z",
-        "PATH": "/usr/bin:/bin",
-        # HOME and GIT_CONFIG_SYSTEM both neutered: a developer's global
-        # `commit.gpgsign` or an `/etc/gitconfig` `core.hooksPath` would
-        # otherwise fail these commits with an opaque CalledProcessError.
-        "HOME": str(repo),
-        "GIT_CONFIG_SYSTEM": "/dev/null",
-        "GIT_CONFIG_GLOBAL": "/dev/null",
-    }
-    return subprocess.run(
-        ["git", *args], cwd=repo, env=env, capture_output=True, text=True, check=True
-    ).stdout
+# Commit timestamps are pinned (rather than "now") so the rendered CHANGELOG
+# is a pure function of COMMITS and cliff.toml. TmpGitRepo also neuters HOME
+# and global/system config: a developer's `commit.gpgsign` or an
+# /etc/gitconfig `core.hooksPath` would otherwise fail these commits with an
+# opaque CalledProcessError.
+COMMIT_DATE = "2026-01-01T00:00:00Z"
 
 
 @pytest.fixture(scope="module")
@@ -114,19 +101,16 @@ def rendered(tmp_path_factory) -> str:
         "git-cliff is a declared dev dependency (pyproject [dependency-groups] dev) "
         "and this test drives the real renderer — run `uv sync` rather than skipping"
     )
-    repo = tmp_path_factory.mktemp("cliffrepo")
-    _git(repo, "init", "-q", "-b", "main")
+    repo = TmpGitRepo(tmp_path_factory.mktemp("cliffrepo"), dates=COMMIT_DATE)
     # A prior tag is required, not scenery: the footer template reads
     # `releases[0].previous.version` to build the Unreleased compare link, and
     # git-cliff fails the whole render on a repo that has never been tagged.
-    (repo / "seed").write_text("x")
-    _git(repo, "add", "-A")
-    _git(repo, "commit", "-q", "-m", "feat: the released past")
-    _git(repo, "tag", "v0.1.0")
+    repo.write("seed", "x")
+    repo.commit("feat: the released past")
+    repo.git("tag", "v0.1.0")
     for i, subject in enumerate(COMMITS):
-        (repo / f"f{i}").write_text("x")
-        _git(repo, "add", "-A")
-        _git(repo, "commit", "-q", "-m", subject)
+        repo.write(f"f{i}", "x")
+        repo.commit(subject)
     # --offline is not optional. git-cliff fetches api.github.com whenever the
     # config declares a `[remote.*]` section, and PANICS (exit 101, and it
     # writes the reason to a stderr this call used to discard) on any failure
@@ -137,7 +121,7 @@ def rendered(tmp_path_factory) -> str:
     # from silently turning a unit test into a network test.
     proc = subprocess.run(
         [cliff, "--config", str(CLIFF), "--offline", "--unreleased"],
-        cwd=repo,
+        cwd=repo.root,
         capture_output=True,
         text=True,
         check=False,

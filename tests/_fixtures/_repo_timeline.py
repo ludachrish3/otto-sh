@@ -6,7 +6,6 @@ mutate → fold → assert`. Folding goes straight through
 pipeline is exercised elsewhere (test_capture_report_cycle).
 """
 
-import subprocess
 from datetime import datetime
 from pathlib import Path
 
@@ -14,46 +13,22 @@ from otto.coverage.capture import gitio
 from otto.coverage.capture.model import Capture, CaptureFileCov
 from otto.coverage.store.model import CoverageStore
 from otto.coverage.validity import apply_manual_capture, register_capture_run
-
-_GIT_ENV = {
-    "GIT_AUTHOR_NAME": "t",
-    "GIT_AUTHOR_EMAIL": "t@t",
-    "GIT_COMMITTER_NAME": "t",
-    "GIT_COMMITTER_EMAIL": "t@t",
-    "GIT_CONFIG_GLOBAL": "/dev/null",
-    "GIT_CONFIG_SYSTEM": "/dev/null",
-    "GIT_AUTHOR_DATE": "2026-01-01T00:00:00Z",
-    "GIT_COMMITTER_DATE": "2026-01-01T00:00:00Z",
-    "PATH": "/usr/bin:/bin",
-}
+from tests._fixtures.gitrepo import TmpGitRepo
 
 
-class RepoTimeline:
+class RepoTimeline(TmpGitRepo):
+    """A TmpGitRepo with pinned dates plus the capture→fold→assert verbs of
+    spec §10 — dates pinned because timeline scenarios pass ``today=``
+    explicitly and want reproducible SHAs."""
+
     def __init__(self, root: Path) -> None:
-        self.root = root
-        self.root.mkdir(parents=True, exist_ok=True)
+        super().__init__(root, dates="2026-01-01T00:00:00Z")
         self.captures: list[Capture] = []
-        self.git("init", "-q", "-b", "main")
 
-    def git(self, *args: str) -> str:
-        return subprocess.run(
-            ["git", *args],
-            cwd=self.root,
-            check=True,
-            capture_output=True,
-            text=True,
-            env={**_GIT_ENV, "HOME": str(self.root)},
-        ).stdout
-
-    def write(self, rel: str, text: str) -> None:
-        p = self.root / rel
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(text)
-
-    def commit(self, msg: str = "c") -> str:
-        self.git("add", "-A")
-        self.git("commit", "-qm", msg, "--allow-empty")
-        return self.git("rev-parse", "HEAD").strip()
+    def commit(self, msg: str = "c", *, allow_empty: bool = True) -> str:
+        # Timeline scenarios script empty "time passes" commits on purpose —
+        # the pre-rebase RepoTimeline always allowed them.
+        return super().commit(msg, allow_empty=allow_empty)
 
     def capture(
         self,

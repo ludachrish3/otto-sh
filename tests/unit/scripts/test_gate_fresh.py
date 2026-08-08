@@ -25,12 +25,24 @@ from scripts.gate_fresh import (
     resolve_ref,
     tree_state,
 )
+from tests._fixtures.gitrepo import git_env
 from tests._fixtures.paths import PROJECT_ROOT
 
 
 def _git(repo: Path, *args: str) -> str:
+    """Run one git command against *repo*, hermetically.
+
+    The env is the suite's one builder (``tests/_fixtures/gitrepo.py``): these
+    spawns used to inherit the developer's full environment, so a global
+    ``commit.gpgsign`` or an ``/etc/gitconfig`` ``core.hooksPath`` failed the
+    repo builder below with an opaque ``CalledProcessError``. Identity now
+    comes from ``GIT_AUTHOR_*``/``GIT_COMMITTER_*``, which is why ``_repo``
+    no longer runs ``git config user.email``/``user.name``. The gate itself
+    (``scripts/gate_fresh.py``) spawns its own git; that is product behaviour
+    and deliberately not touched here.
+    """
     return subprocess.run(
-        ["git", *args], cwd=repo, capture_output=True, text=True, check=True
+        ["git", *args], cwd=repo, capture_output=True, text=True, check=True, env=git_env(repo)
     ).stdout
 
 
@@ -38,8 +50,6 @@ def _repo(tmp_path: Path) -> Path:
     repo = tmp_path / "repo"
     repo.mkdir()
     _git(repo, "init", "-q", "-b", "main")
-    _git(repo, "config", "user.email", "t@example.com")
-    _git(repo, "config", "user.name", "T")
     (repo / "tracked.txt").write_text("v1\n")
     (repo / ".gitignore").write_text("ignored/\n")
     _git(repo, "add", "-A")
@@ -493,17 +503,24 @@ class TestPrePushHook:
 
     _REPO_ROOT = PROJECT_ROOT
 
-    def test_hook_is_committed_executable(self):
+    def test_hook_is_committed_executable(self, tmp_path: Path):
         # Checked via `git ls-files -s` (the INDEX/committed mode), not a
         # filesystem stat: a checkout can carry a working-tree file whose
         # mode git itself does not record, and it is the committed mode that
         # decides what every future clone or checkout gets.
+        # Reads the REAL repo's index, but still under the hermetic env: the
+        # answer must come from this checkout, never from a developer's
+        # global config.  Known trade: neutering global config also discards
+        # any `safe.directory` entry, so a foreign-uid checkout (container
+        # bind-mount) would fail "dubious ownership" here — fine on the dev
+        # VM and ubuntu-latest CI, where the checkout owner runs the tests.
         output = subprocess.run(
             ["git", "ls-files", "-s", ".githooks/pre-push"],
             cwd=self._REPO_ROOT,
             capture_output=True,
             text=True,
             check=True,
+            env=git_env(tmp_path),
         ).stdout
         assert output, ".githooks/pre-push must be tracked by git"
         mode = output.split()[0]

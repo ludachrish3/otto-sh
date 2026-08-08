@@ -4,35 +4,28 @@ import subprocess
 from pathlib import Path
 
 from otto.coverage.attribution import attribute_lines
-
-_GIT_ENV = {
-    "GIT_AUTHOR_NAME": "t",
-    "GIT_AUTHOR_EMAIL": "t@x",
-    "GIT_COMMITTER_NAME": "t",
-    "GIT_COMMITTER_EMAIL": "t@x",
-    "PATH": "/usr/bin:/bin",
-}
-"""Hermetic git identity/env, mirroring ``tests/unit/cov/test_pipeline.py``.
-
-Every subprocess call in this file passes ``env={**_GIT_ENV, "HOME":
-str(tmp_path)}`` so a host-level ``~/.gitconfig`` setting — most notably
-``commit.gpgsign = true``, which made these three tests fail while every
-sibling suite (built the same way but already isolated) survived — can
-never reach the throwaway repos these tests build. Redirecting ``HOME``
-means there is no ``~/.gitconfig`` file to read at all, rather than trying
-to override every setting a real one might contain.
-"""
+from tests._fixtures.gitrepo import git_env
 
 
 def _git(repo: Path, tmp_path: Path, *args: str) -> subprocess.CompletedProcess:
-    """Run one git command against *repo*, isolated from the host's git config."""
+    """Run one git command against *repo*, isolated from the host's git config.
+
+    Every call passes ``env=git_env(tmp_path)`` — the suite's one env builder
+    (``tests/_fixtures/gitrepo.py``) — so a host-level ``~/.gitconfig``
+    setting, most notably ``commit.gpgsign = true`` (which made these three
+    tests fail while every sibling suite, built the same way but already
+    isolated, survived), can never reach the throwaway repos these tests
+    build. Redirecting ``HOME`` into *tmp_path* means there is no
+    ``~/.gitconfig`` file to read at all, rather than trying to override
+    every setting a real one might contain.
+    """
     return subprocess.run(
         ["git", *args],
         cwd=repo,
         check=True,
         capture_output=True,
         text=True,
-        env={**_GIT_ENV, "HOME": str(tmp_path)},
+        env=git_env(tmp_path),
     )
 
 

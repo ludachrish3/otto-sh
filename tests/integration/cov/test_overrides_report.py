@@ -2,7 +2,6 @@
 
 import json
 import logging
-import subprocess
 from pathlib import Path
 
 import pytest
@@ -15,14 +14,7 @@ from otto.coverage.reporter import run_coverage_report
 from otto.coverage.ticket_export import build_ticket_export
 from otto.coverage.tickets import build_ticket_spec
 from otto.coverage.tiers import load_tiers
-
-ENV = {
-    "GIT_AUTHOR_NAME": "t",
-    "GIT_AUTHOR_EMAIL": "t@x",
-    "GIT_COMMITTER_NAME": "t",
-    "GIT_COMMITTER_EMAIL": "t@x",
-    "PATH": "/usr/bin:/bin",
-}
+from tests._fixtures.gitrepo import TmpGitRepo
 
 COV = {
     "tiers": {
@@ -36,20 +28,9 @@ SPEC = build_ticket_spec("#(?P<n>[0-9]+)", None)
 
 
 def _mk_repo(tmp_path: Path):
-    repo = tmp_path / "sut"
-    repo.mkdir()
-
-    def git(*args: str) -> None:
-        subprocess.run(
-            ["git", *args],
-            cwd=repo,
-            check=True,
-            capture_output=True,
-            env={**ENV, "HOME": str(tmp_path)},
-        )
-
-    git("init", "-q", "-b", "main")
-    return repo, git
+    """An empty hermetic repo on `main`, plus its bound git runner."""
+    sut = TmpGitRepo(tmp_path / "sut")
+    return sut.root, sut.git
 
 
 def _seed_lines(repo: Path, rel: str, linenos: list[int]) -> None:

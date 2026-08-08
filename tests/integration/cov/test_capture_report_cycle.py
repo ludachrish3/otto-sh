@@ -1,7 +1,6 @@
 """get → modify → report: valid/stale split over real git history."""
 
 import json
-import subprocess
 from pathlib import Path
 
 import pytest
@@ -11,6 +10,7 @@ from otto.coverage.capture.model import Capture, CaptureFileCov
 from otto.coverage.capture.store_dir import write_manual_capture
 from otto.coverage.reporter import run_coverage_report
 from otto.coverage.tiers import load_tiers
+from tests._fixtures.gitrepo import TmpGitRepo
 
 
 def _mangle_path(path: str) -> str:
@@ -33,14 +33,6 @@ def _index_payload(report_dir: Path) -> dict:
     return json.loads(text[len("window.__OTTO_COV__ = ") : -2])
 
 
-ENV = {
-    "GIT_AUTHOR_NAME": "t",
-    "GIT_AUTHOR_EMAIL": "t@x",
-    "GIT_COMMITTER_NAME": "t",
-    "GIT_COMMITTER_EMAIL": "t@x",
-    "PATH": "/usr/bin:/bin",
-}
-
 COV = {
     "tiers": {
         "system": {"kind": "e2e", "precedence": 1},
@@ -51,20 +43,10 @@ COV = {
 
 @pytest.mark.asyncio
 async def test_manual_survives_unrelated_commit_and_stales_on_edit(tmp_path: Path) -> None:
-    repo = tmp_path / "sut"
-    repo.mkdir()
+    sut = TmpGitRepo(tmp_path / "sut")
+    repo, git = sut.root, sut.git
 
-    def git(*args: str) -> None:
-        subprocess.run(
-            ["git", *args],
-            cwd=repo,
-            check=True,
-            capture_output=True,
-            env={**ENV, "HOME": str(tmp_path)},
-        )
-
-    git("init", "-q")
-    (repo / "f.c").write_text("int a;\nint b;\nint c;\n")
+    sut.write("f.c", "int a;\nint b;\nint c;\n")
     git("add", "f.c")
     git("commit", "-qm", "init")
 
@@ -110,20 +92,10 @@ async def test_runs_traceable_end_to_end(tmp_path: Path) -> None:
     a staled line names the revoked run, and store.json round-trips it all."""
     from otto.coverage.store.model import CoverageStore
 
-    repo = tmp_path / "sut"
-    repo.mkdir()
+    sut = TmpGitRepo(tmp_path / "sut")
+    repo, git = sut.root, sut.git
 
-    def git(*args: str) -> None:
-        subprocess.run(
-            ["git", *args],
-            cwd=repo,
-            check=True,
-            capture_output=True,
-            env={**ENV, "HOME": str(tmp_path)},
-        )
-
-    git("init", "-q")
-    (repo / "f.c").write_text("int a;\nint b;\nint c;\n")
+    sut.write("f.c", "int a;\nint b;\nint c;\n")
     git("add", "f.c")
     git("commit", "-qm", "init")
 

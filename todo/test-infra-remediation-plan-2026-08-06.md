@@ -1316,13 +1316,43 @@ force dropped in the product → both lifecycle tests red (~60s run, FORCE-HOOK
 absent on the graceful-at-30s interleaving, the elapsed discriminator naming the
 deadline path); plus the agent's then=-reorder proof on the helper pin.
 
-### Wave 17 — Test-fixture library build-out (items 16 + §7.4/§7.5 tail; **Effort: M–L**, divisible)
-`tests/_fixtures/gitrepo.py` (hermetic `git_env` + `TmpGitRepo`; migrate 20 files);
-`make_sut_repo()` (48 sites); `active_context` migration (28 sites);
-`bare_host()` (11 factories); `write_lab()` (7 helpers). Each sub-item is
-independently squashable; sequence by annoyance. DispatchRunner migration note from
-review §7.4 applies: migrate the 11 bare-CliRunner files *before* (or with) any
-cov.py async-leaf conversion.
+### Wave 17 — Test-fixture library build-out (items 16 + §7.4/§7.5 tail; **Effort: M–L**, split a/b/c)
+
+**17a — hermetic git harness (LANDED in this squash).** `tests/_fixtures/gitrepo.py`:
+`git_env(home, *, dates=None)` + `TmpGitRepo`; `RepoTimeline` rebased onto it. Dates
+are opt-IN — the pre-existing files created "now" commits feeding age-sensitive
+consumers (coverage validity, changelog), so pinning by default would have changed
+what those tests compute; only the changelog test and `RepoTimeline` pin. Drift guard
+`tests/unit/test_gitenv_hermeticity.py` (AST, four arms: `GIT_*` dict literal /
+`dict(GIT_*=…)` / `env["GIT_*"]=…` / a git argv spawned with an AMBIENT env —
+no `env=` at all, `None`, `os.environ` bare, `.copy()`, `dict()`-wrapped, or
+`**`-unpacked) plus
+behavior pins in `test_gitrepo_fixture.py`. t0 by the instrument: **65 sites / 22
+files** — the draft above said "20 files": the hand enumeration missed
+`test_attribution.py` (25 env-less spawns) and `test_gitio_log_walk.py` (7), and the
+env-less idiom itself (`test_gate_fresh.py` inherited the developer's FULL
+environment) only surfaced when the guard grew its fourth arm. Stated blind spots:
+variable-bound argv lists, concatenated key strings, `os.environ.update` of prebuilt
+dicts — each grepped zero at adoption; `monkeypatch.setenv("GIT_…")` is sanctioned.
+
+**17b — SUT-repo scaffold (next).** `tests/_fixtures/sutrepo.py::make_sut_repo`
+(draft said 48 sites / 27 files — re-measure with the landing instrument).
+
+**17c — remaining §7.4 tail (after 17b).** `active_context` migration (draft: 28
+sites / 59 raw calls; lines containing `set_context(`/`reset_context(` today: 67
+across 21 files — the landing instrument re-measures); `bare_host()` (11 factories / ~157 raw
+`UnixHost(`); `write_lab()` (draft said 7 helpers; only 2 `_write_lab` defs exist —
+re-measure); DispatchRunner: migrate the bare-CliRunner sub-app files *before* (or
+with) any cov.py async-leaf conversion (draft said 11 files; crude recount 17 —
+refine to sub-app invocations). **Rider from W16/fable:** the four remaining inert
+`_RECOVERY_TIMEOUT` module rebinds — `tests/unit/host/test_session.py:514/591/905/1066`
+— each pay the real 5s recovery deadline; convert to explicit `deadline=` arguments.
+**Rider from W17a gates:** the two W16 force-vs-deadline discriminators in
+`test_lifecycle_sync_phase.py` have now twice (W14 once, W17a gates once) taken the
+30s deadline path under loaded parallel gates — a genuine starvation, not a product
+regression (sequential soaks ms-scale green; a real regression fails them
+deterministically). Pin them to a serial lane / `xdist_group` so load cannot
+counterfeit the deadline path.
 
 ### Not scheduled (tracked, deliberately deferred)
 Review items with real value but lower leverage, left to opportunistic pickup:

@@ -18,6 +18,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from otto.coverage.collect import CollectResult, collect_coverage
+from tests._fixtures.gitrepo import git_env
 
 
 @pytest.fixture
@@ -34,14 +35,7 @@ def sut_repo(tmp_path):
             cwd=root,
             check=True,
             capture_output=True,
-            env={
-                "GIT_AUTHOR_NAME": "t",
-                "GIT_AUTHOR_EMAIL": "t@x",
-                "GIT_COMMITTER_NAME": "t",
-                "GIT_COMMITTER_EMAIL": "t@x",
-                "HOME": str(tmp_path),
-                "PATH": "/usr/bin:/bin",
-            },
+            env=git_env(tmp_path),
         )
 
     git("init", "-q")
