@@ -9,16 +9,12 @@ import textwrap
 from pathlib import Path
 
 from otto.config.repo import Repo
+from tests._fixtures.sutrepo import make_sut_repo
 
 
 def _write_repo(repo_dir: Path, settings_body: str) -> Path:
     """Materialize a minimal SUT repo at *repo_dir* with *settings_body* appended."""
-    otto_dir = repo_dir / ".otto"
-    otto_dir.mkdir(parents=True)
-    base = 'name = "tmp_repo"\nversion = "1.0.0"'
-    body = textwrap.dedent(settings_body).strip()
-    (otto_dir / "settings.toml").write_text(f"{base}\n{body}\n")
-    return repo_dir
+    return make_sut_repo(repo_dir, name="tmp_repo", extra=textwrap.dedent(settings_body).strip())
 
 
 def test_relative_paths_anchor_to_repo_root_not_cwd(tmp_path, monkeypatch):

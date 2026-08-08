@@ -2,16 +2,17 @@
 
 from otto.config.dependencies import resolve_dependencies
 from otto.config.repo import Repo
+from tests._fixtures.sutrepo import make_sut_repo
 
 
 def _repo(tmp_path, name, version="1.0.0", *, required=(), optional=(), dirname=None):
-    root = tmp_path / (dirname or name)
-    (root / ".otto").mkdir(parents=True)
     req = ", ".join(f'"{e}"' for e in required)
     opt = ", ".join(f'"{e}"' for e in optional)
-    (root / ".otto" / "settings.toml").write_text(
-        f'name = "{name}"\nversion = "{version}"\n\n'
-        f"[dependencies]\nrequired = [{req}]\noptional = [{opt}]\n"
+    root = make_sut_repo(
+        tmp_path / (dirname or name),
+        name=name,
+        version=version,
+        extra=f"[dependencies]\nrequired = [{req}]\noptional = [{opt}]\n",
     )
     return Repo(sut_dir=root)
 

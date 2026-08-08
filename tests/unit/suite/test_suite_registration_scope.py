@@ -20,6 +20,7 @@ import pytest
 from otto.config.repo import Repo
 from otto.suite.register import SUITES
 from tests._fixtures.paths import TESTS_ROOT
+from tests._fixtures.sutrepo import make_sut_repo
 
 _REPO1_DIR = TESTS_ROOT / "repo1"
 
@@ -108,12 +109,12 @@ def test_the_boundary_is_registration_only_not_collection(tmp_path: Path) -> Non
     nested suite file IS registered by that import, under pytest's own module
     name, far too late for the `otto test` group already built.
     """
-    tests_dir = tmp_path / "tests" / "device"
-    tests_dir.mkdir(parents=True)
-    (tests_dir / "test_plain.py").write_text("def test_plain_nested():\n    assert True\n")
-    (tmp_path / ".otto").mkdir()
-    (tmp_path / ".otto" / "settings.toml").write_text(
-        'name = "nested_probe"\nversion = "0.0.0"\ntests = ["tests"]\n'
+    make_sut_repo(
+        tmp_path,
+        name="nested_probe",
+        version="0.0.0",
+        tests=["tests"],
+        files={"tests/device/test_plain.py": "def test_plain_nested():\n    assert True\n"},
     )
     repo = Repo(sut_dir=tmp_path)
     repo.tests = [tmp_path / "tests"]

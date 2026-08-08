@@ -15,21 +15,22 @@ from otto.config.repo import Repo
 from otto.host.unix_host import UnixHost
 from otto.result import CommandResult
 from otto.utils import Status
+from tests._fixtures.sutrepo import make_sut_repo
+
+_DOCKER_FILES = {"docker/Dockerfile": "FROM alpine\n", "docker/compose.yml": "services: {}\n"}
 
 
 def _make_repo(tmp: Path, *, name: str, default_host: str) -> Repo:
-    sut = tmp / name
-    (sut / ".otto").mkdir(parents=True)
-    (sut / "docker").mkdir()
-    (sut / "docker" / "Dockerfile").write_text("FROM alpine\n")
-    (sut / "docker" / "compose.yml").write_text("services: {}\n")
-    (sut / ".otto" / "settings.toml").write_text(
-        f'name = "{name}"\n'
-        f'version = "1.0.0"\n'
-        f"\n[[docker.composes]]\n"
-        f'path = "docker/compose.yml"\n'
-        f'default_host = "{default_host}"\n'
-        f'services = ["svc"]\n'
+    sut = make_sut_repo(
+        tmp / name,
+        name=name,
+        extra=(
+            f"[[docker.composes]]\n"
+            f'path = "docker/compose.yml"\n'
+            f'default_host = "{default_host}"\n'
+            f'services = ["svc"]\n'
+        ),
+        files=_DOCKER_FILES,
     )
     return Repo(sut_dir=sut)
 
@@ -37,22 +38,20 @@ def _make_repo(tmp: Path, *, name: str, default_host: str) -> Repo:
 def _make_repo_with_image(tmp: Path, *, name: str, default_host: str) -> Repo:
     """Like _make_repo but also declares a [[docker.images]] entry so
     _build's ``if not r.docker_settings.images: continue`` guard is passed."""
-    sut = tmp / name
-    (sut / ".otto").mkdir(parents=True)
-    (sut / "docker").mkdir()
-    (sut / "docker" / "Dockerfile").write_text("FROM alpine\n")
-    (sut / "docker" / "compose.yml").write_text("services: {}\n")
-    (sut / ".otto" / "settings.toml").write_text(
-        f'name = "{name}"\n'
-        f'version = "1.0.0"\n'
-        f"\n[[docker.images]]\n"
-        f'name = "myimage"\n'
-        f'dockerfile = "docker/Dockerfile"\n'
-        f'context = "docker"\n'
-        f"\n[[docker.composes]]\n"
-        f'path = "docker/compose.yml"\n'
-        f'default_host = "{default_host}"\n'
-        f'services = ["svc"]\n'
+    sut = make_sut_repo(
+        tmp / name,
+        name=name,
+        extra=(
+            f"[[docker.images]]\n"
+            f'name = "myimage"\n'
+            f'dockerfile = "docker/Dockerfile"\n'
+            f'context = "docker"\n'
+            f"\n[[docker.composes]]\n"
+            f'path = "docker/compose.yml"\n'
+            f'default_host = "{default_host}"\n'
+            f'services = ["svc"]\n'
+        ),
+        files=_DOCKER_FILES,
     )
     return Repo(sut_dir=sut)
 

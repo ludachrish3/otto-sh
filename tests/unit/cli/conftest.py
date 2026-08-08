@@ -28,6 +28,7 @@ import pytest
 from otto.config.repo import Repo
 from otto.result import CommandResult, Results
 from otto.utils import Status
+from tests._fixtures.sutrepo import make_sut_repo
 
 
 @pytest.fixture(autouse=True)
@@ -137,13 +138,7 @@ def _make_lab_fs(tmp_path: Path) -> tuple[Path, Path]:
     lab_data_dir.mkdir()
     (lab_data_dir / "lab.json").write_text(json.dumps({"hosts": HOSTS_DATA}))
 
-    sut_dir = tmp_path / "sut"
-    sut_dir.mkdir()
-    otto_dir = sut_dir / ".otto"
-    otto_dir.mkdir()
-    (otto_dir / "settings.toml").write_text(
-        'name = "test_repo"\nversion = "1.0.0"\nlabs = ["../lab_data"]\n'
-    )
+    sut_dir = make_sut_repo(tmp_path / "sut", name="test_repo", extra='labs = ["../lab_data"]')
 
     return sut_dir, lab_data_dir
 

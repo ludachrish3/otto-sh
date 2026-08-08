@@ -4,6 +4,7 @@ import pytest
 from pydantic import ValidationError
 
 from otto.models.settings import SettingsModel
+from tests._fixtures.sutrepo import make_sut_repo
 
 BASE = {"name": "widget", "version": "1.0.0"}
 
@@ -53,11 +54,10 @@ def test_unknown_dependencies_key_rejected():
 def test_repo_parses_declared_dependencies(tmp_path):
     from otto.config.repo import Repo
 
-    (tmp_path / ".otto").mkdir()
-    (tmp_path / ".otto" / "settings.toml").write_text(
-        'name = "widget"\nversion = "1.0.0"\n\n'
-        "[dependencies]\n"
-        'required = ["vantage >= 2.1"]\noptional = ["metrics"]\n'
+    make_sut_repo(
+        tmp_path,
+        name="widget",
+        extra='[dependencies]\nrequired = ["vantage >= 2.1"]\noptional = ["metrics"]\n',
     )
     repo = Repo(sut_dir=tmp_path)
     assert [(d.normalized, d.required) for d in repo.declared_dependencies] == [

@@ -92,6 +92,7 @@ from otto.utils import Status
 from tests._fixtures._host_pool import UNIX_POOL as _UNIX_POOL
 from tests._fixtures._host_pool import lease_unix_host
 from tests._fixtures.labdata import host_data
+from tests._fixtures.sutrepo import make_sut_repo
 from tests.e2e.host._pty_driver import InteractiveOttoSession
 
 pytestmark = [pytest.mark.integration, pytest.mark.xdist_group("login_proxy_e2e")]
@@ -348,19 +349,6 @@ def _scaffold_sut_dir(sut_dir: Path, ip: str, element: str) -> str:
     host id (``"<element>_seed"``) the single host in the scaffolded
     ``lab.json`` will resolve to.
     """
-    (sut_dir / ".otto").mkdir(parents=True)
-    (sut_dir / "initlib").mkdir(parents=True)
-    (sut_dir / "lab_data").mkdir(parents=True)
-
-    (sut_dir / ".otto" / "settings.toml").write_text(
-        'name = "lp_e2e"\n'
-        'version = "1.0.0"\n'
-        'labs = ["lab_data"]\n'
-        'libs = ["initlib"]\n'
-        'init = ["lp_e2e_init"]\n'
-    )
-    (sut_dir / "initlib" / "lp_e2e_init.py").write_text(_INIT_MODULE_SOURCE)
-
     hosts = [
         {
             "ip": ip,
@@ -370,7 +358,15 @@ def _scaffold_sut_dir(sut_dir: Path, ip: str, element: str) -> str:
             "labs": [_LP_E2E_LAB],
         }
     ]
-    (sut_dir / "lab_data" / "lab.json").write_text(json.dumps({"hosts": hosts}))
+    make_sut_repo(
+        sut_dir,
+        name="lp_e2e",
+        extra='labs = ["lab_data"]\nlibs = ["initlib"]\ninit = ["lp_e2e_init"]\n',
+        files={
+            "initlib/lp_e2e_init.py": _INIT_MODULE_SOURCE,
+            "lab_data/lab.json": json.dumps({"hosts": hosts}),
+        },
+    )
 
     return f"{element}_seed"
 

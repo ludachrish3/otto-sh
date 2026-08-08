@@ -10,18 +10,17 @@ host. Two ``OttoSuite`` classes share a marker, plus a plain pytest function
 from pathlib import Path
 
 from tests._fixtures.labdata import lab_data_dir
+from tests._fixtures.sutrepo import make_sut_repo
 
 # Reuse otto's own JSON lab fixture data (defines the "veggies" lab) so a
 # throwaway repo can satisfy the mandatory --lab flag without touching a real
 # host — none of these fixture suites request a host fixture.
 LAB_DATA_DIR = lab_data_dir() / "tech1"
 
-SETTINGS = """\
-name = "{name}"
-version = "0.1.0"
+# Appended verbatim after make_sut_repo's name/version/tests header.
+SETTINGS_EXTRA = """\
 lab_data_type = "json"
 {labs_line}
-tests = ["tests"]
 """
 
 SUITE_SRC = """\
@@ -89,11 +88,12 @@ def make_selection_repo(
     ``sys.modules`` key, and the second repo's file loses to the first's
     already-cached module — silently collecting zero tests.
     """
-    repo = root / name
-    (repo / ".otto").mkdir(parents=True)
     labs_line = f'labs = ["{LAB_DATA_DIR}"]' if with_lab else ""
-    (repo / ".otto" / "settings.toml").write_text(SETTINGS.format(name=name, labs_line=labs_line))
-    tests_dir = repo / "tests"
-    tests_dir.mkdir(parents=True)
-    (tests_dir / f"test_selection_{name}.py").write_text(suite_src)
-    return repo
+    return make_sut_repo(
+        root / name,
+        name=name,
+        version="0.1.0",
+        tests=["tests"],
+        extra=SETTINGS_EXTRA.format(labs_line=labs_line),
+        files={f"tests/test_selection_{name}.py": suite_src},
+    )

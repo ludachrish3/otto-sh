@@ -60,6 +60,7 @@ from pathlib import Path
 import pytest
 
 from tests._fixtures.labdata import lab_data_path
+from tests._fixtures.sutrepo import make_sut_repo
 from tests.integration.chaos._driver import spawn_otto
 from tests.integration.chaos._target import ChaosTarget
 
@@ -121,12 +122,11 @@ def _make_sprout_target(root: Path) -> ChaosTarget:
     assert basil is not None, "tech1/lab.json missing 'basil' -- fixture shape changed"
     (tech_dir / "lab.json").write_text(json.dumps({"hosts": hosts, "links": []}, indent=2))
 
-    sut = root / "sut"
-    (sut / ".otto").mkdir(parents=True)
-    (sut / ".otto" / "settings.toml").write_text(
-        f"""\
-name = "sprout_console_harness"
-version = "0.1.0"
+    sut = make_sut_repo(
+        root / "sut",
+        name="sprout_console_harness",
+        version="0.1.0",
+        extra=f"""\
 lab_data_type = "json"
 labs = [
     "{tech_dir}",
@@ -134,7 +134,7 @@ labs = [
 
 [lab]
 backend = "json"
-"""
+""",
     )
     cred = basil["creds"][0]
     return ChaosTarget(

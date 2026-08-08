@@ -7,6 +7,7 @@ import pytest
 from otto.config.repo import Repo
 from tests._fixtures.mockrepo import MockRepo
 from tests._fixtures.paths import TESTS_ROOT
+from tests._fixtures.sutrepo import make_sut_repo
 
 mock_repo: MockRepo = None
 tests_root = TESTS_ROOT
@@ -16,27 +17,15 @@ def _write_repo(tmp_path: Path, settings_body: str) -> Path:
     """Materialize a minimal SUT repo at *tmp_path* with the given TOML body
     appended after the required ``name`` / ``version`` fields.
     """
-    otto_dir = tmp_path / ".otto"
-    otto_dir.mkdir(parents=True)
-    base = textwrap.dedent("""
-        name = "tmp_repo"
-        version = "1.0.0"
-    """).strip()
-    (otto_dir / "settings.toml").write_text(f"{base}\n{settings_body}\n")
-    return tmp_path
+    return make_sut_repo(tmp_path, name="tmp_repo", extra=settings_body)
 
 
 def _repo_with_settings(tmp_path: Path, settings_body: str) -> "Repo":
-    """Materialize a minimal SUT repo and return the parsed Repo.
+    """Materialize a minimal SUT repo (named ``p``) and return the parsed Repo.
 
-    Accepts raw TOML (including ``name``/``version``) — no base prepended.
+    *settings_body* is TOML appended after the generated ``name``/``version``.
     """
-    import textwrap as _textwrap
-
-    otto_dir = tmp_path / ".otto"
-    otto_dir.mkdir(parents=True, exist_ok=True)
-    (otto_dir / "settings.toml").write_text(_textwrap.dedent(settings_body))
-    return Repo(sut_dir=tmp_path)
+    return Repo(sut_dir=make_sut_repo(tmp_path, name="p", extra=textwrap.dedent(settings_body)))
 
 
 @pytest.fixture(autouse=False)
@@ -231,8 +220,6 @@ def test_repo_parses_unified_host_preferences(tmp_path):
     repo = _repo_with_settings(
         tmp_path,
         """
-        name = "p"
-        version = "1.0.0"
         [host_preferences.".*"]
         term = ["telnet"]
         ssh_options = { connect_timeout = 5.0 }
@@ -387,13 +374,7 @@ class TestCollectTestsHardening:
     def _make_repo(self, tmp_path, test_body="def test_ok():\n    assert True\n"):
         from otto.config.repo import Repo
 
-        sut = tmp_path / "sut"
-        (sut / ".otto").mkdir(parents=True)
-        (sut / ".otto" / "settings.toml").write_text(
-            'name = "sut"\nversion = "1.0.0"\ntests = ["tests"]\n'
-        )
-        (sut / "tests").mkdir()
-        (sut / "tests" / "test_a.py").write_text(test_body)
+        sut = make_sut_repo(tmp_path / "sut", tests=["tests"], files={"tests/test_a.py": test_body})
         return Repo(sut_dir=sut)
 
     def test_collects_with_fileno_dependent_conftest_and_pytest_asyncio(self, tmp_path):

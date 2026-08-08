@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from otto.cli.init import AREAS, InitConfig
+from tests._fixtures.sutrepo import make_sut_repo
 
 CFG = InitConfig(name="widget", version="0.1.0")
 BY_NAME = {a.name: a for a in AREAS}
@@ -199,16 +200,13 @@ def test_settings_paths_anchors_relative_and_tilde_paths(tmp_path: Path, monkeyp
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
 
-    # Create settings.toml with bare relative and tilde paths
-    otto_dir = repo / ".otto"
-    otto_dir.mkdir(parents=True)
-    settings_file = otto_dir / "settings.toml"
-    settings_text = (
-        'name = "test"\nversion = "1.0.0"\n'
-        'labs = ["lab_data", "~/custom_labs"]\n'
-        'tests = ["tests"]\nlibs = ["pylib"]'
+    # Settings with bare relative and tilde paths
+    make_sut_repo(
+        repo,
+        name="test",
+        tests=["tests"],
+        extra='labs = ["lab_data", "~/custom_labs"]\nlibs = ["pylib"]',
     )
-    settings_file.write_text(settings_text)
 
     paths = _settings_paths(repo)
     assert paths is not None

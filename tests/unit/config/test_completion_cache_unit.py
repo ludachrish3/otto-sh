@@ -23,6 +23,7 @@ import typer
 
 from otto.config import completion_cache as cc
 from otto.config.repo import PYTEST_CONFIG_NAMES, configured_python_files
+from tests._fixtures.sutrepo import touch_settings
 
 
 def test_read_cache_returns_none_for_empty_repos(tmp_path: Path, monkeypatch) -> None:
@@ -257,8 +258,7 @@ def test_read_cache_rejects_schema_mismatch(tmp_path: Path, monkeypatch) -> None
     fake_repo = MagicMock()
     fake_repo.sut_dir = tmp_path / "sut"
     fake_repo.sut_dir.mkdir()
-    (fake_repo.sut_dir / ".otto").mkdir()
-    (fake_repo.sut_dir / ".otto" / "settings.toml").write_text("")
+    touch_settings(fake_repo.sut_dir)
     fake_repo.init = []
     fake_repo.libs = []
     fake_repo.tests = []
@@ -472,8 +472,7 @@ def test_write_read_cache_round_trips_backend_names(tmp_path: Path, monkeypatch)
     fake_repo = MagicMock()
     fake_repo.sut_dir = tmp_path / "sut"
     fake_repo.sut_dir.mkdir()
-    (fake_repo.sut_dir / ".otto").mkdir()
-    (fake_repo.sut_dir / ".otto" / "settings.toml").write_text("")
+    touch_settings(fake_repo.sut_dir)
     fake_repo.init = []
     fake_repo.libs = []
     fake_repo.tests = []
@@ -684,8 +683,7 @@ def test_write_read_cache_round_trips_commands(tmp_path: Path, monkeypatch) -> N
     fake_repo = MagicMock()
     fake_repo.sut_dir = tmp_path / "sut"
     fake_repo.sut_dir.mkdir()
-    (fake_repo.sut_dir / ".otto").mkdir()
-    (fake_repo.sut_dir / ".otto" / "settings.toml").write_text("")
+    touch_settings(fake_repo.sut_dir)
     fake_repo.init = []
     fake_repo.libs = []
     fake_repo.tests = []
@@ -709,8 +707,7 @@ def test_read_cache_defaults_commands_to_empty_list(tmp_path: Path, monkeypatch)
     fake_repo = MagicMock()
     fake_repo.sut_dir = tmp_path / "sut"
     fake_repo.sut_dir.mkdir()
-    (fake_repo.sut_dir / ".otto").mkdir()
-    (fake_repo.sut_dir / ".otto" / "settings.toml").write_text("")
+    touch_settings(fake_repo.sut_dir)
     fake_repo.init = []
     fake_repo.libs = []
     fake_repo.tests = []
@@ -728,8 +725,7 @@ def test_write_read_cache_round_trips_hosts_by_lab(tmp_path: Path, monkeypatch) 
     fake_repo = MagicMock()
     fake_repo.sut_dir = tmp_path / "sut"
     fake_repo.sut_dir.mkdir()
-    (fake_repo.sut_dir / ".otto").mkdir()
-    (fake_repo.sut_dir / ".otto" / "settings.toml").write_text("")
+    touch_settings(fake_repo.sut_dir)
     fake_repo.init = []
     fake_repo.libs = []
     fake_repo.tests = []
@@ -753,8 +749,7 @@ def test_read_cache_defaults_hosts_by_lab_to_empty_dict(tmp_path: Path, monkeypa
     fake_repo = MagicMock()
     fake_repo.sut_dir = tmp_path / "sut"
     fake_repo.sut_dir.mkdir()
-    (fake_repo.sut_dir / ".otto").mkdir()
-    (fake_repo.sut_dir / ".otto" / "settings.toml").write_text("")
+    touch_settings(fake_repo.sut_dir)
     fake_repo.init = []
     fake_repo.libs = []
     fake_repo.tests = []
@@ -797,8 +792,7 @@ def _make_fake_repo(tmp_path: Path) -> MagicMock:
     fake_repo = MagicMock()
     fake_repo.sut_dir = tmp_path / "sut"
     fake_repo.sut_dir.mkdir(parents=True, exist_ok=True)
-    (fake_repo.sut_dir / ".otto").mkdir(exist_ok=True)
-    (fake_repo.sut_dir / ".otto" / "settings.toml").write_text("")
+    touch_settings(fake_repo.sut_dir)
     fake_repo.init = []
     fake_repo.libs = []
     fake_repo.tests = []
@@ -861,8 +855,7 @@ def _make_fingerprint_repo(
     fake_repo = MagicMock()
     fake_repo.sut_dir = tmp_path / "sut"
     fake_repo.sut_dir.mkdir(parents=True, exist_ok=True)
-    (fake_repo.sut_dir / ".otto").mkdir(exist_ok=True)
-    (fake_repo.sut_dir / ".otto" / "settings.toml").write_text("")
+    touch_settings(fake_repo.sut_dir)
     fake_repo.init = init
     fake_repo.libs = libs
     fake_repo.tests = []

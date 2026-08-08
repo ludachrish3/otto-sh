@@ -23,6 +23,7 @@ from otto.logger.mode import LogMode
 from otto.tunnel.discovery import DISCOVERY_PS_COMMAND, parse_process_discovery
 from otto.utils import wait_for_async
 from tests._fixtures.labdata import host_data, make_host
+from tests._fixtures.sutrepo import make_sut_repo
 from tests.e2e._otto_subprocess import REPO1, run_otto
 
 VEGGIES = ("carrot", "tomato", "pepper")
@@ -327,26 +328,25 @@ def cli_sut_dir(tmp_path: Path) -> Path:
       alone: probe liveness quietly, never compose the stack.
     """
     sut = tmp_path / "cli_cycle_sut"
-    (sut / ".otto").mkdir(parents=True)
     lab_dir = sut / "lab_data"
-    lab_dir.mkdir()
     hosts = [host_data(ne) for ne in ("carrot", "tomato")]
-    (lab_dir / "lab.json").write_text(json.dumps({"hosts": hosts, "links": []}))
-    (sut / ".otto" / "settings.toml").write_text(
-        f'name = "repo1"\n'
-        f'version = "1.0.0"\n'
-        f'lab_data_type = "json"\n'
-        f'labs = ["{lab_dir}"]\n'
-        f"\n"
-        f"[lab]\n"
-        f'backend = "json"\n'
-        f"\n"
-        f"[[docker.composes]]\n"
-        f'path = "{REPO1 / "docker" / "compose.yml"}"\n'
-        f'services = ["api"]\n'
-        f'default_host = "tomato_seed"\n'
+    return make_sut_repo(
+        sut,
+        name="repo1",
+        extra=(
+            f'lab_data_type = "json"\n'
+            f'labs = ["{lab_dir}"]\n'
+            f"\n"
+            f"[lab]\n"
+            f'backend = "json"\n'
+            f"\n"
+            f"[[docker.composes]]\n"
+            f'path = "{REPO1 / "docker" / "compose.yml"}"\n'
+            f'services = ["api"]\n'
+            f'default_host = "tomato_seed"\n'
+        ),
+        files={"lab_data/lab.json": json.dumps({"hosts": hosts, "links": []})},
     )
-    return sut
 
 
 def run_tunnel_cli(sut_dir: Path, *args: str) -> str:

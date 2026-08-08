@@ -3,6 +3,7 @@
 import pytest
 
 from otto import bootstrap as bs
+from tests._fixtures.sutrepo import make_sut_repo
 
 
 @pytest.fixture(autouse=True)
@@ -14,19 +15,23 @@ def _fresh(monkeypatch):
 
 def _write_repo(tmp_path, name, version="1.0.0", *, required=(), optional=()) -> str:
     """A repo whose init module appends its name to $OTTO_TEST_ORDER_FILE."""
-    repo = tmp_path / name
-    (repo / ".otto").mkdir(parents=True)
     req = ", ".join(f'"{e}"' for e in required)
     opt = ", ".join(f'"{e}"' for e in optional)
-    (repo / ".otto" / "settings.toml").write_text(
-        f'name = "{name}"\nversion = "{version}"\n'
-        f'libs = ["."]\ninit = ["{name}_init"]\n\n'
-        f"[dependencies]\nrequired = [{req}]\noptional = [{opt}]\n"
-    )
-    (repo / f"{name}_init.py").write_text(
-        "import os, pathlib\n"
-        "with pathlib.Path(os.environ['OTTO_TEST_ORDER_FILE']).open('a') as f:\n"
-        f"    f.write('{name}\\n')\n"
+    repo = make_sut_repo(
+        tmp_path / name,
+        name=name,
+        version=version,
+        extra=(
+            f'libs = ["."]\ninit = ["{name}_init"]\n\n'
+            f"[dependencies]\nrequired = [{req}]\noptional = [{opt}]\n"
+        ),
+        files={
+            f"{name}_init.py": (
+                "import os, pathlib\n"
+                "with pathlib.Path(os.environ['OTTO_TEST_ORDER_FILE']).open('a') as f:\n"
+                f"    f.write('{name}\\n')\n"
+            )
+        },
     )
     return str(repo)
 
@@ -123,15 +128,17 @@ def test_optional_provider_skipped_warns_and_dependent_registers(tmp_path, monke
 def test_no_dependencies_table_registers_normally(tmp_path, monkeypatch, order_file):
     # A settings.toml with no [dependencies] table at all -- must still
     # register normally, with an empty resolved-dependencies list.
-    root = tmp_path / "solo"
-    (root / ".otto").mkdir(parents=True)
-    (root / ".otto" / "settings.toml").write_text(
-        'name = "solo"\nversion = "1.0.0"\nlibs = ["."]\ninit = ["solo_init"]\n'
-    )
-    (root / "solo_init.py").write_text(
-        "import os, pathlib\n"
-        "with pathlib.Path(os.environ['OTTO_TEST_ORDER_FILE']).open('a') as f:\n"
-        "    f.write('solo\\n')\n"
+    root = make_sut_repo(
+        tmp_path / "solo",
+        name="solo",
+        extra='libs = ["."]\ninit = ["solo_init"]\n',
+        files={
+            "solo_init.py": (
+                "import os, pathlib\n"
+                "with pathlib.Path(os.environ['OTTO_TEST_ORDER_FILE']).open('a') as f:\n"
+                "    f.write('solo\\n')\n"
+            )
+        },
     )
     monkeypatch.setenv("OTTO_SUT_DIRS", str(root))
     result = bs.bootstrap()

@@ -61,7 +61,9 @@ def test_existing_area_is_never_rewritten(tmp_path: Path) -> None:
     _invoke(["--all", "--name", "widget", "--path", str(tmp_path)])
     settings = tmp_path / ".otto" / "settings.toml"
     before = settings.read_text() + "# user edit\n"
-    settings.write_text(before)
+    settings.write_text(  # sutrepo-exempt: user-edit of a scaffolded file IS the subject
+        before
+    )
     result = _invoke(["--all", "--name", "other", "--path", str(tmp_path)])
     assert result.exit_code == 0, result.output
     assert settings.read_text() == before

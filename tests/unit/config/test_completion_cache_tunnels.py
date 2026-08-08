@@ -2,12 +2,12 @@ import time
 from types import SimpleNamespace
 
 import otto.config.completion_cache as cc
+from tests._fixtures.sutrepo import touch_settings
 
 
 def _repos(tmp_path):
     # one repo whose fingerprint sources exist under tmp_path/.otto
-    (tmp_path / ".otto").mkdir(parents=True, exist_ok=True)
-    (tmp_path / ".otto" / "settings.toml").write_text("")
+    touch_settings(tmp_path)
     return [SimpleNamespace(sut_dir=tmp_path, init=[], libs=[], tests=[], labs=[])]
 
 

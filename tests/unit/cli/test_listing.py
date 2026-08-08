@@ -21,6 +21,7 @@ from typer.testing import CliRunner
 from otto.cli.test import suite_app
 from otto.config.repo import CollectedTest, Repo, _test_run_syntax
 from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.sutrepo import make_sut_repo
 
 runner = CliRunner()
 
@@ -44,14 +45,7 @@ def _make_sut(
     extra_toml: str = "",
 ) -> Path:
     """Create a minimal SUT directory with .otto/settings.toml."""
-    sut_dir = base / name
-    sut_dir.mkdir(parents=True, exist_ok=True)
-    otto_dir = sut_dir / ".otto"
-    otto_dir.mkdir()
-    (otto_dir / "settings.toml").write_text(
-        f'name = "{name}"\nversion = "{version}"\ntests = ["tests"]\n{extra_toml}'
-    )
-    return sut_dir
+    return make_sut_repo(base / name, name=name, version=version, tests=["tests"], extra=extra_toml)
 
 
 def _add_test_file(
@@ -387,16 +381,16 @@ class TestExternalRepoIntegration:
 
     @pytest.fixture
     def sut(self, tmp_path) -> tuple[Path, Repo]:
-        sut_dir = tmp_path / "external_sut"
-        sut_dir.mkdir()
-        (sut_dir / ".otto").mkdir()
-        (sut_dir / ".otto" / "settings.toml").write_text(
-            'name = "external"\nversion = "0.1.0"\ntests = ["tests"]\n'
-        )
-        tests_dir = sut_dir / "tests"
-        tests_dir.mkdir()
-        (tests_dir / "test_suite.py").write_text(
-            "def test_alpha():\n    assert True\n\ndef test_beta():\n    assert True\n"
+        sut_dir = make_sut_repo(
+            tmp_path / "external_sut",
+            name="external",
+            version="0.1.0",
+            tests=["tests"],
+            files={
+                "tests/test_suite.py": (
+                    "def test_alpha():\n    assert True\n\ndef test_beta():\n    assert True\n"
+                )
+            },
         )
         return sut_dir, Repo(sut_dir=sut_dir)
 

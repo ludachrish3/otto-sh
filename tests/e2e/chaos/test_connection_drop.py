@@ -40,6 +40,7 @@ import pytest
 from otto.logger.mode import LogMode
 from tests._fixtures.bed_hygiene import argv_pattern
 from tests._fixtures.labdata import host_data
+from tests._fixtures.sutrepo import make_sut_repo
 from tests.e2e.chaos._bed import run_probe, veggies_link_id
 from tests.e2e.chaos._seed import offset_in
 from tests.integration.chaos._driver import spawn_otto
@@ -133,16 +134,17 @@ def _make_hop_target(tmp_path) -> ChaosTarget:
             }
         )
     )
-    sut = tmp_path / "hop_sut"
-    (sut / ".otto").mkdir(parents=True)
-    (sut / ".otto" / "settings.toml").write_text(
-        'name = "chaosdrop_harness"\n'
-        'version = "0.1.0"\n'
-        'lab_data_type = "json"\n'
-        f'labs = ["{tech_dir}"]\n'
-        "\n"
-        "[lab]\n"
-        'backend = "json"\n'
+    sut = make_sut_repo(
+        tmp_path / "hop_sut",
+        name="chaosdrop_harness",
+        version="0.1.0",
+        extra=f"""\
+lab_data_type = "json"
+labs = ["{tech_dir}"]
+
+[lab]
+backend = "json"
+""",
     )
     tomato_cred = tomato["creds"][0]
     return ChaosTarget(

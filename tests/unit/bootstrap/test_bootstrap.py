@@ -6,6 +6,7 @@ import textwrap
 import pytest
 
 from otto import bootstrap as bs
+from tests._fixtures.sutrepo import make_sut_repo
 
 
 @pytest.fixture(autouse=True)
@@ -16,24 +17,12 @@ def _fresh(monkeypatch):
 
 
 def _write_repo(tmp_path, *, broken_test: bool = False) -> str:
-    repo = tmp_path / "repo"
-    (repo / ".otto").mkdir(parents=True)
-    (repo / ".otto" / "settings.toml").write_text(
-        textwrap.dedent(
-            """
-            name = "repo"
-            version = "1.0.0"
-            tests = ["tests"]
-            """
-        )
+    files = (
+        {"tests/test_broken.py": "def broken(:\n"}  # SyntaxError
+        if broken_test
+        else {"tests/test_ok.py": "X = 1\n"}
     )
-    tests = repo / "tests"
-    tests.mkdir()
-    if broken_test:
-        (tests / "test_broken.py").write_text("def broken(:\n")  # SyntaxError
-    else:
-        (tests / "test_ok.py").write_text("X = 1\n")
-    return str(repo)
+    return str(make_sut_repo(tmp_path / "repo", name="repo", tests=["tests"], files=files))
 
 
 def test_idempotent_single_result(tmp_path, monkeypatch):
@@ -65,7 +54,9 @@ def test_discover_runs_no_user_code(tmp_path, monkeypatch):
 def _write_bad_toml_repo(tmp_path) -> str:
     repo = tmp_path / "bad"
     (repo / ".otto").mkdir(parents=True)
-    (repo / ".otto" / "settings.toml").write_text("this is [not valid toml\n")
+    (repo / ".otto" / "settings.toml").write_text(  # sutrepo-exempt: malformed TOML IS the subject
+        "this is [not valid toml\n"
+    )
     return str(repo)
 
 
@@ -102,7 +93,9 @@ def test_invalidate_recovers_from_fixed_repo(tmp_path, monkeypatch):
     # Fix the same repo in place, then invalidate: recomputed discovery must
     # not carry the prior failure.
     fixed_toml = 'name = "fixed"\nversion = "1.0.0"\n'
-    (pathlib.Path(bad) / ".otto" / "settings.toml").write_text(fixed_toml)
+    (pathlib.Path(bad) / ".otto" / "settings.toml").write_text(  # sutrepo-exempt: in-place repair
+        fixed_toml
+    )
     bs.invalidate()
     assert bs.bootstrap().errors == []
 
@@ -124,14 +117,12 @@ def _write_repo_with_test_body(tmp_path, stem: str, body: str) -> str:
     parametrized cases sharing a filename would silently skip the import after the
     first and pass vacuously — a guard that cannot fail.
     """
-    repo = tmp_path / stem
-    (repo / ".otto").mkdir(parents=True)
-    (repo / ".otto" / "settings.toml").write_text(
-        f'name = "{stem}"\nversion = "1.0.0"\ntests = ["tests"]\n'
+    repo = make_sut_repo(
+        tmp_path / stem,
+        name=stem,
+        tests=["tests"],
+        files={f"tests/test_{stem}.py": textwrap.dedent(body)},
     )
-    tests = repo / "tests"
-    tests.mkdir()
-    (tests / f"test_{stem}.py").write_text(textwrap.dedent(body))
     return str(repo)
 
 
@@ -224,14 +215,12 @@ def test_cancelled_error_is_contained_not_propagated(tmp_path, monkeypatch):
 
 def _write_repo_with_init_module(tmp_path, stem: str, body: str) -> str:
     """A repo whose single ``init`` module runs *body* — bootstrap's OTHER user-code seam."""
-    repo = tmp_path / stem
-    (repo / ".otto").mkdir(parents=True)
-    (repo / ".otto" / "settings.toml").write_text(
-        f'name = "{stem}"\nversion = "1.0.0"\nlibs = ["lib"]\ninit = ["{stem}_init"]\n'
+    repo = make_sut_repo(
+        tmp_path / stem,
+        name=stem,
+        extra=f'libs = ["lib"]\ninit = ["{stem}_init"]\n',
+        files={f"lib/{stem}_init.py": textwrap.dedent(body)},
     )
-    lib = repo / "lib"
-    lib.mkdir()
-    (lib / f"{stem}_init.py").write_text(textwrap.dedent(body))
     return str(repo)
 
 

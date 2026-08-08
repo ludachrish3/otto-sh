@@ -29,6 +29,7 @@ import pytest
 
 from tests._fixtures._host_pool import UNIX_POOL as _UNIX_POOL
 from tests._fixtures._host_pool import lease_unix_host
+from tests._fixtures.sutrepo import make_sut_repo
 from tests.e2e._otto_subprocess import REPO1, run_otto
 
 # ---------------------------------------------------------------------------
@@ -212,40 +213,40 @@ def _reservation_repo(root: Path, holder: str) -> Path:
     ``version: 1`` reservation file, mirroring the fixture construction in
     ``tests/unit/reservations/test_wiring.py`` / ``test_json_backend.py``.
     """
-    (root / ".otto").mkdir(parents=True, exist_ok=True)
-    (root / "lab_data").mkdir(parents=True, exist_ok=True)
-    (root / ".otto" / "settings.toml").write_text(
-        'name = "reservation_fixture"\n'
-        'version = "1.0.0"\n'
-        'lab_data_type = "json"\n'
-        'labs = ["lab_data"]\n'  # search paths anchor at the repo root
-        "\n"
-        "[reservations]\n"
-        'backend = "json"\n'
-        "\n"
-        "[reservations.json]\n"
-        'path = "reservations.json"\n'
-    )
-    (root / "lab_data" / "lab.json").write_text(
-        json.dumps(
-            {
-                "hosts": [
-                    {
-                        "ip": "10.10.200.11",
-                        "element": "carrot",
-                        "os_type": "unix",
-                        "board": "seed",
-                        "valid_terms": ["ssh"],
-                        "valid_transfers": ["scp"],
-                        "is_virtual": True,
-                        "creds": [{"login": "vagrant", "password": "vagrant"}],
-                        "resources": ["carrot"],
-                        "labs": [_LAB],
-                    }
-                ],
-                "links": [],
-            }
-        )
+    make_sut_repo(
+        root,
+        name="reservation_fixture",
+        extra=(
+            'lab_data_type = "json"\n'
+            'labs = ["lab_data"]\n'  # search paths anchor at the repo root
+            "\n"
+            "[reservations]\n"
+            'backend = "json"\n'
+            "\n"
+            "[reservations.json]\n"
+            'path = "reservations.json"\n'
+        ),
+        files={
+            "lab_data/lab.json": json.dumps(
+                {
+                    "hosts": [
+                        {
+                            "ip": "10.10.200.11",
+                            "element": "carrot",
+                            "os_type": "unix",
+                            "board": "seed",
+                            "valid_terms": ["ssh"],
+                            "valid_transfers": ["scp"],
+                            "is_virtual": True,
+                            "creds": [{"login": "vagrant", "password": "vagrant"}],
+                            "resources": ["carrot"],
+                            "labs": [_LAB],
+                        }
+                    ],
+                    "links": [],
+                }
+            )
+        },
     )
     _write_reservations(root, holder)
     return root

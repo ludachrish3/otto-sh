@@ -63,7 +63,11 @@ class TestDiscoveryContainment:
     def bad_toml_repo(self, tmp_path: Path) -> Path:
         repo = tmp_path / "repo_bad_toml"
         (repo / ".otto").mkdir(parents=True)
-        (repo / ".otto" / "settings.toml").write_text("this is [not valid toml\n")
+        # The unparseable settings.toml IS this fixture's subject — make_sut_repo
+        # only ever emits well-formed TOML, so the raw write has to stay.
+        (repo / ".otto" / "settings.toml").write_text(  # sutrepo-exempt: malformed TOML
+            "this is [not valid toml\n",
+        )
         return repo
 
     def test_malformed_settings_degrades_help_with_framed_warning(

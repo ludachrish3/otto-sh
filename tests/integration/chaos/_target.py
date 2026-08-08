@@ -16,6 +16,7 @@ from pathlib import Path
 from tests._ambient_env import ambient
 from tests._fixtures.labdata import lab_data_path
 from tests._fixtures.paths import TESTS_ROOT
+from tests._fixtures.sutrepo import make_sut_repo
 
 _REPO_E2E = TESTS_ROOT / "repo_e2e"
 
@@ -61,12 +62,11 @@ def make_loopback_target(root: Path, *, port: int, client_key: Path) -> ChaosTar
             indent=2,
         )
     )
-    sut = root / "sut"
-    (sut / ".otto").mkdir(parents=True)
-    (sut / ".otto" / "settings.toml").write_text(
-        f"""\
-name = "chaos_harness"
-version = "0.1.0"
+    sut = make_sut_repo(
+        root / "sut",
+        name="chaos_harness",
+        version="0.1.0",
+        extra=f"""\
 lab_data_type = "json"
 labs = [
     "{tech_dir}",
@@ -74,7 +74,7 @@ labs = [
 
 [lab]
 backend = "json"
-"""
+""",
     )
     return ChaosTarget(
         sut_dir=sut,

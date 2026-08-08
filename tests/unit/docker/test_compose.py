@@ -35,6 +35,7 @@ from otto.host.login_proxy import Cred
 from otto.host.unix_host import UnixHost
 from otto.result import CommandResult, Result
 from otto.utils import Status
+from tests._fixtures.sutrepo import make_sut_repo
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -63,27 +64,27 @@ _TRANSIENT_NETWORK_RACE_OUTPUT = (
 def _make_repo(
     tmp: Path, *, name: str = "repo1", services: tuple = ("api",), default_host: str = "pepper_seed"
 ) -> Repo:
-    sut = tmp / name
-    (sut / ".otto").mkdir(parents=True)
-    (sut / "docker").mkdir()
-    (sut / "docker" / "Dockerfile").write_text("FROM alpine\n")
-    (sut / "docker" / "compose.yml").write_text("services: {}\n")
     services_toml = "[" + ", ".join(f'"{s}"' for s in services) + "]"
-    (sut / ".otto" / "settings.toml").write_text(
-        f'name = "{name}"\n'
-        f'version = "1.0.0"\n'
-        f"\n"
-        f"[docker]\n"
-        f"\n"
-        f"[[docker.images]]\n"
-        f'name = "api"\n'
-        f'dockerfile = "docker/Dockerfile"\n'
-        f'context = "docker"\n'
-        f"\n"
-        f"[[docker.composes]]\n"
-        f'path = "docker/compose.yml"\n'
-        f'default_host = "{default_host}"\n'
-        f"services = {services_toml}\n"
+    sut = make_sut_repo(
+        tmp / name,
+        name=name,
+        extra=(
+            f"[docker]\n"
+            f"\n"
+            f"[[docker.images]]\n"
+            f'name = "api"\n'
+            f'dockerfile = "docker/Dockerfile"\n'
+            f'context = "docker"\n'
+            f"\n"
+            f"[[docker.composes]]\n"
+            f'path = "docker/compose.yml"\n'
+            f'default_host = "{default_host}"\n'
+            f"services = {services_toml}\n"
+        ),
+        files={
+            "docker/Dockerfile": "FROM alpine\n",
+            "docker/compose.yml": "services: {}\n",
+        },
     )
     return Repo(sut_dir=sut)
 
@@ -703,10 +704,7 @@ def test_placeholder_id_collision_with_different_host_is_rejected(tmp_path):
 
 def _make_bare_repo(tmp: Path, *, name: str = "bare1") -> Repo:
     """Build a Repo with NO [[docker.composes]] entries."""
-    sut = tmp / name
-    (sut / ".otto").mkdir(parents=True)
-    (sut / ".otto" / "settings.toml").write_text(f'name = "{name}"\nversion = "1.0.0"\n')
-    return Repo(sut_dir=sut)
+    return Repo(sut_dir=make_sut_repo(tmp / name, name=name))
 
 
 # ---------------------------------------------------------------------------
@@ -818,17 +816,17 @@ async def test_compose_up_build_failure_raises(tmp_path):
 def test_resolve_parent_no_candidate_raises(tmp_path):
     """Raises ValueError when no on= and no default_host is set in composes."""
     # Build a compose list with NO default_host
-    sut = tmp_path / "repo1"
-    (sut / ".otto").mkdir(parents=True)
-    (sut / "docker").mkdir()
-    (sut / "docker" / "compose.yml").write_text("services: {}\n")
-    (sut / ".otto" / "settings.toml").write_text(
-        'name = "repo1"\nversion = "1.0.0"\n\n'
-        "[docker]\n\n"
-        "[[docker.composes]]\n"
-        'path = "docker/compose.yml"\n'
-        'services = ["api"]\n'
-        "# no default_host\n"
+    sut = make_sut_repo(
+        tmp_path / "repo1",
+        name="repo1",
+        extra=(
+            "[docker]\n\n"
+            "[[docker.composes]]\n"
+            'path = "docker/compose.yml"\n'
+            'services = ["api"]\n'
+            "# no default_host\n"
+        ),
+        files={"docker/compose.yml": "services: {}\n"},
     )
     repo = Repo(sut_dir=sut)
     lab = _make_lab()

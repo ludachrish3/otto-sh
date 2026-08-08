@@ -13,6 +13,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 from otto.config import completion_cache as cc
+from tests._fixtures.sutrepo import touch_settings
 
 
 def _fake_repo(tmp_path: Path):
@@ -20,8 +21,7 @@ def _fake_repo(tmp_path: Path):
     repo = MagicMock()
     repo.sut_dir = tmp_path / "sut"
     repo.sut_dir.mkdir(exist_ok=True)
-    (repo.sut_dir / ".otto").mkdir(exist_ok=True)
-    (repo.sut_dir / ".otto" / "settings.toml").write_text("")
+    touch_settings(repo.sut_dir)
     repo.init = []
     repo.libs = []
     repo.tests = []

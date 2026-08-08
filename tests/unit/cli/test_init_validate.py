@@ -47,7 +47,9 @@ def test_valid_repo_reports_all_ok_and_exits_zero(tmp_path: Path) -> None:
 def test_broken_settings_key_fails_with_pydantic_error(tmp_path: Path) -> None:
     _scaffold_all(tmp_path)
     settings = tmp_path / ".otto" / "settings.toml"
-    settings.write_text(settings.read_text().replace("version =", "verzion ="))
+    settings.write_text(  # sutrepo-exempt: in-place corruption of a product-scaffolded file
+        settings.read_text().replace("version =", "verzion =")
+    )
     result = _invoke(["--all", "--path", str(tmp_path)])
     assert result.exit_code == 1
     assert "verzion" in result.output

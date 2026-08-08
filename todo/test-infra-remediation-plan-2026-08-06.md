@@ -1335,8 +1335,28 @@ environment) only surfaced when the guard grew its fourth arm. Stated blind spot
 variable-bound argv lists, concatenated key strings, `os.environ.update` of prebuilt
 dicts — each grepped zero at adoption; `monkeypatch.setenv("GIT_…")` is sanctioned.
 
-**17b — SUT-repo scaffold (next).** `tests/_fixtures/sutrepo.py::make_sut_repo`
-(draft said 48 sites / 27 files — re-measure with the landing instrument).
+**17b — SUT-repo scaffold (LANDED in this squash).** `tests/_fixtures/sutrepo.py::
+make_sut_repo(root, name, version, tests, extra, files)` — `extra` is VERBATIM
+TOML (no renderer: the dependency tables the sites write are carried
+byte-for-byte), `files` writes suites/conftests under root (contained: cannot
+escape root or clobber the settings just written), callers construct `Repo`
+themselves (the fixture imports nothing from otto — pinned by an AST assert);
+plus `touch_settings(sut_dir)` for the empty fingerprint stubs on MagicMock
+repo stand-ins. Drift guard `tests/unit/test_sutrepo_scaffold_policy.py`:
+write_text/write_bytes/touch/`.open(w)`/`open(w)` arms, PLUS the same shapes
+on a LOCAL NAME bound from a settings path — the first cut claimed that shape
+"grepped zero" and the interim review found a LIVE unmigrated scaffold behind
+it (test_init_scaffold.py; a blind-spot enumeration inherits its omissions);
+`# sutrepo-exempt: <reason>` markers, where a bare marker AND a dead marker
+(line no longer an offence) are themselves offences. t0 by the LANDED
+instrument against the pre-wave tree: **46 sites / 28 files** (the first-cut
+instrument said 43/25; the draft's 48/27 was a hand estimate). Landed as 31
+make_sut_repo migrations + 10 touch_settings stubs + 5 exempts (2
+malformed-TOML subjects, 1 in-place repair, 2 in-place edits of
+product-scaffolded files). Stated blind spots: the product's
+SETTINGS_FILENAME constant / variable filenames, shutil/os.rename moves,
+markers inside string literals, product-side writes (`otto init` runs) —
+each grepped zero at adoption.
 
 **17c — remaining §7.4 tail (after 17b).** `active_context` migration (draft: 28
 sites / 59 raw calls; lines containing `set_context(`/`reset_context(` today: 67
@@ -1348,7 +1368,7 @@ refine to sub-app invocations). **Rider from W16/fable:** the four remaining ine
 `_RECOVERY_TIMEOUT` module rebinds — `tests/unit/host/test_session.py:514/591/905/1066`
 — each pay the real 5s recovery deadline; convert to explicit `deadline=` arguments.
 **Rider from W17a gates:** the two W16 force-vs-deadline discriminators in
-`test_lifecycle_sync_phase.py` have now twice (W14 once, W17a gates once) taken the
+`test_lifecycle_sync_phase.py` have now THREE times (W14, W17a gates, W17b gates) taken the
 30s deadline path under loaded parallel gates — a genuine starvation, not a product
 regression (sequential soaks ms-scale green; a real regression fails them
 deterministically). Pin them to a serial lane / `xdist_group` so load cannot

@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from tests._fixtures.labdata import lab_data_dir
+from tests._fixtures.sutrepo import make_sut_repo
 from tests.e2e._otto_subprocess import run_otto
 
 pytestmark = pytest.mark.hostless
@@ -14,12 +15,10 @@ pytestmark = pytest.mark.hostless
 # host — TestConfcut itself requests no host fixture.
 LAB_DATA_DIR = lab_data_dir() / "tech1"
 
-SETTINGS = """\
-name = "confrepo"
-version = "0.1.0"
+# Appended verbatim after make_sut_repo's name/version/tests header.
+SETTINGS_EXTRA = """\
 lab_data_type = "json"
 labs = ["{lab_data_dir}"]
-tests = ["tests/sub"]
 
 [lab]
 backend = "json"
@@ -44,12 +43,14 @@ class TestConfcut(OttoSuite):
 
 
 def _make_repo(root: Path) -> None:
-    (root / ".otto").mkdir(parents=True)
-    (root / ".otto" / "settings.toml").write_text(SETTINGS.format(lab_data_dir=LAB_DATA_DIR))
-    (root / "conftest.py").write_text(ROOT_CONFTEST)
-    sub = root / "tests" / "sub"
-    sub.mkdir(parents=True)
-    (sub / "test_confcut.py").write_text(SUITE)
+    make_sut_repo(
+        root,
+        name="confrepo",
+        version="0.1.0",
+        tests=["tests/sub"],
+        extra=SETTINGS_EXTRA.format(lab_data_dir=LAB_DATA_DIR),
+        files={"conftest.py": ROOT_CONFTEST, "tests/sub/test_confcut.py": SUITE},
+    )
 
 
 def test_suite_in_subdir_sees_repo_root_fixture(tmp_path: Path) -> None:
