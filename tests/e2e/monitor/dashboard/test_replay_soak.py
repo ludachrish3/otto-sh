@@ -152,5 +152,13 @@ def test_browser_stays_responsive_under_a_full_runs_data(
     started = time.monotonic()
     page.get_by_role("link", name="Fleet").click()
     page.locator('[data-testid="subject-link-h1"]').click()
-    expect(page.locator('[data-testid="chart-CPU"]')).to_be_visible()  # chart-${chartKey}
+    # The visibility wait must OUTLAST the responsiveness budget it sits
+    # inside, or the budget can never be the thing that fails. When this
+    # expect ran at the ambient 5000ms it was numerically identical to the
+    # 5.0s assert below, so a genuine overrun raised PlaywrightTimeoutError
+    # here and the hand-written diagnostic on the next line was unreachable
+    # — the failure that most needed explaining was the one that reported
+    # itself worst. The named budget stays 5.0s; only its instrument is
+    # given room. (chart-${chartKey})
+    expect(page.locator('[data-testid="chart-CPU"]')).to_be_visible(timeout=30_000)
     assert time.monotonic() - started < 5.0, "the shell became unresponsive under load"

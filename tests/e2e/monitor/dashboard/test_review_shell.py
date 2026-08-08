@@ -189,6 +189,13 @@ def _wait_for_links(page, at_least: int) -> None:
     )
 
 
+# How long the topology may take to SETTLE (React Flow re-fits only after its
+# ResizeObserver reports the new box). A runaway guard on a render, not a
+# discriminator — nothing is proven by it being small, and it previously sat
+# at a hand-written 5000ms while this suite's actions ran at 60s.
+_SETTLE_TIMEOUT_MS = 30_000
+
+
 def _assert_reachable(page, testid: str) -> None:
     """Assert a real pointer at this element's centre actually lands ON it.
 
@@ -218,10 +225,25 @@ def _assert_reachable(page, testid: str) -> None:
       return hit?.closest('[data-testid]')?.getAttribute('data-testid') ?? null;
     }}"""
     try:
-        page.wait_for_function(f"({hit_expr})() === {testid!r}", timeout=5000)
+        page.wait_for_function(f"({hit_expr})() === {testid!r}", timeout=_SETTLE_TIMEOUT_MS)
     except PlaywrightTimeoutError:
+        # Re-read AFTER the timeout and let the answer name the failure. The
+        # earlier form reported every timeout as "is occluded" — a confident
+        # root cause the evidence did not support, because a loaded host that
+        # simply had not finished re-fitting produces the same timeout as a
+        # panel genuinely sitting on top. Diagnosing a flake as the issue-#134
+        # regression is worse than not diagnosing it: it sends the next reader
+        # hunting a layout bug that isn't there. The bound is also no longer
+        # the ambient assertion ceiling (it was 5000ms, tightened by hand here
+        # while the suite's actions ran at 60s).
         hit = page.evaluate(hit_expr)
-        msg = f"{testid} is occluded: a click at its centre lands on {hit!r}"
+        if hit == testid:
+            msg = (
+                f"{testid} settled UNoccluded, but only after "
+                f"{_SETTLE_TIMEOUT_MS}ms — slow host, not an occlusion regression"
+            )
+        else:
+            msg = f"{testid} is occluded: a click at its centre lands on {hit!r}"
         raise AssertionError(msg) from None
 
 
@@ -844,9 +866,10 @@ def test_link_less_edges_do_not_open_the_inspector(shell_dash, page):
     _click_edge(page, "reports:mgmt-01~chassis-a")
 
     # A negative assertion needs a barrier, or it passes trivially by running
-    # before the click is even processed. NOT a sleep (this repo has no
-    # wait_for_timeout anywhere, and an arbitrary budget is a flake waiting to
-    # happen). The barrier is sound because Playwright's `page.mouse.click()`
+    # before the click is even processed. NOT a sleep (no TEST in this repo
+    # uses wait_for_timeout — scripts/capture_docs_media.py:306 does, but that
+    # is media capture, not an assertion; an arbitrary budget in a test is a
+    # flake waiting to happen). The barrier is sound because `page.mouse.click()`
     # blocks through its CDP round-trips (move → down → up); Chromium
     # synthesizes and dispatches the native `click` event synchronously inside
     # the `mouseReleased` call, and React flushes discrete-event state updates

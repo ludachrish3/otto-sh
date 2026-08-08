@@ -156,25 +156,13 @@ def pytest_configure(config: pytest.Config) -> None:
         pytest.exit(drift, returncode=1)
 
 
-@pytest.fixture(autouse=True)
-def _generous_playwright_timeout(request: pytest.FixtureRequest) -> None:
-    """Give browser actions/navigations more headroom than Playwright's 30s default.
-
-    These suites are solid — they pass hundreds of consecutive runs at ~33s
-    each even under coverage instrumentation. But a rare, purely environmental
-    ~10x slowdown (a loaded gate host: one run clocked ~340s for the same
-    command and coverage) makes an otherwise-fine ``page.click``/navigation
-    blow past Playwright's default 30s action timeout and fail as a flake, not
-    a bug. Doubling the ceiling to 60s absorbs that transient with zero cost on
-    fast runs (fast actions still return immediately; the timeout is only an
-    upper bound). Scoped to ``browser``-marked tests so the hermetic
-    ``test_harness.py`` lane never instantiates ``page``.
-    """
-    if request.node.get_closest_marker("browser") is None:
-        return
-    page = request.getfixturevalue("page")
-    page.set_default_timeout(60_000)
-    page.set_default_navigation_timeout(60_000)
+# The action/navigation ceiling this suite pioneered now lives in
+# tests/e2e/conftest.py as `_generous_browser_ceilings`, alongside the
+# `expect()` assertion ceiling its reasoning always implied but could not
+# reach (that 5000ms is a library-internal default, readable only via
+# `expect.set_options`). Hoisted to the shared parent because the covapp
+# browser suite — 135 of the 202 browser assertions — sat under no mitigation
+# at all. The measured justification is preserved verbatim there.
 
 
 def _preload(harness: DashboardHarness[FakeCollector]) -> None:

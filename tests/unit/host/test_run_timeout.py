@@ -41,26 +41,42 @@ class TestRunTimeout:
         from otto.host.host import DEFAULT_COMMAND_TIMEOUT
 
         ok = CommandResult(status=Status.Success, value="hi", command="echo hi", retcode=0)
+        loop = asyncio.get_running_loop()
+        started = loop.time()
         with patch.object(host, "_run_one", new_callable=AsyncMock, return_value=ok) as mock:
             await host.run(["echo hi"])
+        elapsed = loop.time() - started
         actual = mock.call_args.kwargs["timeout"]
-        # List form = cumulative budget, so this is just under the full default.
+        # List form = cumulative budget, so the grant is the budget minus what
+        # had already been spent when it was handed out. Sandwiching it against
+        # MEASURED elapsed is load-invariant: a slower machine lowers the floor
+        # by exactly what it cost. The earlier spelling — `> DEFAULT - 1.0` —
+        # was a wall-clock bound demanding this finish within a second, the
+        # shape this file's own test_surplus_time_donated_to_later_commands
+        # docstring calls the old defect in miniature.
         assert 0 < actual <= DEFAULT_COMMAND_TIMEOUT
-        assert actual > DEFAULT_COMMAND_TIMEOUT - 1.0
+        assert actual >= DEFAULT_COMMAND_TIMEOUT - elapsed
 
     @pytest.mark.asyncio
     async def test_timeout_passes_remaining_to_run_one(self, host: UnixHost):
         """With a timeout, each _run_one receives the remaining budget."""
         ok = CommandResult(status=Status.Success, value="ok", command="cmd", retcode=0)
+        budget = 10.0
+        loop = asyncio.get_running_loop()
+        started = loop.time()
         with patch.object(host, "_run_one", new_callable=AsyncMock, return_value=ok) as mock:
-            await host.run(["cmd1", "cmd2"], timeout=10.0)
+            await host.run(["cmd1", "cmd2"], timeout=budget)
+        elapsed = loop.time() - started
 
         assert mock.call_count == 2
-        # First call should get ~10s, second should get slightly less
         first_timeout = mock.call_args_list[0].kwargs["timeout"]
         second_timeout = mock.call_args_list[1].kwargs["timeout"]
-        assert first_timeout > 9.0  # nearly full budget
-        assert second_timeout > 0  # still has remaining time
+        # Each grant is the budget minus what was already spent — sandwiched
+        # against MEASURED elapsed rather than a hardcoded `> 9.0`, so load
+        # lowers the floor instead of failing the test (see the note in
+        # test_no_timeout_uses_the_default_budget).
+        for grant in (first_timeout, second_timeout):
+            assert budget - elapsed <= grant <= budget
         assert first_timeout > second_timeout  # budget decreases
 
     @pytest.mark.asyncio
@@ -92,13 +108,20 @@ class TestRunTimeout:
             call_timeouts.append(kwargs.get("timeout"))
             return CommandResult(status=Status.Success, value="ok", command=cmd, retcode=0)
 
+        budget = 5.0
+        loop = asyncio.get_running_loop()
+        started = loop.time()
         with patch.object(host, "_run_one", new_callable=AsyncMock, side_effect=track_timeout):
-            await host.run(["fast1", "fast2", "fast3"], timeout=5.0)
+            await host.run(["fast1", "fast2", "fast3"], timeout=budget)
+        elapsed = loop.time() - started
 
-        # All three should get nearly the full budget since each is instant
+        # Every grant is the REMAINING budget, so all three sit within elapsed
+        # of the full budget — load-invariant, unlike the previous `> 4.5`
+        # (see the note in test_no_timeout_uses_the_default_budget). An even
+        # split would grant budget/3 and is red here.
         assert len(call_timeouts) == 3
         for t in call_timeouts:
-            assert t > 4.5, f"Expected > 4.5s remaining, got {t}"
+            assert budget - elapsed <= t <= budget, f"expected remaining budget, got {t}"
 
 
 # ---------------------------------------------------------------------------

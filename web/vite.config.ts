@@ -101,6 +101,36 @@ export default defineConfig({
     // every run's header, so replaying a red CI run is
     // `npx vitest run --sequence.shuffle --sequence.seed=N`.
     sequence: { shuffle: true },
+    // A RUNAWAY GUARD, not a discriminator — the distinction is the whole
+    // reason these are written down. vitest's default is 5000ms, which was
+    // never a decision here: it was the one wall-clock bound in this config
+    // nobody chose, and it applied to all 1013 tests. It bit on 2026-08-08,
+    // failing `reviewbar.test.tsx` "switches sessions ..." at 5076ms — a test
+    // that costs 166ms alone, 274ms under coverage, i.e. an ~18x inflation
+    // from machine contention, not from anything the test does. The suite's
+    // genuinely slowest test is 1155ms, so the whole suite lived inside a
+    // 4.3x worst-case margin against a bound whose only job is to stop a hang.
+    //
+    // A tight value buys nothing: this timeout discriminates NOTHING. No test
+    // passes or fails *because* of where it sits, so widening it cannot weaken
+    // an assertion — unlike a bound written INTO an assert, which must never
+    // be widened to dodge a flake (see the docstring on
+    // tests/unit/host/test_run_timeout.py::test_surplus_time_donated_to_later_commands,
+    // where the fix was to assert the property instead). The house rule this
+    // restores: a harness bound must OUTLAST the work it supervises.
+    //
+    // 60s is ~52x the slowest real test, clearing the measured contention
+    // inflation with room to spare, and still surfaces a hung promise 3x
+    // faster than the Python lane's deliberate `timeout = 180` (pyproject).
+    // Slowness stays VISIBLE without being fatal: slowTestThreshold below is
+    // the instrument for "this got slow", the timeout is only for "this hung".
+    testTimeout: 60_000,
+    hookTimeout: 60_000,
+    // Explicit at vitest's own default: a test over 300ms is flagged in the
+    // reporter. Stated rather than inherited so the split above is legible —
+    // this is the knob that notices slowness, and it is deliberately not the
+    // one that fails the build.
+    slowTestThreshold: 300,
     include: ["src/**/*.test.ts", "src/**/*.test.tsx"],
     // Console warnings are test failures (see vitest.setup.ts) — a warning
     // that only scrolls past in coverage output is a warning nobody fixes.

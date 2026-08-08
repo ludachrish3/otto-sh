@@ -67,6 +67,60 @@ _BROWSER_SUITE_GROUPS: dict[str, str] = {
 }
 
 
+# ── Browser wall-clock ceilings ────────────────────────────────────────────
+# These are RUNAWAY GUARDS, not discriminators: no browser test passes or
+# fails *because* of where they sit, so a tight value buys nothing and only
+# converts machine load into red builds. (A bound written INTO an assertion is
+# the opposite case and must never be widened to dodge a flake — see
+# tests/unit/host/test_run_timeout.py::test_surplus_time_donated_to_later_commands,
+# where the fix was to assert the property instead.)
+#
+# The dashboard suite already learned this for ACTIONS: its
+# `_generous_playwright_timeout` records a measured ~10x environmental
+# slowdown on a loaded gate host (one run clocked ~340s against a ~33s norm)
+# and doubled Playwright's 30s action default to 60s. That decision could not
+# reach `expect()`, whose 5000ms lives inside the library
+# (playwright/_impl/_assertions.py: `expect_options["timeout"] = self._timeout
+# or 5_000`) and is read only from `expect.set_options()` — never from
+# `page.set_default_timeout()`. Nothing here called it, so all 202 assertions
+# across both suites ran at 5s: 6x tighter than the default this repo had
+# already judged insufficient, and 12x tighter than what it chose instead.
+#
+# That is the shape worth naming: wherever a bound was written down it got
+# reviewed and made generous; wherever it was a library default it stayed
+# tight and invisible. The same omission sat in web/vite.config.ts (vitest's
+# 5000ms testTimeout), where it failed a 274ms test at 5076ms.
+#
+# Both ceilings live here, at the shared parent of both browser suites, so
+# neither can inherit a bound nobody chose — the covapp suite had no
+# mitigation at all and holds 135 of the 202 assertions. 60s clears the
+# measured transient and still fires inside pytest-timeout's 180s per-test
+# ceiling, so a hang is reported by the precise inner timeout rather than the
+# generic outer kill. Only FAILING assertions pay it: a satisfied `expect()`
+# returns as soon as it polls true.
+_BROWSER_TIMEOUT_MS = 60_000
+
+
+@pytest.fixture(autouse=True)
+def _generous_browser_ceilings(request: pytest.FixtureRequest) -> None:
+    """Raise the action, navigation and ASSERTION ceilings for browser tests.
+
+    Scoped to ``browser``-marked tests so hermetic lanes (e.g. dashboard's
+    ``test_harness.py``) never instantiate ``page``. ``expect.set_options`` is
+    process-global rather than per-page, so it is (idempotently) re-applied per
+    test rather than once per session — a session-scoped fixture would not
+    re-apply it in every xdist worker.
+    """
+    if request.node.get_closest_marker("browser") is None:
+        return
+    from playwright.sync_api import expect as _expect
+
+    _expect.set_options(timeout=_BROWSER_TIMEOUT_MS)
+    page = request.getfixturevalue("page")
+    page.set_default_timeout(_BROWSER_TIMEOUT_MS)
+    page.set_default_navigation_timeout(_BROWSER_TIMEOUT_MS)
+
+
 def _browser_group_key(nodeid: str, *, shard: bool) -> str:
     """Return the xdist_group name for a browser-marked item.
 
