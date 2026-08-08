@@ -23,6 +23,7 @@ import pytest
 
 from otto.host.unix_host import UnixHost
 from otto.result import CommandResult, Result
+from tests._fixtures.bed_hygiene import _NC_LISTENER_PROBE
 from tests.integration.host._transfer_retry import transfer_with_retry
 
 # Real I/O is meaningfully slower than mocked; bump the per-test ceiling.
@@ -269,11 +270,12 @@ async def test_real_concurrent_transfers(
         assert f"content_{i}" in result.value, f"file {i} corrupt: {result.value!r}"
         await transfer_host.run(f"rm -f {remote_path}")
 
-    # nc-only leak check: any leftover listener processes are a bug.
+    # nc-only leak check: any leftover listener processes are a bug. The probe
+    # is the bed_hygiene authority — the old hand-rolled `grep -v "$$"` mirror
+    # also dropped any REAL listener whose line contained the wrapper's pid as
+    # a substring (Wave 14; see _NC_LISTENER_PROBE's comment).
     if transfer_host.transfer == "nc":
-        result = (
-            await transfer_host.run('pgrep -af "nc -l" | grep -v pgrep | grep -v "$$" || true')
-        ).only
+        result = (await transfer_host.run(_NC_LISTENER_PROBE)).only
         leftover = result.value.strip()
         assert not leftover, f"leftover nc listeners after concurrent put: {leftover}"
 
@@ -417,9 +419,7 @@ async def test_real_nc_high_fanout_put(
         assert f"fanout_content_{i}" in result.value, f"file {i} corrupt: {result.value!r}"
         await transfer_host.run(f"rm -f {remote_path}")
 
-    result = (
-        await transfer_host.run('pgrep -af "nc -l" | grep -v pgrep | grep -v "$$" || true')
-    ).only
+    result = (await transfer_host.run(_NC_LISTENER_PROBE)).only
     leftover = result.value.strip()
     assert not leftover, f"leftover nc listeners after N={N} concurrent puts: {leftover}"
 
@@ -449,11 +449,7 @@ async def test_real_nc_cancel_cleans_up_listener(
 
     # Snapshot listener count before — if the remote already has stray
     # listeners from a prior test, attribute that separately.
-    before = (
-        (await transfer_host.run('pgrep -af "nc -l" | grep -v pgrep | grep -v "$$" || true'))
-        .only.value.strip()
-        .splitlines()
-    )
+    before = (await transfer_host.run(_NC_LISTENER_PROBE)).only.value.strip().splitlines()
 
     with contextlib.suppress(
         asyncio.TimeoutError, asyncio.CancelledError
@@ -466,11 +462,7 @@ async def test_real_nc_cancel_cleans_up_listener(
     # Allow a brief grace period for cleanup to settle before checking.
     await asyncio.sleep(2.0)
 
-    after = (
-        (await transfer_host.run('pgrep -af "nc -l" | grep -v pgrep | grep -v "$$" || true'))
-        .only.value.strip()
-        .splitlines()
-    )
+    after = (await transfer_host.run(_NC_LISTENER_PROBE)).only.value.strip().splitlines()
     new_listeners = [line for line in after if line not in before]
     assert not new_listeners, f"cancellation orphaned remote nc listener(s): {new_listeners}"
 

@@ -709,6 +709,9 @@ probe), `tests/e2e/chaos/_bed.py`, all seven tier-3 consumer modules
       `_NC_LISTENER_PROBE` spelling (with the real-listener-hiding `grep -v "$$"`
       filter this wave removed from the authority) at
       `tests/integration/host/test_session_stability_integration.py:275,:421,:453,:470`.
+      *All eight retired in Wave 14, which also widened the pattern-kill scan
+      from the chaos lanes to the whole tests tree (rule-measured t0 on the
+      pre-Wave-14 tree: exactly those 8 sites).*
 - [x] Hand-probe the chaos bed once (gate blind spot rule: the chaos lane is never in
       default gates — run `nox -s chaos` legs touched, with Chris's bed coordination).
       *Done for the non-reboot legs (harness, session, transfer, tunnel_link,
@@ -1112,27 +1115,97 @@ sites, exact inventory in G12 above), the 2 skip→fail conversions, and the
 tier-marker stale-skip fix. Details, measured red, and the four mutation proofs are
 recorded in the G12 section.
 
-### Wave 14 — Harness silent-degradation sweep (review §5.4–5.6 remainder)
-**Files/items, one squash:** CliRunner shield (`tests/conftest.py:1247-1253`) — replace
-`except ImportError: yield` with a hard fail naming the pytest version bump; coverage
-pre-init (`tests/conftest.py:253-254`) — act on the stashed outcome: session-level
-warning-or-fail when preinit reports False under `--cov`; FD-watermark consolidation
-into `tests/_fixtures/fd_watermark.py` (gc-collect-before-baseline semantics, the
-tunnel_stability variant wins) with the three conftests importing it; tunnel-reap
-teardown logs suppressed exceptions (`tunnel_stability/conftest.py:61-68`); the two
-default-reset autouse fixtures (`tests/conftest.py:543-580`) become snapshot-restore.
-**Added during Wave 5a (pre-existing, found by an ad-hoc single-process combo run):**
-cross-file isolation defect — `pytest -n0 tests/unit/cli/test_listing.py
-tests/unit/test_tuple_return_debt.py tests/unit/cli/test_cov.py` (or webassets_guard
-as the middle file) fails all three `TestCovGetValidation` message asserts:
-`cov get` exits 1 through some OTHER path with the patched `cov_module.logger.error`
-never called, i.e. the `patch("otto.config.get_repos")` seam is bypassed after
-`test_listing.py` has run in-process plus one more otto-source-loading module.
-Each pair passes; the triple fails; reproduced on pristine `a76ae1ad`. Likely a
-repos/cov-repo cache primed through a path the patch doesn't cover. The loadgroup
-gates never co-schedule these, so it is invisible today — root-cause it here (the
-sweep's business is exactly this class), and consider whether the single-process
-nightly isolation lane (#108 guard) should have caught it.
+### Wave 14 — Harness silent-degradation sweep (review §5.4–5.6 remainder) — **LANDED**
+One squash; every guard red-proven against the pre-wave tree and mutation-proven
+on the committed one. As landed:
+
+- **CliRunner shield fails loud** — `except ImportError: yield` became a
+  `pytest.fail` naming the pytest rename and forbidding the yield fallback; the
+  guard body split into `_clirunner_guard_impl` so
+  `test_clirunner_capture_guard.py` drives the fail arm directly
+  (mutation: yield-arm restored → red).
+- **Coverage pre-init acts on its outcome** — `force_coverage_schema_init`
+  returns the full traceback instead of `False`; the collection hook stashes a
+  `PreinitOutcome` dataclass; a new session-scoped autouse
+  `_coverage_preinit_failure_is_loud` (in `GLOBAL_GUARDS`) fails the worker's
+  tests with the recorded traceback (deferred, xdist-safe, fixture-based so
+  `--collect-only` never fires). Truth table + hook-composition pins in
+  `test_coverage_schema_preinit.py`; deleting the stash write turns every test
+  on the worker red with the named message — proven live in the mutation run.
+- **FD-watermark consolidated** — `tests/_fixtures/fd_watermark.py` (baseline
+  `gc.collect()` + collect-before-verdict + one retry; the tunnel_stability
+  shape won), imported by name in the three lane conftests.
+  `test_fd_watermark.py`: behavior pins incl. a hidden-leak control that
+  reproduces the drifted copy's exact failure (missing baseline gc → red), and
+  a drift guard failing any conftest that re-grows a local copy (t0: all 3
+  red). The first-collect-vs-retry split is a proven behavior-preserving
+  mutant pair — the pins own the property, not the path.
+- **Tunnel reap logs** — `reap_tunnels` wraps each `remove_tunnel` in
+  `teardown_step` (the W12 authority): failures log tunnel id + exception and
+  reaping continues; the leftover sweep stays the consequence-catcher.
+- **Snapshot-restore, not reset** — `_restore_otto_logger_state` and
+  `_restore_bootstrap_state` replace the two default-reset fixtures: snapshot
+  at setup (state copy + otto-logger handlers/level/propagate; the three
+  bootstrap globals), restore at teardown (test-created listeners stopped,
+  test-registered atexit hooks unregistered, test-added captures detached).
+  `test_guard_snapshot_restore.py` pins it order-independently (module fixture
+  primes state, BOTH tests assert it — either order red pre-fix, t0-proven);
+  `test_env_hermeticity.py`'s poisoner/victim pair still proves the isolation
+  half. Stated limit: a listener live at snapshot that the test stops cannot
+  be resurrected (no current venue has one).
+- **Pattern-kill class closed tree-wide** — the 8 recorded out-of-lane sites
+  (`cancel_auto_cont`'s self-killing pkill-under-suppress, now logged not
+  swallowed; the tunnel/link socat cleanups, the untagged-socat one now
+  asserted; the four `grep -v "$$"` nc-probe mirrors, now
+  `_NC_LISTENER_PROBE`) fixed, and `test_bed_oracle_honesty.py`'s scan widened
+  from the chaos lanes to all of `tests/` (t0 = exactly those 8; new stated
+  blind spots: variable-bound patterns — inline the `argv_pattern` call — and
+  exec-style list argv, which has no wrapper shell to self-match).
+- **Bounded child reader** — `test_lifecycle_sync_phase.py`'s blocking
+  `readline()` (and `_finish`'s unbounded `read()`) became a shared
+  `_StdoutReader` over the raw fd (`select()` with remaining budget — the G6
+  documented non-arm; the inline ast-grep suppression is retired and the G6
+  rule note updated). A silent child is now a named failure at the reader
+  budget instead of a 180s pytest-timeout wedge; pinned by a real
+  silent-child leg. The budget is 60s, NOT the 20s first cut: it must
+  outlast the child's own 30s graceful-teardown deadline net plus a
+  heavy-load stall margin — a fully-loaded gate run caught a child stalled
+  past 20s with an empty buffer (signals not yet handled), which the old
+  unbounded reader absorbed invisibly; the buffered-output diagnostic now
+  classifies any recurrence (a W16 follow-up: make the mixed-signal pin
+  distinguish second-signal force from deadline force by elapsed time).
+
+**The Wave-5a isolation defect, root-caused:** NOT an otto cache — a pytest 9
+collection bug. Since pytest 8.4/9 conftest fixtures bind to the `Directory`
+collector *node object*; `Session.collect` re-collects a parent dir with
+`handle_dupes=False` when an argument's remaining parts are one file path,
+replacing the cached report's child `Directory` nodes on EVERY level down to
+a later argument's target — that argument then descends onto nodes the
+fixture manager never saw, and each conftest on a rebuilt level silently
+vanishes (autouse fixtures simply don't run; with the bare sibling in the
+repo root, even `tests/conftest.py`'s process-global guards vanish). The
+triple's middle file (bare sibling under `tests/unit`) is what forces the
+rebuild; every pair passes. Fix at the source:
+`tests/_fixtures/_conftest_rebind.py` — `pytest_collectstart` re-runs
+`parsefactories` for a `Directory` node whose conftest is loaded, no longer
+pending, and not bound to that node object — REGISTERED AS A PLUGIN from
+`tests/conftest.py`'s `pytest_configure`, never re-exported as a conftest
+hook (the opus interim review's MAJOR: `pytest_collectstart` is dispatched
+through a path-filtered `ihook` proxy that strips conftest hookimpls for
+non-anchor directories, so a conftest-hosted copy repaired anchor levels
+while intermediate and root conftests stayed dropped). Pinned by
+`tests/unit/test_conftest_directory_rebind.py` — a two-conftest-level
+(intermediate + anchor) pytester-subprocess probe owning the argument shape,
+whose no-plugin leg is the standing reproduction FOR BOTH LEVELS (if it ever
+goes green, pytest fixed it upstream: delete the workaround). Real-tree spot
+checks post-fix: the triple 129 passed; the intermediate-level shape keeps
+all 330 `_no_ambient_webassets` setup-plan entries; the root-sibling shape
+keeps both root guards on all 110 items.
+**#108 lane answer: it could never have caught this** — `tests_unit_repeat`
+passes a single directory argument (the one shape that can't trigger the
+re-collect), and `--count` repeats items without re-collecting; a collection-
+shape defect needs an in-suite pin over multi-file argument shapes, which the
+rebind pin now is.
 
 ### Wave 15 — Web cannot-fail cluster (item 15; G14)
 **Files:** the 5 bare-digit sites, `shell.test.tsx:83-93` (rewrite against rendered

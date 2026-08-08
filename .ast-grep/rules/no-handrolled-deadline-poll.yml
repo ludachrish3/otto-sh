@@ -15,9 +15,11 @@ note: >
   review's other five were not predicate polls: host.py's two shared-budget
   splitters (deadline arithmetic across sequential phases — no loop),
   _pty_driver.py's two select()-with-remaining-budget expect loops, and
-  test_lifecycle_sync_phase.py's blocking-readline loop (pacing comes from
-  the blocking read, not an interval sleep; inline-suppressed there with the
-  reason). shell_liveness.py's confirm_live is the product's own sanctioned
+  test_lifecycle_sync_phase.py's child-stdout reader (at t0 a blocking-
+  readline loop carrying this rule's one inline suppression; Wave 14
+  rewrote it into the same select()-with-remaining-budget fused-read class
+  as _pty_driver's, so the suppression is gone and no arm matches it).
+  shell_liveness.py's confirm_live is the product's own sanctioned
   fused probe-response primitive (the reply-wait timeout is the pacing) and
   is ignored below; utils.py itself is NOT ignored — the helper's own loop
   is the remaining-form spelling no arm matches, and an arm-shaped poll

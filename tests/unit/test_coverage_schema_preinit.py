@@ -19,8 +19,10 @@ import pytest
 
 from tests._fixtures._coverage_preinit import (
     PREINIT_OUTCOME,
+    PreinitOutcome,
     active_pytest_cov,
     force_coverage_schema_init,
+    preinit_failure_message,
 )
 
 
@@ -59,7 +61,7 @@ def test_preinit_creates_context_table(tmp_path: Path) -> None:
     """After the pre-init, the data file exists with a usable ``context`` table."""
     cov = _fresh_cov(tmp_path)
 
-    assert force_coverage_schema_init(cov) is True
+    assert force_coverage_schema_init(cov) is None
 
     db_path = Path(cov.get_data().data_filename())
     assert db_path.exists()
@@ -164,24 +166,116 @@ def test_worker_data_file_preinited_under_real_coverage(request: pytest.FixtureR
         pytest.skip("coverage not active in this process")
     # Prove the hook itself ran and armed — not merely that a schema exists
     # (coverage would lazily build one by the first test regardless). A missing
-    # or False outcome means the collection-finish hook was removed or its
-    # force-init returned False: exactly the silent disarm this guards against.
-    assert request.config.stash.get(PREINIT_OUTCOME, False) is True
+    # outcome means the collection-finish hook was removed; a recorded error
+    # means the force-init raised: each is the silent disarm this guards
+    # against (and the one the loud session fixture would have failed on).
+    outcome = request.config.stash.get(PREINIT_OUTCOME, None)
+    assert outcome is not None, "pytest_collection_finish never stashed a PreinitOutcome"
+    assert outcome.armed is True
+    assert outcome.error is None, f"pre-init failed on this worker:\n{outcome.error}"
     db_path = Path(cov.get_data().data_filename())
     assert db_path.exists()
     assert _context_table_usable(db_path)
 
 
-def test_force_returns_false_when_coverage_internals_break() -> None:
-    """Best-effort: a raising cov object yields False, never propagates.
+def test_force_reports_failure_detail_instead_of_raising() -> None:
+    """A raising cov object yields the recorded traceback, never propagates.
 
-    The collection hook must never abort the whole session if a coverage
-    upgrade moves the internals it pokes — it degrades to "no pre-init"
-    (the intermittent race returns) rather than failing every run.
+    The collection hook must not raise (an exception from a post-sessionstart
+    hook under xdist is a controller INTERNALERROR blaming an innocent item),
+    but the failure is not allowed to degrade to a silent ``False`` either —
+    the detail comes back for the loud session fixture to act on.
     """
 
     class _Broken:
         def get_data(self):
             raise RuntimeError("coverage internals moved")
 
-    assert force_coverage_schema_init(_Broken()) is False
+    detail = force_coverage_schema_init(_Broken())
+    assert detail is not None
+    assert "RuntimeError" in detail
+    assert "coverage internals moved" in detail
+
+
+# ---------------------------------------------------------------------------
+# Acting on the outcome (Wave 14): the decision helper's truth table, the
+# collection hook's composition, and the loud fixture's reach.
+# ---------------------------------------------------------------------------
+
+
+def test_failure_message_fires_when_hook_never_ran() -> None:
+    """A missing stash entry is the silent-disarm shape — it must fail."""
+    message = preinit_failure_message(None)
+    assert message is not None
+    assert "never ran" in message
+
+
+def test_failure_message_quiet_when_not_armed() -> None:
+    """Bare ``pytest`` / ``--no-cov``: no context writes, no race, no failure."""
+    assert preinit_failure_message(PreinitOutcome(armed=False)) is None
+
+
+def test_failure_message_quiet_on_success() -> None:
+    assert preinit_failure_message(PreinitOutcome(armed=True, error=None)) is None
+
+
+def test_failure_message_carries_the_recorded_traceback() -> None:
+    message = preinit_failure_message(
+        PreinitOutcome(armed=True, error="Traceback ...\nRuntimeError: moved")
+    )
+    assert message is not None
+    assert "no such table: context" in message
+    assert "RuntimeError: moved" in message
+
+
+class _StubSession:
+    def __init__(self, config: object) -> None:
+        self.config = config
+
+
+def test_collection_hook_stashes_unarmed_without_cov() -> None:
+    """The live hook composes ``PreinitOutcome(armed=False)`` when cov is absent."""
+    from tests.conftest import pytest_collection_finish
+
+    class _Manager:
+        def hasplugin(self, name: str) -> bool:
+            return False
+
+    class _Config:
+        pluginmanager = _Manager()
+        stash = pytest.Stash()
+
+    config = _Config()
+    pytest_collection_finish(_StubSession(config))
+    assert config.stash[PREINIT_OUTCOME] == PreinitOutcome(armed=False)
+
+
+def test_collection_hook_stashes_armed_failure_with_detail() -> None:
+    """A raising force-init lands in the stash as armed + traceback — the
+    exact record the loud session fixture acts on."""
+    from tests.conftest import pytest_collection_finish
+
+    class _RaisingCov:
+        def get_data(self):
+            raise RuntimeError("stash-detail pin")
+
+    class _Controller:
+        started = True
+        cov = _RaisingCov()
+
+    config = _fake_config(_Controller())
+    config.stash = pytest.Stash()
+    pytest_collection_finish(_StubSession(config))
+    outcome = config.stash[PREINIT_OUTCOME]
+    assert outcome.armed is True
+    assert outcome.error is not None
+    assert "stash-detail pin" in outcome.error
+
+
+def test_loud_fixture_reaches_this_tree(request: pytest.FixtureRequest) -> None:
+    """The loud session fixture is autouse from the ROOT conftest.
+
+    ``tests/e2e/cli/test_registry_isolation_e2e.py`` pins its reach into the
+    e2e tree via ``GLOBAL_GUARDS``; this is the same pin for the unit tree.
+    """
+    assert "_coverage_preinit_failure_is_loud" in request.fixturenames

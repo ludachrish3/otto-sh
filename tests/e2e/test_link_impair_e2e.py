@@ -90,6 +90,7 @@ from otto.link.netem import parse_qdisc_show
 from otto.link.sentinel import IMPAIR_PS_COMMAND, parse_impair_ps
 from otto.logger.mode import LogMode
 from otto.utils import wait_for_async
+from tests._fixtures.bed_hygiene import argv_pattern
 from tests._fixtures.labdata import host_data, make_host
 
 pytestmark = [
@@ -666,7 +667,9 @@ async def test_scoped_differential_and_two_selectors(impair_lab: Lab) -> None:
     carrot = impair_lab.hosts[_CARROT]
     pepper = impair_lab.hosts[_PEPPER]
     for port in (_SCOPED_PORT, _CLEAN_PORT):
-        await _root_best_effort(pepper, f"pkill -f 'TCP4-LISTEN:{port}'")
+        # Bracket-tricked (Wave 14): the bare spelling matched the pkill's own
+        # wrapper shell too — see tests/_fixtures/bed_hygiene.argv_pattern.
+        await _root_best_effort(pepper, f"pkill -f '{argv_pattern(f'TCP4-LISTEN:{port}')}'")
         await pepper.exec(
             f"setsid socat TCP4-LISTEN:{port},fork,reuseaddr EXEC:cat </dev/null >/dev/null 2>&1 &",
             timeout=_HOST_CMD_TIMEOUT,
@@ -713,7 +716,7 @@ async def test_scoped_differential_and_two_selectors(impair_lab: Lab) -> None:
             await repair_link(impair_lab, "edge")
     finally:
         for port in (_SCOPED_PORT, _CLEAN_PORT):
-            await _root_best_effort(pepper, f"pkill -f 'TCP4-LISTEN:{port}'")
+            await _root_best_effort(pepper, f"pkill -f '{argv_pattern(f'TCP4-LISTEN:{port}')}'")
 
 
 # ---------------------------------------------------------------------------

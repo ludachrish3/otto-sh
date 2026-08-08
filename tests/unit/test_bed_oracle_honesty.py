@@ -17,6 +17,7 @@ import ast
 import json
 import re
 from dataclasses import dataclass, field
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -205,9 +206,13 @@ def test_argv_pattern_is_total_by_contract():
 
 # ---------------------------------------------------------------------------
 # Consumer-drift scans (the helpers bind only what they can see): AST scans
-# over the chaos lanes ban the two consumer shapes found live — a run_probe
-# factory unwrapping `.value` before the check can vet it, and a pattern
-# kill/grep not built by argv_pattern. Every Name in the factory expression
+# ban the two consumer shapes found live — a run_probe factory unwrapping
+# `.value` before the check can vet it (chaos lanes, where run_probe lives),
+# and a pattern kill/grep not built by argv_pattern (the WHOLE tests tree
+# since Wave 14 — the class regrew outside the chaos lanes exactly as the
+# lane scoping allowed: tunnel_stability's cancel_auto_cont self-killed its
+# own wrapper under a suppress, and four session-stability probes mirrored
+# the retired `grep -v "$$"` spelling). Every Name in the factory expression
 # (the argument itself, a name inside a delegating lambda, a partial's
 # target) is resolved to every same-named function DEFINED IN THE SAME
 # MODULE and those bodies are walked too — the original defect's real shape
@@ -217,11 +222,25 @@ def test_argv_pattern_is_total_by_contract():
 # module is not walked (`run_probe(elem, snapshot_host)` — those `.value`
 # reads live behind `check_probe_result` already); only string literals /
 # f-strings are scanned for patterns, not strings assembled via ''.join or
-# %; and _KILL_RE reads the common `-af`/`-f` spellings, not multi-flag
-# forms like `pkill -x -f` or `--full`, which no lane writes.
+# %; _KILL_RE reads the common `-af`/`-f` spellings, not multi-flag forms
+# like `pkill -x -f` or `--full`, which no lane writes; an interpolated
+# pattern bound to a VARIABLE earlier is invisible (the scan sees only a
+# Name), so pattern-kill sites must inline the `argv_pattern(...)` call in
+# the f-string; and exec-style list argv (`["pgrep", "-af", needle]`) is
+# never one string — deliberately out of scope, because with no wrapper
+# shell there is no argv to self-match. False-POSITIVE shapes, also stated
+# (interim review): a non-docstring string that merely MENTIONS the spelling
+# (an assert message, a bare-string "attribute docstring") flags — reword it
+# or bracket-trick the mention; an alias-imported `argv_pattern as ap` call
+# flags — use the bare or module-qualified name. This file exempts ITSELF:
+# its positive controls embed the offender spellings verbatim.
 # ---------------------------------------------------------------------------
 
 _LANE_FIXTURE = TESTS_ROOT / "_fixtures" / "bed_hygiene.py"
+
+# Fixture SUT repos + firmware: user-example input data, not otto's tests —
+# the same carve-out every tests-scoped structural rule makes.
+_EXCLUDED_TREES = ("repo1", "repo2", "repo3", "repo_broken", "repo_e2e", "firmware")
 
 
 def _lane_sources():
@@ -229,6 +248,30 @@ def _lane_sources():
     files += sorted((TESTS_ROOT / "integration" / "chaos").glob("*.py"))
     files.append(_LANE_FIXTURE)
     return [(path, ast.parse(path.read_text())) for path in files]
+
+
+def _all_test_sources():
+    self_path = Path(__file__).resolve()
+    files = [
+        path
+        for path in sorted(TESTS_ROOT.rglob("*.py"))
+        if not any(part in _EXCLUDED_TREES for part in path.relative_to(TESTS_ROOT).parts)
+        and path.resolve() != self_path
+    ]
+    # Anti-vacuity: a moved tree must fail here, not scan nothing.
+    assert len(files) > 100, f"tests tree scan found only {len(files)} files — wrong root?"
+    return [(path, _parsed_or_fail(path)) for path in files]
+
+
+def _parsed_or_fail(path: Path) -> ast.AST:
+    try:
+        return ast.parse(path.read_text())
+    except SyntaxError as e:
+        pytest.fail(
+            f"{path.relative_to(TESTS_ROOT)} is unparseable ({e.msg} at line "
+            f"{e.lineno}) — if this is deliberate fixture SUT data, add its "
+            f"tree to _EXCLUDED_TREES in {Path(__file__).name}"
+        )
 
 
 def _factory_value_offenders(tree) -> list:
@@ -317,7 +360,14 @@ def _pattern_kill_offenders(tree) -> list:
                 continue  # bracket-tricked literal
             if follow == _INTERP:
                 expr = exprs[text[: m.end()].count(_INTERP)]
-                if any(isinstance(n, ast.Name) and n.id == "argv_pattern" for n in ast.walk(expr)):
+                # Bare or qualified spelling (`argv_pattern(...)` /
+                # `bed_hygiene.argv_pattern(...)`); an alias-import
+                # (`argv_pattern as ap`) is still rejected — spell it out.
+                if any(
+                    (isinstance(n, ast.Name) and n.id == "argv_pattern")
+                    or (isinstance(n, ast.Attribute) and n.attr == "argv_pattern")
+                    for n in ast.walk(expr)
+                ):
                     continue
             offenders.append(getattr(node, "lineno", -1))
     return offenders
@@ -359,6 +409,8 @@ def test_pattern_kill_scan_positive_control():
     assert _pattern_kill_offenders(literal_bad), "a plain self-matching literal must flag"
     interp_ok = ast.parse("cmd = f\"pkill -f '{argv_pattern('sleep 1')}' || true\"")
     assert not _pattern_kill_offenders(interp_ok)
+    qualified_ok = ast.parse("cmd = f\"pkill -f '{bed_hygiene.argv_pattern('sleep 1')}' || true\"")
+    assert not _pattern_kill_offenders(qualified_ok), "module-qualified argv_pattern must pass"
     literal_ok = ast.parse("cmd = \"pkill -f '[s]leep 1' || true\"")
     assert not _pattern_kill_offenders(literal_ok)
 
@@ -375,15 +427,18 @@ def test_no_value_reads_inside_run_probe_factories_across_lanes():
     )
 
 
-def test_no_unbracketed_pattern_kills_across_lanes():
+def test_no_unbracketed_pattern_kills_across_the_tests_tree():
     offenders = [
-        f"{path.name}:{line}"
-        for path, tree in _lane_sources()
+        f"{path.relative_to(TESTS_ROOT)}:{line}"
+        for path, tree in _all_test_sources()
         for line in _pattern_kill_offenders(tree)
     ]
     assert not offenders, (
         "pkill/pgrep -f pattern not built by argv_pattern — it will match its "
-        f"own wrapper shell and self-kill (found live on the bed): {offenders}"
+        "own wrapper shell and self-kill (found live on the bed; regrew "
+        "outside the chaos lanes while this scan was lane-scoped, Wave 14). "
+        "Inline the argv_pattern(...) call in the f-string — a pattern bound "
+        f"to a variable first is invisible to this scan: {offenders}"
     )
 
 

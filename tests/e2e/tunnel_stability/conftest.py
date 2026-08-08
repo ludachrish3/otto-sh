@@ -1,15 +1,17 @@
 """Package-wide bed hygiene (spec §1): reap + sweep + watermark, always on."""
 
 import asyncio
-import contextlib
-import gc
 from pathlib import Path
 
 import pytest
 import pytest_asyncio
 
 from otto.config.lab import Lab
+from otto.host.connections import teardown_step
 from otto.tunnel import remove_tunnel
+from tests._fixtures.fd_watermark import (
+    _fd_watermark,  # noqa: F401 — imported fixture, registered by name
+)
 from tests._fixtures.labdata import host_data
 from tests._fixtures.tunnel_bed import (
     VEGGIES,
@@ -18,32 +20,6 @@ from tests._fixtures.tunnel_bed import (
     assert_reachable,
     build_bed_host,
 )
-
-_FD_TOLERANCE = 4
-
-
-def _open_fds() -> int:
-    return len(list(Path("/proc/self/fd").iterdir()))
-
-
-@pytest.fixture(autouse=True)
-def _fd_watermark():
-    """Local-side leak bracket: the process's open-FD count must return to
-    baseline (±tolerance) once the lab fixture has closed every host. Autouse
-    and dependency-free, so pytest instantiates it BEFORE (and finalizes it
-    AFTER) `tunnel_lab` — the bracket wraps the hosts' whole lifetime. One
-    gc pass absorbs collector timing before the verdict."""
-    gc.collect()
-    before = _open_fds()
-    yield
-    gc.collect()
-    after = _open_fds()
-    if after > before + _FD_TOLERANCE:
-        gc.collect()
-        after = _open_fds()
-    assert after <= before + _FD_TOLERANCE, (
-        f"local fd leak across test: {before} -> {after} open fds"
-    )
 
 
 @pytest_asyncio.fixture
@@ -60,11 +36,19 @@ async def tunnel_lab():
 
 @pytest_asyncio.fixture
 async def reap_tunnels(tunnel_lab):
-    """Guaranteed teardown: reap every tunnel this test created, even on failure."""
+    """Guaranteed teardown: reap every tunnel this test created, even on failure.
+
+    A raising ``remove_tunnel`` here is a product defect in the exact path this
+    suite soaks, so the reap logs it (``teardown_step``, the house teardown
+    shape) instead of swallowing it: the module's leftover sweep would still
+    catch the CONSEQUENCE, but mis-attributed to the module with the original
+    exception gone (review §5.5). Reaping continues past a failed id — the
+    remaining tunnels still deserve their teardown.
+    """
     created: list[str] = []
     yield created
     for tunnel_id in created:
-        with contextlib.suppress(Exception):
+        with teardown_step(f"tunnel_stability reap {tunnel_id}", "remove_tunnel"):
             await remove_tunnel(tunnel_lab, tunnel_id)
 
 

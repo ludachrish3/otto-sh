@@ -79,6 +79,7 @@ from otto.logger.mode import LogMode
 from otto.tunnel import add_tunnel, discover_tunnels, remove_tunnel
 from otto.tunnel.discovery import discover_observations
 from otto.utils import wait_for_async
+from tests._fixtures.bed_hygiene import argv_pattern
 from tests._fixtures.labdata import host_data
 from tests._fixtures.paths import TESTS_ROOT
 from tests._fixtures.tunnel_bed import (
@@ -547,11 +548,20 @@ async def test_foreign_socat_excluded_and_outofband_kill_degrades(tunnel_lab, re
         assert report.survivors == [], f"survivors after remove: {report.survivors!r}"
         reap_tunnels.remove(added.tunnel.id)
     finally:
-        await tomato.exec(
-            f"pkill -f {shlex.quote(f'TCP4-LISTEN:{foreign_port},')} || true",
+        # Bracket-tricked pattern (Wave 14): the bare spelling also matched
+        # this pkill's own wrapper shell (its argv carries the pattern) and
+        # killed it, so the exec came back non-ok — unchecked. The rogue socat
+        # is UNTAGGED, so the module's leftover sweep would never catch a
+        # failed cleanup here; assert it, even inside the finally — when the
+        # body also raised, exception chaining (__context__) reports BOTH,
+        # which is the evidence path we want. argv_pattern is called INLINE —
+        # the G5 tree-wide scan cannot see through a variable binding.
+        result = await tomato.exec(
+            f"pkill -f {shlex.quote(argv_pattern(f'TCP4-LISTEN:{foreign_port},'))} || true",
             timeout=15,
             log=LogMode.QUIET,
         )
+        assert result.is_ok, f"rogue-socat cleanup on {_EXIT!r} failed: {result.value!r}"
 
 
 # ---------------------------------------------------------------------------

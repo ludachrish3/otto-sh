@@ -23,7 +23,8 @@ The rule, then:
 
 * State owned by the PROCESS (global registries, the ``otto`` logger, the
   OttoContext ContextVar, click's captured streams, the built web dist,
-  ``sys.modules`` identity) → root conftest. Every tree gets it.
+  ``sys.modules`` identity, the collection tree itself) → root conftest. Every
+  tree gets it.
 * Setup owned by a RESOURCE or a local technique (docker stacks, the lab, a
   Playwright page, a package's own ``sys.modules`` delitem trick) → that
   package's conftest.
@@ -138,9 +139,12 @@ for _var in [k for k in os.environ if k.startswith("OTTO_") and k not in AMBIENT
     os.environ.pop(_var, None)
 
 import asyncio
+import atexit
 import contextlib
+import dataclasses
 import gc
 import logging
+import logging.handlers
 import sys
 import types
 import weakref
@@ -159,10 +163,13 @@ from otto.host.login_proxy import Cred
 from otto.host.unix_host import UnixHost
 from otto.registry import Registry
 from otto.suite._retry import report_retries, retry_hookwrapper
+from tests._fixtures import _conftest_rebind
 from tests._fixtures._coverage_preinit import (
     PREINIT_OUTCOME,
+    PreinitOutcome,
     active_pytest_cov,
     force_coverage_schema_init,
+    preinit_failure_message,
 )
 from tests._fixtures._loop_reaper import classify_loop_origin, reap_or_raise
 from tests._fixtures._transport_leaks import (
@@ -207,6 +214,13 @@ def pytest_configure(config):  # type: ignore[no-untyped-def]
     _install_sigint_traceback_dump()
     _install_loop_origin_tracker()
     install_transport_tracker(lambda: _current_test)
+    # Registered as a PLUGIN, never re-exported as a conftest hook:
+    # pytest_collectstart is dispatched through a PATH-FILTERED proxy that
+    # strips conftest hookimpls for non-anchor directories — a conftest-hosted
+    # copy of this hook never fires for exactly the duplicate Directory nodes
+    # it must repair (see the module docstring; interim-review find).
+    if not config.pluginmanager.has_plugin("otto-conftest-rebind"):
+        config.pluginmanager.register(_conftest_rebind, name="otto-conftest-rebind")
 
 
 def pytest_collection_finish(session):  # type: ignore[no-untyped-def]
@@ -224,14 +238,44 @@ def pytest_collection_finish(session):  # type: ignore[no-untyped-def]
 
     The outcome is stashed so ``test_coverage_schema_preinit`` can prove the
     hook actually ran and armed (a "schema exists" check alone can't — coverage
-    would lazily build the same schema by the first test regardless).
+    would lazily build the same schema by the first test regardless), and so
+    ``_coverage_preinit_failure_is_loud`` below can ACT on a failure: a raised
+    pre-init used to become ``False`` and nothing read it, silently re-opening
+    the race in exactly the ``make release`` runs it exists for (review §5.4).
+    The hook itself must stay exception-free — an exception from a
+    post-sessionstart hook under xdist is an INTERNALERROR that crashes the
+    controller blaming an innocent item (Wave 12).
 
     Lives in the ROOT conftest per the process-global-state rule: the per-worker
     coverage data file is owned by the process, so every test tree measured
     under ``--cov`` needs the guard, not just one.
     """
     cov = active_pytest_cov(session.config)
-    session.config.stash[PREINIT_OUTCOME] = cov is not None and force_coverage_schema_init(cov)
+    if cov is None:
+        outcome = PreinitOutcome(armed=False)
+    else:
+        outcome = PreinitOutcome(armed=True, error=force_coverage_schema_init(cov))
+    session.config.stash[PREINIT_OUTCOME] = outcome
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _coverage_preinit_failure_is_loud(request):
+    """Fail this worker's tests, by name, when the coverage pre-init failed.
+
+    Deferred to the first test's setup rather than raised in the collection
+    hook (xdist-safe: a hook exception is a controller INTERNALERROR blaming
+    an innocent item — Wave 12), and fixture-based so it cannot fire when
+    nothing runs (``--collect-only``, the #196 lesson). Session-scoped: the
+    first test errors with the recorded traceback and every later test on the
+    worker reuses that error, so the whole worker is loudly invalid instead
+    of silently racing ``no such table: context`` (warn-vs-error house
+    ruling: FAIL LOUD). The decision half is
+    :func:`tests._fixtures._coverage_preinit.preinit_failure_message`, whose
+    truth table is unit-tested.
+    """
+    message = preinit_failure_message(request.config.stash.get(PREINIT_OUTCOME, None))
+    if message is not None:
+        pytest.fail(message, pytrace=False)
 
 
 def _install_sigint_traceback_dump() -> None:
@@ -522,19 +566,106 @@ def _reset_otto_context():
 
 
 @pytest.fixture(autouse=True)
-def _reset_otto_logger_retention():
-    """Reset otto's logging-management state between tests so log retention /
-    output-dir config can't leak across tests in the same xdist worker (the
-    root cause of the old test_cov ENOTDIR flakes)."""
-    yield
+def _restore_otto_logger_state():
+    """Snapshot-restore otto's logging-management state around every test.
+
+    Restores the pre-test state rather than resetting to defaults (the old
+    ``_reset_otto_logger_retention`` / ``management.reset()`` teardown): a
+    reset-to-default destroys state that EXISTED BEFORE the test — a
+    module-scoped fixture's logging setup died with its first test's teardown
+    while later tests in the module silently ran against defaults (review
+    §5.5). Restoring the snapshot keeps the original isolation win (retention
+    / output-dir config from one test can't leak into the next — the old
+    test_cov ENOTDIR flakes) because by induction every test starts from, and
+    therefore hands back, the worker's pre-test state.
+
+    What restore means here: a listener the TEST created is stopped and its
+    handlers closed (its thread must not outlive the test), and the
+    ``_stop_listener`` atexit hook it registered unconditionally is
+    unregistered with it; other atexit hooks the test registered are
+    unregistered; ``management._state`` is rebound to the snapshot copy;
+    handlers/level/propagate on the ``'otto'`` logger and any test-added
+    external-logger captures are put back exactly as found (membership AND
+    order). Stated limits (interim review), none with a live venue today —
+    each would be a new harness design, not a leak: a listener LIVE at
+    snapshot time that the test itself stops cannot be resurrected (pytest
+    never wires otto logging before tests); a handler that was in the
+    snapshot AND got fanned into a test-created listener is closed with that
+    listener yet re-attached here; test-added external-logger captures are
+    detached to ``NOTSET`` (their pre-test level is not snapshotted), and a
+    pre-existing captured prefix that a test re-captures through a NEW
+    QueueHandler keeps that second handler. The restore is wrapped so a
+    raising stop/close cannot skip the state rebind — under the old single
+    ``reset()`` that skip healed next test, but a skipped SNAPSHOT restore
+    would be permanent for the worker (the next test would snapshot the
+    polluted state as its baseline).
+    """
     from otto.logger import management
 
-    management.reset()
+    otto_logger = logging.getLogger("otto")
+    saved = dataclasses.replace(
+        management._state,
+        capture_prefixes=list(management._state.capture_prefixes),
+        captured_prefixes=list(management._state.captured_prefixes),
+    )
+    saved_handlers = list(otto_logger.handlers)
+    saved_level = otto_logger.level
+    saved_propagate = otto_logger.propagate
+    yield
+    state = management._state
+    try:
+        # Stop and close a listener the test created; a pre-existing one
+        # (none in any current venue — see docstring) is left running for
+        # restore. _add_log_handlers registers the _stop_listener atexit hook
+        # unconditionally with each wired listener — drop it with the
+        # listener it belongs to (idempotent at exit anyway, but the registry
+        # should describe reality).
+        if state.listener is not None and state.listener is not saved.listener:
+            if getattr(state.listener, "_thread", None) is not None:
+                state.listener.stop()
+            for handler in state.listener.handlers:
+                handler.close()
+            if saved.listener is None:
+                atexit.unregister(management._stop_listener)
+        # Unregister the flag-guarded atexit hook the test registered
+        # (restore, don't reset: hooks registered before the test stay).
+        if state.atexit_registered and not saved.atexit_registered:
+            atexit.unregister(management._stop_listener)
+            atexit.unregister(management._print_output_dir)
+        # Detach the shared QueueHandler from external loggers captured
+        # DURING the test; captures from before the test are part of the
+        # snapshot and stay.
+        for prefix in state.captured_prefixes:
+            if prefix in saved.captured_prefixes:
+                continue
+            prefix_logger = logging.getLogger(prefix)
+            for handler in list(prefix_logger.handlers):
+                if isinstance(handler, logging.handlers.QueueHandler):
+                    prefix_logger.removeHandler(handler)
+            prefix_logger.setLevel(logging.NOTSET)
+    finally:
+        # The rebind and logger restore must happen even if a stop/close
+        # above raised — see docstring: a skipped snapshot restore is
+        # permanent pollution, not a one-test glitch.
+        management._state = saved
+        for handler in list(otto_logger.handlers):
+            if handler not in saved_handlers:
+                otto_logger.removeHandler(handler)
+        for handler in saved_handlers:
+            if handler not in otto_logger.handlers:
+                otto_logger.addHandler(handler)
+        if otto_logger.handlers != saved_handlers:
+            # Same membership, wrong order (a test removed + re-added a
+            # snapshot handler): restore order too — handler order decides
+            # emit order.
+            otto_logger.handlers[:] = list(saved_handlers)
+        otto_logger.setLevel(saved_level)
+        otto_logger.propagate = saved_propagate
 
 
 @pytest.fixture(autouse=True)
-def _reset_bootstrap_state():
-    """Clear ``otto.bootstrap``'s discovery/registration caches between tests.
+def _restore_bootstrap_state():
+    """Snapshot-restore ``otto.bootstrap``'s discovery/registration caches.
 
     ``bootstrap()`` memoizes into three module globals; discovery errors ride
     the cached ``_discovered`` :class:`~otto.bootstrap.DiscoveryResult` itself
@@ -550,15 +681,37 @@ def _reset_bootstrap_state():
     (~1 run in 3, load-dependent) because it needs the poisoning
     test and the victims to land on the same worker in that order.
 
+    Snapshot-restore, not the old ``bootstrap._reset()`` teardown (review
+    §5.5): reset-to-empty also destroyed caches that existed BEFORE the test,
+    so a module-scoped fixture priming bootstrap died with its first test.
+    Restoring the snapshot keeps the poisoning fix — by induction each test
+    starts from the worker's pre-test caches, so what the poisoner left is
+    swapped back out — while pre-test state survives.
+    (``tests/unit/test_env_hermeticity.py`` re-runs the historical
+    poisoner/victim pair to prove the isolation half still holds.) Stated
+    limit: the restore is reference-only — a test that mutates the cached
+    ``DiscoveryResult``/dict IN PLACE (instead of rebinding, as every real
+    path does) leaks that mutation; the old wholesale reset would not have.
+    Note (interim review): ``parsefactories`` orders same-scope autouse
+    fixtures alphabetically, so the ``_reset_*`` → ``_restore_*`` rename also
+    moved both restores after ``_reset_otto_context`` / ``_reset_tunnel_add_
+    locks`` in setup order — verified interaction-free; nothing here may
+    depend on its neighbors' ordering.
+
     Root conftest, not ``tests/unit/cli``: these are process-global module
     caches, and under ``make coverage`` the whole suite shares one process —
     the same #132/#133 rule that put ``_isolate_registries`` and the
     ``sys.path`` guard here.
     """
-    yield
     from otto import bootstrap
 
-    bootstrap._reset()  # documented test hook for module-global state
+    saved = (bootstrap._discovered, bootstrap._result, bootstrap._completion_names)
+    yield
+    # Direct rebinds, same access the _ADD_LOCKS guard below uses. A rename of
+    # these globals fails loudly at the snapshot READ above (setup raises
+    # AttributeError); this teardown setattr alone would silently mint new
+    # attributes, so the read is the guard (fable's final-review find).
+    bootstrap._discovered, bootstrap._result, bootstrap._completion_names = saved
 
 
 @pytest.fixture(autouse=True)
@@ -1184,8 +1337,7 @@ def hermetic_covapp_bundle(tmp_path: Path) -> Iterator[Path]:
     mp.undo()
 
 
-@pytest.fixture(autouse=True)
-def _clirunner_live_log_capture_guard():
+def _clirunner_guard_impl():
     """Detach pytest's live-log handlers from the root logger during every ``CliRunner.invoke``.
 
     With ``log_cli = true`` (our pyproject default), any log record reaching the
@@ -1227,11 +1379,23 @@ def _clirunner_live_log_capture_guard():
 
     try:
         from _pytest.logging import _LiveLoggingNullHandler, _LiveLoggingStreamHandler
-    except ImportError:  # pragma: no cover - pytest renamed its live-log handlers
-        # Guard is best-effort: if pytest's internal handler classes move, skip
-        # it rather than error every unit test. The flake reappears but is rare.
-        yield
-        return
+    except ImportError:
+        # FAIL LOUD, never degrade (review §5.4): a pytest rename of these
+        # private classes would otherwise inertly disarm this guard for every
+        # CliRunner site while ``log_cli = true`` keeps the #110/#133 hazard
+        # live — and the two pin tests assert the guard's REACH, not its
+        # liveness, so nothing else would notice. One pytest upgrade turns
+        # every test red with this message instead.
+        pytest.fail(
+            "pytest moved/renamed _pytest.logging._LiveLoggingNullHandler / "
+            "_LiveLoggingStreamHandler — the CliRunner live-log capture guard "
+            "(issues #110/#133) cannot arm. Update the import in "
+            "_clirunner_guard_impl (tests/conftest.py) to pytest's "
+            "new spelling; do NOT fall back to yielding, or the "
+            "GC-timing-dependent 'I/O operation on closed file' flake returns "
+            "silently.",
+            pytrace=False,
+        )
 
     real_invoke = CliRunner.invoke
 
@@ -1255,6 +1419,17 @@ def _clirunner_live_log_capture_guard():
         yield
     finally:
         CliRunner.invoke = real_invoke
+
+
+@pytest.fixture(autouse=True)
+def _clirunner_live_log_capture_guard():
+    """Autouse wrapper over :func:`_clirunner_guard_impl` — see its docstring.
+
+    Split so ``tests/unit/cli/test_clirunner_capture_guard.py`` can drive the
+    generator body directly and prove the fail-loud arm (a pytest rename of
+    the live-log handler classes) without a nested pytest session.
+    """
+    yield from _clirunner_guard_impl()
 
 
 def _loaded_registries() -> list[Registry]:

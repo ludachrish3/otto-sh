@@ -14,7 +14,9 @@ re-arms the worker's chained SIGINT faulthandler in teardown.
 """
 
 import contextlib
+import dataclasses
 import os
+import select
 import signal
 import subprocess
 import sys
@@ -58,6 +60,74 @@ sys.exit(128 + guard.interrupted_signum)
 """
 
 
+class _StdoutReader:
+    """Bounded reader over the child's stdout pipe, via ``select()`` on the raw fd.
+
+    The pacing owner is ``select()``: each pass blocks until the child writes
+    or the remaining budget expires, so a child that goes SILENT without
+    exiting is a named failure at the caller's budget — the old blocking
+    ``readline()`` reader could not be interrupted, so its budget was
+    inter-line only and a silent child wedged the test until pytest-timeout's
+    180s kill. Both :func:`_wait_line` and :func:`_finish` consume from this
+    one buffer; nothing else may touch ``proc.stdout``, or bytes would be
+    stranded in the ``BufferedReader``. (The remaining-budget arithmetic is
+    the two-statement fused-read form the ``no-handrolled-deadline-poll``
+    gate documents as a non-arm — the same class as ``_pty_driver``'s expect
+    loops.)
+    """
+
+    def __init__(self, fd: int) -> None:
+        self._fd = fd
+        self._buf = b""
+
+    @property
+    def buffered(self) -> str:
+        """Whatever is sitting unconsumed in the buffer, decoded (diagnostics)."""
+        return self._buf.decode(errors="replace")
+
+    def next_line(self, deadline: float) -> "str | None":
+        """Next decoded line (newline stripped), ``None`` at EOF; ``TimeoutError`` at *deadline*."""
+        while b"\n" not in self._buf:
+            if not self._pump(deadline):
+                if self._buf:  # EOF with an unterminated tail — surface it as a line
+                    tail, self._buf = self._buf, b""
+                    return tail.decode(errors="replace")
+                return None
+        raw, _, self._buf = self._buf.partition(b"\n")
+        return raw.decode(errors="replace")
+
+    def read_to_eof(self, deadline: float) -> str:
+        """Everything up to EOF, decoded; ``TimeoutError`` if the child never closes."""
+        while self._pump(deadline):
+            pass
+        out, self._buf = self._buf, b""
+        return out.decode(errors="replace")
+
+    def _pump(self, deadline: float) -> bool:
+        """Block for one more chunk: True when read, False at EOF."""
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError
+        ready, _, _ = select.select([self._fd], [], [], remaining)
+        if not ready:
+            raise TimeoutError
+        chunk = os.read(self._fd, 65536)
+        if not chunk:
+            return False
+        self._buf += chunk
+        return True
+
+
+@dataclasses.dataclass
+class _Child:
+    proc: subprocess.Popen
+    reader: _StdoutReader
+
+    @property
+    def pid(self) -> int:
+        return self.proc.pid
+
+
 @contextlib.contextmanager
 def _spawned(tmp_path, mode):
     """Popen with guaranteed reaping + pipe close (unraisables are errors here)."""
@@ -67,10 +137,9 @@ def _spawned(tmp_path, mode):
         [sys.executable, str(script), mode],
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
-        text=True,
     )
     try:
-        yield proc
+        yield _Child(proc=proc, reader=_StdoutReader(proc.stdout.fileno()))
     finally:
         if proc.poll() is None:
             proc.kill()
@@ -78,36 +147,54 @@ def _spawned(tmp_path, mode):
         proc.stdout.close()
 
 
-def _wait_line(proc, marker, timeout=20.0):
-    """Read stdout lines until *marker* appears; fail loudly on EOF/timeout."""
+def _wait_line(child, marker, timeout=60.0):
+    """Read stdout lines until *marker* appears; fail loudly on EOF/timeout.
+
+    *timeout* is a TOTAL budget for reaching the marker (it used to be an
+    inter-line budget that could never fire while the child was silent). The
+    default MUST exceed the child's own worst-case recovery — the 30s
+    graceful-teardown deadline its non-wedged modes arm — plus a
+    heavy-load stall margin: a 20s first cut failed one fully-loaded gate
+    run when a child stalled past it with an EMPTY buffer (not even the
+    handler's stderr notice — the signals had not been handled yet), which
+    the pre-wave unbounded reader absorbed invisibly. 60s keeps the named
+    failure while staying 3x tighter than the old 180s pytest-timeout
+    wedge; the buffered-output diagnostic classifies any recurrence.
+    """
     deadline = time.monotonic() + timeout
     lines = []
-    # Not a wait_for poll: the pacing is the blocking readline() on a
-    # line-oriented child, so the clock is an inter-line budget (it cannot
-    # fire while the child is silent), and _finish() reading the same
-    # buffered stream afterwards forbids a select()-based bounded rewrite.
-    # ast-grep-ignore: no-handrolled-deadline-poll
-    while time.monotonic() < deadline:
-        line = proc.stdout.readline()
-        if not line:
+    while True:
+        try:
+            line = child.reader.next_line(deadline)
+        except TimeoutError:
+            pytest.fail(f"timed out waiting for {marker!r}; output so far: {lines}")
+        if line is None:
             pytest.fail(f"child EOF before {marker!r}; output so far: {lines}")
         lines.append(line.strip())
         if marker in line:
             return lines
-    pytest.fail(f"timed out waiting for {marker!r}; output so far: {lines}")
 
 
-def _finish(proc, timeout=20.0):
-    out = proc.stdout.read()
-    rc = proc.wait(timeout=timeout)
+def _finish(child, timeout=60.0):
+    # Same budget rule as _wait_line: must outlast the child's 30s deadline
+    # net, or the harness fails while the product is still on its documented
+    # path to a forced exit.
+    try:
+        out = child.reader.read_to_eof(time.monotonic() + timeout)
+    except TimeoutError:
+        pytest.fail(
+            f"child still open (no stdout EOF) after {timeout}s — silent wedge; "
+            f"buffered output: {child.reader.buffered!r}"
+        )
+    rc = child.proc.wait(timeout=timeout)
     return rc, out
 
 
 def test_first_sigint_graceful_teardown_exits_130(tmp_path):
-    with _spawned(tmp_path, "graceful") as proc:
-        _wait_line(proc, "PHASE-START")
-        os.kill(proc.pid, signal.SIGINT)
-        rc, out = _finish(proc)
+    with _spawned(tmp_path, "graceful") as child:
+        _wait_line(child, "PHASE-START")
+        os.kill(child.pid, signal.SIGINT)
+        rc, out = _finish(child)
     assert rc == 130
     assert "TEARDOWN-DONE" in out
     assert "PHASE-EXITED" in out
@@ -116,21 +203,21 @@ def test_first_sigint_graceful_teardown_exits_130(tmp_path):
 
 
 def test_sigterm_maps_to_graceful_teardown_exits_143(tmp_path):
-    with _spawned(tmp_path, "graceful") as proc:
-        _wait_line(proc, "PHASE-START")
-        os.kill(proc.pid, signal.SIGTERM)
-        rc, out = _finish(proc)
+    with _spawned(tmp_path, "graceful") as child:
+        _wait_line(child, "PHASE-START")
+        os.kill(child.pid, signal.SIGTERM)
+        rc, out = _finish(child)
     assert rc == 143
     assert "TEARDOWN-DONE" in out
     assert "FORCE-HOOK" not in out
 
 
 def test_wedged_teardown_deadline_forces_exit(tmp_path):
-    with _spawned(tmp_path, "wedged") as proc:
-        _wait_line(proc, "PHASE-START")
-        os.kill(proc.pid, signal.SIGINT)
-        _wait_line(proc, "TEARDOWN-START")
-        rc, out = _finish(proc)  # deadline=1.0 fires long before the 30s wedge
+    with _spawned(tmp_path, "wedged") as child:
+        _wait_line(child, "PHASE-START")
+        os.kill(child.pid, signal.SIGINT)
+        _wait_line(child, "TEARDOWN-START")
+        rc, out = _finish(child)  # deadline=1.0 fires long before the 30s wedge
     assert rc == 130
     assert "FORCE-HOOK" in out, "force hooks must run on deadline expiry"
     assert "TEARDOWN-DONE" not in out
@@ -138,12 +225,12 @@ def test_wedged_teardown_deadline_forces_exit(tmp_path):
 
 
 def test_second_signal_forces_immediately(tmp_path):
-    with _spawned(tmp_path, "double") as proc:  # deadline=30s: only a 2nd signal forces in time
-        _wait_line(proc, "PHASE-START")
-        os.kill(proc.pid, signal.SIGINT)
-        _wait_line(proc, "TEARDOWN-START")
-        os.kill(proc.pid, signal.SIGINT)
-        rc, out = _finish(proc)
+    with _spawned(tmp_path, "double") as child:  # deadline=30s: only a 2nd signal forces in time
+        _wait_line(child, "PHASE-START")
+        os.kill(child.pid, signal.SIGINT)
+        _wait_line(child, "TEARDOWN-START")
+        os.kill(child.pid, signal.SIGINT)
+        rc, out = _finish(child)
     assert rc == 130
     assert "FORCE-HOOK" in out
     assert "PHASE-EXITED" not in out
@@ -163,14 +250,34 @@ def test_mixed_signal_pair_forces_regardless_of_order(tmp_path):
     but with deadline=30 and a 30s wedge, only the force path can produce
     FORCE-HOOK and a 128+signum exit in time.
     """
-    with _spawned(tmp_path, "double") as proc:
-        _wait_line(proc, "PHASE-START")
-        os.kill(proc.pid, signal.SIGTERM)
-        os.kill(proc.pid, signal.SIGINT)  # immediately — no marker wait between them
-        rc, out = _finish(proc)
+    with _spawned(tmp_path, "double") as child:
+        _wait_line(child, "PHASE-START")
+        os.kill(child.pid, signal.SIGTERM)
+        os.kill(child.pid, signal.SIGINT)  # immediately — no marker wait between them
+        rc, out = _finish(child)
     assert rc in (130, 143), f"expected 128+signum of either signal, got {rc}"
     assert "FORCE-HOOK" in out
     assert "PHASE-EXITED" not in out
+
+
+def test_silent_child_is_a_named_failure_within_budget(tmp_path):
+    """A child that goes quiet WITHOUT exiting fails by name at the budget.
+
+    This pins Wave 14's bounded reader: the old blocking ``readline()`` could
+    not be interrupted, so waiting for a marker a silent child never prints
+    wedged the test until pytest-timeout's 180s kill — no marker name, no
+    captured output, JUnit attributing a timeout instead of a failure. The
+    graceful-mode child prints PHASE-START and then sleeps silently, which is
+    exactly that shape.
+    """
+    with _spawned(tmp_path, "graceful") as child:
+        _wait_line(child, "PHASE-START")
+        started = time.monotonic()
+        with pytest.raises(pytest.fail.Exception, match="timed out waiting"):
+            _wait_line(child, "PHASE-UNREACHED", timeout=1.0)
+        assert time.monotonic() - started < 10.0, (
+            "the bounded reader took far longer than its budget to give up"
+        )
 
 
 def test_handlers_installed_then_restored(real_sync_phase):

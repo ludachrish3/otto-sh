@@ -35,17 +35,34 @@ Kept as an importable helper (not inlined in ``conftest.py``) so
 real ``coverage.Coverage`` with no VM.
 """
 
+import traceback
 import warnings
+from dataclasses import dataclass
 
 import coverage
 import pytest
 
-# Set by the collection-finish hook to what force_coverage_schema_init returned
-# (False when coverage is not active in this process). The end-to-end test reads
-# it to prove the hook actually ran and armed — a plain "the schema exists"
-# check can't, because coverage would lazily create the same schema by the first
-# test regardless of the hook.
-PREINIT_OUTCOME: "pytest.StashKey[bool]" = pytest.StashKey()
+
+@dataclass(frozen=True)
+class PreinitOutcome:
+    """What the collection-finish hook did on this worker.
+
+    ``armed`` is True when pytest-cov is measuring in this process (so the
+    pre-init was attempted); ``error`` carries the full traceback text when
+    the attempt raised — the state in which the ``no such table: context``
+    race is silently back.
+    """
+
+    armed: bool
+    error: "str | None" = None
+
+
+# Set by the collection-finish hook. The end-to-end test reads it to prove the
+# hook actually ran and armed — a plain "the schema exists" check can't,
+# because coverage would lazily create the same schema by the first test
+# regardless of the hook — and ``_coverage_preinit_failure_is_loud`` (root
+# conftest) acts on a recorded failure instead of letting the run race.
+PREINIT_OUTCOME: "pytest.StashKey[PreinitOutcome]" = pytest.StashKey()
 
 
 def active_pytest_cov(config) -> "coverage.Coverage | None":
@@ -69,16 +86,20 @@ def active_pytest_cov(config) -> "coverage.Coverage | None":
     return getattr(controller, "cov", None)
 
 
-def force_coverage_schema_init(cov) -> bool:
+def force_coverage_schema_init(cov) -> "str | None":
     """Create ``cov``'s data-file schema on the current thread, in full.
 
-    Returns ``True`` when the schema is in place afterwards, ``False`` when
-    coverage's internals have moved and the pre-init was skipped. This is
-    best-effort by design: the collection hook must never abort the whole
-    session over a coverage upgrade — a skip only re-exposes the intermittent
-    race, and ``tests/unit/test_coverage_schema_preinit.py`` fails loudly if the
-    real path stops working, so a regression is caught in CI rather than in a
-    release.
+    Returns ``None`` when the schema is in place afterwards; when coverage's
+    internals have moved (or the data file is unwritable) it returns the full
+    traceback text instead of raising. The hook must not raise — an exception
+    from a post-sessionstart hook under xdist is an INTERNALERROR that crashes
+    the controller blaming an innocent item (the Wave 12 lesson) — but the
+    failure is NOT silent either: the collection hook stashes this detail and
+    ``_coverage_preinit_failure_is_loud`` (root conftest) fails the worker's
+    tests naming it, because a skipped pre-init re-exposes the intermittent
+    ``no such table: context`` release race with no other signal (review
+    §5.4 — this guard has already failed silently once, see the warnings
+    note below).
 
     Must be called single-threaded, before any test spawns a second thread.
     """
@@ -100,6 +121,37 @@ def force_coverage_schema_init(cov) -> bool:
         # together on this one thread.
         data._start_using()
         data._connect()
-    except Exception:  # noqa: BLE001 — best-effort hardening; never fail the run
-        return False
-    return True
+    except Exception:  # noqa: BLE001 — the hook must not raise (xdist INTERNALERROR); the detail is preserved and acted on
+        return traceback.format_exc()
+    return None
+
+
+def preinit_failure_message(outcome: "PreinitOutcome | None") -> "str | None":
+    """The loud-failure text for a worker whose pre-init failed, else ``None``.
+
+    Pure decision half of ``_coverage_preinit_failure_is_loud`` (root
+    conftest), so the truth table is unit-testable:
+
+    * ``None`` (hook never stashed — the collection-finish hook is gone or
+      broken): fail; that is the silent-disarm shape.
+    * not armed (bare ``pytest`` / ``--no-cov`` / in-process controller): no
+      context writes happen, so there is no race to close — quiet.
+    * armed, no error: the schema is in place — quiet.
+    * armed with an error: fail, carrying the recorded traceback.
+    """
+    if outcome is None:
+        return (
+            "coverage schema pre-init never ran on this worker — the "
+            "pytest_collection_finish hook in tests/conftest.py is missing or "
+            "was renamed. Without it the 'no such table: context' schema-init "
+            "race (see tests/_fixtures/_coverage_preinit.py) is back."
+        )
+    if not outcome.armed or outcome.error is None:
+        return None
+    return (
+        "coverage schema pre-init FAILED on this worker; every test here runs "
+        "with the 'no such table: context' schema-init race re-opened (the "
+        "race that repeatedly aborted `make release`, see "
+        "tests/_fixtures/_coverage_preinit.py), so this worker's tests fail "
+        "loudly instead of racing. Recorded failure:\n" + outcome.error
+    )

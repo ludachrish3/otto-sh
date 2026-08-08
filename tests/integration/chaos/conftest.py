@@ -7,35 +7,18 @@ only ever go to the local otto process. Host-down in bed mode fails LOUD
 with the host's name — never a skip (dev-VM rule).
 """
 
-import gc
 import getpass
 import socket
 from collections.abc import Iterator
-from pathlib import Path
 
 import pytest
 
+from tests._fixtures.fd_watermark import (
+    _fd_watermark,  # noqa: F401 — imported fixture, registered by name
+)
+
 from ._sshd import LoopbackSshd, free_port, generate_keypairs, write_sshd_config
 from ._target import ChaosTarget, bed_host_override, make_bed_target, make_loopback_target
-
-_FD_TOLERANCE = 4
-
-
-@pytest.fixture(autouse=True)
-def _fd_watermark() -> "Iterator[None]":
-    """Local FD bracket per test (chaos spec, Tier 2 assertions).
-
-    Same shape as tests/e2e/tunnel_stability/conftest.py: the driver and
-    probe helpers must not leak descriptors across a test.
-    """
-    before = len(list(Path("/proc/self/fd").iterdir()))
-    yield
-    gc.collect()
-    after = len(list(Path("/proc/self/fd").iterdir()))
-    if after > before + _FD_TOLERANCE:
-        gc.collect()
-        after = len(list(Path("/proc/self/fd").iterdir()))
-    assert after <= before + _FD_TOLERANCE, f"fd leak: {before} -> {after}"
 
 
 @pytest.fixture(scope="session")

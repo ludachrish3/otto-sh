@@ -33,11 +33,13 @@ def argv_pattern(needle: str) -> str:
     ``sleep 313``. Before the G5 probe contract these self-kills were
     REPORTED as failures nobody read.
 
-    One spelling for the chaos lanes (tier-3 and tier-2 signal suite). Known
-    siblings still hand-rolling the pattern OUTSIDE these lanes are recorded
-    in the remediation plan's Wave 14 notes. Total by contract: the needle
-    must be non-empty and start with a character that is literal inside a
-    regex class — every real needle starts with a letter.
+    One spelling for every lane: Wave 14 retired the last hand-rolled
+    siblings outside the chaos lanes (tunnel_stability's ``cancel_auto_cont``,
+    the tunnel/link e2e socat cleanups, and the session-stability
+    ``grep -v "$$"`` nc-probe mirrors, which now use ``_NC_LISTENER_PROBE``
+    below). Total by contract: the needle must be non-empty and start with a
+    character that is literal inside a regex class — every real needle starts
+    with a letter.
     """
     if not needle or not needle[0].isalnum():
         raise ValueError(f"argv_pattern needs a needle starting alphanumeric, got {needle!r}")

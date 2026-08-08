@@ -6,11 +6,15 @@ Every knob is read HERE and nowhere else.
 
 import asyncio
 import contextlib
+import logging
 import uuid
 
 from otto.logger.mode import LogMode
 from otto.tunnel import add_tunnel, discover_tunnels, remove_tunnel
 from tests._ambient_env import ambient
+from tests._fixtures.bed_hygiene import argv_pattern
+
+logger = logging.getLogger(__name__)
 
 SOAK_CYCLES = int(ambient("OTTO_TUNNEL_SOAK_CYCLES", "5"))
 """Internal loop depth per soak test. `make stability-tunnel CYCLES=N` sets it."""
@@ -160,11 +164,24 @@ async def cancel_auto_cont(control, arm_tag: str) -> None:
     (the explicit CONT succeeded AND a fresh responsiveness probe succeeded
     AND every assertion in the wedge/recovery body passed) — the sleeper IS
     the safety net for every other path, so cancelling early would remove
-    the net a still-in-flight failure needs. Suppresses all exceptions: a
-    failure here must never fail the test.
+    the net a still-in-flight failure needs. A failure here must never fail
+    the test, but it is LOGGED, not swallowed (Wave 14): the old
+    ``pkill -f {arm_tag}`` matched its own remote wrapper shell (whose argv
+    carries the tag) and killed it, so the exec died, the suppress ate the
+    evidence, and the sleeper it meant to cancel SURVIVED to fire a stray
+    ``kill -CONT`` later — the bracket-trick :func:`argv_pattern` is the
+    same total spelling the chaos lanes use.
     """
-    with contextlib.suppress(Exception):
-        await control.exec(f"sudo -n pkill -f {arm_tag} || true", timeout=15, log=LogMode.QUIET)
+    try:
+        # `|| true`: pkill exits 1 when the sleeper already fired/exited — a
+        # legitimate no-match, not a failure. argv_pattern is called INLINE:
+        # the G5 tree-wide scan resolves only in-f-string calls, a
+        # variable-bound pattern is invisible to it.
+        await control.exec(
+            f'sudo -n pkill -f "{argv_pattern(arm_tag)}" || true', timeout=15, log=LogMode.QUIET
+        )
+    except Exception as e:  # noqa: BLE001 — best-effort by contract; the log line is the evidence
+        logger.warning("cancel_auto_cont: pkill for %s failed: %r", arm_tag, e)
 
 
 def stream_listener_script(port: int, outfile: str, timeout: float) -> str:

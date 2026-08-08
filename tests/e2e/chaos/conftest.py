@@ -5,15 +5,14 @@ host (plus named peers in the inherently two-host scenarios), serialized by
 xdist_group("chaos_lane"). Fail-loud on host-down, never skip.
 """
 
-import gc
 from collections.abc import Iterator
-from pathlib import Path
 
 import pytest
 
+from tests._fixtures.fd_watermark import (
+    _fd_watermark,  # noqa: F401 — imported fixture, registered by name
+)
 from tests.e2e.chaos._bed import ChaosBed, leased_bed
-
-_FD_TOLERANCE = 4
 
 
 @pytest.fixture(scope="session")
@@ -21,20 +20,6 @@ def chaos_bed(tmp_path_factory: pytest.TempPathFactory) -> Iterator[ChaosBed]:
     lock_dir = tmp_path_factory.getbasetemp().parent
     with leased_bed(lock_dir) as bed:
         yield bed
-
-
-@pytest.fixture(autouse=True)
-def _fd_watermark() -> Iterator[None]:
-    """Local FD bracket per test (same shape as tunnel_stability's)."""
-    gc.collect()
-    before = len(list(Path("/proc/self/fd").iterdir()))
-    yield
-    gc.collect()
-    after = len(list(Path("/proc/self/fd").iterdir()))
-    if after > before + _FD_TOLERANCE:
-        gc.collect()
-        after = len(list(Path("/proc/self/fd").iterdir()))
-    assert after <= before + _FD_TOLERANCE, f"fd leak: {before} -> {after}"
 
 
 def _hygiene_bracket_impl(request):

@@ -46,7 +46,7 @@ def no_logger_output_dir():
     We also pre-set ``propagate = False`` on the ``'otto'`` logger to match what
     ``management.init_cli_logging`` would do in a real invocation. Without this,
     tests that mock ``init_cli_logging`` leave ``propagate = True`` (restored by
-    ``_reset_otto_logger_retention`` / ``management.reset()`` between tests),
+    the root conftest's ``_restore_otto_logger_state`` between tests),
     causing log records to reach pytest's live-log handler, which temporarily
     suspends stdout capture inside the CliRunner's isolation context.  Suspending
     capture drops the CliRunner's ``_NamedTextIOWrapper`` reference, whose
