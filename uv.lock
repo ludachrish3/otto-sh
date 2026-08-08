@@ -9,14 +9,14 @@ resolution-markers = [
 
 [[package]]
 name = "aioftp"
-version = "0.27.2"
+version = "0.28.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "typing-extensions", marker = "python_full_version < '3.11'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/cc/a3/d1af4b69c09dc9955fdb329de5a9ea73f6a3ba50ac4861882453254ffa99/aioftp-0.27.2.tar.gz", hash = "sha256:7c048c3220081796c59832a6fd9fd8fad97e3cec12a50be3abccf2dcbbeb261a", size = 70248, upload-time = "2025-09-24T21:51:31.297Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/86/5a/2f107c8d662fcf9f13eebd24b8f3711ffbd756688919515ccc247ba60daa/aioftp-0.28.0.tar.gz", hash = "sha256:311f66e9ff726055f73e74764fb62e097ab806da3177c13f1356c8e7eaf9a65d", size = 70445, upload-time = "2026-08-04T21:57:01.057Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/7c/6c/d56c290696f91c4f0fa4be7cfdb38e710d9735c10c57e481cd4bd6066506/aioftp-0.27.2-py3-none-any.whl", hash = "sha256:83befd4091be0e26eeba44dadebb7e7bea653f7b6bda3ba9b6785d4372a93e10", size = 44292, upload-time = "2025-09-24T21:51:29.448Z" },
+    { url = "https://files.pythonhosted.org/packages/12/94/d62c9798ab178bdbccebb77ff9c8d49d7e0b9f90a5111365d2d62e6bc0c0/aioftp-0.28.0-py3-none-any.whl", hash = "sha256:59e3ca3e40452d02e7dfc7d05974dfebfc1f0b4ebd34ec02406f084597084ba6", size = 44349, upload-time = "2026-08-04T21:56:59.711Z" },
 ]
 
 [[package]]
