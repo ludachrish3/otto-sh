@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# pre-push
+#
+# Runs `gate-fresh` when a push would update refs/heads/main: CI's
+# assets-absent Python lanes, against the sha being pushed, in a throwaway
+# pristine worktree. The dev tree carries gitignored build artifacts CI never
+# has, so a green local run can certify an environment CI will not reproduce
+# (issue #196).
+#
+# Skipped for every other ref, and for deletes. Escape hatch: `git push
+# --no-verify` — unlike prepare-commit-msg, pre-push honours it.
+#
+# Installed by `make dev` via: git config core.hooksPath .githooks
+set -euo pipefail
+
+# Fail closed but explain why: a bare `exec uv ...` on a PATH without uv (a
+# GUI git client, a non-login shell) surfaces as bash's generic
+# "exec: uv: not found" / exit 127, which blocks the push (the safe
+# direction) but gives no hint that --no-verify exists.
+if ! command -v uv >/dev/null 2>&1; then
+    echo "pre-push: 'uv' not found on PATH — cannot run gate-fresh, blocking this push." >&2
+    echo "pre-push: install uv, or bypass this hook with: git push --no-verify" >&2
+    exit 1
+fi
+
+exec uv run python scripts/gate_fresh.py --pre-push

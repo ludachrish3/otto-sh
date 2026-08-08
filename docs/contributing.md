@@ -221,6 +221,35 @@ the message subject:
 Before pushing, run `make all` locally — it mirrors CI
 (`clean-dist → typecheck → coverage → docs → build`).
 
+### Gating a branch before it lands
+
+Run `make gate-fresh` before handing a branch back or squashing it onto `main`.
+
+It runs CI's assets-absent Python lanes — `lint-python`, `lint-arch`,
+`typecheck-python`, `coverage-hostless` — against your **committed** tree
+inside a throwaway pristine worktree, then removes it (or keeps it, if the
+gate went red, so you have somewhere to debug).
+
+The reason it uses a separate worktree is that your checkout is a *superset* of
+CI's environment. It accumulates gitignored build outputs — above all
+`src/otto/_webassets/*/`, which only `make web` produces and which `pytest`
+never builds — and a superset certifies nothing about a subset. A run that is
+green only because an artifact happens to be lying around is not evidence about
+CI, which starts from a clean checkout. That is how issue #196 reached `main`.
+
+A worktree is free of every gitignored artifact by construction, so there is no
+allowlist to write and none to keep in sync. It also catches two things nothing
+else does: an unsynced `uv.lock`, and a test that only passes because of a file
+that was never `git add`ed.
+
+The general rule, of which this is one instance: **each gate should reproduce
+its own CI twin's environment — matched, not maximal.** The hostless lanes are
+the ones that run *without* a frontend build, so gating them with the frontend
+present would be just as wrong as gating the browser lanes without it.
+
+`git push` to `main` runs this automatically via `.githooks/pre-push`; use
+`git push --no-verify` to skip it deliberately.
+
 ## Keeping your branch up to date
 
 Always rebase, never merge, so history stays linear:

@@ -9,7 +9,7 @@
 # on -j.
 .NOTPARALLEL:
 
-.PHONY: help all ci nox nox-full nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-python coverage-unit coverage-integration coverage-unix coverage-embedded coverage-hostless coverage-ts coverage-ts-unit docs docs-lint docs-html docs-inventories docs-media doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts lint-arch check check-python check-ts format format-python format-ts schema monitor-fixtures clean changelog release stability stability-unit stability-unix stability-tunnel stability-embedded chaos chaos-embedded repeat vm-health qemu-restart import-snapshot hyperfine profile browsers dashboard dashboard-all dashboard-soak web-install web web-dev test-ts web-clean wheel-check
+.PHONY: help all ci nox nox-full nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-python coverage-unit coverage-integration coverage-unix coverage-embedded coverage-hostless coverage-ts coverage-ts-unit docs docs-lint docs-html docs-inventories docs-media doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts lint-arch check check-python gate-fresh check-ts format format-python format-ts schema monitor-fixtures clean changelog release stability stability-unit stability-unix stability-tunnel stability-embedded chaos chaos-embedded repeat vm-health qemu-restart import-snapshot hyperfine profile browsers dashboard dashboard-all dashboard-soak web-install web web-dev test-ts web-clean wheel-check
 
 # Bump component for `make release`. Override on the command line:
 #   make release BUMP=minor
@@ -809,6 +809,43 @@ typecheck-ts: $(WEB_NODE_MODULES) ## (Quality) Type-check web/ with tsc --noEmit
 check: check-python check-ts ## (Quality) ALL static analysis (Python + TS): sub-targets check-python + check-ts
 
 check-python: lint-python typecheck-python lint-arch ## (Quality) All Python static analysis: ruff (lint+format) + ty + architecture gates (lint-arch)
+
+# REF reaches the shell through the environment, not Make's text
+# substitution, and only when given explicitly on the command line — two
+# separate Make footguns, both closed below:
+#
+# 1. `$(REF)` re-expands whatever `$`-sequences are IN the value (Make
+#    evaluates the value, not the shell): `feature/$(build)` silently
+#    truncates to `feature/` (calls undefined variable/function "build"),
+#    `my $HOME ref` eats the "H" (`$H` is Make's one-letter-name reference
+#    syntax), and `$(shell touch x)` actually runs `touch` the moment this
+#    text is expanded — even under `make -n`, since a dry run still expands
+#    recipe text to print it. `$(value REF)` sidesteps all of this: it
+#    yields REF's stored text WITHOUT expanding it, so a `$` inside the
+#    value is never re-interpreted as a Make reference. Assigning that
+#    through `:=` (immediate, simple) rather than `=` means the result
+#    isn't re-expanded again later either.
+# 2. GNU Make auto-imports the invoking shell's environment as Make
+#    variables, so a developer with an unrelated `REF` exported would
+#    otherwise have it silently picked up. `$(origin REF)` reports where a
+#    variable's current value came from; gating on `command line` (the same
+#    convention `COUNT` already uses above) accepts an explicit
+#    `make gate-fresh REF=...` while ignoring an ambient-only one.
+#
+# The value is exported under its own name (GATE_FRESH_REF) rather than
+# reassigning REF itself. GNU Make's command-line precedence means this
+# isn't a correctness fix — a target-specific `REF :=` here would itself be
+# a no-op whenever REF came from the command line, and `$(origin REF)`
+# would keep reporting `command line` regardless (verified empirically).
+# The separate name earns its keep on clarity instead: it reads at the call
+# site as "the ref this recipe resolved to use", keeps the recipe from
+# depending on Make's override precedence to stay correct if this logic is
+# ever refactored, and avoids a plain `REF` in the child process's
+# environment shadowing anyone else's expectations of that name.
+gate-fresh: export GATE_FRESH_REF := $(if $(filter command line,$(origin REF)),$(value REF),)
+gate-fresh: ## (Quality) Run CI's assets-absent Python lanes (lint-python + lint-arch + typecheck-python + coverage-hostless) against the COMMITTED tree in a throwaway pristine worktree at REF (default HEAD). Catches gitignored-artifact, unsynced-uv.lock and forgotten-`git add` failures that the dev tree hides. Refuses if tracked files are modified or staged.
+	@$(SAY) "gate-fresh: pristine worktree, assets-absent CI lanes"
+	@uv run python scripts/gate_fresh.py $(if $(filter command line,$(origin REF)),--ref "$$GATE_FRESH_REF",)
 
 # The vendored-source leg is deliberately part of check-ts rather than a
 # post-build gate like check_airgap.sh / check_brand_tokens.sh: it reads the
