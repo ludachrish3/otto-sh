@@ -614,7 +614,7 @@ class ShellSession(ABC):
         parts.append(r"(?P<newline>\n)")
         return re.compile("|".join(parts))
 
-    async def _recover_session(self, deadline: float = _RECOVERY_TIMEOUT) -> str:
+    async def _recover_session(self, deadline: float | None = None) -> str:
         """Interrupt the hung command, then confirm the shell is back (echo-proof).
 
         Sends Ctrl+C, then drives :func:`~otto.host.shell_liveness.confirm_live`
@@ -623,10 +623,13 @@ class ShellSession(ABC):
         correctly fails to confirm and is marked dead rather than falsely
         "recovered". Returns any partial output captured before the probe reply.
 
-        ``deadline`` bounds the confirm-live resend loop (default
-        :data:`_RECOVERY_TIMEOUT`); callers doing a *graceful* teardown under
-        possible CPU starvation (see :meth:`otto.host.app_shell.AppShell._exit`)
-        pass a larger budget so a load-slowed shell hand-back still confirms.
+        ``deadline`` bounds the confirm-live resend loop (``None`` reads
+        :data:`_RECOVERY_TIMEOUT` at CALL time — a def-time default would
+        freeze the module value and make test rebinds silently inert, which
+        is exactly what happened for two years); callers doing a *graceful*
+        teardown under possible CPU starvation (see
+        :meth:`otto.host.app_shell.AppShell._exit`) pass a larger budget so a
+        load-slowed shell hand-back still confirms.
         """
         import asyncssh
 
@@ -654,21 +657,25 @@ class ShellSession(ABC):
         await asyncio.sleep(0.1)
         return await self._confirm_recovered(deadline)
 
-    async def _confirm_recovered(self, deadline: float = _RECOVERY_TIMEOUT) -> str:
+    async def _confirm_recovered(self, deadline: float | None = None) -> str:
         """Drive :func:`~otto.host.shell_liveness.confirm_live` to confirm recovery.
 
         Shared by every ``_recover_session`` override — only how the hung
         command is interrupted (Ctrl+C byte vs. SIGINT-to-children) differs
         between them; confirming recovery is identical everywhere. ``deadline``
-        is the overall give-up ceiling for the resend loop; it only bounds how
-        long confirmation persists before declaring the shell dead — a
-        responsive shell confirms on the first probe regardless.
+        is the overall give-up ceiling for the resend loop (``None`` reads
+        :data:`_RECOVERY_TIMEOUT` at call time — the single resolution point
+        for the whole recovery stack); it only bounds how long confirmation
+        persists before declaring the shell dead — a responsive shell
+        confirms on the first probe regardless.
 
         Returns any partial output captured before the probe reply, or ``""``
         if the shell never confirmed (``self._alive`` is set to False then).
         """
         import asyncssh
 
+        if deadline is None:
+            deadline = _RECOVERY_TIMEOUT
         captured = ""
 
         async def _expect(pat: re.Pattern[str], t: float) -> str:
@@ -924,7 +931,7 @@ class LocalSession(ShellSession):
                 return buf
 
     @override
-    async def _recover_session(self, deadline: float = _RECOVERY_TIMEOUT) -> str:
+    async def _recover_session(self, deadline: float | None = None) -> str:
         """Interrupt the hung command, then confirm the shell is back (echo-proof).
 
         SIGINT is sent to the child processes instead of a Ctrl+C byte, since a

@@ -163,6 +163,7 @@ async def test_run_timeout_recovers_session(stack):
     assert "recovered" in recovered.only.value
 
 
+@pytest.mark.serial_timing
 @pytest.mark.asyncio(loop_scope="module")
 async def test_exec_remains_concurrent_safe(stack):
     """exec() must stay stateless and concurrent — two parallel sleeps
@@ -175,6 +176,12 @@ async def test_exec_remains_concurrent_safe(stack):
     # serial in the same run instead — if exec were serialized internally,
     # parallel would be ~equal to serial; with real concurrency it's roughly
     # half plus one startup cost.
+    #
+    # serial_timing even so: self-calibration absorbs a uniformly slow host,
+    # not sibling-worker load landing INSIDE the parallel measurement window
+    # — observed in a loaded gate as parallel 1.34s vs serial 0.86s, a false
+    # "serialized". The discriminator rejects a path by relative elapsed
+    # time, so it runs only in the -n0 lane.
     start = time.monotonic()
     s1 = await stack.exec("sleep 0.2")
     s2 = await stack.exec("sleep 0.2")

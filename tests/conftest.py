@@ -403,6 +403,22 @@ def _install_loop_origin_tracker() -> None:
 def pytest_runtest_setup(item):  # type: ignore[no-untyped-def]
     global _current_test  # noqa: PLW0603 — module-level singleton/cache
     _current_test = item.nodeid
+    # serial_timing tests reject the slow (deadline) path by elapsed time, and
+    # sibling xdist workers loading the machine can counterfeit that path as a
+    # false red (three loaded-gate sightings). Excluding the marker from a
+    # parallel lane is easy to forget when adding a lane, so enforce it where
+    # the process-global state lives: a marked test inside a worker is a
+    # deterministic failure, never a load-dependent flake. The paired `-n0`
+    # legs (Makefile / noxfile; pinned by tests/unit/test_lane_invariants.py)
+    # re-append what the parallel legs exclude, so nothing goes CI-invisible.
+    if item.get_closest_marker("serial_timing") and os.environ.get("PYTEST_XDIST_WORKER"):
+        pytest.fail(
+            "serial_timing test collected into an xdist worker — sibling-worker "
+            "load can counterfeit its slow arm as a false red. This lane must "
+            "exclude `-m serial_timing` from its parallel run and re-append it "
+            "in a dedicated -n0 leg (see the marker's pyproject entry).",
+            pytrace=False,
+        )
 
 
 # pytest-asyncio backs each non-function ``loop_scope`` with a fixture named

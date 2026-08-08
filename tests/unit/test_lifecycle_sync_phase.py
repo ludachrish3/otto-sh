@@ -224,6 +224,7 @@ def test_wedged_teardown_deadline_forces_exit(tmp_path):
     assert "PHASE-EXITED" not in out
 
 
+@pytest.mark.serial_timing
 def test_second_signal_forces_immediately(tmp_path):
     with _spawned(tmp_path, "double") as child:  # deadline=30s: only a 2nd signal forces in time
         _wait_line(child, "PHASE-START")
@@ -250,6 +251,7 @@ def test_second_signal_forces_immediately(tmp_path):
     )
 
 
+@pytest.mark.serial_timing
 def test_mixed_signal_pair_forces_regardless_of_order(tmp_path):
     """SIGTERM + SIGINT back-to-back must force, whatever the interleaving.
 

@@ -12,6 +12,7 @@ import os
 import re
 import signal
 import subprocess
+import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import asyncssh
@@ -503,23 +504,51 @@ class TestTimeout:
         assert not session.alive  # literal-$? echo never matched -> dead, no false "recovered"
 
     @pytest.mark.asyncio
-    async def test_session_dies_if_recovery_fails(self, session: MockSession):
+    async def test_session_dies_if_recovery_fails(
+        self, session: MockSession, monkeypatch: pytest.MonkeyPatch
+    ):
         # Nothing after BEGIN — recovery will also time out.
         feed_task = asyncio.create_task(session.feed_after_write(f"{session._begin_marker}\n"))
 
-        # Patch _RECOVERY_TIMEOUT to something very short for the test
         import otto.host.session as session_mod
 
-        original = session_mod._RECOVERY_TIMEOUT
-        session_mod._RECOVERY_TIMEOUT = 0.1
-        try:
-            result = await session.run_cmd("sleep 999", timeout=0.1)
-        finally:
-            session_mod._RECOVERY_TIMEOUT = original
+        monkeypatch.setattr(session_mod, "_RECOVERY_TIMEOUT", 0.1)
+        result = await session.run_cmd("sleep 999", timeout=0.1)
         await feed_task
 
         assert result.status == Status.Error
         assert not session.alive
+
+    @pytest.mark.serial_timing
+    @pytest.mark.asyncio
+    async def test_recovery_timeout_rebind_is_live(
+        self, session: MockSession, monkeypatch: pytest.MonkeyPatch
+    ):
+        """A monkeypatched ``_RECOVERY_TIMEOUT`` must actually bound the wait.
+
+        The recovery deadline used to be a def-time parameter default, which
+        froze the ship value into the signature — every test rebind of the
+        module attribute was silently inert and each timeout test paid the
+        full 5 s recovery window without noticing.  The wall-clock bound here
+        is the guard: if the rebind goes inert again, recovery waits ~5 s and
+        this fails.  serial_timing: load can counterfeit the slow (inert)
+        path, so this only runs in the -n0 lane.
+        """
+        import otto.host.session as session_mod
+
+        monkeypatch.setattr(session_mod, "_RECOVERY_TIMEOUT", 0.05)
+        feed_task = asyncio.create_task(session.feed_after_write(f"{session._begin_marker}\n"))
+        start = time.monotonic()
+        result = await session.run_cmd("sleep 999", timeout=0.1)
+        elapsed = time.monotonic() - start
+        await feed_task
+
+        assert result.status == Status.Error
+        assert not session.alive
+        assert elapsed < 2.0, (
+            f"recovery took {elapsed:.2f}s with _RECOVERY_TIMEOUT=0.05 — "
+            "the module rebind is inert again (def-time default regression)"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -578,7 +607,9 @@ class TestZephyrRecovery:
 
     @pytest.mark.parametrize("frame_cls", [ZephyrFrame, ZephyrSerialFrame])
     @pytest.mark.asyncio
-    async def test_recovery_marks_dead_when_unanswered(self, frame_cls: type[CommandFrame]) -> None:
+    async def test_recovery_marks_dead_when_unanswered(
+        self, frame_cls: type[CommandFrame], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """If the probe is never answered, ``confirm_live`` exhausts its deadline and
         the session is marked dead (no false positive)."""
         session = await self._init_session(frame_cls)
@@ -587,12 +618,8 @@ class TestZephyrRecovery:
 
         import otto.host.session as session_mod
 
-        original = session_mod._RECOVERY_TIMEOUT
-        session_mod._RECOVERY_TIMEOUT = 0.2
-        try:
-            result = await session.run_cmd("some-cmd", timeout=0.1)
-        finally:
-            session_mod._RECOVERY_TIMEOUT = original
+        monkeypatch.setattr(session_mod, "_RECOVERY_TIMEOUT", 0.2)
+        result = await session.run_cmd("some-cmd", timeout=0.1)
         await feed_task
 
         assert result.status == Status.Error
@@ -888,7 +915,7 @@ class TestLocalSession:
         assert "recovered" in result.value
 
     @pytest.mark.asyncio
-    async def test_recovery_fails_when_parked_in_python_repl(self):
+    async def test_recovery_fails_when_parked_in_python_repl(self, monkeypatch: pytest.MonkeyPatch):
         """I-3 on the real subprocess path (LocalSession._recover_session override).
 
         python3 -i catches SIGINT and stays at its prompt rather than exiting,
@@ -899,11 +926,9 @@ class TestLocalSession:
         """
         import otto.host.session as session_mod
 
-        original_timeout = session_mod._RECOVERY_TIMEOUT
-        original_probe_timeout = session_mod._RECOVERY_PROBE_TIMEOUT
         # Real wall-clock waits — keep them short so the test stays fast.
-        session_mod._RECOVERY_TIMEOUT = 1.0
-        session_mod._RECOVERY_PROBE_TIMEOUT = 0.3
+        monkeypatch.setattr(session_mod, "_RECOVERY_TIMEOUT", 1.0)
+        monkeypatch.setattr(session_mod, "_RECOVERY_PROBE_TIMEOUT", 0.3)
         host = LocalHost()
         try:
             result = (await host.run("python3 -i", timeout=0.3)).only
@@ -913,8 +938,6 @@ class TestLocalSession:
             assert session is not None
             assert not session.alive  # no false "recovered" while parked in the REPL
         finally:
-            session_mod._RECOVERY_TIMEOUT = original_timeout
-            session_mod._RECOVERY_PROBE_TIMEOUT = original_probe_timeout
             session = host._session_mgr._session
             if session is not None and session._pid is not None:
                 # The parked python3 REPL survived our SIGINT recovery probe;
@@ -1048,7 +1071,9 @@ class TestCommandLogging:
             assert "Password:" not in line
 
     @pytest.mark.asyncio
-    async def test_partial_output_before_timeout(self, session: MockSession):
+    async def test_partial_output_before_timeout(
+        self, session: MockSession, monkeypatch: pytest.MonkeyPatch
+    ):
         """Lines received before a timeout are still delivered to _on_output."""
         logged: list[str] = []
         session._on_output = logged.append
@@ -1057,17 +1082,13 @@ class TestCommandLogging:
         feed_task = asyncio.create_task(
             session.feed_after_write(f"{session._begin_marker}\nearly line\n")
         )
-        # Patch the recovery timeout to a small value so the post-timeout
-        # ``_recover_session`` call doesn't block this test for the full
-        # 5-second recovery window (no recovery sentinel ever arrives).
+        # Small recovery timeout so the post-timeout ``_recover_session``
+        # call doesn't block this test for the full 5-second recovery
+        # window (no recovery sentinel ever arrives).
         import otto.host.session as session_mod
 
-        original = session_mod._RECOVERY_TIMEOUT
-        session_mod._RECOVERY_TIMEOUT = 0.05
-        try:
-            result = await session.run_cmd("long_running_cmd", timeout=0.1)
-        finally:
-            session_mod._RECOVERY_TIMEOUT = original
+        monkeypatch.setattr(session_mod, "_RECOVERY_TIMEOUT", 0.05)
+        result = await session.run_cmd("long_running_cmd", timeout=0.1)
         await feed_task
 
         assert result.status == Status.Error

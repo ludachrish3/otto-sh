@@ -60,11 +60,29 @@ nox.options.sessions = ["lint", "tests_hostless", "typecheck", "docs"]
 # `dashboard` (below) is that dedicated process; every other session whose
 # paths/markers could otherwise co-select browser + async tests in one
 # pytest invocation (tests_hostless, tests_all) excludes `browser` instead.
+#
+# serial_timing (wall-clock discriminators — sibling xdist workers can
+# counterfeit their slow arm as a false red) is excluded from every parallel
+# invocation and re-appended by a paired `-n0` leg in the same session —
+# exclusion alone would make the tests CI-invisible. The coverage gate rides
+# the SERIAL args (the last leg, folding in via --cov-append), so the
+# threshold judges the session's whole run. The two marker expressions are a
+# hand-kept pair like DASHBOARD_MARKER_EXPR: if the resource exclusions
+# change, change both (pinned by tests/unit/test_lane_invariants.py).
 HOSTLESS_TEST_ARGS = (
     "tests/unit",
     "tests/e2e",
     "-m",
-    "not integration and not embedded and not stability and not browser",
+    "not integration and not embedded and not stability and not browser and not serial_timing",
+    "--cov-fail-under=0",
+)
+HOSTLESS_SERIAL_ARGS = (
+    "tests/unit",
+    "tests/e2e",
+    "-m",
+    "serial_timing and not integration and not embedded and not stability and not browser",
+    "-n0",
+    "--cov-append",
     "--cov-fail-under=90",
 )
 
@@ -90,8 +108,18 @@ def tests_unit(session: nox.Session) -> None:
         "pytest",
         "tests/unit",
         "-m",
-        "not stability",
+        "not stability and not serial_timing",
         _junitxml(session, "nox-unit"),
+        *session.posargs,
+    )
+    session.run(
+        "pytest",
+        "tests/unit",
+        "-m",
+        "serial_timing and not stability",
+        "-n0",
+        "--cov-append",
+        _junitxml(session, "nox-unit-serial"),
         *session.posargs,
     )
 
@@ -109,8 +137,19 @@ def tests_integration(session: nox.Session) -> None:
         "tests/unit",
         "tests/integration",
         "-m",
-        "not stability",
+        "not stability and not serial_timing",
         _junitxml(session, "nox-integration"),
+        *session.posargs,
+    )
+    session.run(
+        "pytest",
+        "tests/unit",
+        "tests/integration",
+        "-m",
+        "serial_timing and not stability",
+        "-n0",
+        "--cov-append",
+        _junitxml(session, "nox-integration-serial"),
         *session.posargs,
     )
 
@@ -125,6 +164,9 @@ def tests_hostless(session: nox.Session) -> None:
     to. Auto-includes any future no-testbed e2e test.
     """
     session.run("pytest", *HOSTLESS_TEST_ARGS, _junitxml(session, "nox-hostless"), *session.posargs)
+    session.run(
+        "pytest", *HOSTLESS_SERIAL_ARGS, _junitxml(session, "nox-hostless-serial"), *session.posargs
+    )
 
 
 @nox_uv.session(python=[PRIMARY_PYTHON], uv_groups=["dev"])
@@ -186,8 +228,17 @@ def tests_unix(session: nox.Session) -> None:
     session.run(
         "pytest",
         "-m",
-        "integration and not embedded and not stability and not chaos",
+        "integration and not embedded and not stability and not chaos and not serial_timing",
         _junitxml(session, "nox-unix"),
+        *session.posargs,
+    )
+    session.run(
+        "pytest",
+        "-m",
+        "serial_timing and integration and not embedded and not stability and not chaos",
+        "-n0",
+        "--cov-append",
+        _junitxml(session, "nox-unix-serial"),
         *session.posargs,
     )
 
@@ -278,9 +329,19 @@ def tests_all(session: nox.Session) -> None:
     session.run(
         "pytest",
         "-m",
-        "not browser and not stability",
-        "--cov-fail-under=92",
+        "not browser and not stability and not serial_timing",
+        "--cov-fail-under=0",
         _junitxml(session, "nox"),
+        *session.posargs,
+    )
+    session.run(
+        "pytest",
+        "-m",
+        "serial_timing and not browser and not stability",
+        "-n0",
+        "--cov-append",
+        "--cov-fail-under=92",
+        _junitxml(session, "nox-all-serial"),
         *session.posargs,
     )
 
