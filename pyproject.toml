@@ -147,7 +147,7 @@ dev = [
     "ruff>=0.15.20",
     "sphinx>=8.0",
     "doc8>=1.1",
-    "ty==0.0.64",
+    "ty==0.0.66",
     "pyyaml>=6.0.3",
 ]
 # Architecture-gate tools, kept OUT of the dev group on purpose: tach ships a
