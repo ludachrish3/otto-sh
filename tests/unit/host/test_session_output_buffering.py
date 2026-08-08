@@ -10,9 +10,10 @@ import pytest_asyncio
 
 from otto.host.command_frame import ZephyrFrame
 from otto.host.session import ShellSession
+from tests.unit.host._session_feed import FeedAfterWriteMixin
 
 
-class FrameMockSession(ShellSession):
+class FrameMockSession(FeedAfterWriteMixin, ShellSession):
     """In-memory ShellSession that records what reaches the output sink."""
 
     def __init__(self, command_frame=None) -> None:
@@ -50,10 +51,10 @@ class FrameMockSession(ShellSession):
 
 async def _init(s: FrameMockSession) -> None:
     await s._open()
+    feed_task = asyncio.create_task(s.feed_after_write(s._ready_marker + "\n"))
     task = asyncio.create_task(s._ensure_initialized())
-    await asyncio.sleep(0.01)
-    s.feed(s._ready_marker + "\n")
     await task
+    await feed_task
     s.written.clear()
 
 
@@ -75,11 +76,9 @@ async def zephyr_session() -> FrameMockSession:
 async def test_bash_streams_each_line_live(bash_session: FrameMockSession):
     s = bash_session
 
-    async def simulate():
-        await asyncio.sleep(0.01)
-        s.feed(f"{s._begin_marker}\nline1\nline2\n{s._end_marker_prefix}0__\n")
-
-    feed_task = asyncio.create_task(simulate())
+    feed_task = asyncio.create_task(
+        s.feed_after_write(f"{s._begin_marker}\nline1\nline2\n{s._end_marker_prefix}0__\n")
+    )
     result = await s.run_cmd("seq 1 2")
     await feed_task
 
@@ -91,18 +90,16 @@ async def test_bash_streams_each_line_live(bash_session: FrameMockSession):
 async def test_zephyr_buffers_and_emits_parsed_output_once(zephyr_session: FrameMockSession):
     s = zephyr_session
 
-    async def simulate():
-        await asyncio.sleep(0.01)
-        # Real Zephyr shell shape: a prompt after each executed line, plus the
-        # standalone `retval` integer — all scaffolding parse_output discards.
-        s.feed(
+    # Real Zephyr shell shape: a prompt after each executed line, plus the
+    # standalone `retval` integer — all scaffolding parse_output discards.
+    feed_task = asyncio.create_task(
+        s.feed_after_write(
             f"\r\n{s._begin_marker}: command not found\r\n~$ "
             f"\r\nUnloaded extension cov_ext\r\n~$ "
             f"\r\n0\r\n~$ "
             f"\r\n{s._end_marker_prefix}: command not found\r\n~$ "
         )
-
-    feed_task = asyncio.create_task(simulate())
+    )
     result = await s.run_cmd("llext unload cov_ext")
     await feed_task
 
@@ -115,15 +112,13 @@ async def test_zephyr_buffers_and_emits_parsed_output_once(zephyr_session: Frame
 async def test_zephyr_no_output_emits_nothing(zephyr_session: FrameMockSession):
     s = zephyr_session
 
-    async def simulate():
-        await asyncio.sleep(0.01)
-        s.feed(
+    feed_task = asyncio.create_task(
+        s.feed_after_write(
             f"\r\n{s._begin_marker}: command not found\r\n~$ "
             f"\r\n0\r\n~$ "
             f"\r\n{s._end_marker_prefix}: command not found\r\n~$ "
         )
-
-    feed_task = asyncio.create_task(simulate())
+    )
     result = await s.run_cmd("fs mount fat /RAM:")
     await feed_task
 
@@ -136,11 +131,9 @@ async def test_on_output_argument_overrides_default_sink(bash_session: FrameMock
     s = bash_session
     sink: list[str] = []
 
-    async def simulate():
-        await asyncio.sleep(0.01)
-        s.feed(f"{s._begin_marker}\nhi\n{s._end_marker_prefix}0__\n")
-
-    feed_task = asyncio.create_task(simulate())
+    feed_task = asyncio.create_task(
+        s.feed_after_write(f"{s._begin_marker}\nhi\n{s._end_marker_prefix}0__\n")
+    )
     await s.run_cmd("echo hi", on_output=sink.append)
     await feed_task
 
@@ -195,15 +188,13 @@ class TestWriteProgress:
         def cb(done: int, total: int) -> None:
             return None
 
-        async def simulate():
-            await asyncio.sleep(0.01)
-            s.feed(
+        feed_task = asyncio.create_task(
+            s.feed_after_write(
                 f"\r\n{s._begin_marker}: command not found\r\n~$ "
                 f"\r\nok\r\n~$ \r\n0\r\n~$ "
                 f"\r\n{s._end_marker_prefix}: command not found\r\n~$ "
             )
-
-        feed_task = asyncio.create_task(simulate())
+        )
         await s.run_cmd("noop", write_progress=cb)
         await feed_task
 

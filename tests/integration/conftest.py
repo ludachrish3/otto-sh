@@ -34,6 +34,19 @@ def pytest_collection_modifyitems(config, items):
     gates (``coverage-unix`` = ``-m "integration and not embedded"``, etc.)
     select this tree without each test repeating ``@pytest.mark.integration``.
     Idempotent and additive — explicit ``embedded``/``hops``/``stability`` stay.
+
+    NOTE (lane consequence, recorded at Wave 16): because only explicit marks
+    survive on top of the path stamp, a subtree with NO ``embedded`` marks
+    rides the unix lane wholesale — ``tests/integration/cov/`` is the live
+    case: every module there lands in ``M_UNIX`` (``integration and not
+    embedded ...``) and is invisible to ``make coverage-embedded``, including
+    the pure-git/tmp_path modules that need no bed at all. That is currently
+    intended (the cov integration tier exercises host tooling, not Zephyr),
+    but it is a *default*, not a decision each file re-makes — a future
+    embedded-coverage integration test must OPT IN with an explicit
+    ``@pytest.mark.embedded`` or it will silently run (and fail) in the unix
+    lane. Only ``tests/integration/host/`` distinguishes the lanes today,
+    via per-param marks.
     """
     for item in items:
         if _INTEGRATION_ROOT in item.path.parents:

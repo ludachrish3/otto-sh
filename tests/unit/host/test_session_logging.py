@@ -21,9 +21,10 @@ import pytest
 import pytest_asyncio
 
 from otto.host.session import ShellSession
+from tests.unit.host._session_feed import FeedAfterWriteMixin
 
 
-class MockSession(ShellSession):
+class MockSession(FeedAfterWriteMixin, ShellSession):
     """In-memory ShellSession (mirrors the double in test_session.py)."""
 
     def __init__(self) -> None:
@@ -67,10 +68,10 @@ async def initialized_session(caplog: pytest.LogCaptureFixture) -> MockSession:
     async def handshake():
         await s._ensure_initialized()
 
+    feed_task = asyncio.create_task(s.feed_after_write(s._ready_marker + "\n"))
     task = asyncio.create_task(handshake())
-    await asyncio.sleep(0.01)
-    s.feed(s._ready_marker + "\n")
     await task
+    await feed_task
     return s
 
 
@@ -104,10 +105,10 @@ class TestHandshakeLogging:
         s = MockSession()
         await s._open()
 
+        feed_task = asyncio.create_task(s.feed_after_write(s._ready_marker + "\n"))
         task = asyncio.create_task(s._ensure_initialized())
-        await asyncio.sleep(0.01)
-        s.feed(s._ready_marker + "\n")
         await task
+        await feed_task
 
         log = _messages(caplog)
         assert "handshake start" in log
@@ -165,11 +166,9 @@ class TestRunCmdLogging:
         caplog.clear()
         caplog.set_level(logging.DEBUG, logger="otto")
 
-        async def simulate():
-            await asyncio.sleep(0.01)
-            s.feed(f"{s._begin_marker}\nhello\n{s._end_marker_prefix}0__\n")
-
-        feed_task = asyncio.create_task(simulate())
+        feed_task = asyncio.create_task(
+            s.feed_after_write(f"{s._begin_marker}\nhello\n{s._end_marker_prefix}0__\n")
+        )
         result = await s.run_cmd("echo hello")
         await feed_task
 
@@ -198,11 +197,9 @@ class TestRunCmdLogging:
         caplog.clear()
         caplog.set_level(logging.DEBUG, logger="otto")
 
-        async def simulate():
-            await asyncio.sleep(0.01)
-            s.feed(f"{s._begin_marker}\nok\n{s._end_marker_prefix}0__\n")
-
-        feed_task = asyncio.create_task(simulate())
+        feed_task = asyncio.create_task(
+            s.feed_after_write(f"{s._begin_marker}\nok\n{s._end_marker_prefix}0__\n")
+        )
         result = await s.run_cmd("SECRETPW", redact=True)
         await feed_task
 
@@ -234,13 +231,12 @@ class TestRecoverSessionLogging:
         caplog.clear()
         caplog.set_level(logging.DEBUG, logger="otto")
 
-        async def simulate():
-            await asyncio.sleep(0.01)
-            # RECOVER-marker digit form (the echo-proof recover probe's real reply
-            # — see BashFrame.recover/recover_pattern), not the bare recover token.
-            s.feed(f"interrupted stuff\n{s._recover_marker}0__\n")
-
-        feed_task = asyncio.create_task(simulate())
+        # Ordered on recovery's own Ctrl+C entry write. RECOVER-marker digit
+        # form (the echo-proof recover probe's real reply — see
+        # BashFrame.recover/recover_pattern), not the bare recover token.
+        feed_task = asyncio.create_task(
+            s.feed_after_write(f"interrupted stuff\n{s._recover_marker}0__\n")
+        )
         partial = await s._recover_session()
         await feed_task
 

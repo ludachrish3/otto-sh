@@ -22,13 +22,14 @@ import pytest_asyncio
 from otto.host.command_frame import SessionMarkers, ZephyrFrame
 from otto.host.session import TelnetSession
 from otto.utils import Status
+from tests.unit.host._session_feed import FeedAfterWriteMixin
 
 # Readiness ceiling EmbeddedHost passes for its slow QEMU telnet console; the
 # mock mirrors it so the session's behaviour matches production.
 _EMBEDDED_INIT_TIMEOUT = 15.0
 
 
-class MockZephyrSession(TelnetSession):
+class MockZephyrSession(FeedAfterWriteMixin, TelnetSession):
     """A telnet session speaking the Zephyr dialect, backed by in-memory
     asyncio streams for testing.
 
@@ -101,11 +102,13 @@ async def session() -> MockZephyrSession:
     async def init_handshake():
         await s._ensure_initialized()
 
-    task = asyncio.create_task(init_handshake())
-    await asyncio.sleep(0.01)
     # The shell rejects the unknown READY token and echoes it in the error line.
-    s.feed(f"\r\n{s._ready_marker}: command not found\r\n~$ ")
+    feed_task = asyncio.create_task(
+        s.feed_after_write(f"\r\n{s._ready_marker}: command not found\r\n~$ ")
+    )
+    task = asyncio.create_task(init_handshake())
     await task
+    await feed_task
     s.written.clear()
     return s
 
@@ -151,11 +154,9 @@ class TestFraming:
 
     @pytest.mark.asyncio
     async def test_run_cmd_writes_framed_command(self, session: MockZephyrSession):
-        async def simulate():
-            await asyncio.sleep(0.01)
-            session.feed(session.shell_response("3.7.2", 0))
-
-        feed_task = asyncio.create_task(simulate())
+        feed_task = asyncio.create_task(
+            session.feed_after_write(session.shell_response("3.7.2", 0))
+        )
         await session.run_cmd("kernel version")
         await feed_task
         assert session.written[0] == ZephyrFrame().frame("kernel version", session._markers)
@@ -169,11 +170,9 @@ class TestFraming:
 class TestRunCmd:
     @pytest.mark.asyncio
     async def test_success(self, session: MockZephyrSession):
-        async def simulate():
-            await asyncio.sleep(0.01)
-            session.feed(session.shell_response("Zephyr version 3.7.2", 0))
-
-        feed_task = asyncio.create_task(simulate())
+        feed_task = asyncio.create_task(
+            session.feed_after_write(session.shell_response("Zephyr version 3.7.2", 0))
+        )
         result = await session.run_cmd("kernel version")
         await feed_task
 
@@ -185,11 +184,9 @@ class TestRunCmd:
     async def test_negative_retcode_is_failure(self, session: MockZephyrSession):
         """Zephyr return codes are signed errno-style values."""
 
-        async def simulate():
-            await asyncio.sleep(0.01)
-            session.feed(session.shell_response("usage: ...", -22))
-
-        feed_task = asyncio.create_task(simulate())
+        feed_task = asyncio.create_task(
+            session.feed_after_write(session.shell_response("usage: ...", -22))
+        )
         result = await session.run_cmd("device off bad")
         await feed_task
 
@@ -200,11 +197,9 @@ class TestRunCmd:
     async def test_unknown_command_retcode(self, session: MockZephyrSession):
         """An unknown command yields the shell's -8 (-ENOEXEC)."""
 
-        async def simulate():
-            await asyncio.sleep(0.01)
-            session.feed(session.shell_response("bogus: command not found", -8))
-
-        feed_task = asyncio.create_task(simulate())
+        feed_task = asyncio.create_task(
+            session.feed_after_write(session.shell_response("bogus: command not found", -8))
+        )
         result = await session.run_cmd("bogus")
         await feed_task
 
@@ -214,11 +209,7 @@ class TestRunCmd:
 
     @pytest.mark.asyncio
     async def test_empty_output(self, session: MockZephyrSession):
-        async def simulate():
-            await asyncio.sleep(0.01)
-            session.feed(session.shell_response("", 0))
-
-        feed_task = asyncio.create_task(simulate())
+        feed_task = asyncio.create_task(session.feed_after_write(session.shell_response("", 0)))
         result = await session.run_cmd("kernel reboot cold")
         await feed_task
 
@@ -227,11 +218,11 @@ class TestRunCmd:
 
     @pytest.mark.asyncio
     async def test_multiline_output(self, session: MockZephyrSession):
-        async def simulate():
-            await asyncio.sleep(0.01)
-            session.feed(session.shell_response("devices:\n- uart@3f8 (READY)\n- eth0 (READY)", 0))
-
-        feed_task = asyncio.create_task(simulate())
+        feed_task = asyncio.create_task(
+            session.feed_after_write(
+                session.shell_response("devices:\n- uart@3f8 (READY)\n- eth0 (READY)", 0)
+            )
+        )
         result = await session.run_cmd("device list")
         await feed_task
 
@@ -245,11 +236,9 @@ class TestRunCmd:
     ):
         """A bare integer in command output must not be read as the retcode."""
 
-        async def simulate():
-            await asyncio.sleep(0.01)
-            session.feed(session.shell_response("123456", 0))
-
-        feed_task = asyncio.create_task(simulate())
+        feed_task = asyncio.create_task(
+            session.feed_after_write(session.shell_response("123456", 0))
+        )
         result = await session.run_cmd("kernel uptime")
         await feed_task
 
@@ -262,13 +251,11 @@ class TestRunCmd:
         it never reads the prompt text.
         """
 
-        async def simulate():
-            await asyncio.sleep(0.01)
-            session.feed(
+        feed_task = asyncio.create_task(
+            session.feed_after_write(
                 session.shell_response("Zephyr version 3.7.2", 0, prompt="zephyr-board:/$ ")
             )
-
-        feed_task = asyncio.create_task(simulate())
+        )
         result = await session.run_cmd("kernel version")
         await feed_task
 
@@ -281,13 +268,11 @@ class TestRunCmd:
         the parsed output.
         """
 
-        async def simulate():
-            await asyncio.sleep(0.01)
-            session.feed(
+        feed_task = asyncio.create_task(
+            session.feed_after_write(
                 session.shell_response("Zephyr version 3.7.2", 0, prompt="\x1b[1;32m~$ \x1b[m")
             )
-
-        feed_task = asyncio.create_task(simulate())
+        )
         result = await session.run_cmd("kernel version")
         await feed_task
 
@@ -303,18 +288,18 @@ class TestRunCmd:
 class TestExpect:
     @pytest.mark.asyncio
     async def test_expect_response_is_sent(self, session: MockZephyrSession):
-        async def simulate():
-            await asyncio.sleep(0.01)
-            session.feed(f"\r\n{session._begin_marker}: command not found\r\n~$ ")
-            session.feed("\r\nconfirm? ")
-            await asyncio.sleep(0.01)
-            session.feed(
+        # One command, three chunks: BEGIN, the prompt, then the output that
+        # follows the auto-response (the read loop consumes a byte at a time,
+        # so the last chunk is only reached after "confirm" has matched).
+        feed_task = asyncio.create_task(
+            session.feed_after_write(
+                f"\r\n{session._begin_marker}: command not found\r\n~$ ",
+                "\r\nconfirm? ",
                 "\r\ndone\r\n~$ "
                 "\r\n0\r\n~$ "
-                f"\r\n{session._end_marker_prefix}: command not found\r\n~$ "
+                f"\r\n{session._end_marker_prefix}: command not found\r\n~$ ",
             )
-
-        feed_task = asyncio.create_task(simulate())
+        )
         result = await session.run_cmd("risky", expects=[("confirm", "y\r")])
         await feed_task
 

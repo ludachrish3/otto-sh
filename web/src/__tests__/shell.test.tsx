@@ -77,7 +77,11 @@ async function importMinimal() {
 }
 
 describe("App shell", () => {
-  it("boots to the empty review state with no backend fetches", () => {
+  // Not "with no backend fetches": App unconditionally issues the one-shot
+  // boot fetch on mount (App.tsx's bootstrapFromServer -> GET /api/mode —
+  // bootstrap.ts documents it as the shell's ONLY boot fetch), soft-failing
+  // in jsdom. The old title claimed otherwise and nothing asserted it.
+  it("boots to the empty review state", () => {
     render(<App />);
     expect(screen.getByTestId("empty-review")).toBeTruthy();
   });

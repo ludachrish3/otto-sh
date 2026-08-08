@@ -45,7 +45,10 @@ def test_tiers_parse_with_defaults() -> None:
 
 
 def test_bad_color_rejected() -> None:
-    with pytest.raises(ValidationError, match="color"):
+    with pytest.raises(
+        ValidationError,
+        match=r"(?m)^coverage\.tiers\.system\.color\n\s+Value error, invalid color 'nope'",
+    ):
         _settings({"tiers": {"system": {"kind": "e2e", "precedence": 1, "color": "nope"}}})
 
 
@@ -55,7 +58,10 @@ def test_good_colors_accepted() -> None:
 
 
 def test_bad_max_age_rejected() -> None:
-    with pytest.raises(ValidationError, match="max_age"):
+    with pytest.raises(
+        ValidationError,
+        match=r"(?m)^coverage\.tiers\.manual\.max_age\n\s+Value error, max_age '6mo' must be",
+    ):
         _settings({"tiers": {"manual": {"kind": "manual", "precedence": 1, "max_age": "6mo"}}})
 
 
@@ -85,7 +91,10 @@ def test_report_parses_values() -> None:
 
 
 def test_report_rejects_medium_above_high() -> None:
-    with pytest.raises(ValidationError, match="medium"):
+    with pytest.raises(
+        ValidationError,
+        match=r"(?m)^coverage\.report\n\s+Value error, \[coverage\.report\] medium \(80\.0\)",
+    ):
         _settings({"report": {"high": 70, "medium": 80}})
 
 

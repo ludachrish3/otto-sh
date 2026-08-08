@@ -36,6 +36,24 @@ async def _let_tasks_settle() -> None:
         await asyncio.sleep(0)
 
 
+def _tracked(coro_fn):
+    """Wrap a 0-arg async method with an entry counter — the launch
+    positive-control. Honest scope (opus W16 review): `entered == N` proves
+    all N task BODIES started before `ready.set()` — a zero/omitted settle
+    is caught loudly. It does NOT prove the tasks queued on the lock: an
+    await inserted before the lock would park them all mid-method with the
+    premise green. The ssh test below adds the true contention proof (lock
+    held + N-1 waiters); the other four transports share the same
+    ConnectionManager lock pattern and lean on that exemplar."""
+    state = {"entered": 0}
+
+    async def call():
+        state["entered"] += 1
+        return await coro_fn()
+
+    return state, call
+
+
 @pytest.mark.asyncio
 async def test_concurrent_ssh_opens_one_connection(monkeypatch):
     ready = asyncio.Event()
@@ -57,8 +75,20 @@ async def test_concurrent_ssh_opens_one_connection(monkeypatch):
         name="t",
         ssh_options=SshOptions(),
     )
-    tasks = [asyncio.create_task(cm.ssh()) for _ in range(N)]
+    entered, tracked_ssh = _tracked(cm.ssh)
+    tasks = [asyncio.create_task(tracked_ssh()) for _ in range(N)]
     await _let_tasks_settle()
+    assert entered["entered"] == N, f"contention premise: {entered['entered']}/{N} tasks in flight"
+    # True contention, not just launch: the winner holds the lock (blocked in
+    # fake_connect on `ready`) and every other task is QUEUED on it. Reads a
+    # private asyncio.Lock attribute — if CPython renames `_waiters`, this
+    # fails loudly by name, which is the acceptable failure mode.
+    assert cm._ssh_lock.locked(), "no task holds the connection lock"
+    waiters = cm._ssh_lock._waiters
+    assert waiters is not None, "lock has no waiter queue — the race is not racing"
+    assert len(waiters) == N - 1, (
+        f"expected {N - 1} tasks queued on the lock, found {len(waiters)} — the race is not racing"
+    )
     ready.set()
     results = await asyncio.gather(*tasks)
 
@@ -96,8 +126,10 @@ async def test_concurrent_sftp_opens_one_client(monkeypatch):
         name="t",
         sftp_options=SftpOptions(),
     )
-    tasks = [asyncio.create_task(cm.sftp()) for _ in range(N)]
+    entered, tracked_sftp = _tracked(cm.sftp)
+    tasks = [asyncio.create_task(tracked_sftp()) for _ in range(N)]
     await _let_tasks_settle()
+    assert entered["entered"] == N, f"contention premise: {entered['entered']}/{N} tasks in flight"
     ready.set()
     results = await asyncio.gather(*tasks)
 
@@ -130,8 +162,10 @@ async def test_concurrent_ftp_opens_one_client(monkeypatch):
         name="t",
         ftp_options=FtpOptions(),
     )
-    tasks = [asyncio.create_task(cm.ftp()) for _ in range(N)]
+    entered, tracked_ftp = _tracked(cm.ftp)
+    tasks = [asyncio.create_task(tracked_ftp()) for _ in range(N)]
     await _let_tasks_settle()
+    assert entered["entered"] == N, f"contention premise: {entered['entered']}/{N} tasks in flight"
     ready.set()
     results = await asyncio.gather(*tasks)
 
@@ -165,8 +199,10 @@ async def test_concurrent_telnet_opens_one_client(monkeypatch):
         name="t",
         telnet_options=TelnetOptions(),
     )
-    tasks = [asyncio.create_task(cm.telnet()) for _ in range(N)]
+    entered, tracked_telnet = _tracked(cm.telnet)
+    tasks = [asyncio.create_task(tracked_telnet()) for _ in range(N)]
     await _let_tasks_settle()
+    assert entered["entered"] == N, f"contention premise: {entered['entered']}/{N} tasks in flight"
     ready.set()
     results = await asyncio.gather(*tasks)
 
@@ -186,8 +222,10 @@ async def test_concurrent_hop_tunnel_opens_one_connection():
         return AsyncMock(spec=SSHClientConnection)
 
     hop = SshHopTransport(factory)
-    tasks = [asyncio.create_task(hop.get_tunnel()) for _ in range(N)]
+    entered, tracked_tunnel = _tracked(hop.get_tunnel)
+    tasks = [asyncio.create_task(tracked_tunnel()) for _ in range(N)]
     await _let_tasks_settle()
+    assert entered["entered"] == N, f"contention premise: {entered['entered']}/{N} tasks in flight"
     ready.set()
     results = await asyncio.gather(*tasks)
 

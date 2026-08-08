@@ -623,14 +623,23 @@ class TestMonitorSettings:
         assert model.monitor.to_runtime().tls_key is None
 
     def test_key_without_cert_is_rejected(self):
-        with pytest.raises(ValidationError, match="tls_key"):
+        # Two-halves form (loc line + reason): a bare match="tls_key" was
+        # satisfied by pydantic's input_value= echo of the payload itself,
+        # whatever rule fired (G4's stated residual, proven by mutation).
+        with pytest.raises(
+            ValidationError,
+            match=r"(?m)^monitor\n\s+Value error, \[monitor\] tls_key is set but tls_cert is not",
+        ):
             SettingsModel.model_validate(
                 {"name": "r", "version": "1.0.0", "monitor": {"tls_key": "/x/key.pem"}}
             )
 
     def test_unknown_monitor_key_is_rejected(self):
         """extra='forbid' inherited from OttoModel must cover the new table."""
-        with pytest.raises(ValidationError, match="tls_cret"):
+        with pytest.raises(
+            ValidationError,
+            match=r"(?m)^monitor\.tls_cret\n\s+Extra inputs are not permitted",
+        ):
             SettingsModel.model_validate(
                 {"name": "r", "version": "1.0.0", "monitor": {"tls_cret": "/typo.pem"}}
             )

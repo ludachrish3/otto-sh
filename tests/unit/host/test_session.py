@@ -21,10 +21,11 @@ import pytest_asyncio
 from otto.host.command_frame import CommandFrame, ZephyrFrame, ZephyrSerialFrame
 from otto.host.local_host import LocalHost
 from otto.host.session import LocalSession, SessionManager, ShellSession
-from otto.utils import Status
+from otto.utils import Status, wait_for_async
+from tests.unit.host._session_feed import FeedAfterWriteMixin
 
 
-class MockSession(ShellSession):
+class MockSession(FeedAfterWriteMixin, ShellSession):
     """Concrete ShellSession backed by in-memory asyncio streams for testing."""
 
     def __init__(
@@ -125,10 +126,10 @@ async def session() -> MockSession:
     async def init_handshake():
         await s._ensure_initialized()
 
+    feed_task = asyncio.create_task(s.feed_after_write(s._ready_marker + "\n"))
     task = asyncio.create_task(init_handshake())
-    await asyncio.sleep(0.01)
-    s.feed(s._ready_marker + "\n")
     await task
+    await feed_task
     s.written.clear()
     return s
 
@@ -141,11 +142,11 @@ async def session() -> MockSession:
 class TestRunCmd:
     @pytest.mark.asyncio
     async def test_basic_command_output_and_retcode(self, session: MockSession):
-        async def simulate():
-            await asyncio.sleep(0.01)
-            session.feed(f"{session._begin_marker}\nhello world\n{session._end_marker_prefix}0__\n")
-
-        feed_task = asyncio.create_task(simulate())
+        feed_task = asyncio.create_task(
+            session.feed_after_write(
+                f"{session._begin_marker}\nhello world\n{session._end_marker_prefix}0__\n"
+            )
+        )
         result = await session.run_cmd("echo hello world")
         await feed_task
 
@@ -156,13 +157,11 @@ class TestRunCmd:
 
     @pytest.mark.asyncio
     async def test_nonzero_retcode_returns_failed(self, session: MockSession):
-        async def simulate():
-            await asyncio.sleep(0.01)
-            session.feed(
+        feed_task = asyncio.create_task(
+            session.feed_after_write(
                 f"{session._begin_marker}\ncommand not found\n{session._end_marker_prefix}127__\n"
             )
-
-        feed_task = asyncio.create_task(simulate())
+        )
         result = await session.run_cmd("badcmd")
         await feed_task
 
@@ -172,11 +171,9 @@ class TestRunCmd:
 
     @pytest.mark.asyncio
     async def test_empty_output_command(self, session: MockSession):
-        async def simulate():
-            await asyncio.sleep(0.01)
-            session.feed(f"{session._begin_marker}\n{session._end_marker_prefix}0__\n")
-
-        feed_task = asyncio.create_task(simulate())
+        feed_task = asyncio.create_task(
+            session.feed_after_write(f"{session._begin_marker}\n{session._end_marker_prefix}0__\n")
+        )
         result = await session.run_cmd("cd /tmp")
         await feed_task
 
@@ -185,13 +182,11 @@ class TestRunCmd:
 
     @pytest.mark.asyncio
     async def test_multiline_output(self, session: MockSession):
-        async def simulate():
-            await asyncio.sleep(0.01)
-            session.feed(
+        feed_task = asyncio.create_task(
+            session.feed_after_write(
                 f"{session._begin_marker}\nline1\nline2\nline3\n{session._end_marker_prefix}0__\n"
             )
-
-        feed_task = asyncio.create_task(simulate())
+        )
         result = await session.run_cmd("seq 1 3")
         await feed_task
 
@@ -200,11 +195,11 @@ class TestRunCmd:
 
     @pytest.mark.asyncio
     async def test_prompt_noise_before_begin_marker_stripped(self, session: MockSession):
-        async def simulate():
-            await asyncio.sleep(0.01)
-            session.feed(f"$ {session._begin_marker}\nhello\n{session._end_marker_prefix}0__\n")
-
-        feed_task = asyncio.create_task(simulate())
+        feed_task = asyncio.create_task(
+            session.feed_after_write(
+                f"$ {session._begin_marker}\nhello\n{session._end_marker_prefix}0__\n"
+            )
+        )
         result = await session.run_cmd("echo hello")
         await feed_task
 
@@ -212,11 +207,9 @@ class TestRunCmd:
 
     @pytest.mark.asyncio
     async def test_sentinel_wrapping_sent_to_stdin(self, session: MockSession):
-        async def simulate():
-            await asyncio.sleep(0.01)
-            session.feed(f"{session._begin_marker}\n{session._end_marker_prefix}0__\n")
-
-        feed_task = asyncio.create_task(simulate())
+        feed_task = asyncio.create_task(
+            session.feed_after_write(f"{session._begin_marker}\n{session._end_marker_prefix}0__\n")
+        )
         await session.run_cmd("ls")
         await feed_task
 
@@ -236,14 +229,16 @@ class TestRunCmd:
 class TestExpects:
     @pytest.mark.asyncio
     async def test_expect_auto_responds(self, session: MockSession):
-        async def simulate():
-            await asyncio.sleep(0.01)
-            session.feed(f"{session._begin_marker}\nPassword:")
-            # Wait for the response to be sent
-            await asyncio.sleep(0.02)
-            session.feed(f"\ninstalled ok\n{session._end_marker_prefix}0__\n")
-
-        feed_task = asyncio.create_task(simulate())
+        # One command, two chunks: the prompt, then the output that follows the
+        # auto-response. The read loop consumes a byte at a time, so the second
+        # chunk is picked up only after the prompt has matched and the response
+        # has been written.
+        feed_task = asyncio.create_task(
+            session.feed_after_write(
+                f"{session._begin_marker}\nPassword:",
+                f"\ninstalled ok\n{session._end_marker_prefix}0__\n",
+            )
+        )
         result = await session.run_cmd(
             "sudo apt install nginx",
             expects=[(r"Password:", "secret\n")],
@@ -255,15 +250,13 @@ class TestExpects:
 
     @pytest.mark.asyncio
     async def test_multiple_expects(self, session: MockSession):
-        async def simulate():
-            await asyncio.sleep(0.01)
-            session.feed(f"{session._begin_marker}\nPassword:")
-            await asyncio.sleep(0.02)
-            session.feed("\n[Y/n]")
-            await asyncio.sleep(0.02)
-            session.feed(f"\ndone\n{session._end_marker_prefix}0__\n")
-
-        feed_task = asyncio.create_task(simulate())
+        feed_task = asyncio.create_task(
+            session.feed_after_write(
+                f"{session._begin_marker}\nPassword:",
+                "\n[Y/n]",
+                f"\ndone\n{session._end_marker_prefix}0__\n",
+            )
+        )
         result = await session.run_cmd(
             "sudo apt install nginx",
             expects=[
@@ -281,11 +274,11 @@ class TestExpects:
     async def test_unused_expect_pattern_ignored(self, session: MockSession):
         """If an expect pattern never appears, the sentinel matches normally."""
 
-        async def simulate():
-            await asyncio.sleep(0.01)
-            session.feed(f"{session._begin_marker}\nok\n{session._end_marker_prefix}0__\n")
-
-        feed_task = asyncio.create_task(simulate())
+        feed_task = asyncio.create_task(
+            session.feed_after_write(
+                f"{session._begin_marker}\nok\n{session._end_marker_prefix}0__\n"
+            )
+        )
         result = await session.run_cmd(
             "echo ok",
             expects=[(r"Password:", "secret\n")],
@@ -299,13 +292,12 @@ class TestExpects:
 
     @pytest.mark.asyncio
     async def test_compiled_regex_expect(self, session: MockSession):
-        async def simulate():
-            await asyncio.sleep(0.01)
-            session.feed(f"{session._begin_marker}\npassword for admin:")
-            await asyncio.sleep(0.02)
-            session.feed(f"\nok\n{session._end_marker_prefix}0__\n")
-
-        feed_task = asyncio.create_task(simulate())
+        feed_task = asyncio.create_task(
+            session.feed_after_write(
+                f"{session._begin_marker}\npassword for admin:",
+                f"\nok\n{session._end_marker_prefix}0__\n",
+            )
+        )
         result = await session.run_cmd(
             "sudo ls",
             expects=[(re.compile(r"password for \w+:"), "pw\n")],
@@ -324,16 +316,13 @@ class TestExpects:
 class TestTimeout:
     @pytest.mark.asyncio
     async def test_timeout_returns_error_status(self, session: MockSession):
-        # Don't feed any output — command will hang
-        async def simulate():
-            await asyncio.sleep(0.01)
-            session.feed(f"{session._begin_marker}\n")
-            # Never feed the END marker — simulates a hung command
-
-        simulate_task = asyncio.create_task(simulate())
+        # Feed only the BEGIN marker, never the END one — the command hangs.
+        simulate_task = asyncio.create_task(session.feed_after_write(f"{session._begin_marker}\n"))
 
         # After timeout, recovery sends Ctrl+C + recovery sentinel
-        # We need to feed the recovery marker (RECOVER digit form)
+        # We need to feed the recovery marker (RECOVER digit form). This one
+        # is timed against the RECOVERY window (a second write, past the
+        # command's), not the command write, so it keeps its wall-clock wait.
         async def feed_recovery():
             await asyncio.sleep(0.15)
             session.feed(f"{session._recover_marker}0__\n")
@@ -350,14 +339,10 @@ class TestTimeout:
 
     @pytest.mark.asyncio
     async def test_session_stays_alive_after_recovered_timeout(self, session: MockSession):
-        # Simulate timeout + successful recovery
-        async def simulate():
-            await asyncio.sleep(0.01)
-            session.feed(f"{session._begin_marker}\n")
-            # Hang...
+        # Simulate timeout + successful recovery: BEGIN lands, then nothing.
+        simulate_task = asyncio.create_task(session.feed_after_write(f"{session._begin_marker}\n"))
 
-        simulate_task = asyncio.create_task(simulate())
-
+        # Recovery-window timing, not command-write timing — see above.
         async def feed_recovery():
             await asyncio.sleep(0.15)
             session.feed(f"{session._recover_marker}0__\n")
@@ -432,15 +417,14 @@ class TestTimeout:
         command write, already sent by then) and is consumed by the very
         next ``_write()`` call -- recovery's Ctrl+C entry write, once the
         command times out."""
-
-        async def simulate():
-            await asyncio.sleep(0.01)
-            session.feed(f"{session._begin_marker}\n")
-            # Never feed the END marker -- the command hangs, forcing
-            # recovery. Arm broken-pipe now for recovery's entry write.
-            session.feed_write_broken_pipe()
-
-        simulate_task = asyncio.create_task(simulate())
+        # Never feed the END marker -- the command hangs, forcing recovery.
+        # ``then`` arms broken-pipe once BEGIN has landed, for recovery's
+        # entry write.
+        simulate_task = asyncio.create_task(
+            session.feed_after_write(
+                f"{session._begin_marker}\n", then=session.feed_write_broken_pipe
+            )
+        )
 
         result = await session.run_cmd("sleep 999", timeout=0.1)
         await simulate_task
@@ -471,41 +455,57 @@ class TestTimeout:
         """A session parked in a REPL echoes the probe's literal `$?`, never the
         digit form — recovery must report failure (I-3), not a false positive."""
 
-        async def simulate():
-            await asyncio.sleep(0.01)
-            session.feed(f"{session._begin_marker}\n")  # command hangs, no END
-
-        feed_task = asyncio.create_task(simulate())
+        feed_task = asyncio.create_task(
+            session.feed_after_write(f"{session._begin_marker}\n")  # command hangs, no END
+        )
 
         async def echo_probe_literally():
-            # Mimic a REPL parroting the probe command back verbatim (literal $?).
-            await asyncio.sleep(0.15)
+            # Mimic a REPL parroting the probe command back verbatim (literal
+            # $?), ordered on RECOVERY'S OWN PROBE WRITE — not a wall-clock
+            # sleep into the 0.3s recovery window. The old sleep(0.15) was
+            # review §3.3's headline: if the echo missed the window (or never
+            # ran), recovery timed out and `not session.alive` was IDENTICAL
+            # to the asserted outcome — observationally indistinguishable
+            # from the no-feed sibling below, so "a literal $? echo must be
+            # rejected" was never necessarily exercised. Waiting for the
+            # recover marker to appear in `written` guarantees the parrot
+            # lands inside the recovery read; expiry names the failed
+            # premise (recovery never probed) instead of passing vacuously.
+            await wait_for_async(
+                lambda: any(session._recover_marker in w for w in session.written),
+                5.0,
+                interval=0.005,
+                on_timeout="recovery never wrote its probe — REPL-parrot premise failed",
+            )
             session.feed(f'echo "{session._recover_marker}$?__"\n')
 
         repl_task = asyncio.create_task(echo_probe_literally())
 
-        import otto.host.session as session_mod
-
-        original = session_mod._RECOVERY_TIMEOUT
-        session_mod._RECOVERY_TIMEOUT = 0.3
-        try:
-            result = await session.run_cmd("mysql", timeout=0.1)
-        finally:
-            session_mod._RECOVERY_TIMEOUT = original
+        # No _RECOVERY_TIMEOUT patch: the module-global rebind was INERT all
+        # along (the default binds at def time — opus W16 review, minor 5),
+        # so recovery has always run at the real 5s deadline here. The
+        # parrot is write-ordered above, so no window arithmetic matters.
+        result = await session.run_cmd("mysql", timeout=0.1)
         await feed_task
         await repl_task
 
         assert result.status == Status.Error
+        # The premise wait above proved the probe was written and the parrot
+        # fed after it; the drained reader buffer proves recovery CONSUMED
+        # the parrot bytes (fed-but-unread would reopen the old vacuity).
+        # StreamReader._buffer is CPython-private — a rename fails loudly by
+        # name, the acceptable failure mode for a test-double internal.
+        assert any(session._recover_marker in w for w in session.written)
+        assert session._out_reader is not None
+        assert not session._out_reader._buffer, (
+            "parrot bytes were fed but never consumed by the recovery read"
+        )
         assert not session.alive  # literal-$? echo never matched -> dead, no false "recovered"
 
     @pytest.mark.asyncio
     async def test_session_dies_if_recovery_fails(self, session: MockSession):
-        async def simulate():
-            await asyncio.sleep(0.01)
-            session.feed(f"{session._begin_marker}\n")
-            # Never feed anything — recovery will also time out
-
-        feed_task = asyncio.create_task(simulate())
+        # Nothing after BEGIN — recovery will also time out.
+        feed_task = asyncio.create_task(session.feed_after_write(f"{session._begin_marker}\n"))
 
         # Patch _RECOVERY_TIMEOUT to something very short for the test
         import otto.host.session as session_mod
@@ -544,10 +544,10 @@ class TestZephyrRecovery:
         """A ``MockSession`` framed by ``frame_cls`` and past its readiness handshake."""
         session = MockSession(command_frame=frame_cls())
         await session._open()
+        feed_task = asyncio.create_task(session.feed_after_write(session._ready_marker + "\n"))
         init_task = asyncio.create_task(session._ensure_initialized())
-        await asyncio.sleep(0.01)
-        session.feed(session._ready_marker + "\n")
         await init_task
+        await feed_task
         session.written.clear()
         return session
 
@@ -559,12 +559,10 @@ class TestZephyrRecovery:
         back as OUTPUT) — recovery confirms and the session stays alive."""
         session = await self._init_session(frame_cls)
 
-        async def simulate() -> None:
-            await asyncio.sleep(0.01)
-            session.feed(f"{session._begin_marker}\n")
+        feed_task = asyncio.create_task(session.feed_after_write(f"{session._begin_marker}\n"))
 
-        feed_task = asyncio.create_task(simulate())
-
+        # Recovery-window timing (a second write, past the command's), so this
+        # one keeps its wall-clock wait.
         async def feed_recovery() -> None:
             await asyncio.sleep(0.15)
             session.feed(f"{session._recover_marker}\n")
@@ -585,11 +583,7 @@ class TestZephyrRecovery:
         the session is marked dead (no false positive)."""
         session = await self._init_session(frame_cls)
 
-        async def simulate() -> None:
-            await asyncio.sleep(0.01)
-            session.feed(f"{session._begin_marker}\n")
-
-        feed_task = asyncio.create_task(simulate())
+        feed_task = asyncio.create_task(session.feed_after_write(f"{session._begin_marker}\n"))
 
         import otto.host.session as session_mod
 
@@ -618,6 +612,8 @@ class TestSendExpect:
 
     @pytest.mark.asyncio
     async def test_expect_returns_matched_data(self, session: MockSession):
+        # UNSOLICITED: expect() only reads — nothing is ever written — so the
+        # feed_after_write premise doesn't hold here.
         async def simulate():
             await asyncio.sleep(0.01)
             session.feed("Welcome to Python 3.10\n>>> ")
@@ -636,6 +632,8 @@ class TestSendExpect:
 
     @pytest.mark.asyncio
     async def test_expect_eof_marks_session_dead(self, session: MockSession):
+        # UNSOLICITED: EOF into an idle, read-only expect() — no write to order
+        # against.
         async def simulate():
             await asyncio.sleep(0.01)
             session.feed_eof()
@@ -654,6 +652,7 @@ class TestSendExpect:
         to encode failure into, so — mirroring the EOF branch immediately
         above — it re-raises rather than swallowing the error."""
 
+        # UNSOLICITED: same as the EOF twin above — expect() never writes.
         async def simulate():
             await asyncio.sleep(0.01)
             session.feed_connection_lost()
@@ -685,10 +684,10 @@ class TestShellHistorySuppression:
         """Drive a MockSession through its handshake; return it and what it wrote."""
         s = MockSession(**kwargs)
         await s._open()
+        feed_task = asyncio.create_task(s.feed_after_write(s._ready_marker + "\n"))
         task = asyncio.create_task(s._ensure_initialized())
-        await asyncio.sleep(0.01)
-        s.feed(s._ready_marker + "\n")
         await task
+        await feed_task
         return s, s.written[0]
 
     @pytest.mark.asyncio
@@ -738,17 +737,17 @@ class TestSessionInit:
         async def init():
             await s._ensure_initialized()
 
+        # The ready-marker response is fed once the handshake write lands.
+        feed_task = asyncio.create_task(s.feed_after_write(s._ready_marker + "\n"))
         task = asyncio.create_task(init())
-        await asyncio.sleep(0.01)
+        await task
+        await feed_task
 
-        # Verify stty -echo and ready marker were sent
+        # Verify stty -echo and ready marker were sent — and that the
+        # handshake took exactly one write to do it.
         assert len(s.written) == 1
         assert "stty -echo" in s.written[0]
         assert s._ready_marker in s.written[0]
-
-        # Feed the ready marker response
-        s.feed(s._ready_marker + "\n")
-        await task
 
         assert s.alive
         assert s._initialized
@@ -769,11 +768,9 @@ class TestSessionInit:
 class TestSessionDeath:
     @pytest.mark.asyncio
     async def test_eof_during_run_cmd_returns_error(self, session: MockSession):
-        async def simulate():
-            await asyncio.sleep(0.01)
-            session.feed_eof()
-
-        feed_task = asyncio.create_task(simulate())
+        # EOF is the event, so it rides ``then`` — same write-ordering, no
+        # content chunk.
+        feed_task = asyncio.create_task(session.feed_after_write(then=session.feed_eof))
         result = await session.run_cmd("echo hello")
         await feed_task
 
@@ -787,12 +784,7 @@ class TestSessionDeath:
         the same class of event as EOF above (the transport is gone), so it
         gets the same treatment — mark the session dead and hand back a
         truthful CommandResult the CLI already knows how to render."""
-
-        async def simulate():
-            await asyncio.sleep(0.01)
-            session.feed_connection_lost()
-
-        feed_task = asyncio.create_task(simulate())
+        feed_task = asyncio.create_task(session.feed_after_write(then=session.feed_connection_lost))
         result = await session.run_cmd("echo hello")
         await feed_task
 
@@ -987,13 +979,11 @@ class TestCommandLogging:
         logged: list[str] = []
         session._on_output = logged.append
 
-        async def simulate():
-            await asyncio.sleep(0.01)
-            session.feed(
+        feed_task = asyncio.create_task(
+            session.feed_after_write(
                 f"{session._begin_marker}\nalpha\nbravo\ncharlie\n{session._end_marker_prefix}0__\n"
             )
-
-        feed_task = asyncio.create_task(simulate())
+        )
         result = await session.run_cmd("seq 3")
         await feed_task
 
@@ -1006,11 +996,11 @@ class TestCommandLogging:
         logged: list[str] = []
         session._on_output = logged.append
 
-        async def simulate():
-            await asyncio.sleep(0.01)
-            session.feed(f"{session._begin_marker}\ncontent\n{session._end_marker_prefix}0__\n")
-
-        feed_task = asyncio.create_task(simulate())
+        feed_task = asyncio.create_task(
+            session.feed_after_write(
+                f"{session._begin_marker}\ncontent\n{session._end_marker_prefix}0__\n"
+            )
+        )
         await session.run_cmd("echo content")
         await feed_task
 
@@ -1024,11 +1014,9 @@ class TestCommandLogging:
         logged: list[str] = []
         session._on_output = logged.append
 
-        async def simulate():
-            await asyncio.sleep(0.01)
-            session.feed(f"{session._begin_marker}\n{session._end_marker_prefix}0__\n")
-
-        feed_task = asyncio.create_task(simulate())
+        feed_task = asyncio.create_task(
+            session.feed_after_write(f"{session._begin_marker}\n{session._end_marker_prefix}0__\n")
+        )
         result = await session.run_cmd("cd /tmp")
         await feed_task
 
@@ -1041,13 +1029,12 @@ class TestCommandLogging:
         logged: list[str] = []
         session._on_output = logged.append
 
-        async def simulate():
-            await asyncio.sleep(0.01)
-            session.feed(f"{session._begin_marker}\nPassword:")
-            await asyncio.sleep(0.02)
-            session.feed(f"\ninstalled ok\n{session._end_marker_prefix}0__\n")
-
-        feed_task = asyncio.create_task(simulate())
+        feed_task = asyncio.create_task(
+            session.feed_after_write(
+                f"{session._begin_marker}\nPassword:",
+                f"\ninstalled ok\n{session._end_marker_prefix}0__\n",
+            )
+        )
         result = await session.run_cmd(
             "sudo apt install nginx",
             expects=[(r"Password:", "secret\n")],
@@ -1066,12 +1053,10 @@ class TestCommandLogging:
         logged: list[str] = []
         session._on_output = logged.append
 
-        async def simulate():
-            await asyncio.sleep(0.01)
-            session.feed(f"{session._begin_marker}\nearly line\n")
-            # Never send end sentinel — command will time out
-
-        feed_task = asyncio.create_task(simulate())
+        # Never send the end sentinel — the command will time out.
+        feed_task = asyncio.create_task(
+            session.feed_after_write(f"{session._begin_marker}\nearly line\n")
+        )
         # Patch the recovery timeout to a small value so the post-timeout
         # ``_recover_session`` call doesn't block this test for the full
         # 5-second recovery window (no recovery sentinel ever arrives).
@@ -1094,11 +1079,11 @@ class TestCommandLogging:
         logged: list[str] = []
         session._on_output = logged.append
 
-        async def simulate():
-            await asyncio.sleep(0.01)
-            session.feed(f"{session._begin_marker}\none\ntwo\n{session._end_marker_prefix}0__\n")
-
-        feed_task = asyncio.create_task(simulate())
+        feed_task = asyncio.create_task(
+            session.feed_after_write(
+                f"{session._begin_marker}\none\ntwo\n{session._end_marker_prefix}0__\n"
+            )
+        )
         result = await session.run_cmd("test")
         await feed_task
 
@@ -1108,12 +1093,11 @@ class TestCommandLogging:
     @pytest.mark.asyncio
     async def test_default_noop_callback(self, session: MockSession):
         """run_cmd works correctly with the default no-op _on_output."""
-
-        async def simulate():
-            await asyncio.sleep(0.01)
-            session.feed(f"{session._begin_marker}\nhello\n{session._end_marker_prefix}0__\n")
-
-        feed_task = asyncio.create_task(simulate())
+        feed_task = asyncio.create_task(
+            session.feed_after_write(
+                f"{session._begin_marker}\nhello\n{session._end_marker_prefix}0__\n"
+            )
+        )
         result = await session.run_cmd("echo hello")
         await feed_task
 
@@ -1126,17 +1110,15 @@ class TestCommandLogging:
         logged: list[str] = []
         session._on_output = logged.append
 
-        async def simulate():
-            await asyncio.sleep(0.01)
-            # Simulate shell echoing the wrapped command before the BEGIN marker
-            session.feed(
+        # The shell echoes the wrapped command before the BEGIN marker.
+        feed_task = asyncio.create_task(
+            session.feed_after_write(
                 f'echo "{session._begin_marker}"; ls; echo "{session._end_marker_prefix}$?__"\n'
                 f"{session._begin_marker}\n"
                 f"file.txt\n"
                 f"{session._end_marker_prefix}0__\n"
             )
-
-        feed_task = asyncio.create_task(simulate())
+        )
         result = await session.run_cmd("ls")
         await feed_task
 
@@ -1178,11 +1160,9 @@ class TestEnsureInitializedTimeout:
         s._init_timeout = 5.0  # EOF fires first; timeout shouldn't be reached
         await s._open()
 
-        async def drop():
-            await asyncio.sleep(0.01)
-            s.feed_eof()
-
-        drop_task = asyncio.create_task(drop())
+        # EOF is the event, so it rides ``then``, ordered after the handshake
+        # probe write.
+        drop_task = asyncio.create_task(s.feed_after_write(then=s.feed_eof))
         with pytest.raises(ConnectionError, match="never became ready"):
             await s._ensure_initialized()
         await drop_task
@@ -1376,17 +1356,20 @@ async def test_default_session_seeds_current_user_from_login():
 
     conn = types.SimpleNamespace(credentials=("alice", "pw"))
     built: list[MockSession] = []
+    feeders: list[asyncio.Task[None]] = []
 
     def factory() -> MockSession:
         s = MockSession()
         built.append(s)
+        # The session only exists once the manager builds it, so its feeder is
+        # armed here — synchronously, before the handshake write it waits on.
+        feeders.append(asyncio.create_task(s.feed_after_write(s._ready_marker + "\n")))
         return s
 
     mgr = SessionManager(connections=conn, name="h", session_factory=factory)
     task = asyncio.create_task(mgr.send("hello\n"))  # triggers default-session build
-    await asyncio.sleep(0.01)
-    built[0].feed(built[0]._ready_marker + "\n")
     await task
+    await asyncio.gather(*feeders)
     assert mgr._session is built[0]
     assert mgr._session.current_user == "alice"
     assert mgr.current_user == "alice"
@@ -1401,17 +1384,19 @@ async def test_open_session_seeds_named_session_current_user_from_login():
 
     conn = types.SimpleNamespace(credentials=("alice", "pw"))
     built: list[MockSession] = []
+    feeders: list[asyncio.Task[None]] = []
 
     def factory() -> MockSession:
         s = MockSession()
         built.append(s)
+        # Armed at build time — see the default-session twin above.
+        feeders.append(asyncio.create_task(s.feed_after_write(s._ready_marker + "\n")))
         return s
 
     mgr = SessionManager(connections=conn, name="h", session_factory=factory)
     task = asyncio.create_task(mgr.open_session("mon"))
-    await asyncio.sleep(0.01)
-    built[0].feed(built[0]._ready_marker + "\n")
     hs = await task
+    await asyncio.gather(*feeders)
     assert hs.current_user == "alice"
 
 

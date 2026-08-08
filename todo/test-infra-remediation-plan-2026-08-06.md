@@ -1255,21 +1255,66 @@ files; disclosure zero; menu regrows a ticket row WITHOUT the old testid — the
 differential proof that the phantom-id form could not see it).
 Gates: `make lint-ts` + `make coverage-ts` + full gates before squash.
 
-### Wave 16 — Timing-test hardening, unit tier (§3.3, §3.4, §3.6 residue)
-`_feed_after_ready()` Event helper for the 65-site MockSession family (one helper in
-the mock, mechanical migration); `test_session.py:482` gains a positive control
-(assert the feed actually happened before asserting the verdict); the
-`test_collector_run.py` floors move to exact counts on a virtual clock;
-`test_connection_race.py` gains a contention positive-control; `test_console_lock.py`
-asserts the readers reached the churn loop. **Added during Wave 5a (review §4.1's
-first bullet, which no wave had claimed):** `tests/unit/cov/test_anchor.py:193,197,
-202,207,212` — the five parity-only tests (`lazy == batched` is their only assertion,
-so a resolver returning `unverifiable` for everything passes all five) each gain the
-semantic outcome assert for their named scenario alongside parity. **Added during
-Wave 5b:** sweep the pre-existing bare-field `match=` sites that pydantic's
-`input_value=` echo renders blind (see G4's stated residual — test_settings.py:625
-proven by mutation; :632 and test_settings_coverage.py's bare-field matches suspect)
-to the two-halves `(?m)^<loc>\n\s+<reason>` form. **Effort: M.**
+### Wave 16 — Timing-test hardening, unit tier (§3.3, §3.4, §3.6 residue) — DONE
+As landed:
+- `tests/unit/host/_session_feed.py`: `FeedAfterWriteMixin.feed_after_write(*chunks,
+  then=, timeout=)` — the 65-site family's wall-clock feeder ordering replaced by
+  "the session WROTE its next command". Baseline capture is EAGER (the sync outer
+  call), which is load-bearing: run_cmd executes synchronously through _write until
+  it blocks reading, so a lazily-read baseline already includes the write it means
+  to await. Expiry raises a named WaitTimeoutError premise failure. 56 call sites
+  across the four doubles (34 test_session + 5 logging + 6 output_buffering + 11
+  zephyr, AST-verified; some folding multi-chunk feeds — 56 migrated + 9 kept
+  = the 65-site family exactly); drift guard pins all four doubles to the
+  mixin (red at t0 on the three unwired ones). Honest keep-list, commented in
+  place: 3 expect()-only feeds are UNSOLICITED (no write ever happens), 3 recovery
+  feeds order on the SECOND write, 1 monkeypatched hang, 2 cancellation
+  scheduling points.
+- `test_recovery_fails_when_parked_in_repl` (§3.3's headline): the REPL parrot now
+  orders on recovery's own probe write (wait_for_async on the recover marker in
+  `written`) — the old sleep(0.15) echo could miss the 0.3s window leaving `not
+  session.alive` indistinguishable from the no-feed sibling; expiry names the
+  failed premise, and a written-probe assert pins seen-and-rejected.
+- `test_console_lock`: churn premise = mp.Value counter incremented INSIDE the held
+  SHARED lock, waited to ≥4 before the exclusive acquisition (replacing the blind
+  0.3s ramp), plus readers-alive-after assert.
+- `test_connection_race`: `_tracked` entry counter ×5 — `entered == N` before
+  `ready.set()` makes the settle-loop docstring's claim an assert.
+- `test_collector_run`: `_VirtualClock` (parallel-aware: heap of sleepers, driver
+  advances to the EARLIEST wake once runnable tasks settle; the driver yields via
+  a captured REAL asyncio.sleep because patching otto.monitor.collector's
+  asyncio.sleep rebinds the GLOBAL module). Five floors → exact counts (5, 5, 5,
+  (13, 4), 5 — the pre-loop initial collect plus each iteration's CONCURRENT
+  collect, so t=0 collects twice). The slow-host and cadence-concurrency tests
+  stay wall-clock deliberately: mixing a real mock delay with the virtual
+  timeline breaks exactness, and the cadence test's subject IS wall-clock
+  concurrency (its ≥4 floor already rejects the serialized world's exact 3).
+- `test_anchor` parity five: `_assert_parity` returns the lazy result; each test
+  asserts its named scenario's semantic outcome — the two-sided collapse
+  (unverifiable-for-everything) previously passed all five.
+- match= sweep: the 5 bare-field sites (test_settings.py tls_key/tls_cret,
+  test_settings_coverage.py color/max_age/medium) → two-halves
+  `(?m)^<loc>\n\s+<reason>` with empirically captured messages.
+- Lifecycle (W14 residual): elapsed-time force-vs-deadline discriminator (<20s)
+  bracketing the kill→exit window on BOTH force tests — FORCE-HOOK prints on
+  either path and _finish's 60s budget absorbs both, so only time separates
+  them; the 20s ceiling deliberately sits BELOW the 30s recovery deadline
+  because these asserts exist to REJECT the deadline path, not tolerate it.
+- `tests/integration/conftest.py`: cov-tree lane NOTE (W13 fable) — the whole cov
+  integration tree rides M_UNIX by path-stamped marker; embedded needs opt-in.
+- `shell.test.tsx:80`: title dropped its false "with no backend fetches" clause
+  (App unconditionally boot-fetches /api/mode; nothing asserted fetches).
+- Wave 9's ownership note (chaos suppress-around-expect, above): revisit trigger
+  evaluated at this wave's landing — timing hardening stayed in the unit tier
+  and gave no reason to convert it; the note stands unchanged.
+Mutations, all killed by name: settle loop at zero yields → contention premise;
+reader churn crashed at start → ramp premise; helper wait neutered →
+eager-baseline pin; collector interval doubled → exact counts; anchor resolve
+collapsed → 3 semantic asserts red while the 2 genuinely-unverifiable scenarios
+(correctly) stay green; tls validator reworded → two-halves match; second-signal
+force dropped in the product → both lifecycle tests red (~60s run, FORCE-HOOK
+absent on the graceful-at-30s interleaving, the elapsed discriminator naming the
+deadline path); plus the agent's then=-reorder proof on the helper pin.
 
 ### Wave 17 — Test-fixture library build-out (items 16 + §7.4/§7.5 tail; **Effort: M–L**, divisible)
 `tests/_fixtures/gitrepo.py` (hermetic `git_env` + `TmpGitRepo`; migrate 20 files);

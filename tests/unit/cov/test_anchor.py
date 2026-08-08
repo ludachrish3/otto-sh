@@ -183,34 +183,47 @@ class TestBatchedVsLazyParity:
 
     UNRESOLVABLE_BASE = "0" * 40
 
-    def _assert_parity(self, root: Path, fc: CaptureFileCov, relpath: Path = Path("a.c")) -> None:
+    def _assert_parity(self, root: Path, fc: CaptureFileCov, relpath: Path = Path("a.c")):
+        """Parity AND value: returns the lazy result so each test can assert
+        its named scenario's semantic outcome. Parity alone collapses
+        two-sidedly — a defect making BOTH arms return the same wrong
+        AnchorResult (e.g. unverifiable-for-everything) kept all five tests
+        green (review §4.1)."""
         lazy = AnchorResolver(root, self.UNRESOLVABLE_BASE).resolve(relpath, fc)
         batched = AnchorResolver(
             root, self.UNRESOLVABLE_BASE, files={relpath.as_posix(): fc}
         ).resolve(relpath, fc)
         assert lazy == batched
+        return lazy
 
     def test_unchanged_is_verbatim(self, repo):
         root, _base, fc = repo
-        self._assert_parity(root, fc)
+        r = self._assert_parity(root, fc)
+        assert (r.new_relpath, r.hunks, r.verifiable) == (Path("a.c"), [], True)
 
     def test_whitespace_only_is_verbatim(self, repo):
         root, _base, fc = repo
         (root / "a.c").write_text("l1\n    l2\nl3\nl4\n")  # reindent only
-        self._assert_parity(root, fc)
+        r = self._assert_parity(root, fc)
+        assert r.verifiable
+        assert r.hunks == []
 
     def test_modified_yields_same_hunks(self, repo):
         root, _base, fc = repo
         (root / "a.c").write_text("l1\nCHANGED\nl3\nl4\n")
-        self._assert_parity(root, fc)
+        r = self._assert_parity(root, fc)
+        assert r.verifiable
+        assert len(r.hunks) == 1
 
     def test_deleted_current_is_unverifiable(self, repo):
         root, _base, fc = repo
         (root / "a.c").unlink()
-        self._assert_parity(root, fc)
+        r = self._assert_parity(root, fc)
+        assert not r.verifiable
 
     def test_absent_base_blob_is_unverifiable(self, repo):
         root, _base, _fc = repo
         fc = CaptureFileCov(blob="1" * 40, lines={1: 1})
         (root / "a.c").write_text("different\n")
-        self._assert_parity(root, fc)
+        r = self._assert_parity(root, fc)
+        assert not r.verifiable

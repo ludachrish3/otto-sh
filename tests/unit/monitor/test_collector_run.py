@@ -10,8 +10,11 @@ These tests verify that the collection loop:
 
 import asyncio
 import contextlib
-from datetime import timedelta
-from unittest.mock import AsyncMock, MagicMock
+import heapq
+import itertools
+from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -21,6 +24,83 @@ from otto.monitor.parsers import MetricDataPoint, MetricParser, ParseContext
 from otto.monitor.snmp import OID_SYS_UPTIME, SnmpSource
 from otto.result import CommandResult, Results
 from otto.utils import Status
+
+# Bound at import, BEFORE any test patches otto.monitor.collector.asyncio.sleep:
+# that patch target rebinds `sleep` on the GLOBAL asyncio module (the collector
+# holds no private copy), so the driver below must yield through this captured
+# real function or its own settle yields would become virtual sleepers.
+_REAL_SLEEP = asyncio.sleep
+
+
+class _VirtualClock:
+    """Parallel-aware virtual clock for the collector's bucket loops.
+
+    Replaces ``otto.monitor.collector``'s ``asyncio.sleep`` AND its
+    ``datetime.now`` with one shared timeline, so tick counts become exact
+    (review §3.6: knowable 4 ticks were asserted ``>= 2``). Unlike
+    test_utils_wait_for.py's single-consumer FakeClock, this one models
+    CONCURRENT sleepers: each sleeper parks on a heap keyed by wake time and
+    the driver advances ``now`` to the EARLIEST pending wake only once every
+    runnable task has settled — two buckets sleeping 0.05 and 0.2 advance in
+    parallel, not summed. Only tests whose non-sleep awaits are instant may
+    use this (a real mock delay would mix clocks); the slow-host and
+    cadence-concurrency tests below stay wall-clock for exactly that reason.
+    """
+
+    def __init__(self) -> None:
+        self.now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        self._sleepers: list[tuple[datetime, int, asyncio.Event]] = []
+        self._seq = itertools.count()
+
+    def now_fn(self, tz=None):
+        return self.now
+
+    async def sleep(self, secs: float) -> None:
+        ev = asyncio.Event()
+        heapq.heappush(self._sleepers, (self.now + timedelta(seconds=secs), next(self._seq), ev))
+        await ev.wait()
+
+    async def drive(self, coro, *, cancel_at: timedelta | None = None) -> None:
+        """Run *coro* to completion (or cancel once ``now`` reaches
+        *cancel_at* past start), advancing virtual time between settles.
+
+        Check order is load-bearing for exact counts: each pass SETTLES the
+        runnable tasks, then tests cancel_at, then advances — so a wake
+        scheduled exactly at/past cancel_at still collects once before the
+        cancel lands (the per-parser test's 13th fast tick). The 50-yield
+        settle is a heuristic; if it ever under-settles, the symptom is an
+        exact-count mismatch, not a hang."""
+        start = self.now
+        task = asyncio.create_task(coro)
+        try:
+            while not task.done():
+                for _ in range(50):
+                    await _REAL_SLEEP(0)
+                    if task.done():
+                        break
+                if task.done():
+                    break
+                if cancel_at is not None and self.now - start >= cancel_at:
+                    task.cancel()
+                    break
+                if not self._sleepers:
+                    continue
+                wake, _, ev = heapq.heappop(self._sleepers)
+                self.now = max(self.now, wake)
+                ev.set()
+        finally:
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+
+@contextlib.contextmanager
+def _virtual_time():
+    vt = _VirtualClock()
+    with (
+        patch("otto.monitor.collector.asyncio.sleep", new=vt.sleep),
+        patch("otto.monitor.collector.datetime", new=SimpleNamespace(now=vt.now_fn)),
+    ):
+        yield vt
 
 
 class StubParser(MetricParser):
@@ -98,17 +178,23 @@ class TestCollectorRun:
         host_b = _make_mock_host("host_b")
         collector = _build_collector([host_a, host_b])
 
-        await collector.run(
-            interval=timedelta(milliseconds=100),
-            duration=timedelta(milliseconds=350),
-        )
+        with _virtual_time() as vt:
+            await vt.drive(
+                collector.run(
+                    interval=timedelta(milliseconds=100),
+                    duration=timedelta(milliseconds=350),
+                )
+            )
 
         series = collector.get_series()
         assert "host_a/value" in series, f"host_a missing from series: {list(series)}"
         assert "host_b/value" in series, f"host_b missing from series: {list(series)}"
-        # At least initial + 1-2 loop iterations
-        assert len(series["host_a/value"]) >= 2
-        assert len(series["host_b/value"]) >= 2
+        # Exact on the virtual clock: the pre-loop initial collect at t=0,
+        # then each iteration collects CONCURRENTLY with its sleep — at
+        # t=0 (again), 100, 200, 300ms; the 400ms wake fails the duration
+        # check. 5 = 1 + 4.
+        assert len(series["host_a/value"]) == 5
+        assert len(series["host_b/value"]) == 5
 
     @pytest.mark.asyncio
     async def test_slow_host_times_out(self):
@@ -137,14 +223,19 @@ class TestCollectorRun:
         bad = _make_mock_host("bad", fail=True)
         collector = _build_collector([good, bad])
 
-        await collector.run(
-            interval=timedelta(milliseconds=100),
-            duration=timedelta(milliseconds=350),
-        )
+        with _virtual_time() as vt:
+            await vt.drive(
+                collector.run(
+                    interval=timedelta(milliseconds=100),
+                    duration=timedelta(milliseconds=350),
+                )
+            )
 
         series = collector.get_series()
         assert "good/value" in series
-        assert len(series["good/value"]) >= 2
+        # Exact: the bad host's per-tick raise must not eat any good tick
+        # (same 5-tick derivation as test_normal_collection).
+        assert len(series["good/value"]) == 5
         assert "bad/value" not in series
 
     @pytest.mark.asyncio
@@ -153,15 +244,17 @@ class TestCollectorRun:
         host = _make_mock_host("host")
         collector = _build_collector([host])
 
-        start = asyncio.get_running_loop().time()
-        await collector.run(
-            interval=timedelta(milliseconds=50),
-            duration=timedelta(milliseconds=200),
-        )
-        elapsed = asyncio.get_running_loop().time() - start
-
-        # Should finish within a reasonable margin of the duration
-        assert elapsed < 1.0, f"Loop ran for {elapsed:.2f}s, expected ~0.2s"
+        with _virtual_time() as vt:
+            await vt.drive(
+                collector.run(
+                    interval=timedelta(milliseconds=50),
+                    duration=timedelta(milliseconds=200),
+                )
+            )
+        # drive() returned => run() honored its duration on the virtual
+        # timeline; the count pins WHERE it stopped: initial + concurrent
+        # collects at 0/50/100/150ms — the 200ms wake fails the check.
+        assert len(collector.get_series()["host/value"]) == 5
 
     @pytest.mark.asyncio
     async def test_interval_passed_as_timeout_to_run(self):
@@ -269,17 +362,22 @@ async def test_per_parser_interval_buckets_commands():
     parsers = {FastParser.command: FastParser(), SlowParser.command: SlowParser()}
     collector = MetricCollector(targets=[MonitorTarget(host=host, parsers=parsers)])
 
-    task = asyncio.create_task(collector.run(interval=timedelta(seconds=0.2)))
-    await asyncio.sleep(0.55)
-    task.cancel()
-    with contextlib.suppress(asyncio.CancelledError):
-        await task
+    with _virtual_time() as vt:
+        await vt.drive(
+            collector.run(interval=timedelta(seconds=0.2)),
+            cancel_at=timedelta(seconds=0.54),
+        )
 
     batches = _batches_from(host)
     fast_calls = sum(1 for b in batches if b == ["echo fast"])
     slow_calls = sum(1 for b in batches if "echo slow" in b)
-    # ~11 fast ticks vs ~3 slow ticks in 0.55s; assert the ratio loosely (CI jitter)
-    assert fast_calls >= 2 * slow_calls
+    # Exact on the virtual clock (cancel at 0.54s, off any tick boundary):
+    # fast 13 = initial@0 + iteration collects at 0, .05...50 (11) + one at
+    # .55 — that last exists because drive() settles/advances BEFORE testing
+    # cancel_at (see drive's docstring); reordering that check makes this 12.
+    # slow 4 = initial@0 + iteration collects at 0, 0.2, 0.4.
+    # The old 2x-ratio floor passed even with the fast bucket at HALF rate.
+    assert (fast_calls, slow_calls) == (13, 4)
     assert all(b == ["echo fast"] or "echo fast" not in b for b in batches), (
         "fast command must never ride the slow batch"
     )
@@ -321,16 +419,23 @@ class TestSnmpCollection:
         host, target = self._make_snmp_target("sprout", client)
         collector = MetricCollector(targets=[target])
 
-        await collector.run(
-            interval=timedelta(milliseconds=100),
-            duration=timedelta(milliseconds=350),
-        )
+        with _virtual_time() as vt:
+            await vt.drive(
+                collector.run(
+                    interval=timedelta(milliseconds=100),
+                    duration=timedelta(milliseconds=350),
+                )
+            )
 
         series = collector.get_series()
         # sysUpTime (1/100 s) scaled to seconds by the descriptor: 12345 -> 123.45
         assert "sprout/Uptime" in series, f"series: {list(series)}"
         assert series["sprout/Uptime"][0].value == 123.45
-        assert client.calls >= 2  # initial + at least one loop tick
+        # Exact: initial + concurrent collects at 0/100/200/300ms. NB each
+        # SNMP tick still rides a REAL 100ms asyncio.wait_for inside the
+        # collector (wall clock, not virtualized): a >100ms stall there
+        # drops a tick and reds this count — accepted, it names a real stall.
+        assert client.calls == 5
         host.run.assert_not_called()  # no shell, no core-count probe
 
     @pytest.mark.asyncio

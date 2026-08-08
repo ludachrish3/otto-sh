@@ -229,11 +229,25 @@ def test_second_signal_forces_immediately(tmp_path):
         _wait_line(child, "PHASE-START")
         os.kill(child.pid, signal.SIGINT)
         _wait_line(child, "TEARDOWN-START")
+        t_second = time.monotonic()
         os.kill(child.pid, signal.SIGINT)
         rc, out = _finish(child)
+    elapsed = time.monotonic() - t_second
     assert rc == 130
     assert "FORCE-HOOK" in out
     assert "PHASE-EXITED" not in out
+    # The discriminator behind "immediately": FORCE-HOOK is printed on BOTH
+    # the second-signal force path and the 30s deadline-expiry path, and
+    # _finish's 60s budget (deliberately > the deadline, per its comment)
+    # would absorb either. Only elapsed time separates them: the force path
+    # is handler-speed (~ms), the deadline path cannot finish before 30s.
+    # 20s leaves load margin on this VM while sitting well under 30s. This
+    # ceiling is deliberately BELOW the product's recovery deadline — the
+    # W14 rule (a harness bound must outlast it) applies to budgets that
+    # must TOLERATE the documented path; this assert exists to REJECT it.
+    assert elapsed < 20.0, (
+        f"forced exit took {elapsed:.1f}s — deadline path, not the second-signal force"
+    )
 
 
 def test_mixed_signal_pair_forces_regardless_of_order(tmp_path):
@@ -252,12 +266,19 @@ def test_mixed_signal_pair_forces_regardless_of_order(tmp_path):
     """
     with _spawned(tmp_path, "double") as child:
         _wait_line(child, "PHASE-START")
+        t_kill = time.monotonic()
         os.kill(child.pid, signal.SIGTERM)
         os.kill(child.pid, signal.SIGINT)  # immediately — no marker wait between them
         rc, out = _finish(child)
+    elapsed = time.monotonic() - t_kill
     assert rc in (130, 143), f"expected 128+signum of either signal, got {rc}"
     assert "FORCE-HOOK" in out
     assert "PHASE-EXITED" not in out
+    # W14 residual, closed: the docstring's "only the force path can produce
+    # FORCE-HOOK ... in time" was argument, not measurement — _finish's 60s
+    # budget would have absorbed a 30s deadline-expiry run indistinguishably.
+    # Same 20s rationale as test_second_signal_forces_immediately.
+    assert elapsed < 20.0, f"exit took {elapsed:.1f}s — deadline path, not the mixed-signal force"
 
 
 def test_silent_child_is_a_named_failure_within_budget(tmp_path):
