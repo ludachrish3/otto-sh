@@ -40,3 +40,21 @@ updates:
         patterns:
           - "tailwindcss"
           - "@tailwindcss/*"
+      # The react-aria family ships lockstep releases that all depend on the
+      # same @internationalized/date. Bumping one alone leaves our direct
+      # @internationalized/date pin behind, so npm installs a SECOND nested
+      # copy — and CalendarDate/CalendarDateTime declare `#private`, which
+      # makes them nominally typed. Two structurally identical copies are then
+      # mutually unassignable, and tsc fails with "Type 'CalendarDateTime' is
+      # not assignable to type 'DateValue'" (run 31254709238: 9 errors that
+      # took out check-ts, docs and all three dashboard-e2e legs, since every
+      # one of them runs `make web`). tailwindcss-react-aria-components is
+      # deliberately NOT listed: it is a Tailwind plugin on its own cadence.
+      react-aria:
+        patterns:
+          - "react-aria"
+          - "react-aria-components"
+          - "react-stately"
+          - "@react-aria/*"
+          - "@react-stately/*"
+          - "@internationalized/*"
