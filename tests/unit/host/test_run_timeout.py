@@ -165,16 +165,80 @@ class TestRunTimeoutIntegration:
 
     @pytest.mark.asyncio
     async def test_surplus_time_donated_to_later_commands(self):
-        """Fast early commands leave enough budget for a slightly slow later one."""
+        """Donation survives the real path: the last command is GRANTED the surplus.
+
+        Asserts the allocation, not the race. The earlier shape ran a real
+        ``sleep 0.1`` against a 0.5s budget and asserted only that everything
+        succeeded, which was wrong in both directions: it false-failed on a
+        loaded CI runner (the granted budget there was 99.2% of the 0.5s —
+        donation had worked; the machine just needed more than 0.4s to
+        fork+exec a sleep), and it could not fail on the regression it names,
+        because an even split still grants 0.5/3 = 0.167s and ``sleep 0.1``
+        finishes inside that.
+
+        The budget handed to each command IS the observable property, so spy
+        the seam that receives it. ``_run_one`` still runs for real — real
+        shell, real fork+exec, real output — and the generous budget makes the
+        sleep a 100x margin instead of a 4.8x race.
+
+        Neither assertion below is a wall-clock bound, which is the point: a
+        first cut asserted ``granted[2] > budget - 1.0``, and that is the old
+        defect in miniature — it fails iff the first two commands burn a whole
+        second, roughly a 7x margin on a cold worker whose first subprocess
+        spawn lands here, against the 4.8x inflation that produced the
+        original flake. The two that replaced it are load-INVARIANT and
+        load-SAFE respectively, and both are needed: each catches a regression
+        the other misses (see the comments at each).
+
+        Scope: this observes ALLOCATION only. That ``_run_one`` then honours
+        the timeout it was handed is a different property, pinned by
+        ``test_slow_command_times_out_and_session_recovers`` and
+        ``test_reap_is_bounded_when_process_ignores_sigterm``; the per-command
+        ``min(sc.timeout, remaining)`` cap is pinned in test_shell_command.py.
+        Don't delete those thinking this test subsumes them.
+        """
+        budget = 10.0
         host = LocalHost()
+        loop = asyncio.get_running_loop()
+        granted: list[tuple[float, float]] = []
+        run_one = host._run_one
+
+        async def spy(cmd, **kwargs):
+            # Delegates rather than substitutes (unlike the AsyncMock doubles
+            # above) — the point is to observe the real path, not replace it.
+            granted.append((loop.time(), kwargs["timeout"]))
+            return await run_one(cmd, **kwargs)
+
         try:
-            # 0.5s total budget: two instant commands + one 0.1s sleep.
-            # The point is that the later command gets nearly the full 0.5s
-            # budget (donation), not just an even-split 0.17s slice.
-            result = await host.run(
-                ["echo fast1", "echo fast2", "sleep 0.1 && echo done"],
-                timeout=0.5,
-            )
+            with patch.object(host, "_run_one", new=spy):
+                result = await host.run(
+                    ["echo fast1", "echo fast2", "sleep 0.1 && echo done"],
+                    timeout=budget,
+                )
+
+            assert len(granted) == 3
+            # Donation, stated exactly: each command is granted whatever is
+            # LEFT of the shared budget. An even split grants budget/3 and is
+            # red here. Load-INVARIANT, not merely tolerant — a slower machine
+            # moves the observed clock and the expected grant together, so the
+            # margin never erodes. The tolerance covers only the microseconds
+            # between the product reading the clock and this spy reading it
+            # (no await separates them), not machine speed.
+            first_clock, _ = granted[0]
+            for clock, grant in granted:
+                expected = budget - (clock - first_clock)
+                assert grant == pytest.approx(expected, abs=0.1), (
+                    f"grant {grant} is not the remaining budget {expected} "
+                    f"— donation regressed (an even split would grant {budget / 3})"
+                )
+            # ...and the deadline is real, so the grants strictly SHRINK. This
+            # is the one the check above cannot make: grants that ignore
+            # elapsed time entirely (all three == budget) sit inside the
+            # tolerance whenever the commands are fast. Load-SAFE: it needs
+            # time to advance, not work to finish inside a bound, so load
+            # makes it more true rather than less.
+            assert granted[0][1] > granted[1][1] > granted[2][1]
+
             assert result.status == Status.Success
             assert len(result) == 3
             assert all(r.status == Status.Success for r in result)
@@ -557,8 +621,15 @@ class TestExecBoundsTheWholeCommand:
             assert result.status == Status.Error
             assert result.timed_out is True
             assert "timed out" in result.value.lower()
-            # Prompt: well under the outer 5.0s bound, not just barely inside it.
-            assert elapsed < 2.0, f"expected a prompt timeout, took {elapsed:.2f}s"
+            # Prompt: well under the outer 5.0s bound, not just barely inside
+            # it. This IS a real-work-completes-in-time bound (the reap costs
+            # ~0.3s here), so it is deliberately loose: it only has to separate
+            # the inner 0.2s timeout from the outer 5.0s wait_for, and 4.0
+            # does that with ~13x headroom where 2.0 left ~6.5x — thinner than
+            # the margin that flaked test_surplus_time_donated_to_later_commands
+            # on a loaded runner. Discrimination is unchanged: anything at or
+            # above 5.0 would be the outer bound firing, not the inner one.
+            assert elapsed < 4.0, f"expected a prompt timeout, took {elapsed:.2f}s"
         finally:
             for proc in spawned:
                 if proc.returncode is None:
