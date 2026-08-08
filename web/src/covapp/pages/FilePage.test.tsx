@@ -423,8 +423,12 @@ describe("FilePage", () => {
     mockChunkLoad({ resolve: makeChunk() });
     renderPage({ index: makeFileIndex(), segments: ["src", "net", "tcp.c"], node: NODE });
     const row1 = await screen.findByTestId("code-row-1");
-    expect(row1.textContent).toContain("5"); // system hit count
-    expect(row1.textContent).toContain("·"); // unit column, zero
+    // Positional, exact cells — whole-row toContain("5") was satisfiable by
+    // the line number or source text too (gate no-bare-digit-textcontent).
+    // Row DOM: [0] ticket gutter, [1] num, [2] tier:system, [3] tier:unit,
+    // [4] branches, [5] source, [6] expander.
+    expect(row1.children[2]?.textContent).toBe("5"); // system hit count
+    expect(row1.children[3]?.textContent).toBe("·"); // unit column, zero
 
     const row2 = screen.getByTestId("code-row-2");
     // both tier columns zero on row 2
@@ -506,7 +510,7 @@ describe("FilePage", () => {
 
     const row1 = await screen.findByTestId("code-row-1");
     expect(within(row1).queryByTestId("hit-asserted")).toBeNull();
-    expect(row1.textContent).toContain("5");
+    expect(row1.children[2]?.textContent).toBe("5"); // plain system count, no pill
   });
 
   it("expanding an asserted line shows the override reason", async () => {
@@ -603,8 +607,10 @@ describe("FilePage", () => {
     expect(allRow.textContent).toContain("40.0%");
 
     const meta = screen.getByTestId("page-meta");
-    expect(meta.textContent).toContain("5");
-    expect(meta.textContent).toContain("2");
+    // Labelled fragments — the same line renders the timestamp and version,
+    // which contain every bare digit (gate no-bare-digit-textcontent).
+    expect(meta.textContent).toMatch(/^5 lines/);
+    expect(meta.textContent).toContain("· 2 covered");
     expect(meta.textContent).toContain("2026-07-25 14:02 UTC");
     expect(meta.textContent).toContain("0.7.5");
   });
@@ -673,8 +679,8 @@ describe("FilePage", () => {
     await waitFor(() => expect(appendSpy).toHaveBeenCalledTimes(1));
     window.__OTTO_COV_FILE__?.(makeChunk());
 
-    await screen.findByTestId("code-row-1");
-    expect(screen.getByTestId("code-row-1").textContent).toContain("5");
+    const row1 = await screen.findByTestId("code-row-1");
+    expect(row1.children[2]?.textContent).toBe("5"); // system hit count
   });
 
   describe("under focus", () => {
@@ -718,7 +724,7 @@ describe("FilePage", () => {
     it("hit-count cells: the focused context's tier column sums member-run hits", async () => {
       renderFocused("nightly-full");
       const row1 = await screen.findByTestId("code-row-1");
-      expect(row1.textContent).toContain("5");
+      expect(row1.children[2]?.textContent).toBe("5"); // focused tier (system) member-run sum
     });
 
     it("hit-count cells: a non-member-run hit line shows '·' in every tier column", async () => {
@@ -751,7 +757,7 @@ describe("FilePage", () => {
       renderFocused("nightly-full");
       await screen.findByTestId("code-row-1");
       const meta = screen.getByTestId("page-meta");
-      expect(meta.textContent).toContain("2"); // unfocused "all tiers" covered count (2/5)
+      expect(meta.textContent).toContain("· 2 covered"); // unfocused "all tiers" count (2/5)
     });
 
     it("shows the app-bar focus chip while focused", async () => {

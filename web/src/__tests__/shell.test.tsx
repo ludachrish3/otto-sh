@@ -80,17 +80,15 @@ describe("App shell", () => {
   it("boots to the empty review state with no backend fetches", () => {
     render(<App />);
     expect(screen.getByTestId("empty-review")).toBeTruthy();
-    expect(screen.queryByTestId("status-text")).toBeNull();
   });
 
-  it("renders no status text or dot in any mode (spec decision 9)", async () => {
-    render(<App />);
-    expect(screen.queryByTestId("status-text")).toBeNull();
-    expect(screen.queryByTestId("status-dot")).toBeNull();
-    await importMinimal();
-    expect(screen.queryByTestId("status-text")).toBeNull();
-    expect(screen.queryByTestId("status-dot")).toBeNull();
-  });
+  // There is deliberately no "renders no status text or dot" test here. Those
+  // testids (spec decision 9) have never existed in this codebase — absence
+  // assertions on ids nothing renders are green against every possible
+  // product, which is exactly the shape testid_integrity.test.ts now rejects.
+  // The decision's real pins: ReconnectingBanner is the connection state's
+  // ONE render site (reconnectingbanner.test.tsx, all three connection arms),
+  // and loaded-historical chrome is the ReviewBar (importMinimal above).
 
   it("imports a fixture through the hidden input", async () => {
     render(<App />);

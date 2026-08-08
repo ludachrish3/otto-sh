@@ -25,7 +25,7 @@ on that side.
 | Type checking | `ty` (pinned `==0.0.64`) | `tsc --noEmit` via `scripts/typecheck_web.sh` (vendored Untitled UI diagnostics filtered) |
 | Unused code / deps | ruff (`F401`, `ARG`, …) | `knip` — unused files, exports, dependencies |
 | Module layering | `tach` against `tach.toml` | — none today |
-| Scoped pattern rules | `ast-grep` against `.ast-grep/rules/` — sixteen Python rules | `ast-grep` — two rules (`no-plan-coordinates-ts`, `-tsx`), scoped to `web/src/**` |
+| Scoped pattern rules | `ast-grep` against `.ast-grep/rules/` — sixteen Python rules | `ast-grep` — four rules (`no-plan-coordinates-ts`/`-tsx` over `web/src/**`, `no-bare-digit-textcontent-ts`/`-tsx` over web test files) |
 | Import cost | `scripts/import_budget.py` — module-count caps, snapshots, denylist | — (knip covers dependencies only) |
 | Tests | `pytest` (+ `xdist`, `repeat`, `hypothesis`) | `vitest` |
 | Coverage floor | `coverage.py` / `pytest-cov` — 95 for the full local run, 90 for the hostless CI slice | `@vitest/coverage-v8` for the unit floor; the browser leg is folded in by `monocart-coverage-reports` and the merged report gated by `nyc` |
@@ -51,7 +51,7 @@ every comment, converting a documented debt list into a blessed one.
 
 ### The ast-grep rules
 
-`.ast-grep/rules/` holds eighteen rules — seventeen at `severity: error`,
+`.ast-grep/rules/` holds twenty rules — nineteen at `severity: error`,
 plus one deliberate `severity: warning` review prompt
 (`no-awaited-close-in-finally`, below). The scan roots
 are `src/otto web/src tests` — tests/ joined in the test-infra remediation
@@ -68,6 +68,7 @@ fixture SUT repos (`tests/repo1..repo3`, `repo_broken`, `repo_e2e`) and
 | `models-no-module-scope-config-import` | `src/otto/models/**` |
 | `no-awaited-close-in-finally` | `src/otto/**` — the one `severity: warning` rule, BY DESIGN never promoted: a `.close()` in a `finally` is either cleanup (wrap it in `teardown_step`) or the operation's own completion (leave it and say so at the site), and only a reviewer can tell which; the landing triage wrapped eight sites and recorded one legitimate (`RemoteHost.close`'s transport chain, whose loud-failure contract the close-chain sweep pins — it carries the rule's one `ast-grep-ignore`) |
 | `no-awaited-exec-in-finally` | `src/otto/**` — a bare `finally:` awaiting a remote command replaces the body's real exception with transport noise (the docker staging `rm -rf` pair was the motivating shape); "bare" is literal: an await under any `with` inside the finally is exempt, because the sanctioned fix IS `teardown_step`'s with-wrapper |
+| `no-bare-digit-textcontent-ts` / `no-bare-digit-textcontent-tsx` | `web/src/**/*.test.ts` / `web/src/**/*.test.tsx` — `expect($A).toContain("<entirely 1-2 digits>")` is unconditionally true against text that also embeds a timestamp, version, or line number (17 sites at adoption, every one satisfiable by incidental digits in the same node — the page-meta's `generated_at`, a line number, or a percentage); assert the labelled fragment ("4 contexts") or an exact `toBe` on the addressed cell. Split in two because a `tsx` rule never sees `.ts` files; the receiver is ANY expression because offenders bind `textContent` to a variable first |
 | `no-bare-runtimeerror-in-libraries` | `src/otto/link/**`, `src/otto/tunnel/**`, `src/otto/docker/**`, `src/otto/host/transfer/**` — four packages signalled unreachable-host, command-failed and structural-refusal through one stdlib type, so no consumer could tell them apart; 37 sites converted to `otto.host.errors`' pair, package domain classes, or `ValueError` in the wave that landed the rule |
 | `no-bare-status-return` | `src/otto/**` |
 | `no-handrolled-deadline-poll` | `src/otto/**` + `tests/**` minus fixture repos — poll-until-deadline grew 21 copies in three incompatible shapes with divergent expiry behavior; `otto.utils.wait_for` / `wait_for_async` is the one spelling, and expiry always raises (silent expiry is the defect class); `src/otto/host/shell_liveness.py` is ignored as the sanctioned fused probe-response primitive |

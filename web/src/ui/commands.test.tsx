@@ -97,8 +97,10 @@ describe("useCommands — review/import mode", () => {
     act(() => {
       useUiStore.setState({ theme: "dark" });
     });
-    const { result: r2 } = renderHook(() => useCommands());
-    expect(r2.current.find((c) => c.id === "action-theme")?.label).toBe("Switch to light mode");
+    // The SAME rendered hook must relabel — a second renderHook would mount
+    // fresh and stay green even if useCommands memoized over a stale theme
+    // (e.g. `theme` dropped from its dependency list).
+    expect(result.current.find((c) => c.id === "action-theme")?.label).toBe("Switch to light mode");
   });
 
   it("binds no keyboard shortcut to the theme toggle (Cmd+L removed)", () => {
@@ -178,8 +180,8 @@ describe("useCommands — marking rows (Plan 5c)", () => {
     act(() => {
       useUiStore.setState({ openSpan: { sessionId: "other-session", eventId: 3 } });
     });
-    const { result: r2 } = renderHook(() => useCommands());
-    expect(r2.current.find((c) => c.id === "action-end-span")?.enabled).toBe(false);
+    // Same rendered hook, not a remount — see the theme-label test above.
+    expect(result.current.find((c) => c.id === "action-end-span")?.enabled).toBe(false);
   });
 
   it("editable + review mode: only action-add-event/action-sweep-span appear", () => {

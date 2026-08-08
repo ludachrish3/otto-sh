@@ -1,0 +1,44 @@
+id: no-bare-digit-textcontent-tsx
+language: tsx
+severity: error
+message: toContain on a string that is nothing but 1-2 digits. Rendered text routinely embeds incidental digits (timestamps, versions, line numbers), so this passes for the wrong reason. Assert a labelled fragment ("4 contexts") or an exact value on a targeted cell/testid instead.
+note: >
+  The defect class this bans (todo/test-infra-remediation-plan-2026-08-06.md,
+  gate G14): `expect(meta).toContain("4")` where `meta` is a page-meta
+  textContent that ALSO renders "report generated 2026-07-23 14:02 UTC" and
+  "otto 0.7.5". Every 1-2 digit string is a substring of some timestamp,
+  version, or line-number fragment in the same node, so the assertion is
+  unconditionally true — the count it means to pin can drift to any value
+  (or vanish) without a red. At adoption, all 17 matches across five suites
+  (four covapp pages plus ui/CodeView) were this shape; the sweep converted
+  each to the fragment its component actually labels ("4 contexts",
+  "2 covered files", "5 lines") or to an exact `toBe` on the addressed cell
+  (`row.children[2]`), both of which this rule deliberately does not match.
+
+  The receiver is $A, ANY expression — not `$EL.textContent` — because 3 of
+  the 17 offenders bound the text first
+  (`const meta = getByTestId("page-meta").textContent ?? ""`), and a
+  receiver-shaped pattern is a gate that permanently cannot fire over the
+  variable-bound form. An anchored constraint makes the width safe: a string that is
+  ENTIRELY 1-2 digits has no legitimate toContain use this repo has found —
+  fractions ("8/10"), labelled counts ("2 stale"), and 3+ digit values
+  ("118 credits revoked") all fall outside the constraint.
+
+  Known blind spots, accepted: 3+ digit bare strings (materially less
+  collision-prone; anchoring at {1,2} keeps the rule free of judgment
+  calls), `.not.toContain("4")` (a different, negative-pin class), and a
+  digit string bound to a variable before the toContain
+  (`toContain(FOUR)`) — the same variable-indirection hole every literal
+  constraint has; nothing in the tree does this today.
+
+  Split -tsx/-ts for the same reason as no-plan-coordinates-*: `language:
+  tsx` matches .tsx files ONLY, and a rule that never sees .ts test files
+  is a gate that cannot fire over part of its subject matter. Keep both
+  patterns identical.
+files:
+- web/src/**/*.test.tsx
+rule:
+  pattern: expect($A).toContain($S)
+constraints:
+  S:
+    regex: '^["''`]\d{1,2}["''`]$'

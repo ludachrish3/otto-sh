@@ -133,7 +133,10 @@ describe("DirectoryPage", () => {
 
     expect(screen.getByText("acme-fw", { selector: "h1" })).toBeTruthy();
     const meta = screen.getByTestId("page-meta").textContent ?? "";
-    expect(meta).toContain("2"); // main.c + util.c, recursive
+    // Labelled fragment, not a bare digit: this meta line also renders the
+    // generated_at timestamp, whose "2026" satisfied the old `toContain("2")`
+    // unconditionally — gate no-bare-digit-textcontent.
+    expect(meta).toMatch(/^2 covered files/); // main.c + util.c, recursive
     expect(meta).toContain(index.generated_at);
     expect(meta).toContain(index.otto_version);
 
@@ -200,7 +203,7 @@ describe("DirectoryPage", () => {
     const index = buildIndex();
     const { unmount } = renderPage({ index, segments: [] });
     const disclosure = screen.getByTestId("runs-disclosure");
-    expect(disclosure.textContent).toContain("2"); // run count
+    expect(disclosure.textContent).toContain("Runs & captures (2)"); // titled run count
     const toggle = within(disclosure).getByRole("button");
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
     unmount();

@@ -1,0 +1,17 @@
+id: no-bare-digit-textcontent-ts
+language: typescript
+severity: error
+message: toContain on a string that is nothing but 1-2 digits. Rendered text routinely embeds incidental digits (timestamps, versions, line numbers), so this passes for the wrong reason. Assert a labelled fragment ("4 contexts") or an exact value on a targeted cell/testid instead.
+note: >
+  The .ts half of no-bare-digit-textcontent-tsx — see that rule's note for
+  the defect class, the any-receiver rationale, and the accepted blind
+  spots. It is split in two because ast-grep's `language: tsx` matches .tsx
+  files ONLY; .ts test files (data-layer suites like seriestree.test.ts)
+  would otherwise sit outside the gate. Keep both patterns identical.
+files:
+- web/src/**/*.test.ts
+rule:
+  pattern: expect($A).toContain($S)
+constraints:
+  S:
+    regex: '^["''`]\d{1,2}["''`]$'

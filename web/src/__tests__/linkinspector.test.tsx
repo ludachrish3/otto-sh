@@ -14,7 +14,13 @@ const link: LinkSnapshot = {
     { host: "db-01", interface: "eth0", ip: "10.20.3.31" },
   ],
   protocol: "udp",
-  provenance: "declared",
+  // "implicit", NOT "declared": the inspector renders
+  // `primary.provenance ?? "declared"`, so a "declared" fixture cannot tell
+  // the field read from the fallback (a mutant that drops the read entirely
+  // stays green). "implicit" is the union's only other member, and it also
+  // differs from BASE_EDGE.provenance below — so the assertion additionally
+  // pins that the LINK's field is read, not the edge's.
+  provenance: "implicit",
   name: "metrics-udp",
   impair: "edge-gw",
 };
@@ -58,7 +64,7 @@ describe("LinkInspector", () => {
     const panel = await screen.findByTestId("link-inspector");
     expect(panel.textContent).toContain("metrics-udp");
     expect(screen.getByTestId("inspector-protocol").textContent).toContain("udp");
-    expect(screen.getByTestId("inspector-provenance").textContent).toContain("declared");
+    expect(screen.getByTestId("inspector-provenance").textContent).toContain("implicit");
     expect(screen.getByTestId("inspector-endpoints").textContent).toContain("workers_w3");
     expect(screen.getByTestId("inspector-endpoints").textContent).toContain("10.20.3.31");
     expect(screen.getByTestId("inspector-impair").textContent).toContain("edge-gw");
@@ -75,6 +81,16 @@ describe("LinkInspector", () => {
     expect(panel.className).not.toContain("absolute");
     expect(panel.className).not.toContain("fixed");
     expect(panel.className).toContain("shrink-0");
+  });
+
+  it("falls back to 'declared' when the link carries no provenance", async () => {
+    // The other arm of `primary.provenance ?? "declared"`. Under
+    // exactOptionalPropertyTypes "no provenance" must be an ABSENT key,
+    // hence the rest-destructure rather than `provenance: undefined`.
+    const { provenance: _omitted, ...bare } = link;
+    render(<LinkInspector edge={edgeWith({ link: bare })} onClose={vi.fn()} />);
+    await screen.findByTestId("link-inspector");
+    expect(screen.getByTestId("inspector-provenance").textContent).toContain("declared");
   });
 
   it("renders nothing when no edge is selected", () => {

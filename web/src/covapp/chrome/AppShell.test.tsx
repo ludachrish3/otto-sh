@@ -264,8 +264,17 @@ describe("AppShell", () => {
       renderShell();
       expect(screen.getByTestId("ticket-search")).toBeTruthy();
       await user.click(screen.getByTestId("appbar-menu"));
-      expect(screen.queryByTestId("menu-ticket-all")).toBeNull();
-      expect(screen.queryByTestId("menu-ticket-PROJ-1")).toBeNull();
+      // findByRole proves the menu actually opened; the absence pin is
+      // TEXT-level inside it. The old form queried `menu-ticket-*` testids
+      // that nothing has rendered since this 5c change — a phantom-id absence
+      // check passes against any product, including one that regrew the flat
+      // ticket list under a new id (testid_integrity.test.ts bans the shape).
+      // No row text may mention either fixture ticket, whatever its testid.
+      // (Known limit: within(menu) sees the role="menu" subtree only — a
+      // regrowth as a react-aria SubmenuTrigger renders its own portal
+      // outside this element and would evade the pin.)
+      const menu = await screen.findByRole("menu");
+      expect(within(menu).queryByText(/PROJ-/)).toBeNull();
     });
 
     it("the search box sits before the ⋮ menu in the app bar", () => {

@@ -133,9 +133,11 @@ describe("RunsPage", () => {
     expect(screen.getByTestId("run-row-smoke-2025")).toBeTruthy();
 
     const meta = screen.getByTestId("page-meta").textContent ?? "";
-    expect(meta).toContain("4"); // 4 distinct labels -> 4 contexts
-    // distinct hosts: router-a, router-b, ci-01, bench-3, bench-2 = 5
-    expect(meta).toContain("5");
+    // Labelled fragments, not bare digits: this meta line also renders the
+    // generated_at timestamp, so `toContain("4")` was unconditionally true
+    // ("14:02" contains a 4) — gate no-bare-digit-textcontent.
+    expect(meta).toMatch(/^4 contexts/); // 4 distinct labels; ^ closes the left edge (14 must fail)
+    expect(meta).toContain("· 5 hosts"); // router-a, router-b, ci-01, bench-3, bench-2
     expect(meta).toContain("2026-07-23 14:02 UTC");
   });
 
@@ -161,7 +163,7 @@ describe("RunsPage", () => {
   it("renders 0 contexts, no rows, without crashing when payload.runs is empty", () => {
     const index = buildIndex({ runs: [], run_contrib: {} });
     renderPage(index);
-    expect(screen.getByTestId("page-meta").textContent).toContain("0");
+    expect(screen.getByTestId("page-meta").textContent).toMatch(/^0 contexts/);
     expect(screen.queryByTestId("run-row-nightly-full")).toBeNull();
   });
 

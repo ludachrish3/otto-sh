@@ -34,6 +34,11 @@ describe("buildSeriesTree — host subject", () => {
         expect(chart.series[i].slot).toBe(i);
       }
     }
+    // Anti-vacuity: every host-subject chart here is single-series, so the
+    // loop above alone only ever checks slot 0 === 0. The element tree's cpu
+    // chart is the multi-series case that gives slots real teeth.
+    const cpu = buildSeriesTree(kitchen, "chassis-a").find((c) => c.chartKey === "cpu");
+    expect(cpu?.series.map((s) => s.slot)).toEqual([0, 1, 2]);
   });
 });
 
@@ -77,9 +82,14 @@ describe("filterTree + sourcesIn", () => {
   });
 
   it("filtering preserves original slots (no repaint)", () => {
-    const psu = filterTree(tree, { search: "psu", chips: null, source: null })[0];
-    const original = tree.find((c) => c.chartKey === "psu-temp");
-    expect(psu.series[0].slot).toBe(original?.series[0].slot);
+    // A filter that repaints slots from 0 would still pass a single-series
+    // comparison (0 === 0, the old psu-temp form) — proving no-repaint needs
+    // a surviving series whose original slot is NONZERO. In the element
+    // tree's 3-series cpu chart, "sup" keeps only chassis-a_sup, slot 2.
+    const elementTree = buildSeriesTree(kitchen, "chassis-a");
+    const hit = filterTree(elementTree, { search: "sup", chips: null, source: null });
+    const cpu = hit.find((c) => c.chartKey === "cpu");
+    expect(cpu?.series.map((s) => [s.host, s.slot])).toEqual([["chassis-a_sup", 2]]);
   });
 
   it("sourcesIn lists distinct external sources", () => {

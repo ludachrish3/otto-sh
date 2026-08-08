@@ -16,6 +16,16 @@ describe("ReconnectingBanner", () => {
     expect(screen.getByTestId("reconnecting-banner").textContent).toContain("Reconnecting…");
   });
 
+  it("also renders while live is still CONNECTING — the store-default and reconnect-in-progress state", () => {
+    // The banner's condition is "live mode and not connection === 'live'";
+    // without this arm, a regression to "only when disconnected" (hiding the
+    // banner during the initial connect and every reconnect attempt) passes
+    // the other two tests.
+    useReviewStore.setState({ mode: "live", connection: "connecting" });
+    render(<ReconnectingBanner />);
+    expect(screen.getByTestId("reconnecting-banner").textContent).toContain("Reconnecting…");
+  });
+
   it("disappears when the connection recovers", () => {
     useReviewStore.setState({ mode: "live", connection: "live" });
     render(<ReconnectingBanner />);

@@ -5,10 +5,16 @@ import { useReviewStore } from "../data/reviewStore";
 
 let healthRenders = 0;
 let chartRenders = 0;
+let nullRenders = 0;
 
 function HealthTile() {
   useNow(5000); // subscribes to the clock
   healthRenders++;
+  return null;
+}
+function NullTile() {
+  useNow(null); // subscribes, but an unknown interval must never schedule
+  nullRenders++;
   return null;
 }
 function ChartPanel() {
@@ -27,6 +33,7 @@ describe("useNow", () => {
     vi.useFakeTimers();
     healthRenders = 0;
     chartRenders = 0;
+    nullRenders = 0;
   });
   afterEach(() => vi.useRealTimers());
 
@@ -53,8 +60,14 @@ describe("useNow", () => {
   });
 
   it("does not tick at all when the interval is unknown", () => {
-    render(<HealthTile />);
-    // (rendered with 5000 above; a null interval must simply never schedule)
-    expect(() => act(() => void vi.advanceTimersByTime(60_000))).not.toThrow();
+    // Drives the null branch DIRECTLY — the old form rendered a 5000ms tile
+    // (the null arm never ran) and asserted only not.toThrow(), which
+    // advancing timers cannot do. If useNow(null) ever schedules — e.g. the
+    // guard is dropped and setInterval(fn, null) fires at ~0ms cadence —
+    // 60s of fake time produces a flood of ticks and re-renders.
+    render(<NullTile />);
+    expect(nullRenders).toBe(1);
+    act(() => void vi.advanceTimersByTime(60_000));
+    expect(nullRenders).toBe(1); // still exactly the mount render
   });
 });

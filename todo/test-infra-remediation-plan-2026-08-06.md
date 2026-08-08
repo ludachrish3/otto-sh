@@ -480,32 +480,46 @@ contradict a written rationale. The drift check is decoupled from collection ins
 **Red today:** 3 addopts sites + a CI-blind drift guard. **Landing:** Wave 0 (small,
 self-contained, immediately testable).
 
-### G14. Web: a queried testid must exist in the source; no bare-digit textContent asserts
+### G14. Web: a queried testid must exist in the source; no bare-digit textContent asserts — LANDED (Wave 15)
 
 **Policy:** an absence assertion against a testid nothing renders is permanently green;
 a `toContain("2")` against text containing a timestamp is unconditionally true.
-**Mechanism:**
-1. New vitest meta-test `web/src/__tests__/testid_integrity.test.ts`: glob all test
-   files, extract literals passed to `getByTestId`/`queryByTestId`/`findByTestId`
-   (regex over source is fine here — it *should* also see quoted/commented ids? No:
-   parse only call-argument literals), assert each appears as `data-testid=` (or
-   `data-testid={`…) somewhere under `web/src` excluding test files. Positive control:
-   an inline source snippet querying `definitely-not-rendered` must be flagged by the
-   extractor.
-2. `.ast-grep/rules/no-bare-digit-textcontent.yml` (language: typescript,
-   `files: [web/src/**/*.test.ts, web/src/**/*.test.tsx, web/src/__tests__/**]`):
+**Mechanism, as landed:**
+1. Vitest meta-test `web/src/__tests__/testid_integrity.test.ts`: extracts literals
+   passed to `get/query/find(All)ByTestId` across all vitest files, and accepts an id
+   if shipped source renders it — verbatim `data-testid`, ANY forwarded prop ending in
+   `testId` (ui/Disclosure has both `testId` and `toggleTestId`), or a template prefix
+   (`code-row-${...}` legitimizes `code-row-1`) — or if the referencing test file
+   renders it ITSELF (harness probes; own file only, so one file's harness cannot
+   legitimize another's phantom). Extraction is comment-stripped (a
+   `data-testid="x"` in a comment must not legitimize `x` — two comment-sourced
+   statics existed at adoption), the `querySelector('[data-testid="x"]')` form
+   counts as a REFERENCE (and never as a render site), test helpers (testUtils,
+   `__tests__/_synth`) are excluded from the global acceptance set, and lookalike
+   props (`latestId=`) are rejected. Controls: synthetic phantoms through the
+   real pipeline (both reference shapes), negative controls for
+   comments/selectors/lookalikes, one known site per acceptance path, and corpus
+   floors at ~half of measured actuals (77 files / ~900 refs). Accepted blind
+   spots stated in the header: Playwright lane, `getAttribute("data-testid")`
+   comparisons, same-line trailing comments.
+2. `.ast-grep/rules/no-bare-digit-textcontent-{tsx,ts}.yml` (split pair, same reason
+   as no-plan-coordinates-*: a `tsx` rule never sees .ts files). The receiver is
+   `expect($A)` — ANY expression, not `$EL.textContent` — because 3 of the 17
+   offenders bound the text first (`const meta = ...textContent ?? ""`), a form a
+   receiver-shaped pattern permanently cannot fire on; the
+   anchored 1-2-digit constraint is what keeps that width false-positive-free.
 
-```yaml
-rule:
-  pattern: expect($EL.textContent).toContain($S)
-constraints:
-  S: { regex: '^"\d{1,2}"$' }
-message: bare digits match the embedded report timestamp — assert the labelled fragment ("2 covered", "4 contexts").
-severity: error
-```
-
-**Red today:** 2 testids (`status-text`, `status-dot`) + 5 bare-digit sites.
-**Landing:** Wave 15, fix-with-gate.
+**Red at t0, instrument-measured (the plan's counts below were hand-estimates):**
+4 phantom ids (`status-text`, `status-dot`, and — unknown to the review —
+`menu-ticket-all`/`menu-ticket-PROJ-1` in AppShell.test.tsx, the 5c menu-removal
+tombstone) + 17 bare-digit sites (RunsPage 3, DirectoryPage 2, FilePage 7,
+TicketsPage 2, CodeView 3 — the review's list had 12; CodeView and TicketsPage were
+outside its file enumeration).
+**Landing:** Wave 15, fix-with-gate. Phantom-absence fixes pin behavior, not ids:
+AppShell's menu test now asserts no row TEXT mentions a fixture ticket inside the
+real open menu (a regrown list under any new testid still fails); shell.test.tsx
+dropped the spec-decision-9 tombstone (ReconnectingBanner's header comment is the
+surviving render-site note, and its suite covers all three connection arms).
 
 ### G15. No awaited remote cleanup in a bare `finally` — LANDED (Wave 12)
 
@@ -1207,16 +1221,39 @@ re-collect), and `--count` repeats items without re-collecting; a collection-
 shape defect needs an in-suite pin over multi-file argument shapes, which the
 rebind pin now is.
 
-### Wave 15 — Web cannot-fail cluster (item 15; G14)
-**Files:** the 5 bare-digit sites, `shell.test.tsx:83-93` (rewrite against rendered
-reality or delete with the spec-decision note moved to the component), `clock.test.tsx`
-(drive `useNow(null)` directly via a probe component), `seriestree.test.ts:31-37,:79-83`
-(use the 3-series `chassis-a` tree), `commands.test.tsx` (assert the *same* rendered
-hook re-renders), `linkinspector.test.tsx` (one fixture with `provenance: "measured"`),
-`reconnectingbanner.test.tsx` (third arm); G14 lands in this squash — testid-integrity meta-test (proven red on the 2
-phantom testids) + bare-digit rule at error (proven red on the 5 sites).
-Gate `make lint-ts` + `make coverage-ts` (memory: bare pytest does not build web dist —
-run `make web` first if touching components).
+### Wave 15 — Web cannot-fail cluster (item 15; G14) — DONE
+As landed (see G14 for the instruments and their measured t0 = 4 phantom ids +
+17 bare-digit sites):
+- All 17 bare-digit sites → labelled fragments ("4 contexts", "2 covered files",
+  "5 lines · 2 covered", "Runs & captures (2)") or positional exact cells
+  (`row.children[n]` `toBe`, the DirectoryPage house pattern) — the fixed shapes the
+  rule deliberately does not match.
+- `shell.test.tsx` tombstone deleted; `AppShell.test.tsx` menu test rewritten to a
+  text-level absence pin inside the real open menu (`findByRole("menu")` proves it
+  opened; `/PROJ-/` catches a regrown ticket row under ANY testid).
+- `clock.test.tsx`: `NullTile` probe drives `useNow(null)`; a scheduled null interval
+  now floods `nullRenders`. (No local `cleanup()` — vitest.setup.ts's global
+  afterEach already unmounts, and its comment names this file's counters as the
+  reason; a local registration was added and then reverted on opus review.)
+- `seriestree.test.ts`: slot loop anti-vacuity via the 3-series element-tree cpu
+  chart ([0,1,2]); no-repaint proven on a surviving NONZERO slot (search "sup" keeps
+  only chassis-a_sup, slot 2).
+- `commands.test.tsx`: both remount sites now assert the SAME rendered hook —
+  the shape that catches a non-subscribing/stale-memo regression a fresh mount hides.
+- `linkinspector.test.tsx`: fixture provenance "implicit" (the union has no
+  "measured"; "declared" was indistinguishable from the `?? "declared"` fallback),
+  which also discriminates the LINK read from `edge.provenance`; new test pins the
+  fallback arm via a provenance-omitted link (rest-destructure —
+  exactOptionalPropertyTypes rejects `provenance: undefined`).
+- `reconnectingbanner.test.tsx`: third arm — live + "connecting" (store default and
+  reconnect-in-progress) must show the banner.
+Mutation battery: 14/14 killed, each by its named test (null-interval schedules;
+non-subscribing theme read; provenance read dropped / fallback dropped;
+banner only-on-disconnected; slots always-0; filterTree repaint; zero contexts;
+CodeView cells reversed; covered/uncovered swapped; HitCell doubled; zero covered
+files; disclosure zero; menu regrows a ticket row WITHOUT the old testid — the
+differential proof that the phantom-id form could not see it).
+Gates: `make lint-ts` + `make coverage-ts` + full gates before squash.
 
 ### Wave 16 — Timing-test hardening, unit tier (§3.3, §3.4, §3.6 residue)
 `_feed_after_ready()` Event helper for the 65-site MockSession family (one helper in

@@ -551,8 +551,12 @@ describe("TicketsPage: hideAsserted (Task 11)", () => {
     expect(screen.getByTestId("stats-row-unit").textContent).toContain("8/10");
     expect(screen.getByTestId("stats-row-all").textContent).toContain("8/10");
     const row = screen.getByTestId("ticket-row");
-    expect(row.textContent).toContain("8"); // covered
-    expect(row.textContent).toContain("2"); // uncovered
+    // Positional cells, not whole-row bare digits: the row also renders
+    // "80.0%", which satisfied the old `toContain("8")` unconditionally —
+    // gate no-bare-digit-textcontent. Grid order per TicketRow: [0] toggle,
+    // [1] id cell, [2] owned, [3] covered, [4] uncovered, [5] line %.
+    expect(row.children[3]?.textContent).toBe("8"); // covered
+    expect(row.children[4]?.textContent).toBe("2"); // uncovered
     expect(screen.getByTestId("ticket-line-pct").textContent).toContain("80.0%");
     expect(screen.queryByTestId("ticket-covered-na")).toBeNull();
     expect(screen.queryByTestId("ticket-uncovered-na")).toBeNull();

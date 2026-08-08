@@ -96,8 +96,13 @@ describe("CodeView", () => {
     render(<Harness lines={makeLines()} />);
     const row1 = screen.getByTestId("code-row-1");
     expect(row1.className).toContain("t-sys");
-    expect(row1.textContent).toContain("1");
-    expect(row1.textContent).toContain("3");
+    // Positional, exact cells — the row's textContent also contains its line
+    // number and source text, so whole-row `toContain("1")` was satisfiable
+    // by either (gate no-bare-digit-textcontent), and only positions can pin
+    // the "in order" this test names. Row DOM: [0] ticket gutter, then one
+    // div per GutterCol, then source, then expander.
+    expect(row1.children[1]?.textContent).toBe("1"); // num cell
+    expect(row1.children[2]?.textContent).toBe("3"); // tier:sys cell
   });
 
   it("renders line.html via dangerouslySetInnerHTML in the source cell", () => {
@@ -158,7 +163,8 @@ describe("CodeView", () => {
         }
       />,
     );
-    expect(screen.getByTestId("code-expander-1").textContent).toContain("3");
+    // The button renders the count and a chevron svg (no text) — exact.
+    expect(screen.getByTestId("code-expander-1").textContent).toBe("3");
   });
 
   it("renders a distinct row for every line, keyed by line number", () => {
