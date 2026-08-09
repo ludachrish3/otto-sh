@@ -140,8 +140,27 @@ TIMEOUT_CMD := timeout --foreground --kill-after=10s $(PYTEST_TIMEOUT)
 # ResourceWarning still fires at some later gc point, which is the very flake
 # this is meant to attribute. Verified twice: the LocalHost exec-timeout leak
 # (fixed in dab13a7b) and a synthetic leak both went unreported here. So a
-# clean run under this flag is NOT proof that nothing leaked. Closing the hole
-# needs a per-transport finalizer that survives collection; not attempted.
+# clean run under this flag is NOT proof that nothing leaked.
+#
+# NOTHING here covers that gap, and an earlier version of this comment claimed
+# the FD-watermark bracket (tests/_fixtures/fd_watermark.py) did. It does not:
+# measured 2026-08-09 by mutating dab13a7b's fix back out behind a probe test
+# that asserts nothing, the bracket stayed GREEN and only the unraisable plugin
+# went red. A leaked transport is COLLECTABLE, and every bracket path collects
+# before its verdict — deliberately, so collector timing cannot manufacture a
+# red build — which closes the pipe before the descriptors are counted.
+# Tightening the tolerance does not help; zero fails the same way.
+#
+# So the two boundary instruments cover DIFFERENT halves and neither covers
+# this one. The registry attributes leaks whose transports stay REFERENCED; the
+# FD bracket catches descriptors held by something still ALIVE at teardown, and
+# now runs over all of tests/unit/host at tolerance 0 for no measurable cost
+# (it collects only once a raw count already looks wrong). What actually pins
+# the collectable class is a test that counts descriptors IN-TEST with the loop
+# still open and no collect in between —
+# test_timed_out_exec_does_not_leak_its_pipe_fds — plus the ast-grep rule that
+# bans the API whose Process wrapper makes the leak unfixable. A per-transport
+# finalizer would close the hole here too; not attempted.
 LEAK_DETECT := OTTO_DETECT_ASYNCIO_LEAKS=1
 
 # JUnit XML output. Every test target writes into its own subdirectory of

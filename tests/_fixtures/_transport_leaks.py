@@ -18,12 +18,30 @@ transports still alive — typically zero to a handful — and never calls into
 it. A transport kept alive only by a reference cycle is still caught: until
 the cycle is collected, the object is alive and its weakref entry remains.
 
-Known trade-off vs. the heap scan: the old per-test ``gc.collect()`` also
-happened to promptly finalize *unreferenced* transports leaked onto still-open
-(wider-scoped) loops, firing their warning inside the leaking test. Those are
-not the observed flake class (the loop reaper closes function loops at each
-boundary, so real leaks present as open-transport-on-closed-loop, which the
-scan catches with better attribution) and are not worth 2-3x suite CPU.
+Known trade-off vs. the heap scan, and it is bigger than this file used to
+claim: the old per-test ``gc.collect()`` also promptly finalized transports
+that had become *unreferenced*, firing their warning inside the leaking test.
+This registry cannot, because its keys are weak — a transport that nothing
+references is collected before the next boundary, drops out of the registry,
+and is attributed to nobody, while its ``ResourceWarning`` still lands on some
+later test. That is not a hypothetical corner: it is exactly how the
+exec-timeout leak fixed in ``dab13a7b`` behaved. Positive-controlled on
+2026-08-09 by mutating that fix back out — the armed detector reported
+nothing, and a deliberately blatant synthetic leak was equally invisible.
+
+So a clean run under ``OTTO_DETECT_ASYNCIO_LEAKS=1`` is NOT proof that nothing
+leaked. What the registry does catch, and catch with much better attribution
+than a heap scan, is a leak whose transport stays *referenced* long enough to
+be seen — how the ConnectionManager lazy-init race was found. The complementary
+instrument for the unreferenced case is the FD watermark
+(``tests/_fixtures/fd_watermark.py``), which counts descriptors and is
+therefore immune to collection timing; ``tests/unit/host`` and the chaos lanes
+run under it. Closing the gap here instead would need a per-transport
+finalizer that outlives collection (detached by a wrapped ``close()``, with
+surviving finalizers read as leaks) — deliberately not attempted.
+
+Secondary limit, unchanged: ``scan_leaked_transports`` only reports transports
+whose loop is already closed.
 """
 
 import gc

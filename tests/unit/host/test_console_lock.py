@@ -44,7 +44,16 @@ def test_two_readers_hold_shared_concurrently(tmp_path):
         p.start()
     for p in ps:
         p.join(timeout=15)
-    assert all(p.exitcode == 0 for p in ps), "readers did not hold SHARED concurrently"
+    exitcodes = [p.exitcode for p in ps]
+    # join() reaps the child but does NOT release the parent's end of the
+    # sentinel pipe: popen_fork keeps two descriptors per child alive until the
+    # Popen is finalized, and multiprocessing._children holds a reference until
+    # something else triggers a cleanup pass. close() is the deterministic
+    # release. Read the exitcodes first — close() discards them.
+    for p in ps:
+        if p.exitcode is not None:
+            p.close()
+    assert all(code == 0 for code in exitcodes), "readers did not hold SHARED concurrently"
 
 
 @pytest.mark.serial_timing
@@ -82,3 +91,11 @@ def test_writer_not_starved_by_reader_churn(tmp_path):
         stop.set()
         for r in readers:
             r.join(timeout=5)
+        # See the note in the test above: join() reaps, close() is what frees
+        # the sentinel-pipe descriptors. Guarded because close() raises on a
+        # process that is still running, and a reader that ignored `stop` is a
+        # real failure that should surface as the fd bracket's verdict rather
+        # than as a ValueError out of the finally block.
+        for r in readers:
+            if r.exitcode is not None:
+                r.close()
