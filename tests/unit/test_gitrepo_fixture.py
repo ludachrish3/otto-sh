@@ -64,8 +64,17 @@ def test_default_dates_are_real_time_not_pinned(tmp_path):
     repo = TmpGitRepo(tmp_path / "repo")
     repo.write("f.txt", "x\n")
     repo.commit()
-    stamp = repo.git("log", "-1", "--format=%aI").strip()
-    committed = datetime.fromisoformat(stamp)
+    # %at (epoch seconds), not %aI: git 2.45 made iso-strict render a
+    # ZERO-OFFSET date as a trailing "Z" instead of "+00:00" ("date: make
+    # 'iso-strict' conforming for the UTC timezone"), and
+    # datetime.fromisoformat rejects "Z" until Python 3.11. Both conditions
+    # are needed, so the ISO form was green on any developer machine outside
+    # UTC and red only on a UTC CI runner in the 3.10 lane (issue #218: dev
+    # VM America/Chicago + git 2.43 green; runner UTC + git 2.54 + 3.10 red,
+    # while 3.11-3.14 passed). Epoch seconds carry no timezone and have no
+    # format variants for a future git to restyle.
+    stamp = repo.git("log", "-1", "--format=%at").strip()
+    committed = datetime.fromtimestamp(int(stamp), timezone.utc)
     assert abs(datetime.now(timezone.utc) - committed) < timedelta(days=1)
 
 
