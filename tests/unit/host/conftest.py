@@ -53,29 +53,49 @@ from tests._fixtures.fd_watermark import fd_watermark_bracket
 
 
 @pytest.fixture(scope="session", autouse=True)
-def _warm_the_multiprocessing_arena() -> None:
-    """Pay multiprocessing's one-off descriptor cost outside any test's bracket.
+def _warm_multiprocessing() -> None:
+    """Pay multiprocessing's one-off descriptor costs outside any test's bracket.
 
-    ``multiprocessing``'s shared-memory heap allocates its first arena lazily
-    and keeps it for the life of the process — on Linux that is an mmap'd
-    descriptor per arena, held by a module-level singleton. It is a cache, not
-    a leak, but at ``tolerance=0`` it is indistinguishable from one: whichever
-    test first touched ``mp.Barrier``/``mp.Value`` was billed +2 descriptors
-    that never come back, and which test that was depended on ordering.
-    ``test_console_lock.py`` was the module hit, and both its tests were hit in
-    turn depending on the lane.
+    ``multiprocessing`` allocates two different things lazily and keeps both
+    for the life of the process. Neither is a leak, but at ``tolerance=0``
+    neither is distinguishable from one, and which test gets billed depends on
+    ordering:
+
+    * The shared-memory heap's first arena — an mmap'd descriptor, allocated by
+      the first ``mp.Barrier``/``mp.Value``/``mp.Event``. Costs +2 under
+      ``fork``, +4 under ``forkserver``.
+    * The forkserver itself — one socket to a helper process, spawned by the
+      first ``Process.start()`` and reused by every later one. Costs +1, and
+      ONLY where ``forkserver`` is the default start method, which on Linux
+      means Python 3.14 and up.
+
+    That second one is why this fixture starts a process rather than just
+    building primitives. An earlier version did only the latter, and the
+    tests_hostless-3.14 CI leg went red on
+    ``test_two_readers_hold_shared_concurrently`` (42 -> 43 fds) while 3.10
+    through 3.13 stayed green — a real one-off, correctly detected, simply not
+    warmed. Measured directly: under 3.14 the first ``Process.start()`` is +1
+    and the second and third are +0; under 3.13 the first is already +0.
+
+    ``target=int`` because under ``forkserver`` and ``spawn`` the target is
+    pickled and resolved by name in the child, so a function defined in this
+    conftest would not necessarily import there; a builtin always will.
 
     Session-scoped and autouse, so pytest sets it up before the function-scoped
-    bracket takes its first baseline: the allocation lands outside every
-    watermark rather than on an arbitrary test. This is the same move
+    bracket takes its first baseline. Same move
     ``test_timed_out_exec_does_not_leak_its_pipe_fds`` makes when it runs one
-    throwaway ``exec`` before its baseline — take the process's one-time costs
-    first, then measure.
+    throwaway ``exec`` first: take the process's one-time costs, then measure.
     """
     barrier = mp.Barrier(2)
     value = mp.Value("i", 0)
     event = mp.Event()
     del barrier, value, event
+
+    warmup = mp.Process(target=int)
+    warmup.start()
+    warmup.join(timeout=30)
+    if warmup.exitcode is not None:
+        warmup.close()
 
 
 @pytest.fixture(autouse=True)
