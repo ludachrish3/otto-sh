@@ -370,19 +370,22 @@ class TestTimedOutFlag:
 
         monkeypatch.setattr(local_host_mod, "_EXEC_REAP_TIMEOUT", 0.2)
 
-        real_create_subprocess_shell = asyncio.create_subprocess_shell
+        real_process_cls = asyncio.subprocess.Process
         spawned: list[asyncio.subprocess.Process] = []
 
-        async def capturing_create_subprocess_shell(*args, **kwargs):
-            proc = await real_create_subprocess_shell(*args, **kwargs)
+        def capturing_process(transport, protocol, loop):
+            proc = real_process_cls(transport, protocol, loop)
             spawned.append(proc)
             return proc
 
         # LocalHost doesn't expose the Process it creates, and proc.terminate()
         # is exactly what this test proves is ineffective here — so cleanup
         # (and the liveness check below) has no route to the real OS process
-        # except capturing it ourselves.
-        monkeypatch.setattr(asyncio, "create_subprocess_shell", capturing_create_subprocess_shell)
+        # except capturing it ourselves. Hooked at the Process constructor
+        # rather than at asyncio.create_subprocess_shell because
+        # _exec_subprocess drives loop.subprocess_shell() directly, so that it
+        # holds the transport and can close the pipes on the timeout path.
+        monkeypatch.setattr(asyncio.subprocess, "Process", capturing_process)
 
         host = LocalHost(log=LogMode.QUIET)
         try:

@@ -473,3 +473,53 @@ async def test_close():
     assert result.status == Status.Success
     assert "after_close" in result.value
     await host.close()
+
+
+# ---------------------------------------------------------------------------
+# exec timeout: pipe ownership
+# ---------------------------------------------------------------------------
+
+
+def _open_fds() -> set[str]:
+    """This process's currently-open file descriptors."""
+    return {entry.name for entry in Path("/proc/self/fd").iterdir()}
+
+
+@pytest.mark.asyncio
+async def test_timed_out_exec_does_not_leak_its_pipe_fds():
+    """A timed-out command must release its pipes, not leave them to the GC.
+
+    asyncio retires a subprocess transport only once the child has exited AND
+    every pipe has reached EOF. The timeout path cancels the output drain, so
+    stdout never reaches EOF — the child is reaped, but the read-pipe
+    transport, that pipe's fd and the subprocess transport itself all survived
+    until the collector complained. Three ResourceWarnings per timed-out
+    command, and because unraisable warnings are attributed to whoever is
+    running when the GC notices them, they landed on an unrelated test in a
+    different file each run. That is why this was a drifting CI flake and
+    never a failure of the code that caused it.
+
+    Counts descriptors rather than watching for those ResourceWarnings ON
+    PURPOSE. A first cut of this test did watch for them and PASSED against
+    the unfixed code: inside a test the loop is still open, so nothing is
+    collectable yet and no warning has fired — the leak is entirely real and
+    entirely invisible at that moment, which is the same property that made it
+    land on a stranger in CI. The descriptor is either open or it is not.
+
+    The command loops forever, so the timeout is what ends it on any machine
+    at any load — there is no race here to lose, and nothing to widen.
+    """
+    host = LocalHost()
+    await host.exec("true", 5.0, LogMode.NEVER)  # let the loop take its own fds first
+    before = _open_fds()
+
+    result = await host.exec("while true; do echo tick; sleep 0.05; done", 0.5, LogMode.NEVER)
+    assert result.timed_out is True, "premise: this must take the timeout path"
+
+    # Closing a pipe transport schedules the descriptor's actual close through
+    # call_soon, so yield once to let that callback run. This is a handoff to
+    # an already-queued callback, not a wait for anything timing-dependent.
+    await asyncio.sleep(0)
+
+    leaked = _open_fds() - before
+    assert not leaked, f"timed-out exec leaked file descriptor(s) {sorted(leaked)}"

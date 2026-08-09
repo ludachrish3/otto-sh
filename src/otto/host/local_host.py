@@ -238,73 +238,106 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
         if mode is not LogMode.NEVER:
             self._log_command(cmd, mode)
 
-        proc = await asyncio.create_subprocess_shell(
-            cmd=cmd,
+        # Drive loop.subprocess_shell() directly rather than the higher-level
+        # asyncio.create_subprocess_shell(), for the same reason
+        # LocalSession._open() does: it hands back the transport, so the
+        # `finally` below can release the pipe fds without reaching into the
+        # private Process._transport. stdin=None is not a default — it is what
+        # create_subprocess_shell passed, and loop.subprocess_shell would
+        # otherwise give the child a pipe instead of our stdin.
+        loop = asyncio.get_running_loop()
+
+        def protocol_factory() -> asyncio.subprocess.SubprocessStreamProtocol:
+            return asyncio.subprocess.SubprocessStreamProtocol(limit=2**16, loop=loop)
+
+        transport, protocol = await loop.subprocess_shell(
+            protocol_factory,
+            cmd,
+            stdin=None,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
         )
-
-        if proc.stdout is None:
-            return CommandResult(
-                status=status, value="Failed to set up stdout", command=cmd, retcode=EIO
-            )
-
-        # Narrow once, outside the closure: proc.stdout is confirmed non-None
-        # above, and this local is never reassigned, so the drain loop below
-        # doesn't need its own None-check.
-        stdout = proc.stdout
-
-        async def _drain() -> None:
-            while True:
-                data = await stdout.readline()
-                if not len(data):
-                    break
-                line = data.decode().rstrip()
-                lines.append(line)
-                if mode is not LogMode.NEVER:
-                    self._log_output(line, mode)
+        proc = asyncio.subprocess.Process(transport, protocol, loop)
 
         try:
-            # The whole drain is wrapped in a single wait_for so *timeout*
-            # bounds the command, not each individual readline -- a command
-            # that emits output more often than the timeout period (e.g.
-            # `ping`) would otherwise never trip the per-line wait and run
-            # forever.
-            await asyncio.wait_for(_drain(), timeout=timeout)
-        except asyncio.TimeoutError:
-            proc.terminate()
-            # A process can trap SIGTERM, so bound the reap -- an unbounded wait
-            # here would defeat the timeout it implements. If the bound fires,
-            # escalate to SIGKILL (untrappable) rather than leaving the process
-            # running with our pipes held open.
+            if proc.stdout is None:
+                return CommandResult(
+                    status=status, value="Failed to set up stdout", command=cmd, retcode=EIO
+                )
+
+            # Narrow once, outside the closure: proc.stdout is confirmed non-None
+            # above, and this local is never reassigned, so the drain loop below
+            # doesn't need its own None-check.
+            stdout = proc.stdout
+
+            async def _drain() -> None:
+                while True:
+                    data = await stdout.readline()
+                    if not len(data):
+                        break
+                    line = data.decode().rstrip()
+                    lines.append(line)
+                    if mode is not LogMode.NEVER:
+                        self._log_output(line, mode)
+
             try:
-                await asyncio.wait_for(proc.wait(), timeout=_EXEC_REAP_TIMEOUT)
+                # The whole drain is wrapped in a single wait_for so *timeout*
+                # bounds the command, not each individual readline -- a command
+                # that emits output more often than the timeout period (e.g.
+                # `ping`) would otherwise never trip the per-line wait and run
+                # forever.
+                await asyncio.wait_for(_drain(), timeout=timeout)
             except asyncio.TimeoutError:
-                proc.kill()
-                with contextlib.suppress(asyncio.TimeoutError):
+                proc.terminate()
+                # A process can trap SIGTERM, so bound the reap -- an unbounded wait
+                # here would defeat the timeout it implements. If the bound fires,
+                # escalate to SIGKILL (untrappable) rather than leaving the process
+                # running with our pipes held open.
+                try:
                     await asyncio.wait_for(proc.wait(), timeout=_EXEC_REAP_TIMEOUT)
+                except asyncio.TimeoutError:
+                    proc.kill()
+                    with contextlib.suppress(asyncio.TimeoutError):
+                        await asyncio.wait_for(proc.wait(), timeout=_EXEC_REAP_TIMEOUT)
+                return CommandResult(
+                    status=Status.Error,
+                    value=f"Command timed out after {timeout}s\n" + "\n".join(lines),
+                    command=cmd,
+                    retcode=-1,
+                    timed_out=True,
+                )
+
+            await proc.wait()
+            if proc.returncode is None:
+                return CommandResult(
+                    status=status,
+                    value="Process did not provide a return code",
+                    command=cmd,
+                    retcode=ERANGE,
+                )
+
+            status = Status.Success if proc.returncode == 0 else Status.Failed
+
             return CommandResult(
-                status=Status.Error,
-                value=f"Command timed out after {timeout}s\n" + "\n".join(lines),
-                command=cmd,
-                retcode=-1,
-                timed_out=True,
+                status=status, value="\n".join(lines), command=cmd, retcode=proc.returncode
             )
-
-        await proc.wait()
-        if proc.returncode is None:
-            return CommandResult(
-                status=status,
-                value="Process did not provide a return code",
-                command=cmd,
-                retcode=ERANGE,
-            )
-
-        status = Status.Success if proc.returncode == 0 else Status.Failed
-
-        return CommandResult(
-            status=status, value="\n".join(lines), command=cmd, retcode=proc.returncode
-        )
+        finally:
+            # asyncio retires a subprocess transport only once the child has
+            # exited AND every pipe has reached EOF. The timeout path above
+            # cancels the drain mid-stream, so stdout never reaches EOF: the
+            # child is reaped, but the read-pipe transport, that pipe's fd and
+            # the subprocess transport itself all survive until the garbage
+            # collector complains -- three ResourceWarnings per timed-out
+            # command. Under pytest those are unraisable exceptions billed to
+            # whichever test the collector was running when it noticed, so the
+            # cost landed on a stranger in a different file each run.
+            #
+            # In a `finally` rather than on the timeout branch alone so that
+            # cancellation from outside is covered too: there the child is
+            # still running, and close() kills it rather than orphaning it.
+            # Free where nothing leaked -- close() returns immediately if the
+            # transport already finished, which is every non-timeout path.
+            transport.close()
 
     @override
     async def open_session(self, name: str) -> HostSession:
