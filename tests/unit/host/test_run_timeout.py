@@ -618,15 +618,22 @@ class TestExecBoundsTheWholeCommand:
         The whole call is wrapped in an outer ``asyncio.wait_for`` so a
         regression FAILS this test rather than wedging the suite.
         """
-        real_create_subprocess_shell = asyncio.create_subprocess_shell
+        # Hooked at the Process constructor, not at
+        # asyncio.create_subprocess_shell: _exec_subprocess drives
+        # loop.subprocess_shell() directly so it can close the transport. A
+        # capture aimed at the old seam would quietly collect NOTHING, and
+        # since nothing below asserts on `spawned`, the runaway-process
+        # cleanup in `finally` would be silently dead while this test stayed
+        # green.
+        real_process_cls = asyncio.subprocess.Process
         spawned: list[asyncio.subprocess.Process] = []
 
-        async def capturing_create_subprocess_shell(*args, **kwargs):
-            proc = await real_create_subprocess_shell(*args, **kwargs)
+        def capturing_process(transport, protocol, loop):
+            proc = real_process_cls(transport, protocol, loop)
             spawned.append(proc)
             return proc
 
-        monkeypatch.setattr(asyncio, "create_subprocess_shell", capturing_create_subprocess_shell)
+        monkeypatch.setattr(asyncio.subprocess, "Process", capturing_process)
 
         host = LocalHost(log=LogMode.QUIET)
         loop = asyncio.get_event_loop()
@@ -645,6 +652,11 @@ class TestExecBoundsTheWholeCommand:
                 timeout=5.0,
             )
             elapsed = loop.time() - start
+            # Pin the capture seam itself: nothing else here reads `spawned`,
+            # so if the hook ever stops matching how the product spawns, the
+            # `finally` reap below degrades to a no-op and this test goes on
+            # passing while leaving a runaway process on the box.
+            assert spawned, "capture seam is dead — the finally below would reap nothing"
             assert result.status == Status.Error
             assert result.timed_out is True
             assert "timed out" in result.value.lower()
