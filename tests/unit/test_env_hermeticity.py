@@ -256,6 +256,15 @@ def test_bootstrap_state_cannot_leak_between_tests():
             "no:cacheprovider",
         ],
         cwd=str(PROJECT_ROOT),
+        # The ordered pair above is the whole experiment, so the child must be
+        # driven by these argv and nothing else. An ambient PYTEST_ADDOPTS is
+        # inherited otherwise, and it does not merely add noise: this run
+        # disables pytest-randomly, which UNREGISTERS --randomly-seed, so an
+        # outer `PYTEST_ADDOPTS=--randomly-seed=N` makes the child exit 4 on
+        # "unrecognized arguments" and the assertion below reports it as a
+        # bootstrap leak. Observed exactly that while sweeping seeds by hand,
+        # which is how the nightly seed sweep would drive it too.
+        env={**os.environ, "PYTEST_ADDOPTS": ""},
         capture_output=True,
         text=True,
         timeout=120,

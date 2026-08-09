@@ -127,7 +127,17 @@ def _run_inner_pytest(test_file: Path, tmp_path: Path, options: object | None = 
 
 class TestOttoTestDir:
     def test_test_dir_created_per_test(self, tmp_path: Path) -> None:
-        """Each test gets a unique testDir under suiteDir/tests/."""
+        """Each test gets a unique testDir under suiteDir/tests/.
+
+        Both inner tests APPEND, and the assertions are set-shaped, because the
+        inner pytest run is ordered independently of this one: it inherits
+        pytest-randomly like any other run, so alpha-then-beta is a coin flip.
+        The original wrote with ``write_text`` in alpha and appended in beta,
+        which silently truncated beta's line whenever beta ran first — one line
+        instead of two, roughly half the time, and only under shuffle. What the
+        test is actually about is that the two directories differ and each is
+        named after its own test; neither claim needs an order.
+        """
         capture_file = tmp_path / "dirs.txt"
         test_file = tmp_path / "test_dirs.py"
         test_file.write_text(f"""\
@@ -138,19 +148,20 @@ CAPTURE = pathlib.Path({str(capture_file)!r})
 
 class TestDirs(OttoSuite):
     async def test_alpha(self) -> None:
-        CAPTURE.write_text(str(self.testDir))
+        with CAPTURE.open("a") as f:
+            f.write(str(self.testDir) + "\\n")
 
     async def test_beta(self) -> None:
         with CAPTURE.open("a") as f:
-            f.write("\\n" + str(self.testDir))
+            f.write(str(self.testDir) + "\\n")
 """)
         exit_code = _run_inner_pytest(test_file, tmp_path)
         assert exit_code == pytest.ExitCode.OK
-        lines = capture_file.read_text().strip().split("\n")
-        assert len(lines) == 2
-        assert lines[0] != lines[1]
-        assert "test_alpha" in lines[0]
-        assert "test_beta" in lines[1]
+        lines = [line for line in capture_file.read_text().strip().split("\n") if line]
+        assert len(lines) == 2, f"expected one testDir per inner test, got {lines}"
+        assert lines[0] != lines[1], f"both inner tests shared a testDir: {lines}"
+        assert any("test_alpha" in line for line in lines), lines
+        assert any("test_beta" in line for line in lines), lines
 
     def test_parametrized_names_sanitized(self, tmp_path: Path) -> None:
         """Parametrized test names have brackets replaced in testDir."""

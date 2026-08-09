@@ -149,6 +149,7 @@ dev = [
     "doc8>=1.1",
     "ty==0.0.66",
     "pyyaml>=6.0.3",
+    "pytest-randomly>=4.1.0",
 ]
 # Architecture-gate tools, kept OUT of the dev group on purpose: tach ships a
 # `pytest11` entry-point plugin whose Rust extension installs a C-level Ctrl-C
