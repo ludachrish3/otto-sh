@@ -1,0 +1,11 @@
+id: asyncio-subprocess-through-loop-api
+language: python
+severity: error
+message: Spawn subprocesses via loop.subprocess_shell()/subprocess_exec(), not asyncio.create_subprocess_*(). The convenience wrappers hand back only a Process, which exposes no way to close its transport — so a command whose pipes never reach EOF (a timeout with a surviving grandchild) leaks the transport, its pipe and that fd.
+note: The loop API returns the transport, so a `finally` can close it; asyncio.subprocess.Process(transport, protocol, loop) still gives the friendly wrapper. See LocalSession._open and LocalHost._exec_subprocess. Pass stdin explicitly — the loop API defaults it to a PIPE where create_subprocess_* defaults to None. The leak this prevents (dab13a7b) surfaced only as a ResourceWarning against an unrelated later test.
+files:
+- src/otto/**
+rule:
+  any:
+  - pattern: asyncio.create_subprocess_shell($$$ARGS)
+  - pattern: asyncio.create_subprocess_exec($$$ARGS)

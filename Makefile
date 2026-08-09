@@ -123,6 +123,27 @@ M_HOSTLESS := not integration and not embedded and not stability and not browser
 PYTEST_TIMEOUT := 360s
 TIMEOUT_CMD := timeout --foreground --kill-after=10s $(PYTEST_TIMEOUT)
 
+# Arms the asyncio transport-leak detector (tests/conftest.py +
+# tests/_fixtures/_transport_leaks.py). One token so "which lanes are armed"
+# is a single grep, and so a lane can never be armed by accident of copy-paste
+# while reading as if it were not. Costs nothing when nothing leaked: the scan
+# walks only live tracked transports and never calls into gc.
+#
+# It reports a leak by attributing it to the test that CREATED the transport,
+# then forcing the ResourceWarning out at that boundary so pytest's unraisable
+# plugin errors the leaking test rather than an innocent later one.
+#
+# STATED BLIND SPOT, measured 2026-08-09: it only sees transports still tracked
+# at the test boundary, and the registry holds them weakly. A transport that
+# becomes unreachable when its loop is dropped is collected BEFORE the scan, so
+# it vanishes from the registry and is reported by nobody — while its
+# ResourceWarning still fires at some later gc point, which is the very flake
+# this is meant to attribute. Verified twice: the LocalHost exec-timeout leak
+# (fixed in dab13a7b) and a synthetic leak both went unreported here. So a
+# clean run under this flag is NOT proof that nothing leaked. Closing the hole
+# needs a per-transport finalizer that survives collection; not attempted.
+LEAK_DETECT := OTTO_DETECT_ASYNCIO_LEAKS=1
+
 # JUnit XML output. Every test target writes into its own subdirectory of
 # reports/junit/ named after the target, so runs never clobber each other and
 # `make clean` (rm -rf reports) removes them all. pytest creates the parent
@@ -188,7 +209,7 @@ release: ## (Build & Release) npm ci web/, Python static checks (check-python), 
 		&& $(MAKE) web-install \
 		&& $(MAKE) check-python \
 		&& $(MAKE) docs \
-		&& OTTO_DETECT_ASYNCIO_LEAKS=1 $(MAKE) nox \
+		&& $(LEAK_DETECT) $(MAKE) nox \
 		&& $(MAKE) web \
 		&& $(MAKE) dashboard-all \
 		&& $(MAKE) validate-ts \
@@ -519,36 +540,36 @@ build: ## (Build & Release) Build the project with uv
 # Exclusion↔leg pairing is pinned by tests/unit/test_lane_invariants.py.
 coverage-python: dashboard ## Run the full Python suite (all tiers, pinned Python) and enforce the 95 gate; the browser (Playwright) suite runs first as its own process via the `dashboard` prerequisite — its coverage data is folded in via --cov-append. Requires lab VMs (+ `make browsers` once). JUnit XML lands in reports/junit/coverage-python/.
 	@$(SAY) "pytest: all tiers, pinned Python (browser lane folded in)"
-	@$(TIMEOUT_CMD) uv run pytest -m "not stability and not browser and not serial_timing" --cov-append --cov-fail-under=0 $(call junitxml,coverage-python)
+	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest -m "not stability and not browser and not serial_timing" --cov-append --cov-fail-under=0 $(call junitxml,coverage-python)
 	@$(SAY) "pytest: serial_timing discriminators, -n0 (gate: $(COVERAGE_THRESHOLD)% on the full fold)"
-	@$(TIMEOUT_CMD) uv run pytest -m "serial_timing and not stability and not browser" -n0 --cov-append --cov-fail-under=$(COVERAGE_THRESHOLD) $(call junitxml,coverage-python-serial)
+	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest -m "serial_timing and not stability and not browser" -n0 --cov-append --cov-fail-under=$(COVERAGE_THRESHOLD) $(call junitxml,coverage-python-serial)
 
 coverage: coverage-python coverage-ts ## Run BOTH language coverage gates: coverage-python (full pytest, 95 floor) + coverage-ts (merged vitest+e2e floor). The dashboard browser lane runs exactly once — coverage-python triggers it, and coverage-ts's artifact stamp sees it fresh.
 
 coverage-unit: ## Run the unit level tier (tests/unit only; no testbed) with a coverage report (no gate — one tier can't meet the whole-repo floor). JUnit XML lands in reports/junit/coverage-unit/.
 	@$(SAY) "pytest: tests/unit (no gate)"
-	@$(TIMEOUT_CMD) uv run pytest tests/unit -m "not stability and not serial_timing" $(call junitxml,coverage-unit)
-	@$(TIMEOUT_CMD) uv run pytest tests/unit -m "serial_timing and not stability" -n0 --cov-append $(call junitxml,coverage-unit-serial)
+	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest tests/unit -m "not stability and not serial_timing" $(call junitxml,coverage-unit)
+	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest tests/unit -m "serial_timing and not stability" -n0 --cov-append $(call junitxml,coverage-unit-serial)
 
 coverage-integration: ## Run the unit + integration level tiers (tests/unit + tests/integration) with a coverage report (no gate). Requires the full lab. JUnit XML in reports/junit/coverage-integration/.
 	@$(SAY) "pytest: tests/unit + tests/integration (no gate)"
-	@$(TIMEOUT_CMD) uv run pytest tests/unit tests/integration -m "not stability and not serial_timing" $(call junitxml,coverage-integration)
-	@$(TIMEOUT_CMD) uv run pytest tests/unit tests/integration -m "serial_timing and not stability" -n0 --cov-append $(call junitxml,coverage-integration-serial)
+	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest tests/unit tests/integration -m "not stability and not serial_timing" $(call junitxml,coverage-integration)
+	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest tests/unit tests/integration -m "serial_timing and not stability" -n0 --cov-append $(call junitxml,coverage-integration-serial)
 
 coverage-hostless: ## Run the no-testbed CI gate suite (tests/unit + no-VM e2e) and enforce the CI coverage gate. No VMs. JUnit XML lands in reports/junit/coverage-hostless/.
 	@$(SAY) "pytest: hostless CI slice, no VMs"
-	@$(TIMEOUT_CMD) uv run pytest tests/unit tests/e2e -m "$(M_HOSTLESS) and not serial_timing" --cov-fail-under=0 $(call junitxml,coverage-hostless)
+	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest tests/unit tests/e2e -m "$(M_HOSTLESS) and not serial_timing" --cov-fail-under=0 $(call junitxml,coverage-hostless)
 	@$(SAY) "pytest: serial_timing discriminators, -n0 (gate: $(CI_COVERAGE_THRESHOLD)% on the full fold)"
-	@$(TIMEOUT_CMD) uv run pytest tests/unit tests/e2e -m "serial_timing and $(M_HOSTLESS)" -n0 --cov-append --cov-fail-under=$(CI_COVERAGE_THRESHOLD) $(call junitxml,coverage-hostless-serial)
+	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest tests/unit tests/e2e -m "serial_timing and $(M_HOSTLESS)" -n0 --cov-append --cov-fail-under=$(CI_COVERAGE_THRESHOLD) $(call junitxml,coverage-hostless-serial)
 
 coverage-unix: ## Run the Unix-VM resource slice (incl. multi-hop) with a coverage report (no gate). Requires lab VMs. JUnit XML in reports/junit/coverage-unix/.
 	@$(SAY) "pytest: Unix-VM slice, incl. multi-hop (no gate)"
-	@$(TIMEOUT_CMD) uv run pytest -m "$(M_UNIX) and not serial_timing" $(call junitxml,coverage-unix)
-	@$(TIMEOUT_CMD) uv run pytest -m "serial_timing and $(M_UNIX)" -n0 --cov-append $(call junitxml,coverage-unix-serial)
+	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest -m "$(M_UNIX) and not serial_timing" $(call junitxml,coverage-unix)
+	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest -m "serial_timing and $(M_UNIX)" -n0 --cov-append $(call junitxml,coverage-unix-serial)
 
 coverage-embedded: ## Run the embedded (Zephyr) resource slice with a coverage report (no gate). Requires Vagrant lab up. JUnit XML in reports/junit/coverage-embedded/.
 	@$(SAY) "pytest: embedded/Zephyr slice (no gate)"
-	@$(TIMEOUT_CMD) uv run pytest -m "$(M_EMBEDDED)" $(call junitxml,coverage-embedded)
+	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest -m "$(M_EMBEDDED)" $(call junitxml,coverage-embedded)
 
 DASHBOARD_BROWSERS ?= chromium
 # Browser-lane worker count. The suites are parallel-safe by construction
@@ -663,14 +684,14 @@ dashboard-soak: $(DASHBOARD_DIST) ## Run the dashboard replay soak (Tier-3, `soa
 # runs exist to flush flakes, not to measure coverage — that's `make coverage`.
 stability-unit: ## Run no-VM SessionManager concurrency/soak tests by marker. JUnit XML lands in reports/junit/stability-unit/. Override iterations with COUNT=N (default 50).
 	@$(SAY) "pytest soak: concurrency marker, no VMs (x$(STABILITY_UNIT_COUNT), leak detector on)"
-	@OTTO_DETECT_ASYNCIO_LEAKS=1 uv run pytest \
+	@$(LEAK_DETECT) uv run pytest \
 	    -m "concurrency and not serial_timing" \
 	    --count=$(STABILITY_UNIT_COUNT) \
 	    -p no:cacheprovider \
 	    --no-cov \
 	    $(call junitxml,stability-unit)
 	@$(SAY) "pytest soak: serial_timing discriminators, -n0 (x$(STABILITY_UNIT_COUNT))"
-	@OTTO_DETECT_ASYNCIO_LEAKS=1 uv run pytest \
+	@$(LEAK_DETECT) uv run pytest \
 	    -m "serial_timing and concurrency" \
 	    --count=$(STABILITY_UNIT_COUNT) \
 	    -n0 \
@@ -680,7 +701,7 @@ stability-unit: ## Run no-VM SessionManager concurrency/soak tests by marker. JU
 
 stability-unix: ## Real telnet/SSH soak against the Unix Vagrant VMs (incl. multi-hop). Requires lab VMs. JUnit XML in reports/junit/stability-unix/. Override iterations with COUNT=N (default 10).
 	@$(SAY) "pytest soak: real telnet/SSH on the Unix VMs (x$(STABILITY_UNIX_COUNT), leak detector on)"
-	@OTTO_DETECT_ASYNCIO_LEAKS=1 uv run pytest \
+	@$(LEAK_DETECT) uv run pytest \
 	    -m "stability and integration and not embedded and not hops and not chaos" \
 	    --count=$(STABILITY_UNIX_COUNT) \
 	    -p no:cacheprovider \
@@ -695,7 +716,7 @@ stability-unix: ## Real telnet/SSH soak against the Unix Vagrant VMs (incl. mult
 # setup/teardown. Same reasoning as dashboard-soak below.
 stability-tunnel: ## Tunnel soak against the live bed (churn/concurrency/traffic/adversity/health/monitor-loop). Requires lab VMs. JUnit XML in reports/junit/stability-tunnel/. COUNT=N repeats the suite (default 1); CYCLES=N sets internal loop depth (default 5).
 	@$(SAY) "pytest soak: tunnels on the live bed (x$(STABILITY_TUNNEL_COUNT), $(STABILITY_TUNNEL_CYCLES) cycles/test)"
-	@OTTO_DETECT_ASYNCIO_LEAKS=1 OTTO_TUNNEL_SOAK_CYCLES=$(STABILITY_TUNNEL_CYCLES) uv run pytest \
+	@$(LEAK_DETECT) OTTO_TUNNEL_SOAK_CYCLES=$(STABILITY_TUNNEL_CYCLES) uv run pytest \
 	    tests/e2e/tunnel_stability \
 	    -m "stability and hops" \
 	    --count=$(STABILITY_TUNNEL_COUNT) \
@@ -706,7 +727,7 @@ stability-tunnel: ## Tunnel soak against the live bed (churn/concurrency/traffic
 
 stability-embedded: ## Cross-OS stability contract against real telnet/SSH targets (Zephyr). Requires Vagrant lab up. JUnit XML lands in reports/junit/stability-embedded/. Override iterations with COUNT=N (default 1).
 	@$(SAY) "pytest soak: cross-OS contract incl. Zephyr (x$(STABILITY_EMBEDDED_COUNT), leak detector on)"
-	@OTTO_DETECT_ASYNCIO_LEAKS=1 uv run pytest \
+	@$(LEAK_DETECT) uv run pytest \
 	    -m "stability and embedded and not chaos" \
 	    -p no:cacheprovider \
 	    --no-cov \
@@ -715,11 +736,11 @@ stability-embedded: ## Cross-OS stability contract against real telnet/SSH targe
 
 chaos: ## Tier-3 chaos lane, unix legs: interrupt/SIGKILL/reboot scenarios on a leased bed host. Requires lab VMs and EXCLUSIVE bed use (never co-run with other bed lanes). JUnit XML in reports/junit/nox-chaos/.
 	@$(SAY) "pytest chaos: tier-3 scenarios on the live bed (unix legs, leak detector on)"
-	@OTTO_DETECT_ASYNCIO_LEAKS=1 uv run nox -s chaos
+	@$(LEAK_DETECT) uv run nox -s chaos
 
 chaos-embedded: ## Tier-3 chaos lane, zephyr console leg (console-client-death). Can wedge a board — run deliberately; a failure may need a zephyr bed restart. JUnit XML in reports/junit/nox-chaos-embedded/.
 	@$(SAY) "pytest chaos: zephyr console scenarios (leak detector on)"
-	@OTTO_DETECT_ASYNCIO_LEAKS=1 uv run nox -s chaos_embedded
+	@$(LEAK_DETECT) uv run nox -s chaos_embedded
 
 stability: ## Run the full stability/soak suite: no-VM concurrency, then real telnet/SSH (Unix + embedded). Runs all tiers even if an earlier one is RED. Requires lab VMs for tiers 2-3. Override iterations with COUNT=N.
 	@$(SAY) "Tier 1 — unit-level concurrency"
@@ -752,14 +773,14 @@ stability: ## Run the full stability/soak suite: no-VM concurrency, then real te
 
 repeat: ## Run the full local suite (unit + integration + e2e) under pytest-repeat (excludes `browser` — see note above M_HOSTLESS; run its soak separately). Local only; requires VMs. JUnit XML in reports/junit/repeat/. Override COUNT=N (default 10).
 	@$(SAY) "pytest soak: full local suite, no browser (x$(COUNT), leak detector on)"
-	@OTTO_DETECT_ASYNCIO_LEAKS=1 uv run pytest \
+	@$(LEAK_DETECT) uv run pytest \
 	    -m "not browser and not chaos and not serial_timing" \
 	    --count=$(COUNT) \
 	    -p no:cacheprovider \
 	    --no-cov \
 	    $(call junitxml,repeat)
 	@$(SAY) "pytest soak: serial_timing discriminators, -n0 (x$(COUNT))"
-	@OTTO_DETECT_ASYNCIO_LEAKS=1 uv run pytest \
+	@$(LEAK_DETECT) uv run pytest \
 	    -m "serial_timing and not browser and not chaos" \
 	    -n0 \
 	    --count=$(COUNT) \
