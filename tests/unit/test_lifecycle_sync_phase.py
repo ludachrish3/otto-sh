@@ -16,6 +16,7 @@ re-arms the worker's chained SIGINT faulthandler in teardown.
 import contextlib
 import dataclasses
 import os
+import pathlib
 import select
 import signal
 import subprocess
@@ -26,9 +27,10 @@ import time
 import pytest
 
 from otto.lifecycle import sync_phase
+from otto.utils import wait_for
 
 _CHILD = """
-import os, signal, sys, time
+import asyncio, os, signal, sys, time
 from otto.lifecycle import register_force_exit_hook, sync_phase
 
 mode = sys.argv[1]
@@ -36,7 +38,7 @@ mode = sys.argv[1]
 # deadline is a flake window (a slow box finishing graceful teardown in
 # >1s would spuriously force). double=30 also guarantees only the SECOND
 # signal can force in time.
-deadline = 1.0 if mode == "wedged" else 30.0
+deadline = 1.0 if mode == "wedged" else (5.0 if mode == "stranded" else 30.0)
 # os.write: force hooks run on the watchdog thread while the MAIN thread may
 # be wedged holding stdio locks (print there can deadlock/reentrant-IO).
 register_force_exit_hook(lambda: os.write(1, b"FORCE-HOOK\\n"))
@@ -44,14 +46,39 @@ with sync_phase(deadline=deadline, what="probe") as guard:
     try:
         # Mid-flight positive control: the guard's handler is installed.
         assert signal.getsignal(signal.SIGINT) is not signal.default_int_handler
+        if mode == "stolen":
+            # An async command running INSIDE the phase — the everyday shape,
+            # since `otto test` runs a whole pytest session inside one and any
+            # suite reaching run_command lands here. asyncio's
+            # add_signal_handler claims the interpreter's wakeup fd, and
+            # closing the loop hands back -1 rather than the previous owner,
+            # so the guard's wakeup channel is gone from this point on and
+            # never comes back. SIGWINCH keeps the experiment to the fd: it is
+            # not one of the signals the guard installs, so this cannot be
+            # mistaken for a handler-replacement effect.
+            async def _borrow():
+                asyncio.get_running_loop().add_signal_handler(signal.SIGWINCH, lambda: None)
+
+            asyncio.run(_borrow())
+            assert signal.set_wakeup_fd(-1) == -1, "premise broken: fd was NOT dropped"
+            print("FD-STOLEN", flush=True)
         print("PHASE-START", flush=True)
         time.sleep(30)
         print("PHASE-UNREACHED", flush=True)
     except KeyboardInterrupt:
+        if mode == "stranded":
+            # Block SIGTERM IN THIS THREAD ONLY, then say so. Python-level
+            # handlers run only on the main thread, so the second signal the
+            # parent is about to send can never reach this guard's handler —
+            # while the watchdog thread, created before this mask existed,
+            # still has it unblocked, so the interpreter's wakeup byte is
+            # still written. That is precisely "delivered, but the Python
+            # handler did not run", made deterministic instead of racy.
+            signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM})
         print("TEARDOWN-START", flush=True)
         if mode == "graceful":
             print("TEARDOWN-DONE", flush=True)
-        else:  # wedged/double: teardown never finishes on its own
+        else:  # wedged/double/stranded: teardown never finishes on its own
             time.sleep(30)
 print("PHASE-EXITED", flush=True)
 if guard.interrupted_signum is None:
@@ -175,6 +202,31 @@ def _wait_line(child, marker, timeout=60.0):
             return lines
 
 
+def _wait_until_blocked(pid, timeout=30.0):
+    """Block until *pid*'s main thread is sleeping in a syscall.
+
+    The stranded-signal property only holds while the main thread is inside a
+    blocking call, because that is what denies a tripped-but-undispatched
+    signal the eval checkpoint it needs. Signalling as soon as the child
+    PRINTS is a race against the handful of bytecodes between the print and
+    the sleep — lose it and the second signal dispatches normally, which is
+    how a first cut of this test passed against the very code it exists to
+    fail. `/proc/<pid>/stat` field 3 is the authoritative answer.
+    """
+
+    def _sleeping():
+        stat = pathlib.Path(f"/proc/{pid}/stat").read_text()
+        # rindex: comm sits in parens and may itself contain spaces.
+        return stat[stat.rindex(")") + 2] == "S"
+
+    wait_for(
+        _sleeping,
+        timeout,
+        interval=0.01,
+        on_timeout=lambda: f"child {pid} never reached a blocking call within {timeout}s",
+    )
+
+
 def _finish(child, timeout=60.0):
     # Same budget rule as _wait_line: must outlast the child's 30s deadline
     # net, or the harness fails while the product is still on its documented
@@ -246,7 +298,7 @@ def test_second_signal_forces_immediately(tmp_path):
     # ceiling is deliberately BELOW the product's recovery deadline — the
     # W14 rule (a harness bound must outlast it) applies to budgets that
     # must TOLERATE the documented path; this assert exists to REJECT it.
-    # Transcript rides along for the same reason as its mixed-signal sibling:
+    # Transcript rides along for the same reason as its stranded-signal kin:
     # the two paths are told apart by what the child printed, never by how
     # slow it was, so a bare elapsed figure names the symptom and withholds
     # the evidence.
@@ -399,3 +451,144 @@ def test_non_main_thread_inert_mode_allowed():
     t.join()
     assert "error" not in result
     assert result == {"signum": None}
+
+
+@pytest.mark.serial_timing
+def test_second_signal_forces_even_when_its_handler_never_runs(tmp_path):
+    """The force must not depend on a Python handler that may never run.
+
+    Python-level signal handlers run only on the main thread, and only when
+    the interpreter reaches an eval checkpoint with its pending-signal flag
+    set. Neither is guaranteed: a signal delivered alongside one whose
+    handler RAISES can be left tripped but undispatched (pending signals are
+    dispatched in signal-NUMBER order, so SIGINT precedes SIGTERM, and the
+    raise ends that pass early), and a teardown wedged in a blocking call
+    reaches no checkpoint afterwards. The guard used to write its arm/force
+    bytes FROM those handlers, so when that happened no force byte was ever
+    written and the phase sat out its whole teardown deadline before forcing
+    — the live shape behind test_mixed_signal_pair_forces_regardless_of_order
+    failing ~7% of coverage runs, and 52 of 60 runs of a reproduction.
+
+    Here the child masks SIGTERM on its main thread once teardown begins, so
+    the second signal provably cannot reach a Python handler, while the
+    watchdog thread — created before the mask existed — still has it
+    unblocked, so the interpreter's own wakeup byte is still written. That
+    turns the race into a certainty: this is exactly "delivered, but the
+    handler did not run". Arming and forcing are counted from those wakeup
+    bytes now, so the force still happens at once.
+    """
+    with _spawned(tmp_path, "stranded") as child:
+        _wait_line(child, "PHASE-START")
+        os.kill(child.pid, signal.SIGINT)  # first signal: arms, teardown begins
+        _wait_line(child, "TEARDOWN-START")  # the mask is in place by now
+        _wait_until_blocked(child.pid)  # ...and no eval checkpoint remains
+        t_kill = time.monotonic()
+        os.kill(child.pid, signal.SIGTERM)  # deliverable, but un-handleable
+        rc, out = _finish(child)
+    elapsed = time.monotonic() - t_kill
+    assert "FORCE-HOOK" in out, f"never forced at all; child said:\n{out[-4000:]}"
+    assert "PHASE-EXITED" not in out
+    assert rc in (130, 143), f"expected 128+signum of either signal, got {rc}"
+    # Discriminator, not a budget: 5s is the child's own teardown deadline, so
+    # anything at or past it IS the deadline path. Widening this would delete
+    # the only thing the test checks.
+    assert elapsed < 2.0, (
+        f"forced exit took {elapsed:.1f}s — the teardown deadline expired, so the "
+        f"second signal never forced; child said:\n{out[-4000:]}"
+    )
+
+
+@pytest.mark.serial_timing
+def test_second_signal_forces_after_asyncio_takes_the_wakeup_fd_away(tmp_path):
+    """Losing the wakeup fd mid-phase must cost nothing — the handler still counts.
+
+    The wakeup fd is process-global and asyncio takes it in
+    ``add_signal_handler``; worse, ``remove_signal_handler`` hands back -1
+    rather than the previous owner, so a single async command run inside a
+    phase ends the guard's wakeup channel permanently. That is not a corner:
+    ``otto test`` enters a phase and then runs an entire in-process pytest
+    session inside it, and any suite that calls ``run_command`` installs an
+    asyncio loop with signal handlers.
+
+    So the two channels are COUNTED, not switched between: the handler keeps
+    writing its bytes even while the wakeup fd is held, and the watchdog
+    believes whichever channel has counted more deliveries. A guard that
+    instead treated the wakeup fd as its channel while it thought it owned
+    one would go completely deaf here — no arm, no force, no deadline, on the
+    exact path this guard exists to bound.
+    """
+    with _spawned(tmp_path, "stolen") as child:
+        _wait_line(child, "FD-STOLEN")  # premise: the fd is gone, asserted child-side
+        _wait_line(child, "PHASE-START")
+        os.kill(child.pid, signal.SIGINT)  # first signal: arms, teardown begins
+        _wait_line(child, "TEARDOWN-START")
+        t_kill = time.monotonic()
+        os.kill(child.pid, signal.SIGTERM)  # second signal: must force at once
+        rc, out = _finish(child)
+    elapsed = time.monotonic() - t_kill
+    assert "FORCE-HOOK" in out, f"never forced at all; child said:\n{out[-4000:]}"
+    assert "PHASE-EXITED" not in out
+    assert rc in (130, 143), f"expected 128+signum of either signal, got {rc}"
+    # Discriminator, not a budget: the child's deadline is 30s, so the only
+    # other way out is the deadline path. Widening this deletes the test.
+    assert elapsed < 2.0, (
+        f"forced exit took {elapsed:.1f}s — the second signal did not force, so the "
+        f"handler channel died with the wakeup fd; child said:\n{out[-4000:]}"
+    )
+
+
+def test_wakeup_fd_is_taken_only_when_nobody_else_owns_it(real_sync_phase):
+    """The guard offers to take the wakeup fd; it never seizes it.
+
+    That fd is process-global — one owner per interpreter — so taking it
+    unconditionally is an API change to every other component in the process,
+    however local the diff looks. asyncio owns it whenever a loop has signal
+    handlers installed, and an owner that loses it stops being woken by
+    signals at all; what that costs a guard is measured by
+    ``test_second_signal_forces_after_asyncio_takes_the_wakeup_fd_away``,
+    and there is no reason to inflict the same on anyone else.
+    """
+    r, w = os.pipe()
+    try:
+        os.set_blocking(w, False)
+        prior = signal.set_wakeup_fd(w)
+        try:
+            with sync_phase(deadline=30.0, what="probe"):
+                # Re-setting returns the CURRENT owner: still ours iff the
+                # phase left it alone.
+                assert signal.set_wakeup_fd(w) == w, (
+                    "sync_phase took a signal-wakeup fd that was already owned"
+                )
+        finally:
+            signal.set_wakeup_fd(prior)
+    finally:
+        os.close(r)
+        os.close(w)
+    # And with the fd free, it DOES take it — otherwise the conditional above
+    # would pass just as well on a guard that never claims anything.
+    with sync_phase(deadline=30.0, what="probe"):
+        owner = signal.set_wakeup_fd(-1)
+        assert owner != -1, "sync_phase did not take a wakeup fd that was free"
+        signal.set_wakeup_fd(owner)
+
+
+def test_release_leaves_a_wakeup_fd_someone_else_took_mid_phase(real_sync_phase):
+    """Giving the fd back is conditional too, for the same reason taking it is.
+
+    Ownership can change WHILE the phase runs — asyncio takes the fd in
+    ``add_signal_handler`` — so a guard that clears the fd on the way out
+    just because it claimed one on the way in destroys the new owner's
+    registration, which is precisely the breakage the conditional claim
+    exists to avoid, arriving through the exit door instead.
+    """
+    r, w = os.pipe()
+    try:
+        os.set_blocking(w, False)
+        with sync_phase(deadline=30.0, what="probe"):
+            signal.set_wakeup_fd(w)  # what asyncio does on the phase's behalf
+        owner = signal.set_wakeup_fd(-1)
+        assert owner == w, "sync_phase cleared a wakeup fd it no longer owned"
+    finally:
+        signal.set_wakeup_fd(-1)
+        os.close(r)
+        os.close(w)

@@ -61,6 +61,10 @@ _FORCE_FLUSH_JOIN = 2.0
 """Bound (seconds) on the forced exit's log flush: the force path trades
 buffered log lines for a guaranteed exit, never the other way around."""
 
+_FORCE_AFTER_DELIVERIES = 2
+"""Signal deliveries that trip the force path: the first arms the teardown
+deadline, the second stops waiting. The two-stage policy's whole content."""
+
 
 # Deliberately NOT rooted on otto.errors.OttoError: re-parenting onto an
 # Exception-rooted base would make this catchable by `except Exception`,
@@ -113,6 +117,7 @@ class SyncPhaseGuard:
         # owns a pipe or a thread.
         self._wake_r = -1
         self._wake_w = -1
+        self._owns_wakeup_fd = False
         self._watchdog: "threading.Thread | None" = None
 
     def _start(self) -> None:
@@ -123,12 +128,50 @@ class SyncPhaseGuard:
         (``Event.set``, ``Timer.start``, ``Lock.acquire``) can block on an
         internal lock the interrupted frame already holds — a same-thread
         deadlock of the exact mechanism whose one job is "always gets out".
+
+        The pipe ALSO becomes the interpreter's signal-wakeup fd, but only if
+        nothing else owns it — see ``_watch`` for what that buys and
+        ``_claim_wakeup_fd`` for why the offer is conditional.
         """
         self._wake_r, self._wake_w = os.pipe()
+        os.set_blocking(self._wake_w, False)  # set_wakeup_fd requires it
         self._watchdog = threading.Thread(
             target=self._watch, name="otto-sync-phase-watchdog", daemon=True
         )
         self._watchdog.start()
+        self._claim_wakeup_fd()
+
+    def _claim_wakeup_fd(self) -> None:
+        """Take the signal-wakeup fd, but ONLY if it is unowned.
+
+        The wakeup fd is process-global: exactly one owner per interpreter,
+        and no way to ask who that is — reading it means setting it. So
+        taking it unconditionally is an API change to every other component
+        in the process, however local the diff looks. asyncio owns it for as
+        long as a loop has signal handlers installed
+        (``asyncio/unix_events.py``), and an owner that loses it simply stops
+        being woken by signals; ``_watch`` measures what that costs a guard,
+        and there is no reason to inflict it on anyone else.
+
+        So the claim is an offer, not a seizure. Standalone ``otto`` — the
+        case that actually needs it, a synchronous command with no loop —
+        finds the fd unowned and gets the stronger force path. Where an owner
+        exists it is handed straight back and the guard runs on the
+        handler-written bytes alone, exactly as it always did. The probe
+        itself is destructive for the two statements it spans; that window is
+        unavoidable with this API and is the reason the fd is claimed once,
+        at entry, rather than polled.
+
+        ``warn_on_full_buffer=False``: a full pipe means the watchdog already
+        has more than enough to force on, so a dropped byte changes nothing
+        and the warning would be noise on an already-interrupted stderr.
+        """
+        with contextlib.suppress(ValueError, OSError):
+            prior = signal.set_wakeup_fd(self._wake_w, warn_on_full_buffer=False)
+            if prior == -1:
+                self._owns_wakeup_fd = True
+                return
+            signal.set_wakeup_fd(prior)  # occupied — put it back untouched
 
     def _wake(self, byte: bytes) -> None:
         with contextlib.suppress(OSError):
@@ -155,28 +198,69 @@ class SyncPhaseGuard:
         teardown (there is no loop to cancel), and it skips atexit, hence
         the explicit listener flush.
         """
-        # State loop, NOT a fixed A-then-F sequence: two signals landing at
-        # the same eval checkpoint (e.g. supervisor SIGTERM + terminal
-        # SIGINT) can interleave the handlers so the nested one's b"F" is
-        # written BEFORE the outer one's b"A". A sequential reader would
-        # mistake that b"F" for a foreign byte and retire — permanently
-        # disarming the guard. Here b"F" forces regardless of arrival order,
-        # which is safe because the handler writes `interrupted_signum`
-        # before ANY wake byte, so the exit code below is always right.
+        # TWO CHANNELS REPORTING THE SAME DELIVERIES, and the loop believes
+        # whichever has counted more. The handler writes its b"A"/b"F"
+        # opcodes; the interpreter writes each signal's NUMBER as it arrives,
+        # whenever this guard holds the wakeup fd (`_claim_wakeup_fd`). Both
+        # tick once per delivered signal, so `max` is the true count — and it
+        # stays true if a channel goes silent, which is the whole point.
+        # Opcode bytes cannot be mistaken for signal numbers: "A"/"C"/"F" are
+        # 65/67/70 and Linux has no signal above 64.
+        #
+        # The wakeup channel exists because THE HANDLER MAY NEVER RUN, which
+        # is what the 2026-08-08 investigation found, in the exact case this
+        # guard exists for. Signals pending in one dispatch pass are handled
+        # in SIGNAL-NUMBER order, not arrival order, so SIGINT (2) always
+        # precedes SIGTERM (15); the first handler RAISES, which ends that
+        # pass early and leaves the other signal tripped but undispatched;
+        # and the phase then wedges in a blocking call (`time.sleep`, `join`,
+        # `read`) that reaches no eval checkpoint where the stranded handler
+        # could catch up. No force byte was ever written, so the guard sat
+        # out its whole teardown deadline before forcing — measured 52/60 in
+        # a standalone reproduction, and the live shape behind
+        # `test_mixed_signal_pair_forces_regardless_of_order` failing ~7% of
+        # coverage runs. A wakeup byte is in the pipe before any of that
+        # dispatch logic is reached.
+        #
+        # The handler channel exists because THE WAKEUP FD CAN BE TAKEN AWAY
+        # MID-PHASE, and silently: asyncio claims it in `add_signal_handler`
+        # and hands back -1 rather than the previous owner when the loop
+        # closes, so one async command run inside a phase (`otto test` runs a
+        # whole pytest session inside one) permanently ends our side of that
+        # channel. Counting instead of switching modes is what makes that a
+        # non-event — the opcodes were arriving all along.
+        #
+        # Foreign signals ride the same fd while this phase owns it, so
+        # anything that is not SIGINT/SIGTERM is skipped rather than counted:
+        # a terminal resize must never force-exit a command.
+        watched = {int(signal.SIGINT), int(signal.SIGTERM)}
+        by_handler = by_wakeup = 0
+        first_signum: "int | None" = None
         armed = False
         while True:
             byte = self._read_wake(self._bound if armed else None)
             if self._closed or byte in (b"", b"C"):  # phase completed in time
                 os.close(self._wake_r)
                 return
-            if byte == b"A":
-                armed = True  # the graceful-teardown deadline starts now
-                continue
-            # b"F" (second signal, whatever the interleaving) or None
-            # (deadline expiry after arming — unreachable unarmed, the
-            # pre-arm read has no timeout): force.
-            break
-        signum = self.interrupted_signum if self.interrupted_signum is not None else signal.SIGINT
+            if byte is None:
+                break  # deadline expiry after arming; unreachable before it
+            if byte in (b"A", b"F"):
+                by_handler += 1
+            elif byte[0] in watched:
+                by_wakeup += 1
+                if first_signum is None:
+                    first_signum = byte[0]
+            else:
+                continue  # someone else's signal: not ours to count
+            if max(by_handler, by_wakeup) >= _FORCE_AFTER_DELIVERIES:
+                break  # a second signal, on either channel: force now
+            armed = True  # the graceful-teardown deadline starts here
+        # The handler's record is the authoritative "which signal was first",
+        # and the exit code names the first. It is None only when no handler
+        # ever ran, which is exactly when the wakeup channel has the answer.
+        signum = self.interrupted_signum
+        if signum is None:
+            signum = first_signum if first_signum is not None else signal.SIGINT
         _run_force_exit_hooks()
         with contextlib.suppress(Exception):
             self._shutdown_listener()
@@ -187,6 +271,23 @@ class SyncPhaseGuard:
 
     def _close(self) -> None:
         """Retire a started watchdog; called from ``sync_phase``'s finally."""
+        # Release the wakeup fd FIRST, and only if this guard is STILL its
+        # owner: no further signal may write into a pipe that is about to
+        # close, and b"C" must be the last thing the watchdog sees. Taking it
+        # back is a read-modify-write because the C API has no query — and
+        # the check is not ceremony, because ownership can change under us
+        # (asyncio takes it in `add_signal_handler`), and clearing someone
+        # else's registration would break their signal delivery exactly the
+        # way an unconditional claim broke ours. Restores -1 rather than a
+        # remembered number: the claim only happens when it WAS -1, and
+        # writing back a stale fd could hand the interpreter one that has
+        # since been closed and reused.
+        if self._owns_wakeup_fd:
+            with contextlib.suppress(ValueError, OSError):
+                current = signal.set_wakeup_fd(-1)
+                if current != self._wake_w:
+                    signal.set_wakeup_fd(current)  # not ours any more — put it back
+            self._owns_wakeup_fd = False
         self._wake(b"C")
         with contextlib.suppress(OSError):
             os.close(self._wake_w)
@@ -206,6 +307,17 @@ class SyncPhaseGuard:
             # handler owns any later signal. Dropping this one beats raising
             # into the caller's finally blocks.
             return
+        # The wake byte is written unconditionally, even while the guard also
+        # owns the wakeup fd and the delivery is therefore already in the
+        # pipe twice. The watchdog counts the two channels separately and
+        # takes the larger, so the duplicate is free — and paying for it
+        # keeps this channel live for a phase whose wakeup fd gets taken away
+        # mid-flight, which asyncio does without giving it back.
+        #
+        # Which is not the same as this channel being sufficient: THIS
+        # FUNCTION IS NOT GUARANTEED TO RUN. A signal pending alongside one
+        # whose handler raises can stay undispatched until an eval checkpoint
+        # that a wedged teardown never reaches. Hence two channels.
         if self.interrupted_signum is None:
             self.interrupted_signum = signum
             self._wake(b"A")  # start the watchdog's deadline countdown

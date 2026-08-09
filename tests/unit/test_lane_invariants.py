@@ -177,6 +177,12 @@ _SERIAL_TIMING_TESTS = {
     "tests/unit/test_lifecycle_sync_phase.py": (
         "test_second_signal_forces_immediately",
         "test_mixed_signal_pair_forces_regardless_of_order",
+        # Both added 2026-08-08 with the two-channel force path. Same
+        # discriminator as their siblings above — an elapsed bound BELOW the
+        # child's own teardown deadline, so a force that did not happen is
+        # told apart from one that did by the only signal there is.
+        "test_second_signal_forces_even_when_its_handler_never_runs",
+        "test_second_signal_forces_after_asyncio_takes_the_wakeup_fd_away",
     ),
     "tests/unit/host/test_session.py": ("test_recovery_timeout_rebind_is_live",),
     # Fourth sighting of the class, caught by this wave's own gates run: the
