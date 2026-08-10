@@ -12,6 +12,7 @@ multi-hop UnixHost tests.
 """
 
 import shutil
+from collections.abc import Iterator
 
 import pytest
 
@@ -28,6 +29,7 @@ from otto.logger.mode import LogMode
 # password-SSH invocation exist once for the whole repo.
 from scripts.lab_health import _hop_index, _load_hosts, _run_ssh, _ssh_user_pass
 from tests._fixtures._console_lock import console_access
+from tests._fixtures.fd_watermark import fd_watermark_bracket
 from tests._fixtures.labdata import lab_data_path
 
 # Make repo1's custom Zephyr 2.7 dialect resolvable by the storage factory.
@@ -209,6 +211,48 @@ _MANUAL_CAPTURE_HINT = (
     "Read it by hand with:\n"
     f"  ssh <hop> journalctl -u 'zephyr-qemu-*' --since '{_JOURNAL_WINDOW}' --no-pager"
 )
+
+
+@pytest.fixture(autouse=True)
+def _fd_watermark(request: pytest.FixtureRequest) -> Iterator[None]:
+    """Descriptor bracket for the hop tests, scoped by the ``hops`` marker.
+
+    Catches anything the hop path still holds when the test ends: a
+    ``SshHopTransport.close()`` that aborted partway through its listener loop
+    and so never reached the tunnel teardown, a forward built after close by a
+    caller that raced it, the zombie ``_SelectorSocketTransport`` class this
+    lane's fixtures already fight, and leaked telnet console transports.
+
+    Scoped by marker rather than by module so a hop test added elsewhere in
+    this directory is covered without anyone remembering to opt in. That scope
+    stops at the directory: the ``hops``-marked modules under ``tests/e2e``
+    are covered by their own lane's bracket or by nothing.
+
+    ``gc_policy="always"``, matching the other bed lanes. The eager policy's
+    two collects are what makes ``on-suspicion`` tempting, but that 3.3x
+    (16.1s -> 54.0s) was measured over 1426 unit tests; here N is 18 and the
+    A/B came out at 10.93s with against 10.97s without — no measurable cost
+    either way. With nothing to buy, take the policy that cannot be fooled by
+    the previous test's garbage inflating the baseline, which matters most in
+    exactly this lane's noisy heap.
+
+    Tolerance is the authority's 4, not ``tests/unit/host``'s 0: that lane
+    earned 0 by measuring a flat floor across 1426 tests, and nobody has
+    measured this one, which has live SSH sessions and channels moving under
+    the test. The cost is stated plainly — this bracket cannot see a retained
+    leak of four descriptors or fewer.
+
+    What it CANNOT see at all is a leak released when the host closes: every
+    hop test closes its host in a ``finally``, so the verdict is taken after
+    the evidence is gone. That is not hypothetical — see
+    ``test_hop_transfers_do_not_accumulate_port_forwards``, which exists
+    because this bracket could not see the very leak that motivated it, and
+    which counts from inside the host's lifetime for that reason.
+    """
+    if request.node.get_closest_marker("hops") is None:
+        yield
+        return
+    yield from fd_watermark_bracket(gc_policy="always")
 
 
 def _hop_ssh_target(backend: str) -> tuple[str, str, str] | None:

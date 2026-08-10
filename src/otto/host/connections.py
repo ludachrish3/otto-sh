@@ -490,6 +490,25 @@ class ConnectionManager:
             raise RuntimeError(f"{self._name}: forward_port requires a tunnel (hop)")
         return await self._forward_port(dest_port)
 
+    def unforward_port(self, dest_port: int) -> None:
+        """Release a forward taken out by :meth:`forward_port`.
+
+        The counterpart a per-transfer caller needs: without it a forward
+        lives until the host closes, so a bulk netcat put strands one
+        listening socket per file for the rest of the session.  Tolerant by
+        design — no tunnel, or a destination that was never forwarded, is a
+        no-op, so a caller can release unconditionally from its cleanup path
+        without first working out whether it took one.
+
+        Only for forwards a caller owns end to end.  The ftp and telnet
+        forwards are held by their own cached clients and must not be
+        released per-operation.
+        """
+        if self._hop is None:
+            return
+        self._hop.unforward_port(self._ip, dest_port)
+        logger.debug(f"Released forward to {self._ip}:{dest_port} for {self._name}")
+
     async def close(self) -> None:
         """Close all open connections, port forwards, and the tunnel.
 

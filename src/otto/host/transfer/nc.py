@@ -1099,6 +1099,13 @@ class NcFileTransfer(UnixFileTransfer):
                 # listener still holds it.
                 if listen_task is not None and not listen_task.done():
                     await self._cancel_and_reap(listen_task, port)
+                # Release the local forward with the remote port, for the same
+                # reason and in the same place. Caching in the transport only
+                # bounds the leak where the destination repeats; these files
+                # transfer concurrently on distinct ports, so without this each
+                # one strands a listening socket until the host closes. After
+                # the reap, which needs the forward to reach the listener.
+                self._connections.unforward_port(port)
                 self._release_port(port)
 
         async def _get_one(src: Path) -> Result:
@@ -1362,6 +1369,13 @@ class NcFileTransfer(UnixFileTransfer):
                 # listener still holds it.
                 if listen_task is not None and not listen_task.done():
                     await self._cancel_and_reap(listen_task, port)
+                # Release the local forward with the remote port, for the same
+                # reason and in the same place. Caching in the transport only
+                # bounds the leak where the destination repeats; these files
+                # transfer concurrently on distinct ports, so without this each
+                # one strands a listening socket until the host closes. After
+                # the reap, which needs the forward to reach the listener.
+                self._connections.unforward_port(port)
                 self._release_port(port)
 
         async def _put_one(src: Path) -> Result:

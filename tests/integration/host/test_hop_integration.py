@@ -21,6 +21,8 @@ Skip hop tests::
     pytest -m "not hops"
 """
 
+import gc
+from contextlib import suppress
 from pathlib import Path
 
 import pytest
@@ -32,6 +34,7 @@ from otto.host import UnixHost
 from otto.host.login_proxy import Cred
 from otto.logger.mode import LogMode
 from otto.utils import Status
+from tests._fixtures.fd_watermark import open_fd_count
 from tests.conftest import host_data
 from tests.integration.host._transfer_retry import transfer_with_retry
 
@@ -462,3 +465,151 @@ class TestTwoHopChain:
         result = (await two_hop_ssh.run(f"cat {remote_path}")).only
         assert content in result.value
         await two_hop_ssh.run(f"rm -f {remote_path}")
+
+
+def _nc_hop_host() -> UnixHost:
+    """A ``tomato``-via-``carrot`` host on the netcat backend.
+
+    The two descriptor tests below both need a hop host whose transfers go
+    through ``forward_port``; nothing else about them is shared, so this is a
+    plain helper rather than a fixture.
+    """
+    data = host_data("tomato")
+    return UnixHost(
+        ip=data["ip"],
+        element=data["element"],
+        creds=[Cred(**c) for c in data["creds"]],
+        board=data.get("board"),
+        is_virtual=True,
+        term="ssh",
+        transfer="nc",
+        hop="carrot_seed",
+        log=LogMode.QUIET,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.hops
+async def test_hop_transfers_do_not_accumulate_port_forwards(tmp_path: Path):
+    """Repeated transfers on ONE hop host must not grow the descriptor count.
+
+    This test exists because the fd watermark bracket cannot see the leak it
+    was added to catch. ``ConnectionManager.close()`` releases every port
+    forward, and every hop test closes its host in a ``finally``, so the
+    per-test bracket takes its verdict after the evidence is gone and reports
+    green. Measured 2026-08-10: the whole ``-m hops`` module passed under the
+    bracket while leaking a listening socket per transferred file (two, back
+    when the forward bound every interface and so opened one socket per
+    address family).
+
+    The leak is only visible from INSIDE the host's lifetime, so that is where
+    this measures — several transfers on one open host, counted before the
+    close that would hide it. Same shape as
+    ``test_timed_out_exec_does_not_leak_its_pipe_fds`` in the unit tree, and
+    for the same reason: when the bracket's pre-verdict cleanup is what erases
+    the evidence, the instrument has to count while the evidence still exists.
+
+    Tolerance is not zero: the first transfer legitimately warms the tunnel and
+    the pooled control session. It is the GROWTH ACROSS REPEATS that must be
+    flat, so the baseline is taken after one warm-up transfer.
+    """
+    h = _nc_hop_host()
+    src = tmp_path / "fwd_accum.txt"
+    src.write_text("port-forward accumulation probe")
+    remote = "/tmp/fwd_accum.txt"
+    # Eight rather than a token two or three: the leak is one descriptor per
+    # transfer, so the repeat count IS the discriminating margin against the
+    # tolerance below. Widening the tolerance would blunt the test; adding
+    # repeats sharpens it, and eight transfers cost about a second.
+    repeats = 8
+    try:
+        await h.put([src], Path("/tmp"))  # warm the tunnel and control session
+        gc.collect()
+        before = open_fd_count()
+
+        for i in range(repeats):
+            # Distinct payload per repeat, read back each time. Counting
+            # descriptors alone would be satisfied by a forward that is reused
+            # but no longer reaches anything: each repeat spawns a NEW remote
+            # `nc`, so this is the check that a listener created for one
+            # listener generation still routes to the next.
+            payload = f"port-forward accumulation probe {i}"
+            src.write_text(payload)
+            res = await h.put([src], Path("/tmp"))
+            assert res.status == Status.Success, f"probe transfer {i} failed: {res.msg}"
+            landed = (await h.run(f"cat {remote}")).only
+            assert payload in landed.value, (
+                f"repeat {i} reported success but the remote file holds "
+                f"{landed.value!r}, not {payload!r} — the reused forward is "
+                "not reaching this transfer's listener"
+            )
+
+        gc.collect()
+        growth = open_fd_count() - before
+        assert growth <= 2, (
+            f"{repeats} hop transfers grew the descriptor count by {growth} "
+            f"({growth / repeats:.1f} per transfer). A netcat transfer through a "
+            "hop builds an asyncssh local port forward and the tunnel transport "
+            "holds it until the host closes, so without reuse a bulk put of N "
+            "files strands a listening socket per file mid-operation. "
+            "SshHopTransport.forward_port must reuse the forward for a "
+            "destination it already has one for."
+        )
+    finally:
+        with suppress(Exception):
+            await h.run(f"rm -f {remote}")
+        await h.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.hops
+async def test_a_bulk_hop_put_does_not_strand_a_forward_per_file(tmp_path: Path):
+    """ONE put of N files must not leave N forwards behind either.
+
+    The sibling test above measures sequential single-file puts, which is the
+    shape a per-destination cache fixes: each transfer releases its remote port
+    and the next one is handed the same number back, so one forward serves them
+    all. That shape is not the interesting one.
+
+    ``_put_files_nc`` dispatches every file through an unbounded
+    ``asyncio.gather``, and ``_find_free_port`` reserves a DISTINCT remote port
+    per in-flight caller, so a bulk put opens N forwards at once — N different
+    cache keys, no reuse available, nothing for the cache to do. The same holds
+    for any host whose port strategy resolves to ``python`` or ``custom``, which
+    return a fresh ephemeral port on every call rather than rescanning from the
+    base: there the cache never hits at all, even sequentially.
+
+    So the descriptors have to come back when the transfer ends, not when the
+    host closes. This is the guard for that, and it is the one that does not
+    care which port strategy the target resolved to.
+    """
+    h = _nc_hop_host()
+    files = []
+    for i in range(8):
+        f = tmp_path / f"bulk_fwd_{i}.txt"
+        f.write_text(f"bulk forward probe {i}")
+        files.append(f)
+    try:
+        # Warm the tunnel, the pooled control session and the port strategy
+        # probe, none of which are what this measures.
+        await h.put([files[0]], Path("/tmp"))
+        gc.collect()
+        before = open_fd_count()
+
+        res = await h.put(files, Path("/tmp"))
+        assert res.status == Status.Success, f"bulk put failed: {res.msg}"
+
+        gc.collect()
+        growth = open_fd_count() - before
+        assert growth <= 2, (
+            f"a single put of {len(files)} files grew the descriptor count by "
+            f"{growth} ({growth / len(files):.1f} per file) and kept it. The "
+            "files transfer concurrently on distinct remote ports, so each one "
+            "builds its own forward and a per-destination cache cannot help. "
+            "The forward has to be released where the port is released, in the "
+            "per-attempt finally, not held until the host closes."
+        )
+    finally:
+        with suppress(Exception):
+            await h.run("rm -f /tmp/bulk_fwd_*.txt")
+        await h.close()

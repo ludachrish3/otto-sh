@@ -112,6 +112,58 @@ def test_every_attempt_reaps_from_its_finally_not_per_branch():
         )
 
 
+def test_every_attempt_releases_its_local_forward_where_it_releases_the_port():
+    """The local half of the leak, pinned in the same structural shape.
+
+    The remote listener and the local asyncssh forward are taken out together
+    and have to come back together. Caching forwards in the transport bounds
+    the leak only where the destination repeats; these files transfer
+    concurrently on distinct reserved ports, so the cache cannot help and each
+    attempt has to hand its own forward back.
+
+    Unit tests over the transfer code cannot catch this by behaviour —
+    ``_connections`` is a ``MagicMock`` there, which absorbs an
+    ``unforward_port`` that is never called. Hence a structural guard.
+
+    Ordering matters twice: after the reap, which needs the forward to reach
+    the listener it is killing, and with ``_release_port``, so a destination is
+    never left forwarded to a port that has been handed to someone else.
+    """
+    releasing_finallys = [
+        node
+        for node in ast.walk(_TREE)
+        if isinstance(node, ast.Try)
+        and any(
+            isinstance(c, ast.Call)
+            and isinstance(c.func, ast.Attribute)
+            and c.func.attr == "unforward_port"
+            for f in node.finalbody
+            for c in ast.walk(f)
+        )
+    ]
+    assert len(releasing_finallys) == 2, (
+        f"expected both nc attempts (get and put) to release their forward in "
+        f"`finally`, found {len(releasing_finallys)}. A forward held past its "
+        "attempt lives until the host closes, so a bulk put of N files strands "
+        "N listening sockets for the rest of the session."
+    )
+    for node in releasing_finallys:
+        names = [
+            c.func.attr
+            for f in node.finalbody
+            for c in ast.walk(f)
+            if isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute)
+        ]
+        assert names.index(_REAPING_FUNCTION) < names.index("unforward_port"), (
+            "the forward must be released AFTER the reap — the reap connects "
+            "through that forward to make the remote listener exit"
+        )
+        assert names.index("unforward_port") < names.index("_release_port"), (
+            "release the forward BEFORE the port, so the port is never handed "
+            "to the next transfer while a forward still points at it"
+        )
+
+
 def test_no_listener_is_cancelled_without_being_reaped():
     """The defect, stated as an invariant.
 

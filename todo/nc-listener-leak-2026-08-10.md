@@ -119,7 +119,6 @@ A unit test over `_get_files_nc` / `_put_files_nc` with a stubbed `_exec_cmd`
 can assert `_reap_nc_listener` was awaited for the branch under test — one case
 per branch, each of which fails against today's code.
 
-
 ## What the plan got wrong
 
 The plan said "route the ten bare-cancel branches through `_cancel_and_reap`",
@@ -151,8 +150,112 @@ reacting to the change rather than by reading:
   after two single-version runs had "confirmed" a stub fixture in opposite
   directions.
 
-Still open, from the review: `forward_port` is not cached, so each tunneled
-reap leaks a local asyncssh forward (pre-existing, now exercised more often);
-on the collision branch a blind connect-and-close could truncate a *racing*
-process's file; the hard cap could reasonably be an `NcOptions` field; and a
-GET that exceeds the one-hour cap would still truncate silently.
+Still open, from the review: on the collision branch a blind connect-and-close
+could truncate a *racing* process's file; the hard cap could reasonably be an
+`NcOptions` field; and a GET that exceeds the one-hour cap would still truncate
+silently.
+
+## Follow-up, landed: the uncached forward (the local half of the leak)
+
+The review's first open item — `forward_port` is not cached — was its own leak,
+local rather than remote, and is now fixed. Measured before the fix on a
+`tomato`-via-`carrot` host: five sequential hop puts took the process from 10 to
+18 open descriptors, and a single put of six files from 8 to 20 — two per
+*file*, because `forward_local_port("", ...)` bound both address families. All
+of it was reclaimed at `close()`, which is exactly why nobody noticed: the
+damage is bounded by one host session, and a bulk put of N files strands 2N
+descriptors while it is running.
+
+Two mechanisms, because one is not enough — and the first cut shipped only the
+first one, which review caught.
+
+**Caching.** `SshHopTransport._port_forwards` is a dict keyed by
+`(dest_host, dest_port)`. Keying on the destination is sound because a forward
+is a route, not a session: asyncssh resolves `dest_host:dest_port` and opens the
+channel when the local listener *accepts*, so a listener built for one remote
+`nc` reaches the next one, and a rebuilt telnet client is carried by the forward
+its dead predecessor used. That last case is a second, distinct leak the cache
+fixes on its own: `ConnectionManager.telnet` rebuilds when the cached client
+reports `alive` false and runs the same `_forward_port` call, so before this
+every telnet reconnect stranded a listener for port 23.
+
+**Releasing.** Caching alone does almost nothing for the case that motivated
+the fix. `_put_files_nc` dispatches every file through an unbounded
+`asyncio.gather`, and `_find_free_port` reserves a *distinct* remote port per
+in-flight caller, so a bulk put opens N forwards at once — N different keys,
+no reuse available. Measured on an 8-file put through a hop: **6 descriptors
+stranded with caching alone, 0 once each attempt releases its own.** The same
+gap appears sequentially on any target whose port strategy resolves to `python`
+or `custom`, which return a fresh ephemeral port every call instead of
+rescanning from the base — there the cache never hits at all. So
+`unforward_port` releases the forward in the per-attempt `finally` the previous
+fix established, after the reap (which needs the forward to reach the listener
+it is killing) and before `_release_port`. It is synchronous on purpose: that
+`finally` can run under cancellation, where an `await` can raise and skip the
+rest.
+
+Also in `close()`: each `listener.close()` now runs under `teardown_step`. One
+raising listener used to skip every later listener, the tunnel teardown, and the
+parent cascade — the cleanup path of a leak fix being the largest leak in the
+file.
+
+The bind narrowed from `""` to `"localhost"` in the same change. Every caller
+already connected to `localhost`, so all-interfaces only ever bought off-box
+reachability nobody asked for. Note what this is *not*: forwards have always
+outlived their transfer, so this removes a standing exposure rather than one the
+caching introduced. On this VM it also halves the sockets per forward, but that
+is incidental — `getaddrinfo("localhost")` returns one address here only because
+Debian names `::1` `ip6-localhost`; on a distro that maps `::1 localhost` it is
+still two, bound to the same port by asyncssh's own retry of the assigned port.
+
+### What the fd watermark bracket could not see
+
+A `hops`-scoped `fd_watermark_bracket` went into
+`tests/integration/host/conftest.py` alongside this. It is worth having, but it
+did **not** catch this leak and could not have: `ConnectionManager.close()`
+releases every forward, each hop test closes its host in a `finally`, and the
+bracket's verdict is taken after that. The whole `-m hops` module reported 17
+passed while leaking. Same structural blindness as the collectable-transport
+case in `todo/`-adjacent notes — when the cleanup that runs before the verdict is
+what erases the evidence, a teardown bracket is the wrong instrument.
+
+Two tests measure from inside the host's lifetime instead, one per shape, with
+descriptors counted before the close that would hide them:
+
+- `test_hop_transfers_do_not_accumulate_port_forwards` — eight sequential
+  single-file puts. Eight rather than two or three because the leak is one
+  descriptor per transfer, so the repeat count *is* the margin against the
+  tolerance of 2; widening the tolerance would blunt the test, adding repeats
+  sharpens it. Each repeat writes a distinct payload and reads it back, so a
+  forward that is reused but no longer routes anywhere fails on content rather
+  than passing on a flat count.
+- `test_a_bulk_hop_put_does_not_strand_a_forward_per_file` — one put of eight
+  files. This is the shape the cache cannot help and the one that fails if the
+  release is removed. Without it the suite would have certified a stronger
+  property than the code delivers, which is exactly what the first cut did.
+
+Cost of the bracket, since leak instruments have been expensive before: 18 tests,
+three serial runs each way, 10.93s mean with and 10.97s without — below noise, so
+`gc_policy="always"` it is, matching the other bed lanes. `on-suspicion` was the
+first choice, justified by the 16.1s -> 54.0s figure from `tests/unit/host`; that
+figure is 1426 tests times two collects and does not transfer to 18. With nothing
+to buy, the policy that cannot be fooled by the previous test's garbage inflating
+the baseline is the right one, and this lane has the noisiest heap in the repo.
+Tolerance stays at the authority's 4 rather than `tests/unit/host`'s 0: that lane
+earned 0 by measuring a flat floor, nobody has measured this one, and it has live
+SSH sessions moving under the test. The cost of that is stated plainly in the
+fixture — the bracket cannot see a retained leak of four descriptors or fewer,
+which is a further reason the in-test counters exist alongside it rather than
+instead of it.
+
+### Still open
+
+`SshHopTransport.close()` takes neither lock, so a `forward_port` that is
+mid-await when `close()` runs can store its listener into an already-cleared
+dict — and, if it is awaiting `get_tunnel()`, open a fresh SSH connection to the
+hop *after* close. Both leak, and the orphaned connection is the zombie-transport
+`[unraisable]` class this file's own comments are about. Pre-existing and
+narrow (it needs teardown to interleave with a live transfer, which cancellation
+can do), and a `_closed` flag checked before the store would cover it, but that
+changes `forward_port`'s contract and wants its own decision rather than riding
+along here.

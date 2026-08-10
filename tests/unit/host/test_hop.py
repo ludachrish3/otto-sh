@@ -200,7 +200,49 @@ class TestConnectionManagerTunnel:
             assert call_args.kwargs["user"] == "user"
             assert call_args.kwargs["password"] == "pass"
             assert call_args.kwargs["connect_port"] == 54321
-            mock_tunnel.forward_local_port.assert_awaited_once_with("", 0, "10.0.0.1", 23)
+            mock_tunnel.forward_local_port.assert_awaited_once_with("localhost", 0, "10.0.0.1", 23)
+
+    @pytest.mark.asyncio
+    async def test_telnet_reconnect_does_not_take_a_second_forward(self):
+        """A dropped telnet session must not cost a listener.
+
+        ``telnet()`` rebuilds when the cached client reports ``alive`` false,
+        and the rebuild runs the same ``_forward_port`` call as the first
+        connect. Before forwards were cached that appended a second listener
+        for port 23, held until the host closed — one leaked listening socket
+        per reconnect, on a path whose whole job is surviving reconnects.
+
+        Reuse is correct here because what died is the TCP session, not the
+        route: the forward opens its channel to the destination when a local
+        connection is accepted, so the new client's connect is carried by the
+        existing listener.
+        """
+        mock_tunnel = MagicMock(spec=SSHClientConnection)
+        mock_listener = MagicMock()
+        mock_listener.get_port.return_value = 54321
+        mock_tunnel.forward_local_port = AsyncMock(return_value=mock_listener)
+
+        cm = ConnectionManager(
+            ip="10.0.0.1",
+            creds=[Cred(login="user", password="pass")],
+            user=None,
+            term="telnet",
+            name="test",
+            hop=SshHopTransport(AsyncMock(return_value=mock_tunnel)),
+        )
+        with patch("otto.host.connections.TelnetClient") as MockTelnet:  # noqa: N806 — CapWords for a class mock
+            dead, fresh = MagicMock(), MagicMock()
+            dead.connect, fresh.connect = AsyncMock(), AsyncMock()
+            dead.close = AsyncMock()
+            dead.alive = False
+            fresh.alive = True
+            MockTelnet.side_effect = [dead, fresh]
+
+            assert await cm.telnet() is dead
+            assert await cm.telnet() is fresh, "the stale client was not rebuilt"
+
+        assert MockTelnet.call_count == 2
+        mock_tunnel.forward_local_port.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_ftp_uses_tunneled_client_when_hop_present(self):
@@ -228,7 +270,7 @@ class TestConnectionManagerTunnel:
             result = await cm.ftp()
             assert isinstance(result, TunneledFtpClient)
             mock_connect.assert_awaited_once_with("localhost", 54322)
-            mock_tunnel.forward_local_port.assert_awaited_once_with("", 0, "10.0.0.1", 21)
+            mock_tunnel.forward_local_port.assert_awaited_once_with("localhost", 0, "10.0.0.1", 21)
 
     @pytest.mark.asyncio
     async def test_forward_port_public_api(self):
@@ -248,7 +290,7 @@ class TestConnectionManagerTunnel:
         )
         port = await cm.forward_port(8080)
         assert port == 55555
-        mock_tunnel.forward_local_port.assert_awaited_once_with("", 0, "10.0.0.1", 8080)
+        mock_tunnel.forward_local_port.assert_awaited_once_with("localhost", 0, "10.0.0.1", 8080)
 
     @pytest.mark.asyncio
     async def test_forward_port_raises_without_tunnel(self):

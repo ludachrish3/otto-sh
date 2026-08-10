@@ -219,6 +219,9 @@ _CONSUMERS = (
     # subprocess spawning lives, so it is where an unclosed transport is most
     # likely to be born (dab13a7b was). Adopted 2026-08-09.
     "tests/unit/host/conftest.py",
+    # Marker-scoped rather than module-scoped: the hop tests are the ones that
+    # open port forwards on a tunnel transport. Adopted 2026-08-10.
+    "tests/integration/host/conftest.py",
 )
 
 
