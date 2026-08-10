@@ -11,6 +11,8 @@ The same wiring is done in :mod:`tests.unit.host.test_hop_integration` for
 multi-hop UnixHost tests.
 """
 
+import shutil
+
 import pytest
 
 from otto.config.lab import Lab
@@ -20,7 +22,13 @@ from otto.host.login_proxy import Cred
 from otto.host.telnet import abort_console_transports
 from otto.host.unix_host import UnixHost
 from otto.logger.mode import LogMode
+
+# Private, but the lab tooling's — and already imported this way by
+# tests/unit/scripts/test_lab_health.py. Reused so the hop-id index and the
+# password-SSH invocation exist once for the whole repo.
+from scripts.lab_health import _hop_index, _load_hosts, _run_ssh, _ssh_user_pass
 from tests._fixtures._console_lock import console_access
+from tests._fixtures.labdata import lab_data_path
 
 # Make repo1's custom Zephyr 2.7 dialect resolvable by the storage factory.
 #
@@ -142,6 +150,13 @@ def _load_lab():
 # silent slowdown. Recover with `make qemu-restart` (or `sudo systemctl restart
 # 'zephyr-qemu-*.service'` on the zephyr VM).
 #
+# "Left for inspection" only helps if the report says what to inspect, and it
+# did not: the 2026-08-01 incident record concluded there was no way into a
+# wedged guest, and the instance was restarted un-diagnosed. There is one
+# — the guest's console is muxed to the unit's stdout and therefore captured by
+# systemd on the hop — so the first failure per backend now carries that
+# journal tail as a report section (`_guest_console_tail`).
+#
 # Scope: this is the *console* wedge (the slow, cascading failure mode). A live
 # console with a dead SNMP relay is a separate, fast failure the SNMP tests
 # surface on their own ~4s UDP timeout, and it never trips this gate (the
@@ -160,9 +175,148 @@ _WEDGE_SIGNATURE = "shell never became ready"
 # signature. Per-worker (xdist workers are separate processes).
 _BED_HEALTH: dict[str, str] = {}
 
+# Backend id -> nodeid of the test whose report carries that backend's console
+# tail, so the end-of-run banner can point at it rather than reprint the
+# capture once per wedged backend.
+_BED_CONSOLE: dict[str, str] = {}
 
+# Journal-tail capture settings. The window only has to cover the wedge that
+# just happened, and the wedge is detected within one 15s handshake of it.
+_JOURNAL_WINDOW = "10 min ago"
+_JOURNAL_FAULT_LINES = 20
+_JOURNAL_TAIL_LINES = 25
+_JOURNAL_SSH_TIMEOUT = 20.0
+
+# Three questions, three greps — do not merge them into one filtered tail.
+#
+# A bare severity filter is useless here, measured twice against the live bed.
+# ``<err>`` returns 40 identical ``fs: failed to unlink path (-2)`` lines (the
+# FAT driver's ENOENT, emitted by the file-ops tests doing their normal work).
+# Adding the telnet signatures to the fault filter reproduced the same
+# eviction from the other direction: during an ordinary run they crowd out
+# everything else. So:
+#
+# * ``_JOURNAL_FAULT_RE`` — signatures that are never routine. One is a finding.
+# * ``shell_telnet`` errors — routine INDIVIDUALLY (the todo record's version
+#   differential: the healthy 3.7 fat board has logged 862 of them, the 2.7
+#   board 7 before it died), so they are reported as a count per unit rather
+#   than as lines. Volume, not presence, is the signal, and a count is what
+#   says so.
+# * a raw tail, for what the guest was doing when it went quiet.
+_JOURNAL_FAULT_RE = "FATAL|ASSERT|exception|[Oo]ut of buffers|[Ss]tack overflow|panic"
+
+_MANUAL_CAPTURE_HINT = (
+    "Read it by hand with:\n"
+    f"  ssh <hop> journalctl -u 'zephyr-qemu-*' --since '{_JOURNAL_WINDOW}' --no-pager"
+)
+
+
+def _hop_ssh_target(backend: str) -> tuple[str, str, str] | None:
+    """Resolve ``backend`` to its hop's ``(ip, login, password)``, or None.
+
+    The embedded entries carry ``hop`` as a host *id* (``basil_seed``) while
+    :func:`host_data` keys on ``element`` (``basil``). ``scripts.lab_health``
+    already owns that mapping for the lab tooling and is already imported by
+    ``tests/unit/scripts/test_lab_health.py``, so this borrows it rather than
+    adding a second one — a private import across that boundary is the lesser
+    evil next to two hop indexes drifting apart.
+    """
+    ne = _ZEPHYR_BACKEND_NE.get(backend)
+    hop_id = host_data(ne).get("hop") if ne else None
+    if not hop_id:
+        return None
+    entry = _hop_index(_load_hosts(lab_data_path())).get(hop_id)
+    if entry is None or not entry.get("creds"):
+        return None
+    login, password = _ssh_user_pass(entry["creds"])
+    return entry["ip"], login, password
+
+
+def _guest_console_tail(backend: str) -> str:
+    """Best-effort: the wedged guest's OWN console output, from the hop's journal.
+
+    The gate says the instance is "left for inspection". The 2026-08-01 incident
+    record shows what that produced in practice: it concluded the boards'
+    ``-monitor none`` / stdio-mux configuration "leaves no other window in", so
+    the investigation stopped and the instance was restarted un-inspected. That
+    conclusion was wrong. Muxing the console to stdio is precisely what makes it
+    *durable* — systemd captures the unit's stdout, so the guest's own panic
+    lines outlive both the wedge and the restart, in the hop's journal.
+
+    It is worth the ssh round trip because those lines name the fault outright,
+    and nothing else in the failure output does. The 2026-08-09 wedge was
+    root-caused from them without touching the instance: on the 2.7 board,
+    ``eth_e1000: Out of buffers`` following a ``shell_telnet: Failed to send``
+    teardown, and — on a later run of the same board — a ``ZEPHYR FATAL ERROR``
+    CPU exception in its network RX thread. Two different faults; from otto's
+    side both present identically, as "shell never became ready".
+
+    Queries the ``zephyr-qemu-*`` units as a glob rather than resolving this
+    backend's own unit: no backend-to-unit mapping exists in this repo, and
+    inventing one here would be a second place to keep in sync with the bed.
+    Each line carries its own unit in the syslog identifier, so the tail stays
+    attributable without one — and a wedge whose cause is a *neighbour* board
+    stays visible, which a per-unit query would hide.
+
+    Strictly best-effort, and deliberately so: it runs on the failure path of a
+    test that has already failed for its own reasons. Every error becomes a note
+    plus the manual command. A diagnostic must never change which test fails.
+    """
+    # ``F=$(...)`` rather than ``grep ... || echo``: a pipeline's status is its
+    # LAST command's, so ``grep | tail`` exits 0 even when grep matched nothing
+    # and the ``||`` fallback would never fire. Caught by running this against
+    # the live bed with no faults in the window.
+    unit_of_line = "awk '{split($3,a,\"[\"); print a[1]}'"
+    remote = (
+        f"J() {{ journalctl -u 'zephyr-qemu-*' --since '{_JOURNAL_WINDOW}' "
+        "--no-pager -o short-iso; }; "
+        f"F=$(J | grep -E '{_JOURNAL_FAULT_RE}' | tail -n {_JOURNAL_FAULT_LINES}); "
+        f"echo '### fault lines, whole bed, since {_JOURNAL_WINDOW}:'; "
+        'echo "${F:-(none: a silent wedge with no firmware fault points at the '
+        'telnet slot)}"; '
+        "echo; echo '### shell_telnet errors per unit (routine in ones and twos; "
+        "a spike means two clients raced for one console):'; "
+        f"J | grep -F 'shell_telnet' | {unit_of_line} | sort | uniq -c; "
+        f"echo; echo '### last {_JOURNAL_TAIL_LINES} console lines, whole bed:'; "
+        f"J | tail -n {_JOURNAL_TAIL_LINES}"
+    )
+    try:
+        target = _hop_ssh_target(backend)
+        if target is None:
+            return f"No hop credentials in lab data for {backend!r}.\n{_MANUAL_CAPTURE_HINT}"
+        if shutil.which("sshpass") is None:
+            return f"sshpass is not installed on this runner.\n{_MANUAL_CAPTURE_HINT}"
+        ip, login, password = target
+        rc, out, err = _run_ssh(ip, login, password, remote, timeout=_JOURNAL_SSH_TIMEOUT)
+    except Exception as exc:  # noqa: BLE001 -- diagnostics must never mask the wedge
+        return f"Capture failed ({type(exc).__name__}: {exc}).\n{_MANUAL_CAPTURE_HINT}"
+    if rc != 0 or not out:
+        detail = (err or "no stderr").splitlines()[-1]
+        return f"ssh to the hop failed (rc={rc}: {detail}).\n{_MANUAL_CAPTURE_HINT}"
+    return out
+
+
+@pytest.hookimpl(tryfirst=True)
 def pytest_collection_modifyitems(config, items) -> None:
     """Serialize each embedded *device*'s tests onto one xdist worker.
+
+    ``tryfirst`` is load-bearing, not decoration. xdist's own
+    ``pytest_collection_modifyitems`` (``xdist/remote.py``) is what reads the
+    ``xdist_group`` marker and annotates the nodeid with its ``@group`` suffix,
+    and pluggy dispatches same-phase impls in LIFO registration order. Which
+    side of xdist this conftest lands on therefore depends on WHEN it was
+    registered: collected as part of a full-tree run it registers during
+    collection and wins, but naming this directory on the command line
+    (``pytest tests/integration/host``) makes it an *initial* conftest
+    registered at startup — so it ran AFTER xdist, the markers landed too late
+    to be seen, and every device's tests scattered across workers with no
+    serialization at all. Measured, on this directory: full tree 86 passed with
+    all 34 ``@zephyr_27_fat`` items on one worker; directory-targeted, zero
+    group suffixes, 2.7 spread over four workers, 4 failed + 3 errors, and the
+    guest taken down by a CPU exception in its network RX thread. Pinning the
+    order removes the dependence on invocation shape, and
+    :func:`_unhonored_group` re-checks the *outcome* at setup so a
+    regression fails the run instead of quietly costing a board.
 
     The Zephyr ``shell_telnet`` backend accepts only one telnet client per
     device. Under ``-n auto`` two workers running tests against the *same*
@@ -272,6 +426,41 @@ def _console_access_lock(request: pytest.FixtureRequest, tmp_path_factory):
             abort_console_transports()
 
 
+def _unhonored_group(item: pytest.Item) -> str | None:
+    """The group this item claimed but xdist never applied, or None if fine.
+
+    The marker being present proves nothing: xdist reads it in its own
+    ``pytest_collection_modifyitems`` and, if ours ran later, the marker is set
+    but ignored and the device's tests scatter across workers. What xdist
+    leaves behind when it DOES act is the ``@group`` suffix it appends to the
+    nodeid, which the worker can see — so that suffix, not the marker, is the
+    honest evidence.
+
+    This guard is the regression test for the ordering fix, and it was
+    positive-controlled as one: deleting ``tryfirst`` from
+    :func:`pytest_collection_modifyitems` and running a single embedded test
+    under ``-n2 --dist loadgroup`` errors it at setup in 0.54s, restoring the
+    decorator passes it in 5.5s. Deliberately no separate unit test — a
+    hand-built item would exercise a mock of xdist's behaviour rather than
+    xdist's behaviour, which is the only thing in question here. One test is
+    enough for the control because the guard fires before any fixture runs, so
+    it costs no console contact even when it is right.
+
+    Returns the group name rather than a bool so the caller can name it without
+    looking the marker up a second time. That second lookup was the first
+    version, and ``ty`` caught it: ``get_closest_marker`` is ``Mark | None``, so
+    re-deriving it at the failure site risked ``None.args`` on the one code path
+    that only runs when something is already wrong.
+    """
+    if getattr(item.config, "workerinput", None) is None:
+        return None  # not under xdist — one process, nothing to serialize
+    marker = item.get_closest_marker("xdist_group")
+    if marker is None or not marker.args:
+        return None  # ungrouped by design (nothing claimed, nothing to check)
+    group = str(marker.args[0])
+    return None if item.nodeid.endswith(f"@{group}") else group
+
+
 def pytest_runtest_setup(item: pytest.Item) -> None:
     """Fail fast when a target backend was already found wedged this run.
 
@@ -282,6 +471,21 @@ def pytest_runtest_setup(item: pytest.Item) -> None:
     """
     if "embedded" not in item.keywords:
         return
+    unhonored = _unhonored_group(item)
+    if unhonored is not None:
+        pytest.fail(
+            "per-device console serialization is NOT in effect: this item carries "
+            f"xdist_group({unhonored!r}) but xdist never applied it (no '@group' "
+            "suffix on the nodeid), so two workers can drive one Zephyr console at "
+            "once. That is not a flake — it takes the guest down: a 2.7 board hit a "
+            "CPU exception in its network RX thread this way, and an earlier "
+            "incident left a 3.7 board unreachable for hours.\n"
+            "Cause: this conftest's pytest_collection_modifyitems must run BEFORE "
+            "xdist's, and pluggy orders same-phase impls by registration. It is "
+            "declared tryfirst for exactly this reason — if that decorator was "
+            "removed, restore it rather than silencing this check.",
+            pytrace=False,
+        )
     # Fan-out tests carry no backend param but open every backend, so any one
     # wedged backend takes them down too.
     referenced = _referenced_backends(item) or list(EMBEDDED_BACKENDS)
@@ -305,6 +509,16 @@ def pytest_runtest_makereport(item: pytest.Item, call):
     Only attributes when exactly one backend is implicated — a per-backend test
     pins the culprit, whereas a fan-out test references every backend and can't
     say which one went dark.
+
+    The first failure per backend also gets the guest's console tail attached as
+    a report section (see :func:`_guest_console_tail`). "Left for inspection" is
+    only true if the failure output says what to inspect, and until now it did
+    not. Attached to the report rather than printed so it travels with the
+    failure into JUnit XML and back from an xdist worker.
+
+    Costs one ssh round trip, bounded at ``_JOURNAL_SSH_TIMEOUT``, on the first
+    failure per backend per worker — i.e. only when the bed is already broken
+    and the run is already paying 15s handshake timeouts.
     """
     outcome = yield
     report = outcome.get_result()
@@ -315,10 +529,17 @@ def pytest_runtest_makereport(item: pytest.Item, call):
     if _WEDGE_SIGNATURE not in str(report.longrepr):
         return
     backends = _referenced_backends(item)
-    if len(backends) == 1:
-        _BED_HEALTH.setdefault(
-            backends[0], f"console wedged ('{_WEDGE_SIGNATURE}') during this run"
+    if len(backends) != 1 or backends[0] in _BED_HEALTH:
+        return
+    backend = backends[0]
+    _BED_HEALTH[backend] = f"console wedged ('{_WEDGE_SIGNATURE}') during this run"
+    _BED_CONSOLE[backend] = item.nodeid
+    report.sections.append(
+        (
+            f"Zephyr guest console: {embedded_param_id(backend)} (hop journal)",
+            _guest_console_tail(backend),
         )
+    )
 
 
 def pytest_terminal_summary(terminalreporter, exitstatus, config) -> None:
@@ -333,4 +554,15 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config) -> None:
     )
     for backend, reason in _BED_HEALTH.items():
         terminalreporter.write_line(f"  - {embedded_param_id(backend)}: {reason}")
+        where = _BED_CONSOLE.get(backend)
+        if where:
+            terminalreporter.write_line(
+                f"      guest console tail attached to the report for {where}"
+            )
+    terminalreporter.write_line(
+        "Read that tail BEFORE restarting — it names the fault (e.g. 'eth_e1000: "
+        "Out of buffers', 'ZEPHYR FATAL ERROR'), and it is the only place the "
+        "guest's own view of the wedge appears. It survives the restart in the "
+        "hop's journal, but the 10-minute window in the attached capture does not."
+    )
     terminalreporter.write_line("Recover: `make qemu-restart`, then re-run.")

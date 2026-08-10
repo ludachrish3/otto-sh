@@ -314,16 +314,55 @@ async def test_concurrent_clients_to_one_console_contend_and_recover():
 # ---------------------------------------------------------------------------
 
 
+# Backends held out of the FAN-OUT matrix only, mapped to why. Every one of
+# these still runs the full per-device suite; this narrows one class, not a
+# board's coverage.
+#
+# Deliberately a named holdout with its reason attached rather than a quiet
+# omission, because the coverage it drops is real and someone should be able to
+# put it back when the reason expires.
+_FANOUT_EXCLUDED: dict[str, str] = {
+    "zephyr_27_fat": (
+        "Zephyr 2.7 does not reclaim the net buffers held by a telnet shell "
+        "session it tears down on a send failure, and the e1000 driver then "
+        "starves permanently — the board goes unreachable at L2 and stays that "
+        "way until `make qemu-restart`. Fan-out is the only thing that has ever "
+        "triggered it: on 2026-08-09 this class's connection to sprout27 was "
+        "followed one second later by `shell_telnet: Failed to send -128` "
+        "(ENOTCONN, the client vanished), then four opens on the 15s handshake "
+        "ceiling, then `eth_e1000: Out of buffers` forever. The trigger itself "
+        "is not rare or 2.7-specific — 24 days of hop journal show the same "
+        "event 2/5/6 times on the 3.7 and 4.4 boards with no consequence at all "
+        "— so what is being avoided here is 2.7's reaction to it, not the race. "
+        "See todo/zephyr-console-wedge-2026-08-01.md."
+    ),
+}
+
+# Fail loudly if a holdout key stops naming a real backend (a rename, a matrix
+# edit). A stale key silently un-excludes the board and the next fan-out run
+# kills it again, which is exactly the kind of quiet expiry this file should
+# not have.
+_unknown_holdouts = set(_FANOUT_EXCLUDED) - set(EMBEDDED_BACKENDS)
+if _unknown_holdouts:
+    raise RuntimeError(
+        f"_FANOUT_EXCLUDED names backends that no longer exist: {sorted(_unknown_holdouts)}. "
+        f"Known backends: {sorted(EMBEDDED_BACKENDS)}. Re-point or delete the entry — leaving "
+        "it stale silently returns the board to the fan-out matrix."
+    )
+
+
 # Per-target writable filesystem mount, keyed by lab `ne` name and derived
 # from each host's declared `filesystem` variant (the FS class's mount path,
-# the same source of truth the kits use). Covers the full Zephyr matrix in
-# `tests.conftest.EMBEDDED_BACKENDS`; the no-FS targets map to `None` and are
-# expected to surface a graceful Status.Error rather than succeed.
+# the same source of truth the kits use). Covers `tests.conftest.EMBEDDED_BACKENDS`
+# less `_FANOUT_EXCLUDED`; the no-FS targets map to `None` and are expected to
+# surface a graceful Status.Error rather than succeed.
 def _zephyr_dest_map() -> dict[str, str | None]:
     from otto.host.embedded_filesystem import build_filesystem
 
     dest: dict[str, str | None] = {}
     for backend in EMBEDDED_BACKENDS:
+        if backend in _FANOUT_EXCLUDED:
+            continue
         data = host_data(_BACKEND_NE[backend])
         dest[data["element"]] = build_filesystem(data.get("filesystem", "none")).mount
     return dest
@@ -331,17 +370,35 @@ def _zephyr_dest_map() -> dict[str, str | None]:
 
 _ZEPHYR_DEST: dict[str, str | None] = _zephyr_dest_map()
 
+# A fan-out across one device is not a fan-out, and the race these tests guard
+# needs at least two concurrent sessions to exist at all. Holding a board out is
+# a judgement call; holding out enough of them to make the test vacuous is a
+# silent loss of the whole guard, so it is an error rather than a green run.
+if len(_ZEPHYR_DEST) < 2:
+    raise RuntimeError(
+        f"the fan-out matrix is down to {len(_ZEPHYR_DEST)} device(s) "
+        f"({sorted(_ZEPHYR_DEST)}) after applying _FANOUT_EXCLUDED "
+        f"({sorted(_FANOUT_EXCLUDED)}) — concurrent session init cannot be "
+        "exercised with fewer than two, so this class would pass without "
+        "testing anything."
+    )
+
 
 @pytest.mark.embedded
 @pytest.mark.xdist_group("zephyr_fanout")
 class TestConcurrentEmbeddedTransfer:
     # This fan-out class opens one telnet client per device across *all*
-    # devices at once, so its tests must run together on a single worker —
-    # hence the explicit ``zephyr_fanout`` group (the conftest leaves it as-is
-    # rather than reassigning a per-backend group). Residual known gap: this
-    # group can still land on a different worker than the per-backend device
-    # groups, so a fan-out test may briefly overlap a per-backend test on the
-    # same device's single console. See the conftest grouping note.
+    # devices at once — less ``_FANOUT_EXCLUDED``, which currently holds out
+    # Zephyr 2.7 because it is the one board that does not survive a telnet
+    # teardown on a send failure (see that dict for the evidence). Its
+    # per-device tests are unaffected.
+    #
+    # The tests must run together on a single worker — hence the explicit
+    # ``zephyr_fanout`` group (the conftest leaves it as-is rather than
+    # reassigning a per-backend group). Residual known gap: this group can
+    # still land on a different worker than the per-backend device groups, so a
+    # fan-out test may briefly overlap a per-backend test on the same device's
+    # single console. See the conftest grouping note.
     """Fan-out file transfer across multiple Zephyr targets sharing one
     SSH hop. Reproduces the failure mode hit by ``test_instruction`` in
     ``tests/repo1/pylib/repo1_instructions/install.py``: every Zephyr
