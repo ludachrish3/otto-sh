@@ -801,6 +801,8 @@ class TestNcGetStallBoundAndRetry:
         fake_writer.close = MagicMock()
         fake_writer.wait_closed = AsyncMock(return_value=None)
 
+        # Exactly the two transfer attempts. The reap is patched out below, so
+        # nothing else draws from this list — see the patch stack for why.
         attempts: list[FakeReader] = [FakeReader([]), FakeReader([b"abc"])]
 
         with (
@@ -812,6 +814,16 @@ class TestNcGetStallBoundAndRetry:
                 "_connect_with_retry",
                 AsyncMock(side_effect=lambda *a, **k: (attempts.pop(0), fake_writer)),
             ),
+            # The reap is patched out because it would draw from `attempts`
+            # NON-DETERMINISTICALLY. `_cancel_and_reap` skips a listener task
+            # that is already done, and whether it is done at that instant is
+            # event-loop scheduling: measured 2026-08-10, 3.10 and 3.11 skip the
+            # reap here while 3.12, 3.13 and 3.14 perform it, so a fixed-length
+            # stub list passes on two interpreters and fails on three. That is a
+            # property of this stub, not of the code under test — this test is
+            # about the fresh-port retry, and the reap has its own tests in
+            # test_transfer_nc_listener_reap.py.
+            patch.object(NcFileTransfer, "_reap_nc_listener", new=AsyncMock(return_value=None)),
         ):
             status, msg = _only(
                 await asyncio.wait_for(

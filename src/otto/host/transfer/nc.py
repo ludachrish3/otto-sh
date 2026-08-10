@@ -84,6 +84,12 @@ _NC_STALL_TIMEOUT = 5.0
 # channel must fail the attempt, not hang it.
 _NC_FORWARD_SETUP_TIMEOUT = 5.0
 
+# Hard lifetime cap for a remote `nc -l`, applied via coreutils `timeout` (see
+# `_nc_listener_prefix`). One hour, not `listener_timeout`: this is the backstop
+# for otto dying with a listener up, so it only needs to beat "unnoticed for
+# days" — and capping an ESTABLISHED transfer would truncate large files.
+_NC_LISTENER_HARD_CAP_S = 3600
+
 # Close-handshake bound; past it the transport is aborted (a stalled channel
 # never flushes, so its graceful close never completes — leaking the fd, the
 # buffered bytes, and through a hop the asyncssh forward channel).
@@ -331,6 +337,35 @@ class NcFileTransfer(UnixFileTransfer):
     def _nc_listener_timeout(self) -> int:
         """`nc -w` value — whole seconds, since nc takes an integer timeout."""
         return max(1, int(self._nc_options.listener_timeout))
+
+    @property
+    def _nc_listener_prefix(self) -> str:
+        """Shell prefix giving the remote listener a hard lifetime cap.
+
+        The reap on otto's error paths is the primary defence, and it handles
+        every case where otto is alive to run it. This covers the one case it
+        cannot: otto being killed outright, or the SSH channel dying, after the
+        listener is up. Nothing on the remote side would then end it — OpenBSD
+        netcat ignores ``-w`` for listeners — and the process holds its port
+        until someone finds it. On the lab bed that took three days and six
+        listeners before anyone did.
+
+        Deliberately NOT ``listener_timeout``. That is 30s by default, and a
+        cap on the *whole* listener lifetime at 30s would sever an established
+        transfer of any real size mid-stream, turning a slow copy into a
+        silently truncated file. This cap exists to convert "forever" into
+        "finite", so it only has to be shorter than "nobody notices for days" —
+        an hour does that while being far longer than any legitimate transfer
+        on a lab network.
+
+        Degrades on hosts without coreutils ``timeout``: the prefix collapses
+        to empty and behaviour is exactly what it was before this existed, so a
+        minimal remote can still transfer. It is a backstop, not a dependency.
+        """
+        return (
+            f'T=""; command -v timeout >/dev/null 2>&1 '
+            f'&& T="timeout {_NC_LISTENER_HARD_CAP_S}"; $T '
+        )
 
     # ------------------------------------------------------------------
     # Protocol dispatch (implements BaseFileTransfer's abstract methods)
@@ -904,16 +939,25 @@ class NcFileTransfer(UnixFileTransfer):
             listen_task: asyncio.Task[CommandResult] | None = None
             try:
                 # Remote listener sends file data to the first connecting
-                # client. `-w` bounds the wait for that client so an orphaned
-                # listener (lost a port-collision race) self-terminates rather
-                # than leaking and hanging the `await listen_task` below.
+                # client. `-w` is passed for netcat variants that honour it on
+                # a listener (GNU netcat, ncat) — but it CANNOT be relied on:
+                # OpenBSD nc, the default on most distros, documents "the -w
+                # flag has no effect on the -l option, i.e. nc will listen
+                # forever for a connection". Measured on the bed 2026-08-10:
+                # listeners spawned with `-w 30` were still alive after three
+                # days. Every path out of this block must therefore reap the
+                # remote listener itself (`_cancel_and_reap`), and nothing here
+                # may assume a client that never arrives ends the process.
                 listen_task = asyncio.create_task(
                     self._exec_cmd(
-                        f"{self._nc_exec} -Nl -w {self._nc_listener_timeout} "
-                        f"{port} < {src} 2>/dev/null",
-                        # netcat self-bounds via `-w <listener_timeout>`; an otto
-                        # timeout here would be redundant and could fire first,
-                        # failing a transfer that was still healthy.
+                        f"{self._nc_listener_prefix}{self._nc_exec} -Nl "
+                        f"-w {self._nc_listener_timeout} {port} < {src} 2>/dev/null",
+                        # No otto-side timeout: a healthy transfer of any size
+                        # must not be cut off mid-flight, and this task is the
+                        # only thing that observes the transfer finishing. The
+                        # orphan case is bounded by `_cancel_and_reap` on every
+                        # error path instead — NOT by `-w`, which OpenBSD nc
+                        # ignores for listeners (see the spawn comment above).
                         timeout=float("inf"),
                     )
                 )
@@ -921,8 +965,6 @@ class NcFileTransfer(UnixFileTransfer):
                 try:
                     await self._wait_for_remote_listener(port)
                 except ConnectionError:
-                    listen_task.cancel()
-                    await asyncio.gather(listen_task, return_exceptions=True)
                     return Result(Status.Error, msg=f"Remote nc listener on port {port} not ready")
 
                 try:
@@ -931,8 +973,6 @@ class NcFileTransfer(UnixFileTransfer):
                         timeout=_NC_FORWARD_SETUP_TIMEOUT,
                     )
                 except (asyncio.TimeoutError, TimeoutError):
-                    listen_task.cancel()
-                    await asyncio.gather(listen_task, return_exceptions=True)
                     return Result(
                         Status.Error,
                         msg=(
@@ -948,8 +988,6 @@ class NcFileTransfer(UnixFileTransfer):
                         timeout=5.0,
                     )
                 except ConnectionError:
-                    listen_task.cancel()
-                    await asyncio.gather(listen_task, return_exceptions=True)
                     return Result(
                         Status.Error, msg=f"nc listener on localhost:{local_port} not ready"
                     )
@@ -971,8 +1009,6 @@ class NcFileTransfer(UnixFileTransfer):
                             if handler is not None:
                                 handler(str(src), str(dst), bytes_done, total or 0)
                 except (asyncio.TimeoutError, TimeoutError):
-                    listen_task.cancel()
-                    await asyncio.gather(listen_task, return_exceptions=True)
                     return Result(
                         Status.Error,
                         msg=(
@@ -998,8 +1034,6 @@ class NcFileTransfer(UnixFileTransfer):
                 # could split "file changed" from "dropped mid-transfer";
                 # deliberately not taken in this wave).
                 if total and bytes_done == 0:
-                    listen_task.cancel()
-                    await asyncio.gather(listen_task, return_exceptions=True)
                     return Result(
                         Status.Error,
                         msg=(
@@ -1009,16 +1043,16 @@ class NcFileTransfer(UnixFileTransfer):
                     )
 
                 # Reader drained the socket to EOF; the remote nc should exit
-                # now. Bound the wait so an orphaned listener can't hang us —
-                # `-w` caps it remote-side, this is the asyncio backstop.
+                # now. Bound the wait so an orphaned listener can't hang us.
+                # This is the ONLY bound: `-w` does not cap an OpenBSD listener
+                # (see the spawn comment above), so the timeout branch below
+                # must reap rather than merely report.
                 try:
                     await asyncio.wait_for(
                         listen_task,
                         timeout=self._nc_options.listener_timeout,
                     )
                 except (asyncio.TimeoutError, TimeoutError):
-                    listen_task.cancel()
-                    await asyncio.gather(listen_task, return_exceptions=True)
                     return Result(
                         Status.Error,
                         msg=(
@@ -1052,6 +1086,19 @@ class NcFileTransfer(UnixFileTransfer):
                     )
                 raise
             finally:
+                # Reap here, not per-branch. The ten error branches that used to
+                # be patched individually were found by grepping
+                # `listen_task.cancel()`, and an ELEVENTH path had no cancel to
+                # find: PUT's bare `await self._wait_for_remote_listener(port)`
+                # raises ConnectionError straight past every handler except
+                # CancelledError, stranding both the remote listener and the
+                # local task. A guard built from the same enumeration inherited
+                # the same blind spot and reported clean. One exit covers every
+                # branch, including ones nobody has written yet, and it runs
+                # BEFORE `_release_port` so the port is never handed out while a
+                # listener still holds it.
+                if listen_task is not None and not listen_task.done():
+                    await self._cancel_and_reap(listen_task, port)
                 self._release_port(port)
 
         async def _get_one(src: Path) -> Result:
@@ -1083,8 +1130,10 @@ class NcFileTransfer(UnixFileTransfer):
 
         ``nc -l ... < /dev/null`` exits as soon as a TCP peer connects and
         then disconnects. When a transfer is cancelled before its real
-        sender ever connects, the listener would otherwise linger until its
-        ``-w`` timeout. A throwaway connect-and-close reaps it now.
+        sender ever connects, the listener would otherwise linger FOREVER on
+        an OpenBSD netcat, which ignores ``-w`` for listeners. A throwaway
+        connect-and-close reaps it now. This is not an optimisation over
+        waiting out ``-w`` — it is the only thing that ends the process.
 
         Fully best-effort: a cancellation can land while the listener is
         still launching, so ``_connect_with_retry`` is given a short budget
@@ -1094,8 +1143,20 @@ class NcFileTransfer(UnixFileTransfer):
         if self._connections.has_tunnel:
             try:
                 host = "localhost"
-                target_port = await self._connections.forward_port(port)
-            except Exception:  # noqa: BLE001 — port-forward setup failed; nothing to reap, silently return
+                # Bounded, and the bound is load-bearing rather than tidy: one
+                # of the paths that now reaps is the forward-setup timeout
+                # itself, so this call can be re-entering the very forward that
+                # just stalled. Unbounded, the reap would park there forever and
+                # convert a bounded failure into a hang — caught by
+                # `test_a_stalled_forward_setup_fails_the_attempt` the moment
+                # that branch started reaping. Giving up is the right answer:
+                # a listener behind a wedged hop is unreachable by definition,
+                # and the remote-side hard cap is what ends it.
+                target_port = await asyncio.wait_for(
+                    self._connections.forward_port(port),
+                    timeout=_NC_FORWARD_SETUP_TIMEOUT,
+                )
+            except Exception:  # noqa: BLE001 — port-forward setup failed or stalled; nothing to reap, silently return
                 return
         else:
             host = self._connections.ip
@@ -1123,6 +1184,12 @@ class NcFileTransfer(UnixFileTransfer):
         listener-join failure ``_reap_nc_listener`` doesn't already
         best-effort internally.
         """
+        if listen_task.done():
+            # Nothing to reap: our nc already accepted and exited. Matters on
+            # the GET empty-transfer branch, the DESIGNED recovery for the
+            # accept-window race — without this it burns a full
+            # `_connect_with_retry` against a closed port on every retry.
+            return
         listen_task.cancel()
         with suppress(Exception):
             await asyncio.gather(listen_task, return_exceptions=True)
@@ -1147,17 +1214,22 @@ class NcFileTransfer(UnixFileTransfer):
             port = await self._find_free_port()
             listen_task: asyncio.Task[CommandResult] | None = None
             try:
-                # `-w` bounds how long this listener waits for a client. If a
-                # racing process bound the same port first, our sender's bytes
-                # go to *its* listener and ours never gets a connection — `-w`
-                # makes it self-terminate instead of leaking and hanging us.
+                # If a racing process bound the same port first, our sender's
+                # bytes go to *its* listener and ours never gets a connection.
+                # `-w` is passed for netcat variants that honour it on a
+                # listener, but OpenBSD nc — the distro default — documents
+                # that "-w has no effect on the -l option"; such a listener
+                # waits forever. `_cancel_and_reap` on every error path is what
+                # actually ends it.
                 listen_task = asyncio.create_task(
                     self._exec_cmd(
-                        f"{self._nc_exec} -l -w {self._nc_listener_timeout} {port} "
+                        f"{self._nc_listener_prefix}{self._nc_exec} -l "
+                        f"-w {self._nc_listener_timeout} {port} "
                         f"< /dev/null > {dst} 2>/dev/null",
-                        # netcat self-bounds via `-w <listener_timeout>`; an otto
-                        # timeout here would be redundant and could fire first,
-                        # failing a transfer that was still healthy.
+                        # No otto-side timeout: a healthy transfer of any size
+                        # must not be cut off mid-flight. The orphan case is
+                        # bounded by `_cancel_and_reap` on every error path
+                        # instead — NOT by `-w` (see the spawn comment above).
                         timeout=float("inf"),
                     )
                 )
@@ -1178,8 +1250,6 @@ class NcFileTransfer(UnixFileTransfer):
                             timeout=_NC_FORWARD_SETUP_TIMEOUT,
                         )
                     except (asyncio.TimeoutError, TimeoutError):
-                        listen_task.cancel()
-                        await asyncio.gather(listen_task, return_exceptions=True)
                         return Result(
                             Status.Error,
                             msg=(
@@ -1207,8 +1277,6 @@ class NcFileTransfer(UnixFileTransfer):
                         timeout=timeout,
                     )
                 except ConnectionError:
-                    listen_task.cancel()
-                    await asyncio.gather(listen_task, return_exceptions=True)
                     return Result(
                         Status.Error, msg=f"nc listener on {connect_host}:{connect_port} not ready"
                     )
@@ -1218,8 +1286,6 @@ class NcFileTransfer(UnixFileTransfer):
 
                 stall = await self._send_file_stall_bounded(writer, src, dst, total, handler)
                 if stall is not None:
-                    listen_task.cancel()
-                    await asyncio.gather(listen_task, return_exceptions=True)
                     return stall
 
                 # The sender has pushed every byte and closed the socket, so
@@ -1227,7 +1293,7 @@ class NcFileTransfer(UnixFileTransfer):
                 # doesn't, this listener is orphaned (a racing process won the
                 # port and took our connection); bound the wait so a never-
                 # exiting nc — or a wedged control channel — can't hang the
-                # transfer. `-w` already caps it remote-side; this is the
+                # transfer. `-w` does NOT cap an OpenBSD listener; this is the
                 # asyncio-level backstop. On timeout, surface an error and let
                 # `_put_one`'s retry take another port.
                 try:
@@ -1236,8 +1302,6 @@ class NcFileTransfer(UnixFileTransfer):
                         timeout=self._nc_options.listener_timeout,
                     )
                 except (asyncio.TimeoutError, TimeoutError):
-                    listen_task.cancel()
-                    await asyncio.gather(listen_task, return_exceptions=True)
                     return Result(
                         Status.Error,
                         msg=(
@@ -1285,6 +1349,19 @@ class NcFileTransfer(UnixFileTransfer):
             else:
                 return Result(Status.Success, value=dst)
             finally:
+                # Reap here, not per-branch. The ten error branches that used to
+                # be patched individually were found by grepping
+                # `listen_task.cancel()`, and an ELEVENTH path had no cancel to
+                # find: PUT's bare `await self._wait_for_remote_listener(port)`
+                # raises ConnectionError straight past every handler except
+                # CancelledError, stranding both the remote listener and the
+                # local task. A guard built from the same enumeration inherited
+                # the same blind spot and reported clean. One exit covers every
+                # branch, including ones nobody has written yet, and it runs
+                # BEFORE `_release_port` so the port is never handed out while a
+                # listener still holds it.
+                if listen_task is not None and not listen_task.done():
+                    await self._cancel_and_reap(listen_task, port)
                 self._release_port(port)
 
         async def _put_one(src: Path) -> Result:

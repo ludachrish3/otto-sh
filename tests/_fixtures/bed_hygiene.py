@@ -55,7 +55,16 @@ _QDISC_DEVS = ("eth1", "eth2")
 # dropped any REAL listener whose line contained the wrapper's pid as a
 # substring (e.g. wrapper pid 1520 vs a listener on port 15200) — the same
 # "oracle reads clean" class the G5 contract exists to kill.
-_NC_LISTENER_PROBE = f'pgrep -af "{argv_pattern("nc -l")}" || true'
+# ``-e`` because the GET direction spawns ``nc -Nl``, which ``nc -l`` cannot
+# match: for as long as this probe existed it saw only half the listeners it
+# exists to find. Proved 2026-08-10 — a sweep with a wider pattern turned three
+# leaked pairs on tomato into six, the invisible half all ``-Nl``. Matching the
+# flag cluster — ``l`` anywhere in it, not just last — rather than listing
+# spellings keeps a new one from re-opening the same hole silently. `l` last
+# was the first attempt and still missed ``nc -lp PORT``, the standard GNU
+# netcat listener spelling: a narrower fix for a blind spot is still a blind
+# spot.
+_NC_LISTENER_PROBE = f'pgrep -af "{argv_pattern("nc")} -[A-Za-z]*l[A-Za-z]*( |$)" || true'
 _STAGING_PROBE = "ls -d /tmp/otto-* /tmp/otto_* 2>/dev/null || true"
 _HISTORY_PROBE = "cat ~/.bash_history 2>/dev/null | sha256sum || true"
 # Docker accumulation probes (Plan 5). `-a` deliberately: exited containers

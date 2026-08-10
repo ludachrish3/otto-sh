@@ -450,13 +450,27 @@ class NcOptions:
     a port is listening. Only used when ``listener_check == 'custom'``."""
 
     listener_timeout: float = 30.0
-    """Seconds a remote ``nc -l`` listener may wait for a client before it
-    self-terminates (passed as ``nc -w``), and the ceiling on the post-transfer
-    wait for that listener to exit. Bounds the orphaned-listener hang: if a
-    concurrent process wins a port-collision race, our sender's bytes land in
-    *its* listener and ours never gets a client — without this it would block
-    forever. A transfer whose connection is established stays unaffected; this
-    only caps the wait for a client that never arrives."""
+    """Ceiling on otto's wait for a remote ``nc -l`` listener to exit after a
+    transfer ends. Also passed as ``nc -w``, but do NOT read that as a bound.
+
+    An earlier version of this docstring claimed ``-w`` made the listener
+    "self-terminate" and thereby bounded the orphaned-listener hang. That is
+    false on OpenBSD netcat, the distro default, whose manual says: "The -w
+    flag has no effect on the -l option, i.e. nc will listen forever for a
+    connection, with or without the -w flag." The claim went unchecked long
+    enough to strand listeners on a lab host for over three days apiece, each
+    holding its port so the next transfer's port scan started one higher.
+
+    So a listener whose client never arrives is ended by otto reaping it
+    (``_cancel_and_reap`` on every error path in ``transfer/nc.py``), not by
+    netcat giving up. ``-w`` is still passed because some variants do bound a
+    listener with it — but do not assume yours is one: Nmap's ``ncat``, which
+    ``exec_name`` explicitly offers, documents ``-w`` as a *connect* timeout and
+    spells the listen-side bound ``-i``/``--idle-timeout``. Treat ``-w`` as a
+    possible bonus, never as the mechanism.
+
+    What this value genuinely caps is otto's own post-transfer wait; a transfer
+    whose connection is established is unaffected."""
 
 
 # ---------------------------------------------------------------------------

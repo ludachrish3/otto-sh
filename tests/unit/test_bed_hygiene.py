@@ -6,6 +6,7 @@ never be blamed on the scenario (2026-07-21 misattribution class), and must
 never mask a NEW leftover of the same kind either.
 """
 
+import re
 from dataclasses import dataclass, field
 
 import pytest
@@ -15,6 +16,7 @@ from otto.utils import Status
 from tests._fixtures.bed_hygiene import (
     _DOCKER_NET_PROBE,
     _DOCKER_PS_PROBE,
+    _NC_LISTENER_PROBE,
     HygieneSnapshot,
     diff_snapshots,
     format_hygiene_report,
@@ -210,3 +212,68 @@ def test_bracketed_test_requests_the_lease_lazily():
     with pytest.raises(_LeaseTouchedError):
         next(gen)  # first thing the engaged branch does is request chaos_bed
     assert request.fixture_requests == ["chaos_bed"]
+
+
+# ── nc listener probe: the GET direction spelling ────────────────────────────
+#
+# Regression guard for a blind spot the probe carried from the day it was
+# written: it matched `nc -l` only, so every `nc -Nl` listener — the whole GET
+# direction of the nc transfer backend — was invisible to the authority whose
+# job is finding leaked listeners. Found 2026-08-10 when a wider sweep turned
+# three leaked pairs on a lab host into six.
+
+
+def _probe_regex() -> re.Pattern[str]:
+    """The pattern `_NC_LISTENER_PROBE` hands to `pgrep -af`, as Python regex.
+
+    Extracted from the real constant rather than restated, so a probe edit that
+    reopens the hole fails here instead of quietly passing a copy of itself.
+
+    Pulled out by splitting on the quotes rather than by matching the literal
+    command text: the repo-wide scan (`test_no_unbracketed_pkill_patterns`)
+    rejects any source line carrying a `pgrep -f` pattern that is not built by
+    an inline `argv_pattern(...)` call, and it cannot tell a line that BUILDS a
+    probe from one that PARSES it. Writing the command text here to reach the
+    pattern would trip a guard that is right to be blunt.
+    """
+    _, _, rest = _NC_LISTENER_PROBE.partition('"')
+    pattern, sep, _ = rest.partition('"')
+    assert sep, f"probe no longer has a quoted pattern: {_NC_LISTENER_PROBE!r}"
+    return re.compile(pattern)
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        "nc -l -w 30 9000",  # PUT direction
+        "nc -Nl -w 30 9001",  # GET direction — the spelling that was invisible
+        "nc -l 9000",  # no -w at all
+        "nc -lp 9000",  # GNU netcat spelling: `l` is not the last flag letter
+        "nc -klv 9000",  # multiple flags around the `l`
+        "bash -c nc -Nl -w 30 9002 < /etc/hostname",  # the wrapper shell
+    ],
+)
+def test_probe_matches_every_listener_spelling(argv):
+    assert _probe_regex().search(argv), f"probe would not find a leaked {argv!r}"
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        "nc 10.0.0.1 9000",  # a CLIENT, not a listener — must not match
+        "ncat -l 9000",  # different executable; `nc` is what otto spawns
+        "sleep 30",
+    ],
+)
+def test_probe_ignores_non_listeners(argv):
+    assert not _probe_regex().search(argv), f"probe would misreport {argv!r} as a listener"
+
+
+def test_probe_cannot_match_its_own_wrapper_shell():
+    """The bracket trick must survive the widening.
+
+    The remote wrapper's argv carries the probe text verbatim; if the pattern
+    matched itself, every run would report a phantom listener. `argv_pattern`
+    exists for this, and widening the flag cluster must not have bypassed it.
+    """
+    assert not _probe_regex().search(_NC_LISTENER_PROBE)
