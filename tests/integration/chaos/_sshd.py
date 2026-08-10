@@ -6,7 +6,10 @@ tmp directory owned by the test session. The daemon runs foreground
 dev VM and on ubuntu-latest runners alike, no sudo, no system state.
 """
 
+import ctypes
+import os
 import shutil
+import signal
 import socket
 import subprocess
 from pathlib import Path
@@ -15,6 +18,44 @@ from otto.utils import WaitTimeoutError, wait_for
 
 _SSHD = shutil.which("sshd") or "/usr/sbin/sshd"
 _READY_TIMEOUT = 15.0
+
+# prctl(2) PR_SET_PDEATHSIG — ask the kernel to signal this process when its
+# parent dies.
+_PR_SET_PDEATHSIG = 1
+
+
+def _die_with_parent() -> None:
+    """Between fork and exec: arrange for the kernel to kill us with our parent.
+
+    ``stop()`` runs in a ``finally`` and handles every exit the worker is alive
+    for. It cannot handle the one where the worker is SIGKILLed — a stopped
+    gate run, an OOM kill, ``kill -9`` on a wedged suite — because no Python
+    finalizer runs at all. The daemon then reparents to init and keeps its
+    port; pytest's numbered-dir rotation later deletes the directory holding
+    its config, leaving an orphan with no visible owner. One was found on this
+    VM two days after the run that spawned it, and the run that spawned it was
+    a gate stopped by hand.
+
+    So the kernel holds the other end. This is the same shape as the netcat
+    listener's remote ``timeout`` cap: a bound that survives the death of the
+    thing that would otherwise have done the cleaning up.
+
+    Linux-only (the chaos lane already is — it shells out to ``sshd`` and
+    reads ``/proc``). Best-effort by design: if ``prctl`` is unavailable this
+    returns quietly and behaviour is exactly what it was before, because the
+    ``finally`` remains the primary mechanism.
+
+    The ``getppid`` re-check closes the race where the parent dies *between*
+    the fork and the ``prctl`` call — the signal would already have been
+    delivered and missed, so the child has to notice for itself.
+    """
+    parent = os.getppid()
+    try:
+        ctypes.CDLL("libc.so.6", use_errno=True).prctl(_PR_SET_PDEATHSIG, signal.SIGKILL)
+    except (OSError, AttributeError):  # pragma: no cover — non-glibc / no prctl
+        return
+    if os.getppid() != parent:
+        os._exit(1)
 
 
 def free_port() -> int:
@@ -82,6 +123,7 @@ class LoopbackSshd:
                 [_SSHD, "-D", "-e", "-f", str(self._config)],
                 stdout=log,
                 stderr=log,
+                preexec_fn=_die_with_parent,  # noqa: PLW1509 — see _die_with_parent: the point is that it runs in the CHILD, and the fork-safety caveat does not apply to a bare prctl+getppid
             )
         finally:
             log.close()  # sshd holds its own fd now
