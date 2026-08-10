@@ -251,6 +251,19 @@ def _probe_regex() -> re.Pattern[str]:
         "nc -lp 9000",  # GNU netcat spelling: `l` is not the last flag letter
         "nc -klv 9000",  # multiple flags around the `l`
         "bash -c nc -Nl -w 30 9002 < /etc/hostname",  # the wrapper shell
+        # The hard-cap wrapper, which since 2026-08-10 is the NORMAL argv on
+        # every host that has a `timeout`. On GNU the wrapper stays resident
+        # as the listener's parent and wears this argv; the `nc` child wears
+        # the bare form above.
+        "timeout 3600 nc -l -w 30 9000",  # GNU coreutils
+        "timeout -t 3600 nc -Nl -w 30 9001",  # BusyBox < 1.30
+        # BusyBox >= 1.30 execs the program IN PLACE (measured: the pid ends
+        # up with argv `nc …`, no wrapper) and forks a detached watchdog that
+        # setsids and reparents to init wearing the full command. So on a
+        # BusyBox host the listener itself matches the bare rows above, and
+        # this row is the watchdog — a second hit per listener, which is the
+        # right way round for a probe whose job is finding leftovers.
+        "/usr/bin/busybox timeout 3600 nc -Nl -w 30 9001",
     ],
 )
 def test_probe_matches_every_listener_spelling(argv):

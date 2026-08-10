@@ -90,6 +90,14 @@ _NC_FORWARD_SETUP_TIMEOUT = 5.0
 # days" — and capping an ESTABLISHED transfer would truncate large files.
 _NC_LISTENER_HARD_CAP_S = 3600
 
+# Cap used when probing which `timeout` calling convention the remote speaks
+# (see `_nc_listener_prefix`). The probed command exits immediately, so this
+# is never waited out — it only has to be a value both spellings accept as a
+# duration, which rules out 0 (coreutils reads 0 as "no timeout", so the probe
+# would still pass but would be testing a different code path than the one the
+# real prefix uses).
+_NC_CAP_PROBE_S = 1
+
 # Close-handshake bound; past it the transport is aborted (a stalled channel
 # never flushes, so its graceful close never completes — leaking the fd, the
 # buffered bytes, and through a hop the asyncssh forward channel).
@@ -358,13 +366,64 @@ class NcFileTransfer(UnixFileTransfer):
         an hour does that while being far longer than any legitimate transfer
         on a lab network.
 
-        Degrades on hosts without coreutils ``timeout``: the prefix collapses
-        to empty and behaviour is exactly what it was before this existed, so a
-        minimal remote can still transfer. It is a backstop, not a dependency.
+        Probes the CALLING CONVENTION, not the binary's name. ``command -v
+        timeout`` only proves something called ``timeout`` exists, and two
+        spellings matter:
+
+        ``SECS PROG``
+            GNU coreutils and BusyBox >= 1.30.
+        ``-t SECS PROG``
+            BusyBox < 1.30, which reads a bare leading number as the PROGRAM.
+            A name-only probe there builds ``timeout 3600 nc -l``, the applet
+            fails to exec ``3600``, and the listener never starts — the
+            backstop becoming an outage, strictly worse than no backstop.
+
+        Order does not matter: each implementation rejects the other's
+        spelling (measured: coreutils exits 125 on ``-t``, BusyBox 1.36 exits
+        1), so the arms are mutually exclusive and converge either way round.
+
+        **Precondition, unobvious and load-bearing.** GNU ``timeout`` calls
+        ``setpgid(0,0)``, which would move ``nc`` out of the foreground
+        process group and so out of reach of the SIGHUP a session hangup
+        delivers — the cap outliving the session it was meant to be bounded
+        by. It does not, because a job-control shell has *already* put the
+        foreground job in its own process group and handed it the terminal, so
+        the call is a no-op. Measured on a pty running ``bash -i`` by closing
+        the master: unwrapped, wrapped, and wrapped with ``--foreground`` all
+        die on hangup; only ``set +m`` (job control off) leaves the listener
+        alive with ``ppid=1``.
+
+        So this is correct only while the listener is spawned as a plain
+        foreground job. Compose it into ``( … )``, ``$( … )``, or any shell
+        with job control disabled and the leak comes back. That is pinned by
+        ``test_the_listener_spawns_are_plain_foreground_commands`` rather than
+        defended with ``--foreground``, which measurably changes nothing on
+        either otto path.
+
+        Degrades to empty whenever no form works, including ``timeout`` being
+        absent entirely: behaviour is then exactly what it was before this
+        existed, so a minimal remote can still transfer. It is a backstop, not
+        a dependency.
+
+        Costs one extra fork of ``true`` per listener spawn on the common
+        path, alongside the ``nc`` this is wrapping. ``true`` has to be a real
+        executable rather than the shell builtin, since ``timeout`` execs it;
+        if it is missing every probe fails and the cap is skipped, which is
+        the safe direction but a silent one.
+
+        Note the host class this actually rescues is narrower than "BusyBox":
+        BusyBox's own ``nc`` applet wants ``-l -p PORT`` and has no ``-N``, so
+        otto cannot drive it regardless (see ``NcOptions.exec_name``). The
+        beneficiary is an old-BusyBox userland with an OpenBSD-style netcat
+        installed alongside — Alpine <= 3.8, OpenWrt <= 18.06.
         """
+        cap = _NC_LISTENER_HARD_CAP_S
+        probe = _NC_CAP_PROBE_S
         return (
-            f'T=""; command -v timeout >/dev/null 2>&1 '
-            f'&& T="timeout {_NC_LISTENER_HARD_CAP_S}"; $T '
+            'T=""; if command -v timeout >/dev/null 2>&1; then '
+            f'if timeout {probe} true >/dev/null 2>&1; then T="timeout {cap}"; '
+            f'elif timeout -t {probe} true >/dev/null 2>&1; then T="timeout -t {cap}"; '
+            "fi; fi; $T "
         )
 
     # ------------------------------------------------------------------

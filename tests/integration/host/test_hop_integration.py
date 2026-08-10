@@ -40,6 +40,23 @@ from tests.integration.host._transfer_retry import transfer_with_retry
 
 pytestmark = [pytest.mark.timeout(30)]
 
+# Shared with test_session_stability_integration.py and
+# test_proxy_user_stability_integration.py — the SAME group string on purpose,
+# so `--dist loadgroup` runs every nc case in the suite on one worker.
+#
+# `_find_free_port` serialises port allocation within a UnixHost, but nothing
+# coordinates across xdist workers: two nc transfers racing the same host's
+# port scan in the TOCTOU window before `nc -l` binds can both pick 9000 and
+# cross-wire. The hop tests hard-code `tomato` and take no pool lease, so they
+# are the most exposed of all, and the two descriptor tests below make it far
+# likelier by doing eight rapid transfers where the others do one.
+#
+# Observed 2026-08-10 on the nox 3.14 leg, under xdist with the full suite
+# live: "nc transfer to /tmp/fwd_accum.txt: expected 33 bytes, got 20" — the
+# "wrong file contents" outcome the group's original comment predicts. Not
+# reproducible serially (11 clean runs across two interpreters).
+_NC_SERIAL_GROUP = pytest.mark.xdist_group("nc-serial")
+
 
 # ---------------------------------------------------------------------------
 # Lab setup — the config module must be populated so that hop resolution
@@ -357,6 +374,7 @@ class TestFileTransferThroughHop:
 
     @pytest.mark.asyncio
     @pytest.mark.hops
+    @_NC_SERIAL_GROUP
     async def test_nc_put_through_hop(self, tmp_path: Path):
         """Upload a file through an SSH hop via netcat (port-forwarded)."""
         data = host_data("tomato")
@@ -389,6 +407,7 @@ class TestFileTransferThroughHop:
 
     @pytest.mark.asyncio
     @pytest.mark.hops
+    @_NC_SERIAL_GROUP
     async def test_nc_get_through_hop(self, tmp_path: Path):
         """Download a file through an SSH hop via netcat (reversed-listener)."""
         data = host_data("tomato")
@@ -490,6 +509,7 @@ def _nc_hop_host() -> UnixHost:
 
 @pytest.mark.asyncio
 @pytest.mark.hops
+@_NC_SERIAL_GROUP
 async def test_hop_transfers_do_not_accumulate_port_forwards(tmp_path: Path):
     """Repeated transfers on ONE hop host must not grow the descriptor count.
 
@@ -563,6 +583,7 @@ async def test_hop_transfers_do_not_accumulate_port_forwards(tmp_path: Path):
 
 @pytest.mark.asyncio
 @pytest.mark.hops
+@_NC_SERIAL_GROUP
 async def test_a_bulk_hop_put_does_not_strand_a_forward_per_file(tmp_path: Path):
     """ONE put of N files must not leave N forwards behind either.
 

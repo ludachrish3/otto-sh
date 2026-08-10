@@ -19,6 +19,7 @@ remembering this file exists.
 
 import ast
 import inspect
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -278,3 +279,258 @@ def test_hard_cap_prefix_degrades_when_timeout_is_absent(path, expect_wrapped):
         check=False,
     )
     assert (which.stdout.strip() == "HAVE") is expect_wrapped
+
+
+# Older BusyBox: `timeout [-t SECS] [-s SIG] PROG [ARGS]`. The cut-over is
+# believed to be 1.30 (Dec 2018) but that release number has NOT been checked
+# against the BusyBox git log from here — treat it as a lead, not a fact. What
+# IS measured is that 1.36.1 rejects `-t` and accepts the bare form, so the two
+# conventions exist and are mutually exclusive.
+# A bare leading number is taken as PROG, so the coreutils spelling fails to
+# exec. Faithful to the two behaviours that matter — accepts `-t SECS PROG`,
+# rejects `SECS PROG` — because no old BusyBox is installable here and the
+# modern one (1.36) rejects `-t`, so the two conventions cannot both be
+# exercised by a real binary on this machine.
+_OLD_BUSYBOX_TIMEOUT = """#!/bin/sh
+case "$1" in --*) echo "timeout: unrecognized option: $1" >&2; exit 1;; esac
+if [ "$1" = "-t" ]; then shift 2; exec "$@"; fi
+case "$1" in ''|*[!0-9]*) exec "$@";; esac
+echo "timeout: can't execute '$1': No such file or directory" >&2
+exit 127
+"""
+
+
+def _run_prefix(prefix: str, command: str, path: str) -> subprocess.CompletedProcess[str]:
+    """Execute *prefix* + *command* under ``/bin/sh`` with *path* as PATH.
+
+    Not BusyBox's own shell: its ash resolves applets internally and ignores
+    PATH entirely, so a shim placed on PATH is never reached. The first
+    version of this control used ``busybox sh`` and reported the old-syntax
+    host as working — it had silently tested the modern built-in applet.
+    """
+    return subprocess.run(
+        ["/bin/sh", "-c", f"{prefix}{command}"],
+        capture_output=True,
+        text=True,
+        env={"PATH": path},
+        timeout=30,
+        check=False,
+    )
+
+
+def test_hard_cap_prefix_probes_the_calling_convention_not_the_name(tmp_path):
+    """A host whose ``timeout`` takes ``-t SECS`` must still transfer, and be capped.
+
+    ``command -v timeout`` proves a binary exists, not that it speaks the
+    coreutils calling convention. On BusyBox < 1.30 the name-only probe built
+    ``timeout 3600 nc -l ...``, which fails to exec and takes the listener with
+    it: the backstop becomes an outage, strictly worse than no backstop.
+
+    Executed rather than asserted on the prefix string, for the same reason the
+    degrade test is: a prefix that cannot exec passes any substring check.
+    """
+    import os
+
+    shim_dir = tmp_path / "oldbb"
+    shim_dir.mkdir()
+    shim = shim_dir / "timeout"
+    shim.write_text(_OLD_BUSYBOX_TIMEOUT)
+    shim.chmod(0o755)
+    path = f"{shim_dir}:{os.environ.get('PATH', '/usr/bin:/bin')}"
+
+    from otto.host.transfer.nc import _NC_LISTENER_HARD_CAP_S, NcFileTransfer
+
+    prefix = NcFileTransfer._nc_listener_prefix.fget(object.__new__(NcFileTransfer))  # type: ignore[attr-defined]
+
+    ran = _run_prefix(prefix, "/bin/echo RAN", path)
+    assert ran.returncode == 0, (
+        f"the prefix broke the command on an old-BusyBox timeout: {ran.stderr!r}. "
+        "This is the outage the interface probe exists to prevent."
+    )
+    assert ran.stdout.strip() == "RAN", f"listener never started: {ran.stdout!r}"
+
+    # ...and it is actually capped, not merely un-broken: a prefix that gave up
+    # and emitted nothing would also pass the check above.
+    capped = _run_prefix(prefix, 'echo "[$T]"', path)
+    assert capped.stdout.strip() == f"[timeout -t {_NC_LISTENER_HARD_CAP_S}]", (
+        f"expected the -t spelling to be selected, got {capped.stdout.strip()!r}"
+    )
+
+
+def test_hard_cap_prefix_selects_the_coreutils_spelling_on_a_coreutils_host():
+    """The other half of the probe: a modern host must end up capped, not skipped.
+
+    The shim test proves an old host is not broken; this proves the ordinary
+    host still gets its backstop. A probe that fell through both arms — a
+    mistyped flag, a ``true`` that is only a shell builtin — degrades silently
+    to no cap, and silence is what the whole hard-cap change exists to end.
+
+    Deliberately NOT pinning which arm is tried first. Each implementation
+    rejects the other's spelling (measured: coreutils exits 125 on ``-t``,
+    BusyBox 1.36 exits 1), so the arms are mutually exclusive and either order
+    converges. Swapping them is a mutation this suite does not go red on,
+    because it is not a defect.
+    """
+    import os
+
+    from otto.host.transfer.nc import _NC_LISTENER_HARD_CAP_S, NcFileTransfer
+
+    prefix = NcFileTransfer._nc_listener_prefix.fget(object.__new__(NcFileTransfer))  # type: ignore[attr-defined]
+    path = os.environ.get("PATH", "/usr/bin:/bin")
+
+    chosen = _run_prefix(prefix, 'echo "[$T]"', path)
+    assert chosen.stdout.strip() == f"[timeout {_NC_LISTENER_HARD_CAP_S}]", (
+        f"expected the coreutils spelling on this host, got {chosen.stdout.strip()!r}"
+    )
+    ran = _run_prefix(prefix, "/bin/echo RAN", path)
+    assert ran.returncode == 0, f"prefix broke the command: {ran.stderr!r}"
+    assert ran.stdout.strip() == "RAN", f"command did not run: {ran.stdout!r}"
+
+
+def test_the_listener_spawns_are_plain_foreground_commands():
+    """The precondition that makes the hard cap survivable, pinned at last.
+
+    GNU ``timeout`` calls ``setpgid(0,0)``, which on the face of it moves
+    ``nc`` out of the foreground process group and out of reach of the SIGHUP
+    a hangup delivers — the cap outliving the session it should be bounded by.
+    It does not, but only because a job-control shell has ALREADY given the
+    foreground job its own process group and handed it the terminal, making
+    the call a no-op. Measured on a pty by closing the master, with a real
+    listener: unwrapped, wrapped, and wrapped with ``--foreground`` all die on
+    hangup; only ``set +m`` leaves the listener alive at ``ppid=1``.
+
+    So the correctness rests on HOW the command is composed, and that was
+    unguarded. Put a spawn inside ``( … )`` or ``$( … )`` — a subshell is not
+    a job and never gets the terminal — or background it, and the listener
+    stops dying with its session. Silently, on the path where nothing else
+    would notice.
+
+    This exists instead of ``timeout --foreground``, which was added on the
+    strength of a measurement taken inside ``$(...)``. Command substitution
+    disables job control, so that reading described a shell otto never
+    produces. The flag changes nothing measurable on either otto path, which
+    is precisely why no behavioural test could fail when it was removed —
+    whereas this one can.
+    """
+    # Over the whole f-string expression, not per line: the command is split
+    # across continuation lines, so a line-wise check cannot see a trailing
+    # `&` and would happily match the prose in this module's own comments.
+    spawns = [
+        node
+        for node in ast.walk(_TREE)
+        if isinstance(node, ast.JoinedStr)
+        and any(
+            isinstance(v, ast.FormattedValue)
+            and isinstance(v.value, ast.Attribute)
+            and v.value.attr == "_nc_listener_prefix"
+            for v in node.values
+        )
+    ]
+    assert len(spawns) == 2, (
+        f"expected 2 listener spawn expressions carrying the prefix, found {len(spawns)}"
+    )
+    for node in spawns:
+        text = ast.get_source_segment(_SOURCE, node) or ""
+        flat = " ".join(text.split())
+        before_prefix = flat.split("{self._nc_listener_prefix}", 1)[0]
+        assert not before_prefix.rstrip("f\"' ").rstrip().endswith(("(", "$(")), (
+            f"nc.py:{node.lineno} composes the listener into a subshell: {flat[:90]!r}. "
+            "A subshell is not a job, so it never gets the terminal, and the "
+            "listener stops receiving the hangup that currently kills it."
+        )
+        backgrounded = flat.replace("2>&1", "").replace("&&", "")
+        assert "&" not in backgrounded, (
+            f"nc.py:{node.lineno} backgrounds the listener: {flat[:90]!r}. A "
+            "background job is not in the foreground process group either, so "
+            "it survives the hangup that should end it."
+        )
+
+
+def test_an_unrecognised_timeout_convention_degrades_instead_of_breaking(tmp_path):
+    """The assumption the whole design rests on, which nothing else tests.
+
+    Three spellings are probed; the bet is that a fourth — some vendor variant
+    nobody here has seen — loses the cap rather than the transfer. Every other
+    test in this file exercises a convention that IS handled, so all of them
+    would still pass if that bet were wrong.
+    """
+    import os
+
+    shim_dir = tmp_path / "thirdconv"
+    shim_dir.mkdir()
+    shim = shim_dir / "timeout"
+    # Accepts only `--duration=N PROG`; rejects everything otto probes.
+    shim.write_text(
+        "#!/bin/sh\n"
+        'case "$1" in --duration=*) shift; exec "$@";; esac\n'
+        'echo "timeout: usage: timeout --duration=N PROG" >&2\n'
+        "exit 2\n"
+    )
+    shim.chmod(0o755)
+    path = f"{shim_dir}:{os.environ.get('PATH', '/usr/bin:/bin')}"
+
+    from otto.host.transfer.nc import NcFileTransfer
+
+    prefix = NcFileTransfer._nc_listener_prefix.fget(object.__new__(NcFileTransfer))  # type: ignore[attr-defined]
+
+    ran = _run_prefix(prefix, "/bin/echo RAN", path)
+    assert ran.returncode == 0, f"an unknown convention broke the command: {ran.stderr!r}"
+    assert ran.stdout.strip() == "RAN", f"listener never started: {ran.stdout!r}"
+
+    chosen = _run_prefix(prefix, 'echo "[$T]"', path)
+    assert chosen.stdout.strip() == "[]", (
+        f"expected no cap against an unrecognised convention, got "
+        f"{chosen.stdout.strip()!r} — a wrapper otto cannot drive was selected anyway"
+    )
+
+
+def test_the_probe_does_not_leak_wrapper_output_into_the_command_stream(tmp_path):
+    """Probe chatter must not reach stdout; the frame parses that stream.
+
+    A wrapper that prints usage to stdout on a rejected option would inject
+    text between ``BashFrame``'s BEGIN/END sentinels, and on telnet that lands
+    in the command's parsed value. Neither coreutils nor BusyBox does this, so
+    the shim is what makes the hazard reachable.
+    """
+    import os
+
+    shim_dir = tmp_path / "chatty"
+    shim_dir.mkdir()
+    shim = shim_dir / "timeout"
+    shim.write_text('#!/bin/sh\necho "CHATTER: unsupported option $1"\nexit 2\n')
+    shim.chmod(0o755)
+    path = f"{shim_dir}:{os.environ.get('PATH', '/usr/bin:/bin')}"
+
+    from otto.host.transfer.nc import NcFileTransfer
+
+    prefix = NcFileTransfer._nc_listener_prefix.fget(object.__new__(NcFileTransfer))  # type: ignore[attr-defined]
+    ran = _run_prefix(prefix, "/bin/echo RAN", path)
+
+    assert ran.stdout.strip() == "RAN", (
+        f"probe output leaked into the command stream: {ran.stdout!r}"
+    )
+
+
+@pytest.mark.serial_timing
+def test_hard_cap_probe_does_not_wait_out_its_own_cap():
+    """The probe must cost a fork, not a second.
+
+    ``timeout N true`` returns as soon as ``true`` exits; N is only a ceiling.
+    Getting this wrong — probing with a command that blocks — would add the
+    probe duration to every listener spawn, on the latency-sensitive path where
+    the transfer is waiting for the listener to come up.
+    """
+    import os
+    import time
+
+    from otto.host.transfer.nc import _NC_CAP_PROBE_S, NcFileTransfer
+
+    prefix = NcFileTransfer._nc_listener_prefix.fget(object.__new__(NcFileTransfer))  # type: ignore[attr-defined]
+    start = time.monotonic()
+    _run_prefix(prefix, "/bin/echo RAN", os.environ.get("PATH", "/usr/bin:/bin"))
+    elapsed = time.monotonic() - start
+
+    assert elapsed < _NC_CAP_PROBE_S, (
+        f"the prefix took {elapsed:.2f}s, at or beyond the probe cap of "
+        f"{_NC_CAP_PROBE_S}s — the probe is waiting rather than returning"
+    )
