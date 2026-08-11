@@ -821,7 +821,20 @@ qemu-restart: ## (Lab) Restart the Zephyr QEMU + SNMP-relay units on the hop VM(
 
 lint: lint-python lint-ts ## (Quality) Lint ALL code (Python + TS): sub-targets lint-python + lint-ts
 
-lint-python: ## (Quality) Run ruff lint + format checks (part of check-python)
+# `lint-arch` is a PREREQUISITE here, not a separate thing to remember. CI's
+# lint-python JOB is `nox -s lint`, which runs ruff AND tach AND ast-grep (see
+# the session docstring in noxfile.py); this target is that job's local twin
+# and has to match it — matched, not maximal, per the gate-twin rule. It ran
+# ruff only until 2026-08-10, so the make target and the CI job of the same
+# name disagreed, and a file could pass `make lint`, `make format` and every
+# coverage lane while still carrying an architecture violation. Two did, and
+# the pre-push `gate-fresh` hook is what stopped them.
+#
+# The arch rules mostly police TEST code (deadline polls, path arithmetic,
+# module-scope env writes), so "it's only a test" is the case that needs this
+# most. Make remakes a target once per invocation, so `check-python` and
+# `gate-fresh` naming `lint-arch` alongside `lint-python` costs nothing.
+lint-python: lint-arch ## (Quality) Ruff lint + format checks AND the architecture gates — local twin of CI's lint-python job (`nox -s lint`)
 	@$(SAY) "ruff: lint + format check"
 	@uv run ruff check .
 	@uv run ruff format --check .

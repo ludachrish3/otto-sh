@@ -182,6 +182,16 @@ Biome config lives in `web/biome.json`; the vitest coverage floor lives in
 the recommended "Biome" and "Vitest" VS Code extensions (see
 `.vscode/extensions.json`) for format-on-save and an inline test runner.
 
+One asymmetry inside that shape, because it is the kind that bites: `make
+lint-python` also runs the architecture gates (`lint-arch` — tach and
+ast-grep), so it matches CI's `lint-python` job, which is `nox -s lint` and
+has always run them. It ran ruff only until 2026-08-10, and the difference
+was invisible: a file could pass `make lint`, `make format` and every
+coverage lane while still violating an architecture rule. Those rules mostly
+police *test* code — deadline polls, `parents[N]` path arithmetic,
+module-scope env writes — so a change that is "only a test" is the one most
+exposed to them, not the least.
+
 ## Branching and commits
 
 All work branches off `main`. `main` is protected — direct pushes are

@@ -170,7 +170,7 @@ job that enforces it on push.
 | Gate | `make` | `nox` | CI job |
 | --- | --- | --- | --- |
 | ruff (lint + format) | `lint-python` | `lint` | `lint-python` |
-| tach + ast-grep | `lint-arch` | `lint` | `lint-python` |
+| tach + ast-grep | `lint-arch`, and pulled in by `lint-python` | `lint` | `lint-python` |
 | ty | `typecheck-python` | `typecheck` | `typecheck-python` |
 | Biome + knip | `lint-ts` | — | `check-ts` |
 | tsc | `typecheck-ts` | — | `check-ts` |
