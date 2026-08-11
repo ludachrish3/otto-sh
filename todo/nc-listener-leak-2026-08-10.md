@@ -248,14 +248,54 @@ fixture — the bracket cannot see a retained leak of four descriptors or fewer,
 which is a further reason the in-test counters exist alongside it rather than
 instead of it.
 
+### Follow-up, landed: the teardown race
+
+`close()` took neither lock, so an in-flight `forward_port` could store its
+listener into an already-swept dict, and one awaiting `get_tunnel()` could open a
+fresh SSH connection to the hop *after* close — the zombie-transport
+`[unraisable]` class. Four windows, not the two guessed here: the factory await,
+the bind await, and waiting on either lock while another caller holds it. On a
+multi-hop chain the factory ALSO assigns `_parent` and connects it as a side
+effect (`RemoteHost._build_hop_transport`), so `close()` read `_parent is None`,
+skipped its cascade, and a fix that tore down only the connection moved the
+zombie one hop up.
+
+Fixed with a GENERATION counter, not the `_closed` flag suggested above. That
+flag was implemented first and was wrong: `close()` in otto means "release
+resources now", not "this object is dead". Measured against the pre-fix tree, a
+post-close `get_tunnel` calls the factory a second time, `ConnectionManager`
+never clears `_hop`, and `tests/e2e/tunnel_stability/test_monitor_loop.py`
+closes a host deliberately so the next scan dials through a wedged sshd. Making
+the transport terminal also broke hopped embedded coverage collection, where
+`suite.py`'s class-scoped release closes every lab host and `EmbeddedHost` has
+no `rebuild_connections`. The docstring claim that the factory is "called at
+most once" was already false before any of this.
+
+So `close()` ends a generation rather than the object: it bumps before it can
+yield, and each creation path records the generation it entered in and releases
+what it built if that generation moved. Reuse still works; only a resource whose
+owner is gone is refused, as `HopTransportTornDownError`.
+
+Two review passes shaped it. Both capture points must precede their lock — a
+caller queued on a contended lock otherwise resumes and reads the *new*
+generation, which is the same leak by another route and the one window the
+`_closed` entry guard had covered by accident. Eleven mutants are pinned,
+including both capture points, the bump's position (invisible to any test whose
+`wait_closed` is an `AsyncMock`, because those never yield), and the parent
+cascade on the abandon path.
+
 ### Still open
 
-`SshHopTransport.close()` takes neither lock, so a `forward_port` that is
-mid-await when `close()` runs can store its listener into an already-cleared
-dict — and, if it is awaiting `get_tunnel()`, open a fresh SSH connection to the
-hop *after* close. Both leak, and the orphaned connection is the zombie-transport
-`[unraisable]` class this file's own comments are about. Pre-existing and
-narrow (it needs teardown to interleave with a live transfer, which cancellation
-can do), and a `_closed` flag checked before the store would cover it, but that
-changes `forward_port`'s contract and wants its own decision rather than riding
-along here.
+- Two concurrent `close()` calls: the second returns before the first has
+  finished tearing down. Pre-existing shape, shared with
+  `ConnectionManager.close`, and not reachable through `_build_hop_transport`
+  today since each host builds its own chain.
+- `close()` no longer guarantees "nothing is held on return" — a caller that
+  starts *after* the bump can adopt a connection during close's own awaits and
+  keep it. That is the price of reuse and is documented on the method.
+- A factory that raises *after* assigning `_parent` and opening the parent's
+  tunnel, when a `close()` has already passed, leaves the parent unowned. Narrow
+  and pre-existing; the generation check is on the success path only.
+- `HopTransportTornDownError` is a `RuntimeError`, and
+  `ConnectionManager.forward_port` documents `RuntimeError` for "no tunnel
+  configured", so an `except RuntimeError` now conflates the two.

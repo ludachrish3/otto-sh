@@ -53,6 +53,7 @@ from otto.errors import OttoError
 from otto.host.app_shell import AppShellActiveError, AppShellTimeoutError, ParseMismatch
 from otto.host.errors import HostCommandError, HostUnreachableError
 from otto.host.login_proxy import LoginProxyError
+from otto.host.transport import HopTransportTornDownError
 from otto.labs.errors import LabNotFoundError, LabRepositoryError
 from otto.lifecycle import SyncPhaseInterrupt
 from otto.link.manage import LinkCommandFailedError, LinkHostUnreachableError
@@ -85,6 +86,7 @@ CASES: list[tuple[type[BaseException], type[BaseException]]] = [
     (ParseMismatch, ValueError),
     (HostUnreachableError, RuntimeError),
     (HostCommandError, RuntimeError),
+    (HopTransportTornDownError, RuntimeError),
     (AppShellActiveError, RuntimeError),
     (AppShellTimeoutError, TimeoutError),
     (WaitTimeoutError, TimeoutError),
@@ -309,4 +311,46 @@ def test_every_ottoerror_subclass_declares_its_stdlib_root():
     )
     assert not sorted(declared - public), (
         f"CASES names classes the sweep cannot find in src/otto: {sorted(declared - public)}"
+    )
+
+
+def test_the_taxonomy_counts_in_errors_py_match_the_measured_split():
+    """``otto.errors``' docstring publishes counts; nothing checked them.
+
+    They render to users via ``docs/api/errors.rst``, and the docstring itself
+    says "Re-measure by walking the AST of ``src/otto``; do not adjust these by
+    hand" — but no gate enforced it, so adding one named class in 2026-08-11
+    silently made four published figures wrong. ``CASES`` is already proven
+    complete by the sweep above, which makes it a sound measuring stick.
+
+    Deliberately narrow: this pins the NAMED-class split (the part that moves
+    whenever anyone adds an exception), not the 301/254 raise-site figures,
+    which are a different measurement over builtin raises and do not change
+    when a named class is added.
+    """
+    import re
+
+    from otto import errors
+
+    doc = errors.__doc__ or ""
+    named = len(CASES)
+    covered = sum(1 for _, root in CASES if root in (ValueError, RuntimeError))
+    rootless = len(DELIBERATELY_ROOTLESS)
+    os_rooted = sum(1 for _, root in CASES if isinstance(root, type) and issubclass(root, OSError))
+
+    assert covered + rootless + os_rooted == named, (
+        "the three buckets no longer partition CASES, so the docstring's split "
+        "cannot be expressed — reclassify before updating prose"
+    )
+
+    split = re.search(r"(\d+) \+ (\d+) \+ (\d+) = (\d+)", doc)
+    assert split, "errors.py no longer states its split as 'a + b + c = total'"
+    assert tuple(int(g) for g in split.groups()) == (covered, rootless, os_rooted, named), (
+        f"errors.py says {split.group(0)}; measured {covered} + {rootless} + {os_rooted} = {named}"
+    )
+    assert f"otto's {named} NAMED failures" in doc, (
+        f"errors.py's 'NAMED failures' count is not {named}"
+    )
+    assert f"{covered} of the {named} named classes" in doc, (
+        f"errors.py's coverage sentence is not '{covered} of the {named} named classes'"
     )
