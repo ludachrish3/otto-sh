@@ -168,6 +168,24 @@ def test_nc_spec_defaults_match_runtime():
     assert rt_obj.port_strategy == "auto"
 
 
+def test_nc_spec_carries_the_transfer_bound_and_rejects_a_useless_one():
+    """The knob must reach the runtime, and a zero must die at the boundary.
+
+    ``max_concurrent_transfers`` becomes an ``asyncio.Semaphore``, so a zero
+    from lab data would hand every bulk transfer on that host a permit pool it
+    never gets a permit out of. The runtime dataclass refuses it too, but this
+    is the layer a ``lab.json`` typo actually arrives at, and it is the one that
+    can name the offending key.
+    """
+    assert NcOptionsSpec().to_runtime().max_concurrent_transfers is None, (
+        "the default must stay 'derive it', not a number frozen into the spec"
+    )
+    assert NcOptionsSpec(max_concurrent_transfers=6).to_runtime().max_concurrent_transfers == 6
+
+    with pytest.raises(ValidationError, match="greater than or equal to 1"):
+        NcOptionsSpec(max_concurrent_transfers=0)
+
+
 def test_nc_spec_rejects_unknown_key():
     # ``extra`` itself is the rejected key (otto-owned spec, no passthrough
     # table) — not a complaint about something nested inside it.

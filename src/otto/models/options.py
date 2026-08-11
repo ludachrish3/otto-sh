@@ -201,6 +201,11 @@ class NcOptionsSpec(OttoModel):
     listener_check: NcListenerCheck = "auto"
     listener_cmd: str | None = None
     listener_timeout: float = 30.0
+    # Bound as a `Field` kwarg, not as `Annotated[int, Field(ge=1)]`: autodoc's
+    # annotation stringifier turns the metadata into dotted py:class targets
+    # (`Ge`, `FieldInfo`, `NoneType`) and nitpicky -W fails the docs build on
+    # them. Same constraint, and the same reason as `CoverageReportSpec.high`.
+    max_concurrent_transfers: int | None = Field(default=None, ge=1)
 
     def to_runtime(self) -> rt.NcOptions:
         """Build the ``NcOptions`` runtime dataclass from the validated spec fields."""
@@ -212,6 +217,7 @@ class NcOptionsSpec(OttoModel):
             listener_check=self.listener_check,
             listener_cmd=self.listener_cmd,
             listener_timeout=self.listener_timeout,
+            max_concurrent_transfers=self.max_concurrent_transfers,
         )
 
 

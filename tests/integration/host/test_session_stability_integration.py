@@ -386,12 +386,20 @@ async def test_real_nc_high_fanout_put(
 ) -> None:
     """20 concurrent nc puts stress port allocation + listener cleanup.
 
-    The cross-protocol ``test_real_concurrent_transfers`` runs at N=5 to
-    avoid sshd MaxSessions backpressure for non-nc transfers; nc uses
-    ephemeral remote ports rather than SSH channels so it can scale
-    further without infrastructure noise. N=20 pushes ``_find_free_port``
-    contention and per-transfer listener spin-up/teardown harder than the
-    N=5 baseline.
+    N=20 pushes ``_find_free_port`` contention and per-transfer listener
+    spin-up/teardown harder than the N=5 baseline of the cross-protocol
+    ``test_real_concurrent_transfers``.
+
+    This docstring used to justify the higher N by claiming nc "uses ephemeral
+    remote ports rather than SSH channels so it can scale further". That is
+    false, and it cost a day of chasing a 3.14 flake: an nc transfer needs
+    ephemeral ports AND SSH channels — one exec channel held for the life of
+    its remote ``nc -l``, plus another for the readiness poll. nc is if
+    anything the HUNGRIEST backend for the ``MaxSessions`` budget the comment
+    said it sidestepped. What actually keeps this test off the ceiling is the
+    fan-out bound in ``NcFileTransfer``, whose permits are per host connection
+    precisely so the 20 separate one-file puts below cannot each claim a full
+    budget (``tests/unit/host/test_transfer_nc_fanout.py``).
     """
     N = 20  # noqa: N806 — single-letter math dimension
     files = []

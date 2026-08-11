@@ -63,22 +63,47 @@ isn't appropriate for a particular host:
 
 ## `nc_options` reference
 
-The `nc_options` object accepts all seven fields of {class}`~otto.host.options.NcOptions`:
+The `nc_options` object accepts all eight fields of {class}`~otto.host.options.NcOptions`:
 
-| Field                | Default    | Purpose                                                                      |
-|----------------------|------------|------------------------------------------------------------------------------|
-| ``exec_name``        | ``"nc"``   | Netcat binary on both sides (e.g. ``ncat``, ``netcat``).                     |
-| ``port``             | ``9000``   | Base port; used as the scan-start for auto-discovery strategies.             |
-| ``port_strategy``    | ``"auto"`` | Strategy for finding a free remote port (see table above).                   |
-| ``port_cmd``         | ``null``   | Shell command printing a free port; used when ``port_strategy="custom"``.    |
-| ``listener_check``   | ``"auto"`` | Strategy for verifying the remote listener is ready (see table above).       |
-| ``listener_cmd``     | ``null``   | Shell command (``{port}``); exits 0 when ``listener_check="custom"``.        |
-| ``listener_timeout`` | ``30.0``   | Seconds the remote listener waits for a client before self-terminating.      |
+| Field                        | Default    | Purpose                                                                   |
+|------------------------------|------------|---------------------------------------------------------------------------|
+| ``exec_name``                | ``"nc"``   | Netcat binary on both sides (e.g. ``ncat``, ``netcat``).                  |
+| ``port``                     | ``9000``   | Base port; used as the scan-start for auto-discovery strategies.          |
+| ``port_strategy``            | ``"auto"`` | Strategy for finding a free remote port (see table above).                |
+| ``port_cmd``                 | ``null``   | Shell command printing a free port; used when ``port_strategy="custom"``. |
+| ``listener_check``           | ``"auto"`` | Strategy for verifying the remote listener is ready (see table above).    |
+| ``listener_cmd``             | ``null``   | Shell command (``{port}``); exits 0 when ``listener_check="custom"``.     |
+| ``listener_timeout``         | ``30.0``   | Seconds the remote listener waits for a client before self-terminating.   |
+| ``max_concurrent_transfers`` | ``null``   | Files in flight at once; ``null`` fits a default sshd (see below).        |
 
 ``listener_timeout`` is passed as ``nc -w`` on the remote side and also caps the
 post-transfer wait for the listener process to exit.  It prevents an
 orphaned-listener hang when a port-collision race causes the listener to never
 receive a client — without it the listener would block indefinitely.
+
+### Concurrency and the remote channel budget
+
+An nc transfer is not free of SSH channels just because it moves its bytes over
+its own TCP connection: otto holds one exec channel for the whole life of the
+remote ``nc -l``, and the listener-readiness poll opens another while it is
+held. A default OpenSSH server allows ``MaxSessions 10`` channels per
+*connection* and **refuses** the excess rather than queueing it, so an
+unbounded bulk transfer turns "many files" into ``open failed`` — or into
+``Remote nc listener on port N not ready`` when it is the readiness poll that
+loses its channel.
+
+otto therefore caps the files in flight per host connection. The default is
+derived from the OpenSSH default, leaving headroom for otto's own control
+commands. Set ``max_concurrent_transfers`` when the remote sshd is *not*
+default — raise it for a host with a raised ``MaxSessions`` to transfer wider,
+and lower it for a host with a lowered one, which would otherwise lose files.
+otto cannot read the server's setting, so this is the only way to tell it.
+
+```json
+{
+    "nc_options": { "max_concurrent_transfers": 12 }
+}
+```
 
 `nc_options` participates in the same layered merge as the other transport option
 objects — see {doc}`Host configuration <../configuration>`.

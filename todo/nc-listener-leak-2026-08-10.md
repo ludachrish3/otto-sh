@@ -183,7 +183,11 @@ every telnet reconnect stranded a listener for port 23.
 the fix. `_put_files_nc` dispatches every file through an unbounded
 `asyncio.gather`, and `_find_free_port` reserves a *distinct* remote port per
 in-flight caller, so a bulk put opens N forwards at once — N different keys,
-no reuse available. Measured on an 8-file put through a hop: **6 descriptors
+no reuse available. (The fan-out is bounded as of 2026-08-11 — see
+`nc-listener-readiness-under-concurrency-2026-08-11.md`, where the unbounded
+gather turned out to be a second defect: it overran the remote sshd's
+`MaxSessions`. The reasoning here is unaffected, since the bounded fan-out still
+opens several distinct-key forwards at once.) Measured on an 8-file put through a hop: **6 descriptors
 stranded with caching alone, 0 once each attempt releases its own.** The same
 gap appears sequentially on any target whose port strategy resolves to `python`
 or `custom`, which return a fresh ephemeral port every call instead of

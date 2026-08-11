@@ -472,6 +472,19 @@ class NcOptions:
     What this value genuinely caps is otto's own post-transfer wait; a transfer
     whose connection is established is unaffected."""
 
+    max_concurrent_transfers: int | None = None
+    """How many files of one bulk transfer may be in flight at once. ``None``
+    derives a bound that fits a DEFAULT OpenSSH server.
+
+    Set this when the remote sshd is not default. Each in-flight nc transfer
+    holds an SSH exec channel for the life of its remote ``nc -l`` listener and
+    its readiness poll opens another, so the real ceiling is that host's
+    ``MaxSessions`` (10 unless configured) — which sshd enforces by REFUSING the
+    excess channels, not by queueing them. A host with a raised ``MaxSessions``
+    can transfer wider; one with a lowered ``MaxSessions`` must go narrower or
+    it loses files to ``open failed``. otto cannot read the server's setting, so
+    the default is derived from the OpenSSH default."""
+
 
 # ---------------------------------------------------------------------------
 # TFTP

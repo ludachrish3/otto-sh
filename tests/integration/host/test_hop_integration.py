@@ -592,13 +592,20 @@ async def test_a_bulk_hop_put_does_not_strand_a_forward_per_file(tmp_path: Path)
     and the next one is handed the same number back, so one forward serves them
     all. That shape is not the interesting one.
 
-    ``_put_files_nc`` dispatches every file through an unbounded
-    ``asyncio.gather``, and ``_find_free_port`` reserves a DISTINCT remote port
-    per in-flight caller, so a bulk put opens N forwards at once — N different
-    cache keys, no reuse available, nothing for the cache to do. The same holds
-    for any host whose port strategy resolves to ``python`` or ``custom``, which
-    return a fresh ephemeral port on every call rather than rescanning from the
-    base: there the cache never hits at all, even sequentially.
+    ``_put_files_nc`` dispatches its files concurrently, and ``_find_free_port``
+    reserves a DISTINCT remote port per in-flight caller, so a bulk put opens
+    several forwards at once — different cache keys, no reuse available, nothing
+    for the cache to do. The same holds for any host whose port strategy
+    resolves to ``python`` or ``custom``, which return a fresh ephemeral port on
+    every call rather than rescanning from the base: there the cache never hits
+    at all, even sequentially.
+
+    "Concurrently", not "N at once": the fan-out is bounded per host connection
+    (``NcFileTransfer._transfer_semaphore``) because each in-flight transfer
+    costs SSH channels against the remote sshd's ``MaxSessions``. That bound
+    does not weaken this guard — the concurrent forwards are still distinct keys
+    the cache cannot serve — but it does mean N here is an upper bound on the
+    forwards open at any instant, not the count.
 
     So the descriptors have to come back when the transfer ends, not when the
     host closes. This is the guard for that, and it is the one that does not
