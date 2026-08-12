@@ -269,15 +269,15 @@ monitor startup rather than silently polling nothing.  See
 [Per-interface and per-filesystem OIDs](../monitor.md#per-interface-and-per-filesystem-oids)
 in {doc}`../monitor` for what each expanded OID charts.
 
-### Per-protocol option tables
+### Option tables
 
 Each of the following keys accepts an object that overrides individual
-protocol fields.  They merge per-key with hardcoded dataclass defaults;
+fields.  They merge per-key with hardcoded dataclass defaults;
 product `[host_preferences]` values are then applied on top (product wins
 over the host's own values).  See {doc}`../hosts/configuration` for the full
 connection-options reference.
 
-| Key | Protocol |
+| Key | Covers |
 |-----|----------|
 | `ssh_options` | SSH (term and hop) |
 | `telnet_options` | Telnet (term, and the embedded console) |
@@ -285,6 +285,19 @@ connection-options reference.
 | `scp_options` | SCP transfer |
 | `ftp_options` | FTP transfer |
 | `nc_options` | Netcat transfer |
+| `userland_options` | The device's own userland (see below) |
+
+`userland_options` is the odd one out: it names no protocol.  It carries
+declared answers about the *device* — which elevation mechanism it has,
+which `timeout` calling convention its applet speaks, and so on — that otto
+otherwise probes for once per host and caches.  Every key defaults to
+"probe it", so the table is only worth writing to skip a probe or to correct
+one.  Run with `--log-level DEBUG` and otto prints the resolved answers as a
+`userland_options` object ready to paste in.
+
+```json
+"userland_options": { "elevation": "su", "timeout_style": "dash-t" }
+```
 
 ### Coverage toolchain
 
@@ -415,7 +428,8 @@ matched (`re.fullmatch`) against each host's **id** (e.g. `carrot_seed`,
   backends.  Otto picks the first entry that is in the host's lab-defined
   `valid_terms` / `valid_transfers` menu; out-of-menu entries are skipped.
 - **Option tables** (`ssh_options`, `telnet_options`, `sftp_options`,
-  `scp_options`, `ftp_options`, `nc_options`) — per-key value overrides.
+  `scp_options`, `ftp_options`, `nc_options`, `userland_options`) — per-key
+  value overrides.
 
 ```toml
 # .otto/settings.toml

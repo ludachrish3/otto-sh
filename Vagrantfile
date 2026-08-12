@@ -313,10 +313,24 @@ Vagrant.configure("2") do |config|
             # and dash are guaranteed (dash IS /bin/sh here) and busybox rides
             # in with the base image, so only these three need installing.
             # Dropping one silently narrows that matrix rather than failing.
+            # qemu-user-static is a TEST FIXTURE too: the BusyBox artifact
+            # matrix (tests/_fixtures/busybox.py) runs x86_64 userland.
+            # Upstream publishes no aarch64 BusyBox build for ANY version, and
+            # this VM's ARMv8 cores have no AArch32 EL0 — a 32-bit ARM static
+            # binary fails ENOEXEC here even though CONFIG_COMPAT=y (measured,
+            # not assumed). Running the x86_64 artifact under binfmt also means
+            # the dev VM and CI (x86_64) exercise identical bytes rather than
+            # two different builds. The package registers its binfmt_misc
+            # handlers itself at install time, so nothing else is provisioned;
+            # what it DOES need is a fresh package index — installed by hand on
+            # a box whose apt lists have gone stale it 404s on the .deb and
+            # reads like the package does not exist. The `apt update` in the
+            # global provisioner above is what makes this line safe here.
             apt install -y  gcc                   \
                             gh                    \
                             graphviz              \
                             lcov                  \
+                            qemu-user-static      \
                             ruby                  \
                             zsh                   \
                             ksh                   \

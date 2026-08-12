@@ -267,6 +267,7 @@ class OttoContext:
         scp_options: "Any" = None,
         ftp_options: "Any" = None,
         nc_options: "Any" = None,
+        userland_options: "Any" = None,
         **kwargs: Any,
     ) -> "dict[str, T | BaseException]":
         """Call *method* on every matching host and return a ``{host_id: result}`` mapping.
@@ -291,6 +292,7 @@ class OttoContext:
                 scp_options=scp_options,
                 ftp_options=ftp_options,
                 nc_options=nc_options,
+                userland_options=userland_options,
             )
         )
         if concurrent:
@@ -323,6 +325,7 @@ class OttoContext:
         scp_options: "Any" = None,
         ftp_options: "Any" = None,
         nc_options: "Any" = None,
+        userland_options: "Any" = None,
     ) -> "dict[str, Results | BaseException]":
         """Run one or more shell commands on every matching host and return a results mapping.
 
@@ -349,6 +352,7 @@ class OttoContext:
             scp_options=scp_options,
             ftp_options=ftp_options,
             nc_options=nc_options,
+            userland_options=userland_options,
         )
 
 

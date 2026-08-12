@@ -15,6 +15,7 @@ from otto.host.options import (
     SshOptions,
     TelnetOptions,
     TftpOptions,
+    UserlandOptions,
 )
 from otto.models.base import OttoModel
 from otto.models.options import (
@@ -27,6 +28,7 @@ from otto.models.options import (
     SshOptionsSpec,
     TelnetOptionsSpec,
     TftpOptionsSpec,
+    UserlandOptionsSpec,
 )
 
 
@@ -218,6 +220,38 @@ def test_tftp_spec_defaults_match_runtime():
     assert rt_obj.port == 69
     assert rt_obj.block_size == 512
     assert rt_obj.server_ip == "10.0.0.2"
+
+
+def test_userland_spec_defaults_to_probing_everything():
+    """`None` means 'ask the device'. A frozen default would be a lie.
+
+    BusyBox behaviour depends on build config as much as version, so the spec
+    must not ship an answer it cannot know — every field defaults to probe.
+
+    The field list is derived from the model/dataclass, not hand-listed: a
+    hand-written subset would silently stop covering a field added later,
+    which is exactly the gap this test exists to close.
+    """
+    spec_fields = set(UserlandOptionsSpec.model_fields)
+    assert spec_fields, "UserlandOptionsSpec.model_fields introspection returned nothing"
+
+    spec = UserlandOptionsSpec()
+    for name in spec_fields:
+        assert getattr(spec, name) is None, f"{name} must default to probe (None)"
+
+    rt_obj = spec.to_runtime()
+    assert isinstance(rt_obj, UserlandOptions)
+
+    runtime_fields = {f.name for f in dataclasses.fields(UserlandOptions)}
+    assert runtime_fields, "dataclasses.fields(UserlandOptions) introspection returned nothing"
+    for name in runtime_fields:
+        assert getattr(rt_obj, name) is None, f"{name} must reach the runtime as None"
+
+
+def test_userland_spec_rejects_an_unknown_elevation():
+    """A typo in lab data must fail at the boundary, naming the key."""
+    with pytest.raises(ValidationError, match="elevation"):
+        UserlandOptionsSpec(elevation="pkexec")
 
 
 @pytest.mark.parametrize(("spec_cls", "runtime_cls"), OPTION_SPEC_RUNTIME_PAIRS)

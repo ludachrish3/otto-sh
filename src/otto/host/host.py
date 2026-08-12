@@ -281,9 +281,12 @@ class Host(Protocol):
                 :data:`DEFAULT_COMMAND_TIMEOUT`. Execution is always bounded;
                 pass ``float("inf")`` for a deliberately unbounded command.
             log: Whether to log command output for this call.
-            sudo: If ``True``, each command is run with elevated privileges.
+            sudo: If ``True``, each command is run with elevated privileges,
+                through whichever mechanism the host's userland resolved.
                 Implementations that do not support elevation raise
-                :exc:`NotImplementedError`.
+                :exc:`NotImplementedError`; a host whose userland offers no
+                mechanism raises
+                :exc:`~otto.host.errors.UnsupportedOnUserlandError`.
 
         Returns:
             A :class:`~otto.result.Results` aggregating one :class:`~otto.result.CommandResult`
@@ -596,10 +599,29 @@ class BaseHost(ABC):
 
         Default raises — only posix-shell hosts (via the ``PosixPrivilege``
         mixin) can elevate. Embedded/RTOS hosts have no ``sudo``.
+
+        Synchronous by contract, which is why :meth:`_prepare_elevation`
+        exists: an implementation needing an awaited answer resolves it there.
         """
         raise NotImplementedError(
             f"sudo/elevation is not supported on '{self.__class__.__name__}'"
         ) from None
+
+    async def _prepare_elevation(self) -> None:
+        """Resolve anything :meth:`_elevate` reads. Awaited by ``run(sudo=True)``.
+
+        Default no-op — a host whose ``_elevate`` needs nothing resolved (and a
+        host that cannot elevate at all, which still raises from ``_elevate``
+        and not from here) does nothing. ``PosixPrivilege`` overrides it to
+        resolve the host's :class:`~otto.host.userland.Userland`, whose
+        capabilities raise if read before ``resolve()`` has been awaited.
+
+        Separate from ``_elevate`` rather than folded into it because
+        ``_elevate`` is synchronous and is called from a comprehension over
+        already-resolved commands; this is the single async point above both of
+        those call sites.
+        """
+        return
 
     async def switch_user(self, user: str = "", password: str | None = None) -> None:
         """Switch the persistent session to another user via ``su``.
@@ -704,10 +726,21 @@ class BaseHost(ABC):
                 with ``Status.Error``. :attr:`ShellCommand.timeout` caps the per-command
                 value but is still bounded by the remaining budget.
                 Defaults to :data:`DEFAULT_COMMAND_TIMEOUT`; pass
-                ``float("inf")`` to opt out of the bound.
+                ``float("inf")`` to opt out of the bound. It bounds the
+                COMMANDS and nothing else: with ``sudo=True`` the userland
+                resolution below happens above this budget and can add up to
+                ``otto.host.userland._RESOLVE_BUDGET_S`` (30s) to the call on a
+                host that will not answer probes.
             sudo: If ``True``, each command is rewritten through ``_elevate`` before
-                execution. Hosts that do not support elevation (e.g. embedded/RTOS) raise
-                :exc:`NotImplementedError` — see ``_elevate``.
+                execution, using whichever mechanism this host's userland resolved
+                (``sudo`` or ``su``). Resolving that mechanism is a real cost the
+                first time — see ``timeout`` above and
+                :meth:`otto.host.userland.Userland.resolve`. Hosts that do not
+                support elevation at all
+                (e.g. embedded/RTOS) raise :exc:`NotImplementedError`; a host whose
+                userland offers neither mechanism raises
+                :exc:`~otto.host.errors.UnsupportedOnUserlandError` rather than
+                emitting a command that cannot work — see ``_elevate``.
 
         Returns:
             A :class:`~otto.result.Results` aggregating one :class:`~otto.result.CommandResult`
@@ -718,6 +751,18 @@ class BaseHost(ABC):
         """
         timeout = _validate_timeout(timeout)
         default_expects = _normalize_expects(expects)
+        if sudo:
+            # ABOVE the single-vs-sequence split, not inside either arm. This is
+            # the only async point above `_elevate`, which is synchronous and so
+            # cannot resolve the capabilities it reads, and there are two
+            # `_apply_sudo` sites below — one per arm. Moved into the
+            # single-command arm this still reads earlier in the file than the
+            # sequence arm's rewrite, so it satisfies any line-number check
+            # while `run([...], sudo=True)` raises; that mutant was measured
+            # green against an earlier version of the guard. What pins it now is
+            # a STATEMENT-POSITION rule plus a behavioural test driving both
+            # shapes, in `tests/unit/host/test_privilege.py`.
+            await self._prepare_elevation()
         if isinstance(cmds, (str, ShellCommand)):
             resolved = [_resolve_command(cmds, default_expects, timeout, log)]
             if sudo:

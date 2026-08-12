@@ -554,3 +554,65 @@ class SnmpOptions:
     from the host's ``interfaces`` map (now ``Interface`` objects — see
     ``todo/multi_interface_hosts.md``), resolved via
     :meth:`~otto.host.remote_host.RemoteHost.address_for`."""
+
+
+# ---------------------------------------------------------------------------
+# Userland
+# ---------------------------------------------------------------------------
+
+
+@dataclass(slots=True)
+class UserlandOptions:
+    """Declared answers about a host's userland; ``None`` means probe it.
+
+    These are properties of the DEVICE, not of otto's connection to it, and
+    they are deliberately not named ``busybox_*``: the ``timeout`` convention
+    probe that motivated them already rescues a non-BusyBox class (Alpine
+    <= 3.8, OpenWrt <= 18.06, which pair an old BusyBox userland with a real
+    netcat). Scoping them to a BusyBox host type would exclude the hosts that
+    already benefit.
+    """
+
+    shell_dialect: str | None = None
+    """Registered ``CommandFrame`` type_name, or ``None`` to probe."""
+
+    elevation: str | None = None
+    """``"sudo"``, ``"su"``, ``"none"``, or ``None`` to probe."""
+
+    base64_flag: str | None = None
+    """Decode spelling (``"-d"`` / ``"--decode"``), ``"absent"``, or None.
+
+    Measured against real BusyBox binaries (see
+    ``docs/superpowers/specs/2026-08-11-busybox-host-support-design.md``):
+    ``base64 --decode`` is rejected by every BusyBox build tested (1.16.1
+    through 1.35.0, and the Ubuntu 1.36.1 system build); only ``-d`` works
+    there. ``--decode`` stays a valid member because GNU coreutils hosts
+    accept it — this spec covers all unix hosts, not just BusyBox.
+    ``base64`` itself is absent entirely on 1.16.1, which is why
+    ``"absent"`` is a member and not an error."""
+
+    stat_size: str | None = None
+    """``"stat"``, ``"wc"``, ``"absent"``, or ``None`` to probe.
+
+    Measured against real BusyBox binaries (see
+    ``docs/superpowers/specs/2026-08-11-busybox-host-support-design.md``):
+    ``"stat"`` means ``stat -c %s`` specifically — ``stat --format=%s`` is
+    rejected by every BusyBox build tested. ``wc -c < FILE`` works
+    everywhere as the fallback."""
+
+    timeout_style: str | None = None
+    """``"coreutils"``, ``"dash-t"``, ``"absent"``, or ``None`` to probe.
+
+    Measured against real BusyBox binaries (see
+    ``docs/superpowers/specs/2026-08-11-busybox-host-support-design.md``):
+    ``-t SECS PROG`` works up to BusyBox 1.28.1; bare ``SECS PROG`` (the
+    coreutils spelling) works from 1.31.0. The two spellings are mutually
+    exclusive on every build tested."""
+
+    version: str | None = None
+    """Userland version, for documentation and profile selection ONLY.
+
+    Never gates behaviour. BusyBox applets can be compiled out and ``sh`` may
+    be ash or hush, so the version number cannot answer a behavioural question
+    — only the device can.
+    """

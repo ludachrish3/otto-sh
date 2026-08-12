@@ -23,6 +23,7 @@ if TYPE_CHECKING:
         SftpOptions,
         SshOptions,
         TelnetOptions,
+        UserlandOptions,
     )
     from ..host.remote_host import RemoteHost
 
@@ -42,6 +43,7 @@ def _apply_option_overrides(
     scp_options: "ScpOptions | None" = None,
     ftp_options: "FtpOptions | None" = None,
     nc_options: "NcOptions | None" = None,
+    userland_options: "UserlandOptions | None" = None,
 ) -> "RemoteHost":
     """Return a copy of *host* with the given ``*_options`` fields replaced.
 
@@ -88,6 +90,7 @@ def _apply_option_overrides(
             ("scp_options", scp_options),
             ("ftp_options", ftp_options),
             ("nc_options", nc_options),
+            ("userland_options", userland_options),
         )
         if v is not None
     }
@@ -116,6 +119,7 @@ def all_hosts(  # noqa: PLR0913 — wide host-dispatch API (mirrors do_for_all_h
     scp_options: "ScpOptions | None" = None,
     ftp_options: "FtpOptions | None" = None,
     nc_options: "NcOptions | None" = None,
+    userland_options: "UserlandOptions | None" = None,
 ) -> Generator["RemoteHost", Any, Any]:
     """Yield the active lab's real remote hosts, optionally filtered by regex.
 
@@ -144,7 +148,7 @@ def all_hosts(  # noqa: PLR0913 — wide host-dispatch API (mirrors do_for_all_h
         term, transfer: optional active-protocol override; see
             ``_apply_option_overrides``.
         ssh_options, telnet_options, sftp_options, scp_options,
-        ftp_options, nc_options: Optional per-call option overrides. When
+        ftp_options, nc_options, userland_options: Optional per-call overrides. When
             supplied, each yielded host is a fresh
             :func:`dataclasses.replace`-style copy whose corresponding
             ``*_options`` field is replaced by the caller's instance
@@ -185,6 +189,7 @@ def all_hosts(  # noqa: PLR0913 — wide host-dispatch API (mirrors do_for_all_h
         scp_options=scp_options,
         ftp_options=ftp_options,
         nc_options=nc_options,
+        userland_options=userland_options,
     )
 
 
@@ -203,6 +208,7 @@ async def do_for_all_hosts(  # noqa: PLR0913 — wide host-dispatch API
     scp_options: "ScpOptions | None" = None,
     ftp_options: "FtpOptions | None" = None,
     nc_options: "NcOptions | None" = None,
+    userland_options: "UserlandOptions | None" = None,
     **kwargs: Any,
 ) -> dict[str, T | BaseException]:
     """Call an async host method on every matching host.
@@ -221,7 +227,7 @@ async def do_for_all_hosts(  # noqa: PLR0913 — wide host-dispatch API
         term, transfer: optional active-protocol override; see
             ``_apply_option_overrides``.
         ssh_options, telnet_options, sftp_options, scp_options,
-        ftp_options, nc_options: Optional per-call option overrides
+        ftp_options, nc_options, userland_options: Optional per-call overrides
             forwarded to :func:`all_hosts`. See its docstring for
             semantics.
         **kwargs: Keyword arguments forwarded to *method*.
@@ -259,6 +265,7 @@ async def do_for_all_hosts(  # noqa: PLR0913 — wide host-dispatch API
         scp_options=scp_options,
         ftp_options=ftp_options,
         nc_options=nc_options,
+        userland_options=userland_options,
         **kwargs,
     )
 
@@ -278,6 +285,7 @@ async def run_on_all_hosts(  # noqa: PLR0913 — wide host-dispatch API
     scp_options: "ScpOptions | None" = None,
     ftp_options: "FtpOptions | None" = None,
     nc_options: "NcOptions | None" = None,
+    userland_options: "UserlandOptions | None" = None,
 ) -> "dict[str, Results | BaseException]":
     """Run commands on every matching host via :meth:`~otto.host.host.BaseHost.run`.
 
@@ -296,7 +304,7 @@ async def run_on_all_hosts(  # noqa: PLR0913 — wide host-dispatch API
         term, transfer: optional active-protocol override; see
             ``_apply_option_overrides``.
         ssh_options, telnet_options, sftp_options, scp_options,
-        ftp_options, nc_options: Optional per-call option overrides
+        ftp_options, nc_options, userland_options: Optional per-call overrides
             forwarded to :func:`do_for_all_hosts`.
 
     Returns:
@@ -324,6 +332,7 @@ async def run_on_all_hosts(  # noqa: PLR0913 — wide host-dispatch API
         scp_options=scp_options,
         ftp_options=ftp_options,
         nc_options=nc_options,
+        userland_options=userland_options,
     )
 
 
@@ -338,6 +347,7 @@ def get_host(
     scp_options: "ScpOptions | None" = None,
     ftp_options: "FtpOptions | None" = None,
     nc_options: "NcOptions | None" = None,
+    userland_options: "UserlandOptions | None" = None,
 ) -> "UnixHost":
     """Return the host registered under *host_id* in the active lab.
 
@@ -346,7 +356,7 @@ def get_host(
         term, transfer: optional active-protocol override; see
             ``_apply_option_overrides``.
         ssh_options, telnet_options, sftp_options, scp_options,
-        ftp_options, nc_options: Optional per-call option overrides.
+        ftp_options, nc_options, userland_options: Optional per-call overrides.
             Each non-``None`` argument **replaces** the corresponding
             ``*_options`` field on a returned copy wholesale; the copy is
             built via :func:`dataclasses.replace` so the new host's
@@ -369,6 +379,7 @@ def get_host(
         scp_options=scp_options,
         ftp_options=ftp_options,
         nc_options=nc_options,
+        userland_options=userland_options,
     )
 
 

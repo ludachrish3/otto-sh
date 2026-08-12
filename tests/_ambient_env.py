@@ -69,6 +69,12 @@ AMBIENT_OPT_INS: "dict[str, str]" = {
         "opts tier-2 chaos onto a leased bed host instead of the loopback "
         "sshd (tests/integration/chaos/_target.py); set by hand on the lab"
     ),
+    "OTTO_BUSYBOX_CACHE": (
+        "redirects the BusyBox artifact cache off ~/.cache/otto/busybox "
+        "(tests/_fixtures/busybox.py); set by `make busybox-cache` and by an "
+        "air-gapped lab priming the cache by hand. Stripped, every run "
+        "silently writes and reads the real cache instead"
+    ),
     "OTTO_TUNNEL_SOAK_CYCLES": (
         "internal soak depth per tunnel stability test "
         "(tests/e2e/tunnel_stability/_harness.py); set by `make "

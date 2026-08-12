@@ -81,7 +81,8 @@ that family needs at its call site, then calls `cls.create(ctx)`. A custom
 backend overrides `create` and reads only the fields it needs:
 
 - a **unix** transfer backend reads `connections`, `exec_cmd`, `nc_options`,
-  `scp_options`, and `get_local_ip`;
+  `scp_options`, `get_local_ip`, and `userland` — the host's shared capability
+  resolver, whose answers are only readable after `await ctx.userland.resolve()`;
 - an **embedded** transfer backend reads `exec_cmd` and `filesystem`.
 
 Selector validation runs before construction, so a backend never sees a ctx

@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 if TYPE_CHECKING:
     from ..connections import ConnectionManager
     from ..options import NcOptions
+    from ..userland import Userland
 
 import logging
 
@@ -84,19 +85,28 @@ _NC_STALL_TIMEOUT = 5.0
 # channel must fail the attempt, not hang it.
 _NC_FORWARD_SETUP_TIMEOUT = 5.0
 
-# Hard lifetime cap for a remote `nc -l`, applied via coreutils `timeout` (see
+# Hard lifetime cap for a remote `nc -l`, applied via `timeout` (see
 # `_nc_listener_prefix`). One hour, not `listener_timeout`: this is the backstop
 # for otto dying with a listener up, so it only needs to beat "unnoticed for
 # days" — and capping an ESTABLISHED transfer would truncate large files.
 _NC_LISTENER_HARD_CAP_S = 3600
 
-# Cap used when probing which `timeout` calling convention the remote speaks
-# (see `_nc_listener_prefix`). The probed command exits immediately, so this
-# is never waited out — it only has to be a value both spellings accept as a
-# duration, which rules out 0 (coreutils reads 0 as "no timeout", so the probe
-# would still pass but would be testing a different code path than the one the
-# real prefix uses).
-_NC_CAP_PROBE_S = 1
+# The cap's spelling per `timeout` calling convention, keyed by
+# `Userland.timeout_style`. Measured against real BusyBox binaries: `-t SECS
+# PROG` works up to 1.28.1, bare `SECS PROG` from 1.31.0, and the two are
+# mutually exclusive on every build tested.
+#
+# `absent` is deliberately NOT a key, and neither is any style this table has
+# not been taught: both degrade to no prefix at all, which is exactly the
+# behaviour from before the cap existed. Wrapping in a convention the remote
+# rejects would be worse than not wrapping — the applet fails to exec and takes
+# the listener with it. Which styles exist is fixed by the `Literal` on
+# `UserlandOptionsSpec.timeout_style`, and the coverage of this table against
+# that vocabulary is pinned in tests/unit/host/test_transfer_nc_listener_reap.py.
+_TIMEOUT_STYLE_PREFIXES = {
+    "coreutils": f"timeout {_NC_LISTENER_HARD_CAP_S} ",
+    "dash-t": f"timeout -t {_NC_LISTENER_HARD_CAP_S} ",
+}
 
 # How many per-file transfers may be in flight at once, derived from a channel
 # budget rather than picked. A default OpenSSH server allows `MaxSessions 10`
@@ -297,7 +307,27 @@ class NcFileTransfer(UnixFileTransfer):
         get_local_ip: Callable[[], str],
         exec_cmd: Callable[..., Coroutine[Any, Any, CommandResult]],
         max_filename_len: int = 255,
+        *,
+        userland: "Userland | None",
     ) -> None:
+        """Build an nc backend. See :meth:`_nc_listener_prefix` for *userland*.
+
+        *userland* is the host's shared capability resolver, and it is the only
+        thing that decides which ``timeout`` calling convention the hard cap is
+        spelled in. :class:`~otto.host.unix_host.UnixHost` supplies its own
+        through :class:`~otto.host.transfer.base.TransferContext`, so the
+        production path always has one.
+
+        **Required, with no default, and that is the point.** ``None`` is
+        still a legal answer — a caller constructing this directly, with no
+        host behind it, has no resolver to give — and it degrades to the
+        documented backstop-absent behaviour: no cap, and a transfer that
+        still works. What the missing default removes is losing the cap by
+        SILENCE. A new construction site now has to say which of the two it
+        means, because the version that gets this wrong by omission produces
+        listeners that outlive an otto killed outright, and nothing downstream
+        can tell that from a host whose userland genuinely has no ``timeout``.
+        """
         super().__init__(
             connections=connections,
             name=name,
@@ -307,6 +337,7 @@ class NcFileTransfer(UnixFileTransfer):
         self.transfer = transfer
         self._nc_options = nc_options
         self._get_local_ip = get_local_ip
+        self._userland = userland
         self._resolved_port_strategy: NcPortStrategy | None = None
         self._resolved_listener_check: NcListenerCheck | None = None
         self._reserved_ports: set[int] = set()
@@ -354,6 +385,10 @@ class NcFileTransfer(UnixFileTransfer):
             raise ValueError("NcFileTransfer requires get_local_ip on the transfer context")
         if ctx.nc_options is None:
             raise ValueError("NcFileTransfer requires nc_options on the transfer context")
+        # Threaded through rather than validated like the four above: a ctx
+        # without a userland still builds a working backend, it just builds one
+        # whose listeners run uncapped. Rejecting it here would overstate the
+        # requirement — the cap is a backstop, not a dependency.
         return cls(
             connections=ctx.connections,
             name=ctx.host_name,
@@ -362,6 +397,7 @@ class NcFileTransfer(UnixFileTransfer):
             get_local_ip=ctx.get_local_ip,
             exec_cmd=ctx.exec_cmd,
             max_filename_len=ctx.max_filename_len,
+            userland=ctx.userland,
         )
 
     @property
@@ -413,21 +449,35 @@ class NcFileTransfer(UnixFileTransfer):
         an hour does that while being far longer than any legitimate transfer
         on a lab network.
 
-        Probes the CALLING CONVENTION, not the binary's name. ``command -v
-        timeout`` only proves something called ``timeout`` exists, and two
-        spellings matter:
+        Keyed on the CALLING CONVENTION, not the binary's name. That something
+        called ``timeout`` exists does not say which of two spellings it
+        speaks:
 
         ``SECS PROG``
-            GNU coreutils and BusyBox >= 1.30.
+            GNU coreutils and BusyBox from 1.31.0.
         ``-t SECS PROG``
-            BusyBox < 1.30, which reads a bare leading number as the PROGRAM.
-            A name-only probe there builds ``timeout 3600 nc -l``, the applet
-            fails to exec ``3600``, and the listener never starts — the
+            BusyBox up to 1.28.1, which reads a bare leading number as the
+            PROGRAM. Getting it wrong there builds ``timeout 3600 nc -l``, the
+            applet fails to exec ``3600``, and the listener never starts — the
             backstop becoming an outage, strictly worse than no backstop.
 
-        Order does not matter: each implementation rejects the other's
-        spelling (measured: coreutils exits 125 on ``-t``, BusyBox 1.36 exits
-        1), so the arms are mutually exclusive and converge either way round.
+        The answer comes from :attr:`~otto.host.userland.Userland.timeout_style`
+        and from nowhere else. This method used to embed a shell probe of its
+        own, which was correct but private — a sixth answer to a question five
+        sibling capabilities already resolve, cache and log through the
+        userland layer, and so a divergence waiting to happen.
+
+        **Resolution is this method's precondition, and it is synchronous.**
+        Every ``Userland`` capability raises if it is read before ``resolve()``
+        has been awaited, and there is no awaiting from here, so the error is
+        allowed to propagate rather than being caught and answered "no cap": a
+        silent fallback would reinstate the divergence the mapping removes, on
+        the path where the cap is the only defence left. What keeps it from
+        firing is :meth:`prepare`, which resolves the userland as its FIRST
+        statement — ahead of its own early return, so a host with both nc
+        strategies declared resolves too — and which every spawning path
+        reaches through ``_warmup_for_transfer``. Both halves are pinned in
+        ``tests/unit/host/test_transfer_nc_listener_reap.py``.
 
         **Precondition, unobvious and load-bearing.** GNU ``timeout`` calls
         ``setpgid(0,0)``, which would move ``nc`` out of the foreground
@@ -447,16 +497,46 @@ class NcFileTransfer(UnixFileTransfer):
         defended with ``--foreground``, which measurably changes nothing on
         either otto path.
 
-        Degrades to empty whenever no form works, including ``timeout`` being
-        absent entirely: behaviour is then exactly what it was before this
-        existed, so a minimal remote can still transfer. It is a backstop, not
-        a dependency.
+        **Degrades to empty in FOUR cases, not three.** The device has no
+        ``timeout``; it has one whose style this build was never taught; no
+        userland is wired up at all; or — the one that is new, and the one
+        with no analogue before this — the userland's probe round could not be
+        ASKED. ``timeout_style``'s cannot-ask default is ``absent``, so a host
+        that HAS a working ``timeout`` spawns an uncapped listener whenever its
+        probes were refused, and ``Userland._RETRY_COOLDOWN_S`` holds that for
+        up to a minute. The refusal that causes it is sshd at its
+        ``MaxSessions`` ceiling, which is the very condition a bulk transfer's
+        own fan-out creates.
 
-        Costs one extra fork of ``true`` per listener spawn on the common
-        path, alongside the ``nc`` this is wrapping. ``true`` has to be a real
-        executable rather than the shell builtin, since ``timeout`` execs it;
-        if it is missing every probe fails and the cap is skipped, which is
-        the safe direction but a silent one.
+        Which baseline that "degrades to" is measured against matters, because
+        there are two. Before the CAP existed there was no cap, and the
+        sentence is true. But the cap's first implementation resolved the
+        convention IN-BAND — a shell one-liner spliced into the spawn command
+        itself — so it cost nothing, could not fail independently of the spawn,
+        and was lost only when the device genuinely had no usable ``timeout``.
+        Against THAT baseline the fourth case is a regression, and this
+        docstring used to claim a parity it no longer has.
+
+        Shipped as it stands because the blast radius is narrow and the
+        direction is safe: it needs the probe round refused AND otto to die
+        during that transfer window, and no cap is a stale listener while a
+        WRONG cap (``timeout 3600`` on a ``-t`` host) is a transfer that never
+        starts. It is a backstop, not a dependency.
+
+        The third case is no longer the production state.
+        :class:`~otto.host.unix_host.UnixHost` builds one ``Userland`` per host
+        and passes it on the ``TransferContext``, so a registry-built backend
+        always has a resolver and the cap is live wherever the device's
+        ``timeout`` can carry it. ``None`` survives only for a backend
+        constructed directly with no host behind it, which is why
+        :meth:`__init__` makes the argument required — the degraded path
+        should be chosen, never inherited by omission.
+
+        Costs nothing at spawn time: the convention was resolved once, when the
+        host's userland was, so this is a dict lookup rather than the extra
+        fork of ``true`` per listener the embedded probe used to pay. That
+        saving and the fourth degradation case are the same trade seen from
+        its two ends.
 
         Note the host class this actually rescues is narrower than "BusyBox":
         BusyBox's own ``nc`` applet wants ``-l -p PORT`` and has no ``-N``, so
@@ -464,14 +544,9 @@ class NcFileTransfer(UnixFileTransfer):
         beneficiary is an old-BusyBox userland with an OpenBSD-style netcat
         installed alongside — Alpine <= 3.8, OpenWrt <= 18.06.
         """
-        cap = _NC_LISTENER_HARD_CAP_S
-        probe = _NC_CAP_PROBE_S
-        return (
-            'T=""; if command -v timeout >/dev/null 2>&1; then '
-            f'if timeout {probe} true >/dev/null 2>&1; then T="timeout {cap}"; '
-            f'elif timeout -t {probe} true >/dev/null 2>&1; then T="timeout -t {cap}"; '
-            "fi; fi; $T "
-        )
+        if self._userland is None:
+            return ""
+        return _TIMEOUT_STYLE_PREFIXES.get(self._userland.timeout_style, "")
 
     # ------------------------------------------------------------------
     # Protocol dispatch (implements BaseFileTransfer's abstract methods)
@@ -501,7 +576,7 @@ class NcFileTransfer(UnixFileTransfer):
 
     @override
     async def prepare(self) -> None:
-        """Resolve port + listener strategies in a single round-trip.
+        """Resolve the userland, then port + listener strategies in one round-trip.
 
         Runs the shared `_STRATEGY_PROBE` script through `_control_run` so the
         port and listener strategies are resolved up front rather than lazily
@@ -511,10 +586,21 @@ class NcFileTransfer(UnixFileTransfer):
         Callers use `_warmup_for_transfer` to run this concurrently with
         exec-pool warming; direct callers can invoke `prepare()` alone.
 
-        If the probe itself fails (non-zero exit, malformed output), the
-        caches stay unset and the lazy cascades in `_find_free_port_auto` /
+        If the strategy probe itself fails (non-zero exit, malformed output),
+        the caches stay unset and the lazy cascades in `_find_free_port_auto` /
         `_resolve_listener_strategy` still kick in as fallbacks.
+
+        The userland resolves FIRST, and that position is load-bearing rather
+        than stylistic: everything below it is skipped whenever both strategies
+        are declared, so a resolution placed after the early return would
+        happen only on hosts that use `auto` — and `_nc_listener_prefix`, which
+        is synchronous and cannot resolve on demand, would then raise on a
+        perfectly legitimate configuration. `Userland.resolve()` is idempotent,
+        concurrency-safe, and never raises for a failed probe, so calling it on
+        every prepare costs nothing after the first.
         """
+        if self._userland is not None:
+            await self._userland.resolve()
         port_auto = self._nc_port_strategy == "auto" and self._resolved_port_strategy is None
         listener_auto = self._nc_listener_check == "auto" and self._resolved_listener_check is None
         if not (port_auto or listener_auto):

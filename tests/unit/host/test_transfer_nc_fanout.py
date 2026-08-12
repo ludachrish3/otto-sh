@@ -70,6 +70,7 @@ def _make_ft(**nc_kwargs) -> NcFileTransfer:
         nc_options=NcOptions(**nc_kwargs),
         get_local_ip=lambda: "127.0.0.1",
         exec_cmd=AsyncMock(),
+        userland=None,
     )
 
 

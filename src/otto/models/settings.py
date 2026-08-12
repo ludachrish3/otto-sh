@@ -42,6 +42,7 @@ from .options import (
     SftpOptionsSpec,
     SshOptionsSpec,
     TelnetOptionsSpec,
+    UserlandOptionsSpec,
 )
 
 if TYPE_CHECKING:
@@ -289,9 +290,11 @@ class ReservationFile(OttoModel):
 # tests/unit/config/test_version.py keeps the two in behavioral lockstep.
 _VERSION_RE = re.compile(r"^\d+\.\d+\.\d+(?:[-+.][0-9A-Za-z.+-]+)?$")
 
-# The six per-protocol option tables accepted under [host_preferences."<selector>"],
-# each mapped to the spec that validates it. Keys mirror host.factory.OPTIONS_KEYS
-# (a drift test keeps them in lockstep).
+# The option tables accepted under [host_preferences."<selector>"], each mapped
+# to the spec that validates it. Keys mirror host.factory.OPTIONS_KEYS (a drift
+# test keeps them in lockstep). All but the last are per-protocol;
+# userland_options describes the device itself, and is settable here so a
+# product can answer for a whole class of hosts at once.
 _HOST_DEFAULT_OPTION_SPECS: dict[str, type[OttoModel]] = {
     "ssh_options": SshOptionsSpec,
     "telnet_options": TelnetOptionsSpec,
@@ -299,6 +302,7 @@ _HOST_DEFAULT_OPTION_SPECS: dict[str, type[OttoModel]] = {
     "scp_options": ScpOptionsSpec,
     "ftp_options": FtpOptionsSpec,
     "nc_options": NcOptionsSpec,
+    "userland_options": UserlandOptionsSpec,
 }
 
 # Capability names accepted inside a [host_preferences."<selector>"] table. Each

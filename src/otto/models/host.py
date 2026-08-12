@@ -38,6 +38,7 @@ from .options import (
     SnmpOptionsSpec,
     SshOptionsSpec,
     TelnetOptionsSpec,
+    UserlandOptionsSpec,
 )
 
 
@@ -436,6 +437,12 @@ class UnixHostSpec(HostSpec):
     scp_options: ScpOptionsSpec = ScpOptionsSpec()
     ftp_options: FtpOptionsSpec = FtpOptionsSpec()
     nc_options: NcOptionsSpec = NcOptionsSpec()
+    userland_options: UserlandOptionsSpec = UserlandOptionsSpec()
+    """Declared answers about this host's userland; every key defaults to
+    "probe it". Unlike its siblings this table is not per-protocol — it
+    describes the DEVICE (which elevation mechanism exists, which ``timeout``
+    convention its applet speaks), so one table serves every backend. See
+    ``docs/superpowers/specs/2026-08-11-busybox-host-support-design.md``."""
 
     _host_family: ClassVar[str] = "unix"
 
@@ -485,7 +492,14 @@ class UnixHostSpec(HostSpec):
         for n in ("hw_version", "sw_version", "docker_capable", "shell_history"):
             if n in s:
                 kw[n] = getattr(self, n)
-        for n in ("ssh_options", "sftp_options", "scp_options", "ftp_options", "nc_options"):
+        for n in (
+            "ssh_options",
+            "sftp_options",
+            "scp_options",
+            "ftp_options",
+            "nc_options",
+            "userland_options",
+        ):
             if n in s:
                 kw[n] = getattr(self, n).to_runtime()
         return cls(**kw)

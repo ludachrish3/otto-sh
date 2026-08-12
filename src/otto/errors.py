@@ -10,7 +10,7 @@ the same ``try`` — the first lexical match wins.
 DEFINES, not raises, and the difference is not small: otto also raises plain
 stdlib exceptions at 301 sites — an argument otto validates and rejects is
 usually a bare ``ValueError``, not a named class. ``except OttoError``
-therefore means "one of otto's 35 NAMED failures", not "anything otto
+therefore means "one of otto's 36 NAMED failures", not "anything otto
 raised".
 
 There is no one clause that catches everything, and it is worth being exact
@@ -24,11 +24,11 @@ rather than offering a comforting near-miss:
   :class:`~otto.lifecycle.SyncPhaseInterrupt`, a ``KeyboardInterrupt`` on
   purpose (see below).
 * ``except (ValueError, RuntimeError)`` covers 254 of the 301 raise sites,
-  and 24 of the 35 named classes. Of the other 11, seven are rooted at plain
+  and 25 of the 36 named classes. Of the other 11, seven are rooted at plain
   ``Exception`` (the bootstrap, lab-context, lab-repository and reservation
   errors) and four sit under ``OSError`` (``AppShellTimeoutError``,
   ``LoginProxyError``, ``RetryAttemptTimeoutError``, ``WaitTimeoutError``) —
-  24 + 7 + 4 = 35, so the split accounts for every named class.
+  25 + 7 + 4 = 36, so the split accounts for every named class.
 
 Those counts are measured, not maintained by arithmetic: a *raise site* is a
 ``raise`` of a name that is a BUILTIN exception type (so ``typer.Exit`` and
@@ -38,7 +38,9 @@ builtin is rooted at ``ValueError`` or ``RuntimeError`` — which is why the 42
 AST of ``src/otto``; do not adjust these by hand. The 2026-08-07 error-taxonomy
 wave is why the site count FELL: 37 bare ``RuntimeError`` raises in link,
 tunnel, docker and transfer became named classes, which moves them out of the
-301 and into the 35.
+301 and into the named-class total. That total is stated once, above, and
+gated; it is not repeated here, because the second copy is the one that goes
+stale.
 
 So: catch by NAME what you intend to handle, use ``except OttoError`` when
 "was this otto's own failure?" is the question, and treat ``except

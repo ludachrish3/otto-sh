@@ -55,9 +55,10 @@ init = ["{init_module}"]           # modules imported at startup (register instr
 #term = ["ssh", "telnet"]
 #transfer = ["scp", "sftp"]
 #impairer = ["tc"]
-# Six per-protocol option tables may also sit under a selector: ssh_options,
-# telnet_options, sftp_options, scp_options, ftp_options, nc_options. Their
-# fields are not listed here — the schema autocompletes them. Example:
+# Option tables may also sit under a selector: ssh_options, telnet_options,
+# sftp_options, scp_options, ftp_options, nc_options, and userland_options
+# (facts about the device, not a protocol). Their fields are not listed
+# here — the schema autocompletes them. Example:
 #[host_preferences.".*".ssh_options]
 #port = 22
 

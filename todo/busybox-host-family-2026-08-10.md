@@ -56,11 +56,18 @@ Checked against `busybox --list`:
 
 ### 3. Already fixed, for context
 
-The `timeout` calling convention (BusyBox `-t SECS PROG` before ~1.30 vs
-coreutils/BusyBox-modern `SECS PROG`) is handled — `_nc_listener_prefix` now
-probes the convention rather than the binary name. See
-`todo/nc-listener-leak-2026-08-10.md`. That fix is what surfaced everything
-above.
+The `timeout` calling convention (BusyBox `-t SECS PROG` up to 1.28.1 vs
+coreutils/BusyBox-from-1.31.0 `SECS PROG`) is handled by convention rather than
+by binary name. See `todo/nc-listener-leak-2026-08-10.md`. That fix is what
+surfaced everything above.
+
+`_nc_listener_prefix` no longer probes for it. The probe was correct but
+private, so it has been retired into `Userland.timeout_style` — one mechanism
+alongside the four sibling capabilities — and the prefix is now a mapping from
+the resolved answer. Two consequences for anyone working here: the convention
+can be declared in lab data's `[userland_options]` to skip the probe, and until
+a host wires its `Userland` through `TransferContext` the backend receives
+`None` and its listeners run **uncapped**.
 
 ### 4. The trap that will bite anyone testing this
 

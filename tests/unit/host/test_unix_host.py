@@ -10,6 +10,7 @@ ssh / telnet / local).
 
 import asyncio
 import contextlib
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -19,7 +20,10 @@ import pytest
 from otto.host import HostSession, UnixHost
 from otto.host.host import DEFAULT_COMMAND_TIMEOUT
 from otto.host.login_proxy import Cred
+from otto.host.options import NcOptions, SshOptions, UserlandOptions
 from otto.host.session import ShellSession
+from otto.host.transfer.nc import _TIMEOUT_STYLE_PREFIXES
+from otto.host.userland import Userland
 from otto.logger.mode import LogMode
 from otto.result import CommandResult, Result
 from otto.utils import Status
@@ -178,6 +182,178 @@ class TestCreds:
         assert user == "vagrant"
         assert password == "vagrant"
         await h.close()
+
+
+# ---------------------------------------------------------------------------
+# userland
+# ---------------------------------------------------------------------------
+
+
+class TestUserland:
+    """The host end of the capability layer: one resolver, shared by its consumers.
+
+    ``UserlandOptions`` is what the lab DECLARED; :class:`~otto.host.userland.Userland`
+    is what the host RESOLVED. The host owns exactly one of the latter and
+    hands the same instance to everything that reads a capability, so a
+    resolution paid for by one consumer is not re-paid by the next — against
+    a server that refuses excess channels rather than queueing them.
+    """
+
+    def _host(self, **extra) -> UnixHost:
+        """A host whose real transport, if anything reaches for it, is REFUSED fast.
+
+        Loopback on port 1 rather than the usual unroutable lab address, and
+        the difference is the difference between a red and a hang. These tests
+        stub ``exec``; the mistakes they exist to catch — a resolver that bound
+        ``self.exec`` eagerly, or one built for some other host — are exactly
+        the mistakes that send a probe to the REAL transport instead. Against
+        an address that silently drops, that is a 180s per-test alarm whose
+        message says "deadlock" and names nothing. Against a closed port it is
+        ``ConnectionRefusedError`` in milliseconds, the probe reports "could
+        not ask", and the assertion below fails saying which answer was wrong.
+        """
+        extra.setdefault("ssh_options", SshOptions(port=1))
+        return UnixHost(
+            ip="127.0.0.1",
+            element="box",
+            creds=[Cred(login="user", password="pass")],
+            log=LogMode.QUIET,
+            **extra,
+        )
+
+    def test_the_host_hands_one_userland_to_every_consumer(self):
+        """Built once per host and shared, not rebuilt per reader.
+
+        Three distinct failures, each with its own assertion: no override at
+        all (the mixin's ``None`` survives), a fresh resolver per call (every
+        reader pays its own probe round and none of them see another's
+        answers), and a transfer backend left holding nothing.
+        """
+        h = self._host(transfer="nc")
+        userland = h._userland()
+        assert isinstance(userland, Userland)
+        assert h._userland() is userland
+        assert h._file_transfer._userland is userland
+
+    @pytest.mark.parametrize("style", ["dash-t", "coreutils"])
+    @pytest.mark.asyncio
+    async def test_a_declared_timeout_style_reaches_the_nc_listener_cap(
+        self, style: str, monkeypatch
+    ):
+        """End to end: a declared answer selects the listener's hard-cap spelling.
+
+        Compared against the backend's own mapping rather than a copied
+        string: which spelling each style maps to is pinned in
+        ``tests/unit/host/test_transfer_nc_listener_reap.py``, and what THIS
+        test adds is that the host's declaration is what picks the row. Both
+        styles, because one alone is passed by a backend that ignores the
+        userland and hard-codes a prefix.
+
+        ``exec`` is stubbed to fail rather than left alone, and that choice is
+        about the shape of the failure. Every capability is declared, so a
+        correct host issues no probe at all; a host that dropped the
+        declaration on the way to the resolver would probe, and the probe
+        would reach for a connection to an address that does not answer. The
+        stub converts that into ``timeout_style`` resolving to ``absent`` and
+        an empty prefix — a red that names the property — instead of a test
+        that hangs until the suite's per-test alarm, which reads the same as a
+        genuine deadlock in a summary line.
+        """
+
+        async def _refuses(cmd: str, *_a, **_kw) -> CommandResult:
+            raise AssertionError(f"a fully declared userland must not probe, but ran {cmd!r}")
+
+        h = self._host(
+            transfer="nc",
+            userland_options=UserlandOptions(
+                shell_dialect="ash",
+                elevation="su",
+                base64_flag="-d",
+                stat_size="stat",
+                timeout_style=style,
+            ),
+        )
+        monkeypatch.setattr(h, "exec", _refuses)
+        await h._userland().resolve()
+        assert h._file_transfer._nc_listener_prefix == _TIMEOUT_STYLE_PREFIXES[style]
+
+    @pytest.mark.asyncio
+    async def test_the_userland_probes_this_host_and_not_something_else(self, monkeypatch):
+        """The resolver's ``run`` is this host's own ``exec``.
+
+        Nothing is declared, so every capability is probed — and the probes
+        have to arrive at THIS host. A resolver handed some other callable
+        (or a bare stub) would resolve without the host ever being asked, and
+        every answer would then describe a machine that is not the one otto
+        is about to run commands on.
+
+        The fake answers ``su`` and refuses ``sudo``, which is the BusyBox
+        shape the layer exists for; a resolver reading the fake's replies
+        cannot land on the ``sudo`` default by accident. Answering yes to
+        everything instead would be satisfied by an ``AsyncMock`` that had
+        never been called, so the discrimination is worth the one thing it
+        costs: this echoes a probe spelling that
+        ``tests/unit/host/test_userland.py`` owns. If that list is reworded,
+        the authoritative test reds first and this one follows.
+        """
+        h = self._host()
+        seen: list[str] = []
+
+        async def fake_exec(cmd: str, *_a, **_kw) -> CommandResult:
+            seen.append(cmd)
+            rc = 0 if cmd == "command -v su" else 1
+            return CommandResult(command=cmd, value="", status=Status.Success, retcode=rc)
+
+        monkeypatch.setattr(h, "exec", fake_exec)
+        await h._userland().resolve()
+
+        assert h._userland().elevation == "su", (
+            f"the resolver answered {h._userland().elevation!r} from somewhere other than "
+            f"this host's exec, which saw {seen}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_an_override_copy_probes_itself_not_the_host_it_was_copied_from(
+        self, monkeypatch
+    ):
+        """A ``dataclasses.replace`` copy gets its own resolver, bound to its own exec.
+
+        This is the property ``_userland_cache``'s ``init=False`` buys, and it
+        is not hypothetical: ``otto.config.fleet._apply_option_overrides``
+        builds override copies exactly this way for every ``get_host(...)`` /
+        ``all_hosts(...)`` call that passes an option table, and the copy opens
+        its OWN connection. A copied-over resolver would send that copy's
+        probes down the original's transport and answer for the wrong machine
+        — silently, because both are the same host at the same address and the
+        answers would usually agree.
+
+        Drop the ``init=False`` and ``replace`` carries the cache across:
+        every assertion below still reads plausibly, and the original's
+        recorder is the only thing that notices.
+        """
+        original = self._host()
+        copy = replace(original, nc_options=NcOptions(port=9999))
+
+        original_saw: list[str] = []
+        copy_saw: list[str] = []
+
+        def _recorder(into: list[str]):
+            async def _exec(cmd: str, *_a, **_kw) -> CommandResult:
+                into.append(cmd)
+                return CommandResult(command=cmd, value="", status=Status.Success, retcode=1)
+
+            return _exec
+
+        monkeypatch.setattr(original, "exec", _recorder(original_saw))
+        monkeypatch.setattr(copy, "exec", _recorder(copy_saw))
+
+        await copy._userland().resolve()
+
+        assert copy._userland() is not original._userland()
+        assert copy_saw, "the copy's resolver never reached the copy"
+        assert original_saw == [], (
+            f"the copy's resolver probed the host it was copied from: {original_saw}"
+        )
 
 
 # ---------------------------------------------------------------------------

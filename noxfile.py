@@ -73,7 +73,10 @@ HOSTLESS_TEST_ARGS = (
     "tests/unit",
     "tests/e2e",
     "-m",
-    "not integration and not embedded and not stability and not browser and not serial_timing",
+    (
+        "not integration and not embedded and not stability and not browser "
+        "and not busybox and not serial_timing"
+    ),
     "--cov-fail-under=0",
 )
 HOSTLESS_SERIAL_ARGS = (
@@ -108,7 +111,7 @@ def tests_unit(session: nox.Session) -> None:
         "pytest",
         "tests/unit",
         "-m",
-        "not stability and not serial_timing",
+        "not stability and not busybox and not serial_timing",
         _junitxml(session, "nox-unit"),
         *session.posargs,
     )
@@ -137,7 +140,7 @@ def tests_integration(session: nox.Session) -> None:
         "tests/unit",
         "tests/integration",
         "-m",
-        "not stability and not serial_timing",
+        "not stability and not busybox and not serial_timing",
         _junitxml(session, "nox-integration"),
         *session.posargs,
     )
@@ -183,7 +186,8 @@ def tests_unit_repeat(session: nox.Session) -> None:
     which is why such leaks only ever surfaced in the nightly ``--count`` matrix,
     several nights after landing (issue #108, and the earlier SUITES leak).
 
-    Running the whole no-VM ``tests/unit`` tree twice in one process
+    Running the whole no-VM ``tests/unit`` tree twice in one process — less the
+    ``busybox`` tier, which fetches from the network (see the ``-m`` below) —
     (``--count=2 --repeat-scope=session``, single-process via a cleared
     ``addopts``) trips any such regression at PR time instead of waiting for the
     nightly. Single-process is deliberate: under ``-n auto`` the repeated items
@@ -200,6 +204,29 @@ def tests_unit_repeat(session: nox.Session) -> None:
     session.run(
         "pytest",
         "tests/unit",
+        # `not busybox`, on a lane that selects by PATH. Every other default
+        # lane carries this clause because it selects by marker; this one had
+        # no `-m` at all, so it selected `tests/unit/host/test_busybox_artifacts.py`'s
+        # five artifact tests whole — a ~5 MB busybox.net fetch, and a fixture
+        # that RAISES rather than skips when upstream is down, inside a job
+        # that runs on every push and every PR and gates `report-failure`.
+        # Measured before the clause: 5 of 5483 collected items were the
+        # `busybox` tier, and the lane's exact invocation against an empty
+        # cache fetched all five artifacts. The whole G8 guard family reasons
+        # over `-m` expressions and so could not see a path-only lane;
+        # tests/unit/test_tier_marker_invariants.py's G8f now covers that
+        # shape, and reds if this clause goes away.
+        #
+        # `not stability` rides along because an all-negation expression is a
+        # catch-all by G4's rule whatever path scopes it, and this is the
+        # spelling every other tests/unit lane uses. It deselects nothing today
+        # (measured: `-m stability` over tests/unit collects 0 of 5484), so the
+        # isolation guard's coverage is unchanged. `serial_timing` is
+        # deliberately NOT excluded, unlike the sibling lanes: those exclude it
+        # because they run under `-n auto` and re-append it in a paired `-n0`
+        # leg, and this session is single-process already.
+        "-m",
+        "not stability and not busybox",
         # Clearing addopts must still re-state `-p no:tach`: the override drops
         # pyproject's entry whole, and that flag is the only thing protecting
         # plugin LOAD from issue #193 (the conftest stub seeds too late).
@@ -329,7 +356,7 @@ def tests_all(session: nox.Session) -> None:
     session.run(
         "pytest",
         "-m",
-        "not browser and not stability and not serial_timing",
+        "not browser and not stability and not busybox and not serial_timing",
         "--cov-fail-under=0",
         _junitxml(session, "nox"),
         *session.posargs,

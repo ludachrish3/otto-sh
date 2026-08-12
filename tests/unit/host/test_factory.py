@@ -1092,6 +1092,33 @@ def test_product_value_overrides_host_value_per_key():
     assert h.ssh_options.port == 2222  # host-only key preserved
 
 
+def test_userland_options_merge_per_key_like_every_other_option_table():
+    """``userland_options`` is layered, not replaced wholesale.
+
+    It reaches the host either way — a table absent from ``OPTIONS_KEYS``
+    still rides through on the plain ``{**profile.defaults, **host_data}``
+    merge — so only the LAYERING distinguishes the two implementations. Left
+    out of the key set, the product value is dropped on the floor and the
+    host's own table survives intact; that is the wrong implementation this
+    test exists to catch, and asserting the merged value alone would not
+    catch it.
+    """
+    h = create_host_from_dict(
+        {
+            "os_type": "unix",
+            "element": "carrot",
+            "ip": "1.1.1.1",
+            "creds": [{"login": "u", "password": "p"}],
+            "valid_terms": ["ssh"],
+            "valid_transfers": ["scp"],
+            "userland_options": {"elevation": "sudo", "stat_size": "wc"},
+        },
+        preferences={".*": {"userland_options": {"elevation": "su"}}},
+    )
+    assert h.userland_options.elevation == "su"  # product wins
+    assert h.userland_options.stat_size == "wc"  # host-only key preserved
+
+
 def test_selection_preference_overrides_lab_pin():
     # The flip: product selection wins over the lab term pin, still menu-gated.
     h = create_host_from_dict(

@@ -117,13 +117,23 @@ def register_login_proxy(
     LOGIN_PROXIES.register(name, LoginProxy(fn, undo), overwrite=overwrite, origin=caller_module())
 
 
+# How `su` spells the prompt it asks for credentials at. Not locale-
+# independent, and there is no `su` flag that would make it so — sudo's `-p`
+# has no counterpart — so both capitals are matched and nothing more. Shared
+# with `otto.host.privilege.PosixPrivilege._elevate`, which auto-answers the
+# same prompt through the expect channel when a host's resolved elevation is
+# `su`: one fact, one spelling, so the interactive switch and the one-shot
+# elevation cannot drift apart.
+_SU_PROMPT = r"[Pp]assword:"
+
+
 async def _su_proxy(io: ProxyIO, ctx: ProxyContext) -> None:
     """Built-in single-step ``su`` exchange (the pre-proxy default)."""
     login = ctx.target.login
     cmd = "su" if not login else f"su {shlex.quote(login)}"
     await io.send(cmd + "\n")
     if ctx.target.password is not None:
-        await io.expect(r"[Pp]assword:")
+        await io.expect(_SU_PROMPT)
         await io.send(ctx.target.password + "\n", log=LogMode.NEVER)
 
 

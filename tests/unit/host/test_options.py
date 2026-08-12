@@ -16,6 +16,7 @@ from otto.host.options import (
     SocksForward,
     SshOptions,
     TelnetOptions,
+    UserlandOptions,
 )
 
 
@@ -209,6 +210,39 @@ class TestCreateHostFromDict:
         assert host.telnet_options == TelnetOptions()
         assert host.ftp_options == FtpOptions()
         assert host.nc_options == NcOptions()
+        # All-None is "probe everything", which is what a host that says
+        # nothing about its userland must get.
+        assert host.userland_options == UserlandOptions()
+
+    def test_userland_options_from_dict(self):
+        """Lab data's ``userland_options`` reaches the runtime host as runtime options.
+
+        Two separate claims, because the spec-side wiring has two halves that
+        fail independently: ``HostSpec`` has to DECLARE the field (without it
+        the table is an extra key and validation rejects the host outright),
+        and ``to_host`` has to convert it (without that the host keeps the
+        all-probe default and the declaration is silently discarded).
+
+        The ``isinstance`` is not decoration. ``UserlandOptionsSpec`` carries
+        the same attribute names, so a ``to_host`` that forwarded the SPEC
+        instead of calling ``to_runtime()`` would satisfy every value
+        assertion below while handing :class:`~otto.host.userland.Userland` a
+        pydantic model where it expects a dataclass.
+        """
+        host = create_host_from_dict(
+            self._minimal(
+                userland_options={
+                    "elevation": "su",
+                    "timeout_style": "dash-t",
+                }
+            )
+        )
+        assert isinstance(host.userland_options, UserlandOptions)
+        assert host.userland_options.elevation == "su"
+        assert host.userland_options.timeout_style == "dash-t"
+        # Declaring two answers must not fabricate the other three: an
+        # undeclared capability stays None so the device is still asked.
+        assert host.userland_options.base64_flag is None
 
     def test_ssh_options_from_dict(self):
         host = create_host_from_dict(

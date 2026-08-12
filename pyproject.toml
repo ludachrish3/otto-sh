@@ -198,6 +198,14 @@ testpaths = [
     "tests/unit",
     "tests/integration",
     "tests/e2e",
+    # The BusyBox matrix tiers. A top-level tree, because they are hermetic and
+    # `tests/integration/` is defined as tests that drive the real bed — but a
+    # tree absent from THIS list is invisible to every path-less invocation,
+    # which is most of them: `make busybox` is `pytest -m busybox` with no
+    # path, and it silently collected 5 of its 20 tests until this line
+    # existed. Adding a tier directory without adding it here deletes the tier
+    # from CI while every gate stays green.
+    "tests/busybox",
 ]
 pythonpath = ["src", "."]
 log_cli = true
@@ -252,6 +260,7 @@ markers = [
     "soak: heavy browser-driven replay stress test (tests/e2e/monitor/dashboard/test_replay_soak.py) — excluded from `make dashboard`'s default -m selection and from noxfile.py's `dashboard` session (keep both in sync); chromium-only (`make dashboard-soak`, or -m soak --browser chromium — the test itself skips on other engines)",
     "no_bundle_page: browser test whose page deliberately renders none of our bundles (e.g. an access-key-refusal HTML hint page) — opts out of tests/_fixtures/_ts_coverage.py's zero-match guard without disabling collection",
     "no_hygiene_bracket: chaos-lane test that manages its own BedHygiene bracket (reboot races the autouse after-probe)",
+    "busybox: needs a real BusyBox artifact (fetched + cached; qemu-user-static on non-x86_64) — deselect with -m 'not busybox'",
 ]
 
 # NB: coverage.py config lives in .coveragerc, not here — that file is shared

@@ -67,3 +67,8 @@ web/coverage/
 # plans-archive-2026-08-03. Specs (decision records) stay tracked — they are
 # cited from src/ docstrings and todos.
 docs/superpowers/plans/
+
+# NB: no BusyBox entry here on purpose. The fetched artifacts live in
+# ~/.cache/otto/busybox (or wherever OTTO_BUSYBOX_CACHE points), never inside
+# the repo, so an ignore rule for them would match nothing and read as though
+# the tree could contain them.

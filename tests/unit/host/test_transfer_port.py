@@ -42,6 +42,7 @@ def make_ft(
         ),
         get_local_ip=lambda: "127.0.0.1",
         exec_cmd=exec_cmd or AsyncMock(),
+        userland=None,
     )
 
 
@@ -532,6 +533,7 @@ class TestWarmupForTransfer:
             ),
             get_local_ip=lambda: "127.0.0.1",
             exec_cmd=AsyncMock(side_effect=mock_exec),
+            userland=None,
         )
 
         await ft._warmup_for_transfer(file_count=2)
@@ -574,6 +576,7 @@ class TestWarmupForTransfer:
             ),
             get_local_ip=lambda: "127.0.0.1",
             exec_cmd=AsyncMock(side_effect=mock_exec),
+            userland=None,
         )
 
         # Should not raise — prepare succeeded, pool warmup failures are

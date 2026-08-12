@@ -15,7 +15,7 @@ from otto.config.lab import Lab
 from otto.context import OttoContext, reset_context, set_context
 from otto.host import EmbeddedHost, UnixHost
 from otto.host.factory import create_host_from_dict
-from otto.host.options import SshOptions, TelnetOptions
+from otto.host.options import SshOptions, TelnetOptions, UserlandOptions
 from otto.result import CommandResult, Results
 from otto.utils import Status
 from tests.conftest import host_data, make_host
@@ -318,6 +318,30 @@ class TestPerCallOptionOverrides:
 
         assert host is not original
         assert host.ssh_options is override
+
+    def test_userland_options_are_overridable_per_call(self, three_hosts):
+        """The device-facts table gets the same per-call layer as the protocol ones.
+
+        ``docs/guide/hosts/configuration.md`` tells a reader that
+        ``userland_options`` "layers exactly like" its neighbours and, a few
+        lines on, that per-call tuning means passing an ``*_options=`` keyword
+        to ``get_host()`` / ``all_hosts()``. Left out of this signature the
+        second half is false for it, and the failure is a silent
+        ``TypeError``-free no-op only because the kwarg would not exist at all.
+
+        The resolver is asserted as well as the field, and that is the half
+        with teeth: the copy has to build its OWN resolver from the OVERRIDE
+        table. A copy that carried the stored host's resolver across would
+        show the new field and still elevate by the old answer.
+        """
+        original = three_hosts["carrot_seed"]
+        override = UserlandOptions(elevation="su")
+        host = get_host("carrot_seed", userland_options=override)
+
+        assert host is not original
+        assert host.userland_options is override
+        assert host._userland() is not original._userland()
+        assert host._userland()._options is override
 
     def test_override_does_not_mutate_stored_host(self, three_hosts):
         """Stored host's options remain untouched after an override call."""

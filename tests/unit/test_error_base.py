@@ -51,7 +51,11 @@ from otto.coverage.overrides import OverrideConfigError
 from otto.coverage.tickets import TicketConfigError
 from otto.errors import OttoError
 from otto.host.app_shell import AppShellActiveError, AppShellTimeoutError, ParseMismatch
-from otto.host.errors import HostCommandError, HostUnreachableError
+from otto.host.errors import (
+    HostCommandError,
+    HostUnreachableError,
+    UnsupportedOnUserlandError,
+)
 from otto.host.login_proxy import LoginProxyError
 from otto.host.transport import HopTransportTornDownError
 from otto.labs.errors import LabNotFoundError, LabRepositoryError
@@ -86,6 +90,7 @@ CASES: list[tuple[type[BaseException], type[BaseException]]] = [
     (ParseMismatch, ValueError),
     (HostUnreachableError, RuntimeError),
     (HostCommandError, RuntimeError),
+    (UnsupportedOnUserlandError, RuntimeError),
     (HopTransportTornDownError, RuntimeError),
     (AppShellActiveError, RuntimeError),
     (AppShellTimeoutError, TimeoutError),

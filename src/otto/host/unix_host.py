@@ -79,6 +79,7 @@ from .connections import (
     build_term_backend,
     teardown_step,
 )
+from .errors import UnsupportedOnUserlandError
 from .file_ops import PosixFileOps
 from .host import (
     Host,
@@ -96,6 +97,7 @@ from .options import (
     SnmpOptions,
     SshOptions,
     TelnetOptions,
+    UserlandOptions,
 )
 from .power import PowerController, power_control_from_spec
 from .privilege import PosixPrivilege
@@ -111,6 +113,7 @@ from .transfer import (
     UnixFileTransfer,
     build_transfer_backend,
 )
+from .userland import Userland
 
 logger = logging.getLogger(__name__)
 
@@ -238,6 +241,18 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     """Connection options for netcat file transfers (nc executable, port
     strategy, listener check, etc.)."""
 
+    userland_options: UserlandOptions = field(default_factory=UserlandOptions, repr=False)
+    """Declared answers about this host's userland — which elevation mechanism
+    it has, which ``timeout`` convention its applet speaks, and so on. Every
+    field defaults to ``None``, meaning "ask the device"; a declared value wins
+    outright and skips the probe.
+
+    Not a per-protocol table like its neighbours. These are facts about the
+    DEVICE, so one table answers for every backend, and ``_userland()`` turns
+    it into the single :class:`~otto.host.userland.Userland` this host's
+    consumers share. See
+    ``docs/superpowers/specs/2026-08-11-busybox-host-support-design.md``."""
+
     command_frame: CommandFrame | None = None
     """Shell-framing dialect for this host's bash console. ``None`` (the
     default) lets the :class:`~otto.host.session.SessionManager` use its
@@ -334,6 +349,10 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     _file_transfer: UnixFileTransfer = field(init=False, repr=False)
     """Handles all file transfer protocols for this host."""
 
+    _userland_cache: Userland | None = field(default=None, init=False, repr=False, compare=False)
+    """Backing store for :meth:`_userland` — see there for why it is built on
+    demand rather than by a ``default_factory``."""
+
     ####################
     #  Privilege
     ####################
@@ -343,6 +362,38 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         """Return the current user's password, used for ``sudo -S``."""
         c = cred_for(self.creds, self.current_user)
         return c.password if c else None
+
+    @override
+    def _userland(self) -> Userland:
+        """Return this host's one :class:`~otto.host.userland.Userland`, building it on first ask.
+
+        **One per host instance, never rebuilt.** Every consumer — the
+        elevation path in :class:`~otto.host.privilege.PosixPrivilege`, the
+        netcat backend's listener cap — reads through this, so the probe round
+        is paid once for the host rather than once per reader. That matters
+        more than it sounds: ``resolve()`` serializes its callers, and the
+        heaviest consumer fans out over files against a server that REFUSES
+        excess channels rather than queueing them.
+
+        **Built here rather than by a ``default_factory``,** which is what the
+        sibling ``*_options`` fields use. A ``Userland`` is not inert data: it
+        needs a ``run`` callable bound to this host, and a field default has no
+        access to ``self``. Building it on demand also means a subclass that
+        replaces ``__post_init__`` cannot leave the seam uninitialized, and a
+        ``dataclasses.replace`` copy — which skips ``init=False`` fields — gets
+        its own rather than inheriting one whose ``run`` still points at the
+        original instance.
+
+        The lambda is deliberate, and matches :meth:`_build_file_transfer`'s:
+        binding ``self.exec`` eagerly would freeze out a test (or a subclass)
+        that swaps the method afterwards.
+        """
+        if self._userland_cache is None:
+            self._userland_cache = Userland(
+                self.userland_options,
+                lambda *a, **kw: self.exec(*a, **kw),  # noqa: PLW0108 — late-bind self for monkeypatching
+            )
+        return self._userland_cache
 
     def cred(self, login: str) -> Cred:
         """Return the cred entry for *login*; loud lookup listing known logins."""
@@ -461,6 +512,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
                     connections=self._connections,
                     nc_options=self.nc_options,
                     scp_options=self.scp_options,
+                    userland=self._userland(),
                     get_local_ip=lambda: self._get_local_ip(),  # noqa: PLW0108 — late-bind self for monkeypatching
                     exec_cmd=lambda *a, **kw: self.exec(*a, **kw),  # noqa: PLW0108 — late-bind self for monkeypatching
                     max_filename_len=self.max_filename_len,
@@ -799,8 +851,26 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         # that failure is indistinguishable from the host obeying quickly.
         # Tolerate it — reboot(wait=True)'s down-wait is the loud check for
         # "the command never actually took".
+        #
+        # `timeout=10.0` bounds the COMMAND, not the call. `sudo=True` makes
+        # `run` await the host's userland resolution first, above the budget,
+        # so on a host that refuses probes this line can take up to 30s + 10s
+        # where before the userland layer it took 10s. Once per host object,
+        # and again only after `_RETRY_COOLDOWN_S`; the recovery deadline
+        # `reboot(wait=True)` applies afterwards is unaffected. See
+        # `PosixPrivilege._prepare_elevation`.
         try:
             await self.run("reboot", sudo=True, timeout=10.0)
+        except UnsupportedOnUserlandError:
+            # NOT the disconnect race, and the difference is the whole point of
+            # the refusal. This one is raised BEFORE anything is sent: otto knew
+            # the command could not work and declined to emit it. Swallowing it
+            # into the Success below would report a reboot on a host that was
+            # never rebooted — and `wait` defaults to False, so nothing
+            # downstream would ever notice. The generic handler below caught it
+            # until this clause was added; enforced tree-wide by
+            # `tests/unit/host/test_privilege.py`.
+            raise
         except Exception as e:  # noqa: BLE001 — expected issue-race disconnect; the down-wait disambiguates
             logger.debug(f"{self.name}: connection dropped while issuing reboot ({e})")
         return Result(Status.Success)

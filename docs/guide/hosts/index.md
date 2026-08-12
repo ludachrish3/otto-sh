@@ -185,6 +185,7 @@ connections
 configuration
 embedded
 os-profiles
+busybox
 extending-backends
 extending-embedded
 ```

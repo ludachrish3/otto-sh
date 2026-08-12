@@ -58,6 +58,7 @@ otto.host.transfer.tftp
 otto.host.transfer.unix_base
 otto.host.transport
 otto.host.unix_host
+otto.host.userland
 otto.labs
 otto.labs.errors
 otto.labs.json_repository

@@ -15,9 +15,20 @@ from .os_profile import (
 from .product import apply_product_providers
 from .remote_host import RemoteHost, make_host_id
 
-# Names of the per-protocol option tables accepted on host dicts and in
-# ``[host_preferences."<selector>"]`` blocks. Kept here (and imported by
-# ``config.repo``) as the canonical option-key set.
+# Names of the option tables accepted on host dicts and in
+# ``[host_preferences."<selector>"]`` blocks. Kept here as the canonical
+# option-key set; ``models.settings`` mirrors it and a drift test holds the two
+# in lockstep.
+#
+# Membership is what makes a table merge PER KEY across the profile / host /
+# product layers. A table left out still reaches the host — the plain dict
+# merge carries it — but the layers replace each other wholesale instead of
+# blending, so a product default and a host's own table cannot coexist.
+#
+# All but the last are per-protocol. ``userland_options`` describes the DEVICE
+# rather than a connection to it, and is here for the same layering reason: an
+# os_profile can default a whole host class's answers while a single host pins
+# one key inline.
 OPTIONS_KEYS: frozenset[str] = frozenset(
     {
         "ssh_options",
@@ -26,6 +37,7 @@ OPTIONS_KEYS: frozenset[str] = frozenset(
         "scp_options",
         "ftp_options",
         "nc_options",
+        "userland_options",
     }
 )
 

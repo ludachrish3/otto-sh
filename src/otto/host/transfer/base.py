@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from ..connections import ConnectionManager
     from ..embedded_filesystem import EmbeddedFileSystem
     from ..options import NcOptions, ScpOptions
+    from ..userland import Userland
 
 # (src_path, dst_path, bytes_done, bytes_total)  # noqa: ERA001 — signature doc
 # Mirrors asyncssh's progress_handler signature exactly.
@@ -51,6 +52,11 @@ class TransferContext:
     nc_options: "NcOptions | None" = None
     scp_options: "ScpOptions | None" = None
     get_local_ip: "Callable[[], str] | None" = None
+    # The host's shared capability resolver. Not per-protocol like the option
+    # tables above it: one object answers for the whole device, and a backend
+    # that needs to know how the device spells something reads it here rather
+    # than probing on its own account.
+    userland: "Userland | None" = None
     # embedded-family fields
     filesystem: "EmbeddedFileSystem | None" = None
 

@@ -268,6 +268,33 @@ class TftpOptionsSpec(OttoModel):
         )
 
 
+class UserlandOptionsSpec(OttoModel):
+    """Boundary spec for the ``[userland_options]`` lab-data table.
+
+    Every field defaults to ``None`` = probe. Constraints are expressed as
+    ``Literal`` unions rather than free strings so a lab-data typo fails here,
+    naming the key, instead of silently selecting a fallback at runtime.
+    """
+
+    shell_dialect: str | None = None
+    elevation: Literal["sudo", "su", "none"] | None = None
+    base64_flag: Literal["-d", "--decode", "absent"] | None = None
+    stat_size: Literal["stat", "wc", "absent"] | None = None
+    timeout_style: Literal["coreutils", "dash-t", "absent"] | None = None
+    version: str | None = None
+
+    def to_runtime(self) -> rt.UserlandOptions:
+        """Build the ``UserlandOptions`` runtime dataclass from validated fields."""
+        return rt.UserlandOptions(
+            shell_dialect=self.shell_dialect,
+            elevation=self.elevation,
+            base64_flag=self.base64_flag,
+            stat_size=self.stat_size,
+            timeout_style=self.timeout_style,
+            version=self.version,
+        )
+
+
 OPTION_SPEC_RUNTIME_PAIRS: list[tuple[type[OttoModel], type]] = [
     (SshOptionsSpec, rt.SshOptions),
     (TelnetOptionsSpec, rt.TelnetOptions),
@@ -277,6 +304,7 @@ OPTION_SPEC_RUNTIME_PAIRS: list[tuple[type[OttoModel], type]] = [
     (NcOptionsSpec, rt.NcOptions),
     (SnmpOptionsSpec, rt.SnmpOptions),
     (TftpOptionsSpec, rt.TftpOptions),
+    (UserlandOptionsSpec, rt.UserlandOptions),
 ]
 """Each boundary option spec paired with the runtime dataclass it builds.
 Drives the drift guard so the duplicated field lists cannot silently diverge.

@@ -126,6 +126,62 @@ jobs:
           OTTO_BROWSER_SHARD: "1"
         run: uv run nox -k ${{ matrix.browser }}
 
+  # The BusyBox artifact tier. Every default lane excludes `-m busybox`
+  # (tests/unit/test_tier_marker_invariants.py G8), so without this job the
+  # whole tier — five behavioural assertions, and everything later BusyBox
+  # work hangs off — runs nowhere but a developer's terminal.
+  #
+  # No qemu here, deliberately. The artifacts are x86 userland and
+  # ubuntu-latest is x86_64, so it executes them natively; the dev VM's
+  # qemu-user-static (see docs/guide/hosts/busybox.md) is an aarch64
+  # workaround, not a requirement of the tier. That also means CI is the
+  # reference environment for these bytes and the dev VM is the emulated one.
+  #
+  # THE ARTIFACT CACHE IS DELIBERATELY NOT CACHED. Upstream publishes no
+  # signatures, so trust rests on a committed SHA-256 whose entire stated
+  # value is that "CI re-fetches on every cold cache" — the pin converts
+  # per-run trust in busybox.net into one-time trust taken at a reviewed
+  # moment. An actions/cache keyed on busybox_pins.json would only ever miss
+  # when the pins change, i.e. it would skip the fetch in exactly the runs
+  # that could detect upstream having rebuilt an artifact in place. Caching
+  # here would keep the pin file and delete the event it exists to check. The
+  # cost accepted in exchange is real and worth naming: ~5 MB over five
+  # requests per run, and a busybox.net outage reds this job.
+  #
+  # Invokes the Makefile lane rather than re-listing its pytest invocation,
+  # for the same reason check-ts does (see that job): a CI job that copies a
+  # gate's steps is a second copy of that gate, and it drifts. G8c pins that
+  # this job invokes the lane G8b requires to exist.
+  busybox:
+    name: busybox-artifacts
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: astral-sh/setup-uv@v9.0.0
+        with:
+          enable-cache: true
+      - run: uv python install 3.10
+      # The system row (BusyBox 1.36.1) resolves `busybox` via shutil.which and
+      # SKIPS when it is absent — and the runner image does not carry it. The
+      # `busybox` binary at /usr/bin/busybox comes from `busybox-static`, which
+      # is not in the ubuntu-latest manifest; the routinely-present
+      # `busybox-initramfs` installs to /usr/lib/initramfs-tools/bin/busybox, a
+      # path `which` never sees. So without this the matrix runs 20 of 23 and
+      # the one DISTRO-PACKAGED build silently runs nowhere but a developer's
+      # machine.
+      #
+      # That row is worth the two seconds precisely because it is the entry
+      # that can diverge through PACKAGING rather than through upstream
+      # version — the "build config matters as much as version" case the whole
+      # userland layer is built on (docs/superpowers/specs/2026-08-11-busybox-host-support-design.md).
+      # It is also the only row served from the distro rather than fetched from
+      # busybox.net, so it stays green through a busybox.net outage.
+      - name: Install the distro BusyBox so the system row runs rather than skips
+        run: sudo apt-get update && sudo apt-get install -y busybox-static
+      - name: Fetch, verify and run the BusyBox artifact matrix (cold cache)
+        run: make busybox
+
   # web/ TypeScript quality gates — the TS analogue of the lint-python /
   # typecheck-python jobs (those run Python-only nox sessions; this is where
   # Biome/knip/tsc live). Node-only: no Python, no browsers, no dashboard
@@ -223,7 +279,7 @@ jobs:
   # to the PR author in the checks UI.
   report-failure:
     name: Open issue on failure
-    needs: [lint-python, tests, unit-repeat, dashboard, check-ts, typecheck-python, docs]
+    needs: [lint-python, tests, unit-repeat, dashboard, busybox, check-ts, typecheck-python, docs]
     if: failure() && github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
@@ -237,7 +293,7 @@ jobs:
             echo "- Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
             echo "- Commit: ${{ github.sha }}"
             echo
-            echo "Check the job logs to see which of lint-python / tests / unit-repeat / dashboard / check-ts / typecheck-python / docs failed."
+            echo "Check the job logs to see which of lint-python / tests / unit-repeat / dashboard / busybox / check-ts / typecheck-python / docs failed."
           } > issue-body.md
 
       - name: Create issue from file

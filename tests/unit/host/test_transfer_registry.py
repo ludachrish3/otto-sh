@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from otto.host import transfer as xfer_mod
-from otto.host.options import NcOptions, ScpOptions
+from otto.host.options import NcOptions, ScpOptions, UserlandOptions
 from otto.host.transfer import (
     BaseFileTransfer,
     FtpFileTransfer,
@@ -16,6 +16,7 @@ from otto.host.transfer import (
     build_transfer_backend,
     register_transfer_backend,
 )
+from otto.host.userland import Userland
 
 
 @pytest.fixture(autouse=True)
@@ -79,6 +80,16 @@ class TestRegistry:
 
 class TestCreate:
     def test_create_constructs_ncfiletransfer(self):
+        """``create`` builds the backend and carries the ctx's userland into it.
+
+        The userland is the seam the listener's hard cap hangs off, and it is
+        the only construction input that is silently survivable: drop it and
+        the backend still builds, still transfers, and simply stops capping
+        its listeners. So the identity is asserted here rather than left to
+        the behaviour tests, which all construct the backend directly and
+        never exercise this function.
+        """
+        userland = Userland(UserlandOptions(), AsyncMock())
         ctx = TransferContext(
             transfer="nc",
             host_name="h1",
@@ -88,10 +99,12 @@ class TestCreate:
             get_local_ip=lambda: "1.2.3.4",
             exec_cmd=AsyncMock(),
             max_filename_len=255,
+            userland=userland,
         )
         ft = NcFileTransfer.create(ctx)
         assert isinstance(ft, NcFileTransfer)
         assert ft.transfer == "nc"
+        assert ft._userland is userland
 
 
 def test_public_reexports_available():

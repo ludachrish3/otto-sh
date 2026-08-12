@@ -28,6 +28,7 @@ local and remote machines.
    daemon
    toolchain
    options
+   userland
    interface
    interact
    product

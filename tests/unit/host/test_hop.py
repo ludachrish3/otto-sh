@@ -501,6 +501,7 @@ class TestNetcatGetThroughHop:
             ),
             get_local_ip=lambda: "127.0.0.1",
             exec_cmd=mock_exec,
+            userland=None,
         )
 
         with (
@@ -566,6 +567,7 @@ class TestNetcatGetThroughHop:
             ),
             get_local_ip=lambda: "127.0.0.1",
             exec_cmd=mock_exec,
+            userland=None,
         )
 
         with patch("asyncio.start_server", new_callable=AsyncMock) as mock_start_server:
@@ -645,6 +647,7 @@ class TestNetcatPutThroughHop:
             ),
             get_local_ip=lambda: "127.0.0.1",
             exec_cmd=mock_exec,
+            userland=None,
         )
 
         # Create a small temp file to transfer
@@ -713,6 +716,7 @@ class TestNetcatPutThroughHop:
             ),
             get_local_ip=lambda: "127.0.0.1",
             exec_cmd=mock_exec,
+            userland=None,
         )
 
         with tempfile.NamedTemporaryFile(delete=False, suffix=".txt") as tmp:

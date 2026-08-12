@@ -45,6 +45,35 @@ class HostCommandError(OttoError, RuntimeError):
     """
 
 
+class UnsupportedOnUserlandError(OttoError, RuntimeError):
+    """The host's userland provides no way to do what otto was asked to do.
+
+    A THIRD outcome, and the reason it is not one of the two above: nothing was
+    attempted, so there is neither a transport problem nor a verdict about the
+    system under test. otto knows in advance that the command it would emit
+    cannot work — a host that resolved ``elevation`` to ``"none"`` has no sudo
+    and no su — and says so at the call site instead of shipping a command that
+    fails somewhere less informative.
+
+    Raising rather than degrading is the whole point on a privilege path. A
+    quiet fallback to sudo on a host without sudo LOOKS like it worked: the
+    wrapped command runs, the shell answers ``sudo: not found``, and the
+    failure is attributed to whatever the caller was actually doing.
+
+    ``RuntimeError``, matching :class:`HostCommandError` and
+    :class:`HostUnreachableError`, so the ``except (ValueError, RuntimeError)``
+    clauses that already bracket host work keep catching it.
+
+    EXPECTED TO MOVE. This class belongs with the userland gap registry
+    described in ``docs/superpowers/specs/2026-08-11-busybox-host-support-design.md``,
+    which will render its message from the registry's entry for the missing
+    capability rather than from the caller's f-string. It is defined here
+    because the elevation branch needs it now and the registry does not exist
+    yet; when the registry lands, this becomes its rendering surface rather
+    than being redefined next to it.
+    """
+
+
 async def exec_or_raise(
     host: Any,
     cmd: str,
