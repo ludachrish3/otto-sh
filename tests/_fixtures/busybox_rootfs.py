@@ -151,18 +151,44 @@ sum rather than discover it as a bare timeout."""
 def _host_env() -> "dict[str, str]":
     """The environment the host-side `unshare`/`chroot` run with.
 
-    The caller's variables are kept — nothing here needs them scrubbed, and the
-    in-chroot `env -i` scrubs the ones that would reach the rootfs shell anyway
-    — but PATH is REPLACED, for the reason recorded at :data:`_HOST_PATH`.
+    The caller's variables are kept and PATH is REPLACED, for the reason
+    recorded at :data:`_HOST_PATH`.
+
+    This is NOT what the rootfs shell sees. :func:`run_in_rootfs` passes its
+    own scrubbed environment instead of using this one, so nothing here
+    crosses the chroot boundary into a measurement. The remaining callers are
+    the ones that only ever exec host binaries — the `unshare` probe and
+    `--install -s` — where the caller's variables are harmless.
     """
     return {**os.environ, "PATH": _HOST_PATH}
 
 
-def _run_host(argv: "list[str]", timeout: float) -> "subprocess.CompletedProcess[str]":
+def _host_tool(name: str) -> str:
+    """Absolute path to a host binary this tier execs.
+
+    Resolved here so the caller can hand the child a SCRUBBED environment
+    without also losing the ability to find `unshare` and `chroot`. Those two
+    are looked up through :data:`_HOST_PATH` (`chroot` lives in /usr/sbin,
+    which a login PATH often omits), and once resolved they no longer depend
+    on the PATH the child is given — which is what lets
+    :func:`run_in_rootfs` pass the rootfs's own PATH straight through instead
+    of correcting it from inside the chroot with an applet.
+    """
+    found = shutil.which(name, path=_HOST_PATH)
+    if found is None:
+        raise RootfsUnavailableError(
+            f"the rootfs tier needs `{name}` on the host and it is not on {_HOST_PATH}"
+        )
+    return found
+
+
+def _run_host(
+    argv: "list[str]", timeout: float, env: "dict[str, str] | None" = None
+) -> "subprocess.CompletedProcess[str]":
     """Run a host-side *argv*, killing the whole process GROUP on a timeout.
 
     `subprocess.run(timeout=...)` kills only the direct child. The chain here is
-    `unshare -> chroot -> env -> sh`, four execs of one process today, so
+    `unshare -> chroot -> sh`, three execs of one process today, so
     nothing survives that kill right now. It stops being true the moment a
     script pipes or backgrounds anything: those grandchildren outlive the
     timeout still holding the rootfs open, while :class:`TemporaryDirectory`
@@ -178,7 +204,7 @@ def _run_host(argv: "list[str]", timeout: float) -> "subprocess.CompletedProcess
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
-        env=_host_env(),
+        env=_host_env() if env is None else env,
         start_new_session=True,
     ) as proc:
         try:
@@ -349,6 +375,30 @@ def _install_applets(root: Path) -> None:
             f"rc={result.returncode} {result.stdout}{result.stderr}"
         )
 
+    # `--install -s` EXITING 0 IS NOT EVIDENCE THAT IT INSTALLED ANYTHING.
+    #
+    # This is not defensive padding; it is the fix for a real CI failure that
+    # this tier reported as thirteen unrelated ones (issue #227). On 1.16.1 the
+    # install returned 0 and the root came out without the applet the harness
+    # itself then reached for, so every downstream test failed with
+    # "chroot: failed to run command ...: No such file or directory" — a message
+    # about the harness's own argv, naming nothing about the install that
+    # actually went wrong. One silent success became thirteen misleading
+    # diagnoses, none of them pointing here.
+    #
+    # So the postcondition is asserted where it is created. `sh` is the only
+    # applet the harness cannot do without (`run_in_rootfs` execs it directly),
+    # and the count travels with the error because "installed 1 applet" and
+    # "installed 300 but not this one" are different bugs with the same symptom.
+    installed = sorted(p.name for p in (root / "bin").iterdir() if p.is_symlink())
+    if "sh" not in installed:
+        raise RootfsUnavailableError(
+            f"BusyBox {root.name} installed {len(installed)} applet symlink(s) but no `sh`, "
+            f"so nothing can run in this root. `--install -s` exited 0 regardless. "
+            f"Installed: {', '.join(installed[:20]) or '(none)'}"
+            f"{' ...' if len(installed) > 20 else ''}"
+        )
+
 
 def _install_dev_null(root: Path) -> None:
     """Create `/dev/null` as a plain REGULAR FILE — no `mknod`, no privilege.
@@ -432,33 +482,42 @@ def run_in_rootfs(
     matters there (a read after an earlier write in the same rootfs sees
     that write's content, not emptiness).
 
-    `env -i` is BusyBox's own applet at `/bin/env`, not `/usr/bin/env`: the
-    rootfs has no `/usr/bin`, so reaching for the host's usual path fails with
-    "failed to run command '/usr/bin/env'" — the harness must live by the same
-    rule it is testing.
+    THE CHAIN EXECS NO APPLET BEFORE `sh`, and that is a fix, not a
+    simplification. It used to run `/bin/env -i PATH=... /bin/sh`, scrubbing
+    the environment one layer inside the chroot with BusyBox's own `env`
+    applet. That made the harness depend on an applet being installed in order
+    to find out which applets are installed, and it broke exactly where a
+    circular dependency like that is worst: on CI, 1.16.1's root came out with
+    no `/bin/env`, and all thirteen of its Tier 2 tests failed with
+    "chroot: failed to run command '/bin/env'" — thirteen reports about the
+    harness's own argv, none about the artifact (issue #227). The dev VM never
+    saw it, because the i686 rows run under qemu-i386 here and natively on an
+    x86_64 runner.
 
-    There are TWO environments in play here and they are not redundant, however
-    much the argv below reads that way. The host-side `env=` (see
-    :func:`_host_env`) belongs to `unshare` and `chroot`, host binaries found by
-    execvp, so a PATH that omits /usr/sbin kills the call with rc=127 before any
-    namespace exists (measured). `/bin/env -i` runs one layer further in, after
-    the chroot has taken effect, and is what the rootfs SHELL sees: it discards
-    everything inherited across the chroot boundary and hands ash the single
-    PATH this module declares. Collapsing either one into the other silently
-    changes which side of the boundary is scrubbed.
+    The scrub still happens; it just happens on the side of the boundary that
+    needs no applet. `chroot` does not alter the environment, so what ash sees
+    IS the child's environment — passing `{"PATH": _ROOTFS_PATH}` to the
+    subprocess is exactly what `env -i PATH=...` was achieving, one exec
+    earlier and with nothing to install first.
+
+    That works only because `unshare` and `chroot` are resolved to absolute
+    paths (see :func:`_host_tool`) rather than found through the child's PATH.
+    The two requirements really are in tension — `chroot` lives in /usr/sbin
+    while ash must see only /bin, and a child PATH that omits /usr/sbin kills
+    the call with rc=127 before any namespace exists (measured) — but
+    resolving the host tools up front dissolves the tension instead of
+    correcting for it after the fact.
     """
     return _run_host(
         [
-            "unshare",
+            _host_tool("unshare"),
             "-r",
-            "chroot",
+            _host_tool("chroot"),
             str(root),
-            "/bin/env",
-            "-i",
-            f"PATH={_ROOTFS_PATH}",
             "/bin/sh",
             "-c",
             script,
         ],
         timeout,
+        env={"PATH": _ROOTFS_PATH},
     )
