@@ -210,18 +210,28 @@ def require_interpreter(
     """Fail early and actionably when x86 artifacts cannot run here.
 
     Called with no arguments this covers every arch the matrix declares; pass
-    arches to narrow it. Intended for a tier's session fixture, so the missing
-    prerequisite is named ONCE rather than surfacing as five identical
-    ENOEXECs — and named as a *dependency*, since `Exec format error` on a
-    file the reader did not know was x86_64 is a twenty-minute detour.
+    arches to narrow it. Intended for a tier's session-scoped, autouse
+    fixture (see `tests/busybox/conftest.py`'s `_interpreter`), so the
+    missing prerequisite is named ONCE per session rather than surfacing as
+    five identical ENOEXECs — and named as a *dependency*, since
+    `Exec format error` on a file the reader did not know was x86_64 is a
+    twenty-minute detour.
 
-    This is not redundant with the collection-time skip in the tier's test
-    module, because the two answer at different moments. `pytest.mark.skipif`
-    reads binfmt_misc while pytest is COLLECTING; this reads it while the test
-    is RUNNING. A session that began before `qemu-user-static` registered its
-    handlers — or one where the handler was disabled underneath it — collects
-    as runnable and then fails in execve. The skip is the normal answer; this
-    is the answer for the window the skip cannot see.
+    Raises rather than skips. A skipped BusyBox tier and a passing one are
+    the same line in a pytest summary, which is how this tier's coverage
+    would quietly evaporate without anyone noticing — the rule every refusal
+    in this tree follows (see `busybox_rootfs.py`'s module docstring).
+
+    Reads binfmt_misc at the moment it is CALLED, inside the running
+    session, rather than once earlier at collection. That distinction is
+    load-bearing: the answer can change between those two moments — a
+    session that started before `qemu-user-static` registered its handlers,
+    or one where a handler was disabled partway through a run, needs the
+    live answer, not the one collection saw. Fixture setup for a
+    session-scoped fixture happens lazily, on first use, after collection
+    has already finished — which is what makes calling this from one an
+    answer to the live question rather than a restatement of the collected
+    one.
     """
     wanted = arches or tuple(dict.fromkeys(release.arch for release in BUSYBOX_MATRIX))
     missing = [

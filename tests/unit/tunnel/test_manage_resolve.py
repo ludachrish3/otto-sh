@@ -12,6 +12,7 @@ from otto.tunnel.manage import (
     _check_conflicts,
     _process_plan,
     _resolve_chain,
+    _resolve_one,
 )
 from otto.tunnel.model import Direction, Role, Tunnel, TunnelHop
 from otto.tunnel.socat import SocatCarrier
@@ -82,6 +83,72 @@ class TestResolveChain:
         )
         with pytest.raises(ValueError, match="has_bash"):
             asyncio.run(_resolve_chain(lab, [("a", None), ("b", None)]))
+
+    def test_busybox_profile_host_rejected_as_chain_member(self) -> None:
+        """The busybox `os_type` profile's `has_bash=False` default is not just
+        a value sitting in a dict — it reaches this exact guard.
+
+        Built through the real factory (``create_host_from_dict``), not a
+        ``FakeUnix`` with ``has_bash`` hand-set: that would only restate the
+        guard's condition, not prove the profile actually produces it. This
+        pins the consequence documented on
+        ``otto.host.os_profile._register_builtin_os_profiles`` — a busybox
+        host cannot occupy ANY position in a tunnel's ``--hosts`` chain (relay
+        hop or path endpoint alike; this loop runs over every entry in
+        ``specs``, not just interior ones). It can still be named via
+        ``--dest`` (the far-end delivery target `add_tunnel` resolves through
+        `_resolve_one`, which carries no `has_bash` check at all) —
+        `test_resolve_one_accepts_a_busybox_host` below pins that other half
+        directly, so the split is asserted on both sides, not just claimed
+        here.
+        """
+        from otto.host.factory import create_host_from_dict
+
+        busybox = create_host_from_dict(
+            {
+                "element": "bb1",
+                "os_type": "busybox",
+                "ip": "10.0.0.1",
+                "creds": [{"login": "v", "password": "v"}],
+            }
+        )
+        lab = _lab(bb=busybox, b=FakeUnix("b", ip="10.0.0.2"))
+        with pytest.raises(ValueError, match="has_bash"):
+            asyncio.run(_resolve_chain(lab, [("bb", None), ("b", None)]))
+
+    def test_resolve_one_accepts_a_busybox_host(self) -> None:
+        """The other half of the target-vs-hop split: `_resolve_one` — what
+        `add_tunnel` resolves `--dest` through — carries no `has_bash` check
+        at all, so a busybox host resolves here even though
+        `test_busybox_profile_host_rejected_as_chain_member` above shows the
+        same host refused as a `--hosts` chain member.
+
+        This is not a redundant restatement of that test. A natural-looking
+        DRY refactor — hoisting the `has_bash` check out of `_resolve_chain`'s
+        per-spec loop and into `_resolve_one` itself, since `_resolve_chain`
+        calls `_resolve_one` once per host anyway — would silently take away
+        busybox's only supported tunnel role (as `--dest`) while leaving
+        every other tunnel test green: none of them assert that `_resolve_one`
+        itself accepts a `has_bash=False` host, only that `_resolve_chain`
+        rejects one as a chain member. This test is what would catch that
+        refactor.
+        """
+        from otto.host.factory import create_host_from_dict
+
+        busybox = create_host_from_dict(
+            {
+                "element": "bb1",
+                "os_type": "busybox",
+                "ip": "10.0.0.1",
+                "creds": [{"login": "v", "password": "v"}],
+            }
+        )
+        lab = _lab(bb=busybox)
+
+        resolved = asyncio.run(_resolve_one(lab, ("bb", None)))
+
+        assert resolved.ip == "10.0.0.1"
+        assert resolved.hop == TunnelHop("bb")
 
 
 def _container(

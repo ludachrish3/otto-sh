@@ -14,6 +14,8 @@ import re
 import pytest
 
 from otto.host.command_frame import (
+    FRAME_CLASSES,
+    AshFrame,
     BashFrame,
     CommandFrame,
     SessionMarkers,
@@ -90,6 +92,107 @@ class TestBashFrame:
     def test_streams_output_live_is_true(self):
         # Bash with echo off emits a clean line-by-line stream, so it streams live.
         assert BashFrame.streams_output_live is True
+
+
+class TestAshFrame:
+    """The BusyBox ash dialect: a registered seam, deliberately near-empty.
+
+    Its value is not the code it contains but the fact that it exists to be
+    filled: a host declaring `command_frame: "ash"` is documented as a
+    BusyBox shell, and any future ash-only divergence has one obvious home.
+    """
+
+    def test_ash_is_registered_and_buildable_by_name(self):
+        """Lab data selects a frame by string; an unregistered name is
+        rejected by HostSpec, so registration is the whole interface."""
+        assert "ash" in FRAME_CLASSES, (
+            '`ash` must be registered, or `command_frame: "ash"` in lab data '
+            "fails HostSpec validation"
+        )
+        assert isinstance(build_command_frame("ash"), AshFrame)
+
+    def test_the_registry_key_and_the_class_constant_agree(self):
+        """`register_command_frame` raises when they disagree; assert the
+        value rather than trusting the registration call site."""
+        assert AshFrame.type_name == "ash"
+
+    def test_ash_inherits_bashs_marker_scheme_rather_than_restating_it(self):
+        """A copied scheme is two schemes that drift.
+
+        The payloads were measured identical under real BusyBox ash across
+        the matrix, so ash must INHERIT them. This asserts the payloads
+        match BashFrame's byte for byte — a re-implementation that happens
+        to agree today fails the moment BashFrame changes, which is the
+        drift worth catching.
+        """
+        markers = SessionMarkers(ready="__R__", begin="__B__", end_prefix="__E__", recover="__V__")
+        ash, bash = AshFrame(), BashFrame()
+
+        assert ash.frame("cmd", markers) == bash.frame("cmd", markers)
+        assert ash.handshake(markers) == bash.handshake(markers)
+        assert ash.recover(markers) == bash.recover(markers)
+        assert ash.quiet_history() == bash.quiet_history()
+
+    def test_ash_is_distinguishable_from_bash(self):
+        """Two names for one behaviour still have to be two names.
+
+        `register_command_frame("ash", BashFrame)` is already refused — its
+        own `cls.type_name != type_name` check raises before the module can
+        even finish importing (see `AshFrame`'s docstring). What that check
+        does not reach is the raw registry underneath it:
+        `FRAME_CLASSES.register("ash", BashFrame, overwrite=True)` skips the
+        check entirely and — measured directly — DOES leave the
+        payload-equality assertions above
+        (`test_ash_inherits_bashs_marker_scheme_rather_than_restating_it`)
+        satisfied, reporting `bash` in diagnostics for a host that runs ash
+        with no seam to fill. It does NOT fool everything: the same bypass
+        also reddens `test_ash_is_registered_and_buildable_by_name`'s
+        `isinstance` check and this test's own `type(...) is AshFrame`
+        assertion below, both of which construct through the registry
+        rather than compare rendered strings. That gap — a
+        behavioural-equality check the bypass defeats, sitting right next
+        to an identity check it cannot — is exactly what this test closes.
+        """
+        assert AshFrame is not BashFrame
+        assert issubclass(AshFrame, BashFrame)
+        assert type(build_command_frame("ash")) is AshFrame
+        assert type(build_command_frame("bash")) is BashFrame
+
+    def test_ash_overrides_nothing_but_type_name(self):
+        """The docstring's central claim — "the override set is EMPTY" —
+        needs a guard of its own, not just an inference from the payload
+        equality test above.
+
+        That test compares four RENDERED strings; it says nothing about the
+        PARSE half (`end_pattern`, `marks_begin`, `parse_output`,
+        `extract_retcode`, `recover_pattern`) or `streams_output_live`. A
+        silently added `AshFrame.end_pattern` that happens to return a
+        byte-identical compiled pattern to `BashFrame.end_pattern` would
+        satisfy every payload-equality assertion above while still
+        contradicting the docstring — this asserts the CLASS BODY directly,
+        so any override at all, parse-half or render-half, is caught
+        regardless of what it returns.
+
+        Only DUNDERS are filtered (`__module__`, `__doc__`, ...) — not every
+        underscore-prefixed name, or a genuine *private* override would slip
+        through uncaught, contradicting "any override at all... is caught"
+        above. `_abc_impl` is the one non-dunder, non-`type_name` name every
+        direct `CommandFrame` subclass carries (confirmed present in
+        `BashFrame.__dict__` and `ZephyrSerialFrame.__dict__` too, stamped
+        there by `ABCMeta` at class-creation time, not by anything either
+        class defines) — allowed explicitly, by name, in the expected set
+        below, rather than swept away by a looser filter that would also
+        hide a real one.
+        """
+        own_attrs = {
+            name for name in vars(AshFrame) if not (name.startswith("__") and name.endswith("__"))
+        }
+        expected = {"type_name", "_abc_impl"}
+        assert own_attrs == expected, (
+            f"AshFrame defines {own_attrs - expected} beyond type_name "
+            "(and ABCMeta's own _abc_impl) — the docstring's 'override set "
+            "is EMPTY' claim no longer holds"
+        )
 
 
 class TestZephyrFrame:

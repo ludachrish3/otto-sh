@@ -13,6 +13,7 @@ exercised only by the marked tier and so go unexercised on the machine where
 the tier is skipped.
 """
 
+import ast
 import contextlib
 import http.client
 import json
@@ -33,7 +34,7 @@ except ModuleNotFoundError:  # pragma: no cover - 3.10 only, otto's floor
 from typing_extensions import Self  # `typing.Self` is 3.11+; otto's floor is 3.10
 
 from tests._ambient_env import AMBIENT_OPT_INS
-from tests._fixtures import busybox
+from tests._fixtures import busybox, busybox_rootfs
 from tests._fixtures.busybox import (
     BUSYBOX_MATRIX,
     QEMU_HANDLER,
@@ -44,7 +45,7 @@ from tests._fixtures.busybox import (
     probe_banner,
     require_interpreter,
 )
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import PROJECT_ROOT, TESTS_ROOT
 
 # The repo root. Sourced from tests/_fixtures/paths.py rather than derived
 # with Path(__file__).parents[N] here, so a move of this file cannot
@@ -742,6 +743,150 @@ def test_the_fetch_budget_fits_inside_both_timeouts():
         f"`make busybox`'s {session_cap}s cap, which kills the run outright — no "
         f"per-test error, no JUnit report. Shrink the fetch budget or raise the cap"
     )
+
+
+def test_the_rootfs_budget_fits_inside_the_per_test_timeout():
+    """The rootfs tier's bounds are spent ON TOP of a fetch, in one test body.
+
+    Same failure as the fetch budget above, one layer out. Building a root
+    costs a cold-cache fetch plus a userns probe plus the applet install plus
+    the scripts a test runs, and the tier's first version spent one 60s
+    constant at every site: ~300s worst case against a 180s per-test timeout,
+    so a wedged qemu or `unshare` would be SIGALRM'd as a bare
+    "Timeout >180.0s" and the caller would never see the named
+    RootfsUnavailableError the fixture exists to raise.
+
+    Lives in the unit lane, not the `busybox` tier, on purpose: the tier runs
+    only in `make busybox`, and a later task raising one of these constants
+    should redden in the ordinary gates rather than in the one job nobody runs
+    locally. Every term is READ from where it is configured, so raising the
+    per-test timeout relaxes this honestly and raising a bound reddens it.
+
+    EVERY BOUNDED CALL CONTRIBUTES ITS REAP. `_run_host` waits up to
+    `_REAP_TIMEOUT_S` for output after SIGKILLing a timed-out group, so a call
+    that times out costs its own bound PLUS that wait — and the timeout path is
+    precisely the one this arithmetic exists to keep inside the SIGALRM window,
+    so omitting it makes the guard wrong exactly when it matters. An earlier
+    version of this sum left the reaps out and computed 115s where the module's
+    own comment documented 135s; both cleared 180 at the time, which is how a
+    20s discrepancy hides until someone raises a bound into the gap.
+    """
+    fetch = (len(busybox._RETRY_BACKOFF_S) + 1) * busybox._FETCH_TIMEOUT_S + sum(
+        busybox._RETRY_BACKOFF_S
+    )
+    reap = busybox_rootfs._REAP_TIMEOUT_S
+    probe = busybox_rootfs._USERNS_PROBE_TIMEOUT_S + reap
+    build = busybox_rootfs._BUILD_TIMEOUT_S + reap
+    scripts = busybox_rootfs._RUNS_PER_TEST_BUDGETED * (busybox_rootfs._RUN_TIMEOUT_S + reap)
+    worst = fetch + probe + build + scripts
+
+    pyproject = tomllib.loads((_REPO_ROOT / "pyproject.toml").read_text())
+    per_test = pyproject["tool"]["pytest"]["ini_options"]["timeout"]
+
+    # 1.25x rather than the fetch guard's 2x: this sum already CONTAINS that
+    # guard's worst case as a term, so demanding another doubling would force
+    # the rootfs bounds below the seconds a loaded emulated runner plausibly
+    # needs. Headroom, not a stopwatch — nothing here measures elapsed time.
+    assert worst * 1.25 <= per_test, (
+        f"one rootfs test's worst case is {worst}s ({fetch}s cold fetch + "
+        f"{probe}s userns probe + {build}s applet install + "
+        f"{busybox_rootfs._RUNS_PER_TEST_BUDGETED} x "
+        f"{busybox_rootfs._RUN_TIMEOUT_S + reap}s script, each non-fetch term "
+        f"including the {reap}s post-SIGKILL reap) against a {per_test}s "
+        f"per-test timeout. Leave 25% headroom: pytest's SIGALRM would "
+        f"otherwise replace the fixture's actionable error with a bare timeout, "
+        f"and CI runs this tier on a deliberately cold cache so the fetch term "
+        f"is its normal case"
+    )
+
+
+def run_in_rootfs_calls(source: str) -> "dict[str, int]":
+    """`run_in_rootfs(...)` call sites per ``test_`` function in *source*.
+
+    AST rather than a regex, for the reason the sibling scanners in
+    ``tests/unit/test_declared_harness_bounds.py`` blank comments first: this
+    tier's docstrings discuss ``run_in_rootfs`` by name, and a textual count
+    reads that prose as call sites. An annotated removal must stay counted-out,
+    and a mention must never count in.
+
+    Two limits, stated because a scanner whose coverage cannot be described is
+    worse than none. Calls made from a module-level HELPER that a test invokes
+    are attributed to the helper, not the test; and a call inside a loop counts
+    once, since the budget models call sites and the arithmetic cannot see a
+    loop bound either way. Both would under-count, so the honest reading of a
+    green result is "no test names it more than N times", not "no test can
+    exceed N scripts".
+    """
+    counts: dict[str, int] = {}
+    for node in ast.walk(ast.parse(source)):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if not node.name.startswith("test_"):
+            continue
+        counts[node.name] = sum(
+            1
+            for sub in ast.walk(node)
+            if isinstance(sub, ast.Call)
+            and isinstance(sub.func, ast.Name)
+            and sub.func.id == "run_in_rootfs"
+        )
+    return counts
+
+
+def test_no_rootfs_test_runs_more_scripts_than_its_budget_assumes():
+    """`_RUNS_PER_TEST_BUDGETED` is a term in an arithmetic, so it must be true.
+
+    The budget guard above reads that constant and reds when the CONSTANT
+    moves. Nothing made it red when a third `run_in_rootfs` call simply
+    appeared in a test — which is the way it will actually be violated, since
+    the later tiers add call sites rather than edit bounds. That is an
+    assumption wearing a constant's clothing, and the whole point of writing
+    the sum down was to stop the timeout budget drifting silently.
+
+    Discovered over the tree, not listed: a new file in the tier inherits this.
+    """
+    tier = TESTS_ROOT / "busybox"
+    assert tier.is_dir(), "tests/busybox vanished — this scanner is reading nothing"
+
+    budget = busybox_rootfs._RUNS_PER_TEST_BUDGETED
+    seen = 0
+    offenders: list[str] = []
+    for module in sorted(tier.rglob("test_*.py")):
+        for name, count in run_in_rootfs_calls(module.read_text()).items():
+            seen += 1
+            if count > budget:
+                offenders.append(f"{module.name}::{name} makes {count}")
+
+    assert seen, "no test function found under tests/busybox (scanner misparse?)"
+    assert not offenders, (
+        f"these tests call run_in_rootfs more than the {budget} times the "
+        f"timeout arithmetic budgets for: {offenders}. Each script costs "
+        f"_RUN_TIMEOUT_S + _REAP_TIMEOUT_S against a 180s per-test timeout, so "
+        f"raise _RUNS_PER_TEST_BUDGETED and let "
+        f"test_the_rootfs_budget_fits_inside_the_per_test_timeout re-check the "
+        f"sum — do not just add the call"
+    )
+
+
+def test_the_rootfs_script_scanner_observes_red():
+    """Positive control: the scanner seen counting, and seen NOT counting prose."""
+    two = "def test_one():\n    run_in_rootfs(r, 'a')\n    run_in_rootfs(r, 'b')\n"
+    assert run_in_rootfs_calls(two) == {"test_one": 2}
+    assert run_in_rootfs_calls(two + "    run_in_rootfs(r, 'c')\n") == {"test_one": 3}
+
+    # A docstring that discusses the helper is not a call site — the failure a
+    # regex would have, in a tier whose guards all explain run_in_rootfs.
+    prose = (
+        'def test_two():\n    """Calls run_in_rootfs(r, x) twice."""\n    run_in_rootfs(r, "a")\n'
+    )
+    assert run_in_rootfs_calls(prose) == {"test_two": 1}
+    assert run_in_rootfs_calls("def test_three():\n    # run_in_rootfs(r, 'x')\n    pass\n") == {
+        "test_three": 0
+    }
+
+    # Non-test functions are not budgeted, and are the scanner's stated blind
+    # spot rather than an oversight.
+    assert run_in_rootfs_calls("def helper():\n    run_in_rootfs(r, 'a')\n") == {}
 
 
 # ─── shipped error text must cite things that exist ────────────────────────

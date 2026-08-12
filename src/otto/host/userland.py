@@ -32,7 +32,8 @@ what today:
 ``base64_flag``
     nothing yet
 ``shell_dialect``
-    nothing yet — no ``ash`` frame exists; see the hole below
+    nothing yet — an ``ash`` frame is registered, but nothing routes this
+    probe's result to it; see the hole below
 
 So the first ``run(sudo=True)`` against a host issues up to ten probes to read
 one answer that probes 1-2 settled. The whole round is deliberate — splitting
@@ -47,15 +48,19 @@ time is NOT charged to the caller's ``timeout=``; see
 :meth:`otto.host.host.BaseHost.run`.
 
 **Known hole: ``shell_dialect`` is measured but not yet consumable.** Every
-BusyBox host resolves it to ``"ash"``, and no ``CommandFrame`` is registered
-under that name — ``build_command_frame("ash")`` raises ``ValueError: Unknown
-command frame 'ash'``. An ash frame is called for in
-``docs/superpowers/specs/2026-08-11-busybox-host-support-design.md`` but
-nothing registers one yet, so the resolved value is a MEASUREMENT to record
-and pin, not a frame name a caller may look up. Until that frame exists, do
-not feed :attr:`Userland.shell_dialect` to the frame registry; the other four
-are safe to consume today, though only two of them have a consumer at all —
-see the table above.
+BusyBox host resolves it to ``"ash"``. An ``ash`` frame is now registered
+(:class:`~otto.host.command_frame.AshFrame`, in
+``otto.host.command_frame``) and ``build_command_frame("ash")`` succeeds —
+that half of the original hole is closed. What remains missing is the
+WIRING: no call site in this codebase reads :attr:`Userland.shell_dialect`
+and passes it to ``build_command_frame`` — every existing
+``build_command_frame`` call site (``models/host.py``, ``unix_host.py``,
+``embedded_host.py``) resolves a DECLARED ``command_frame`` string, never
+this probe's result. So the resolved value is still a MEASUREMENT to record
+and pin, not a frame name any caller looks up through this probe. Until
+something does that routing, do not feed :attr:`Userland.shell_dialect` to
+the frame registry; the other four are safe to consume today, though only
+two of them have a consumer at all — see the table above.
 
 The probe COMMAND SPELLINGS here have two other copies, and all three have to
 agree: ``tests/busybox/test_applet_contracts.py`` measures them against real
@@ -508,11 +513,11 @@ class Userland:
     def shell_dialect(self) -> str:
         """The measured shell dialect — ``"bash"`` | ``"ash"``.
 
-        NOT necessarily a registered ``CommandFrame`` type_name, which an
-        earlier draft of this docstring promised. ``"ash"`` is what every
-        BusyBox host resolves to and no frame is registered under it, so
-        ``build_command_frame`` would raise on the common case. See the
-        module docstring's hole note before wiring this to a consumer.
+        An ``ash`` ``CommandFrame`` is now registered (``AshFrame``), so
+        ``build_command_frame(self.shell_dialect)`` would no longer raise on
+        the common BusyBox case — but nothing calls it that way yet. See the
+        module docstring's hole note before wiring this property to a
+        consumer.
         """
         return self._get("shell_dialect")
 

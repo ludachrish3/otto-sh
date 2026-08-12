@@ -296,6 +296,14 @@ This is not a detail. **BusyBox's ash resolves applets internally and ignores
 produced one false pass during the `timeout` work, where a control "verified"
 broken code by silently exercising BusyBox's own builtin.
 
+*Qualification, added after measurement:* this is a BUILD-CONFIG property
+(`CONFIG_FEATURE_SH_STANDALONE`), not a universal fact about "BusyBox's ash" —
+measured OFF on every busybox.net prebuilt this project fetches and ON for the
+system build the `timeout`-work control used, pinned per row in
+`tests/busybox/test_applet_resolution.py`'s `_EXPECTED_STANDALONE_SHELL`
+table (system-build counterexample in `test_applet_contracts.py`'s
+`test_the_system_busybox_is_the_standalone_counterexample`).
+
 Proves: argument parsing, exit codes, usage text — the `timeout` convention,
 `nc` flags, `base64` presence per version. Structurally cannot prove applet
 resolution.

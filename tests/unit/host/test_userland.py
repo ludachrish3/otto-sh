@@ -147,9 +147,12 @@ _FULLY_DEGRADED = {
 #                  status quo and "absent" would be a capability regression.
 #   base64_flag    nothing consumes it yet, so the conservative answer wins:
 #                  claiming a decode flag works builds a command that fails.
-#   shell_dialect  otto's unix path has always assumed bash, and no
-#                  CommandFrame is registered under "ash" at all — recording
-#                  "ash" for an unasked host is a measurement nobody took.
+#   shell_dialect  otto's unix path has always assumed bash, and nothing
+#                  routes this PROBE's value to frame selection yet — an
+#                  `ash` CommandFrame IS registered now
+#                  (build_command_frame("ash") succeeds), but recording
+#                  "ash" for an unasked host would still claim a measurement
+#                  nobody took, not merely name a frame that can't be built.
 _UNASKABLE = {
     "base64_flag": "absent",
     "elevation": "sudo",

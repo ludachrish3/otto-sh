@@ -48,7 +48,38 @@ Pinned by G9 in tests/unit/test_tier_marker_invariants.py.
 
 from pathlib import Path
 
+import pytest
+
+from tests._fixtures.busybox import require_interpreter
+
 _BUSYBOX_ROOT = Path(__file__).parent
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _interpreter():
+    """Fail this whole tree — loudly, once, by name — when x86 artifacts cannot run.
+
+    Every tier here drives real x86 BusyBox binaries, so a host without the
+    matching qemu-user-static handler cannot run ANY of them. The binding rule
+    is that unavailability is named, never skipped: a skipped BusyBox tier and
+    a passing one are the same line in a summary, and that is how the coverage
+    evaporates without anyone noticing.
+
+    This lives in the conftest rather than in a test module because a
+    module-local copy binds only its own file. The rootfs tier was written with
+    a module-level ``pytest.mark.skipif`` instead and measured at *11 skipped*
+    where the applet tier gave *18 errors* with apt instructions — same missing
+    dependency, opposite verdicts, and the silent one is in the tier whose
+    absence is hardest to spot. A collection-time ``skipif`` was the wrong
+    instrument twice over: it also took down the tests that need no interpreter
+    at all (the error-message guards), and on an x86_64 runner ``can_run``
+    short-circuits to True, so it could only ever fire on the dev VM.
+
+    Session-scoped and argument-less, so it covers every arch the matrix
+    declares and reports all missing handlers in one message rather than five
+    identical ENOEXECs.
+    """
+    require_interpreter()
 
 
 def pytest_collection_modifyitems(config, items):

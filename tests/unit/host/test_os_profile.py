@@ -233,3 +233,188 @@ def test_custom_subclass_with_data_bundle_composes():
     assert host.os_type == "myrtos-v2"  # selector recorded
     assert host.os_name == "MyRTOS"  # from the data bundle
     assert host.max_filename_len == 12  # from the data bundle
+
+
+class TestBusyBoxProfile:
+    """`os_type: "busybox"` — a bundle of unix defaults, not a new host class.
+
+    A BusyBox box is a unix host whose userland answers differently. The
+    capability answers themselves are PROBED at runtime by `Userland`, so this
+    profile carries only what probing cannot discover: facts about the host that
+    change which code paths otto is allowed to take at all.
+    """
+
+    def test_busybox_resolves_to_the_unix_base(self):
+        """No new host class — the spec's central decision, asserted."""
+        from otto.host.os_profile import build_os_profile
+
+        profile = build_os_profile("busybox")
+
+        assert profile.base == "unix", (
+            "busybox must build UnixHost; a separate class would fork every "
+            "unix code path for one userland variant"
+        )
+
+    def test_busybox_declares_it_has_no_bash(self):
+        """`has_bash` gates real behaviour, so its default is load-bearing.
+
+        `otto.tunnel.discovery` scans only `has_bash` hosts, and
+        `bash -c 'exec -a ...'` is how commands get tagged. A BusyBox box
+        typically ships no bash at all, so leaving the unix default of True
+        makes otto emit bash-only commands to a shell that cannot run them.
+        """
+        from otto.host.os_profile import build_os_profile
+
+        assert build_os_profile("busybox").defaults["has_bash"] is False
+
+    def test_busybox_selects_the_ash_frame_by_its_registered_name(self):
+        """Profiles hold RAW lab-data values — a string, coerced by the factory.
+
+        Asserted as the string rather than an instance: a profile holding a
+        built object would bypass the factory's own coercion and diverge from
+        what a hand-written lab.json produces.
+        """
+        from otto.host.os_profile import build_os_profile
+
+        assert build_os_profile("busybox").defaults["command_frame"] == "ash"
+
+    def test_the_frame_the_profile_names_is_actually_registered(self):
+        """A profile naming an unregistered frame fails at host BUILD time, on a
+        real lab, not here. This closes the gap between the two registries."""
+        from otto.host.command_frame import FRAME_CLASSES
+        from otto.host.os_profile import build_os_profile
+
+        named = build_os_profile("busybox").defaults["command_frame"]
+        assert named in FRAME_CLASSES, (
+            f"the busybox profile names frame {named!r}, which is not registered"
+        )
+
+    def test_busybox_does_not_yet_claim_a_transfer_backend(self):
+        """Deliberate deferral, asserted so it cannot be forgotten.
+
+        A real BusyBox device typically runs dropbear rather than OpenSSH,
+        which ships no sftp-server; sftp/scp against dropbear is a named but
+        *untested* risk (design doc, "Known entries at design time" / "The
+        dropbear risk"), not a measured break — so the inherited `scp`
+        default is unverified against a real device, not proven to work (see
+        `_register_builtin_os_profiles` for the full reasoning, including why
+        a busybox host still attempts scp on every put/get regardless). The
+        honest replacement, the `shell` backend, does not exist yet, and
+        setting `transfer` to it today would not fail at registration —
+        `register_os_profile` only validates default *keys*, never values —
+        it would fail later, at host-build time, when `CapabilityResolver`
+        rejects the value against this host's `valid_transfers` *menu*
+        (measured: `transfer 'shell' is not in this host's transfer menu
+        ['scp', 'sftp', 'ftp', 'nc']`), not from any "is this backend
+        registered" lookup. So the field is left alone until the backend
+        lands, and this test documents that the omission is a choice rather
+        than an oversight.
+        """
+        from otto.host.os_profile import build_os_profile
+
+        defaults = build_os_profile("busybox").defaults
+        assert "transfer" not in defaults
+        assert "valid_transfers" not in defaults
+
+    def test_busybox_is_a_builtin_so_overriding_it_warns(self, caplog):
+        """The other built-ins warn on override; a profile absent from the set
+        is silently replaceable, which is a different contract.
+
+        Asserts the actual warning, not just membership in `_BUILTIN_NAMES` —
+        membership alone would keep passing even if the warning code were
+        deleted. Same pattern as `TestRegistry.test_overriding_builtin_warns`.
+
+        This covers the `register_os_profile` override path only. `busybox`
+        is unusual among the built-ins: it names no host class of its own, so
+        it has an entry in `OS_PROFILES` but never one in `HOST_CLASSES`. The
+        *other* override path — `register_host_class("busybox", ...)`, which
+        also silently touches `OS_PROFILES` via its own auto-registration —
+        is a separate guard, checked by
+        `test_busybox_is_also_a_builtin_via_register_host_class` below.
+        """
+        import logging
+
+        with caplog.at_level(logging.WARNING):
+            register_os_profile("busybox", base="unix", defaults={"has_bash": False})
+        assert any("built-in" in r.message for r in caplog.records)
+
+    def test_busybox_is_also_a_builtin_via_register_host_class(self, caplog):
+        """The override-warning guard on `register_host_class` must ALSO
+        fire for `busybox`, even though `busybox` has never had an entry in
+        `HOST_CLASSES` (it names no class of its own — only `unix` does).
+
+        `register_host_class`'s own guard historically checked only
+        `name in HOST_CLASSES`, which is False here on a first-ever
+        registration under this name — so a naive guard would stay silent
+        while this call's own auto-registered trivial `OsProfile`
+        (`base="busybox", defaults={}`) silently destroys the real
+        `has_bash`/`command_frame` defaults underneath it. Measured directly
+        before the guard was widened to check `OS_PROFILES` too: zero log
+        records were emitted for this exact call, and
+        `build_os_profile("busybox").defaults` came back `{}` afterward.
+        """
+        import logging
+
+        from otto.models.host import UnixHostSpec
+
+        class Rogue(UnixHost):
+            pass
+
+        with caplog.at_level(logging.WARNING):
+            register_host_class("busybox", Rogue, UnixHostSpec)
+        assert any("built-in" in r.message for r in caplog.records)
+
+    def test_a_hosts_own_field_still_beats_the_profile_default(self):
+        """Profile defaults sit BENEATH a host's own lab.json fields.
+
+        Without this, a profile could silently override an explicit declaration
+        — the opposite of the documented merge order, and unfixable from lab
+        data.
+        """
+        from otto.host.factory import create_host_from_dict
+
+        host = create_host_from_dict(
+            {
+                "element": "bb1",
+                "os_type": "busybox",
+                "has_bash": True,
+                "ip": "10.0.0.1",
+                # Required by UnixHostSpec — a dict without it raises
+                # `ValidationError: creds Field required`, which reads like a
+                # profile bug and is not one.
+                "creds": [{"login": "v", "password": "v"}],
+            }
+        )
+
+        assert host.has_bash is True, (
+            "an explicit lab.json value must win over the profile's default"
+        )
+
+    def test_a_busybox_host_builds_from_a_minimal_lab_entry(self):
+        """Exit criterion 1: a minimal lab.json entry works.
+
+        End-to-end through the factory, because every assertion above is about
+        the profile record and none of them proves a host can actually be built
+        from it.
+        """
+        from otto.host.command_frame import AshFrame
+        from otto.host.factory import create_host_from_dict
+        from otto.host.unix_host import UnixHost
+
+        host = create_host_from_dict(
+            {
+                "element": "bb1",
+                "os_type": "busybox",
+                "ip": "10.0.0.1",
+                "creds": [{"login": "v", "password": "v"}],
+            }
+        )
+
+        assert isinstance(host, UnixHost)
+        # A plain unix host's `command_frame` is None; the profile supplies the
+        # STRING "ash" and the factory coerces it. Measured 2026-08-12 with a
+        # throwaway profile: `command_frame: "bash"` in defaults produced a
+        # BashFrame instance on the built host, so this asserts the coercion as
+        # well as the profile value.
+        assert isinstance(host.command_frame, AshFrame)
+        assert host.has_bash is False

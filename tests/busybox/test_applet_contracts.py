@@ -1,10 +1,15 @@
 """Tier 1: real BusyBox argument parsing, per version, without a container.
 
-DRIVEN FROM /bin/sh (dash), NEVER from `busybox sh`. BusyBox's ash resolves
-applets INTERNALLY and ignores PATH, so a PATH-based shim is invisible to it:
-during the 2026-08-10 timeout work a control 'verified' broken code because it
-had silently exercised BusyBox's own builtin instead of the shim under test.
-Anything asserting applet RESOLUTION belongs in Tier 2, not here.
+DRIVEN FROM /bin/sh (dash), NEVER from `busybox sh`. Applet resolution that
+ignores PATH is a BUILD-CONFIG property (`CONFIG_FEATURE_SH_STANDALONE`), not
+a universal fact about "BusyBox's ash" — measured off in every busybox.net
+prebuilt this project fetches, see `tests/busybox/test_applet_resolution.py`'s
+`_EXPECTED_STANDALONE_SHELL` table — but the system package apt installs for
+the `system` row below HAS it on: during the 2026-08-10 timeout work a control
+'verified' broken code because `busybox sh` resolved applets internally
+regardless of PATH, silently exercising BusyBox's own builtin instead of the
+shim under test. Anything asserting applet RESOLUTION belongs in Tier 2, not
+here.
 
 The command SPELLINGS measured here have two other copies, and all three have
 to agree: `src/otto/host/userland.py` issues them at runtime, and
@@ -27,7 +32,6 @@ from tests._fixtures.busybox import (
     BUSYBOX_MATRIX,
     busybox_binary,
     probe_banner,
-    require_interpreter,
 )
 
 # BusyBox switched `timeout` from `-t SECS PROG` to the coreutils-compatible
@@ -111,6 +115,65 @@ _ROWS = [pytest.param(release, id=release.version) for release in BUSYBOX_MATRIX
 ]
 
 
+@pytest.mark.busybox
+def test_the_system_busybox_is_the_standalone_counterexample():
+    """The only `True` in the standalone-shell story, pinned rather than prose.
+
+    `_EXPECTED_STANDALONE_SHELL` in `tests/busybox/test_applet_resolution.py`
+    is five identical `False`s. Without an assertion somewhere that a
+    DIFFERENT build measures `True`, that table is a constant wearing a
+    discrimination's clothing: if Ubuntu ever shipped a `busybox` without
+    `CONFIG_FEATURE_SH_STANDALONE`, every docstring citing this contrast —
+    including the reason this module drives applets from dash rather than
+    `busybox sh` — would go false at once, and nothing here would notice.
+    This is that assertion, on the same `system` build `_ROWS` already
+    exercises, skipped the same way when nothing is installed to test.
+
+    Invokes `busybox sh` directly, the ONE construction this module's own
+    module docstring forbids everywhere else — deliberately: proving the
+    system build resolves internally is the whole point here, not a control
+    to avoid.
+
+    `PATH=/nonexistent`, not `PATH=`: an entirely empty PATH is one empty
+    component, which POSIX resolves to the CURRENT DIRECTORY, so a probe run
+    from a directory that happens to contain a file named `ls` would pass for
+    the wrong reason regardless of which shell is running it.
+    """
+    if _SYSTEM_BUSYBOX is None:
+        pytest.skip(
+            "no `busybox` on PATH: this pins the DISTRO's own build, same as "
+            "the `system` row above — nothing can fetch it"
+        )
+    result = subprocess.run(
+        [
+            _SYSTEM_BUSYBOX,
+            "sh",
+            "-c",
+            (
+                "PATH=/nonexistent; command -v ls && echo RESOLVED; "
+                "command -v definitely_not_an_applet || echo NEGATIVE_CONTROL_OK"
+            ),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 0, f"the probe did not run: {result.stderr}"
+    assert "NEGATIVE_CONTROL_OK" in result.stdout, (
+        f"a name that is not an applet must still fail even under this "
+        f"build's standalone shell, or the RESOLVED assertion below would "
+        f"prove nothing: {result.stdout!r} {result.stderr!r}"
+    )
+    assert "RESOLVED" in result.stdout, (
+        f"the system busybox was expected to resolve `ls` with PATH pointed "
+        f"nowhere useful (CONFIG_FEATURE_SH_STANDALONE) — got "
+        f"{result.stdout!r} {result.stderr!r}. If the distro build changed, "
+        f"every docstring citing this build as the standalone counterexample "
+        f"needs revisiting in the same commit that explains why"
+    )
+
+
 def _binary_for(release) -> Path:
     """The artifact under test: fetched for a pinned row, local for the system."""
     return release.path if isinstance(release, _LocalBuild) else busybox_binary(release)
@@ -132,11 +195,6 @@ def _run_via_dash(applets: Path, script: str) -> subprocess.CompletedProcess:
         # destroy the answer rather than report a problem.
         check=False,
     )
-
-
-@pytest.fixture(scope="session", autouse=True)
-def _interpreter():
-    require_interpreter()
 
 
 @pytest.fixture

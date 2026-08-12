@@ -71,16 +71,31 @@ a host wires its `Userland` through `TransferContext` the backend receives
 
 ### 4. The trap that will bite anyone testing this
 
-**BusyBox's `ash` resolves applets internally and ignores `PATH`.** A shim
-placed on `PATH` is unreachable from `busybox sh`:
+**BusyBox's `ash` resolves applets internally and ignores `PATH`** — for a
+build with `CONFIG_FEATURE_SH_STANDALONE` on, which is a build-config
+property, not a universal fact about "BusyBox's ash". A shim placed on `PATH`
+is unreachable from a standalone-shell `busybox sh`:
 
     PATH=/nonexistent busybox sh -c 'command -v timeout'   ->  timeout
+
+That holds for Ubuntu's system busybox (`1:1.36.1-6ubuntu3.1`, the build this
+finding was measured against) — `CONFIG_FEATURE_SH_STANDALONE` is on there.
+It is measured OFF on every busybox.net prebuilt this project fetches: the
+identical construction against those binaries hits no built-in and instead
+falls through to a `PATH` search that either finds the host's own coreutils
+`timeout` (PATH left alone) or fails outright with nothing resolved (PATH
+poisoned) — the opposite of "resolves internally". See
+`tests/busybox/test_applet_resolution.py`'s `_EXPECTED_STANDALONE_SHELL`
+table (system-build counterexample in `test_applet_contracts.py`'s
+`test_the_system_busybox_is_the_standalone_counterexample`).
 
 This produced a false pass during the `timeout` work — a control that
 "verified" the broken code worked, because it had silently exercised BusyBox's
 own built-in applet instead of the shim on `PATH`. Any PATH-based fake must be
 driven by a **non-BusyBox** shell (`/bin/sh` → dash) to mean anything, and
-conversely, anything testing *applet resolution* must use a real BusyBox shell.
+conversely, anything testing *applet resolution* must use a real BusyBox shell
+built with standalone-shell support — this project's own busybox.net
+prebuilts are not that shell.
 
 ## Proposed approach to testing
 

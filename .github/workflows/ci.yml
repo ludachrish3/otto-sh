@@ -179,6 +179,29 @@ jobs:
       # busybox.net, so it stays green through a busybox.net outage.
       - name: Install the distro BusyBox so the system row runs rather than skips
         run: sudo apt-get update && sudo apt-get install -y busybox-static
+      - name: Allow unprivileged user namespaces, for the BusyBox rootfs tier
+        # The tier chroots into a BusyBox-only root from an unprivileged user
+        # namespace. Ubuntu 24.04 ships
+        # kernel.apparmor_restrict_unprivileged_userns=1, which permits creating
+        # a namespace but denies the uid_map write that maps you to uid 0 —
+        # leaving no CAP_SYS_CHROOT and no chroot.
+        #
+        # The existence test is not defensive mush: A MISSING KNOB IS NOT A
+        # MISSING CAPABILITY. `sysctl -w` exits non-zero on an image without
+        # that key and steps run under `bash -e`, so writing it unconditionally
+        # reds the job on precisely the images where the tier would have worked
+        # fine. `ubuntu-latest` is 24.04 and has it today, but that pin moves.
+        #
+        # The verification line carries no `|| true` on purpose, and that
+        # asymmetry is the whole point: the capability is what we require, so
+        # that is what fails the job. A runner that cannot map to uid 0 must
+        # stop here with a reason, not skip the tier into a green report.
+        run: |
+          if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+          unshare -r id -u | grep -qx 0 \
+            || { echo "::error::unshare -r cannot map to uid 0 on this runner; the BusyBox rootfs tier cannot build a root"; exit 1; }
       - name: Fetch, verify and run the BusyBox artifact matrix (cold cache)
         run: make busybox
 

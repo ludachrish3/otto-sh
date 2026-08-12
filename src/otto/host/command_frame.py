@@ -331,6 +331,85 @@ class BashFrame(CommandFrame):
         return -1
 
 
+class AshFrame(BashFrame):
+    """BusyBox ash: bash's marker scheme, unchanged, under a name of its own.
+
+    The override set is EMPTY, and that is a measured result, not an
+    omission. All four payloads `BashFrame` renders — `handshake`, `frame`,
+    `recover`, `quiet_history` — were run under real BusyBox ash across the
+    artifact matrix (1.16.1, 1.21.1, 1.28.1, 1.31.0, 1.35.0), inside a
+    chrooted BusyBox-only root, and every one satisfied the contract those
+    payloads make: markers in order around a command's own output, `$?`
+    baked correctly into both the END marker (exit 0, 3, 42, and
+    `/bin/false`'s own exit status 1 — a real applet exec'd through its
+    `--install -s` symlink, not a subshell-synthesized literal; a bare
+    `false` resolves to ash's own shell builtin instead and never reaches
+    it, which is why the test spells this case by absolute path) and the
+    RECOVER marker, the handshake reaching READY with
+    `/bin/stty` both present and deleted, and the shell still alive and
+    `$HISTFILE` actually set to `/dev/null` after history suppression. No
+    bash arm runs in that rootfs tier — it is a single-shell contract check
+    against real ash, not a differential — so the separate claim that ash's
+    payloads match bash's byte for byte rests on a different, unit-level
+    test that compares `AshFrame`'s emitted strings directly against
+    `BashFrame`'s: `test_ash_inherits_bashs_marker_scheme_rather_than_restating_it`
+    in `tests/unit/host/test_command_frame.py`. See
+    `tests/busybox/test_ash_frame_payloads.py` for the rootfs measurements
+    themselves.
+
+    One real divergence turned up: ash's `set` has no `+o history` option at
+    all and rejects it outright (`illegal option +o history`) on every row.
+    That needs no override — `quiet_history()`'s `command` prefix and `|| :`
+    guards exist precisely so an unsupported builtin option is survivable,
+    and the shell was measured alive and still readable afterwards. "No
+    override needed because the rejection is tolerated by design" is the
+    honest claim; it is not the same as "nothing differs".
+
+    What the measurement does NOT cover: it drives a non-interactive shell
+    over a pipe, with no controlling tty. Interactive echo and history
+    behavior (a real terminal, a real HISTFILE actually being written) are
+    unmeasured by this tier and may still diverge.
+
+    The class exists anyway, for two reasons that outlive the empty body. It
+    gives lab data a truthful name — a host declaring `ash` is documented as
+    a BusyBox shell rather than mislabelled `bash` in every diagnostic — and
+    it gives the first genuine ash-only divergence (interactive or
+    otherwise) a single obvious home, instead of a conditional inside the
+    bash frame.
+
+    Cheap to keep, and the alternative is worse — just not through the path
+    that looks riskiest at first. `register_command_frame("ash", BashFrame)`
+    is already refused: its own `cls.type_name != type_name` check raises
+    before the module can even finish importing (measured:
+    `ValueError: register_command_frame: type_name 'ash' doesn't match
+    BashFrame.type_name = 'bash'`). What that check does not reach is the
+    lower-level registry it wraps — `FRAME_CLASSES.register("ash",
+    BashFrame, overwrite=True)` performs no such comparison and DOES pass
+    every payload-equality assertion, leaving nowhere to put the divergence
+    when one arrives (measured: `build_command_frame("ash")` then returns a
+    plain `BashFrame`). A payload comparison can never catch this bypass —
+    ash's rendered strings ARE bash's rendered strings by design, so nothing
+    about their bytes ever disagrees. What catches it is any assertion that
+    checks TYPE IDENTITY through the registry instead of rendered output —
+    `isinstance(x, AshFrame)`, `type(x) is AshFrame`, or a caller one level up
+    that builds a host and inspects what class its `command_frame` landed as.
+    That is a claim about the *kind* of assertion, not a count of them, on
+    purpose: measured directly, three tests fall over today, in two different
+    files, one of which (`tests/unit/host/test_os_profile.py`'s
+    `TestBusyBoxProfile::test_a_busybox_host_builds_from_a_minimal_lab_entry`)
+    was written later, by the task that added the `busybox` profile, with no
+    idea this bypass existed — it catches the bypass anyway, because it asserts
+    `isinstance(host.command_frame, AshFrame)` on the far side of the
+    registry. A future test that only compares rendered strings will not
+    join that list no matter how many are added; only one that resolves
+    `"ash"` through the registry and checks what came back will. That
+    bypass, not the guarded public path, is the reason a distinguishing test
+    earns its place.
+    """
+
+    type_name = "ash"
+
+
 # Terminal control sequences (colored prompt, cursor moves). otto is not a
 # terminal — strip them before parsing the Zephyr shell stream.
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]")
@@ -545,6 +624,7 @@ def _register_builtin_frames() -> None:
     ``os_profile._register_builtin_host_classes``).
     """
     register_command_frame(BashFrame.type_name, BashFrame)
+    register_command_frame(AshFrame.type_name, AshFrame)
     register_command_frame(ZephyrFrame.type_name, ZephyrFrame)
     register_command_frame(ZephyrSerialFrame.type_name, ZephyrSerialFrame)
 

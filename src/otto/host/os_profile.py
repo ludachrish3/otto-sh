@@ -161,6 +161,16 @@ def register_host_class(
     (``base=name``, empty ``defaults``), so ``os_type: name`` resolves with no
     extra config. Re-registering replaces the prior class and spec.
 
+    Overriding a built-in name (``unix`` / ``embedded`` / ``zephyr`` /
+    ``busybox``) logs a warning. Checked against *both* ``HOST_CLASSES`` and
+    ``OS_PROFILES``, not just this function's own registry: a defaults-only
+    built-in like ``busybox`` is a member of ``OS_PROFILES`` and never of
+    ``HOST_CLASSES`` (it names no class of its own), so a guard that only
+    checked ``HOST_CLASSES`` would silently let ``register_host_class("busybox",
+    ...)`` overwrite it — the auto-registered trivial profile that call
+    produces (see above) would erase ``busybox``'s ``has_bash``/``command_frame``
+    defaults with no warning at all.
+
     Raises
     ------
     ValueError
@@ -188,7 +198,7 @@ def register_host_class(
             raise ValueError(
                 f"register_host_class({name!r}): spec must be a HostSpec subclass, got {spec!r}"
             )
-    if name in _BUILTIN_NAMES and name in HOST_CLASSES:
+    if name in _BUILTIN_NAMES and (name in HOST_CLASSES or name in OS_PROFILES):
         logger.warning(f"register_host_class: overriding built-in host class {name!r}")
     # Last-writer-wins by design (see docstring) — always overwrite rather
     # than raise on re-registration.
@@ -269,7 +279,20 @@ def register_os_profile(
     Call from an init module listed in ``.otto/settings.toml`` — the same
     pattern :func:`otto.host.command_frame.register_command_frame` follows.
     Re-registering a name replaces the previous profile (last writer wins);
-    overriding a built-in (``unix`` / ``embedded`` / ``zephyr``) logs a warning.
+    overriding a built-in (``unix`` / ``embedded`` / ``zephyr`` / ``busybox``)
+    logs a warning, checked against this function's own registry
+    (``OS_PROFILES``) only — unlike :func:`register_host_class`, which also
+    checks ``OS_PROFILES`` because a class-only-not-yet-profiled built-in
+    name is possible there. The reverse is not, *today*:
+    ``register_host_class`` always writes ``OS_PROFILES`` in the same call
+    that writes ``HOST_CLASSES``, and no caller anywhere unregisters one of
+    the pair independently of the other — ``Registry.unregister`` exists and
+    is called elsewhere, including on ``OS_PROFILES`` itself in test
+    fixtures, but never to strip a built-in's profile while its host class
+    stays registered. So an ``or name in HOST_CLASSES`` clause here would be
+    unreachable, not defensive, *as long as that stays true* — it is a fact
+    about current call sites, not a structural guarantee the registries
+    enforce.
 
     Parameters
     ----------
@@ -352,8 +375,10 @@ def registered_profile_names() -> list[str]:
 # unchanged. ``zephyr`` maps to :class:`~otto.host.embedded_host.ZephyrHost`,
 # which re-declares the Zephyr-specific defaults on the class itself. Registering
 # each class also auto-registers a same-named trivial :class:`OsProfile`, so
-# ``os_type: <name>`` resolves with no extra config.
-_BUILTIN_NAMES: frozenset[str] = frozenset(("unix", "embedded", "zephyr"))
+# ``os_type: <name>`` resolves with no extra config. ``busybox`` builds no new
+# class — it is a defaults-only profile over ``unix``, registered explicitly by
+# :func:`_register_builtin_os_profiles` below.
+_BUILTIN_NAMES: frozenset[str] = frozenset(("unix", "embedded", "zephyr", "busybox"))
 
 
 def _register_builtin_host_classes() -> None:
@@ -371,4 +396,82 @@ def _register_builtin_host_classes() -> None:
     register_host_class("zephyr", ZephyrHost, EmbeddedHostSpec)
 
 
+def _register_builtin_os_profiles() -> None:
+    """Register built-in profiles that are more than a bare host class.
+
+    ``unix``/``embedded``/``zephyr`` get trivial same-named profiles for free
+    when their classes register. ``busybox`` is the first profile that bundles
+    non-default fields, so it registers explicitly — through the same public
+    call a third party would use.
+
+    What is here and what is NOT is the whole design. A BusyBox box is a unix
+    host whose *userland* differs, and those differences are measured at runtime
+    by :class:`~otto.host.userland.Userland` (elevation, timeout syntax, base64
+    spelling, stat spelling, shell dialect). Probed answers must not be
+    duplicated as declared defaults: a declaration in ``userland_options``
+    skips the probe entirely, so a wrong guess here would be unfixable from the
+    device itself — the profile carries none.
+
+    That leaves the facts probing cannot discover, which gate whole code paths:
+
+    ``has_bash=False``
+        A stock BusyBox ships no bash. This is not cosmetic —
+        :mod:`otto.tunnel.discovery` scans only ``has_bash`` hosts (it builds
+        its process list from ``[h for h in lab.hosts.values() if
+        getattr(h, "has_bash", False)]``), and detached command tagging goes
+        through :func:`otto.host.daemon.launch_command`'s ``bash -c 'exec -a
+        …'`` — ``exec -a`` is a bash builtin. Left at the unix default of
+        ``True``, ``otto.tunnel.manage._resolve_chain`` would accept the host
+        as a tunnel path member and then emit a bash-only launch command to a
+        shell that cannot run it.
+
+    ``command_frame="ash"``
+        A truthful name for the shell. `AshFrame` overrides nothing —
+        its rendered payloads (handshake, frame, recover, quiet_history) are
+        byte-identical to `BashFrame`'s, measured both under real BusyBox ash
+        across the artifact matrix (``tests/busybox/test_ash_frame_payloads.py``)
+        and directly against `BashFrame`'s output
+        (``test_ash_inherits_bashs_marker_scheme_rather_than_restating_it`` in
+        ``tests/unit/host/test_command_frame.py``). So this changes no bytes on
+        the wire today; it labels the host correctly in diagnostics and gives a
+        future ash-only divergence a home.
+
+    ``transfer`` is deliberately absent. A real BusyBox device typically runs
+    **dropbear** in place of OpenSSH — a separate project, not a BusyBox
+    applet itself (measured: ``busybox-1.35.0-x86_64 --list`` names none of
+    its 402 applets ``sshd``/``ssh``/``scp``/``sftp``/``dropbear``) — and
+    dropbear ships no ``sftp-server`` (``docs/superpowers/specs/
+    2026-08-11-busybox-host-support-design.md``, "The dropbear risk"). That
+    same design doc's "Known entries at design time" names ``sftp``/``scp``
+    against dropbear as an identified, *untested* risk — not a measured
+    break, unlike ``daemon``'s ``bash -c`` above — so the honest claim is
+    that the inherited ``scp`` default is unverified against a real device,
+    not proven to work. Left inherited, a busybox host still *attempts* scp
+    on every ``put``/``get``: ``ScpFileTransfer._get_files_scp``/
+    ``_put_files_scp`` (``otto/host/transfer/scp.py``) call ``asyncssh.scp()``
+    unconditionally, with no upfront probe of the remote — so a failure
+    lands at transfer time on a real device, not at the cheaper host-build
+    time where a wrong ``command_frame`` or ``has_bash`` would be caught.
+
+    The honest replacement is a shell-based backend that does not exist yet
+    (no ``shell`` entry in ``TRANSFER_BACKENDS``). Naming one in ``defaults``
+    today would not fail where it looks like it should:
+    :func:`register_os_profile` validates only default *keys* against the
+    base class's fields, never values, so registration itself would succeed.
+    The failure comes later, at host-build time, from
+    :class:`~otto.host.capability.CapabilityResolver` checking the value
+    against this host's ``valid_transfers`` *menu* — not from any
+    "is this backend registered" lookup (measured: ``transfer 'shell' is not
+    in this host's transfer menu ['scp', 'sftp', 'ftp', 'nc']``, since this
+    profile does not touch ``valid_transfers`` either). The field stays
+    inherited until that backend lands.
+    """
+    register_os_profile(
+        "busybox",
+        base="unix",
+        defaults={"has_bash": False, "command_frame": "ash"},
+    )
+
+
 _register_builtin_host_classes()
+_register_builtin_os_profiles()

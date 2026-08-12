@@ -513,10 +513,13 @@ exit 127
 def _run_prefix(prefix: str, command: str, path: str) -> subprocess.CompletedProcess[str]:
     """Execute *prefix* + *command* under ``/bin/sh`` with *path* as PATH.
 
-    Not BusyBox's own shell: its ash resolves applets internally and ignores
-    PATH entirely, so a shim placed on PATH is never reached. The first
-    version of this control used ``busybox sh`` and reported the old-syntax
-    host as working — it had silently tested the modern built-in applet.
+    Not BusyBox's own shell: the ``busybox`` apt installs on this machine has
+    ``CONFIG_FEATURE_SH_STANDALONE`` on (measured; busybox.net's own prebuilt
+    artifacts do not — see ``tests/busybox/test_applet_resolution.py``), so
+    its ``sh`` resolves applets internally and ignores PATH entirely, and a
+    shim placed on PATH is never reached. The first version of this control
+    used ``busybox sh`` and reported the old-syntax host as working — it had
+    silently tested the modern built-in applet.
     """
     return subprocess.run(
         ["/bin/sh", "-c", f"{prefix}{command}"],

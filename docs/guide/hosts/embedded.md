@@ -69,6 +69,7 @@ frame's dialect.
 | `zephyr` | `ZephyrFrame` | Stock Zephyr `retval` shell (3.7 / 4.4 LTS).  Default for `ZephyrHost`. |
 | `zephyr-serial` | `ZephyrSerialFrame` | Same framing as `zephyr`; differs only in handshake.  For a UART shell bridged via QEMU `-serial telnet:` (raw byte bridge, not the in-guest `SHELL_BACKEND_TELNET`). |
 | `bash` | `BashFrame` | POSIX bash; used internally by SSH/telnet Unix sessions. |
+| `ash` | `AshFrame` | BusyBox `ash`.  Inherits `BashFrame`'s framing unchanged, no override — every rendered payload measured matching across the BusyBox artifact matrix. Not the same as "nothing differs": ash rejects `set +o history` outright, survivably, by design (see `AshFrame`'s docstring). |
 
 Declare a frame by name in lab data:
 
