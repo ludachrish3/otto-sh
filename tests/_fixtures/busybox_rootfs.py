@@ -82,6 +82,7 @@ _HOST_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 #     busybox_binary()'s cold-cache fetch     60s  (tests/_fixtures/busybox.py)
 #   + require_userns()'s probe                _USERNS_PROBE_TIMEOUT_S + reap
 #   + _install_applets()                      _BUILD_TIMEOUT_S        + reap
+#   + _install_applets()'s exec proof         _PROOF_TIMEOUT_S        + reap
 #   + _RUNS_PER_TEST_BUDGETED x run_in_rootfs _RUN_TIMEOUT_S          + reap
 #
 # where "reap" is _REAP_TIMEOUT_S, which only elapses on a call that has
@@ -103,25 +104,43 @@ _HOST_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 #
 # Be precise about what that guard binds, because it is NOT a tripwire on any
 # one constant: it is the SUM above, times 1.25 headroom, against 180. Today
-# that sum is 135s (144s is the most it may reach), so each constant carries
+# that sum is 140s (144s is the most it may reach), so each constant carries
 # whatever slack is left once the others are held fixed — measured, raising
-# `_USERNS_PROBE_TIMEOUT_S` alone from 10.0 to 14.0 leaves the sum at 139s
-# (139 * 1.25 = 173.75 <= 180) and the guard PASSES. `_REAP_TIMEOUT_S` is the
-# tightest of the four regardless — it is charged once per bounded call
-# (three sites, one of them x `_RUNS_PER_TEST_BUDGETED`), so a rise there
-# costs the sum four times over and has the least room to move. Raise enough
+# `_USERNS_PROBE_TIMEOUT_S` alone from 5.0 to 8.0 leaves the sum at 143s
+# (143 * 1.25 = 178.75 <= 180) and the guard PASSES. `_REAP_TIMEOUT_S` is the
+# tightest of the five regardless — it is charged once per bounded call
+# (four sites, one of them x `_RUNS_PER_TEST_BUDGETED`), so a rise there
+# costs the sum five times over and has the least room to move. Raise enough
 # of one constant, or several together, and it reds; raising any one of them
 # by an amount smaller than its current slack does not.
+#
+# Adding the exec proof cost 10s of a budget that had 9s spare, which is why
+# `_USERNS_PROBE_TIMEOUT_S` was halved in the same commit. A new bounded call
+# is never free here: it must arrive with the room for it, taken from a term
+# that can spare it.
 #
 # All four are RUNAWAY GUARDS, never discriminators: no assertion anywhere in
 # this tier reads elapsed time, so each is as generous as the remaining
 # budget allows and tightening one below what its own site needs buys
 # nothing but red builds on a loaded host.
 
-_USERNS_PROBE_TIMEOUT_S = 10.0
+_USERNS_PROBE_TIMEOUT_S = 5.0
 """Bound for `unshare -r id -u`. One fork+exec of a tiny host binary; measured
-in single-digit milliseconds, so 10s is already three orders of magnitude of
-slack for a contended runner."""
+in single-digit milliseconds, so 5s is already nearly three orders of magnitude
+of slack for a contended runner.
+
+Was 10.0. Halved to pay for :data:`_PROOF_TIMEOUT_S` without pushing the
+coupled sum above what the per-test timeout allows — see the block above. The
+budget is the reason, and it is a real one: this term and the proof's are the
+two cheapest in the sum, so they are where the room came from."""
+
+_PROOF_TIMEOUT_S = 5.0
+"""Bound for the post-install `/bin/sh -c :` inside the new root.
+
+One exec of a static binary through a freshly written symlink, on the same
+order as the userns probe. It buys the difference between "thirteen tests
+report the harness's argv" and "one named error reports the install" — see
+:func:`_install_applets`."""
 
 _BUILD_TIMEOUT_S = 15.0
 """Bound for the in-chroot `busybox --install -s /bin`, the one call that writes
@@ -390,13 +409,46 @@ def _install_applets(root: Path) -> None:
     # applet the harness cannot do without (`run_in_rootfs` execs it directly),
     # and the count travels with the error because "installed 1 applet" and
     # "installed 300 but not this one" are different bugs with the same symptom.
-    installed = sorted(p.name for p in (root / "bin").iterdir() if p.is_symlink())
-    if "sh" not in installed:
+    # EVERY LINK IS REPOINTED AT `/bin/busybox`, rather than trusted.
+    #
+    # `--install -s` bakes a target derived from how busybox was invoked, and
+    # what it derives is not portable: measured identical (`/bin/busybox`) on
+    # all five rows under qemu-i386 here, yet 1.16.1 came out of a native
+    # x86_64 runner with a `sh` link that existed and did not resolve — execve
+    # gave ENOENT for the TARGET while the link itself was present, which is
+    # why the first version of this postcondition (`is_symlink()`) passed and
+    # let thirteen tests fail downstream instead. `/bin/busybox` is the path
+    # this function copied the binary to, so writing it explicitly makes the
+    # link set correct by construction on every platform rather than correct
+    # by coincidence on one.
+    links = [p for p in (root / "bin").iterdir() if p.is_symlink()]
+    for link in links:
+        link.unlink()
+        link.symlink_to("/bin/busybox")
+
+    # THE POSTCONDITION IS EXECUTED, NOT INSPECTED.
+    #
+    # A symlink's existence is not the property this tier needs; running a
+    # command through it is. `is_symlink()` was a proxy for that and it was
+    # the wrong one, so the check now spends one exec proving the thing it
+    # claims. The error carries the state a reader would otherwise have to
+    # ask CI for — count, target, and whether the target is really there —
+    # because this failure has already cost two round trips for want of it.
+    proof = _run_host(
+        [_host_tool("unshare"), "-r", _host_tool("chroot"), str(root), "/bin/sh", "-c", ":"],
+        _PROOF_TIMEOUT_S,
+        env={"PATH": _ROOTFS_PATH},
+    )
+    if proof.returncode != 0:
+        sh = root / "bin" / "sh"
+        target = str(sh.readlink()) if sh.is_symlink() else "(not a symlink)"
+        busybox = root / "bin" / "busybox"
         raise RootfsUnavailableError(
-            f"BusyBox {root.name} installed {len(installed)} applet symlink(s) but no `sh`, "
-            f"so nothing can run in this root. `--install -s` exited 0 regardless. "
-            f"Installed: {', '.join(installed[:20]) or '(none)'}"
-            f"{' ...' if len(installed) > 20 else ''}"
+            f"the root at {root} installed {len(links)} applet symlink(s) and "
+            f"`--install -s` exited 0, but /bin/sh will not run: rc={proof.returncode} "
+            f"{proof.stdout}{proof.stderr}".rstrip()
+            + f" | /bin/sh -> {target} | /bin/busybox present={busybox.exists()} "
+            f"size={busybox.stat().st_size if busybox.exists() else 0}"
         )
 
 

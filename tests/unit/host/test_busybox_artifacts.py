@@ -777,8 +777,9 @@ def test_the_rootfs_budget_fits_inside_the_per_test_timeout():
     reap = busybox_rootfs._REAP_TIMEOUT_S
     probe = busybox_rootfs._USERNS_PROBE_TIMEOUT_S + reap
     build = busybox_rootfs._BUILD_TIMEOUT_S + reap
+    proof = busybox_rootfs._PROOF_TIMEOUT_S + reap
     scripts = busybox_rootfs._RUNS_PER_TEST_BUDGETED * (busybox_rootfs._RUN_TIMEOUT_S + reap)
-    worst = fetch + probe + build + scripts
+    worst = fetch + probe + build + proof + scripts
 
     pyproject = tomllib.loads((_REPO_ROOT / "pyproject.toml").read_text())
     per_test = pyproject["tool"]["pytest"]["ini_options"]["timeout"]
@@ -789,7 +790,7 @@ def test_the_rootfs_budget_fits_inside_the_per_test_timeout():
     # needs. Headroom, not a stopwatch — nothing here measures elapsed time.
     assert worst * 1.25 <= per_test, (
         f"one rootfs test's worst case is {worst}s ({fetch}s cold fetch + "
-        f"{probe}s userns probe + {build}s applet install + "
+        f"{probe}s userns probe + {build}s applet install + {proof}s exec proof + "
         f"{busybox_rootfs._RUNS_PER_TEST_BUDGETED} x "
         f"{busybox_rootfs._RUN_TIMEOUT_S + reap}s script, each non-fetch term "
         f"including the {reap}s post-SIGKILL reap) against a {per_test}s "
