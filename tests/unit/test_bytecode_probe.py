@@ -14,6 +14,7 @@ the mtime. Size and mtime then match exactly what the `.pyc` recorded, which is
 the same on-disk state a same-second, length-preserving restore produces.
 """
 
+import functools
 import os
 import subprocess
 import sys
@@ -39,16 +40,12 @@ _MUTATED = "VALUE = 'bbb'"
 _COMMENT = "# a comment whose position moves"
 _ASSIGN_LINE = "VALUE = 'aaa'                   "  # padded to _COMMENT's width
 
-# Different, FIXED hash seeds for the process that writes the .pyc and the one
-# that probes it. Real runs differ by chance; pinning two seeds makes the warm
-# case deterministic instead of ~5-in-6, so a regression to a non-canonical
-# oracle fails every time rather than most times. The premise — that these two
-# seeds really do order the set differently — is asserted below, because a
-# CPython change could quietly collapse them and take the control with it.
-_WRITER_SEED = "1"
-_PROBER_SEED = "4"
-
 _SET_LITERAL = '{"integration", "embedded", "hops"}'
+
+# How far to search for two hash seeds that disagree. Small: disagreement is
+# common, so a pair turns up within the first few candidates on every version
+# otto supports. The ceiling exists to fail loudly rather than spin.
+_SEED_SEARCH_CEILING = 32
 
 
 def _module(tmp_path: Path, header: "str | None" = None) -> Path:
@@ -72,8 +69,8 @@ def _module(tmp_path: Path, header: "str | None" = None) -> Path:
     return source
 
 
-def _run(tmp_path: Path, args: "list[str]", seed: str) -> "subprocess.CompletedProcess[str]":
-    """Spawn a child with the bytecode-cache environment under THIS test's control.
+def _child_env(seed: str) -> "dict[str, str]":
+    """The bytecode-cache environment for a child, under THIS test's control.
 
     `PYTHONDONTWRITEBYTECODE` and `PYTHONPYCACHEPREFIX` are stripped rather than
     inherited, and that is load-bearing: every claim here is about where a
@@ -85,10 +82,15 @@ def _run(tmp_path: Path, args: "list[str]", seed: str) -> "subprocess.CompletedP
     """
     env = {k: v for k, v in os.environ.items() if not k.startswith("PYTHONPYCACHE")}
     env.pop("PYTHONDONTWRITEBYTECODE", None)
+    return {**env, "PYTHONHASHSEED": seed}
+
+
+def _run(tmp_path: Path, args: "list[str]", seed: str) -> "subprocess.CompletedProcess[str]":
+    """Spawn a child in *tmp_path* with a controlled bytecode-cache environment."""
     return subprocess.run(
         [sys.executable, *args],
         cwd=tmp_path,
-        env={**env, "PYTHONHASHSEED": seed},
+        env=_child_env(seed),
         capture_output=True,
         text=True,
         timeout=120,
@@ -96,14 +98,65 @@ def _run(tmp_path: Path, args: "list[str]", seed: str) -> "subprocess.CompletedP
     )
 
 
+def _set_order_under(seed: str) -> str:
+    """The set literal's iteration order in a child running under *seed*.
+
+    No `cwd` and no imports: this only prints, so it cannot write a `.pyc`
+    anywhere and needs no `tmp_path` to be safe in.
+    """
+    result = subprocess.run(
+        [sys.executable, "-c", f"print(list({_SET_LITERAL}))"],
+        env=_child_env(seed),
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=True,
+    )
+    return result.stdout.strip()
+
+
+@functools.cache
+def _discriminating_seeds() -> "tuple[str, str]":
+    """Two `PYTHONHASHSEED` values that really do order the set differently.
+
+    Measured on the running interpreter, never pinned. Which seeds disagree is
+    a property of CPython's string hashing: 3.11 switched from siphash24 to
+    siphash13, and the pair this module used to hard-code — "1" and "4" —
+    disagreed on 3.10 while collapsing to one ordering on 3.11 and every
+    version above it. That reddened four CI lanes and stayed green on this
+    machine's 3.10, where the suite is normally run. Choosing a different fixed
+    pair would only defer the same failure to the next hashing change, so the
+    pair is discovered instead.
+
+    Cached, so the warm-cache control stays deterministic within a run: both
+    the writing process and the probing process get the same two seeds every
+    time, rather than a fresh roll per test.
+    """
+    orders: "dict[str, str]" = {}
+    for candidate in range(1, _SEED_SEARCH_CEILING + 1):
+        seed = str(candidate)
+        order = _set_order_under(seed)
+        for earlier_seed, earlier_order in orders.items():
+            if earlier_order != order:
+                return earlier_seed, seed
+        orders[seed] = order
+    raise AssertionError(
+        f"no two seeds in 1..{_SEED_SEARCH_CEILING} order {_SET_LITERAL} differently "
+        f"under Python {sys.version.split()[0]} — every one gave "
+        f"{next(iter(orders.values()), 'nothing')}. The warm-cache control needs two "
+        f"processes to disagree about set order, so it cannot be made meaningful here; "
+        f"widen the set literal rather than raising the ceiling"
+    )
+
+
 def _run_probe(tmp_path: Path) -> "subprocess.CompletedProcess[str]":
     """Run the probe against the synthetic module, cwd'd at its directory."""
-    return _run(tmp_path, [str(_PROBE), "probe_subject"], _PROBER_SEED)
+    return _run(tmp_path, [str(_PROBE), "probe_subject"], _discriminating_seeds()[1])
 
 
 def _import_in_subprocess(tmp_path: Path) -> None:
     """Import the module in a fresh interpreter, so its `.pyc` gets written."""
-    result = _run(tmp_path, ["-c", "import probe_subject"], _WRITER_SEED)
+    result = _run(tmp_path, ["-c", "import probe_subject"], _discriminating_seeds()[0])
     assert result.returncode == 0, f"could not warm the cache: {result.stderr}"
 
 
@@ -120,22 +173,34 @@ def test_the_lengths_that_make_the_scenario_possible_are_still_equal():
     )
 
 
-def test_the_two_seeds_really_do_order_the_set_differently(tmp_path):
-    """Guard the premise of the warm control: the seeds must actually disagree.
+def test_the_seed_search_returns_a_pair_that_really_does_disagree():
+    """Guard the premise of the warm control, by checking the SEARCH's answer.
 
-    If a CPython change made these two seeds produce the same frozenset order,
-    the warm positive control would still pass — while no longer testing
-    anything. That is a guard that cannot fail, so the disagreement is checked
-    rather than assumed.
+    The claim under test is `_discriminating_seeds`' output, not the abstract
+    existence of disagreeing seeds — so the two orderings are re-measured here
+    independently rather than taken from the search's own bookkeeping. A search
+    that returned the first two candidates without comparing them, or returned
+    one seed twice, passes its own internal logic and fails this.
+
+    Two ways to red it, both worth knowing: break the comparison in the search
+    and this reports identical orderings; drop `_SEED_SEARCH_CEILING` to 1 and
+    the search raises before this test can assert anything, naming the
+    interpreter it gave up on. The previous version of this test pinned the two
+    seeds as constants and asserted they disagreed — an honest guard over a
+    dishonest premise, which is exactly how it came to fail on four CI lanes at
+    once while passing here.
     """
-    orders = [
-        _run(tmp_path, ["-c", f"print(list({_SET_LITERAL}))"], seed).stdout.strip()
-        for seed in (_WRITER_SEED, _PROBER_SEED)
-    ]
+    writer_seed, prober_seed = _discriminating_seeds()
+
+    assert writer_seed != prober_seed, (
+        f"the search returned the same seed twice ({writer_seed}); the warm "
+        f"control needs the writing and probing processes to differ"
+    )
+    orders = [_set_order_under(writer_seed), _set_order_under(prober_seed)]
     assert orders[0] != orders[1], (
-        f"PYTHONHASHSEED {_WRITER_SEED} and {_PROBER_SEED} now order the set "
-        f"identically ({orders[0]}), so the warm-cache control no longer "
-        f"exercises cross-process set ordering — pick two seeds that differ"
+        f"the search chose PYTHONHASHSEED {writer_seed} and {prober_seed}, but "
+        f"they order the set identically ({orders[0]}) — so the warm-cache "
+        f"control below no longer exercises cross-process set ordering"
     )
 
 
@@ -170,7 +235,7 @@ def test_the_child_environment_is_free_of_inherited_cache_settings(tmp_path, mon
     result = _run(
         tmp_path,
         ["-c", "import sys; print(sys.flags.dont_write_bytecode, sys.pycache_prefix)"],
-        _PROBER_SEED,
+        "1",  # any seed: this asks what the child inherited, not how it hashes
     )
 
     # `_run` passes check=False, so a child that died would otherwise be

@@ -13,6 +13,7 @@ exercised only by the marked tier and so go unexercised on the machine where
 the tier is skipped.
 """
 
+import contextlib
 import http.client
 import json
 import os
@@ -20,6 +21,7 @@ import re
 import stat
 import subprocess
 import urllib.error
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -395,8 +397,66 @@ def _record_sleeps(monkeypatch):
     return slept
 
 
-def _http_error(code: int) -> urllib.error.HTTPError:
-    return urllib.error.HTTPError(BUSYBOX_MATRIX[0].url, code, "nope", hdrs=None, fp=None)
+@contextlib.contextmanager
+def _closing_http_errors(*codes: int) -> "Iterator[list[urllib.error.HTTPError]]":
+    """Build HTTPErrors for the retry scripts, and CLOSE them on the way out.
+
+    `urllib.error.HTTPError` is a file-like object, not a plain exception:
+    `urllib.response.addbase` subclasses `tempfile._TemporaryFileWrapper`, so
+    every instance carries a temp-file closer. Left unclosed, that closer emits
+    a `ResourceWarning` when the collector eventually reaches it — and pytest
+    reports an unraisable warning against whatever test happens to be running
+    at that moment, not the one that leaked.
+
+    That is not hypothetical. Three errors built here (404, 503, 503) reddened
+    `tests/unit/config/test_settings_path_anchoring.py` on every CI lane from
+    3.11 up, naming a test that has nothing to do with HTTP. CPython 3.10 —
+    this machine's interpreter, and the one lane that stayed green — does not
+    warn at all, so the whole class of defect is invisible to a local run.
+
+    Closing is done in a `finally` so a failing assertion inside the block
+    still cleans up; an escaping exception would otherwise reintroduce the leak
+    on exactly the runs that are already reporting a failure.
+    """
+    errors = [
+        urllib.error.HTTPError(BUSYBOX_MATRIX[0].url, code, "nope", hdrs=None, fp=None)
+        for code in codes
+    ]
+    try:
+        yield errors
+    finally:
+        for error in errors:
+            error.close()
+
+
+def test_the_error_helper_closes_every_error_it_builds():
+    """Guard the close, because the leak it prevents surfaces under someone else's name.
+
+    Asserted through `.closed` rather than by provoking a `ResourceWarning`:
+    the warning only exists on 3.11+, so a warning-based guard would be inert
+    on this machine's 3.10 — green for the wrong reason, in the environment
+    where it would actually be run by hand. `.closed` reports the same fact on
+    every supported version.
+
+    The first assertion is what stops the second from being vacuous: "all
+    closed" is trivially true of an empty list, and would also pass if the
+    helper closed its errors immediately and handed back corpses the retry
+    script could never raise.
+    """
+    with _closing_http_errors(503, 404) as errors:
+        assert [error.code for error in errors] == [503, 404], (
+            "the helper must hand back live, usable errors in the order asked for"
+        )
+        assert not any(error.closed for error in errors), (
+            "the errors must still be open inside the block, or the retry "
+            "scripts below are raising already-closed objects"
+        )
+
+    assert all(error.closed for error in errors), (
+        "the helper leaked an unclosed HTTPError. urllib's HTTPError is a "
+        "tempfile wrapper, so the collector reports it as an unraisable "
+        "ResourceWarning against an unrelated test on Python 3.11+"
+    )
 
 
 def test_a_truncated_download_still_names_the_recovery(tmp_path, monkeypatch):
@@ -567,13 +627,15 @@ def test_a_transient_failure_is_retried_and_a_later_attempt_publishes(tmp_path, 
     release = BUSYBOX_MATRIX[0]
     target = tmp_path / release.filename
     _record_sleeps(monkeypatch)
-    attempts = _stub_attempts(monkeypatch, [_http_error(503), _http_error(503), b"#!/bin/false\n"])
 
-    busybox._fetch(release, target)
+    with _closing_http_errors(503, 503) as errors:
+        attempts = _stub_attempts(monkeypatch, [*errors, b"#!/bin/false\n"])
 
-    assert attempts == [1, 2, 3], f"expected three attempts, saw {attempts}"
-    assert target.exists(), "the succeeding attempt must publish"
-    assert target.stat().st_mode & stat.S_IXUSR, "and publish something runnable"
+        busybox._fetch(release, target)
+
+        assert attempts == [1, 2, 3], f"expected three attempts, saw {attempts}"
+        assert target.exists(), "the succeeding attempt must publish"
+        assert target.stat().st_mode & stat.S_IXUSR, "and publish something runnable"
 
 
 def test_a_deterministic_failure_is_not_retried(tmp_path, monkeypatch):
@@ -589,13 +651,15 @@ def test_a_deterministic_failure_is_not_retried(tmp_path, monkeypatch):
     """
     release = BUSYBOX_MATRIX[0]
     slept = _record_sleeps(monkeypatch)
-    attempts = _stub_attempts(monkeypatch, [_http_error(404)])
 
-    with pytest.raises(BusyBoxUnavailableError, match="after 1 attempt"):
-        busybox._fetch(release, tmp_path / release.filename)
+    with _closing_http_errors(404) as errors:
+        attempts = _stub_attempts(monkeypatch, errors)
 
-    assert attempts == [1], f"a 404 must not be retried, saw {attempts} attempts"
-    assert slept == [], "and must not sleep before failing"
+        with pytest.raises(BusyBoxUnavailableError, match="after 1 attempt"):
+            busybox._fetch(release, tmp_path / release.filename)
+
+        assert attempts == [1], f"a 404 must not be retried, saw {attempts} attempts"
+        assert slept == [], "and must not sleep before failing"
 
 
 def test_a_local_write_failure_is_not_retried(tmp_path, monkeypatch):
