@@ -152,10 +152,43 @@ jobs:
   # for the same reason check-ts does (see that job): a CI job that copies a
   # gate's steps is a second copy of that gate, and it drifts. G8c pins that
   # this job invokes the lane G8b requires to exist.
+  #
+  # TWO ARCHITECTURES, AND THE DISAGREEMENT IS THE SIGNAL.
+  #
+  # The dev VM is aarch64, so its i686/x86_64 artifact rows run under
+  # qemu-user; this job's x86_64 leg runs them natively. That is not a
+  # cosmetic difference. qemu-user INTERCEPTS `/proc/self/exe` and answers it
+  # from its own knowledge of the guest binary — measured inside a chroot with
+  # no /proc mounted at all, `readlink /proc/self/exe` returns `/bin/busybox`,
+  # rc=0, which no real kernel would ever do. BusyBox `--install -s` resolves
+  # its own path that way, so under emulation it bakes a working symlink
+  # target and natively (1.16.1) it bakes a dangling one. That divergence
+  # reached `main` twice as a red CI run nothing local could reproduce
+  # (issues #227 and #228).
+  #
+  # So the tier now runs on BOTH: native x86_64 here, and emulated on arm64
+  # the way a developer's machine sees it. Neither leg is the reference — the
+  # point is that a behaviour which depends on being emulated shows up as the
+  # two legs disagreeing, on the push that introduces it, instead of as a
+  # local green and a remote red. `fail-fast: false` for exactly that reason:
+  # cancelling the second leg when the first fails would throw away the
+  # comparison this job exists to make.
+  #
+  # This is the cheap half of the fix. The durable half is that the harness no
+  # longer trusts environment-sensitive values it can derive itself — see
+  # `_install_applets` in tests/_fixtures/busybox_rootfs.py.
   busybox:
-    name: busybox-artifacts
-    runs-on: ubuntu-latest
+    name: busybox-artifacts (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: astral-sh/setup-uv@v9.0.0
@@ -179,6 +212,23 @@ jobs:
       # busybox.net, so it stays green through a busybox.net outage.
       - name: Install the distro BusyBox so the system row runs rather than skips
         run: sudo apt-get update && sudo apt-get install -y busybox-static
+      - name: Register qemu-user handlers, so the x86 rows can run on arm64
+        if: matrix.arch == 'arm64'
+        # Every row in the matrix is an x86 binary, so on this leg NOTHING runs
+        # without a binfmt handler. `require_interpreter` already fails with a
+        # named error rather than skipping, but it fails once per test; this
+        # fails once, here, where the cause is a missing package rather than a
+        # missing artifact.
+        #
+        # Both handlers are checked, not just one: the matrix has i686 rows and
+        # x86_64 rows, and a leg that registered only `qemu-x86_64` would run
+        # three rows and fail two with an error about the artifacts.
+        run: |
+          sudo apt-get install -y qemu-user-static
+          for handler in qemu-i386 qemu-x86_64; do
+            [ -e "/proc/sys/fs/binfmt_misc/$handler" ] \
+              || { echo "::error::$handler binfmt handler is not registered; the x86 artifact rows cannot execute on this arm64 runner"; exit 1; }
+          done
       - name: Allow unprivileged user namespaces, for the BusyBox rootfs tier
         # The tier chroots into a BusyBox-only root from an unprivileged user
         # namespace. Ubuntu 24.04 ships
