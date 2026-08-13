@@ -1,5 +1,6 @@
 """Unit tests for posix remote file operations (run against a real LocalHost)."""
 
+import base64
 from unittest.mock import AsyncMock
 
 import pytest
@@ -159,6 +160,66 @@ async def test_read_file_round_trips_arbitrary_content_exactly(tmp_path):
     payload = "trailing spaces   \n__OTTO_EOF__ in body\nno final newline"
     await host.write_file(f, payload)
     assert await host.read_file(f) == payload
+
+
+@pytest.mark.asyncio
+async def test_read_file_round_trips_content_whose_base64_wraps_multiple_lines(tmp_path):
+    """The device's ``base64`` wraps its output, and that must not corrupt the read.
+
+    MEASURED: this machine's coreutils ``base64`` wraps at 76 columns by
+    default -- encoding 200 bytes of payload here produces more than one
+    line (confirmed directly: ``base64 <file>`` on a 100-byte input already
+    produces 2 lines). ``read_file`` must flatten that wrapping before
+    decoding with ``validate=True``, or the bare newlines a real device's
+    ``base64`` always emits would make every read fail, not just a
+    corrupted one.
+    """
+    host = LocalHost()
+    f = tmp_path / "wrapped.bin"
+    payload = "y" * 200
+    await host.write_file(f, payload)
+    assert await host.read_file(f) == payload
+
+
+@pytest.mark.asyncio
+async def test_read_file_raises_on_a_stray_non_alphabet_byte_mid_stream(tmp_path):
+    """A transport glitch -- one stray byte inside an otherwise-valid stream -- must be loud.
+
+    MEASURED (reproduced in this test): decoding this exact corrupted
+    string with the stdlib DEFAULT (``base64.b64decode(x)``, i.e.
+    ``validate=False``) silently discards the stray ``@`` and recovers the
+    ORIGINAL payload byte-for-byte -- the corruption is invisible, not
+    wrong-looking. ``read_file`` must not rely on that luck: decoding with
+    ``validate=True`` on the same input must raise instead of silently
+    returning a plausible string.
+
+    A corrupt decode is also a different condition than a failed read, and
+    must be reported as one: ``read_file`` already raises
+    :class:`FileNotFoundError` when the remote command itself fails (see
+    ``test_read_file_missing_raises``), while here the command succeeded and
+    something came back -- it just was not valid base64. The raised error
+    must name the path it failed on so a caller chasing the failure is not
+    left guessing which read broke.
+    """
+    host = LocalHost()
+    f = tmp_path / "corrupt.bin"
+    payload = b"the quick brown fox jumps over the lazy dog, more text for length"
+    encoded = base64.b64encode(payload).decode("ascii")
+    corrupted = encoded[:10] + "@" + encoded[10:]
+    assert base64.b64decode(corrupted) == payload, (
+        "setup check: the default decode must silently recover the original bytes "
+        "here, or this test is not exercising the discard this task is about"
+    )
+    host.exec = AsyncMock(  # type: ignore[method-assign]
+        return_value=CommandResult(
+            status=Status.Success, value=corrupted, command="base64 ...", retcode=0
+        )
+    )
+    with pytest.raises(ValueError, match="not valid base64") as exc_info:
+        await host.read_file(f)
+    assert str(f) in str(exc_info.value), (
+        f"error should name the path it failed on: {exc_info.value}"
+    )
 
 
 # ---------------------------------------------------------------------------

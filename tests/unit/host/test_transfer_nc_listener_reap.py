@@ -84,17 +84,21 @@ async def _never_probes(cmd: str, **_kwargs: object) -> CommandResult:
     raise AssertionError(f"a declared userland must not probe, but it ran {cmd!r}")
 
 
-# The four capabilities nc does not read, declared anyway. Not padding: a
+# The five capabilities nc does not read, declared anyway. Not padding: a
 # `Userland` with anything left to probe still CALLS its runner, and an earlier
 # version of this file declared `timeout_style` alone — so `_never_probes` was
 # reached seven times per helper call (both elevation spellings, both base64
 # spellings, stat, wc, $BASH_VERSION) and its message was false every time.
+# `checksum` joined this table when that capability was added; leaving it
+# undeclared would add an eighth unwanted call ($BASH_VERSION's neighbour,
+# `md5sum < /dev/null`).
 # Values are ones Tier 1 measured as real answers; nothing here reads them.
 _OTHER_DECLARED_CAPABILITIES = {
     "shell_dialect": "ash",
     "elevation": "none",
     "base64_flag": "-d",
     "stat_size": "stat",
+    "checksum": "md5sum",
 }
 
 # `timeout_style` is the parameter under test; `version` is documentation and is

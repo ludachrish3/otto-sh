@@ -17,6 +17,16 @@ to agree: `src/otto/host/userland.py` issues them at runtime, and
 They are deliberately not shared through an import — a product reading its
 spellings from a test could not be caught drifting by that test — so each of
 the three names the other two.
+
+Not every probe `Userland` issues has a row here, only the ones with a real
+argument-parsing question a BusyBox version could answer differently:
+`timeout`, `base64`, `stat`, `wc`. `Userland.elevation`'s `command -v`
+presence checks, `Userland.shell_dialect`'s `$BASH_VERSION` variable read, and
+`Userland.checksum`'s single-spelling `md5sum < /dev/null` probe have no such
+question, so they carry no Tier 1 row and only the other two copies exist for
+them -- `checksum`'s PRESENCE and OUTPUT format (not this exact probe
+spelling) is substantiated instead by `test_shell_codec_contracts.py`'s real
+`md5sum` round trips over the matrix.
 """
 
 import functools
@@ -74,7 +84,7 @@ def _banner_version(path: Path) -> str:
     # Identity before form. `vX.Y.Z` is a shape a great many binaries print, so
     # matching it alone would let any `busybox` on PATH — a wrapper script, a
     # toybox symlink, something a distro renamed — feed a row of the measured
-    # table that five product decisions in `src/otto/host/userland.py` rest on.
+    # table that six product decisions in `src/otto/host/userland.py` rest on.
     # Only bites the `[system]` row: the other five are hash-pinned artifacts.
     if "BusyBox" not in banner:
         pytest.fail(

@@ -14,6 +14,7 @@ an embedded host implements only the subset its filesystem supports.
 """
 
 import base64
+import binascii
 import shlex
 from pathlib import Path
 from typing import Annotated
@@ -86,13 +87,60 @@ class PosixFileOps:
         Reads via ``base64`` — the exact inverse of :meth:`write_file`'s base64
         transport — so content round-trips byte-exact regardless of trailing
         newlines, trailing whitespace, or shell metacharacters (``exec``'s
-        per-line ``rstrip``/rejoin would otherwise corrupt them). Raises
-        :class:`FileNotFoundError` when the read fails (missing path, permissions).
+        per-line ``rstrip``/rejoin would otherwise corrupt them).
+
+        The device's ``base64`` wraps its output (measured: this machine's
+        coreutils ``base64``, like BusyBox's, wraps at 76 columns by default),
+        so the raw command output always contains newlines. Those are
+        stripped locally before decoding — the base64 alphabet
+        (``[A-Za-z0-9+/=]``) never contains whitespace, so flattening it out
+        is lossless regardless of how the wrapping happened. Decoding then
+        uses ``base64.b64decode(..., validate=True)`` rather than the stdlib
+        default (``validate=False``): the default does not IGNORE bytes
+        outside the alphabet, it silently DISCARDS them, so any
+        contamination beyond the wrapping newlines the flatten step already
+        accounts for — a login banner fragment, a stray warning line, a
+        short or partial read — would decode without complaint.
+        ``validate=True`` turns that into a loud failure instead, at the
+        cost of requiring the flatten step to run first (bare wrapping
+        newlines are themselves outside the alphabet and would otherwise be
+        rejected as contamination).
+
+        Be precise about what ``validate=True`` buys: it detects that the
+        stream was corrupted, not that a corrupted stream decodes to WRONG
+        bytes. Measured directly (see
+        ``test_read_file_raises_on_a_stray_non_alphabet_byte_mid_stream``):
+        injecting one stray non-alphabet byte into an otherwise-valid
+        encoded string and decoding it with the stdlib default recovers the
+        ORIGINAL bytes exactly — the discard removes the intruder and
+        leaves a valid string, so that specific corruption is invisible
+        under the default, not wrong-looking. A truncated or
+        partially-read stream is the case that actually yields wrong bytes;
+        this method still cannot distinguish that from a genuine short file,
+        since both look like well-formed, complete base64.
+
+        Raises:
+            FileNotFoundError: the remote command itself failed (missing
+                path, permissions) — nothing came back to decode.
+            ValueError: the command succeeded but its output, once wrapping
+                was flattened out, was not valid base64. This is a
+                transport or content problem, not a missing file, and
+                reporting it as :class:`FileNotFoundError` would send a
+                caller looking for the wrong thing.
         """
         result = await self.exec(f"base64 {self._q(path)}")  # ty: ignore[unresolved-attribute]
         if not result.status.is_ok:
             raise FileNotFoundError(f"read_file({path!r}) failed: {result.value}")
-        return base64.b64decode(result.value).decode()
+        flattened = "".join((result.value or "").split())
+        try:
+            decoded = base64.b64decode(flattened, validate=True)
+        except binascii.Error as exc:
+            raise ValueError(
+                f"read_file({path!r}): device output was not valid base64 once "
+                f"wrapping was flattened ({exc}); the stream may be truncated or "
+                f"contaminated by something other than ordinary line-wrapping"
+            ) from exc
+        return decoded.decode()
 
     @cli_exposed
     async def write_file(self, path: "str | Path", data: str, append: bool = False) -> Result:

@@ -18,7 +18,7 @@ off the console and out of both log files at otto's default ``INFO``. They are
 written in a form that can be pasted into ``lab.json`` to skip the probes next
 time.
 
-**One round asks about all five, whatever the caller came for.** There is no
+**One round asks about all six, whatever the caller came for.** There is no
 per-capability resolution: :meth:`Userland.resolve` settles everything not
 already declared, and every consumer awaits that same whole round. Who reads
 what today:
@@ -28,15 +28,23 @@ what today:
 ``timeout_style``
     ``otto.host.transfer.nc.NcFileTransfer._nc_listener_prefix``
 ``stat_size``
-    nothing yet — ``transfer/nc.py`` still writes ``stat -c %s`` at three sites
+    ``otto.host.transfer.shell.ShellFileTransfer._run_get`` (via
+    ``_remote_size``) — ``transfer/nc.py`` still writes its own
+    ``stat -c %s`` at three sites, unrelated to this probe
 ``base64_flag``
-    nothing yet
+    ``otto.host.transfer.shell.ShellFileTransfer`` (both ``_run_put`` and
+    ``_run_get``)
+``checksum``
+    ``otto.host.transfer.shell.ShellFileTransfer`` (both ``_put_one`` and
+    ``_get_one``, for post-transfer integrity verification — ``md5sum`` on
+    both sides when present, a byte-size comparison via ``stat_size``
+    otherwise)
 ``shell_dialect``
     nothing yet — an ``ash`` frame is registered, but nothing routes this
     probe's result to it; see the hole below
 
-So the first ``run(sudo=True)`` against a host issues up to ten probes to read
-one answer that probes 1-2 settled. The whole round is deliberate — splitting
+So the first ``run(sudo=True)`` against a host issues up to eleven probes to
+read one answer that probes 1-2 settled. The whole round is deliberate — splitting
 it means a second set of exec channels against a server that refuses rather
 than queues them (see ``_RETRY_COOLDOWN_S``), a second chance to strand a
 capability at its cannot-ask default, and a partial ``userland_options``
@@ -59,16 +67,32 @@ and passes it to ``build_command_frame`` — every existing
 this probe's result. So the resolved value is still a MEASUREMENT to record
 and pin, not a frame name any caller looks up through this probe. Until
 something does that routing, do not feed :attr:`Userland.shell_dialect` to
-the frame registry; the other four are safe to consume today, though only
-two of them have a consumer at all — see the table above.
+the frame registry; the other five are safe to consume today, and now all
+five of them have a consumer — see the table above — leaving ``shell_dialect``
+the only capability in this module still without one.
 
-The probe COMMAND SPELLINGS here have two other copies, and all three have to
-agree: ``tests/busybox/test_applet_contracts.py`` measures them against real
-BusyBox binaries, and ``tests/unit/host/test_userland.py`` pins the exact list
-and order this module issues. They are deliberately NOT shared through an
-import — a module that read its spellings from the test that checks them could
-not be caught drifting by that test — so each of the three names the other two
-instead.
+Most of the probe COMMAND SPELLINGS here have two other copies, and where a
+copy exists all three have to agree: ``tests/busybox/test_applet_contracts.py``
+measures them against real BusyBox binaries, and
+``tests/unit/host/test_userland.py`` pins the exact list and order this module
+issues. They are deliberately NOT shared through an import — a module that
+read its spellings from the test that checks them could not be caught
+drifting by that test — so each of the three names the other two instead.
+
+That third, Tier 1 copy exists only for spellings with a real ARGUMENT-PARSING
+question a BusyBox version could answer differently -- ``timeout``'s
+``-t SECS PROG`` vs ``SECS PROG``, ``base64``'s ``-d`` vs ``--decode``,
+``stat``'s ``-c %s`` vs ``--format=%s``, ``wc``'s ``-c <`` vs ``-c FILE``.
+``elevation`` (a bare ``command -v`` presence check), ``shell_dialect`` (a
+shell-builtin variable read), and ``checksum`` (``Userland._probe_checksum``'s
+own docstring: one spelling, not a contested pair) have no such question, so
+Tier 1 carries no copy of theirs and the two-copy rule applies to them
+instead. ``checksum``'s OUTPUT format (lowercase hex, matching
+``hashlib.md5().hexdigest()``) is substantiated a different way: Tier 1's
+``tests/busybox/test_shell_codec_contracts.py`` runs a real ``md5sum
+/tmp/payload.bin`` (not this module's ``< /dev/null`` probe spelling) across
+the matrix and compares its first field byte-for-byte -- presence and format,
+not this exact probe command.
 """
 
 import asyncio
@@ -90,9 +114,20 @@ _monotonic = time.monotonic
 
 # Every probe is a single short command whose only job is to exit 0 or not.
 # Bounded so an unreachable or wedged host fails resolution instead of hanging
-# the first command the caller actually cares about. Not a discriminator — no
-# assertion reads the VALUE — so it can be widened freely. Its PRESENCE on the
-# call is load-bearing and is pinned.
+# the first command the caller actually cares about. Its PRESENCE on the call
+# is load-bearing and is pinned -- but its VALUE is NOT free to widen, and
+# claiming so was the same fallacy _RESOLVE_BUDGET_S's own comment below
+# corrects for that constant: this one is the OTHER half of the same ratio,
+# ceil(_RESOLVE_BUDGET_S / _PROBE_TIMEOUT_S), and widening it shrinks how many
+# probes one resolution affords exactly as widening the budget grows that
+# count. MEASURED, by editing just this constant and running
+# tests/unit/host/test_userland.py: 20.0 keeps all 55 tests green (30/20 still
+# affords 2 probes, ceil'd); 31.0 already reds
+# test_resolution_stops_once_the_whole_budget_is_spent[as-shipped] -- the
+# budget now affords only 1 probe instead of 2, so elevation is no longer
+# measured before the budget runs out. Widening this safely means changing
+# the constant, then running tests/unit/host/test_userland.py and reading
+# what reds; that run IS the guard, same as below.
 #
 # ENFORCED BY US, not by the callee, and the difference is the whole reason
 # this number means anything. `_probe` wraps the call in `asyncio.wait_for`
@@ -104,16 +139,16 @@ _monotonic = time.monotonic
 _PROBE_TIMEOUT_S = 10.0
 
 # Ceiling on one whole resolution, and the reason both numbers have to be read
-# together. THE ARITHMETIC: resolution issues at most ten probes (2 elevation +
-# 3 timeout + 2 base64 + 2 stat + 1 dialect), so a host that swallows every one
-# of them costs 10 x _PROBE_TIMEOUT_S = 100s unbounded. resolve() holds its
+# together. THE ARITHMETIC: resolution issues at most eleven probes (2 elevation +
+# 3 timeout + 2 base64 + 2 stat + 1 checksum + 1 dialect), so a host that swallows
+# every one of them costs 11 x _PROBE_TIMEOUT_S = 110s unbounded. resolve() holds its
 # lock for that whole span, so on a concurrent consumer — nc's bulk put fans
 # its files out and each one awaits resolution — every queued caller waits the
 # full span out BEFORE its own timeout starts counting. This budget converts
 # that into a stated bound: the deadline is set once per resolution, each probe
 # is granted min(_PROBE_TIMEOUT_S, whatever is left), and a probe with nothing
 # left is never sent. So a wedged host costs at most ceil(30/10) = 3 probe
-# timeouts, not ten.
+# timeouts, not eleven.
 #
 # What the unreached capabilities get is a NO-INFORMATION DEFAULT, not a "no"
 # (see _UNASKABLE_DEFAULTS), and they are asked again on a later resolve()
@@ -133,28 +168,65 @@ _PROBE_TIMEOUT_S = 10.0
 # are, and is parametrized over ratios that do NOT divide evenly, because two
 # separate defects once hid behind the fact that these two divide exactly.
 #
-# HOW FAR IT CAN BE WIDENED: up to and including 9 x _PROBE_TIMEOUT_S — 90s at
-# today's numbers — and no further. Not 10 x, which is what an earlier version
-# of this clause said by carrying the floor reading the rest of this comment
-# was corrected away from. The guard's condition is ceil(B / P) < 10, so the
-# last passing value is the largest B with ceil(B / P) <= 9, i.e. B <= 9 x P.
-# MEASURED in both directions rather than reasoned: green at 90.0 (40 passed),
-# red at 91.0.
+# WHAT NOT TO DO WHEN WIDENING THIS: state a "safe up to N seconds" number in
+# this comment. An earlier version of this note did exactly that (first 90s,
+# then "corrected" to 100s) and BOTH were wrong -- measured directly by
+# editing just this constant and running tests/unit/host/test_userland.py:
+# 40.0 keeps all 55 tests green; 41.0 already reds
+# test_resolution_stops_once_the_whole_budget_is_spent[as-shipped] on one
+# assertion; 90.0 reds the SAME row on a DIFFERENT assertion (see 1. below --
+# one test, two distinct ways to fail it, not two tests); 100.0 adds a second
+# test failing; 101.0 adds a third. Neither prior number was ever guarded by
+# an assertion that reads it, which is exactly how both survived being wrong
+# until someone happened to measure them.
 #
-# The reason the line sits there at all: once ceil(B / P) reaches 10 the budget
-# affords every probe, so it bounds nothing the per-probe timeout had not
-# already bounded, and it has stopped being a budget. The guard refuses to
-# pass in that state rather than sitting there vacuously green, which is the
-# right behaviour — but be ready for the first failure to point somewhere
-# else. With nothing ever skipped, the "resolution budget spent" line is never
-# emitted, so the log-site coverage guard reds too, reporting a call site that
-# was never exercised. That message is about logging and the cause is this
-# number; check the budget row of
-# test_resolution_stops_once_the_whole_budget_is_spent before believing it.
+# There is no clean replacement formula, because the real ceiling is the
+# INTERACTION of three unrelated mechanisms in three different tests, not one
+# arithmetic bound on probe count:
 #
-# Widening past 90s therefore means raising _PROBE_TIMEOUT_S with it, or
-# deciding the whole-resolution bound is not worth keeping and removing both
-# the constant and its guard deliberately.
+# 1. test_resolution_stops_once_the_whole_budget_is_spent's "as-shipped" row
+#    hard-codes what ONE SPECIFIC scripted device (answers only
+#    `command -v timeout`) measures at the SHIPPED budget. Widening the
+#    budget alone -- with that row's own device script unchanged -- lets
+#    LATER probes in that script actually run: at affordable=5,
+#    timeout_style stops being merely assumed and becomes genuinely
+#    MEASURED (as "absent" -- the same value the assumed default already
+#    had, but now a settled one, which changes what as_lab_json() reports),
+#    reddening the row's own pasteable-dict assertion (41.0); at affordable=9,
+#    stat_size is fully measured too, this time to a VALUE that actually
+#    differs from its assumed default ("absent" vs "stat"), reddening the
+#    row's whole-map _answers() assertion for an unrelated reason (90.0).
+# 2. test_a_wedged_host_is_not_amplified_by_the_fan_out scripts a device
+#    where EVERY probe is unreachable. Against that script,
+#    `_probe_timeout` short-circuits (`if present is None: return None`)
+#    the moment `command -v timeout` itself cannot be asked, so the whole
+#    resolution can only ever ISSUE 9 commands (2 elevation + 1 timeout +
+#    2 base64 + 2 stat + 1 checksum + 1 dialect -- confirmed directly from
+#    the failing assertion's own captured call list), never 11, no matter
+#    how much budget the caller affords. Once the budget affords 10 or
+#    more, the test's own `affordable = ceil(budget / probe)` prediction
+#    exceeds what the algorithm can structurally send, and
+#    `len(runner.calls) == affordable` reds on a probe-tree ceiling that
+#    has nothing to do with the time budget (100.0).
+# 3. test_every_logger_call_site_is_exercised_at_debug is the third red, at
+#    101.0, and it breaks for a reason that has nothing to do with either
+#    mechanism above. The "resolution budget spent" line (`_probe`, guarding
+#    `if remaining <= 0`) is only emitted when a probe is skipped for lack of
+#    budget. Once the budget affords every probe -- which is exactly what (2)
+#    measures becoming structurally true once affordable reaches 10 -- nothing
+#    is ever skipped, that line is never emitted, and the log-site coverage
+#    guard reds reporting a call site "never exercised". BEWARE when chasing
+#    this one: the failure message is about logging and reads like a logging
+#    defect; the actual cause is this constant. Check the budget row of
+#    test_resolution_stops_once_the_whole_budget_is_spent (and mechanism 2
+#    above) before believing the message.
+#
+# All three are properties of their SCRIPTS (and, for 3., of what (2) does
+# structurally), not of this constant in general -- a differently-scripted
+# device would move any of the three boundaries. So widening this safely
+# means changing the constant, then running tests/unit/host/test_userland.py
+# and reading what reds; that run IS the guard, and no number typed into this
+# comment can substitute for it.
 _RESOLVE_BUDGET_S = 30.0
 
 # What each capability answers when its probes could not be ASKED — the
@@ -192,6 +264,21 @@ _RESOLVE_BUDGET_S = 30.0
 #     ``stat``. ``transfer/nc.py`` has always sized remote files with
 #     ``stat -c %s`` (three call sites), so this is the status quo; ``absent``
 #     would be a capability regression rather than a neutral guess.
+# ``checksum``
+#     ``absent`` — and the reasoning here is the OPPOSITE of ``stat_size``'s.
+#     ``stat_size``'s default encodes the status quo (nc already assumed
+#     ``stat`` before this table existed); ``checksum`` has no status quo to
+#     preserve, because nothing consumed a checksum capability before this
+#     one was added. What ``absent`` actually buys is degrading to the check
+#     that ALWAYS works: :class:`~otto.host.transfer.shell.ShellFileTransfer`
+#     falls back to a byte-size comparison via ``stat_size`` when
+#     ``checksum == "absent"``, and that fallback never depends on a binary
+#     otto never confirmed exists. Defaulting to ``"md5sum"`` instead would
+#     do the opposite of degrading safely: an unasked host would have a
+#     transfer emit ``md5sum`` on faith, and on the host that could not even
+#     answer the probe that command is exactly the one likely to 127 —
+#     turning a transfer that actually landed correctly into a reported
+#     failure, not a weaker check.
 # ``shell_dialect``
 #     ``bash``. otto's unix path has always assumed it, and no ``CommandFrame``
 #     is registered under ``ash`` at all — see the module docstring's hole.
@@ -203,6 +290,7 @@ _UNASKABLE_DEFAULTS = {
     "timeout_style": "absent",
     "base64_flag": "absent",
     "stat_size": "stat",
+    "checksum": "absent",
     "shell_dialect": "bash",
 }
 
@@ -319,7 +407,7 @@ class Userland:
         ``rebuild_connections()``, nothing short of a new host object.
 
         The retry is per capability, not per round. A device that answered
-        four of five has already paid for those four, and re-issuing them
+        five of six has already paid for those five, and re-issuing them
         would put probe traffic back on the fan-out path the lock protects.
 
         It is also RATE LIMITED, by ``_RETRY_COOLDOWN_S``, and that bound is
@@ -337,10 +425,10 @@ class Userland:
         fan-out — against a server that refuses excess SSH channels rather
         than queueing them.
 
-        **WHAT A CALLER PAYS.** All five capabilities, not the one it came
+        **WHAT A CALLER PAYS.** All six capabilities, not the one it came
         for: there is no scoped form of this call, so ``run(sudo=True)``
-        issues up to ten probes to read ``elevation``, which probes 1-2
-        settled. On a healthy host that is ten fast round trips; on a
+        issues up to eleven probes to read ``elevation``, which probes 1-2
+        settled. On a healthy host that is eleven fast round trips; on a
         refusing one it is up to ``_RESOLVE_BUDGET_S`` (30s), and up to that
         again on the next call outside ``_RETRY_COOLDOWN_S`` (60s). None of it
         is charged to the caller's ``timeout=`` — ``BaseHost.run`` awaits this
@@ -372,6 +460,7 @@ class Userland:
             ("timeout_style", self._probe_timeout),
             ("base64_flag", self._probe_base64),
             ("stat_size", self._probe_stat),
+            ("checksum", self._probe_checksum),
             ("shell_dialect", self._probe_dialect),
         )
         sources: dict[str, str] = {}
@@ -475,6 +564,22 @@ class Userland:
             return None
         return "absent"
 
+    async def _probe_checksum(self) -> str | None:
+        # One spelling only, unlike stat_size's stat/wc pair: there is no
+        # second, widely-available checksum tool this module falls back to,
+        # so a single probe answers the whole capability the same way
+        # _probe_dialect's single `$BASH_VERSION` check does. `< /dev/null`
+        # is a redirect, feeding md5sum's stdin -- matching wc's probe just
+        # above, not stat's, which passes `/dev/null` as a plain positional
+        # argument and reads no stdin at all. `_probe` only checks the exit
+        # code (see its own docstring), never the output, so a positional
+        # `md5sum /dev/null` would answer identically; redirect form was
+        # chosen only to match the OTHER redirect-based probe in this set.
+        md5sum = await self._probe("md5sum < /dev/null")
+        if md5sum is None:
+            return None
+        return "md5sum" if md5sum else "absent"
+
     async def _probe_dialect(self) -> str | None:
         # Behaviour, not a name: BusyBox ships both ash and hush and `sh` may
         # be either, so `$BASH_VERSION` presence is the only thing that
@@ -508,6 +613,17 @@ class Userland:
     def stat_size(self) -> str:
         """``"stat"`` | ``"wc"`` | ``"absent"``."""
         return self._get("stat_size")
+
+    @property
+    def checksum(self) -> str:
+        """``"md5sum"`` | ``"absent"``.
+
+        Consumed by :class:`~otto.host.transfer.shell.ShellFileTransfer` to
+        verify a PUT or GET landed intact: ``md5sum`` on both sides when this
+        resolves to ``"md5sum"``, a byte-size comparison via
+        :attr:`stat_size` when it resolves to ``"absent"``.
+        """
+        return self._get("checksum")
 
     @property
     def shell_dialect(self) -> str:

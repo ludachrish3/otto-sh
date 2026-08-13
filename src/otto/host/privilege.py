@@ -171,8 +171,8 @@ class PosixPrivilege:
         concurrency-safe and never raises for a failed probe.
 
         **What it costs, stated rather than implied.** ``resolve()`` has no
-        scoped form: it settles all five capabilities, so the first elevated
-        command on a host issues up to ten probes to read the one — settled by
+        scoped form: it settles all six capabilities, so the first elevated
+        command on a host issues up to eleven probes to read the one — settled by
         probes 1-2 — that :meth:`_elevate` looks at. Free thereafter only once
         every capability is SETTLED; a round that could not ask leaves nothing
         settled, and the next elevated call outside ``_RETRY_COOLDOWN_S`` (60s)

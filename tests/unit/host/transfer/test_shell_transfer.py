@@ -1,0 +1,2104 @@
+"""Tests for ``ShellFileTransfer`` PUT and GET: chunked base64 over exec.
+
+``shell`` moves files using nothing but command execution -- no ``scp``, no
+``nc``, no ``rsync`` -- for a device whose entire toolkit is a POSIX shell.
+
+Two fakes, answering two different questions:
+
+``_RecordingExec``
+    Records every command string issued, in order, and never runs anything.
+    Cheap, and the only way to inspect ORDER or COUNT (how many chunks, which
+    redirect, which command came last) without paying for a real shell. For
+    GET it can also be handed a scripted ``outputs`` queue so a caller can
+    answer the size probe with a specific number -- it still never *runs*
+    ``dd`` or ``base64``, it only says what the size probe returned.
+``_ShellExecutingExec``
+    Actually runs each command through ``/bin/sh -c``, ``cwd`` SET to the
+    test's ``tmp_path`` -- not a sandbox: an absolute path outside ``cwd``
+    still gets written there (verified locally), it's just that every path
+    this backend ever emits is itself absolute and derived from ``tmp_path``,
+    so nothing here ever reaches outside it in practice. Lets a test read
+    the REAL file that landed on disk. Complementary to ``_RecordingExec``,
+    not a replacement for it: round 3 review found that it does NOT guard
+    temp-then-mv (see ``TestShellPutOrdering`` and
+    ``TestShellPutContentIntegrity``'s docstrings for exactly which of round
+    1's three found holes each fake actually closes).
+
+For GET specifically, note that the LOCAL side (writing the decoded temp,
+``Path.replace()``) is never faked by either class -- both fakes only stand in
+for the REMOTE exec channel (the size probe and each ``dd | base64``). Real
+disk I/O happens in every GET test that reaches ``_get_one`` at all,
+regardless of which fake is used -- the difference between the two is only
+whether the *remote* command is actually executed by a real shell
+(``_ShellExecutingExec``) or answered from a script (``_RecordingExec``).
+The exception is ``TestShellGetRefusal``'s two tests: both raise
+``UnsupportedOnUserlandError`` out of ``_run_get`` before the per-file loop
+(and therefore ``_get_one``) is ever reached, so no local file is created or
+written for either.
+
+Guards, and which mutation each backs:
+
+1. Temp-then-mv, not a direct write -- ``TestShellPutOrdering`` is written
+   to isolate this property specifically, but it is not the only test that
+   reddens under the mutation: measured directly (``temp = dst``, the
+   ``mv`` call left in place so it self-moves), 8 of this file's 50 tests
+   across 5 classes fail -- ``TestShellPutOrdering``,
+   ``TestShellPutSequentialFailure``, ``TestShellPutIntegrityVerification``,
+   ``TestShellPutContentIntegrity``, and ``TestShellChunkLineLength`` --
+   each for its own reason (a changed transcript, a step never reached, a
+   shorter command line once *temp* is no longer a generated name), not
+   because it was built to catch this. ``TestShellPutContentIntegrity``'s
+   two are themselves an artifact of this dev machine's GNU ``mv`` refusing
+   a self-move ("are the same file"), which BusyBox's ``mv`` does not do
+   (tolerant, rc 0) -- so even those are not real content-based evidence;
+   see that class's own docstring, round 3 finding N1, for why no CONTENT
+   check can tell this mutation apart from a correct transfer.
+2. Staging happens in the destination's OWN directory, never ``/tmp`` --
+   ``TestShellPutOrdering::test_temp_stages_in_the_same_directory_as_the_destination``.
+3. The final ``mv`` actually lands the file at the real destination --
+   ``TestShellPutFileArrivesAtDest``.
+4. ``base64_flag == "absent"`` is a refusal, not a silent success --
+   ``TestShellPutRefusal``.
+5. Chunk slicing reconstructs the source byte-for-byte -- SPLIT across two
+   classes on purpose: ``TestShellPutChunkStructure`` checks the shape the
+   encoder produced (count, redirect operator, order) from the transcript;
+   ``TestShellPutContentIntegrity`` checks the bytes that actually land on
+   disk. Only the second can tell "correct content, different chunk count"
+   apart from "wrong content" -- see that class's docstring for the two
+   off-by-one variants this distinction matters for.
+6. Every path interpolated into a command is quoted, and it matters --
+   ``TestShellPutContentIntegrity::test_a_filename_with_shell_metacharacters_is_not_interpreted``.
+7. A failed temp CREATION (the empty-file path) cleans up like every other
+   failure -- ``TestShellPutSequentialFailure::test_a_failed_empty_file_creation_cleans_up``.
+
+GET's own guards, ``G``-prefixed and numbered independently below -- NOT a
+claimed 1:1 correspondence to PUT's numbered list above (``G3``'s refusal
+guard is PUT's item 4's analogue; ``G4``'s chunk-slicing guard is PUT's item
+5's; see each entry's own note):
+
+G1. Temp-then-``Path.replace()``, not a direct write to the destination --
+    ``TestShellGetStaging``, BOTH tests: under ``temp = dst`` (the
+    direct-write mutation), measured to redden 2 of 2 in that class (48
+    passed elsewhere, re-measured against this file's current 50 tests --
+    the file has grown since fix round 1's original count). Content tests
+    cannot substitute -- see ``TestShellGetSequentialFailure::test_a_failed_chunk_read_...``'s
+    own docstring for the measured reason a content check stays green under
+    this exact mutation.
+G2. Staging happens in the destination's own directory, never elsewhere --
+    ``TestShellGetStaging::test_temp_stages_in_the_same_directory_as_the_destination``.
+    This is where the cross-device argument belongs (it is a property of
+    WHERE the temp lives, not of temp-then-replace as a mechanism): unlike
+    PUT's remote ``mv``, which on some implementations degrades to a copy
+    across filesystems rather than failing, ``Path.replace()`` has no such
+    fallback -- it raises ``OSError: [Errno 18] Invalid cross-device link``
+    outright when source and destination are on different filesystems
+    (measured locally: replacing a file from ``/dev/shm`` (tmpfs) onto this
+    repo's ext4 checkout fails exactly that way) -- so staging in
+    ``dest_dir`` specifically, not just "somewhere before the final
+    replace," is load bearing for GET even more directly than it is for
+    PUT.
+G3. ``base64_flag == "absent"`` and ``stat_size == "absent"`` are both
+    refusals, not a silent success or a hang -- ``TestShellGetRefusal``.
+    (PUT's analogue is its item 4, not item 3 -- these G-numbers are their
+    own independent sequence, not a claimed 1:1 mapping onto PUT's list.)
+G4. Chunk slicing (via ``dd bs/skip/count``) reads the source byte-for-byte,
+    in order -- split the same way as PUT's item 5: ``TestShellGetChunkStructure``
+    (transcript: skip sequence, chunk count) and
+    ``TestShellGetContentIntegrity`` (actual bytes on disk, including a
+    short final chunk and a payload where chunk order is only provable by
+    content).
+G5. A failure partway through leaves the real destination untouched and its
+    local temp removed -- ``TestShellGetSequentialFailure``.
+G6. Size 0 is a real case: zero chunks, an empty file still lands, progress
+    still fires once at ``(0, 0)`` -- ``TestShellGetEmptyFile``.
+G7. The device's ``base64`` wraps its output (measured, not assumed -- see
+    below), and decoding must both tolerate that AND reject genuine garbage
+    loudly rather than silently drop it -- ``TestShellGetWrappedAndValidatedDecode``.
+"""
+
+import asyncio
+import base64
+import hashlib
+import re
+import subprocess
+from collections.abc import Callable
+from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
+from otto.host.connections import ConnectionManager
+from otto.host.errors import UnsupportedOnUserlandError
+from otto.host.options import UserlandOptions
+from otto.host.transfer.base import TransferContext
+from otto.host.transfer.shell import _SHELL_CHUNK_BYTES, ShellFileTransfer
+from otto.host.userland import Userland
+from otto.result import CommandResult
+from otto.utils import Status
+
+# ---------------------------------------------------------------------------
+# Shared fakes
+# ---------------------------------------------------------------------------
+
+
+def _ok(output: str = "") -> CommandResult:
+    return CommandResult(command="", value=output, status=Status.Success, retcode=0)
+
+
+def _err(output: str = "boom") -> CommandResult:
+    return CommandResult(command="", value=output, status=Status.Error, retcode=1)
+
+
+async def _never_probes(cmd: str, **_kwargs: object) -> CommandResult:
+    """A ``Userland`` runner that must not be called -- every field is declared below."""
+    raise AssertionError(f"a fully-declared userland must not probe, but it ran {cmd!r}")
+
+
+def _declared_userland(
+    base64_flag: str, stat_size: str = "stat", checksum: str = "absent"
+) -> Userland:
+    """A resolved ``Userland`` with every capability declared, so ``resolve()`` probes nothing.
+
+    ``UserlandOptions`` has seven fields; the six named here (shell_dialect,
+    elevation, base64_flag, stat_size, checksum, timeout_style) are its six
+    CAPABILITIES -- the seventh, ``version``, is metadata only ("Never gates
+    behaviour") and is never probed, so it needs no declaration here. All six
+    capabilities are declared so a fully-resolved object never calls
+    ``_never_probes``.
+
+    *checksum* defaults to ``"absent"``, not ``"md5sum"`` -- every existing
+    PUT/GET test in this module, written before integrity verification
+    existed, exercises the byte-size fallback by default and stays green
+    without scripting an extra remote answer. Tests that specifically cover
+    the ``md5sum`` path pass ``checksum="md5sum"`` explicitly.
+    """
+    return Userland(
+        UserlandOptions(
+            shell_dialect="ash",
+            elevation="none",
+            base64_flag=base64_flag,
+            stat_size=stat_size,
+            checksum=checksum,
+            timeout_style="absent",
+        ),
+        _never_probes,
+    )
+
+
+class _RecordingExec:
+    """Fake ``exec_cmd``: records every command issued, in order. Never runs anything.
+
+    *fail_when* optionally marks a command as failing by predicate -- used to
+    simulate a chunk-write, create, or ``mv`` failure mid-transfer.
+
+    *outputs*, when given, is a queue of canned ``CommandResult`` values
+    (successful, with the given ``value``) handed out ONE PER CALL, in
+    order; once exhausted, later calls fall back to a bare success like the
+    no-``outputs`` case. This does not make the fake "run" anything -- it
+    still never touches a real ``dd`` or ``base64`` -- it just lets a GET
+    test script a specific answer for the size probe (a real number
+    ``_remote_size`` can parse) without needing a real shell.
+
+    *answer_when*, when given, is a predicate-to-answer function checked
+    BEFORE *fail_when* and BEFORE the *outputs* queue: the first call it
+    returns a non-``None`` string for gets that string as its output,
+    regardless of position in the transcript. Added for PUT's integrity
+    verification, whose one stat/wc-shaped command (``_put_one`` has no
+    other) has to answer with the REAL local total for a test to reach its
+    ``mv`` at all -- a position-dependent ``outputs`` entry would break the
+    moment an unrelated chunk count changed, where a predicate keyed on the
+    command's own shape does not.
+    """
+
+    def __init__(
+        self,
+        fail_when: "Callable[[str], bool] | None" = None,
+        outputs: "list[str] | None" = None,
+        answer_when: "Callable[[str], str | None] | None" = None,
+    ) -> None:
+        self.calls: list[str] = []
+        self._fail_when = fail_when
+        self._outputs = list(outputs) if outputs is not None else None
+        self._answer_when = answer_when
+
+    async def __call__(
+        self, cmd: str, timeout: "float | None" = None, **_kwargs: object
+    ) -> CommandResult:
+        self.calls.append(cmd)
+        if self._fail_when is not None and self._fail_when(cmd):
+            return _err(f"simulated failure: {cmd}")
+        if self._answer_when is not None:
+            answer = self._answer_when(cmd)
+            if answer is not None:
+                return _ok(answer)
+        if self._outputs:
+            return _ok(self._outputs.pop(0))
+        return _ok()
+
+
+class _ShellExecutingExec:
+    """Fake ``exec_cmd``: runs each command via ``/bin/sh -c``, ``cwd`` SET (not contained).
+
+    Unlike ``_RecordingExec``, this fake lets a test read the REAL file that
+    landed on disk and compare it to the original payload -- it answers "what
+    actually happened," not "what did otto ask for."
+
+    ``cwd`` is passed to ``subprocess.run`` and used for anything the command
+    references RELATIVELY; it is not a jail. Verified locally: a command
+    given an absolute path outside ``cwd`` writes there without complaint.
+    Safe here only because every path this backend ever emits is itself
+    absolute and derived from the test's own ``tmp_path``.
+
+    No ``timeout=`` is passed to ``subprocess.run`` -- a command that never
+    returns is bounded only by this repo's 180s per-test wall-clock cap
+    (``pyproject.toml``'s ``[tool.pytest.ini_options] timeout``), not by
+    anything in this fake.
+
+    Using this fake makes ``tests/unit`` depend on the HOST actually having
+    ``/bin/sh``, ``base64``, ``mv``, ``rm`` and ``printf`` -- a new
+    dependency for this test tree, stated here rather than left as a
+    surprise the first time one of them is missing.
+
+    *fail_when* optionally SKIPS real execution of a matching command and
+    returns a synthetic failure instead -- simulating a remote exec failure
+    (the command never ran on the device) rather than a local one. Every
+    command it does not match runs for real.
+    """
+
+    def __init__(
+        self,
+        cwd: Path,
+        fail_when: "Callable[[str], bool] | None" = None,
+    ) -> None:
+        self.cwd = cwd
+        self.calls: list[str] = []
+        self.outputs: list[str] = []
+        self._fail_when = fail_when
+
+    async def __call__(
+        self, cmd: str, timeout: "float | None" = None, **_kwargs: object
+    ) -> CommandResult:
+        self.calls.append(cmd)
+        if self._fail_when is not None and self._fail_when(cmd):
+            self.outputs.append("")
+            return _err(f"simulated failure: {cmd}")
+        # A real subprocess fork/exec off the event loop thread -- blocking
+        # `subprocess.run` directly here would stall every other coroutine
+        # for the (small, local) duration of each command.
+        proc = await asyncio.to_thread(
+            subprocess.run,
+            ["/bin/sh", "-c", cmd],
+            cwd=self.cwd,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        output = proc.stdout + proc.stderr
+        self.outputs.append(output)
+        status = Status.Success if proc.returncode == 0 else Status.Error
+        return CommandResult(command=cmd, value=output, status=status, retcode=proc.returncode)
+
+
+def _make_ft(
+    exec_cmd: "Callable[..., object]",
+    *,
+    base64_flag: str = "-d",
+    stat_size: str = "stat",
+    checksum: str = "absent",
+) -> ShellFileTransfer:
+    mock_connections = MagicMock(spec=ConnectionManager)
+    return ShellFileTransfer(
+        connections=mock_connections,
+        name="tomato",
+        exec_cmd=exec_cmd,
+        userland=_declared_userland(base64_flag, stat_size, checksum),
+    )
+
+
+# `printf '%s' '<b64>' | base64 <flag> <>|>>> <path>` -- the exact shape
+# `_put_one` emits (matches what `test_shell_codec_contracts.py` measured
+# on-device, not `echo`).
+_CHUNK_RE = re.compile(
+    r"^printf '%s' '(?P<b64>[^']*)' \| base64 (?P<flag>\S+) (?P<redir>>{1,2}) (?P<path>\S+)$"
+)
+
+
+def _parse_chunk_cmd(cmd: str) -> "re.Match[str]":
+    m = _CHUNK_RE.match(cmd)
+    assert m, f"not a chunk-write command: {cmd!r}"
+    return m
+
+
+def _payload_of(cmd: str) -> bytes:
+    """Extract and base64-decode the payload out of one chunk-write command.
+
+    This decodes the text the ENCODER put into the command string -- it
+    proves the encoder's output is right, not that the bytes it produced
+    actually landed on a real filesystem in the right place. See
+    ``TestShellPutContentIntegrity`` for the guard that checks the latter.
+    """
+    return base64.b64decode(_parse_chunk_cmd(cmd).group("b64"))
+
+
+# `stat -c %s -- <path>` or `wc -c < <path>` -- the two spellings
+# `_remote_size` (and so PUT's byte-size integrity verification, its only
+# caller with no other stat/wc-shaped command in the transcript) can emit.
+#
+# Round 1 review (finding MINOR 9): `\S+` cannot match a `shlex.quote`d path
+# containing a space (quoting wraps it in single quotes, which then
+# contains a literal space) -- inert on every fixture used today, since
+# none of them puts a space in a path, but silently wrong the day one does.
+# `.+` instead, mirroring `_GET_CHUNK_RE`'s same fix for the same reason,
+# and named groups so a caller can extract WHICH path was queried, not
+# just whether the shape matched.
+_SIZE_QUERY_RE = re.compile(r"^(?:stat -c %s -- (?P<stat_path>.+)|wc -c < (?P<wc_path>.+))$")
+
+
+def _parse_size_query_path(cmd: str) -> str:
+    m = _SIZE_QUERY_RE.match(cmd)
+    assert m, f"not a size-verification command: {cmd!r}"
+    path = m.group("stat_path") or m.group("wc_path")
+    assert path is not None
+    return path
+
+
+def _get_chunk_outputs(total: int) -> list[str]:
+    """Canned ``dd | base64`` outputs for a *total*-byte GET, chunk by chunk.
+
+    Every byte is ``\\x00`` -- these tests care about the TRANSCRIPT (skip
+    sequence, chunk count, ``bs``), not content, so any filler that decodes
+    to exactly *total* bytes will do. Real content correctness is
+    ``TestShellGetContentIntegrity``'s job, over a real shell.
+
+    This is not decorative padding: with integrity verification always on,
+    the empty-string canned outputs these tests used before the check
+    existed would decode to 0 bytes against a non-zero announced *total*,
+    which the ``checksum == "absent"`` byte-size check (the default in
+    ``_make_ft``) would now -- correctly -- treat as a mismatch and fail the
+    transfer, breaking every ``Status.Success`` assertion below for a reason
+    that has nothing to do with what each test actually names.
+    """
+    chunks = []
+    remaining = total
+    while remaining > 0:
+        n = min(_SHELL_CHUNK_BYTES, remaining)
+        chunks.append(base64.b64encode(b"\x00" * n).decode("ascii"))
+        remaining -= n
+    return chunks
+
+
+def _size_answer(total: int) -> "Callable[[str], str | None]":
+    """An ``answer_when`` predicate: answer any size-verification query with *total*.
+
+    Used with ``_RecordingExec(answer_when=_size_answer(...))`` in PUT tests
+    so the `checksum == "absent"` integrity check -- the default in
+    ``_make_ft`` -- finds a real, parseable number and lets the transfer
+    reach its ``mv``, without the test having to predict the exact position
+    of that one command among a variable number of chunk writes.
+    """
+
+    def _answer(cmd: str) -> str | None:
+        return str(total) if _SIZE_QUERY_RE.match(cmd) else None
+
+    return _answer
+
+
+# `dd if=<if_expr> bs=<n> skip=<k> count=1 2>/dev/null | base64` -- the exact
+# shape `_get_one` emits for one chunk READ (matches what
+# `test_shell_codec_contracts.py::test_dd_reads_a_block_range_with_bs_skip_and_count`
+# measured on-device). `if_expr` is `.+` rather than `\S+` because
+# `shlex.quote` wraps a path containing shell metacharacters in single
+# quotes, which then contains a space -- deliberately permissive here so the
+# same regex parses both the plain and quoted forms. No decode flag anywhere
+# in this command: the device only ENCODES for GET, so a flag appearing
+# after `base64` would fail to match this pattern at all (the trailing `$`
+# anchors immediately after the literal `base64`).
+_GET_CHUNK_RE = re.compile(
+    r"^dd (?P<if_expr>.+) bs=(?P<bs>\d+) skip=(?P<skip>\d+) count=1 2>/dev/null \| base64$"
+)
+
+
+def _parse_get_chunk_cmd(cmd: str) -> "re.Match[str]":
+    m = _GET_CHUNK_RE.match(cmd)
+    assert m, f"not a GET chunk-read command: {cmd!r}"
+    return m
+
+
+# ---------------------------------------------------------------------------
+# Step 1 / mutation "write directly to dest instead of temp-then-mv"
+# ---------------------------------------------------------------------------
+
+
+class TestShellPutOrdering:
+    """Chunks land on a temp path first, in sequence; exactly one ``mv`` at the end.
+
+    Catches the mutation "write directly to dest instead of temp-then-mv":
+    that mutation would make every chunk-write command reference the real
+    destination directly, which the loop below explicitly forbids.
+
+    THE ONLY guard for that mutation. A test in ``TestShellPutContentIntegrity``
+    (``test_a_failed_transfer_leaves_the_real_destination_untouched``) looks
+    like a second, content-based way to catch it and is not: measured
+    directly (round 3 review, finding N1), that test PASSES unmodified under
+    this mutation, because with ``temp == dst`` the cleanup step's
+    ``rm -f -- <dst>`` deletes the real bytes the first chunk just wrote
+    there for real -- "the real path doesn't exist" ends up true, but for
+    the inverted reason (deleted, not never-written). See that test's own
+    docstring. Nor can the executing fake's mutation-1 numbers in
+    task-2-report.md's Round 2 stand as evidence either: they came from a
+    local GNU ``mv -- X X`` refusing a self-move ("are the same file"),
+    which BusyBox 1.36.1's ``mv`` does not do -- tolerant, rc 0, on exactly
+    the device class this backend exists for. This transcript-based
+    structural check -- not any content check -- is the one actually
+    load-bearing for temp-then-mv.
+    """
+
+    @pytest.mark.asyncio
+    async def test_writes_temp_first_in_sequence_then_moves_to_dest(self, tmp_path: Path) -> None:
+        src = tmp_path / "payload.bin"
+        # Two chunks: one full block plus a partial tail.
+        payload = b"a" * _SHELL_CHUNK_BYTES + b"b" * 100
+        src.write_bytes(payload)
+        dest_dir = tmp_path / "dest"
+        dest_dir.mkdir()
+        dest_str = str(dest_dir / "payload.bin")
+
+        # `checksum` defaults to "absent" in `_make_ft`, so the integrity
+        # check between the last chunk and the `mv` is a size query; answer
+        # it with the real total so the transfer reaches `mv` at all.
+        exec_cmd = _RecordingExec(answer_when=_size_answer(len(payload)))
+        ft = _make_ft(exec_cmd)
+
+        per_file = await ft._run_put([src], dest_dir, None)
+
+        assert per_file[src].status is Status.Success, per_file[src].msg
+        assert per_file[src].value == dest_dir / "payload.bin"
+
+        calls = exec_cmd.calls
+        assert len(calls) == 4, calls  # 2 chunk writes + 1 size-verify + 1 mv
+        write_calls, (verify_cmd, mv_cmd) = calls[:2], calls[2:]
+        assert _SIZE_QUERY_RE.match(verify_cmd), verify_cmd
+
+        m0, m1 = _parse_chunk_cmd(write_calls[0]), _parse_chunk_cmd(write_calls[1])
+        # The temp filename embeds the real basename as a PREFIX
+        # (`payload.bin.otto-<hex>`), so a plain substring check on
+        # `dest_str` would always match — assert on the parsed redirect
+        # TARGET being exactly the temp, not the real destination, instead.
+        assert m0.group("path") != dest_str, "a pre-mv command wrote directly to the real dest"
+        assert m1.group("path") != dest_str, "a pre-mv command wrote directly to the real dest"
+        assert m0.group("redir") == ">", f"first chunk must create/truncate: {write_calls[0]!r}"
+        assert m1.group("redir") == ">>", f"second chunk must append: {write_calls[1]!r}"
+        assert m0.group("path") == m1.group("path"), "both chunks must target the same temp"
+        assert ".otto-" in m0.group("path"), m0.group("path")
+
+        assert mv_cmd.startswith("mv -- "), mv_cmd
+        assert m0.group("path") in mv_cmd
+        assert dest_str in mv_cmd
+
+    @pytest.mark.asyncio
+    async def test_temp_stages_in_the_same_directory_as_the_destination(
+        self, tmp_path: Path
+    ) -> None:
+        """The brief's explicitly load-bearing property: staging happens NEXT
+        TO the destination, never under ``/tmp`` -- a cross-filesystem ``mv``
+        degrades to a copy and loses the atomicity the whole temp-then-mv
+        shape exists for. Asserted directly (``temp.parent == dest_dir``)
+        rather than inferred from content, because on a single-machine test
+        ``/tmp`` and ``dest_dir`` can share a filesystem, so a content check
+        alone cannot tell "staged in the right place" from "staged in the
+        wrong place but it didn't matter this time."
+        """
+        src = tmp_path / "payload.bin"
+        src.write_bytes(b"hello world")
+        dest_dir = tmp_path / "dest"
+        dest_dir.mkdir()
+
+        exec_cmd = _RecordingExec()
+        ft = _make_ft(exec_cmd)
+
+        await ft._run_put([src], dest_dir, None)
+
+        write_calls = [c for c in exec_cmd.calls if c.startswith("printf ")]
+        assert write_calls
+        temp_path = Path(_parse_chunk_cmd(write_calls[0]).group("path"))
+        assert temp_path.parent == dest_dir, f"temp staged at {temp_path}, not inside {dest_dir}"
+
+
+# ---------------------------------------------------------------------------
+# Step 3 / mutation "drop the final mv"
+# ---------------------------------------------------------------------------
+
+
+class TestShellPutFileArrivesAtDest:
+    """The file must actually land at the real destination via exactly one ``mv``.
+
+    Catches the mutation "drop the final mv": with the ``mv`` call deleted
+    but the method still returning Success, ``mv_calls`` below would be
+    empty while the assertion demands exactly one.
+    """
+
+    @pytest.mark.asyncio
+    async def test_exactly_one_mv_lands_the_file(self, tmp_path: Path) -> None:
+        payload = b"hello world"
+        src = tmp_path / "f.bin"
+        src.write_bytes(payload)
+        dest_dir = tmp_path / "dest"
+        dest_dir.mkdir()
+
+        exec_cmd = _RecordingExec(answer_when=_size_answer(len(payload)))
+        ft = _make_ft(exec_cmd)
+
+        per_file = await ft._run_put([src], dest_dir, None)
+        result = per_file[src]
+
+        assert result.status is Status.Success, result.msg
+        assert result.value == dest_dir / "f.bin"
+
+        mv_calls = [c for c in exec_cmd.calls if c.startswith("mv ")]
+        assert len(mv_calls) == 1, exec_cmd.calls
+        assert str(dest_dir / "f.bin") in mv_calls[0]
+
+
+# ---------------------------------------------------------------------------
+# Step 2 / mutation "return success when base64_flag == absent"
+# ---------------------------------------------------------------------------
+
+
+class TestShellPutRefusal:
+    """``base64_flag == "absent"`` must refuse loudly, before any command runs.
+
+    Catches the mutation "return success when base64_flag == 'absent'": that
+    mutation would return a Success/Skipped mapping instead of raising, so
+    ``pytest.raises`` below would fail. The zero-calls assertion is a
+    SEPARATE, stronger check: run against the actual disabled-refusal
+    mutation, it issues 2 commands (one chunk write, one ``mv``) before
+    (wrongly) returning Success -- so the zero-calls assertion catches that
+    concrete case, and would also catch a softer mutation that raises late,
+    after already emitting a command.
+    """
+
+    @pytest.mark.asyncio
+    async def test_absent_base64_raises_before_any_command(self, tmp_path: Path) -> None:
+        src = tmp_path / "f.bin"
+        src.write_bytes(b"hello")
+        dest_dir = tmp_path / "dest"
+        dest_dir.mkdir()
+
+        exec_cmd = _RecordingExec()
+        ft = _make_ft(exec_cmd, base64_flag="absent")
+
+        with pytest.raises(UnsupportedOnUserlandError) as exc_info:
+            await ft._run_put([src], dest_dir, None)
+
+        assert exec_cmd.calls == [], f"refusal must precede every command, got {exec_cmd.calls}"
+        assert "tomato" in str(exc_info.value)
+        assert "base64" in str(exc_info.value)
+
+
+# ---------------------------------------------------------------------------
+# Step 4 / mutation "off-by-one in chunk slicing" -- SHAPE half (transcript)
+# ---------------------------------------------------------------------------
+
+
+class TestShellPutChunkStructure:
+    """The encoder's chunk COUNT, redirect operator and order -- from the transcript.
+
+    Deliberately narrow, and named for what it actually checks after round 1
+    of this test's review found the previous name overclaimed: this class
+    decodes the base64 text the encoder put INTO each command string and
+    checks it against the source, which proves the encoder is right, but it
+    is blind to anything that happens after the command leaves otto -- a
+    real remote shell could still write those same bytes to the wrong file,
+    the wrong directory, or lose them to an unquoted path, and nothing here
+    would notice. ``TestShellPutContentIntegrity`` is the class that checks
+    actual on-disk bytes.
+
+    A chunk-COUNT change (shrinking or growing the read size, N >= 1) is NOT
+    content corruption, and this class's two tests are shaped to keep that
+    distinction visible rather than paper over it. This is settled, not a
+    hedge: for any N >= 1, ``while True: chunk = f.read(N)`` is a contiguous,
+    in-order, non-overlapping partition of the file -- a structural property
+    of sequential ``read``, not an empirical guess -- and each piece is
+    base64-encoded/decoded independently (Python's encoder pads every call on
+    its own), so a pure chunk-count change reconstructs identical bytes; it
+    only changes how many pieces they arrived in. Confirmed against real
+    on-disk bytes via ``TestShellPutContentIntegrity`` in both round 2 and
+    round 3 of this task's review (task-2-report.md).
+
+    N = 0 is the one exception, and it is not a counterexample to the above:
+    at N = 0 the loop degenerates (``f.read(0)`` is always empty, so the
+    first iteration breaks immediately even for a non-empty file), the
+    "empty file" branch runs instead, and the real destination ends up
+    genuinely empty regardless of the source's actual content -- a true
+    content bug, and confirmed by mutation in round 3: 11 failed, 9 passed,
+    all three ``TestShellPutContentIntegrity`` tests among the reds. N = 0
+    is not a chunk size any code path here would produce; it is listed for
+    completeness, not as a live risk.
+    """
+
+    @pytest.mark.asyncio
+    async def test_two_full_chunks_plus_a_partial_tail_are_split_and_ordered_right(
+        self, tmp_path: Path
+    ) -> None:
+        payload = bytes((i * 7) % 256 for i in range(_SHELL_CHUNK_BYTES * 2 + 123))
+        src = tmp_path / "payload.bin"
+        src.write_bytes(payload)
+        dest_dir = tmp_path / "dest"
+        dest_dir.mkdir()
+
+        exec_cmd = _RecordingExec(answer_when=_size_answer(len(payload)))
+        ft = _make_ft(exec_cmd)
+
+        per_file = await ft._run_put([src], dest_dir, None)
+        assert per_file[src].status is Status.Success, per_file[src].msg
+
+        write_calls = exec_cmd.calls[:-2]  # everything but the size-verify and the final mv
+        assert len(write_calls) == 3, write_calls  # 2 full chunks + 1 partial tail
+
+        reconstructed = b"".join(_payload_of(c) for c in write_calls)
+        assert reconstructed == payload
+
+    @pytest.mark.asyncio
+    async def test_exact_multiple_of_chunk_size_has_no_stray_empty_chunk(
+        self, tmp_path: Path
+    ) -> None:
+        payload = b"\xab" * (_SHELL_CHUNK_BYTES * 2)
+        src = tmp_path / "payload.bin"
+        src.write_bytes(payload)
+        dest_dir = tmp_path / "dest"
+        dest_dir.mkdir()
+
+        exec_cmd = _RecordingExec(answer_when=_size_answer(len(payload)))
+        ft = _make_ft(exec_cmd)
+
+        per_file = await ft._run_put([src], dest_dir, None)
+        assert per_file[src].status is Status.Success, per_file[src].msg
+
+        write_calls = exec_cmd.calls[:-2]  # everything but the size-verify and the final mv
+        assert len(write_calls) == 2, write_calls
+        assert b"".join(_payload_of(c) for c in write_calls) == payload
+
+
+# ---------------------------------------------------------------------------
+# _SHELL_CHUNK_BYTES's own guard: not the byte constant, the wire consequence
+# ---------------------------------------------------------------------------
+
+
+class TestShellChunkLineLength:
+    """Pins what ``_SHELL_CHUNK_BYTES`` actually exists to control: how many
+    characters cross the wire in one PUT chunk's command line.
+
+    Deliberately does NOT assert ``_SHELL_CHUNK_BYTES == 4096``: the byte
+    count is a deliberate, revisable choice (see its own docstring, and
+    phase 5's Tier 3, which will re-measure it against a real transport).
+    Pinning the literal value would be a change-detector, red for the wrong
+    reason the moment that re-measurement moves it. Asserting the LENGTH of
+    one full chunk's emitted command line means a future change to the
+    constant reddens here with a message that says "you changed how much
+    crosses the wire per line -- re-justify it", which is the signal that
+    actually matters.
+
+    *dest_dir* is a synthetic path, not ``tmp_path``: ``_put_one`` never
+    touches the destination directory on the local filesystem (only *src*
+    must be real, for ``.stat().st_size``), and ``tmp_path``'s own directory
+    name is pytest-run-dependent -- using it here would make the asserted
+    length flake across machines and runs. The staged temp filename embeds
+    ``uuid.uuid4().hex``: its VALUE differs every run, but ``uuid4().hex``
+    is always exactly 32 hex characters, so the total command length stays
+    exactly reproducible even though the temp name itself is not.
+    """
+
+    @pytest.mark.asyncio
+    async def test_one_full_chunks_command_line_length_is_pinned(self, tmp_path: Path) -> None:
+        payload = b"x" * _SHELL_CHUNK_BYTES
+        src = tmp_path / "payload.bin"
+        src.write_bytes(payload)
+        dest_dir = Path("/dest")  # synthetic, deterministic -- see class docstring
+
+        exec_cmd = _RecordingExec(answer_when=_size_answer(len(payload)))
+        ft = _make_ft(exec_cmd)
+
+        per_file = await ft._run_put([src], dest_dir, None)
+        assert per_file[src].status is Status.Success, per_file[src].msg
+
+        write_calls = [c for c in exec_cmd.calls if c.startswith("printf ")]
+        assert len(write_calls) == 1, write_calls
+        assert len(write_calls[0]) == 5548, (
+            f"one full {_SHELL_CHUNK_BYTES}-byte chunk's command line is "
+            f"{len(write_calls[0])} characters, not the 5548 measured when this "
+            f"guard was written -- changing _SHELL_CHUNK_BYTES changes how much "
+            f"crosses the wire per line; re-justify the new number against the "
+            f"transport bound (see the constant's own docstring) before updating "
+            f"this assertion"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Step 4 / mutation "off-by-one in chunk slicing" -- CONTENT half (real exec)
+# ---------------------------------------------------------------------------
+
+
+class TestShellPutContentIntegrity:
+    """Executes every emitted command for real, then reads the ACTUAL file that landed.
+
+    ``TestShellPutChunkStructure`` answers "does the fake see the right
+    shape of commands"; this class answers "did the right bytes end up at
+    the right path on a real filesystem."
+
+    Round 1's review found three holes in the (then transcript-only) suite
+    by mutation: staging moved to ``/tmp`` (15 passed, 0 failed), ``shlex.quote``
+    removed from the temp path (15 passed, 0 failed), and every chunk
+    truncating instead of appending (1 failed, 14 passed --
+    ``TestShellPutOrdering`` already inspected the redirect operator
+    directly, so that one was partially caught even then). This class closes
+    the SECOND and THIRD with a real on-disk byte comparison.
+
+    It does NOT close the first. Staging under ``/tmp`` instead of next to
+    the destination is a question of WHERE a file lands, not what bytes it
+    contains, and a real device whose ``mv`` still completes the move (or a
+    test machine where ``/tmp`` and the destination happen to share a
+    filesystem) leaves the content correct either way -- confirmed by
+    mutation in round 2 (task-2-report.md), where this class's tests stayed
+    green under that exact mutation and only
+    ``TestShellPutOrdering::test_temp_stages_in_the_same_directory_as_the_destination``
+    went red. No content check can ever substitute for that one.
+    """
+
+    @pytest.mark.asyncio
+    async def test_multi_chunk_round_trip_lands_correct_bytes_on_disk(self, tmp_path: Path) -> None:
+        payload = bytes((i * 7) % 256 for i in range(_SHELL_CHUNK_BYTES * 2 + 123))
+        src = tmp_path / "payload.bin"
+        src.write_bytes(payload)
+        dest_dir = tmp_path / "dest"
+        dest_dir.mkdir()
+
+        exec_cmd = _ShellExecutingExec(cwd=tmp_path)
+        ft = _make_ft(exec_cmd)
+
+        per_file = await ft._run_put([src], dest_dir, None)
+
+        assert per_file[src].status is Status.Success, per_file[src].msg
+        landed = dest_dir / "payload.bin"
+        assert landed.exists(), exec_cmd.calls
+        assert landed.read_bytes() == payload
+
+    @pytest.mark.asyncio
+    async def test_a_filename_with_shell_metacharacters_is_not_interpreted(
+        self, tmp_path: Path
+    ) -> None:
+        """A semicolon in the filename must stay DATA, never become a second command.
+
+        ``;printf INJECTED;`` is a standard, safe injection probe: if
+        ``shlex.quote`` is doing its job, the whole filename (and the temp
+        path built from it) is one shell word and the payload lands
+        untouched; if quoting is dropped, the shell reads ``;`` as a command
+        separator and runs ``printf INJECTED`` as a second statement, which
+        both shows up in this fake's captured output AND breaks the intended
+        command (measured locally: the unquoted form exits 127, "not found",
+        because the remainder of the filename is parsed as a bogus command of
+        its own) -- so the transfer's own Success/Error status is already a
+        strong signal, and the INJECTED check is the second, independent one.
+        """
+        src = tmp_path / "evil;printf INJECTED;name.bin"
+        payload = b"just a normal file"
+        src.write_bytes(payload)
+        dest_dir = tmp_path / "dest"
+        dest_dir.mkdir()
+
+        exec_cmd = _ShellExecutingExec(cwd=tmp_path)
+        ft = _make_ft(exec_cmd)
+
+        per_file = await ft._run_put([src], dest_dir, None)
+
+        assert per_file[src].status is Status.Success, per_file[src].msg
+        assert "INJECTED" not in "".join(exec_cmd.outputs), exec_cmd.outputs
+        landed = dest_dir / src.name
+        assert landed.exists(), exec_cmd.calls
+        assert landed.read_bytes() == payload
+
+    @pytest.mark.asyncio
+    async def test_a_failed_transfer_leaves_the_real_destination_untouched(
+        self, tmp_path: Path
+    ) -> None:
+        """Temp-then-mv: a mid-transfer failure, WHEN STAGING GENUINELY USED A
+        SEPARATE TEMP, must not leave a partial file at the real destination
+        path. The first chunk's write DOES run for real (so a real temp file
+        with real bytes briefly exists); only the second chunk's exec is
+        intercepted, simulating a remote failure rather than a local one.
+
+        NOT a guard against "write directly to dest instead of temp-then-mv"
+        (round 3 review, finding N1) -- despite reading like one. Measured
+        directly: this test PASSES unmodified against that mutation. With
+        ``temp == dst`` there, the first chunk's write lands for real at the
+        REAL destination, and when the second chunk's exec then fails,
+        ``_cleanup_temp``'s ``rm -f -- <dst>`` deletes those real bytes --
+        so ``not real_dest.exists()`` is true, but because the file was
+        created and then deleted, not because it was staged safely away from
+        the real path the whole time. See ``TestShellPutOrdering``, the
+        actual (and only) guard for that mutation, for why.
+        """
+        src = tmp_path / "payload.bin"
+        src.write_bytes(b"x" * _SHELL_CHUNK_BYTES + b"y" * _SHELL_CHUNK_BYTES)
+        dest_dir = tmp_path / "dest"
+        dest_dir.mkdir()
+
+        write_count = 0
+
+        def fail_second_write(cmd: str) -> bool:
+            nonlocal write_count
+            if cmd.startswith("printf "):
+                write_count += 1
+                return write_count == 2
+            return False
+
+        exec_cmd = _ShellExecutingExec(cwd=tmp_path, fail_when=fail_second_write)
+        ft = _make_ft(exec_cmd)
+
+        per_file = await ft._run_put([src], dest_dir, None)
+
+        assert per_file[src].status is Status.Error
+        real_dest = dest_dir / "payload.bin"
+        assert not real_dest.exists(), (
+            f"a failed transfer left a file at the real destination: {real_dest}"
+        )
+        leftover_temps = list(dest_dir.glob("payload.bin.otto-*"))
+        assert leftover_temps == [], (
+            f"the failed attempt's temp was not cleaned up: {leftover_temps}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Decode flag is read verbatim, never hard-coded
+# ---------------------------------------------------------------------------
+
+
+class TestShellPutDecodeFlagVerbatim:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("flag", ["-d", "--decode"])
+    async def test_emitted_flag_matches_whatever_userland_resolved(
+        self, tmp_path: Path, flag: str
+    ) -> None:
+        src = tmp_path / "f.bin"
+        src.write_bytes(b"x" * 10)
+        dest_dir = tmp_path / "dest"
+        dest_dir.mkdir()
+
+        exec_cmd = _RecordingExec()
+        ft = _make_ft(exec_cmd, base64_flag=flag)
+
+        await ft._run_put([src], dest_dir, None)
+
+        write_calls = [c for c in exec_cmd.calls if c.startswith("printf ")]
+        assert write_calls
+        for c in write_calls:
+            assert _parse_chunk_cmd(c).group("flag") == flag
+
+
+# ---------------------------------------------------------------------------
+# Sequential batch semantics: stop on failure, skip the rest, clean up
+# ---------------------------------------------------------------------------
+
+
+class TestShellPutSequentialFailure:
+    @pytest.mark.asyncio
+    async def test_a_failed_chunk_write_skips_remaining_files_and_cleans_up(
+        self, tmp_path: Path
+    ) -> None:
+        src1 = tmp_path / "a.bin"
+        src1.write_bytes(b"x" * 10)
+        src2 = tmp_path / "b.bin"
+        src2.write_bytes(b"y" * 10)
+        dest_dir = tmp_path / "dest"
+        dest_dir.mkdir()
+
+        # The temp filename always embeds the destination basename
+        # (`a.bin.otto-<hex>`), so this reliably targets only src1's writes.
+        exec_cmd = _RecordingExec(fail_when=lambda c: "a.bin.otto-" in c and c.startswith("printf"))
+        ft = _make_ft(exec_cmd)
+
+        per_file = await ft._run_put([src1, src2], dest_dir, None)
+
+        assert per_file[src1].status is Status.Error
+        assert per_file[src2].status is Status.Skipped
+        assert not any("b.bin" in c for c in exec_cmd.calls), (
+            "the second file must never be attempted after the first fails"
+        )
+        rm_calls = [c for c in exec_cmd.calls if c.startswith("rm ")]
+        assert rm_calls, f"a failed chunk write must clean up its temp: {exec_cmd.calls}"
+        assert all("a.bin.otto-" in c for c in rm_calls)
+
+    @pytest.mark.asyncio
+    async def test_a_failed_mv_cleans_up_and_does_not_report_success(self, tmp_path: Path) -> None:
+        payload = b"hello"
+        src = tmp_path / "f.bin"
+        src.write_bytes(payload)
+        dest_dir = tmp_path / "dest"
+        dest_dir.mkdir()
+
+        # The integrity check must PASS here -- fed the real size via
+        # `answer_when` -- so what actually fails, and is what this test is
+        # named for, is genuinely the `mv` and nothing upstream of it.
+        exec_cmd = _RecordingExec(
+            fail_when=lambda c: c.startswith("mv "), answer_when=_size_answer(len(payload))
+        )
+        ft = _make_ft(exec_cmd)
+
+        per_file = await ft._run_put([src], dest_dir, None)
+
+        assert per_file[src].status is Status.Error
+        assert "moving" in per_file[src].msg, (
+            f"expected the mv step itself to be what failed, got: {per_file[src].msg}"
+        )
+        rm_calls = [c for c in exec_cmd.calls if c.startswith("rm ")]
+        assert rm_calls, "a failed mv must still clean up its temp"
+
+    @pytest.mark.asyncio
+    async def test_a_failed_empty_file_creation_cleans_up(self, tmp_path: Path) -> None:
+        """The empty-file ``: > <temp>`` creation step is a failure path too.
+
+        Round 1 shipped this step WITHOUT a cleanup call despite the
+        docstring's claim that every failure -- "a chunk write, the temp's
+        creation, or the final mv" -- removes the temp; an empty source file
+        whose creation step failed left the docstring's claim false and the
+        temp genuinely leaked. Fixed in round 2; this pins it.
+        """
+        src = tmp_path / "empty.bin"
+        src.write_bytes(b"")
+        dest_dir = tmp_path / "dest"
+        dest_dir.mkdir()
+
+        exec_cmd = _RecordingExec(fail_when=lambda c: c.startswith(": >"))
+        ft = _make_ft(exec_cmd)
+
+        per_file = await ft._run_put([src], dest_dir, None)
+
+        assert per_file[src].status is Status.Error
+        rm_calls = [c for c in exec_cmd.calls if c.startswith("rm ")]
+        assert rm_calls, "a failed empty-file temp creation must still clean up"
+        assert all("empty.bin.otto-" in c for c in rm_calls)
+
+
+# ---------------------------------------------------------------------------
+# Empty source file
+# ---------------------------------------------------------------------------
+
+
+class TestShellPutEmptyFile:
+    @pytest.mark.asyncio
+    async def test_empty_source_creates_an_empty_temp_and_moves_it(self, tmp_path: Path) -> None:
+        src = tmp_path / "empty.bin"
+        src.write_bytes(b"")
+        dest_dir = tmp_path / "dest"
+        dest_dir.mkdir()
+
+        exec_cmd = _RecordingExec(answer_when=_size_answer(0))
+        ft = _make_ft(exec_cmd)
+
+        per_file = await ft._run_put([src], dest_dir, None)
+
+        assert per_file[src].status is Status.Success, per_file[src].msg
+        assert per_file[src].value == dest_dir / "empty.bin"
+        assert not any(c.startswith("printf ") for c in exec_cmd.calls)
+        assert any(c.startswith(": >") for c in exec_cmd.calls), exec_cmd.calls
+        assert any(c.startswith("mv -- ") for c in exec_cmd.calls)
+
+
+# ---------------------------------------------------------------------------
+# Progress contract
+# ---------------------------------------------------------------------------
+
+
+class TestShellPutProgress:
+    @pytest.mark.asyncio
+    async def test_handler_reaches_bytes_done_equals_total(self, tmp_path: Path) -> None:
+        src = tmp_path / "f.bin"
+        payload = b"z" * (_SHELL_CHUNK_BYTES + 50)
+        src.write_bytes(payload)
+        dest_dir = tmp_path / "dest"
+        dest_dir.mkdir()
+
+        seen: list[tuple[int, int]] = []
+
+        def handler(_src: str, _dst: str, bytes_done: int, bytes_total: int) -> None:
+            seen.append((bytes_done, bytes_total))
+
+        # Answered so the transfer actually reaches Success -- confirming the
+        # progress contract holds for a transfer integrity verification let
+        # through, not merely for one that fails after progress already
+        # reported completion (which `seen` alone cannot tell apart).
+        exec_cmd = _RecordingExec(answer_when=_size_answer(len(payload)))
+        ft = _make_ft(exec_cmd)
+
+        result = await ft._run_put([src], dest_dir, lambda: handler)
+
+        assert result[src].status is Status.Success, result[src].msg
+        assert seen, "progress handler was never invoked"
+        assert seen[-1] == (len(payload), len(payload))
+
+
+# ---------------------------------------------------------------------------
+# Task 4 / integrity verification -- both directions
+# ---------------------------------------------------------------------------
+
+
+class TestShellPutIntegrityVerification:
+    """PUT's post-chunk, pre-``mv`` integrity check, on the TEMP -- both ``checksum`` arms.
+
+    Uses ``_RecordingExec`` throughout: the property under test is the FORMAT
+    of what a device returns and how this backend reacts to it (a matching
+    digest, a matching size, a mismatch of either), not what a real
+    filesystem ends up holding -- that half is
+    ``TestShellPutContentIntegrity``'s job, over a real shell via
+    ``_ShellExecutingExec``.
+
+    Round 1 review (finding IMPORTANT 4): this docstring previously claimed
+    "every test in those classes reaches this code path" and that
+    ``TestShellPutSequentialFailure`` was one of the classes doing so
+    through ``_ShellExecutingExec``. Both were false, and measured wrong in
+    two different ways. Traced by reading each test's own control flow
+    (which tests reach ``mv`` unimpeded, since verification sits directly
+    before it): of ``TestShellPutContentIntegrity``'s 3 tests, 2 reach
+    verification for real (the two that expect ``Status.Success``) and 1
+    does not (its chunk write fails first, aborting before verification is
+    ever reached). ``TestShellPutSequentialFailure`` uses ``_RecordingExec``
+    exclusively, never ``_ShellExecutingExec``; of its 3 tests, exactly 1
+    reaches verification (and must PASS it, by its own docstring's design,
+    to isolate a later failure) -- the other 2 fail at an earlier step
+    (chunk write, empty-file creation) that verification never gets called
+    from. 3 of 6 tests across both classes reach this method; the other 3
+    exercise a failure that happens strictly before it.
+    """
+
+    @pytest.mark.asyncio
+    async def test_matching_md5sum_lets_the_transfer_reach_mv(self, tmp_path: Path) -> None:
+        """Also pins WHICH path ``md5sum`` targets -- the temp, never the real destination.
+
+        Round 1 review (finding CRITICAL 2): the original version of this
+        test answered any command starting with ``"md5sum"``, so a mutant
+        querying the wrong path (``dst`` instead of ``temp``, or an
+        unrelated path entirely) still got the right-looking answer and
+        this test stayed green. Fixed by cross-checking the ``md5sum``
+        command's path against the temp path an EARLIER, independently
+        parsed command (the chunk write) actually used -- not a path this
+        test computed itself, so it cannot agree by construction.
+        """
+        payload = b"the quick brown fox jumps over the lazy dog"
+        src = tmp_path / "f.bin"
+        src.write_bytes(payload)
+        dest_dir = tmp_path / "dest"
+        dest_dir.mkdir()
+        dest_str = str(dest_dir / "f.bin")
+        digest = hashlib.md5(payload).hexdigest()  # noqa: S324 -- matching a real device's md5sum
+
+        exec_cmd = _RecordingExec(
+            answer_when=lambda c: f"{digest}  ignored-filename" if c.startswith("md5sum") else None
+        )
+        ft = _make_ft(exec_cmd, checksum="md5sum")
+
+        per_file = await ft._run_put([src], dest_dir, None)
+
+        assert per_file[src].status is Status.Success, per_file[src].msg
+        write_calls = [c for c in exec_cmd.calls if c.startswith("printf ")]
+        assert write_calls
+        temp_path = _parse_chunk_cmd(write_calls[0]).group("path")
+        md5sum_calls = [c for c in exec_cmd.calls if c.startswith("md5sum")]
+        assert md5sum_calls == [f"md5sum -- {temp_path}"], (
+            f"md5sum must target the same temp the chunks were written to "
+            f"({temp_path!r}), not the real destination or anything else: {exec_cmd.calls}"
+        )
+        assert temp_path != dest_str, temp_path
+        assert any(c.startswith("mv -- ") for c in exec_cmd.calls), exec_cmd.calls
+
+    @pytest.mark.asyncio
+    async def test_mismatched_md5sum_fails_before_mv_and_cleans_up(self, tmp_path: Path) -> None:
+        """Step 3's named mutation: a corrupted chunk must be caught, and the temp removed.
+
+        The corruption is injected at the point ``_RecordingExec`` can most
+        directly script it -- the device's answer to the verification
+        query itself is scripted WRONG (a real digest of different bytes),
+        standing in for "the device silently wrote/served different bytes
+        than what was sent, yet every individual chunk command still
+        reported exit 0" -- exactly the gap a pure exit-code check cannot
+        see and integrity verification exists to close.
+        """
+        payload = b"the quick brown fox jumps over the lazy dog"
+        src = tmp_path / "f.bin"
+        src.write_bytes(payload)
+        dest_dir = tmp_path / "dest"
+        dest_dir.mkdir()
+        wrong_digest = hashlib.md5(b"not the same bytes at all").hexdigest()  # noqa: S324
+
+        exec_cmd = _RecordingExec(
+            answer_when=lambda c: (
+                f"{wrong_digest}  ignored-filename" if c.startswith("md5sum") else None
+            )
+        )
+        ft = _make_ft(exec_cmd, checksum="md5sum")
+
+        per_file = await ft._run_put([src], dest_dir, None)
+
+        assert per_file[src].status is Status.Error
+        assert "md5sum mismatch" in per_file[src].msg, per_file[src].msg
+        assert not any(c.startswith("mv ") for c in exec_cmd.calls), (
+            f"a mismatched digest must never reach mv: {exec_cmd.calls}"
+        )
+        rm_calls = [c for c in exec_cmd.calls if c.startswith("rm ")]
+        assert rm_calls, f"a mismatched digest must still clean up its temp: {exec_cmd.calls}"
+
+    @pytest.mark.asyncio
+    async def test_a_differently_cased_but_equal_digest_still_matches(self, tmp_path: Path) -> None:
+        """The comparison must not be case-sensitive, even though no real ``md5sum`` needs that.
+
+        Every ``md5sum`` measured on this matrix emits lowercase hex and so
+        does :meth:`hashlib.md5.hexdigest`, so this scenario cannot arise
+        from a real device -- but the parser choosing to compare
+        case-sensitively anyway would be a latent bug with no measured
+        counterexample to catch it. This test is that counterexample.
+        """
+        payload = b"case insensitivity probe"
+        src = tmp_path / "f.bin"
+        src.write_bytes(payload)
+        dest_dir = tmp_path / "dest"
+        dest_dir.mkdir()
+        digest_upper = hashlib.md5(payload).hexdigest().upper()  # noqa: S324
+
+        exec_cmd = _RecordingExec(
+            answer_when=lambda c: (
+                f"{digest_upper}  ignored-filename" if c.startswith("md5sum") else None
+            )
+        )
+        ft = _make_ft(exec_cmd, checksum="md5sum")
+
+        per_file = await ft._run_put([src], dest_dir, None)
+
+        assert per_file[src].status is Status.Success, per_file[src].msg
+
+    @pytest.mark.asyncio
+    async def test_absent_checksum_falls_back_to_a_matching_size_check(
+        self, tmp_path: Path
+    ) -> None:
+        """Also pins WHICH path the size query targets -- the temp, never the real destination.
+
+        The same weakness CRITICAL 2 named for the ``md5sum`` arm applies
+        here too: ``_size_answer`` answers any stat/wc-shaped command
+        regardless of path, so a mutant querying ``dst`` instead of the
+        temp would still get the right-looking answer. Fixed the same way:
+        cross-check against the temp path an earlier, independently parsed
+        command (the chunk write) actually used.
+        """
+        payload = b"twelve bytes"
+        src = tmp_path / "f.bin"
+        src.write_bytes(payload)
+        dest_dir = tmp_path / "dest"
+        dest_dir.mkdir()
+        dest_str = str(dest_dir / "f.bin")
+
+        exec_cmd = _RecordingExec(answer_when=_size_answer(len(payload)))
+        ft = _make_ft(exec_cmd, checksum="absent")
+
+        per_file = await ft._run_put([src], dest_dir, None)
+
+        assert per_file[src].status is Status.Success, per_file[src].msg
+        assert not any(c.startswith("md5sum") for c in exec_cmd.calls), (
+            f"checksum='absent' must never emit md5sum: {exec_cmd.calls}"
+        )
+        write_calls = [c for c in exec_cmd.calls if c.startswith("printf ")]
+        assert write_calls
+        temp_path = _parse_chunk_cmd(write_calls[0]).group("path")
+        size_calls = [c for c in exec_cmd.calls if _SIZE_QUERY_RE.match(c)]
+        assert size_calls, exec_cmd.calls
+        assert all(_parse_size_query_path(c) == temp_path for c in size_calls), (
+            f"the size query must target the same temp the chunks were written to "
+            f"({temp_path!r}), not the real destination or anything else: {exec_cmd.calls}"
+        )
+        assert temp_path != dest_str, temp_path
+
+    @pytest.mark.asyncio
+    async def test_absent_checksum_size_mismatch_fails_before_mv_and_cleans_up(
+        self, tmp_path: Path
+    ) -> None:
+        payload = b"twelve bytes"
+        src = tmp_path / "f.bin"
+        src.write_bytes(payload)
+        dest_dir = tmp_path / "dest"
+        dest_dir.mkdir()
+
+        # Answers with a size one byte short of the real total.
+        exec_cmd = _RecordingExec(answer_when=_size_answer(len(payload) - 1))
+        ft = _make_ft(exec_cmd, checksum="absent")
+
+        per_file = await ft._run_put([src], dest_dir, None)
+
+        assert per_file[src].status is Status.Error
+        assert "size mismatch" in per_file[src].msg, per_file[src].msg
+        assert not any(c.startswith("mv ") for c in exec_cmd.calls), exec_cmd.calls
+        rm_calls = [c for c in exec_cmd.calls if c.startswith("rm ")]
+        assert rm_calls, f"a size mismatch must still clean up its temp: {exec_cmd.calls}"
+
+    @pytest.mark.asyncio
+    async def test_checksum_and_stat_size_both_absent_refuses_before_any_command(
+        self, tmp_path: Path
+    ) -> None:
+        """Unhit by the matrix (measured: ``md5sum`` and ``stat``/``wc`` are present on all five
+        rows), so this is a unit-only branch, like ``stat_size``'s own ``"absent"`` arm --
+        kept and tested, not assumed unreachable.
+        """
+        src = tmp_path / "f.bin"
+        src.write_bytes(b"hello")
+        dest_dir = tmp_path / "dest"
+        dest_dir.mkdir()
+
+        exec_cmd = _RecordingExec()
+        ft = _make_ft(exec_cmd, checksum="absent", stat_size="absent")
+
+        with pytest.raises(UnsupportedOnUserlandError) as exc_info:
+            await ft._run_put([src], dest_dir, None)
+
+        assert exec_cmd.calls == [], f"refusal must precede every command, got {exec_cmd.calls}"
+        assert "tomato" in str(exc_info.value)
+        assert "checksum" in str(exc_info.value)
+
+
+# ===========================================================================
+# GET
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# G3 / mutation "return success when stat_size or base64_flag is 'absent'"
+# ---------------------------------------------------------------------------
+
+
+class TestShellGetRefusal:
+    """Both ``base64_flag`` and ``stat_size`` resolving to ``"absent"`` must refuse loudly.
+
+    Two independent refusals, mirroring ``TestShellPutRefusal``'s single one.
+    Measured (this task's brief): every row of the BusyBox matrix resolves
+    ``stat_size`` to ``"stat"``, so the second branch is never live on that
+    matrix today -- it exists for a non-BusyBox unix host that genuinely has
+    neither ``stat`` nor a usable ``wc``, and is tested here precisely
+    because nothing else would ever exercise it.
+    """
+
+    @pytest.mark.asyncio
+    async def test_absent_base64_raises_before_any_command(self, tmp_path: Path) -> None:
+        src = tmp_path / "f.bin"
+        dest_dir = tmp_path / "dest"
+        dest_dir.mkdir()
+
+        exec_cmd = _RecordingExec()
+        ft = _make_ft(exec_cmd, base64_flag="absent", stat_size="stat")
+
+        with pytest.raises(UnsupportedOnUserlandError) as exc_info:
+            await ft._run_get([src], dest_dir, None)
+
+        assert exec_cmd.calls == [], f"refusal must precede every command, got {exec_cmd.calls}"
+        assert "tomato" in str(exc_info.value)
+        assert "base64" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_absent_stat_size_raises_before_any_command(self, tmp_path: Path) -> None:
+        src = tmp_path / "f.bin"
+        dest_dir = tmp_path / "dest"
+        dest_dir.mkdir()
+
+        exec_cmd = _RecordingExec()
+        ft = _make_ft(exec_cmd, base64_flag="-d", stat_size="absent")
+
+        with pytest.raises(UnsupportedOnUserlandError) as exc_info:
+            await ft._run_get([src], dest_dir, None)
+
+        assert exec_cmd.calls == [], f"refusal must precede every command, got {exec_cmd.calls}"
+        assert "tomato" in str(exc_info.value)
+        assert "stat_size" in str(exc_info.value)
+
+
+# ---------------------------------------------------------------------------
+# Size probe spelling -- shell becomes the first consumer of Userland.stat_size
+# ---------------------------------------------------------------------------
+
+
+class TestShellGetSizeQuery:
+    """The size probe is issued once, first, spelled per ``Userland.stat_size``.
+
+    ``shell`` is the first consumer of :attr:`~otto.host.userland.Userland.stat_size`
+    (see that module's updated docstring table) -- read verbatim here, never
+    hard-coded, exactly as ``_put_one`` reads ``base64_flag``.
+    """
+
+    @pytest.mark.asyncio
+    async def test_stat_spelling_is_stat_dash_c_percent_s_with_terminator(
+        self, tmp_path: Path
+    ) -> None:
+        src = tmp_path / "f.bin"
+        dest_dir = tmp_path / "dest"
+        dest_dir.mkdir()
+
+        exec_cmd = _RecordingExec(outputs=["0"])
+        ft = _make_ft(exec_cmd, stat_size="stat")
+
+        await ft._run_get([src], dest_dir, None)
+
+        assert exec_cmd.calls == [f"stat -c %s -- {src}"], exec_cmd.calls
+
+    @pytest.mark.asyncio
+    async def test_wc_spelling_is_wc_dash_c_redirected_from_the_path(self, tmp_path: Path) -> None:
+        src = tmp_path / "f.bin"
+        dest_dir = tmp_path / "dest"
+        dest_dir.mkdir()
+
+        exec_cmd = _RecordingExec(outputs=["0"])
+        ft = _make_ft(exec_cmd, stat_size="wc")
+
+        await ft._run_get([src], dest_dir, None)
+
+        assert exec_cmd.calls == [f"wc -c < {src}"], exec_cmd.calls
+
+
+# ---------------------------------------------------------------------------
+# G4 (transcript half) / mutation "off-by-one in chunk range reads"
+# ---------------------------------------------------------------------------
+
+
+class TestShellGetChunkStructure:
+    """The chunk READ shape -- count, ``bs``, increasing ``skip`` -- from the transcript.
+
+    Uses ``_RecordingExec`` with a scripted ``outputs`` queue: the first
+    call (the size probe) is answered with the real total; every dd|base64
+    call after it is answered with an empty string, which decodes to
+    ``b""`` without error. That is enough to check ORDER and COUNT -- it
+    proves nothing about DECODED CONTENT, which is
+    ``TestShellGetContentIntegrity``'s job, split the same way PUT's G5 is.
+
+    Catches "fixed skip=0" directly: a chunker that requested the same
+    block every time would produce ``skips == [0, 0, 0]`` instead of
+    ``[0, 1, 2]``.
+    """
+
+    @pytest.mark.asyncio
+    async def test_two_full_chunks_plus_a_partial_tail_are_split_and_ordered_by_skip(
+        self, tmp_path: Path
+    ) -> None:
+        src = tmp_path / "payload.bin"
+        dest_dir = tmp_path / "dest"
+        dest_dir.mkdir()
+        total = _SHELL_CHUNK_BYTES * 2 + 123
+
+        exec_cmd = _RecordingExec(outputs=[str(total), *_get_chunk_outputs(total)])
+        ft = _make_ft(exec_cmd)
+
+        per_file = await ft._run_get([src], dest_dir, None)
+        assert per_file[src].status is Status.Success, per_file[src].msg
+
+        size_call, chunk_calls = exec_cmd.calls[0], exec_cmd.calls[1:]
+        assert size_call == f"stat -c %s -- {src}"
+        assert len(chunk_calls) == 3, chunk_calls  # 2 full chunks + 1 partial tail
+        skips = [int(_parse_get_chunk_cmd(c).group("skip")) for c in chunk_calls]
+        assert skips == [0, 1, 2], skips
+        for c in chunk_calls:
+            assert _parse_get_chunk_cmd(c).group("bs") == str(_SHELL_CHUNK_BYTES), c
+
+    @pytest.mark.asyncio
+    async def test_exact_multiple_of_chunk_size_has_no_stray_empty_chunk(
+        self, tmp_path: Path
+    ) -> None:
+        src = tmp_path / "payload.bin"
+        dest_dir = tmp_path / "dest"
+        dest_dir.mkdir()
+        total = _SHELL_CHUNK_BYTES * 2
+
+        exec_cmd = _RecordingExec(outputs=[str(total), *_get_chunk_outputs(total)])
+        ft = _make_ft(exec_cmd)
+
+        per_file = await ft._run_get([src], dest_dir, None)
+        assert per_file[src].status is Status.Success, per_file[src].msg
+
+        chunk_calls = exec_cmd.calls[1:]
+        assert len(chunk_calls) == 2, chunk_calls
+        skips = [int(_parse_get_chunk_cmd(c).group("skip")) for c in chunk_calls]
+        assert skips == [0, 1], skips
+
+    @pytest.mark.asyncio
+    async def test_short_final_chunk_gets_its_own_read_not_a_third_full_one(
+        self, tmp_path: Path
+    ) -> None:
+        """Step 3's size: ``_SHELL_CHUNK_BYTES + 1`` -- two chunks, not one, not three.
+
+        The transcript half of step 3: proves the RANGE READ shape asks for
+        exactly two blocks. ``TestShellGetContentIntegrity`` proves the
+        second block's decoded bytes are not padded out to a full chunk.
+        """
+        src = tmp_path / "payload.bin"
+        dest_dir = tmp_path / "dest"
+        dest_dir.mkdir()
+        total = _SHELL_CHUNK_BYTES + 1
+
+        exec_cmd = _RecordingExec(outputs=[str(total), *_get_chunk_outputs(total)])
+        ft = _make_ft(exec_cmd)
+
+        per_file = await ft._run_get([src], dest_dir, None)
+        assert per_file[src].status is Status.Success, per_file[src].msg
+
+        chunk_calls = exec_cmd.calls[1:]
+        assert len(chunk_calls) == 2, chunk_calls
+        skips = [int(_parse_get_chunk_cmd(c).group("skip")) for c in chunk_calls]
+        assert skips == [0, 1], skips
+
+
+# ---------------------------------------------------------------------------
+# G1 / mutation "drop the local temp-then-replace, write straight to dest"
+# G2 / mutation "stage the local temp somewhere other than dest_dir"
+# ---------------------------------------------------------------------------
+
+
+class TestShellGetStaging:
+    """Local staging: a temp lands in ``dest_dir`` first; ``dest`` appears only at the end.
+
+    THE ONLY guard for "write straight to the destination instead of
+    temp-then-replace": unlike PUT's remote ``mv``, GET's final step is
+    Python's own ``Path.replace()``, which raises outright
+    (``OSError: [Errno 18] Invalid cross-device link``, measured locally by
+    replacing a file from ``/dev/shm`` (tmpfs) onto this repo's checkout)
+    when source and destination are on different filesystems -- there is no
+    silent degrade-to-copy the way some ``mv`` implementations have. That
+    makes staging in ``dest_dir`` a correctness requirement for GET, not
+    only an atomicity nicety, and it is why this class checks it directly
+    rather than inferring it from content: a content check alone cannot
+    distinguish "staged correctly" from "staged elsewhere but same
+    filesystem, so it still worked this time" -- the identical reasoning
+    ``TestShellPutOrdering`` gives for PUT's temp-directory guard.
+    """
+
+    @pytest.mark.asyncio
+    async def test_dest_does_not_exist_until_the_final_replace(self, tmp_path: Path) -> None:
+        src = tmp_path / "payload.bin"
+        dest_dir = tmp_path / "dest"
+        dest_dir.mkdir()
+        dst = dest_dir / "payload.bin"
+        total = _SHELL_CHUNK_BYTES * 2 + 123
+
+        seen_calls = 0
+
+        def handler(_src: str, _dst: str, _bytes_done: int, _bytes_total: int) -> None:
+            nonlocal seen_calls
+            seen_calls += 1
+            assert not dst.exists(), (
+                f"the real destination existed before the final replace (call {seen_calls})"
+            )
+
+        exec_cmd = _RecordingExec(outputs=[str(total), *_get_chunk_outputs(total)])
+        ft = _make_ft(exec_cmd)
+
+        per_file = await ft._run_get([src], dest_dir, lambda: handler)
+
+        assert per_file[src].status is Status.Success, per_file[src].msg
+        assert seen_calls == 3, seen_calls
+        assert dst.exists(), "the destination must exist once the transfer completes"
+
+    @pytest.mark.asyncio
+    async def test_temp_stages_in_the_same_directory_as_the_destination(
+        self, tmp_path: Path
+    ) -> None:
+        """Every in-loop assertion is inside the progress handler -- deliberately guarded
+        against going vacuous if that handler is ever dropped (fix round 1, I4): a
+        missing call means zero assertions ran, not a genuine pass. ``seen_calls``
+        and the ``Status.Success`` check below are UNCONDITIONAL, run whether or
+        not the handler fired, so "the handler never ran" fails loud here instead
+        of reading as agreement. Verified by mutation: commenting out this
+        method's own ``handler(...)`` call site in ``_get_one`` (simulating the
+        drop) reddens `seen_calls == 1` here directly -- see the fix-round report.
+        """
+        src = tmp_path / "payload.bin"
+        dest_dir = tmp_path / "dest"
+        dest_dir.mkdir()
+        dst = dest_dir / "payload.bin"
+        total = 11  # single chunk (< _SHELL_CHUNK_BYTES): handler fires exactly once
+
+        seen_calls = 0
+
+        def handler(_src: str, _dst: str, _bytes_done: int, _bytes_total: int) -> None:
+            nonlocal seen_calls
+            seen_calls += 1
+            matches = list(dest_dir.glob(f"{dst.name}.otto-*"))
+            assert len(matches) == 1, (
+                f"expected exactly one local temp staged in {dest_dir}, found {matches}"
+            )
+            assert matches[0].parent == dest_dir
+
+        exec_cmd = _RecordingExec(outputs=[str(total), *_get_chunk_outputs(total)])
+        ft = _make_ft(exec_cmd)
+
+        per_file = await ft._run_get([src], dest_dir, lambda: handler)
+
+        assert per_file[src].status is Status.Success, per_file[src].msg
+        assert seen_calls == 1, seen_calls
+
+
+# ---------------------------------------------------------------------------
+# G4 (content half) / mutations "reverse chunk write order", "off-by-one"
+# ---------------------------------------------------------------------------
+
+
+class TestShellGetContentIntegrity:
+    """Executes every emitted command for real, then reads the ACTUAL local file that landed.
+
+    ``TestShellGetChunkStructure`` answers "did the fake see the right
+    shape of dd commands"; this class answers "did the right bytes end up
+    at the right local path" -- the only class that can tell "correct
+    content, different chunk count" apart from "wrong content", and the
+    only one that can catch chunks decoded correctly but WRITTEN in the
+    wrong order (an ordering bug in the local write, not in the remote
+    read, so ``TestShellGetChunkStructure``'s skip-sequence check is blind
+    to it -- the emitted dd commands would still ask for blocks 0, 1, 2 in
+    order even if the decoded bytes were then written to the local temp
+    out of order).
+    """
+
+    @pytest.mark.asyncio
+    async def test_multi_chunk_round_trip_lands_correct_bytes_including_nul_and_trailing_newline(
+        self, tmp_path: Path
+    ) -> None:
+        base = bytes((i * 7) % 256 for i in range(_SHELL_CHUNK_BYTES * 2 + 123))
+        # Force the LAST two bytes to a NUL followed by a trailing newline,
+        # without changing the total length (still spans three chunks: two
+        # full plus a partial tail).
+        payload = base[:-2] + b"\x00\n"
+        src = tmp_path / "payload.bin"
+        src.write_bytes(payload)
+        dest_dir = tmp_path / "dest"
+        dest_dir.mkdir()
+
+        exec_cmd = _ShellExecutingExec(cwd=tmp_path)
+        ft = _make_ft(exec_cmd)
+
+        per_file = await ft._run_get([src], dest_dir, None)
+
+        assert per_file[src].status is Status.Success, (per_file[src].msg, exec_cmd.calls)
+        landed = dest_dir / "payload.bin"
+        assert landed.exists(), exec_cmd.calls
+        assert landed.read_bytes() == payload
+
+    @pytest.mark.asyncio
+    async def test_short_final_chunk_is_not_padded_or_dropped(self, tmp_path: Path) -> None:
+        payload = b"x" * _SHELL_CHUNK_BYTES + b"y"
+        src = tmp_path / "payload.bin"
+        src.write_bytes(payload)
+        dest_dir = tmp_path / "dest"
+        dest_dir.mkdir()
+
+        exec_cmd = _ShellExecutingExec(cwd=tmp_path)
+        ft = _make_ft(exec_cmd)
+
+        per_file = await ft._run_get([src], dest_dir, None)
+
+        assert per_file[src].status is Status.Success, (per_file[src].msg, exec_cmd.calls)
+        landed = dest_dir / "payload.bin"
+        landed_bytes = landed.read_bytes()
+        assert len(landed_bytes) == _SHELL_CHUNK_BYTES + 1, len(landed_bytes)
+        assert landed_bytes == payload
+
+    @pytest.mark.asyncio
+    async def test_a_filename_with_shell_metacharacters_is_not_interpreted(
+        self, tmp_path: Path
+    ) -> None:
+        """A semicolon in the SOURCE filename must stay DATA, never become a second command.
+
+        Mirrors ``TestShellPutContentIntegrity``'s same-named test. GET's
+        quoting is new code (the ``dd if=<src>`` argument, and the ``stat``/
+        ``wc`` size-probe path), so this pins that it is not skipped just
+        because PUT already proved the pattern once.
+        """
+        src = tmp_path / "evil;printf INJECTED;name.bin"
+        payload = b"just a normal file"
+        src.write_bytes(payload)
+        dest_dir = tmp_path / "dest"
+        dest_dir.mkdir()
+
+        exec_cmd = _ShellExecutingExec(cwd=tmp_path)
+        ft = _make_ft(exec_cmd)
+
+        per_file = await ft._run_get([src], dest_dir, None)
+
+        # The DISCRIMINATING assertion goes first, deliberately. Verified by
+        # mutation (dropping shlex.quote on `dd`'s if= argument): the
+        # unquoted `;` splits the shell into three statements -- a `dd` on a
+        # truncated path, a bare `printf INJECTED`, and a bogus third
+        # command -- and the compound command still exits nonzero (the
+        # captured stdout+stderr is not valid base64 either way), so
+        # `Status.Success` reddens too. But checking `Status.Success` FIRST
+        # would surface a generic "chunk 0 was not valid base64" message
+        # that says nothing about *why* -- it could just as easily be a
+        # transport corruption bug. Checking the INJECTED marker first
+        # surfaces the actual, specific, load-bearing signal: `printf
+        # INJECTED` really executed (confirmed directly, see this test's own
+        # verification in the fix-round report) and its output landed in
+        # `exec_cmd.outputs`, proving the unquoted `;` was read as a command
+        # separator by a REAL shell, not merely present in the command
+        # string.
+        assert "INJECTED" not in "".join(exec_cmd.outputs), exec_cmd.outputs
+        assert per_file[src].status is Status.Success, (per_file[src].msg, exec_cmd.calls)
+        landed = dest_dir / src.name
+        assert landed.exists(), exec_cmd.calls
+        assert landed.read_bytes() == payload
+
+
+# ---------------------------------------------------------------------------
+# I1 (fix round 1 review) -- the device's base64 wraps; decode must tolerate
+# wrapping and must not silently accept garbage
+# ---------------------------------------------------------------------------
+
+
+class TestShellGetWrappedAndValidatedDecode:
+    """The remote ``base64`` wraps its output, and a corrupt chunk must fail loudly, not silently.
+
+    Measured directly against real BusyBox rootfs images in this worktree
+    (``tests/_fixtures/busybox_rootfs``, all four matrix rows with a
+    ``base64`` applet at all): encoding one 4096-byte chunk wraps to 72
+    lines of up to 76 columns each. This class does not rely on THIS dev
+    box's own ``base64`` happening to wrap the same way -- each test hands
+    ``_RecordingExec`` a HAND-BUILT, explicitly wrapped or corrupted chunk,
+    so the property under test is pinned by the test data, not by whichever
+    ``base64`` happens to be on `$PATH` wherever the suite runs.
+
+    ``base64.b64decode(..., validate=True)`` is why both properties hold at
+    once: the flatten step (stripping whitespace before decoding) makes
+    wrapped text decode correctly, and ``validate=True`` makes anything
+    ELSE outside the base64 alphabet a hard failure instead of the default
+    ``validate=False``, which would silently accept a corrupted chunk --
+    measured on this class's own fixture (see
+    ``test_a_stray_non_alphabet_byte_mid_stream_fails_loudly``): discarding
+    the stray ``@`` there happens to leave a valid base64 string that decodes
+    to exactly the original 52-byte payload, so the bytes would have been
+    RIGHT. What ``validate=True`` actually buys is detecting that the wire
+    was corrupt at all -- nothing about ``validate=False`` would have
+    flagged that a transport injected a byte, even though this particular
+    injection was harmless by luck of where it landed.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_wrapped_chunk_decodes_to_the_original_bytes(self, tmp_path: Path) -> None:
+        payload = bytes((i * 13 + 7) % 256 for i in range(300))
+        encoded = base64.b64encode(payload).decode("ascii")
+        wrapped = "\n".join(encoded[i : i + 76] for i in range(0, len(encoded), 76)) + "\n"
+        assert wrapped.count("\n") > 1, "the fixture must actually span multiple lines"
+
+        src = tmp_path / "wrapped.bin"
+        dest_dir = tmp_path / "dest"
+        dest_dir.mkdir()
+
+        exec_cmd = _RecordingExec(outputs=[str(len(payload)), wrapped])
+        ft = _make_ft(exec_cmd)
+
+        per_file = await ft._run_get([src], dest_dir, None)
+
+        assert per_file[src].status is Status.Success, per_file[src].msg
+        landed = dest_dir / "wrapped.bin"
+        assert landed.read_bytes() == payload
+
+    @pytest.mark.asyncio
+    async def test_a_stray_non_alphabet_byte_mid_stream_fails_loudly(self, tmp_path: Path) -> None:
+        """A garbage byte injected into an otherwise-valid chunk must ERROR, not silently drop it.
+
+        ``@`` is not in the base64 alphabet (``[A-Za-z0-9+/=]``) and is not
+        whitespace, so the flatten step does not remove it. With
+        ``validate=False`` (the default, and this backend's behavior before
+        this fix round), ``base64.b64decode`` would silently accept the
+        corrupted chunk -- measured directly: discarding the stray ``@`` here
+        happens to recover the exact original bytes (52 bytes, equal), so the
+        payload would NOT have been wrong. Nothing would have flagged that
+        the transport injected a byte, though -- that silent acceptance,
+        not a bytes-level corruption, is the failure mode this test exists
+        to catch.
+        """
+        payload = b"hello world, this is more than one base64 group long"
+        encoded = base64.b64encode(payload).decode("ascii")
+        corrupted = encoded[:10] + "@" + encoded[10:]
+
+        src = tmp_path / "corrupt.bin"
+        dest_dir = tmp_path / "dest"
+        dest_dir.mkdir()
+
+        exec_cmd = _RecordingExec(outputs=[str(len(payload)), corrupted])
+        ft = _make_ft(exec_cmd)
+
+        per_file = await ft._run_get([src], dest_dir, None)
+
+        assert per_file[src].status is Status.Error, (
+            f"a stray non-alphabet byte mid-chunk must fail the transfer, not silently "
+            f"decode wrong bytes: got {per_file[src]}"
+        )
+        assert not (dest_dir / "corrupt.bin").exists(), (
+            "a failed decode must not leave a (wrong) file at the destination"
+        )
+
+
+# ---------------------------------------------------------------------------
+# G5 / mutation "fail mid-transfer" -- destination untouched, temp cleaned up
+# ---------------------------------------------------------------------------
+
+
+class TestShellGetSequentialFailure:
+    @pytest.mark.asyncio
+    async def test_a_failed_size_probe_fails_before_any_chunk_read(self, tmp_path: Path) -> None:
+        src = tmp_path / "payload.bin"
+        src.write_bytes(b"x" * 10)
+        dest_dir = tmp_path / "dest"
+        dest_dir.mkdir()
+
+        exec_cmd = _ShellExecutingExec(cwd=tmp_path, fail_when=lambda c: c.startswith("stat "))
+        ft = _make_ft(exec_cmd)
+
+        per_file = await ft._run_get([src], dest_dir, None)
+
+        assert per_file[src].status is Status.Error
+        assert not any(c.startswith("dd ") for c in exec_cmd.calls), exec_cmd.calls
+        assert not (dest_dir / "payload.bin").exists()
+
+    @pytest.mark.asyncio
+    async def test_a_failed_chunk_read_leaves_the_real_destination_untouched_and_cleans_up(
+        self, tmp_path: Path
+    ) -> None:
+        """Second of three chunk reads fails (a simulated remote/exec failure).
+
+        The first chunk's read DOES run for real (so real, decoded bytes
+        are briefly written to the local temp); only the second chunk's
+        exec is intercepted.
+
+        NOT a second guard for G1 ("write straight to the destination
+        instead of temp-then-replace") despite reading like one -- that is
+        ``TestShellGetStaging``'s job, and ONLY its job. Measured directly
+        (fix round 1): under ``temp = dst`` (G1's mutation), this test
+        still PASSES -- `pytest ...::test_a_failed_chunk_read_...` alone
+        reports 1 passed, and the same mutation against the whole GET suite
+        reports 2 failed (both in ``TestShellGetStaging``), 17 passed,
+        this test among the passes. With ``temp == dst``, chunk 1's real
+        bytes land at the REAL destination for real, and when chunk 2 then
+        fails, ``_cleanup_local_temp(temp)`` -- where ``temp`` IS ``dst`` --
+        deletes them; ``not real_dest.exists()`` ends up true, but for the
+        inverted reason (created then deleted, not staged safely away the
+        whole time). The ``leftover_temps == []`` half is equally blind to
+        that mutation for a different reason: with no ``.otto-`` suffix
+        ever used, there is nothing matching ``payload.bin.otto-*`` to find
+        either way -- vacuously true, not a measurement.
+
+        What THIS test actually guards, and does catch (fix round 1,
+        mutation: dropped the ``self._cleanup_local_temp(temp)`` call on
+        the chunk-read failure branch): 1 failed, 18 passed, and this test
+        -- specifically its ``leftover_temps == []`` assertion -- is the
+        one red. That is the real, on-disk analogue of PUT's own F1 defect
+        (a cleanup omitted on one failure path), for GET's chunk-read
+        branch.
+        """
+        payload = b"x" * (_SHELL_CHUNK_BYTES * 3)
+        src = tmp_path / "payload.bin"
+        src.write_bytes(payload)
+        dest_dir = tmp_path / "dest"
+        dest_dir.mkdir()
+
+        exec_cmd = _ShellExecutingExec(
+            cwd=tmp_path, fail_when=lambda c: c.startswith("dd ") and "skip=1 " in c
+        )
+        ft = _make_ft(exec_cmd)
+
+        per_file = await ft._run_get([src], dest_dir, None)
+
+        assert per_file[src].status is Status.Error
+        real_dest = dest_dir / "payload.bin"
+        assert not real_dest.exists(), (
+            f"a failed GET left a file at the real destination: {real_dest}"
+        )
+        leftover_temps = list(dest_dir.glob("payload.bin.otto-*"))
+        assert leftover_temps == [], (
+            f"the failed attempt's local temp was not cleaned up: {leftover_temps}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_failed_file_skips_remaining_files(self, tmp_path: Path) -> None:
+        src1 = tmp_path / "a.bin"
+        src1.write_bytes(b"x" * 10)
+        src2 = tmp_path / "b.bin"
+        src2.write_bytes(b"y" * 10)
+        dest_dir = tmp_path / "dest"
+        dest_dir.mkdir()
+
+        # `if=<abs path>` always embeds the full source path, never a bare
+        # basename, so match on the trailing `/a.bin` to target only src1.
+        exec_cmd = _ShellExecutingExec(
+            cwd=tmp_path, fail_when=lambda c: c.startswith("dd ") and "/a.bin" in c
+        )
+        ft = _make_ft(exec_cmd)
+
+        per_file = await ft._run_get([src1, src2], dest_dir, None)
+
+        assert per_file[src1].status is Status.Error
+        assert per_file[src2].status is Status.Skipped
+        assert not any("/b.bin" in c for c in exec_cmd.calls if c.startswith("dd ")), (
+            "the second file must never be attempted after the first fails"
+        )
+
+
+# ---------------------------------------------------------------------------
+# G6 / mutation "drop the zero-chunk progress call / mishandle size 0"
+# ---------------------------------------------------------------------------
+
+
+class TestShellGetEmptyFile:
+    @pytest.mark.asyncio
+    async def test_empty_source_creates_an_empty_local_file_with_no_chunk_reads(
+        self, tmp_path: Path
+    ) -> None:
+        src = tmp_path / "empty.bin"
+        dest_dir = tmp_path / "dest"
+        dest_dir.mkdir()
+
+        seen: list[tuple[int, int]] = []
+
+        def handler(_src: str, _dst: str, bytes_done: int, bytes_total: int) -> None:
+            seen.append((bytes_done, bytes_total))
+
+        exec_cmd = _RecordingExec(outputs=["0"])
+        ft = _make_ft(exec_cmd)
+
+        per_file = await ft._run_get([src], dest_dir, lambda: handler)
+
+        assert per_file[src].status is Status.Success, per_file[src].msg
+        assert per_file[src].value == dest_dir / "empty.bin"
+        assert not any(c.startswith("dd ") for c in exec_cmd.calls), exec_cmd.calls
+        landed = dest_dir / "empty.bin"
+        assert landed.exists()
+        assert landed.read_bytes() == b""
+        assert seen == [(0, 0)], seen
+
+
+# ---------------------------------------------------------------------------
+# Progress contract
+# ---------------------------------------------------------------------------
+
+
+class TestShellGetProgress:
+    @pytest.mark.asyncio
+    async def test_handler_reaches_bytes_done_equals_total(self, tmp_path: Path) -> None:
+        src = tmp_path / "f.bin"
+        payload = b"z" * (_SHELL_CHUNK_BYTES + 50)
+        src.write_bytes(payload)
+        dest_dir = tmp_path / "dest"
+        dest_dir.mkdir()
+
+        seen: list[tuple[int, int]] = []
+
+        def handler(_src: str, _dst: str, bytes_done: int, bytes_total: int) -> None:
+            seen.append((bytes_done, bytes_total))
+
+        exec_cmd = _ShellExecutingExec(cwd=tmp_path)
+        ft = _make_ft(exec_cmd)
+
+        per_file = await ft._run_get([src], dest_dir, lambda: handler)
+
+        assert per_file[src].status is Status.Success, per_file[src].msg
+        assert seen, "progress handler was never invoked"
+        assert seen[-1] == (len(payload), len(payload))
+
+
+# ---------------------------------------------------------------------------
+# Task 4 / integrity verification -- GET's own arms, plus the named mutation
+# ---------------------------------------------------------------------------
+
+
+class TestShellGetIntegrityVerification:
+    """GET's post-decode, pre-``Path.replace()`` integrity check -- both ``checksum`` arms.
+
+    ``_RecordingExec`` throughout, for the same reason PUT's counterpart
+    class gives: the property under test is the FORMAT of what a device
+    returns and how this backend reacts to it, and GET's LOCAL temp write is
+    real regardless of which fake stands in for the remote side (see the
+    module docstring) -- so "the temp is gone" can be checked directly
+    against the filesystem even with the remote exec entirely faked.
+    """
+
+    @pytest.mark.asyncio
+    async def test_matching_md5sum_lets_the_transfer_reach_replace(self, tmp_path: Path) -> None:
+        """Also pins WHICH path ``md5sum`` targets -- the real remote ``src``, nothing else.
+
+        Round 1 review (finding CRITICAL 2, the most severe of the two): the
+        original version of this test answered any command starting with
+        ``"md5sum"``, so a mutant substituting an entirely unrelated path
+        (the review's own example: ``Path("/wrong/path/entirely")``) still
+        got the right-looking answer and this test stayed green -- 49
+        passed, 0 failed under that mutation. Fixed with an exact-equality
+        check against *src*, which GET's ``md5sum`` arm must always target
+        (there is no remote temp on the GET side to stage into first).
+        """
+        payload = b"the quick brown fox jumps over the lazy dog"
+        src = tmp_path / "f.bin"
+        dest_dir = tmp_path / "dest"
+        dest_dir.mkdir()
+        dst = dest_dir / "f.bin"
+        digest = hashlib.md5(payload).hexdigest()  # noqa: S324 -- matching a real device's md5sum
+        chunk = base64.b64encode(payload).decode("ascii")
+
+        exec_cmd = _RecordingExec(
+            outputs=[str(len(payload)), chunk],
+            answer_when=lambda c: f"{digest}  ignored-filename" if c.startswith("md5sum") else None,
+        )
+        ft = _make_ft(exec_cmd, checksum="md5sum")
+
+        per_file = await ft._run_get([src], dest_dir, None)
+
+        assert per_file[src].status is Status.Success, per_file[src].msg
+        md5sum_calls = [c for c in exec_cmd.calls if c.startswith("md5sum")]
+        assert md5sum_calls == [f"md5sum -- {src}"], (
+            f"md5sum must target the real remote source ({src}), not a substituted "
+            f"path: {exec_cmd.calls}"
+        )
+        assert dst.exists()
+        assert dst.read_bytes() == payload
+
+    @pytest.mark.asyncio
+    async def test_a_corrupted_chunk_is_caught_by_md5sum_and_the_temp_is_removed(
+        self, tmp_path: Path
+    ) -> None:
+        """Step 3's named mutation: corrupt one chunk in the fake; the check must catch it
+        AND the temp must be gone afterwards.
+
+        Two chunks, both syntactically valid base64 (so
+        ``base64.b64decode(..., validate=True)`` -- item 0's guard -- has
+        nothing to object to; decoding succeeds and every chunk-read command
+        reports exit 0). The SECOND chunk's canned output is swapped for a
+        different, equal-length, still-valid-base64 payload -- bytes that
+        decode cleanly but are not what the source actually contains. The
+        device's ``md5sum`` answer is scripted as the digest of the
+        UNCORRUPTED original payload (what a real device holding the real
+        source would actually report), so the mismatch is entirely between
+        that answer and what landed locally -- exactly the "exit 0 but wrong
+        bytes" gap a pure exit-code or base64-validity check cannot see.
+
+        Second thread, alongside ``test_matching_md5sum_lets_the_transfer_reach_replace``'s:
+        that test is the only one pinning WHICH path ``md5sum`` targets, so
+        reverting its lone exact-equality assertion back to the old
+        ``any(c.startswith("md5sum -- "))`` fully un-guards a wrong-path
+        regression again -- MEASURED, reverting it while a
+        ``Path("/wrong/path/entirely")`` mutation is applied to
+        ``_get_one``'s ``_verify_integrity`` call returns the suite to 49
+        passed, 0 failed. ``answer_when`` here is keyed on the exact command
+        too (not a bare ``startswith("md5sum")``), and ``exec_cmd.calls`` is
+        asserted the same way, so a wrong-path regression reds THIS test as
+        well -- two independent assertions instead of one.
+        """
+        payload = b"a" * _SHELL_CHUNK_BYTES + b"b" * 200
+        src = tmp_path / "f.bin"
+        dest_dir = tmp_path / "dest"
+        dest_dir.mkdir()
+        real_digest = hashlib.md5(payload).hexdigest()  # noqa: S324
+        chunk0 = base64.b64encode(payload[:_SHELL_CHUNK_BYTES]).decode("ascii")
+        real_chunk1 = payload[_SHELL_CHUNK_BYTES:]
+        corrupted_chunk1 = base64.b64encode(b"X" * len(real_chunk1)).decode("ascii")
+        assert corrupted_chunk1 != base64.b64encode(real_chunk1).decode("ascii")
+
+        exec_cmd = _RecordingExec(
+            outputs=[str(len(payload)), chunk0, corrupted_chunk1],
+            answer_when=lambda c: (
+                f"{real_digest}  ignored-filename" if c == f"md5sum -- {src}" else None
+            ),
+        )
+        ft = _make_ft(exec_cmd, checksum="md5sum")
+
+        per_file = await ft._run_get([src], dest_dir, None)
+
+        assert per_file[src].status is Status.Error
+        assert "md5sum mismatch" in per_file[src].msg, per_file[src].msg
+        md5sum_calls = [c for c in exec_cmd.calls if c.startswith("md5sum")]
+        assert md5sum_calls == [f"md5sum -- {src}"], (
+            f"md5sum must target the real remote source ({src}), not a substituted "
+            f"path: {exec_cmd.calls}"
+        )
+        dst = dest_dir / "f.bin"
+        assert not dst.exists(), "a mismatched digest must never reach the real destination"
+        leftover_temps = list(dest_dir.glob("f.bin.otto-*"))
+        assert leftover_temps == [], (
+            f"the corrupted chunk's local temp was not cleaned up: {leftover_temps}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_absent_checksum_falls_back_to_the_already_known_total(
+        self, tmp_path: Path
+    ) -> None:
+        """No FRESH remote query on the ``absent`` path -- see ``_verify_integrity``'s
+        docstring for why reusing *total* does not weaken what this catches. Asserted
+        directly: exactly one ``stat`` call in the whole transcript.
+        """
+        payload = b"twelve bytes"
+        src = tmp_path / "f.bin"
+        dest_dir = tmp_path / "dest"
+        dest_dir.mkdir()
+        chunk = base64.b64encode(payload).decode("ascii")
+
+        exec_cmd = _RecordingExec(outputs=[str(len(payload)), chunk])
+        ft = _make_ft(exec_cmd, checksum="absent")
+
+        per_file = await ft._run_get([src], dest_dir, None)
+
+        assert per_file[src].status is Status.Success, per_file[src].msg
+        stat_calls = [c for c in exec_cmd.calls if _SIZE_QUERY_RE.match(c)]
+        assert len(stat_calls) == 1, (
+            f"the absent-checksum path must reuse the size already fetched, not "
+            f"re-query: {exec_cmd.calls}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_absent_checksum_short_read_is_a_size_mismatch(self, tmp_path: Path) -> None:
+        """A chunk that decodes short of the announced total -- no exec error, no base64
+        error -- must still fail as a size mismatch, not report ``Status.Success`` on a
+        truncated local file.
+        """
+        payload = b"twelve bytes"
+        src = tmp_path / "f.bin"
+        dest_dir = tmp_path / "dest"
+        dest_dir.mkdir()
+        # Decodes to one byte fewer than announced.
+        short_chunk = base64.b64encode(payload[:-1]).decode("ascii")
+
+        exec_cmd = _RecordingExec(outputs=[str(len(payload)), short_chunk])
+        ft = _make_ft(exec_cmd, checksum="absent")
+
+        per_file = await ft._run_get([src], dest_dir, None)
+
+        assert per_file[src].status is Status.Error
+        assert "size mismatch" in per_file[src].msg, per_file[src].msg
+        dst = dest_dir / "f.bin"
+        assert not dst.exists()
+        leftover_temps = list(dest_dir.glob("f.bin.otto-*"))
+        assert leftover_temps == [], leftover_temps
+
+
+# ---------------------------------------------------------------------------
+# create() -- ctx guards
+# ---------------------------------------------------------------------------
+
+
+class TestShellFileTransferCreate:
+    def _ctx(self, **overrides: object) -> TransferContext:
+        base: dict[str, object] = {
+            "transfer": "shell",
+            "host_name": "tomato",
+            "connections": MagicMock(spec=ConnectionManager),
+            "exec_cmd": AsyncMock(),
+            "userland": _declared_userland("-d"),
+        }
+        base.update(overrides)
+        return TransferContext(**base)  # type: ignore[arg-type]
+
+    def test_missing_exec_cmd_raises(self) -> None:
+        with pytest.raises(ValueError, match="exec_cmd"):
+            ShellFileTransfer.create(self._ctx(exec_cmd=None))
+
+    def test_missing_userland_raises(self) -> None:
+        with pytest.raises(ValueError, match="userland"):
+            ShellFileTransfer.create(self._ctx(userland=None))
+
+    def test_missing_connections_raises(self) -> None:
+        with pytest.raises(ValueError, match="connections"):
+            ShellFileTransfer.create(self._ctx(connections=None))
+
+    def test_builds_with_a_full_context(self) -> None:
+        ft = ShellFileTransfer.create(self._ctx())
+        assert isinstance(ft, ShellFileTransfer)
+        assert ft.host_families == frozenset({"unix"})

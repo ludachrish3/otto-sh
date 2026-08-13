@@ -46,16 +46,47 @@ from pathlib import Path
 
 from .busybox import BusyBoxRelease, busybox_binary
 
-# /bin gets applet symlinks and /dev gets exactly one file (see
-# `_install_dev_null`); nothing else is populated — no `/tmp` either, since no
-# script this tier runs writes to one (checked: no `run_in_rootfs` payload
-# anywhere under tests/busybox/ references `mktemp` or `/tmp`; an applet that
-# defaulted TMPDIR-less to `/tmp` would simply fail the way it fails on any
-# path this root doesn't have). A BusyBox device's `/usr/bin` is typically a
-# symlink or absent, and leaving it absent is the point of the tier: code
-# that shells out to /usr/bin/<gnu tool> must fail here the way it fails on
-# the device.
-_ROOTFS_DIRS = ("bin", "dev")
+# /bin gets applet symlinks, /dev gets exactly one file (see
+# `_install_dev_null`), and /tmp is an ordinary empty, writable directory —
+# nothing else is populated.
+#
+# `tmp` was dropped from this tuple in phase 3's final review as unused, and
+# the first consumer arrived exactly one phase later: the `shell` transfer
+# backend stages a temp file on the target host and `mv`s it into place once
+# the write completes, so a root with no writable temp directory cannot
+# exercise that backend's central safety property (no reader ever sees a
+# partial file). The pre-planning probe for that phase failed with
+# `can't create /tmp/...: nonexistent directory` — which is the SAME
+# silent-corruption shape `/dev/null`'s earlier absence had: a WRITE REDIRECT
+# (`>/tmp/...`) whose own `open()` fails to a missing directory reports the
+# WHOLE wrapped command as failed, not "the temp dir is missing", so a caller
+# that only checks the exit code learns nothing about which line lost. See
+# `run_in_rootfs`'s docstring for the `/dev/null` half of that history.
+#
+# NOT the same MECHANISM as a write redirect's setup failure, though an
+# earlier version of this comment drew the contrast wrong twice over — first
+# by claiming `mktemp` shares the redirect's failure shape at all, then by
+# claiming it differs by NOT swallowing a `;`-chain. Measured, with no `/tmp`
+# present: `echo hi >/tmp/x; echo AFTER` and `mktemp; echo AFTER` both print
+# `AFTER` and exit 0 — `;` never looks at the exit status of what came
+# before it, for either one, and under `&&` both alike skip the tail. There
+# is no chain-propagation difference between the two.
+#
+# What genuinely differs is WHERE the failure happens. A write redirect's
+# `open()` runs BEFORE the command it is attached to even starts, so a
+# failure there means that command is never attempted at all — which is what
+# "the WHOLE wrapped command" means above and in `run_in_rootfs`'s own
+# docstring: not a chain of several commands, but the ONE command plus its
+# own redirect, failing as a unit because the shell refuses to start it.
+# `mktemp` invoked bare has no such redirect — it DOES run, and fails on its
+# OWN internal open() instead, surfacing its own diagnostic
+# (`mktemp: (null): No such file or directory`, rc=1) rather than ash's
+# `can't create ...: nonexistent directory`.
+#
+# A BusyBox device's `/usr/bin` is typically a symlink or absent, and leaving
+# it absent is the point of the tier: code that shells out to
+# /usr/bin/<gnu tool> must fail here the way it fails on the device.
+_ROOTFS_DIRS = ("bin", "dev", "tmp")
 
 # The environment the rootfs shell gets. INJECTED, never inherited: `chroot`
 # passes the caller's environment straight through, and the dev VM's PATH

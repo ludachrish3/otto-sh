@@ -280,6 +280,7 @@ class UserlandOptionsSpec(OttoModel):
     elevation: Literal["sudo", "su", "none"] | None = None
     base64_flag: Literal["-d", "--decode", "absent"] | None = None
     stat_size: Literal["stat", "wc", "absent"] | None = None
+    checksum: Literal["md5sum", "absent"] | None = None
     timeout_style: Literal["coreutils", "dash-t", "absent"] | None = None
     version: str | None = None
 
@@ -290,6 +291,7 @@ class UserlandOptionsSpec(OttoModel):
             elevation=self.elevation,
             base64_flag=self.base64_flag,
             stat_size=self.stat_size,
+            checksum=self.checksum,
             timeout_style=self.timeout_style,
             version=self.version,
         )

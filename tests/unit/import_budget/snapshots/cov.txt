@@ -65,6 +65,7 @@ otto.host.transfer.progress
 otto.host.transfer.registry
 otto.host.transfer.scp
 otto.host.transfer.sftp
+otto.host.transfer.shell
 otto.host.transfer.tftp
 otto.host.transfer.unix_base
 otto.host.transport

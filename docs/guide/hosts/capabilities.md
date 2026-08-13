@@ -173,7 +173,7 @@ to {meth}`~otto.host.unix_host.UnixHost.put` and
 | `await host.rm(path, recursive=False, force=False)` | Remove a path. |
 | `await host.cp(src, dst, recursive=False)` | Copy on the host. |
 | `await host.mv(src, dst)` | Move/rename on the host. |
-| `await host.read_file(path)` | Return text contents (raises `FileNotFoundError`). |
+| `await host.read_file(path)` | Return text contents (raises `FileNotFoundError` if the path is missing, `ValueError` if the device output is not valid base64). |
 | `await host.write_file(path, data, append=False)` | Write text (base64 on the wire, injection-safe). |
 
 `write_file` and `read_file` transfer text; for

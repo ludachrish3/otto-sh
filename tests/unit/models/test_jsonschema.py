@@ -146,8 +146,8 @@ class TestSelectorEnums:
         assert vt["anyOf"][0]["enum"] == ["ssh", "telnet"]  # scalar
         assert vt["anyOf"][1]["items"]["enum"] == ["ssh", "telnet"]  # array
         vx = props["valid_transfers"]
-        assert vx["anyOf"][0]["enum"] == ["ftp", "nc", "scp", "sftp"]
-        assert vx["anyOf"][1]["items"]["enum"] == ["ftp", "nc", "scp", "sftp"]
+        assert vx["anyOf"][0]["enum"] == ["ftp", "nc", "scp", "sftp", "shell"]
+        assert vx["anyOf"][1]["items"]["enum"] == ["ftp", "nc", "scp", "sftp", "shell"]
         # Scalar pins are present but have no injected enum (nullable optional).
         assert "term" in props
         assert "enum" not in props["term"]
@@ -180,6 +180,7 @@ class TestSelectorEnums:
             "nc",
             "scp",
             "sftp",
+            "shell",
         ]
 
     def test_custom_unix_transfer_appears_in_enum(self):

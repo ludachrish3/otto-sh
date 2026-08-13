@@ -1,11 +1,13 @@
 """Resolution, caching, override precedence and log discipline for Userland.
 
-Every probe SPELLING and every expected answer in this module traces to a
+Every probe SPELLING WITH A REAL ARGUMENT-PARSING QUESTION -- one BusyBox
+version could plausibly answer differently than another -- traces to a
 measurement in ``tests/busybox/test_applet_contracts.py`` (Tier 1, real
 BusyBox binaries), never to a guess about what a build does. The constants
 below are the test's own copy of those spellings: the product is compared
 against them, so a drift to a spelling Tier 1 measured as REJECTED (e.g.
-``stat --format=%s``) reddens here rather than on a device.
+``stat --format=%s``) reddens here rather than on a device. Not every probe
+qualifies -- see the block below for which ones do and why the rest do not.
 """
 
 import ast
@@ -34,6 +36,15 @@ from otto.result import CommandResult, Status
 # an import on purpose — a product that imported the test's list could not be
 # caught drifting by it — so each of the three names the other two.
 #
+# That is true of `_P_TIMEOUT*`, `_P_BASE64*`, `_P_STAT`, and `_P_WC` --
+# genuinely contested spellings a BusyBox version could reject. `_P_SUDO`,
+# `_P_SU`, and `_P_MD5SUM` are NOT: a bare `command -v X` presence check and
+# a single-spelling checksum probe have no argument-parsing variant for a
+# BusyBox version to disagree about, so Tier 1 carries no copy of them and
+# only TWO copies of theirs exist (this file's and the product's). Tier 1
+# does substantiate `_P_MD5SUM`'s capability a different way -- see
+# `src/otto/host/userland.py`'s module docstring.
+#
 # `command -v X` rather than `which X`: `which` is itself an optional applet.
 _P_SUDO = "command -v sudo"
 _P_SU = "command -v su"
@@ -53,6 +64,13 @@ _P_BASE64_LONG = "echo aGk= | base64 --decode"
 # the universal fallback.
 _P_STAT = "stat -c %s /dev/null"
 _P_WC = "wc -c < /dev/null"
+# One spelling only -- unlike stat_size's stat/wc pair there is no second,
+# widely-available checksum tool this module falls back to, so the probe
+# either answers or it does not. `< /dev/null` is a redirect, matching
+# `_P_WC` just above (not `_P_STAT`, which passes `/dev/null` as a plain
+# positional argument and reads no stdin at all) -- the other REDIRECT-based
+# probe in this set, picked for consistency, not because md5sum needs it.
+_P_MD5SUM = "md5sum < /dev/null"
 # Behaviour, not a name: BusyBox ships both ash and hush and `sh` may be
 # either, so the presence of $BASH_VERSION is the only thing that separates
 # the frame otto should use.
@@ -60,7 +78,7 @@ _P_BASH = 'test -n "$BASH_VERSION"'
 
 # ``version`` is the one field with no probe, by the plan's binding constraint:
 # a declared version is documentation and must never gate behaviour. Every
-# OTHER field of UserlandOptions is derived, so adding a seventh field without
+# OTHER field of UserlandOptions is derived, so adding an eighth field without
 # teaching Userland to resolve it reddens
 # ``test_every_option_field_is_probed_or_documented_as_never_probed`` instead
 # of quietly going unresolved.
@@ -93,7 +111,7 @@ def _ok(value: str = "") -> CommandResult:
 # `str | None` rather than a Literal, so UserlandOptionsSpec validates ANY
 # string for it and the paste-ready round trip cannot police it. Its
 # vocabulary is pinned here instead, or the field rides along on the other
-# four fields' Literals and a probe answering "posix" ships unnoticed.
+# five fields' Literals and a probe answering "posix" ships unnoticed.
 _MEASURED_DIALECTS = {"ash", "bash"}
 
 
@@ -116,7 +134,7 @@ def _assert_debug_only(caplog) -> None:
 
 
 # What a host that can answer NOTHING must resolve to. Checked against the
-# derived field list inside the test, so a seventh field cannot arrive without
+# derived field list inside the test, so an eighth field cannot arrive without
 # someone deciding what it degrades to.
 #
 # "Answers nothing" here means ANSWERS NO — the device is reachable and every
@@ -125,6 +143,7 @@ def _assert_debug_only(caplog) -> None:
 # see _UNASKABLE below and do not merge the two.
 _FULLY_DEGRADED = {
     "base64_flag": "absent",
+    "checksum": "absent",
     "elevation": "none",
     "shell_dialect": "ash",
     "stat_size": "absent",
@@ -147,6 +166,12 @@ _FULLY_DEGRADED = {
 #                  status quo and "absent" would be a capability regression.
 #   base64_flag    nothing consumes it yet, so the conservative answer wins:
 #                  claiming a decode flag works builds a command that fails.
+#   checksum       "absent" degrades to the byte-size comparison that always
+#                  works, the OPPOSITE reasoning from stat_size: there is no
+#                  status quo to preserve (nothing consumed a checksum before
+#                  this capability existed), so assuming "md5sum" on a host
+#                  that could not even answer the probe would build a command
+#                  likely to 127 and report a good transfer as a bad one.
 #   shell_dialect  otto's unix path has always assumed bash, and nothing
 #                  routes this PROBE's value to frame selection yet — an
 #                  `ash` CommandFrame IS registered now
@@ -155,6 +180,7 @@ _FULLY_DEGRADED = {
 #                  nobody took, not merely name a frame that can't be built.
 _UNASKABLE = {
     "base64_flag": "absent",
+    "checksum": "absent",
     "elevation": "sudo",
     "shell_dialect": "bash",
     "stat_size": "stat",
@@ -162,7 +188,7 @@ _UNASKABLE = {
 }
 
 # Every probe otto issues, in order, on a host that answers only `command -v
-# timeout` — the one script that reaches all ten arms, because a `timeout`
+# timeout` — the one script that reaches all eleven arms, because a `timeout`
 # that is absent short-circuits both spelling probes.
 _EVERY_PROBE_IN_ORDER = [
     _P_SUDO,
@@ -174,6 +200,7 @@ _EVERY_PROBE_IN_ORDER = [
     _P_BASE64_LONG,
     _P_STAT,
     _P_WC,
+    _P_MD5SUM,
     _P_BASH,
 ]
 
@@ -555,38 +582,47 @@ class _Device:
 
 _DEVICES = [
     # BusyBox 1.16.1: `base64` applet absent entirely, `timeout` still `-t`.
+    # `md5sum` is measured present even here (this task's brief), unlike
+    # `base64` on the same build.
     _Device(
         "busybox-1.16.1",
-        frozenset({_P_SU, _P_TIMEOUT, _P_TIMEOUT_DASH_T, _P_STAT, _P_WC}),
+        frozenset({_P_SU, _P_TIMEOUT, _P_TIMEOUT_DASH_T, _P_STAT, _P_WC, _P_MD5SUM}),
         {
             "elevation": "su",
             "timeout_style": "dash-t",
             "base64_flag": "absent",
             "stat_size": "stat",
+            "checksum": "md5sum",
             "shell_dialect": "ash",
         },
     ),
     # BusyBox 1.28.1: the last measured build on the `-t` side, with base64.
     _Device(
         "busybox-1.28.1",
-        frozenset({_P_SU, _P_TIMEOUT, _P_TIMEOUT_DASH_T, _P_BASE64_SHORT, _P_STAT, _P_WC}),
+        frozenset(
+            {_P_SU, _P_TIMEOUT, _P_TIMEOUT_DASH_T, _P_BASE64_SHORT, _P_STAT, _P_WC, _P_MD5SUM}
+        ),
         {
             "elevation": "su",
             "timeout_style": "dash-t",
             "base64_flag": "-d",
             "stat_size": "stat",
+            "checksum": "md5sum",
             "shell_dialect": "ash",
         },
     ),
     # BusyBox 1.35.0: coreutils-style `timeout`, still no `--decode`.
     _Device(
         "busybox-1.35.0",
-        frozenset({_P_SU, _P_TIMEOUT, _P_TIMEOUT_COREUTILS, _P_BASE64_SHORT, _P_STAT, _P_WC}),
+        frozenset(
+            {_P_SU, _P_TIMEOUT, _P_TIMEOUT_COREUTILS, _P_BASE64_SHORT, _P_STAT, _P_WC, _P_MD5SUM}
+        ),
         {
             "elevation": "su",
             "timeout_style": "coreutils",
             "base64_flag": "-d",
             "stat_size": "stat",
+            "checksum": "md5sum",
             "shell_dialect": "ash",
         },
     ),
@@ -594,12 +630,13 @@ _DEVICES = [
     # the reason the fallback arm is not dead code.
     _Device(
         "busybox-stat-compiled-out",
-        frozenset({_P_SU, _P_TIMEOUT, _P_TIMEOUT_DASH_T, _P_BASE64_SHORT, _P_WC}),
+        frozenset({_P_SU, _P_TIMEOUT, _P_TIMEOUT_DASH_T, _P_BASE64_SHORT, _P_WC, _P_MD5SUM}),
         {
             "elevation": "su",
             "timeout_style": "dash-t",
             "base64_flag": "-d",
             "stat_size": "wc",
+            "checksum": "md5sum",
             "shell_dialect": "ash",
         },
     ),
@@ -617,6 +654,7 @@ _DEVICES = [
                 _P_BASE64_LONG,
                 _P_STAT,
                 _P_WC,
+                _P_MD5SUM,
                 _P_BASH,
             }
         ),
@@ -625,6 +663,7 @@ _DEVICES = [
             "timeout_style": "coreutils",
             "base64_flag": "-d",
             "stat_size": "stat",
+            "checksum": "md5sum",
             "shell_dialect": "bash",
         },
     ),
@@ -635,12 +674,13 @@ _DEVICES = [
     # backstop into an outage.
     _Device(
         "timeout-present-but-unusable",
-        frozenset({_P_SU, _P_TIMEOUT, _P_BASE64_SHORT, _P_STAT, _P_WC}),
+        frozenset({_P_SU, _P_TIMEOUT, _P_BASE64_SHORT, _P_STAT, _P_WC, _P_MD5SUM}),
         {
             "elevation": "su",
             "timeout_style": "absent",
             "base64_flag": "-d",
             "stat_size": "stat",
+            "checksum": "md5sum",
             "shell_dialect": "ash",
         },
     ),
@@ -653,12 +693,15 @@ _DEVICES = [
     # do not weaken it.
     _Device(
         "synthetic-long-decode-only",
-        frozenset({_P_SU, _P_TIMEOUT, _P_TIMEOUT_COREUTILS, _P_BASE64_LONG, _P_STAT, _P_WC}),
+        frozenset(
+            {_P_SU, _P_TIMEOUT, _P_TIMEOUT_COREUTILS, _P_BASE64_LONG, _P_STAT, _P_WC, _P_MD5SUM}
+        ),
         {
             "elevation": "su",
             "timeout_style": "coreutils",
             "base64_flag": "--decode",
             "stat_size": "stat",
+            "checksum": "md5sum",
             "shell_dialect": "ash",
         },
     ),
@@ -708,11 +751,16 @@ async def test_a_scripted_device_resolves_to_its_measured_answers(device):
 async def test_every_probe_is_sent_with_a_bound():
     """A probe with no timeout hangs the command the caller actually wanted.
 
-    The VALUE is a runaway guard that nothing here reads, and it can be
-    widened freely. Its PRESENCE is the wedged-host protection the constant
-    exists for, and deleting the kwarg is invisible to every other guard in
-    this module — the scripted runner answers instantly either way. Asserting
-    presence is not a wall-clock discriminator: no clock is consulted.
+    THIS test reads only the kwarg's PRESENCE and its upper bound, never the
+    constant's exact VALUE — deleting the kwarg is invisible to every other
+    guard in this module, since the scripted runner answers instantly either
+    way. Asserting presence is not a wall-clock discriminator: no clock is
+    consulted. That does not mean the constant is free to widen: it is one
+    half of the ratio ceil(_RESOLVE_BUDGET_S / _PROBE_TIMEOUT_S), and
+    `_RESOLVE_BUDGET_S`'s own comment in userland.py measures what widening
+    that ratio breaks (31.0 already reds
+    test_resolution_stops_once_the_whole_budget_is_spent[as-shipped]) — this
+    test's silence on the value is not evidence that no test cares about it.
     """
     runner = _Runner({_P_TIMEOUT})
 
@@ -779,8 +827,8 @@ def test_every_probe_is_bounded_by_otto_and_not_by_the_callee():
     to establishing the SSH connection the command needs first.
     ``exec("true", timeout=2.0)`` against an unroutable address had still not
     returned after 120 seconds. Passing the grant down is therefore advice,
-    and the arithmetic in this module's budget comment — ten probes reduced to
-    three, one resolution bounded at ``_RESOLVE_BUDGET_S`` — is only true if
+    and the arithmetic in this module's budget comment — eleven probes reduced
+    to three, one resolution bounded at ``_RESOLVE_BUDGET_S`` — is only true if
     something up here actually stops waiting.
 
     That matters more now than when it was written: the first elevated command
@@ -901,7 +949,7 @@ async def test_resolution_stops_once_the_whole_budget_is_spent(
 ):
     """One resolution is bounded in total, not just probe by probe.
 
-    Ten probes at _PROBE_TIMEOUT_S each is 100s of lock held on a host that
+    Eleven probes at _PROBE_TIMEOUT_S each is 110s of lock held on a host that
     swallows everything, and resolve() holds that lock across the lot — so a
     concurrent consumer's queued callers wait the whole span out before their
     own timeouts even start. The budget converts that into a stated bound.
@@ -1162,9 +1210,12 @@ async def test_the_pasteable_summary_never_offers_a_value_otto_did_not_measure(c
     assert summary, "no pasteable summary was emitted"
     payload = json.loads(summary[0].split('-- "userland_options": ', 1)[1])
 
-    assert payload == {"elevation": "su", "timeout_style": "dash-t", "base64_flag": "-d"}, (
-        f"the paste line offered {payload}; every key in it must have been measured"
-    )
+    assert payload == {
+        "elevation": "su",
+        "timeout_style": "dash-t",
+        "base64_flag": "-d",
+        "checksum": "md5sum",
+    }, f"the paste line offered {payload}; every key in it must have been measured"
     UserlandOptionsSpec(**payload)
     # The host still HAS answers for the two it could not ask — it just may not
     # invite anyone to make them permanent.
@@ -1221,6 +1272,7 @@ _BLIP_RECOVERY = [
     ("timeout_style", {_P_TIMEOUT}, "gnu-coreutils-bash", "absent", "coreutils"),
     ("base64_flag", {_P_BASE64_SHORT, _P_BASE64_LONG}, "gnu-coreutils-bash", "absent", "-d"),
     ("stat_size", {_P_STAT, _P_WC}, "busybox-stat-compiled-out", "stat", "wc"),
+    ("checksum", {_P_MD5SUM}, "busybox-1.28.1", "absent", "md5sum"),
     ("shell_dialect", {_P_BASH}, "busybox-1.28.1", "bash", "ash"),
 ]
 
@@ -1280,8 +1332,8 @@ async def test_a_settled_capability_is_not_re_probed_by_a_neighbour_s_retry(monk
     """Recovery re-probes the unsettled keys only, never the whole round.
 
     The retry above must not become "resolve everything again on every call".
-    A device that answered four of five capabilities has already paid for
-    those four, and re-issuing them on the next elevated command puts the
+    A device that answered five of six capabilities has already paid for
+    those five, and re-issuing them on the next elevated command puts the
     probe traffic back on the fan-out path the lock was added to protect.
     """
     clock = _FakeClock()

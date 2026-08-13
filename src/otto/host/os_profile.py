@@ -436,40 +436,50 @@ def _register_builtin_os_profiles() -> None:
         the wire today; it labels the host correctly in diagnostics and gives a
         future ash-only divergence a home.
 
-    ``transfer`` is deliberately absent. A real BusyBox device typically runs
-    **dropbear** in place of OpenSSH — a separate project, not a BusyBox
-    applet itself (measured: ``busybox-1.35.0-x86_64 --list`` names none of
-    its 402 applets ``sshd``/``ssh``/``scp``/``sftp``/``dropbear``) — and
-    dropbear ships no ``sftp-server`` (``docs/superpowers/specs/
+    ``transfer`` defaults to ``"shell"`` (:mod:`otto.host.transfer.shell`),
+    the phase 4 backend built for exactly this device class: PUT, GET, and
+    integrity verification all move bytes with nothing but command
+    execution — no ``scp``, ``sftp-server``, or ``nc`` required on the
+    device. That default exists *because* a real BusyBox device typically
+    runs **dropbear** in place of OpenSSH — a separate project, not a
+    BusyBox applet itself (measured: ``busybox-1.35.0-x86_64 --list`` names
+    none of its 402 applets ``sshd``/``ssh``/``scp``/``sftp``/``dropbear``)
+    — and dropbear ships no ``sftp-server`` (``docs/superpowers/specs/
     2026-08-11-busybox-host-support-design.md``, "The dropbear risk"). That
     same design doc's "Known entries at design time" names ``sftp``/``scp``
     against dropbear as an identified, *untested* risk — not a measured
-    break, unlike ``daemon``'s ``bash -c`` above — so the honest claim is
-    that the inherited ``scp`` default is unverified against a real device,
-    not proven to work. Left inherited, a busybox host still *attempts* scp
-    on every ``put``/``get``: ``ScpFileTransfer._get_files_scp``/
-    ``_put_files_scp`` (``otto/host/transfer/scp.py``) call ``asyncssh.scp()``
-    unconditionally, with no upfront probe of the remote — so a failure
-    lands at transfer time on a real device, not at the cheaper host-build
-    time where a wrong ``command_frame`` or ``has_bash`` would be caught.
+    break — so they are not pruned from ``valid_transfers``: a lab entry
+    that knows its device runs a real OpenSSH-compatible server can still
+    opt into ``scp``/``sftp``/``ftp``/``nc`` by pinning ``transfer`` itself.
+    Doing so gets ``ScpFileTransfer``'s unconditional ``asyncssh.scp()``
+    call (``otto/host/transfer/scp.py``, both ``_get_files_scp`` and
+    ``_put_files_scp``), with no upfront probe of the remote — a failure
+    lands at transfer time on the real device, not at the cheaper
+    host-build time where a wrong ``command_frame`` or ``has_bash`` would
+    be caught. ``shell`` as the *default* is what avoids that exposure for
+    the common case.
 
-    The honest replacement is a shell-based backend that does not exist yet
-    (no ``shell`` entry in ``TRANSFER_BACKENDS``). Naming one in ``defaults``
-    today would not fail where it looks like it should:
-    :func:`register_os_profile` validates only default *keys* against the
-    base class's fields, never values, so registration itself would succeed.
-    The failure comes later, at host-build time, from
-    :class:`~otto.host.capability.CapabilityResolver` checking the value
-    against this host's ``valid_transfers`` *menu* — not from any
-    "is this backend registered" lookup (measured: ``transfer 'shell' is not
-    in this host's transfer menu ['scp', 'sftp', 'ftp', 'nc']``, since this
-    profile does not touch ``valid_transfers`` either). The field stays
-    inherited until that backend lands.
+    Naming a backend here is validated shallowly by design:
+    :func:`register_os_profile` checks only that ``defaults``'s *keys* are
+    fields on the base class, never that its *values* make sense — a
+    typo'd or unregistered transfer name would register cleanly and only
+    surface later, at host-build time, not here.
+    ``TestBusyBoxProfile.test_busybox_names_the_shell_transfer_backend_and_it_is_registered``
+    (``tests/unit/host/test_os_profile.py``) closes that gap for
+    ``transfer`` the same way
+    ``test_the_frame_the_profile_names_is_actually_registered`` closes it
+    for ``command_frame``: asserting not just the name but that the named
+    backend is actually registered in ``TRANSFER_BACKENDS``.
     """
     register_os_profile(
         "busybox",
         base="unix",
-        defaults={"has_bash": False, "command_frame": "ash"},
+        defaults={
+            "has_bash": False,
+            "command_frame": "ash",
+            "transfer": "shell",
+            "valid_transfers": ["shell", "scp", "sftp", "ftp", "nc"],
+        },
     )
 
 

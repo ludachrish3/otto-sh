@@ -600,6 +600,18 @@ class UserlandOptions:
     rejected by every BusyBox build tested. ``wc -c < FILE`` works
     everywhere as the fallback."""
 
+    checksum: str | None = None
+    """``"md5sum"``, ``"absent"``, or ``None`` to probe.
+
+    Measured against real BusyBox binaries (see
+    ``docs/superpowers/specs/2026-08-11-busybox-host-support-design.md``):
+    ``md5sum`` is present on every BusyBox build tested, 1.16.1 included, so
+    ``"absent"`` is unhit by the matrix today but stays a real member for a
+    minimal userland the matrix does not cover. Consumed by
+    :class:`~otto.host.transfer.shell.ShellFileTransfer` to verify a PUT or
+    GET landed intact: ``md5sum`` on both sides when present, a byte-size
+    comparison via :attr:`stat_size` otherwise."""
+
     timeout_style: str | None = None
     """``"coreutils"``, ``"dash-t"``, ``"absent"``, or ``None`` to probe.
 

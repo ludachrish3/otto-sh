@@ -36,6 +36,7 @@ from .registry import (
 )
 from .scp import ScpFileTransfer  # registers scp on import
 from .sftp import SftpFileTransfer  # registers sftp on import
+from .shell import ShellFileTransfer  # registers shell on import
 from .tftp import TftpFileTransfer  # registers tftp on import
 from .unix_base import UnixFileTransfer
 
@@ -51,6 +52,7 @@ __all__ = [
     "NcPortStrategy",
     "ScpFileTransfer",
     "SftpFileTransfer",
+    "ShellFileTransfer",
     "TftpFileTransfer",
     "TransferContext",
     "TransferProgressFactory",

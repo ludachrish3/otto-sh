@@ -289,32 +289,31 @@ class TestBusyBoxProfile:
             f"the busybox profile names frame {named!r}, which is not registered"
         )
 
-    def test_busybox_does_not_yet_claim_a_transfer_backend(self):
-        """Deliberate deferral, asserted so it cannot be forgotten.
+    def test_busybox_names_the_shell_transfer_backend_and_it_is_registered(self):
+        """The deferral is over: `shell` is the default, and both registries agree.
 
-        A real BusyBox device typically runs dropbear rather than OpenSSH,
-        which ships no sftp-server; sftp/scp against dropbear is a named but
-        *untested* risk (design doc, "Known entries at design time" / "The
-        dropbear risk"), not a measured break — so the inherited `scp`
-        default is unverified against a real device, not proven to work (see
-        `_register_builtin_os_profiles` for the full reasoning, including why
-        a busybox host still attempts scp on every put/get regardless). The
-        honest replacement, the `shell` backend, does not exist yet, and
-        setting `transfer` to it today would not fail at registration —
-        `register_os_profile` only validates default *keys*, never values —
-        it would fail later, at host-build time, when `CapabilityResolver`
-        rejects the value against this host's `valid_transfers` *menu*
-        (measured: `transfer 'shell' is not in this host's transfer menu
-        ['scp', 'sftp', 'ftp', 'nc']`), not from any "is this backend
-        registered" lookup. So the field is left alone until the backend
-        lands, and this test documents that the omission is a choice rather
-        than an oversight.
+        `register_os_profile` validates default *keys* against the base
+        class's fields, never values (see `_register_builtin_os_profiles`),
+        so a profile naming an unregistered backend registers cleanly
+        regardless -- the mismatch only surfaces later, at host-build time,
+        not here (measured during this test's own mutation verification:
+        pydantic's own field validator raises if the bad name is also
+        listed in `valid_transfers`; `CapabilityResolver`'s menu-membership
+        check raises if it is not -- neither at registration). Same shape
+        as `test_the_frame_the_profile_names_is_actually_registered`:
+        assert BOTH that the profile names `shell` and that `shell` is
+        actually in `TRANSFER_BACKENDS`, so a naming mistake is caught here
+        instead of on a real lab device.
         """
         from otto.host.os_profile import build_os_profile
+        from otto.host.transfer import TRANSFER_BACKENDS
 
         defaults = build_os_profile("busybox").defaults
-        assert "transfer" not in defaults
-        assert "valid_transfers" not in defaults
+        assert defaults["transfer"] == "shell"
+        assert "shell" in defaults["valid_transfers"]
+        assert "shell" in TRANSFER_BACKENDS, (
+            f"the busybox profile names transfer {defaults['transfer']!r}, which is not registered"
+        )
 
     def test_busybox_is_a_builtin_so_overriding_it_warns(self, caplog):
         """The other built-ins warn on override; a profile absent from the set
