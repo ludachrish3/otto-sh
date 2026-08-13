@@ -4,8 +4,25 @@ Targets the three race hotspots in :mod:`otto.host.session`:
 ``_exec_pool``, ``_named_sessions`` get-or-create, and
 ``_ensure_session()`` default-session recreation.
 
-Tests are expected to land RED until lock fixes are applied to
-``SessionManager``; the failures are the diagnosis.
+The lock fixes these tests were written to diagnose have since landed, so
+the module runs green; each test now stands as a regression guard for the
+behaviour its own docstring describes.
+
+No assertion here reads elapsed wall-clock time. Each one observes the
+structural fact it is actually about — session identity, factory creation
+counts, peak connect overlap, the backoff duration the retry really slept —
+so a loaded gate cannot counterfeit a failure. Two of them used to infer
+those facts from a clock, and one of those,
+``test_exec_pool_connects_concurrently``, was actually counterfeited by load
+in the nightly (issue #229); the other's bound was converted alongside it,
+before it ever had a sighting.
+
+One assertion's truth is still produced by a timer, and that timer is a
+*stimulus*, not a discriminator:
+``test_open_session_closes_session_when_init_cancelled`` expects the raise
+from a 0.05 s ``wait_for``. Its fake never answers the readiness probe, so
+the handshake cannot complete and the timeout is certain to fire; load
+pushes that in the safe direction, never toward a false red.
 """
 
 import asyncio
@@ -18,7 +35,7 @@ from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
 from otto.host.connections import ConnectionManager
-from otto.host.session import SessionManager, ShellSession
+from otto.host.session import _HANDSHAKE_RETRY_BACKOFF, SessionManager, ShellSession
 from otto.result import CommandResult
 
 pytestmark = pytest.mark.concurrency
@@ -97,27 +114,80 @@ def _make_mgr(factory: _Factory, term: str = "telnet") -> SessionManager:
     )
 
 
+class _ConnectOverlapTracker:
+    """Records the peak number of ``_open()`` calls in flight simultaneously.
+
+    One tracker is shared by every session a :class:`_SlowConnectFactory`
+    hands out, so ``peak`` is the largest number of pool connects that were
+    ever running at the same moment across the whole fan-out. That count *is*
+    the structural property the per-name-lock fix is about, so tests read it
+    directly rather than inferring it from elapsed wall-clock time.
+    """
+
+    def __init__(self) -> None:
+        self.in_flight = 0
+        self.peak = 0
+
+    def enter(self) -> None:
+        self.in_flight += 1
+        self.peak = max(self.peak, self.in_flight)
+
+    def leave(self) -> None:
+        self.in_flight -= 1
+
+
 class _SlowConnectFakeSession(_StabilityFakeSession):
     """Fake session with a configurable, non-trivial ``_open()`` delay.
 
     Real telnet ``exec()`` pool sessions spend ~1-2 s in the connect
-    handshake.  A fake that connects instantly can't tell a manager that
-    connects pool sessions *concurrently* from one that connects them
-    *serially* — both finish in ~0 s.  This fake makes that distinction
-    observable by sleeping for ``connect_delay`` inside ``_open()``.
+    handshake, and sleeping for ``connect_delay`` inside ``_open()`` keeps the
+    fake faithful to that: each concurrent connect is parked on a real timer
+    for the width of a handshake, the way the real ones are.
+
+    The delay is *not* what makes the overlap visible, which is worth stating
+    because the timing-era docstring here used to claim it was.  Measured 15
+    runs each way, a ``connect_delay`` of 0.1 s and of 0 both report a peak
+    overlap of 10 under per-name locks and 1 under a single shared lock — the
+    tracker reads a structural fact, and structural facts do not need a
+    stopwatch-sized window to be legible.  The delay stays because it is the
+    realistic stimulus, not because the assertion depends on it.
+
+    Entry and exit are reported to a shared :class:`_ConnectOverlapTracker`;
+    the exit is in a ``finally`` so a failed connect cannot leave the in-flight
+    count permanently inflated.
     """
 
     connect_delay: float = 0.1
 
+    def __init__(self, instance_id: int, overlap: _ConnectOverlapTracker) -> None:
+        super().__init__(instance_id)
+        self.overlap = overlap
+
     async def _open(self) -> None:
-        await asyncio.sleep(self.connect_delay)
+        self.overlap.enter()
+        try:
+            await asyncio.sleep(self.connect_delay)
+        finally:
+            self.overlap.leave()
 
 
 class _SlowConnectFactory(_Factory):
-    """``_Factory`` variant that hands out :class:`_SlowConnectFakeSession`."""
+    """``_Factory`` variant that hands out :class:`_SlowConnectFakeSession`.
+
+    Owns the one :class:`_ConnectOverlapTracker` every session it creates
+    reports to, so ``factory.overlap.peak`` is the peak connect overlap over
+    all the sessions this factory produced.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.overlap = _ConnectOverlapTracker()
 
     def __call__(self) -> _StabilityFakeSession:
-        session = _SlowConnectFakeSession(instance_id=len(self.created) + 1)
+        session = _SlowConnectFakeSession(
+            instance_id=len(self.created) + 1,
+            overlap=self.overlap,
+        )
         self.created.append(session)
         return session
 
@@ -125,7 +195,6 @@ class _SlowConnectFactory(_Factory):
 # ── Targeted concurrency tests ────────────────────────────────────────────────
 
 
-@pytest.mark.serial_timing
 @pytest.mark.asyncio
 @pytest.mark.timeout(10)
 async def test_exec_pool_connects_concurrently() -> None:
@@ -141,26 +210,44 @@ async def test_exec_pool_connects_concurrently() -> None:
     blew the 15 s budget in ``test_real_long_telnet_exec_vs_concurrent``.
 
     With per-name locks, distinct names connect concurrently.
+
+    The assertion observes that overlap *directly* — the peak number of
+    ``_open()`` calls in flight at once — rather than inferring it from how
+    long the fan-out took.  That is load-immune, and on the axis this test
+    exists to guard, connect serialization, it strictly dominates the
+    ``elapsed < 0.5 s`` bound it replaced (issue #229).  Measured by handing
+    the manager k locks shared across the ten pool names, the old bound only
+    fired once concurrency had collapsed to two-way or worse (k=2: 0.531 s,
+    caught) — partial regressions sailed through it (k=5: 0.211 s, k=4:
+    0.319 s, k=3: 0.428 s, all under 0.5 s).  Every one of those fails
+    ``peak == N`` immediately.  So the clock was not merely flaky, it was
+    also blind to most of the shapes it was there to catch.
+
+    Dominance is claimed on that axis only, not in general: ``peak`` sees
+    only the connect phase, while ``elapsed`` bounded the whole fan-out.  A
+    regression that added wall-clock cost *outside* ``_open()`` — a
+    re-introduced per-exec settle, say — would have tripped the old bound and
+    passes this one.  Nothing here guards that; it is not what this test is
+    for.
     """
     factory = _SlowConnectFactory()
     mgr = _make_mgr(factory)
 
     N = 10  # noqa: N806 — single-letter math dimension
-    delay = _SlowConnectFakeSession.connect_delay
 
-    loop = asyncio.get_running_loop()
-    start = loop.time()
     results = await asyncio.gather(*(mgr.exec(f"echo {i}") for i in range(N)))
-    elapsed = loop.time() - start
 
     assert all(r.status.is_ok for r in results), "some execs returned non-ok status"
-    # Serial connects would take >= N * delay.  Parallel connects take ~delay;
-    # allow generous slack for scheduling/event-loop overhead but stay well
-    # below the serial figure.
-    assert elapsed < (N * delay) / 2, (
-        f"{N} concurrent execs took {elapsed:.2f}s with a {delay:.2f}s "
-        f"per-connect delay — pool connects serialized instead of running "
-        f"in parallel (serial would be ~{N * delay:.2f}s)"
+    # A peak of N already implies at least N sessions existed (one _open()
+    # in flight each). This pins the other side: exactly one pool session per
+    # exec, no surplus builds.
+    assert factory.created_count == N, (
+        f"expected {N} pool sessions to be built, got {factory.created_count}"
+    )
+    assert factory.overlap.peak == N, (
+        f"peak concurrent _open() was {factory.overlap.peak}, expected {N} — "
+        f"pool connects serialized instead of running in parallel (a single "
+        f"shared lock around the get-or-create body pins the peak at 1)"
     )
 
 
@@ -250,10 +337,16 @@ async def test_named_session_alive_check_race() -> None:
 async def test_ensure_default_session_recreation_race() -> None:
     """Concurrent commands after default-session death must trigger one recreation.
 
-    This is the highest-confidence test in this module: ``_ensure_session()``
-    has an unguarded ``await self._session.close()`` between its alive-check
-    and the recreate path, and the fake's ``close()`` yields to the event
-    loop. Multiple tasks can all pass the guard and all create new sessions.
+    The race this was written to diagnose: ``_ensure_session()`` used to run
+    an unguarded ``await self._session.close()`` between its alive-check and
+    the recreate path, and the fake's ``close()`` yields to the event loop, so
+    every task could pass the guard and every task could build a new session.
+
+    That is fixed — the whole recreate body now runs under
+    ``self._ensure_session_lock``, which re-checks liveness after acquiring
+    and only then closes the dead session. This test stands as the regression
+    guard: it asserts the creation count, not a timing, so it fails if the
+    lock or the re-check is ever removed.
     """
     factory = _Factory()
     mgr = _make_mgr(factory)
@@ -498,16 +591,56 @@ async def test_ensure_session_propagates_persistent_handshake_failure() -> None:
     await mgr.close_all()
 
 
-@pytest.mark.serial_timing
 @pytest.mark.asyncio
 @pytest.mark.timeout(5)
-async def test_ensure_session_retry_backoff_is_configurable() -> None:
-    """The inter-attempt retry backoff is injectable so tests don't pay the
-    production ~2 s peer-release wait. With ``retry_backoff=0`` a persistent
-    handshake failure surfaces in well under that budget while still making
-    exactly two attempts — the retry *logic* is unchanged, only its real-world
-    timing is. (Paying the real 2 s here burned 40% of the tight
-    ``timeout(5)`` budget and made these tests flake under CI teardown load.)"""
+async def test_ensure_session_retry_backoff_is_configurable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The inter-attempt retry backoff is injectable, so tests don't pay the
+    production ``_HANDSHAKE_RETRY_BACKOFF`` peer-release wait. The sibling
+    tests above pass ``retry_backoff=0.0`` on the strength of that; this test
+    is what makes that safe to rely on.
+
+    It asserts the *granted value* rather than the race outcome: every
+    duration handed to ``asyncio.sleep`` while the retry runs is recorded, and
+    the injected backoff must appear exactly once (the single retry) with the
+    production default never slept at all. An elapsed-time bound would only
+    say "this finished quickly", which load can counterfeit, and a check of
+    ``mgr._retry_backoff`` would pass against a manager that stored the value
+    and then ignored it.
+
+    The injected value is deliberately non-zero and distinctive so it cannot
+    be confused with the ``asyncio.sleep(0)`` yields the fake transports make
+    on every open and close. The default-never-slept assertion reads that same
+    shared list, so it rests on ``_HANDSHAKE_RETRY_BACKOFF`` colliding with
+    neither; that precondition is asserted rather than assumed.
+    """
+    injected_backoff = 0.037
+    # Precondition, not a product claim. The two assertions below that read
+    # ``slept`` share one list, which also carries the fakes' sleep(0) yields,
+    # so if the production default were ever tuned to 0.0 — or to the sentinel
+    # — the last of them would become a guaranteed red carrying a false
+    # explanation. Fail here instead, saying what actually needs fixing.
+    assert _HANDSHAKE_RETRY_BACKOFF not in (0.0, injected_backoff), (
+        f"test precondition broken: _HANDSHAKE_RETRY_BACKOFF is now "
+        f"{_HANDSHAKE_RETRY_BACKOFF}, which collides with the fakes' sleep(0) "
+        f"yields or with the injected {injected_backoff}s sentinel. If it "
+        f"collided with the sentinel, choose a fresh injected_backoff so the "
+        f"two stay distinguishable; if the default is now 0.0, no sentinel "
+        f"helps — the default-never-slept assertion cannot tell a 0.0 default "
+        f"from the ambient yields and must be restructured or dropped."
+    )
+    slept: list[float] = []
+    real_sleep = asyncio.sleep
+
+    async def _recording_sleep(delay: float, *args: object, **kwargs: object) -> object:
+        # Delegate to the real sleep so the retry path's behaviour — and the
+        # ordering it depends on — is entirely unchanged; only observed.
+        slept.append(delay)
+        return await real_sleep(delay, *args, **kwargs)
+
+    monkeypatch.setattr(asyncio, "sleep", _recording_sleep)
+
     factory = _Factory()
 
     def make_session() -> _HandshakeFailsOnceFakeSession:
@@ -521,19 +654,21 @@ async def test_ensure_session_retry_backoff_is_configurable() -> None:
     mgr = SessionManager(
         connections=cast("ConnectionManager", SimpleNamespace(term="telnet")),
         session_factory=make_session,
-        retry_backoff=0.0,
+        retry_backoff=injected_backoff,
     )
 
-    loop = asyncio.get_running_loop()
-    start = loop.time()
     with pytest.raises(ConnectionError):
         await mgr.run_cmd("echo hello", timeout=2.0)
-    elapsed = loop.time() - start
 
     assert factory.created_count == 2, f"expected exactly 2 attempts, got {factory.created_count}"
-    assert elapsed < 0.5, (
-        f"retry backoff not bypassed: _ensure_session took {elapsed:.3f}s "
-        f"(expected << the 2 s production default)"
+    assert slept.count(injected_backoff) == 1, (
+        f"the single retry did not sleep the injected {injected_backoff}s backoff "
+        f"exactly once — durations passed to asyncio.sleep: {slept}"
+    )
+    assert _HANDSHAKE_RETRY_BACKOFF not in slept, (
+        f"the retry slept the {_HANDSHAKE_RETRY_BACKOFF}s production default "
+        f"instead of the injected {injected_backoff}s — the parameter is stored "
+        f"but not used; durations passed to asyncio.sleep: {slept}"
     )
 
     await mgr.close_all()

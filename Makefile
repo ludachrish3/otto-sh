@@ -743,22 +743,22 @@ busybox-cache: ## Fetch + verify the BusyBox test artifacts into the local cache
 # to every one of the COUNT-multiplied iterations and, on slow CI runners under
 # xdist, helps push tight per-test timeouts over their wall-clock budget. These
 # runs exist to flush flakes, not to measure coverage — that's `make coverage`.
+# One leg, no serial_timing split: `serial_timing and concurrency` is empty
+# (issue #229 converted its last two members to load-immune assertions), and a
+# leg that selects nothing exits 5, which aborts this recipe and the nightly
+# matrix behind it. Do NOT re-add an exclusion + `-n0` leg pair speculatively —
+# add it back only when a test is actually both marked. Until then the guard is
+# the root conftest, which errors any serial_timing test that reaches an xdist
+# worker, so a future `concurrency`-and-`serial_timing` test fails here loudly
+# rather than running where load can counterfeit it.
 stability-unit: ## Run no-VM SessionManager concurrency/soak tests by marker. JUnit XML lands in reports/junit/stability-unit/. Override iterations with COUNT=N (default 50).
 	@$(SAY) "pytest soak: concurrency marker, no VMs (x$(STABILITY_UNIT_COUNT), leak detector on)"
 	@$(LEAK_DETECT) uv run pytest \
-	    -m "concurrency and not serial_timing" \
+	    -m "concurrency" \
 	    --count=$(STABILITY_UNIT_COUNT) \
 	    -p no:cacheprovider \
 	    --no-cov \
 	    $(call junitxml,stability-unit)
-	@$(SAY) "pytest soak: serial_timing discriminators, -n0 (x$(STABILITY_UNIT_COUNT))"
-	@$(LEAK_DETECT) uv run pytest \
-	    -m "serial_timing and concurrency" \
-	    --count=$(STABILITY_UNIT_COUNT) \
-	    -n0 \
-	    -p no:cacheprovider \
-	    --no-cov \
-	    $(call junitxml,stability-unit-serial)
 
 stability-unix: ## Real telnet/SSH soak against the Unix Vagrant VMs (incl. multi-hop). Requires lab VMs. JUnit XML in reports/junit/stability-unix/. Override iterations with COUNT=N (default 10).
 	@$(SAY) "pytest soak: real telnet/SSH on the Unix VMs (x$(STABILITY_UNIX_COUNT), leak detector on)"
