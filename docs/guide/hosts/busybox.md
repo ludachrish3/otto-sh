@@ -8,6 +8,14 @@ honest way to pin them is to run the releases.
 This page is the prerequisite list for running that matrix on your machine, plus the
 trust note that comes with executing someone else's binary.
 
+```{note}
+**It does not say what otto can and cannot do against a BusyBox host.** That is
+{doc}`../../architecture/subsystems/busybox-support`, which renders the declared gap
+registry: the surfaces otto has measured broken on such a userland, the surfaces that
+are merely untested, and the evidence behind each verdict. This page is about the
+harness; that page is about the behaviour. Neither restates the other.
+```
+
 ## The artifacts
 
 The matrix is fetched from the BusyBox project's own prebuilds at
@@ -83,6 +91,59 @@ On the otto dev VM this package is installed by the `dev-root` provisioner in th
 repository's `Vagrantfile`, so a rebuilt VM has it. Installing it by hand on a VM
 without that entry lasts only until the next `vagrant destroy`.
 ```
+
+## Prerequisite: `dropbear-bin`
+
+Needed on every machine, unlike `qemu-user-static`. The tier that logs into the BusyBox
+root over **real ssh** runs a throwaway dropbear on loopback, because a real BusyBox
+device runs dropbear rather than OpenSSH and the two disagree exactly where that tier
+measures — channel behaviour and legacy crypto.
+
+```console
+$ sudo apt update && sudo apt install dropbear-bin
+```
+
+`dropbear-bin`, **not** `dropbear` and not `dropbear-run`. The `-bin` package ships only
+the binaries — `dropbear`, `dbclient`, `dropbearkey`, `dropbearconvert` — and registers
+no service, so installing it starts nothing listening on your machine:
+
+```console
+$ systemctl is-enabled dropbear
+not-found
+```
+
+The tier brings up its own foreground daemon on `127.0.0.1` at an ephemeral port and
+reaps it when the run ends. The package is in Ubuntu's `universe` component, and the
+index refresh matters here for the same reason it does above.
+
+```{note}
+On the otto dev VM this package is installed by the `dev-root` provisioner in the
+repository's `Vagrantfile`, so a rebuilt VM has it.
+```
+
+## Prerequisite: `openssh-client`
+
+Also needed on every machine, and it is the one prerequisite here that nothing
+installs for you — neither the `Vagrantfile` nor the CI job lists it, because it is
+present by default on Ubuntu and on the dev VM. It is listed anyway so this page stays
+a complete answer to "what does the matrix need".
+
+```console
+$ sudo apt update && sudo apt install openssh-client
+```
+
+Two separate needs, and `dropbear-bin` covers neither:
+
+- **`ssh-keygen`**, for the CLIENT key. `dropbearkey` writes dropbear's own private-key
+  format, which asyncssh cannot read, so the host keys and the client key come from
+  different generators. See `SSH_KEYGEN` in `tests/_fixtures/busybox_dropbear.py`.
+- **`scp` and `sftp`**, which the tier drives on purpose — the
+  [`scp-transfer`](../../architecture/subsystems/busybox-support.md#scp-transfer) and
+  [`sftp-transfer`](../../architecture/subsystems/busybox-support.md#sftp-transfer)
+  refusals are measured by running the real clients against the BusyBox root.
+
+Absence is already diagnosed by name rather than by a skip: `generate_keys` refuses with
+the `apt install` line above.
 
 ## Running the matrix
 

@@ -326,7 +326,19 @@ Vagrant.configure("2") do |config|
             # a box whose apt lists have gone stale it 404s on the .deb and
             # reads like the package does not exist. The `apt update` in the
             # global provisioner above is what makes this line safe here.
-            apt install -y  gcc                   \
+            # dropbear-bin is the THIRD test fixture in this list: the BusyBox
+            # Tier 3 tier (tests/busybox/) logs into the Tier 2 rootfs over a
+            # throwaway rootless dropbear on loopback, because real BusyBox
+            # devices run dropbear rather than OpenSSH and only dropbear
+            # reproduces its legacy crypto and channel behaviour. Deliberately
+            # the `-bin` package and NOT `dropbear-run`: -bin ships only the
+            # binaries (dropbear, dbclient, dropbearkey, dropbearconvert) and
+            # registers no service — measured, `systemctl is-enabled dropbear`
+            # reports not-found after install — so nothing listens on this box.
+            # The tier starts its own foreground daemon on 127.0.0.1 with an
+            # ephemeral port and kills it with PR_SET_PDEATHSIG.
+            apt install -y  dropbear-bin          \
+                            gcc                   \
                             gh                    \
                             graphviz              \
                             lcov                  \

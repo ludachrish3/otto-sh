@@ -69,25 +69,151 @@ _logger = logging.getLogger(__name__)
 _SHELL_CHUNK_BYTES = 4096
 """Bytes of PLAINTEXT per chunk; base64 expands this to 5464 characters.
 
-Conservative, but NOT because it sits comfortably below every plausible line
-limit -- it does not. Measured device-side: a single exec argument of >=4 MB
-succeeds in the Tier 2 rootfs, so ARG_MAX is nowhere near binding. The real
-constraint is transport-side -- telnet line handling and the command frame's
-per-line processing -- and NOTHING IN THIS PHASE MEASURES IT, because a
-chroot has no transport. One full chunk's command line is over 5500
-characters (see ``TestShellChunkLineLength``), which already exceeds the
-classic Linux canonical-mode tty line buffer: measured directly in this
-worktree via a real pty (``pty.openpty()``, ``ICANON`` set), writing an
-8001-byte line returns only 4096 bytes on the first read. Whether a real
-telnet session's line discipline imposes that same limit is exactly what
-Phase 5's Tier 3 (rootless dropbear) is for measuring; until then, the
-honest statement is that this value's wire-level headroom is UNMEASURED and
-plausibly negative, not that it was chosen with margin to spare. If that
-bites, the failure mode is a wedge or a loud integrity failure (``base64
--d``'s own validation, or the post-chunk md5sum/size check) -- never silent
-corruption, since a wire-level split breaks the base64 stream cleanly
-rather than producing plausible-looking wrong bytes.
+Conservative, and as of Phase 5 the margin is MEASURED rather than assumed --
+but only for the channel this backend gets on an ``ssh`` host, which is not
+the channel the hostile case runs on. Three limits, in the order they were
+ruled in or out.
+
+ARG_MAX IS NOT THE CONSTRAINT. Measured device-side: a single exec argument
+of >=4 MB succeeds in the Tier 2 rootfs, nowhere near a chunk command's line.
+
+THE EXEC CHANNEL CARRIES A FULL CHUNK WITH ROOM TO SPARE, which is what Phase
+5 added and what an earlier version of this note called UNMEASURED and
+plausibly negative. ``tests/busybox/test_tier3_shell_transfer.py`` puts real
+chunk commands through a real dropbear over a real ssh exec channel and
+measures both halves of the inequality: the channel takes 9000 characters
+intact and breaks at 9001 (``_MEASURED_EXEC_LINE_LIMIT`` there, re-measured
+one character at a time), while the longest line this backend emitted for a
+full chunk measured 5535. Roughly 3465 characters of headroom, positive
+rather than negative. Note what that 5535 is attached to: the staged temp's
+whole path is interpolated into every chunk command, so it is Tier 3's own
+destination (27 characters) and a longer path spends the headroom -- the test
+pins the RELATIONSHIP for that reason, not either number.
+
+THE PTY PATH IS THE ONE WITH NO MARGIN, and it is a separate measurement this
+branch also holds. BusyBox ash's line editor
+(``CONFIG_FEATURE_EDITING_MAX_LEN``) delivers 1022 characters intact and
+truncates at 1023 -- the ``run-command-line-length`` record in
+:data:`~otto.host.userland.GAPS`, measured identically against dropbear,
+against OpenSSH and against a bare local pty, which is what identifies it as
+the DEVICE's line editor rather than as any transport. A 5535-character chunk
+line is over that by a factor of five.
+
+WHICH OF THE TWO THIS BACKEND GETS IS THE HOST'S ``term``, not this module's
+choice. ``_exec_cmd`` is ``UnixHost.exec``, and ``SessionManager.exec`` opens
+a bare pty-less exec channel only for ``term: "ssh"``; telnet has no
+stateless exec primitive, so it routes through a pooled SHELL session
+instead -- the line-edited path, with the 1022 ceiling. A ``term: telnet``
+BusyBox host is therefore exactly the case this note used to worry about, and
+it is STILL UNMEASURED: Tier 3 is ssh-only, and no tier puts this backend on
+a telnet transport.
+
+What that would cost is bounded, which is why this is a note and not a block.
+The failure would be LOUD. Truncation lands inside the single-quoted base64
+blob of ``printf '%s' '<b64>' | base64 -d >> <temp>``, so the far side gets
+an unterminated quote rather than a valid shorter command -- it errors or
+wedges; it cannot append plausible-looking bytes. That is the opposite of the
+gap record's general case, where truncation silently runs a shorter command
+that works. And the backstop holds regardless: PUT verifies the TEMP (see
+:meth:`ShellFileTransfer._verify_integrity`) before the ``mv``, so no
+truncation anywhere can land wrong bytes at the destination under a
+``Status.Success``.
 """
+
+_STAGING_TOKEN_HEX = 8
+"""Hex characters of :func:`uuid.uuid4` kept in a staged temp's name.
+
+32 bits, taken from the FIRST 8 characters of ``uuid4().hex`` -- which are
+the whole of the ``time_low`` field and so entirely random, since uuid4
+spends its only non-random nibbles on the version (hex index 12) and
+variant (hex index 16). Truncating there costs no entropy beyond the
+truncation itself.
+
+Was the full 32-character hex. Shortened because the staged basename is
+:meth:`~otto.host.transfer.base.BaseFileTransfer.put_files`'s problem, not
+merely a cosmetic one: that method validates the CALLER's basename against
+``max_filename_len`` and then stages under a LONGER name, so the check that
+exists to turn "this target cannot open that name" into a clear up-front
+refusal was answering for the wrong name. See :func:`staged_temp_name`,
+which is what actually closes that gap -- this constant only makes the
+budget it enforces cheap enough to spend on almost every real name. It also
+buys 24 characters of transport headroom on every chunk command line, since
+the staged path is interpolated into each one (measured over Tier 3's real
+exec channel: 5558 characters per full chunk before, 5534 after).
+
+Collision risk, deliberately re-checked rather than waved through: two
+stagings collide only if they draw the same 32-bit token AND target the
+same directory AND the same destination basename AND overlap in time.
+Neither ``_run_put`` nor ``_run_get`` has any concurrency of its own --
+both are strictly sequential, one-file-at-a-time loops (see their
+docstrings), and each temp is renamed or unlinked away before the next file
+starts -- so a single transfer can never race itself; it takes two
+independent transfers aimed at one directory to get two live temps at all.
+At that scale the birthday bound is n^2 / 2^33, i.e. about 1.2e-4 even for a
+thousand simultaneous stagings of the same filename, against a failure mode
+that is loud rather than silent: PUT verifies the TEMP (see
+:meth:`ShellFileTransfer._verify_integrity`) before the ``mv``, so a
+clobbered temp fails its own check instead of landing wrong bytes at the
+destination.
+"""
+
+
+def staged_temp_name(dest_name: str, max_filename_len: int) -> str:
+    """Name a same-directory staging temp for *dest_name* the target can actually open.
+
+    Returns ``<dest_name>.otto-<token>``, with *dest_name* truncated by as
+    much as it takes for the whole basename to fit inside *max_filename_len*
+    -- the caller's declared cap on a name the target's filesystem will
+    accept (:attr:`~otto.host.remote_host.RemoteHost.max_filename_len`).
+
+    The truncation is the point, not a rounding detail.
+    :meth:`~otto.host.transfer.base.BaseFileTransfer.put_files` and
+    :meth:`~otto.host.transfer.base.BaseFileTransfer.get_files` both validate
+    the caller's basename against exactly this number, up front, precisely so
+    that an over-long name is a clear refusal instead of an opaque device
+    error partway through -- and then both hand that basename to a staging
+    step that makes it longer. A name at the cap therefore passed the front
+    door and failed at the back one: measured on this repo's ext4 checkout
+    (``NAME_MAX`` 255), a 255-character source staged as a 293-character temp
+    and PUT died with ``/bin/sh: cannot create ...: File name too long``
+    after the first chunk had already crossed the wire, GET with
+    ``OSError: [Errno 36]`` from its local temp. Shortening the token alone
+    does NOT fix that -- 255 + len(".otto-") + 8 is 269, still over 255 --
+    which is why this budget exists and not just :data:`_STAGING_TOKEN_HEX`;
+    the short token is what keeps the budget from biting any name shorter
+    than ``max_filename_len - 14``.
+
+    Truncating the DESTINATION half rather than the token keeps the random
+    part whole: the token is what makes two concurrent stagings distinct (see
+    :data:`_STAGING_TOKEN_HEX`), whereas the retained prefix only has to make
+    a stray temp traceable back to its file by eye. Nothing ever reads the
+    name back -- the temp path is carried in a local variable from creation
+    through to ``mv`` / ``Path.replace()`` -- so a truncated prefix loses no
+    information otto later needs.
+
+    A *max_filename_len* below the token's own framing (14 characters) leaves
+    no room for any of *dest_name*, and the final slice then keeps the result
+    inside the cap at the cost of some of the token. No unix target in the
+    BusyBox matrix declares anything remotely like that -- every one is the
+    ``255`` default -- but a bound that silently stops holding below some
+    threshold is worse than one that degrades visibly.
+
+    ONE VALUE IS OUT OF CONTRACT, and it is named here rather than left to be
+    rediscovered: ``max_filename_len=1`` returns ``"."``. That is inside the
+    cap, so the bound holds arithmetically, but ``.`` is a basename resolving
+    to the CONTAINING DIRECTORY -- the one degenerate output that is not
+    visible degradation in the sense the paragraph above claims. Every limit
+    from 6 up keeps a recognisable ``.otto-`` prefix and degrades honestly.
+    Unreachable in production (*max_filename_len* is a declared host field, and
+    no profile declares anything under ``255``) and left as-is deliberately:
+    making it visible means raising, which is a behaviour change no caller has
+    asked for. Pinned by
+    ``test_a_limit_of_one_returns_a_dot_which_is_out_of_contract``, so a change
+    of mind updates a test rather than surprising someone.
+    """
+    suffix = f".otto-{uuid.uuid4().hex[:_STAGING_TOKEN_HEX]}"
+    keep = max(max_filename_len - len(suffix), 0)
+    return f"{dest_name[:keep]}{suffix}"[:max_filename_len]
 
 
 class ShellFileTransfer(UnixFileTransfer):
@@ -339,7 +465,10 @@ class ShellFileTransfer(UnixFileTransfer):
     ) -> Result:
         """PUT one file: chunk, base64-encode, exec, verify, temp-then-mv.
 
-        Stages as ``<dst>.otto-<unique>`` in ``dst``'s own directory --
+        Stages as ``<dst>.otto-<unique>`` in ``dst``'s own directory (named
+        by :func:`staged_temp_name`, which keeps that whole basename inside
+        the ``max_filename_len`` :meth:`~otto.host.transfer.base.BaseFileTransfer.put_files`
+        already validated *src*'s own name against) --
         deliberately not under ``/tmp``, which is not guaranteed to be the
         same filesystem as the destination, and a cross-filesystem ``mv``
         degrades to a copy, losing the atomicity a same-filesystem rename
@@ -398,7 +527,7 @@ class ShellFileTransfer(UnixFileTransfer):
         :func:`hashlib.md5` locally, so an ``md5sum`` verification costs no
         second local read pass over *src*.
         """
-        temp = dst.parent / f"{dst.name}.otto-{uuid.uuid4().hex}"
+        temp = dst.parent / staged_temp_name(dst.name, self._max_filename_len)
         quoted_temp = shlex.quote(str(temp))
         try:
             total = src.stat().st_size
@@ -507,7 +636,11 @@ class ShellFileTransfer(UnixFileTransfer):
 
         PUT's temp-then-mv shape, mirrored onto the local side rather than
         the remote one: every chunk lands in a same-directory local temp
-        (``<dst>.otto-<unique>``), and ``Path.replace()`` swings it onto
+        (``<dst>.otto-<unique>``, named by the same
+        :func:`staged_temp_name` PUT uses, so the same ``max_filename_len``
+        budget applies to a name
+        :meth:`~otto.host.transfer.base.BaseFileTransfer.get_files` already
+        validated), and ``Path.replace()`` swings it onto
         *dst* only once every chunk has arrived. Staying in ``dst``'s own
         directory is not merely the same discipline PUT follows -- for GET
         it is load-bearing in a way PUT's staging choice is not: PUT's
@@ -582,7 +715,7 @@ class ShellFileTransfer(UnixFileTransfer):
         updates a running :func:`hashlib.md5` locally, so an ``md5sum``
         verification costs no second local read pass over the temp.
         """
-        temp = dst.parent / f"{dst.name}.otto-{uuid.uuid4().hex}"
+        temp = dst.parent / staged_temp_name(dst.name, self._max_filename_len)
         try:
             total = await self._remote_size(src, stat_size)
             if total is None:

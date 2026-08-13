@@ -93,17 +93,29 @@ instead. ``checksum``'s OUTPUT format (lowercase hex, matching
 /tmp/payload.bin`` (not this module's ``< /dev/null`` probe spelling) across
 the matrix and compares its first field byte-for-byte -- presence and format,
 not this exact probe command.
+
+**The other half of this module is the GAP REGISTRY** (:class:`Gap`,
+:data:`GAPS`, :func:`gap_for`, :func:`refuse_if_gapped`, at the bottom of the
+file). The capabilities above are what otto ASKS A DEVICE; the registry is what
+otto has already MEASURED about a whole class of userland and therefore never
+needs to ask again. They sit in one module because they answer the same
+question from two directions and a caller usually needs both -- and because a
+gap that turns out to be probe-answerable should become a capability here
+rather than a second table somewhere else.
 """
 
 import asyncio
 import json
 import logging
+import re
 import time
 from collections.abc import Callable, Coroutine
+from dataclasses import dataclass
 from typing import Any
 
 from ..logger.mode import LogMode
 from ..result import CommandResult
+from .errors import UnsupportedOnUserlandError
 from .options import UserlandOptions
 
 _logger = logging.getLogger(__name__)
@@ -654,3 +666,506 @@ class Userland:
         which is precisely what otto could not do this time.
         """
         return {k: v for k, v in sorted(self._resolved.items()) if k in self._settled}
+
+
+# ===========================================================================
+# The gap registry
+# ===========================================================================
+#
+# ONE SOURCE OF TRUTH FOR THREE AUDIENCES.
+# ``docs/superpowers/specs/2026-08-11-busybox-host-support-design.md`` §4:
+# what otto knows about a non-GNU userland has to reach the runtime error, a
+# user-facing docs page, and the parity queue -- and written three times it
+# drifts three ways. It is written once, here, and the other two READ these
+# records:
+#
+# 1. the runtime error -- :meth:`~otto.host.errors.UnsupportedOnUserlandError
+#    .for_gap` renders its message from a record rather than from the caller's
+#    f-string, so the surface, the evidence and the docs anchor arrive
+#    together instead of as a bare ``sudo: not found``;
+# 2. the docs page -- ``GAP_DOCS_PAGE``, one table row per record, anchored at
+#    :attr:`Gap.docs_anchor`, with a test pinning the table to this list in
+#    both directions;
+# 3. the parity queue -- :attr:`Gap.queued_for` names the workstream that
+#    would close each gap, so ``todo/busybox-parity-sweep-2026-08-11.md`` and
+#    ``todo/busybox-tier3-fidelity-2026-08-13.md`` carry the PLAN for the work
+#    and this table carries the FACT. Neither restates the other.
+#
+# THE FIRING RULE, verbatim from the spec, and it is the whole design:
+#
+#     **Measured-broken refuses up front; unmeasured runs.**
+#
+# A surface measured broken on the matrix raises
+# :exc:`~otto.host.errors.UnsupportedOnUserlandError` immediately rather than
+# emitting a command guaranteed to fail confusingly. A surface merely UNTESTED
+# is not blocked: it runs, and the outcome is the measurement. Blocking
+# untested surfaces would convert "we do not know" into "does not work" -- a
+# lie in the expensive direction, which makes otto refuse things that work.
+# :func:`refuse_if_gapped` is the only place that rule is spelled out in code,
+# and :attr:`Gap.refuses` is the only place it is decided.
+#
+# WHAT MAY BE WRITTEN HERE. Measurements, not predictions. The spec's
+# design-time list was a survey's guesses; every ``measured-broken`` record
+# below instead names a command that was RUN and what it answered, and the
+# three design-time candidates measurement did NOT support are recorded in the
+# comment block below :data:`GAPS` rather than quietly dropped.
+#
+# KNOWN HOLE, in the same sense as the ``shell_dialect`` hole above: NO
+# PRODUCT CALL SITE CONSULTS :func:`refuse_if_gapped` YET. The refusals that
+# fire today (``PosixPrivilege._elevate``,
+# ``ShellFileTransfer._run_put``/``_run_get``) are PROBE-driven -- they refuse
+# on what this host answered, which is a different trigger from this table's
+# "otto measured this on the matrix" -- and rewiring them is a behaviour
+# change that belongs with the call site being changed, not with the table
+# landing. So today this registry is a declared, tested, renderable record
+# that the docs page and the parity queue consume; wiring a raise site to it
+# is a per-surface decision, and the record's ``reason`` is written to say
+# what such a call site would refuse.
+
+GAP_DOCS_PAGE = "docs/architecture/subsystems/busybox-support.md"
+"""Where the user-facing rendering of this table lives.
+
+Named here rather than in the docs test so that a page MOVE is one edit and
+every rendered error message follows it. ``tests/unit/test_docs_gap_sync.py``
+resolves the page through this constant and pins its table to :data:`GAPS` in
+both directions, so the anchors below are checked rather than promised.
+
+It sits under ``subsystems/`` because that is where the architecture toctree
+keeps its per-area pages; the top level of ``docs/architecture/`` is
+cross-cutting material only.
+"""
+
+MEASURED_BROKEN = "measured-broken"
+"""Ran it, watched it fail, recorded what it said. This status REFUSES."""
+
+UNTESTED = "untested"
+"""Nobody has run it on this class of userland. This status does NOT refuse."""
+
+_STATUSES = [MEASURED_BROKEN, UNTESTED]
+
+# Anchor-safe by construction, because :attr:`Gap.docs_anchor` puts it after a
+# `#`. Validated rather than trusted: a surface with a space or a backtick in
+# it renders a docs link that silently goes nowhere, and a link that goes
+# nowhere is exactly the drift this table exists to prevent.
+_SURFACE_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
+
+
+@dataclass(frozen=True)
+class Gap:
+    """One thing otto cannot do on a userland, with the evidence behind it.
+
+    Frozen because every consumer reads and none writes: the docs page renders
+    it, the error renders it, and the parity queue points at it.
+
+    The invariant tying :attr:`status` to :attr:`measured_on` is enforced in
+    ``__post_init__`` rather than left to review, because it IS the firing
+    rule in data form: a record that refuses must carry the measurement that
+    earns the refusal, and a record that carries no measurement must not
+    refuse. Getting that pair wrong in either direction is the only way this
+    table can lie. It is checked at CONSTRUCTION, which for the declared table
+    means at import: a malformed record is a broken build, loudly, rather than
+    a surprise the first time someone is refused.
+    """
+
+    surface: str
+    """Stable, anchor-safe id -- ``[a-z0-9]`` words joined by ``-``.
+
+    The lookup key, the docs anchor, and the name the error message prints.
+    Not prose: it has to survive being pasted into a URL fragment.
+    """
+
+    status: str
+    """:data:`MEASURED_BROKEN` or :data:`UNTESTED`. Decides whether this refuses."""
+
+    reason: str
+    """What breaks (or what is unknown), and what a caller should do instead.
+
+    Written for the person reading the exception, so it names otto's own
+    surface and the device's answer, not the internal that noticed.
+    """
+
+    measured_on: str
+    """What was run, against which artifacts, and when -- the evidence.
+
+    EMPTY for :data:`UNTESTED` and non-empty for :data:`MEASURED_BROKEN`, as
+    ``__post_init__`` enforces. "We measured this on 2026-08-13" with no
+    command named is not evidence; every string in the table names the
+    artifact rows and the output they gave.
+    """
+
+    queued_for: str
+    """The workstream that would close this gap, or why nothing is queued.
+
+    The parity queue's entry point. Never empty: "nobody owns this" is itself
+    an answer a reader needs, and it is spelled out rather than left blank.
+    """
+
+    def __post_init__(self) -> None:
+        if not _SURFACE_RE.match(self.surface):
+            raise ValueError(
+                f"gap surface {self.surface!r} is not anchor-safe: it must be lowercase "
+                f"`[a-z0-9]` words joined by `-`, because it is used verbatim as the "
+                f"fragment of {GAP_DOCS_PAGE}#<surface>"
+            )
+        if self.status not in _STATUSES:
+            raise ValueError(
+                f"gap {self.surface!r} has status {self.status!r}, not one of {_STATUSES}"
+            )
+        if not self.reason or not self.queued_for:
+            raise ValueError(
+                f"gap {self.surface!r} needs both a reason and a queued_for; a gap with no "
+                f"stated consequence and no stated owner is a note, not a record"
+            )
+        # The firing rule, as an invariant on the data rather than a comment.
+        if self.status == MEASURED_BROKEN and not self.measured_on:
+            raise ValueError(
+                f"gap {self.surface!r} is {MEASURED_BROKEN!r} and carries no measurement. "
+                f"Measured-broken refuses up front, so the refusal has to be earned by a "
+                f"command that was actually run; declare it {UNTESTED!r} instead"
+            )
+        if self.status == UNTESTED and self.measured_on:
+            raise ValueError(
+                f"gap {self.surface!r} is {UNTESTED!r} and carries a measurement "
+                f"({self.measured_on!r}). Something measured is not untested -- if the "
+                f"measurement showed it broken, declare it {MEASURED_BROKEN!r}"
+            )
+
+    @property
+    def refuses(self) -> bool:
+        """Whether this gap blocks the call. THE firing rule, decided once.
+
+        ``True`` only for :data:`MEASURED_BROKEN`. Every other value --
+        including a status this build has never heard of, were one to reach
+        here past ``__post_init__`` -- answers ``False``, because the
+        expensive mistake is refusing something that works.
+        """
+        return self.status == MEASURED_BROKEN
+
+    @property
+    def docs_anchor(self) -> str:
+        """:data:`GAP_DOCS_PAGE` plus ``#<surface>`` -- where a user reads more."""
+        return f"{GAP_DOCS_PAGE}#{self.surface}"
+
+
+# The records. ORDER IS THE DOCS TABLE'S ORDER, so it is grouped the way a
+# reader meets these: the file-moving surfaces first (the ones the `shell`
+# backend exists for), then the command surfaces, then what is merely unknown.
+#
+# Every ``measured_on`` string names a command and its answer. The five matrix
+# artifacts are 1.16.1, 1.21.1, 1.28.1, 1.31.0 and 1.35.0 -- the same rows
+# `tests/_fixtures/busybox.py`'s BUSYBOX_MATRIX fetches and pins.
+GAPS: list[Gap] = [
+    Gap(
+        surface="shell-transfer-base64",
+        status=MEASURED_BROKEN,
+        reason=(
+            "the `shell` transfer backend encodes every chunk with the device's own "
+            "`base64`, so a userland with no `base64` applet cannot use it at all. "
+            "Nothing is attempted: on such a device every file of the batch would fail "
+            "identically. Use a backend the device supports, or install base64 on it."
+        ),
+        measured_on=(
+            "BusyBox 1.16.1 ships no `base64` applet -- `tests/busybox/"
+            "test_applet_resolution.py`'s `_EXPECTED_BASE64` records False for that row "
+            "and `tests/busybox/test_shell_codec_contracts.py`'s `_EXPECTED_BASE64_FLAG` "
+            "records None, while 1.21.1 and every later matrix row decode with `-d`"
+        ),
+        queued_for=(
+            "the full-parity workstream, `todo/busybox-parity-sweep-2026-08-11.md`: "
+            "`uuencode`/`uudecode` is measured-feasible on all five rows including "
+            "1.16.1, and needs a codec probe plus a second codec path in the backend"
+        ),
+    ),
+    Gap(
+        surface="file-ops-base64",
+        status=MEASURED_BROKEN,
+        reason=(
+            "`Host.read_file` and `Host.write_file` move their payload through the "
+            "device's `base64` too, but unlike the `shell` transfer they hard-code it: "
+            "`src/otto/host/file_ops.py` emits `base64 <path>` and `... | base64 -d` "
+            "without ever reading `Userland.base64_flag`. So on a userland with no "
+            "`base64` they cannot refuse up front and cannot adapt -- the caller gets "
+            "the device's own `not found`, attributed to the file it asked for"
+        ),
+        measured_on=(
+            "the same 1.16.1 rows as `shell-transfer-base64`, against these two call "
+            "sites: `src/otto/host/file_ops.py:131` (read) and `:156` (write). Both "
+            "read as unconditional in the source: no `Userland` is consulted on either "
+            "path"
+        ),
+        queued_for=(
+            "the full-parity workstream, `todo/busybox-parity-sweep-2026-08-11.md`: the "
+            "codec probe queued for `shell-transfer-base64` is what these two would "
+            "read, so the two are one change and not two"
+        ),
+    ),
+    Gap(
+        surface="sftp-transfer",
+        status=MEASURED_BROKEN,
+        reason=(
+            "the `sftp` transfer backend needs a server-side sftp subsystem, and a "
+            "stock BusyBox userland ships none. Note what does NOT decide this: the "
+            "ssh daemon. Packaged dropbear serves sftp perfectly well when the machine "
+            "provides an sftp-server binary, so the question is what the DEVICE has, "
+            "not which daemon answered. Use the `shell` backend"
+        ),
+        measured_on=(
+            "Tier 3, 2026-08-13: an `sftp` session into the pinned BusyBox root fails "
+            "with `/bin/sh: /usr/lib/sftp-server: not found` -- ash inside the chroot, "
+            "not the host's shell. See `tests/busybox/test_tier3_session.py::"
+            "test_sftp_and_scp_are_both_refused_inside_the_root`"
+        ),
+        queued_for=(
+            "nothing, deliberately: the `shell` backend is the answer for these devices "
+            "and it is verified over real ssh in Tier 3 (spec exit criterion 3)"
+        ),
+    ),
+    Gap(
+        surface="scp-transfer",
+        status=MEASURED_BROKEN,
+        reason=(
+            "the legacy `scp` protocol needs an `scp` binary on the far side, and a "
+            "stock BusyBox userland has none. Same caveat as `sftp-transfer`: the "
+            "daemon is not the authority, the device's userland is. Use the `shell` "
+            "backend"
+        ),
+        measured_on=(
+            "Tier 3, 2026-08-13: `scp -O` into the pinned BusyBox root fails with "
+            "`/bin/sh: scp: not found`, and the file does not land. Same test as "
+            "`sftp-transfer`; the two take different routes on purpose, since `scp -O` "
+            "reaches for a remote binary while `sftp` opens a subsystem"
+        ),
+        queued_for=(
+            "nothing, deliberately: the `shell` backend is the answer for these devices "
+            "and it is verified over real ssh in Tier 3 (spec exit criterion 3)"
+        ),
+    ),
+    Gap(
+        surface="nc-transfer",
+        status=MEASURED_BROKEN,
+        reason=(
+            "the `nc` transfer backend cannot drive BusyBox's own `nc` APPLET: it sends "
+            "with `nc -N <ip> <port>` and listens OpenBSD-style with `nc -l <port>`, and "
+            "the applet supports neither spelling. A BusyBox device with a real OpenBSD "
+            "netcat installed alongside is fine -- point `NcOptions.exec_name` at it -- "
+            "so this is a gap in the applet, not in every BusyBox host"
+        ),
+        measured_on=(
+            "the five matrix artifacts, 2026-08-13: `nc -N 127.0.0.1 1` is rejected on "
+            "every row (`nc: invalid option -- N` on 1.16.1 and 1.21.1, `nc: "
+            "unrecognized option: N` on 1.28.1, 1.31.0 and 1.35.0), and every row's own "
+            "usage line spells the listener `nc [OPTIONS] -l -p PORT`. otto emits `-N` "
+            "at `src/otto/host/transfer/nc.py:1106`"
+        ),
+        queued_for=(
+            "the full-parity workstream, `todo/busybox-parity-sweep-2026-08-11.md`: the "
+            "spec queues a BusyBox `nc` variant (`-l -p PORT`, size-terminated reads to "
+            "replace the missing `-N`) and explicitly keeps it out of the phases that "
+            "built the `shell` backend"
+        ),
+    ),
+    Gap(
+        surface="daemon-launch",
+        status=MEASURED_BROKEN,
+        reason=(
+            "`otto.host.daemon.launch_command` wraps every daemon in "
+            '`setsid bash -c \'exec -a "$1" "${@:2}"\' _ <sentinel> <argv>` so the '
+            "process carries a findable `argv[0]`, and a stock BusyBox userland has no "
+            "bash. The body is not portable to ash either, so this is not a `bash`->`sh` "
+            "substitution: it needs a different argv[0] mechanism"
+        ),
+        measured_on=(
+            "the five matrix artifacts, 2026-08-13. `bash` is not an applet on any row, "
+            "and Tier 3 measures the pinned root as having no `/usr/bin` at all "
+            "(`tests/busybox/test_tier3_session.py`). Running the wrapper body under "
+            "each row's own ash instead: 1.16.1 and 1.21.1 answer `ash: exec: line 1: "
+            "-a: not found`, having no `exec -a`; 1.28.1, 1.31.0 and 1.35.0 DO parse "
+            '`exec -a` and then mis-expand `"${@:2}"` into a substring of `$1` -- with '
+            "`$1=SENTINEL` the launch execs `NTINEL` and answers `_: exec: line 1: "
+            "NTINEL: not found`. So the naive fix trades a clean `not found` for a "
+            "corrupted program name"
+        ),
+        queued_for=(
+            "the full-parity workstream, `todo/busybox-parity-sweep-2026-08-11.md`. Not "
+            "yet written up there: this table is the record, and the queue file carries "
+            "the plan for work that has one"
+        ),
+    ),
+    Gap(
+        surface="shutdown-command",
+        status=MEASURED_BROKEN,
+        reason=(
+            "`Host.shutdown()` emits `shutdown -h now` (`src/otto/host/unix_host.py:912`) "
+            "and BusyBox has no `shutdown` applet; the BusyBox spelling is `poweroff`. "
+            "`Host.reboot()` is NOT affected and must not be lumped in with this -- "
+            "`reboot` is present on every matrix row and `UnixHost._soft_reboot` works "
+            "as shipped"
+        ),
+        measured_on=(
+            "the five matrix artifacts, 2026-08-13: `shutdown` is absent from the applet "
+            "list on 1.16.1, 1.21.1, 1.28.1, 1.31.0 and 1.35.0, while `reboot` and "
+            "`poweroff` are present on all five. BusyBox will only run an applet its own "
+            "list carries, so the list is the whole answer here"
+        ),
+        queued_for=(
+            "the full-parity workstream, `todo/busybox-parity-sweep-2026-08-11.md`. "
+            "`poweroff` is the measured spelling, but choosing between the two is a "
+            "userland probe (the pattern `Userland.timeout_style` already sets), not a "
+            "hard-coded swap that would break every GNU host"
+        ),
+    ),
+    Gap(
+        surface="run-command-line-length",
+        status=MEASURED_BROKEN,
+        reason=(
+            "a command longer than 1022 characters sent through `Host.run()` is "
+            "SILENTLY TRUNCATED on a BusyBox target -- a different, shorter command "
+            "runs and its success is reported as the caller's. `run()` drives a "
+            'PERSISTENT session, which `SshSession._open` opens with `term_type="dumb"` '
+            "(`src/otto/host/session.py:765,770`), so the far side allocates a pty and "
+            "the command arrives as a TYPED LINE through ash's line editor. `Host.exec()` "
+            "opens a bare exec channel with no pty and is unaffected, so the same command "
+            "is safe through `exec()`"
+        ),
+        measured_on=(
+            "the phase-5 spike, 2026-08-13, dropbear 2022.83 against BusyBox 1.35.0: "
+            "largest line delivered intact 1022, first truncated 1023, with no error and "
+            "no log line. Measured identical against OpenSSH and against a bare LOCAL "
+            "pty, which is what identifies it as BusyBox ash's "
+            "`CONFIG_FEATURE_EDITING_MAX_LEN` and not the transport. For contrast the "
+            "exec channel took 9000 characters intact and broke at 9001"
+        ),
+        queued_for=(
+            "unqueued, deliberately: the phase-5 plan lists fixing this under `Out of "
+            "scope, deliberately` and records it here instead. A fix is a pty-free "
+            "`run()` path, not a larger buffer -- the buffer belongs to the device"
+        ),
+    ),
+    Gap(
+        surface="legacy-dropbear-crypto",
+        status=UNTESTED,
+        reason=(
+            "real BusyBox devices run dropbear, and an OLD dropbear negotiates only "
+            "SHA-1-era algorithms that modern asyncssh disables by default. otto carries "
+            "cipher/host-key/kex lists in `ssh_options`, so the spec calls this "
+            "configuration rather than code -- UNVERIFIED in either direction. Nothing "
+            "is blocked and nothing should be: otto connects, and the outcome is the "
+            "measurement this entry is waiting for"
+        ),
+        measured_on="",
+        queued_for=(
+            "Tier 3 fidelity item C, `todo/busybox-tier3-fidelity-2026-08-13.md`: run "
+            "the phase-5 harness against a period-appropriate dropbear instead of "
+            "2022.83. Two things it must measure first -- whether an old dropbear even "
+            "builds on a modern toolchain, and whether `ssh_options` really suffices"
+        ),
+    ),
+    Gap(
+        surface="busybox-over-a-real-network",
+        status=UNTESTED,
+        reason=(
+            "no BusyBox target is exercised over a real network path. Every tier is "
+            "local: Tier 1 runs the artifact as a subprocess, Tiers 2 and 3 run it "
+            "inside an unprivileged namespace on loopback. Loopback has a ~64 KB MTU and "
+            "no real latency, so nothing measured so far can surface an interaction "
+            "between the transfer's chunking and a real path's MTU, window or timeouts. "
+            "Untested, therefore not blocked"
+        ),
+        measured_on="",
+        queued_for=(
+            "Tier 3 fidelity item B, `todo/busybox-tier3-fidelity-2026-08-13.md`: let "
+            "the harness aim at a remote host when one is configured, defaulting to "
+            "loopback. Option A (a real BusyBox lab VM) is declined for now -- it needs "
+            "VM provisioning, which is not this workstream's call"
+        ),
+    ),
+]
+"""Every declared userland gap, in the order the docs table renders them.
+
+The single source of truth §4 of the spec asks for. Read it, do not edit it in
+flight: the entries are declared constants, and the three consumers (the
+runtime error, the docs page, the parity queue) all assume this list is what
+the repo says it is.
+
+Adding one is a four-part claim -- what breaks, why, what proved it, and who
+would fix it -- and :class:`Gap` refuses a record that leaves any of the four
+out.
+"""
+
+# Design-time candidates that are NOT records above, kept here rather than
+# quietly dropped. The spec's §4 "Known entries at design time" came from a
+# survey; the entries above are what phases 1-5 actually ran. Where the two
+# disagree the measurement wins, and a reader comparing the spec to this file
+# is owed the reason each missing candidate is missing.
+#
+# FOUR ENTRIES, TWO REASONS, and they must not be read as one list. THREE were
+# measured and the measurement did not support the prediction -- ``pgrep``/
+# ``pkill``, ``sudo`` and ``reboot``. That is the count the docs page quotes
+# ("three candidates ... dropped for exactly this reason once they were
+# measured"), and it is the count to keep in sync with it. The FOURTH,
+# ``install``/``stage``, is here for the opposite reason: nothing measured it
+# at all. It is listed so a reader does not conclude it was cleared.
+#
+# Recorded as a comment and not as records, because a `Gap` is a gap: a
+# candidate that measurement CLEARED is not one, and putting it in `GAPS`
+# would put a non-gap in the docs table and in the parity queue.
+#
+# ``pgrep``/``pkill`` -- predicted absent, MEASURED PRESENT on all five matrix
+#     artifacts (2026-08-13). The spec's item was test hygiene rather than
+#     product behaviour anyway: nothing under ``src/otto/`` spawns either.
+# ``sudo`` -- absent on all five rows, but this is ADAPTATION, not a gap.
+#     ``su`` is present on all five and ``Userland.elevation`` already probes
+#     for exactly this, picking ``su``; it refuses only when BOTH answer no.
+# ``reboot`` -- the spec pairs it with ``shutdown``; measurement separates
+#     them. ``reboot`` is an applet on all five rows, so only the ``shutdown``
+#     half is a gap (see ``shutdown-command``).
+# product ``install``/``stage`` -- NOT MEASURED by any tier, and therefore not
+#     a record: unmeasured runs. Whoever measures it first adds it, in either
+#     status, with what it answered.
+
+
+def gap_for(surface: str) -> "Gap | None":
+    """Return the declared gap for *surface*, or ``None`` if none is declared.
+
+    ``None`` is the answer for a surface nobody has written down, and that is
+    not the same as a surface known to work -- but it leads to the same place,
+    because :func:`refuse_if_gapped` does not block what it has no measurement
+    for.
+    """
+    for gap in GAPS:
+        if gap.surface == surface:
+            return gap
+    return None
+
+
+def refuse_if_gapped(surface: str, *, host: str = "", attempted: str = "") -> None:
+    """Raise if *surface* is measured broken; return quietly otherwise.
+
+    **Measured-broken refuses up front; unmeasured runs.** The spec's rule,
+    and the only implementation of it. Three outcomes and only one of them
+    raises:
+
+    * *surface* has a :data:`MEASURED_BROKEN` record -- raise, before anything
+      is emitted, with the record's own evidence and docs anchor in the
+      message;
+    * *surface* has an :data:`UNTESTED` record -- return. otto does not know
+      this fails, and refusing would turn "we do not know" into "does not
+      work", which is a lie in the expensive direction: it makes otto decline
+      things that work;
+    * *surface* is not in the table at all -- return, for the same reason,
+      more so.
+
+    *host* and *attempted* only decorate the message. Neither changes the
+    verdict: the table is about a class of userland, and the caller is the one
+    that decided this host belongs to it.
+
+    Raises:
+        UnsupportedOnUserlandError: *surface* is declared
+            :data:`MEASURED_BROKEN`. Nothing was attempted, which is precisely
+            why it is this exception and not
+            :class:`~otto.host.errors.HostCommandError`.
+    """
+    gap = gap_for(surface)
+    if gap is None or not gap.refuses:
+        return
+    raise UnsupportedOnUserlandError.for_gap(gap, host=host, attempted=attempted)

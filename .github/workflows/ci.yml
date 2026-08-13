@@ -229,6 +229,36 @@ jobs:
             [ -e "/proc/sys/fs/binfmt_misc/$handler" ] \
               || { echo "::error::$handler binfmt handler is not registered; the x86 artifact rows cannot execute on this arm64 runner"; exit 1; }
           done
+      - name: Install dropbear, for the BusyBox Tier 3 ssh tier
+        # Tier 3 logs into the Tier 2 BusyBox root over real ssh, against a
+        # throwaway rootless dropbear on loopback. BOTH legs need it: the tier
+        # runs wherever `make busybox` runs.
+        #
+        # `dropbear-bin`, not `dropbear` and not `dropbear-run` — measured on
+        # 2022.83-4: `-bin` ships only the binaries (dropbear, dbclient,
+        # dropbearkey, dropbearconvert) and registers NO service, so
+        # `systemctl is-enabled dropbear` reports `not-found` after install
+        # and this step leaves nothing listening on the runner. The tier
+        # starts its own foreground daemon on 127.0.0.1 at an ephemeral port
+        # and reaps it. The package is in `universe` and is NOT preinstalled
+        # on the runner images (measured), so this line is doing real work.
+        #
+        # No `apt-get update` here, matching the qemu step above: the
+        # busybox-static step refreshed the index already, and a stale index
+        # is what makes an install 404 on the .deb and read like the package
+        # does not exist.
+        #
+        # NO VERIFICATION LINE, unlike the two steps either side of this one,
+        # and the asymmetry is deliberate rather than an omission. Those two
+        # verify a CAPABILITY that installing a package does not guarantee (a
+        # registered binfmt handler; a uid_map write the kernel may refuse).
+        # This one has nothing of that kind to check, and the tier's own
+        # `test_the_provisioned_host_has_the_dropbear_tier3_needs` runs in
+        # THIS lane and fails by name with the apt line if the paths are not
+        # where `tests/_fixtures/busybox_dropbear.py` says they are. Re-doing
+        # that in shell here would be a second copy of a gate, which is the
+        # thing this job's own header warns drifts.
+        run: sudo apt-get install -y dropbear-bin
       - name: Allow unprivileged user namespaces, for the BusyBox rootfs tier
         # The tier chroots into a BusyBox-only root from an unprivileged user
         # namespace. Ubuntu 24.04 ships

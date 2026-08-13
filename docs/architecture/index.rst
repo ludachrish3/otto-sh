@@ -28,6 +28,7 @@ cross-cutting spines; the principles are the recurring design rules.
 
    subsystems/hosts
    subsystems/docker-hosts
+   subsystems/busybox-support
    subsystems/execution
    subsystems/network
    subsystems/monitoring

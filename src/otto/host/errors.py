@@ -21,11 +21,18 @@ impair can mean "link work failed" rather than "some host call failed", and it
 gets the same three checks by passing them in.
 """
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ..errors import OttoError
 from ..logger.mode import LogMode
 from ..result import CommandResult
+
+if TYPE_CHECKING:
+    # Typing only, and deliberately so: `otto.host.userland` imports THIS
+    # module at runtime to raise the class below, so a runtime import back
+    # would be a cycle. `UnsupportedOnUserlandError.for_gap` reads four
+    # attributes off the record and never constructs one.
+    from .userland import Gap
 
 
 class HostUnreachableError(OttoError, RuntimeError):
@@ -64,14 +71,68 @@ class UnsupportedOnUserlandError(OttoError, RuntimeError):
     :class:`HostUnreachableError`, so the ``except (ValueError, RuntimeError)``
     clauses that already bracket host work keep catching it.
 
-    EXPECTED TO MOVE. This class belongs with the userland gap registry
-    described in ``docs/superpowers/specs/2026-08-11-busybox-host-support-design.md``,
-    which will render its message from the registry's entry for the missing
-    capability rather than from the caller's f-string. It is defined here
-    because the elevation branch needs it now and the registry does not exist
-    yet; when the registry lands, this becomes its rendering surface rather
-    than being redefined next to it.
+    THE REGISTRY HAS LANDED, and this class stayed put. An earlier version of
+    this note said the class was EXPECTED TO MOVE, next to the userland gap
+    registry described in
+    ``docs/superpowers/specs/2026-08-11-busybox-host-support-design.md``. What
+    the registry actually needed was a RENDERING SURFACE, which is
+    :meth:`for_gap` below, and moving the class to get one would have dragged
+    every ``except`` clause and every import in this package along with it for
+    no gain. So the dependency runs the other way: ``otto.host.userland``
+    imports this class to raise it, and this class knows a
+    :class:`~otto.host.userland.Gap` only as a shape it can format.
+
+    Both ways of raising it are legitimate and they answer different
+    questions. :meth:`for_gap` renders what otto MEASURED about a whole class
+    of userland ("BusyBox has no ``shutdown`` applet"). A caller's own
+    f-string renders what THIS host answered a probe ("resolved
+    ``elevation='none'``") — see ``PosixPrivilege._elevate`` and
+    ``ShellFileTransfer._run_put``, which are probe-driven and stay that way.
+    A registry record cannot say the second thing and a probe cannot say the
+    first.
     """
+
+    @classmethod
+    def for_gap(
+        cls, gap: "Gap", *, host: str = "", attempted: str = ""
+    ) -> "UnsupportedOnUserlandError":
+        """Build the refusal for a declared *gap*, rendered from the record.
+
+        The spec's first consumer of the registry: "a named
+        ``UnsupportedOnUserlandError`` renders its message from the record
+        (surface, why, docs anchor) instead of surfacing a bare ``sudo: not
+        found``".
+
+        Everything in the message comes from the record except *host* and
+        *attempted*, which the caller supplies because the record cannot know
+        them. That is the point — an operator who hits this gets the same
+        four facts (what broke, why, what proved it, where to read more)
+        wherever it fires, and a docs page rendered from the same record
+        cannot disagree with it.
+
+        ``Nothing was attempted`` leads, because it is the one thing this
+        exception means that the other two host errors do not: no command was
+        sent, so nothing was learned about the system under test.
+
+        TAKES A ``measured-broken`` RECORD ONLY, and does not check. The
+        message says "otto has measured ``<surface>`` as broken" and prints
+        ``MEASURED: <measured_on>``, both of which are false for an
+        ``untested`` record -- whose ``measured_on`` is empty by the
+        :class:`~otto.host.userland.Gap` invariant, so the rendering would read
+        ``MEASURED: .`` The firing rule lives in
+        :func:`~otto.host.userland.refuse_if_gapped`, which is what decides
+        that a record refuses at all, and every raise today goes through it, so
+        this is a precondition on direct callers rather than a reachable bug.
+        A caller doing its own dispatch must check
+        :attr:`~otto.host.userland.Gap.refuses` first.
+        """
+        who = f"{host}: " if host else ""
+        what = f" ({attempted})" if attempted else ""
+        return cls(
+            f"{who}nothing was attempted{what} — otto has measured `{gap.surface}` as "
+            f"broken on this class of userland. {gap.reason}. MEASURED: {gap.measured_on}. "
+            f"QUEUED FOR: {gap.queued_for}. See {gap.docs_anchor}."
+        )
 
 
 async def exec_or_raise(

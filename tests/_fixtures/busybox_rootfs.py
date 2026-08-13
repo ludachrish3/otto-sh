@@ -154,6 +154,71 @@ _HOST_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 # this tier reads elapsed time, so each is as generous as the remaining
 # budget allows and tightening one below what its own site needs buys
 # nothing but red builds on a loaded host.
+#
+# ── TIER 3 SPENDS FROM A DIFFERENT WINDOW, and that is why it is not a term ──
+#
+# `tests/_fixtures/busybox_dropbear.py` adds bounded calls of its own — one
+# `_KEYGEN_TIMEOUT_S` per key (three keys), one `_READY_TIMEOUT_S` for the
+# daemon's bind wait, and up to two `_STOP_TIMEOUT_S` for its two-stage reap
+# — on top of a root built through THIS module. None of them joins the sum
+# above, and the reason is structural rather than a rounding call: Tier 3
+# builds all of it in the SESSION-scoped `tier3_dropbear` fixture, while the
+# sum above bounds what one TEST BODY spends. pyproject sets
+# `timeout_func_only = true`, so the per-test SIGALRM this arithmetic protects
+# covers the CALL phase only; session setup is bounded by
+# `faulthandler_timeout = 300` instead, and the arithmetic there is
+# 3 x 30 + 15 + 2 x 10 = 125s of Tier 3 bounds plus this module's own
+# probe + build + proof (with reaps, 40s) and a cold-cache fetch (60s) —
+# 225s against 300, which fits and has 75s of room. Spend that room and Tier
+# 3's named refusals are replaced by a faulthandler dump, the same collapse
+# the sum above exists to prevent one window over.
+#
+# What a Tier 3 test spends in its own CALL phase is ssh round trips against
+# an already-running daemon: 0.12s measured for an exec round trip, bounded
+# by nothing but the 180s SIGALRM, which is the right instrument for a
+# transport with no wedge of its own to name.
+#
+# Measured 2026-08-13 on this VM, warm: keys 0.01s each (RSA 0.20s), rootfs
+# 0.03s, `start()` 0.05s, exec round trip 0.12s, `stop()` 0.00s. Every bound
+# above is therefore two to three orders of magnitude of slack, which is what
+# a runaway guard should be.
+#
+# A SECOND TIER 3 DAEMON IS NOT FREE IN THE SAME WAY. Three tests start their
+# own — the reap guard in `test_tier3_harness.py`, and the two guards in
+# `test_tier3_session.py` that INJECT a hostile condition (no chroot wrapper,
+# no mount namespace) rather than observe the ambient one — and each `start()`
+# lands in a CALL phase, so it is charged against the 180s per-test timeout
+# like any other in-test work.
+#
+# That budget is PER TEST, not shared, so three of them do not sum: the most
+# expensive body is one `_READY_TIMEOUT_S` (15s) plus two of that module's
+# `_CLIENT_TIMEOUT_S` (30s each) for the scp and sftp calls, i.e. 75s of the
+# 180 in the worst case and well under a second warm. What would need this
+# arithmetic revisited is a single test that started several, or one that
+# added enough bounded calls beside a start to approach 180 — at which point
+# the named refusals collapse into a bare `Timeout >180.0s`, the same failure
+# the sum above exists to prevent one window over.
+#
+# ── `test_tier3_shell_transfer.py` SPENDS UNDER THE PRODUCT'S BOUNDS, NOT OURS ─
+#
+# That module drives otto's own `UnixHost.put`/`get` against the session
+# daemon. It starts no daemon and adds no constant to this file, but its
+# per-test worst case is bounded by numbers this tree does not own and cannot
+# pass: `Userland.resolve()`'s `_RESOLVE_BUDGET_S` (30s, charged once per host)
+# plus `DEFAULT_COMMAND_TIMEOUT` (30s) for each exec the transfer issues — and
+# a three-chunk PUT issues five (three chunks, one `md5sum`, one `mv`). 30 +
+# 5 x 30 = 180s, i.e. exactly at the per-test SIGALRM with nothing to spare,
+# and a GET in the same body pushes past it. `put` and `get` take no timeout
+# argument, so this is not tunable from the test side.
+#
+# It is recorded rather than fixed because of WHICH failure it degrades. A
+# dead or refusing daemon fails in milliseconds; only a WEDGED one (a device
+# that accepts a command and never answers) walks the full budget, and that is
+# the one shape a loopback daemon on this machine does not produce. Measured
+# warm: ~0.15s for the whole three-chunk transfer. If a future test in that
+# module adds a second host or a fourth direction, it needs this paragraph
+# revisited first — the collapse into a bare `Timeout >180.0s` is the same one
+# the sum above exists to prevent.
 
 _USERNS_PROBE_TIMEOUT_S = 5.0
 """Bound for `unshare -r id -u`. One fork+exec of a tiny host binary; measured

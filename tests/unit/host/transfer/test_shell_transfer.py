@@ -114,11 +114,21 @@ G6. Size 0 is a real case: zero chunks, an empty file still lands, progress
 G7. The device's ``base64`` wraps its output (measured, not assumed -- see
     below), and decoding must both tolerate that AND reject genuine garbage
     loudly rather than silently drop it -- ``TestShellGetWrappedAndValidatedDecode``.
+
+One guard belongs to NEITHER list because it belongs to both directions at
+once -- ``TestStagedNameFitsTheDeclaredFilenameLimit``. PUT and GET stage
+under the same generated basename (:func:`~otto.host.transfer.shell.staged_temp_name`),
+and ``put_files``/``get_files`` validate the CALLER's basename against
+``max_filename_len`` before handing it to a staging step that makes it
+longer -- so a name the front door accepted could still be one the target
+cannot open. See that class's docstring for why its three tests do not
+substitute for one another.
 """
 
 import asyncio
 import base64
 import hashlib
+import os
 import re
 import subprocess
 from collections.abc import Callable
@@ -131,7 +141,7 @@ from otto.host.connections import ConnectionManager
 from otto.host.errors import UnsupportedOnUserlandError
 from otto.host.options import UserlandOptions
 from otto.host.transfer.base import TransferContext
-from otto.host.transfer.shell import _SHELL_CHUNK_BYTES, ShellFileTransfer
+from otto.host.transfer.shell import _SHELL_CHUNK_BYTES, ShellFileTransfer, staged_temp_name
 from otto.host.userland import Userland
 from otto.result import CommandResult
 from otto.utils import Status
@@ -305,6 +315,7 @@ def _make_ft(
     base64_flag: str = "-d",
     stat_size: str = "stat",
     checksum: str = "absent",
+    max_filename_len: int = 255,
 ) -> ShellFileTransfer:
     mock_connections = MagicMock(spec=ConnectionManager)
     return ShellFileTransfer(
@@ -312,6 +323,7 @@ def _make_ft(
         name="tomato",
         exec_cmd=exec_cmd,
         userland=_declared_userland(base64_flag, stat_size, checksum),
+        max_filename_len=max_filename_len,
     )
 
 
@@ -703,9 +715,19 @@ class TestShellChunkLineLength:
     must be real, for ``.stat().st_size``), and ``tmp_path``'s own directory
     name is pytest-run-dependent -- using it here would make the asserted
     length flake across machines and runs. The staged temp filename embeds
-    ``uuid.uuid4().hex``: its VALUE differs every run, but ``uuid4().hex``
-    is always exactly 32 hex characters, so the total command length stays
-    exactly reproducible even though the temp name itself is not.
+    ``uuid.uuid4().hex[:_STAGING_TOKEN_HEX]``: its VALUE differs every run,
+    but the token is always exactly 8 hex characters, so the total command
+    length stays exactly reproducible even though the temp name itself is
+    not. ``payload.bin`` is far shorter than ``max_filename_len``, so
+    :func:`~otto.host.transfer.shell.staged_temp_name`'s budget never
+    truncates it here and the length is a pure function of the token.
+
+    The pinned number moved from 5548 to 5524 when that token was cut from
+    32 hex characters to 8 -- see :data:`~otto.host.transfer.shell._STAGING_TOKEN_HEX`
+    for why it was cut. That is a 24-character REDUCTION in what crosses the
+    wire per line, which is the direction that needs no re-justification
+    against the transport bound; the guard is re-measured rather than
+    recomputed regardless.
     """
 
     @pytest.mark.asyncio
@@ -723,10 +745,11 @@ class TestShellChunkLineLength:
 
         write_calls = [c for c in exec_cmd.calls if c.startswith("printf ")]
         assert len(write_calls) == 1, write_calls
-        assert len(write_calls[0]) == 5548, (
+        assert len(write_calls[0]) == 5524, (
             f"one full {_SHELL_CHUNK_BYTES}-byte chunk's command line is "
-            f"{len(write_calls[0])} characters, not the 5548 measured when this "
-            f"guard was written -- changing _SHELL_CHUNK_BYTES changes how much "
+            f"{len(write_calls[0])} characters, not the 5524 measured when this "
+            f"guard was last re-measured -- changing _SHELL_CHUNK_BYTES (or the "
+            f"staged temp's name; see _STAGING_TOKEN_HEX) changes how much "
             f"crosses the wire per line; re-justify the new number against the "
             f"transport bound (see the constant's own docstring) before updating "
             f"this assertion"
@@ -2067,6 +2090,231 @@ class TestShellGetIntegrityVerification:
         assert not dst.exists()
         leftover_temps = list(dest_dir.glob("f.bin.otto-*"))
         assert leftover_temps == [], leftover_temps
+
+
+# ---------------------------------------------------------------------------
+# The staged name's own budget: what `put_files` ACCEPTS, staging must SURVIVE
+# ---------------------------------------------------------------------------
+
+
+class TestStagedNameFitsTheDeclaredFilenameLimit:
+    """A basename ``put_files``/``get_files`` let through must be STAGEABLE.
+
+    Both entry points validate the caller's basename against
+    ``max_filename_len`` (:func:`~otto.host.transfer.base.validate_filename_lengths`,
+    ``len(name) > limit``), and both then hand that same basename to a
+    staging step that makes it LONGER -- ``<name>.otto-<token>``. So a name
+    at or near the limit passes the up-front check that exists precisely to
+    turn "the target cannot open this name" into a clear refusal, and then
+    fails anyway, late, from the target instead: ``File name too long``
+    after the local file has been read and (for PUT) after chunks have
+    already crossed the wire. The whole point of the front-door check is
+    that it answers for the WHOLE operation, and it was answering for the
+    wrong name.
+
+    Two independent things have to be true, and they are guarded separately
+    because they can break separately:
+
+    1. **The declared limit is respected** -- ``test_the_staged_temp_name_...``.
+       ``max_filename_len`` models the DEVICE's filesystem, which for PUT is
+       not the machine running the test at all: the temp is created remotely,
+       by the emitted command. So this one reads the emitted TRANSCRIPT and
+       measures the basename otto asked the device to create, against a
+       declared limit far tighter than anything this machine enforces. It
+       needs no real filesystem and cannot be satisfied by a permissive one.
+    2. **A real filesystem at that limit actually accepts it** -- the PUT and
+       GET round trips below, which run every command through a real
+       ``/bin/sh`` (PUT) and do real local staging (GET). These derive
+       ``max_filename_len`` FROM ``os.pathconf(..., "PC_NAME_MAX")`` rather
+       than hard-coding 255, so the declared limit and the filesystem that
+       enforces it are equal BY CONSTRUCTION -- on a filesystem with a
+       different ``NAME_MAX`` the test moves with it instead of going
+       vacuous, and it can never pass merely because the bed was more
+       permissive than the number under test.
+
+    Guard 1 alone would stay green if the arithmetic were right and the real
+    world disagreed; guards 2 and 3 alone would stay green on any host whose
+    ``NAME_MAX`` happened to exceed the declared limit. Neither substitutes
+    for the other.
+    """
+
+    @pytest.mark.asyncio
+    async def test_the_staged_temp_name_fits_a_limit_far_tighter_than_this_machines(
+        self, tmp_path: Path
+    ) -> None:
+        """Declared limit 40, source basename exactly 40 -- and the emitted temp is <= 40.
+
+        40 is nothing like this machine's ``NAME_MAX`` (255), deliberately:
+        the temp PUT stages is created by the DEVICE, so the only limit that
+        can be checked from a transcript is the declared one, and a limit the
+        local filesystem would happily exceed proves the arithmetic is doing
+        the work rather than the bed.
+        """
+        limit = 40
+        name = "n" * limit
+        src = tmp_path / name
+        src.write_bytes(b"hello")
+        dest_dir = Path("/dest")  # synthetic: nothing local is ever created for PUT's temp
+
+        exec_cmd = _RecordingExec(answer_when=_size_answer(5))
+        ft = _make_ft(exec_cmd, max_filename_len=limit)
+
+        result = await ft.put_files([src], dest_dir, show_progress=False)
+        assert result.is_ok, result.msg
+
+        staged = Path(_parse_chunk_cmd(exec_cmd.calls[0]).group("path")).name
+        assert len(staged) <= limit, (
+            f"put_files accepted a {len(name)}-character basename against a "
+            f"{limit}-character limit and then staged {staged!r}, which is "
+            f"{len(staged)} characters -- the front-door check validated the "
+            f"SOURCE name while the device is asked to create the STAGED one, so "
+            f"a name inside the limit still fails late, on the device, with `File "
+            f"name too long`"
+        )
+        assert staged.startswith("n"), (
+            f"the staged name {staged!r} kept nothing of the destination basename -- "
+            f"a temp nobody can trace back to its file is a worse debugging story "
+            f"than a long one"
+        )
+        assert ".otto-" in staged, staged
+
+    @pytest.mark.asyncio
+    async def test_a_put_source_at_the_limit_lands_on_a_real_filesystem(
+        self, tmp_path: Path
+    ) -> None:
+        """The real failure, end to end: a real shell, a real ext4 ``NAME_MAX``.
+
+        Every command runs through ``/bin/sh``, so the redirect that creates
+        the temp is a real ``open(2)`` against a real filesystem -- the exact
+        call that returns ``ENAMETOOLONG`` when the staged basename overruns
+        ``NAME_MAX``. The limit handed to the backend IS this filesystem's
+        ``NAME_MAX``, so "at exactly ``max_filename_len``" and "at exactly
+        what the filesystem enforces" are the same length here by
+        construction.
+        """
+        dest_dir = tmp_path / "dest"
+        dest_dir.mkdir()
+        limit = os.pathconf(dest_dir, "PC_NAME_MAX")
+        name = "p" * (limit - len(".bin")) + ".bin"
+        assert len(name) == limit
+        payload = b"a source name at the limit still has to land"
+        src = tmp_path / name
+        src.write_bytes(payload)
+
+        exec_cmd = _ShellExecutingExec(cwd=tmp_path)
+        ft = _make_ft(exec_cmd, max_filename_len=limit)
+
+        result = await ft.put_files([src], dest_dir, show_progress=False)
+        assert result.is_ok, (
+            f"a {len(name)}-character source basename passed put_files' own "
+            f"{limit}-character check and then failed to transfer: {result.msg}. "
+            f"Transcript: {exec_cmd.calls[:1]}; shell said: {exec_cmd.outputs[:1]}"
+        )
+        assert (dest_dir / name).read_bytes() == payload
+        assert list(dest_dir.glob("*.otto-*")) == [], "a staged temp was left behind"
+
+    @pytest.mark.asyncio
+    async def test_a_get_source_at_the_limit_stages_locally(self, tmp_path: Path) -> None:
+        """GET's temp is LOCAL, and stages under the same naming -- same bug, same fix.
+
+        ``get_files`` validates the remote basename against the same
+        ``max_filename_len``, then :meth:`ShellFileTransfer._get_one` stages
+        the decoded bytes in a same-directory local temp named exactly the way
+        PUT names its remote one. The staging failure surfaces differently
+        (an ``OSError`` caught into a failing ``Result``, not a device error),
+        but it is the same overrun, so it needs its own guard rather than
+        inheriting PUT's.
+        """
+        dest_dir = tmp_path / "dest"
+        dest_dir.mkdir()
+        limit = os.pathconf(dest_dir, "PC_NAME_MAX")
+        name = "g" * (limit - len(".bin")) + ".bin"
+        assert len(name) == limit
+        payload = b"a remote name at the limit still has to come back"
+        src = Path("/remote") / name
+
+        encoded = base64.b64encode(payload).decode("ascii")
+        exec_cmd = _RecordingExec(outputs=[str(len(payload)), encoded])
+        ft = _make_ft(exec_cmd, max_filename_len=limit)
+
+        result = await ft.get_files([src], dest_dir, show_progress=False)
+        assert result.is_ok, (
+            f"a {len(name)}-character remote basename passed get_files' own "
+            f"{limit}-character check and then failed to stage locally: {result.msg}"
+        )
+        assert (dest_dir / name).read_bytes() == payload
+        assert list(dest_dir.glob("*.otto-*")) == [], "a staged temp was left behind"
+
+    @pytest.mark.parametrize("limit", [1, 6, 13, 14, 15, 32, 255])
+    def test_the_budget_holds_at_every_limit_including_below_the_tokens_own_framing(
+        self, limit: int
+    ) -> None:
+        """The documented degenerate case, made real rather than merely asserted in prose.
+
+        ``.otto-`` plus an 8-hex token is 14 characters, so a limit under 14
+        leaves nothing for the destination half and the arithmetic
+        (``max_filename_len - len(suffix)``) goes negative. Two clauses keep
+        the bound holding there, and they need SEPARATE assertions because
+        they fail in different currencies:
+
+        * the final ``[:max_filename_len]`` slice is what keeps the LENGTH
+          inside the cap. Mutation-verified 2026-08-13: drop it and this test
+          reds at limits 1, 6 and 13 (the suffix alone is 14 characters).
+        * the ``max(..., 0)`` is what keeps the CONTENT right, and the length
+          assertion above cannot see it. Mutation-verified the same way:
+          replace it with a bare ``max_filename_len - len(suffix)`` and
+          ``dest_name[:negative]`` slices from the RIGHT end, but the final
+          slice clamps the result anyway, so the returned LENGTH is identical
+          at all seven limits and only the returned VALUE changes -- ``"z"``
+          where the real function gives ``"."``. An earlier version of this
+          docstring claimed both were detected here when only the first was;
+          the ``startswith`` assertion below is what makes the second true.
+
+        The name at each limit is the worst case for that limit: longer than
+        the cap to begin with.
+        """
+        framing = ".otto-"
+        staged = staged_temp_name("z" * (limit + 40), limit)
+        assert len(staged) <= limit, (
+            f"staged_temp_name promised a name inside {limit} characters and "
+            f"returned {staged!r} ({len(staged)} characters)"
+        )
+        if limit < 14:
+            # Below the framing there is no room for any of the destination,
+            # so what survives must be the SUFFIX. Without `max(..., 0)` the
+            # negative slice returns destination characters instead, at the
+            # same length -- which is why this is asserted on content.
+            assert staged.startswith(framing[:limit]), (
+                f"at a {limit}-character limit the token's framing is all that fits, so "
+                f"staged_temp_name should have returned a prefix of {framing!r}; it "
+                f"returned {staged!r}, which is destination text. That is the signature "
+                f"of a negative slice reaching in from the RIGHT end -- the bound still "
+                f"holds on length and has stopped holding on content"
+            )
+
+    def test_a_limit_of_one_returns_a_dot_which_is_out_of_contract(self) -> None:
+        """The one degenerate output that is NOT visible degradation. Pinned as known.
+
+        :func:`~otto.host.transfer.shell.staged_temp_name` promises that the
+        bound "degrades visibly rather than silently" below the token's
+        framing, and at every limit from 6 up it does: you get a recognisable
+        ``.otto-`` prefix with progressively less of the token. At ``limit=1``
+        it does not -- the return is ``"."``, which is a real basename that
+        resolves to the CONTAINING DIRECTORY rather than to a file in it.
+
+        No unix target in the BusyBox matrix declares such a limit (every one
+        is the 255 default), and ``max_filename_len`` is a declared host field
+        rather than anything probed, so this is unreachable in production.
+        It is pinned rather than fixed because making it visible means raising,
+        and that is a behaviour change with no caller asking for it. This test
+        exists so the next reader finds the hazard already known and measured
+        instead of rediscovering it as a bug.
+        """
+        assert staged_temp_name("z" * 41, 1) == ".", (
+            "staged_temp_name(_, 1) no longer returns '.'. If it now raises or returns "
+            "something else, that is a deliberate improvement -- update this test and "
+            "the out-of-contract note in staged_temp_name's docstring together"
+        )
 
 
 # ---------------------------------------------------------------------------
