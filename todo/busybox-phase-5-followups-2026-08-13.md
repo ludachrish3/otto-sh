@@ -147,11 +147,16 @@ bash — and so is `repair`, which cancels timers with a `ps` scan and `kill`.
 
 ### `file-ops-base64` — NO LONGER blames the file, or empties it
 
-`read_file`/`write_file` emit `base64` / `base64 -d`
-(`src/otto/host/file_ops.py:266,317`) whatever `Userland.base64_flag` says, so
-both break on BusyBox 1.16.1, which ships no `base64` applet at all. They still
-cannot adapt; they now REFUSE, at `otto.host.file_ops.refuse_if_base64_is_absent`,
-rendering the record's message.
+`read_file`/`write_file` emit `base64` / `base64 -d` whatever
+`Userland.base64_flag` says, so both break on BusyBox 1.16.1, which ships no
+`base64` applet at all. They still cannot adapt; they now REFUSE, at
+`otto.host.file_ops.refuse_if_base64_is_absent`, rendering the record's message.
+
+(This paragraph used to cite `src/otto/host/file_ops.py:266,317`. Both numbers
+had drifted two lines, in a field that renders into the operator's error
+message, so they were dropped rather than renumbered — the record's `paths` name
+the same two call sites as dotted names a test resolves. `Gap.measured_on`'s
+docstring now says so, and names the two records that still carry a line number.)
 
 What that replaced was worse than the record originally said, in both
 directions. `read_file` re-attributed the device's `base64: not found` to the
@@ -184,11 +189,86 @@ probe; the difference is the path, not a change of policy.
    measurement (`Userland.is_settled`). Such a host still attempts the
    operation and still gets the old misleading error. Refusing on an assumed
    value would turn a refused ssh channel into a verdict about the device.
-3. **`DockerContainerHost` builds no `Userland` at all**, so an alpine
-   container — a real BusyBox userland — is never refused by this guard and
-   never probed by anything else either. Same for `LocalHost`. Giving those two
-   families a resolver is a behaviour change well beyond this surface; it is
-   noted here because this guard is the first thing that would have benefited.
+3. **`LocalHost` and `DockerContainerHost` build no `Userland` at all**, so the
+   guard is structurally incapable of firing on either — a guard that cannot
+   fire, which is this repo's most-repeated defect. Recorded as two `PATH_OPEN`
+   entries on the record. **Measured 2026-08-14 and deliberately NOT closed**;
+   the measurement and the decomposition are below, because "give them a
+   resolver" is three changes wearing one sentence.
+
+   *Severity first, so the work is not over-scoped.* This is a coverage hole,
+   not ongoing data loss. `base64` is absent only on BusyBox 1.16.1
+   (`tests/busybox/test_applet_resolution.py::_EXPECTED_BASE64`, every later row
+   `True`) and `alpine:3.20` ships BusyBox 1.36.1 with `/bin/base64` — measured,
+   round trip returns its input — so `read_file`/`write_file` work on an
+   ordinary container. What is exposed is a minimal, ancient or custom image
+   with the applet compiled out, where a `write_file` does not merely fail but
+   **zeroes the destination** (the shell opens `>` before resolving the codec;
+   `>>` is intact).
+
+   *Why it is not one change.* `_userland()` is one hook with two consumers, and
+   `Userland.resolve()` has no scoped form, so settling `base64_flag` also
+   produces an `elevation` verdict on a class that has none today:
+
+   - **the mechanism moves.** A resolver over `LocalHost.exec` answered
+     `elevation=sudo` on this machine (7 probes, 16 ms — cost is not the
+     problem), but scripted against alpine's measured shape (`su`, no `sudo`) the
+     same wiring builds `su -c <cmd>` with **no password expect** — neither class
+     has a `creds` field — and with neither applet it **raises**
+     `UnsupportedOnUserlandError` where the caller gets a non-ok `CommandResult`
+     today. Two of three arms are a behaviour change on the two families that
+     reach otto's own machine. Pinned by `TestWhyTheseTwoPathsAreStillOpen` in
+     `tests/unit/host/test_file_ops_base64_refusal.py`, which is also the
+     discriminator: if elevation ever stops reading this hook, those tests go
+     red and this entry should be re-decided rather than re-worded.
+   - **on `LocalHost` the probes measure the wrong shell.** `exec` runs them
+     under `loop.subprocess_shell` (`/bin/sh`); `run` runs commands in a
+     persistent `bash` (`LocalSession`). Measured: `$0` is `/bin/sh` and `bash`
+     respectively, and a round answering the way a non-bash `/bin/sh` does
+     resolves `shell_dialect` to `ash` on a class declaring `has_bash=True`.
+     Latent only because nothing consumes `shell_dialect` yet (the module
+     docstring's own hole) — and `resolve()` already prints that value as a
+     pasteable `lab.json` pin.
+   - **neither class can be pinned out of the cost.** `userland_options` is a
+     `UnixHost` field, so the escape hatch the guard's docstring offers an
+     operator does not exist here, and adding one is an init-field change that
+     needs a spec field to reach a host from lab data. For the container it is
+     not a small cost either: each probe is a `docker exec` dispatched as **one
+     exec channel on the parent**, so 7–11 of them land on the first elevated
+     command or `read_file` against a server that refuses excess channels
+     rather than queueing them.
+
+   *The decomposition, in order.* Each step is landable and testable alone:
+
+   1. **A scoped resolution** — let a consumer settle one capability without
+      producing verdicts it did not ask for. This is the step that decouples the
+      file-ops guard from elevation, and it has to argue with
+      `Userland.resolve`'s own case for a whole round (channel fan-out, the
+      partial pin line, capabilities stranded at their cannot-ask defaults).
+      Everything else is blocked on it or made safe by it.
+   2. **A `userland_options` field on both classes**, plus the spec field that
+      lets it arrive from lab data. Independent of step 1 and useful alone: it
+      is also the per-host override item 4 under `run-command-line-length`
+      wants.
+   3. **A probe runner that targets the shell the host's commands run in** —
+      `LocalHost` only. Either bind the probes to the session shell, or make the
+      resolver state that it describes `exec`'s `/bin/sh`. Until one of the two,
+      a `LocalHost` resolver records a false `shell_dialect`.
+   4. **Then wire `DockerContainerHost`**, which is the higher-exposure of the
+      two (an image *can* be a 1.16.1-shaped userland; the machine running otto
+      realistically cannot), and `LocalHost` only after step 3.
+
+   *One gate finding, worth keeping.* Wiring `LocalHost` by hand and leaving its
+   path record at `OPEN` was caught by **three** tests — the two "the hook is
+   declared once" pins and `test_a_host_with_no_userland_builds_todays_exact_sudo_command`
+   — but by **nothing** in `tests/unit/host/test_gap_registry.py` or
+   `tests/unit/test_docs_gap_sync.py`, which stayed green at 194 passed. The
+   registry checks an `OPEN` path's SHAPE (its site resolves, it names no
+   checker, it has a docs bullet), never that the site is still unguarded, and
+   for these two paths it could not: the wiring is not a guard call at the site,
+   it is the host acquiring a resolver. The record's own `pinned_by` test is what
+   catches it — which is the mechanism working as designed, but it means the gate
+   command in the brief is not where that drift shows up.
 4. **`ShellFileTransfer` still refuses on an ASSUMED `absent`**
    (`_run_put`/`_run_get` read the value without asking whether it was
    settled), so a transfer to a host whose probes were refused is declined with

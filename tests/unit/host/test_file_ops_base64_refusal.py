@@ -519,6 +519,152 @@ class TestTheFamiliesWithNoResolver:
 
 
 # ===========================================================================
+# Why those two paths are still OPEN, rather than closed in passing
+# ===========================================================================
+
+
+def _applets(*present: str):
+    """A probe runner whose ELEVATION applets are exactly *present*.
+
+    Everything else answers the way ``alpine:3.20`` measurably does (BusyBox
+    1.36.1: ``base64``, ``timeout`` and ``stat -c`` all work, and there is no
+    ``bash``), so every capability settles and the three arms below differ only
+    in the one thing under test. Answering "no" to a probe is a MEASUREMENT
+    here, not a refusal — ``_ok``/``_fail`` both return a result, and a runner
+    that raised would leave the capability unsettled instead.
+    """
+
+    async def run(cmd: str, **_kwargs: object) -> CommandResult:
+        if cmd in ("command -v sudo", "command -v su"):
+            return _ok(cmd) if cmd.rsplit(maxsplit=1)[-1] in present else _fail(cmd, "")
+        if cmd == 'test -n "$BASH_VERSION"':
+            return _fail(cmd, "", code=1)
+        return _ok(cmd, "hi" if "base64" in cmd else "")
+
+    return run
+
+
+class _WiredLocalHost(LocalHost):
+    """A ``LocalHost`` given the resolver it does not have, to measure what that changes.
+
+    A plain subclass rather than a dataclass one, for the same reason ``_Host``
+    above is: ``LocalHost`` is ``@dataclass(slots=True)``, so there is nowhere to
+    hang the resolver on an instance otherwise. Production cannot hand these
+    tests this state at all — which is the point, and why it is built here rather
+    than shipped.
+    """
+
+    userland: Userland
+
+    def _userland(self) -> Userland:
+        return self.userland
+
+
+class TestWhyTheseTwoPathsAreStillOpen:
+    """The coupling that keeps them open, asserted rather than argued.
+
+    ``_userland()`` is declared on :class:`~otto.host.userland.UserlandHost` and
+    read by TWO mixins, so a resolver added to close this surface also decides
+    how ``run(sudo=True)`` elevates on the same host — and ``resolve()`` has no
+    scoped form, so there is no way to take the one without the other. These
+    tests are what makes that a measurement instead of a paragraph: they arrive
+    at ``_elevate`` on a host wired the way closing the path would wire it, and
+    show the built command moving.
+
+    They are also the discriminator for whether the recorded reason is still
+    true. If a later change makes elevation resolver-independent, or gives
+    ``resolve()`` a scoped form, these go red — and the ``PATH_OPEN`` details on
+    ``file-ops-base64`` should be revisited rather than re-worded.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_resolver_here_moves_the_elevation_mechanism(self) -> None:
+        """The alpine shape: ``su`` and no ``sudo``, measured on ``alpine:3.20``."""
+        plain = LocalHost(log=LogMode.QUIET)
+        assert plain._elevate("id -u") == ("sudo -S -p 'otto-sudo:' id -u", []), (
+            "the premise: today this family builds sudo whatever the device has"
+        )
+
+        wired = _WiredLocalHost(log=LogMode.QUIET)
+        wired.userland = Userland(UserlandOptions(), _applets("su"))
+        await wired._prepare_elevation()
+        assert len(wired.userland.as_lab_json()) == 6, (
+            "`as_lab_json` reports only SETTLED keys, so this is the premise that the "
+            "round really answered rather than falling back to its cannot-ask defaults — "
+            "and that the whole round is what `base64_flag` alone would have cost"
+        )
+        assert wired.userland.elevation == "su"
+        # No password expect: neither of these two families has a `creds` field,
+        # so `_switch_creds()` is empty and nothing answers `su`'s prompt.
+        assert wired._elevate("id -u") == ("su -c 'id -u'", [])
+
+    @pytest.mark.asyncio
+    async def test_a_resolver_here_can_turn_a_non_ok_result_into_a_raise(self) -> None:
+        """The third arm, and the one that changes the TYPE of the failure.
+
+        A device with neither applet resolves ``elevation='none'``, which
+        ``_elevate`` refuses outright. Today the same call builds ``sudo`` and
+        the caller gets a non-ok ``CommandResult`` to check; wired, it raises
+        before anything is sent. That is the arm this surface's paths cannot
+        close in passing.
+        """
+        wired = _WiredLocalHost(log=LogMode.QUIET)
+        wired.userland = Userland(UserlandOptions(), _applets())
+        await wired._prepare_elevation()
+        assert wired.userland.elevation == "none"
+        with pytest.raises(UnsupportedOnUserlandError, match="no elevation mechanism"):
+            wired._elevate("id -u")
+
+    @pytest.mark.asyncio
+    async def test_the_probes_would_not_run_in_the_shell_local_commands_run_in(self) -> None:
+        """``LocalHost``'s own extra reason, and it is structural, not this box's.
+
+        A resolver's probes go through ``exec``, which is
+        ``loop.subprocess_shell`` — ``/bin/sh``. Commands go through ``run``,
+        which is a persistent ``bash`` (``LocalSession``). ``$0`` is asserted
+        rather than ``$BASH_VERSION`` deliberately: it names the shell each path
+        INVOKES, which is fixed by otto's own code, so this states the split on
+        a machine whose ``/bin/sh`` happens to be bash too — where a
+        ``BASH_VERSION`` comparison would pass by agreeing.
+        """
+        host = LocalHost(log=LogMode.QUIET)
+        try:
+            probe_shell = (await host.exec('echo "$0"')).value.strip()
+            command_shell = (await host.run('echo "$0"')).only.value.strip()
+        finally:
+            # `run` opens the persistent session; the fd watermark fixture fails
+            # the test if it is left open.
+            await host.close()
+        assert probe_shell == "/bin/sh"
+        assert command_shell == "bash"
+        assert probe_shell != command_shell, (
+            "a resolver on this class would describe the shell its probes ran in, which "
+            "is not the shell `run()` executes the caller's commands in"
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_round_in_a_non_bash_sh_denies_the_bash_this_class_declares(self) -> None:
+        """The consequence of that split, INJECTED rather than inherited.
+
+        The runner answers the way a non-bash ``/bin/sh`` does, so this measures
+        the outcome on any machine — including one whose ``/bin/sh`` IS bash,
+        where relying on the ambient shell would make the test inert. Nothing
+        consumes ``shell_dialect`` yet, which is the only thing keeping this
+        latent; ``Userland.resolve``'s debug line already offers the value as a
+        pasteable ``lab.json`` pin.
+        """
+        wired = _WiredLocalHost(log=LogMode.QUIET)
+        wired.userland = Userland(UserlandOptions(), _applets("sudo", "su"))
+        await wired._prepare_elevation()
+        assert wired.has_bash is True, "the class declares bash, and it is right: run() uses it"
+        assert wired.userland.shell_dialect == "ash"
+        assert wired.userland.is_settled("shell_dialect"), (
+            "a MEASURED contradiction, not an unasked default — an assumed value would be "
+            "`bash` and there would be nothing to report"
+        )
+
+
+# ===========================================================================
 # Runners for the guard-level tests
 # ===========================================================================
 

@@ -41,6 +41,7 @@ paths" carry their own list of what those checks can and cannot see, and the
 import ast
 import importlib
 import inspect
+import re
 import textwrap
 from types import ModuleType
 
@@ -314,6 +315,35 @@ class TestTheTableIsRenderable:
             f"the first one's anchor"
         )
 
+    def test_a_record_is_frozen_but_not_hashable_and_says_what_to_use_instead(self) -> None:
+        """The one inference ``frozen=True`` invites and this class does not support.
+
+        ``@dataclass(frozen=True)`` generates a ``__hash__`` over the fields, and
+        :attr:`~otto.host.userland.Gap.paths` is a list, so the generated one
+        raises when it is finally called — naming the list, not the field. Nobody
+        hashes a record today, so this pins a documented LIMITATION rather than a
+        behaviour: a future ``set(GAPS)`` fails here, in a test that names the
+        cause, instead of at the call site as a puzzle.
+
+        Both alternatives the class docstring offers are asserted, because a
+        limitation recorded without a way round it is just an obstacle:
+        :class:`~otto.host.userland.GapPath` is hashable, and
+        :attr:`~otto.host.userland.Gap.surface` is a unique key
+        (``test_every_surface_is_unique`` above). Making ``Gap`` hashable reddens
+        this — deliberately: the docstring is then wrong and has to move with it.
+        """
+        with pytest.raises(TypeError, match="unhashable type: 'list'"):
+            hash(GAPS[0])
+        with pytest.raises(TypeError, match="unhashable type: 'list'"):
+            set(GAPS)
+
+        declared_paths = [path for gap in GAPS for path in gap.paths]
+        assert len(set(declared_paths)) == len(declared_paths), (
+            "GapPath is hashable and every declared path is distinct, so a caller "
+            "wanting a set of call sites already has one"
+        )
+        assert len({gap.surface for gap in GAPS}) == len(GAPS)
+
     @pytest.mark.parametrize("gap", _ALL_ROWS)
     def test_every_anchor_hangs_off_the_declared_page(self, gap: Gap) -> None:
         assert gap.docs_anchor == f"{GAP_DOCS_PAGE}#{gap.surface}"
@@ -355,7 +385,18 @@ class TestThePhase4And5MeasurementsAreRecorded:
         assert transfer.refuses
         assert file_ops.refuses
         assert "1.16.1" in transfer.measured_on
-        assert "file_ops.py" in file_ops.measured_on
+        # The file_ops record names its call sites through `paths`, as dotted
+        # names the tests below RESOLVE, and no longer as `file_ops.py:<line>`
+        # in prose the operator's error message prints. It carried two such
+        # numbers and both had drifted two lines; see `Gap.measured_on`.
+        assert not re.search(r"file_ops\.py:\d+", file_ops.measured_on), (
+            "a source line number is back in the one field that renders into the "
+            "operator's error message and that nothing can check"
+        )
+        assert [path.site for path in file_ops.wired_paths] == [
+            "otto.host.file_ops.PosixFileOps.read_file",
+            "otto.host.file_ops.PosixFileOps.write_file",
+        ], "the two call sites the measurement was taken against, resolvable rather than cited"
         assert "base64_flag" in file_ops.reason, (
             "the file_ops record has to name the capability whose spelling it ignores — "
             "that is the difference between it and the transfer's record"

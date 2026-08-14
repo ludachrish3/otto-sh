@@ -213,7 +213,23 @@ families reach the same two methods and are never refused; the paths say which.
   `None` arm, and the sharper case — an `alpine` container *is* a BusyBox
   userland, and otto will never refuse it.
 
-Both open paths close by giving the host a resolver, not by widening the guard.
+Both open paths close by giving the host a resolver, not by widening the guard —
+and both stay open because that resolver was **measured** (2026-08-14) to change
+more than this surface. `_userland()` is one hook read by two mixins, and
+`resolve()` has no scoped form, so a resolver added here also decides how
+`run(sudo=True)` elevates on the same host: on the shape `alpine` actually has
+(BusyBox 1.36.1, `/bin/su`, no `sudo`) it moves the built command from
+`sudo -S -p …` to `su -c …`, and on a host with neither applet it *raises* where
+today the caller gets a non-ok result. See
+{class}`~otto.host.userland.UserlandHost` for the three findings and
+`todo/busybox-phase-5-followups-2026-08-13.md` §2 for the decomposition that
+would make it safe.
+
+**What is *not* at risk while they stay open:** an ordinary `alpine` container has
+`base64` (measured on `alpine:3.20`; the matrix records the applet missing on
+1.16.1 alone), so `read_file`/`write_file` work there. The exposure is an image
+or a local machine with the applet compiled out, and on a *write* that is the
+destructive case described below.
 
 Both move their payload through the device's `base64`, and unlike the `shell`
 transfer they hard-code it: `file_ops.py` emits `base64 <path>` and

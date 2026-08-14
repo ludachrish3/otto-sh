@@ -734,6 +734,46 @@ class UserlandHost:
     refuse. That is :func:`refuse_if_gapped`'s own asymmetry one level down --
     "we were not told" must not become "does not work".
 
+    **WHAT IT WOULD COST TO GIVE THOSE TWO A RESOLVER, MEASURED 2026-08-14.**
+    Read this before adding one, because the second reader makes it look like a
+    file-ops change and it is not: the hook is shared, so a resolver on either
+    class also decides how every ``run(sudo=True)`` there elevates, and
+    ``resolve()`` has no scoped form -- there is no way to settle
+    ``base64_flag`` without also producing an ``elevation`` verdict. Three
+    findings, each from a run rather than a reading:
+
+    * **the mechanism really does move.** A ``Userland`` over
+      ``LocalHost.exec`` on this machine issued 7 probes in 16 ms and answered
+      ``elevation=sudo``, so the built command was byte-identical -- but that is
+      a property of the machine, not of the change. Scripted against the shape
+      ``alpine`` actually has (measured: BusyBox 1.36.1, ``/bin/su``, no
+      ``sudo``), the same wiring builds ``su -c <cmd>`` with NO password expect
+      (neither class has a ``creds`` field, so ``_switch_creds()`` is empty);
+      with neither applet it RAISES
+      :exc:`~otto.host.errors.UnsupportedOnUserlandError` where today the caller
+      gets a non-ok ``CommandResult``. Two of the three arms are a change of
+      behaviour on the two host families that reach otto's own machine.
+    * **on ``LocalHost`` the probes would measure the wrong shell.** ``exec``
+      runs them through ``loop.subprocess_shell`` (``/bin/sh``) while ``run``
+      runs commands in a persistent ``bash`` (``LocalSession``), so the resolver
+      would describe a shell the caller's commands never use: measured,
+      ``shell_dialect`` resolved to ``"ash"`` on a machine that declares
+      ``has_bash=True`` and really does run ``run()`` in bash, and the
+      ``resolve()`` debug line offers that value as a pasteable ``lab.json``
+      pin. Nothing consumes ``shell_dialect`` yet (see the module docstring's
+      hole), which is the only reason this is latent rather than live.
+    * **neither class can be pinned out of it.** ``userland_options`` is a
+      :class:`~otto.host.unix_host.UnixHost` field, so the escape hatch
+      ``otto.host.file_ops.refuse_if_base64_is_absent`` offers an operator --
+      declare all six and the round issues nothing -- does not exist here, and
+      adding one is an init-field change that needs a spec field to reach a
+      host from lab data.
+
+    The decomposition that would make it safe is in
+    ``todo/busybox-phase-5-followups-2026-08-13.md`` §2 under
+    ``file-ops-base64``. The two ``PATH_OPEN`` records on that surface are the
+    holes this leaves, and they say so.
+
     ``__slots__ = ()`` so it keeps composing with the ``@dataclass(slots=True)``
     hosts, exactly as the two mixins that inherit it do.
     """
@@ -1048,6 +1088,20 @@ class Gap:
     Frozen because every consumer reads and none writes: the docs page renders
     it, the error renders it, and the parity queue points at it.
 
+    **Frozen but NOT hashable, and that inference is the reason this is written
+    down.** ``@dataclass(frozen=True)`` generates a ``__hash__`` over the
+    fields, and :attr:`paths` is a ``list``, so the generated one raises
+    ``TypeError: unhashable type: 'list'`` when it is finally called --
+    ``set(GAPS)`` and ``{gap: ...}`` both fail that way, naming the list and not
+    the field that holds it. Nothing hashes a record today, so this is a
+    limitation rather than a bug, and the field type is not the thing to
+    "fix": lists are this project's API default and a ``tuple[GapPath, ...]``
+    would make every record's literal noisier to buy an ability nobody uses.
+    :class:`GapPath` IS hashable (every field a ``str``), so a caller that wants
+    a set of paths already has one. A caller that needs a set of RECORDS should
+    key on :attr:`surface`, which is unique across the table and pinned so by
+    ``test_every_surface_is_unique`` in ``tests/unit/host/test_gap_registry.py``.
+
     The invariant tying :attr:`status` to :attr:`measured_on` is enforced in
     ``__post_init__`` rather than left to review, because it IS the firing
     rule in data form: a record that refuses must carry the measurement that
@@ -1082,6 +1136,16 @@ class Gap:
     ``__post_init__`` enforces. "We measured this on 2026-08-13" with no
     command named is not evidence; every string in the table names the
     artifact rows and the output they gave.
+
+    **Name the code by what it EMITS, not by ``file.py:<line>``.** This string
+    renders into the operator's error message, and a line number in it is the
+    one claim here that nothing resolves: ``file-ops-base64`` carried two, both
+    two lines stale by the time anyone re-read them, and dropping them cost
+    nothing because :attr:`paths` already carries the same call sites as dotted
+    names a test resolves. Two records below still cite one (``nc-transfer``,
+    ``shutdown-command``); both were re-checked accurate on 2026-08-14 and are
+    left alone rather than swept, but they drift the same way and a rewrite of
+    either should take the number out.
     """
 
     queued_for: str
@@ -1310,9 +1374,13 @@ GAPS: list[Gap] = [
             "covered by `shell-transfer-base64`"
         ),
         measured_on=(
-            "the same 1.16.1 rows as `shell-transfer-base64`, against these two call "
-            "sites: `src/otto/host/file_ops.py:266` (read) and `:317` (write), both of "
-            "which still emit the same fixed spelling. The DESTRUCTIVE half was "
+            "the same 1.16.1 rows as `shell-transfer-base64`, against the two call sites "
+            "`paths` names below, both of which still emit the same fixed spelling. NO "
+            "LINE NUMBERS, deliberately: `paths` carries each site as a dotted name a "
+            "test RESOLVES, so a rename or a move reddens instead of sitting here as "
+            "stale prose -- which is what the two numbers this field used to carry had "
+            "already become, each off by two, in a string that renders into the "
+            "operator's own error message. The DESTRUCTIVE half was "
             "measured directly, 2026-08-14, running the 1.16.1 artifact's own ash with "
             "`PATH=/nonexistent` (the isolation `tests/busybox/"
             "test_applet_resolution.py` records): `echo aGk= | base64 -d > <file>` "
@@ -1374,7 +1442,16 @@ GAPS: list[Gap] = [
                     "still reachable, and a local shell without `base64` gets the "
                     "`FileNotFoundError`-blaming-a-present-file failure this record "
                     "describes. Closing it means giving the host a resolver, not widening "
-                    "the guard"
+                    "the guard -- and it stays open because that resolver was MEASURED "
+                    "(2026-08-14) to change more than this surface: it also decides how "
+                    "every local `run(sudo=True)` elevates, and its probes run in "
+                    "`exec`'s `/bin/sh` rather than the `bash` `run()` uses, which "
+                    "resolved `shell_dialect` to `ash` on a machine declaring "
+                    "`has_bash=True`. See `UserlandHost` for the three findings and "
+                    "`todo/busybox-phase-5-followups-2026-08-13.md` §2 for the "
+                    "decomposition. The exposure this leaves is also the smaller of the "
+                    "two: the device here is the machine otto itself runs on, and every "
+                    "`base64` otto has measured absent was BusyBox 1.16.1"
                 ),
                 pinned_by=(
                     "tests/unit/host/test_file_ops_base64_refusal.py::TestTheFamiliesWithNoResolver"
@@ -1388,7 +1465,22 @@ GAPS: list[Gap] = [
                     "the same `None` arm as `LocalHost`, and the sharper case of the two: an "
                     "`alpine` container IS a BusyBox userland, so this is a host otto can "
                     "meet the measured class on and will never refuse. It has no resolver to "
-                    "settle `base64_flag` with, so the guard has nothing to key on"
+                    "settle `base64_flag` with, so the guard has nothing to key on. Sharper, "
+                    "but NOT live on the flagship image: measured 2026-08-14 against "
+                    "`alpine:3.20`, BusyBox 1.36.1 ships `/bin/base64` and a `base64 | "
+                    "base64 -d` round trip returns its input, matching the matrix "
+                    "(`tests/busybox/test_applet_resolution.py` records `base64` absent on "
+                    "1.16.1 alone). What is exposed is an image with the applet compiled "
+                    "out. Wiring it is held for the same shared-hook reason as `LocalHost` "
+                    "-- see `UserlandHost` -- with one cost that is this class's own: every "
+                    "probe is a `docker exec` dispatched as one exec channel on the PARENT, "
+                    "so the first elevated command or `read_file` would spend 7-11 of them "
+                    "against a server that refuses excess channels rather than queueing "
+                    "them, with no `userland_options` to pin them out. The elevation arm it "
+                    "would take is measured rather than guessed: `alpine` has `su` and no "
+                    "`sudo`, so `run(sudo=True)` would move from today's `sudo -S -p ...` "
+                    "(rc 127, `sudo: not found`) to `su -c <cmd>`, which succeeds as root "
+                    "and answers `su: must be suid to work properly` under `-u 1000`"
                 ),
                 pinned_by=(
                     "tests/unit/host/test_file_ops_base64_refusal.py::TestTheFamiliesWithNoResolver"
