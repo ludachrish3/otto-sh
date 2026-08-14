@@ -233,9 +233,13 @@ per-codec fields covers it without making the operator choose the codec.
   were rewritten with the codec, not before it. See
   `todo/busybox-phase-5-followups-2026-08-13.md` §1.
 - **Shares its probe question with four other surfaces.** `sftp-transfer`,
-  `scp-transfer`, `nc-transfer` and `shutdown-command` are each blocked on a
-  device-capability signal that does not exist, and it is the same kind of
-  question as the codec probe — one mechanism likely serves all five. Note the
+  `scp-transfer`, `nc-transfer` and `shutdown-command` were each blocked on a
+  device-capability signal that did not exist, and it is the same kind of
+  question as the codec probe — one mechanism likely serves all five. That
+  mechanism landed as the batched `applet_*` capabilities, and
+  `shutdown-command` is the first surface it CLOSED:
+  `otto.host.unix_host.shutdown_command` reads `applet_shutdown` and
+  `applet_poweroff` and emits the spelling the device has. Note the
   `busybox` profile declares `valid_transfers: ["shell","scp","sftp","ftp","nc"]`
   **deliberately**, because a device with a real sftp-server or netcat installed
   works, so those refusals must be device-conditional rather than blanket.

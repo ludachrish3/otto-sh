@@ -38,7 +38,7 @@ appear on the page, and (the other direction, and the worse one again) every pat
 the page prints has to be a declared one in the declared state, or the page can
 claim a hole otto closed. The COUNTS are pinned as well, against
 :func:`~otto.host.userland.gap_path_totals` and
-:func:`~otto.host.userland.wired_guards`, because a hand-maintained number was
+:func:`~otto.host.userland.table_guards`, because a hand-maintained number was
 what the path data replaced.
 
 VACUITY IS THE HAZARD HERE. Every assertion below is driven by lists parsed out
@@ -58,7 +58,7 @@ from otto.host.userland import (
     GAPS,
     PATH_OPEN,
     gap_path_totals,
-    wired_guards,
+    table_guards,
 )
 from tests._fixtures.paths import PROJECT_ROOT
 
@@ -571,16 +571,17 @@ class TestThePagesNumbersAreTheRegistrysNumbers:
     def test_the_guard_count_matches_the_registry(self) -> None:
         match = _GUARD_COUNT_RE.search(_page_text())
         assert match is not None, (
-            f"{GAP_DOCS_PAGE} no longer states how many guard functions the wired paths "
-            f"reach `refuse_if_gapped` through, in the form `through **<n>** guard "
-            f"functions`. That sentence is the one that keeps 'four wired paths' and "
-            f"'three guards' from being read as the same number; without it this "
+            f"{GAP_DOCS_PAGE} no longer states how many guard functions the table-backed "
+            f"paths reach `refuse_if_gapped` through, in the form `through **<n>** guard "
+            f"functions`. That sentence is the one that keeps 'five table-backed paths' "
+            f"and 'four guards' from being read as the same number; without it this "
             f"assertion checks nothing, so it fails rather than passing quietly."
         )
-        assert int(match.group("count")) == len(wired_guards()), (
-            f"{GAP_DOCS_PAGE} says the wired paths go through {match.group('count')} guard "
-            f"functions; `otto.host.userland.wired_guards()` finds {len(wired_guards())} "
-            f"({wired_guards()})."
+        assert int(match.group("count")) == len(table_guards()), (
+            f"{GAP_DOCS_PAGE} says the table-backed paths go through "
+            f"{match.group('count')} guard functions; "
+            f"`otto.host.userland.table_guards()` finds {len(table_guards())} "
+            f"({table_guards()})."
         )
 
     def test_the_two_counts_are_not_the_same_number(self) -> None:
@@ -591,9 +592,15 @@ class TestThePagesNumbersAreTheRegistrysNumbers:
         noise. They are not one-to-one today because ``read_file`` and
         ``write_file`` share a guard — and if that ever stops being true, this
         reds and the sentence should go rather than quietly become false.
+
+        Counted over BOTH states whose verdict is the table's, because that is
+        what ``table_guards()`` is derived from: an ``ADAPTED`` path names a
+        guard that reaches ``refuse_if_gapped`` exactly as a ``WIRED`` one does.
         """
-        assert gap_path_totals()["WIRED"] != len(wired_guards()), (
-            "every wired path now has its own guard, so the page's sentence about the two "
-            "numbers differing 'on purpose' is no longer about anything. Reword it and "
-            "delete this test, deliberately."
+        totals = gap_path_totals()
+        table_backed = totals["WIRED"] + totals["ADAPTED"]
+        assert table_backed != len(table_guards()), (
+            "every table-backed path now has its own guard, so the page's sentence about "
+            "the two numbers differing 'on purpose' is no longer about anything. Reword it "
+            "and delete this test, deliberately."
         )

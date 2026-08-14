@@ -53,6 +53,7 @@ from otto.host.userland import (
     GAP_DOCS_PAGE,
     GAPS,
     MEASURED_BROKEN,
+    PATH_ADAPTED,
     PATH_OPEN,
     PATH_PROBE_REFUSED,
     PATH_PROTECTED,
@@ -63,7 +64,7 @@ from otto.host.userland import (
     gap_for,
     gap_path_totals,
     refuse_if_gapped,
-    wired_guards,
+    table_guards,
 )
 from tests._fixtures.paths import PROJECT_ROOT
 
@@ -89,6 +90,15 @@ table, so it is vacuous if the table ever empties -- which is what
 
 def _paths_in(state: str) -> list:
     return [p for p in _ALL_PATHS if p.values[1].state == state]
+
+
+_TABLE_BACKED_PATHS = _paths_in(PATH_WIRED) + _paths_in(PATH_ADAPTED)
+"""The paths whose verdict is a record's -- what ``Gap.table_backed_paths`` returns.
+
+Built from the same two states rather than by calling that property, so a
+property that silently stopped including one of them would red here instead of
+narrowing every assertion parametrized over this list to the other state.
+"""
 
 
 def _valid_gap(**overrides) -> dict:
@@ -659,7 +669,9 @@ class TestEveryPathStateIsRepresented:
     report the docs page as in sync with a hole list of zero.
     """
 
-    @pytest.mark.parametrize("state", [PATH_WIRED, PATH_PROBE_REFUSED, PATH_PROTECTED, PATH_OPEN])
+    @pytest.mark.parametrize(
+        "state", [PATH_ADAPTED, PATH_WIRED, PATH_PROBE_REFUSED, PATH_PROTECTED, PATH_OPEN]
+    )
     def test_the_table_declares_at_least_one_path_in_this_state(self, state: str) -> None:
         assert _paths_in(state), (
             f"no path in GAPS is {state}, so every assertion parametrized over that state "
@@ -673,6 +685,7 @@ class TestEveryPathStateIsRepresented:
         """The derived count is over the same data the parametrization walks."""
         assert sum(gap_path_totals().values()) == sum(len(gap.paths) for gap in GAPS)
         assert set(gap_path_totals()) == {
+            PATH_ADAPTED,
             PATH_WIRED,
             PATH_PROBE_REFUSED,
             PATH_PROTECTED,
@@ -754,18 +767,24 @@ class TestEveryPathNamesRealCode:
             scope = list(match.body) if isinstance(match, ast.ClassDef) else []
 
 
-class TestAWiredClaimIsCheckedNotTrusted:
-    """``WIRED`` says "this site reads this record and refuses from it". Prove it.
+class TestATableBackedClaimIsCheckedNotTrusted:
+    """``WIRED`` and ``ADAPTED`` both say "this site reaches this record". Prove it.
 
     Three separate claims, each with its own way of going stale, so each is its
     own assertion: the guard exists, the site calls it, and the guard reaches
     :func:`~otto.host.userland.refuse_if_gapped` with THIS record's surface. A
     deleted guard, a site that stopped calling it, and a guard pointed at a
-    different record are three different defects and all three would leave a
-    ``WIRED`` claim looking correct.
+    different record are three different defects and all three would leave the
+    claim looking correct.
+
+    Parametrized over BOTH states, not just ``WIRED``.
+    :data:`~otto.host.userland.PATH_ADAPTED` differs in what it does for a host
+    in the measured class -- it serves it -- and not in where the verdict for
+    the residue lives, which is here. An ADAPTED path exempt from these three
+    would be the one table consumer nothing checked.
     """
 
-    @pytest.mark.parametrize(("gap", "path"), _paths_in(PATH_WIRED))
+    @pytest.mark.parametrize(("gap", "path"), _TABLE_BACKED_PATHS)
     def test_the_named_guard_exists(self, gap: Gap, path: GapPath) -> None:
         try:
             obj = _resolve_dotted(path.checked_by)
@@ -778,7 +797,7 @@ class TestAWiredClaimIsCheckedNotTrusted:
             )
         assert callable(obj), f"{path.checked_by!r} is not callable"
 
-    @pytest.mark.parametrize(("gap", "path"), _paths_in(PATH_WIRED))
+    @pytest.mark.parametrize(("gap", "path"), _TABLE_BACKED_PATHS)
     def test_the_site_calls_the_guard_it_names(self, gap: Gap, path: GapPath) -> None:
         guard_name = path.checked_by.rsplit(".", 1)[-1]
         called = _calls_made_by(_resolve_dotted(path.site))
@@ -790,7 +809,7 @@ class TestAWiredClaimIsCheckedNotTrusted:
             f"a reader trusts. Either restore the call or change the path's state."
         )
 
-    @pytest.mark.parametrize(("gap", "path"), _paths_in(PATH_WIRED))
+    @pytest.mark.parametrize(("gap", "path"), _TABLE_BACKED_PATHS)
     def test_the_guard_refuses_from_this_record(self, gap: Gap, path: GapPath) -> None:
         """The claim that makes the table the AUTHORITY rather than decoration.
 
@@ -809,13 +828,32 @@ class TestAWiredClaimIsCheckedNotTrusted:
             f"the record's evidence."
         )
 
-    def test_the_wired_guards_are_derived_and_all_resolve(self) -> None:
-        """``wired_guards()`` is the "how many guard functions" count, never retyped."""
-        guards = wired_guards()
-        assert guards, "no WIRED path names a guard, so this count is vacuous"
-        assert len(guards) == len(set(guards)), "wired_guards() must de-duplicate"
+    def test_the_table_guards_are_derived_and_all_resolve(self) -> None:
+        """``table_guards()`` is the "how many guard functions" count, never retyped."""
+        guards = table_guards()
+        assert guards, "no table-backed path names a guard, so this count is vacuous"
+        assert len(guards) == len(set(guards)), "table_guards() must de-duplicate"
         for guard in guards:
             assert callable(_resolve_dotted(guard))
+
+    def test_the_count_spans_both_states_rather_than_wired_alone(self) -> None:
+        """Non-vacuity for the parametrization above, and for ``table_guards()``.
+
+        Both would still pass if ``ADAPTED`` were quietly dropped from
+        :attr:`~otto.host.userland.Gap.table_backed_paths` -- the WIRED paths
+        alone satisfy every assertion in this class. What would be lost is the
+        one guard that is named by an ADAPTED path and by nothing else, so that
+        is what this asserts directly.
+        """
+        adapted = [p.values[1] for p in _paths_in(PATH_ADAPTED)]
+        assert adapted, "no ADAPTED path, so the union above is just the WIRED list"
+        wired_only = {p.values[1].checked_by for p in _paths_in(PATH_WIRED)}
+        assert {p.checked_by for p in adapted} - wired_only, (
+            "every ADAPTED guard is also named by a WIRED path, so `table_guards()` "
+            "counting both states is not observable here and this class could be "
+            "narrowed back to WIRED without anything reddening."
+        )
+        assert set(table_guards()) == wired_only | {p.checked_by for p in adapted}
 
 
 class TestTheFourthStateIsNotEitherOfTheOtherTwo:
@@ -942,7 +980,7 @@ class TestGapPathRejectsAClaimItCannotSupport:
         with pytest.raises(ValueError, match="verdict with no argument"):
             _valid_path(detail="")
 
-    @pytest.mark.parametrize("state", [PATH_WIRED, PATH_PROTECTED])
+    @pytest.mark.parametrize("state", [PATH_WIRED, PATH_PROTECTED, PATH_ADAPTED])
     def test_a_checked_state_that_names_nothing_is_rejected(self, state: str) -> None:
         with pytest.raises(ValueError, match="checked_by"):
             _valid_path(state=state, pinned_by="tests/unit/host/test_gap_registry.py::x")
@@ -957,9 +995,20 @@ class TestGapPathRejectsAClaimItCannotSupport:
             _valid_path(state=PATH_WIRED, checked_by="refuse_if_gapped")
 
     def test_a_protected_path_with_no_test_is_rejected(self) -> None:
-        """The one state whose truth lives in another package's code."""
+        """The state whose truth lives in another package's code."""
         with pytest.raises(ValueError, match="names no test"):
             _valid_path(state=PATH_PROTECTED, checked_by="otto.host.userland.gap_for")
+
+    def test_an_adapted_path_with_no_test_is_rejected(self) -> None:
+        """The other one, and it goes quiet the same way.
+
+        ``PROTECTED`` stops being true when somebody else deletes the upstream
+        refusal; ``ADAPTED`` stops being true when a refactor drops the probe and
+        the old, broken spelling goes back on the wire. Neither leaves a trace in
+        this table, so both owe a test.
+        """
+        with pytest.raises(ValueError, match="names no test"):
+            _valid_path(state=PATH_ADAPTED, checked_by="otto.host.userland.gap_for")
 
     def test_a_pinned_by_that_is_not_a_node_id_is_rejected(self) -> None:
         with pytest.raises(ValueError, match="pytest node id"):

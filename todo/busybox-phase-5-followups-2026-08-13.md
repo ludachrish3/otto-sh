@@ -17,11 +17,11 @@ Two queues already exist and are **not** duplicated here:
 
 ## 1. The registry renders messages that almost nothing invokes
 
-**Status: three of eight surfaces wired. Five open.**
+**Status: four of eight surfaces reach the table. Four open.**
 
 `Gap`, `GAPS`, `gap_for()`, `refuse_if_gapped()` and
 `UnsupportedOnUserlandError.for_gap()` all exist and are tested. Phase 5 left
-them with **no product call site at all**; three now consult the table:
+them with **no product call site at all**; four now consult the table:
 
 1. `run-command-line-length` —
    `otto.host.session.refuse_if_line_editor_would_truncate`, called from
@@ -35,8 +35,15 @@ them with **no product call site at all**; three now consult the table:
    from both `PosixFileOps.read_file` and `PosixFileOps.write_file`. Keyed on a
    **probed** fact, which is what makes it different from the first two: see §2
    below for the cost that predicate carries and why it was accepted here.
+4. `shutdown-command` — `otto.host.unix_host.shutdown_command`, called from
+   `UnixHost.shutdown`. **The first one that FIXES the surface instead of
+   declining it**: it reads the probed `applet_shutdown`/`applet_poweroff` pair
+   and emits the spelling the device has, so every matrix row is powered off
+   rather than refused. The table is the authority only for the residue — a
+   device answering `absent` to both — which is why the path carries the new
+   `ADAPTED` state rather than `WIRED`.
 
-The other five measured-broken surfaces are unchanged, and
+The other four measured-broken surfaces are unchanged, and
 `shell-transfer-base64` still refuses only incidentally, because `_run_put`
 probes `base64_flag` rather than reading this table. **Since the `uuencode`
 codec landed, that site now DEGRADES before it refuses** — a settled `absent`

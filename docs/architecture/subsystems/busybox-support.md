@@ -95,9 +95,17 @@ record's, so the probe decides only that this host is in the measured class.
 ## Where otto consults this table
 
 Each `measured-broken` section below lists the call sites otto reaches that
-surface from, with one of four states. **This is the answer to "am I protected",
+surface from, with one of five states. **This is the answer to "am I protected",
 and the surface's status is not** — a surface can refuse on one path and truncate
 silently on another.
+
+`ADAPTED`
+: otto asks your device and then does the thing it *can* do, so the operation
+  **succeeds**. Not a refusal and not a hole: the only state where the
+  measurement behind the record no longer costs you anything. The record stays
+  on this page because the device limitation is still real and because a device
+  that can do neither thing is still refused — from the record — rather than
+  told it worked.
 
 `WIRED`
 : this call site reads the record and refuses from it. The message you get *is*
@@ -127,15 +135,17 @@ Counts, derived from the records themselves rather than maintained by hand
 
 | Path state | Paths |
 | --- | --- |
+| `ADAPTED` | 1 |
 | `WIRED` | 4 |
 | `PROBE_REFUSED` | 2 |
 | `PROTECTED` | 1 |
-| `OPEN` | 12 |
+| `OPEN` | 11 |
 
-The `WIRED` paths reach {func}`~otto.host.userland.refuse_if_gapped`
-through **3** guard functions ({func}`~otto.host.userland.wired_guards`), which is
-fewer than the `WIRED` count above — `read_file` and `write_file` share one guard,
-so the two numbers are different on purpose and both are derived.
+The `WIRED` and `ADAPTED` paths — the ones whose verdict is this table's — reach
+{func}`~otto.host.userland.refuse_if_gapped` through **4** guard functions
+({func}`~otto.host.userland.table_guards`), which is fewer than the five such
+paths above — `read_file` and `write_file` share one guard, so the two numbers are
+different on purpose and both are derived.
 
 ## The declared gaps
 
@@ -151,7 +161,7 @@ error prints it verbatim; the sections below are its readable form.
 | [`scp-transfer`](#scp-transfer) | `measured-broken` | No `scp` binary on a stock BusyBox device. Use the `shell` backend. |
 | [`nc-transfer`](#nc-transfer) | `measured-broken` | The `nc` backend cannot drive BusyBox's own `nc` applet. A real netcat installed alongside is fine. |
 | [`daemon-launch`](#daemon-launch) | `measured-broken` | Launching a tagged daemon needs bash, which a stock BusyBox userland does not have, so `link impair --expire` is refused rather than left with a timer that never runs. Impair without `--expire` and it works. |
-| [`shutdown-command`](#shutdown-command) | `measured-broken` | `Host.shutdown()` emits a command BusyBox spells differently. `Host.reboot()` is unaffected. |
+| [`shutdown-command`](#shutdown-command) | `measured-broken` | Nothing, on any measured device: `Host.shutdown()` asks which spelling your device has and emits `poweroff` where there is no `shutdown`. Only a device with neither is refused. `Host.reboot()` is unaffected. |
 | [`run-command-line-length`](#run-command-line-length) | `measured-broken` | `Host.run()` refuses a command whose typed line would exceed 1022 characters, rather than let ash truncate it. `Host.exec()` is safe and is not refused. |
 | [`product-lifecycle`](#product-lifecycle) | `untested` | otto's `stage`/`install`/`uninstall` verbs emit no command of their own. Whether they work on your device is decided by your own product code. |
 | [`legacy-dropbear-crypto`](#legacy-dropbear-crypto) | `untested` | An old dropbear may need `ssh_options` to negotiate at all. Nobody has tried. |
@@ -447,31 +457,51 @@ stays `measured-broken`, because the surface still is.
 
 ### shutdown-command
 
-**Status:** `measured-broken` — otto *would* refuse before sending anything,
-once a call site consults the registry. None does yet, so today the attempt is
-made and the outcome is whatever the device does with it, below.
+**Status:** `measured-broken` — about the *device*, not about what otto does.
+**otto shuts a BusyBox host down.** It asks the device which spelling it has and
+emits that, so no host on any matrix row is refused here; the record stays
+because `shutdown` really is absent on all five, and because a device that has
+*neither* spelling still has to be told so rather than reported as powered off.
 
 **Paths otto touches this from:**
 
-- `otto.host.unix_host.UnixHost.shutdown` — **OPEN**: emits `shutdown -h now` and
-  reads nothing from this record, so the device answers `shutdown: not found`, the
-  `run` is non-ok, and `shutdown()` returns success anyway — it discards the
-  result. `Host.reboot()` is a *different* surface and not a path of this record.
+- `otto.host.unix_host.UnixHost.shutdown` — **ADAPTED** by
+  {func}`~otto.host.unix_host.shutdown_command`: resolves the userland, emits
+  `shutdown -h now` where the device has that applet and `poweroff` where it does
+  not. Every matrix row takes the second arm and powers off. Only a device that
+  answered `absent` to both names is refused, from this record.
+  `Host.reboot()` is a *different* surface and not a path of this record.
 
-`Host.shutdown()` emits `shutdown -h now`, and BusyBox has no `shutdown` applet;
-the BusyBox spelling is `poweroff`. **`Host.reboot()` is not affected** and must
-not be lumped in with this — `reboot` is present on every matrix row and otto's
-soft reboot works as shipped.
+`Host.shutdown()` used to emit `shutdown -h now` unconditionally, and BusyBox has
+no `shutdown` applet; the BusyBox spelling is `poweroff`. The choice is a
+userland probe — the `applet_shutdown` and `applet_poweroff` capabilities, in the
+pattern `Userland.timeout_style` set — rather than a hard-coded swap that would
+break every GNU host. **`Host.reboot()` is not affected** and must not be lumped
+in with this — `reboot` is present on every matrix row and otto's soft reboot
+works as shipped, unchanged.
 
-**Measured:** the five matrix artifacts, 2026-08-13. `shutdown` is absent from
-the applet list on all five, while `reboot` and `poweroff` are present on all
-five. BusyBox runs only what its own applet list carries, so the list is the
-whole answer here.
+Two details worth knowing if you operate one of these devices. Picking the
+spelling reads the probe's *value* alone, so a host whose probe round never
+arrived gets `shutdown -h now` — exactly what otto sent before this existed —
+rather than a refusal; the refusal for a device with neither name asks
+`is_settled` first, so an sshd that refused otto an exec channel cannot be
+mistaken for a device with no way to power off. And `shutdown()` now *reports*
+what the device answered: a completed round trip that exits non-zero (sudo
+denied, say) comes back `Failed` instead of `Success`. A dropped connection
+still counts as success, because issuing a power-off command races the transport
+being torn down and that is not evidence the device disobeyed.
 
-**Queued for:** the full-parity workstream. `poweroff` is the measured spelling,
-but choosing between the two is a userland probe — the pattern
-`Userland.timeout_style` already sets — not a hard-coded swap that would break
-every GNU host.
+**Measured:** the five matrix artifacts, 2026-08-13, re-measured through the
+batched applet probe 2026-08-14. `shutdown` is absent from the applet list on all
+five, while `reboot` and `poweroff` are present on all five
+(`tests/busybox/test_applet_resolution.py` records it per row). BusyBox runs only
+what its own applet list carries, so the list is the whole answer here — and it
+is also why the choice always has somewhere to go.
+
+**Queued for:** nothing. The fix has landed in
+{func}`~otto.host.unix_host.shutdown_command`, the first place this registry
+answers a measurement by adapting rather than declining. The record stays
+`measured-broken` because the device still is.
 
 ### run-command-line-length
 
@@ -633,7 +663,7 @@ to; and every path on this page has to be a declared one, in the state the recor
 declares, so this page cannot invent a hole or report a closed one as open. The
 counts under "Where otto consults this table" are pinned to
 {func}`~otto.host.userland.gap_path_totals` and
-{func}`~otto.host.userland.wired_guards`, so **no number on this page is
+{func}`~otto.host.userland.table_guards`, so **no number on this page is
 maintained by hand** — that is the whole reason the paths exist as data rather
 than prose.
 

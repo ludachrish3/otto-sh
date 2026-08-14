@@ -113,12 +113,139 @@ from .transfer import (
     UnixFileTransfer,
     build_transfer_backend,
 )
-from .userland import Userland
+from .userland import (
+    APPLET_ABSENT,
+    APPLET_PRESENT,
+    Userland,
+    applet_capability,
+    refuse_if_gapped,
+)
 
 logger = logging.getLogger(__name__)
 
 _RECOVERY_PROBE_TIMEOUT = 10.0
 """Per-attempt bound for the post-reboot shell probe (`exec "true"`)."""
+
+GNU_SHUTDOWN = "shutdown -h now"
+"""The coreutils/systemd spelling, and still the default when nothing says otherwise.
+
+Exactly what ``UnixHost.shutdown`` emitted, unconditionally, before
+:func:`shutdown_command` existed -- which is the whole reason it is the fallback
+rather than :data:`BUSYBOX_POWEROFF`. A host whose applet batch could not be
+asked gets this and is therefore UNCHANGED by the probe; falling back the other
+way would quietly re-spell the command on every host otto has ever run against,
+which is not something any measurement here asked for.
+"""
+
+BUSYBOX_POWEROFF = "poweroff"
+"""The spelling a BusyBox device actually has. Measured, not inferred.
+
+``shutdown`` is absent and ``poweroff`` present on all five matrix artifacts --
+1.16.1, 1.21.1, 1.28.1, 1.31.0 and 1.35.0 -- recorded per row by
+``tests/busybox/test_applet_resolution.py`` and by the ``shutdown-command``
+record in :data:`~otto.host.userland.GAPS`. Not a BusyBox-only spelling: a GNU
+host normally has ``poweroff`` too, so this arm is only ever reached on a device
+that answered "no ``shutdown``".
+"""
+
+
+def shutdown_command(userland: "Userland", *, host: str = "") -> str:
+    """Return the shutdown spelling *userland* actually has.
+
+    **The gap registry's fourth product call site, and the first that FIXES a
+    surface rather than declining it.** The other three --
+    :func:`otto.host.session.refuse_if_line_editor_would_truncate`,
+    :func:`otto.host.daemon.refuse_if_launch_wrapper_needs_bash` and
+    :func:`otto.host.file_ops.refuse_if_base64_is_absent` -- all answer a
+    measured device limitation by refusing. This one answers it by asking the
+    device which spelling it has and emitting that, so a BusyBox host is shut
+    down instead of being told otto cannot.
+
+    THREE OUTCOMES:
+
+    * ``shutdown`` present -- :data:`GNU_SHUTDOWN`, unchanged from what otto
+      emitted before this function existed. A GNU host takes this arm and
+      nothing about it moves;
+    * ``shutdown`` absent, ``poweroff`` present -- :data:`BUSYBOX_POWEROFF`.
+      Every matrix row lands here;
+    * both measured absent -- refused through
+      :func:`~otto.host.userland.refuse_if_gapped`, so the message, the
+      evidence and the docs anchor are the ``shutdown-command`` record's and
+      not a second, drifting copy. Downgrading that record to ``untested``
+      stops the refusal and the caller falls back to :data:`GNU_SHUTDOWN` --
+      the CALLER decides this host is in the measured class, the TABLE decides
+      whether that class is refused at all.
+
+    **WHY THE CHOICE READS THE VALUE ALONE WHILE THE REFUSAL ASKS
+    :meth:`~otto.host.userland.Userland.is_settled` FIRST.** The two
+    neighbouring guards do the opposite of the first half of that and the
+    difference is deliberate, not an inconsistency. ``is_settled`` draws the
+    line itself: *a consumer that DEGRADES may read the value alone --
+    degrading on a guess costs a weaker mode. A consumer that REFUSES has to
+    ask this first.* Picking a spelling is a degrade: the worst a guess buys is
+    a command the device does not have, which is precisely the situation otto
+    was in before this function existed. Refusing is not: an applet batch that
+    could not be ASKED must never become a verdict that the device has neither
+    spelling, or an sshd at its ``MaxSessions`` ceiling turns a healthy host
+    into an un-shutdownable one.
+
+    That gate is belt-and-braces TODAY and is written anyway, because what
+    makes it redundant is a value that can change. ``_UNASKABLE_DEFAULTS`` maps
+    every applet to :data:`~otto.host.userland.APPLET_PRESENT`, so an unasked
+    batch currently reads as "``shutdown`` is there", takes the first arm, and
+    emits what otto always emitted. Flip that default to ``absent`` and the
+    unsettled host would fall through to the refusal with nothing measured --
+    which is what the ``is_settled`` calls stop, and what
+    ``test_an_unsettled_absence_degrades_rather_than_refusing`` holds by
+    flipping exactly that default.
+
+    **COSTS NOTHING EXTRA ON THIS PATH.** Reading an applet needs a resolved
+    userland, and ``UnixHost.shutdown`` issues its command with ``sudo=True``,
+    which makes ``Host.run`` await ``PosixPrivilege._prepare_elevation`` --
+    i.e. the same :meth:`~otto.host.userland.Userland.resolve` -- before it
+    sends anything. Resolving up front only moves that round earlier in the
+    same call; ``resolve()`` is idempotent on what is settled, so the second
+    one costs a lock acquisition and nothing on the wire.
+
+    Args:
+        userland: the host's RESOLVED capabilities.
+            :meth:`~otto.host.userland.Userland.resolve` must have been awaited
+            -- :meth:`~otto.host.userland.Userland.has_applet` raises otherwise,
+            deliberately, rather than answering from an empty table.
+        host: the host's name, for the refusal message only. Never changes the
+            verdict.
+
+    Returns:
+        The command to emit.
+
+    Raises:
+        ~otto.host.errors.UnsupportedOnUserlandError: the device was measured to
+            have neither spelling and the ``shutdown-command`` record is
+            ``measured-broken``. Nothing was attempted.
+    """
+    if userland.has_applet("shutdown") == APPLET_PRESENT:
+        return GNU_SHUTDOWN
+    if userland.has_applet("poweroff") == APPLET_PRESENT:
+        return BUSYBOX_POWEROFF
+    if _measured_absent(userland, "shutdown") and _measured_absent(userland, "poweroff"):
+        refuse_if_gapped("shutdown-command", host=host, attempted=GNU_SHUTDOWN)
+    return GNU_SHUTDOWN
+
+
+def _measured_absent(userland: "Userland", applet: str) -> bool:
+    """Whether *applet* is absent AND that absence was declared or measured.
+
+    The ``is_settled``-first shape :meth:`~otto.host.userland.Userland.has_applet`
+    documents for a consumer that refuses. *applet* is validated twice against
+    the same closed list -- once by ``has_applet`` and once by
+    :func:`~otto.host.userland.applet_capability` on the way into
+    :meth:`~otto.host.userland.Userland.is_settled` -- so a typo raises here
+    rather than becoming a condition that quietly never fires.
+    """
+    return (
+        userland.is_settled(applet_capability(applet))
+        and userland.has_applet(applet) == APPLET_ABSENT
+    )
 
 
 @dataclass(slots=True)
@@ -909,5 +1036,72 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     @override
     @cli_exposed
     async def shutdown(self) -> Result:
-        await self.run("shutdown -h now", sudo=True, timeout=10.0)
+        """Power this host off from its own shell, in the spelling it has.
+
+        :func:`shutdown_command` asks the device: ``shutdown -h now`` where that
+        applet exists, ``poweroff`` where it does not (every BusyBox matrix row).
+
+        A dropped connection is SUCCESS — issuing a power-off command races the
+        transport being torn down — but a completed round trip that exits
+        non-zero is :attr:`~otto.utils.Status.Failed`, because the device
+        answered and it said no.
+
+        Raises:
+            ~otto.host.errors.UnsupportedOnUserlandError: the device has neither
+                spelling, or this userland offers no elevation. Nothing was sent
+                in either case.
+        """
+        # THE SPELLING IS THE DEVICE'S, not otto's. `shutdown` is absent on
+        # every BusyBox matrix row and `poweroff` is present on all five, so a
+        # hard-coded `shutdown -h now` is a command a whole class of device
+        # cannot run -- while swapping in a hard-coded `poweroff` would silently
+        # re-spell the command on every host otto already works against.
+        # `shutdown_command` asks instead.
+        #
+        # Resolved HERE rather than left to `run(sudo=True)`: that call awaits
+        # the same resolution through `PosixPrivilege._prepare_elevation`, but
+        # it does so AFTER the command has been chosen, and the choice is what
+        # needs the answer. Same round, moved earlier; `resolve()` is
+        # idempotent once settled, so the one `run` does costs a lock and
+        # nothing on the wire.
+        userland = self._userland()
+        await userland.resolve()
+        command = shutdown_command(userland, host=self.name)
+        try:
+            result = await self.run(command, sudo=True, timeout=10.0)
+        except UnsupportedOnUserlandError:
+            # NOT the disconnect race, exactly as `_soft_reboot` argues: this
+            # is raised BEFORE anything is sent (no elevation on this
+            # userland), so swallowing it would report a shutdown on a host
+            # that is still running.
+            raise
+        except Exception as e:  # noqa: BLE001 — expected issue-race disconnect; see below
+            logger.debug(f"{self.name}: connection dropped while issuing {command} ({e})")
+            return Result(Status.Success)
+        # THE RESULT IS READ, WHICH `_soft_reboot` DOES NOT DO, and the
+        # asymmetry is deliberate rather than shutdown being stricter than
+        # reboot. Both tolerate the same race: issuing a power-off command
+        # kills the transport under it, and otto reports that as
+        # `Status.Error` (a timeout, an EOF or a lost connection --
+        # `SessionManager.run_cmd` turns all three into Error, it does not
+        # raise) or as the exception caught above. Neither is evidence the
+        # device disobeyed, so neither fails the call.
+        #
+        # `Status.Failed` is a different animal and is the one this reads: the
+        # round trip COMPLETED and the shell handed back a non-zero exit
+        # (`retcode != 0` is the only thing that produces it). The device
+        # answered, and it said no -- `shutdown: not found` at 127, or sudo
+        # denied. Reporting that as Success is the silent-success class that
+        # cost otto an expire timer and a zeroed destination file, and here it
+        # is worse than at `_soft_reboot`: `reboot(wait=True)` has a down-wait
+        # that catches a reboot which never took, and `shutdown()` has no wait
+        # and no second check at all. Nothing downstream would ever notice.
+        if result.status is Status.Failed:
+            return Result(
+                Status.Failed,
+                msg=(
+                    f"{self.name}: {command!r} exited non-zero and the host is "
+                    f"still running: {result.only.value.strip()}"
+                ),
+            )
         return Result(Status.Success)

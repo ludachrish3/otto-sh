@@ -298,9 +298,11 @@ actually gets each one:
     uu pair are listed because a build is free to compile out either one and
     the backend needs both (PUT decodes on the device, GET encodes on it).
 ``shutdown``, ``poweroff``
-    the ``shutdown-command`` surface. Presence IS the question, and it is a
-    CHOICE between two names rather than a refusal: ``shutdown`` is absent and
-    ``poweroff`` present on all five rows.
+    the ``shutdown-command`` surface, and the pair otto ACTS on rather than
+    refuses. Presence IS the question, and it is a CHOICE between two names:
+    ``shutdown`` is absent and ``poweroff`` present on all five rows, so
+    :func:`otto.host.unix_host.shutdown_command` reads both and emits whichever
+    the device has. Only a device answering ``absent`` to both is refused.
 ``scp``
     the ``scp-transfer`` surface. Presence IS the question: ``scp`` is a remote
     BINARY the legacy protocol execs by name, absent on all five rows.
@@ -1465,7 +1467,7 @@ class UserlandHost:
 # WHICH CALL SITES CONSULT :func:`refuse_if_gapped` IS DATA, NOT PROSE. It is
 # :attr:`Gap.paths` on each record below, one :class:`GapPath` per place otto
 # touches the surface, and every count anything needs is derived from it --
-# :func:`gap_path_totals`, :func:`wired_guards`, :attr:`Gap.consults_the_table`,
+# :func:`gap_path_totals`, :func:`table_guards`, :attr:`Gap.consults_the_table`,
 # :attr:`Gap.fully_covered`. NO NUMBER IS WRITTEN IN THIS FILE BY HAND, and that
 # is the whole reason the paths exist: this block used to say "THREE PRODUCT CALL
 # SITES CONSULT refuse_if_gapped. EXACTLY THREE, and the count is the point",
@@ -1492,9 +1494,20 @@ class UserlandHost:
 # ``base64_flag == "absent"`` -- and the TABLE decides whether that class is
 # refused at all. Neither half is enough alone, which is why the record's own
 # ``refuses`` cannot be the whole trigger and why no wired call site carries its
-# own copy of the message. One of the three guards keys on a PROBE rather than a
-# declaration and therefore costs a :meth:`Userland.resolve`; that trade is
-# argued at :func:`otto.host.file_ops.refuse_if_base64_is_absent`, not here.
+# own copy of the message. Two of the guards key on a PROBE rather than a
+# declaration and therefore cost a :meth:`Userland.resolve`; that trade is
+# argued at :func:`otto.host.file_ops.refuse_if_base64_is_absent` and at
+# :func:`otto.host.unix_host.shutdown_command`, not here.
+#
+# NOT EVERY TABLE-BACKED PATH IS A REFUSAL, and :data:`PATH_ADAPTED` is where
+# that stops being true. ``shutdown-command``'s guard has the same two halves --
+# the caller decides the host is in the measured class, the table decides
+# whether that class is refused -- and then does something no other consumer
+# does: on the measured class it EMITS the spelling the device has and the
+# operation succeeds. The record is the authority only for the residue, a device
+# with neither spelling, which no matrix row is. Read :data:`PATH_ADAPTED`
+# before adding a sixth consumer, because "wire it and refuse" is not the only
+# shape any more.
 #
 # WIRING A RAISE SITE STAYS A PER-SURFACE DECISION that belongs with the call
 # site being changed, and the ``reason`` strings of the unwired surfaces are
@@ -1553,6 +1566,45 @@ _DOTTED_RE = re.compile(r"^otto(\.[A-Za-z_][A-Za-z0-9_]*)+$")
 # ``tests/…/test_x.py::TestClass::test_name`` or ``…::test_name``.
 _NODE_ID_RE = re.compile(r"^tests/[\w./-]+\.py(::[A-Za-z_][A-Za-z0-9_]*)+$")
 
+PATH_ADAPTED = "ADAPTED"
+"""This path meets the gapped surface and does the thing the device CAN do.
+
+THE FIFTH STATE, and the first one that is good news. The other four all answer
+"am I protected" -- three ways of being refused and one way of being broken --
+because until ``shutdown-command`` every record described a surface otto could
+only decline. This one answers a different question: otto asks the device which
+spelling it has and emits that, so a host in the measured class is SERVED here
+rather than refused. Recording it as :data:`PATH_WIRED` would tell a reader otto
+still turns a BusyBox shutdown away, which is the one thing this state exists to
+stop them concluding.
+
+The measurement behind the record does NOT go away when a path reaches this
+state, which is why the fix is a path state and not a deletion:
+``shutdown`` really is absent on all five matrix rows, and a future caller that
+hard-codes it needs to find that written down. The record's :attr:`Gap.status`
+stays :data:`MEASURED_BROKEN` for the same reason it does on ``daemon-launch``
+and ``run-command-line-length`` -- the status is about the DEVICE, and the
+device has not changed.
+
+WHAT IT OBLIGES, and both are enforced in ``__post_init__``.
+:attr:`GapPath.checked_by` names the code that makes the choice, so the claim is
+resolvable rather than prose. :attr:`GapPath.pinned_by` is REQUIRED, as it is for
+:data:`PATH_PROTECTED` and for the same reason: "otto handles this now" is a
+claim that stops being true silently. A refactor that lost the probe would put
+``shutdown -h now`` back on the wire, the record would still read ADAPTED, and
+nothing but the named test would notice.
+
+WHY THE ``shell-transfer-base64`` PATHS ARE NOT THIS, though they also degrade
+before they refuse. Those two take the refusal for a host otto meets in normal
+service: ``ShellFileTransfer._select_codec`` raises on an UNSETTLED
+``base64_flag``, because a probe round that never arrived does not get to choose
+a codec, and a refused probe round is an ordinary event on a busy sshd. This
+state's claim is stronger and is what earns it a name -- nothing otto can serve
+is refused here, and an unsettled probe DEGRADES to the pre-existing GNU
+spelling rather than raising. The only refusal left is for a device that
+answered, on a batch that landed, that it has neither spelling.
+"""
+
 PATH_WIRED = "WIRED"
 """This path reads this record and refuses from it. The table is the authority.
 
@@ -1601,8 +1653,13 @@ about that. Every :data:`PATH_OPEN` path is rendered on
 only to this table.
 """
 
-_PATH_STATES = [PATH_WIRED, PATH_PROBE_REFUSED, PATH_PROTECTED, PATH_OPEN]
-"""The four states, ordered strongest-coverage first. Renders in this order."""
+_PATH_STATES = [PATH_ADAPTED, PATH_WIRED, PATH_PROBE_REFUSED, PATH_PROTECTED, PATH_OPEN]
+"""The five states, ordered strongest-coverage first. Renders in this order.
+
+:data:`PATH_ADAPTED` leads because it is the only one where the operation
+SUCCEEDS on the measured device; the three after it are three ways of being
+refused, and :data:`PATH_OPEN` is the hole.
+"""
 
 
 @dataclass(frozen=True)
@@ -1632,8 +1689,9 @@ class GapPath:
     """
 
     state: str
-    """One of :data:`PATH_WIRED`, :data:`PATH_PROBE_REFUSED`,
-    :data:`PATH_PROTECTED`, :data:`PATH_OPEN`. Read those four for what each means."""
+    """One of :data:`PATH_ADAPTED`, :data:`PATH_WIRED`,
+    :data:`PATH_PROBE_REFUSED`, :data:`PATH_PROTECTED`, :data:`PATH_OPEN`. Read
+    those five for what each means."""
 
     detail: str
     """What this state MEANS at this site, in the reader's terms. Never empty.
@@ -1648,8 +1706,11 @@ class GapPath:
 
     :data:`PATH_WIRED`: the guard that consults this table -- REQUIRED, and
     checked to actually reach :func:`refuse_if_gapped` with this record's
-    surface. :data:`PATH_PROTECTED`: the upstream refusal -- REQUIRED, and
-    checked to exist. Empty for the other two, and that is enforced:
+    surface. :data:`PATH_ADAPTED`: the code that picks what the device can
+    actually run -- REQUIRED, and checked the same way, because the one
+    adaptation there is also the record's authority for the device that can run
+    neither spelling. :data:`PATH_PROTECTED`: the upstream refusal -- REQUIRED,
+    and checked to exist. Empty for the other two, and that is enforced:
     :data:`PATH_OPEN` has nothing to name, and :data:`PATH_PROBE_REFUSED`'s
     check is inline at the site rather than in a named function.
     """
@@ -1662,7 +1723,8 @@ class GapPath:
     here instead of leaving the record pointing at nothing. Optional, because
     not every path has one and inventing a name would be worse than admitting
     it; REQUIRED for :data:`PATH_PROTECTED`, whose whole claim is that something
-    else refuses first and keeps refusing.
+    else refuses first and keeps refusing, and for :data:`PATH_ADAPTED`, whose
+    claim that otto handles this now stops being true just as silently.
     """
 
     def __post_init__(self) -> None:
@@ -1681,13 +1743,14 @@ class GapPath:
                 f"gap path {self.site!r} is {self.state} and says nothing about what that "
                 f"means here. A state with no detail is a verdict with no argument"
             )
-        needs_checker = self.state in (PATH_WIRED, PATH_PROTECTED)
+        needs_checker = self.state in (PATH_WIRED, PATH_PROTECTED, PATH_ADAPTED)
         if needs_checker and not self.checked_by:
             raise ValueError(
                 f"gap path {self.site!r} is {self.state} and names nothing in `checked_by`. "
-                f"{PATH_WIRED} has to name the guard that consults this table and "
-                f"{PATH_PROTECTED} the code that refuses upstream -- unnamed, neither claim "
-                f"can be checked, which is the whole point of recording it"
+                f"{PATH_WIRED} has to name the guard that consults this table, "
+                f"{PATH_ADAPTED} the code that picks what the device can run, and "
+                f"{PATH_PROTECTED} the code that refuses upstream -- unnamed, none of the "
+                f"three claims can be checked, which is the whole point of recording it"
             )
         if not needs_checker and self.checked_by:
             raise ValueError(
@@ -1707,6 +1770,14 @@ class GapPath:
                 f"'unreachable' is the one state that stops being true silently -- the "
                 f"upstream refusal is somebody else's code and nothing here would notice "
                 f"it going away, so the test that pins it is part of the claim"
+            )
+        if self.state == PATH_ADAPTED and not self.pinned_by:
+            raise ValueError(
+                f"gap path {self.site!r} is {PATH_ADAPTED} and names no test. "
+                f"'otto handles this now' stops being true as quietly as 'unreachable' "
+                f"does: a refactor that dropped the probe would put the broken spelling "
+                f"back on the wire and leave this record reading ADAPTED, so the test "
+                f"that pins the choice is part of the claim"
             )
         if self.pinned_by and not _NODE_ID_RE.match(self.pinned_by):
             raise ValueError(
@@ -1777,10 +1848,10 @@ class Gap:
     one claim here that nothing resolves: ``file-ops-base64`` carried two, both
     two lines stale by the time anyone re-read them, and dropping them cost
     nothing because :attr:`paths` already carries the same call sites as dotted
-    names a test resolves. Two records below still cite one (``nc-transfer``,
-    ``shutdown-command``); both were re-checked accurate on 2026-08-14 and are
-    left alone rather than swept, but they drift the same way and a rewrite of
-    either should take the number out.
+    names a test resolves. One record below still cites one (``nc-transfer``);
+    it was re-checked accurate on 2026-08-14 and is left alone rather than
+    swept, but it drifts the same way and a rewrite of it should take the number
+    out -- which is what ``shutdown-command``'s rewrite did with the second.
     """
 
     queued_for: str
@@ -1805,7 +1876,7 @@ class Gap:
     paths for them would be inventing evidence.
 
     Every count anything needs is DERIVED from this -- :attr:`open_paths`,
-    :attr:`fully_covered`, :func:`gap_path_totals`, :func:`wired_guards`.
+    :attr:`fully_covered`, :func:`gap_path_totals`, :func:`table_guards`.
     Nothing retypes one.
     """
 
@@ -1890,13 +1961,34 @@ class Gap:
         return self.paths_in_state(PATH_WIRED)
 
     @property
+    def adapted_paths(self) -> list[GapPath]:
+        """The paths where otto does what the device CAN do. The fixed ones."""
+        return self.paths_in_state(PATH_ADAPTED)
+
+    @property
     def open_paths(self) -> list[GapPath]:
         """The paths that are reachable and still unguarded. The holes."""
         return self.paths_in_state(PATH_OPEN)
 
     @property
+    def table_backed_paths(self) -> list[GapPath]:
+        """Every path whose refusal is THIS record's.
+
+        :data:`PATH_WIRED` and :data:`PATH_ADAPTED`, in that order.
+
+        Two states rather than one because an :data:`PATH_ADAPTED` path reaches
+        :func:`refuse_if_gapped` too: it serves the measured device and keeps
+        the record as the floor for a device that can run neither spelling. A
+        count that read only :data:`PATH_WIRED` would leave that guard out of
+        :func:`table_guards` and answer :attr:`consults_the_table` ``False`` for
+        a record the guard names by surface -- a derived value that lies, which
+        is the defect these paths exist to remove.
+        """
+        return self.wired_paths + self.adapted_paths
+
+    @property
     def consults_the_table(self) -> bool:
-        """Whether this record is the AUTHORITY anywhere -- any :data:`PATH_WIRED` path.
+        """Whether this record is the AUTHORITY anywhere -- any table-backed path.
 
         The question the docs page's "which surfaces does otto refuse from this
         table" prose is asking, and it is NOT :attr:`fully_covered`: the two
@@ -1905,7 +1997,7 @@ class Gap:
         :attr:`fully_covered` would tell a reader the table decides something it
         does not.
         """
-        return bool(self.wired_paths)
+        return bool(self.table_backed_paths)
 
     @property
     def fully_covered(self) -> bool:
@@ -2363,34 +2455,55 @@ GAPS: list[Gap] = [
         surface="shutdown-command",
         status=MEASURED_BROKEN,
         reason=(
-            "`Host.shutdown()` emits `shutdown -h now` (`src/otto/host/unix_host.py:912`) "
-            "and BusyBox has no `shutdown` applet; the BusyBox spelling is `poweroff`. "
-            "`Host.reboot()` is NOT affected and must not be lumped in with this -- "
-            "`reboot` is present on every matrix row and `UnixHost._soft_reboot` works "
-            "as shipped"
+            "BusyBox has no `shutdown` applet, and `shutdown -h now` is what "
+            "`Host.shutdown()` used to emit unconditionally. otto now ASKS: "
+            "`otto.host.unix_host.shutdown_command` reads the resolved `applet_shutdown` "
+            "and `applet_poweroff` capabilities and emits the spelling the device has, so "
+            "a BusyBox device is powered off through `poweroff` rather than told otto "
+            "cannot. THIS RECORD IS NOT A REFUSAL FOR ANY MEASURED DEVICE -- what is left "
+            "of it is the floor: a device that answers `absent` to BOTH names has nothing "
+            "otto can emit, and is refused before anything is sent instead of being told a "
+            "shutdown succeeded. `Host.reboot()` is NOT affected and must not be lumped in "
+            "with this -- `reboot` is present on every matrix row and "
+            "`UnixHost._soft_reboot` works as shipped"
         ),
         measured_on=(
-            "the five matrix artifacts, 2026-08-13: `shutdown` is absent from the applet "
-            "list on 1.16.1, 1.21.1, 1.28.1, 1.31.0 and 1.35.0, while `reboot` and "
-            "`poweroff` are present on all five. BusyBox will only run an applet its own "
-            "list carries, so the list is the whole answer here"
+            "the five matrix artifacts, 2026-08-13, re-measured through the batched applet "
+            "probe 2026-08-14: `shutdown` is absent from the applet list on 1.16.1, "
+            "1.21.1, 1.28.1, 1.31.0 and 1.35.0, while `reboot` and `poweroff` are present "
+            "on all five (`tests/busybox/test_applet_resolution.py` records it per row). "
+            "BusyBox will only run an applet its own list carries, so the list is the whole "
+            "answer here -- and it is also why the choice always has somewhere to go: no "
+            "measured row is refused by this record"
         ),
         queued_for=(
-            "the full-parity workstream, `todo/busybox-parity-sweep-2026-08-11.md`. "
-            "`poweroff` is the measured spelling, but choosing between the two is a "
-            "userland probe (the pattern `Userland.timeout_style` already sets), not a "
-            "hard-coded swap that would break every GNU host"
+            "nothing -- the FIX has landed, in `otto.host.unix_host.shutdown_command`, and "
+            "it is this registry's first. The full-parity workstream "
+            "(`todo/busybox-parity-sweep-2026-08-11.md`) asked for a userland probe rather "
+            "than a hard-coded swap that would break every GNU host, and that is what "
+            "`applet_shutdown`/`applet_poweroff` are. The record stays `measured-broken` "
+            "because the DEVICE still is: `shutdown` is absent on every row, a future "
+            "caller that hard-codes it needs to find that written down, and the "
+            "neither-spelling refusal is still earned by this measurement"
         ),
         paths=[
             GapPath(
                 site="otto.host.unix_host.UnixHost.shutdown",
-                state=PATH_OPEN,
+                state=PATH_ADAPTED,
+                checked_by="otto.host.unix_host.shutdown_command",
                 detail=(
-                    "emits `shutdown -h now` through `run(sudo=True)` and reads nothing from "
-                    "this record, so a BusyBox device answers `shutdown: not found`, the "
-                    "`run` is non-ok, and `shutdown()` returns `Status.Success` anyway -- it "
-                    "discards the result. `UnixHost.reboot` is a DIFFERENT surface and is not "
-                    "a path of this record: `reboot` is present on every matrix row"
+                    "resolves the userland, then emits `shutdown -h now` where the device "
+                    "has that applet and `poweroff` where it does not -- so every matrix "
+                    "row is shut down rather than refused. The choice reads the capability "
+                    "VALUE alone, because degrading on a guess costs at worst the command "
+                    "otto already emitted; the refusal for a device with neither asks "
+                    "`is_settled` first, so a probe round that never arrived cannot become "
+                    "a verdict. `UnixHost.reboot` is a DIFFERENT surface and is not a path "
+                    "of this record: `reboot` is present on every matrix row"
+                ),
+                pinned_by=(
+                    "tests/unit/host/test_power.py::TestShutdownPicksTheSpellingTheDeviceHas"
+                    "::test_a_device_without_shutdown_is_powered_off_with_poweroff"
                 ),
             ),
         ],
@@ -2605,7 +2718,9 @@ out.
 #     for exactly this, picking ``su``; it refuses only when BOTH answer no.
 # ``reboot`` -- the spec pairs it with ``shutdown``; measurement separates
 #     them. ``reboot`` is an applet on all five rows, so only the ``shutdown``
-#     half is a gap (see ``shutdown-command``).
+#     half is a gap (see ``shutdown-command``) -- and that half is now ADAPTED
+#     to rather than refused, which is a second way this pair had to be kept
+#     apart: `_soft_reboot` needed no change at all.
 
 
 def gap_for(surface: str) -> "Gap | None":
@@ -2642,17 +2757,24 @@ def gap_path_totals() -> dict[str, int]:
     return totals
 
 
-def wired_guards() -> list[str]:
-    """Every distinct guard function a :data:`PATH_WIRED` path names, sorted.
+def table_guards() -> list[str]:
+    """Every distinct guard function a table-backed path names, sorted.
 
-    A SECOND count, and it is not the first one: four wired paths reach this
-    table through three guards, because ``read_file`` and ``write_file`` share
-    one. The prose that used to say "three product call sites" was counting
-    guards and reading as though it counted sites, which is exactly the
-    ambiguity a hand-maintained number buys. Both numbers are derived now, and
-    they are allowed to differ.
+    Table-backed is :attr:`Gap.table_backed_paths` -- :data:`PATH_WIRED` and
+    :data:`PATH_ADAPTED`, the two states whose verdict is this record's. Named
+    for that rather than ``wired_guards``, which it used to be called: an
+    ADAPTED path reaches :func:`refuse_if_gapped` exactly as a wired one does,
+    so a name scoped to ``WIRED`` would have to either exclude a real table
+    consumer or mean something other than what it says.
+
+    A SECOND count, and it is not the first one: five table-backed paths reach
+    this table through four guards, because ``read_file`` and ``write_file``
+    share one. The prose that used to say "three product call sites" was
+    counting guards and reading as though it counted sites, which is exactly the
+    ambiguity a hand-maintained number buys. Both numbers are derived, and they
+    are allowed to differ.
     """
-    return sorted({p.checked_by for gap in GAPS for p in gap.wired_paths})
+    return sorted({p.checked_by for gap in GAPS for p in gap.table_backed_paths})
 
 
 def refuse_if_gapped(surface: str, *, host: str = "", attempted: str = "") -> None:

@@ -654,7 +654,9 @@ class UserlandOptions:
     """``"present"``, ``"absent"``, or ``None`` to probe.
 
     Present on all five matrix artifacts (2026-08-14) — the BusyBox spelling of
-    :attr:`applet_shutdown`."""
+    :attr:`applet_shutdown`, and what
+    :func:`~otto.host.unix_host.shutdown_command` emits when this pair says the
+    device has this one and not that one."""
 
     applet_scp: str | None = None
     """``"present"``, ``"absent"``, or ``None`` to probe.
@@ -667,7 +669,11 @@ class UserlandOptions:
 
     Absent on all five matrix artifacts (2026-08-14), which is why
     ``Host.shutdown()``'s ``shutdown -h now`` is a recorded gap;
-    :attr:`applet_poweroff` is the spelling those devices have."""
+    :attr:`applet_poweroff` is the spelling those devices have.
+    :func:`~otto.host.unix_host.shutdown_command` reads this one FIRST, so
+    declaring it ``"present"`` on a host that has both keeps the GNU spelling
+    and declaring it ``"absent"`` moves that host to ``poweroff`` without a
+    probe."""
 
     applet_uudecode: str | None = None
     """``"present"``, ``"absent"``, or ``None`` to probe.
