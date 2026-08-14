@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..errors import OttoError
 from ..host.builtin_hosts import BUILTIN_LOCAL_HOST_ID
-from ..host.daemon import kill_command, launch_command
+from ..host.daemon import kill_command, launch_command, refuse_if_launch_wrapper_needs_bash
 from ..host.errors import exec_or_raise
 from ..logger.mode import LogMode
 from .impairer import FIRST_SELECTOR_BAND, MAX_SELECTORS, LinkImpairer, ScopedState, build_impairer
@@ -453,13 +453,47 @@ async def _cancel_timers(
     return len(pids)
 
 
+async def _launch_daemon(host: Any, sentinel: str, argv: list[str]) -> None:
+    """Launch one sentinel-tagged daemon on *host*, refusing what it cannot run.
+
+    THE ONLY PLACE ``otto.link`` reaches
+    :func:`~otto.host.daemon.launch_command`. Both expire-timer flavours (v1
+    whole-link, v2 per-selector) funnel through here so the ``daemon-launch``
+    refusal cannot be bypassed by adding a third launch:
+    :func:`~otto.host.daemon.launch_command` takes no host and so cannot check
+    for itself.
+
+    THE REFUSAL FIRES HERE, not at the top of :func:`impair_link`, and the cost
+    of that is real and worth stating: this call's own qdisc mutation has
+    already been applied and verified by the time we get here, so the refusal
+    propagates into ``impair_link``'s no-half-impairments handler and the
+    mutation is rolled back. What it replaces is worse than a wasted round
+    trip. :func:`_root_run` deliberately does not raise on a non-ok result -- a
+    qdisc mutation's failure is caught by the caller's own re-read instead --
+    and NOTHING re-reads after a timer launch, so on a bash-less host the launch
+    line used to come back ``bash: not found``, be discarded, and leave
+    ``impair_link`` reporting SUCCESS for an impairment whose timer does not
+    exist and which therefore never expires. That is the silent failure this
+    converts into a refusal.
+    """
+    refuse_if_launch_wrapper_needs_bash(
+        host,
+        attempted=(
+            f"an expire-timer daemon tagged {sentinel!r}, which otto launches through "
+            f"`bash -c 'exec -a …'`. Impair without `--expire` and repair the link when "
+            f"you are done — the impairment itself needs no bash, only the timer does"
+        ),
+    )
+    await _root_run(host, launch_command(sentinel, argv))
+
+
 async def _launch_timer(
     host: Any, link: Link, placement: Placement, impairer: LinkImpairer, expire: int
 ) -> None:
     """Launch a detached, sentinel-tagged timer that clears *placement* after *expire*s."""
     sentinel = encode_impair_sentinel(link.id, placement.netdev)
     argv = ["bash", "-c", f"sleep {int(expire)} && {impairer.clear_command(placement.netdev)}"]
-    await _root_run(host, launch_command(sentinel, argv))
+    await _launch_daemon(host, sentinel, argv)
 
 
 def _assign_band(link_id: str, host: Any, netdev: str, state: ScopedState) -> int:
@@ -509,7 +543,7 @@ async def _launch_selector_timer(
     script = (
         f'sleep {int(expire)} && {clear_seq} && if [ -z "$({filter_show})" ]; then {root_del}; fi'
     )
-    await _root_run(host, launch_command(sentinel, ["bash", "-c", script]))
+    await _launch_daemon(host, sentinel, ["bash", "-c", script])
 
 
 def _expected_scoped_mapping(
@@ -704,6 +738,13 @@ async def impair_link(
     v1 whole-link timers; a scoped impair only ever cancels/launches its OWN
     selector's v2 timer, leaving every other selector's timer (and any v1
     timer, which scoped state can't have anyway) untouched.
+
+    An *expire* against a host declaring ``has_bash=False`` is REFUSED with
+    :class:`~otto.host.errors.UnsupportedOnUserlandError` (the ``daemon-launch``
+    gap — see :func:`~otto.host.daemon.refuse_if_launch_wrapper_needs_bash`),
+    and the refusal takes the no-half-impairments path below, so the link is
+    left as it was found. An impair with NO *expire* on the same host is
+    untouched: only the timer needs bash.
 
     No half-impairments: if any placement fails mid-way (mutation doesn't
     verify, host unreachable, etc.), every placement touched in this call —

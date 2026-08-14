@@ -5,15 +5,20 @@ process's argv[0] IS the sentinel (discoverable via ``ps -eo args=``), launched
 under ``systemd-run --user`` with a ``setsid`` fallback. Extracted from
 ``otto.tunnel.socat`` (#2b), renamed from ``otto.host.detached``
 (2026-07-11): the module owns the daemon lifecycle vocabulary — launch,
-discover (ps scan), reap — shared by tunnels and link-impairment timers
-without a tunnel<->link import edge.
+discover (ps scan), reap, and now refuse
+(``refuse_if_launch_wrapper_needs_bash``, the ``daemon-launch`` gap's raise
+site) — shared by tunnels and link-impairment timers without a tunnel<->link
+import edge.
 """
 
 import re
 import shlex
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
+from typing import Any
 from urllib.parse import quote, unquote
+
+from .userland import refuse_if_gapped
 
 # Ceiling (seconds) on the *real* ``systemd-run --user`` invocation folded into
 # the ``if`` condition below. ``systemd-run`` being present and even connecting
@@ -35,7 +40,9 @@ def launch_command(sentinel: str, argv: list[str]) -> str:
 
     ``bash -c 'exec -a "$1" "${@:2}"' _ <sentinel> <program argv…>`` sets the
     process's ``argv[0]`` to the sentinel (``exec -a`` — a bash builtin; bash is
-    required on the target host). ``argv`` is the FULL program argv (its first element
+    required on the target host, which is what
+    :func:`refuse_if_launch_wrapper_needs_bash` refuses on rather than
+    emitting). ``argv`` is the FULL program argv (its first element
     is the program to run, e.g. ``"socat"``), so the template must NOT hardcode a
     program name — hardcoding one runs ``prog prog <args…>`` and dies on the bogus
     duplicate.
@@ -101,6 +108,76 @@ def launch_command(sentinel: str, argv: list[str]) -> str:
         f"then :; else ( {setsid} ); fi"
     )
     return f"bash -c {shlex.quote(body)}"
+
+
+def refuse_if_launch_wrapper_needs_bash(host: Any, *, attempted: str = "") -> None:
+    """Refuse a tagged-daemon launch on a host that declares it has no bash.
+
+    **The gap registry's second product call site.** Everything otto knows
+    about this failure lives in the ``daemon-launch`` record in
+    :data:`~otto.host.userland.GAPS`; this function supplies the only thing a
+    record cannot -- whether THIS host is one the measurement covers -- and
+    hands the raise back to :func:`~otto.host.userland.refuse_if_gapped` so the
+    message is the record's and not a second, drifting copy of it. Downgrading
+    that record to ``untested`` stops the refusal: the CALLER decides this host
+    is in the measured class, the TABLE decides whether that class is refused
+    at all.
+
+    WHY IT IS A SEPARATE FUNCTION AND NOT A CHECK INSIDE
+    :func:`launch_command`. That is a pure string builder and takes no host, so
+    it cannot know. Every caller must call this first; the module docstring's
+    launch/discover/reap vocabulary now has a fourth word, refuse, and this is
+    it.
+
+    WHAT IT KEYS ON: ``has_bash is False``, DECLARED on the host class
+    (``UnixHost``/``LocalHost``/``DockerContainerHost`` default ``True``,
+    ``EmbeddedHost`` ``False``) and set ``False`` by the ``busybox`` os_profile.
+    It is free -- no probe, no userland resolution, no connection -- and
+    ``otto.host.os_profile``'s ``_register_builtin_os_profiles`` already
+    documents ``has_bash`` as a gate on this exact mechanism, so this completes
+    a partially-built defence rather than inventing one. Three alternatives,
+    each wrong for its own reason:
+
+    * NOT :attr:`~otto.host.userland.Userland.shell_dialect`. The same trap
+      :func:`otto.host.session.refuse_if_line_editor_would_truncate` documents:
+      it is the probe that MEASURES the fact, and reading it would drag a whole
+      userland resolution -- up to ``_RESOLVE_BUDGET_S``, 30 seconds against a
+      host that will not answer -- onto a decision the lab entry has already
+      made.
+    * NOT ``isinstance(frame, AshFrame)``. Right for the line-length gap and
+      wrong here: the failure is the ABSENCE OF BASH, not the presence of ash.
+      A dash-only host has no bash, cannot run this wrapper either, and
+      refusing it is CORRECT rather than a false positive -- keying on ash
+      would miss it.
+    * NOT the profile name. ``has_bash`` is the fact; ``busybox`` is one thing
+      that sets it, and a plain ``unix`` lab entry may set it directly.
+
+    A host that declares NOTHING is not refused (the ``getattr`` default is
+    ``True``). That is the same asymmetry
+    :func:`~otto.host.userland.refuse_if_gapped` is built on, one level up:
+    refusing a host otto has no declaration for would turn "we were not told"
+    into "does not work", which is the expensive direction.
+    Note this is the OPPOSITE default from :mod:`otto.tunnel.discovery`'s
+    ``getattr(h, "has_bash", False)`` -- there the conservative answer is to
+    leave a host out of a scan, here it is to leave it out of the refusal.
+
+    *attempted* is the caller's own one-line description of the launch, since
+    only the caller knows what the daemon was for and what the operator can do
+    instead. It decorates the message and changes no verdict.
+
+    Raises:
+        ~otto.host.errors.UnsupportedOnUserlandError: *host* declares
+            ``has_bash=False`` and the ``daemon-launch`` record is
+            ``measured-broken``. Never raised for any other declaration, and
+            never while that record says anything else.
+    """
+    if getattr(host, "has_bash", True) is not False:
+        return
+    refuse_if_gapped(
+        "daemon-launch",
+        host=str(getattr(host, "id", "")),
+        attempted=attempted,
+    )
 
 
 _ETIME_MAX_FIELDS = 3

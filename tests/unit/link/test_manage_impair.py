@@ -52,6 +52,11 @@ class FakeHost:
     impairer: str = "netem"
     current_user: str = "vagrant"
     fail_on: str | None = None
+    has_bash: bool = True
+    """Defaults True, matching ``UnixHost``: only a lab entry or the ``busybox``
+    os_profile declares otherwise, and an expire-timer launch is then refused —
+    see ``TestExpireOnAHostWithoutBash``."""
+
     commands: list[str] = field(default_factory=list)
     sudo_commands: list[str] = field(default_factory=list)
 
@@ -892,3 +897,152 @@ class TestTimeoutStillNamesTheHost:
 
         with pytest.raises(RuntimeError, match=r"carrot.*unreachable"):
             await _root_run(_Host(), "tc qdisc replace dev eth1.100 root netem delay 50ms")
+
+
+class TestExpireOnAHostWithoutBash:
+    """`otto.link` is the ONLY product path that reaches a tagged-daemon launch.
+
+    ``otto.host.daemon.refuse_if_launch_wrapper_needs_bash`` is the guard; its
+    own contract is pinned in ``tests/unit/host/test_daemon_launch_refusal.py``.
+    What this class establishes is the half that file cannot: that the two
+    launch sites in ``otto.link.manage`` are REACHABLE with a ``has_bash=False``
+    host, so the guard is not decoration. Both tests below arrive at the launch
+    only after the host has taken a real qdisc mutation, and they assert that
+    mutation ran — a guard hoisted to the top of ``impair_link`` would still
+    refuse, but these two would no longer be proving that the sites downstream
+    of it exist.
+
+    otto's only OTHER caller of ``launch_command`` — the socat launch in
+    ``otto.tunnel.manage.add_tunnel`` — is NOT reachable with such a host and
+    carries no guard, deliberately: ``_resolve_chain`` refuses a
+    ``has_bash=False`` host as a chain member, loudly, before the launch plan is
+    built. ``tests/unit/tunnel/test_manage_resolve.py``'s
+    ``test_busybox_profile_host_rejected_as_chain_member`` pins that through the
+    real ``busybox`` profile.
+
+    WHAT THE REFUSAL REPLACES was silence, not a loud failure.
+    ``otto.link.manage._root_run`` deliberately does not raise on a non-ok
+    result — a qdisc mutation's failure is caught by the caller's own re-read
+    instead — and NOTHING re-reads after a timer launch, so the ``bash: not
+    found`` came back, was discarded, and ``impair_link`` reported SUCCESS for
+    an impairment whose timer did not exist and which therefore never expired.
+    ``test_any_other_failed_launch_is_still_unnoticed`` pins that mechanism,
+    which is still live for every launch failure that is not this one.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_whole_link_expire_is_refused_and_rolled_back(self) -> None:
+        from otto.host.errors import UnsupportedOnUserlandError
+
+        lab, carrot, _, _ = _bed(has_bash=False)
+        carrot.qdisc_texts = ["", DELAY_50_TEXT]  # pre-read, then post-apply verify
+        with pytest.raises(UnsupportedOnUserlandError) as excinfo:
+            await impair_link(
+                lab, "edge", ImpairmentParams(delay_ms=50.0), from_host="carrot_seed", expire=30
+            )
+        message = str(excinfo.value)
+        assert "daemon-launch" in message
+        assert "carrot_seed" in message
+        assert "--expire" in message, (
+            "the refusal has to name the option the operator can drop; the impairment "
+            "itself needs no bash"
+        )
+        assert "tc qdisc replace dev eth1.100 root netem delay 50ms" in carrot.sudo_commands, (
+            "the launch site sits AFTER this mutation, so without it the test would not "
+            "be reaching the site it claims to reach"
+        )
+        assert not [c for c in carrot.sudo_commands if "exec -a" in c], (
+            "the bash-only launch line must never be emitted — refusing after sending it "
+            "would be the old silent failure with extra steps"
+        )
+        assert carrot.sudo_commands[-1] == "tc qdisc del dev eth1.100 root", (
+            "no half-impairments: the refusal takes impair_link's rollback path, so the "
+            "link is left as it was found (clean, here)"
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_port_scoped_expire_is_refused_too(self) -> None:
+        """The v2 timer is a SECOND launch site on a mutually exclusive branch.
+
+        `--port` routes through `_launch_selector_timer`, which the whole-link
+        test above never touches; both funnel through `_launch_daemon`, and
+        this is what says so.
+        """
+        from otto.host.errors import UnsupportedOnUserlandError
+
+        lab, carrot, _, _ = _bed(has_bash=False)
+        carrot.qdisc_texts = ["", QDISC_SCOPED_ONE]
+        carrot.filter_texts = ["", FILTER_SCOPED_ONE]
+        with pytest.raises(UnsupportedOnUserlandError, match="daemon-launch"):
+            await impair_link(
+                lab,
+                "edge",
+                ImpairmentParams(delay_ms=200.0),
+                from_host="carrot_seed",
+                selector=Selector(5201, "tcp"),
+                expire=30,
+            )
+        assert [c for c in carrot.sudo_commands if c.startswith("tc filter add")], (
+            "the scoped mutation runs before the launch site, so reaching the site "
+            "requires having got past it"
+        )
+        assert not [c for c in carrot.sudo_commands if "exec -a" in c]
+
+    @pytest.mark.asyncio
+    async def test_an_impair_without_expire_is_not_refused(self) -> None:
+        """Scope, and the expensive mistake is refusing something that works.
+
+        `tc` needs no bash. A guard on `impair_link` rather than on the daemon
+        launch would take whole-link impairment away from every BusyBox device,
+        which is the one thing this workstream exists to support.
+        """
+        lab, carrot, _, _ = _bed(has_bash=False)
+        carrot.qdisc_texts = ["", DELAY_50_TEXT]
+        report = await impair_link(
+            lab, "edge", ImpairmentParams(delay_ms=50.0), from_host="carrot_seed"
+        )
+        assert [a.placement.host_id for a in report.applied] == ["carrot_seed"]
+        assert "tc qdisc replace dev eth1.100 root netem delay 50ms" in carrot.sudo_commands
+
+    @pytest.mark.asyncio
+    async def test_repair_is_not_refused_either(self) -> None:
+        """Repair kills timers, it never launches one, so it needs no bash.
+
+        `_cancel_timers` reaps through a `ps` scan and `kill`, neither of which
+        is the bash wrapper. Nothing on this path goes near `launch_command`.
+        """
+        from otto.link.manage import repair_link
+        from otto.link.sentinel import encode_impair_sentinel
+
+        lab, carrot, _, _ = _bed(has_bash=False)
+        token = encode_impair_sentinel(LINK.id, "eth1.100")
+        carrot.ps_text = f"  4242 05:00 {token} -c sleep 600 && tc qdisc del dev eth1.100 root\n"
+        carrot.qdisc_texts = [DELAY_50_TEXT, ""]
+        await repair_link(lab, "edge")
+        assert "kill 4242" in carrot.sudo_commands
+
+    @pytest.mark.asyncio
+    async def test_any_other_failed_launch_is_still_unnoticed(self) -> None:
+        """The silence this refusal replaces, on the path where it still lives.
+
+        A host that DOES declare bash reaches the launch, and a launch that
+        comes back non-ok is discarded: `_root_run` does not raise, and nothing
+        re-reads after a timer launch. So `impair_link` reports success for an
+        impairment that will never expire.
+
+        Pinned deliberately rather than fixed here. It is the same defect for a
+        different cause, and the fix is a post-launch verify — a change to
+        `otto.link`'s own contract, not to the gap registry, and so not this
+        change's business. Without this test the claim that the refusal
+        replaces SILENCE would be prose nothing executes.
+        """
+        lab, carrot, _, _ = _bed(fail_on="exec -a")
+        carrot.qdisc_texts = ["", DELAY_50_TEXT]
+        report = await impair_link(
+            lab, "edge", ImpairmentParams(delay_ms=50.0), from_host="carrot_seed", expire=30
+        )
+        assert [a.placement.host_id for a in report.applied] == ["carrot_seed"]
+        assert [c for c in carrot.sudo_commands if "exec -a" in c], "the launch was not attempted"
+        assert carrot.sudo_commands[-1].startswith("bash -c 'if command -v systemd-run"), (
+            "nothing ran after the failed launch — no re-read, no rollback, no error"
+        )

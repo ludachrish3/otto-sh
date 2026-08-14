@@ -710,28 +710,37 @@ class Userland:
 # three design-time candidates measurement did NOT support are recorded in the
 # comment block below :data:`GAPS` rather than quietly dropped.
 #
-# ONE PRODUCT CALL SITE CONSULTS :func:`refuse_if_gapped`. EXACTLY ONE, and
+# TWO PRODUCT CALL SITES CONSULT :func:`refuse_if_gapped`. EXACTLY TWO, and
 # the count is the point -- an earlier version of this block said "none yet",
-# and the sentence that replaced it must not be read as "the table is wired".
+# then "exactly one", and the sentence that replaces each must not be read as
+# "the table is wired". They are being added deliberately, one per change.
 #
-# The one is :func:`otto.host.session.refuse_if_line_editor_would_truncate`,
-# called from ``SessionManager.run_cmd`` (the per-command path of
-# ``Host.run()``, for every host family), against the
-# ``run-command-line-length`` record. It is the shape a registry consumer
-# takes: the CALLER decides that this host belongs to the measured class --
-# there, that its declared shell dialect is ``ash`` -- and the TABLE decides
-# whether that class is refused at all. Neither half is enough alone, which is
-# why the record's own ``refuses`` cannot be the whole trigger and why the call
-# site does not carry its own copy of the message.
+# * :func:`otto.host.session.refuse_if_line_editor_would_truncate`, called from
+#   ``SessionManager.run_cmd`` (the per-command path of ``Host.run()``, for
+#   every host family), against the ``run-command-line-length`` record.
+# * :func:`otto.host.daemon.refuse_if_launch_wrapper_needs_bash`, called from
+#   ``otto.link.manage._launch_daemon`` (the only path in ``otto.link`` that
+#   reaches ``launch_command``, shared by the whole-link and port-scoped
+#   expire timers), against the ``daemon-launch`` record. ``otto.tunnel``'s
+#   own ``launch_command`` call is NOT a raise site and does not need one:
+#   ``_resolve_chain`` already refuses a ``has_bash=False`` host as a tunnel
+#   path member before any launch is planned.
 #
-# THE OTHER SEVEN ``measured-broken`` SURFACES ARE STILL UNWIRED, and their
+# Both take the shape a registry consumer takes: the CALLER decides that this
+# host belongs to the measured class -- a declared shell dialect of ``ash``
+# there, a declared ``has_bash=False`` here -- and the TABLE decides whether
+# that class is refused at all. Neither half is enough alone, which is why the
+# record's own ``refuses`` cannot be the whole trigger and why neither call
+# site carries its own copy of the message.
+#
+# THE OTHER SIX ``measured-broken`` SURFACES ARE STILL UNWIRED, and their
 # ``reason`` strings are still written to say what a call site WOULD refuse.
 # The refusals that fire elsewhere in otto today
 # (``PosixPrivilege._elevate``, ``ShellFileTransfer._run_put``/``_run_get``)
 # are PROBE-driven -- they refuse on what this host answered, which is a
 # different trigger from this table's "otto measured this on the matrix". So
 # wiring a raise site remains a PER-SURFACE decision that belongs with the call
-# site being changed; one surface having made it does not generalise to the
+# site being changed; two surfaces having made it does not generalise to the
 # rest, and the docs page states each surface's status separately for the same
 # reason.
 
@@ -985,7 +994,17 @@ GAPS: list[Gap] = [
             '`setsid bash -c \'exec -a "$1" "${@:2}"\' _ <sentinel> <argv>` so the '
             "process carries a findable `argv[0]`, and a stock BusyBox userland has no "
             "bash. The body is not portable to ash either, so this is not a `bash`->`sh` "
-            "substitution: it needs a different argv[0] mechanism"
+            "substitution: it needs a different argv[0] mechanism. otto REFUSES the "
+            "launch instead, on any host declaring `has_bash=False`, rather than emitting "
+            "a command whose failure it would not notice -- `otto.link.manage._root_run` "
+            "does not raise on a non-ok result, a qdisc mutation's failure is caught by "
+            "the caller's own re-read, and NOTHING re-reads after a timer launch, so `link "
+            "impair --expire` used to report SUCCESS for a timer that was never running "
+            "and an impairment that therefore never expired. "
+            "What is refused is only the DAEMON: impair without `--expire` "
+            "and repair when done, since `tc` needs no bash. `otto.tunnel`'s socat launch "
+            "is not refused here because it is unreachable -- `_resolve_chain` rejects "
+            "such a host as a tunnel path member first"
         ),
         measured_on=(
             "the five matrix artifacts, 2026-08-13. `bash` is not an applet on any row, "
@@ -999,9 +1018,15 @@ GAPS: list[Gap] = [
             "corrupted program name"
         ),
         queued_for=(
-            "the full-parity workstream, `todo/busybox-parity-sweep-2026-08-11.md`. Not "
-            "yet written up there: this table is the record, and the queue file carries "
-            "the plan for work that has one"
+            "the REFUSAL has landed, in "
+            "`otto.host.daemon.refuse_if_launch_wrapper_needs_bash` -- this registry's "
+            "second product call site. A FIX has not, and is not written up in the "
+            "full-parity workstream (`todo/busybox-parity-sweep-2026-08-11.md`) yet: this "
+            "table is the record, and the queue file carries the plan for work that has "
+            "one. A fix is a portable argv[0] mechanism, which is a design question and "
+            "not a spelling change. The record stays `measured-broken` because the surface "
+            "still is -- otto now declines the launch instead of emitting one it cannot "
+            "run"
         ),
     ),
     Gap(

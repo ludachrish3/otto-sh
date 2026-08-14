@@ -44,9 +44,9 @@ is an applet everywhere, so only the `shutdown` half is a gap.
 Every record carries one of two statuses, and the status decides whether otto
 would block the call. Read the whole of this section together with the note
 below it: the rule is implemented in
-{func}`~otto.host.userland.refuse_if_gapped`, and **exactly one product call
-site consults that function** — so for one surface below the refusal is what
-otto does, and for the other seven it is still what a wired call site would do.
+{func}`~otto.host.userland.refuse_if_gapped`, and **exactly two product call
+sites consult that function** — so for two surfaces below the refusal is what
+otto does, and for the other six it is still what a wired call site would do.
 Each section's **Status:** line says which.
 
 `measured-broken`
@@ -66,14 +66,17 @@ Each section's **Status:** line says which.
   work.
 
 ```{note}
-**One product call site consults the registry; seven surfaces are still
-unwired.** The one is
-[`run-command-line-length`](#run-command-line-length): `Host.run()` reads that
-record through {func}`~otto.host.userland.refuse_if_gapped` and refuses before
-it types anything. For the other seven `measured-broken` rows, wiring a call
-site is a behaviour change that belongs with the call site being changed, and
-it has not happened — read those rows as "what otto knows", and each `reason`
-and **Status:** line as what such a refusal *would* say and do.
+**Two product call sites consult the registry; six surfaces are still
+unwired.** They are [`daemon-launch`](#daemon-launch) — `otto link impair
+--expire` reads that record and refuses to launch its expire timer on a host
+declaring `has_bash=False` — and
+[`run-command-line-length`](#run-command-line-length), where `Host.run()` reads
+its record and refuses before it types anything. Both go through
+{func}`~otto.host.userland.refuse_if_gapped`. For the other six
+`measured-broken` rows, wiring a call site is a behaviour change that belongs
+with the call site being changed, and it has not happened — read those rows as
+"what otto knows", and each `reason` and **Status:** line as what such a refusal
+*would* say and do.
 
 Two refusals that fire in otto today are *not* this table at all:
 `PosixPrivilege._elevate` and `ShellFileTransfer._run_put`/`_run_get` are
@@ -96,7 +99,7 @@ error prints it verbatim; the sections below are its readable form.
 | [`sftp-transfer`](#sftp-transfer) | `measured-broken` | No sftp subsystem on a stock BusyBox device. Use the `shell` backend. |
 | [`scp-transfer`](#scp-transfer) | `measured-broken` | No `scp` binary on a stock BusyBox device. Use the `shell` backend. |
 | [`nc-transfer`](#nc-transfer) | `measured-broken` | The `nc` backend cannot drive BusyBox's own `nc` applet. A real netcat installed alongside is fine. |
-| [`daemon-launch`](#daemon-launch) | `measured-broken` | Launching a daemon needs bash, which a stock BusyBox userland does not have. |
+| [`daemon-launch`](#daemon-launch) | `measured-broken` | Launching a tagged daemon needs bash, which a stock BusyBox userland does not have, so `link impair --expire` is refused rather than left with a timer that never runs. Impair without `--expire` and it works. |
 | [`shutdown-command`](#shutdown-command) | `measured-broken` | `Host.shutdown()` emits a command BusyBox spells differently. `Host.reboot()` is unaffected. |
 | [`run-command-line-length`](#run-command-line-length) | `measured-broken` | `Host.run()` refuses a command whose typed line would exceed 1022 characters, rather than let ash truncate it. `Host.exec()` is safe and is not refused. |
 | [`product-lifecycle`](#product-lifecycle) | `untested` | otto's `stage`/`install`/`uninstall` verbs emit no command of their own. Whether they work on your device is decided by your own product code. |
@@ -106,9 +109,10 @@ error prints it verbatim; the sections below are its readable form.
 ### shell-transfer-base64
 
 **Status:** `measured-broken` — otto does refuse before it sends anything, and
-this is the one surface here that already does. The refusal is probe-driven
-(`ShellFileTransfer._run_put` resolves `base64_flag` and raises on `absent`),
-not read from this table.
+this is the only surface here whose refusal does not come from this table. It is
+probe-driven (`ShellFileTransfer._run_put` resolves `base64_flag` and raises on
+`absent`) rather than read from the record, which is why it refuses despite
+being unwired.
 
 The `shell` transfer backend encodes every chunk with the device's own
 `base64`, so a userland without that applet cannot use the backend at all.
@@ -205,14 +209,42 @@ replace the missing `-N`).
 
 ### daemon-launch
 
-**Status:** `measured-broken` — otto *would* refuse before sending anything,
-once a call site consults the registry. None does yet, so today the attempt is
-made and the outcome is whatever the device does with it, below.
+**Status:** `measured-broken` — and this is one of the two surfaces on this page
+that otto actually refuses *from this table*. `otto link impair --expire` reads
+the record through {func}`~otto.host.userland.refuse_if_gapped` and declines to
+launch the timer.
 
 `otto.host.daemon.launch_command` wraps every daemon in a `setsid bash -c` that
 re-`exec`s it under a findable `argv[0]`, and a stock BusyBox userland has no
 bash. The wrapper body is not portable to ash either, so this is not a
 `bash`→`sh` substitution: it needs a different `argv[0]` mechanism.
+
+**What the refusal replaced was silence, not a loud failure.** `otto.link`
+launches a detached timer to clear an impairment after `--expire` seconds, and
+its `_root_run` helper deliberately does not raise on a non-ok result — a qdisc
+mutation's failure is caught by the caller's own re-read instead — and nothing
+re-reads after a timer launch. So the device's `bash: not found` came back, was
+discarded, and `impair` reported **success** for an impairment whose timer did
+not exist and which therefore never expired. Now the impair is refused, and the
+link is left as it was found.
+
+**What is not refused.** Only the daemon. `tc` needs no bash, so an impair
+*without* `--expire` works normally on the same device — clear it yourself with
+`otto link repair` when you are done. `repair` is also unaffected: it cancels
+timers with a `ps` scan and `kill`, and never launches one.
+
+**Which hosts are refused.** Those declaring `has_bash=False` — the `busybox`
+os_profile sets it, and any `unix` lab entry may set it directly. It is the
+*absence of bash* that matters, not BusyBox specifically: a dash-only host
+cannot run this wrapper either and is refused for the same reason. Nothing is
+probed to decide this, so the refusal costs no connection.
+
+**otto's other tagged-daemon launch, tunnels, is not a second raise site** and
+does not need one: `otto.tunnel.manage._resolve_chain` already refuses a
+`has_bash=False` host as a tunnel path member, before any launch is planned,
+because tunnel discovery and removal scan only `has_bash` hosts and would
+otherwise leak un-reapable processes. That refusal is loud and predates this
+one.
 
 **Measured:** the five matrix artifacts, 2026-08-13, running the wrapper body
 under each row's own ash. The two oldest have no `exec -a` and answer
@@ -221,9 +253,11 @@ then mis-expand `"${@:2}"` into a substring of `$1`, so the launch execs
 `NTINEL` instead of `SENTINEL`. The naive fix trades a clean `not found` for a
 corrupted program name.
 
-**Queued for:** the full-parity workstream. Not yet written up in the queue
-file: this table is the record, and the queue file carries the plan for work
-that has one.
+**Queued for:** the refusal has landed; a *fix* has not, and is not written up
+in the queue file — this table is the record, and the queue file carries the plan
+for work that has one. A fix is a portable `argv[0]` mechanism, which is a
+design question rather than a spelling change, and until one exists the record
+stays `measured-broken`, because the surface still is.
 
 ### shutdown-command
 
@@ -248,8 +282,8 @@ every GNU host.
 
 ### run-command-line-length
 
-**Status:** `measured-broken` — and this is the one surface on this page that
-otto actually refuses *from this table*. `Host.run()` reads the record through
+**Status:** `measured-broken` — and this is one of the two surfaces on this page
+that otto actually refuses *from this table*. `Host.run()` reads the record through
 {func}`~otto.host.userland.refuse_if_gapped` and raises before it types
 anything, so nothing is attempted and no connection is opened.
 

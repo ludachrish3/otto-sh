@@ -17,32 +17,50 @@ Two queues already exist and are **not** duplicated here:
 
 ## 1. The registry renders messages that almost nothing invokes
 
-**Status: one of eight surfaces wired. Seven open.**
+**Status: two of eight surfaces wired. Six open.**
 
 `Gap`, `GAPS`, `gap_for()`, `refuse_if_gapped()` and
 `UnsupportedOnUserlandError.for_gap()` all exist and are tested. Phase 5 left
-them with **no product call site at all**; `run-command-line-length` now has
-one — `otto.host.session.refuse_if_line_editor_would_truncate`, called from
-`SessionManager.run_cmd` (see §2 below). The other seven measured-broken
-surfaces are unchanged, and `shell-transfer-base64` still refuses only
-incidentally, because `_run_put` probes `base64_flag` rather than reading this
-table.
+them with **no product call site at all**; two now consult the table:
 
-The shape the first one settled, and the one to copy: the **caller** decides
-that this host belongs to the measured class (there, that its declared shell
-dialect is `ash`), and the **table** decides whether that class is refused at
-all — so downgrading the record to `untested` stops the refusal, which is
-asserted. Neither half is enough alone.
+1. `run-command-line-length` —
+   `otto.host.session.refuse_if_line_editor_would_truncate`, called from
+   `SessionManager.run_cmd` (see §2 below).
+2. `daemon-launch` — `otto.host.daemon.refuse_if_launch_wrapper_needs_bash`,
+   called from `otto.link.manage._launch_daemon`, the single path in `otto.link`
+   that reaches `launch_command`. Keyed on a declared `has_bash=False`. See §2
+   below for what it replaced, which was a **silent** failure rather than a loud
+   one.
+
+The other six measured-broken surfaces are unchanged, and
+`shell-transfer-base64` still refuses only incidentally, because `_run_put`
+probes `base64_flag` rather than reading this table.
+
+The shape both settled, and the one to copy: the **caller** decides that this
+host belongs to the measured class (a declared shell dialect of `ash`; a
+declared `has_bash=False`), and the **table** decides whether that class is
+refused at all — so downgrading the record to `untested` stops the refusal,
+which is asserted in both cases. Neither half is enough alone.
+
+**Reachability is the thing to establish before writing the guard**, not after.
+`daemon-launch` had three `launch_command` call sites and only two of them were
+reachable with a `has_bash=False` host: `otto.tunnel.manage.add_tunnel`'s socat
+launch is already unreachable because `_resolve_chain` rejects such a host as a
+tunnel path member first, so it got **no guard**. A guard at a site nothing
+reaches cannot fail, which is this repo's most common defect; the reachable two
+are each pinned end to end by a test that arrives at the site with a bash-less
+host.
 
 Wiring a raise site is still a **behaviour change** that belongs with each call
 site, one at a time, with its own test. Per-surface, the call sites to wire are
 named in each record's `measured_on`.
 
-## 2. Two product bugs recorded as gaps
+## 2. Three product bugs recorded as gaps
 
-Both are registry entries with measurements. Recording them was phase 5's job.
-The first has since been converted from silence into a refusal; the second has
-not been touched.
+Each is a registry entry with a measurement. Recording the first two was phase
+5's job; the third was recorded then too, but the fact that its failure was
+SILENT was found later, while wiring it. Two of the three have since been
+converted from silence into a refusal; `file-ops-base64` has not been touched.
 
 ### `run-command-line-length` — NO LONGER SILENT on `Host.run()`
 
@@ -78,6 +96,42 @@ longest line of the command — and a multi-line script is judged line by line.
    trade, stated on the constant; there is no per-host override today, and
    adding one (a `userland_options` field, or a probe) is the natural next
    item if a real device disagrees.
+
+### `daemon-launch` — NO LONGER a silent SUCCESS on `link impair --expire`
+
+`otto link impair <link> --expire N` launches a detached timer to clear the
+impairment later, through `otto.host.daemon.launch_command`'s
+`bash -c 'exec -a …'` wrapper. On a host declaring `has_bash=False` that line
+came back `bash: not found` — and nothing looked. `otto.link.manage._root_run`
+deliberately does not raise on a non-ok result (its docstring's reason: a qdisc
+mutation's failure is caught by the caller's own re-read), and **nothing
+re-reads after a timer launch**. So `impair_link` appended the placement,
+returned an `ImpairReport`, and the CLI printed success for an impairment whose
+timer did not exist and which therefore never expired.
+
+It now REFUSES, at `_launch_daemon`, rendering the record's message. The refusal
+lands after this call's own qdisc mutation has been applied and verified, so it
+takes `impair_link`'s no-half-impairments path and the link is left as it was
+found. An impair with no `--expire` on the same host is untouched — `tc` needs no
+bash — and so is `repair`, which cancels timers with a `ps` scan and `kill`.
+
+**What is still open here:**
+
+1. **The un-watched launch is only fixed for THIS cause.** A launch that fails
+   for any other reason on a host that does have bash is still discarded
+   silently, and `impair` still reports success. Pinned deliberately, not fixed,
+   by `test_any_other_failed_launch_is_still_unnoticed` in
+   `tests/unit/link/test_manage_impair.py`. The fix is a post-launch verify (a
+   `ps` scan for the sentinel, the way `add_tunnel` verifies its own chain), which
+   is a change to `otto.link`'s contract rather than to the gap registry.
+2. **No fix for the gap itself**, only a refusal: `--expire` remains unavailable
+   on a bash-less host. A fix is a portable `argv[0]` mechanism — a design
+   question, not a spelling change — and the parity sweep does not carry it yet.
+3. The refusal is welded to `launch_command` via `_launch_daemon` rather than
+   hoisted to the top of `impair_link`, which would refuse before touching the
+   device at all. That would be cheaper by one apply/rollback round trip and is
+   a reasonable later move; it was not taken because a guard at the API entry
+   stops proving that the launch sites downstream of it are reachable.
 
 ### `file-ops-base64` — hard-coded codec
 
