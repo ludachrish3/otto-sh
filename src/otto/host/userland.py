@@ -628,7 +628,38 @@ class Userland:
         ``_RESOLVE_BUDGET_S``'s arithmetic is fiction. The kwarg stays because
         a callee that CAN bound itself should, and because it is what lets the
         remote command be abandoned cleanly rather than orphaned.
+
+        **A DRY RUN CANNOT ASK, AND THAT IS THE ARM IT TAKES.** Every path into
+        this method reads the answer as a measurement:
+        :meth:`_probe` believes the exit code and ``_probe_applets`` believes
+        the stdout. ``BaseHost.exec`` answers a dry run with
+        ``_dry_run_result`` — ``retcode=0``, without leaving this machine — so
+        every probe issued under one comes back a YES and every capability
+        settles on an answer nobody took. That is not a cosmetic wrong value:
+        SETTLED is precisely what :meth:`as_lab_json` offers as a pasteable
+        ``userland_options``, and inside a JSON payload a guess is
+        indistinguishable from a measurement. Refusing here rather than at each
+        reader is what makes it ONE authority: the applet batch and the six
+        single probes share this method, and both need the same answer.
+
+        The consequence is that nothing settles under a dry run, so every
+        capability holds its ``_UNASKABLE_DEFAULTS`` value as ``assumed`` —
+        which is exactly what it is, and exactly what otto did before it asked
+        anything. The ``[DRY RUN]`` echo those probes used to print goes with
+        them, and losing it makes the dry run MORE faithful rather than less:
+        the probes are issued ``log=LogMode.NEVER`` (redacted from every sink),
+        so a real run shows none of them, while ``_dry_run_result`` logs at the
+        default ``NORMAL`` and showed all of them.
+
+        The dry-run arm reuses this method's own "could not be asked" template
+        rather than adding a second one, on the same ground ``_probe_applets``
+        reuses it: that is exactly what this is.
         """
+        if is_dry_run():
+            _logger.debug(
+                "userland: probe %r could not be asked (%s)", cmd, "a dry run reaches no device"
+            )
+            return None
         remaining = self._deadline - _monotonic()
         if remaining <= 0:
             _logger.debug("userland: resolution budget spent before %r; leaving it unasked", cmd)
@@ -1237,16 +1268,28 @@ def _no_resolver_report(host_class: str) -> "list[str]":
 
 
 def _dry_run_report() -> "list[str]":
-    """Refuse to render under ``--dry-run``, where measuring anything is impossible."""
+    """Say plainly that a dry run measured nothing, instead of rendering an all-guess table.
+
+    A MESSAGE, NOT A GUARD, and the distinction is worth stating because this
+    used to be both. ``Userland._send`` refuses to issue a probe under a dry
+    run, so the pin is empty here whether or not this branch exists -- the
+    paste-safety property is enforced there, once, for every command that
+    triggers a resolution rather than for this verb alone. What is left for
+    this function is which of two true answers a user gets, and the table is
+    the worse one: thirteen rows of ``assumed`` says what the host WOULD do,
+    which is a real reading, but ``_probe_report``'s empty-pin paragraph then
+    invites the reader to "run this again outside that window", and there is no
+    window. A dry run will not settle anything however long they wait.
+    """
     return [
         "Dry run: no probe was issued, so there is nothing to report and nothing to pin.",
         "",
         (
-            "Deliberate, and this verb is the one that most needs it. A dry-run `exec` "
-            "returns retcode 0 without reaching the device, and a probe keyed to that exit "
-            "code reads it as a yes -- so a report built here would offer answers nobody "
-            "measured as a pasteable pin, which is the single outcome the settled-only pin "
-            "exists to prevent."
+            "Deliberate. `Userland._send` declines to issue a probe under a dry run -- a "
+            "dry-run `exec` answers `retcode 0` without leaving this machine, and a probe "
+            "keyed to that exit code would read it as a yes -- so nothing settles and there "
+            "is genuinely nothing measured to show. Run this without --dry-run to reach the "
+            "device."
         ),
     ]
 

@@ -400,13 +400,21 @@ async def test_a_host_with_no_userland_says_so_instead_of_printing_an_empty_pin(
 
 @pytest.mark.asyncio
 async def test_dry_run_reports_nothing_rather_than_a_fabricated_pin(monkeypatch):
-    """Under ``--dry-run`` every probe would answer yes without leaving this machine.
+    """Under ``--dry-run`` this verb says so, instead of rendering an all-guess table.
 
-    ``BaseHost._dry_run_result`` returns ``retcode=0`` and ``Userland._probe``
-    reads exactly that exit code, so a report built under dry-run would offer a
-    full table of measurements nobody took as a pasteable pin -- the one
-    outcome the settled-only payload exists to prevent, arriving through the
-    front door.
+    THE PASTE-SAFETY PROPERTY IS NOT THIS BRANCH'S ANY MORE, and the split is
+    worth knowing before touching either half. ``Userland._send`` declines to
+    issue a probe under a dry run, so nothing settles and the pin is empty for
+    EVERY command that resolves a userland, not just this verb --
+    ``tests/unit/host/test_dry_run.py::TestDryRunMeasuresNothing`` is that
+    guard. What ``_dry_run_report`` decides is only which true answer a user
+    gets here, and this pins the choice: not thirteen ``assumed`` rows followed
+    by an empty-pin paragraph inviting them to "run this again outside that
+    window", when no window will ever make a dry run measure anything.
+
+    The two assertions still hold on both sides of that split, which is the
+    point of keeping them: whatever this branch renders, no pasteable payload
+    and no device contact may come out of a dry run.
     """
     monkeypatch.setattr("otto.host.userland.is_dry_run", lambda: True)
     device = _Device(applets=list(PROBED_APPLETS))
