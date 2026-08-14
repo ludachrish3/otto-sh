@@ -135,8 +135,10 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ..logger.mode import LogMode
-from ..result import CommandResult
+from ..result import CommandResult, Result
+from ..utils import Status, cli_exposed
 from .errors import UnsupportedOnUserlandError
+from .host import is_dry_run
 from .options import UserlandOptions
 
 _logger = logging.getLogger(__name__)
@@ -1095,6 +1097,160 @@ class Userland:
         return {k: v for k, v in sorted(self._resolved.items()) if k in self._settled}
 
 
+# ===========================================================================
+# The `probe` verb's rendering
+# ===========================================================================
+#
+# Formatting only. :meth:`Userland.as_lab_json` is the authority on WHAT may be
+# pinned -- these helpers never decide that, they only lay out what it returns
+# and explain what it left behind.
+
+
+def _capability_rows(userland: "Userland") -> "list[tuple[str, str, str]]":
+    """``(capability, value, source)`` for every capability, sorted by name.
+
+    EVERY capability, including the assumed ones :meth:`Userland.as_lab_json`
+    drops -- the omission is the thing a human reader needs explained, so this
+    view cannot be built from the pin.
+
+    THE SOURCE IS RECONSTRUCTED, not read back, and that is a stated limit
+    rather than an oversight. ``_resolve_once`` builds its ``sources`` map as a
+    local and spends it on the debug lines, so the only two facts about a
+    capability that outlive a resolution are :meth:`Userland.is_settled` and
+    the declaration the options carry -- and those two are exactly what the
+    three arms are made of there: ``declared`` on a truthy option, ``probed``
+    on an answer that then settles, ``assumed`` on the arm that settles
+    nothing. Reading them back the same way yields the same classification
+    without teaching :class:`Userland` to retain a map nothing else consumes.
+    ``tests/unit/host/test_userland_probe.py`` holds the two spellings in
+    agreement by parsing the debug lines a resolution has just emitted, rather
+    than by restating an expectation here -- so a drift in either reddens.
+    """
+    values = {applet_capability(a): userland.has_applet(a) for a in PROBED_APPLETS}
+    # Whatever `_UNASKABLE_DEFAULTS` carries beyond the applets is the fixed
+    # six, and each of those names is spelled exactly like the property that
+    # reads it. Derived rather than listed, so a seventh capability with no
+    # reader raises AttributeError here instead of going quietly missing from
+    # the report.
+    values |= {n: getattr(userland, n) for n in _UNASKABLE_DEFAULTS if n not in values}
+    rows: list[tuple[str, str, str]] = []
+    for name in sorted(values):
+        if not userland.is_settled(name):
+            source = "assumed"
+        elif getattr(userland._options, name):  # noqa: SLF001 — same-module read of the declarations `_resolve_once` classifies from
+            source = "declared"
+        else:
+            source = "probed"
+        rows.append((name, values[name], source))
+    return rows
+
+
+_SOURCE_LEGEND = (
+    "declared = already pinned in this host's userland_options, and never re-probed. "
+    "probed = the device answered, so this one is worth pinning. "
+    "assumed = otto could not ask, so the value is only what otto did before it asked "
+    "anything -- and it is left out of the pin for that reason, because inside a JSON "
+    "payload a guess is indistinguishable from a measurement."
+)
+
+
+def _probe_report(userland: "Userland") -> "list[str]":
+    """Lay out the resolved capabilities, then the pin, as :meth:`UserlandHost.probe` prints them.
+
+    Two audiences in one output, in the order they are useful: the table says
+    what this host will actually DO (assumed values included, since those are
+    the values in force), and the payload below it says what a maintainer may
+    safely RECORD. They differ exactly when something could not be asked, and
+    the legend between them is what makes that difference actionable rather
+    than mysterious.
+    """
+    rows = _capability_rows(userland)
+    pin = userland.as_lab_json()
+    assumed = [n for n, _, s in rows if s == "assumed"]
+    name_w = max(len("capability"), *(len(n) for n, _, _ in rows))
+    value_w = max(len("value"), *(len(v) for _, v, _ in rows))
+    lines = [
+        f"{'capability':<{name_w}}  {'value':<{value_w}}  source",
+        *(f"{n:<{name_w}}  {v:<{value_w}}  {s}" for n, v, s in rows),
+        "",
+        _SOURCE_LEGEND,
+        "",
+    ]
+    if not pin:
+        lines.append(
+            f"Nothing settled, so there is nothing to pin: all {len(rows)} values above are "
+            "guesses, and recording one would make it permanent. otto abandons a resolution "
+            f"after {_RESOLVE_BUDGET_S:.0f}s and refuses the next attempt for "
+            f"{_RETRY_COOLDOWN_S:.0f}s once one has left anything unasked, so an empty pin "
+            "says otto measured nothing this round -- not that the device has nothing. Run "
+            "this again outside that window."
+        )
+        return lines
+    if assumed:
+        lines.append(
+            f"Left out of the pin below because otto could not ask about them "
+            f"({len(assumed)} of {len(rows)}): {', '.join(assumed)}. Pin the rest into this "
+            "host's lab.json entry; otto asks about these again on a later connection."
+        )
+    elif all(s == "declared" for _, _, s in rows):
+        lines.append(
+            "Every capability is declared in this host's userland_options already, so none "
+            "of them needed a probe. This is the pin in force:"
+        )
+    else:
+        lines.append(
+            "Every capability settled. Pin these into this host's lab.json entry and the "
+            "next connection to this device issues no probe at all:"
+        )
+    lines.append("")
+    payload = json.dumps(pin, indent=2, sort_keys=True).splitlines()
+    lines.append(f'"userland_options": {payload[0]}')
+    lines.extend(payload[1:])
+    return lines
+
+
+def _no_resolver_report(host_class: str) -> "list[str]":
+    """Say plainly that a host whose ``_userland()`` answers ``None`` has no answers.
+
+    Said rather than swallowed, because the alternative renderings are both
+    worse than the hole: a crash blames the user's command for a property of
+    the host class, and an empty pin is indistinguishable from a device that
+    refused every probe. Naming it makes a recorded gap legible at the one
+    moment someone is asking about it.
+    """
+    return [
+        (
+            f"{host_class} builds no Userland, so otto asked this host nothing and there is "
+            "nothing to pin."
+        ),
+        "",
+        (
+            "That is a recorded hole and not a failure of this command: `_userland()` answers "
+            "None by default, and otto's own UnixHost is the only host class that overrides "
+            "it. What follows from that is written where the hook lives -- `UserlandHost` in "
+            "`otto.host.userland` -- and was measured rather than assumed: elevation here "
+            "keeps building today's `sudo`, `refuse_if_base64_is_absent` declines to refuse, "
+            "and neither LocalHost nor DockerContainerHost carries a `userland_options` field "
+            "to pin an answer into anyway."
+        ),
+    ]
+
+
+def _dry_run_report() -> "list[str]":
+    """Refuse to render under ``--dry-run``, where measuring anything is impossible."""
+    return [
+        "Dry run: no probe was issued, so there is nothing to report and nothing to pin.",
+        "",
+        (
+            "Deliberate, and this verb is the one that most needs it. A dry-run `exec` "
+            "returns retcode 0 without reaching the device, and a probe keyed to that exit "
+            "code reads it as a yes -- so a report built here would offer answers nobody "
+            "measured as a pasteable pin, which is the single outcome the settled-only pin "
+            "exists to prevent."
+        ),
+    ]
+
+
 class UserlandHost:
     """Mixin: the hook a host answers with its one :class:`Userland`, or ``None``.
 
@@ -1160,6 +1316,15 @@ class UserlandHost:
     ``file-ops-base64``. The two ``PATH_OPEN`` records on that surface are the
     holes this leaves, and they say so.
 
+    **IT ALSO CARRIES THE ``probe`` VERB**, and the hook is why it lives here
+    rather than on :class:`~otto.host.unix_host.UnixHost`. ``@cli_exposed``
+    scopes a verb by the class that defines it, so putting it on the hook's own
+    class gives ``otto host <id> probe`` to exactly the hosts that answer the
+    hook -- INCLUDING the two that answer ``None``. That is the point rather
+    than a side effect: the paragraph above is a recorded hole, and a verb that
+    was simply absent on those two classes would leave a user asking about the
+    userland with no way to be told there is none.
+
     ``__slots__ = ()`` so it keeps composing with the ``@dataclass(slots=True)``
     hosts, exactly as the two mixins that inherit it do.
     """
@@ -1169,6 +1334,47 @@ class UserlandHost:
     def _userland(self) -> "Userland | None":
         """Return this host's resolved userland capabilities, or None when it has none."""
         return None
+
+    @cli_exposed(output_dir=False)
+    async def probe(self) -> Result:
+        """Resolve this host's userland capabilities and print the pin that skips them.
+
+        RECON ONCE, THEN PIN -- that is the whole point, and it is why the
+        pasteable payload is the product here rather than a footnote to a
+        table. BusyBox devices are slow and :meth:`Userland.resolve` costs a
+        probe round per fresh host object; a maintainer who runs this once and
+        records the answers in that host's ``userland_options`` makes every
+        later connection issue nothing, because ``_resolve_once`` asks only
+        about names that are neither settled nor declared. Until now the pin
+        was reachable only by reading a DEBUG log line, which is a poor place
+        to keep the one output a user is meant to copy.
+
+        ``value`` is the report's lines (``list[str]``), which the CLI renderer
+        prints one per line. Ok in every arm, deliberately: the three
+        interesting outcomes -- a full table, a partial one, and a host with no
+        resolver at all -- are all ANSWERS, and none of them is this command
+        failing. A non-zero exit on the last two would make a sweep across a
+        lab look broken on exactly the hosts whose state otto has already
+        recorded and explained.
+
+        Named ``probe`` rather than ``userland`` for two reasons that point the
+        same way: it names what running it COSTS on the device this exists for
+        (a real probe round, bounded by ``_RESOLVE_BUDGET_S``), matching the
+        other verbs that spend a round trip; and a public ``userland()`` beside
+        the ``_userland()`` hook would read as that hook's public face while
+        returning something else entirely.
+
+        Inherited by every posix-shell host, including the two that answer
+        ``None`` -- see ``_no_resolver_report`` for why that is a case to
+        state rather than a case to hide.
+        """
+        if is_dry_run():
+            return Result(Status.Skipped, value=_dry_run_report())
+        userland = self._userland()
+        if userland is None:
+            return Result(Status.Success, value=_no_resolver_report(type(self).__name__))
+        await userland.resolve()
+        return Result(Status.Success, value=_probe_report(userland))
 
 
 # ===========================================================================

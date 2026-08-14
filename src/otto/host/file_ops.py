@@ -94,8 +94,9 @@ async def refuse_if_base64_is_absent(
       ``test_a_wedged_host_is_not_amplified_by_the_fan_out`` in
       ``tests/unit/host/test_userland.py``);
     * an operator who does not want to pay it can pin all six capabilities in
-      ``userland_options`` — the ``resolve()`` debug line prints them in
-      exactly that form — at which point the round issues nothing.
+      ``userland_options`` — ``otto host <id> probe``
+      (:meth:`~otto.host.userland.UserlandHost.probe`) prints them in exactly
+      that form — at which point the round issues nothing.
 
     That trade is affordable HERE for reasons that are about these two methods
     specifically: they are coarse-grained, user-facing, already multi-round-trip

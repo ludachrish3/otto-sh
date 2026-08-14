@@ -295,6 +295,7 @@ to see what is available for a specific host.
 | `mv` | Move/rename a path on the host |
 | `read-file` | Print a file's text contents |
 | `write-file` | Write text to a file on the host |
+| `probe` | Report the host's userland capabilities and print the `userland_options` pin |
 
 See {doc}`hosts/capabilities` for class-scoping rules and which verbs each host
 type exposes.

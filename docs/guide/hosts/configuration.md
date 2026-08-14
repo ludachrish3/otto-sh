@@ -27,7 +27,8 @@ One further table, ``userland_options``, sits alongside these but names no
 protocol: it declares facts about the *device* (which elevation mechanism it
 has, which ``timeout`` convention its applet speaks) that otto otherwise
 probes for once per host.  It layers exactly like the six above, per-call
-override included.  See {doc}`../setup/lab-config`.
+override included.  `otto host <id> probe` prints the table ready to paste —
+see {ref}`userland-capabilities`.  See also {doc}`../setup/lab-config`.
 
 The same tables are recognized in four places, layered from least
 to most specific:

@@ -292,8 +292,9 @@ declared answers about the *device* — which elevation mechanism it has,
 which `timeout` calling convention its applet speaks, and so on — that otto
 otherwise probes for once per host and caches.  Every key defaults to
 "probe it", so the table is only worth writing to skip a probe or to correct
-one.  Run with `--log-level DEBUG` and otto prints the resolved answers as a
-`userland_options` object ready to paste in.
+one.  Run `otto host <id> probe` and otto prints the answers it settled as a
+`userland_options` object ready to paste in — see
+{ref}`userland-capabilities`.
 
 ```json
 "userland_options": { "elevation": "su", "timeout_style": "dash-t" }
