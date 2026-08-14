@@ -621,6 +621,29 @@ class UserlandOptions:
     coreutils spelling) works from 1.31.0. The two spellings are mutually
     exclusive on every build tested."""
 
+    nc_dash_n: str | None = None
+    """``"supported"``, ``"rejected"``, ``"absent"``, or ``None`` to probe.
+
+    Whether this device's ``nc`` parses the ``-N`` that the ``nc`` transfer
+    backend emits when it asks the device to SEND a file. The second
+    option-support capability after :attr:`timeout_style`, and read the same
+    way: what exists is not what a spelling does.
+
+    Measured 2026-08-14 -- ``rejected`` on all five matrix artifacts (1.16.1,
+    1.21.1, 1.28.1, 1.31.0, 1.35.0, Tier 2 rootfs), ``supported`` on OpenBSD
+    netcat 1.226. That split is the whole point: BusyBox is not the question,
+    the netcat in front of otto is.
+
+    **DECLARING THIS IS A CLAIM ABOUT ONE NAME, ``nc``, AND NOT ABOUT
+    :attr:`NcOptions.exec_name`.** The probe asks about ``nc`` because a
+    capability is cached under a fixed key, and
+    ``otto.host.transfer.nc.refuse_if_nc_rejects_dash_n`` acts on the
+    answer only while ``exec_name`` IS ``nc``. A host pointed at ``ncat`` is
+    never refused from this value, however it was set -- so pinning
+    ``rejected`` on such a host records a measurement and changes nothing, and
+    pinning it after changing ``exec_name`` back to ``nc`` puts a stale answer
+    in force. Re-run ``otto host <id> probe`` when the netcat changes."""
+
     applet_base64: str | None = None
     """``"present"``, ``"absent"``, or ``None`` to probe. Read via
     :meth:`~otto.host.userland.Userland.has_applet`.
@@ -648,7 +671,9 @@ class UserlandOptions:
     ``nc`` transfer question — BusyBox's applet rejects the ``-N`` and ``-l
     PORT`` spellings otto emits, and a real netcat installed alongside works
     via :attr:`NcOptions.exec_name`, which may name a binary this list does not
-    carry. See :data:`~otto.host.userland.PROBED_APPLETS`."""
+    carry. :attr:`nc_dash_n` is the field that asks about the option; this one
+    stays a presence answer with no consumer. See
+    :data:`~otto.host.userland.PROBED_APPLETS`."""
 
     applet_poweroff: str | None = None
     """``"present"``, ``"absent"``, or ``None`` to probe.

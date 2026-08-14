@@ -20,7 +20,7 @@ the three names the other two.
 
 Not every probe `Userland` issues has a row here, only the ones with a real
 argument-parsing question a BusyBox version could answer differently:
-`timeout`, `base64`, `stat`, `wc`. `Userland.elevation`'s `command -v`
+`timeout`, `base64`, `stat`, `wc`, `nc`. `Userland.elevation`'s `command -v`
 presence checks, `Userland.shell_dialect`'s `$BASH_VERSION` variable read, and
 `Userland.checksum`'s single-spelling `md5sum < /dev/null` probe have no such
 question, so they carry no Tier 1 row and only the other two copies exist for
@@ -366,4 +366,69 @@ def test_which_stat_spelling_reports_a_files_size(release, applet_dir, tmp_path)
         f"BusyBox {release.version} `wc -c FILE` printed "
         f"{with_operand.stdout.strip()!r} — the fallback's redirect is "
         f"load-bearing only while this form appends the filename"
+    )
+
+
+# `nc -N` is otto's sender spelling and an OpenBSD netcat option; BusyBox has
+# never had it. The rejection is worded two ways across the matrix
+# (`invalid option -- N` up to 1.21.1, `unrecognized option: N` from 1.28.1),
+# which is exactly why the product probe compares OUTPUT rather than matching
+# either string -- see `Userland._probe_nc_dash_n`. This is that probe's
+# spelling, measured against real binaries.
+_NC_DIFFERENTIAL = '[ "$(nc 2>&1 </dev/null)" = "$(nc -N 2>&1 </dev/null)" ]'
+
+
+@pytest.mark.busybox
+@pytest.mark.parametrize("release", _ROWS)
+def test_no_row_accepts_the_dash_n_the_nc_backend_sends_with(release, applet_dir):
+    """The `nc` backend's GET asks the device to send with `nc -N`. No row can.
+
+    THE DIFFERENTIAL IS WHAT IS MEASURED, not the error text and not the exit
+    code, because neither of those separates the two cases on real binaries: a
+    destination-less `nc` exits 1 on every artifact here AND on a real OpenBSD
+    netcat, and the rejection wording moved between 1.21.1 and 1.28.1. What
+    does separate them is whether adding `-N` CHANGES the answer, and that is
+    the product's own predicate.
+
+    Both halves are asserted, and the second is the one that stops this being
+    a test that would pass against anything: a control option `-Q` -- which no
+    netcat here has either -- must also come back different, so a probe that
+    simply reported "differs" for every input could not satisfy the first
+    assertion while the emitted `-N` genuinely parsed. What this tier cannot
+    show is the ACCEPTING side; that is not a BusyBox row, and the record's
+    `measured_on` carries it (OpenBSD netcat 1.226 answers "supported").
+
+    NOTHING IS CONNECTED. Every invocation here is destination-less, so no
+    socket is opened and nothing binds -- the same property that lets otto
+    issue this against a real device during resolution.
+    """
+    d = applet_dir(release, ["nc"])
+
+    bare = _run_via_dash(d, "nc </dev/null")
+    with_n = _run_via_dash(d, "nc -N </dev/null")
+    differential = _run_via_dash(d, _NC_DIFFERENTIAL)
+    control = _run_via_dash(d, _NC_DIFFERENTIAL.replace("nc -N 2>&1", "nc -Q 2>&1"))
+
+    assert differential.returncode != 0, (
+        f"BusyBox {release.version} answered `nc` and `nc -N` identically, so this "
+        f"build parses `-N` -- the `nc-transfer` record says every row rejects it, and "
+        f"the GET refusal keys on exactly this probe. Re-measure the record before "
+        f"changing this row"
+    )
+    assert control.returncode != 0, (
+        f"BusyBox {release.version} answered `nc -Q` identically to bare `nc`, so this "
+        f"artifact does not reject unknown options at all and the differential above "
+        f"measures nothing on it"
+    )
+    # The same comparison made in PYTHON, from the two invocations' real
+    # output, so the shell one-liner above is checked against what the binary
+    # actually printed rather than trusted to mean what it says.
+    assert bare.stdout or bare.stderr, (
+        f"BusyBox {release.version} printed nothing for a destination-less `nc`; the "
+        f"differential compares those outputs and two empty strings would compare EQUAL, "
+        f"reporting a rejected option as an accepted one"
+    )
+    assert (bare.stdout + bare.stderr) != (with_n.stdout + with_n.stderr), (
+        f"BusyBox {release.version} printed the same thing for `nc` and `nc -N`, which "
+        f"is what the shell differential is checking -- the two must not disagree"
     )

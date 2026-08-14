@@ -106,6 +106,11 @@ _OTHER_DECLARED_CAPABILITIES = {
     "base64_flag": "-d",
     "stat_size": "stat",
     "checksum": "md5sum",
+    # `rejected` is what 1.35.0 measures, like the applet values below, and
+    # nothing in this module reads it: the guard that does
+    # (`refuse_if_nc_rejects_dash_n`) sits on the GET path, and every test here
+    # is about the listener PREFIX. Declared only so the round issues no probe.
+    "nc_dash_n": "rejected",
     **{
         applet_capability(a): ("absent" if a in {"scp", "shutdown"} else "present")
         for a in PROBED_APPLETS

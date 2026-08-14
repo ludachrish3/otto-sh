@@ -1,6 +1,14 @@
 """Unix/SSH-based file transfer backends (netcat) for UnixHost.
 
 Registers ``nc`` into the shared transfer registry on import.
+
+**THE GET DIRECTION ASKS THE DEVICE FOR ONE OPTION FIRST.** Both GET paths make
+the device run ``nc -N`` -- the plain one to SEND, the tunnelled one to LISTEN
+as ``nc -Nl`` -- and ``-N`` is an OpenBSD netcat option that BusyBox's applet
+rejects outright. :func:`refuse_if_nc_rejects_dash_n` declines those up front on
+a device measured to reject it, rather than letting the failure arrive as a
+local server waiting for a peer that will never connect. The PUT direction is
+deliberately not gated on that answer; the guard's own docstring says why.
 """
 
 import asyncio
@@ -21,6 +29,7 @@ from typing_extensions import override
 from ...result import CommandResult, Result
 from ...utils import Status, WaitTimeoutError, wait_for_async
 from ..errors import HostCommandError, HostUnreachableError
+from ..userland import NC_APPLET, NC_DASH_N_REJECTED, refuse_if_gapped
 from .base import (
     NcListenerCheck,
     NcPortStrategy,
@@ -282,6 +291,129 @@ async def _connect_with_retry(
         raise ConnectionError(str(expiry)) from last_err
     # wait_for_async only returns once `connected` stored the pair.
     return cast("tuple[asyncio.StreamReader, asyncio.StreamWriter]", connection)
+
+
+NC_DASH_N_CAPABILITY = "nc_dash_n"
+"""The capability key this backend's refusal turns on.
+
+Spelled once and read once, by
+:meth:`~otto.host.userland.Userland.is_settled`, which validates it against the
+capabilities that module resolves -- so a typo raises there rather than becoming
+a condition that quietly never fires. The VALUE is read through
+:attr:`~otto.host.userland.Userland.nc_dash_n`, a property, which cannot be
+misspelled at all.
+"""
+
+
+async def refuse_if_nc_rejects_dash_n(
+    userland: "Userland | None", *, exec_name: str, host: str = "", attempted: str = ""
+) -> None:
+    """Refuse a netcat GET to a device whose ``nc`` was measured to reject ``-N``.
+
+    **The gap registry's sixth product call site**, and the first whose
+    predicate is an OPTION rather than a presence. Everything otto knows about
+    this failure lives in the ``nc-transfer`` record in
+    :data:`~otto.host.userland.GAPS`; this function supplies the only thing a
+    record cannot -- whether THIS device is one the measurement covers -- and
+    hands the raise back to :func:`~otto.host.userland.refuse_if_gapped` so the
+    message is the record's and not a second, drifting copy of it. Downgrading
+    that record to ``untested`` stops the refusal.
+
+    **PRESENCE WAS NEVER THE QUESTION HERE, WHICH IS WHY THIS IS NOT THE
+    ``scp`` GUARD WITH A DIFFERENT NAME.** ``nc`` is present on all five matrix
+    artifacts; what BusyBox's applet does not have is the OPTION. So the
+    predicate is a SETTLED :attr:`~otto.host.userland.Userland.nc_dash_n` of
+    :data:`~otto.host.userland.NC_DASH_N_REJECTED` -- the device ran its own
+    ``nc`` and the option did not parse. Read
+    ``Userland._probe_nc_dash_n`` for how that is
+    measured without connecting anything.
+
+    **IT KEYS ON THE BINARY otto WILL ACTUALLY EXEC, WHICH IS WHY IT TAKES
+    *exec_name*.** :attr:`~otto.host.options.NcOptions.exec_name` lets an
+    operator point this backend at ``ncat``, ``netcat``, or an absolute path,
+    and the capability is an answer about the name
+    :data:`~otto.host.userland.NC_APPLET` (``nc``) alone. Measuring one binary
+    and refusing on behalf of another is exactly the false refusal the
+    ``nc-transfer`` record warns about -- a BusyBox device with a real OpenBSD
+    netcat installed alongside transfers perfectly well -- so when *exec_name*
+    is anything but that name this returns without refusing, whatever the
+    device answered. The cost is stated rather than hidden: such a host is
+    never protected by this guard, and gets the same timeout it got before the
+    guard existed. What the shared name buys, when they DO match, is that the
+    probe and the transfer resolve it through the same ``Host.exec`` and the
+    same ``PATH`` -- so a locally-installed ``/usr/local/bin/nc`` shadowing the
+    applet is measured, not assumed away.
+
+    **THE PUT PATH IS DELIBERATELY NOT REFUSED FROM THIS ANSWER**, and the
+    asymmetry is the honest one rather than an omission.
+    ``NcFileTransfer._put_files_nc`` spawns ``nc -l -w SECS PORT``, which
+    carries no ``-N`` at all: it is broken on BusyBox for a DIFFERENT reason
+    (the applet spells a listener ``-l -p PORT``), and nothing measured here
+    establishes that a netcat rejecting ``-N`` also rejects the OpenBSD
+    listener form. The two facts coincide on every matrix row and are still two
+    facts. Settling the second one would mean asking a device to LISTEN, which
+    binds a port -- a probe with a side effect on the host it is asking about,
+    and one that can leave a process behind on exactly the devices otto is
+    least able to clean up. So that path stays ``PATH_OPEN`` in the record,
+    which is what it already was.
+
+    **IT RESPECTS ``is_settled``**, like every refusing consumer here. The
+    cannot-ask default for this capability is
+    :data:`~otto.host.userland.NC_DASH_N_SUPPORTED`, so an unsettled host
+    currently reads as "the option parses" and never reaches the refusal --
+    but the gate is written anyway, because what makes it redundant is a VALUE
+    that can change, and because the alternative is that an sshd at its
+    ``MaxSessions`` ceiling (the very condition a bulk transfer creates) turns
+    a refused probe round into a verdict that this device cannot send files.
+    ``test_a_probe_round_that_never_arrived_is_not_refused`` holds it by
+    flipping exactly that default.
+
+    **A host with no resolver at all (``userland is None``) is likewise not
+    refused.** ``_userland()`` is an overridable hook whose base implementation
+    answers ``None``, and :class:`NcFileTransfer` accepts such a context rather
+    than rejecting it -- see its ``__init__``. Nothing has been measured about
+    such a host, so there is nothing to refuse from.
+
+    **IT COSTS NO ROUND TRIP THIS PATH DID NOT ALREADY PAY**, unlike
+    :func:`otto.host.transfer.scp.refuse_if_scp_is_absent`, which added a
+    resolution to a path that awaited none. :meth:`NcFileTransfer.prepare`
+    already resolves the userland as its FIRST statement on every transfer, and
+    :meth:`~otto.host.userland.Userland.resolve` is idempotent once settled, so
+    the ``await`` here is the same round the listener cap
+    (``NcFileTransfer._nc_listener_prefix``) was already awaiting. It is
+    awaited HERE rather than left to ``prepare`` because the guard runs before
+    ``_warmup_for_transfer`` -- refusing before the pool is warmed is the point.
+    What the CAPABILITY costs, on every host and not just this path, is two
+    probes in the resolution round; that is argued at
+    ``Userland._probe_nc_dash_n``.
+
+    Args:
+        userland: the host's capability resolver, from its ``_userland()``
+            hook, or ``None`` when the host has none.
+            :meth:`~otto.host.userland.Userland.resolve` is awaited here, so the
+            caller does not have to.
+        exec_name: the netcat this backend will exec --
+            :attr:`~otto.host.options.NcOptions.exec_name`. Not decoration: it
+            decides whether the measurement is about otto's binary at all.
+        host: the host's name. Decorates the message; changes no verdict.
+        attempted: what the caller was doing, in its own words.
+
+    Raises:
+        ~otto.host.errors.UnsupportedOnUserlandError: this device settled
+            ``nc_dash_n`` on ``rejected``, otto would exec that same ``nc``, and
+            the ``nc-transfer`` record is ``measured-broken``. Nothing is sent,
+            no listener is spawned, and no local server is bound.
+    """
+    if userland is None:
+        return
+    if exec_name != NC_APPLET:
+        return
+    await userland.resolve()
+    if not userland.is_settled(NC_DASH_N_CAPABILITY):
+        return
+    if userland.nc_dash_n != NC_DASH_N_REJECTED:
+        return
+    refuse_if_gapped("nc-transfer", host=host, attempted=attempted)
 
 
 class NcFileTransfer(UnixFileTransfer):
@@ -1055,6 +1187,24 @@ class NcFileTransfer(UnixFileTransfer):
         dest_dir: Path,
         progress_factory: TransferProgressFactory | None = None,
     ) -> dict[Path, Result]:
+        # ABOVE THE TUNNEL DISPATCH, and that position is the whole reason there
+        # is one guard here and not two. Both arms make the device parse `-N` --
+        # this one to SEND (`nc -N <ip> <port>`), the tunnelled one to LISTEN
+        # (`nc -Nl <port>`) -- and `_get_files_nc_tunneled` has exactly one
+        # caller, the dispatch immediately below. A second call inside it would
+        # be a guard that could never be the one to fire, which is this repo's
+        # most common defect; the record states that path PROTECTED instead,
+        # naming this guard.
+        await refuse_if_nc_rejects_dash_n(
+            self._userland,
+            exec_name=self._nc_exec,
+            host=self._name,
+            attempted=(
+                f"get of {len(src_files)} file(s) over the `nc` backend, which asks the "
+                f"device to run `{self._nc_exec} -N` -- to send directly, or to serve a "
+                f"`-Nl` listener when the connection is tunnelled"
+            ),
+        )
         if self._connections.has_tunnel:
             return await self._get_files_nc_tunneled(src_files, dest_dir, progress_factory)
         await self._warmup_for_transfer(len(src_files))

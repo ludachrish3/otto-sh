@@ -24,6 +24,7 @@ does at the call site, including the truncation, without a rootfs.
 """
 
 import base64 as b64
+import dataclasses
 from pathlib import Path
 
 import pytest
@@ -38,10 +39,12 @@ from otto.host.privilege import PosixPrivilege
 from otto.host.unix_host import UnixHost
 from otto.host.userland import (
     MEASURED_BROKEN,
+    PROBED_APPLETS,
     UNTESTED,
     Gap,
     Userland,
     UserlandHost,
+    applet_capability,
     gap_for,
 )
 from otto.logger.mode import LogMode
@@ -523,6 +526,19 @@ class TestTheFamiliesWithNoResolver:
 # ===========================================================================
 
 
+# Every capability the runner below settles: all of them except the applet
+# batch, which it answers with empty stdout and which is therefore discarded.
+# DERIVED from `UserlandOptions` rather than counted, because the count is not
+# what the assertion is about -- "the round really answered" is -- and a hand
+# written number reds on an eighth capability for a reason that has nothing to
+# do with this test.
+_EVERY_NON_APPLET_CAPABILITY = {
+    f.name
+    for f in dataclasses.fields(UserlandOptions)
+    if f.name != "version" and f.name not in {applet_capability(a) for a in PROBED_APPLETS}
+}
+
+
 def _applets(*present: str):
     """A probe runner whose ELEVATION applets are exactly *present*.
 
@@ -588,7 +604,7 @@ class TestWhyTheseTwoPathsAreStillOpen:
         wired = _WiredLocalHost(log=LogMode.QUIET)
         wired.userland = Userland(UserlandOptions(), _applets("su"))
         await wired._prepare_elevation()
-        assert len(wired.userland.as_lab_json()) == 6, (
+        assert set(wired.userland.as_lab_json()) == _EVERY_NON_APPLET_CAPABILITY, (
             "`as_lab_json` reports only SETTLED keys, so this is the premise that the "
             "round really answered rather than falling back to its cannot-ask defaults — "
             "and that the whole round is what `base64_flag` alone would have cost"

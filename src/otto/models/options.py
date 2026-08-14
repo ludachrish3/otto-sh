@@ -282,6 +282,7 @@ class UserlandOptionsSpec(OttoModel):
     stat_size: Literal["stat", "wc", "absent"] | None = None
     checksum: Literal["md5sum", "absent"] | None = None
     timeout_style: Literal["coreutils", "dash-t", "absent"] | None = None
+    nc_dash_n: Literal["supported", "rejected", "absent"] | None = None
     # One field per name in `otto.host.userland.PROBED_APPLETS`, spelled out
     # rather than generated: `extra='forbid'` is what turns `applet_scpp` in
     # lab.json into an error naming the key, and it can only do that for fields
@@ -306,6 +307,7 @@ class UserlandOptionsSpec(OttoModel):
             stat_size=self.stat_size,
             checksum=self.checksum,
             timeout_style=self.timeout_style,
+            nc_dash_n=self.nc_dash_n,
             applet_base64=self.applet_base64,
             applet_nc=self.applet_nc,
             applet_poweroff=self.applet_poweroff,
