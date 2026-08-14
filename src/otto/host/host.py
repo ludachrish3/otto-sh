@@ -746,6 +746,17 @@ class BaseHost(ABC):
             A :class:`~otto.result.Results` aggregating one :class:`~otto.result.CommandResult`
             per command.
 
+        Raises:
+            ~otto.host.errors.UnsupportedOnUserlandError: the host's declared
+                shell dialect is ``ash`` and a command's framed line would
+                exceed what BusyBox ash's line editor delivers intact — see
+                :func:`~otto.host.session.refuse_if_line_editor_would_truncate`.
+                The command is refused before anything is sent, because the
+                alternative is the device silently running a SHORTER command
+                and reporting its success as this one's. :meth:`exec` allocates
+                no pty, is not subject to the bound, and is the way to send
+                such a command.
+
         See Also:
             :meth:`exec`: stateless, concurrent-safe alternative for one-off commands.
         """

@@ -108,6 +108,18 @@ BusyBox host is therefore exactly the case this note used to worry about, and
 it is STILL UNMEASURED: Tier 3 is ssh-only, and no tier puts this backend on
 a telnet transport.
 
+THE ``run()`` GUARD DOES NOT REACH HERE, AND THAT IS THE POINT.
+:func:`otto.host.session.refuse_if_line_editor_would_truncate` now refuses an
+over-long typed line on an ash host, reading the same
+``run-command-line-length`` record -- but it is called from
+``SessionManager.run_cmd``, which is ``Host.run()``'s per-command path, and
+NOT from ``ShellSession.run_cmd``, which is where the pooled exec session
+above would meet it. Pushed one layer down it would refuse every chunk
+command on a telnet or proxied-login BusyBox host rather than transfer it,
+turning the bounded, loud, verified-against failure described below into a
+hard block on the backend those devices depend on. Pinned by
+``tests/unit/host/test_run_line_length.py``'s ``TestTheRefusalIsScoped``.
+
 What that would cost is bounded, which is why this is a note and not a block.
 The failure would be LOUD. Truncation lands inside the single-quoted base64
 blob of ``printf '%s' '<b64>' | base64 -d >> <temp>``, so the far side gets

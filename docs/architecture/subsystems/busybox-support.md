@@ -44,9 +44,10 @@ is an applet everywhere, so only the `shutdown` half is a gap.
 Every record carries one of two statuses, and the status decides whether otto
 would block the call. Read the whole of this section together with the note
 below it: the rule is implemented in
-{func}`~otto.host.userland.refuse_if_gapped`, but **no product call site
-consults that function yet**, so the refusals described here are what a wired
-call site would do, not what otto does today.
+{func}`~otto.host.userland.refuse_if_gapped`, and **exactly one product call
+site consults that function** — so for one surface below the refusal is what
+otto does, and for the other seven it is still what a wired call site would do.
+Each section's **Status:** line says which.
 
 `measured-broken`
 : otto has run it, watched it fail, and written down what it said. A call site
@@ -65,18 +66,21 @@ call site would do, not what otto does today.
   work.
 
 ```{note}
-**No product call site consults the registry yet.** The refusals that fire in
-otto today (`PosixPrivilege._elevate`, `ShellFileTransfer._run_put` and
-`_run_get`) are *probe-driven*: they refuse on what the host in front of them
-answered, which is a different trigger from this table's "otto measured this on
-the matrix". Wiring a call site to {func}`~otto.host.userland.refuse_if_gapped`
-is a behaviour change that belongs with the call site being changed. So today
-this table is a declared, tested record that this page and the parity queue
-consume — read the rows below as "what otto knows", and each `reason`, and
-each section's **Status:** line, as what such a refusal *would* say and do.
-One `measured-broken` surface does refuse before sending today —
-[`shell-transfer-base64`](#shell-transfer-base64) — and it gets there by
-probing `base64_flag`, not by reading this table.
+**One product call site consults the registry; seven surfaces are still
+unwired.** The one is
+[`run-command-line-length`](#run-command-line-length): `Host.run()` reads that
+record through {func}`~otto.host.userland.refuse_if_gapped` and refuses before
+it types anything. For the other seven `measured-broken` rows, wiring a call
+site is a behaviour change that belongs with the call site being changed, and
+it has not happened — read those rows as "what otto knows", and each `reason`
+and **Status:** line as what such a refusal *would* say and do.
+
+Two refusals that fire in otto today are *not* this table at all:
+`PosixPrivilege._elevate` and `ShellFileTransfer._run_put`/`_run_get` are
+*probe-driven*, refusing on what the host in front of them answered — a
+different trigger from "otto measured this on the matrix". That is why
+[`shell-transfer-base64`](#shell-transfer-base64) refuses before sending
+despite being unwired here: it gets there by probing `base64_flag`.
 ```
 
 ## The declared gaps
@@ -94,7 +98,7 @@ error prints it verbatim; the sections below are its readable form.
 | [`nc-transfer`](#nc-transfer) | `measured-broken` | The `nc` backend cannot drive BusyBox's own `nc` applet. A real netcat installed alongside is fine. |
 | [`daemon-launch`](#daemon-launch) | `measured-broken` | Launching a daemon needs bash, which a stock BusyBox userland does not have. |
 | [`shutdown-command`](#shutdown-command) | `measured-broken` | `Host.shutdown()` emits a command BusyBox spells differently. `Host.reboot()` is unaffected. |
-| [`run-command-line-length`](#run-command-line-length) | `measured-broken` | A command over 1022 characters through `Host.run()` is silently truncated. `Host.exec()` is safe. |
+| [`run-command-line-length`](#run-command-line-length) | `measured-broken` | `Host.run()` refuses a command whose typed line would exceed 1022 characters, rather than let ash truncate it. `Host.exec()` is safe and is not refused. |
 | [`legacy-dropbear-crypto`](#legacy-dropbear-crypto) | `untested` | An old dropbear may need `ssh_options` to negotiate at all. Nobody has tried. |
 | [`busybox-over-a-real-network`](#busybox-over-a-real-network) | `untested` | Every tier is loopback, so nothing has met a real path's MTU, latency or window. |
 
@@ -243,27 +247,62 @@ every GNU host.
 
 ### run-command-line-length
 
-**Status:** `measured-broken` — otto *would* refuse before sending anything,
-once a call site consults the registry. None does yet, so today the attempt is
-made and the outcome is whatever the device does with it, below.
+**Status:** `measured-broken` — and this is the one surface on this page that
+otto actually refuses *from this table*. `Host.run()` reads the record through
+{func}`~otto.host.userland.refuse_if_gapped` and raises before it types
+anything, so nothing is attempted and no connection is opened.
 
-A command longer than 1022 characters sent through `Host.run()` is **silently
-truncated** on a BusyBox target: a different, shorter command runs and its
-success is reported as the caller's. `run()` drives a persistent session, which
-otto opens with a `dumb` terminal type, so the far side allocates a pty and the
-command arrives as a *typed line* through ash's line editor. `Host.exec()` opens
-a bare exec channel with no pty and is unaffected, so the same command is safe
-through `exec()`.
+BusyBox ash's line editor **silently truncates** a typed line longer than 1022
+characters: a different, shorter command runs and its success is reported as the
+caller's. That is the failure this refusal replaces, and it was the last place
+otto was knowingly wrong in the quiet direction. `run()` drives a persistent
+session, which otto opens with a `dumb` terminal type, so the far side allocates
+a pty and the command arrives as a *typed line* through that editor.
 
-**Measured:** the phase-5 spike, 2026-08-13, dropbear 2022.83 against BusyBox
-1.35.0. Largest line delivered intact 1022, first truncated 1023, with no error
-and no log line. Measured identical against OpenSSH and against a bare local
-pty, which is what identifies it as BusyBox ash's `CONFIG_FEATURE_EDITING_MAX_LEN`
-and not the transport. For contrast, the exec channel took 9000 characters
-intact and broke at 9001.
+**What the bound applies to.** The line otto *types*, not the command you passed:
+every command is wrapped in BEGIN/END sentinels first, which cost 74 characters,
+so **948** is the most any single line of your command may be. A multi-line
+script is judged line by line, because the editor's buffer holds one line —
+a long here-doc is fine as long as no individual line is over.
 
-**Queued for:** unqueued, deliberately. A fix is a pty-free `run()` path, not a
-larger buffer — the buffer belongs to the device.
+**What is not refused.** `Host.exec()` opens a bare exec channel with no pty, is
+unaffected, and is the way to send an over-long command. Two further paths stay
+unguarded deliberately: a named session's `HostSession.run()`, and `exec()` on a
+**telnet or proxied-login** host — neither has a stateless exec primitive, so
+the call routes through a pooled shell session and *is* line-edited. Guarding
+those would make {class}`~otto.host.transfer.shell.ShellFileTransfer` refuse its
+own 5534-character chunk lines, which is the whole reason the `shell` backend
+exists. Those two remain measured-but-unfixed; on them, truncation is still
+possible.
+
+**Which hosts are refused.** Those whose declared shell dialect is `ash` — the
+`busybox` os_profile sets `command_frame: "ash"`, and a lab entry may set it
+directly. Not every BusyBox-userland host and not every host without bash: the
+buffer belongs to ash's line editor, and dash or ksh hosts have no such limit.
+
+**Measured:** two measurements. First the phase-5 spike, 2026-08-13, dropbear
+2022.83 against BusyBox 1.35.0: largest line delivered intact 1022, first
+truncated 1023, with no error and no log line — identical against OpenSSH and
+against a bare local pty, which is what identifies it as BusyBox ash's
+`CONFIG_FEATURE_EDITING_MAX_LEN` rather than any transport, while the exec
+channel took 9000 characters intact and broke at 9001. Then, because that
+config is set at *build time* and one artifact cannot speak for the matrix, all
+five pinned rows (1.16.1, 1.21.1, 1.28.1, 1.31.0, 1.35.0) were driven through a
+local pty and answered 1022/1023 identically; the same harness carried 18437
+characters into bash and over 20000 into dash, ruling itself out as the thing
+being measured.
+
+**The cost of the bound, stated plainly:** a device whose BusyBox was built with
+a larger `CONFIG_FEATURE_EDITING_MAX_LEN` — or with the line editor compiled out
+— will be refused a command it could actually have run. Twelve years of upstream
+prebuilds agreeing is why otto takes that trade; a device that disagrees is a
+new measurement, not a bug in your command.
+
+**Queued for:** the refusal has landed; a *fix* has not, and stays unqueued
+deliberately. A fix is a pty-free `run()` path, not a larger buffer — the buffer
+belongs to the device — and until one exists the record stays `measured-broken`,
+because the surface still is: otto declines the command rather than running a
+shorter one.
 
 ### legacy-dropbear-crypto
 

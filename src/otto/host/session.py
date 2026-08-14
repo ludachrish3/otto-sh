@@ -22,10 +22,11 @@ from typing import TYPE_CHECKING, Any
 
 from typing_extensions import Self, override
 
-from .command_frame import BashFrame, CommandFrame, SessionMarkers, history_prefix
+from .command_frame import AshFrame, BashFrame, CommandFrame, SessionMarkers, history_prefix
 from .login_proxy import Cred, LoginProxyError, cred_for, perform_switch, run_proxy, run_undo
 from .shell_liveness import confirm_live
 from .telnet import TelnetClient
+from .userland import ASH_TYPED_LINE_MAX, refuse_if_gapped
 
 if TYPE_CHECKING:
     from asyncssh import SSHClientConnection
@@ -46,6 +47,14 @@ Expect = tuple[str | re.Pattern[str], str]
 
 # Max length hint for asyncssh regex readuntil (performance optimization)
 _MAX_SEPARATOR_LEN = 256
+
+# Hex characters of ``uuid.uuid4()`` that become a session id, and so the
+# length of every marker built from it. Named because a second reader depends
+# on it: ``refuse_if_line_editor_would_truncate`` has to size otto's own
+# framing BEFORE any session exists, and it does that by rendering the frame
+# against a synthetic marker set of exactly this shape. Pinned against a real
+# session's markers by ``tests/unit/host/test_run_line_length.py``.
+_SESSION_ID_LEN = 12
 
 # Log-preview truncation limits to keep debug output readable.
 _LOG_PREVIEW_FRAMED = 256  # max chars of a framed command payload in the log
@@ -89,6 +98,83 @@ def _sink_for(
     return lambda line: log_output(line, mode)
 
 
+def refuse_if_line_editor_would_truncate(
+    frame: CommandFrame | None, cmd: str, *, host: str = ""
+) -> None:
+    """Refuse *cmd* when the far shell's line editor would silently shorten it.
+
+    **The gap registry's first product call site.** Everything otto knows about
+    this failure lives in the ``run-command-line-length`` record in
+    :data:`~otto.host.userland.GAPS`; this function supplies the only two things
+    a record cannot — whether THIS host is one the measurement covers, and
+    whether THIS command is over the bound — and then hands the raise back to
+    :func:`~otto.host.userland.refuse_if_gapped` so the message is the record's
+    and not a second, drifting copy of it.
+
+    WHAT IT KEYS ON: ``isinstance(frame, AshFrame)``, the host's declared shell
+    DIALECT. Not the os_profile (a device can be BusyBox-userland with a
+    different shell, and ``userland_options`` deliberately refuses to be named
+    ``busybox_*`` for the mirror-image reason -- see
+    :class:`~otto.host.options.UserlandOptions`), not ``has_bash=False`` (dash
+    and ksh hosts are not ash and have no such buffer), and not
+    :attr:`~otto.host.userland.Userland.shell_dialect`. That last one is the
+    tempting wrong answer: it is the probe that MEASURES ash-ness, but reading
+    it here would drag a whole userland resolution -- up to
+    ``_RESOLVE_BUDGET_S``, 30 seconds against a host that will not answer --
+    onto every ``run()`` on every unix host, to decide a question the lab entry
+    has already answered. The frame is declared, synchronous, and free, and
+    ``os_profile``'s ``busybox`` profile sets it (``command_frame: "ash"``) for
+    exactly the devices this covers. Identity, not ``type_name``, because
+    ``AshFrame``'s own docstring records a registry bypass that produces a
+    ``BashFrame`` answering to ``"ash"``; only an isinstance check sees through
+    it.
+
+    WHAT IT MEASURES: the longest PHYSICAL LINE otto would type, framing
+    included. Two corrections to the obvious ``len(cmd)``, and both matter:
+
+    * otto never types the caller's command bare -- it wraps it in the frame's
+      BEGIN/END sentinels, which cost 74 characters on the bash/ash frame. A
+      guard on ``len(cmd)`` would leave every command between 949 and 1022
+      characters silently truncated, which is the original defect with a
+      narrower mouth.
+    * the buffer holds ONE line. A multi-line script is many lines, each
+      independently edited, so the total is the wrong number: summing it would
+      refuse a here-doc every line of which the device handles fine.
+
+    Renders the framing against a synthetic marker set rather than a real
+    session's, because it runs BEFORE ``_ensure_session`` -- the refusal must
+    not cost a connection. Only the marker LENGTH affects the arithmetic and
+    that is fixed by this module's ``_SESSION_ID_LEN``, which
+    ``tests/unit/host/test_run_line_length.py`` pins against a real session.
+
+    Raises:
+        ~otto.host.errors.UnsupportedOnUserlandError: *frame* is ash and the
+            typed line is over :data:`~otto.host.userland.ASH_TYPED_LINE_MAX`.
+            Never raised for another dialect, and never raised while the record
+            is anything but ``measured-broken`` -- the firing rule stays in
+            :func:`~otto.host.userland.refuse_if_gapped`.
+    """
+    if not isinstance(frame, AshFrame):
+        return
+    markers = SessionMarkers.for_session("0" * _SESSION_ID_LEN)
+    longest = max(len(line) for line in frame.frame(cmd, markers).rstrip("\n").split("\n"))
+    if longest <= ASH_TYPED_LINE_MAX:
+        return
+    overhead = len(frame.frame("", markers).rstrip("\n"))
+    refuse_if_gapped(
+        "run-command-line-length",
+        host=host,
+        attempted=(
+            f"a {len(cmd)}-character command, which otto types as a {longest}-character "
+            f"line once its own BEGIN/END framing ({overhead} characters) is added — over "
+            f"the {ASH_TYPED_LINE_MAX} this shell's line editor delivers intact, so "
+            f"{ASH_TYPED_LINE_MAX - overhead} characters is the most any one line of a "
+            f"command may be here. Send it through `exec()`, which allocates no pty and "
+            f"took 9000 characters in the same measurement, or split it"
+        ),
+    )
+
+
 class ShellSession(ABC):
     """Abstract base for persistent shell sessions.
 
@@ -120,7 +206,7 @@ class ShellSession(ABC):
         init_timeout: float | None = None,
         shell_history: bool = True,
     ) -> None:
-        self._session_id = uuid.uuid4().hex[:12]
+        self._session_id = uuid.uuid4().hex[:_SESSION_ID_LEN]
         # The dialect: how commands are framed and parsed. Defaults to bash; an
         # embedded host injects a ZephyrFrame (or a project-registered frame).
         self._frame: CommandFrame = command_frame or BashFrame()
@@ -1623,7 +1709,22 @@ class SessionManager:
         Wraps :meth:`~otto.host.session.ShellSession.run_cmd` with automatic
         session creation. Shell state persists across calls (same session is
         reused until it dies).
+
+        THE PER-COMMAND PATH OF :meth:`otto.host.host.BaseHost.run`, for every
+        host family (``RemoteHost._run_one``, ``LocalHost``,
+        ``DockerContainerHost``, ``EmbeddedHost``), and nothing else --
+        ``exec()`` and named sessions both reach a
+        :class:`ShellSession` without passing through here. That is what makes
+        this the right and only home for
+        :func:`refuse_if_line_editor_would_truncate`: the
+        ``run-command-line-length`` gap is ``run()``'s alone, and the two paths
+        this method does not cover are two paths that MUST keep working
+        unguarded (see that function, and the gap record).
+
+        The refusal is checked BEFORE ``_ensure_session``, so a command otto
+        will not send costs no connection either.
         """
+        refuse_if_line_editor_would_truncate(self._command_frame, cmd, host=self._name)
         await self._ensure_session()
         mode = log
         if mode is not LogMode.NEVER:

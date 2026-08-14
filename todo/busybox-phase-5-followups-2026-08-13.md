@@ -15,43 +15,69 @@ Two queues already exist and are **not** duplicated here:
 
 ---
 
-## 1. The registry renders messages that nothing invokes
+## 1. The registry renders messages that almost nothing invokes
 
-**Status: by design in phase 5, and the largest open item.**
+**Status: one of eight surfaces wired. Seven open.**
 
 `Gap`, `GAPS`, `gap_for()`, `refuse_if_gapped()` and
-`UnsupportedOnUserlandError.for_gap()` all exist and are tested, but **no
-product call site consults them**. `refuse_if_gapped`'s only `raise` is inside
-itself; nothing under `src/otto/` calls it. Of the eight measured-broken
-surfaces, exactly one — `shell-transfer-base64` — refuses today, and only
-incidentally, because `_run_put` probes `base64_flag`.
+`UnsupportedOnUserlandError.for_gap()` all exist and are tested. Phase 5 left
+them with **no product call site at all**; `run-command-line-length` now has
+one — `otto.host.session.refuse_if_line_editor_would_truncate`, called from
+`SessionManager.run_cmd` (see §2 below). The other seven measured-broken
+surfaces are unchanged, and `shell-transfer-base64` still refuses only
+incidentally, because `_run_put` probes `base64_flag` rather than reading this
+table.
 
-This is stated honestly in `src/otto/host/userland.py` and the docs page's
-status lines are subjunctive for the same reason. Wiring a raise site is a
-**behaviour change** that belongs with each call site, one at a time, each with
-its own test — which is why phase 5 did not do it wholesale.
+The shape the first one settled, and the one to copy: the **caller** decides
+that this host belongs to the measured class (there, that its declared shell
+dialect is `ash`), and the **table** decides whether that class is refused at
+all — so downgrading the record to `untested` stops the refusal, which is
+asserted. Neither half is enough alone.
 
-Per-surface, the call sites to wire are named in each record's `measured_on`.
+Wiring a raise site is still a **behaviour change** that belongs with each call
+site, one at a time, with its own test. Per-surface, the call sites to wire are
+named in each record's `measured_on`.
 
-## 2. Two product bugs recorded as gaps, not fixed
+## 2. Two product bugs recorded as gaps
 
-Both are registry entries with measurements. Recording them was phase 5's job;
-fixing them was explicitly out of scope.
+Both are registry entries with measurements. Recording them was phase 5's job.
+The first has since been converted from silence into a refusal; the second has
+not been touched.
 
-### `run-command-line-length` — silent truncation over a persistent session
+### `run-command-line-length` — NO LONGER SILENT on `Host.run()`
 
-`UnixHost.run()` passes `term_type="dumb"` (`src/otto/host/session.py:765,770`),
-so it allocates a pty. `exec()` does not. BusyBox `ash` **silently truncates a
-typed line at 1023 characters** (`CONFIG_FEATURE_EDITING_MAX_LEN`) — measured
-identical against OpenSSH and against a bare local pty, so it is the shell's
-line editor, not the transport. Any `run()` command over 1022 characters
-against a BusyBox target is silently truncated.
+`UnixHost.run()` passes `term_type="dumb"`, so it allocates a pty; `exec()`
+does not. BusyBox `ash` **silently truncates a typed line at 1023 characters**
+(`CONFIG_FEATURE_EDITING_MAX_LEN`) — measured identical against OpenSSH and
+against a bare local pty, so it is the shell's line editor, not the transport.
+Re-measured 2026-08-13 across **all five** matrix artifacts through a local
+pty: every row answers 1022 intact / 1023 truncated, so the bound is a
+constant (`otto.host.userland.ASH_TYPED_LINE_MAX`) and not a per-row table.
 
-This is the one open item in a data-corruption class rather than a
-refusal-clarity class. `exec()` is unaffected, and `ShellFileTransfer` uses
-`exec()`, so the transfer path is safe — see the `_SHELL_CHUNK_BYTES` docstring
-for why `term: telnet` remains the hostile case (telnet has no stateless exec
-primitive and routes through a pooled shell session).
+`Host.run()` now REFUSES up front on a host whose declared shell dialect is
+`ash`, rendering the record's own message. The bound is applied to the line
+otto **types** — the BEGIN/END framing costs 74 characters, leaving 948 for the
+longest line of the command — and a multi-line script is judged line by line.
+
+**What is still open here**, and why the record stays `measured-broken`:
+
+1. No fix, only a refusal. The fix is a pty-free `run()` path; the buffer
+   belongs to the device and cannot be raised from otto's side.
+2. `HostSession.run()` on a named session is **still silently truncated**.
+3. `exec()` on a `term: telnet` or proxied-login host is **still silently
+   truncated**: neither has a stateless exec primitive, so the call routes
+   through a pooled shell session. This is the case the `_SHELL_CHUNK_BYTES`
+   docstring already flags, and it is exactly why the guard sits in
+   `SessionManager.run_cmd` and not in `ShellSession.run_cmd` — one layer down
+   it would refuse `ShellFileTransfer`'s own 5534-character chunk lines instead
+   of transferring them. Pinned by `TestTheRefusalIsScoped` in
+   `tests/unit/host/test_run_line_length.py`; do not "tidy" the guard downward
+   without reading it.
+4. A device whose BusyBox raised `CONFIG_FEATURE_EDITING_MAX_LEN`, or compiled
+   the line editor out, is now refused a command it could have run. Accepted
+   trade, stated on the constant; there is no per-host override today, and
+   adding one (a `userland_options` field, or a probe) is the natural next
+   item if a real device disagrees.
 
 ### `file-ops-base64` — hard-coded codec
 

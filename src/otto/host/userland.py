@@ -710,17 +710,30 @@ class Userland:
 # three design-time candidates measurement did NOT support are recorded in the
 # comment block below :data:`GAPS` rather than quietly dropped.
 #
-# KNOWN HOLE, in the same sense as the ``shell_dialect`` hole above: NO
-# PRODUCT CALL SITE CONSULTS :func:`refuse_if_gapped` YET. The refusals that
-# fire today (``PosixPrivilege._elevate``,
-# ``ShellFileTransfer._run_put``/``_run_get``) are PROBE-driven -- they refuse
-# on what this host answered, which is a different trigger from this table's
-# "otto measured this on the matrix" -- and rewiring them is a behaviour
-# change that belongs with the call site being changed, not with the table
-# landing. So today this registry is a declared, tested, renderable record
-# that the docs page and the parity queue consume; wiring a raise site to it
-# is a per-surface decision, and the record's ``reason`` is written to say
-# what such a call site would refuse.
+# ONE PRODUCT CALL SITE CONSULTS :func:`refuse_if_gapped`. EXACTLY ONE, and
+# the count is the point -- an earlier version of this block said "none yet",
+# and the sentence that replaced it must not be read as "the table is wired".
+#
+# The one is :func:`otto.host.session.refuse_if_line_editor_would_truncate`,
+# called from ``SessionManager.run_cmd`` (the per-command path of
+# ``Host.run()``, for every host family), against the
+# ``run-command-line-length`` record. It is the shape a registry consumer
+# takes: the CALLER decides that this host belongs to the measured class --
+# there, that its declared shell dialect is ``ash`` -- and the TABLE decides
+# whether that class is refused at all. Neither half is enough alone, which is
+# why the record's own ``refuses`` cannot be the whole trigger and why the call
+# site does not carry its own copy of the message.
+#
+# THE OTHER SEVEN ``measured-broken`` SURFACES ARE STILL UNWIRED, and their
+# ``reason`` strings are still written to say what a call site WOULD refuse.
+# The refusals that fire elsewhere in otto today
+# (``PosixPrivilege._elevate``, ``ShellFileTransfer._run_put``/``_run_get``)
+# are PROBE-driven -- they refuse on what this host answered, which is a
+# different trigger from this table's "otto measured this on the matrix". So
+# wiring a raise site remains a PER-SURFACE decision that belongs with the call
+# site being changed; one surface having made it does not generalise to the
+# rest, and the docs page states each surface's status separately for the same
+# reason.
 
 GAP_DOCS_PAGE = "docs/architecture/subsystems/busybox-support.md"
 """Where the user-facing rendering of this table lives.
@@ -1018,27 +1031,46 @@ GAPS: list[Gap] = [
         surface="run-command-line-length",
         status=MEASURED_BROKEN,
         reason=(
-            "a command longer than 1022 characters sent through `Host.run()` is "
-            "SILENTLY TRUNCATED on a BusyBox target -- a different, shorter command "
-            "runs and its success is reported as the caller's. `run()` drives a "
-            'PERSISTENT session, which `SshSession._open` opens with `term_type="dumb"` '
-            "(`src/otto/host/session.py:765,770`), so the far side allocates a pty and "
-            "the command arrives as a TYPED LINE through ash's line editor. `Host.exec()` "
-            "opens a bare exec channel with no pty and is unaffected, so the same command "
-            "is safe through `exec()`"
+            "BusyBox ash's line editor SILENTLY TRUNCATES a typed line longer than 1022 "
+            "characters -- a different, shorter command runs and its success is reported "
+            "as the caller's. `Host.run()` refuses instead, up front, on any host whose "
+            "declared shell dialect is `ash`: `run()` drives a PERSISTENT session, which "
+            '`SshSession._open` opens with `term_type="dumb"`, so the far side allocates '
+            "a pty and the command arrives as a TYPED LINE through that editor. The bound "
+            "is on the LINE and not on the command -- otto's own BEGIN/END framing costs "
+            "74 characters, leaving 948 for the longest line of the command itself. "
+            "`Host.exec()` opens a bare exec channel with no pty, is unaffected, and is "
+            "NOT refused: it is the way to send this command. Two paths stay unguarded "
+            "deliberately -- a named session's `HostSession.run()`, and `exec()` on a "
+            "telnet or proxied-login host, which has no stateless primitive and so routes "
+            "through a pooled shell session. Guarding those would make "
+            "`ShellFileTransfer` refuse its own 5534-character chunk lines, which is the "
+            "whole reason the `shell` backend exists"
         ),
         measured_on=(
-            "the phase-5 spike, 2026-08-13, dropbear 2022.83 against BusyBox 1.35.0: "
-            "largest line delivered intact 1022, first truncated 1023, with no error and "
-            "no log line. Measured identical against OpenSSH and against a bare LOCAL "
-            "pty, which is what identifies it as BusyBox ash's "
-            "`CONFIG_FEATURE_EDITING_MAX_LEN` and not the transport. For contrast the "
-            "exec channel took 9000 characters intact and broke at 9001"
+            "TWO measurements, and the second is why the bound is a constant. The phase-5 "
+            "spike, 2026-08-13, dropbear 2022.83 against BusyBox 1.35.0: largest line "
+            "delivered intact 1022, first truncated 1023, with no error and no log line -- "
+            "identical against OpenSSH and against a bare LOCAL pty, which is what "
+            "identifies it as BusyBox ash's `CONFIG_FEATURE_EDITING_MAX_LEN` and not the "
+            "transport, while the exec channel took 9000 characters intact and broke at "
+            "9001. Then, 2026-08-13, because that config is BUILD-TIME and one artifact "
+            "cannot speak for the matrix: all five pinned rows (1.16.1, 1.21.1, 1.28.1, "
+            "1.31.0, 1.35.0) driven through a local pty answered 1022/1023 identically, "
+            "and the same harness carried 18437 characters into bash and over 20000 into "
+            "dash -- ruling itself out as the thing being measured. A CUSTOM build that "
+            "raised the config would be refused a command it could actually run; that "
+            "cost is stated on `ASH_TYPED_LINE_MAX` rather than hidden"
         ),
         queued_for=(
-            "unqueued, deliberately: the phase-5 plan lists fixing this under `Out of "
-            "scope, deliberately` and records it here instead. A fix is a pty-free "
-            "`run()` path, not a larger buffer -- the buffer belongs to the device"
+            "the REFUSAL has landed, in "
+            "`otto.host.session.refuse_if_line_editor_would_truncate` -- this registry's "
+            "first product call site. A FIX has not, and stays unqueued "
+            "deliberately: it is a pty-free `run()` path, not a larger buffer, "
+            "because the buffer belongs to the device. The record stays `measured-broken` "
+            "because the surface still is -- otto now declines the command instead of "
+            "running a shorter one. The two unguarded paths named in the reason are the "
+            "next candidates and are likewise unqueued"
         ),
     ),
     Gap(
@@ -1169,3 +1201,36 @@ def refuse_if_gapped(surface: str, *, host: str = "", attempted: str = "") -> No
     if gap is None or not gap.refuses:
         return
     raise UnsupportedOnUserlandError.for_gap(gap, host=host, attempted=attempted)
+
+
+ASH_TYPED_LINE_MAX = 1022
+"""Longest line BusyBox ash's line editor delivers intact. A DISCRIMINATOR.
+
+The measurement behind the ``run-command-line-length`` record, hoisted into a
+constant because :func:`otto.host.session.refuse_if_line_editor_would_truncate`
+now compares against it rather than merely printing it. Read that record for
+the evidence; this docstring is about the number's standing.
+
+**NEVER WIDEN THIS.** It is not a budget otto chose and not a runaway guard --
+it is the far side's buffer, ``CONFIG_FEATURE_EDITING_MAX_LEN`` minus the NUL,
+and a larger value here does not buy patience, it re-opens the silent
+truncation for the band between the two numbers. The only thing that may
+change it is a new measurement against real artifacts, and then it moves to
+whatever they answered.
+
+WHICH BUILDS ANSWERED 1022, precisely, because ``CONFIG_FEATURE_EDITING_MAX_LEN``
+is build-configurable and a device is free to disagree. All five pinned matrix
+artifacts -- 1.16.1, 1.21.1, 1.28.1, 1.31.0 and 1.35.0 -- were driven through a
+local pty on 2026-08-13 and every one of them delivered 1022 intact and
+truncated at 1023. Twelve years of upstream prebuilds agreeing is why this is a
+constant and not a per-row table, and it is still not a proof about a
+CUSTOM build: a vendor who raised the config, or compiled the line editor out
+altogether, has a device otto will now refuse a working command on. That is the
+expensive direction, so it is stated rather than buried -- the refusal names
+the measurement, and a device that disagrees is a new measurement, not a bug in
+the caller's command.
+
+The same harness measured bash at 18437 and dash at 20000+ on the machine that
+took the BusyBox numbers, which is what rules the harness itself out as the
+thing being measured.
+"""
