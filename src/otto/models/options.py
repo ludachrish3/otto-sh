@@ -282,6 +282,19 @@ class UserlandOptionsSpec(OttoModel):
     stat_size: Literal["stat", "wc", "absent"] | None = None
     checksum: Literal["md5sum", "absent"] | None = None
     timeout_style: Literal["coreutils", "dash-t", "absent"] | None = None
+    # One field per name in `otto.host.userland.PROBED_APPLETS`, spelled out
+    # rather than generated: `extra='forbid'` is what turns `applet_scpp` in
+    # lab.json into an error naming the key, and it can only do that for fields
+    # the model actually declares. The list is not imported — a boundary that
+    # read its field names from the runtime could not be caught drifting from
+    # it — so `tests/unit/host/test_userland.py` pins the two sets equal.
+    applet_base64: Literal["present", "absent"] | None = None
+    applet_nc: Literal["present", "absent"] | None = None
+    applet_poweroff: Literal["present", "absent"] | None = None
+    applet_scp: Literal["present", "absent"] | None = None
+    applet_shutdown: Literal["present", "absent"] | None = None
+    applet_uudecode: Literal["present", "absent"] | None = None
+    applet_uuencode: Literal["present", "absent"] | None = None
     version: str | None = None
 
     def to_runtime(self) -> rt.UserlandOptions:
@@ -293,6 +306,13 @@ class UserlandOptionsSpec(OttoModel):
             stat_size=self.stat_size,
             checksum=self.checksum,
             timeout_style=self.timeout_style,
+            applet_base64=self.applet_base64,
+            applet_nc=self.applet_nc,
+            applet_poweroff=self.applet_poweroff,
+            applet_scp=self.applet_scp,
+            applet_shutdown=self.applet_shutdown,
+            applet_uudecode=self.applet_uudecode,
+            applet_uuencode=self.applet_uuencode,
             version=self.version,
         )
 

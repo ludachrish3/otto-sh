@@ -43,7 +43,7 @@ from otto.host.connections import ConnectionManager
 from otto.host.options import NcOptions, UserlandOptions
 from otto.host.transfer import nc as nc_module
 from otto.host.transfer.nc import _NC_LISTENER_HARD_CAP_S, NcFileTransfer
-from otto.host.userland import Userland
+from otto.host.userland import PROBED_APPLETS, Userland, applet_capability
 from otto.models.options import UserlandOptionsSpec
 from otto.result import CommandResult
 
@@ -93,12 +93,23 @@ async def _never_probes(cmd: str, **_kwargs: object) -> CommandResult:
 # undeclared would add an eighth unwanted call ($BASH_VERSION's neighbour,
 # `md5sum < /dev/null`).
 # Values are ones Tier 1 measured as real answers; nothing here reads them.
+#
+# The `applet_*` block joined for the same reason `checksum` did, and it is
+# derived from `PROBED_APPLETS` rather than typed out: undeclared, the applet
+# BATCH would be an eighth unwanted call. Deriving it means an applet added to
+# that list cannot silently restore the probe this table exists to remove.
+# Values are what the matrix measured on 1.35.0 (`scp` and `shutdown` absent on
+# every row); nothing here reads them.
 _OTHER_DECLARED_CAPABILITIES = {
     "shell_dialect": "ash",
     "elevation": "none",
     "base64_flag": "-d",
     "stat_size": "stat",
     "checksum": "md5sum",
+    **{
+        applet_capability(a): ("absent" if a in {"scp", "shutdown"} else "present")
+        for a in PROBED_APPLETS
+    },
 }
 
 # `timeout_style` is the parameter under test; `version` is documentation and is

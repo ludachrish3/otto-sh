@@ -21,8 +21,16 @@ from pathlib import Path
 import pytest
 
 from otto.host import userland as userland_module
+from otto.host.command_frame import AshFrame
 from otto.host.options import UserlandOptions
-from otto.host.userland import Userland
+from otto.host.session import refuse_if_line_editor_would_truncate
+from otto.host.userland import (
+    APPLET_ABSENT,
+    APPLET_PRESENT,
+    PROBED_APPLETS,
+    Userland,
+    applet_capability,
+)
 from otto.logger.mode import LogMode
 from otto.models.options import UserlandOptionsSpec
 from otto.result import CommandResult, Status
@@ -76,6 +84,35 @@ _P_MD5SUM = "md5sum < /dev/null"
 # the frame otto should use.
 _P_BASH = 'test -n "$BASH_VERSION"'
 
+# The applet batch. THIS FILE'S OWN COPY of the spelling, like every other
+# constant above -- the product builds it in `_applet_probe_command` and Tier 2
+# measures it against real binaries in
+# `tests/busybox/test_applet_resolution.py`, and all three have to agree
+# without importing one another.
+#
+# The one probe here whose spelling is not a fixed string: it is built from the
+# list of names still open, so the helper takes that list. That is the O(1)
+# property in the pin -- ONE command for however many names.
+_APPLET_CONTROL = "echo"
+
+
+def _p_applets(applets) -> str:
+    names = " ".join([_APPLET_CONTROL, *applets])
+    return (
+        f'for a in {names}; do command -v "$a" >/dev/null 2>&1 && echo "$a=1" || echo "$a=0"; done'
+    )
+
+
+_P_APPLETS = _p_applets(PROBED_APPLETS)
+
+
+def _applet_answer(present=()) -> str:
+    """The stdout a device gives for the whole-list batch, with *present* saying yes."""
+    lines = [f"{_APPLET_CONTROL}=1"]
+    lines += [f"{a}={'1' if a in present else '0'}" for a in PROBED_APPLETS]
+    return "\n".join(lines) + "\n"
+
+
 # ``version`` is the one field with no probe, by the plan's binding constraint:
 # a declared version is documentation and must never gate behaviour. Every
 # OTHER field of UserlandOptions is derived, so adding an eighth field without
@@ -89,6 +126,31 @@ def _probeable_field_names() -> list[str]:
     return sorted(f.name for f in fields(UserlandOptions) if f.name not in _NEVER_PROBED)
 
 
+# The applet capabilities, and the six that are not. Derived from
+# `PROBED_APPLETS` through the product's own bridge rather than by matching a
+# prefix here, so a rename of the prefix cannot leave this file quietly
+# classifying every applet field as a fixed one.
+_APPLET_FIELDS = [applet_capability(a) for a in PROBED_APPLETS]
+_APPLET_BY_FIELD = {applet_capability(a): a for a in PROBED_APPLETS}
+
+
+def _fixed_field_names() -> list[str]:
+    return [n for n in _probeable_field_names() if n not in _APPLET_BY_FIELD]
+
+
+def _read(userland, name: str) -> str:
+    """Read capability *name* the way its own consumer would.
+
+    The applet capabilities have no property -- one parameterized
+    :meth:`Userland.has_applet` stands in for what would otherwise be seven of
+    them -- so "read every capability" is two spellings, not one. Derived, so
+    a capability that grows a reader of a third kind reddens rather than being
+    skipped.
+    """
+    applet = _APPLET_BY_FIELD.get(name)
+    return userland.has_applet(applet) if applet is not None else getattr(userland, name)
+
+
 def _answers(userland) -> dict[str, str]:
     """Every capability the host is USING, read through the properties.
 
@@ -100,7 +162,7 @@ def _answers(userland) -> dict[str, str]:
     ``as_lab_json()``. Conflating them is what let an unmeasured value reach
     the paste line in the first place.
     """
-    return {n: getattr(userland, n) for n in _probeable_field_names()}
+    return {n: _read(userland, n) for n in _probeable_field_names()}
 
 
 def _ok(value: str = "") -> CommandResult:
@@ -148,6 +210,10 @@ _FULLY_DEGRADED = {
     "shell_dialect": "ash",
     "stat_size": "absent",
     "timeout_style": "absent",
+    # Every applet name reported `<name>=0` by a batch that RAN, control and
+    # all: a measurement of a userland with none of them, not a batch that
+    # failed. The two are different states and `_UNASKABLE` below is the other.
+    **dict.fromkeys(_APPLET_FIELDS, APPLET_ABSENT),
 }
 
 # What each capability answers when the probe could not be ASKED — the
@@ -178,6 +244,12 @@ _FULLY_DEGRADED = {
 #                  (build_command_frame("ash") succeeds), but recording
 #                  "ash" for an unasked host would still claim a measurement
 #                  nobody took, not merely name a frame that can't be built.
+#   applet_*       `present`, uniformly, and it is the same rule the five
+#                  above are instances of rather than a seventh argument:
+#                  otto reached for `shutdown`, `scp` and `base64` by name
+#                  before this probe existed, so "present" is what it did
+#                  before it asked anything. `absent` would make a refused
+#                  probe round read as a device that has none of them.
 _UNASKABLE = {
     "base64_flag": "absent",
     "checksum": "absent",
@@ -185,11 +257,17 @@ _UNASKABLE = {
     "shell_dialect": "bash",
     "stat_size": "stat",
     "timeout_style": "absent",
+    **dict.fromkeys(_APPLET_FIELDS, APPLET_PRESENT),
 }
 
 # Every probe otto issues, in order, on a host that answers only `command -v
-# timeout` — the one script that reaches all eleven arms, because a `timeout`
+# timeout` — the one script that reaches all twelve arms, because a `timeout`
 # that is absent short-circuits both spelling probes.
+#
+# TWELVE COMMANDS FOR THIRTEEN CAPABILITIES, and the last line is why: the
+# applet batch is ONE command whatever the length of `PROBED_APPLETS`, and it
+# is LAST so the eleven before it keep the order, the spellings and the count
+# they had before applets existed.
 _EVERY_PROBE_IN_ORDER = [
     _P_SUDO,
     _P_SU,
@@ -202,7 +280,14 @@ _EVERY_PROBE_IN_ORDER = [
     _P_WC,
     _P_MD5SUM,
     _P_BASH,
+    _P_APPLETS,
 ]
+
+# The eleven that predate this capability, in the order and the spellings they
+# were issued in then. Read by the no-regression guard, which is the only thing
+# standing between "the applet batch was added" and "the applet batch changed
+# what every existing host is asked".
+_PROBES_BEFORE_APPLETS = _EVERY_PROBE_IN_ORDER[:-1]
 
 
 class _FakeClock:
@@ -222,12 +307,30 @@ class _FakeClock:
         return self.now
 
 
+_APPLET_BATCH_PREFIX = "for a in "
+
+
+def _emulate_applet_batch(cmd: str, present) -> str:
+    """Answer the batch the way a device's own ash would, for whatever it asked.
+
+    Parsed rather than table-matched, and that is the one place this runner
+    cannot match exactly: the batch's text DEPENDS ON WHICH NAMES ARE STILL
+    OPEN, so a declared applet shortens it. A fixed-string entry would answer
+    only the all-seven spelling and make every partial-declaration guard below
+    fall through to "unknown command".
+    """
+    names = cmd[len(_APPLET_BATCH_PREFIX) :].split(";", 1)[0].split()
+    return "".join(f"{n}={'1' if n in present else '0'}\n" for n in names)
+
+
 class _Runner:
     """Records every command, its LogMode and its kwargs; answers a scripted device.
 
     Matching is EXACT, not substring: ``command -v su`` is a substring of
     ``command -v sudo``, so a substring table would answer the sudo probe from
-    the su entry and make a su-only device look like a sudo device.
+    the su entry and make a su-only device look like a sudo device. The applet
+    batch is the sole exception and it is not a relaxation of that rule -- see
+    :func:`_emulate_applet_batch`.
     """
 
     def __init__(
@@ -238,6 +341,10 @@ class _Runner:
         raises: BaseException | None = None,
         unreachable=(),
         clock: _FakeClock | None = None,
+        applets=(),
+        applet_control: bool = True,
+        applet_stdout: str | None = None,
+        applet_retcode: int = 0,
     ):
         self.calls: list[str] = []
         self.modes: list[LogMode] = []
@@ -253,6 +360,21 @@ class _Runner:
         self._works = set(works)
         self._fail_retcode = fail_retcode
         self._raises = raises
+        # The applets this device HAS. Absent-by-default, matching the four
+        # matrix answers that are absent everywhere (`scp`, `shutdown`) more
+        # closely than a present-by-default would.
+        self._applets = set(applets)
+        # The three ways a batch can come back looking like a measurement
+        # without being one, each drivable on its own: the control saying no,
+        # the answer being the wrong shape, and a non-zero exit.
+        #
+        # `applet_control` is PUBLIC and mutable for the same reason
+        # `unreachable` is: a device that recovers is one whose hostile
+        # condition STOPPED, and a recovery guard has to be able to stop it
+        # between two `resolve()` calls.
+        self.applet_control = applet_control
+        self._applet_stdout = applet_stdout
+        self._applet_retcode = applet_retcode
 
     async def __call__(self, cmd, *, log=LogMode.NORMAL, **kw):
         self.calls.append(cmd)
@@ -274,13 +396,31 @@ class _Runner:
             # is the whole subject of the guards below: this must never be
             # recorded as a "no".
             raise OSError(f"channel refused before {cmd!r} was delivered")
+        if cmd.startswith(_APPLET_BATCH_PREFIX):
+            # The loop's own exit code is the LAST `echo`'s, so a real device
+            # answers 0 even when every name is absent. A device with none of
+            # these applets is a measurement, not a failed probe, and scripting
+            # it as `fail_retcode` below would erase that distinction.
+            present = set(self._applets)
+            if self.applet_control:
+                present.add(_APPLET_CONTROL)
+            out = (
+                _emulate_applet_batch(cmd, present)
+                if self._applet_stdout is None
+                else self._applet_stdout
+            )
+            return CommandResult(
+                Status.Success if self._applet_retcode == 0 else Status.Error,
+                value=out,
+                retcode=self._applet_retcode,
+            )
         if cmd in self._works:
             return _ok()
         return CommandResult(Status.Error, value="", retcode=self._fail_retcode)
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("field_name", _probeable_field_names())
+@pytest.mark.parametrize("field_name", _fixed_field_names())
 async def test_a_declared_answer_is_never_probed(field_name):
     """A pin exists to SKIP the round trip, so probing anyway defeats it.
 
@@ -294,6 +434,14 @@ async def test_a_declared_answer_is_never_probed(field_name):
     commands, which fails both ways: equal means the declaration bought
     nothing, and a command outside the baseline means the declaration changed
     what gets probed instead of removing it.
+
+    THE APPLET FIELDS ARE EXCLUDED HERE AND COVERED BY THE SIBLING BELOW, and
+    the reason is the strict-subset assertion rather than a scoping preference:
+    declaring one applet does not REMOVE a command, it SHORTENS one, so the
+    declared run issues a batch string that is not in the baseline's set and
+    fails a subset check while behaving exactly as it should. The split is
+    derived from ``PROBED_APPLETS`` on both sides, so neither test can lose a
+    field to the other.
     """
     baseline = _Runner()
     await Userland(UserlandOptions(), baseline).resolve()
@@ -307,6 +455,103 @@ async def test_a_declared_answer_is_never_probed(field_name):
         f"declaring {field_name} removed no probe: declared run issued "
         f"{runner.calls}, undeclared run issued {baseline.calls}"
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("applet", PROBED_APPLETS)
+async def test_a_declared_applet_is_never_asked_about(applet):
+    """A declared applet leaves the batch, and the batch is still one command.
+
+    The applet half of the guard above, and it asserts the thing that shape
+    makes possible: a partial pin costs LESS, and a complete one (the sibling
+    below) costs nothing. A design where the seven answers rode one opaque
+    value could not do this -- a part-filled declaration would either be read
+    as a complete answer or ignored entirely.
+
+    The batch's exact text is pinned, not merely its length, because "the
+    declared name is gone" and "the other six are still asked" are different
+    claims and dropping a second name would satisfy the first.
+    """
+    baseline = _Runner()
+    await Userland(UserlandOptions(), baseline).resolve()
+
+    runner = _Runner()
+    userland = Userland(UserlandOptions(**{applet_capability(applet): APPLET_ABSENT}), runner)
+    await userland.resolve()
+
+    assert userland.as_lab_json()[applet_capability(applet)] == APPLET_ABSENT
+    assert userland.has_applet(applet) == APPLET_ABSENT
+    assert len(runner.calls) == len(baseline.calls), (
+        f"declaring one applet changed the ROUND COUNT ({len(baseline.calls)} -> "
+        f"{len(runner.calls)}); the whole point of the batch is that it is one "
+        f"command however many names are open"
+    )
+    expected = _p_applets([a for a in PROBED_APPLETS if a != applet])
+    assert runner.calls[-1] == expected, (
+        f"the batch was {runner.calls[-1]!r}; declaring {applet!r} must drop that "
+        f"one name and no other"
+    )
+
+
+@pytest.mark.asyncio
+async def test_declaring_every_capability_issues_no_command_at_all():
+    """THE REQUIREMENT: a maintainer who has recorded the answers pays nothing.
+
+    BusyBox devices are typically slow, so the pin exists to skip the probe
+    round entirely -- and "entirely" is the word this asserts. A batch that
+    still went out to ask about nothing, or to re-confirm what was declared,
+    would be a round trip bought back on the one class of host the pin was
+    written for.
+
+    Derived from ``UserlandOptions``, so a capability added later without a
+    declared arm reddens here instead of quietly costing every pinned host a
+    command.
+    """
+    declared = dict.fromkeys(_fixed_field_names(), "DECLARED")
+    declared |= dict.fromkeys(_APPLET_FIELDS, APPLET_PRESENT)
+    runner = _Runner()
+
+    userland = Userland(UserlandOptions(**declared), runner)
+    await userland.resolve()
+
+    assert runner.calls == [], f"a fully declared host still probed: {runner.calls}"
+    assert userland.as_lab_json() == declared
+
+
+@pytest.mark.asyncio
+async def test_the_pasteable_pin_round_trips_through_lab_data_and_then_costs_nothing():
+    """The whole loop: probe once, paste the line, and the next host asks nothing.
+
+    Every step of what the debug line promises, executed rather than described:
+    the emitted payload validates at the lab-data boundary
+    (``UserlandOptionsSpec``, ``extra='forbid'``), builds the runtime options a
+    host would carry, and a ``Userland`` over those options issues no command
+    and reports the same answers. Any capability that cannot make that trip --
+    a probe with no field, a field with no spec entry, a value outside the
+    spec's Literal -- breaks it at the step it is missing from.
+
+    A SETTLED-ONLY payload is what makes this honest: the device below answers
+    everything, so nothing is dropped and the second host really does get the
+    complete table.
+    """
+    device = next(d for d in _DEVICES if d.name == "gnu-coreutils-bash")
+    first = Userland(UserlandOptions(), _Runner(device.works, applets=device.applets))
+    await first.resolve()
+    pinned = first.as_lab_json()
+    assert set(pinned) == set(_probeable_field_names()), (
+        f"the device answered everything, so the pin must be complete; it omitted "
+        f"{sorted(set(_probeable_field_names()) - set(pinned))}"
+    )
+
+    options = UserlandOptionsSpec(**json.loads(json.dumps(pinned))).to_runtime()
+    second_runner = _Runner()
+    second = Userland(options, second_runner)
+    await second.resolve()
+
+    assert second_runner.calls == [], (
+        f"a host carrying the pasted pin still probed: {second_runner.calls}"
+    )
+    assert _answers(second) == _answers(first)
 
 
 @pytest.mark.asyncio
@@ -346,13 +591,15 @@ async def test_resolution_happens_once():
 async def test_reading_a_capability_before_resolve_fails_loudly(field_name):
     """Silently probing on first read would hide a round trip inside a property.
 
-    Every property, derived: a sixth one added later would otherwise be the
-    one that answers ``None`` quietly.
+    Every reader, derived: one added later would otherwise be the one that
+    answers ``None`` quietly. ``_read`` covers both spellings -- the six
+    properties and :meth:`Userland.has_applet` -- because a parameterized
+    reader is just as capable of resolving on first read as a property is.
     """
     userland = Userland(UserlandOptions(), _Runner())
 
     with pytest.raises(RuntimeError, match="before resolve"):
-        getattr(userland, field_name)
+        _read(userland, field_name)
 
 
 @pytest.mark.asyncio
@@ -623,11 +870,38 @@ async def test_only_a_zero_exit_counts_as_a_yes(fail_retcode):
 
 @dataclass(frozen=True)
 class _Device:
-    """A scripted device: the probes it answers 0 to, and what must resolve."""
+    """A scripted device: the probes it answers 0 to, and what must resolve.
+
+    ``applets`` is separate from ``works`` because the applet answers do not
+    arrive as exit codes: one batched command carries them all as stdout, so
+    the script for them is a SET OF NAMES the device has, not a set of commands
+    it succeeds at.
+
+    ABSENT-BY-DEFAULT for anything a row does not list, unlike ``expected``,
+    which every row must fill in completely. That asymmetry is deliberate and
+    it is not a weaker claim about hardware: what a real matrix row answers is
+    pinned per row and per applet in Tier 2
+    (``tests/busybox/test_applet_resolution.py``, which reds with a ``KeyError``
+    on an applet nobody recorded). These rows script a DEVICE for the resolver
+    to talk to, and a new applet nobody has scripted is one the scripted device
+    does not have.
+    """
 
     name: str
     works: frozenset = field(default_factory=frozenset)
     expected: dict = field(default_factory=dict)
+    applets: frozenset = field(default_factory=frozenset)
+
+    @property
+    def all_expected(self) -> dict:
+        """Every capability's answer -- the row's own six plus its applets."""
+        return {
+            **self.expected,
+            **{
+                applet_capability(a): APPLET_PRESENT if a in self.applets else APPLET_ABSENT
+                for a in PROBED_APPLETS
+            },
+        }
 
 
 _DEVICES = [
@@ -645,6 +919,10 @@ _DEVICES = [
             "checksum": "md5sum",
             "shell_dialect": "ash",
         },
+        # Measured 2026-08-14, Tier 2 rootfs: no `base64`, no `scp`, no
+        # `shutdown`; `nc`, `poweroff` and both uu halves are there. The row
+        # that makes uu the only measured codec path.
+        applets=frozenset({"nc", "poweroff", "uudecode", "uuencode"}),
     ),
     # BusyBox 1.28.1: the last measured build on the `-t` side, with base64.
     _Device(
@@ -660,6 +938,9 @@ _DEVICES = [
             "checksum": "md5sum",
             "shell_dialect": "ash",
         },
+        # Measured 2026-08-14: `base64` has arrived; `scp` and `shutdown`
+        # are still absent, as on every matrix row.
+        applets=frozenset({"base64", "nc", "poweroff", "uudecode", "uuencode"}),
     ),
     # BusyBox 1.35.0: coreutils-style `timeout`, still no `--decode`.
     _Device(
@@ -675,6 +956,9 @@ _DEVICES = [
             "checksum": "md5sum",
             "shell_dialect": "ash",
         },
+        # Measured 2026-08-14: identical applet set to 1.28.1 -- the applet
+        # answers do not move across the `timeout` convention change.
+        applets=frozenset({"base64", "nc", "poweroff", "uudecode", "uuencode"}),
     ),
     # `stat` compiled out — the only script that produces the `wc` answer, and
     # the reason the fallback arm is not dead code.
@@ -689,6 +973,7 @@ _DEVICES = [
             "checksum": "md5sum",
             "shell_dialect": "ash",
         },
+        applets=frozenset({"base64", "nc", "poweroff", "uudecode", "uuencode"}),
     ),
     # A GNU/coreutils host with bash: accepts BOTH decode spellings and has
     # both elevation paths, so it is where the preference order shows.
@@ -716,6 +1001,14 @@ _DEVICES = [
             "checksum": "md5sum",
             "shell_dialect": "bash",
         },
+        # The row where `scp` and `shutdown` are PRESENT, so the table is not
+        # uniform in the two names the `scp-transfer` and `shutdown-command`
+        # surfaces turn on -- an always-absent column would let a probe that
+        # never reported "present" pass every other row. `uuencode` is absent
+        # because a stock Debian/Ubuntu has it in `sharutils`, unshipped by
+        # default, which is also what makes uu a codec otto must ASK about
+        # rather than assume on a GNU host.
+        applets=frozenset({"base64", "nc", "poweroff", "scp", "shutdown"}),
     ),
     # `timeout` present but speaking neither spelling. Not measured on any
     # artifact — it is the shape a future build could take, and the arm that
@@ -733,6 +1026,7 @@ _DEVICES = [
             "checksum": "md5sum",
             "shell_dialect": "ash",
         },
+        applets=frozenset({"base64", "nc", "poweroff", "uudecode", "uuencode"}),
     ),
     # SYNTHETIC, and deliberately labelled so. No measured device behaves this
     # way: every BusyBox artifact rejects `--decode`, and GNU accepts `-d`, so
@@ -754,6 +1048,7 @@ _DEVICES = [
             "checksum": "md5sum",
             "shell_dialect": "ash",
         },
+        applets=frozenset({"base64", "nc", "poweroff", "uudecode", "uuencode"}),
     ),
 ]
 
@@ -773,18 +1068,18 @@ async def test_a_scripted_device_resolves_to_its_measured_answers(device):
     spec's Literal members are written in different files by different tasks,
     and nothing else makes them agree.
     """
-    assert set(device.expected) == set(_probeable_field_names()), (
+    assert set(device.all_expected) == set(_probeable_field_names()), (
         f"device {device.name} has no expected answer for every field"
     )
-    userland = Userland(UserlandOptions(), _Runner(device.works))
+    userland = Userland(UserlandOptions(), _Runner(device.works, applets=device.applets))
 
     await userland.resolve()
 
-    assert userland.as_lab_json() == device.expected
-    # Read through the PROPERTIES too, derived from the field list: a property
-    # wired to the wrong key returns a real string and is invisible to a
-    # map-only assertion.
-    assert {n: getattr(userland, n) for n in _probeable_field_names()} == device.expected
+    assert userland.as_lab_json() == device.all_expected
+    # Read through the READERS too, derived from the field list: a property (or
+    # a `has_applet` wired to the wrong key) returns a real string and is
+    # invisible to a map-only assertion.
+    assert _answers(userland) == device.all_expected
     UserlandOptionsSpec(**userland.as_lab_json())
     # Independent of the row's own expectation, and of the spec: this is the
     # one field the spec types as a free string, so a probe answering "posix"
@@ -1250,7 +1545,12 @@ async def test_the_pasteable_summary_never_offers_a_value_otto_did_not_measure(c
     """
     device = next(d for d in _DEVICES if d.name == "busybox-1.28.1")
     userland = Userland(
-        UserlandOptions(), _Runner(device.works, unreachable={_P_STAT, _P_WC, _P_BASH})
+        UserlandOptions(),
+        _Runner(
+            device.works,
+            applets=device.applets,
+            unreachable={_P_STAT, _P_WC, _P_BASH, _P_APPLETS},
+        ),
     )
 
     with caplog.at_level(logging.DEBUG, logger="otto.host.userland"):
@@ -1260,6 +1560,10 @@ async def test_the_pasteable_summary_never_offers_a_value_otto_did_not_measure(c
     assert summary, "no pasteable summary was emitted"
     payload = json.loads(summary[0].split('-- "userland_options": ', 1)[1])
 
+    # The applet batch is refused too, and every one of its seven keys is
+    # therefore absent from the payload -- the sharpest version of this hazard,
+    # since their no-information default is `present` and a complete payload
+    # would invite the user to pin seven applets nothing looked for.
     assert payload == {
         "elevation": "su",
         "timeout_style": "dash-t",
@@ -1267,10 +1571,11 @@ async def test_the_pasteable_summary_never_offers_a_value_otto_did_not_measure(c
         "checksum": "md5sum",
     }, f"the paste line offered {payload}; every key in it must have been measured"
     UserlandOptionsSpec(**payload)
-    # The host still HAS answers for the two it could not ask — it just may not
-    # invite anyone to make them permanent.
+    # The host still HAS answers for the ones it could not ask — it just may
+    # not invite anyone to make them permanent.
     assert userland.stat_size == "stat"
     assert userland.shell_dialect == "bash"
+    assert userland.has_applet("scp") == APPLET_PRESENT
     _assert_debug_only(caplog)
 
 
@@ -1324,6 +1629,11 @@ _BLIP_RECOVERY = [
     ("stat_size", {_P_STAT, _P_WC}, "busybox-stat-compiled-out", "stat", "wc"),
     ("checksum", {_P_MD5SUM}, "busybox-1.28.1", "absent", "md5sum"),
     ("shell_dialect", {_P_BASH}, "busybox-1.28.1", "bash", "ash"),
+    # `scp` rather than an applet the row HAS: the assumed answer is `present`
+    # for every applet, so a row whose device also says present could not tell
+    # a re-probe from the standing guess. 1.28.1 has no `scp`, so the two
+    # differ.
+    (applet_capability("scp"), {_P_APPLETS}, "busybox-1.28.1", APPLET_PRESENT, APPLET_ABSENT),
 ]
 
 
@@ -1358,11 +1668,11 @@ async def test_an_unasked_capability_is_re_probed_until_the_device_answers(
     clock = _FakeClock()
     monkeypatch.setattr(userland_module, "_monotonic", clock)
     device = next(d for d in _DEVICES if d.name == device_name)
-    runner = _Runner(device.works, unreachable=unreachable)
+    runner = _Runner(device.works, applets=device.applets, unreachable=unreachable)
     userland = Userland(UserlandOptions(), runner)
 
     await userland.resolve()
-    assert getattr(userland, field_name) == assumed
+    assert _read(userland, field_name) == assumed
     during_blip = len(runner.calls)
 
     # The blip passes. Nothing else about the host changes.
@@ -1374,7 +1684,7 @@ async def test_an_unasked_capability_is_re_probed_until_the_device_answers(
         f"{field_name} was never re-probed after the blip cleared, so the "
         f"guess {assumed!r} is now permanent"
     )
-    assert getattr(userland, field_name) == measured
+    assert _read(userland, field_name) == measured
 
 
 @pytest.mark.asyncio
@@ -1389,7 +1699,7 @@ async def test_a_settled_capability_is_not_re_probed_by_a_neighbour_s_retry(monk
     clock = _FakeClock()
     monkeypatch.setattr(userland_module, "_monotonic", clock)
     device = next(d for d in _DEVICES if d.name == "gnu-coreutils-bash")
-    runner = _Runner(device.works, unreachable={_P_BASH})
+    runner = _Runner(device.works, applets=device.applets, unreachable={_P_BASH})
     userland = Userland(UserlandOptions(), runner)
 
     await userland.resolve()
@@ -1419,3 +1729,277 @@ async def test_a_cancelled_probe_is_not_swallowed():
         await Userland(UserlandOptions(), runner).resolve()
 
     assert len(runner.calls) == 1, f"probing continued after cancellation: {runner.calls}"
+
+
+# ── the applet capability ───────────────────────────────────────────────────
+#
+# `PROBED_APPLETS` answers "does this device have applet X" for a CLOSED list
+# of names, and it is deliberately probe-only: nothing in otto refuses on one
+# yet. The five pieces of work that will are named in the list's own docstring.
+# What these guards hold is the mechanism -- one round trip, a declaration that
+# short-circuits it, a settled/assumed split a refusal can key on, and a
+# pasteable pin -- because each of those five will inherit exactly this and
+# none of them will re-derive it.
+
+
+def test_every_probed_applet_has_a_declarable_field_and_no_field_is_orphaned():
+    """The closed list and the options dataclass are the same set. Both ways.
+
+    THE TWO FAILURES THIS CATCHES, and they are different bugs. A name in
+    ``PROBED_APPLETS`` with no ``UserlandOptions`` field is a capability that
+    cannot be declared or pinned -- ``_resolve_once``'s ``getattr`` would raise
+    on the first resolution against any host. A field with no list entry is the
+    quieter one: a maintainer writes it into ``lab.json``, the boundary accepts
+    it because the field exists, and nothing ever reads it -- a declaration
+    that silently does nothing, which is this repo's most common defect wearing
+    a config file.
+
+    The prefix is written out here, once, because that is the only way to ask
+    the question in the direction that matters: derived from
+    ``applet_capability`` on both sides, an orphaned field is invisible.
+    """
+    from_list = {applet_capability(a) for a in PROBED_APPLETS}
+    from_fields = {n for n in _probeable_field_names() if n.startswith("applet_")}
+
+    assert from_list == from_fields, (
+        f"PROBED_APPLETS and UserlandOptions disagree: no field for "
+        f"{sorted(from_list - from_fields)}, no list entry for "
+        f"{sorted(from_fields - from_list)}"
+    )
+
+
+def test_the_applet_bridge_rejects_a_name_nothing_probes():
+    """A typo must be loud at the bridge, not silent at the guard.
+
+    ``applet_capability("scpp")`` answering ``"applet_scpp"`` would give
+    ``is_settled`` a key it rejects -- but only at the moment the guard runs,
+    which for a refusal is the moment it was supposed to fire. Both readers are
+    checked, because a consumer holds the applet name and reaches this module
+    through two doors.
+    """
+    with pytest.raises(ValueError, match="is not an applet this module probes"):
+        applet_capability("scpp")
+
+    userland = Userland(UserlandOptions(), _Runner())
+    with pytest.raises(ValueError, match="is not an applet this module probes"):
+        userland.has_applet("scpp")
+
+
+@pytest.mark.asyncio
+async def test_the_whole_applet_list_costs_exactly_one_round_trip():
+    """O(1) round trips, whatever the list length -- the requirement, measured.
+
+    BusyBox devices are typically slow, so a per-applet round trip is the cost
+    this capability was shaped to avoid. Proved by VARYING the list rather than
+    by counting against a constant: the same resolution is run with one applet
+    and with all of them, and the number of commands must not move. A
+    per-applet probe passes any fixed-number assertion written against
+    today's seven.
+
+    ``busybox --list`` is why this is a batched loop rather than an
+    enumeration: measured, it exits 1 with ``--list: applet not found`` on
+    1.16.1 (see ``tests/busybox/test_applet_resolution.py``), so four of the
+    five matrix rows would answer and the oldest would report nothing.
+    """
+    assert len(PROBED_APPLETS) > 1, "a one-name list cannot distinguish O(1) from O(n)"
+
+    wide = _Runner()
+    await Userland(UserlandOptions(), wide).resolve()
+
+    narrow_options = UserlandOptions(
+        **dict.fromkeys(_APPLET_FIELDS[1:], APPLET_PRESENT),
+    )
+    narrow = _Runner()
+    await Userland(narrow_options, narrow).resolve()
+
+    assert len(wide.calls) == len(narrow.calls), (
+        f"asking about {len(PROBED_APPLETS)} applets cost {len(wide.calls)} commands "
+        f"and asking about 1 cost {len(narrow.calls)}; the cost must not scale with "
+        f"the list"
+    )
+    batches = [c for c in wide.calls if c.startswith(_APPLET_BATCH_PREFIX)]
+    assert batches == [_P_APPLETS], (
+        f"the applet round was {batches}; it must be exactly one command naming every open applet"
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_batch_asks_about_every_applet_and_reports_each_one():
+    """The command's text is the contract, so it is pinned literally.
+
+    A batch that dropped a name would resolve that capability from its
+    no-information default and mark it PROBED anyway -- an unmeasured value
+    presented as a measurement, and offered for pinning. Asserting the whole
+    command string catches the drop wherever it happens: in the list, in the
+    join, or in the loop body.
+
+    The device is scripted so the answers are MIXED. An all-present or
+    all-absent row would be satisfied by a parser that ignored the value and
+    returned a constant.
+    """
+    present = {"base64", "poweroff"}
+    runner = _Runner(applets=present)
+    userland = Userland(UserlandOptions(), runner)
+
+    await userland.resolve()
+
+    assert runner.calls[-1] == _P_APPLETS, (
+        f"the applet batch was {runner.calls[-1]!r}, not the measured spelling"
+    )
+    assert {a: userland.has_applet(a) for a in PROBED_APPLETS} == {
+        a: APPLET_PRESENT if a in present else APPLET_ABSENT for a in PROBED_APPLETS
+    }
+    for applet in PROBED_APPLETS:
+        assert userland.is_settled(applet_capability(applet)), (
+            f"{applet} was answered by the device and must count as settled"
+        )
+
+
+# How a batch can come back looking like a measurement without being one.
+# Every row leaves the capabilities UNASKED — never `absent`, which is the
+# whole point: `absent` is a verdict about the device and none of these
+# measured the device.
+_HOSTILE_BATCHES = [
+    # `command -v` missing or broken: every name reports 0 and the shape is
+    # perfect. The one failure a batch cannot see without a positive control.
+    ("no-control", {"applet_control": False}),
+    # The `run-command-line-length` failure mode: a shorter command ran and
+    # answered for fewer names, with rc 0 and no error anywhere.
+    ("truncated", {"applet_stdout": f"{_APPLET_CONTROL}=1\nbase64=1\n"}),
+    # A login banner where the answers should be — nothing parses.
+    ("garbage", {"applet_stdout": "Welcome to the device\n"}),
+    # The construct itself did not run. Real devices answer 0 here even with
+    # no applets at all, because the loop's exit code is the last `echo`'s.
+    ("nonzero", {"applet_retcode": 2}),
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("shape", "kwargs"), _HOSTILE_BATCHES, ids=[r[0] for r in _HOSTILE_BATCHES]
+)
+async def test_a_batch_that_did_not_measure_the_device_leaves_it_unasked(shape, kwargs, caplog):
+    """An untrustworthy answer is an absence of measurement, not a "no".
+
+    THE HAZARD, and it is the expensive direction: all four shapes below reach
+    otto as a well-formed, rc-0-ish reply, and reading any of them as answers
+    would settle seven capabilities at ``absent`` on the strength of a probe
+    that measured nothing -- then offer all seven for pinning into ``lab.json``,
+    where nothing would ever revisit them.
+
+    ``is_settled`` is asserted alongside the value because the value alone
+    cannot carry this: a consumer that REFUSES has to be able to tell "the
+    device has no scp" from "otto never found out".
+    """
+    runner = _Runner(applets={"base64", "nc"}, **kwargs)
+    userland = Userland(UserlandOptions(), runner)
+
+    with caplog.at_level(logging.DEBUG, logger="otto.host.userland"):
+        await userland.resolve()
+
+    for applet in PROBED_APPLETS:
+        name = applet_capability(applet)
+        assert userland.has_applet(applet) == _UNASKABLE[name], (
+            f"the {shape} batch was read as an answer for {applet}"
+        )
+        assert not userland.is_settled(name), (
+            f"the {shape} batch settled {applet}, so a refused probe round became "
+            f"a verdict about the device"
+        )
+    assert userland.as_lab_json() == {
+        k: v for k, v in _FULLY_DEGRADED.items() if k not in _APPLET_FIELDS
+    }, "an unmeasured applet answer reached the pasteable pin"
+    _assert_debug_only(caplog)
+
+
+@pytest.mark.asyncio
+async def test_an_untrusted_batch_is_asked_again_once_the_cooldown_expires(monkeypatch):
+    """Unasked is provisional. Only a measurement is cached.
+
+    The companion to the row above: leaving the batch unsettled is only the
+    right answer if it is also re-asked, or one bad reply pins ``present`` for
+    every applet for the object's lifetime -- which is the state a consumer
+    keyed on ``is_settled`` would never escape.
+    """
+    clock = _FakeClock()
+    monkeypatch.setattr(userland_module, "_monotonic", clock)
+    runner = _Runner(applets={"base64"}, applet_control=False)
+    userland = Userland(UserlandOptions(), runner)
+
+    await userland.resolve()
+    assert userland.has_applet("scp") == APPLET_PRESENT
+    during = len(runner.calls)
+
+    runner.applet_control = True
+    clock.now += userland_module._RETRY_COOLDOWN_S
+    await userland.resolve()
+
+    assert runner.calls[during:] == [_P_APPLETS], (
+        f"the retry issued {runner.calls[during:]}; only the batch was unsettled"
+    )
+    assert userland.has_applet("scp") == APPLET_ABSENT
+    assert userland.has_applet("base64") == APPLET_PRESENT
+    assert userland.is_settled(applet_capability("scp"))
+
+
+@pytest.mark.asyncio
+async def test_the_six_that_predate_applets_are_asked_exactly_as_before():
+    """No behaviour change for a host that never reads an applet capability.
+
+    The applet batch is appended, not woven in: the eleven commands the six
+    fixed capabilities cost are the same commands, in the same order, with the
+    same spellings, and the batch is the twelfth. Asserted as a PREFIX rather
+    than as a set, because an interleaving that put the batch third would keep
+    every set-based assertion in this module green while changing which probes
+    a budget-limited host reaches.
+    """
+    runner = _Runner({_P_TIMEOUT})
+
+    await Userland(UserlandOptions(), runner).resolve()
+
+    assert runner.calls[: len(_PROBES_BEFORE_APPLETS)] == _PROBES_BEFORE_APPLETS
+    assert runner.calls[len(_PROBES_BEFORE_APPLETS) :] == [_P_APPLETS], (
+        "the applet batch must be the last command and the only one added"
+    )
+
+
+@pytest.mark.asyncio
+async def test_every_applet_gets_its_own_debug_line_with_its_own_source(caplog):
+    """One line per applet, not one for the batch, and the source is per name.
+
+    The debug lines are what tell a user WHICH answers cost a round trip, and
+    the applets are the one group where the answer and the cost do not line up
+    one-to-one: seven answers, one command, and some of the seven may be
+    declared. A single "applets = ..." line would hide both facts.
+    """
+    runner = _Runner(applets={"base64"})
+    userland = Userland(UserlandOptions(applet_scp=APPLET_ABSENT), runner)
+
+    with caplog.at_level(logging.DEBUG, logger="otto.host.userland"):
+        await userland.resolve()
+
+    lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("userland: ")]
+    assert f"userland: {applet_capability('scp')} = {APPLET_ABSENT} (declared)" in lines
+    assert f"userland: {applet_capability('base64')} = {APPLET_PRESENT} (probed)" in lines
+    assert f"userland: {applet_capability('nc')} = {APPLET_ABSENT} (probed)" in lines
+    _assert_debug_only(caplog)
+
+
+def test_the_batch_fits_the_line_bound_the_tighter_transport_imposes():
+    """The batch is a command, so it is measured against otto's own line guard.
+
+    NOT A LENGTH ASSERTION WITH A NUMBER IN IT. The bound is
+    ``ASH_TYPED_LINE_MAX`` minus otto's BEGIN/END framing, and both halves
+    already live in ``refuse_if_line_editor_would_truncate`` -- so this runs
+    that function over the real emitted command rather than restating either
+    one. Adding applets until the batch would truncate reds here, on the guard
+    that would have refused it, instead of on a device.
+
+    THE TIGHTER TRANSPORT IS REACHABLE, which is what makes this worth
+    asserting at all rather than waving at the 9000-character exec ceiling:
+    probes go out through ``Host.exec``, and ``exec`` has no stateless
+    primitive on a ``term: telnet`` host or on any host whose login is proxied
+    (see the ``run-command-line-length`` record's two OPEN paths), so there it
+    is line-edited exactly like a typed command.
+    """
+    refuse_if_line_editor_would_truncate(AshFrame(), _P_APPLETS, host="probe")

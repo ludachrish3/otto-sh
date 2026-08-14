@@ -621,6 +621,68 @@ class UserlandOptions:
     coreutils spelling) works from 1.31.0. The two spellings are mutually
     exclusive on every build tested."""
 
+    applet_base64: str | None = None
+    """``"present"``, ``"absent"``, or ``None`` to probe. Read via
+    :meth:`~otto.host.userland.Userland.has_applet`.
+
+    One of the ``applet_*`` fields, whose names are the closed list
+    :data:`~otto.host.userland.PROBED_APPLETS`. They are FIXED FIELDS rather
+    than one ``dict`` for two reasons, and both are about a declaration that
+    silently does nothing. A field name is checked by the dataclass here and by
+    ``extra='forbid'`` on
+    :class:`~otto.models.options.UserlandOptionsSpec`, so ``applet_scpp`` fails
+    at both boundaries — a dict of names could only be checked by a validator
+    the runtime dataclass has no way to run. And a field can be declared ONE AT
+    A TIME: ``resolve()`` asks the device only about the applets left
+    undeclared, which a part-filled dict could not express without being read
+    as a complete answer.
+
+    Measured on the five matrix artifacts, 2026-08-14 (Tier 2 rootfs):
+    ``base64`` is absent on 1.16.1 and present on 1.21.1 and later — the
+    transition the ``shell`` transfer backend's codec choice turns on."""
+
+    applet_nc: str | None = None
+    """``"present"``, ``"absent"``, or ``None`` to probe.
+
+    Present on all five matrix artifacts (2026-08-14). Presence is NOT the
+    ``nc`` transfer question — BusyBox's applet rejects the ``-N`` and ``-l
+    PORT`` spellings otto emits, and a real netcat installed alongside works
+    via :attr:`NcOptions.exec_name`, which may name a binary this list does not
+    carry. See :data:`~otto.host.userland.PROBED_APPLETS`."""
+
+    applet_poweroff: str | None = None
+    """``"present"``, ``"absent"``, or ``None`` to probe.
+
+    Present on all five matrix artifacts (2026-08-14) — the BusyBox spelling of
+    :attr:`applet_shutdown`."""
+
+    applet_scp: str | None = None
+    """``"present"``, ``"absent"``, or ``None`` to probe.
+
+    Absent on all five matrix artifacts (2026-08-14): the legacy ``scp``
+    protocol execs a remote binary by that name."""
+
+    applet_shutdown: str | None = None
+    """``"present"``, ``"absent"``, or ``None`` to probe.
+
+    Absent on all five matrix artifacts (2026-08-14), which is why
+    ``Host.shutdown()``'s ``shutdown -h now`` is a recorded gap;
+    :attr:`applet_poweroff` is the spelling those devices have."""
+
+    applet_uudecode: str | None = None
+    """``"present"``, ``"absent"``, or ``None`` to probe.
+
+    Present on all five matrix artifacts (2026-08-14), 1.16.1 included — the
+    measured fallback codec for the one row with no ``base64``. Listed
+    separately from :attr:`applet_uuencode` because a build may compile out
+    either half and a transfer needs both directions."""
+
+    applet_uuencode: str | None = None
+    """``"present"``, ``"absent"``, or ``None`` to probe.
+
+    Present on all five matrix artifacts (2026-08-14). See
+    :attr:`applet_uudecode`."""
+
     version: str | None = None
     """Userland version, for documentation and profile selection ONLY.
 

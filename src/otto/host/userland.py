@@ -18,8 +18,8 @@ off the console and out of both log files at otto's default ``INFO``. They are
 written in a form that can be pasted into ``lab.json`` to skip the probes next
 time.
 
-**One round asks about all six, whatever the caller came for.** There is no
-per-capability resolution: :meth:`Userland.resolve` settles everything not
+**One round asks about all of them, whatever the caller came for.** There is
+no per-capability resolution: :meth:`Userland.resolve` settles everything not
 already declared, and every consumer awaits that same whole round. Who reads
 what today:
 
@@ -47,8 +47,12 @@ what today:
 ``shell_dialect``
     nothing yet — an ``ash`` frame is registered, but nothing routes this
     probe's result to it; see the hole below
+``applet_<name>``, one per entry in :data:`PROBED_APPLETS`
+    nothing yet, deliberately. This capability is PROBE ONLY: it exists so the
+    five pieces of work named at :data:`PROBED_APPLETS` can be written, and not
+    one of them is wired here. Read it through :meth:`Userland.has_applet`.
 
-So the first ``run(sudo=True)`` against a host issues up to eleven probes to
+So the first ``run(sudo=True)`` against a host issues up to twelve probes to
 read one answer that probes 1-2 settled. The whole round is deliberate — splitting
 it means a second set of exec channels against a server that refuses rather
 than queues them (see ``_RETRY_COOLDOWN_S``), a second chance to strand a
@@ -98,6 +102,18 @@ instead. ``checksum``'s OUTPUT format (lowercase hex, matching
 /tmp/payload.bin`` (not this module's ``< /dev/null`` probe spelling) across
 the matrix and compares its first field byte-for-byte -- presence and format,
 not this exact probe command.
+
+THE APPLET BATCH'S THIRD COPY IS TIER 2, NOT TIER 1, and that is a property of
+what it asks rather than a filing choice. ``_applet_probe_command`` is a
+shell CONSTRUCT (``for``/``command -v``/``&&``/``||``/``>/dev/null``) whose
+answer is "is there an applet by this name", and Tier 1 cannot substantiate an
+ABSENCE structurally: it SCOPES PATH to a directory of symlinks it wrote
+itself, so a missing applet is missing because Tier 1 did not shim it. Tier 2
+builds a root whose ``/bin`` came from BusyBox's own ``--install -s``, so a
+name that is not there was compiled out. The copy therefore lives in
+``tests/busybox/test_applet_resolution.py``, which already measured
+``command -v base64`` that way, and the three-copy rule holds with that file
+in Tier 1's place.
 
 **The other half of this module is the GAP REGISTRY** (:class:`Gap`,
 :data:`GAPS`, :func:`gap_for`, :func:`refuse_if_gapped`, at the bottom of the
@@ -156,16 +172,19 @@ _monotonic = time.monotonic
 _PROBE_TIMEOUT_S = 10.0
 
 # Ceiling on one whole resolution, and the reason both numbers have to be read
-# together. THE ARITHMETIC: resolution issues at most eleven probes (2 elevation +
-# 3 timeout + 2 base64 + 2 stat + 1 checksum + 1 dialect), so a host that swallows
-# every one of them costs 11 x _PROBE_TIMEOUT_S = 110s unbounded. resolve() holds its
+# together. THE ARITHMETIC: resolution issues at most twelve probes (2 elevation +
+# 3 timeout + 2 base64 + 2 stat + 1 checksum + 1 dialect + 1 applet batch), so a host
+# that swallows every one of them costs 12 x _PROBE_TIMEOUT_S = 120s unbounded. The
+# applet batch is ONE probe however many names :data:`PROBED_APPLETS` carries --
+# that is the whole point of ``_applet_probe_command``, and it is why adding an
+# applet does not move this number. resolve() holds its
 # lock for that whole span, so on a concurrent consumer — nc's bulk put fans
 # its files out and each one awaits resolution — every queued caller waits the
 # full span out BEFORE its own timeout starts counting. This budget converts
 # that into a stated bound: the deadline is set once per resolution, each probe
 # is granted min(_PROBE_TIMEOUT_S, whatever is left), and a probe with nothing
 # left is never sent. So a wedged host costs at most ceil(30/10) = 3 probe
-# timeouts, not eleven.
+# timeouts, not twelve.
 #
 # What the unreached capabilities get is a NO-INFORMATION DEFAULT, not a "no"
 # (see _UNASKABLE_DEFAULTS), and they are asked again on a later resolve()
@@ -217,9 +236,9 @@ _PROBE_TIMEOUT_S = 10.0
 #    where EVERY probe is unreachable. Against that script,
 #    `_probe_timeout` short-circuits (`if present is None: return None`)
 #    the moment `command -v timeout` itself cannot be asked, so the whole
-#    resolution can only ever ISSUE 9 commands (2 elevation + 1 timeout +
-#    2 base64 + 2 stat + 1 checksum + 1 dialect -- confirmed directly from
-#    the failing assertion's own captured call list), never 11, no matter
+#    resolution can only ever ISSUE 10 commands (2 elevation + 1 timeout +
+#    2 base64 + 2 stat + 1 checksum + 1 dialect + 1 applet batch -- confirmed
+#    directly from the failing assertion's own captured call list), never 12, no matter
 #    how much budget the caller affords. Once the budget affords 10 or
 #    more, the test's own `affordable = ceil(budget / probe)` prediction
 #    exceeds what the algorithm can structurally send, and
@@ -245,6 +264,201 @@ _PROBE_TIMEOUT_S = 10.0
 # and reading what reds; that run IS the guard, and no number typed into this
 # comment can substitute for it.
 _RESOLVE_BUDGET_S = 30.0
+
+PROBED_APPLETS = [
+    "base64",
+    "nc",
+    "poweroff",
+    "scp",
+    "shutdown",
+    "uudecode",
+    "uuencode",
+]
+"""The closed list of applet names :meth:`Userland.has_applet` will answer for.
+
+CLOSED ON PURPOSE, and that is the whole of the typo safety. Every name here
+becomes a real capability key (``applet_<name>``, see :func:`applet_capability`)
+and a real :class:`~otto.host.options.UserlandOptions` field, so a misspelling
+is a ``TypeError`` from the dataclass, an ``extra='forbid'`` validation error
+from :class:`~otto.models.options.UserlandOptionsSpec`, or a ``ValueError``
+from :func:`applet_capability` -- never a guard that silently never fires.
+An OPEN "ask the device about any name" probe would have none of those three.
+
+TAKEN FROM THE :data:`GAPS` RECORDS' OWN ``measured_on`` FIELDS, never invented.
+Which of the five blocked pieces of work reads which name, and how far presence
+actually gets each one:
+
+``base64``, ``uuencode``, ``uudecode``
+    codec selection for the ``shell`` transfer backend
+    (``todo/busybox-parity-sweep-2026-08-11.md``). Presence IS the question
+    here: ``base64`` is absent on 1.16.1 and present from 1.21.1, and
+    ``uuencode``/``uudecode`` round-trip on all five rows. Both halves of the
+    uu pair are listed because a build is free to compile out either one and
+    the backend needs both (PUT decodes on the device, GET encodes on it).
+``shutdown``, ``poweroff``
+    the ``shutdown-command`` surface. Presence IS the question, and it is a
+    CHOICE between two names rather than a refusal: ``shutdown`` is absent and
+    ``poweroff`` present on all five rows.
+``scp``
+    the ``scp-transfer`` surface. Presence IS the question: ``scp`` is a remote
+    BINARY the legacy protocol execs by name, absent on all five rows.
+``nc``
+    the ``nc-transfer`` surface, and the one entry where presence is NECESSARY
+    BUT NOT SUFFICIENT -- do not read this probe as having solved it. That
+    record's gap is that BusyBox's ``nc`` APPLET rejects ``-N`` and spells its
+    listener ``-l -p PORT``; a device with a real OpenBSD netcat installed
+    alongside works fine via ``NcOptions.exec_name``. So ``present`` says
+    nothing about WHICH netcat answered, and ``exec_name`` may name a binary
+    (``ncat``, ``netcat``) that is not in this closed list at all. Only the
+    ``absent`` direction is a conclusion there: nothing to run is nothing to
+    run.
+
+WHAT IS DELIBERATELY NOT HERE. ``sftp-transfer`` is the fifth blocked surface
+and it gets NO entry, because its question is not a PATH-applet question and a
+capability that answered it wrongly would be worse than none. That record's own
+``measured_on`` names an ABSOLUTE path -- ``/bin/sh: /usr/lib/sftp-server: not
+found`` -- and an sftp-server binary is not on ``PATH`` on a healthy GNU host
+either (Debian ships ``/usr/lib/openssh/sftp-server``), so ``command -v
+sftp-server`` answers "absent" on hosts where sftp works perfectly. That is a
+false negative in the expensive direction: a refusal built on it would decline
+a transfer the device can do. Which path to test, and whether the daemon's
+configured subsystem is even reachable as a file, is a design question this
+probe does not settle.
+"""
+
+APPLET_PRESENT = "present"
+"""The device resolved this name to something it can run."""
+
+APPLET_ABSENT = "absent"
+"""The device resolved this name to nothing. A MEASUREMENT, not a refusal."""
+
+_APPLET_PREFIX = "applet_"
+# The capability key and the `UserlandOptions` field share this prefix, and the
+# sharing is load-bearing rather than tidy: `_resolve_once` reads a declaration
+# with `getattr(self._options, name)` for the fixed six, and the applet block
+# reads its declarations exactly the same way. A prefix written twice would let
+# the two drift into a declaration nothing consults.
+
+
+def applet_capability(applet: str) -> str:
+    """Return the capability key for *applet* -- ``"scp"`` -> ``"applet_scp"``.
+
+    The bridge between the two vocabularies, and the reason a consumer can ask
+    :meth:`Userland.is_settled` about an applet without spelling the prefix by
+    hand. ``is_settled(f"applet_{name}")`` would work and is exactly what this
+    exists to stop: an f-string bypasses the closed list, so a typo becomes a
+    key ``is_settled`` rejects at the wrong moment (or, worse, one it accepts
+    because the typo happened to name another capability).
+
+    Raises:
+        ValueError: *applet* is not in :data:`PROBED_APPLETS`. Loud for the
+            same reason :meth:`Userland.is_settled` is loud about an unknown
+            key -- a consumer gating a refusal on a name nothing probes has a
+            guard that cannot fire.
+    """
+    if applet not in PROBED_APPLETS:
+        raise ValueError(
+            f"{applet!r} is not an applet this module probes; it asks about {PROBED_APPLETS}"
+        )
+    return f"{_APPLET_PREFIX}{applet}"
+
+
+_APPLET_CONTROL = "echo"
+"""The POSITIVE CONTROL carried in every applet batch. Never a reported answer.
+
+WHAT IT DEFENDS AGAINST, which is the failure a naive batch has no way to see:
+the loop reports ``<name>=0`` both when the device has no such applet and when
+``command -v`` itself is missing or broken, and the second case is an ALL-ZEROS
+answer that looks exactly like a device with none of the applets. Recorded as a
+measurement, that would settle every capability at ``absent`` on the strength of
+a probe that measured nothing.
+
+``echo`` is the control because it is a SHELL BUILTIN -- ``command -v echo``
+answers 0 with no dependence on ``PATH``, on an applet symlink, or on
+``CONFIG_FEATURE_SH_STANDALONE``, so a zero for it can only mean the primitive
+itself did not work. Measured 1 on all five matrix rows (2026-08-14, Tier 2
+rootfs). :meth:`Userland._probe_applets` discards the whole batch when it comes
+back anything else, which leaves the capabilities UNASKED rather than answered
+-- see ``_UNASKABLE_DEFAULTS``.
+"""
+
+
+def _applet_probe_command(applets: "list[str]") -> str:
+    """Build the ONE command that answers presence for every name in *applets*.
+
+    O(1) ROUND TRIPS, WHATEVER THE LIST LENGTH, and that is the requirement
+    rather than an optimisation: BusyBox devices are typically slow, and a
+    per-applet round trip would put one SSH exec channel per name on the same
+    path ``_RETRY_COOLDOWN_S`` exists to protect -- against a server that
+    REFUSES excess channels rather than queueing them.
+
+    WHAT THAT IS WORTH, measured 2026-08-14 over the Tier 3 transport (real
+    ssh, rootless dropbear on loopback, BusyBox 1.35.0, connection already
+    warm): the batch answered all seven names in a median 10.7 ms, while seven
+    separate ``command -v`` execs cost a median 61.2 ms -- 5.7x, and that is
+    the FLOOR of the saving rather than a typical figure, because loopback has
+    no real latency and the per-channel cost is what a slow device on a real
+    path multiplies. Six of the seven channels are also six chances to be
+    refused by an sshd at its ``MaxSessions`` ceiling, which is the cost that
+    does not show up in a timing.
+
+    ENUMERATION IS NOT AVAILABLE, which is why this is per-name detection at
+    all. ``busybox --list`` does not exist on 1.16.1: measured, it exits 1 with
+    ``--list: applet not found`` and enumerates nothing (the same finding that
+    made ``tests/_fixtures/busybox_rootfs.py`` build its root with
+    ``--install -s``). It works on the other four rows, so a probe built on it
+    covers four fifths of the matrix and reports success.
+
+    ``command -v``, MEASURED rather than assumed, 2026-08-14, in the Tier 2
+    rootfs on all five matrix rows. It answered correctly on every one --
+    ``base64`` absent on 1.16.1 alone, ``scp`` and ``shutdown`` absent on all
+    five, ``nc``/``poweroff``/``uuencode``/``uudecode`` present on all five.
+    ``which`` and the ``type`` builtin answered identically on those same five
+    artifacts, so this is a choice between three things that all work here and
+    not a lone survivor: ``command -v`` wins because ``which`` is ITSELF an
+    optional applet a build may compile out (in which case it reports every
+    name absent -- the all-zeros failure ``_APPLET_CONTROL`` exists for),
+    and because it is what :meth:`Userland._probe_elevation` already issues, so
+    the module asks its presence questions one way.
+
+    A PROBE IS NOT EXEMPT FROM THE LINE BOUNDS, which is why the length is
+    guarded rather than eyeballed. Probes go out through ``Host.exec``, whose
+    9000-character exec-channel ceiling is roomy -- but ``exec`` has no
+    stateless primitive on a ``term: telnet`` host or on any host whose login
+    is proxied, and there it routes through a pooled shell session where
+    :data:`ASH_TYPED_LINE_MAX` (1022, minus otto's own BEGIN/END framing)
+    applies instead. The shipped seven names emit 135 characters, so the slack
+    against the tighter of the two is a factor of about seven -- comfortable,
+    and nothing like the three orders of magnitude the exec ceiling suggests.
+    ``test_the_batch_fits_the_line_bound_the_tighter_transport_imposes`` runs
+    otto's real ``refuse_if_line_editor_would_truncate`` over this command, so
+    the guard is the RELATIONSHIP and neither number is retyped: a list long
+    enough to approach the bound reds there rather than truncating on a device.
+    """
+    names = " ".join([_APPLET_CONTROL, *applets])
+    return (
+        f'for a in {names}; do command -v "$a" >/dev/null 2>&1 && echo "$a=1" || echo "$a=0"; done'
+    )
+
+
+def _parse_applet_answers(output: str) -> "dict[str, bool]":
+    """Parse ``<name>=1``/``<name>=0`` lines into a map. Unknown shapes are dropped.
+
+    Dropping rather than raising, and the verdict is not this function's: the
+    CALLER compares the parsed map against exactly the names it asked for (see
+    ``Userland._probe_applets``), so an unparseable line reaches it as a
+    MISSING answer and discards the batch, while a banner line that happens to
+    parse reaches it as an EXTRA key and discards it too. Both are the safe
+    direction. Raising here would instead turn a chatty login shell into a
+    resolution error rather than an unasked capability.
+    """
+    answers: dict[str, bool] = {}
+    for line in output.splitlines():
+        name, sep, value = line.strip().partition("=")
+        if sep and value in ("0", "1"):
+            answers[name] = value == "1"
+    return answers
+
 
 # What each capability answers when its probes could not be ASKED — the
 # transport raised, or the budget above ran out before the command was sent.
@@ -308,6 +522,21 @@ _RESOLVE_BUDGET_S = 30.0
 # ``shell_dialect``
 #     ``bash``. otto's unix path has always assumed it, and no ``CommandFrame``
 #     is registered under ``ash`` at all — see the module docstring's hole.
+# ``applet_<name>``
+#     ``present``, for every name, DERIVED rather than typed -- and the six
+#     above are the reason it can be one uniform rule instead of seven
+#     arguments. Each of those six had to be reasoned about separately because
+#     each names a SPELLING otto would emit; an applet capability names only
+#     whether otto may reach for a binary at all, and what otto did before it
+#     asked anything was reach for it. ``Host.shutdown()`` emits ``shutdown -h
+#     now`` today, ``ScpFileTransfer`` execs ``scp`` today, and
+#     ``ShellFileTransfer`` emits ``base64`` today; ``present`` is precisely
+#     that status quo, for every name, which is the same standard
+#     ``stat_size``'s ``stat`` is held to. ``absent`` would be the expensive
+#     direction twice over: a consumer that DEGRADES on the value alone would
+#     read a refused probe round as "this device has no scp" and pick a worse
+#     backend, and a consumer that REFUSES is already required to check
+#     :meth:`Userland.is_settled` first, so ``absent`` buys it nothing.
 #
 # These are provisional: an unasked capability is not recorded as settled, so
 # ``resolve()`` asks again on the next call. See :meth:`Userland.resolve`.
@@ -318,6 +547,7 @@ _UNASKABLE_DEFAULTS = {
     "stat_size": "stat",
     "checksum": "absent",
     "shell_dialect": "bash",
+    **{applet_capability(a): APPLET_PRESENT for a in PROBED_APPLETS},
 }
 
 # Minimum gap between resolution attempts once one has left something unasked.
@@ -373,25 +603,15 @@ class Userland:
         # attempt leaves something unasked, so the first caller never waits.
         self._retry_after = 0.0
 
-    async def _probe(self, cmd: str) -> bool | None:
-        """Report whether *cmd* exits 0, or ``None`` when it could not be asked.
+    async def _send(self, cmd: str) -> "CommandResult | None":
+        """Issue *cmd* under the resolution budget; ``None`` if it could not be asked.
 
-        On ``rc == 0`` and nothing else. The same "this does not work" outcome
-        reaches otto as 127 from the shell when an applet is absent and as 1
-        from the applet when a flag is rejected (both measured across the
-        BusyBox matrix), so a probe keyed to either code misclassifies the
-        other.
-
-        **A probe that could not run is not a NO — it is nothing.** An earlier
-        version returned ``False`` there, reasoning that resolution is an
-        adaptation step and the real command would report a broken transport
-        with its own context. That reasoning holds for a capability whose
-        fallback still runs; it collapses for one that GATES the operation,
-        because then the real command never runs and there is nothing left to
-        report. Measured: with only the first probe refused on an otherwise
-        healthy sudo host, elevation resolved to ``su`` and stayed there for
-        the object's lifetime. Callers turn ``None`` into no conclusion for
-        the whole capability, and :meth:`resolve` declines to cache it.
+        The transport half of ``_probe``, split out so the applet batch can
+        read the command's OUTPUT while every probe keeps one grant, one
+        budget check and one ``wait_for``. Nothing here interprets the answer:
+        the exit-code reading lives in ``_probe`` and the line parsing in
+        ``_probe_applets``, so neither can quietly acquire its own
+        timeout policy.
 
         Cancellation is not caught — ``CancelledError`` is a ``BaseException``
         — so a shutdown still ends resolution immediately instead of waiting
@@ -413,13 +633,38 @@ class Userland:
             return None
         grant = min(_PROBE_TIMEOUT_S, remaining)
         try:
-            result = await asyncio.wait_for(
+            return await asyncio.wait_for(
                 self._run(cmd, log=LogMode.NEVER, timeout=grant), timeout=grant
             )
         except Exception as exc:  # noqa: BLE001 — a probe that cannot run is an absence of measurement, not an error
             _logger.debug("userland: probe %r could not be asked (%s)", cmd, exc)
             return None
-        return result.retcode == 0
+
+    async def _probe(self, cmd: str) -> bool | None:
+        """Report whether *cmd* exits 0, or ``None`` when it could not be asked.
+
+        On ``rc == 0`` and nothing else. The same "this does not work" outcome
+        reaches otto as 127 from the shell when an applet is absent and as 1
+        from the applet when a flag is rejected (both measured across the
+        BusyBox matrix), so a probe keyed to either code misclassifies the
+        other.
+
+        **A probe that could not run is not a NO — it is nothing.** An earlier
+        version returned ``False`` there, reasoning that resolution is an
+        adaptation step and the real command would report a broken transport
+        with its own context. That reasoning holds for a capability whose
+        fallback still runs; it collapses for one that GATES the operation,
+        because then the real command never runs and there is nothing left to
+        report. Measured: with only the first probe refused on an otherwise
+        healthy sudo host, elevation resolved to ``su`` and stayed there for
+        the object's lifetime. Callers turn ``None`` into no conclusion for
+        the whole capability, and :meth:`resolve` declines to cache it.
+
+        The transport, the grant and the budget check are ``_send``'s;
+        this method is only the exit-code reading laid over them.
+        """
+        result = await self._send(cmd)
+        return None if result is None else result.retcode == 0
 
     async def resolve(self) -> None:
         """Settle every capability not already declared. Idempotent once settled.
@@ -433,8 +678,10 @@ class Userland:
         ``rebuild_connections()``, nothing short of a new host object.
 
         The retry is per capability, not per round. A device that answered
-        five of six has already paid for those five, and re-issuing them
+        all but one has already paid for the rest, and re-issuing them
         would put probe traffic back on the fan-out path the lock protects.
+        The applet capabilities are the one exception, and only because their
+        probe is: they ride ONE command, so they settle together or not at all.
 
         It is also RATE LIMITED, by ``_RETRY_COOLDOWN_S``, and that bound is
         load-bearing rather than tidy. The consumers call this per unit of work
@@ -451,10 +698,12 @@ class Userland:
         fan-out — against a server that refuses excess SSH channels rather
         than queueing them.
 
-        **WHAT A CALLER PAYS.** All six capabilities, not the one it came
+        **WHAT A CALLER PAYS.** Every capability, not the one it came
         for: there is no scoped form of this call, so ``run(sudo=True)``
-        issues up to eleven probes to read ``elevation``, which probes 1-2
-        settled. On a healthy host that is eleven fast round trips; on a
+        issues up to twelve probes to read ``elevation``, which probes 1-2
+        settled. Twelve rather than one per capability because the applet
+        names ride a single batched command whatever their number — see
+        ``_applet_probe_command``. On a healthy host that is twelve fast round trips; on a
         refusing one it is up to ``_RESOLVE_BUDGET_S`` (30s), and up to that
         again on the next call outside ``_RETRY_COOLDOWN_S`` (60s). None of it
         is charged to the caller's ``timeout=`` — ``BaseHost.run`` awaits this
@@ -504,6 +753,44 @@ class Userland:
             else:
                 resolved[name], sources[name] = answer, "probed"
                 settled.add(name)
+        # THE APPLET CAPABILITIES, RESOLVED AS A GROUP, and the second loop is
+        # the point rather than a duplication of the first. Above, one probe
+        # answers one capability; here ONE COMMAND answers as many as are still
+        # open, so the (name, probe) pairing the loop above is built on cannot
+        # express it. Everything else is identical -- same declared-wins
+        # short-circuit, same "assumed" vs "probed" source, same settled rule --
+        # because that is what makes the override, the debug line and the
+        # pasteable pin apply to these without a second mechanism.
+        #
+        # LAST, deliberately. The six above keep their exact order, their exact
+        # spellings and their exact count, so a host that never reads an applet
+        # capability sees the resolution it saw before; and when the budget cuts
+        # the round short it is this batch that goes, not an incumbent.
+        #
+        # ONLY THE UNSETTLED, UNDECLARED NAMES ARE ASKED ABOUT. A maintainer who
+        # has pinned every applet costs zero round trips here, which is the
+        # requirement the batch exists to serve -- and one who has pinned some
+        # gets a shorter command rather than a wasted question.
+        open_applets = []
+        for applet in PROBED_APPLETS:
+            name = applet_capability(applet)
+            if name in settled:
+                continue
+            declared = getattr(self._options, name)
+            if declared:
+                resolved[name], sources[name] = declared, "declared"
+                settled.add(name)
+                continue
+            open_applets.append(applet)
+        if open_applets:
+            answers = await self._probe_applets(open_applets)
+            for applet in open_applets:
+                name = applet_capability(applet)
+                if answers is None:
+                    resolved[name], sources[name] = _UNASKABLE_DEFAULTS[name], "assumed"
+                else:
+                    resolved[name], sources[name] = answers[applet], "probed"
+                    settled.add(name)
         self._resolved = resolved
         self._settled = settled
         if len(settled) < len(_UNASKABLE_DEFAULTS):
@@ -615,6 +902,58 @@ class Userland:
             return None
         return "bash" if bash else "ash"
 
+    async def _probe_applets(self, applets: "list[str]") -> "dict[str, str] | None":
+        """Answer presence for EVERY name in *applets* in ONE round trip, or ``None``.
+
+        The whole list or nothing, and the all-or-nothing is honest rather than
+        coarse: one command carries every answer, so either it came back and
+        every name in it was measured, or it did not and none of them was. That
+        is why there is no per-applet ``None`` arm -- a partial answer is not a
+        state this probe can produce.
+
+        THREE THINGS ARE CHECKED BEFORE THE ANSWER IS BELIEVED, and each is a
+        way the batch can come back looking like a measurement without being
+        one:
+
+        * the exit code, which is 0 whenever the loop ran at all (the final
+          ``echo`` succeeds even when every name is absent), so a non-zero here
+          means the shell never got through the construct;
+        * ``_APPLET_CONTROL``, which separates "this device has none of these
+          applets" from "``command -v`` did not work" -- the one failure a
+          batch has no other way to see, since both reach otto as a
+          well-formed all-zeros reply;
+        * that the parsed names are EXACTLY the ones asked about, which rejects
+          both a truncated answer (the ``run-command-line-length`` failure
+          mode: a silently shortened line running a shorter command, which
+          would otherwise present as a device with fewer applets) and a login
+          banner whose text happens to parse as an answer.
+
+        Any of the three failing leaves the whole batch UNASKED, which is the
+        expensive-direction-safe outcome: the capabilities take their
+        ``_UNASKABLE_DEFAULTS`` (``present``, i.e. what otto did before it
+        asked), stay unsettled, and are asked again after
+        ``_RETRY_COOLDOWN_S``.
+
+        Reuses ``_send``'s "could not be asked" log template rather than
+        adding a second one, because that is exactly what this is.
+        """
+        cmd = _applet_probe_command(applets)
+        result = await self._send(cmd)
+        if result is None:
+            return None
+        seen = _parse_applet_answers(result.value)
+        expected = {_APPLET_CONTROL, *applets}
+        if result.retcode != 0:
+            reason = f"the batch exited {result.retcode}"
+        elif not seen.get(_APPLET_CONTROL):
+            reason = f"the {_APPLET_CONTROL!r} control answered no, so `command -v` did not work"
+        elif set(seen) != expected:
+            reason = f"answered for {sorted(seen)}, not {sorted(expected)}"
+        else:
+            return {a: APPLET_PRESENT if seen[a] else APPLET_ABSENT for a in applets}
+        _logger.debug("userland: probe %r could not be asked (%s)", cmd, reason)
+        return None
+
     def _get(self, name: str) -> str:
         if not self._resolved:
             raise RuntimeError(f"Userland.{name} read before resolve()")
@@ -663,6 +1002,40 @@ class Userland:
         """
         return self._get("shell_dialect")
 
+    def has_applet(self, applet: str) -> str:
+        """:data:`APPLET_PRESENT` or :data:`APPLET_ABSENT` for one *applet*.
+
+        The parameterized reader the fixed six do not need. Seven properties
+        would say the same thing seven times and would have to grow with
+        :data:`PROBED_APPLETS`; this cannot fall behind that list, because the
+        list is what it validates against.
+
+        **A VALUE, NOT A VERDICT** -- and for a consumer that REFUSES that
+        distinction is the whole contract. :data:`APPLET_ABSENT` is what an
+        unasked capability reads as only if someone changed
+        ``_UNASKABLE_DEFAULTS`` (it is ``present`` today, so an unasked
+        applet reads as present) -- but do not lean on that, because the rule
+        it is an instance of is the one that holds: a consumer that refuses
+        asks :meth:`is_settled` first, or a refused probe round becomes a
+        verdict about the device. ``otto.host.file_ops.refuse_if_base64_is_absent``
+        is the precedent, and the shape here is the same::
+
+            settled = userland.is_settled(applet_capability("scp"))
+            if settled and userland.has_applet("scp") == APPLET_ABSENT:
+                ...
+
+        Both spellings of the name are checked -- this method against
+        :data:`PROBED_APPLETS`, :meth:`is_settled` against
+        ``_UNASKABLE_DEFAULTS`` via :func:`applet_capability` -- so neither
+        half of that condition can be a typo that quietly never fires.
+
+        Raises:
+            ValueError: *applet* is not in :data:`PROBED_APPLETS`.
+            RuntimeError: read before :meth:`resolve` was awaited, exactly as
+                the six properties do.
+        """
+        return self._get(applet_capability(applet))
+
     def is_settled(self, name: str) -> bool:
         """Whether *name*'s value was DECLARED or actually MEASURED, not assumed.
 
@@ -677,6 +1050,12 @@ class Userland:
 
         ``False`` before :meth:`resolve` has been awaited, which is honest
         rather than a special case: nothing is settled yet.
+
+        Takes an applet capability as readily as one of the fixed six -- pass
+        ``applet_capability("scp")``, never ``"applet_" + name``, so the closed
+        list gets to reject a typo before this method does. The whole applet
+        batch settles or none of it does (see ``_probe_applets``), so
+        asking about one of those keys is asking whether the batch landed.
 
         Raises:
             ValueError: *name* is not a capability this module resolves. A
@@ -705,6 +1084,13 @@ class Userland:
         A partial table is the right output and not a degraded one: the keys
         it omits stay ``None`` in ``lab.json``, which means "ask the device",
         which is precisely what otto could not do this time.
+
+        The applet capabilities travel here on exactly the same terms, under
+        their ``applet_<name>`` keys. That is what makes the batch worth
+        having twice over: a maintainer pastes the whole table back and the
+        next resolution against that slow device issues no applet round trip
+        at all, because ``_resolve_once`` asks only about names that are
+        neither settled nor declared.
         """
         return {k: v for k, v in sorted(self._resolved.items()) if k in self._settled}
 
