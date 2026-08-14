@@ -1074,6 +1074,33 @@ GAPS: list[Gap] = [
         ),
     ),
     Gap(
+        surface="product-lifecycle",
+        status=UNTESTED,
+        reason=(
+            "nobody has run otto's product verbs -- `Host.stage()`, `Host.install()`, "
+            "`Host.uninstall()` and `Host.is_installed()` -- against a BusyBox userland, "
+            "and no tier can, because those four emit NO command of their own. Each "
+            "iterates `Host.products` and delegates to a `Product`, and `Product` "
+            "declares all four of its methods abstract. otto ships exactly ONE concrete "
+            "body, `FileProduct.stage`, and it is a single `await host.put(...)` -- a "
+            "surface this table already covers. Everything else that would reach the "
+            "device is project-supplied product code otto does not own, so a test that "
+            "measured `install` here would be measuring the `Product` subclass the test "
+            "itself wrote. Untested, therefore not blocked -- and with no products "
+            "declared, `stage`/`install`/`uninstall` are successful no-ops on any "
+            "userland and `is_installed()` is False"
+        ),
+        measured_on="",
+        queued_for=(
+            "nothing, and not for the usual reason: there is no otto code here to fix. "
+            "What would close this is a PROJECT taking a real `Product` to a real "
+            "BusyBox device and reporting what its `install` emitted -- at which point "
+            "the gap, if there is one, belongs to the command that failed (`run`, `put`) "
+            "and is recorded under THAT surface rather than this one. "
+            "`todo/busybox-parity-sweep-2026-08-11.md` is where such a finding lands"
+        ),
+    ),
+    Gap(
         surface="legacy-dropbear-crypto",
         status=UNTESTED,
         reason=(
@@ -1130,13 +1157,19 @@ out.
 # disagree the measurement wins, and a reader comparing the spec to this file
 # is owed the reason each missing candidate is missing.
 #
-# FOUR ENTRIES, TWO REASONS, and they must not be read as one list. THREE were
-# measured and the measurement did not support the prediction -- ``pgrep``/
-# ``pkill``, ``sudo`` and ``reboot``. That is the count the docs page quotes
-# ("three candidates ... dropped for exactly this reason once they were
-# measured"), and it is the count to keep in sync with it. The FOURTH,
-# ``install``/``stage``, is here for the opposite reason: nothing measured it
-# at all. It is listed so a reader does not conclude it was cleared.
+# THREE ENTRIES, ONE REASON, and the reason is what gives this block its
+# standing: each was MEASURED, and the measurement did not support the
+# prediction -- ``pgrep``/``pkill``, ``sudo`` and ``reboot``. That is the count
+# the docs page quotes ("three candidates ... dropped for exactly this reason
+# once they were measured"), and it is the count to keep in sync with it.
+#
+# The survey's fourth candidate, product ``install``/``stage``/``uninstall``,
+# is deliberately NOT here any more. Nothing ever measured it, so it never
+# belonged in a block whose whole authority is "measured, not predicted" -- one
+# entry cleared by reasoning devalues the other three. It is a record above
+# instead, ``product-lifecycle``, ``untested``, which is where a surface nobody
+# has run belongs. See that record for why nobody can: otto ships no
+# implementation of the half that touches the device.
 #
 # Recorded as a comment and not as records, because a `Gap` is a gap: a
 # candidate that measurement CLEARED is not one, and putting it in `GAPS`
@@ -1151,9 +1184,6 @@ out.
 # ``reboot`` -- the spec pairs it with ``shutdown``; measurement separates
 #     them. ``reboot`` is an applet on all five rows, so only the ``shutdown``
 #     half is a gap (see ``shutdown-command``).
-# product ``install``/``stage`` -- NOT MEASURED by any tier, and therefore not
-#     a record: unmeasured runs. Whoever measures it first adds it, in either
-#     status, with what it answered.
 
 
 def gap_for(surface: str) -> "Gap | None":

@@ -27,9 +27,14 @@ refusing record into the table is to write down what earned it. The rest is
 review.
 """
 
+import ast
+import inspect
+import textwrap
+
 import pytest
 
 from otto.host.errors import UnsupportedOnUserlandError
+from otto.host.product import FileProduct, Product
 from otto.host.userland import (
     GAP_DOCS_PAGE,
     GAPS,
@@ -324,6 +329,21 @@ class TestThePhase4And5MeasurementsAreRecorded:
             "for the truncation in the transport — where it is not"
         )
 
+    def test_the_product_lifecycle_record_is_untested_and_blocks_nothing(self) -> None:
+        """The survey's fourth candidate, moved out of the *rejected* comment block.
+
+        ``pgrep``, ``sudo`` and ``reboot`` sit in that block because a
+        measurement contradicted the prediction. ``install``/``stage`` sat
+        there on reasoning alone, which is the one thing a table whose whole
+        authority is "measured, not predicted" cannot carry -- so it is a
+        record, and the honest status is the one that blocks nothing.
+        """
+        gap = gap_for("product-lifecycle")
+        assert gap is not None, "the product lifecycle record is gone from GAPS"
+        assert gap.status == UNTESTED
+        assert gap.refuses is False
+        assert refuse_if_gapped("product-lifecycle") is None
+
     @pytest.mark.parametrize("surface", ["legacy-dropbear-crypto", "busybox-over-a-real-network"])
     def test_the_tier3_fidelity_gaps_are_recorded_as_untested_and_block_nothing(
         self, surface: str
@@ -342,3 +362,96 @@ class TestThePhase4And5MeasurementsAreRecorded:
         assert gap.refuses is False
         assert refuse_if_gapped(surface) is None
         assert "busybox-tier3-fidelity-2026-08-13" in gap.queued_for
+
+
+# ===========================================================================
+# The one record whose claim IS checkable, because it is about otto's own code
+# ===========================================================================
+
+
+_LIFECYCLE_VERBS = frozenset({"stage", "install", "uninstall", "is_installed"})
+"""The four methods :class:`~otto.host.product.Product` declares."""
+
+
+def _host_attributes_reached_for_by(source: str) -> set[str]:
+    """Every ``host.<name>`` *source* reaches for, read off its AST.
+
+    Source-level rather than behavioural on purpose. The claim under test is
+    what otto's one concrete product body *can possibly* emit; a behavioural
+    test would need a fake host, and a fake answers whatever it was written to
+    answer -- it would pass just as well if the body had grown a second call
+    the fake happened to stub.
+    """
+    tree = ast.parse(textwrap.dedent(source))
+    return {
+        node.attr
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Attribute)
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "host"
+    }
+
+
+class TestProductLifecycleIsUntestedBecauseOttoShipsNoImplementation:
+    """Why ``product-lifecycle`` cannot be measured, pinned as structure.
+
+    The module header above says no assertion can check that a ``measured_on``
+    string is true. This record is the exception that proves the shape of the
+    rule: its claim is not about what a BusyBox device answered, it is about
+    **otto's own source**, and that is checkable here.
+
+    The claim: ``Host.stage``/``install``/``uninstall``/``is_installed`` emit
+    no command of their own. They iterate ``Host.products`` and delegate, and
+    :class:`~otto.host.product.Product` declares all four of its methods
+    abstract. otto ships exactly ONE concrete body,
+    :meth:`~otto.host.product.FileProduct.stage`, and it is a single
+    ``host.put`` -- a surface already in this table. So the half a measurement
+    could reach is recorded elsewhere, and the half that decides whether
+    ``install`` works on a BusyBox device is project code otto does not own.
+
+    WHY THAT MAKES A MEASUREMENT MEANINGLESS RATHER THAN MERELY EXPENSIVE, and
+    why this guard is on the structure rather than on a Tier 3 run: a test that
+    staged a ``Product`` against a real BusyBox root would exercise the
+    subclass the test itself wrote, plus a ``for`` loop. It could not fail for
+    a BusyBox reason, which is this repo's recurring defect, not evidence.
+
+    THE DAY THIS RECORD STOPS BEING TRUE is the day otto ships a concrete
+    ``Product.install`` -- one emitting ``opkg``, ``dpkg``, ``tar``, anything --
+    or grows a second device call in ``FileProduct.stage``. Then the surface
+    becomes otto's, and measurable, and these assertions are what say so.
+    """
+
+    def test_product_declares_every_lifecycle_verb_abstract(self) -> None:
+        assert set(Product.__abstractmethods__) == _LIFECYCLE_VERBS, (
+            f"`Product` declares {sorted(Product.__abstractmethods__)} abstract, not "
+            f"{sorted(_LIFECYCLE_VERBS)}. The `product-lifecycle` gap record says otto "
+            f"ships no implementation of these verbs, which is why it is `untested` and "
+            f"not cleared. A concrete body here makes that record false -- and makes the "
+            f"surface otto's own, and measurable. Measure it and update the record."
+        )
+
+    def test_fileproduct_leaves_every_verb_but_stage_abstract(self) -> None:
+        assert set(FileProduct.__abstractmethods__) == _LIFECYCLE_VERBS - {"stage"}, (
+            f"`FileProduct` leaves {sorted(FileProduct.__abstractmethods__)} abstract. "
+            f"The `product-lifecycle` record rests on `stage` being the ONLY verb otto "
+            f"gives a body to; if `install`, `uninstall` or `is_installed` now has one, "
+            f"otto emits its own commands during install and the record needs measuring "
+            f"rather than rewording."
+        )
+
+    def test_the_one_concrete_body_reaches_the_device_only_through_put(self) -> None:
+        """``FileProduct.stage`` is one ``host.put`` — an already-recorded surface.
+
+        That single call is the whole reason ``product-lifecycle`` adds no new
+        device contact: whatever BusyBox does to it is already answered by
+        ``shell-transfer-base64``, ``sftp-transfer``, ``scp-transfer`` and
+        ``nc-transfer``, and measured over real ssh in Tier 3.
+        """
+        reached = _host_attributes_reached_for_by(inspect.getsource(FileProduct.stage))
+        assert reached == {"put"}, (
+            f"`FileProduct.stage` reaches for {sorted(reached)} on the host, not just "
+            f"`put`. The `product-lifecycle` record says otto's one concrete product "
+            f"body adds no device contact beyond a surface this table already covers; a "
+            f"second call breaks that, and whatever it emits has never been run on a "
+            f"BusyBox userland."
+        )

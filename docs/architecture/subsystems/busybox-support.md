@@ -99,6 +99,7 @@ error prints it verbatim; the sections below are its readable form.
 | [`daemon-launch`](#daemon-launch) | `measured-broken` | Launching a daemon needs bash, which a stock BusyBox userland does not have. |
 | [`shutdown-command`](#shutdown-command) | `measured-broken` | `Host.shutdown()` emits a command BusyBox spells differently. `Host.reboot()` is unaffected. |
 | [`run-command-line-length`](#run-command-line-length) | `measured-broken` | `Host.run()` refuses a command whose typed line would exceed 1022 characters, rather than let ash truncate it. `Host.exec()` is safe and is not refused. |
+| [`product-lifecycle`](#product-lifecycle) | `untested` | otto's `stage`/`install`/`uninstall` verbs emit no command of their own. Whether they work on your device is decided by your own product code. |
 | [`legacy-dropbear-crypto`](#legacy-dropbear-crypto) | `untested` | An old dropbear may need `ssh_options` to negotiate at all. Nobody has tried. |
 | [`busybox-over-a-real-network`](#busybox-over-a-real-network) | `untested` | Every tier is loopback, so nothing has met a real path's MTU, latency or window. |
 
@@ -303,6 +304,40 @@ deliberately. A fix is a pty-free `run()` path, not a larger buffer — the buff
 belongs to the device — and until one exists the record stays `measured-broken`,
 because the surface still is: otto declines the command rather than running a
 shorter one.
+
+### product-lifecycle
+
+**Status:** `untested` — nothing is blocked, and there is no otto command here
+to block.
+
+Nobody has run otto's product verbs — `Host.stage()`, `Host.install()`,
+`Host.uninstall()`, `Host.is_installed()` — against a BusyBox device, and no
+tier can, because **those four emit no command of their own**. Each iterates
+`Host.products` and delegates to a {class}`~otto.host.product.Product`, and
+`Product` declares all four of its methods abstract. otto ships exactly one
+concrete body — {meth}`~otto.host.product.FileProduct.stage`, a single
+`await host.put(...)` — and `put` is a surface this table already covers and
+Tier 3 already exercises over real ssh.
+
+Everything else that would reach the device comes from **your** product code.
+The documented shape (see {doc}`../../guide/hosts/capabilities`) has `install`
+call `host.run("tar xzf …")` and `is_installed` call `host.run("test -d …")`,
+so on a BusyBox device the verdict is decided by those commands and by the
+`run`/`put` rows above — not by anything in `otto.host.product`.
+
+**Measured:** nothing, and a measurement would not mean what it looked like. A
+test that stood up a `Product` and staged it against a BusyBox root would be
+measuring the subclass the test itself wrote, plus a `for` loop; the only otto
+code under it is `host.put`, which is already measured elsewhere. That is why
+this is `untested` rather than cleared — the design survey listed
+`install`/`stage`/`uninstall` as a predicted gap and it sat with the *rejected*
+candidates on reasoning alone, which is the one thing this table does not
+accept.
+
+**Queued for:** nothing, and not for the usual reason — there is no otto code
+here to fix. What would close it is a project taking a real `Product` to a real
+BusyBox device and reporting what its `install` emitted. Any gap that turns up
+then belongs to the command that failed, and gets recorded under *that* surface.
 
 ### legacy-dropbear-crypto
 

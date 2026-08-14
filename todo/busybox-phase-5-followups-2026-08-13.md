@@ -146,10 +146,21 @@ Only criterion 3's "on the matrix" half remains open under this heading.
   it is strictly noisier, not more decisive, which is the opposite of what the
   name suggests. `tests/busybox/conftest.py`'s raise site is left alone;
   changing the mechanism is a behaviour change.
-- **`install`/`stage` was never measured.** It sits with the rejected
-  design-time candidates but, unlike `pgrep`, `reboot` and `sudo`, it was
-  cleared by reasoning rather than by running the matrix. Either measure it or
-  move it to the untested entries.
+- ~~**`install`/`stage` was never measured.**~~ **CLOSED** — moved to the
+  untested entries as the `product-lifecycle` record. Measuring it turned out
+  to be not merely expensive but *meaningless*: `Host.stage`/`install`/
+  `uninstall`/`is_installed` emit no command of their own, `Product` declares
+  all four of its methods abstract, and otto ships exactly one concrete body —
+  `FileProduct.stage`, a single `await host.put(...)`, a surface already in the
+  table and already run over real ssh in Tier 3. Every other byte that reaches
+  the device is project-supplied product code, so a Tier 3 test would have
+  exercised the `Product` subclass the test itself wrote plus a `for` loop —
+  a guard that cannot fail for a BusyBox reason. The record's claim is about
+  otto's own source rather than about a device, so it is pinned as structure in
+  `tests/unit/host/test_gap_registry.py`
+  (`TestProductLifecycleIsUntestedBecauseOttoShipsNoImplementation`): the day
+  otto ships a concrete `Product.install`, the surface becomes otto's, becomes
+  measurable, and those assertions redden.
 
 ## 5. Not BusyBox: the empty-lane-leg gate
 
