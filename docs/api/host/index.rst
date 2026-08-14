@@ -15,6 +15,7 @@ local and remote machines.
    transfer
    transfer_base
    transfer_scp
+   transfer_sftp
    embedded_filesystem
    session
    app_shell

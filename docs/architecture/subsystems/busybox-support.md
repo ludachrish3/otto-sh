@@ -95,7 +95,7 @@ record's, so the probe decides only that this host is in the measured class.
 ## Where otto consults this table
 
 Each `measured-broken` section below lists the call sites otto reaches that
-surface from, with one of five states. **This is the answer to "am I protected",
+surface from, with one of six states. **This is the answer to "am I protected",
 and the surface's status is not** — a surface can refuse on one path and truncate
 silently on another.
 
@@ -125,6 +125,15 @@ silently on another.
   upstream refuses your host first. Not a hole, and not a place to add a guard:
   a guard there could never fire.
 
+`ATTRIBUTED`
+: otto attempts it, your device refuses it, and **the failure you get is this
+  record** rather than a library's internal. Nothing is prevented here: the
+  operation fails exactly as it did before, in the same time, having moved
+  nothing. What changes is that the message names the surface, the measurement
+  and what to do instead. This state exists for surfaces where **no pre-check is
+  possible without refusing hosts that work** — read
+  [`sftp-transfer`](#sftp-transfer), the only one today, for the argument.
+
 `OPEN`
 : reachable, unguarded, **still broken as described**. These are the holes, and
   they are listed here so they are visible to you and not only to the table.
@@ -139,14 +148,15 @@ Counts, derived from the records themselves rather than maintained by hand
 | `WIRED` | 7 |
 | `PROBE_REFUSED` | 2 |
 | `PROTECTED` | 2 |
-| `OPEN` | 7 |
+| `ATTRIBUTED` | 2 |
+| `OPEN` | 5 |
 
-The `WIRED` and `ADAPTED` paths — the ones whose verdict is this table's — reach
-{func}`~otto.host.userland.refuse_if_gapped` through **6** guard functions
-({func}`~otto.host.userland.table_guards`), which is fewer than the eight such
-paths above — `read_file`/`write_file` share one guard and the scp backend's two
-directions share another, so the two numbers are different on purpose and both
-are derived.
+The `WIRED`, `ADAPTED` and `ATTRIBUTED` paths — the ones whose message is this
+table's — reach {func}`~otto.host.userland.refuse_if_gapped`
+through **7** guard functions ({func}`~otto.host.userland.table_guards`), which
+is fewer than the ten such paths above — `read_file`/`write_file` share one
+guard, and the scp and sftp backends each share one across both directions — so
+the two numbers are different on purpose and both are derived.
 
 ## The declared gaps
 
@@ -306,17 +316,22 @@ instead of emitting one it cannot run.
 
 ### sftp-transfer
 
-**Status:** `measured-broken` — otto *would* refuse before sending anything,
-once a call site consults the registry. None does yet, so today the attempt is
-made and the outcome is whatever the device does with it, below.
+**Status:** `measured-broken` — and otto **does not refuse this up front, on
+purpose**. It attempts the transfer, and when the subsystem does not start it
+tells you so in this record's words instead of asyncssh's. Read the paragraph
+after the paths for why a pre-check would be worse than none.
 
 **Paths otto touches this from:**
 
-- `otto.host.transfer.sftp.SftpFileTransfer._run_get` — **OPEN**: opens the
-  subsystem and reads nothing from this record, so the attempt is made and
-  asyncssh's own error names the missing `sftp-server`.
-- `otto.host.transfer.sftp.SftpFileTransfer._run_put` — **OPEN**: the same
-  subsystem in the other direction.
+- `otto.host.transfer.sftp.SftpFileTransfer._run_get` — **ATTRIBUTED** by
+  {func}`~otto.host.transfer.sftp.open_sftp_or_attribute`: opens the subsystem,
+  and if it closes before the SFTP handshake, raises this record with asyncssh's
+  own error chained beneath it. The transfer still fails; only the message
+  changes.
+- `otto.host.transfer.sftp.SftpFileTransfer._run_put` — **ATTRIBUTED** by the
+  same guard, charged once per `put()` rather than once per file because it sits
+  above the per-file fan-out. That position is also why no file is ever blamed
+  for the missing subsystem.
 
 The `sftp` transfer backend needs a server-side sftp subsystem, and a stock
 BusyBox userland ships none. Note what does *not* decide this: the ssh daemon.
@@ -324,12 +339,33 @@ Packaged dropbear serves sftp perfectly well when the machine provides an
 `sftp-server` binary, so the question is what the **device** has, not which
 daemon answered. Use the `shell` backend.
 
-**Measured:** Tier 3, 2026-08-13. An `sftp` session into the pinned BusyBox root
-fails with `/bin/sh: /usr/lib/sftp-server: not found` — ash inside the chroot,
-not the host's shell.
+**Why there is no pre-emptive refusal here, unlike every other surface on this
+page.** Nothing otto can ask before the operation distinguishes a device that
+serves sftp from one that does not. `sftp-server` is not on `PATH` even on a
+healthy Debian host (it lives at `/usr/lib/openssh/sftp-server`), so a
+presence probe answers "absent" where sftp works. The absolute path differs
+across distros and dropbear compiles it in rather than reading a config, so a
+known-paths list fails on the first unusual device. And the daemon is not the
+authority either. Every available pre-check therefore produces false absents —
+refusals of hosts that work — which is the one error this table is ordered to
+avoid, and the reason the `busybox` profile keeps `sftp` in its
+`valid_transfers`. The only definitive test is opening the subsystem, which
+*is* the operation. So the operation runs, and the record improves its failure
+rather than preventing it.
 
-**Queued for:** nothing, deliberately. The `shell` backend is the answer for
-these devices, and it is verified over real ssh in Tier 3.
+**Measured:** twice, on the same device. Tier 3, 2026-08-13 — an `sftp(1)`
+session into the pinned BusyBox root fails with
+`/bin/sh: /usr/lib/sftp-server: not found`, ash inside the chroot rather than
+the host's shell. Then otto's own backend against that same tier, 2026-08-14 —
+`UnixHost.put` on a host built with `transfer: sftp` raised
+`asyncssh.sftp.SFTPConnectionLost: 0 bytes read on a total of 4 expected bytes`
+in 22ms, moved no bytes and left nothing behind on either side. That message is
+what this record now replaces: it names no subsystem, no device and no
+alternative, and it reads like a dropped connection.
+
+**Queued for:** nothing for a fix, deliberately — the `shell` backend is the
+answer for these devices and it is verified over real ssh in Tier 3. What landed
+instead is the attribution above.
 
 ### scp-transfer
 

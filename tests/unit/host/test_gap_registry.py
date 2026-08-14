@@ -54,6 +54,7 @@ from otto.host.userland import (
     GAPS,
     MEASURED_BROKEN,
     PATH_ADAPTED,
+    PATH_ATTRIBUTED,
     PATH_OPEN,
     PATH_PROBE_REFUSED,
     PATH_PROTECTED,
@@ -92,7 +93,7 @@ def _paths_in(state: str) -> list:
     return [p for p in _ALL_PATHS if p.values[1].state == state]
 
 
-_TABLE_BACKED_PATHS = _paths_in(PATH_WIRED) + _paths_in(PATH_ADAPTED)
+_TABLE_BACKED_PATHS = _paths_in(PATH_WIRED) + _paths_in(PATH_ADAPTED) + _paths_in(PATH_ATTRIBUTED)
 """The paths whose verdict is a record's -- what ``Gap.table_backed_paths`` returns.
 
 Built from the same two states rather than by calling that property, so a
@@ -670,7 +671,8 @@ class TestEveryPathStateIsRepresented:
     """
 
     @pytest.mark.parametrize(
-        "state", [PATH_ADAPTED, PATH_WIRED, PATH_PROBE_REFUSED, PATH_PROTECTED, PATH_OPEN]
+        "state",
+        [PATH_ADAPTED, PATH_WIRED, PATH_PROBE_REFUSED, PATH_PROTECTED, PATH_ATTRIBUTED, PATH_OPEN],
     )
     def test_the_table_declares_at_least_one_path_in_this_state(self, state: str) -> None:
         assert _paths_in(state), (
@@ -689,6 +691,7 @@ class TestEveryPathStateIsRepresented:
             PATH_WIRED,
             PATH_PROBE_REFUSED,
             PATH_PROTECTED,
+            PATH_ATTRIBUTED,
             PATH_OPEN,
         }, "gap_path_totals() must key every state, at zero if need be"
 
@@ -836,24 +839,32 @@ class TestATableBackedClaimIsCheckedNotTrusted:
         for guard in guards:
             assert callable(_resolve_dotted(guard))
 
-    def test_the_count_spans_both_states_rather_than_wired_alone(self) -> None:
+    @pytest.mark.parametrize("state", [PATH_ADAPTED, PATH_ATTRIBUTED])
+    def test_the_count_spans_all_three_states_rather_than_wired_alone(self, state: str) -> None:
         """Non-vacuity for the parametrization above, and for ``table_guards()``.
 
-        Both would still pass if ``ADAPTED`` were quietly dropped from
+        Every assertion in this class would still pass if ``ADAPTED`` or
+        ``ATTRIBUTED`` were quietly dropped from
         :attr:`~otto.host.userland.Gap.table_backed_paths` -- the WIRED paths
-        alone satisfy every assertion in this class. What would be lost is the
-        one guard that is named by an ADAPTED path and by nothing else, so that
-        is what this asserts directly.
+        alone satisfy all of them. What would be lost in each case is a guard
+        named by that state and by nothing else, so that is what this asserts
+        directly, once per non-WIRED member of the union.
         """
-        adapted = [p.values[1] for p in _paths_in(PATH_ADAPTED)]
-        assert adapted, "no ADAPTED path, so the union above is just the WIRED list"
+        extra = [p.values[1] for p in _paths_in(state)]
+        assert extra, f"no {state} path, so the union above is just the WIRED list"
         wired_only = {p.values[1].checked_by for p in _paths_in(PATH_WIRED)}
-        assert {p.checked_by for p in adapted} - wired_only, (
-            "every ADAPTED guard is also named by a WIRED path, so `table_guards()` "
-            "counting both states is not observable here and this class could be "
-            "narrowed back to WIRED without anything reddening."
+        assert {p.checked_by for p in extra} - wired_only, (
+            f"every {state} guard is also named by a WIRED path, so `table_guards()` "
+            f"counting that state is not observable here and this class could be "
+            f"narrowed back to WIRED without anything reddening."
         )
-        assert set(table_guards()) == wired_only | {p.checked_by for p in adapted}
+
+    def test_the_guard_list_is_the_union_of_all_three_states(self) -> None:
+        by_state = {
+            state: {p.values[1].checked_by for p in _paths_in(state)}
+            for state in (PATH_WIRED, PATH_ADAPTED, PATH_ATTRIBUTED)
+        }
+        assert set(table_guards()) == set().union(*by_state.values())
 
 
 class TestTheFourthStateIsNotEitherOfTheOtherTwo:

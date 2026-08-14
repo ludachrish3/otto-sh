@@ -373,6 +373,15 @@ false negative in the expensive direction: a refusal built on it would decline
 a transfer the device can do. Which path to test, and whether the daemon's
 configured subsystem is even reachable as a file, is a design question this
 probe does not settle.
+
+THAT QUESTION HAS SINCE BEEN ANSWERED, and the answer is that it has no answer
+worth having: no fact available before the operation distinguishes a device
+that serves sftp from one that does not, so ``sftp-transfer`` gets no
+pre-emptive refusal from anywhere -- not from this probe and not from a
+"known paths" list, which would fail the same way on the first unusual distro.
+Its paths are :data:`PATH_ATTRIBUTED` instead: the attempt is made, and the
+failure it produces is translated into the record's words. Read that state for
+why an exclusion here is the beginning of that story rather than a gap in it.
 """
 
 APPLET_PRESENT = "present"
@@ -1842,6 +1851,54 @@ this repo's most common defect. :attr:`GapPath.checked_by` names the protector
 and :attr:`GapPath.pinned_by` the test that holds it in place.
 """
 
+PATH_ATTRIBUTED = "ATTRIBUTED"
+"""This path attempts the surface, it fails, and this record names the failure.
+
+THE SIXTH STATE, and the first one that is neither a refusal nor a hole. The
+other five all answer "was the attempt made" the same way -- four say no
+(something declined first) and :data:`PATH_OPEN` says yes and nothing was
+learned from it. This one says the attempt was made, it failed on the DEVICE's
+authority, and otto turned the device's answer into this record's.
+
+WHY ``sftp-transfer`` COULD NOT TAKE ANY OF THE OTHER FIVE, and the reason this
+state exists rather than a sixth guard. Whether a device serves sftp is a
+property of its SSH SERVER's subsystem configuration, and the only thing that
+answers it is opening the subsystem -- which is the operation. There is no fact
+to pre-check: ``sftp-server`` is not on ``PATH`` even on a healthy GNU host (see
+the applet-probe block above, which excludes it for exactly this reason), the
+absolute path differs across distros and is compiled in on dropbear, and the
+daemon is not the authority either. Every pre-check available answers "absent"
+on hosts where sftp works, which is a refusal of a working host -- the one
+mistake this whole table is ordered to avoid. So the attempt happens, and what
+this state adds is that its failure arrives as otto's sentence instead of
+asyncssh's.
+
+WHAT IT BUYS OVER :data:`PATH_OPEN`, measured rather than asserted. Left open,
+``UnixHost.put`` against a device with no sftp-server raises
+``asyncssh.sftp.SFTPConnectionLost: 0 bytes read on a total of 4 expected
+bytes`` -- prompt (22ms), residue-free, and naming nothing: not the subsystem,
+not the device, not otto's surface, and not the ``shell`` backend this record
+says to use instead. It reads as a truncated connection, so the diagnosis it
+invites is "the link is flaky". Attributed, the same failure carries the four
+facts every other refusal here carries.
+
+WHAT IT DOES NOT CLAIM: that anything is protected. A caller who puts a file
+over sftp to such a device still gets an exception and still moves no bytes.
+This state is about the MESSAGE, and a reader must not count it as coverage in
+the sense :data:`PATH_WIRED` means -- nothing was prevented, only explained.
+
+WHAT IT OBLIGES, both enforced in ``__post_init__`` and both for the reasons
+:data:`PATH_ADAPTED` gives. :attr:`GapPath.checked_by` names the code that does
+the translating, and it is table-backed, so the same three checks that hold a
+:data:`PATH_WIRED` claim hold this one: the guard exists, the site calls it, and
+it reaches :func:`refuse_if_gapped` with this record's surface. That last one is
+what keeps the table the authority -- downgrading this record to
+:data:`UNTESTED` does not merely stop a message, it puts asyncssh's own error
+back in the caller's hands untouched. :attr:`GapPath.pinned_by` is REQUIRED
+because "otto explains this now" stops being true as silently as "otto handles
+this now" does.
+"""
+
 PATH_OPEN = "OPEN"
 """This path is reachable, touches the gapped surface, and is still unguarded.
 
@@ -1853,12 +1910,24 @@ about that. Every :data:`PATH_OPEN` path is rendered on
 only to this table.
 """
 
-_PATH_STATES = [PATH_ADAPTED, PATH_WIRED, PATH_PROBE_REFUSED, PATH_PROTECTED, PATH_OPEN]
-"""The five states, ordered strongest-coverage first. Renders in this order.
+_PATH_STATES = [
+    PATH_ADAPTED,
+    PATH_WIRED,
+    PATH_PROBE_REFUSED,
+    PATH_PROTECTED,
+    PATH_ATTRIBUTED,
+    PATH_OPEN,
+]
+"""The six states, ordered strongest-coverage first. Renders in this order.
 
 :data:`PATH_ADAPTED` leads because it is the only one where the operation
 SUCCEEDS on the measured device; the three after it are three ways of being
-refused, and :data:`PATH_OPEN` is the hole.
+refused; :data:`PATH_ATTRIBUTED` comes next because the operation still fails
+there and only its message is otto's; and :data:`PATH_OPEN` is the hole.
+
+The ordering is a claim about how much a reader is protected, so
+:data:`PATH_ATTRIBUTED` sitting BELOW the three refusals is deliberate and not
+alphabetical drift: an attributed path prevents nothing.
 """
 
 
@@ -1943,14 +2012,21 @@ class GapPath:
                 f"gap path {self.site!r} is {self.state} and says nothing about what that "
                 f"means here. A state with no detail is a verdict with no argument"
             )
-        needs_checker = self.state in (PATH_WIRED, PATH_PROTECTED, PATH_ADAPTED)
+        needs_checker = self.state in (
+            PATH_WIRED,
+            PATH_PROTECTED,
+            PATH_ADAPTED,
+            PATH_ATTRIBUTED,
+        )
         if needs_checker and not self.checked_by:
             raise ValueError(
                 f"gap path {self.site!r} is {self.state} and names nothing in `checked_by`. "
                 f"{PATH_WIRED} has to name the guard that consults this table, "
-                f"{PATH_ADAPTED} the code that picks what the device can run, and "
-                f"{PATH_PROTECTED} the code that refuses upstream -- unnamed, none of the "
-                f"three claims can be checked, which is the whole point of recording it"
+                f"{PATH_ADAPTED} the code that picks what the device can run, "
+                f"{PATH_ATTRIBUTED} the code that turns the device's failure into this "
+                f"record's message, and {PATH_PROTECTED} the code that refuses upstream -- "
+                f"unnamed, none of the four claims can be checked, which is the whole point "
+                f"of recording it"
             )
         if not needs_checker and self.checked_by:
             raise ValueError(
@@ -1978,6 +2054,14 @@ class GapPath:
                 f"does: a refactor that dropped the probe would put the broken spelling "
                 f"back on the wire and leave this record reading ADAPTED, so the test "
                 f"that pins the choice is part of the claim"
+            )
+        if self.state == PATH_ATTRIBUTED and not self.pinned_by:
+            raise ValueError(
+                f"gap path {self.site!r} is {PATH_ATTRIBUTED} and names no test. "
+                f"'otto explains this now' stops being true as quietly as 'otto handles "
+                f"this now' does, and more so: the translation only runs on a device that "
+                f"has ALREADY failed, so losing it restores a green suite and an operator "
+                f"back on asyncssh's own message, with nothing else reddening"
             )
         if self.pinned_by and not _NODE_ID_RE.match(self.pinned_by):
             raise ValueError(
@@ -2166,25 +2250,42 @@ class Gap:
         return self.paths_in_state(PATH_ADAPTED)
 
     @property
+    def attributed_paths(self) -> list[GapPath]:
+        """The paths that still fail, with this record's sentence instead of a stranger's."""
+        return self.paths_in_state(PATH_ATTRIBUTED)
+
+    @property
     def open_paths(self) -> list[GapPath]:
         """The paths that are reachable and still unguarded. The holes."""
         return self.paths_in_state(PATH_OPEN)
 
     @property
     def table_backed_paths(self) -> list[GapPath]:
-        """Every path whose refusal is THIS record's.
+        """Every path whose MESSAGE is THIS record's.
 
-        :data:`PATH_WIRED` and :data:`PATH_ADAPTED`, in that order.
+        :data:`PATH_WIRED`, :data:`PATH_ADAPTED` and :data:`PATH_ATTRIBUTED`,
+        in that order.
 
-        Two states rather than one because an :data:`PATH_ADAPTED` path reaches
-        :func:`refuse_if_gapped` too: it serves the measured device and keeps
-        the record as the floor for a device that can run neither spelling. A
-        count that read only :data:`PATH_WIRED` would leave that guard out of
-        :func:`table_guards` and answer :attr:`consults_the_table` ``False`` for
-        a record the guard names by surface -- a derived value that lies, which
-        is the defect these paths exist to remove.
+        Three states rather than one because all three reach
+        :func:`refuse_if_gapped`, and for reasons that differ in what they do
+        for the caller and agree in where the verdict lives. An
+        :data:`PATH_ADAPTED` path serves the measured device and keeps the
+        record as the floor for a device that can run neither spelling. An
+        :data:`PATH_ATTRIBUTED` path serves nobody -- the operation has already
+        failed -- and hands the record's four facts back instead of a
+        stranger's byte count. A count that read only :data:`PATH_WIRED` would
+        leave both guards out of :func:`table_guards` and answer
+        :attr:`consults_the_table` ``False`` for records the guards name by
+        surface -- a derived value that lies, which is the defect these paths
+        exist to remove.
+
+        NOT A COVERAGE COUNT, and the name says so: "table-backed" is about
+        WHOSE SENTENCE the caller gets, not about whether anything was
+        prevented. :attr:`fully_covered` is the other question and it treats
+        these three alike for a different reason -- none of them is
+        :data:`PATH_OPEN`, meaning none is silently broken.
         """
-        return self.wired_paths + self.adapted_paths
+        return self.wired_paths + self.adapted_paths + self.attributed_paths
 
     @property
     def consults_the_table(self) -> bool:
@@ -2205,7 +2306,15 @@ class Gap:
 
         ``True`` when there is at least one path and none of them is
         :data:`PATH_OPEN` -- every place otto meets this surface either refuses
-        (from this table, or on its own probe) or cannot be reached at all.
+        (from this table, or on its own probe), cannot be reached at all, does
+        what the device can do instead, or fails and SAYS SO in this record's
+        words.
+
+        SILENTLY is the load-bearing word, and :data:`PATH_ATTRIBUTED` is what
+        made it earn its place: that state's operation still fails, so reading
+        this as "the caller is protected" would be wrong there. What it means
+        is that no path meets this surface and leaves the caller without the
+        record -- which is the property the docs page's hole list is about.
 
         NOT NAMED ``fully_wired``, deliberately. A :data:`PATH_PROBE_REFUSED`
         path is covered and is not wired, so ``fully_wired`` would be a false
@@ -2441,33 +2550,74 @@ GAPS: list[Gap] = [
             "not which daemon answered. Use the `shell` backend"
         ),
         measured_on=(
-            "Tier 3, 2026-08-13: an `sftp` session into the pinned BusyBox root fails "
+            "TWO measurements of the same device, and the second is what the message keys "
+            "on. Tier 3, 2026-08-13: an `sftp` session into the pinned BusyBox root fails "
             "with `/bin/sh: /usr/lib/sftp-server: not found` -- ash inside the chroot, "
-            "not the host's shell. See `tests/busybox/test_tier3_session.py::"
-            "test_sftp_and_scp_are_both_refused_inside_the_root`"
+            "not the host's shell (`tests/busybox/test_tier3_session.py::"
+            "test_sftp_and_scp_are_both_refused_inside_the_root`, driven by `sftp(1)`). "
+            "Then otto's OWN backend against that same tier, 2026-08-14: "
+            "`UnixHost.put` on a host built with `transfer: sftp` raises "
+            "`asyncssh.sftp.SFTPConnectionLost: 0 bytes read on a total of 4 expected "
+            "bytes` in 22ms, having moved no bytes and left nothing behind on either side "
+            "-- the subsystem channel is accepted, the far side's exec of `sftp-server` "
+            "exits 127, and the channel closes before the SFTP version exchange. The "
+            "first measurement is what a DEVICE does; the second is what a CALLER gets, "
+            "and only the second can be improved from a call site"
         ),
         queued_for=(
-            "nothing, deliberately: the `shell` backend is the answer for these devices "
-            "and it is verified over real ssh in Tier 3 (spec exit criterion 3)"
+            "nothing for a fix, deliberately: the `shell` backend is the answer for these "
+            "devices and it is verified over real ssh in Tier 3 (spec exit criterion 3). "
+            "What HAS landed is the ATTRIBUTION, in "
+            "`otto.host.transfer.sftp.open_sftp_or_attribute`. Note what deliberately did "
+            "NOT land, because the absence is the finding: there is no pre-emptive refusal "
+            "here and there is not meant to be one. Every fact a pre-check could key on "
+            "answers `absent` on hosts where sftp works -- `sftp-server` is not on `PATH` "
+            "even on Debian, its absolute path differs across distros and is compiled into "
+            "dropbear, and the daemon is not the authority since packaged dropbear serves "
+            "sftp fine when the machine provides the binary. The only definitive test is "
+            "opening the subsystem, which IS the operation, so this record improves the "
+            "failure instead of preventing it"
         ),
         paths=[
             GapPath(
                 site="otto.host.transfer.sftp.SftpFileTransfer._run_get",
-                state=PATH_OPEN,
+                state=PATH_ATTRIBUTED,
+                checked_by="otto.host.transfer.sftp.open_sftp_or_attribute",
                 detail=(
-                    "opens the sftp subsystem through `_get_files_sftp` and reads nothing "
-                    "from this record, so on a stock BusyBox device the attempt is made and "
-                    "the failure arrives as asyncssh's, naming the missing `sftp-server` "
-                    "rather than the userland. Unguarded deliberately for now: `queued_for` "
-                    "says the answer is the `shell` backend, not a refusal here"
+                    "opens the subsystem through the guard, which is where the attempt is "
+                    "made and where its failure is translated. NOT a refusal and not "
+                    "protection: a device with no sftp-server still fails, in the same "
+                    "22ms and with the same nothing transferred. What changed is the "
+                    "sentence -- `SFTPConnectionLost: 0 bytes read on a total of 4 "
+                    "expected bytes`, which names no subsystem and reads as a flaky link, "
+                    "becomes this record's reason, measurement and docs anchor, with "
+                    "asyncssh's own error chained beneath it. It keys on nothing about the "
+                    "host: the `busybox` profile lists `sftp` in `valid_transfers` "
+                    "deliberately, and a device with an sftp-server installed never "
+                    "reaches this arm because its subsystem starts"
+                ),
+                pinned_by=(
+                    "tests/unit/host/test_sftp_transfer_attribution.py::TestGetArrivesAtTheGuard"
+                    "::test_a_device_with_no_sftp_server_gets_this_record_instead_of_a_byte_count"
                 ),
             ),
             GapPath(
                 site="otto.host.transfer.sftp.SftpFileTransfer._run_put",
-                state=PATH_OPEN,
+                state=PATH_ATTRIBUTED,
+                checked_by="otto.host.transfer.sftp.open_sftp_or_attribute",
                 detail=(
-                    "the same subsystem, the same absence of any read of this record. Both "
-                    "directions are open because both need the server side that is not there"
+                    "the same guard for the same missing subsystem in the other direction, "
+                    "and charged ONCE per `put()` rather than once per file because it sits "
+                    "above the per-file fan-out `_put_files_sftp` gathers. That position is "
+                    "also why the `file-ops-base64` defect shape -- a present file reported "
+                    "missing -- does not occur here even without the guard: the failure "
+                    "happens before any `src` is named, so the per-file "
+                    "`Result(Status.Error, msg=f'{src}: {outcome}')` arm never renders it "
+                    "and no file is ever blamed for the subsystem"
+                ),
+                pinned_by=(
+                    "tests/unit/host/test_sftp_transfer_attribution.py::TestPutArrivesAtTheGuard"
+                    "::test_a_device_with_no_sftp_server_gets_this_record_instead_of_a_byte_count"
                 ),
             ),
         ],
@@ -3041,7 +3191,9 @@ def table_guards() -> list[str]:
     return sorted({p.checked_by for gap in GAPS for p in gap.table_backed_paths})
 
 
-def refuse_if_gapped(surface: str, *, host: str = "", attempted: str = "") -> None:
+def refuse_if_gapped(
+    surface: str, *, host: str = "", attempted: str = "", observed: str = ""
+) -> None:
     """Raise if *surface* is measured broken; return quietly otherwise.
 
     **Measured-broken refuses up front; unmeasured runs.** The spec's rule,
@@ -3058,20 +3210,32 @@ def refuse_if_gapped(surface: str, *, host: str = "", attempted: str = "") -> No
     * *surface* is not in the table at all -- return, for the same reason,
       more so.
 
-    *host* and *attempted* only decorate the message. Neither changes the
-    verdict: the table is about a class of userland, and the caller is the one
-    that decided this host belongs to it.
+    *host*, *attempted* and *observed* only decorate the message. None of them
+    changes the verdict: the table is about a class of userland, and the caller
+    is the one that decided this host belongs to it.
+
+    *observed* IS STILL A DECORATION, and it is worth saying plainly because it
+    is the one that reads like a mode. It replaces the message's
+    ``nothing was attempted`` lead for a caller whose attempt IS the probe --
+    today only :func:`otto.host.transfer.sftp.open_sftp_or_attribute`, whose
+    surface cannot be pre-checked without refusing hosts that work. The three
+    outcomes above are unchanged by it, and so is the ``untested`` behaviour
+    that makes such a call worth routing through here at all: downgrade the
+    record and this returns, which for that caller means the device's own error
+    reaches the operator untranslated rather than a second message being
+    silently dropped.
 
     Raises:
         UnsupportedOnUserlandError: *surface* is declared
-            :data:`MEASURED_BROKEN`. Nothing was attempted, which is precisely
-            why it is this exception and not
+            :data:`MEASURED_BROKEN`. Nothing was attempted -- unless the caller
+            passed *observed*, which says what was -- which is precisely why it
+            is this exception and not
             :class:`~otto.host.errors.HostCommandError`.
     """
     gap = gap_for(surface)
     if gap is None or not gap.refuses:
         return
-    raise UnsupportedOnUserlandError.for_gap(gap, host=host, attempted=attempted)
+    raise UnsupportedOnUserlandError.for_gap(gap, host=host, attempted=attempted, observed=observed)
 
 
 ASH_TYPED_LINE_MAX = 1022

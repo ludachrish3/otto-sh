@@ -94,7 +94,7 @@ class UnsupportedOnUserlandError(OttoError, RuntimeError):
 
     @classmethod
     def for_gap(
-        cls, gap: "Gap", *, host: str = "", attempted: str = ""
+        cls, gap: "Gap", *, host: str = "", attempted: str = "", observed: str = ""
     ) -> "UnsupportedOnUserlandError":
         """Build the refusal for a declared *gap*, rendered from the record.
 
@@ -103,16 +103,29 @@ class UnsupportedOnUserlandError(OttoError, RuntimeError):
         (surface, why, docs anchor) instead of surfacing a bare ``sudo: not
         found``".
 
-        Everything in the message comes from the record except *host* and
-        *attempted*, which the caller supplies because the record cannot know
-        them. That is the point — an operator who hits this gets the same
-        four facts (what broke, why, what proved it, where to read more)
-        wherever it fires, and a docs page rendered from the same record
-        cannot disagree with it.
+        Everything in the message comes from the record except *host*,
+        *attempted* and *observed*, which the caller supplies because the
+        record cannot know them. That is the point — an operator who hits this
+        gets the same four facts (what broke, why, what proved it, where to
+        read more) wherever it fires, and a docs page rendered from the same
+        record cannot disagree with it.
 
         ``Nothing was attempted`` leads, because it is the one thing this
         exception means that the other two host errors do not: no command was
         sent, so nothing was learned about the system under test.
+
+        *observed* REPLACES THAT LEAD, and exists because one caller cannot
+        say it. ``otto.host.transfer.sftp.open_sftp_or_attribute`` translates a
+        failure that has ALREADY HAPPENED — whether the device serves sftp is
+        answerable only by opening the subsystem, so there is no fact to
+        pre-check and the operation is its own probe. For that site "nothing
+        was attempted" would be false in the message's first clause, so the
+        caller passes what it watched instead and the record supplies the rest
+        unchanged. Empty for every other caller, which is why every existing
+        message is byte-identical to what it was before this parameter
+        existed. *attempted* is dropped when *observed* is given: the two
+        answer the same question (what otto was doing) and *observed* answers
+        it with an outcome attached.
 
         TAKES A ``measured-broken`` RECORD ONLY, and does not check. The
         message says "otto has measured ``<surface>`` as broken" and prints
@@ -128,8 +141,9 @@ class UnsupportedOnUserlandError(OttoError, RuntimeError):
         """
         who = f"{host}: " if host else ""
         what = f" ({attempted})" if attempted else ""
+        lead = observed or f"nothing was attempted{what}"
         return cls(
-            f"{who}nothing was attempted{what} — otto has measured `{gap.surface}` as "
+            f"{who}{lead} — otto has measured `{gap.surface}` as "
             f"broken on this class of userland. {gap.reason}. MEASURED: {gap.measured_on}. "
             f"QUEUED FOR: {gap.queued_for}. See {gap.docs_anchor}."
         )
