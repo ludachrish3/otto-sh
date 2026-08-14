@@ -48,9 +48,20 @@ what today:
     nothing yet — an ``ash`` frame is registered, but nothing routes this
     probe's result to it; see the hole below
 ``applet_<name>``, one per entry in :data:`PROBED_APPLETS`
-    nothing yet, deliberately. This capability is PROBE ONLY: it exists so the
-    five pieces of work named at :data:`PROBED_APPLETS` can be written, and not
-    one of them is wired here. Read it through :meth:`Userland.has_applet`.
+    three consumers, and NOT the same one for all seven names -- which is the
+    point of a per-name capability. ``applet_uudecode``/``applet_uuencode``
+    choose the ``shell`` backend's codec
+    (``otto.host.transfer.shell.ShellFileTransfer._select_codec``);
+    ``applet_shutdown``/``applet_poweroff`` pick the power-off spelling
+    (``otto.host.unix_host.shutdown_command``, the one consumer that ADAPTS
+    rather than refusing); ``applet_scp`` refuses an scp transfer to a device
+    with no such binary
+    (``otto.host.transfer.scp.refuse_if_scp_is_absent``). ``applet_base64``
+    and ``applet_nc`` still have none, for different reasons: the codec
+    question is answered by ``base64_flag`` above (a spelling, not a
+    presence), and ``nc``'s presence is necessary but not sufficient -- see
+    :data:`PROBED_APPLETS`. Read them all through
+    :meth:`Userland.has_applet`.
 
 So the first ``run(sudo=True)`` against a host issues up to twelve probes to
 read one answer that probes 1-2 settled. The whole round is deliberate — splitting
@@ -78,7 +89,9 @@ and pin, not a frame name any caller looks up through this probe. Until
 something does that routing, do not feed :attr:`Userland.shell_dialect` to
 the frame registry; the other five are safe to consume today, and now all
 five of them have a consumer — see the table above — leaving ``shell_dialect``
-the only capability in this module still without one.
+the only one of the FIXED SIX still without one. Two of the seven applet
+capabilities are likewise unconsumed (``applet_base64``, ``applet_nc``), each
+for a different reason — see the table above.
 
 Most of the probe COMMAND SPELLINGS here have two other copies, and where a
 copy exists all three have to agree: ``tests/busybox/test_applet_contracts.py``
@@ -304,8 +317,16 @@ actually gets each one:
     :func:`otto.host.unix_host.shutdown_command` reads both and emits whichever
     the device has. Only a device answering ``absent`` to both is refused.
 ``scp``
-    the ``scp-transfer`` surface. Presence IS the question: ``scp`` is a remote
-    BINARY the legacy protocol execs by name, absent on all five rows.
+    the ``scp-transfer`` surface, and the one entry where presence is the WHOLE
+    question. ``scp`` is a remote BINARY the legacy protocol execs by name,
+    absent on all five rows, and :class:`~otto.host.options.ScpOptions` carries
+    no binary-name override -- so unlike ``nc`` below there is no second name
+    the answer could be about, and unlike ``shutdown``/``poweroff`` above there
+    is no alternative spelling to adapt to.
+    :func:`otto.host.transfer.scp.refuse_if_scp_is_absent` reads a SETTLED
+    ``absent`` here and declines the transfer; a device that answers
+    ``present``, or one that could not be asked, transfers exactly as it did
+    before that guard existed.
 ``nc``
     the ``nc-transfer`` surface, and the one entry where presence is NECESSARY
     BUT NOT SUFFICIENT -- do not read this probe as having solved it. That
@@ -532,10 +553,11 @@ def _parse_applet_answers(output: str) -> "dict[str, bool]":
 #     arguments. Each of those six had to be reasoned about separately because
 #     each names a SPELLING otto would emit; an applet capability names only
 #     whether otto may reach for a binary at all, and what otto did before it
-#     asked anything was reach for it. ``Host.shutdown()`` emits ``shutdown -h
-#     now`` today, ``ScpFileTransfer`` execs ``scp`` today, and
-#     ``ShellFileTransfer`` emits ``base64`` today; ``present`` is precisely
-#     that status quo, for every name, which is the same standard
+#     asked anything was reach for it. Before any of these capabilities existed
+#     ``Host.shutdown()`` emitted ``shutdown -h now`` unconditionally,
+#     ``ScpFileTransfer`` execed ``scp`` unconditionally, and
+#     ``ShellFileTransfer`` emitted ``base64`` unconditionally. ``present`` is
+#     precisely that status quo, for every name, which is the same standard
 #     ``stat_size``'s ``stat`` is held to. ``absent`` would be the expensive
 #     direction twice over: a consumer that DEGRADES on the value alone would
 #     read a refused probe round as "this device has no scp" and pick a worse
@@ -1491,13 +1513,17 @@ class UserlandHost:
 # WHAT A WIRED PATH LOOKS LIKE, and it is the shape every registry consumer
 # takes: the CALLER decides that this host belongs to the measured class -- a
 # declared shell dialect of ``ash``, a declared ``has_bash=False``, a SETTLED
-# ``base64_flag == "absent"`` -- and the TABLE decides whether that class is
+# ``base64_flag == "absent"``, a SETTLED ``applet_scp == "absent"`` -- and the
+# TABLE decides whether that class is
 # refused at all. Neither half is enough alone, which is why the record's own
 # ``refuses`` cannot be the whole trigger and why no wired call site carries its
-# own copy of the message. Two of the guards key on a PROBE rather than a
+# own copy of the message. THREE of the guards key on a PROBE rather than a
 # declaration and therefore cost a :meth:`Userland.resolve`; that trade is
-# argued at :func:`otto.host.file_ops.refuse_if_base64_is_absent` and at
-# :func:`otto.host.unix_host.shutdown_command`, not here.
+# argued at :func:`otto.host.file_ops.refuse_if_base64_is_absent`, at
+# :func:`otto.host.unix_host.shutdown_command` and at
+# :func:`otto.host.transfer.scp.refuse_if_scp_is_absent`, not here -- and the
+# three do not pay the same price, which is why each argues its own: only the
+# last of them ADDS a resolution to a path that awaited none before.
 #
 # NOT EVERY TABLE-BACKED PATH IS A REFUSAL, and :data:`PATH_ADAPTED` is where
 # that stops being true. ``shutdown-command``'s guard has the same two halves --
@@ -2282,32 +2308,62 @@ GAPS: list[Gap] = [
             "backend"
         ),
         measured_on=(
-            "Tier 3, 2026-08-13: `scp -O` into the pinned BusyBox root fails with "
-            "`/bin/sh: scp: not found`, and the file does not land. Same test as "
+            "TWO measurements, and the second is what the refusal keys on. Tier 3, "
+            "2026-08-13: `scp -O` into the pinned BusyBox root fails with "
+            "`/bin/sh: scp: not found`, and the file does not land -- same test as "
             "`sftp-transfer`; the two take different routes on purpose, since `scp -O` "
-            "reaches for a remote binary while `sftp` opens a subsystem"
+            "reaches for a remote binary while `sftp` opens a subsystem. Then the five "
+            "matrix artifacts through the batched applet probe, 2026-08-14: `scp` is "
+            "absent from the applet list on 1.16.1, 1.21.1, 1.28.1, 1.31.0 and 1.35.0 "
+            "(`tests/busybox/test_applet_resolution.py` records it per row). The first "
+            "measurement is what a device DOES; the second is what a device can be ASKED, "
+            "and only the second can be read at a call site"
         ),
         queued_for=(
-            "nothing, deliberately: the `shell` backend is the answer for these devices "
-            "and it is verified over real ssh in Tier 3 (spec exit criterion 3)"
+            "nothing for a fix, deliberately: the `shell` backend is the answer for these "
+            "devices and it is verified over real ssh in Tier 3 (spec exit criterion 3), "
+            "and there is no second spelling to adapt to -- `ScpOptions` carries no "
+            "binary-name override, and the name the far side runs is the legacy protocol's "
+            "rather than otto's. What HAS landed is the REFUSAL, in "
+            "`otto.host.transfer.scp.refuse_if_scp_is_absent` -- this registry's fifth "
+            "product call site. The record stays `measured-broken` because the surface "
+            "still is: otto now declines the transfer instead of attempting one the device "
+            "cannot serve"
         ),
         paths=[
             GapPath(
                 site="otto.host.transfer.scp.ScpFileTransfer._run_get",
-                state=PATH_OPEN,
+                state=PATH_WIRED,
+                checked_by="otto.host.transfer.scp.refuse_if_scp_is_absent",
                 detail=(
-                    "runs the legacy protocol through `_get_files_scp` and reads nothing from "
-                    "this record, so a device with no `scp` binary answers `scp: not found` "
-                    "and the file does not land. Unguarded for the same deliberate reason as "
-                    "`sftp-transfer`'s two paths"
+                    "reads this record through the guard and declines before "
+                    "`_get_files_scp` opens the connection. The guard's PREDICATE is a "
+                    "probe -- a SETTLED `applet_scp` of `absent` -- and its VERDICT and "
+                    "MESSAGE are this record's, which is what makes the table the authority "
+                    "here. It keys on what the DEVICE answered and never on the host's "
+                    "profile: the `busybox` profile lists `scp` in `valid_transfers` "
+                    "deliberately, because a BusyBox device with a real `scp` installed "
+                    "alongside transfers perfectly well"
+                ),
+                pinned_by=(
+                    "tests/unit/host/test_scp_transfer_refusal.py::TestGetArrivesAtTheGuard"
+                    "::test_a_device_with_no_scp_is_refused_before_the_connection_is_opened"
                 ),
             ),
             GapPath(
                 site="otto.host.transfer.scp.ScpFileTransfer._run_put",
-                state=PATH_OPEN,
+                state=PATH_WIRED,
+                checked_by="otto.host.transfer.scp.refuse_if_scp_is_absent",
                 detail=(
-                    "the same missing remote binary in the other direction, and the same "
-                    "absence of any read of this record"
+                    "the same guard for the same missing remote binary in the other "
+                    "direction. Two sites, one guard -- which is why the count of wired "
+                    "PATHS and the count of wired GUARDS are different numbers, both "
+                    "derived. The guard is charged ONCE per `put()` and not once per file, "
+                    "because it sits above the per-file fan-out `_put_files_scp` gathers"
+                ),
+                pinned_by=(
+                    "tests/unit/host/test_scp_transfer_refusal.py::TestPutArrivesAtTheGuard"
+                    "::test_a_device_with_no_scp_is_refused_before_the_connection_is_opened"
                 ),
             ),
         ],

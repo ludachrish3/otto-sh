@@ -17,11 +17,11 @@ Two queues already exist and are **not** duplicated here:
 
 ## 1. The registry renders messages that almost nothing invokes
 
-**Status: four of eight surfaces reach the table. Four open.**
+**Status: five of eight measured-broken surfaces reach the table. Three do not.**
 
 `Gap`, `GAPS`, `gap_for()`, `refuse_if_gapped()` and
 `UnsupportedOnUserlandError.for_gap()` all exist and are tested. Phase 5 left
-them with **no product call site at all**; four now consult the table:
+them with **no product call site at all**; five now consult the table:
 
 1. `run-command-line-length` —
    `otto.host.session.refuse_if_line_editor_would_truncate`, called from
@@ -42,26 +42,49 @@ them with **no product call site at all**; four now consult the table:
    rather than refused. The table is the authority only for the residue — a
    device answering `absent` to both — which is why the path carries the new
    `ADAPTED` state rather than `WIRED`.
+5. `scp-transfer` — `otto.host.transfer.scp.refuse_if_scp_is_absent`, called
+   from both `ScpFileTransfer._run_put` and `._run_get`. Keyed on a settled
+   `applet_scp == "absent"`. **Back to a refusal**, deliberately, and the
+   surface is why rather than a change of heart: `ScpOptions` carries no
+   binary-name override and the far-side name is the legacy protocol's, so
+   there is no second spelling to adapt to the way `shutdown-command` had
+   `poweroff`. The refusal is keyed on the **device** and never on the profile —
+   `busybox` keeps `scp` in `valid_transfers` precisely so a device with a real
+   `scp` installed alongside can opt in, and it must keep working.
+   **This is the first guard that ADDS a resolution to a path that awaited
+   none:** an scp transfer resolved nothing before (`put`/`get` reach
+   `asyncssh.scp` through the connection manager, and a `mode=` put's batched
+   `chmod` goes through `Host.exec`, which does not resolve). Accepted because a
+   transfer is coarse and the guard sits **above** the per-file fan-out, so it is
+   one batch per `put()` and not one per file; stated on the guard rather than
+   discovered.
 
-The other four measured-broken surfaces are unchanged, and
+The other three measured-broken surfaces are unchanged, and
 `shell-transfer-base64` still refuses only incidentally, because `_run_put`
 probes `base64_flag` rather than reading this table. **Since the `uuencode`
 codec landed, that site now DEGRADES before it refuses** — a settled `absent`
 selects uu instead of declining — but the standing is the same: the verdict and
 the message are the call site's, not this table's.
 
-The shape all three settled, and the one to copy: the **caller** decides that
+The shape all five settled, and the one to copy: the **caller** decides that
 this host belongs to the measured class (a declared shell dialect of `ash`; a
-declared `has_bash=False`; a settled `base64_flag == "absent"`), and the
-**table** decides whether that class is refused at all — so downgrading the
-record to `untested` stops the refusal, which is asserted in all three cases.
-Neither half is enough alone.
+declared `has_bash=False`; a settled `base64_flag == "absent"`; a settled
+`applet_scp == "absent"`), and the **table** decides whether that class is
+refused at all — so downgrading the record to `untested` stops the refusal,
+which is asserted in all five cases. Neither half is enough alone.
 
-**A probed predicate does not make the refusal probe-driven.** The third
-surface's verdict and message are still the record's; the probe only decides
+**A probed predicate does not make the refusal probe-driven.** Three of the five
+now key on a probe (`file-ops-base64`, `shutdown-command`, `scp-transfer`), and
+their verdict and message are still the record's; the probe only decides
 membership of the measured class. Worth stating because the distinction the
 docs page draws between this table and the two probe-driven refusals
 (`_elevate`, `ShellFileTransfer`) would otherwise read as broken.
+
+**A probed predicate does not cost the same everywhere either**, which is the
+thing to establish before wiring the next one. `shutdown-command` pays nothing
+extra (its caller already awaited a resolution for `sudo=True`);
+`file-ops-base64` and `scp-transfer` each add one, and only measured coarseness
+makes that affordable. Say which of the three a new site is before writing it.
 
 **Reachability is the thing to establish before writing the guard**, not after.
 `daemon-launch` had three `launch_command` call sites and only two of them were
@@ -72,9 +95,36 @@ reaches cannot fail, which is this repo's most common defect; the reachable two
 are each pinned end to end by a test that arrives at the site with a bash-less
 host.
 
+`scp-transfer` came out the other way on the call sites and was still worth
+checking rather than assuming: `_run_put` and `_run_get` are the only two places
+the backend runs the protocol, `BaseFileTransfer.put_files`/`get_files` are their
+only callers, and `Host.put`/`Host.get` are the only callers of those — so both
+are reachable, both are guarded, and nothing is left over.
+
+**The CONSTRUCTION seam is where this surface differs from every earlier one,
+and the first attempt got it wrong.** `ShellFileTransfer.create` rejects a
+context with no `userland`, so requiring one here looked like the consistent
+move — and it is wrong, because **`scp` is `UnixHost`'s DEFAULT `transfer`**.
+This backend is built for every plain unix host, including one whose
+`_userland()` hook answers `None` (which is what
+`UserlandHost._userland` answers by default, and subclasses may keep it). A
+rejection therefore fires out of `__post_init__` and turns "this host cannot be
+guarded" into "this host cannot be BUILT". Measured, not reasoned: the strict
+version reddened
+`tests/unit/host/test_privilege.py::test_a_host_with_no_userland_builds_todays_exact_sudo_command`,
+which builds exactly that host and has nothing to do with transfers. So the
+resolver is threaded through as `NcFileTransfer` does, and the guard carries a
+`None` arm — reachable through that same shape, and pinned by
+`test_a_host_whose_hook_answers_none_builds_and_is_not_refused`.
+
+**The general lesson for the next raise site:** ask whether the backend you are
+adding a dependency to is on the DEFAULT construction path before making the
+dependency hard. A guard's inputs are cheap to require at a site something opted
+into and expensive to require at a site everything goes through.
+
 Wiring a raise site is still a **behaviour change** that belongs with each call
 site, one at a time, with its own test. Per-surface, the call sites to wire are
-named in each record's `measured_on`.
+named in each record's `paths`.
 
 ## 2. Three product bugs recorded as gaps — all three now refuse
 

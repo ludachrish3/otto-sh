@@ -236,10 +236,17 @@ per-codec fields covers it without making the operator choose the codec.
   `scp-transfer`, `nc-transfer` and `shutdown-command` were each blocked on a
   device-capability signal that did not exist, and it is the same kind of
   question as the codec probe — one mechanism likely serves all five. That
-  mechanism landed as the batched `applet_*` capabilities, and
-  `shutdown-command` is the first surface it CLOSED:
+  mechanism landed as the batched `applet_*` capabilities, and it has now served
+  two of them: `shutdown-command` first, where
   `otto.host.unix_host.shutdown_command` reads `applet_shutdown` and
-  `applet_poweroff` and emits the spelling the device has. Note the
+  `applet_poweroff` and emits the spelling the device has, and then
+  `scp-transfer`, where `otto.host.transfer.scp.refuse_if_scp_is_absent` reads a
+  settled `applet_scp` and declines. `sftp-transfer` gets NO applet capability
+  and is the one of the five the mechanism cannot serve — its `measured_on`
+  names an absolute path (`/usr/lib/sftp-server`) that is not on `PATH` on a
+  healthy GNU host either, so `command -v sftp-server` would answer "absent"
+  where sftp works perfectly. `nc-transfer` has one and is not solved by it:
+  `NcOptions.exec_name` means presence of *an* `nc` is not the question. Note the
   `busybox` profile declares `valid_transfers: ["shell","scp","sftp","ftp","nc"]`
   **deliberately**, because a device with a real sftp-server or netcat installed
   works, so those refusals must be device-conditional rather than blanket.

@@ -136,16 +136,17 @@ Counts, derived from the records themselves rather than maintained by hand
 | Path state | Paths |
 | --- | --- |
 | `ADAPTED` | 1 |
-| `WIRED` | 4 |
+| `WIRED` | 6 |
 | `PROBE_REFUSED` | 2 |
 | `PROTECTED` | 1 |
-| `OPEN` | 11 |
+| `OPEN` | 9 |
 
 The `WIRED` and `ADAPTED` paths — the ones whose verdict is this table's — reach
-{func}`~otto.host.userland.refuse_if_gapped` through **4** guard functions
-({func}`~otto.host.userland.table_guards`), which is fewer than the five such
-paths above — `read_file` and `write_file` share one guard, so the two numbers are
-different on purpose and both are derived.
+{func}`~otto.host.userland.refuse_if_gapped` through **5** guard functions
+({func}`~otto.host.userland.table_guards`), which is fewer than the seven such
+paths above — `read_file`/`write_file` share one guard and the scp backend's two
+directions share another, so the two numbers are different on purpose and both
+are derived.
 
 ## The declared gaps
 
@@ -158,7 +159,7 @@ error prints it verbatim; the sections below are its readable form.
 | [`shell-transfer-base64`](#shell-transfer-base64) | `measured-broken` | A device with no `base64` applet gets the `shell` backend's `uuencode` codec instead; only a device with neither is refused. |
 | [`file-ops-base64`](#file-ops-base64) | `measured-broken` | `read_file` and `write_file` are refused on those same devices, rather than blaming the file for the missing applet — and, for a write, emptying it. |
 | [`sftp-transfer`](#sftp-transfer) | `measured-broken` | No sftp subsystem on a stock BusyBox device. Use the `shell` backend. |
-| [`scp-transfer`](#scp-transfer) | `measured-broken` | No `scp` binary on a stock BusyBox device. Use the `shell` backend. |
+| [`scp-transfer`](#scp-transfer) | `measured-broken` | No `scp` binary on a stock BusyBox device, so otto refuses the transfer up front rather than failing one file at a time. A device with a real `scp` installed is unaffected. Use the `shell` backend. |
 | [`nc-transfer`](#nc-transfer) | `measured-broken` | The `nc` backend cannot drive BusyBox's own `nc` applet. A real netcat installed alongside is fine. |
 | [`daemon-launch`](#daemon-launch) | `measured-broken` | Launching a tagged daemon needs bash, which a stock BusyBox userland does not have, so `link impair --expire` is refused rather than left with a timer that never runs. Impair without `--expire` and it works. |
 | [`shutdown-command`](#shutdown-command) | `measured-broken` | Nothing, on any measured device: `Host.shutdown()` asks which spelling your device has and emits `poweroff` where there is no `shutdown`. Only a device with neither is refused. `Host.reboot()` is unaffected. |
@@ -332,28 +333,57 @@ these devices, and it is verified over real ssh in Tier 3.
 
 ### scp-transfer
 
-**Status:** `measured-broken` — otto *would* refuse before sending anything,
-once a call site consults the registry. None does yet, so today the attempt is
-made and the outcome is whatever the device does with it, below.
+**Status:** `measured-broken` — and otto **refuses before it sends anything**,
+on both directions, when your device answered that it has no `scp`. A device
+that has one, or one otto could not ask, transfers exactly as it did before.
 
 **Paths otto touches this from:**
 
-- `otto.host.transfer.scp.ScpFileTransfer._run_get` — **OPEN**: runs the legacy
-  protocol and reads nothing from this record, so the device answers
-  `scp: not found` and the file does not land.
-- `otto.host.transfer.scp.ScpFileTransfer._run_put` — **OPEN**: the same missing
-  remote binary in the other direction.
+- `otto.host.transfer.scp.ScpFileTransfer._run_get` — **WIRED** by
+  {func}`~otto.host.transfer.scp.refuse_if_scp_is_absent`: resolves the userland
+  and declines before the connection is opened, rather than letting asyncssh
+  report the missing binary once per file.
+- `otto.host.transfer.scp.ScpFileTransfer._run_put` — **WIRED** by the same
+  guard, in the other direction. Two sites, one guard — and it is charged once
+  per `put()`/`get()` rather than once per file, because it sits above the
+  per-file fan-out.
 
 The legacy `scp` protocol needs an `scp` binary on the far side, and a stock
 BusyBox userland has none. Same caveat as [`sftp-transfer`](#sftp-transfer): the
 daemon is not the authority, the device's userland is. Use the `shell` backend.
 
-**Measured:** Tier 3, 2026-08-13. `scp -O` into the pinned BusyBox root fails
-with `/bin/sh: scp: not found`, and the file does not land. The two surfaces are
-measured separately on purpose — `scp -O` reaches for a remote binary while
-`sftp` opens a subsystem.
+Three things worth knowing if you operate one of these devices. **The refusal is
+about your device and never about its profile:** the `busybox` os_profile keeps
+`scp` in `valid_transfers` deliberately, so a BusyBox box with a real `scp`
+installed alongside can still pin `transfer: scp` and it keeps working — only
+the applet answer decides. **A probe round otto could not get an answer to is
+not a refusal:** the guard asks `is_settled` first, so an sshd at its
+`MaxSessions` ceiling cannot be mistaken for a device with no `scp`. And **this
+is the one guard on this page that adds a probe round to a path that had none** —
+an scp transfer resolved nothing before, so the first `put`/`get` against a host
+now pays one applet batch. It is cached on the host for every later transfer,
+and pinning `applet_scp` in that host's `userland_options` (`otto host <id>
+probe` prints the payload) removes it entirely.
 
-**Queued for:** nothing, deliberately, for the same reason as `sftp-transfer`.
+Unlike [`shutdown-command`](#shutdown-command), there is nothing here to adapt
+to: `ScpOptions` carries no binary-name override, and the name the far side runs
+is the protocol's rather than otto's — which is also what separates this from
+[`nc-transfer`](#nc-transfer), where `NcOptions.exec_name` means the presence of
+*an* `nc` is not the question.
+
+**Measured:** two measurements, and the second is what the refusal keys on.
+Tier 3, 2026-08-13: `scp -O` into the pinned BusyBox root fails with
+`/bin/sh: scp: not found`, and the file does not land — measured separately from
+`sftp-transfer` on purpose, since `scp -O` reaches for a remote binary while
+`sftp` opens a subsystem. Then the five matrix artifacts through the batched
+applet probe, 2026-08-14: `scp` is absent from the applet list on all five
+(`tests/busybox/test_applet_resolution.py` records it per row).
+
+**Queued for:** nothing for a *fix*, deliberately, for the same reason as
+`sftp-transfer` — the `shell` backend is the answer for these devices. The
+refusal has landed. The record stays `measured-broken` because the surface still
+is: otto now declines the transfer instead of attempting one the device cannot
+serve.
 
 ### nc-transfer
 

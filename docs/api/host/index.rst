@@ -14,6 +14,7 @@ local and remote machines.
    dockerhost
    transfer
    transfer_base
+   transfer_scp
    embedded_filesystem
    session
    app_shell

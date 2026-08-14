@@ -451,13 +451,18 @@ def _register_builtin_os_profiles() -> None:
     break — so they are not pruned from ``valid_transfers``: a lab entry
     that knows its device runs a real OpenSSH-compatible server can still
     opt into ``scp``/``sftp``/``ftp``/``nc`` by pinning ``transfer`` itself.
-    Doing so gets ``ScpFileTransfer``'s unconditional ``asyncssh.scp()``
-    call (``otto/host/transfer/scp.py``, both ``_get_files_scp`` and
-    ``_put_files_scp``), with no upfront probe of the remote — a failure
-    lands at transfer time on the real device, not at the cheaper
-    host-build time where a wrong ``command_frame`` or ``has_bash`` would
-    be caught. ``shell`` as the *default* is what avoids that exposure for
-    the common case.
+    **Keeping ``scp`` here is what makes the refusal a question about the
+    DEVICE rather than about this profile.**
+    ``otto.host.transfer.scp.refuse_if_scp_is_absent`` declines a transfer
+    only where the device answered that it has no ``scp`` applet, so a
+    BusyBox box with a real ``scp`` installed alongside keeps working; a
+    profile-level prune would refuse that host on the strength of its
+    ``os_type`` and nothing else. The other three are unguarded and stay
+    that way here: ``sftp``/``ftp``/``nc`` reach the device with no upfront
+    probe, so their failure lands at transfer time on the real device
+    rather than at the cheaper host-build time where a wrong
+    ``command_frame`` or ``has_bash`` would be caught. ``shell`` as the
+    *default* is what avoids that exposure for the common case.
 
     Naming a backend here is validated shallowly by design:
     :func:`register_os_profile` checks only that ``defaults``'s *keys* are
