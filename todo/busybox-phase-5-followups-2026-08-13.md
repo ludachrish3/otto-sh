@@ -79,10 +79,16 @@ applet table — the **primitives**, not the backend. Deciding whether to widen
 Tier 3 or to reword the criterion is the open question; do not silently treat
 the primitives as backend coverage.
 
-### Criterion 7 — the CI half is unproven
+### Criterion 7 — CLOSED: the CI half is now demonstrated
 
-Tiers 1-3 run on the dev VM. CI cannot be proven from a worktree, and **three
-preconditions are asserted rather than demonstrated**:
+**Resolved by CI run `31759194001` on `901326a4`: success, every job green,
+including `busybox-artifacts (arm64)` and `busybox-artifacts (x86_64)`.** Tier 3
+cannot reach a passing state with any of the three preconditions below unmet, so
+all three are now demonstrated rather than asserted. Criterion 7 is met.
+
+Kept for the record, because each is a live dependency that a future change to
+the runner image or the tier could break, and the failure modes are worth
+recognising:
 
 1. **`/usr/lib/sftp-server` exists on both runner images.** This is the one that
    fails hardest: `mount --bind` onto a missing target aborts the daemon script
@@ -100,7 +106,7 @@ preconditions are asserted rather than demonstrated**:
    — the same one as the dev VM, and the branch that asserts `F`. That is
    precisely where a missing `F` would first bite.
 
-**Watch the first CI run on `4f93b756`** with these three in mind.
+Only criterion 3's "on the matrix" half remains open under this heading.
 
 ## 4. Small deferred items
 
