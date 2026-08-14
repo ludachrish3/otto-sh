@@ -375,6 +375,35 @@ class TestTheRefusalIsScoped:
         assert sessions, "the pooled exec path built no session at all"
         assert sessions[0].ran == [line]
 
+    @pytest.mark.asyncio
+    async def test_a_named_session_is_not_refused_either(self) -> None:
+        """The other path the guard deliberately does not cover, asserted.
+
+        ``HostSession.run`` calls ``ShellSession.run_cmd`` directly — one layer
+        BELOW ``SessionManager.run_cmd``, where the guard lives — so an
+        over-long line on a named session is still silently truncated by the
+        device. That is recorded as an ``OPEN`` path on the
+        ``run-command-line-length`` record and rendered on the docs page, and it
+        is open deliberately: this is the path ``ShellFileTransfer`` rides with
+        5534-character chunk lines, so a guard here would stop every shell
+        transfer to the devices the backend exists for.
+
+        THIS TEST IS NOT A CLAIM THAT THE HOLE IS FINE. It is the thing that
+        makes closing it a deliberate act: whoever finds a way to guard this
+        path reds this test, and the fix is to move the record's path from
+        ``OPEN`` to ``WIRED`` in the same change — not to delete the assertion.
+        """
+        mgr, sessions = _manager(AshFrame())
+        session = await mgr.open_session("monitor")
+        line = "echo " + "x" * 2000
+        results = await session.run(line)
+        assert results.only.is_ok
+        assert sessions, "open_session built no session at all"
+        assert sessions[0].ran == [line], (
+            "the named session did not reach the device, so this test proves nothing "
+            "about whether the guard fired"
+        )
+
 
 # ===========================================================================
 # End to end, through the profile a lab entry actually declares

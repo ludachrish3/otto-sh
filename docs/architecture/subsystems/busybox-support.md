@@ -44,10 +44,12 @@ is an applet everywhere, so only the `shutdown` half is a gap.
 Every record carries one of two statuses, and the status decides whether otto
 would block the call. Read the whole of this section together with the note
 below it: the rule is implemented in
-{func}`~otto.host.userland.refuse_if_gapped`, and **exactly three product call
-sites consult that function** — so for three surfaces below the refusal is what
-otto does, and for the other five it is still what a wired call site would do.
-Each section's **Status:** line says which.
+{func}`~otto.host.userland.refuse_if_gapped`, and only some of the call sites
+that reach these surfaces consult it — so for some surfaces below the refusal is
+what otto does, and for the rest it is still what a wired call site would do.
+Each section's **Status:** line says which, and its **Paths** list says it per
+call site, which is the finer-grained answer: a surface can be guarded where
+`Host.run()` reaches it and unguarded where a named session does.
 
 `measured-broken`
 : otto has run it, watched it fail, and written down what it said. A call site
@@ -66,30 +68,73 @@ Each section's **Status:** line says which.
   work.
 
 ```{note}
-**Three product call sites consult the registry; five surfaces are still
-unwired.** They are [`daemon-launch`](#daemon-launch) — `otto link impair
---expire` reads that record and refuses to launch its expire timer on a host
-declaring `has_bash=False`; [`run-command-line-length`](#run-command-line-length),
-where `Host.run()` reads its record and refuses before it types anything; and
-[`file-ops-base64`](#file-ops-base64), where `read_file`/`write_file` refuse on a
-host whose userland answered that it has no `base64` at all. All three go through
-{func}`~otto.host.userland.refuse_if_gapped`. For the other five
-`measured-broken` rows, wiring a call site is a behaviour change that belongs
-with the call site being changed, and it has not happened — read those rows as
-"what otto knows", and each `reason` and **Status:** line as what such a refusal
-*would* say and do.
+**A surface is a fact about your device; a path is a place otto touches it.** One
+measurement, several call sites — and otto reaches most of these surfaces from
+more than one. Wiring one call site leaves the others exactly as broken, so
+"which surfaces refuse" is the wrong question and every section below answers the
+right one instead, per call site, in its **Paths** list.
 
-Two refusals that fire in otto today are *not* this table at all:
-`PosixPrivilege._elevate` and `ShellFileTransfer._run_put`/`_run_get` are
-*probe-driven*, refusing on what the host in front of them answered *and*
-printing their own message — a different thing from "otto measured this on the
-matrix". That is why [`shell-transfer-base64`](#shell-transfer-base64) refuses
-before sending despite being unwired here: it gets there by probing
-`base64_flag`. The third call site above is the one that mixes the two, and the
-split is worth keeping straight: its *predicate* is that same probe, while its
-*verdict* and its *message* are the record's, so the probe decides only that
-this host is in the measured class.
+For the surfaces with no wired path, wiring one is a behaviour change that
+belongs with the call site being changed, and it has not happened — read those
+rows as "what otto knows", and each `reason` and **Status:** line as what such a
+refusal *would* say and do.
+
+Not every refusal in otto is this table's. `PosixPrivilege._elevate` and
+`ShellFileTransfer._run_put`/`_run_get` are *probe-driven*: they refuse on what
+the host in front of them answered *and* print their own message, which is a
+different thing from "otto measured this on the matrix". That is why
+[`shell-transfer-base64`](#shell-transfer-base64) refuses before sending while
+reading nothing from this record — it gets there by probing `base64_flag` — and
+it is what the `PROBE_REFUSED` state below records. `read_file`/`write_file` are
+the ones that mix the two, and the split is worth keeping straight: their
+*predicate* is that same probe, while their *verdict* and their *message* are the
+record's, so the probe decides only that this host is in the measured class.
 ```
+
+## Where otto consults this table
+
+Each `measured-broken` section below lists the call sites otto reaches that
+surface from, with one of four states. **This is the answer to "am I protected",
+and the surface's status is not** — a surface can refuse on one path and truncate
+silently on another.
+
+`WIRED`
+: this call site reads the record and refuses from it. The message you get *is*
+  the record — the reason, the measurement, the queue entry and a link back to
+  this page. Downgrading the record to `untested` stops the refusal, which is
+  what makes this table the authority here.
+
+`PROBE_REFUSED`
+: otto refuses before it sends anything, but on its own authority rather than
+  this table's: the call site asks the device, raises itself, and writes its own
+  message. **You are protected here, and this page is a record of the surface
+  rather than the thing deciding it** — downgrading the record would not stop the
+  refusal, and the message carries none of the evidence above.
+
+`PROTECTED`
+: this call site cannot reach the gapped operation at all, because something
+  upstream refuses your host first. Not a hole, and not a place to add a guard:
+  a guard there could never fire.
+
+`OPEN`
+: reachable, unguarded, **still broken as described**. These are the holes, and
+  they are listed here so they are visible to you and not only to the table.
+
+Counts, derived from the records themselves rather than maintained by hand
+({func}`~otto.host.userland.gap_path_totals`), and pinned to them by
+`tests/unit/test_docs_gap_sync.py`:
+
+| Path state | Paths |
+| --- | --- |
+| `WIRED` | 4 |
+| `PROBE_REFUSED` | 2 |
+| `PROTECTED` | 1 |
+| `OPEN` | 12 |
+
+The `WIRED` paths reach {func}`~otto.host.userland.refuse_if_gapped`
+through **3** guard functions ({func}`~otto.host.userland.wired_guards`), which is
+fewer than the `WIRED` count above — `read_file` and `write_file` share one guard,
+so the two numbers are different on purpose and both are derived.
 
 ## The declared gaps
 
@@ -114,10 +159,22 @@ error prints it verbatim; the sections below are its readable form.
 ### shell-transfer-base64
 
 **Status:** `measured-broken` — otto does refuse before it sends anything, and
-this is the only surface here whose refusal does not come from this table. It is
-probe-driven (`ShellFileTransfer._run_put` resolves `base64_flag` and raises on
-`absent`) rather than read from the record, which is why it refuses despite
-being unwired.
+that refusal does not come from this table. It is probe-driven
+(`ShellFileTransfer._run_put` resolves `base64_flag` and raises on `absent`)
+rather than read from the record, which is what the `PROBE_REFUSED` paths below
+mean: you are protected, and this page is the record rather than the authority.
+
+**Paths otto touches this from:**
+
+- `otto.host.transfer.shell.ShellFileTransfer._run_put` — **PROBE_REFUSED**:
+  refuses before the first chunk, from `Userland.base64_flag` and with its own
+  message. Refuses on the value alone, so a host whose probe round never arrived
+  is refused too — base64 is the whole backend, so there is nothing to degrade to.
+- `otto.host.transfer.shell.ShellFileTransfer._run_get` — **PROBE_REFUSED**: the
+  same refusal in the other direction, after GET's own size-probe check.
+
+Wiring either of these means *moving* the verdict onto the record, never adding a
+second refusal beside the one already there.
 
 The `shell` transfer backend encodes every chunk with the device's own
 `base64`, so a userland without that applet cannot use the backend at all.
@@ -135,10 +192,28 @@ with `-d`.
 
 ### file-ops-base64
 
-**Status:** `measured-broken` — and this is the third of the three surfaces on
-this page that otto actually refuses *from this table*. `Host.read_file` and
+**Status:** `measured-broken` — and this is a surface otto actually refuses *from
+this table*, on the hosts that build a userland. `Host.read_file` and
 `Host.write_file` read the record through
-{func}`~otto.host.userland.refuse_if_gapped` and decline the operation.
+{func}`~otto.host.userland.refuse_if_gapped` and decline the operation. Other host
+families reach the same two methods and are never refused; the paths say which.
+
+**Paths otto touches this from:**
+
+- `otto.host.file_ops.PosixFileOps.read_file` — **WIRED** by
+  {func}`~otto.host.file_ops.refuse_if_base64_is_absent`: declines before it
+  emits `base64 <path>`.
+- `otto.host.file_ops.PosixFileOps.write_file` — **WIRED** by the same guard, and
+  the more valuable of the two: the command it declines to emit is *destructive*
+  on exactly the device that cannot run it.
+- `otto.host.local_host.LocalHost._userland` — **OPEN**: `LocalHost` never builds
+  a `Userland`, so the guard returns on its `None` arm before it reads this
+  record. A local shell with no `base64` still gets the failure described below.
+- `otto.host.docker_host.DockerContainerHost._userland` — **OPEN**: the same
+  `None` arm, and the sharper case — an `alpine` container *is* a BusyBox
+  userland, and otto will never refuse it.
+
+Both open paths close by giving the host a resolver, not by widening the guard.
 
 Both move their payload through the device's `base64`, and unlike the `shell`
 transfer they hard-code it: `file_ops.py` emits `base64 <path>` and
@@ -195,6 +270,14 @@ instead of emitting one it cannot run.
 once a call site consults the registry. None does yet, so today the attempt is
 made and the outcome is whatever the device does with it, below.
 
+**Paths otto touches this from:**
+
+- `otto.host.transfer.sftp.SftpFileTransfer._run_get` — **OPEN**: opens the
+  subsystem and reads nothing from this record, so the attempt is made and
+  asyncssh's own error names the missing `sftp-server`.
+- `otto.host.transfer.sftp.SftpFileTransfer._run_put` — **OPEN**: the same
+  subsystem in the other direction.
+
 The `sftp` transfer backend needs a server-side sftp subsystem, and a stock
 BusyBox userland ships none. Note what does *not* decide this: the ssh daemon.
 Packaged dropbear serves sftp perfectly well when the machine provides an
@@ -214,6 +297,14 @@ these devices, and it is verified over real ssh in Tier 3.
 once a call site consults the registry. None does yet, so today the attempt is
 made and the outcome is whatever the device does with it, below.
 
+**Paths otto touches this from:**
+
+- `otto.host.transfer.scp.ScpFileTransfer._run_get` — **OPEN**: runs the legacy
+  protocol and reads nothing from this record, so the device answers
+  `scp: not found` and the file does not land.
+- `otto.host.transfer.scp.ScpFileTransfer._run_put` — **OPEN**: the same missing
+  remote binary in the other direction.
+
 The legacy `scp` protocol needs an `scp` binary on the far side, and a stock
 BusyBox userland has none. Same caveat as [`sftp-transfer`](#sftp-transfer): the
 daemon is not the authority, the device's userland is. Use the `shell` backend.
@@ -230,6 +321,21 @@ measured separately on purpose — `scp -O` reaches for a remote binary while
 **Status:** `measured-broken` — otto *would* refuse before sending anything,
 once a call site consults the registry. None does yet, so today the attempt is
 made and the outcome is whatever the device does with it, below.
+
+**Paths otto touches this from:**
+
+- `otto.host.transfer.nc.NcFileTransfer._put_files_nc` — **OPEN**: spawns the
+  device-side listener as `nc -l -w <secs> <port>`, which the applet does not
+  accept, so nothing binds and otto waits for a peer that cannot arrive — a
+  timeout rather than the refusal this record describes.
+- `otto.host.transfer.nc.NcFileTransfer._get_files_nc_tunneled` — **OPEN**: the
+  hop-tunnelled GET, dispatched to whenever the connection has a tunnel, spawns
+  `nc -Nl <port>` — both rejected spellings in one option string.
+- `otto.host.transfer.nc.NcFileTransfer._get_files_nc` — **OPEN**: asks the device
+  to send with `nc -N`, the option every matrix row rejects outright.
+
+A guard here would have to key on the resolved binary rather than the userland,
+since `NcOptions.exec_name` pointed at a real netcat makes both paths work.
 
 The `nc` transfer backend cannot drive BusyBox's own `nc` **applet**: it sends
 with `nc -N <ip> <port>` and listens OpenBSD-style with `nc -l <port>`, and the
@@ -248,10 +354,22 @@ replace the missing `-N`).
 
 ### daemon-launch
 
-**Status:** `measured-broken` — and this is one of the three surfaces on this page
-that otto actually refuses *from this table*. `otto link impair --expire` reads
-the record through {func}`~otto.host.userland.refuse_if_gapped` and declines to
-launch the timer.
+**Status:** `measured-broken` — and this is a surface otto actually refuses *from
+this table*. `otto link impair --expire` reads the record through
+{func}`~otto.host.userland.refuse_if_gapped` and declines to launch the timer.
+Every path otto reaches this surface from is accounted for: one refuses from the
+record, and the other cannot be reached at all.
+
+**Paths otto touches this from:**
+
+- `otto.link.manage._launch_daemon` — **WIRED** by
+  {func}`~otto.host.daemon.refuse_if_launch_wrapper_needs_bash`: the only path in
+  `otto.link` that reaches `launch_command`, shared by both expire-timer
+  flavours, so the refusal cannot be bypassed by adding a third launch.
+- `otto.tunnel.manage.add_tunnel` — **PROTECTED** by
+  `otto.tunnel.manage._resolve_chain`, which rejects a `has_bash=False` host as a
+  tunnel path member before any launch is planned. Not a hole: a guard here could
+  never fire.
 
 `otto.host.daemon.launch_command` wraps every daemon in a `setsid bash -c` that
 re-`exec`s it under a findable `argv[0]`, and a stock BusyBox userland has no
@@ -304,6 +422,13 @@ stays `measured-broken`, because the surface still is.
 once a call site consults the registry. None does yet, so today the attempt is
 made and the outcome is whatever the device does with it, below.
 
+**Paths otto touches this from:**
+
+- `otto.host.unix_host.UnixHost.shutdown` — **OPEN**: emits `shutdown -h now` and
+  reads nothing from this record, so the device answers `shutdown: not found`, the
+  `run` is non-ok, and `shutdown()` returns success anyway — it discards the
+  result. `Host.reboot()` is a *different* surface and not a path of this record.
+
 `Host.shutdown()` emits `shutdown -h now`, and BusyBox has no `shutdown` applet;
 the BusyBox spelling is `poweroff`. **`Host.reboot()` is not affected** and must
 not be lumped in with this — `reboot` is present on every matrix row and otto's
@@ -321,10 +446,27 @@ every GNU host.
 
 ### run-command-line-length
 
-**Status:** `measured-broken` — and this is one of the three surfaces on this page
-that otto actually refuses *from this table*. `Host.run()` reads the record through
-{func}`~otto.host.userland.refuse_if_gapped` and raises before it types
-anything, so nothing is attempted and no connection is opened.
+**Status:** `measured-broken` — and this is a surface otto actually refuses *from
+this table*, on the path `Host.run()` takes. `Host.run()` reads the record through
+{func}`~otto.host.userland.refuse_if_gapped` and raises before it types anything,
+so nothing is attempted and no connection is opened. **Other paths reach the same
+line editor and are still open**, deliberately; the paths list says which, and
+"What is not refused" below says why they must stay that way for now.
+
+**Paths otto touches this from:**
+
+- `otto.host.session.SessionManager.run_cmd` — **WIRED** by
+  {func}`~otto.host.session.refuse_if_line_editor_would_truncate`: the per-command
+  path of `Host.run()` for every host family. Keys on the *declared* dialect, sizes
+  the line otto would *type* including its own framing, and refuses before any
+  session is opened.
+- `otto.host.session.HostSession.run` — **OPEN**: a named session's `run()` calls
+  `ShellSession.run_cmd` directly, one layer below the guard, so an over-long
+  typed line is still silently truncated there.
+- `otto.host.session.SessionManager.exec` — **OPEN**: on a `term: telnet` host,
+  and on *any* host whose login is proxied, `exec()` has no stateless primitive
+  and routes through a pooled shell session — so it is line-edited like a typed
+  command, and the escape hatch below does not hold on those two host shapes.
 
 BusyBox ash's line editor **silently truncates** a typed line longer than 1022
 characters: a different, shorter command runs and its success is reported as the
@@ -455,6 +597,17 @@ set of surfaces in the same order with the same status — plus that every row
 links to a section this page actually has, since those anchors are what the
 runtime error's `See ...` line points at.
 
+**The paths are pinned in both directions too**, and the `OPEN` ones especially:
+every open path in the registry has to appear in its section's **Paths** list, so
+a hole cannot be recorded in the source and left off the page a reader is sent
+to; and every path on this page has to be a declared one, in the state the record
+declares, so this page cannot invent a hole or report a closed one as open. The
+counts under "Where otto consults this table" are pinned to
+{func}`~otto.host.userland.gap_path_totals` and
+{func}`~otto.host.userland.wired_guards`, so **no number on this page is
+maintained by hand** — that is the whole reason the paths exist as data rather
+than prose.
+
 What that test does **not** check is the prose: no assertion can tell whether a
 `measured_on` string is true, and pinning paragraphs verbatim would only add a
 copying ritual. The structure is compulsory and the wording is review's job. So
@@ -465,6 +618,8 @@ when a record changes:
 - closing one means deleting both;
 - changing a status means changing it in the row and in the section's
   **Status:** line;
+- adding or re-stating a path means changing the record's `paths` **and** the
+  section's **Paths** bullet, and the count table if the totals moved;
 - the page's location is not written here twice — it is `GAP_DOCS_PAGE` in
   `src/otto/host/userland.py`, which every rendered error message and this test
   both read, so moving the page is one edit.

@@ -115,7 +115,7 @@ import logging
 import re
 import time
 from collections.abc import Callable, Coroutine
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from ..logger.mode import LogMode
@@ -787,51 +787,57 @@ class UserlandHost:
 # three design-time candidates measurement did NOT support are recorded in the
 # comment block below :data:`GAPS` rather than quietly dropped.
 #
-# THREE PRODUCT CALL SITES CONSULT :func:`refuse_if_gapped`. EXACTLY THREE, and
-# the count is the point -- an earlier version of this block said "none yet",
-# then "exactly one", then "exactly two", and the sentence that replaces each
-# must not be read as "the table is wired". They are being added deliberately,
-# one per change.
+# WHICH CALL SITES CONSULT :func:`refuse_if_gapped` IS DATA, NOT PROSE. It is
+# :attr:`Gap.paths` on each record below, one :class:`GapPath` per place otto
+# touches the surface, and every count anything needs is derived from it --
+# :func:`gap_path_totals`, :func:`wired_guards`, :attr:`Gap.consults_the_table`,
+# :attr:`Gap.fully_covered`. NO NUMBER IS WRITTEN IN THIS FILE BY HAND, and that
+# is the whole reason the paths exist: this block used to say "THREE PRODUCT CALL
+# SITES CONSULT refuse_if_gapped. EXACTLY THREE, and the count is the point",
+# having previously said "none yet", then "exactly one", then "exactly two". A
+# number a human retypes every change is a number that is wrong between changes,
+# and this one was also AMBIGUOUS -- it counted GUARD FUNCTIONS while reading as
+# though it counted sites, because ``read_file`` and ``write_file`` share one
+# guard. Both counts are derived now and they are allowed to differ.
 #
-# * :func:`otto.host.session.refuse_if_line_editor_would_truncate`, called from
-#   ``SessionManager.run_cmd`` (the per-command path of ``Host.run()``, for
-#   every host family), against the ``run-command-line-length`` record.
-# * :func:`otto.host.daemon.refuse_if_launch_wrapper_needs_bash`, called from
-#   ``otto.link.manage._launch_daemon`` (the only path in ``otto.link`` that
-#   reaches ``launch_command``, shared by the whole-link and port-scoped
-#   expire timers), against the ``daemon-launch`` record. ``otto.tunnel``'s
-#   own ``launch_command`` call is NOT a raise site and does not need one:
-#   ``_resolve_chain`` already refuses a ``has_bash=False`` host as a tunnel
-#   path member before any launch is planned.
-# * :func:`otto.host.file_ops.refuse_if_base64_is_absent`, called from BOTH
-#   ``PosixFileOps.read_file`` and ``PosixFileOps.write_file``, against the
-#   ``file-ops-base64`` record. Unlike the two above, its predicate is PROBED
-#   rather than declared -- there is no declared base64 fact to key on -- so it
-#   is also the one that costs a :meth:`Userland.resolve`. That trade is argued
-#   at the function, not here.
+# WHY A SURFACE IS NOT A CALL SITE, which is the mistake the old count made
+# structurally rather than by drifting. A surface is a fact about the DEVICE,
+# measured once; a path is a place OTTO touches it, and otto touches most of
+# these from more than one. Wiring one path leaves the others exactly as broken
+# while a count of wired surfaces reports the surface done -- and three such
+# holes were live in this repo, unmentioned by any count, when the paths were
+# written: ``run-command-line-length`` is guarded on ``SessionManager.run_cmd``
+# and open on a named session and on a pooled ``exec()``, and
+# ``file-ops-base64`` can never fire on ``LocalHost`` or a docker container
+# host. Read :data:`PATH_OPEN` for what that state is for.
 #
-# All three take the shape a registry consumer takes: the CALLER decides that
-# this host belongs to the measured class -- a declared shell dialect of
-# ``ash``, a declared ``has_bash=False``, a SETTLED ``base64_flag ==
-# "absent"`` -- and the TABLE decides whether that class is refused at all.
-# Neither half is enough alone, which is why the record's own ``refuses``
-# cannot be the whole trigger and why no call site carries its own copy of the
-# message.
+# WHAT A WIRED PATH LOOKS LIKE, and it is the shape every registry consumer
+# takes: the CALLER decides that this host belongs to the measured class -- a
+# declared shell dialect of ``ash``, a declared ``has_bash=False``, a SETTLED
+# ``base64_flag == "absent"`` -- and the TABLE decides whether that class is
+# refused at all. Neither half is enough alone, which is why the record's own
+# ``refuses`` cannot be the whole trigger and why no wired call site carries its
+# own copy of the message. One of the three guards keys on a PROBE rather than a
+# declaration and therefore costs a :meth:`Userland.resolve`; that trade is
+# argued at :func:`otto.host.file_ops.refuse_if_base64_is_absent`, not here.
 #
-# THE OTHER FIVE ``measured-broken`` SURFACES ARE STILL UNWIRED, and their
-# ``reason`` strings are still written to say what a call site WOULD refuse.
-# The refusals that fire elsewhere in otto today
-# (``PosixPrivilege._elevate``, ``ShellFileTransfer._run_put``/``_run_get``)
-# are PROBE-driven -- they refuse on what this host answered, and they render
-# their own message, which is a different thing from this table's "otto
-# measured this on the matrix". Note what the third call site above does NOT
-# do to that distinction: its PREDICATE is a probe, but its VERDICT and its
-# MESSAGE are still the record's, so a probe may decide that a host is in the
-# measured class without becoming a second authority on whether the class is
-# refused. So wiring a raise site remains a PER-SURFACE decision that belongs
-# with the call site being changed; three surfaces having made it does not
-# generalise to the rest, and the docs page states each surface's status
-# separately for the same reason.
+# WIRING A RAISE SITE STAYS A PER-SURFACE DECISION that belongs with the call
+# site being changed, and the ``reason`` strings of the unwired surfaces are
+# still written to say what a call site WOULD refuse. Some surfaces having made
+# that decision does not generalise to the rest, and the docs page states each
+# surface's status separately for the same reason.
+#
+# NOT EVERY REFUSAL IN OTTO IS THIS TABLE'S, and the distinction is what
+# :data:`PATH_PROBE_REFUSED` exists to keep straight. ``PosixPrivilege._elevate``
+# and ``ShellFileTransfer._run_put``/``_run_get`` refuse on what the host in
+# front of them ANSWERED and render their OWN messages -- a different thing from
+# this table's "otto measured this on the matrix", and downgrading a record would
+# not stop them. Only the transfer pair is recorded as a path, because
+# ``shell-transfer-base64`` is a surface in this table and elevation is not.
+# Note what a WIRED path does NOT do to that distinction: its PREDICATE may be a
+# probe, but its VERDICT and its MESSAGE are the record's, so a probe may decide
+# that a host is in the measured class without becoming a second authority on
+# whether the class is refused.
 
 GAP_DOCS_PAGE = "docs/architecture/subsystems/busybox-support.md"
 """Where the user-facing rendering of this table lives.
@@ -859,6 +865,180 @@ _STATUSES = [MEASURED_BROKEN, UNTESTED]
 # it renders a docs link that silently goes nowhere, and a link that goes
 # nowhere is exactly the drift this table exists to prevent.
 _SURFACE_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
+
+# A dotted python name inside otto -- what :attr:`GapPath.site` and
+# :attr:`GapPath.checked_by` are. Validated at construction for SHAPE only;
+# whether the name RESOLVES, and whether the code it names does what the record
+# claims, is checked in ``tests/unit/host/test_gap_registry.py``. Deliberately
+# not resolved here: this module is imported on every CLI ``--help`` path, and a
+# table that imported ``otto.link`` and ``otto.tunnel`` to validate itself would
+# put the whole product behind the import budget guard.
+_DOTTED_RE = re.compile(r"^otto(\.[A-Za-z_][A-Za-z0-9_]*)+$")
+
+# ``tests/…/test_x.py::TestClass::test_name`` or ``…::test_name``.
+_NODE_ID_RE = re.compile(r"^tests/[\w./-]+\.py(::[A-Za-z_][A-Za-z0-9_]*)+$")
+
+PATH_WIRED = "WIRED"
+"""This path reads this record and refuses from it. The table is the authority.
+
+:attr:`GapPath.checked_by` names the guard, and that claim is CHECKED rather
+than trusted: the named guard has to exist, the site has to call it, and the
+guard has to reach :func:`refuse_if_gapped` with this record's own surface. See
+``tests/unit/host/test_gap_registry.py``.
+"""
+
+PATH_PROBE_REFUSED = "PROBE_REFUSED"
+"""This path refuses, but on its OWN authority rather than this table's.
+
+THE FOURTH STATE, and it exists because ``shell-transfer-base64`` is neither of
+the obvious two. ``ShellFileTransfer._run_put`` (in ``otto.host.transfer.shell``)
+reads :attr:`Userland.base64_flag`, raises
+:exc:`~otto.host.errors.UnsupportedOnUserlandError` itself, and renders its own
+message -- so calling it :data:`PATH_WIRED` would be false (downgrading this
+record to :data:`UNTESTED` would not stop that refusal, and the message carries
+none of the record's evidence or docs anchor), while calling it
+:data:`PATH_OPEN` would be false the other way (nothing is silently broken; otto
+declines before it sends).
+
+WHAT A READER MUST TAKE FROM IT: the user is protected here, and this table is
+a RECORD of the surface rather than the thing deciding it. WHAT A FUTURE
+IMPLEMENTER MUST NOT DO: read it as a hole and add a second refusal. Wiring such
+a path means MOVING the verdict onto the record, not adding one beside it.
+"""
+
+PATH_PROTECTED = "PROTECTED"
+"""This path cannot reach the gapped operation -- something upstream refuses first.
+
+Load-bearing on its own: without it ``otto.tunnel.manage.add_tunnel`` reads as a
+permanent hole, and the fix someone reaches for is a guard that cannot fire --
+this repo's most common defect. :attr:`GapPath.checked_by` names the protector
+and :attr:`GapPath.pinned_by` the test that holds it in place.
+"""
+
+PATH_OPEN = "OPEN"
+"""This path is reachable, touches the gapped surface, and is still unguarded.
+
+The state that has to be impossible to miss: a surface can be wired at one call
+site and silently broken at another, and the count of wired sites says nothing
+about that. Every :data:`PATH_OPEN` path is rendered on
+:data:`GAP_DOCS_PAGE`, pinned in both directions by
+``tests/unit/test_docs_gap_sync.py``, so a hole is visible to a reader and not
+only to this table.
+"""
+
+_PATH_STATES = [PATH_WIRED, PATH_PROBE_REFUSED, PATH_PROTECTED, PATH_OPEN]
+"""The four states, ordered strongest-coverage first. Renders in this order."""
+
+
+@dataclass(frozen=True)
+class GapPath:
+    """One place otto TOUCHES a gapped surface, and what is true of it there.
+
+    **A surface is a fact about the DEVICE; a path is a place otto touches it.**
+    One measurement, many call sites -- which is why these hang off a
+    :class:`Gap` rather than replacing it. otto reaches most of these surfaces
+    from more than one place, and wiring one of them leaves the others silently
+    broken while a count of wired surfaces reports the surface done. Three such
+    holes were live in this repo when these records were written, all of them
+    invisible to a table that recorded only surfaces.
+
+    Frozen for the same reason :class:`Gap` is: every consumer reads and none
+    writes.
+    """
+
+    site: str
+    """The call site, as a dotted name under ``otto.`` -- ``module.Class.method``
+    or ``module.function``.
+
+    Resolvable, and RESOLVED by the test module: a renamed method or a moved
+    function reddens rather than sitting here as stale prose. Shape only is
+    checked at construction, because resolving it would mean importing
+    ``otto.link`` and ``otto.tunnel`` from a module on the ``--help`` path.
+    """
+
+    state: str
+    """One of :data:`PATH_WIRED`, :data:`PATH_PROBE_REFUSED`,
+    :data:`PATH_PROTECTED`, :data:`PATH_OPEN`. Read those four for what each means."""
+
+    detail: str
+    """What this state MEANS at this site, in the reader's terms. Never empty.
+
+    The state is the verdict and this is the evidence for it -- why the path is
+    still open, or what makes it unreachable. A state with no detail is a claim
+    with no argument, so ``__post_init__`` refuses one.
+    """
+
+    checked_by: str = ""
+    """The dotted name of the code that makes this path safe, where one exists.
+
+    :data:`PATH_WIRED`: the guard that consults this table -- REQUIRED, and
+    checked to actually reach :func:`refuse_if_gapped` with this record's
+    surface. :data:`PATH_PROTECTED`: the upstream refusal -- REQUIRED, and
+    checked to exist. Empty for the other two, and that is enforced:
+    :data:`PATH_OPEN` has nothing to name, and :data:`PATH_PROBE_REFUSED`'s
+    check is inline at the site rather than in a named function.
+    """
+
+    pinned_by: str = ""
+    """A pytest node id for the test that holds this path where it is, if any.
+
+    ``tests/…/test_x.py::TestClass::test_name``. Checked to EXIST -- the file is
+    read and the named test looked for -- so a deleted or renamed test reddens
+    here instead of leaving the record pointing at nothing. Optional, because
+    not every path has one and inventing a name would be worse than admitting
+    it; REQUIRED for :data:`PATH_PROTECTED`, whose whole claim is that something
+    else refuses first and keeps refusing.
+    """
+
+    def __post_init__(self) -> None:
+        if not _DOTTED_RE.match(self.site):
+            raise ValueError(
+                f"gap path site {self.site!r} is not a dotted name under `otto.`. It has "
+                f"to be resolvable (`otto.host.session.SessionManager.run_cmd`), because "
+                f"the site is what a stale claim is caught by -- prose cannot be resolved"
+            )
+        if self.state not in _PATH_STATES:
+            raise ValueError(
+                f"gap path {self.site!r} has state {self.state!r}, not one of {_PATH_STATES}"
+            )
+        if not self.detail:
+            raise ValueError(
+                f"gap path {self.site!r} is {self.state} and says nothing about what that "
+                f"means here. A state with no detail is a verdict with no argument"
+            )
+        needs_checker = self.state in (PATH_WIRED, PATH_PROTECTED)
+        if needs_checker and not self.checked_by:
+            raise ValueError(
+                f"gap path {self.site!r} is {self.state} and names nothing in `checked_by`. "
+                f"{PATH_WIRED} has to name the guard that consults this table and "
+                f"{PATH_PROTECTED} the code that refuses upstream -- unnamed, neither claim "
+                f"can be checked, which is the whole point of recording it"
+            )
+        if not needs_checker and self.checked_by:
+            raise ValueError(
+                f"gap path {self.site!r} is {self.state} and names {self.checked_by!r} in "
+                f"`checked_by`. {PATH_OPEN} means nothing guards it, and "
+                f"{PATH_PROBE_REFUSED} means the check is inline at the site rather than a "
+                f"named function -- neither may claim a checker"
+            )
+        if self.checked_by and not _DOTTED_RE.match(self.checked_by):
+            raise ValueError(
+                f"gap path {self.site!r} names checked_by={self.checked_by!r}, which is not "
+                f"a dotted name under `otto.`; it has to resolve for the claim to be checked"
+            )
+        if self.state == PATH_PROTECTED and not self.pinned_by:
+            raise ValueError(
+                f"gap path {self.site!r} is {PATH_PROTECTED} and names no test. "
+                f"'unreachable' is the one state that stops being true silently -- the "
+                f"upstream refusal is somebody else's code and nothing here would notice "
+                f"it going away, so the test that pins it is part of the claim"
+            )
+        if self.pinned_by and not _NODE_ID_RE.match(self.pinned_by):
+            raise ValueError(
+                f"gap path {self.site!r} names pinned_by={self.pinned_by!r}, which is not a "
+                f"pytest node id (`tests/…/test_x.py::TestClass::test_name`); it has to be "
+                f"resolvable for the claim to be checked"
+            )
 
 
 @dataclass(frozen=True)
@@ -911,6 +1091,25 @@ class Gap:
     an answer a reader needs, and it is spelled out rather than left blank.
     """
 
+    paths: list[GapPath] = field(default_factory=list)
+    """Every place otto TOUCHES this surface, and what is true of it there.
+
+    The surface is one measurement; this is the list of call sites it reaches
+    otto through, and the two are not the same shape. A surface wired at one
+    site and unguarded at another is COVERED by any count of wired surfaces and
+    still broken for the caller who took the other path.
+
+    Compulsory for :data:`MEASURED_BROKEN` and forbidden for :data:`UNTESTED`,
+    both enforced in ``__post_init__``: a refusing record with no paths says
+    nothing about otto and would vanish from the coverage view, while the
+    untested records are test-fidelity gaps rather than call sites and inventing
+    paths for them would be inventing evidence.
+
+    Every count anything needs is DERIVED from this -- :attr:`open_paths`,
+    :attr:`fully_covered`, :func:`gap_path_totals`, :func:`wired_guards`.
+    Nothing retypes one.
+    """
+
     def __post_init__(self) -> None:
         if not _SURFACE_RE.match(self.surface):
             raise ValueError(
@@ -940,6 +1139,23 @@ class Gap:
                 f"({self.measured_on!r}). Something measured is not untested -- if the "
                 f"measurement showed it broken, declare it {MEASURED_BROKEN!r}"
             )
+        # The coverage half of the same idea: a record must not be able to claim
+        # coverage it does not have, in either direction.
+        if self.status == MEASURED_BROKEN and not self.paths:
+            raise ValueError(
+                f"gap {self.surface!r} is {MEASURED_BROKEN!r} and names no path otto "
+                f"touches it from. The surface is a fact about the device; a path is a "
+                f"place otto meets it, and a record with none says nothing about otto -- "
+                f"it would sit in the coverage view as neither wired nor open. Name at "
+                f"least the site the measurement was taken against"
+            )
+        if self.status == UNTESTED and self.paths:
+            raise ValueError(
+                f"gap {self.surface!r} is {UNTESTED!r} and carries "
+                f"{len(self.paths)} path(s). An untested record is not a call site -- it is "
+                f"a surface nobody has run, and two of the three are test-fidelity gaps "
+                f"rather than otto code at all. Do not invent paths for them"
+            )
 
     @property
     def refuses(self) -> bool:
@@ -956,6 +1172,57 @@ class Gap:
     def docs_anchor(self) -> str:
         """:data:`GAP_DOCS_PAGE` plus ``#<surface>`` -- where a user reads more."""
         return f"{GAP_DOCS_PAGE}#{self.surface}"
+
+    def paths_in_state(self, state: str) -> list[GapPath]:
+        """Return this record's paths in *state*, in declaration order.
+
+        Raises:
+            ValueError: *state* is not one of the four. A typo'd state would
+                otherwise answer "no paths" forever, which for a caller counting
+                holes is a count that cannot rise.
+        """
+        if state not in _PATH_STATES:
+            raise ValueError(f"{state!r} is not a gap path state; there are {_PATH_STATES}")
+        return [p for p in self.paths if p.state == state]
+
+    @property
+    def wired_paths(self) -> list[GapPath]:
+        """The paths that read THIS record and refuse from it."""
+        return self.paths_in_state(PATH_WIRED)
+
+    @property
+    def open_paths(self) -> list[GapPath]:
+        """The paths that are reachable and still unguarded. The holes."""
+        return self.paths_in_state(PATH_OPEN)
+
+    @property
+    def consults_the_table(self) -> bool:
+        """Whether this record is the AUTHORITY anywhere -- any :data:`PATH_WIRED` path.
+
+        The question the docs page's "which surfaces does otto refuse from this
+        table" prose is asking, and it is NOT :attr:`fully_covered`: the two
+        disagree on ``shell-transfer-base64``, which refuses everywhere it is
+        reachable and reads none of it from here. Answering that question with
+        :attr:`fully_covered` would tell a reader the table decides something it
+        does not.
+        """
+        return bool(self.wired_paths)
+
+    @property
+    def fully_covered(self) -> bool:
+        """Whether no path otto touches this surface from is left silently broken.
+
+        ``True`` when there is at least one path and none of them is
+        :data:`PATH_OPEN` -- every place otto meets this surface either refuses
+        (from this table, or on its own probe) or cannot be reached at all.
+
+        NOT NAMED ``fully_wired``, deliberately. A :data:`PATH_PROBE_REFUSED`
+        path is covered and is not wired, so ``fully_wired`` would be a false
+        name for ``shell-transfer-base64`` -- and a derived value that lies is
+        exactly the defect paths exist to remove. Read :attr:`consults_the_table`
+        for the wiring question; they are different questions and both are asked.
+        """
+        return bool(self.paths) and not self.open_paths
 
 
 # The records. ORDER IS THE DOCS TABLE'S ORDER, so it is grouped the way a
@@ -986,6 +1253,44 @@ GAPS: list[Gap] = [
             "`uuencode`/`uudecode` is measured-feasible on all five rows including "
             "1.16.1, and needs a codec probe plus a second codec path in the backend"
         ),
+        paths=[
+            GapPath(
+                site="otto.host.transfer.shell.ShellFileTransfer._run_put",
+                state=PATH_PROBE_REFUSED,
+                detail=(
+                    "refuses before the first chunk, and on its OWN authority: it reads "
+                    "`Userland.base64_flag`, raises `UnsupportedOnUserlandError` itself and "
+                    "composes its own message, without consulting this record at all. So "
+                    "the user is protected here and this table is the RECORD of the surface "
+                    "rather than the thing deciding it -- downgrading this record to "
+                    "`untested` would not stop the refusal, and the message carries none of "
+                    "the evidence, queue entry or docs anchor above. It also refuses on the "
+                    "VALUE alone, without `is_settled`, so a host whose probe round never "
+                    "arrived is refused too -- base64 is the whole backend, so there is "
+                    "nothing to degrade to. Wiring it means MOVING the verdict onto this "
+                    "record, never adding a second refusal beside this one"
+                ),
+                pinned_by=(
+                    "tests/unit/host/transfer/test_shell_transfer.py::TestShellPutRefusal"
+                    "::test_absent_base64_raises_before_any_command"
+                ),
+            ),
+            GapPath(
+                site="otto.host.transfer.shell.ShellFileTransfer._run_get",
+                state=PATH_PROBE_REFUSED,
+                detail=(
+                    "the same probe-driven refusal as `_run_put`, with the same standing: "
+                    "otto declines before it sends, and it does so from "
+                    "`Userland.base64_flag` rather than from this record. GET checks its "
+                    "size probe first and the codec second, which changes the order of two "
+                    "refusals and nothing about this one"
+                ),
+                pinned_by=(
+                    "tests/unit/host/transfer/test_shell_transfer.py::TestShellGetRefusal"
+                    "::test_absent_base64_raises_before_any_command"
+                ),
+            ),
+        ],
     ),
     Gap(
         surface="file-ops-base64",
@@ -1025,6 +1330,72 @@ GAPS: list[Gap] = [
             "the surface still is -- otto now declines the operation instead of "
             "emitting one it cannot run"
         ),
+        paths=[
+            GapPath(
+                site="otto.host.file_ops.PosixFileOps.read_file",
+                state=PATH_WIRED,
+                checked_by="otto.host.file_ops.refuse_if_base64_is_absent",
+                detail=(
+                    "reads this record through the guard and declines before it emits "
+                    "`base64 <path>`. The guard's PREDICATE is a probe -- a SETTLED "
+                    "`base64_flag == 'absent'` -- and its VERDICT and MESSAGE are this "
+                    "record's, which is what makes the table the authority here"
+                ),
+                pinned_by=(
+                    "tests/unit/host/test_file_ops_base64_refusal.py::TestReadFileArrivesAtTheGuard"
+                    "::test_a_device_with_no_base64_is_refused_before_anything_is_read"
+                ),
+            ),
+            GapPath(
+                site="otto.host.file_ops.PosixFileOps.write_file",
+                state=PATH_WIRED,
+                checked_by="otto.host.file_ops.refuse_if_base64_is_absent",
+                detail=(
+                    "the same guard, and the more valuable of the two: the command it "
+                    "declines to emit is DESTRUCTIVE on exactly the device that cannot run "
+                    "it, since the shell opens `> <path>` before it resolves `base64`. Two "
+                    "sites, one guard -- which is why the count of wired PATHS and the count "
+                    "of wired GUARDS are different numbers, both derived"
+                ),
+                pinned_by=(
+                    "tests/unit/host/test_file_ops_base64_refusal.py::TestWriteFileArrivesAtTheGuard"
+                    "::test_a_device_with_no_base64_is_refused_and_the_file_is_untouched"
+                ),
+            ),
+            GapPath(
+                site="otto.host.local_host.LocalHost._userland",
+                state=PATH_OPEN,
+                detail=(
+                    "`LocalHost` mixes in `PosixFileOps` and never builds a `Userland`: it "
+                    "inherits `UserlandHost._userland`, which answers `None`, so "
+                    "`refuse_if_base64_is_absent` returns on its `None` arm before it ever "
+                    "reads this record. Nothing has been measured about such a host's "
+                    "userland, so the refusal correctly does not fire -- but the SURFACE is "
+                    "still reachable, and a local shell without `base64` gets the "
+                    "`FileNotFoundError`-blaming-a-present-file failure this record "
+                    "describes. Closing it means giving the host a resolver, not widening "
+                    "the guard"
+                ),
+                pinned_by=(
+                    "tests/unit/host/test_file_ops_base64_refusal.py::TestTheFamiliesWithNoResolver"
+                    "::test_the_hook_is_declared_once_and_only_unix_host_overrides_it"
+                ),
+            ),
+            GapPath(
+                site="otto.host.docker_host.DockerContainerHost._userland",
+                state=PATH_OPEN,
+                detail=(
+                    "the same `None` arm as `LocalHost`, and the sharper case of the two: an "
+                    "`alpine` container IS a BusyBox userland, so this is a host otto can "
+                    "meet the measured class on and will never refuse. It has no resolver to "
+                    "settle `base64_flag` with, so the guard has nothing to key on"
+                ),
+                pinned_by=(
+                    "tests/unit/host/test_file_ops_base64_refusal.py::TestTheFamiliesWithNoResolver"
+                    "::test_the_hook_is_declared_once_and_only_unix_host_overrides_it"
+                ),
+            ),
+        ],
     ),
     Gap(
         surface="sftp-transfer",
@@ -1046,6 +1417,27 @@ GAPS: list[Gap] = [
             "nothing, deliberately: the `shell` backend is the answer for these devices "
             "and it is verified over real ssh in Tier 3 (spec exit criterion 3)"
         ),
+        paths=[
+            GapPath(
+                site="otto.host.transfer.sftp.SftpFileTransfer._run_get",
+                state=PATH_OPEN,
+                detail=(
+                    "opens the sftp subsystem through `_get_files_sftp` and reads nothing "
+                    "from this record, so on a stock BusyBox device the attempt is made and "
+                    "the failure arrives as asyncssh's, naming the missing `sftp-server` "
+                    "rather than the userland. Unguarded deliberately for now: `queued_for` "
+                    "says the answer is the `shell` backend, not a refusal here"
+                ),
+            ),
+            GapPath(
+                site="otto.host.transfer.sftp.SftpFileTransfer._run_put",
+                state=PATH_OPEN,
+                detail=(
+                    "the same subsystem, the same absence of any read of this record. Both "
+                    "directions are open because both need the server side that is not there"
+                ),
+            ),
+        ],
     ),
     Gap(
         surface="scp-transfer",
@@ -1066,6 +1458,26 @@ GAPS: list[Gap] = [
             "nothing, deliberately: the `shell` backend is the answer for these devices "
             "and it is verified over real ssh in Tier 3 (spec exit criterion 3)"
         ),
+        paths=[
+            GapPath(
+                site="otto.host.transfer.scp.ScpFileTransfer._run_get",
+                state=PATH_OPEN,
+                detail=(
+                    "runs the legacy protocol through `_get_files_scp` and reads nothing from "
+                    "this record, so a device with no `scp` binary answers `scp: not found` "
+                    "and the file does not land. Unguarded for the same deliberate reason as "
+                    "`sftp-transfer`'s two paths"
+                ),
+            ),
+            GapPath(
+                site="otto.host.transfer.scp.ScpFileTransfer._run_put",
+                state=PATH_OPEN,
+                detail=(
+                    "the same missing remote binary in the other direction, and the same "
+                    "absence of any read of this record"
+                ),
+            ),
+        ],
     ),
     Gap(
         surface="nc-transfer",
@@ -1090,6 +1502,42 @@ GAPS: list[Gap] = [
             "replace the missing `-N`) and explicitly keeps it out of the phases that "
             "built the `shell` backend"
         ),
+        paths=[
+            GapPath(
+                site="otto.host.transfer.nc.NcFileTransfer._put_files_nc",
+                state=PATH_OPEN,
+                detail=(
+                    "spawns the device-side listener as `nc -l -w <secs> <port>`, the "
+                    "OpenBSD spelling the applet does not accept (it wants `-l -p PORT`), "
+                    "and reads nothing from this record. So the listener never binds, otto "
+                    "waits for a peer that cannot arrive, and `_cancel_and_reap` ends it -- "
+                    "a timeout rather than the refusal this record describes"
+                ),
+            ),
+            GapPath(
+                site="otto.host.transfer.nc.NcFileTransfer._get_files_nc_tunneled",
+                state=PATH_OPEN,
+                detail=(
+                    "the hop-tunnelled GET, which `_get_files_nc` dispatches to whenever the "
+                    "connection has a tunnel, so it is a THIRD unguarded emitter and not a "
+                    "restatement of the two others. It spawns the device-side listener as "
+                    "`nc -Nl <port>`, combining both spellings the applet rejects into one "
+                    "option string, and reads nothing from this record either"
+                ),
+            ),
+            GapPath(
+                site="otto.host.transfer.nc.NcFileTransfer._get_files_nc",
+                state=PATH_OPEN,
+                detail=(
+                    "asks the device to send with `nc -N <ip> <port>`, and `-N` is the option "
+                    "every matrix row rejects outright. Reads nothing from this record "
+                    "either. `NcOptions.exec_name` pointed at a real netcat is the "
+                    "workaround, which is why this is a gap in the applet rather than in "
+                    "every BusyBox host -- and why a guard here would have to key on the "
+                    "resolved binary, not on the userland"
+                ),
+            ),
+        ],
     ),
     Gap(
         surface="daemon-launch",
@@ -1133,6 +1581,42 @@ GAPS: list[Gap] = [
             "still is -- otto now declines the launch instead of emitting one it cannot "
             "run"
         ),
+        paths=[
+            GapPath(
+                site="otto.link.manage._launch_daemon",
+                state=PATH_WIRED,
+                checked_by="otto.host.daemon.refuse_if_launch_wrapper_needs_bash",
+                detail=(
+                    "the only path in `otto.link` that reaches `launch_command`, shared by "
+                    "both expire-timer flavours, so the refusal cannot be bypassed by adding "
+                    "a third launch. Keys on a DECLARED `has_bash is False` -- free, no probe "
+                    "-- and hands the verdict and the message to this record"
+                ),
+                pinned_by=(
+                    "tests/unit/host/test_daemon_launch_refusal.py"
+                    "::TestTheTableDecidesWhetherTheClassIsRefused"
+                    "::test_flipping_the_record_to_untested_stops_the_refusal"
+                ),
+            ),
+            GapPath(
+                site="otto.tunnel.manage.add_tunnel",
+                state=PATH_PROTECTED,
+                checked_by="otto.tunnel.manage._resolve_chain",
+                detail=(
+                    "otto's other tagged-daemon launch, and NOT a hole: `add_tunnel` calls "
+                    "`_resolve_chain` before it plans anything, and that rejects a "
+                    "`has_bash=False` host as a tunnel path member outright -- so the "
+                    "`launch_command` further down is unreachable on exactly the hosts this "
+                    "record covers. It correctly has no guard, and adding one here would be "
+                    "a guard that cannot fire. The refusal is loud, is a `ValueError` rather "
+                    "than this table's error, and predates this record"
+                ),
+                pinned_by=(
+                    "tests/unit/tunnel/test_manage_resolve.py::TestResolveChain"
+                    "::test_busybox_profile_host_rejected_as_chain_member"
+                ),
+            ),
+        ],
     ),
     Gap(
         surface="shutdown-command",
@@ -1156,6 +1640,19 @@ GAPS: list[Gap] = [
             "userland probe (the pattern `Userland.timeout_style` already sets), not a "
             "hard-coded swap that would break every GNU host"
         ),
+        paths=[
+            GapPath(
+                site="otto.host.unix_host.UnixHost.shutdown",
+                state=PATH_OPEN,
+                detail=(
+                    "emits `shutdown -h now` through `run(sudo=True)` and reads nothing from "
+                    "this record, so a BusyBox device answers `shutdown: not found`, the "
+                    "`run` is non-ok, and `shutdown()` returns `Status.Success` anyway -- it "
+                    "discards the result. `UnixHost.reboot` is a DIFFERENT surface and is not "
+                    "a path of this record: `reboot` is present on every matrix row"
+                ),
+            ),
+        ],
     ),
     Gap(
         surface="run-command-line-length",
@@ -1202,6 +1699,60 @@ GAPS: list[Gap] = [
             "running a shorter one. The two unguarded paths named in the reason are the "
             "next candidates and are likewise unqueued"
         ),
+        paths=[
+            GapPath(
+                site="otto.host.session.SessionManager.run_cmd",
+                state=PATH_WIRED,
+                checked_by="otto.host.session.refuse_if_line_editor_would_truncate",
+                detail=(
+                    "the per-command path of `Host.run()` for every host family, and the "
+                    "only one of the three below that reads this record. The guard keys on "
+                    "`isinstance(frame, AshFrame)` -- the DECLARED dialect, free and "
+                    "synchronous -- sizes the line otto would TYPE including its own framing, "
+                    "and refuses before `_ensure_session`, so a refused command costs no "
+                    "connection"
+                ),
+                pinned_by=(
+                    "tests/unit/host/test_run_line_length.py::TestAnAshHostRefusesInsteadOfTruncating"
+                    "::test_flipping_the_record_to_untested_stops_the_refusal"
+                ),
+            ),
+            GapPath(
+                site="otto.host.session.HostSession.run",
+                state=PATH_OPEN,
+                detail=(
+                    "a NAMED session's `run()` calls `ShellSession.run_cmd` directly -- one "
+                    "layer below the guard, which lives on `SessionManager.run_cmd` -- so a "
+                    "typed line over the bound is still silently truncated here. Open "
+                    "DELIBERATELY, and this is the one path that must not simply be closed: "
+                    "`ShellFileTransfer` rides it with 5534-character chunk lines and would "
+                    "be refused, which would stop every shell transfer to exactly the devices "
+                    "the backend exists for. Moving the guard down a layer is the wrong fix; "
+                    "a pty-free `run()` is the right one"
+                ),
+                pinned_by=(
+                    "tests/unit/host/test_run_line_length.py::TestTheRefusalIsScoped"
+                    "::test_a_named_session_is_not_refused_either"
+                ),
+            ),
+            GapPath(
+                site="otto.host.session.SessionManager.exec",
+                state=PATH_OPEN,
+                detail=(
+                    "`exec()` is safe only where it has a stateless primitive. On a "
+                    "`term: telnet` host, and on ANY host whose login is proxied, there is "
+                    "none, so the call takes `_acquire_exec_session()` -> `HostSession.run` "
+                    "-> `ShellSession.run_cmd` and is line-edited like a typed command. The "
+                    "record's escape hatch -- 'send it through `exec()`' -- is therefore not "
+                    "true on those two host shapes, which is what makes this path worth "
+                    "recording rather than filing under the one above"
+                ),
+                pinned_by=(
+                    "tests/unit/host/test_run_line_length.py::TestTheRefusalIsScoped"
+                    "::test_the_pooled_shell_session_exec_path_is_not_refused_either"
+                ),
+            ),
+        ],
     ),
     Gap(
         surface="product-lifecycle",
@@ -1328,6 +1879,39 @@ def gap_for(surface: str) -> "Gap | None":
         if gap.surface == surface:
             return gap
     return None
+
+
+def gap_path_totals() -> dict[str, int]:
+    """How many paths across :data:`GAPS` are in each state. DERIVED, never typed.
+
+    The replacement for the count this module's comment block used to carry by
+    hand ("EXACTLY THREE", after "none yet", "exactly one" and "exactly two" --
+    a number a human retyped every change, and the reason this function exists).
+    Every state is a key even at zero, so a reader of the output cannot mistake
+    "no paths in that state" for "that state is not a thing here".
+
+    :data:`GAP_DOCS_PAGE` prints this table verbatim and
+    ``tests/unit/test_docs_gap_sync.py`` pins the page's numbers to these, so
+    there is no number on either side that a human maintains.
+    """
+    totals = dict.fromkeys(_PATH_STATES, 0)
+    for gap in GAPS:
+        for path in gap.paths:
+            totals[path.state] += 1
+    return totals
+
+
+def wired_guards() -> list[str]:
+    """Every distinct guard function a :data:`PATH_WIRED` path names, sorted.
+
+    A SECOND count, and it is not the first one: four wired paths reach this
+    table through three guards, because ``read_file`` and ``write_file`` share
+    one. The prose that used to say "three product call sites" was counting
+    guards and reading as though it counted sites, which is exactly the
+    ambiguity a hand-maintained number buys. Both numbers are derived now, and
+    they are allowed to differ.
+    """
+    return sorted({p.checked_by for gap in GAPS for p in gap.wired_paths})
 
 
 def refuse_if_gapped(surface: str, *, host: str = "", attempted: str = "") -> None:
