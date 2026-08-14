@@ -41,8 +41,8 @@ Guards, and which mutation each backs:
 1. Temp-then-mv, not a direct write -- ``TestShellPutOrdering`` is written
    to isolate this property specifically, but it is not the only test that
    reddens under the mutation: measured directly (``temp = dst``, the
-   ``mv`` call left in place so it self-moves), 8 of this file's 50 tests
-   across 5 classes fail -- ``TestShellPutOrdering``,
+   ``mv`` call left in place so it self-moves), 8 of the 50 tests this file
+   held at the time, across 5 classes, fail -- ``TestShellPutOrdering``,
    ``TestShellPutSequentialFailure``, ``TestShellPutIntegrityVerification``,
    ``TestShellPutContentIntegrity``, and ``TestShellChunkLineLength`` --
    each for its own reason (a changed transcript, a step never reached, a
@@ -79,8 +79,8 @@ guard is PUT's item 4's analogue; ``G4``'s chunk-slicing guard is PUT's item
 G1. Temp-then-``Path.replace()``, not a direct write to the destination --
     ``TestShellGetStaging``, BOTH tests: under ``temp = dst`` (the
     direct-write mutation), measured to redden 2 of 2 in that class (48
-    passed elsewhere, re-measured against this file's current 50 tests --
-    the file has grown since fix round 1's original count). Content tests
+    passed elsewhere, measured when this file held 50 tests -- it has grown
+    since, both then and again for the codec seam). Content tests
     cannot substitute -- see ``TestShellGetSequentialFailure::test_a_failed_chunk_read_...``'s
     own docstring for the measured reason a content check stays green under
     this exact mutation.
@@ -115,8 +115,18 @@ G7. The device's ``base64`` wraps its output (measured, not assumed -- see
     below), and decoding must both tolerate that AND reject genuine garbage
     loudly rather than silently drop it -- ``TestShellGetWrappedAndValidatedDecode``.
 
-One guard belongs to NEITHER list because it belongs to both directions at
-once -- ``TestStagedNameFitsTheDeclaredFilenameLimit``. PUT and GET stage
+Two guards belong to NEITHER list because they belong to both directions at
+once.
+
+``TestEmittedCommandLinesArePinned`` is the newer of the two and is a
+deliberate change detector, unlike everything else here: it pins the literal
+command strings both directions emit, because
+:class:`~otto.host.transfer.shell.ShellCodec` moved the chunk loops out of
+:class:`~otto.host.transfer.shell.ShellFileTransfer` and a refactor that
+claims to change nothing has to be able to show it. Its strings were captured
+from the code as it stood before that split.
+
+``TestStagedNameFitsTheDeclaredFilenameLimit`` is the other. PUT and GET stage
 under the same generated basename (:func:`~otto.host.transfer.shell.staged_temp_name`),
 and ``put_files``/``get_files`` validate the CALLER's basename against
 ``max_filename_len`` before handing it to a staging step that makes it
@@ -140,6 +150,7 @@ import pytest
 from otto.host.connections import ConnectionManager
 from otto.host.errors import UnsupportedOnUserlandError
 from otto.host.options import UserlandOptions
+from otto.host.transfer import shell as shell_module
 from otto.host.transfer.base import TransferContext
 from otto.host.transfer.shell import _SHELL_CHUNK_BYTES, ShellFileTransfer, staged_temp_name
 from otto.host.userland import Userland
@@ -2350,3 +2361,272 @@ class TestShellFileTransferCreate:
         ft = ShellFileTransfer.create(self._ctx())
         assert isinstance(ft, ShellFileTransfer)
         assert ft.host_families == frozenset({"unix"})
+
+
+# ---------------------------------------------------------------------------
+# The codec seam's inertness proof: the emitted lines, byte for byte
+# ---------------------------------------------------------------------------
+
+_PINNED_TOKEN = "0f1e2d3c"
+"""A staged temp's random token, held still so a whole command can be a literal.
+
+Eight lowercase hex characters, exactly the shape
+:data:`~otto.host.transfer.shell._STAGING_TOKEN_HEX` produces, so every pinned
+length below is the length a real run emits.
+"""
+
+# The binary-hostile payload `tests/busybox/test_shell_codec_contracts.py`
+# uses -- NUL, newline, CR, 0xFF, single quote, backslash -- chosen here for a
+# second reason: 13 bytes encode to 20 base64 characters, so a whole chunk
+# command fits in this file as a literal string rather than as a computed one.
+_PINNED_PAYLOAD = b"A\x00B\nC\rD\xffE'F\\G"
+_PINNED_PAYLOAD_B64 = "QQBCCkMNRP9FJ0ZcRw=="
+
+
+@pytest.fixture
+def pinned_staged_name(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Freeze the staged temp's random token so the emitted lines are literals.
+
+    Replaces ``staged_temp_name`` in the shell module's OWN namespace -- not
+    ``uuid`` itself, which is process-global -- so nothing outside this
+    backend sees the substitution. The replacement drops the real function's
+    ``max_filename_len`` truncation, which is safe here only because every
+    destination name below is far shorter than the 255-character budget;
+    ``TestStagedNameFitsTheDeclaredFilenameLimit`` is what tests the budget,
+    and this class deliberately does not.
+    """
+
+    def _fixed(dest_name: str, max_filename_len: int) -> str:
+        return f"{dest_name}.otto-{_PINNED_TOKEN}"
+
+    monkeypatch.setattr(shell_module, "staged_temp_name", _fixed)
+
+
+@pytest.mark.usefixtures("pinned_staged_name")
+class TestEmittedCommandLinesArePinned:
+    """Every command this backend emits, pinned byte for byte.
+
+    THIS CLASS IS A CHANGE DETECTOR ON PURPOSE, which everywhere else in this
+    file would be the criticism. It exists because
+    :class:`~otto.host.transfer.shell.ShellCodec` split the chunk loops out of
+    the staging skeleton, and a pure refactor is only credible if it can be
+    shown to have changed nothing: these strings were captured from the code
+    as it stood BEFORE that split and are asserted against the code after it.
+    A future change that legitimately moves an emitted byte updates these
+    literals, with the new bytes re-justified against the transport bound the
+    way :class:`TestShellChunkLineLength` describes -- it does not delete
+    them.
+
+    Three details are pinned that a careless refactor breaks silently, named
+    here so nobody reads them as incidental:
+
+    - the FIRST chunk redirects with ``>`` and every later one with ``>>``,
+      which is what makes an appending chunk's line exactly one character
+      longer than the first's;
+    - the decode flag is spelled ``-d``. ``base64 --decode`` is rejected on
+      every BusyBox row tested, so a "clearer" long spelling breaks the
+      devices this backend exists for;
+    - ``bs=4096`` and the 5524/5525-character chunk lines are what actually
+      crosses the wire, against the 9000-character ssh exec ceiling measured
+      in ``tests/busybox/test_tier3_shell_transfer.py``. 5535 is the longest
+      line Tier 3 itself measured; the numbers here are smaller only because
+      ``/dest`` is a shorter destination directory than Tier 3's.
+
+    Mutation-verified rather than assumed -- three mutations, each run and
+    counted against this class's seven tests:
+
+    - hard-coding the emitted decode flag to ``--decode`` instead of
+      interpolating the resolved one: 3 red, 4 pass
+      (``test_a_one_chunk_put_transcript_is_pinned``,
+      ``test_an_appending_chunk_redirects_with_double_gt``,
+      ``test_a_failed_chunk_reports_the_same_message_and_cleans_up_the_same_way``);
+    - GET's ``2>/dev/null`` to ``2>&1``: 3 red, 4 pass -- the three GET
+      tests, and none of the PUT ones;
+    - making the FIRST chunk redirect with ``>>`` like every later one: 3
+      red, 4 pass, the same three as the flag mutation.
+
+    The 4 that stay green under each mutation are exactly the tests whose
+    transcript contains no mutated command -- the three GET tests under a PUT
+    mutation and vice versa, plus ``test_an_empty_source_put_transcript_is_pinned``,
+    which is a PUT that emits no chunk command at all. So the reds are the
+    tests that name the mutated line, not a blast radius.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_one_chunk_put_transcript_is_pinned(self, tmp_path: Path) -> None:
+        src = tmp_path / "stored.bin"
+        src.write_bytes(_PINNED_PAYLOAD)
+
+        exec_cmd = _RecordingExec(answer_when=_size_answer(len(_PINNED_PAYLOAD)))
+        ft = _make_ft(exec_cmd)
+
+        # A synthetic destination directory, for the reason
+        # `TestShellChunkLineLength` gives: `_put_one` never touches it
+        # locally, and `tmp_path`'s name is run-dependent, so interpolating it
+        # would make these literals unpinnable.
+        per_file = await ft._run_put([src], Path("/dest"), None)
+        assert per_file[src].status is Status.Success, per_file[src].msg
+
+        assert exec_cmd.calls == [
+            f"printf '%s' '{_PINNED_PAYLOAD_B64}' | base64 -d > /dest/stored.bin.otto-0f1e2d3c",
+            "stat -c %s -- /dest/stored.bin.otto-0f1e2d3c",
+            "mv -- /dest/stored.bin.otto-0f1e2d3c /dest/stored.bin",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_an_empty_source_put_transcript_is_pinned(self, tmp_path: Path) -> None:
+        """The empty-file branch stayed on the SHARED side of the seam.
+
+        No codec produces a chunk for a zero-byte source, so ``: > <temp>`` is
+        what creates the temp -- and it is emitted by the staging skeleton,
+        not by ``Base64Codec``. If that had moved into the codec, this
+        transcript would be unchanged; what would change is that the next
+        codec would have to re-emit it. Pinned here so the shared-side
+        placement is visible in a transcript rather than only in a docstring.
+        """
+        src = tmp_path / "empty.bin"
+        src.write_bytes(b"")
+
+        exec_cmd = _RecordingExec(answer_when=_size_answer(0))
+        ft = _make_ft(exec_cmd)
+
+        per_file = await ft._run_put([src], Path("/dest"), None)
+        assert per_file[src].status is Status.Success, per_file[src].msg
+
+        assert exec_cmd.calls == [
+            ": > /dest/empty.bin.otto-0f1e2d3c",
+            "stat -c %s -- /dest/empty.bin.otto-0f1e2d3c",
+            "mv -- /dest/empty.bin.otto-0f1e2d3c /dest/empty.bin",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_an_appending_chunk_redirects_with_double_gt(self, tmp_path: Path) -> None:
+        """Two FULL chunks: ``>`` then ``>>``, and the append is one character longer.
+
+        The encoded blob is 5464 characters, far too long to sit in this file
+        as a literal, so the frame around it is pinned literally and the blob
+        is recomputed from the source bytes -- which also checks the slicing,
+        since a wrong slice produces a blob that does not match.
+        """
+        payload = b"\xab" * (_SHELL_CHUNK_BYTES * 2)
+        src = tmp_path / "payload.bin"
+        src.write_bytes(payload)
+
+        exec_cmd = _RecordingExec(answer_when=_size_answer(len(payload)))
+        ft = _make_ft(exec_cmd)
+
+        per_file = await ft._run_put([src], Path("/dest"), None)
+        assert per_file[src].status is Status.Success, per_file[src].msg
+
+        first_blob = base64.b64encode(payload[:_SHELL_CHUNK_BYTES]).decode("ascii")
+        second_blob = base64.b64encode(payload[_SHELL_CHUNK_BYTES:]).decode("ascii")
+        assert exec_cmd.calls == [
+            f"printf '%s' '{first_blob}' | base64 -d > /dest/payload.bin.otto-0f1e2d3c",
+            f"printf '%s' '{second_blob}' | base64 -d >> /dest/payload.bin.otto-0f1e2d3c",
+            "stat -c %s -- /dest/payload.bin.otto-0f1e2d3c",
+            "mv -- /dest/payload.bin.otto-0f1e2d3c /dest/payload.bin",
+        ]
+        assert len(exec_cmd.calls[0]) == 5524
+        assert len(exec_cmd.calls[1]) == 5525, (
+            "an appending chunk's line must be exactly one character longer than the "
+            "first's -- that one character is the second `>`, and it is the whole "
+            "reason the maximum emitted line belongs to an APPEND rather than to the "
+            "chunk that creates the temp"
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_get_transcript_is_pinned(self, tmp_path: Path) -> None:
+        """GET's size probe and chunk reads, byte for byte -- and no decode flag.
+
+        The device only ENCODES for GET, so the trailing ``| base64`` carries
+        no flag at all; the decode happens locally in Python. A flag appearing
+        there would be a real behaviour change and reddens this assertion.
+        """
+        remote = Path("/remote/stored.bin")
+        outputs = [str(len(_PINNED_PAYLOAD)), _PINNED_PAYLOAD_B64]
+
+        exec_cmd = _RecordingExec(outputs=outputs)
+        ft = _make_ft(exec_cmd)
+
+        per_file = await ft._run_get([remote], tmp_path, None)
+        assert per_file[remote].status is Status.Success, per_file[remote].msg
+        assert (tmp_path / "stored.bin").read_bytes() == _PINNED_PAYLOAD
+
+        assert exec_cmd.calls == [
+            "stat -c %s -- /remote/stored.bin",
+            "dd if=/remote/stored.bin bs=4096 skip=0 count=1 2>/dev/null | base64",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_a_get_transcript_with_wc_sizing_and_md5_verification_is_pinned(
+        self, tmp_path: Path
+    ) -> None:
+        """The other two userland spellings, on the same transcript.
+
+        ``wc -c <`` instead of ``stat -c %s --`` (a redirection TARGET, so no
+        ``--`` terminator), and a closing ``md5sum --`` instead of reusing the
+        size already fetched. Both come from
+        :class:`~otto.host.userland.Userland`, and neither moved when the
+        chunk loop did.
+        """
+        remote = Path("/remote/stored.bin")
+        digest = hashlib.md5(_PINNED_PAYLOAD).hexdigest()  # noqa: S324
+        outputs = [str(len(_PINNED_PAYLOAD)), _PINNED_PAYLOAD_B64, f"{digest}  -"]
+
+        exec_cmd = _RecordingExec(outputs=outputs)
+        ft = _make_ft(exec_cmd, stat_size="wc", checksum="md5sum")
+
+        per_file = await ft._run_get([remote], tmp_path, None)
+        assert per_file[remote].status is Status.Success, per_file[remote].msg
+
+        assert exec_cmd.calls == [
+            "wc -c < /remote/stored.bin",
+            "dd if=/remote/stored.bin bs=4096 skip=0 count=1 2>/dev/null | base64",
+            "md5sum -- /remote/stored.bin",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_a_failed_chunk_reports_the_same_message_and_cleans_up_the_same_way(
+        self, tmp_path: Path
+    ) -> None:
+        """The failure text is part of the emitted behaviour, so it is pinned too.
+
+        A codec now composes the reason ("writing a chunk to ... failed") and
+        the staging skeleton prefixes the file it belongs to; before the seam
+        both halves were one f-string. The joined result has to be the same
+        string, and the ``rm -f --`` cleanup has to still follow it.
+        """
+        src = tmp_path / "stored.bin"
+        src.write_bytes(_PINNED_PAYLOAD)
+
+        exec_cmd = _RecordingExec(fail_when=lambda c: c.startswith("printf "))
+        ft = _make_ft(exec_cmd)
+
+        per_file = await ft._run_put([src], Path("/dest"), None)
+
+        assert per_file[src].status is Status.Error
+        assert per_file[src].msg == (
+            f"{src}: writing a chunk to /dest/stored.bin.otto-0f1e2d3c failed "
+            f"(exit 1): simulated failure: printf '%s' '{_PINNED_PAYLOAD_B64}' | "
+            f"base64 -d > /dest/stored.bin.otto-0f1e2d3c"
+        )
+        assert exec_cmd.calls[-1] == "rm -f -- /dest/stored.bin.otto-0f1e2d3c"
+
+    @pytest.mark.asyncio
+    async def test_a_failed_chunk_read_reports_the_same_message(self, tmp_path: Path) -> None:
+        """GET's mirror of the above: the codec names the chunk, the caller names the file."""
+        remote = Path("/remote/stored.bin")
+
+        exec_cmd = _RecordingExec(
+            fail_when=lambda c: c.startswith("dd "),
+            outputs=[str(len(_PINNED_PAYLOAD))],
+        )
+        ft = _make_ft(exec_cmd)
+
+        per_file = await ft._run_get([remote], tmp_path, None)
+
+        assert per_file[remote].status is Status.Error
+        assert per_file[remote].msg == (
+            "/remote/stored.bin: reading chunk 0 failed (exit 1): simulated failure: "
+            "dd if=/remote/stored.bin bs=4096 skip=0 count=1 2>/dev/null | base64"
+        )

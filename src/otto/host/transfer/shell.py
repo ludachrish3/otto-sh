@@ -6,6 +6,16 @@ entire toolkit is a POSIX shell plus whatever applets are actually present --
 which, on a Tier 2 rootfs old enough to lack ``base64`` entirely, may not
 include a decoder at all (see ``ShellFileTransfer._run_put``).
 
+TWO LAYERS, AND THE SPLIT IS THE POINT. ``ShellFileTransfer`` owns the
+STAGING SKELETON -- name a temp in the destination's own directory and inside
+the filename budget, fill it, verify it BEFORE the rename, rename it, clean
+up on any failure -- and a :class:`ShellCodec` owns the FILLING, whole chunk
+loop and all. ``Base64Codec`` is the only codec today and does exactly what
+this module always did. A second one for ``uuencode``/``uudecode`` is coming
+for the BusyBox rows with no ``base64`` applet, and it is why the codec's unit
+is the loop rather than an ``encode()`` call: see :class:`ShellCodec` for the
+measurement that settled that.
+
 PUT chunks the local file into ``_SHELL_CHUNK_BYTES``-byte plaintext
 pieces, base64-encodes each locally, and appends it to a same-directory temp
 file via ``printf '%s' '<chunk>' | base64 <flag> >> <temp>``; once every
@@ -13,7 +23,8 @@ chunk has landed, an integrity check runs against the TEMP (see below), and
 only then does the last step move the temp onto the real destination with
 ``mv``, so a transfer that dies -- or fails its integrity check -- partway
 through never leaves a truncated or wrong file at the real path. See
-``ShellFileTransfer._put_one``.
+``ShellFileTransfer._put_one`` for the skeleton and
+``Base64Codec.send_chunks`` for the loop.
 
 GET is the mirror image with the encode/decode roles swapped, and the
 staging moved from the remote side to the local one: the device is asked for
@@ -25,7 +36,8 @@ land in a same-directory local temp (``<dest>.otto-<unique>``, exactly
 PUT's naming); the same integrity check PUT runs then confirms the temp
 against the remote source, and ``Path.replace()`` swings it onto the real
 destination only once that check passes. See
-``ShellFileTransfer._get_one``.
+``ShellFileTransfer._get_one`` for the skeleton and
+``Base64Codec.fetch_chunks`` for the loop.
 
 Both directions verify the same way, in
 ``ShellFileTransfer._verify_integrity``:
@@ -47,7 +59,9 @@ import hashlib
 import logging
 import shlex
 import uuid
+from abc import ABC, abstractmethod
 from collections.abc import Callable, Coroutine
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -228,11 +242,294 @@ def staged_temp_name(dest_name: str, max_filename_len: int) -> str:
     return f"{dest_name[:keep]}{suffix}"[:max_filename_len]
 
 
+# ---------------------------------------------------------------------------
+# The codec seam
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ChunkLoopOutcome:
+    """How a codec's chunk loop ended: how many chunks moved, and why it stopped.
+
+    Returned rather than raised, matching
+    :meth:`ShellFileTransfer._verify_integrity`'s own ``str | None`` shape:
+    a codec decides whether its loop finished, never what a
+    :class:`~otto.result.Result` should say.
+    """
+
+    chunks: int
+    """Chunks the loop actually moved.
+
+    Both directions read this, and for the same reason in mirror image:
+    ``ShellFileTransfer._put_one`` creates its temp explicitly (``: > <temp>``)
+    when a source produced no chunks at all, and
+    ``ShellFileTransfer._get_one`` fires its one ``(0, 0)`` progress call when
+    a remote file produced none. On a loop that stopped early this is the
+    count reached BEFORE the failure, not the count planned -- the caller
+    returns on *error* before reading it, so the two never disagree in
+    practice.
+    """
+
+    error: str | None = None
+    """``None`` if every chunk moved; otherwise why the loop stopped.
+
+    A fragment, not a finished message: the caller prefixes it with the file
+    it belongs to (``f"{src}: {outcome.error}"``) and turns it into a failing
+    :class:`~otto.result.Result`, exactly as it does with
+    :meth:`ShellFileTransfer._verify_integrity`'s return. A codec therefore
+    names the codec-specific detail (which chunk, which command, what the
+    device said) and nothing else.
+    """
+
+
+@dataclass(frozen=True)
+class PutChunkLoop:
+    """What a codec is handed to move one local file into an already-named remote temp.
+
+    Everything here is the STAGING SKELETON's work, already done: the temp has
+    been named inside the destination's own directory and quoted, and removing
+    it, verifying it and renaming it onto the real destination all happen after
+    the codec returns. A codec only fills it.
+    """
+
+    exec_cmd: "Callable[..., Coroutine[Any, Any, CommandResult]]"
+    """The device's command channel -- ``ShellFileTransfer``'s own ``_exec_cmd``."""
+
+    src: Path
+    """The LOCAL source file, unopened.
+
+    Handed as a path rather than as an open handle or a chunk iterator because
+    the read size is the codec's to choose: it is a function of how far the
+    encoding expands a chunk against the transport's line budget, and the two
+    encodings expand differently (see :data:`_SHELL_CHUNK_BYTES`). An
+    :exc:`OSError` raised while reading it propagates to the caller, which
+    already catches one around the whole staging skeleton.
+    """
+
+    temp: Path
+    """The staged remote temp, for MESSAGES -- never interpolate this into a command."""
+
+    quoted_temp: str
+    """:func:`shlex.quote`\\ d *temp*, which is what a command may interpolate."""
+
+    on_sent: "Callable[[bytes], None]"
+    """Report one chunk's PLAINTEXT bytes, once the device has accepted them.
+
+    The running byte count, the local ``md5`` the integrity check compares
+    against, and the progress handler all live on the shared side and are all
+    fed from here -- so a codec never touches them, and never has to know that
+    ``bytes_done`` is counted in plaintext rather than in encoded characters.
+    Call it once per chunk, AFTER the chunk's command succeeded; a codec that
+    calls it before has told the caller bytes landed that may not have.
+    """
+
+
+@dataclass(frozen=True)
+class GetChunkLoop:
+    """What a codec is handed to pull one remote file's bytes back, chunk by chunk.
+
+    The local staging temp is already open on the shared side and is renamed
+    onto the destination after the codec returns; *on_received* is the only
+    way into it. The device only ENCODES for GET -- every decode is local
+    Python -- so a codec's GET half is an emit-and-parse pair, where its PUT
+    half is an emit-and-check one.
+    """
+
+    exec_cmd: "Callable[..., Coroutine[Any, Any, CommandResult]]"
+    """The device's command channel -- ``ShellFileTransfer``'s own ``_exec_cmd``."""
+
+    src: Path
+    """The REMOTE source path, unquoted. A codec quotes it into its own commands."""
+
+    total: int
+    """*src*'s size in bytes, as the device just reported it.
+
+    The chunk COUNT is derived from this by the codec, not passed in, for the
+    same reason :attr:`PutChunkLoop.src` is a path: the read size is the
+    codec's own.
+    """
+
+    on_received: "Callable[[bytes], None]"
+    """Report one chunk's DECODED bytes.
+
+    Writes them to the local staging temp and feeds the same byte count,
+    local ``md5`` and progress handler :attr:`PutChunkLoop.on_sent` feeds.
+    Raises :exc:`OSError` if the local write fails, which propagates to the
+    caller's own ``except OSError``.
+    """
+
+
+class ShellCodec(ABC):
+    """One way to move bytes through a device's shell, chunk loop and all.
+
+    What is NOT here is as load-bearing as what is. The STAGING SKELETON stays
+    with :class:`ShellFileTransfer`: naming the temp inside the destination's
+    own directory and inside ``max_filename_len``'s budget, creating an empty
+    one when the source has no bytes, verifying integrity BEFORE the rename,
+    the rename itself, and cleaning up after any failure. That is
+    codec-independent, and it is the part that was measured into shape.
+
+    THE UNIT IS THE WHOLE LOOP, NOT AN ``encode()`` CALL, and that is a
+    measurement rather than a taste. ``base64`` is a stream codec:
+    otto appends encoded chunks to one remote temp and the device decodes the
+    concatenation once, at the end. ``uuencode`` is a CONTAINER format: each
+    chunk carries its own ``begin``/``end`` framing, so appending three
+    uuencoded chunks and decoding the result once returns only the FIRST
+    chunk -- 4096 of 10253 bytes, at rc=0, on all five rows of the BusyBox
+    matrix (measured 2026-08-14; see
+    ``todo/busybox-parity-sweep-2026-08-11.md``). What works there is the
+    inverse order: decode each chunk on arrival and append the PLAINTEXT. A
+    seam with one ``encode(chunk) -> str`` hook can express base64's order and
+    cannot express uu's, so the hook is the loop.
+
+    Concretely, that is what each method below is free to vary: how many
+    commands one chunk costs, what those commands are, what a chunk even is,
+    and in which order encoded and plaintext bytes reach the temp. What it may
+    not vary is when :attr:`PutChunkLoop.on_sent` /
+    :attr:`GetChunkLoop.on_received` are called -- once per chunk, after the
+    bytes are safe -- because the shared side's integrity check is built from
+    those calls.
+    """
+
+    @abstractmethod
+    async def send_chunks(self, loop: PutChunkLoop) -> ChunkLoopOutcome:
+        """Move every byte of ``loop.src`` into ``loop.temp`` on the device.
+
+        Owns the read loop, the encoding, the commands and their order.
+        Returns without renaming, verifying or cleaning up anything: a
+        non-``None`` :attr:`ChunkLoopOutcome.error` leaves the temp exactly
+        where it is and the caller removes it.
+        """
+
+    @abstractmethod
+    async def fetch_chunks(self, loop: GetChunkLoop) -> ChunkLoopOutcome:
+        """Pull every byte of ``loop.src`` back from the device, decoded.
+
+        Owns the chunk count, the commands, and the local decode. Hands each
+        chunk's plaintext to :attr:`GetChunkLoop.on_received` and never writes
+        to the local filesystem itself.
+        """
+
+
+class Base64Codec(ShellCodec):
+    """``base64`` over ``printf`` and ``dd`` -- the stream codec this backend was built on.
+
+    PUT appends each chunk's encoded text to the temp with
+    ``printf '%s' '<b64>' | base64 <flag> >> <temp>`` and lets the DEVICE
+    decode; GET pulls ``dd ... | base64`` and decodes LOCALLY. Both halves are
+    what ``tests/busybox/test_shell_codec_contracts.py`` measured on-device,
+    and the emitted strings are pinned byte-for-byte by
+    ``tests/unit/host/transfer/test_shell_transfer.py``'s
+    ``TestShellEmittedCommandLinesArePinned``.
+
+    *decode_flag* is whatever
+    :attr:`~otto.host.userland.Userland.base64_flag` resolved to, emitted
+    verbatim and never hard-coded: ``base64 --decode`` is rejected on every
+    BusyBox row tested, and BusyBox's ``-d`` is not what every GNU host wants.
+    It is held HERE, on the codec, rather than passed per call, because it is
+    a knob of this encoding and of no other -- ``uuencode`` has no decode flag
+    and needs an ``-o`` output path instead. GET never emits it at all (the
+    device only encodes there), so a codec built for GET alone would still
+    carry it unused; that is the price of one object per codec rather than one
+    per direction, and it is cheaper than the alternative.
+    """
+
+    def __init__(self, decode_flag: str) -> None:
+        self._decode_flag = decode_flag
+
+    @override
+    async def send_chunks(self, loop: PutChunkLoop) -> ChunkLoopOutcome:
+        """Append ``_SHELL_CHUNK_BYTES`` at a time, encoded, and let the device decode.
+
+        The first chunk uses ``>`` and every later one ``>>``, which is what
+        makes an appending chunk's command line exactly one character longer
+        than the first's. Successive ``base64 <flag>`` invocations appending
+        to one file concatenate correctly and IN ORDER -- measured on the four
+        matrix rows that have a ``base64`` applet at all
+        (``test_shell_codec_contracts.py::test_chunk_append_reassembles_in_order``).
+
+        The literal single quotes around the encoded text need no escaping:
+        :func:`base64.b64encode` emits ``[A-Za-z0-9+/=]`` only, never wraps,
+        and so never produces a quote, another shell metacharacter, or a
+        leading ``-``. ``printf '%s'`` rather than ``echo`` because that is
+        the shape measured on-device at full chunk size; ``echo`` was only
+        ever measured against a 4-character probe, and its escaping and
+        ``-n`` handling are userland-dependent.
+        """
+        sent = 0
+        with loop.src.open("rb") as f:
+            while True:
+                chunk = f.read(_SHELL_CHUNK_BYTES)
+                if not chunk:
+                    break
+                encoded = base64.b64encode(chunk).decode("ascii")
+                redirect = ">>" if sent else ">"
+                result = await loop.exec_cmd(
+                    f"printf '%s' '{encoded}' | base64 {self._decode_flag} "
+                    f"{redirect} {loop.quoted_temp}"
+                )
+                if not result.is_ok:
+                    return ChunkLoopOutcome(
+                        sent,
+                        f"writing a chunk to {loop.temp} failed "
+                        f"(exit {result.retcode}): {result.value or result.msg}",
+                    )
+                sent += 1
+                loop.on_sent(chunk)
+        return ChunkLoopOutcome(sent)
+
+    @override
+    async def fetch_chunks(self, loop: GetChunkLoop) -> ChunkLoopOutcome:
+        """Ask ``dd`` for each block range, encoded, and decode it locally.
+
+        No wrap flag (``-w 0`` or similar) is ever passed to the remote
+        ``base64``, because none is portable and none is needed: whatever the
+        device's encoder wrapped to is flattened here by stripping ALL
+        whitespace before decoding, which is lossless against an alphabet that
+        contains none. Measured, not assumed -- a full 4096-byte chunk comes
+        back as 72 lines of up to 76 columns on every matrix row that has the
+        applet.
+
+        The flatten step is load-bearing rather than defensive.
+        :func:`base64.b64decode` runs with ``validate=True``, which rejects any
+        byte outside the alphabet -- including the newlines the device just
+        emitted -- so the flatten has to run first. The default
+        ``validate=False`` would instead DISCARD stray bytes silently, turning
+        a wedged transport's leaked stderr or prompt fragment into wrong bytes
+        with no error at all.
+        """
+        num_chunks = (loop.total + _SHELL_CHUNK_BYTES - 1) // _SHELL_CHUNK_BYTES
+        quoted_if = shlex.quote(f"if={loop.src}")
+        for k in range(num_chunks):
+            result = await loop.exec_cmd(
+                f"dd {quoted_if} bs={_SHELL_CHUNK_BYTES} skip={k} count=1 2>/dev/null | base64"
+            )
+            if not result.is_ok:
+                return ChunkLoopOutcome(
+                    k,
+                    f"reading chunk {k} failed (exit {result.retcode}): "
+                    f"{result.value or result.msg}",
+                )
+            try:
+                decoded = base64.b64decode("".join((result.value or "").split()), validate=True)
+            except ValueError as e:
+                return ChunkLoopOutcome(k, f"chunk {k} was not valid base64: {e}")
+            loop.on_received(decoded)
+        return ChunkLoopOutcome(num_chunks)
+
+
 class ShellFileTransfer(UnixFileTransfer):
     """File transfer using nothing but command execution -- no scp, nc, or rsync.
 
-    Every byte moves as base64 text piped through the device's own shell --
+    Every byte moves as encoded text piped through the device's own shell --
     the last resort for a host with no ``scp``, no ``nc``, and no ``rsync``.
+
+    THIS CLASS IS THE STAGING SKELETON, not the encoding. It names the temp,
+    handles the empty-file case, verifies before the rename, renames, and
+    cleans up; a ``ShellCodec`` moves the bytes in between. Today that is
+    always ``Base64Codec``, constructed in ``_run_put`` and ``_run_get`` from
+    the ``base64_flag`` those methods already resolve -- there is no selection
+    yet, and no second codec to select.
 
     PUT chunks the local file into ``_SHELL_CHUNK_BYTES``-byte plaintext
     pieces; each piece is base64-encoded locally and appended to a
@@ -381,11 +678,12 @@ class ShellFileTransfer(UnixFileTransfer):
                 "this host. Nothing was attempted; transfer with a backend this host "
                 "actually supports."
             )
+        codec = Base64Codec(flag)
         per_file: dict[Path, Result] = {}
         for i, src in enumerate(src_files):
             dst = dest_dir / src.name
             handler = progress_factory() if progress_factory is not None else None
-            result = await self._put_one(src, dst, flag, checksum, stat_size, handler)
+            result = await self._put_one(src, dst, codec, checksum, stat_size, handler)
             per_file[src] = result
             if not result.is_ok:
                 mark_skipped(per_file, src_files[i + 1 :])
@@ -451,11 +749,12 @@ class ShellFileTransfer(UnixFileTransfer):
                 "transfer with a backend this host actually supports."
             )
         checksum = self._userland.checksum
+        codec = Base64Codec(flag)
         per_file: dict[Path, Result] = {}
         for i, src in enumerate(src_files):
             dst = dest_dir / src.name
             handler = progress_factory() if progress_factory is not None else None
-            result = await self._get_one(src, dst, stat_size, checksum, handler)
+            result = await self._get_one(src, dst, codec, stat_size, checksum, handler)
             per_file[src] = result
             if not result.is_ok:
                 mark_skipped(per_file, src_files[i + 1 :])
@@ -470,12 +769,12 @@ class ShellFileTransfer(UnixFileTransfer):
         self,
         src: Path,
         dst: Path,
-        flag: str,
+        codec: ShellCodec,
         checksum: str,
         stat_size: str,
         handler: "TransferProgressHandler | None",
     ) -> Result:
-        """PUT one file: chunk, base64-encode, exec, verify, temp-then-mv.
+        """PUT one file: stage a temp, hand the chunk loop to *codec*, verify, mv.
 
         Stages as ``<dst>.otto-<unique>`` in ``dst``'s own directory (named
         by :func:`staged_temp_name`, which keeps that whole basename inside
@@ -484,42 +783,33 @@ class ShellFileTransfer(UnixFileTransfer):
         deliberately not under ``/tmp``, which is not guaranteed to be the
         same filesystem as the destination, and a cross-filesystem ``mv``
         degrades to a copy, losing the atomicity a same-filesystem rename
-        gives the final step. The first chunk creates the temp (``>``);
-        every later chunk appends (``>>``) -- successive ``base64 <flag>``
-        invocations appending to the same file concatenate correctly,
-        IN ORDER (measured, Tier 2 rootfs,
-        ``tests/busybox/test_shell_codec_contracts.py::test_chunk_append_reassembles_in_order``,
-        the four matrix rows that have a ``base64`` applet at all -- 1.16.1
-        has none, so that row returns early and is not part of this
-        measurement), so chunk N+1 lands cleanly after chunk N. A source
-        file with no bytes at all never enters the chunk loop, so its temp
-        is created directly.
+        gives the final step.
 
-        *flag* is emitted verbatim -- whatever
-        :attr:`~otto.host.userland.Userland.base64_flag` resolved to, never
-        hard-coded. The encoded text is emitted as ``printf '%s' '<chunk>'``
-        rather than ``echo <chunk>`` -- the shape
-        ``test_chunk_append_reassembles_in_order`` (and
-        ``test_a_binary_hostile_payload_survives_the_round_trip``) actually
-        measured on-device, not merely a plan description. This is not
-        because ``echo`` was untested there: it was, at
-        ``test_the_decode_spelling_matches_what_the_matrix_records:205``,
-        which runs ``echo aGk= | base64 <flag>`` on-device. What was never
-        measured is ``echo`` at 5464 characters (this module's real chunk
-        size, versus that test's 4-character probe), or its escape and
-        ``-n``-guarding behaviour in general -- both are userland-dependent
-        and outside what any test in that suite pins. The literal single quotes
-        around ``<chunk>`` need no escaping: the base64 alphabet this
-        module's encoder emits is ``[A-Za-z0-9+/=]`` only (verified against
-        :func:`base64.b64encode`'s own output, which also never wraps the
-        text -- each chunk is one line), so it contains no single quote, no
-        other shell metacharacter, and never starts with ``-``. The temp and
-        destination paths are not so safe -- ``shlex.quote`` plus a ``--``
-        terminator on every command that takes a path as a positional
-        argument (``mv``, ``rm``), matching :func:`~otto.host.transfer.base.chmod_command`'s
-        precedent, because ``shlex.quote`` alone leaves a leading-dash
-        basename like ``-rf`` unquoted and a command without ``--`` would
-        then read it as flags.
+        FILLING that temp is *codec*'s job, not this method's: everything
+        between naming it and verifying it is one
+        :meth:`ShellCodec.send_chunks` call, and how many commands that costs,
+        what they say, and in what order encoded and plaintext bytes reach the
+        temp are the codec's to choose (see :class:`ShellCodec` for the
+        measurement that made the whole loop the unit rather than an
+        ``encode()`` call, and :meth:`Base64Codec.send_chunks` for what the
+        ``base64`` one does). This method contributes exactly three things to
+        the bytes: the temp's name, the empty-file case, and the running state
+        the codec reports into.
+
+        THE EMPTY-FILE CASE IS SHARED, and stays here because it is not an
+        encoding at all -- a source with no bytes yields no chunks from any
+        codec, and ``: > <temp>`` creates the temp without one.
+        :attr:`ChunkLoopOutcome.chunks` is how this method learns that
+        happened.
+
+        The temp and destination paths are quoted with ``shlex.quote`` plus a
+        ``--`` terminator on every command that takes a path as a positional
+        argument (``mv``, ``rm``), matching
+        :func:`~otto.host.transfer.base.chmod_command`'s precedent, because
+        ``shlex.quote`` alone leaves a leading-dash basename like ``-rf``
+        unquoted and a command without ``--`` would then read it as flags. The
+        codec is handed the already-quoted form
+        (:attr:`PutChunkLoop.quoted_temp`) so it cannot get that wrong either.
 
         Any failure -- a chunk write, the temp's creation, a failed or
         mismatched integrity check, or the final ``mv`` -- removes the temp
@@ -544,38 +834,33 @@ class ShellFileTransfer(UnixFileTransfer):
         try:
             total = src.stat().st_size
             bytes_done = 0
-            wrote_any = False
             # MD5 is a corruption check against `md5sum`, the tool name this
             # capability is named for and the only one BusyBox ships -- never
             # a security boundary, so the collision-resistance ruff's S324
             # warns about does not apply here.
             local_digest = hashlib.md5()  # noqa: S324
-            with src.open("rb") as f:
-                while True:
-                    chunk = f.read(_SHELL_CHUNK_BYTES)
-                    if not chunk:
-                        break
-                    encoded = base64.b64encode(chunk).decode("ascii")
-                    redirect = ">>" if wrote_any else ">"
-                    result = await self._exec_cmd(
-                        f"printf '%s' '{encoded}' | base64 {flag} {redirect} {quoted_temp}"
-                    )
-                    if not result.is_ok:
-                        await self._cleanup_temp(quoted_temp)
-                        return Result(
-                            Status.Error,
-                            msg=(
-                                f"{src}: writing a chunk to {temp} failed "
-                                f"(exit {result.retcode}): {result.value or result.msg}"
-                            ),
-                        )
-                    wrote_any = True
-                    bytes_done += len(chunk)
-                    local_digest.update(chunk)
-                    if handler is not None:
-                        handler(str(src), str(dst), bytes_done, total)
 
-            if not wrote_any:
+            def _sent(chunk: bytes) -> None:
+                nonlocal bytes_done
+                bytes_done += len(chunk)
+                local_digest.update(chunk)
+                if handler is not None:
+                    handler(str(src), str(dst), bytes_done, total)
+
+            outcome = await codec.send_chunks(
+                PutChunkLoop(
+                    exec_cmd=self._exec_cmd,
+                    src=src,
+                    temp=temp,
+                    quoted_temp=quoted_temp,
+                    on_sent=_sent,
+                )
+            )
+            if outcome.error is not None:
+                await self._cleanup_temp(quoted_temp)
+                return Result(Status.Error, msg=f"{src}: {outcome.error}")
+
+            if outcome.chunks == 0:
                 create_result = await self._exec_cmd(f": > {quoted_temp}")
                 if not create_result.is_ok:
                     await self._cleanup_temp(quoted_temp)
@@ -640,11 +925,12 @@ class ShellFileTransfer(UnixFileTransfer):
         self,
         src: Path,
         dst: Path,
+        codec: ShellCodec,
         stat_size: str,
         checksum: str,
         handler: "TransferProgressHandler | None",
     ) -> Result:
-        """GET one file: size it, pull+decode chunks, verify, stage locally, replace into place.
+        """GET one file: size it, hand the chunk loop to *codec*, verify, replace into place.
 
         PUT's temp-then-mv shape, mirrored onto the local side rather than
         the remote one: every chunk lands in a same-directory local temp
@@ -664,44 +950,31 @@ class ShellFileTransfer(UnixFileTransfer):
 
         Sizing runs first, via *stat_size* (``"stat"`` or ``"wc"`` --
         ``"absent"`` is refused earlier, in :meth:`_run_get`, before this
-        method is ever called). The device only ENCODES: each chunk is
-        pulled with ``dd if=<src> bs=<N> skip=<k> count=1 2>/dev/null |
-        base64`` and decoded locally, in Python -- no decode flag is ever
-        emitted remotely for GET, unlike PUT, where the device does the
-        decoding. The number of chunks is ``ceil(total / N)`` -- 0 when
-        *src* is empty, in which case the loop below never runs and the
-        local temp is created empty (opening it for writing is enough; no
-        special-cased remote command is needed the way PUT's empty-file
-        branch needs one, because GET's "local file" really is local). The
-        size probe and every chunk read are separate exec round trips
+        method is ever called), and the number it returns is handed to
+        *codec* as :attr:`GetChunkLoop.total`. PULLING the bytes is then one
+        :meth:`ShellCodec.fetch_chunks` call: how many chunks that is, what
+        each one's command says, and how its text decodes are the codec's
+        (see :meth:`Base64Codec.fetch_chunks` for the ``base64`` answers, and
+        :class:`ShellCodec` for why the unit is the loop). What stays here is
+        the local staging temp -- this method opens it, and
+        :attr:`GetChunkLoop.on_received` is the only way the codec can reach
+        it, so a codec never touches the local filesystem.
+
+        The device only ENCODES for GET, whichever codec is in use: every
+        decode runs locally, in Python, so no decode flag is emitted remotely
+        the way PUT emits one. A remote file of zero bytes yields zero chunks,
+        and the local temp is then created empty by opening it for writing --
+        no special-cased remote command is needed the way PUT's empty-file
+        branch needs one, because GET's "local file" really is local.
+        :attr:`ChunkLoopOutcome.chunks` is how this method learns that
+        happened and fires its one ``(0, 0)`` progress call.
+
+        The size probe and every chunk read are separate exec round trips
         against the same remote path -- *src* can grow or shrink on the
         device in between them (a TOCTOU PUT's own local ``stat()``-then-read
-        shares in miniature), and this method does not detect or guard
-        against it; a shrink mid-transfer surfaces as one chunk's ``dd``
+        shares in miniature), and neither this method nor any codec detects
+        or guards against it; a shrink mid-transfer surfaces as one chunk
         reading short, silently under-filling that chunk, not as an error.
-
-        No wrap flag (``-w 0`` or similar) is ever passed to the remote
-        ``base64``. Whether the device's ``base64`` wraps its output IS
-        measured, on real BusyBox rootfs images (reproduced directly in
-        this worktree against ``tests/_fixtures/busybox_rootfs``): encoding
-        one :data:`_SHELL_CHUNK_BYTES` (4096-byte) chunk wraps to 72 lines
-        of up to 76 columns each (5464 encoded characters) on every row that
-        has a ``base64`` applet at all; 1.16.1 has none. Wrapping is not an
-        edge case here -- on this matrix, for a full-size chunk, it is the
-        *only* case measured. Whatever text comes back is flattened locally
-        by stripping ALL whitespace before decoding: the base64 alphabet
-        (``[A-Za-z0-9+/=]``) never contains whitespace, so this is lossless
-        regardless of how the remote encoder chose to wrap. The flatten step
-        is genuinely load-bearing, not merely defensive: decoding uses
-        ``base64.b64decode(..., validate=True)``, which raises on ANY
-        character outside the alphabet -- including a bare, unstripped
-        newline -- rather than the default ``validate=False``, which
-        silently *discards* non-alphabet bytes. ``validate=False`` would
-        make a stray byte from a wedged transport (leaked stderr, a prompt
-        fragment, a truncated read) decode into wrong bytes with no error at
-        all; ``validate=True`` turns that into a loud
-        :exc:`~otto.result.Result` failure instead, at the cost of requiring
-        the flatten step to run first on ordinary wrapped output.
 
         Any failure -- a chunk read, decoding a chunk's text, a failed or
         mismatched integrity check, or a local write -- removes the local
@@ -736,44 +1009,34 @@ class ShellFileTransfer(UnixFileTransfer):
                     msg=f"{src}: could not determine the remote file's size (stat/wc probe "
                     "failed or returned unparseable output)",
                 )
-            num_chunks = (total + _SHELL_CHUNK_BYTES - 1) // _SHELL_CHUNK_BYTES
             bytes_done = 0
             # MD5 is a corruption check against `md5sum`, the tool name this
             # capability is named for and the only one BusyBox ships -- never
             # a security boundary, so the collision-resistance ruff's S324
             # warns about does not apply here.
             local_digest = hashlib.md5()  # noqa: S324
-            quoted_if = shlex.quote(f"if={src}")
             with temp.open("wb") as f:
-                for k in range(num_chunks):
-                    result = await self._exec_cmd(
-                        f"dd {quoted_if} bs={_SHELL_CHUNK_BYTES} skip={k} count=1 "
-                        "2>/dev/null | base64"
-                    )
-                    if not result.is_ok:
-                        self._cleanup_local_temp(temp)
-                        return Result(
-                            Status.Error,
-                            msg=(
-                                f"{src}: reading chunk {k} failed (exit {result.retcode}): "
-                                f"{result.value or result.msg}"
-                            ),
-                        )
-                    try:
-                        decoded = base64.b64decode(
-                            "".join((result.value or "").split()), validate=True
-                        )
-                    except ValueError as e:
-                        self._cleanup_local_temp(temp)
-                        return Result(
-                            Status.Error, msg=f"{src}: chunk {k} was not valid base64: {e}"
-                        )
+
+                def _received(decoded: bytes) -> None:
+                    nonlocal bytes_done
                     f.write(decoded)
                     bytes_done += len(decoded)
                     local_digest.update(decoded)
                     if handler is not None:
                         handler(str(src), str(dst), bytes_done, total)
-            if num_chunks == 0 and handler is not None:
+
+                outcome = await codec.fetch_chunks(
+                    GetChunkLoop(
+                        exec_cmd=self._exec_cmd,
+                        src=src,
+                        total=total,
+                        on_received=_received,
+                    )
+                )
+            if outcome.error is not None:
+                self._cleanup_local_temp(temp)
+                return Result(Status.Error, msg=f"{src}: {outcome.error}")
+            if outcome.chunks == 0 and handler is not None:
                 handler(str(src), str(dst), 0, 0)
 
             mismatch = await self._verify_integrity(
