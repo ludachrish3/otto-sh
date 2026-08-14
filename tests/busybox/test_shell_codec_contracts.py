@@ -52,11 +52,25 @@ before ever reaching `/tmp` because they take the base64-absent branch
 instead.
 """
 
+import asyncio
 import base64
 import hashlib
+import shlex
+import tempfile
+from pathlib import Path
 
 import pytest
 
+from otto.host.transfer.shell import (
+    _SHELL_CHUNK_BYTES,
+    GetChunkLoop,
+    PutChunkLoop,
+    UuencodeCodec,
+    _uu_frame,
+    _uu_unframe,
+)
+from otto.result import CommandResult
+from otto.utils import Status
 from tests._fixtures.busybox import BUSYBOX_MATRIX, require_interpreter
 from tests._fixtures.busybox_rootfs import busybox_rootfs, require_userns, run_in_rootfs
 from tests.busybox.test_applet_resolution import _EXPECTED_BASE64
@@ -382,4 +396,252 @@ def test_the_flag_table_agrees_with_the_presence_table(release):
         f"test_applet_resolution._EXPECTED_BASE64 records it as "
         f"{'present' if present else 'absent'} — the two tables record the "
         f"same fact and must agree"
+    )
+
+
+# ---------------------------------------------------------------------------
+# The uu codec's contracts -- the same four facts, for the OTHER codec
+# ---------------------------------------------------------------------------
+#
+# These run on all five rows, unbranched, and that is the difference from the
+# base64 block above: `uudecode` and `uuencode` are present on every matrix
+# row (`test_applet_resolution.py`'s `_EXPECTED_UUDECODE`/`_EXPECTED_UUENCODE`
+# both record True five times), so there is no absent-row branch to take. The
+# row that matters most is 1.16.1 -- the one with no `base64` applet at all,
+# and therefore the one whose only path through the `shell` backend is this
+# codec.
+#
+# WHAT IS EXECUTED HERE IS THE PRODUCT'S OWN COMMAND STRING, not a
+# reconstruction of it. Each test drives the real `UuencodeCodec` against a
+# recording exec, collects exactly what it would have sent, and runs THOSE
+# lines inside the rootfs. That is what makes these tests fail when the codec
+# changes shape, rather than when someone forgets to update a transcript
+# copied into this file -- the failure mode the base64 block above accepts
+# because it predates the codec seam.
+
+_UU_SWEEP_PAYLOAD = (_HOSTILE_PAYLOAD + bytes(range(256)) * 41)[:10253]
+"""The 10253 bytes `todo/busybox-parity-sweep-2026-08-11.md` measured uu against.
+
+The hostile 13 followed by a repeating 0..255 ramp: three chunks at
+``_SHELL_CHUNK_BYTES`` (4096/4096/2061, the last one partial), every byte
+value present, and order-sensitive, so a transposed or short chunk changes the
+digest rather than only the length. Reproduced from the sweep's own
+construction rather than invented, which is checkable -- its md5 is the
+`cec24026d4cb12df00f2ef9be4222224` that document records, asserted below so a
+future edit to these bytes cannot quietly stop being the measured payload.
+"""
+
+_UU_SWEEP_PAYLOAD_MD5 = hashlib.md5(_UU_SWEEP_PAYLOAD, usedforsecurity=False).hexdigest()
+_UU_SWEEP_PAYLOAD_SPEC_MD5 = "cec24026d4cb12df00f2ef9be4222224"
+
+
+class _Recorder:
+    """Collect the commands a codec emits, answering every one with success."""
+
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    async def __call__(self, cmd: str, **_kwargs: object) -> CommandResult:
+        self.calls.append(cmd)
+        return CommandResult(command=cmd, value="", status=Status.Success, retcode=0)
+
+
+def _uu_put_commands(temp: str) -> "list[str]":
+    """Exactly what ``UuencodeCodec.send_chunks`` would send for the sweep payload."""
+    recorder = _Recorder()
+    codec = UuencodeCodec(255)
+    with tempfile.TemporaryDirectory() as workdir:
+        src = Path(workdir) / "payload.bin"
+        src.write_bytes(_UU_SWEEP_PAYLOAD)
+        outcome = asyncio.run(
+            codec.send_chunks(
+                PutChunkLoop(
+                    exec_cmd=recorder,
+                    src=src,
+                    temp=Path(temp),
+                    quoted_temp=shlex.quote(temp),
+                    on_sent=lambda _chunk: None,
+                )
+            )
+        )
+    assert outcome.error is None, outcome.error
+    assert outcome.chunks == 3, (
+        f"the sweep payload must split into three chunks for this measurement to cover a "
+        f"partial tail; it produced {outcome.chunks}"
+    )
+    return recorder.calls
+
+
+def _uu_get_command(remote: str) -> str:
+    """Exactly what ``UuencodeCodec.fetch_chunks`` would send for one chunk."""
+    recorder = _Recorder()
+    codec = UuencodeCodec(255)
+    asyncio.run(
+        codec.fetch_chunks(
+            GetChunkLoop(exec_cmd=recorder, src=Path(remote), total=1, on_received=lambda _b: None)
+        )
+    )
+    return recorder.calls[0]
+
+
+def test_the_uu_sweep_payload_is_the_one_the_measurement_names():
+    """These bytes still digest to what the parity sweep recorded for them.
+
+    Pure, like ``test_the_flag_table_agrees_with_the_presence_table``: no
+    rootfs, no interpreter. Every uu assertion below compares a device's
+    answer against ``_UU_SWEEP_PAYLOAD_MD5``, which is computed from the bytes
+    themselves and so is self-consistent no matter what those bytes are. This
+    is the one place the literal from the measurement appears, so an edit to
+    the payload reddens here instead of silently re-pointing five rows'
+    worth of contracts at a different measurement.
+    """
+    assert _UU_SWEEP_PAYLOAD_MD5 == _UU_SWEEP_PAYLOAD_SPEC_MD5, (
+        f"the uu sweep payload digests to {_UU_SWEEP_PAYLOAD_MD5!r}, not the "
+        f"{_UU_SWEEP_PAYLOAD_SPEC_MD5!r} recorded in "
+        f"todo/busybox-parity-sweep-2026-08-11.md for the 10253 bytes uu was measured "
+        f"against -- these tests would still pass and would no longer be that measurement"
+    )
+
+
+@pytest.mark.parametrize("release", BUSYBOX_MATRIX, ids=[r.version for r in BUSYBOX_MATRIX])
+def test_the_backends_own_uu_put_commands_reassemble_the_payload(release):
+    """PUT's real chunk commands, run by this row's own ash, land the right bytes.
+
+    THREE FACTS AT ONCE, and they are one measurement rather than three
+    because they cannot be separated without running the same commands three
+    times against a per-test rootfs budget that does not allow it (see
+    `busybox_rootfs.py`'s coupled-budget block):
+
+    1. ``uudecode -o <scratch>`` WORKS ON THIS ROW. It is the option this
+       whole path depends on and the one most likely to be missing on 1.16.1,
+       where ``base64 --decode`` and ``busybox --list`` both fail.
+    2. Decoding per chunk and appending PLAINTEXT reassembles all 10253 bytes
+       in order, MD5-compared rather than eyeballed -- the payload has a NUL
+       in it, so no string comparison on either side is safe.
+    3. NO SCRATCH SURVIVES. The chunk command removes it whether its decode
+       worked or not, which matters because a failed ``uudecode`` leaves the
+       file behind (see the failure test below).
+    """
+    require_interpreter(release.arch)
+    require_userns()
+
+    temp = "/tmp/staged.bin"
+    script = "\n".join([*_uu_put_commands(temp), f"md5sum {temp}", "ls /tmp | tr '\\n' ' '"])
+
+    with busybox_rootfs(release) as root:
+        result = run_in_rootfs(root, script)
+
+    assert result.returncode == 0, f"the probe did not run: {result.stderr}"
+    lines = result.stdout.splitlines()
+    seen_md5 = lines[0].split()[0] if lines and lines[0].split() else ""
+    assert seen_md5 == _UU_SWEEP_PAYLOAD_MD5, (
+        f"BusyBox {release.version}: the `shell` backend's own uu chunk commands "
+        f"reassembled the {len(_UU_SWEEP_PAYLOAD)}-byte payload to md5 {seen_md5!r}, not "
+        f"{_UU_SWEEP_PAYLOAD_MD5!r} ({result.stdout!r}) -- a PUT to this row would land "
+        f"the wrong bytes, and `uudecode -o` not being supported here is the first thing "
+        f"to check"
+    )
+    left_behind = sorted(lines[-1].split()) if len(lines) > 1 else []
+    assert left_behind == ["staged.bin"], (
+        f"BusyBox {release.version}: a completed uu PUT left {left_behind} in /tmp, and "
+        f"only the staged temp belongs there -- the per-chunk scratch must be removed by "
+        f"the same command that creates it"
+    )
+
+
+@pytest.mark.parametrize("release", BUSYBOX_MATRIX, ids=[r.version for r in BUSYBOX_MATRIX])
+def test_appending_frames_and_decoding_once_truncates_at_rc_zero(release):
+    """The measured hazard this codec's whole shape exists to avoid, pinned per row.
+
+    ``base64`` is a stream codec and ``uuencode`` is a CONTAINER format, so
+    the naive port of PUT's base64 order -- append every chunk's framed text,
+    let the device decode the concatenation once at the end -- returns only
+    the FIRST chunk. It does not fail while doing it: rc is 0, and 4096 of
+    10253 bytes land under a clean exit.
+
+    A NEGATIVE MEASUREMENT, deliberately, and it is the one that would catch
+    the rewrite. The positive test above proves the codec's real order works;
+    it would go on passing if someone "simplified" the loop back into base64's
+    shape ONLY on a device this suite never runs. This one records what that
+    device would actually do, on all five rows, so the hazard is a fact in the
+    tree rather than a sentence in a docstring.
+    """
+    require_interpreter(release.arch)
+    require_userns()
+
+    chunks = [
+        _UU_SWEEP_PAYLOAD[i : i + _SHELL_CHUNK_BYTES]
+        for i in range(0, len(_UU_SWEEP_PAYLOAD), _SHELL_CHUNK_BYTES)
+    ]
+    appended = "\n".join(
+        f"cat >> /tmp/all.uu <<'ottoUU'\n{_uu_frame(chunk)}\nottoUU" for chunk in chunks
+    )
+    script = (
+        f"{appended}\n"
+        "uudecode -o /tmp/decoded.bin < /tmp/all.uu\n"
+        'echo "RC=$?"\n'
+        'echo "LEN=$(wc -c < /tmp/decoded.bin)"\n'
+    )
+
+    with busybox_rootfs(release) as root:
+        result = run_in_rootfs(root, script)
+
+    assert result.returncode == 0, f"the probe did not run: {result.stderr}"
+    fields = _fields(result.stdout, "RC", "LEN")
+    assert fields["RC"] == "0", (
+        f"BusyBox {release.version}: appending three uu frames and decoding once exited "
+        f"{fields['RC']!r} rather than 0 ({result.stdout!r}). A LOUD failure here would "
+        f"be good news and would change this codec's rationale -- the reason PUT decodes "
+        f"per chunk is that this shape is SILENT"
+    )
+    assert fields["LEN"] == str(len(chunks[0])), (
+        f"BusyBox {release.version}: appending three uu frames and decoding once yielded "
+        f"{fields['LEN']} bytes, not the first chunk's {len(chunks[0])} "
+        f"({result.stdout!r}). The `shell` backend's uu path is shaped around this row "
+        f"returning exactly one chunk at rc=0; if that changed, re-read "
+        f"`UuencodeCodec`'s docstring before relying on it"
+    )
+
+
+@pytest.mark.parametrize("release", BUSYBOX_MATRIX, ids=[r.version for r in BUSYBOX_MATRIX])
+def test_this_rows_uuencode_output_parses_with_the_backends_own_decoder(release):
+    """GET's real command, and the frame this row's ``uuencode`` actually emits.
+
+    The device only ENCODES for GET, so what has to survive here is otto's
+    LOCAL parse of a real device's output -- ``_uu_unframe``, the same
+    function the backend runs, against this row's own ``uuencode`` rather than
+    against Python's encoder. That distinction is the whole value: a decoder
+    tested only against its own encoder proves the pair self-consistent and
+    nothing about the device.
+
+    The source file is staged by the PUT commands rather than by a shell
+    one-liner, because a 10253-byte binary-hostile payload cannot be written
+    into a BusyBox rootfs any other way that does not itself depend on a
+    codec -- and on 1.16.1 there is no ``base64`` to depend on.
+    """
+    require_interpreter(release.arch)
+    require_userns()
+
+    remote = "/tmp/source.bin"
+    script = "\n".join([*_uu_put_commands(remote), "echo FRAME", _uu_get_command(remote)])
+
+    with busybox_rootfs(release) as root:
+        result = run_in_rootfs(root, script)
+
+    assert result.returncode == 0, f"the probe did not run: {result.stderr}"
+    _, _, frame = result.stdout.partition("FRAME\n")
+    assert frame.startswith("begin "), (
+        f"BusyBox {release.version}: `dd | uuencode` did not start a frame "
+        f"({result.stdout[:200]!r})"
+    )
+    decoded = _uu_unframe(frame)
+    seen_md5 = hashlib.md5(decoded, usedforsecurity=False).hexdigest()
+    expected = hashlib.md5(
+        _UU_SWEEP_PAYLOAD[:_SHELL_CHUNK_BYTES], usedforsecurity=False
+    ).hexdigest()
+    assert seen_md5 == expected, (
+        f"BusyBox {release.version}: otto's own frame parser turned this row's "
+        f"`dd | uuencode` output into md5 {seen_md5!r} rather than the first chunk's "
+        f"{expected!r} ({len(decoded)} bytes) -- a GET from this row would land the wrong "
+        f"bytes"
     )

@@ -38,7 +38,10 @@ them with **no product call site at all**; three now consult the table:
 
 The other five measured-broken surfaces are unchanged, and
 `shell-transfer-base64` still refuses only incidentally, because `_run_put`
-probes `base64_flag` rather than reading this table.
+probes `base64_flag` rather than reading this table. **Since the `uuencode`
+codec landed, that site now DEGRADES before it refuses** — a settled `absent`
+selects uu instead of declining — but the standing is the same: the verdict and
+the message are the call site's, not this table's.
 
 The shape all three settled, and the one to copy: the **caller** decides that
 this host belongs to the measured class (a declared shell dialect of `ash`; a
@@ -275,6 +278,10 @@ probe; the difference is the path, not a change of policy.
    a message about the device's applets. That is a pre-existing, probe-driven
    refusal and was left alone; `shell-transfer-base64` is the next surface in
    the queue and is where it should be reconsidered.
+   **RESOLVED with the `uuencode` codec.** `_select_codec` now separates the
+   two: a SETTLED absence selects uu, an unsettled one refuses with a message
+   that says the probe could not be asked rather than claiming the device has
+   no base64.
 
 ## 3. Coverage the exit criteria do not actually have
 

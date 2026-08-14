@@ -1936,10 +1936,15 @@ GAPS: list[Gap] = [
         surface="shell-transfer-base64",
         status=MEASURED_BROKEN,
         reason=(
-            "the `shell` transfer backend encodes every chunk with the device's own "
-            "`base64`, so a userland with no `base64` applet cannot use it at all. "
-            "Nothing is attempted: on such a device every file of the batch would fail "
-            "identically. Use a backend the device supports, or install base64 on it."
+            "the `shell` transfer backend prefers the device's own `base64` for every "
+            "chunk, and a userland with no `base64` applet used to be unable to use it "
+            "at all. It now FALLS BACK to `uuencode`/`uudecode` on a device measured to "
+            "have those instead -- which is every BusyBox row in this matrix, including "
+            "the 1.16.1 one that has no `base64`. So this record is a measurement about "
+            "the applet, not a verdict about the backend: the transfer still works, one "
+            "command per chunk plus a scratch file, and the only devices refused are "
+            "those with NEITHER codec. base64 stays the preference where it exists, "
+            "being the cheaper shape on the wire."
         ),
         measured_on=(
             "BusyBox 1.16.1 ships no `base64` applet -- `tests/busybox/"
@@ -1948,45 +1953,54 @@ GAPS: list[Gap] = [
             "records None, while 1.21.1 and every later matrix row decode with `-d`"
         ),
         queued_for=(
-            "the full-parity workstream, `todo/busybox-parity-sweep-2026-08-11.md`: "
-            "`uuencode`/`uudecode` is measured-feasible on all five rows including "
-            "1.16.1, and needs a codec probe plus a second codec path in the backend"
+            "nothing for the codec itself -- `todo/busybox-parity-sweep-2026-08-11.md`'s "
+            "uu item is built and covered per row in "
+            "`tests/busybox/test_shell_codec_contracts.py`. What remains queued is the "
+            "PTY path: a `term: telnet` BusyBox host routes this backend through a pooled "
+            "shell session whose line editor truncates at 1022 characters (the "
+            "`run-command-line-length` record), and neither codec's chunk command has "
+            "been measured there"
         ),
         paths=[
             GapPath(
                 site="otto.host.transfer.shell.ShellFileTransfer._run_put",
                 state=PATH_PROBE_REFUSED,
                 detail=(
-                    "refuses before the first chunk, and on its OWN authority: it reads "
-                    "`Userland.base64_flag`, raises `UnsupportedOnUserlandError` itself and "
-                    "composes its own message, without consulting this record at all. So "
-                    "the user is protected here and this table is the RECORD of the surface "
-                    "rather than the thing deciding it -- downgrading this record to "
-                    "`untested` would not stop the refusal, and the message carries none of "
-                    "the evidence, queue entry or docs anchor above. It also refuses on the "
-                    "VALUE alone, without `is_settled`, so a host whose probe round never "
-                    "arrived is refused too -- base64 is the whole backend, so there is "
-                    "nothing to degrade to. Wiring it means MOVING the verdict onto this "
-                    "record, never adding a second refusal beside this one"
+                    "DEGRADES first and refuses second, both on its OWN authority. "
+                    "`_select_codec` reads `Userland.base64_flag` and, on a settled "
+                    "absence, switches to the `uuencode` codec rather than declining -- so "
+                    "on the 1.16.1-shaped device this record is about, the surface is "
+                    "routed around and the transfer happens. What still refuses is a "
+                    "device with NEITHER codec (`applet_uudecode` settled absent too) and "
+                    "a host whose probe round never arrived at all, which is kept distinct "
+                    "from a measured absence because a refused probe must not select a "
+                    "codec. Both raise `UnsupportedOnUserlandError` with their own message "
+                    "and consult this record for none of it, so the user is protected here "
+                    "and this table is the RECORD rather than the thing deciding: "
+                    "downgrading it to `untested` would not stop either refusal. Wiring it "
+                    "means MOVING the verdict onto this record, never adding a second "
+                    "refusal beside these"
                 ),
                 pinned_by=(
                     "tests/unit/host/transfer/test_shell_transfer.py::TestShellPutRefusal"
-                    "::test_absent_base64_raises_before_any_command"
+                    "::test_neither_codec_raises_before_any_command"
                 ),
             ),
             GapPath(
                 site="otto.host.transfer.shell.ShellFileTransfer._run_get",
                 state=PATH_PROBE_REFUSED,
                 detail=(
-                    "the same probe-driven refusal as `_run_put`, with the same standing: "
-                    "otto declines before it sends, and it does so from "
-                    "`Userland.base64_flag` rather than from this record. GET checks its "
-                    "size probe first and the codec second, which changes the order of two "
-                    "refusals and nothing about this one"
+                    "the same degrade-then-refuse as `_run_put`, through the same "
+                    "`_select_codec`, with one difference that is not cosmetic: GET needs "
+                    "`uuencode` where PUT needs `uudecode`, because the device only "
+                    "ENCODES here. They are separate applets, so a device could support "
+                    "one direction and not the other. GET also checks its size probe "
+                    "first and the codec second, which changes the order of two refusals "
+                    "and nothing about this one"
                 ),
                 pinned_by=(
                     "tests/unit/host/transfer/test_shell_transfer.py::TestShellGetRefusal"
-                    "::test_absent_base64_raises_before_any_command"
+                    "::test_neither_codec_raises_before_any_command"
                 ),
             ),
         ],

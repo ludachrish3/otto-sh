@@ -1,20 +1,23 @@
-"""Shell-only file transfer backend for UnixHost -- chunked base64 over exec.
+"""Shell-only file transfer backend for UnixHost -- chunked base64 or uu over exec.
 
 Moves files using nothing but command execution: no ``scp``, no ``nc``, no
 ``rsync``. Built for the devices at the bottom of the BusyBox matrix, whose
 entire toolkit is a POSIX shell plus whatever applets are actually present --
-which, on a Tier 2 rootfs old enough to lack ``base64`` entirely, may not
-include a decoder at all (see ``ShellFileTransfer._run_put``).
+including a Tier 2 rootfs old enough to lack ``base64`` entirely, which is
+what the second codec is for.
 
 TWO LAYERS, AND THE SPLIT IS THE POINT. ``ShellFileTransfer`` owns the
 STAGING SKELETON -- name a temp in the destination's own directory and inside
 the filename budget, fill it, verify it BEFORE the rename, rename it, clean
 up on any failure -- and a :class:`ShellCodec` owns the FILLING, whole chunk
-loop and all. ``Base64Codec`` is the only codec today and does exactly what
-this module always did. A second one for ``uuencode``/``uudecode`` is coming
-for the BusyBox rows with no ``base64`` applet, and it is why the codec's unit
-is the loop rather than an ``encode()`` call: see :class:`ShellCodec` for the
-measurement that settled that.
+loop and all. There are two: :class:`Base64Codec`, which does exactly what
+this module always did, and :class:`UuencodeCodec` for the rows with no
+``base64`` applet. Which one a transfer gets is
+``ShellFileTransfer._select_codec``'s answer, read from the device's own
+probe -- never an operator's choice -- and base64 wins wherever it is
+available. The codec's unit is the whole chunk loop rather than an
+``encode()`` call because the two encodings need OPPOSITE loop orders: see
+:class:`ShellCodec` for the measurement that settled that.
 
 PUT chunks the local file into ``_SHELL_CHUNK_BYTES``-byte plaintext
 pieces, base64-encodes each locally, and appends it to a same-directory temp
@@ -55,6 +58,7 @@ _register_builtin_os_profiles``).
 """
 
 import base64
+import binascii
 import hashlib
 import logging
 import shlex
@@ -74,6 +78,7 @@ if TYPE_CHECKING:
 from ...result import CommandResult, Result
 from ...utils import Status
 from ..errors import UnsupportedOnUserlandError
+from ..userland import APPLET_ABSENT, applet_capability
 from .base import TransferContext, TransferProgressFactory, TransferProgressHandler, mark_skipped
 from .registry import register_transfer_backend
 from .unix_base import UnixFileTransfer
@@ -518,6 +523,371 @@ class Base64Codec(ShellCodec):
         return ChunkLoopOutcome(num_chunks)
 
 
+_UU_BYTES_PER_LINE = 45
+"""Plaintext bytes one ``uuencode`` body line carries. Fixed by the format.
+
+45 is what every ``uuencode`` emits and what :func:`binascii.b2a_uu` accepts
+as its maximum in one call, so this is a property of the encoding rather than
+a knob: 45 bytes become a length character plus 60 encoded characters, the 61
+measured on all five matrix rows (see :class:`UuencodeCodec`).
+"""
+
+_UU_FRAME_NAME = "otto"
+"""The name baked into every emitted ``begin`` header.
+
+Never read back by anything. ``uudecode`` would write to it, which is exactly
+why :meth:`UuencodeCodec.send_chunks` always passes ``-o`` -- measured on all
+five rows: with no ``-o``, ``uudecode`` exits 0 and creates a file called
+``otto`` in the working directory instead. Constant rather than derived from
+the destination so that no caller-supplied name reaches a device command by
+this route; the frame rides a quoted heredoc body, so it could not be
+interpreted anyway, and a constant makes that argument unnecessary.
+"""
+
+_UU_FRAME_MODE = "600"
+"""The mode baked into every emitted ``begin`` header.
+
+``uudecode -o`` APPLIES it -- measured, the scratch lands ``-rw-------`` on
+all five rows -- so this is the SCRATCH's mode and nothing else's. It never
+reaches the transferred file: the plaintext is appended to the staged temp
+with ``cat``, which does not carry a mode, and the temp's own mode is whatever
+the device's umask gave it. That is what dissolves the ``put --mode`` question
+``todo/busybox-parity-sweep-2026-08-11.md`` raised against uu's header (BusyBox
+emits ``begin 664`` for its own encodes): a header mode that only ever
+describes a file otto deletes cannot disagree with anything.
+
+600 rather than 664 because a scratch holding another file's plaintext should
+not be world-readable for the moment it exists.
+"""
+
+_UU_HEREDOC_DELIMITER = "ottoUU"
+"""Heredoc delimiter for a chunk's framed text. Provably unmatchable by a body line.
+
+A quoted heredoc (``<<'ottoUU'``) makes the body LITERAL -- no expansion, no
+escaping, and no way for a byte of the payload to end the command early --
+which is the whole reason the uu chunk rides one rather than a quoted
+``printf`` argument. uu's alphabet is 0x20-0x60 (it emits a backtick for the
+zero value; see :func:`_uu_frame`), so an encoded line can and does contain
+single quotes, backslashes and backticks, all of which a ``printf '%s'``
+argument would have to escape.
+
+That safety needs the delimiter to be a string no body line can equal, and
+LOWERCASE is what guarantees it: 0x61-0x7a is outside the encoded alphabet
+entirely, so no frame line -- full, short or terminating -- can ever be
+``ottoUU``. Pinned by ``test_no_frame_line_can_ever_close_the_heredoc_early``.
+"""
+
+
+def _uu_frame(chunk: bytes) -> str:
+    """Frame *chunk* as one self-contained ``begin``/``end`` uuencode container.
+
+    THE CONTAINER IS THE POINT, and it is why this codec's loop is shaped the
+    way it is rather than base64's way: each chunk is a WHOLE uu document that
+    the device decodes on arrival. Concatenating several and decoding once
+    returns only the first -- 4096 of 10253 bytes, at rc=0, re-measured on all
+    five matrix rows for this task -- so the plaintext, never the framed text,
+    is what accumulates in the staged temp. See :class:`ShellCodec`.
+
+    ``backtick=True`` so the zero value encodes as ``` ` ``` rather than as a
+    SPACE, and that is a transport property rather than a style: with it, no
+    line of the frame contains a space character at all (the length character
+    is ``chr(0x20 + n)`` for ``n >= 1`` and every data character is
+    ``chr(0x21..0x60)``), so nothing a transport might do to trailing
+    whitespace can shorten a line and silently drop bytes from its decode. It
+    also matches what BusyBox's own ``uuencode`` emits on the GET side --
+    measured: backticks, no trailing spaces, on the real ssh channel.
+    """
+    lines = [f"begin {_UU_FRAME_MODE} {_UU_FRAME_NAME}"]
+    for start in range(0, len(chunk), _UU_BYTES_PER_LINE):
+        piece = chunk[start : start + _UU_BYTES_PER_LINE]
+        lines.append(binascii.b2a_uu(piece, backtick=True).decode("ascii").rstrip("\n"))
+    lines.append("`")
+    lines.append("end")
+    return "\n".join(lines)
+
+
+def _uu_unframe(text: str) -> bytes:
+    """Decode one ``begin``/``end`` container back to bytes, or raise ``ValueError``.
+
+    STRICT, for the reason :meth:`Base64Codec.fetch_chunks` decodes with
+    ``validate=True``: a lenient parse turns a wedged transport's leaked
+    stderr, a login banner or a truncated reply into wrong bytes with no error
+    at all. Three things are therefore required rather than tolerated -- a
+    ``begin`` header, a zero-length terminator line, and an ``end`` -- and a
+    reply missing any of them raises instead of returning what it managed to
+    read. A truncated reply is the one that matters: it is the shape a real
+    transport failure takes, and it is indistinguishable from a short file by
+    length alone.
+
+    THE LENGTH CHECK IS THE ``validate=True`` OF THIS DECODER, and it is not
+    defensive padding. :func:`binascii.a2b_uu` SILENTLY ZERO-PADS a line whose
+    characters run out before its length character says they should: measured,
+    ``a2b_uu("NOTUU")`` returns 46 bytes -- 43 of them NUL -- and raises
+    nothing, because ``N`` declares 46 and the four characters after it supply
+    three. So a line clipped in transit decodes to plausible zeroed bytes at
+    no error, which is exactly base64's ``validate=False`` failure in another
+    costume. A correct line carries ``1 + 4 * ceil(n / 3)`` characters for its
+    declared ``n``, and anything else raises here.
+
+    It rejects a PADDED encoder too -- one that filled its final line out to
+    full width, or spelled the zero value as a trailing SPACE the transport
+    then stripped -- and that is deliberate rather than an accepted
+    limitation. Both would be indistinguishable from truncation without a
+    second measurement, and BusyBox's own ``uuencode`` measurably does
+    neither: exact-width lines, backticks for zero, no trailing whitespace
+    anywhere, on all five matrix rows and over the real ssh channel.
+
+    Lines are matched after stripping a trailing CARRIAGE RETURN, because the
+    device's text arrives through
+    :meth:`~otto.host.session.SessionManager.exec`'s line rejoin; nothing else
+    is stripped, since a correctly framed line contains no whitespace at all
+    (see :func:`_uu_frame`).
+    """
+    decoded = bytearray()
+    seen_begin = False
+    seen_terminator = False
+    for raw in text.splitlines():
+        line = raw.rstrip("\r")
+        if not seen_begin:
+            if line.startswith("begin "):
+                seen_begin = True
+            continue
+        if line == "end":
+            if not seen_terminator:
+                raise ValueError("the frame reached `end` with no zero-length terminator line")
+            return bytes(decoded)
+        if seen_terminator:
+            raise ValueError(f"the frame carried data after its terminator: {line!r}")
+        if not line:
+            continue
+        # `& 0x3F` is the mapping `a2b_uu` itself applies, and it is what makes
+        # the terminator line work: uu spells zero as a BACKTICK, whose raw
+        # `ord - 0x20` is 64 rather than 0. A check that skipped the mask would
+        # reject every well-formed frame's last line.
+        declared = (ord(line[0]) - 0x20) & 0x3F
+        expected = 1 + 4 * ((declared + 2) // 3)
+        if declared > _UU_BYTES_PER_LINE or len(line) != expected:
+            raise ValueError(
+                f"line {line!r} declares {declared} bytes, which needs {expected} "
+                f"characters, and carries {len(line)} -- a clipped line decodes to "
+                f"zero padding rather than an error"
+            )
+        try:
+            piece = binascii.a2b_uu(line)
+        except binascii.Error as e:
+            raise ValueError(f"line {line!r} is not uuencoded text: {e}") from e
+        if not piece:
+            seen_terminator = True
+        else:
+            decoded += piece
+    if not seen_begin:
+        raise ValueError("the reply carried no `begin` header")
+    raise ValueError("the frame was never closed by an `end` line")
+
+
+class UuencodeCodec(ShellCodec):
+    """``uuencode``/``uudecode`` -- the container codec, for a device with no ``base64``.
+
+    THE ROW THIS EXISTS FOR IS 1.16.1, the one BusyBox matrix artifact that
+    ships no ``base64`` applet at all; ``uudecode`` and ``uuencode`` are
+    present on all five (measured, ``test_applet_resolution.py``). It is the
+    SECOND choice wherever both are available -- see
+    :meth:`ShellFileTransfer._select_codec` for why base64 is preferred.
+
+    PUT DECODES PER CHUNK AND APPENDS PLAINTEXT, which is the inverse of
+    base64's order and is forced by measurement rather than chosen. Each chunk
+    is framed locally into a whole ``begin``/``end`` document and sent as ONE
+    command::
+
+        uudecode -o <scratch> <<'ottoUU' && cat -- <scratch> >> <temp>
+        begin 600 otto
+        M...                      (92 lines for a full chunk, <=61 characters
+                                   each; 100 lines in the whole command)
+        `
+        end
+        ottoUU
+        otto_rc=$?
+        rm -f -- <scratch>
+        (exit $otto_rc)
+
+    Four things in that shape are each a measurement, all re-taken for this
+    task on all five rows in the Tier 2 rootfs and on the Tier 3 ssh channel:
+
+    ``-o`` IS MANDATORY, and it works on 1.16.1. Without it ``uudecode``
+    writes to the name in the header and exits 0, so the plaintext lands
+    somewhere otto never reads. 1.16.1 was the row this whole path depended on
+    and the one where an option was most likely to be missing (``base64
+    --decode`` and ``busybox --list`` both fail there); it accepts ``-o``
+    identically to every later row.
+
+    THE SCRATCH IS UNCONDITIONALLY REMOVED IN THE SAME COMMAND. A FAILED
+    ``uudecode -o`` LEAVES THE FILE BEHIND -- measured: a garbage frame exits 1
+    with ``uudecode: short file`` and the empty scratch is still there
+    afterwards. That is why the ``rm -f`` is not chained onto the success path
+    with ``&&``: it must run whether the decode worked or not. ``otto_rc``
+    carries the real exit status across it, and ``(exit $otto_rc)`` republishes
+    that status in a SUBSHELL rather than with a bare ``exit`` -- a bare one
+    would terminate a pooled shell session rather than one command.
+
+    A HEREDOC, NOT A QUOTED ARGUMENT, AND THE ALTERNATIVE IS NOT MERELY
+    UGLIER -- IT CAN EXCEED THE TRANSPORT. uu's alphabet contains single
+    quotes (the byte value 7 encodes to one), so the obvious one-line form,
+    ``printf`` with each frame line as a quoted argument, has to escape them,
+    and :func:`shlex.quote` turns every quote into four characters. Its length
+    is therefore PAYLOAD-DEPENDENT: measured for one full chunk against the
+    same paths, 6275 characters for an ordinary byte ramp and 11330 for a
+    chunk of ``0x07`` bytes, whose encoding is all quotes -- past the ~9000
+    the channel carries, for a chunk size that is perfectly safe otherwise. A
+    quoted heredoc is literal, needs no escaping at all, and is a FIXED 5952
+    characters whichever bytes it carries. See :data:`_UU_HEREDOC_DELIMITER`
+    for why no body line can close it early, and
+    ``test_the_commands_length_does_not_depend_on_the_payloads_bytes`` for the
+    guard on that fixedness.
+
+    THE CEILING IS ON THE WHOLE COMMAND STRING, NOT ON ITS LONGEST LINE, and
+    that was measured here rather than inherited: a 400-line command of
+    18-character lines (8991 characters) crosses dropbear's exec channel and
+    one of 500 such lines (9009) drops the connection, which is the same
+    ~9000-character boundary ``tests/busybox/test_tier3_shell_transfer.py``'s
+    ``_MEASURED_EXEC_LINE_LIMIT`` measured one character at a time for a
+    SINGLE line. So the multi-line shape buys no room against that limit and
+    is not claimed to: for a 26-character destination a full chunk's command
+    is 5952 characters (5953 for an appending one) against base64's 5533,
+    leaving about 3047 characters of headroom rather than base64's 3466. uu
+    spends the difference on the scratch path, which appears TWICE in every
+    chunk command, so a long destination spends this headroom about three
+    times as fast as base64's does. What the shape does buy is a LONGEST LINE
+    of 186 characters instead of 5533 -- under the 1022-character ash line
+    editor bound the ``run-command-line-length`` gap records, though nothing
+    measures a multi-line command on that path and this docstring claims
+    nothing about it.
+
+    GET IS THE EASY HALF, as it is for base64: the device only ENCODES, so
+    ``dd ... | uuencode otto`` comes back as one frame per chunk and
+    :func:`_uu_unframe` decodes it locally. The container problem does not
+    arise, because the decode is local Python, one chunk at a time.
+
+    *max_filename_len* is held on the codec for the same reason
+    :attr:`Base64Codec._decode_flag` is: it is a knob this encoding needs and
+    the other does not. base64 stages nothing on the device beyond the temp the
+    skeleton already named; uu needs a SECOND device-side name, and a name that
+    ignored the target's filename budget would reintroduce exactly the
+    ``File name too long`` failure :func:`staged_temp_name` exists to prevent
+    -- ``<temp>.uu`` is three characters over the cap for any destination that
+    used all of it.
+    """
+
+    def __init__(self, max_filename_len: int) -> None:
+        self._max_filename_len = max_filename_len
+
+    def _scratch_for(self, temp: Path) -> Path:
+        """Name the device-side scratch this codec decodes each chunk into.
+
+        :func:`staged_temp_name` again, applied to the STAGED TEMP's own
+        basename: same directory, same filename budget, and a fresh random
+        token of its own so the scratch can collide neither with the temp it
+        sits beside nor with another transfer's scratch. Truncating the
+        prefix rather than the token is that function's discipline and it is
+        the right one here too -- nothing reads this name back, it exists to
+        be created, catted and removed inside one command.
+
+        ONE PER FILE, not per chunk: ``uudecode -o`` truncates an existing
+        target, so every chunk reuses the same path, and the command that
+        creates it also removes it.
+        """
+        return temp.parent / staged_temp_name(temp.name, self._max_filename_len)
+
+    @override
+    async def send_chunks(self, loop: PutChunkLoop) -> ChunkLoopOutcome:
+        """Frame, decode and append one chunk at a time -- one command each.
+
+        The first chunk redirects with ``>`` and every later one with ``>>``,
+        matching :meth:`Base64Codec.send_chunks`: an append would otherwise
+        add to a temp that somehow already existed rather than replacing it.
+
+        :attr:`PutChunkLoop.on_sent` is called only after the command
+        succeeded, so the running digest and byte count never count a chunk
+        the device did not take.
+
+        On failure the scratch is swept a second time before returning. The
+        command removes it itself on both of its own paths, so this only
+        covers the one it cannot: a command that never ran to completion
+        because the transport dropped it. Best-effort and silent, like
+        :meth:`ShellFileTransfer._cleanup_temp`, and for the same reason --
+        the file has already failed.
+        """
+        scratch = self._scratch_for(loop.temp)
+        quoted_scratch = shlex.quote(str(scratch))
+        sent = 0
+        with loop.src.open("rb") as f:
+            while True:
+                chunk = f.read(_SHELL_CHUNK_BYTES)
+                if not chunk:
+                    break
+                redirect = ">>" if sent else ">"
+                result = await loop.exec_cmd(
+                    f"uudecode -o {quoted_scratch} <<'{_UU_HEREDOC_DELIMITER}' && "
+                    f"cat -- {quoted_scratch} {redirect} {loop.quoted_temp}\n"
+                    f"{_uu_frame(chunk)}\n"
+                    f"{_UU_HEREDOC_DELIMITER}\n"
+                    f"otto_rc=$?\n"
+                    f"rm -f -- {quoted_scratch}\n"
+                    f"(exit $otto_rc)"
+                )
+                if not result.is_ok:
+                    await self._sweep_scratch(loop.exec_cmd, quoted_scratch)
+                    return ChunkLoopOutcome(
+                        sent,
+                        f"writing a chunk to {loop.temp} failed "
+                        f"(exit {result.retcode}): {result.value or result.msg}",
+                    )
+                sent += 1
+                loop.on_sent(chunk)
+        return ChunkLoopOutcome(sent)
+
+    @staticmethod
+    async def _sweep_scratch(
+        exec_cmd: "Callable[..., Coroutine[Any, Any, CommandResult]]", quoted_scratch: str
+    ) -> None:
+        """Best-effort removal of the device-side scratch after a failed chunk."""
+        result = await exec_cmd(f"rm -f -- {quoted_scratch}")
+        if not result.is_ok:
+            _logger.debug(
+                f"sweep of uu scratch {quoted_scratch} failed (ignored): "
+                f"{result.value or result.msg}"
+            )
+
+    @override
+    async def fetch_chunks(self, loop: GetChunkLoop) -> ChunkLoopOutcome:
+        """Ask ``dd`` for each block range, uuencoded, and unframe it locally.
+
+        One command per chunk and no scratch anywhere: the device writes the
+        frame to stdout and every decode is local Python. ``uuencode``
+        requires a name argument, which is :data:`_UU_FRAME_NAME` and is
+        discarded -- what the device calls the stream has no bearing on where
+        the bytes go.
+        """
+        num_chunks = (loop.total + _SHELL_CHUNK_BYTES - 1) // _SHELL_CHUNK_BYTES
+        quoted_if = shlex.quote(f"if={loop.src}")
+        for k in range(num_chunks):
+            result = await loop.exec_cmd(
+                f"dd {quoted_if} bs={_SHELL_CHUNK_BYTES} skip={k} count=1 2>/dev/null "
+                f"| uuencode {_UU_FRAME_NAME}"
+            )
+            if not result.is_ok:
+                return ChunkLoopOutcome(
+                    k,
+                    f"reading chunk {k} failed (exit {result.retcode}): "
+                    f"{result.value or result.msg}",
+                )
+            try:
+                decoded = _uu_unframe(result.value or "")
+            except ValueError as e:
+                return ChunkLoopOutcome(k, f"chunk {k} was not a valid uuencode frame: {e}")
+            loop.on_received(decoded)
+        return ChunkLoopOutcome(num_chunks)
+
+
 class ShellFileTransfer(UnixFileTransfer):
     """File transfer using nothing but command execution -- no scp, nc, or rsync.
 
@@ -526,10 +896,11 @@ class ShellFileTransfer(UnixFileTransfer):
 
     THIS CLASS IS THE STAGING SKELETON, not the encoding. It names the temp,
     handles the empty-file case, verifies before the rename, renames, and
-    cleans up; a ``ShellCodec`` moves the bytes in between. Today that is
-    always ``Base64Codec``, constructed in ``_run_put`` and ``_run_get`` from
-    the ``base64_flag`` those methods already resolve -- there is no selection
-    yet, and no second codec to select.
+    cleans up; a ``ShellCodec`` moves the bytes in between. Which one is
+    ``_select_codec``'s single decision, taken once per ``_run_put`` /
+    ``_run_get`` from the device's own probe: ``Base64Codec`` wherever
+    ``base64`` is available, ``UuencodeCodec`` on a device measured not to
+    have it.
 
     PUT chunks the local file into ``_SHELL_CHUNK_BYTES``-byte plaintext
     pieces; each piece is base64-encoded locally and appended to a
@@ -554,9 +925,11 @@ class ShellFileTransfer(UnixFileTransfer):
         Every unix backend needs this; there is no other way to run
         anything on the device.
     ``userland``
-        Whether ``base64`` exists at all, and which flag spells "decode",
-        can only be known by asking the device -- see
-        :attr:`~otto.host.userland.Userland.base64_flag`. Assuming a
+        WHICH CODEC this backend can use at all, and which flag spells
+        "decode", can only be known by asking the device -- see
+        :attr:`~otto.host.userland.Userland.base64_flag`,
+        :meth:`~otto.host.userland.Userland.has_applet` and
+        ``_select_codec``. Assuming a
         GNU-coreutils spelling breaks on every BusyBox row in the matrix
         (``base64 --decode`` is rejected everywhere it was tested; see
         :attr:`~otto.host.options.UserlandOptions.base64_flag`), and
@@ -625,18 +998,19 @@ class ShellFileTransfer(UnixFileTransfer):
         dest_dir: Path,
         progress_factory: "TransferProgressFactory | None",
     ) -> dict[Path, Result]:
-        """Sequential shell PUT: refuse up front, then chunk-and-mv one file at a time.
+        """Sequential shell PUT: pick a codec or refuse, then chunk-and-mv one file at a time.
 
-        Two refusal checks run before the loop -- and before anything else in
-        this method -- because each answers a question about the WHOLE
-        transfer, not about any one file: if the device has no ``base64``, or
-        no way to confirm a PUT landed intact, every file would fail
+        Two userland questions are answered before the loop -- and before
+        anything else in this method -- because each is about the WHOLE
+        transfer, not about any one file: if the device can run neither codec,
+        or has no way to confirm a PUT landed intact, every file would fail
         identically, and issuing the first file's chunk command anyway would
         read as "we tried and it failed" when nothing was tried at all. See
         :exc:`~otto.host.errors.UnsupportedOnUserlandError`.
 
-        ``base64_flag == "absent"`` is checked first: without it, no chunk
-        can even be encoded, so nothing else here can run at all.
+        The CODEC is chosen first, by :meth:`_select_codec`, which also owns
+        the refusal for a device that can run neither: without an encoder no
+        chunk can be moved at all, so nothing else here can run.
         ``checksum == "absent" and stat_size == "absent"`` together is
         checked second: :meth:`_put_one` always verifies its temp before the
         final ``mv`` (see :meth:`_verify_integrity`), and with neither a
@@ -660,14 +1034,7 @@ class ShellFileTransfer(UnixFileTransfer):
         ``Status.Skipped`` rather than guessed at.
         """
         await self._userland.resolve()
-        flag = self._userland.base64_flag
-        if flag == "absent":
-            raise UnsupportedOnUserlandError(
-                f"{self._name}: shell transfer needs base64 on the remote host, but this "
-                "host's userland resolved base64_flag='absent' -- no base64 binary was "
-                "found there. Nothing was attempted; install base64 on the device or "
-                "transfer with a backend this host actually supports."
-            )
+        codec = self._select_codec("put", "uudecode")
         checksum = self._userland.checksum
         stat_size = self._userland.stat_size
         if checksum == "absent" and stat_size == "absent":
@@ -678,7 +1045,6 @@ class ShellFileTransfer(UnixFileTransfer):
                 "this host. Nothing was attempted; transfer with a backend this host "
                 "actually supports."
             )
-        codec = Base64Codec(flag)
         per_file: dict[Path, Result] = {}
         for i, src in enumerate(src_files):
             dst = dest_dir / src.name
@@ -697,11 +1063,11 @@ class ShellFileTransfer(UnixFileTransfer):
         dest_dir: Path,
         progress_factory: "TransferProgressFactory | None",
     ) -> dict[Path, Result]:
-        """Sequential shell GET: refuse up front, then dd|base64-and-decode one file at a time.
+        """Sequential shell GET: size it, pick a codec, then decode one file at a time.
 
-        Two refusals run before the loop, for the same reason
-        :meth:`_run_put`'s own two refusals do: each answers a question
-        about the WHOLE transfer, not about any one file, so answering it
+        Two userland questions are answered before the loop, for the same
+        reason :meth:`_run_put`'s own two are: each is about
+        the WHOLE transfer, not about any one file, so answering it
         late would read as "we tried and it failed" when nothing was tried
         at all. GET's two are not the same PAIR as PUT's, though: GET never
         needs the ``checksum``-or-``stat_size`` refusal PUT does, because
@@ -721,10 +1087,13 @@ class ShellFileTransfer(UnixFileTransfer):
         and a non-BusyBox unix host can answer differently, so the branch
         is real and stays.
 
-        ``base64_flag == "absent"`` is checked second, exactly as in
-        :meth:`_run_put` -- the device only encodes for GET, so the same
-        binary is required even though no *decode* flag of its own is ever
-        emitted remotely (decoding happens locally; see :meth:`_get_one`).
+        The CODEC is chosen second, by the same :meth:`_select_codec`
+        :meth:`_run_put` calls -- but for the applet THIS direction needs.
+        The device only ENCODES for GET, so what it must have is
+        ``uuencode``, not the ``uudecode`` PUT asks about; the ``base64``
+        arm needs the same binary either way, even though no *decode* flag of
+        its own is ever emitted remotely (decoding happens locally; see
+        :meth:`_get_one`).
 
         Sequential, like :meth:`_run_put`: this backend has no concurrency
         story of its own, so a failure stops the batch and every file not
@@ -740,16 +1109,8 @@ class ShellFileTransfer(UnixFileTransfer):
                 "host. Nothing was attempted; transfer with a backend this host actually "
                 "supports."
             )
-        flag = self._userland.base64_flag
-        if flag == "absent":
-            raise UnsupportedOnUserlandError(
-                f"{self._name}: shell transfer needs base64 on the remote host, but this "
-                "host's userland resolved base64_flag='absent' -- no base64 binary was "
-                "found there. Nothing was attempted; install base64 on the device or "
-                "transfer with a backend this host actually supports."
-            )
+        codec = self._select_codec("get", "uuencode")
         checksum = self._userland.checksum
-        codec = Base64Codec(flag)
         per_file: dict[Path, Result] = {}
         for i, src in enumerate(src_files):
             dst = dest_dir / src.name
@@ -760,6 +1121,78 @@ class ShellFileTransfer(UnixFileTransfer):
                 mark_skipped(per_file, src_files[i + 1 :])
                 break
         return per_file
+
+    def _select_codec(self, direction: str, applet: str) -> ShellCodec:
+        """Choose the codec this host can actually run, or refuse before anything is sent.
+
+        Called once per ``_run_put`` / ``_run_get``, after ``resolve()``, and
+        it is the ONLY place either direction decides how bytes are encoded.
+
+        BASE64 WINS WHEREVER IT IS AVAILABLE, and the preference is a
+        measurement rather than a habit. It costs ONE command per chunk
+        against uu's one-command-plus-a-scratch-file, its chunk command is
+        shorter on the wire (5535 characters against 5832 for the same
+        destination), and it is the path whose emitted lines are pinned
+        byte-for-byte by ``TestEmittedCommandLinesArePinned``. uu exists for
+        the device that has no choice.
+
+        *direction* is ``"put"`` or ``"get"`` and appears in the refusal;
+        *applet* is the one THAT direction needs, and the two are not the
+        same. otto encodes locally for PUT and the device only decodes, so PUT
+        needs ``uudecode``; GET is the mirror image and needs ``uuencode``.
+        They are separate applets in :data:`~otto.host.userland.PROBED_APPLETS`
+        and a device could ship one without the other, so neither direction is
+        allowed to answer for the other -- passing the wrong one here would be
+        a guard that fires on the wrong evidence.
+
+        THREE OUTCOMES, AND ``is_settled`` DECIDES BETWEEN TWO OF THEM.
+        ``base64_flag`` reads ``"absent"`` both for a device that answered "no
+        base64 here" and for one whose probe round never arrived at all
+        (``_UNASKABLE_DEFAULTS``), and those two must not lead to the same
+        place:
+
+        * a SETTLED absence -- measured on the device, or declared in the
+          host's ``userland_options`` -- is a fact, and otto switches codecs
+          on it. That is the 1.16.1 case, and it is also how a test forces the
+          uu path onto a device that has both.
+        * an UNSETTLED absence is not a fact about the device, so it does not
+          get to select a codec. This path refuses instead, exactly as the
+          backend did before uu existed, and says which of the two it is --
+          the message this replaces claimed "no base64 binary was found
+          there" for a probe round that never asked.
+
+        The refusal for a device with NEITHER codec gates on ``is_settled``
+        the same way and in the same direction: an applet whose batch was
+        discarded is not evidence of absence, so an unsettled ``applet_*``
+        DEGRADES to attempting uu rather than refusing. ``base64`` is already
+        ruled out by the time that matters, so attempting is strictly better
+        than declining -- and if the applet really is missing, the device says
+        so on the first chunk with the temp cleaned up behind it.
+        """
+        flag = self._userland.base64_flag
+        if flag != "absent":
+            return Base64Codec(flag)
+        if not self._userland.is_settled("base64_flag"):
+            raise UnsupportedOnUserlandError(
+                f"{self._name}: shell {direction} needs a codec on the remote host, and "
+                "this host's userland could not be asked which it has -- base64_flag is "
+                "sitting at its cannot-ask default ('absent'), which is not a measurement "
+                "that the device has no base64. Nothing was attempted; the usual cause is "
+                "an sshd refusing further exec channels, so retry, or declare "
+                "base64_flag / applet_uudecode in this host's userland_options."
+            )
+        if (
+            self._userland.is_settled(applet_capability(applet))
+            and self._userland.has_applet(applet) == APPLET_ABSENT
+        ):
+            raise UnsupportedOnUserlandError(
+                f"{self._name}: shell {direction} needs either base64 or {applet} on the "
+                f"remote host, and this host's userland resolved base64_flag='absent' and "
+                f"applet_{applet}='absent' -- neither encoder was found there. Nothing was "
+                f"attempted; install one of them on the device or transfer with a backend "
+                f"this host actually supports."
+            )
+        return UuencodeCodec(self._max_filename_len)
 
     # ------------------------------------------------------------------
     # Shell put

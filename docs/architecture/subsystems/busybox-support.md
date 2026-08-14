@@ -83,8 +83,9 @@ Not every refusal in otto is this table's. `PosixPrivilege._elevate` and
 `ShellFileTransfer._run_put`/`_run_get` are *probe-driven*: they refuse on what
 the host in front of them answered *and* print their own message, which is a
 different thing from "otto measured this on the matrix". That is why
-[`shell-transfer-base64`](#shell-transfer-base64) refuses before sending while
-reading nothing from this record — it gets there by probing `base64_flag` — and
+[`shell-transfer-base64`](#shell-transfer-base64) picks a codec, and then
+refuses before sending if it has none, while reading nothing from this record —
+it gets there by probing `base64_flag` and the applet list — and
 it is what the `PROBE_REFUSED` state below records. `read_file`/`write_file` are
 the ones that mix the two, and the split is worth keeping straight: their
 *predicate* is that same probe, while their *verdict* and their *message* are the
@@ -144,7 +145,7 @@ error prints it verbatim; the sections below are its readable form.
 
 | Surface | Status | What it means for you |
 | --- | --- | --- |
-| [`shell-transfer-base64`](#shell-transfer-base64) | `measured-broken` | The `shell` transfer backend cannot move a single file on a device with no `base64` applet. |
+| [`shell-transfer-base64`](#shell-transfer-base64) | `measured-broken` | A device with no `base64` applet gets the `shell` backend's `uuencode` codec instead; only a device with neither is refused. |
 | [`file-ops-base64`](#file-ops-base64) | `measured-broken` | `read_file` and `write_file` are refused on those same devices, rather than blaming the file for the missing applet — and, for a write, emptying it. |
 | [`sftp-transfer`](#sftp-transfer) | `measured-broken` | No sftp subsystem on a stock BusyBox device. Use the `shell` backend. |
 | [`scp-transfer`](#scp-transfer) | `measured-broken` | No `scp` binary on a stock BusyBox device. Use the `shell` backend. |
@@ -158,37 +159,49 @@ error prints it verbatim; the sections below are its readable form.
 
 ### shell-transfer-base64
 
-**Status:** `measured-broken` — otto does refuse before it sends anything, and
-that refusal does not come from this table. It is probe-driven
-(`ShellFileTransfer._run_put` resolves `base64_flag` and raises on `absent`)
-rather than read from the record, which is what the `PROBE_REFUSED` paths below
-mean: you are protected, and this page is the record rather than the authority.
+**Status:** `measured-broken` — the *applet* really is missing on 1.16.1, but
+since the `uuencode` codec landed that no longer stops the backend. otto probes
+the device, picks the codec it can actually run, and only refuses when it can
+run neither. Both the fallback and the refusal are decided at the call site from
+`Userland`, not read from this table, which is what the `PROBE_REFUSED` paths
+below mean: you are protected, and this page is the record rather than the
+authority.
 
 **Paths otto touches this from:**
 
 - `otto.host.transfer.shell.ShellFileTransfer._run_put` — **PROBE_REFUSED**:
-  refuses before the first chunk, from `Userland.base64_flag` and with its own
-  message. Refuses on the value alone, so a host whose probe round never arrived
-  is refused too — base64 is the whole backend, so there is nothing to degrade to.
+  degrades first, refuses second, both with its own message. On a *settled*
+  `base64_flag` of `absent` it switches to `uudecode` and the transfer happens;
+  it refuses only when `uudecode` is measured absent too, or when the probe round
+  never arrived at all — a probe that could not be asked does not get to choose a
+  codec.
 - `otto.host.transfer.shell.ShellFileTransfer._run_get` — **PROBE_REFUSED**: the
-  same refusal in the other direction, after GET's own size-probe check.
+  same choice in the other direction, after GET's own size-probe check, reading
+  `uuencode` rather than `uudecode` — the device only *encodes* for a GET, and the
+  two are separate applets.
 
 Wiring either of these means *moving* the verdict onto the record, never adding a
 second refusal beside the one already there.
 
-The `shell` transfer backend encodes every chunk with the device's own
-`base64`, so a userland without that applet cannot use the backend at all.
-Nothing is attempted: on such a device every file in the batch would fail
-identically. Use a backend the device supports, or install `base64` on it.
+The `shell` transfer backend prefers the device's own `base64`, because that is
+the cheaper shape on the wire: one command per chunk, one line. A userland
+without that applet gets `uuencode`/`uudecode` instead — one command per chunk
+plus a scratch file the same command removes — which is present on every BusyBox
+row in this matrix, 1.16.1 included. Only a device with *neither* is refused, and
+then nothing is attempted, because every file in the batch would fail
+identically.
 
 **Measured:** BusyBox 1.16.1 ships no `base64` applet. `tests/busybox/test_applet_resolution.py`
 records `False` for that row and `tests/busybox/test_shell_codec_contracts.py`
 records a `None` decode flag, while 1.21.1 and every later matrix row decode
-with `-d`.
+with `-d`. The same module round-trips a 10253-byte binary-hostile payload
+through the uu codec's own emitted commands on all five rows, 1.16.1 among them.
 
-**Queued for:** the full-parity workstream, `todo/busybox-parity-sweep-2026-08-11.md`.
-`uuencode`/`uudecode` is measured-feasible on all five matrix rows including
-1.16.1, and needs a codec probe plus a second codec path in the backend.
+**Queued for:** nothing for the codec itself. What remains unmeasured is the
+*pty* path: a `term: telnet` BusyBox host routes this backend through a pooled
+shell session whose line editor truncates at 1022 characters (see
+[`run-command-line-length`](#run-command-line-length)), and neither codec's chunk
+command has been measured there.
 
 ### file-ops-base64
 

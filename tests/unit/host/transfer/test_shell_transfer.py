@@ -138,8 +138,10 @@ substitute for one another.
 import asyncio
 import base64
 import hashlib
+import itertools
 import os
 import re
+import shlex
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
@@ -152,8 +154,16 @@ from otto.host.errors import UnsupportedOnUserlandError
 from otto.host.options import UserlandOptions
 from otto.host.transfer import shell as shell_module
 from otto.host.transfer.base import TransferContext
-from otto.host.transfer.shell import _SHELL_CHUNK_BYTES, ShellFileTransfer, staged_temp_name
-from otto.host.userland import Userland
+from otto.host.transfer.shell import (
+    _SHELL_CHUNK_BYTES,
+    _UU_HEREDOC_DELIMITER,
+    Base64Codec,
+    ShellFileTransfer,
+    UuencodeCodec,
+    _uu_frame,
+    staged_temp_name,
+)
+from otto.host.userland import APPLET_ABSENT, APPLET_PRESENT, PROBED_APPLETS, Userland
 from otto.result import CommandResult
 from otto.utils import Status
 
@@ -176,16 +186,31 @@ async def _never_probes(cmd: str, **_kwargs: object) -> CommandResult:
 
 
 def _declared_userland(
-    base64_flag: str, stat_size: str = "stat", checksum: str = "absent"
+    base64_flag: str,
+    stat_size: str = "stat",
+    checksum: str = "absent",
+    applets: "dict[str, str] | None" = None,
 ) -> Userland:
     """A resolved ``Userland`` with every capability declared, so ``resolve()`` probes nothing.
 
-    ``UserlandOptions`` has seven fields; the six named here (shell_dialect,
-    elevation, base64_flag, stat_size, checksum, timeout_style) are its six
-    CAPABILITIES -- the seventh, ``version``, is metadata only ("Never gates
-    behaviour") and is never probed, so it needs no declaration here. All six
-    capabilities are declared so a fully-resolved object never calls
-    ``_never_probes``.
+    The six named directly (shell_dialect, elevation, base64_flag, stat_size,
+    checksum, timeout_style) are ``UserlandOptions``'s original six
+    CAPABILITIES; ``version`` is metadata only ("Never gates behaviour") and
+    is never probed, so it needs no declaration. The seven ``applet_*`` fields
+    are declared too, defaulting to ``APPLET_PRESENT``, and that is not
+    padding -- ``ShellFileTransfer._select_codec`` reads
+    ``is_settled(applet_capability(...))``, so an UNDECLARED applet is a
+    genuinely different input from a declared-present one and a fixture that
+    could not express the difference could not test the discipline.
+
+    IT ALSO MAKES THIS HELPER'S OWN NAME TRUE AGAIN. Before the applet fields
+    were declared here, ``resolve()`` issued the applet batch against
+    ``_never_probes``, whose ``AssertionError`` ``resolve()`` swallows as a
+    failed probe -- so "a fully-declared userland must not probe" was quietly
+    false, and every test in this module ran against seven UNSETTLED applets
+    sitting at their cannot-ask default. Pass ``applets={}`` to get that
+    state deliberately (see ``TestCodecSelection``); pass a partial dict to
+    declare some and leave the rest unasked.
 
     *checksum* defaults to ``"absent"``, not ``"md5sum"`` -- every existing
     PUT/GET test in this module, written before integrity verification
@@ -193,6 +218,9 @@ def _declared_userland(
     without scripting an extra remote answer. Tests that specifically cover
     the ``md5sum`` path pass ``checksum="md5sum"`` explicitly.
     """
+    declared = {f"applet_{name}": APPLET_PRESENT for name in PROBED_APPLETS}
+    if applets is not None:
+        declared = {f"applet_{name}": value for name, value in applets.items()}
     return Userland(
         UserlandOptions(
             shell_dialect="ash",
@@ -201,6 +229,7 @@ def _declared_userland(
             stat_size=stat_size,
             checksum=checksum,
             timeout_style="absent",
+            **declared,
         ),
         _never_probes,
     )
@@ -284,17 +313,31 @@ class _ShellExecutingExec:
     returns a synthetic failure instead -- simulating a remote exec failure
     (the command never ran on the device) rather than a local one. Every
     command it does not match runs for real.
+
+    *path_prefix*, when given, is prepended to ``PATH`` for the child shell.
+    Used only by the uu tests, which need a ``uudecode``/``uuencode`` on
+    ``PATH`` and cannot assume one: this dev VM has neither (sharutils is not
+    installed), so :func:`_uu_applet_shims` writes stand-ins and points the
+    shell at them. What stays REAL under that arrangement is everything the
+    emitted command's own shape depends on -- the heredoc, the ``&&``, the
+    ``$?`` capture across the ``rm``, the subshell exit, the ``cat``
+    redirect -- and only the applet itself is a stand-in. See that function
+    for what keeps the stand-in honest.
     """
 
     def __init__(
         self,
         cwd: Path,
         fail_when: "Callable[[str], bool] | None" = None,
+        path_prefix: "Path | None" = None,
     ) -> None:
         self.cwd = cwd
         self.calls: list[str] = []
         self.outputs: list[str] = []
         self._fail_when = fail_when
+        self._env: "dict[str, str] | None" = None
+        if path_prefix is not None:
+            self._env = {**os.environ, "PATH": f"{path_prefix}{os.pathsep}{os.environ['PATH']}"}
 
     async def __call__(
         self, cmd: str, timeout: "float | None" = None, **_kwargs: object
@@ -313,6 +356,7 @@ class _ShellExecutingExec:
             capture_output=True,
             text=True,
             check=False,
+            env=self._env,
         )
         output = proc.stdout + proc.stderr
         self.outputs.append(output)
@@ -327,13 +371,14 @@ def _make_ft(
     stat_size: str = "stat",
     checksum: str = "absent",
     max_filename_len: int = 255,
+    applets: "dict[str, str] | None" = None,
 ) -> ShellFileTransfer:
     mock_connections = MagicMock(spec=ConnectionManager)
     return ShellFileTransfer(
         connections=mock_connections,
         name="tomato",
         exec_cmd=exec_cmd,
-        userland=_declared_userland(base64_flag, stat_size, checksum),
+        userland=_declared_userland(base64_flag, stat_size, checksum, applets),
         max_filename_len=max_filename_len,
     )
 
@@ -588,9 +633,16 @@ class TestShellPutFileArrivesAtDest:
 
 
 class TestShellPutRefusal:
-    """``base64_flag == "absent"`` must refuse loudly, before any command runs.
+    """A device that can run NEITHER codec must refuse loudly, before any command runs.
 
-    Catches the mutation "return success when base64_flag == 'absent'": that
+    ``base64_flag == "absent"`` alone is no longer the condition, and that is
+    the point of the uu codec: a device with no ``base64`` but a working
+    ``uudecode`` -- every BusyBox matrix row that lacks base64, which is
+    1.16.1 -- now transfers instead of being turned away. The refusal that
+    remains is for a device with neither, and it still has to arrive before a
+    single command.
+
+    Catches the mutation "return success when no codec is available": that
     mutation would return a Success/Skipped mapping instead of raising, so
     ``pytest.raises`` below would fail. The zero-calls assertion is a
     SEPARATE, stronger check: run against the actual disabled-refusal
@@ -598,17 +650,25 @@ class TestShellPutRefusal:
     (wrongly) returning Success -- so the zero-calls assertion catches that
     concrete case, and would also catch a softer mutation that raises late,
     after already emitting a command.
+
+    The second test is what stops the refusal being "fixed" by widening it
+    back: a codec-less refusal that also fired on a uu-capable device would
+    make this whole path unreachable and nothing else here would notice.
     """
 
     @pytest.mark.asyncio
-    async def test_absent_base64_raises_before_any_command(self, tmp_path: Path) -> None:
+    async def test_neither_codec_raises_before_any_command(self, tmp_path: Path) -> None:
         src = tmp_path / "f.bin"
         src.write_bytes(b"hello")
         dest_dir = tmp_path / "dest"
         dest_dir.mkdir()
 
         exec_cmd = _RecordingExec()
-        ft = _make_ft(exec_cmd, base64_flag="absent")
+        ft = _make_ft(
+            exec_cmd,
+            base64_flag="absent",
+            applets={"uudecode": APPLET_ABSENT, "uuencode": APPLET_ABSENT},
+        )
 
         with pytest.raises(UnsupportedOnUserlandError) as exc_info:
             await ft._run_put([src], dest_dir, None)
@@ -616,6 +676,28 @@ class TestShellPutRefusal:
         assert exec_cmd.calls == [], f"refusal must precede every command, got {exec_cmd.calls}"
         assert "tomato" in str(exc_info.value)
         assert "base64" in str(exc_info.value)
+        assert "uudecode" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_absent_base64_with_uudecode_present_transfers_instead(
+        self, tmp_path: Path
+    ) -> None:
+        """The behaviour this codec exists to add: no base64, and the PUT still happens."""
+        src = tmp_path / "f.bin"
+        src.write_bytes(b"hello")
+        dest_dir = tmp_path / "dest"
+        dest_dir.mkdir()
+
+        exec_cmd = _RecordingExec(answer_when=_size_answer(5))
+        ft = _make_ft(exec_cmd, base64_flag="absent")
+
+        per_file = await ft._run_put([src], dest_dir, None)
+
+        assert per_file[src].status is Status.Success, per_file[src].msg
+        assert any(cmd.startswith("uudecode -o ") for cmd in exec_cmd.calls), (
+            f"a base64-less device must reach the uu codec, and no command here is a "
+            f"uudecode: {[cmd[:40] for cmd in exec_cmd.calls]}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1303,24 +1385,33 @@ class TestShellPutIntegrityVerification:
 
 
 class TestShellGetRefusal:
-    """Both ``base64_flag`` and ``stat_size`` resolving to ``"absent"`` must refuse loudly.
+    """A codec-less device and an unsizeable one must both refuse loudly.
 
-    Two independent refusals, mirroring ``TestShellPutRefusal``'s single one.
+    Two independent refusals, mirroring ``TestShellPutRefusal``'s pair.
     Measured (this task's brief): every row of the BusyBox matrix resolves
     ``stat_size`` to ``"stat"``, so the second branch is never live on that
     matrix today -- it exists for a non-BusyBox unix host that genuinely has
     neither ``stat`` nor a usable ``wc``, and is tested here precisely
     because nothing else would ever exercise it.
+
+    GET's codec refusal reads ``uuencode``, not PUT's ``uudecode``: the device
+    only ENCODES here. ``TestCodecSelection::test_put_reads_uudecode_and_get_reads_uuencode``
+    is what holds the two apart.
     """
 
     @pytest.mark.asyncio
-    async def test_absent_base64_raises_before_any_command(self, tmp_path: Path) -> None:
+    async def test_neither_codec_raises_before_any_command(self, tmp_path: Path) -> None:
         src = tmp_path / "f.bin"
         dest_dir = tmp_path / "dest"
         dest_dir.mkdir()
 
         exec_cmd = _RecordingExec()
-        ft = _make_ft(exec_cmd, base64_flag="absent", stat_size="stat")
+        ft = _make_ft(
+            exec_cmd,
+            base64_flag="absent",
+            stat_size="stat",
+            applets={"uudecode": APPLET_ABSENT, "uuencode": APPLET_ABSENT},
+        )
 
         with pytest.raises(UnsupportedOnUserlandError) as exc_info:
             await ft._run_get([src], dest_dir, None)
@@ -1328,6 +1419,7 @@ class TestShellGetRefusal:
         assert exec_cmd.calls == [], f"refusal must precede every command, got {exec_cmd.calls}"
         assert "tomato" in str(exc_info.value)
         assert "base64" in str(exc_info.value)
+        assert "uuencode" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_absent_stat_size_raises_before_any_command(self, tmp_path: Path) -> None:
@@ -2382,6 +2474,31 @@ length below is the length a real run emits.
 _PINNED_PAYLOAD = b"A\x00B\nC\rD\xffE'F\\G"
 _PINNED_PAYLOAD_B64 = "QQBCCkMNRP9FJ0ZcRw=="
 
+# The same 13 bytes framed the way `UuencodeCodec` frames them. Written out
+# rather than computed so the pinned command below is a literal end to end:
+# a bug in `_uu_frame` that a computed expectation would follow silently is
+# exactly what this class exists to catch. `-` is the length character for 13
+# bytes (chr(0x20 + 13)), the trailing backticks are uu's zero value (see
+# `_uu_frame`'s `backtick=True`), and the lone-backtick line is the
+# zero-length terminator every frame ends with before `end`.
+_PINNED_PAYLOAD_UU = 'begin 600 otto\n-00!""D,-1/]%)T9<1P``\n`\nend'
+
+# The 10253-byte payload `todo/busybox-parity-sweep-2026-08-11.md` measured uu
+# against on all five matrix rows -- the hostile 13 bytes followed by a
+# repeating 0..255 ramp, md5 cec24026d4cb12df00f2ef9be4222224. Reproduced here
+# rather than invented so this module and that measurement are talking about
+# the same bytes: three chunks at `_SHELL_CHUNK_BYTES` (4096/4096/2061), the
+# last one partial, with every byte value present and the whole thing
+# order-sensitive.
+_UU_SWEEP_PAYLOAD = (_PINNED_PAYLOAD + bytes(range(256)) * 41)[:10253]
+
+# One well-formed FULL body line: `M` declares 45 bytes and 60 backticks
+# encode 45 zero bytes. Built as a literal so the malformed cases below are
+# each one deliberate edit away from a line that really does decode -- a
+# hand-typed "looks uuencoded" string is how the first version of those cases
+# asserted the wrong failure.
+_UU_FULL_LINE = "M" + "`" * 60
+
 
 @pytest.fixture
 def pinned_staged_name(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -2630,3 +2747,767 @@ class TestEmittedCommandLinesArePinned:
             "/remote/stored.bin: reading chunk 0 failed (exit 1): simulated failure: "
             "dd if=/remote/stored.bin bs=4096 skip=0 count=1 2>/dev/null | base64"
         )
+
+
+# ---------------------------------------------------------------------------
+# The uu codec: selection, emitted commands, and the container discipline
+# ---------------------------------------------------------------------------
+
+_UUDECODE_SHIM = """\
+import binascii
+import sys
+
+args = sys.argv[1:]
+out = None
+infile = None
+while args:
+    arg = args.pop(0)
+    if arg == "-o":
+        out = args.pop(0)
+    else:
+        infile = arg
+
+text = open(infile).read() if infile else sys.stdin.read()
+
+data = bytearray()
+started = False
+ok = True
+name = "uudecode.out"
+for raw in text.split("\\n"):
+    line = raw.rstrip("\\r")
+    if not started:
+        if line.startswith("begin "):
+            parts = line.split(None, 2)
+            if len(parts) == 3:
+                name = parts[2]
+            started = True
+        continue
+    if line == "end":
+        break
+    if not line:
+        continue
+    try:
+        piece = binascii.a2b_uu(line)
+    except Exception:
+        ok = False
+        break
+    data += piece
+else:
+    ok = False
+
+with open(out or name, "wb") as fh:
+    if ok:
+        fh.write(bytes(data))
+
+if not ok:
+    sys.stderr.write("uudecode: short file\\n")
+    sys.exit(1)
+"""
+
+_UUENCODE_SHIM = """\
+import binascii
+import sys
+
+args = sys.argv[1:]
+if len(args) == 2:
+    name = args[1]
+    data = open(args[0], "rb").read()
+else:
+    name = args[0]
+    data = sys.stdin.buffer.read()
+
+lines = ["begin 664 " + name]
+for start in range(0, len(data), 45):
+    lines.append(binascii.b2a_uu(data[start:start + 45], backtick=True).decode().rstrip("\\n"))
+lines += ["`", "end"]
+sys.stdout.write("\\n".join(lines) + "\\n")
+"""
+
+
+def _uu_applet_shims(tmp_path: Path) -> Path:
+    """Write ``uudecode``/``uuencode`` stand-ins and return the directory holding them.
+
+    THIS DEV VM AND CI HAVE NEITHER APPLET -- sharutils is not installed and
+    ``command -v uudecode`` answers nothing -- so a unit test that wanted a
+    real one would either skip (which is how coverage evaporates) or depend on
+    a package nobody declares. What is faked is exactly one thing: the applet.
+    The command otto emits is still parsed and run by a real ``/bin/sh``, so
+    the heredoc, the ``&&``, the ``$?`` capture across the ``rm``, the
+    subshell exit and the ``cat`` redirect are all genuine.
+
+    THE ONE BEHAVIOUR THAT MAKES THESE WORTH ANYTHING IS THE CONTAINER RULE:
+    ``uudecode`` stops at the FIRST ``end`` line and exits 0. That is not
+    invented for convenience, it is the measurement this whole codec's shape
+    comes from -- appending three frames and decoding once returns 4096 of
+    10253 bytes at rc=0 on all five matrix rows
+    (``todo/busybox-parity-sweep-2026-08-11.md``, re-measured 2026-08-14).
+    Two more measured behaviours are reproduced because guards below depend on
+    them: with no ``-o`` the plaintext goes to the name in the ``begin``
+    header rather than anywhere otto reads, and a frame that fails to parse
+    still LEAVES ITS OUTPUT FILE behind (``uudecode: short file``, rc 1, an
+    empty scratch on disk).
+
+    WHAT KEEPS THE STAND-IN HONEST is not this docstring: it is
+    ``tests/busybox/test_shell_codec_contracts.py``, which runs the same three
+    behaviours through five real BusyBox artifacts, and
+    ``tests/busybox/test_tier3_shell_transfer.py``, which runs this codec's
+    real commands against a real ``uudecode`` over a real ssh channel. A
+    stand-in that drifted from the applet would leave those green tests
+    disagreeing with these ones.
+    """
+    shim_dir = tmp_path / "uu-applets"
+    shim_dir.mkdir()
+    for name, body in (("uudecode", _UUDECODE_SHIM), ("uuencode", _UUENCODE_SHIM)):
+        script = shim_dir / name
+        script.write_text(f"#!/usr/bin/env python3\n{body}")
+        script.chmod(0o755)
+    return shim_dir
+
+
+async def _resolved_ft(exec_cmd: "Callable[..., object]", **kwargs: object) -> ShellFileTransfer:
+    """A transfer whose userland has been resolved, as ``_run_put``/``_run_get`` leave it.
+
+    ``_select_codec`` reads capabilities, and ``Userland`` refuses to be read
+    before ``resolve()`` -- deliberately, so nothing consumes a value that was
+    never asked for. Both callers await it first; a test calling the selector
+    directly has to do the same, or it measures that guard instead of this one.
+    """
+    ft = _make_ft(exec_cmd, **kwargs)  # type: ignore[arg-type]
+    await ft._userland.resolve()
+    return ft
+
+
+async def _resolved_uu_ft(exec_cmd: "Callable[..., object]", **kwargs: object) -> ShellFileTransfer:
+    """A resolved transfer whose userland forces the uu path: base64 DECLARED absent.
+
+    Declaring ``base64_flag="absent"`` is what a 1.16.1 device measures for
+    itself, and a declaration is settled (see ``Userland.is_settled``), which
+    is exactly the condition ``_select_codec`` switches codecs on.
+    """
+    return await _resolved_ft(exec_cmd, base64_flag="absent", **kwargs)
+
+
+class TestCodecSelection:
+    """Which codec a device gets, and what happens when it can run neither.
+
+    ``_select_codec`` is the only place either direction decides, so these
+    call it directly rather than inferring the answer from a transcript --
+    the transcript is pinned separately by
+    ``TestUuencodeEmittedCommands``, and a test that read the codec out of a
+    command string would fail for two different reasons at once.
+
+    Mutation-verified, each run and counted against this module's 96 tests:
+
+    - preferring uu wherever it is available reds
+      ``test_base64_wins_wherever_it_is_available`` -- inside a blast radius
+      of 35, because that mutation moves EVERY host in this module off the
+      default codec and most of its transcripts with it. The named test is
+      the only one that says why;
+    - dropping the ``is_settled`` guard on ``base64_flag``, so the cannot-ask
+      default selects uu, reds exactly 1:
+      ``test_an_unsettled_base64_absence_refuses_instead_of_selecting_a_codec``;
+    - turning the applet refusal into "refuse unless PROVEN present", so the
+      cannot-ask default refuses, reds exactly 1:
+      ``test_an_unsettled_applet_attempts_uu_rather_than_refusing``;
+    - dropping the applet check altogether, so a codec-less device gets uu,
+      reds 4 -- this class's neither-codec and direction tests plus both
+      ``_run_put``/``_run_get`` refusal tests;
+    - having GET read ``uudecode`` reds exactly 1,
+      ``TestShellGetRefusal::test_neither_codec_raises_before_any_command``,
+      which is the one place a device with only ``uudecode`` is put in front
+      of a GET.
+    """
+
+    @pytest.mark.asyncio
+    async def test_base64_wins_wherever_it_is_available(self) -> None:
+        """Both applets present AND base64 present: base64, in both directions.
+
+        The preference is not a tie-break. base64 costs one command per chunk
+        against uu's one-plus-a-scratch, its chunk command is shorter on the
+        wire, and it is the path whose emitted lines are pinned byte for byte.
+        """
+        ft = await _resolved_ft(_RecordingExec())
+
+        assert isinstance(ft._select_codec("put", "uudecode"), Base64Codec)
+        assert isinstance(ft._select_codec("get", "uuencode"), Base64Codec)
+
+    @pytest.mark.asyncio
+    async def test_a_settled_absence_of_base64_selects_uu(self) -> None:
+        ft = await _resolved_uu_ft(_RecordingExec())
+
+        assert isinstance(ft._select_codec("put", "uudecode"), UuencodeCodec)
+        assert isinstance(ft._select_codec("get", "uuencode"), UuencodeCodec)
+
+    @pytest.mark.asyncio
+    async def test_the_uu_codec_carries_the_hosts_own_filename_budget(self) -> None:
+        """Not a default: the scratch has to fit the same cap the temp does."""
+        ft = await _resolved_uu_ft(_RecordingExec(), max_filename_len=64)
+
+        codec = ft._select_codec("put", "uudecode")
+        assert isinstance(codec, UuencodeCodec)
+        assert codec._max_filename_len == 64
+
+    @pytest.mark.asyncio
+    async def test_put_reads_uudecode_and_get_reads_uuencode(self) -> None:
+        """Separate applets, separate directions -- neither may answer for the other.
+
+        otto encodes locally and the device DECODES for PUT; the device
+        ENCODES for GET. A device shipping only one of the two therefore
+        supports exactly one direction, and gating both on one applet would
+        either refuse a direction that works or attempt one that cannot.
+        """
+        decode_only = await _resolved_ft(
+            _RecordingExec(),
+            base64_flag="absent",
+            applets={"uudecode": APPLET_PRESENT, "uuencode": APPLET_ABSENT},
+        )
+        assert isinstance(decode_only._select_codec("put", "uudecode"), UuencodeCodec)
+        with pytest.raises(UnsupportedOnUserlandError, match="uuencode"):
+            decode_only._select_codec("get", "uuencode")
+
+        encode_only = await _resolved_ft(
+            _RecordingExec(),
+            base64_flag="absent",
+            applets={"uudecode": APPLET_ABSENT, "uuencode": APPLET_PRESENT},
+        )
+        assert isinstance(encode_only._select_codec("get", "uuencode"), UuencodeCodec)
+        with pytest.raises(UnsupportedOnUserlandError, match="uudecode"):
+            encode_only._select_codec("put", "uudecode")
+
+    @pytest.mark.asyncio
+    async def test_a_device_with_neither_codec_is_refused_before_any_command(self) -> None:
+        exec_cmd = _RecordingExec()
+        ft = await _resolved_ft(
+            exec_cmd,
+            base64_flag="absent",
+            applets={"uudecode": APPLET_ABSENT, "uuencode": APPLET_ABSENT},
+        )
+
+        with pytest.raises(UnsupportedOnUserlandError) as exc_info:
+            ft._select_codec("put", "uudecode")
+
+        assert exec_cmd.calls == [], f"refusal must precede every command, got {exec_cmd.calls}"
+        assert "tomato" in str(exc_info.value)
+        assert "base64" in str(exc_info.value)
+        assert "uudecode" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_an_unsettled_base64_absence_refuses_instead_of_selecting_a_codec(self) -> None:
+        """A probe round that never arrived is not a measurement, and must not pick a codec.
+
+        ``base64_flag`` reads ``"absent"`` for a device that answered "no
+        base64 here" AND for one otto could not ask at all -- the
+        cannot-ask default. Switching codecs on the second is the expensive
+        direction twice over: it would move a host that has always used
+        base64 onto uu on the strength of nothing, and it would do so exactly
+        when the transport is already refusing channels. So this branch
+        refuses, and unlike the message it replaces it does not claim the
+        device was found to have no base64.
+        """
+        userland = Userland(
+            UserlandOptions(
+                shell_dialect="ash",
+                elevation="none",
+                stat_size="stat",
+                checksum="absent",
+                timeout_style="absent",
+            ),
+            AsyncMock(side_effect=OSError("the device refused the probe channel")),
+        )
+        await userland.resolve()
+        assert userland.base64_flag == "absent"
+        assert not userland.is_settled("base64_flag"), (
+            "this fixture exists to produce an UNSETTLED absence; a settled one "
+            "would exercise the branch below the one under test"
+        )
+
+        ft = ShellFileTransfer(
+            connections=MagicMock(spec=ConnectionManager),
+            name="tomato",
+            exec_cmd=_RecordingExec(),
+            userland=userland,
+        )
+        with pytest.raises(UnsupportedOnUserlandError) as exc_info:
+            ft._select_codec("put", "uudecode")
+        assert "could not be asked" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_an_unsettled_applet_attempts_uu_rather_than_refusing(self) -> None:
+        """base64 is measured gone and the applet batch never landed: try uu.
+
+        The mirror image of the test above, and it goes the other way for a
+        reason that is not inconsistency. There, an unmeasured value would
+        have been used to CHANGE a working path; here base64 is already ruled
+        out by a settled measurement, so refusing on an unmeasured applet
+        buys nothing -- the alternative to attempting uu is not "keep using
+        base64", it is "do not transfer at all". If the applet really is
+        missing the device says so on the first chunk, with the staged temp
+        cleaned up behind it.
+        """
+        ft = await _resolved_ft(_RecordingExec(), base64_flag="absent", applets={})
+
+        assert isinstance(ft._select_codec("put", "uudecode"), UuencodeCodec)
+
+
+@pytest.fixture
+def pinned_uu_names(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Freeze BOTH staged names uu draws, so its whole command can be a literal.
+
+    uu needs two device-side names per file -- the staged temp and the
+    scratch it decodes each chunk into -- and both come from
+    ``staged_temp_name``, one draw each. ``pinned_staged_name`` freezes a
+    single token and would therefore give the codec a scratch path EQUAL to
+    the temp it appends to, which is the one arrangement that could never
+    happen in production and would quietly turn every chunk into a
+    self-append. This hands out the two tokens in call order instead, CYCLING
+    so a test that stages more than one file still gets a distinct pair each
+    time rather than a ``StopIteration`` raised inside a coroutine -- which
+    arrives as a bare ``RuntimeError`` naming neither this fixture nor the
+    draw that ran out.
+    """
+    tokens = itertools.cycle([_PINNED_TOKEN, _PINNED_SCRATCH_TOKEN])
+
+    def _fixed(dest_name: str, max_filename_len: int) -> str:
+        return f"{dest_name}.otto-{next(tokens)}"
+
+    monkeypatch.setattr(shell_module, "staged_temp_name", _fixed)
+
+
+_PINNED_SCRATCH_TOKEN = "5a6b7c8d"
+"""The SECOND token :func:`pinned_uu_names` hands out -- the uu scratch's.
+
+Different from :data:`_PINNED_TOKEN` on purpose and asserted to be: the two
+names are drawn independently in production, and a fixture that made them
+equal would hide a codec appending a file to itself.
+"""
+
+
+@pytest.mark.usefixtures("pinned_uu_names")
+class TestUuencodeEmittedCommands:
+    """What the uu codec puts on the wire, pinned byte for byte.
+
+    A change detector, exactly like ``TestEmittedCommandLinesArePinned`` and
+    for the same reason: every element of this command shape is a measurement
+    (see ``UuencodeCodec``'s docstring), so a change to any of them is a
+    change to a measured claim and has to be re-justified rather than
+    absorbed.
+
+    Mutation-verified, each run and counted against this module's 96 tests:
+
+    - dropping ``-o`` from the ``uudecode`` reds 6 -- this class's two pinned
+      commands and all four tests that run the command through a real shell,
+      because the plaintext then goes to a file called ``otto`` in the
+      working directory and the temp stays empty;
+    - chaining the ``rm -f`` onto the success path with ``&&`` instead of
+      running it unconditionally reds 3: the pinned command, and the two
+      scratch-lifetime tests in ``TestUuencodeThroughARealShell``;
+    - making the FIRST chunk redirect with ``>>`` reds 2, the two pinned
+      commands, and nothing that runs a real shell -- which is the argument
+      for pinning the transcript at all, since a stale temp is not something
+      a green round trip can notice;
+    - reusing the temp's own name as the scratch reds 7, including
+      ``test_the_scratch_is_a_second_staged_name_beside_the_temp``, which is
+      the one that names the fault rather than a symptom of it.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_one_chunk_put_command_is_pinned(self, tmp_path: Path) -> None:
+        src = tmp_path / "stored.bin"
+        src.write_bytes(_PINNED_PAYLOAD)
+
+        exec_cmd = _RecordingExec(answer_when=_size_answer(len(_PINNED_PAYLOAD)))
+        ft = _make_ft(exec_cmd, base64_flag="absent")
+
+        per_file = await ft._run_put([src], Path("/dest"), None)
+        assert per_file[src].status is Status.Success, per_file[src].msg
+
+        temp = "/dest/stored.bin.otto-0f1e2d3c"
+        scratch = f"{temp}.otto-5a6b7c8d"
+        assert exec_cmd.calls == [
+            (
+                f"uudecode -o {scratch} <<'ottoUU' && cat -- {scratch} > {temp}\n"
+                f"{_PINNED_PAYLOAD_UU}\n"
+                f"ottoUU\n"
+                f"otto_rc=$?\n"
+                f"rm -f -- {scratch}\n"
+                f"(exit $otto_rc)"
+            ),
+            f"stat -c %s -- {temp}",
+            f"mv -- {temp} /dest/stored.bin",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_the_first_chunk_truncates_and_later_ones_append(self, tmp_path: Path) -> None:
+        """``>`` then ``>>``, matching base64's own discipline.
+
+        A stale temp at the generated name is vanishingly unlikely and the
+        cost of being wrong is a file with someone else's bytes in front of
+        it, which the integrity check would catch and the user would then
+        have to explain. One character buys the whole question away.
+        """
+        src = tmp_path / "payload.bin"
+        src.write_bytes(b"\x01" * (_SHELL_CHUNK_BYTES + 1))
+
+        exec_cmd = _RecordingExec(answer_when=_size_answer(_SHELL_CHUNK_BYTES + 1))
+        ft = _make_ft(exec_cmd, base64_flag="absent")
+
+        await ft._run_put([src], Path("/dest"), None)
+
+        temp = "/dest/payload.bin.otto-0f1e2d3c"
+        scratch = f"{temp}.otto-5a6b7c8d"
+        chunk_cmds = [cmd for cmd in exec_cmd.calls if cmd.startswith("uudecode ")]
+        assert len(chunk_cmds) == 2, chunk_cmds
+        assert chunk_cmds[0].startswith(
+            f"uudecode -o {scratch} <<'ottoUU' && cat -- {scratch} > {temp}\n"
+        )
+        assert chunk_cmds[1].startswith(
+            f"uudecode -o {scratch} <<'ottoUU' && cat -- {scratch} >> {temp}\n"
+        )
+
+    @pytest.mark.asyncio
+    async def test_the_scratch_is_a_second_staged_name_beside_the_temp(
+        self, tmp_path: Path
+    ) -> None:
+        """Two independent names in one directory, neither able to be the other.
+
+        The scratch is where a whole chunk's plaintext sits for the instant
+        between ``uudecode`` and ``cat``. If it were the temp, every chunk
+        would append the temp to itself; if it were outside the destination's
+        directory it would risk a different filesystem and a different
+        writability. Both are avoided by drawing it from the same
+        :func:`~otto.host.transfer.shell.staged_temp_name` the temp comes
+        from, which is also what keeps it inside ``max_filename_len``.
+        """
+        assert _PINNED_SCRATCH_TOKEN != _PINNED_TOKEN
+
+        codec = UuencodeCodec(255)
+        temp = Path("/dest/payload.bin.otto-0f1e2d3c")
+        scratch = codec._scratch_for(temp)
+
+        assert scratch != temp
+        assert scratch.parent == temp.parent
+
+    @pytest.mark.asyncio
+    async def test_the_commands_length_does_not_depend_on_the_payloads_bytes(
+        self, tmp_path: Path
+    ) -> None:
+        """A chunk command is the same length whatever the chunk contains.
+
+        THE PROPERTY THE HEREDOC BUYS, and the reason the obvious one-line
+        ``printf`` form was not taken. uu's alphabet contains the single
+        quote -- byte value 7 encodes to one -- so a form that quotes each
+        frame line grows four characters for every quote in the payload:
+        measured against these same paths, 6275 characters for a byte ramp
+        and 11330 for a chunk of ``0x07``, which is past the ~9000 the ssh
+        exec channel carries. A quoted heredoc needs no escaping, so its
+        length is a function of the paths and the chunk SIZE only.
+
+        That matters because of what the alternative's failure would look
+        like. The transport does not reject an over-long command, it drops
+        the whole connection with no server log line
+        (``_MEASURED_EXEC_LINE_LIMIT``), so a payload-dependent length turns
+        "this file happens to contain a run of 0x07" into "the link is
+        flaky". The Tier 3 guard measures ONE payload and could not see it.
+
+        Mutation-verified: emitting the ``printf`` form instead reds this
+        test with the two lengths hundreds of characters apart.
+        """
+        ramp = bytes((i * 7) % 256 for i in range(_SHELL_CHUNK_BYTES))
+        quotes = bytes([0x07]) * _SHELL_CHUNK_BYTES
+        lengths = []
+        for payload in (ramp, quotes):
+            src = tmp_path / "payload.bin"
+            src.write_bytes(payload)
+            exec_cmd = _RecordingExec(answer_when=_size_answer(len(payload)))
+            ft = _make_ft(exec_cmd, base64_flag="absent")
+            await ft._run_put([src], Path("/dest"), None)
+            # The LONGEST command emitted, not the one whose prefix says
+            # "uudecode": a form that escaped the frame would change that
+            # prefix too, and a filter keyed on it would fail with an empty
+            # sequence instead of with the two lengths this test is about.
+            lengths.append(max(len(cmd) for cmd in exec_cmd.calls))
+
+        assert lengths[0] == lengths[1], (
+            f"a {_SHELL_CHUNK_BYTES}-byte chunk of ramp bytes emitted a "
+            f"{lengths[0]}-character command and one of 0x07 bytes emitted "
+            f"{lengths[1]}. uu encodes 0x07 as a single quote, so any form that has "
+            f"to escape the frame grows with the payload -- and an over-long command "
+            f"does not fail, it drops the connection with no log line"
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_get_chunk_command_is_pinned(self, tmp_path: Path) -> None:
+        """``dd | uuencode <name>`` -- one command, no scratch, no decode flag.
+
+        The name argument is required by ``uuencode`` and discarded by otto:
+        every decode is local Python, so what the device calls the stream
+        cannot affect where the bytes land.
+        """
+        remote = Path("/remote/stored.bin")
+        frame = _uu_frame(_PINNED_PAYLOAD)
+
+        exec_cmd = _RecordingExec(outputs=[str(len(_PINNED_PAYLOAD)), frame])
+        ft = _make_ft(exec_cmd, base64_flag="absent", checksum="absent")
+
+        per_file = await ft._run_get([remote], tmp_path, None)
+        assert per_file[remote].status is Status.Success, per_file[remote].msg
+
+        assert exec_cmd.calls == [
+            "stat -c %s -- /remote/stored.bin",
+            "dd if=/remote/stored.bin bs=4096 skip=0 count=1 2>/dev/null | uuencode otto",
+        ]
+        assert (tmp_path / "stored.bin").read_bytes() == _PINNED_PAYLOAD
+
+    @pytest.mark.asyncio
+    async def test_a_failed_chunk_sweeps_the_scratch_and_names_the_temp(
+        self, tmp_path: Path
+    ) -> None:
+        """The transport dropped the command, so the device never ran its own ``rm``.
+
+        The chunk command removes its scratch on both of ITS paths, which
+        covers a decode that failed and a ``cat`` that failed. What it cannot
+        cover is a command that never completed -- and that is the case this
+        sweep exists for, so it is the case the test injects (``fail_when``
+        means the command is never run at all, not that it ran and failed).
+        """
+        src = tmp_path / "stored.bin"
+        src.write_bytes(_PINNED_PAYLOAD)
+
+        exec_cmd = _RecordingExec(fail_when=lambda c: c.startswith("uudecode "))
+        ft = _make_ft(exec_cmd, base64_flag="absent")
+
+        per_file = await ft._run_put([src], Path("/dest"), None)
+
+        temp = "/dest/stored.bin.otto-0f1e2d3c"
+        scratch = f"{temp}.otto-5a6b7c8d"
+        assert per_file[src].status is Status.Error
+        assert per_file[src].msg.startswith(f"{src}: writing a chunk to {temp} failed (exit 1):")
+        assert exec_cmd.calls[-2] == f"rm -f -- {scratch}", (
+            f"the scratch sweep must run before the skeleton's own temp cleanup: {exec_cmd.calls}"
+        )
+        assert exec_cmd.calls[-1] == f"rm -f -- {temp}"
+
+
+class TestUuencodeThroughARealShell:
+    """The uu codec's commands, parsed and run by a real ``/bin/sh``.
+
+    ``_RecordingExec`` proves what otto ASKED for; this proves what the
+    request DOES. Everything but the applet is real here -- see
+    :func:`_uu_applet_shims` for what is not, and for what keeps it honest.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_multi_chunk_hostile_payload_round_trips(self, tmp_path: Path) -> None:
+        """Three chunks including a partial tail, NUL/CR/quote/backslash and all.
+
+        The same 10253-byte payload the Tier 2 sweep measured uu against, so
+        this test and the five-row contract are talking about the same bytes.
+        """
+        payload = _UU_SWEEP_PAYLOAD
+        src = tmp_path / "payload.bin"
+        src.write_bytes(payload)
+        dest_dir = tmp_path / "dest"
+        dest_dir.mkdir()
+
+        exec_cmd = _ShellExecutingExec(tmp_path, path_prefix=_uu_applet_shims(tmp_path))
+        ft = _make_ft(exec_cmd, base64_flag="absent", checksum="absent")
+
+        per_file = await ft._run_put([src], dest_dir, None)
+
+        assert per_file[src].status is Status.Success, per_file[src].msg
+        assert (dest_dir / "payload.bin").read_bytes() == payload
+
+    @pytest.mark.asyncio
+    async def test_the_codec_alone_appends_plaintext_not_frames(self, tmp_path: Path) -> None:
+        """THE HEADLINE GUARD: decode per chunk, append plaintext -- or lose 6157 bytes.
+
+        Driven at the CODEC rather than through ``_put_one``, deliberately.
+        The staging skeleton verifies the temp before its ``mv``, so the
+        end-to-end test above reddens under the container mutation too -- but
+        it reddens as an integrity FAILURE, which is the backstop doing its
+        job and says nothing about what the codec produced. Here there is no
+        backstop: the loop reports success and the file on disk is short.
+
+        THE MUTATION THIS EXISTS FOR is the naive port of base64's order --
+        append every chunk's FRAMED text and let the device decode the
+        concatenation once. It is the shape a reader reaches for, it exits
+        rc=0 on all five matrix rows, and it returns 4096 of 10253 bytes
+        (``todo/busybox-parity-sweep-2026-08-11.md``). Applied to
+        ``UuencodeCodec.send_chunks``, this test reds on the LENGTH -- a
+        truncated file under a clean outcome -- rather than on a status.
+        """
+        payload = _UU_SWEEP_PAYLOAD
+        src = tmp_path / "payload.bin"
+        src.write_bytes(payload)
+        temp = tmp_path / "temp.bin"
+
+        exec_cmd = _ShellExecutingExec(tmp_path, path_prefix=_uu_applet_shims(tmp_path))
+        codec = UuencodeCodec(255)
+        outcome = await codec.send_chunks(
+            shell_module.PutChunkLoop(
+                exec_cmd=exec_cmd,
+                src=src,
+                temp=temp,
+                quoted_temp=shlex.quote(str(temp)),
+                on_sent=lambda _chunk: None,
+            )
+        )
+
+        assert outcome.error is None, outcome.error
+        assert outcome.chunks == 3, outcome.chunks
+        assert temp.read_bytes() == payload, (
+            f"the codec's loop reported no error and left {len(temp.read_bytes())} of "
+            f"{len(payload)} bytes on the temp. uu is a CONTAINER format: appending "
+            f"frames and decoding once returns only the first chunk, at rc=0, on every "
+            f"matrix row -- which is why this codec decodes per chunk and appends "
+            f"PLAINTEXT"
+        )
+
+    @pytest.mark.asyncio
+    async def test_no_scratch_survives_a_completed_transfer(self, tmp_path: Path) -> None:
+        src = tmp_path / "payload.bin"
+        src.write_bytes(_UU_SWEEP_PAYLOAD)
+        dest_dir = tmp_path / "dest"
+        dest_dir.mkdir()
+
+        exec_cmd = _ShellExecutingExec(tmp_path, path_prefix=_uu_applet_shims(tmp_path))
+        ft = _make_ft(exec_cmd, base64_flag="absent", checksum="absent")
+
+        await ft._run_put([src], dest_dir, None)
+
+        assert sorted(p.name for p in dest_dir.iterdir()) == ["payload.bin"], (
+            f"a completed uu PUT left something beside the destination: "
+            f"{sorted(p.name for p in dest_dir.iterdir())}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_failed_decode_leaves_no_scratch_behind(self, tmp_path: Path) -> None:
+        """The measured leak, and the ``rm -f`` that closes it.
+
+        A ``uudecode`` that cannot parse its frame still CREATES its output
+        file before failing -- measured on all five rows, ``uudecode: short
+        file`` at rc 1 with an empty scratch on disk. So the removal cannot
+        ride the success path. Injected here by corrupting the frame the
+        codec emits, which is the only way to reach a device-side decode
+        failure without a device.
+
+        Mutation-verified: chaining the ``rm -f`` with ``&&`` instead of
+        running it unconditionally reds this test with the scratch still in
+        the destination directory.
+        """
+        src = tmp_path / "payload.bin"
+        src.write_bytes(b"hello world")
+        dest_dir = tmp_path / "dest"
+        dest_dir.mkdir()
+
+        shims = _uu_applet_shims(tmp_path)
+
+        class _CorruptingExec(_ShellExecutingExec):
+            async def __call__(self, cmd: str, *args: object, **kwargs: object) -> CommandResult:
+                if cmd.startswith("uudecode "):
+                    cmd = cmd.replace("begin 600 otto", "begin 600 otto\nNOTUUENCODED")
+                return await super().__call__(cmd, *args, **kwargs)  # type: ignore[arg-type]
+
+        exec_cmd = _CorruptingExec(tmp_path, path_prefix=shims)
+        ft = _make_ft(exec_cmd, base64_flag="absent", checksum="absent")
+
+        per_file = await ft._run_put([src], dest_dir, None)
+
+        assert per_file[src].status is Status.Error
+        assert list(dest_dir.iterdir()) == [], (
+            f"a failed uu chunk left files in the destination directory: "
+            f"{sorted(p.name for p in dest_dir.iterdir())} -- the scratch must be "
+            f"removed whether the decode worked or not"
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_get_round_trips_the_devices_own_uuencode(self, tmp_path: Path) -> None:
+        remote_dir = tmp_path / "remote"
+        remote_dir.mkdir()
+        remote = remote_dir / "payload.bin"
+        remote.write_bytes(_UU_SWEEP_PAYLOAD)
+        landing = tmp_path / "landing"
+        landing.mkdir()
+
+        exec_cmd = _ShellExecutingExec(tmp_path, path_prefix=_uu_applet_shims(tmp_path))
+        ft = _make_ft(exec_cmd, base64_flag="absent", checksum="absent")
+
+        per_file = await ft._run_get([remote], landing, None)
+
+        assert per_file[remote].status is Status.Success, per_file[remote].msg
+        assert (landing / "payload.bin").read_bytes() == _UU_SWEEP_PAYLOAD
+
+
+class TestUuFramingIsSafeAndStrict:
+    """The two properties the frame itself has to have: unquotable, and undecodable-loud."""
+
+    def test_no_frame_line_can_ever_close_the_heredoc_early(self) -> None:
+        """The delimiter is unmatchable BY CONSTRUCTION, not by luck.
+
+        A heredoc body ends at a line equal to the delimiter, so a payload
+        able to produce that line could end the command early and let the
+        rest of the frame be read as shell. uu's alphabet is 0x20-0x60 --
+        every data character is ``chr(0x21..0x60)`` and the length character
+        is ``chr(0x20 + n)`` -- which excludes lowercase entirely, so a
+        delimiter carrying one cannot be produced by any payload.
+
+        Asserted over every byte value in every position within a line rather
+        than over a sample: the alphabet claim is what the safety rests on,
+        so the test checks the alphabet, not a payload.
+        """
+        assert any(c.islower() for c in _UU_HEREDOC_DELIMITER), (
+            "the delimiter's safety comes from carrying a character uu cannot "
+            "emit; lowercase is that character class"
+        )
+
+        every_byte = bytes(range(256))
+        alphabet = set()
+        for length in (1, 2, 44, 45):
+            for start in range(0, len(every_byte) - length, length):
+                for line in _uu_frame(every_byte[start : start + length]).splitlines()[1:-2]:
+                    alphabet.update(line)
+
+        assert alphabet, "the sweep produced no body lines at all"
+        assert all(0x21 <= ord(c) <= 0x60 for c in sorted(alphabet)), (
+            f"a uu body line carried a character outside 0x21-0x60: "
+            f"{sorted(c for c in alphabet if not 0x21 <= ord(c) <= 0x60)!r}"
+        )
+        assert not any(c.islower() for c in alphabet)
+        assert " " not in alphabet, (
+            "a body line carried a SPACE, so a transport that strips trailing "
+            "whitespace could shorten a line and silently drop bytes from its decode"
+        )
+
+    @pytest.mark.parametrize(
+        ("text", "why"),
+        [
+            ("", "carried no `begin` header"),
+            (f"begin 664 otto\n{_UU_FULL_LINE}\n`", "never closed by an `end` line"),
+            (f"begin 664 otto\n{_UU_FULL_LINE}\nend", "no zero-length terminator line"),
+            (f"begin 664 otto\n`\n{_UU_FULL_LINE}\nend", "carried data after its terminator"),
+            ("begin 664 otto\nNOTUU\n`\nend", "declares 46 bytes"),
+            (f"begin 664 otto\n{_UU_FULL_LINE[:-1]}\n`\nend", "declares 45 bytes"),
+            ("begin 664 otto\ngarbage line here\n`\nend", "declares 7 bytes"),
+        ],
+    )
+    def test_a_malformed_frame_raises_rather_than_returning_what_it_managed(
+        self, text: str, why: str
+    ) -> None:
+        """Strict for the reason base64's decode passes ``validate=True``.
+
+        A lenient parse turns a truncated reply, a leaked stderr line or a
+        login banner into fewer bytes with no error at all -- and GET's own
+        integrity check compares against a size the DEVICE reported, so a
+        short decode is caught, but as a size mismatch naming neither the
+        chunk nor the reason. Failing here names both.
+        """
+        with pytest.raises(ValueError, match=re.escape(why)):
+            shell_module._uu_unframe(text)
+
+    def test_a_well_formed_frame_round_trips_every_byte_value(self) -> None:
+        payload = bytes(range(256)) * 3
+        assert shell_module._uu_unframe(_uu_frame(payload)) == payload
+
+    def test_an_empty_frame_decodes_to_no_bytes(self) -> None:
+        """What a zero-length ``dd`` read comes back as, measured over real ssh."""
+        assert shell_module._uu_unframe("begin 664 otto\n`\nend\n") == b""

@@ -148,7 +148,9 @@ count against another.
 
 
 @contextlib.asynccontextmanager
-async def busybox_host(daemon: bbd.LoopbackDropbear) -> "AsyncIterator[UnixHost]":
+async def busybox_host(
+    daemon: bbd.LoopbackDropbear, userland_options: "dict[str, str] | None" = None
+) -> "AsyncIterator[UnixHost]":
     """Yield a real `UnixHost` pointed at *daemon*, built the way a lab builds one.
 
     THROUGH :func:`~otto.host.factory.create_host_from_dict`, from a host dict
@@ -176,6 +178,11 @@ async def busybox_host(daemon: bbd.LoopbackDropbear) -> "AsyncIterator[UnixHost]
     default to `"scp"`: all three transfer tests then error here with `the
     `busybox` os_profile built a host whose transfer is 'scp'` instead of
     quietly measuring a different backend.
+
+    *userland_options* is passed through to the host dict, and it is the only
+    way this tier can reach the `shell` backend's uu codec at all. See
+    :func:`test_the_uu_codec_moves_a_payload_over_real_ssh` for why that is
+    needed and what it costs.
     """
     host = create_host_from_dict(
         {
@@ -186,6 +193,7 @@ async def busybox_host(daemon: bbd.LoopbackDropbear) -> "AsyncIterator[UnixHost]
             "creds": [{"login": daemon.username, "password": "unused-pubkey-auth"}],
             "term": "ssh",
             "ssh_options": {"port": daemon.port, "client_keys": [str(daemon.keys.client)]},
+            **({"userland_options": userland_options} if userland_options else {}),
         }
     )
     assert host.transfer == "shell", (
@@ -571,4 +579,131 @@ async def test_a_multi_chunk_get_reassembles_the_devices_wrapped_base64(tier3_dr
         f"{len(payload)} on the device. Chunks are decoded and appended in order, so a "
         f"dropped line from a wrapped reply, a transposed chunk or a short `dd` read all "
         f"land here"
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_uu_codec_moves_a_payload_over_real_ssh(tier3_dropbear, tmp_path):
+    """The `shell` backend's OTHER codec, over the same real channel, both directions.
+
+    THE COVERAGE PROBLEM THIS SOLVES, stated plainly because the obvious test
+    plan does not solve it. The uu codec exists for BusyBox 1.16.1, the one
+    matrix row with no `base64` applet, and `TIER3_RELEASE` runs 1.35.0 --
+    one row, on cost grounds. So a uu test that waited for its own device
+    would never run here, and uu would ship with chroot-only coverage: exactly
+    the gap phase 4 left for base64 and phase 5 closed.
+
+    WHAT MAKES THE WAY OUT LEGITIMATE is that the codec is chosen from a
+    DECLARABLE fact. `userland_options` sets `base64_flag` to `absent`, which
+    `Userland` treats as settled -- a declaration is as authoritative as a
+    measurement, by design -- and `ShellFileTransfer._select_codec` then picks
+    uu exactly as it would on a device that answered the same way. Nothing is
+    monkeypatched and no test-only switch exists; the selector runs its real
+    branch on its real input.
+
+    BE HONEST ABOUT THE ONE THING THIS DECLARATION IS: a lie about THIS
+    device. 1.35.0 has `base64`, and this host says it does not. What that
+    costs is precision about which row was proved -- the transport, the
+    channel, the daemon, the chroot and every command are real, and the
+    applet the commands actually run is this row's own `uudecode`, which is
+    present on all five. What it does not cost is the codec's per-row
+    correctness, because that is
+    `tests/busybox/test_shell_codec_contracts.py`'s job and it covers 1.16.1
+    itself.
+
+    THE LINE-LENGTH GUARD IS THE RELATIONSHIP AGAIN, not a number, matching
+    the base64 test above -- but the quantity is different and the difference
+    is measured rather than assumed. uu's chunk command is MULTI-LINE: 100
+    lines, of which 95 are the frame at up to 61 characters each and the
+    longest is the 186-character first line that carries the scratch path
+    twice and the temp path once. The ceiling is on the WHOLE command string
+    rather than on its longest line -- measured on this tier, a 400-line
+    command of 18-character lines (8991 characters) crosses intact and 500
+    such lines (9009) drops the connection, the same boundary
+    :data:`_MEASURED_EXEC_LINE_LIMIT` records for a single line. So the guard
+    compares the total, and the multi-line shape claims no extra room: for a
+    26-character destination the whole command measures 5952 characters
+    against base64's 5533.
+    """
+    name = unique_name("uuchunks")
+    payload = multi_chunk_payload()
+    src = tmp_path / name
+    src.write_bytes(payload)
+    landing = tmp_path / "landing"
+    landing.mkdir()
+
+    async with busybox_host(tier3_dropbear, {"base64_flag": "absent"}) as host:
+        emitted: list[str] = []
+        real_exec = host._file_transfer._exec_cmd
+
+        async def recording_exec(cmd, *args, **kwargs):
+            emitted.append(cmd)
+            return await real_exec(cmd, *args, **kwargs)
+
+        host._file_transfer._exec_cmd = recording_exec
+
+        put_error: "Exception | None" = None
+        put = Result(Status.Error, msg="the PUT never returned a result")
+        try:
+            put = await host.put(src, _DEVICE_TMP, show_progress=False)
+        except (asyncssh.Error, OSError) as e:
+            put_error = e
+
+        chunk_cmds = [cmd for cmd in emitted if cmd.startswith("uudecode ")]
+        assert chunk_cmds, (
+            f"the transfer emitted no uu chunk command, so it did not take the codec this "
+            f"test exists for -- the declaration that forces it is the first thing to "
+            f"check. Commands seen: {[cmd[:40] for cmd in emitted]}"
+        )
+        assert not any(cmd.startswith("printf ") for cmd in emitted), (
+            f"a base64 chunk command was emitted on a host that declared base64_flag="
+            f"'absent': {[cmd[:40] for cmd in emitted if cmd.startswith('printf ')]}"
+        )
+        longest = max(len(cmd) for cmd in chunk_cmds)
+        assert longest <= _MEASURED_EXEC_LINE_LIMIT, (
+            f"otto emitted a {longest}-character uu chunk command, and this transport "
+            f"carries {_MEASURED_EXEC_LINE_LIMIT} intact before it drops the whole "
+            f"connection with no server log line. The command is a heredoc, so this is its "
+            f"TOTAL length and not its longest line -- the ceiling was measured on the "
+            f"total (8991 characters of 18-character lines through, 9009 broken), so a "
+            f"multi-line shape buys no room here. `_SHELL_CHUNK_BYTES` is "
+            f"{_SHELL_CHUNK_BYTES} bytes of plaintext; uu expands that to 95 framed lines "
+            f"plus the scratch path TWICE and the temp path once, so a longer destination "
+            f"spends this headroom about three times as fast as base64's does"
+        )
+        expected_chunks = -(-len(payload) // _SHELL_CHUNK_BYTES)
+        assert len(chunk_cmds) == expected_chunks, (
+            f"a {len(payload)}-byte payload at {_SHELL_CHUNK_BYTES} bytes per chunk is "
+            f"{expected_chunks} chunk commands, and {len(chunk_cmds)} were emitted -- the "
+            f"guard above measured a different transfer than the one it was written for"
+        )
+
+        if put_error is not None:
+            raise AssertionError(
+                f"the uu chunk commands were inside the measured ceiling, but the PUT "
+                f"still failed on the transport: {type(put_error).__name__}: {put_error}"
+            ) from put_error
+        assert put.is_ok, f"PUT failed: {put.msg} {put.value}"
+        assert_landed_in_the_root(tier3_dropbear, name, payload)
+
+        got = await host.get(_DEVICE_TMP / name, landing, show_progress=False)
+        assert got.is_ok, f"GET failed: {got.msg} {got.value}"
+
+    device_tmp = device_path(tier3_dropbear, name).parent
+    strays = sorted(p.name for p in device_tmp.iterdir() if p.name.startswith(f"{name}.otto-"))
+    assert strays == [], (
+        f"the uu transfer left {strays} in the device's /tmp. Both the staged temp and the "
+        f"per-chunk scratch are named `<dest>.otto-<token>`, so anything still carrying "
+        f"that prefix after a successful transfer was not cleaned up -- the scratch is "
+        f"removed by the same command that creates it, and a real device would otherwise "
+        f"accumulate one per file. Scoped to this transfer's own basename rather than to "
+        f"the whole directory because the Tier 3 root is SESSION-scoped and every other "
+        f"test in this module has already written into it"
+    )
+    back = landing / name
+    assert back.read_bytes() == payload, (
+        f"the uu GET reassembled {len(back.read_bytes())} bytes that are not the "
+        f"{len(payload)} that were sent. Each chunk comes back as its own `begin`/`end` "
+        f"frame and is unframed locally, so a dropped line, a transposed chunk or a short "
+        f"`dd` read all land here"
     )
