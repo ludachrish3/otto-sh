@@ -180,6 +180,25 @@ def test_unit_tier_has_no_vm_markers():
     assert not offenders, f"VM markers found under tests/unit/: {offenders}"
 
 
+def _string_constants(tree: ast.Module) -> "dict[str, str]":
+    """Name -> value for every ``NAME = "..."`` assignment in *tree*.
+
+    Walks the whole tree rather than only ``tree.body``, so a constant
+    assigned inside a function is resolved too; every such name in this
+    repo's build files is in fact module-level (``DASHBOARD_MARKER_EXPR``,
+    ``PRIMARY_PYTHON``, ``DEEP_PYTHON``).
+    """
+    return {
+        node.targets[0].id: node.value.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Name)
+        and isinstance(node.value, ast.Constant)
+        and isinstance(node.value.value, str)
+    }
+
+
 def _python_marker_expressions(source: Path) -> list[str]:
     """Every marker expression passed via ``-m`` anywhere in *source*.
 
@@ -195,15 +214,7 @@ def _python_marker_expressions(source: Path) -> list[str]:
     it.
     """
     tree = ast.parse(source.read_text())
-    assigns: dict[str, str] = {
-        node.targets[0].id: node.value.value
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Assign)
-        and len(node.targets) == 1
-        and isinstance(node.targets[0], ast.Name)
-        and isinstance(node.value, ast.Constant)
-        and isinstance(node.value.value, str)
-    }
+    assigns = _string_constants(tree)
     exprs: list[str] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Call):
@@ -366,6 +377,18 @@ def test_resource_slice_legs_exclude_stability_and_chaos():
             assert not missing, f"{label} -m expression missing {missing}: {expr!r}"
 
 
+def _makefile_marker_variables(text: str) -> "dict[str, str]":
+    """The ``M_* := ...`` marker-expression variables the Makefile's lanes share."""
+    return dict(re.findall(r"^(M_[A-Z_]+) := (.+)$", text, re.MULTILINE))
+
+
+def _expand_makefile_variables(expr: str, variables: "dict[str, str]") -> str:
+    """*expr* with every ``$(M_*)`` reference replaced by its definition."""
+    for name, value in variables.items():
+        expr = expr.replace(f"$({name})", value)
+    return expr
+
+
 def _makefile_marker_expressions(text: str) -> list[str]:
     """Every ``-m`` expression in the Makefile, with ``M_*`` variables expanded.
 
@@ -373,15 +396,11 @@ def _makefile_marker_expressions(text: str) -> list[str]:
     quotes real expressions, and a scanner that reads documentation as
     configuration fails on the wrong thing.
     """
-    variables = dict(re.findall(r"^(M_[A-Z_]+) := (.+)$", text, re.MULTILINE))
+    variables = _makefile_marker_variables(text)
     live = "\n".join(line for line in text.splitlines() if not line.strip().startswith("#"))
-    exprs = []
-    for raw in re.findall(r'-m\s+"([^"]+)"', live):
-        expanded = raw
-        for name, value in variables.items():
-            expanded = expanded.replace(f"$({name})", value)
-        exprs.append(expanded)
-    return exprs
+    return [
+        _expand_makefile_variables(raw, variables) for raw in re.findall(r'-m\s+"([^"]+)"', live)
+    ]
 
 
 def _catchall(exprs: "list[str]") -> list[str]:
@@ -633,7 +652,7 @@ _VALUE_FLAGS = frozenset(
 )
 
 
-def _python_pytest_invocations(source: Path) -> "list[list[str]]":
+def _python_pytest_invocations(source: Path, *, resolve_names: bool = False) -> "list[list[str]]":
     """Every ``pytest`` argv built in *source*, each kept whole as its literal tokens.
 
     A second pass over the same syntax :func:`_python_marker_expressions`
@@ -645,13 +664,22 @@ def _python_pytest_invocations(source: Path) -> "list[list[str]]":
 
     ``*BUNDLE`` arguments are expanded from module-level tuple/list
     assignments (``HOSTLESS_TEST_ARGS``). Non-literal arguments are dropped
-    (``_junitxml(session, ...)``, ``*session.posargs``,
+    (``_junitxml(session, ...)``, ``*session.posargs``, and by default
     ``DASHBOARD_MARKER_EXPR``); every way that can be wrong is wrong in the
-    loud direction — a dropped path makes an invocation look path-less and so
-    WIDER, and a dropped ``-m`` puts it in front of this guard rather than
-    past it.
+    loud direction FOR G8f — a dropped path makes an invocation look path-less
+    and so WIDER, and a dropped ``-m`` puts it in front of that guard rather
+    than past it.
+
+    ``resolve_names=True`` additionally substitutes string constants for their
+    bare-name references (:func:`_string_constants`). Off by default because
+    dropping them is the safe direction for G8f's presence question, and ON
+    for the caller that needs a flag's VALUE and not just its presence: the
+    lane-leg membership gate in ``tests/unit/test_lane_invariants.py``, where
+    a dropped ``DASHBOARD_MARKER_EXPR`` leaves ``-m`` adjacent to
+    ``"--browser"`` and the next token would be read as the marker expression.
     """
     tree = ast.parse(source.read_text())
+    constants = _string_constants(tree) if resolve_names else {}
     bundles: "dict[str, list[ast.expr]]" = {
         node.targets[0].id: list(node.value.elts)
         for node in ast.walk(tree)
@@ -672,6 +700,8 @@ def _python_pytest_invocations(source: Path) -> "list[list[str]]":
                 ]
             elif isinstance(elt, ast.Constant) and isinstance(elt.value, str):
                 out.append(elt.value)
+            elif isinstance(elt, ast.Name) and elt.id in constants:
+                out.append(constants[elt.id])
         return out
 
     found: "list[list[str]]" = []
