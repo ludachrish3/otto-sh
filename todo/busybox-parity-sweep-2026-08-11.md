@@ -4,7 +4,10 @@ Queue for the full-parity workstream named in
 `docs/superpowers/specs/2026-08-11-busybox-host-support-design.md` (exit
 criterion 6): landmines found while building phase 4's `shell` transfer
 backend, each with its measurement, so the sweep starts from evidence rather
-than from a fresh survey. One item so far.
+than from a fresh survey.
+
+Two items, and they are **one effort**: the second is the restructuring the
+first needs in order to land at all. Do not schedule them separately.
 
 ## `uuencode`/`uudecode` fallback for BusyBox 1.16.1 (no `base64` applet) — MEASURED-FEASIBLE
 
@@ -77,8 +80,90 @@ inherently multi-line, it cannot ride a single `printf '%s' '<blob>'` command
 line the way base64 does; that shape has to change too, which is where the
 transport-path line-length question moves.
 
-Not decided here: whether the second codec is an internal strategy inside the
-one `shell` backend or a separately registered backend. The measurement argues
-the shared part is the staging skeleton (temp-then-rename in the destination's
-own directory, integrity-verified BEFORE the rename) and the codec-specific
-part is the whole chunk loop, not merely the encode call.
+Not decided here: how the second codec is structured. That is the next item,
+which this measurement is the input to.
+
+## Shell transfer: make the encoding a pluggable unit — DESIGN OPEN
+
+Raised by Chris 2026-08-14, while the gap-registry raise sites were being
+wired: does the `shell` backend have subtypes for `base64` and uu, or should
+those be separate backends (`shell_base64` / `shell_uucode`)? Each codec
+plausibly has its own options, which is an argument for separating them.
+
+**Today there is no seam at all.** `ShellFileTransfer` assumes `base64` end to
+end, not merely at the encode call:
+
+- `_SHELL_CHUNK_BYTES` is 4096 *plaintext* bytes because base64 expands that to
+  5464 characters, and the emitted command line measures 5534 against a
+  measured 9000-character ssh exec ceiling;
+- PUT is `printf '%s' '<b64>' | base64 <flag> >> <temp>`, GET is
+  `dd … | base64`;
+- there is **no `ShellOptions` class**. The codec is modelled as a *userland
+  capability* (`UserlandOptions.base64_flag`), alongside `timeout_style`,
+  `checksum`, `stat_size`, `elevation` and `shell_dialect`.
+
+### The recommendation, and why
+
+**One operator-facing `shell` backend. The codec is an internal unit selected
+by probe, not a backend name.** Two reasons:
+
+1. Which codec a device has is a **device fact otto probes**, not an operator
+   choice. Putting it in the backend name forces the operator to know it, makes
+   the `busybox` profile's `valid_transfers` list both spellings, and turns a
+   wrong guess into an avoidable failure — the opposite of what `Userland` is
+   for. It is also inconsistent with every other device-spelling variance here:
+   there is no `nc_openbsd` / `nc_busybox` split, there is `NcOptions.exec_name`
+   plus `timeout_style` inside one backend.
+2. What the two codecs genuinely share is the **staging skeleton** —
+   temp-then-rename in the destination's own directory, integrity-verified
+   BEFORE the rename. That is phase 4's hard-won part and it is
+   codec-independent.
+
+But note what the measurement above forces: the codec-specific unit is the
+**whole chunk loop**, not an `encode()` call. So this is a template method with
+a codec-owned loop body, NOT a strategy object with one thin hook. A design that
+assumes the latter will not fit uu.
+
+Chris's "distinct options" instinct is right in substance and does not require
+separate backends: if per-codec knobs are ever needed, one `ShellOptions` with
+per-codec fields covers it without making the operator choose the codec.
+
+| route | pros | cons |
+| --- | --- | --- |
+| one backend, codec = internal unit (recommended) | `transfer: shell` unchanged, no lab-config migration; codec stays probed; the unit can own chunking, framing and loop order | one class does more; needs the codec probe |
+| separate registered backends | clean per-codec namespaces; each algorithm self-contained | operator must know a device fact otto can probe; `valid_transfers` grows; breaks the `nc`/`timeout_style` precedent; duplicates the staging skeleton |
+| swap the encode call only | smallest diff | **measured not to work** — see the uu item above |
+
+### Work items
+
+1. A `Userland` codec probe: `base64` / `uuencode` / neither. Constraint already
+   known: `busybox --list` **does not exist on 1.16.1** (exits 1,
+   `--list: applet not found`), so applet *enumeration* cannot be the basis;
+   per-applet detection is the portable shape and its round-trip cost at
+   resolution time is unmeasured.
+2. Restructure `ShellFileTransfer` so the staging skeleton and the chunk loop
+   are separable, with the base64 path landing on the new seam unchanged. This
+   should be provable: the refactor is done right when base64's emitted command
+   lines are byte-identical before and after.
+3. The uu path, using the **decode-per-chunk, append-plaintext** order, with
+   `-o` always passed.
+4. Re-measure the emitted line length for uu against the real transport. base64's
+   5534-vs-9000 headroom does not transfer: a uu chunk is 92 lines rather than
+   one, so the question changes shape rather than scaling.
+5. Check `begin 664` against `put --mode` — uu bakes the source file's mode into
+   its header, and otto has a `--mode` feature that may disagree with it.
+
+### Blocks, and is blocked by
+
+- **Blocks `shell-transfer-base64`'s raise-site wiring**, which is deliberately
+  held. That record's message currently says "use a backend the device supports,
+  or install base64"; once a codec probe exists, the honest message on a 1.16.1
+  device becomes "otto will use uu instead". Wiring it first means writing a
+  message we would then revise. See `todo/busybox-phase-5-followups-2026-08-13.md` §1.
+- **Shares its probe question with four other surfaces.** `sftp-transfer`,
+  `scp-transfer`, `nc-transfer` and `shutdown-command` are each blocked on a
+  device-capability signal that does not exist, and it is the same kind of
+  question as the codec probe — one mechanism likely serves all five. Note the
+  `busybox` profile declares `valid_transfers: ["shell","scp","sftp","ftp","nc"]`
+  **deliberately**, because a device with a real sftp-server or netcat installed
+  works, so those refusals must be device-conditional rather than blanket.
