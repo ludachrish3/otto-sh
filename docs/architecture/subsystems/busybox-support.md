@@ -44,9 +44,9 @@ is an applet everywhere, so only the `shutdown` half is a gap.
 Every record carries one of two statuses, and the status decides whether otto
 would block the call. Read the whole of this section together with the note
 below it: the rule is implemented in
-{func}`~otto.host.userland.refuse_if_gapped`, and **exactly two product call
-sites consult that function** — so for two surfaces below the refusal is what
-otto does, and for the other six it is still what a wired call site would do.
+{func}`~otto.host.userland.refuse_if_gapped`, and **exactly three product call
+sites consult that function** — so for three surfaces below the refusal is what
+otto does, and for the other five it is still what a wired call site would do.
 Each section's **Status:** line says which.
 
 `measured-broken`
@@ -66,13 +66,14 @@ Each section's **Status:** line says which.
   work.
 
 ```{note}
-**Two product call sites consult the registry; six surfaces are still
+**Three product call sites consult the registry; five surfaces are still
 unwired.** They are [`daemon-launch`](#daemon-launch) — `otto link impair
 --expire` reads that record and refuses to launch its expire timer on a host
-declaring `has_bash=False` — and
-[`run-command-line-length`](#run-command-line-length), where `Host.run()` reads
-its record and refuses before it types anything. Both go through
-{func}`~otto.host.userland.refuse_if_gapped`. For the other six
+declaring `has_bash=False`; [`run-command-line-length`](#run-command-line-length),
+where `Host.run()` reads its record and refuses before it types anything; and
+[`file-ops-base64`](#file-ops-base64), where `read_file`/`write_file` refuse on a
+host whose userland answered that it has no `base64` at all. All three go through
+{func}`~otto.host.userland.refuse_if_gapped`. For the other five
 `measured-broken` rows, wiring a call site is a behaviour change that belongs
 with the call site being changed, and it has not happened — read those rows as
 "what otto knows", and each `reason` and **Status:** line as what such a refusal
@@ -80,10 +81,14 @@ with the call site being changed, and it has not happened — read those rows as
 
 Two refusals that fire in otto today are *not* this table at all:
 `PosixPrivilege._elevate` and `ShellFileTransfer._run_put`/`_run_get` are
-*probe-driven*, refusing on what the host in front of them answered — a
-different trigger from "otto measured this on the matrix". That is why
-[`shell-transfer-base64`](#shell-transfer-base64) refuses before sending
-despite being unwired here: it gets there by probing `base64_flag`.
+*probe-driven*, refusing on what the host in front of them answered *and*
+printing their own message — a different thing from "otto measured this on the
+matrix". That is why [`shell-transfer-base64`](#shell-transfer-base64) refuses
+before sending despite being unwired here: it gets there by probing
+`base64_flag`. The third call site above is the one that mixes the two, and the
+split is worth keeping straight: its *predicate* is that same probe, while its
+*verdict* and its *message* are the record's, so the probe decides only that
+this host is in the measured class.
 ```
 
 ## The declared gaps
@@ -95,7 +100,7 @@ error prints it verbatim; the sections below are its readable form.
 | Surface | Status | What it means for you |
 | --- | --- | --- |
 | [`shell-transfer-base64`](#shell-transfer-base64) | `measured-broken` | The `shell` transfer backend cannot move a single file on a device with no `base64` applet. |
-| [`file-ops-base64`](#file-ops-base64) | `measured-broken` | `read_file` and `write_file` break on those same devices, and blame the file rather than the missing applet. |
+| [`file-ops-base64`](#file-ops-base64) | `measured-broken` | `read_file` and `write_file` are refused on those same devices, rather than blaming the file for the missing applet — and, for a write, emptying it. |
 | [`sftp-transfer`](#sftp-transfer) | `measured-broken` | No sftp subsystem on a stock BusyBox device. Use the `shell` backend. |
 | [`scp-transfer`](#scp-transfer) | `measured-broken` | No `scp` binary on a stock BusyBox device. Use the `shell` backend. |
 | [`nc-transfer`](#nc-transfer) | `measured-broken` | The `nc` backend cannot drive BusyBox's own `nc` applet. A real netcat installed alongside is fine. |
@@ -130,25 +135,59 @@ with `-d`.
 
 ### file-ops-base64
 
-**Status:** `measured-broken` — otto *would* refuse before sending anything,
-once a call site consults the registry. These two call sites are furthest from
-that: as below, they consult no `Userland` at all, so today they cannot refuse
-up front even on a probe.
+**Status:** `measured-broken` — and this is the third of the three surfaces on
+this page that otto actually refuses *from this table*. `Host.read_file` and
+`Host.write_file` read the record through
+{func}`~otto.host.userland.refuse_if_gapped` and decline the operation.
 
-`Host.read_file` and `Host.write_file` move their payload through the device's
-`base64` too, but unlike the `shell` transfer they hard-code it: `file_ops.py`
-emits `base64 <path>` and `... | base64 -d` without ever consulting
-`Userland.base64_flag`. So on a device with no `base64` they can neither refuse
-up front nor adapt — the caller gets the device's own `not found`, attributed to
-the file it asked for.
+Both move their payload through the device's `base64`, and unlike the `shell`
+transfer they hard-code it: `file_ops.py` emits `base64 <path>` and
+`... | base64 -d` whatever `Userland.base64_flag` says. They cannot *adapt*, so
+otto refuses them instead.
+
+**What the refusal replaced was a failure that blamed the wrong thing** —
+and, on a write, destroyed a file. `read_file` turned the device's own
+`base64: not found` into a `FileNotFoundError` naming the caller's path, sending
+them to look for a file the device has. `write_file` was worse than misleading:
+the shell opens `> <path>` before it resolves `base64`, so an overwriting write
+emptied the destination and *then* reported failure. Refusing leaves the file
+exactly as it was found. An `append=True` write builds `>>`, which never
+truncated, and is refused on the same terms — it would still write nothing.
+
+**Which hosts are refused.** Those whose userland *settled* `base64_flag` on
+`absent` — the device answered both decode probes, or the lab entry declared it
+in `userland_options`. Unlike the other two refusals this one is **probed**, so
+the first `read_file`/`write_file` on a host pays one userland resolution
+(cached per host object thereafter, and up to 30s on a host that will not answer
+at all — see {meth}`~otto.host.userland.Userland.resolve`). There is no declared
+`base64` fact to key on instead, and the `busybox` os_profile deliberately
+declares none, because a declaration would skip the probe and a wrong guess
+would be unfixable from the device.
+
+A host whose probe round never *arrived* is **not** refused, even though
+`base64_flag` reads `absent` for it too: that value is what otto assumes before
+it has asked anything, and treating it as a measurement would turn a refused ssh
+channel into a verdict about the device's applets. Such a host attempts the
+operation exactly as it did before. Neither is a host with no resolver at all —
+`LocalHost` and a docker container host never build one.
+
+**What is not refused.** Only these two methods. `put`/`get` choose a transfer
+backend and are covered by [`shell-transfer-base64`](#shell-transfer-base64),
+and the other file operations — `exists`, `ls`, `mkdir`, `rm`, `cp`, `mv` — need
+nothing but a shell and are untouched.
 
 **Measured:** the same 1.16.1 rows as [`shell-transfer-base64`](#shell-transfer-base64),
-against two call sites in `src/otto/host/file_ops.py` that read as unconditional
-in the source: no `Userland` is consulted on either path.
+against two call sites in `src/otto/host/file_ops.py` that still emit one fixed
+spelling each. The destructive half was measured directly, 2026-08-14, on the
+1.16.1 artifact's own ash with `PATH` blocked: `echo aGk= | base64 -d > <file>`
+against a 17-byte file answered `sh: base64: not found` and left that file at
+0 bytes, while `>>` left it intact.
 
-**Queued for:** the full-parity workstream, with the entry above — the codec
-probe queued there is what these two would read, so the two are one change and
-not two.
+**Queued for:** the refusal has landed; a *fix* is still the full-parity
+workstream's, with the entry above — the codec probe queued there is what these
+two would read, so the two are one change and not two. The record stays
+`measured-broken` because the surface still is: otto now declines the operation
+instead of emitting one it cannot run.
 
 ### sftp-transfer
 
@@ -209,7 +248,7 @@ replace the missing `-N`).
 
 ### daemon-launch
 
-**Status:** `measured-broken` — and this is one of the two surfaces on this page
+**Status:** `measured-broken` — and this is one of the three surfaces on this page
 that otto actually refuses *from this table*. `otto link impair --expire` reads
 the record through {func}`~otto.host.userland.refuse_if_gapped` and declines to
 launch the timer.
@@ -282,7 +321,7 @@ every GNU host.
 
 ### run-command-line-length
 
-**Status:** `measured-broken` — and this is one of the two surfaces on this page
+**Status:** `measured-broken` — and this is one of the three surfaces on this page
 that otto actually refuses *from this table*. `Host.run()` reads the record through
 {func}`~otto.host.userland.refuse_if_gapped` and raises before it types
 anything, so nothing is attempted and no connection is opened.

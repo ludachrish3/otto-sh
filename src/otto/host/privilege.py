@@ -47,10 +47,10 @@ from .command_frame import history_prefix
 from .errors import UnsupportedOnUserlandError
 from .host import DEFAULT_COMMAND_TIMEOUT
 from .login_proxy import _SU_PROMPT, Cred, cred_for, perform_switch, run_undo
+from .userland import UserlandHost
 
 if TYPE_CHECKING:
     from .session import Expect
-    from .userland import Userland
 
 # Recognizable, locale-independent sudo prompt we match on.
 _SUDO_PROMPT = "otto-sudo:"
@@ -84,8 +84,17 @@ class _HostProxyIO:
         return await self._host.expect(pattern, timeout)  # ty: ignore[unresolved-attribute]
 
 
-class PosixPrivilege:
-    """Mixin: ``sudo``/``su`` elevation for posix-shell hosts."""
+class PosixPrivilege(UserlandHost):
+    """Mixin: ``sudo``/``su`` elevation for posix-shell hosts.
+
+    Inherits the ``_userland()`` hook rather than declaring it, because a
+    second mixin now reads the same hook —
+    :class:`~otto.host.file_ops.PosixFileOps` asks whether the device has
+    ``base64``. It is declared once, on
+    :class:`~otto.host.userland.UserlandHost`; see there for why that is not
+    this class's field to own, and ``_elevate`` below for what ``None`` means on
+    this path.
+    """
 
     __slots__ = ()
 
@@ -103,20 +112,6 @@ class PosixPrivilege:
         empty list (ad-hoc, passwordless ``su`` targets).
         """
         return getattr(self, "creds", [])
-
-    def _userland(self) -> "Userland | None":
-        """Return this host's resolved userland capabilities, or None when it has none.
-
-        Default None, in the same shape as :meth:`_sudo_password` and
-        :meth:`_switch_creds`: the mixin carries no fields, so a host that
-        acquires a :class:`~otto.host.userland.Userland` supplies it by
-        overriding this. :class:`~otto.host.unix_host.UnixHost` does, building
-        one per host instance; :class:`~otto.host.local_host.LocalHost` and
-        :class:`~otto.host.docker_host.DockerContainerHost` do not, and keep
-        this default deliberately — see :meth:`_elevate` for why ``None`` has
-        to mean ``sudo`` there.
-        """
-        return None
 
     def _su_password(self) -> str | None:
         """Password for ``su``, or None when the switch needs none.

@@ -536,6 +536,56 @@ async def test_every_option_field_is_probed_or_documented_as_never_probed():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("field_name", _probeable_field_names())
+async def test_is_settled_separates_a_measurement_from_an_assumption(field_name):
+    """The tri-state, exposed for consumers that REFUSE rather than degrade.
+
+    Every field, because the distinction is a property of the module and not of
+    one capability: a device that answered has settled it, and a device that
+    could not be asked has not, whatever the value ends up reading as. The
+    property alone cannot tell them apart -- ``base64_flag`` says ``"absent"``
+    both ways round -- which is why
+    ``otto.host.file_ops.refuse_if_base64_is_absent`` asks this first. All three
+    arms are asserted in one test on purpose: an implementation that always
+    answered True, and one that always answered False, each satisfy one of them.
+    """
+    answered = Userland(UserlandOptions(), _Runner())
+    await answered.resolve()
+    assert answered.is_settled(field_name), (
+        f"{field_name} was answered by the device (a NO is still an answer) and must "
+        f"count as settled, or a refusal keyed on it can never fire"
+    )
+
+    unasked = Userland(UserlandOptions(), _Runner(unreachable=_EVERY_PROBE_IN_ORDER))
+    await unasked.resolve()
+    assert not unasked.is_settled(field_name), (
+        f"{field_name} was never asked, so calling it settled would let a refused "
+        f"probe round become a verdict about the device"
+    )
+
+    declared = Userland(UserlandOptions(**{field_name: "DECLARED"}), _Runner())
+    await declared.resolve()
+    assert declared.is_settled(field_name), "a declaration is settled by definition"
+
+
+def test_is_settled_refuses_a_name_it_does_not_resolve():
+    """A typo must be loud, because the quiet answer is the dangerous one.
+
+    ``is_settled("base64flag")`` answering False forever is a caller's refusal
+    that can never fire -- this repo's most common defect, delivered by a
+    missing underscore.
+    """
+    userland = Userland(UserlandOptions(), _Runner())
+    with pytest.raises(ValueError, match="is not a userland capability"):
+        userland.is_settled("base64flag")
+
+
+def test_is_settled_is_false_before_anything_is_resolved():
+    """Honest rather than a special case: nothing has been settled yet."""
+    assert Userland(UserlandOptions(base64_flag="-d"), _Runner()).is_settled("base64_flag") is False
+
+
+@pytest.mark.asyncio
 async def test_a_host_answering_nothing_degrades_rather_than_raising():
     """A minimal host must stay usable: absent is an answer, not an error."""
     assert set(_FULLY_DEGRADED) == set(_probeable_field_names()), (

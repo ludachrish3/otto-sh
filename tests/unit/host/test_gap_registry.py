@@ -288,12 +288,16 @@ class TestThePhase4And5MeasurementsAreRecorded:
     """
 
     def test_the_1_16_1_base64_hole_covers_both_surfaces(self) -> None:
-        """The transfer refuses on it; ``read_file``/``write_file`` cannot even do that.
+        """One missing applet, two surfaces, and each refuses through its own route.
 
-        Two records rather than one because the CONSEQUENCE differs:
-        ``ShellFileTransfer`` consults ``Userland.base64_flag`` and refuses up
-        front, while ``file_ops`` hard-codes the applet and hands the caller
-        the device's own "not found".
+        Two records rather than one because the SURFACE differs and so does the
+        route to the refusal: ``ShellFileTransfer`` reads
+        ``Userland.base64_flag`` and raises its own probe-driven message, while
+        ``read_file``/``write_file`` cannot adapt at all — they hard-code the
+        applet — and are refused from THIS table by
+        ``otto.host.file_ops.refuse_if_base64_is_absent``. A fix is one change
+        for both (a second codec), which is what ``queued_for`` says; the
+        records stay separate because a caller hits one or the other.
         """
         transfer = gap_for("shell-transfer-base64")
         file_ops = gap_for("file-ops-base64")
@@ -304,8 +308,8 @@ class TestThePhase4And5MeasurementsAreRecorded:
         assert "1.16.1" in transfer.measured_on
         assert "file_ops.py" in file_ops.measured_on
         assert "base64_flag" in file_ops.reason, (
-            "the file_ops record has to name the capability it fails to consult — that "
-            "is the difference between it and the transfer's record"
+            "the file_ops record has to name the capability whose spelling it ignores — "
+            "that is the difference between it and the transfer's record"
         )
 
     def test_the_run_pty_truncation_is_recorded_with_both_boundaries(self) -> None:

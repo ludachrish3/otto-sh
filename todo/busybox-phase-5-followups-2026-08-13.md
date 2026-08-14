@@ -17,11 +17,11 @@ Two queues already exist and are **not** duplicated here:
 
 ## 1. The registry renders messages that almost nothing invokes
 
-**Status: two of eight surfaces wired. Six open.**
+**Status: three of eight surfaces wired. Five open.**
 
 `Gap`, `GAPS`, `gap_for()`, `refuse_if_gapped()` and
 `UnsupportedOnUserlandError.for_gap()` all exist and are tested. Phase 5 left
-them with **no product call site at all**; two now consult the table:
+them with **no product call site at all**; three now consult the table:
 
 1. `run-command-line-length` —
    `otto.host.session.refuse_if_line_editor_would_truncate`, called from
@@ -31,16 +31,27 @@ them with **no product call site at all**; two now consult the table:
    that reaches `launch_command`. Keyed on a declared `has_bash=False`. See §2
    below for what it replaced, which was a **silent** failure rather than a loud
    one.
+3. `file-ops-base64` — `otto.host.file_ops.refuse_if_base64_is_absent`, called
+   from both `PosixFileOps.read_file` and `PosixFileOps.write_file`. Keyed on a
+   **probed** fact, which is what makes it different from the first two: see §2
+   below for the cost that predicate carries and why it was accepted here.
 
-The other six measured-broken surfaces are unchanged, and
+The other five measured-broken surfaces are unchanged, and
 `shell-transfer-base64` still refuses only incidentally, because `_run_put`
 probes `base64_flag` rather than reading this table.
 
-The shape both settled, and the one to copy: the **caller** decides that this
-host belongs to the measured class (a declared shell dialect of `ash`; a
-declared `has_bash=False`), and the **table** decides whether that class is
-refused at all — so downgrading the record to `untested` stops the refusal,
-which is asserted in both cases. Neither half is enough alone.
+The shape all three settled, and the one to copy: the **caller** decides that
+this host belongs to the measured class (a declared shell dialect of `ash`; a
+declared `has_bash=False`; a settled `base64_flag == "absent"`), and the
+**table** decides whether that class is refused at all — so downgrading the
+record to `untested` stops the refusal, which is asserted in all three cases.
+Neither half is enough alone.
+
+**A probed predicate does not make the refusal probe-driven.** The third
+surface's verdict and message are still the record's; the probe only decides
+membership of the measured class. Worth stating because the distinction the
+docs page draws between this table and the two probe-driven refusals
+(`_elevate`, `ShellFileTransfer`) would otherwise read as broken.
 
 **Reachability is the thing to establish before writing the guard**, not after.
 `daemon-launch` had three `launch_command` call sites and only two of them were
@@ -55,12 +66,13 @@ Wiring a raise site is still a **behaviour change** that belongs with each call
 site, one at a time, with its own test. Per-surface, the call sites to wire are
 named in each record's `measured_on`.
 
-## 2. Three product bugs recorded as gaps
+## 2. Three product bugs recorded as gaps — all three now refuse
 
 Each is a registry entry with a measurement. Recording the first two was phase
 5's job; the third was recorded then too, but the fact that its failure was
-SILENT was found later, while wiring it. Two of the three have since been
-converted from silence into a refusal; `file-ops-base64` has not been touched.
+SILENT was found later, while wiring it. All three have since been converted
+from a misleading (or silent, or destructive) failure into a refusal. What is
+still open under each is what a fix would be, and none of the three has one.
 
 ### `run-command-line-length` — NO LONGER SILENT on `Host.run()`
 
@@ -133,16 +145,56 @@ bash — and so is `repair`, which cancels timers with a `ps` scan and `kill`.
    a reasonable later move; it was not taken because a guard at the API entry
    stops proving that the launch sites downstream of it are reachable.
 
-### `file-ops-base64` — hard-coded codec
+### `file-ops-base64` — NO LONGER blames the file, or empties it
 
 `read_file`/`write_file` emit `base64` / `base64 -d`
-(`src/otto/host/file_ops.py:131,156`) without consulting
-`Userland.base64_flag`, so both break on BusyBox 1.16.1, which ships no `base64`
-applet at all. They can neither refuse up front nor adapt: the caller gets the
-device's own `not found`, attributed to the file it asked for.
+(`src/otto/host/file_ops.py:266,317`) whatever `Userland.base64_flag` says, so
+both break on BusyBox 1.16.1, which ships no `base64` applet at all. They still
+cannot adapt; they now REFUSE, at `otto.host.file_ops.refuse_if_base64_is_absent`,
+rendering the record's message.
 
-Closing this properly overlaps the uu-codec item in the parity sweep — a device
-with no `base64` needs a second codec, not just a better error.
+What that replaced was worse than the record originally said, in both
+directions. `read_file` re-attributed the device's `base64: not found` to the
+caller's path as a `FileNotFoundError`, sending them after a file that is
+present. `write_file` was destructive: measured on the 1.16.1 artifact's own ash
+with `PATH` blocked, `echo … | base64 -d > <17-byte file>` left that file at **0
+bytes** before answering `not found`, because the shell opens the redirect before
+it resolves the command. `>>` (an `append=True` write) did not truncate.
+
+**The predicate is PROBED, and that is a real cost this change accepted.** There
+is no declared base64 fact — `has_bash` is unrelated and the `busybox`
+os_profile deliberately declares no `userland_options`, because a declaration
+skips the probe and a wrong guess is unfixable from the device. So the first
+`read_file`/`write_file` on a host now pays one `Userland.resolve()`, cached on
+the host object thereafter, and up to `_RESOLVE_BUDGET_S` (30s) on a host that
+answers nothing — where before it paid none. Accepted because these two are
+coarse-grained, user-facing and called by nothing under `src/otto/`, so there is
+no loop for that cost to multiply through, and because `_RETRY_COOLDOWN_S`
+bounds the repeat to one attempt per 60s window however many calls arrive. This
+is the OPPOSITE call from the first two surfaces, whose guards refuse to read a
+probe; the difference is the path, not a change of policy.
+
+**What is still open here:**
+
+1. **No fix, only a refusal**, and closing it properly overlaps the uu-codec
+   item in the parity sweep — a device with no `base64` needs a second codec,
+   not just a better error. The two records are one change.
+2. **A host whose probe round never arrived is not refused**, deliberately:
+   `base64_flag` reads `absent` for it too, but that is an assumption, not a
+   measurement (`Userland.is_settled`). Such a host still attempts the
+   operation and still gets the old misleading error. Refusing on an assumed
+   value would turn a refused ssh channel into a verdict about the device.
+3. **`DockerContainerHost` builds no `Userland` at all**, so an alpine
+   container — a real BusyBox userland — is never refused by this guard and
+   never probed by anything else either. Same for `LocalHost`. Giving those two
+   families a resolver is a behaviour change well beyond this surface; it is
+   noted here because this guard is the first thing that would have benefited.
+4. **`ShellFileTransfer` still refuses on an ASSUMED `absent`**
+   (`_run_put`/`_run_get` read the value without asking whether it was
+   settled), so a transfer to a host whose probes were refused is declined with
+   a message about the device's applets. That is a pre-existing, probe-driven
+   refusal and was left alone; `shell-transfer-base64` is the next surface in
+   the queue and is where it should be reconsidered.
 
 ## 3. Coverage the exit criteria do not actually have
 

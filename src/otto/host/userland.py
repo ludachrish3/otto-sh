@@ -33,7 +33,12 @@ what today:
     ``stat -c %s`` at three sites, unrelated to this probe
 ``base64_flag``
     ``otto.host.transfer.shell.ShellFileTransfer`` (both ``_run_put`` and
-    ``_run_get``)
+    ``_run_get``), and ``otto.host.file_ops.refuse_if_base64_is_absent``
+    (``read_file``/``write_file``, which still hard-code the codec and read
+    this only to REFUSE when the device has none). That second reader is why
+    :class:`UserlandHost` below exists: it reaches the resolver through the
+    host's own hook rather than being handed one, and two mixins now share
+    that hook.
 ``checksum``
     ``otto.host.transfer.shell.ShellFileTransfer`` (both ``_put_one`` and
     ``_get_one``, for post-transfer integrity verification — ``md5sum`` on
@@ -270,8 +275,17 @@ _RESOLVE_BUDGET_S = 30.0
 #     ``NcFileTransfer._nc_listener_prefix``, which enumerates the four ways
 #     the cap is lost.
 # ``base64_flag``
-#     ``absent``. Nothing consumes it yet, so the conservative answer wins:
-#     claiming a decode flag works builds a command that fails.
+#     ``absent``, because the alternative is to claim a decode flag works and
+#     build a command that fails. Two consumers read it and they treat this
+#     value DIFFERENTLY, which is a property of the consumer and not of the
+#     table: :class:`~otto.host.transfer.shell.ShellFileTransfer` refuses a
+#     transfer on ``"absent"`` however it got there (base64 is the whole
+#     backend, so there is nothing to degrade to), while
+#     ``otto.host.file_ops.refuse_if_base64_is_absent`` refuses only when the
+#     absence was SETTLED -- see :meth:`Userland.is_settled`. An assumed value
+#     is exactly what otto did before it asked anything, so a guard that
+#     refused on one would convert a refused probe round into "this device has
+#     no base64", which is the expensive direction.
 # ``stat_size``
 #     ``stat``. ``transfer/nc.py`` has always sized remote files with
 #     ``stat -c %s`` (three call sites), so this is the status quo; ``absent``
@@ -649,6 +663,33 @@ class Userland:
         """
         return self._get("shell_dialect")
 
+    def is_settled(self, name: str) -> bool:
+        """Whether *name*'s value was DECLARED or actually MEASURED, not assumed.
+
+        The tri-state ``_probe`` keeps, made readable at the consumer. A
+        property cannot answer this: :attr:`base64_flag` says ``"absent"`` both
+        for a device that answered "no base64 here" and for one whose probe
+        round never arrived, and ``_UNASKABLE_DEFAULTS`` is the whole reason
+        those two must not be conflated. A consumer that DEGRADES may read the
+        value alone -- degrading on a guess costs a weaker mode. A consumer
+        that REFUSES has to ask this first, or a refused probe round becomes a
+        verdict about the device.
+
+        ``False`` before :meth:`resolve` has been awaited, which is honest
+        rather than a special case: nothing is settled yet.
+
+        Raises:
+            ValueError: *name* is not a capability this module resolves. A
+                typo'd key would otherwise answer ``False`` forever, which for
+                a caller gating a refusal on it is a guard that cannot fire.
+        """
+        if name not in _UNASKABLE_DEFAULTS:
+            raise ValueError(
+                f"{name!r} is not a userland capability; this module resolves "
+                f"{sorted(_UNASKABLE_DEFAULTS)}"
+            )
+        return name in self._settled
+
     def as_lab_json(self) -> dict[str, str]:
         """Return the SETTLED answers, as a table a user may safely pin.
 
@@ -666,6 +707,42 @@ class Userland:
         which is precisely what otto could not do this time.
         """
         return {k: v for k, v in sorted(self._resolved.items()) if k in self._settled}
+
+
+class UserlandHost:
+    """Mixin: the hook a host answers with its one :class:`Userland`, or ``None``.
+
+    Declared here, once, because TWO sibling mixins read it and neither owns
+    it: :class:`~otto.host.privilege.PosixPrivilege` (which mechanism
+    ``run(sudo=True)`` elevates with) and
+    :class:`~otto.host.file_ops.PosixFileOps` (whether the device has the
+    ``base64`` its ``read_file``/``write_file`` are built on). It lived on the
+    privilege mixin while elevation was its only reader; a second reader made
+    that an accident of who arrived first. The two alternatives were a second
+    identical default on the other mixin -- one hook with two definitions,
+    where MRO decides which is in force -- and reaching into the privilege
+    mixin's hook from ``file_ops``, which is the same coupling with less of a
+    name. :class:`~otto.host.unix_host.UnixHost` overrides it and is the only
+    host that does.
+
+    ``None`` is the default and it means "this host has told us nothing", not
+    "nothing works". :class:`~otto.host.local_host.LocalHost` and
+    :class:`~otto.host.docker_host.DockerContainerHost` never acquire one, so
+    each reader has to decide what an absent resolver means for it, and both
+    answer the same way: ``PosixPrivilege._elevate`` keeps building today's
+    ``sudo``, and ``otto.host.file_ops.refuse_if_base64_is_absent`` declines to
+    refuse. That is :func:`refuse_if_gapped`'s own asymmetry one level down --
+    "we were not told" must not become "does not work".
+
+    ``__slots__ = ()`` so it keeps composing with the ``@dataclass(slots=True)``
+    hosts, exactly as the two mixins that inherit it do.
+    """
+
+    __slots__ = ()
+
+    def _userland(self) -> "Userland | None":
+        """Return this host's resolved userland capabilities, or None when it has none."""
+        return None
 
 
 # ===========================================================================
@@ -710,10 +787,11 @@ class Userland:
 # three design-time candidates measurement did NOT support are recorded in the
 # comment block below :data:`GAPS` rather than quietly dropped.
 #
-# TWO PRODUCT CALL SITES CONSULT :func:`refuse_if_gapped`. EXACTLY TWO, and
+# THREE PRODUCT CALL SITES CONSULT :func:`refuse_if_gapped`. EXACTLY THREE, and
 # the count is the point -- an earlier version of this block said "none yet",
-# then "exactly one", and the sentence that replaces each must not be read as
-# "the table is wired". They are being added deliberately, one per change.
+# then "exactly one", then "exactly two", and the sentence that replaces each
+# must not be read as "the table is wired". They are being added deliberately,
+# one per change.
 #
 # * :func:`otto.host.session.refuse_if_line_editor_would_truncate`, called from
 #   ``SessionManager.run_cmd`` (the per-command path of ``Host.run()``, for
@@ -725,24 +803,35 @@ class Userland:
 #   own ``launch_command`` call is NOT a raise site and does not need one:
 #   ``_resolve_chain`` already refuses a ``has_bash=False`` host as a tunnel
 #   path member before any launch is planned.
+# * :func:`otto.host.file_ops.refuse_if_base64_is_absent`, called from BOTH
+#   ``PosixFileOps.read_file`` and ``PosixFileOps.write_file``, against the
+#   ``file-ops-base64`` record. Unlike the two above, its predicate is PROBED
+#   rather than declared -- there is no declared base64 fact to key on -- so it
+#   is also the one that costs a :meth:`Userland.resolve`. That trade is argued
+#   at the function, not here.
 #
-# Both take the shape a registry consumer takes: the CALLER decides that this
-# host belongs to the measured class -- a declared shell dialect of ``ash``
-# there, a declared ``has_bash=False`` here -- and the TABLE decides whether
-# that class is refused at all. Neither half is enough alone, which is why the
-# record's own ``refuses`` cannot be the whole trigger and why neither call
-# site carries its own copy of the message.
+# All three take the shape a registry consumer takes: the CALLER decides that
+# this host belongs to the measured class -- a declared shell dialect of
+# ``ash``, a declared ``has_bash=False``, a SETTLED ``base64_flag ==
+# "absent"`` -- and the TABLE decides whether that class is refused at all.
+# Neither half is enough alone, which is why the record's own ``refuses``
+# cannot be the whole trigger and why no call site carries its own copy of the
+# message.
 #
-# THE OTHER SIX ``measured-broken`` SURFACES ARE STILL UNWIRED, and their
+# THE OTHER FIVE ``measured-broken`` SURFACES ARE STILL UNWIRED, and their
 # ``reason`` strings are still written to say what a call site WOULD refuse.
 # The refusals that fire elsewhere in otto today
 # (``PosixPrivilege._elevate``, ``ShellFileTransfer._run_put``/``_run_get``)
-# are PROBE-driven -- they refuse on what this host answered, which is a
-# different trigger from this table's "otto measured this on the matrix". So
-# wiring a raise site remains a PER-SURFACE decision that belongs with the call
-# site being changed; two surfaces having made it does not generalise to the
-# rest, and the docs page states each surface's status separately for the same
-# reason.
+# are PROBE-driven -- they refuse on what this host answered, and they render
+# their own message, which is a different thing from this table's "otto
+# measured this on the matrix". Note what the third call site above does NOT
+# do to that distinction: its PREDICATE is a probe, but its VERDICT and its
+# MESSAGE are still the record's, so a probe may decide that a host is in the
+# measured class without becoming a second authority on whether the class is
+# refused. So wiring a raise site remains a PER-SURFACE decision that belongs
+# with the call site being changed; three surfaces having made it does not
+# generalise to the rest, and the docs page states each surface's status
+# separately for the same reason.
 
 GAP_DOCS_PAGE = "docs/architecture/subsystems/busybox-support.md"
 """Where the user-facing rendering of this table lives.
@@ -903,22 +992,38 @@ GAPS: list[Gap] = [
         status=MEASURED_BROKEN,
         reason=(
             "`Host.read_file` and `Host.write_file` move their payload through the "
-            "device's `base64` too, but unlike the `shell` transfer they hard-code it: "
+            "device's `base64` too, and unlike the `shell` transfer they hard-code it: "
             "`src/otto/host/file_ops.py` emits `base64 <path>` and `... | base64 -d` "
-            "without ever reading `Userland.base64_flag`. So on a userland with no "
-            "`base64` they cannot refuse up front and cannot adapt -- the caller gets "
-            "the device's own `not found`, attributed to the file it asked for"
+            "whatever `Userland.base64_flag` says. They cannot ADAPT, so otto REFUSES "
+            "both up front instead, on any host whose userland actually settled "
+            "`base64_flag` on `absent` -- rather than emitting a command that comes "
+            "back as the device's own `not found`, attributed to the file the caller "
+            "asked for. What the refusal replaces is a `FileNotFoundError` naming a "
+            "file that is present, and, for a write, a destination truncated to zero "
+            "bytes by the redirect before the missing applet was ever reached. Only "
+            "these two are refused: `put`/`get` choose a transfer backend and are "
+            "covered by `shell-transfer-base64`"
         ),
         measured_on=(
             "the same 1.16.1 rows as `shell-transfer-base64`, against these two call "
-            "sites: `src/otto/host/file_ops.py:131` (read) and `:156` (write). Both "
-            "read as unconditional in the source: no `Userland` is consulted on either "
-            "path"
+            "sites: `src/otto/host/file_ops.py:266` (read) and `:317` (write), both of "
+            "which still emit the same fixed spelling. The DESTRUCTIVE half was "
+            "measured directly, 2026-08-14, running the 1.16.1 artifact's own ash with "
+            "`PATH=/nonexistent` (the isolation `tests/busybox/"
+            "test_applet_resolution.py` records): `echo aGk= | base64 -d > <file>` "
+            "against a 17-byte file answered rc=127 `sh: base64: not found` and left "
+            "that file at 0 bytes, since the shell opens the redirect before it "
+            "resolves the command. `>>` (otto's `append=True`) left it intact"
         ),
         queued_for=(
-            "the full-parity workstream, `todo/busybox-parity-sweep-2026-08-11.md`: the "
-            "codec probe queued for `shell-transfer-base64` is what these two would "
-            "read, so the two are one change and not two"
+            "the REFUSAL has landed, in `otto.host.file_ops.refuse_if_base64_is_absent` "
+            "-- this registry's third product call site, and the first whose predicate "
+            "is a probe rather than a declaration. A FIX is still the full-parity "
+            "workstream's, `todo/busybox-parity-sweep-2026-08-11.md`: the codec probe "
+            "queued for `shell-transfer-base64` is what these two would read, so the "
+            "two are one change and not two. The record stays `measured-broken` because "
+            "the surface still is -- otto now declines the operation instead of "
+            "emitting one it cannot run"
         ),
     ),
     Gap(
