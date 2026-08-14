@@ -162,9 +162,34 @@ Only criterion 3's "on the matrix" half remains open under this heading.
   otto ships a concrete `Product.install`, the surface becomes otto's, becomes
   measurable, and those assertions redden.
 
-## 5. Not BusyBox: the empty-lane-leg gate
+## 5. Not BusyBox: the empty-lane-leg gate — **CLOSED**
 
-Recorded here because it has now been sighted twice and there is no gate for it.
+**Built, as `test_every_lane_leg_selects_at_least_one_test` in
+`tests/unit/test_lane_invariants.py` (`f9e895ce`).** It inventories all 37 legs
+across the Makefile, `noxfile.py` and `scripts/stability_campaign.py`, and
+asserts each selects at least one test. Verified red by restoring the pre-#229
+two-leg recipe, which names the leg and the count it saw:
+
+```text
+Makefile: `-m serial_timing and concurrency` over <testpaths>
+  — selects 0 of the 6515 tests collected there
+```
+
+Costs ~13.6 s.
+
+The design finding is the durable part, and it is why the obvious version of
+this gate would have been worthless: **membership had to come from real
+collection, not from reading the tests.** Markers reach a test by four routes
+here — module `pytestmark`, function/class decorators, directory conftest
+stamps, and param-level `marks=` built by a helper — and a per-function AST
+scan modelling three of them reports phantom empty legs. Measured: that scan
+called `stability and embedded and not chaos` empty; it collects 15. The gate
+therefore shells out one `--collect-only` per distinct path set and evaluates
+expressions with pytest's own `Expression` compiler rather than a hand-rolled
+one, which is load-bearing — an `or` expression a conjunction reader would have
+silently skipped is caught as an offender.
+
+Retained below: the original record of the hazard and its two sightings.
 
 **A lane leg that selects zero tests exits 5 and aborts `make`.** Unmarking a
 test can empty one: issue #229 removed `serial_timing` from the last two members
