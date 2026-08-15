@@ -5,6 +5,7 @@ import pytest
 
 from otto.link.manage import (
     LinkCommandFailedError,
+    LinkNotMeasuredError,
     _cancel_timers,
     read_link_states,
     repair_all,
@@ -12,13 +13,15 @@ from otto.link.manage import (
 )
 from otto.link.model import Link, LinkEndpoint
 from otto.link.params import ImpairmentParams, Selector
-from otto.link.placement import BOTH_DIRECTIONS, FlowDirection, impairment_refusal
+from otto.link.placement import BOTH_DIRECTIONS, FlowDirection, Placement, impairment_refusal
 from otto.link.sentinel import IMPAIR_PS_COMMAND, encode_impair_sentinel, encode_impair_sentinel_v2
 from otto.result import CommandResult
+from tests.conftest import active_context
 
 from .test_manage_impair import (
     FILTER_SCOPED_ONE,
     FILTER_SCOPED_TWO,
+    INPATH,
     LINK,
     QDISC_SCOPED_ONE,
     QDISC_SCOPED_TWO,
@@ -452,3 +455,225 @@ class TestScopedRepair:
         with pytest.raises(ValueError, match="foreign qdisc otto did not create"):
             await repair_link(lab, "edge")
         assert not carrot.sudo_commands
+
+
+# ===========================================================================
+# --dry-run: repair previews, and `list` gets a third state
+# ===========================================================================
+
+
+class TestDryRunRepairPlansWithoutContact:
+    """`repair --dry-run` previews conditionally and reports nothing cleared.
+
+    Before the short-circuit, the synthetic reply parsed as a CLEAN netdev, so
+    every placement took `repair_link`'s `state.kind == "clean"` skip and the
+    command reported `cleared (nothing to clear), timers cancelled 0` and
+    exited 0 — three claims about a device it never contacted.
+    """
+
+    @pytest.mark.asyncio
+    async def test_the_clears_are_conditional_and_nothing_is_reported_cleared(self) -> None:
+        lab, carrot, tomato, _ = _bed()
+        with active_context(dry_run=True):
+            report = await repair_link(lab, "edge")
+
+        assert report.plan is not None
+        assert report.cleared == []
+        assert report.timers_cancelled == 0
+        assert carrot.commands + tomato.commands == [], "a dry run contacted a host"
+        assert report.plan.would == [
+            (
+                "carrot_seed/eth1.100: tc qdisc del dev eth1.100 root "
+                "(only if the netdev carries otto impairment)"
+            ),
+            "carrot_seed/eth1.100: cancel every live expire timer for this link",
+            (
+                "tomato_seed/eth1.200: tc qdisc del dev eth1.200 root "
+                "(only if the netdev carries otto impairment)"
+            ),
+            "tomato_seed/eth1.200: cancel every live expire timer for this link",
+        ]
+        unchecked = " ".join(report.plan.unchecked)
+        assert "timers cancelled 0" in unchecked, (
+            "the count the CLI would otherwise print is exactly the claim that has to be "
+            "disowned, so the plan names it"
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_real_repair_on_the_same_bed_still_clears_and_counts(self) -> None:
+        """The control: the bed HAS something to clear and a timer to kill, so
+        the assertions above are about suppression and not about an empty lab."""
+        lab, carrot, tomato, _ = _bed()
+        token = encode_impair_sentinel(LINK.id, "eth1.100")
+        carrot.ps_text = f"  4242 05:00 {token} -c sleep 600\n"
+        carrot.qdisc_texts = ["qdisc netem 8001: root refcnt 2 limit 1000 delay 20ms\n", ""]
+        tomato.qdisc_texts = [""]
+        report = await repair_link(lab, "edge")
+        assert [p.netdev for p in report.cleared] == ["eth1.100"]
+        assert report.timers_cancelled == 1
+        assert report.plan is None
+
+    @pytest.mark.asyncio
+    async def test_repair_all_files_previews_apart_from_repairs(self) -> None:
+        """`repaired` counts links CLEARED AND VERIFIED GONE; a preview is neither.
+
+        The sweep's summary line counts that list, so a preview filed there is
+        the `repaired N link(s)` fabrication in a second shape.
+        """
+        lab, *_ = _bed()
+        with active_context(dry_run=True):
+            sweep = await repair_all(lab)
+
+        assert sweep.repaired == []
+        assert sweep.failures == []
+        assert [r.link_id for r in sweep.planned] == [LINK.id]
+        assert sweep.planned[0].plan is not None
+
+    @pytest.mark.asyncio
+    async def test_a_structural_refusal_is_still_a_skip_under_a_dry_run(self) -> None:
+        """Skips come from lab data, so a dry run is as entitled to them as a real run."""
+        bare = Link(
+            a=LinkEndpoint(host="carrot_seed", ip="10.10.201.11"),
+            b=LinkEndpoint(host="tomato_seed", ip="10.10.202.12"),
+            name="bare-edge",
+        )
+        lab, *_ = _bed(link=bare)
+        with active_context(dry_run=True):
+            sweep = await repair_all(lab)
+
+        assert sweep.planned == []
+        assert len(sweep.skipped) == 1
+        assert "no named interface" in sweep.skipped[0]
+        # …and the sweep still knows it was a dry run. `planned` is empty here,
+        # so anything derived from it cannot say so — see the CLI half in
+        # `test_cli.py::…::test_a_sweep_that_previews_nothing_still_says_it_was_dry`.
+        assert sweep.dry_run is True
+
+    @pytest.mark.asyncio
+    async def test_a_real_sweep_of_the_same_lab_is_not_marked_dry(self) -> None:
+        """The control for the flag: `dry_run` is read from the run, not defaulted on."""
+        bare = Link(
+            a=LinkEndpoint(host="carrot_seed", ip="10.10.201.11"),
+            b=LinkEndpoint(host="tomato_seed", ip="10.10.202.12"),
+            name="bare-edge",
+        )
+        lab, *_ = _bed(link=bare)
+        sweep = await repair_all(lab)
+
+        assert sweep.dry_run is False
+        assert len(sweep.skipped) == 1
+
+
+class TestDryRunListReportsNotMeasured:
+    """`list --dry-run` says "nothing was asked", not "clean", "?" or "!".
+
+    Reporting a dry run as CLEAN was the dangerous one: it is the only wrong
+    answer indistinguishable from a real one. Reporting it as `unreachable`
+    sends the operator to the network and as `read_errors` to the host's `tc`,
+    both by the same argument that split those two in the first place.
+    """
+
+    @pytest.mark.asyncio
+    async def test_nothing_is_reported_clean_unreachable_or_read_failed(self) -> None:
+        lab, carrot, tomato, _ = _bed()
+        with active_context(dry_run=True):
+            (state,) = await read_link_states(lab)
+
+        assert state.not_measured is True
+        assert state.by_direction == {}, (
+            "a per-direction shape here is a parsed answer, and the only thing there was "
+            "to parse is a banner"
+        )
+        assert state.unreachable is False
+        assert state.read_errors == {}
+        assert state.read_failed is False
+        assert state.impairable is True, (
+            "the STRUCTURAL predicate is pure and did answer; what it does not cover is "
+            "the live refusals, which is what not_measured warns about"
+        )
+        assert carrot.commands + tomato.commands == []
+
+    @pytest.mark.asyncio
+    async def test_the_same_bed_read_for_real_reports_the_impairment(self) -> None:
+        """The control. Without it, `not_measured` could be reported by a
+        `_link_state` that had simply stopped reading anything."""
+        lab, carrot, tomato, _ = _bed()
+        carrot.qdisc_texts = ["qdisc netem 8001: root refcnt 2 limit 1000 delay 20ms\n"]
+        tomato.qdisc_texts = [""]
+        (state,) = await read_link_states(lab)
+
+        assert state.not_measured is False
+        assert state.by_direction[FlowDirection.A_TO_B].whole == ImpairmentParams(delay_ms=20.0)
+
+    @pytest.mark.asyncio
+    async def test_a_structural_refusal_still_wins_and_is_not_not_measured(self) -> None:
+        """`impairment_refusal` needs no lab, no await and no address fetch, so
+        it is answered first and completely — there is nothing left unread."""
+        bare = Link(
+            a=LinkEndpoint(host="carrot_seed", ip="10.10.201.11"),
+            b=LinkEndpoint(host="tomato_seed", ip="10.10.202.12"),
+            name="bare-edge",
+        )
+        lab, *_ = _bed(link=bare)
+        with active_context(dry_run=True):
+            (state,) = await read_link_states(lab)
+
+        assert state.impairable is False
+        assert state.refusal is not None
+        assert "no named interface" in state.refusal
+        assert state.not_measured is False
+
+    @pytest.mark.asyncio
+    async def test_the_never_raise_promise_survives_the_new_error(self) -> None:
+        """`LinkNotMeasuredError` subclasses `RuntimeError` so the existing arms
+        would have caught it anyway; the point of its own arm is the BUCKET.
+
+        A class outside that hierarchy would escape all three arms and break
+        `read_link_states`'s per-link never-raise promise, which is asserted
+        here by the call above returning at all rather than by inspection.
+        """
+        assert issubclass(LinkNotMeasuredError, RuntimeError)
+        lab, *_ = _bed(link=INPATH)
+        with active_context(dry_run=True):
+            (state,) = await read_link_states(lab)
+        assert state.not_measured is True
+
+    @pytest.mark.asyncio
+    async def test_a_backstop_raise_inside_the_read_loop_is_not_filed_as_a_read_failure(
+        self, monkeypatch
+    ) -> None:
+        """The INNER arm, reached by injecting the one refactor that would reach it.
+
+        Unreachable today, and the proof is in `_link_state` beside the arm:
+        under a dry run the loop is entered only if `_resolve_placements`
+        returned, and that always issues at least one `_exec` first, so the
+        OUTER arm always wins. The premise is one plausible change away — cache
+        address tables across links and placement resolution goes pure for a
+        warm host — and this test IS that change, made locally: a
+        `_resolve_placements` that hands back a placement without contacting
+        anything. Nothing else is faked; the raise comes from the real backstop
+        under the real `_read_state`.
+
+        Simulated, and deliberately not skipped as "cannot happen": the arm can
+        be shown red (delete the `except LinkNotMeasuredError: raise` and this
+        goes to `read_errors`, rendering `!` cells and "host reachable, read
+        command failed" — both false), so it is a guard that CAN fail, which is
+        the bar. An arm left open because its bad path is currently
+        unreachable is how "no read path can quietly start fabricating"
+        weakens to "fails into the wrong bucket".
+        """
+        from otto.link import manage
+
+        lab, *_ = _bed()
+
+        async def _pure_resolve(_lab: object, _link: object, _directions: object) -> list:
+            return [Placement("carrot_seed", "eth1.100", FlowDirection.A_TO_B)]
+
+        monkeypatch.setattr(manage, "_resolve_placements", _pure_resolve)
+        with active_context(dry_run=True):
+            (state,) = await read_link_states(lab)
+
+        assert state.not_measured is True
+        assert state.read_errors == {}
+        assert state.read_failed is False
+        assert state.unreachable is False

@@ -27,9 +27,11 @@ def test_manage_names_all_resolve():
     for name in (
         "AppliedPlacement",
         "DirectionState",
+        "DryRunPlan",
         "ImpairReport",
         "LinkCommandFailedError",
         "LinkHostUnreachableError",
+        "LinkNotMeasuredError",
         "LinkState",
         "RepairAllReport",
         "RepairReport",

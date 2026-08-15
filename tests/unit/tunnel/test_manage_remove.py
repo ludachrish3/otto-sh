@@ -11,6 +11,7 @@ from otto.tunnel.manage import RemovedReport, remove_all_tunnels, remove_tunnel
 from otto.tunnel.model import Direction, Role, Tunnel, TunnelHop
 from otto.tunnel.sentinel import encode_sentinel
 from otto.utils import Status
+from tests.conftest import active_context
 
 _LO = 49152
 
@@ -292,3 +293,72 @@ class TestRemoveAllTunnels:
         }
         assert report.survivors == []
         assert report.unreachable == []
+
+
+# ── --dry-run: the reap that never happened ──────────────────────────────────
+
+
+class TestRemoveDryRunPreviewsTheSweep:
+    """`removed (none found)`, exit 0, was a claim about hosts nobody scanned.
+
+    It is also byte-identical to the answer a real reap of a clean lab gives —
+    the only wrong answer indistinguishable from a right one.
+    """
+
+    def _bed(self):
+        tunnel = _three_hop_tunnel()
+        hosts = {}
+        for host_id in ("a", "b", "c"):
+            text, _pids = _full_ps(tunnel, host_id, _LO, _LO + 1, 100)
+            hosts[host_id] = FakeHost(host_id, ps_texts=[text, ""])
+        hosts["shell_less"] = FakeHost("shell_less", has_bash=False)
+        return _lab(**hosts), tunnel
+
+    def test_by_id_previews_the_scope_and_kills_nothing(self) -> None:
+        lab, tunnel = self._bed()
+
+        with active_context(dry_run=True):
+            report = asyncio.run(remove_tunnel(lab, tunnel.id))
+
+        assert [cmd for h in lab.hosts.values() for cmd in h.commands] == []
+        assert report.plan is not None
+        assert (report.removed_ids, report.killed, report.unreachable, report.survivors) == (
+            [],
+            {},
+            [],
+            [],
+        )
+        would = "\n".join(report.plan.would)
+        assert "scan 3 has_bash host(s)" in would
+        assert "a, b, c" in would
+        # The has_bash=False host is EXCLUDED from the reap, which is exactly
+        # the leak the chain refusal exists to prevent — and it is lab data,
+        # so a dry run can show it.
+        assert "shell_less" not in would
+        assert f"tunnel {tunnel.id!r}" in would
+
+    def test_all_says_it_would_reap_every_tunnel_not_one(self) -> None:
+        lab, tunnel = self._bed()
+        with active_context(dry_run=True):
+            report = asyncio.run(remove_all_tunnels(lab))
+        would = "\n".join(report.plan.would)
+        assert "EVERY otto tunnel" in would
+        assert tunnel.id not in would
+
+    def test_it_names_what_only_a_scan_could_decide(self) -> None:
+        lab, tunnel = self._bed()
+        with active_context(dry_run=True):
+            plan = asyncio.run(remove_tunnel(lab, tunnel.id)).plan
+        joined = "\n".join(plan.unchecked)
+        assert "which tunnels are live" in joined
+        assert "SURVIVOR" in joined
+        assert plan.would
+        assert plan.unchecked
+
+    def test_a_real_remove_on_the_same_bed_still_reaps_and_reports(self) -> None:
+        """Positive control: the short-circuit did not swallow the product."""
+        lab, tunnel = self._bed()
+        report = asyncio.run(remove_tunnel(lab, tunnel.id))
+        assert report.plan is None
+        assert report.removed_ids == [tunnel.id]
+        assert sorted(report.killed) == ["a", "b", "c"]

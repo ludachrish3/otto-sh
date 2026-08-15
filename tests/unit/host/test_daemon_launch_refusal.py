@@ -11,11 +11,16 @@ refusal to raise.
 
 **This module pins the GUARD's contract.** Whether the guard is reachable from
 a product path is a different question and is pinned where those call sites live
-— ``tests/unit/link/test_manage_impair.py::TestExpireOnAHostWithoutBash``
-arrives at otto's only caller of it today with a bash-less host and observes the
-refusal end to end. The two halves are deliberately not in one file: a guard
-that fires correctly at a place nothing reaches is this repo's most common
-defect, so "it fires" and "something gets here" are asserted separately.
+— in ``tests/unit/link/test_manage_impair.py``,
+``TestExpireOnAHostWithoutBash`` arrives at the real launch site with a
+bash-less host and observes the refusal end to end, and
+``TestDryRunSurfacesTheExpireRefusalUpFront`` arrives at otto's other caller,
+the ``--dry-run`` planner, which asks the same guard the same question BEFORE
+anything is mutated (it launches nothing, so it is a second caller and not a
+second path to the gapped surface). The two halves are deliberately not in one
+file: a guard that fires correctly at a place nothing reaches is this repo's
+most common defect, so "it fires" and "something gets here" are asserted
+separately.
 
 Nothing here talks to a device, and that is the point twice over — the
 predicate is DECLARED, so the refusal costs no probe, no userland resolution

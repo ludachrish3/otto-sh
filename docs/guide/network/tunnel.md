@@ -169,6 +169,88 @@ If any killed process is still alive on the post-kill scan, `remove` names
 it as a survivor and exits non-zero — never a silent trust of the kill
 command's own exit code.
 
+## Previewing: `--dry-run`
+
+`--dry-run` (`-n`) is a **global** option — `otto -n --lab veggies tunnel add
+…`. It is documented as "Preview without running commands", and that is literal
+here: **a dry run contacts no device at all**, not even for the read-only
+probes and not even for docker's container-liveness check. So every answer it
+gives comes from `lab.json` and the options you typed, and it says plainly what
+it could not check.
+
+```console
+$ otto -n --lab veggies tunnel add --hosts carrot_seed@eth2,pepper_seed@eth2,tomato_seed@eth2 --port 8080
+dry run carrot_seed <-> tomato_seed: no device was contacted — nothing was read and nothing was changed
+  would: build tun-80b8500dedcf-8080: carrot_seed@eth2 -> pepper_seed@eth2 -> tomato_seed@eth2,
+    tcp:8080, delivering to 127.0.0.1 on tomato_seed
+  would: carry fwd traffic on port 49152 and rev on 49153 — PROVISIONAL, see the first
+    `not checked` line
+  would: start each process below detached, with its argv[0] replaced by an `otto-tunnel:v1`
+    sentinel …
+  would: tomato_seed fwd/egress: socat TCP4-LISTEN:49152,fork,reuseaddr TCP4:127.0.0.1:8080
+  would: pepper_seed fwd/relay: socat TCP4-LISTEN:49152,fork,reuseaddr TCP4:192.168.1.12:49152
+  would: carrot_seed fwd/ingress: socat TCP4-LISTEN:8080,bind=192.168.1.11,fork,reuseaddr
+    TCP4:192.168.1.13:49152
+  … (2n lines: one per process, fwd then rev)
+  not checked: which ports are already bound anywhere on the chain …
+  not checked: whether this tunnel already exists …
+  not checked: whether the chain hosts actually have socat and/or bash …
+  not checked: the 6 launches themselves and the post-add verify …
+```
+
+Read both halves. The `would:` lines are the exact argv, but:
+
+:::{warning}
+**The two carrier ports are provisional, and every argv above names them.** A
+real `add` first probes every hop with `ss -Htln` / `netstat -tln` and skips
+what is already listening; a dry run has only your `--port` to go on, so it
+picks 49152/49153 on every lab. If a real run finds either taken, all 2n
+command lines change. `AddedTunnel.carrier_fwd` / `carrier_rev` are `None`
+under a dry run for exactly this reason — the provisional pair is in the plan,
+labelled, and nowhere else.
+:::
+
+What each command shows:
+
+- **`add`** — the resolved chain with its addresses, the tunnel id (which
+  hashes path + protocol + port, none of it read off a device), the 2n argv,
+  and the provisional carrier pair. Refusals that need no device are still
+  made: an unknown host, an ambiguous or unknown `@iface`, a chain shorter
+  than two hops, a repeated host, a container in an illegal position, a
+  `--dest` inside the path, an unsupported protocol, and the
+  [`has_bash=False` refusal](#host-requirements).
+- **`remove`** — the *scope* of the reap: which `has_bash` hosts would be
+  scanned, and what the kill would match. It never prints
+  `removed (none found)`; that line is a claim about live processes.
+- **`list`** — one line saying no host was scanned. Every row of that table is
+  an observed process, so there is nothing left to show; a dry run also leaves
+  the `remove <TAB>` completion cache alone rather than emptying it from a scan
+  that never ran. The exception is a lab that declares no `has_bash` host:
+  there is nothing to scan, so `list -n` gives the same complete, empty answer
+  a real run gives — banner and all — including the cache write.
+
+**A container endpoint previews much less.** A container's tunnel address is
+its docker bridge ip, read with `docker inspect` on the parent, and the hops
+either side of it connect *to* that address — so a dry run has no argv to show
+for any hop, not just for the container. It says so rather than guessing:
+
+```console
+$ otto -n --lab veggies tunnel add --hosts carrot_seed.repo1.api,carrot_seed@eth2,tomato_seed@eth2 --port 8080
+dry run carrot_seed.repo1.api <-> tomato_seed: no device was contacted — nothing was read and nothing was changed
+  would: build tun-91e5f6330d1d-8080: carrot_seed.repo1.api -> carrot_seed@eth2 -> tomato_seed@eth2,
+    tcp:8080, delivering to 127.0.0.1 on tomato_seed
+  would: carry fwd traffic on port 49152 and rev on 49153 — PROVISIONAL …
+  not checked: every process argv, because 'carrot_seed.repo1.api' is a container endpoint …
+```
+
+Programmatically, a dry run is visible on the return value:
+`AddedTunnel.plan` / `RemovedReport.plan` is a `DryRunPlan` (with `.would` and
+`.unchecked`), and `TunnelDiscovery.not_measured` is `True` whenever a scan was
+declined — a third state, distinct from "reachable and empty" and from
+`unreachable`, because nothing was asked. `discover_tunnel_records` (the monitor's source) raises
+`TunnelNotMeasuredError` rather than returning `[]`, so the dashboard keeps its
+last known tunnel set instead of blanking the overlay.
+
 ## Tunnel identity
 
 Every tunnel gets an id of the form `tun-<hex>-<port>`, e.g.

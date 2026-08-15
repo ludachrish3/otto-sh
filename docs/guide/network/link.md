@@ -397,10 +397,83 @@ trailing `partial scan — could not fully read: <ids>` warning rather than
 silently dropping those links from the picture — the same
 never-silently-wrong philosophy as `otto tunnel list`.
 
+## Previewing: `--dry-run`
+
+`--dry-run` (`-n`) is a **global** option — `otto -n --lab veggies link impair
+edge --delay 50ms`. It is documented as "Preview without running commands", and
+that is literal here: **a dry run contacts no device at all**, not even for the
+read-only commands. So every answer it gives comes from lab data and the
+options you typed, and it says plainly what it could not check.
+
+```console
+$ otto -n --lab veggies link impair edge --delay 50ms
+dry run edge: no device was contacted — nothing was read and nothing was changed
+  would: a->b on carrot_seed/eth1.100: tc qdisc replace dev eth1.100 root netem delay 50ms
+  would: b->a on tomato_seed/eth1.200: tc qdisc replace dev eth1.200 root netem delay 50ms
+  not checked: what is CURRENTLY applied to the netdev. A real run merges the given
+    parameters over it per-param, so any command line above is the one a CLEAN netdev
+    would get and nothing else …
+  not checked: the two self-lockout refusals …
+  not checked: the netdev's current SHAPE …
+  not checked: live expire timers … and the post-apply verify …
+```
+
+Read both halves. The `would:` lines are exact command strings, but they are
+built as though the netdev were clean — a re-impair [merges](#re-impairing-merge-per-param-last-one-wins)
+over what is already applied and produces a different command. The
+`not checked:` lines are the ones that change what you should conclude:
+
+:::{warning}
+**A dry run cannot tell you an impairment is safe to apply.** Both
+[self-lockout refusals](#safety) — the management interface and hop transit —
+fire only on a *positive* match against the placement host's live
+`ip -o addr show`, and a dry run does not run it. An impair that a real run
+would refuse outright, because it would cut otto off from the bed, previews
+here as an ordinary `tc` command line with a `not checked:` note beside it.
+:::
+
+What each command shows:
+
+- **`impair`** — the placement (host and netdev) per direction and the exact
+  `tc` line, for an *endpoint-mode* link. Refusals that need no device are
+  still made, and made *early*: the local-host refusal, an unknown host, a
+  `--port` against an impairer that has no selector support, and the
+  `--expire` [bash refusal](#--expire-auto-clearing) — which in a real run only
+  fires *after* that placement's qdisc mutation has been applied and rolled
+  back.
+- **`repair`** — the same placements, with each clear marked `only if`: whether
+  a netdev carries anything to clear is a device read. It never prints
+  `cleared …, timers cancelled N`; that line is three measurements.
+- **`list`** — every row, with both direction cells reading `not read`. This is
+  a distinct state from `-` (clean), `?` (host unreachable) and `!` (host
+  answered, read failed), because it is distinct news: nothing was asked.
+
+**In-path links preview much less.** A middlebox's facing netdev per direction
+is resolved by subnet-matching its live address table, so a dry run cannot name
+a single placement — and therefore has no command line, no current state and no
+refusal to show for the link. It says so rather than guessing:
+
+```console
+$ otto -n --lab veggies link impair dataplane --delay 50ms
+dry run dataplane: no device was contacted — nothing was read and nothing was changed
+  not checked: every placement. 'pepper_seed' is this link's in-path middlebox, and which
+    of its interfaces faces each endpoint is resolved by subnet-matching the middlebox's
+    live `ip -o addr show`, which was not run …
+```
+
+Programmatically, a dry run is visible on the return value:
+`ImpairReport.plan` / `RepairReport.plan` is a `DryRunPlan` (with `.would` and
+`.unchecked`) and `applied` / `cleared` are empty; `LinkState.not_measured` is
+`True`; and `repair_all` files previews under `RepairAllReport.planned` rather
+than `repaired`, with `RepairAllReport.dry_run` recording the run itself —
+check that rather than `planned`, since a lab whose links are all refused
+previews nothing.
+
 ## Safety
 
 Two refusals are enforced on **every** resolved placement, in both endpoint
-and in-path mode, and apply regardless of `--expire`:
+and in-path mode, and apply regardless of `--expire`. Neither is evaluated
+under [`--dry-run`](#previewing---dry-run) — both need a live address table:
 
 - **Management-interface refusal.** otto refuses to impair the interface it
   reaches a host *through* — resolved live by matching the host's

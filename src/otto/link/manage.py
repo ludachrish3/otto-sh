@@ -25,6 +25,7 @@ from ..errors import OttoError
 from ..host.builtin_hosts import BUILTIN_LOCAL_HOST_ID
 from ..host.daemon import kill_command, launch_command, refuse_if_launch_wrapper_needs_bash
 from ..host.errors import exec_or_raise
+from ..host.host import is_dry_run
 from ..logger.mode import LogMode
 from .impairer import FIRST_SELECTOR_BAND, MAX_SELECTORS, LinkImpairer, ScopedState, build_impairer
 from .model import Link
@@ -82,6 +83,60 @@ class LinkCommandFailedError(OttoError, RuntimeError):
     """
 
 
+class LinkNotMeasuredError(OttoError, RuntimeError):
+    """A device read was attempted under ``--dry-run``, where none may happen.
+
+    A THIRD outcome, and neither of the two above: the host was not reached
+    AND did not answer — it was never asked. ``--dry-run`` is documented as
+    "Preview without running commands", so every answer this package gives
+    under one has to come from lab data and the user's own arguments.
+
+    ``_exec`` raises this rather than letting ``BaseHost.exec``'s synthetic
+    reply through, because that reply is ``Status.Skipped`` (``is_ok`` is
+    ``True``) with the literal value ``"[DRY RUN] Command not executed"`` and
+    this package PARSES it: the impairer sees ``"[DRY"`` as ``tokens[0]`` and
+    reports the netdev CLEAN, ``parse_ip_addr`` yields an EMPTY address table
+    so the two self-lockout refusals cannot match, and ``impair_link``'s
+    post-apply verify compares one fabrication against another. A raise cannot
+    be mistaken for a measurement; a clean read can.
+
+    ``RuntimeError``, like the two errors above, because three consumers bucket
+    on that base and all three must keep working: :func:`read_link_states`
+    promises never to raise per link, :func:`repair_all` collects a
+    ``RuntimeError`` as a failure rather than aborting the sweep, and the CLI
+    catches ``ValueError``/``RuntimeError``. A class outside that hierarchy
+    would escape all three.
+    """
+
+
+@dataclass(frozen=True, slots=True)
+class DryRunPlan:
+    """What a ``--dry-run`` would do, and what it could not check.
+
+    Built from lab data and the command's own arguments — a dry run makes no
+    device contact, so there is nothing else to build it from.
+
+    BOTH HALVES ARE THE PRODUCT. :attr:`would` on its own reads as a promise
+    otto has verified and cannot keep: every command line here is the one a
+    CLEAN netdev would get, and the two self-lockout refusals that would stop
+    the whole call have not run. :attr:`unchecked` on its own is a dry run with
+    no preview at all, which is the useless-rather-than-safe shape
+    :meth:`~otto.host.file_ops.PosixFileOps.write_file`'s dry-run arm exists to
+    avoid. Renderers print both or neither.
+    """
+
+    would: list[str] = dc_field(default_factory=list)
+    """One line per action a real run would take, in the order it would take
+    them. Empty is a legitimate answer — an in-path link's placements cannot be
+    resolved without the middlebox's live address table, so there is nothing to
+    name."""
+
+    unchecked: list[str] = dc_field(default_factory=list)
+    """One line per fact a real run reads off a device and this one did not,
+    each saying what the missing read would have decided. Never empty: a dry
+    run that reached this type read nothing at all."""
+
+
 @dataclass(frozen=True, slots=True)
 class AppliedPlacement:
     """One placement's post-verify impairment state."""
@@ -103,6 +158,20 @@ class ImpairReport:
     link_id: str
     applied: list[AppliedPlacement] = dc_field(default_factory=list)
 
+    plan: "DryRunPlan | None" = None
+    """Set, and :attr:`applied` EMPTY, when this call was a ``--dry-run``.
+
+    The two are exclusive by construction and that is the point:
+    :class:`AppliedPlacement` documents its ``params`` as "actually verified
+    present after the mutation", so a dry run may not put anything in
+    :attr:`applied` — there was no mutation and no verify. A caller that reads
+    :attr:`applied` alone therefore cannot mistake a preview for a result, and
+    one that wants the preview reads this.
+
+    Appended, per the rule :attr:`LinkState.refusal` states: these are public
+    dataclasses and inserting a field mid-order silently rebinds positional
+    construction instead of failing."""
+
 
 @dataclass(frozen=True, slots=True)
 class RepairReport:
@@ -111,6 +180,15 @@ class RepairReport:
     link_id: str
     cleared: list[Placement] = dc_field(default_factory=list)
     timers_cancelled: int = 0
+
+    plan: "DryRunPlan | None" = None
+    """Set when this call was a ``--dry-run``; see :attr:`ImpairReport.plan`.
+
+    :attr:`cleared` is then empty and :attr:`timers_cancelled` is ``0`` BY
+    CONSTRUCTION rather than by measurement — nothing was cleared because
+    nothing was looked at, and no ``ps`` scan ran. ``0`` is the honest value
+    for "did not cancel any" and is the wrong thing to render as a result,
+    which is why this field exists for the renderer to branch on."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -141,6 +219,31 @@ class RepairAllReport:
     link it had refused. Naming them is verbose on a lab full of implicit
     links (every one lands here) and that is the accepted cost — a sweep that
     silently does nothing is the worse failure."""
+
+    planned: list[RepairReport] = dc_field(default_factory=list)
+    """One entry per link a ``--dry-run`` sweep PREVIEWED; every one carries a
+    :attr:`RepairReport.plan` and cleared nothing.
+
+    A separate bucket rather than letting these land in :attr:`repaired`,
+    because that field says "cleared and verified gone" and a dry run did
+    neither — the sweep's own summary line counts :attr:`repaired`, so a
+    preview filed there is exactly the ``repaired N link(s)`` fabrication this
+    commit removes. Empty on every real run."""
+
+    dry_run: bool = False
+    """``True`` when this sweep contacted nothing; see :attr:`RepairReport.plan`.
+
+    NOT derivable from ``bool(planned)``, which is why it is recorded
+    separately. On a lab whose links are ALL structurally refused — every
+    implicit link is, so an N-host lab with no declared links is exactly this —
+    a dry-run sweep files every one under :attr:`skipped` and previews nothing,
+    and a renderer keying off :attr:`planned` would fall through to
+    ``repaired 0 link(s)``: output byte-identical to a real sweep, which is the
+    indistinguishable-from-real shape in vacuous form.
+
+    Recorded by :func:`repair_all` from the run's own context rather than
+    inferred from its results, for that reason: a flag derived from the output
+    cannot describe a run that produced none."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -198,6 +301,29 @@ class LinkState:
 
     Appended for the same reason :attr:`refusal` was — see above."""
 
+    not_measured: bool = False
+    """``True`` when NOTHING was asked: no read was issued, on any host.
+
+    A THIRD state, and it exists because this dataclass already argues for it.
+    :attr:`unreachable` means "couldn't be reached" and :attr:`read_errors`
+    means "answered, and the read failed"; the docstring above says why they
+    were split — reporting a host that ANSWERED as unreachable "sends the
+    operator to look at the network instead of at the host's tooling". A
+    ``--dry-run`` is neither, and by that same argument reporting it as either
+    sends the operator somewhere wrong: to the network, or to a ``tc`` that is
+    fine. What actually happened is that otto declined to look.
+
+    Reporting it as CLEAN — which is what happened before this field existed,
+    because the synthetic dry-run reply parses to an empty qdisc — is worse
+    than all three: it is the only wrong answer that is indistinguishable from
+    a real one.
+
+    A ``bool``, not a message, unlike :attr:`refusal`: that field carries a
+    string because the reasons vary, and there is exactly one reason to be
+    here. The sentence belongs to the renderer.
+
+    Appended for the same reason :attr:`refusal` was — see above."""
+
     @property
     def read_failed(self) -> bool:
         """True when any direction's read failed on a reachable host."""
@@ -232,7 +358,36 @@ async def _exec(host: Any, cmd: str) -> Any:
     package's OWN pair of errors substituted — transport, then timed-out, then
     non-ok. The messages are unchanged because they are where that helper's
     pattern came from.
+
+    **THE DRY-RUN BACKSTOP LIVES HERE**, at the single funnel every read in
+    this package goes through — :func:`_read_state`, :func:`_resolve_placements`
+    and :func:`_cancel_timers` all arrive by it. A dry run reaching this line
+    means some path above forgot to short-circuit, and the ONLY safe answer is
+    to fail loudly: ``BaseHost.exec`` would otherwise hand back an ``is_ok``
+    ``CommandResult`` whose value is a banner, and every caller here PARSES
+    what it gets. That is the guarantee that no read path added later can
+    quietly start fabricating — see :class:`LinkNotMeasuredError`.
+
+    It is a backstop and NOT the answer. On its own it turns every command
+    into an error, which is honest and is not a product: a dry run with no
+    preview is useless rather than safe. It also cannot build one — the
+    preview needs the caller's whole intent (params, ``--port``, ``--expire``,
+    the directions), none of which is visible from a command string. So
+    :func:`impair_link` and :func:`repair_link` short-circuit ABOVE this, where
+    that intent lives, and never reach it.
+
+    :func:`_link_state` is the deliberate exception: it has no plan to build —
+    reading IS its whole job — so it lets this fire and catches it, which is
+    what gives ``list`` its "not read" state and keeps this arm live rather
+    than a tripwire nothing ever trips. :func:`_root_run`, the MUTATING twin,
+    gets the opposite treatment: nothing parses its output, so it needs no
+    backstop, and a dry run never reaches it either.
     """
+    if is_dry_run():
+        raise LinkNotMeasuredError(
+            f"{cmd!r} was not run on host {host.id!r}: a dry run makes no device contact, "
+            f"so nothing about this host's state was measured"
+        )
     return await exec_or_raise(
         host,
         cmd,
@@ -453,6 +608,28 @@ async def _cancel_timers(
     return len(pids)
 
 
+def _expire_refusal_context(sentinel: str | None = None) -> str:
+    """Build the ``attempted=`` text for the ``daemon-launch`` refusal — ONE home.
+
+    Two callers ask :func:`~otto.host.daemon.refuse_if_launch_wrapper_needs_bash`
+    the same question and must get the same sentence back:
+    :func:`_launch_daemon`, at the moment of the real launch, and
+    :func:`_plan_impair`, which asks UP FRONT because a dry run has nothing to
+    roll back and an operator asking "what would this do" is owed "it would be
+    refused" before any of the rest.
+
+    *sentinel* is omitted only by the in-path planner, which has no netdev to
+    build one from (:func:`_planned_placements` explains why) and so cannot
+    name the tag without inventing it.
+    """
+    tag = f" tagged {sentinel!r}" if sentinel is not None else ""
+    return (
+        f"an expire-timer daemon{tag}, which otto launches through "
+        f"`bash -c 'exec -a …'`. Impair without `--expire` and repair the link when "
+        f"you are done — the impairment itself needs no bash, only the timer does"
+    )
+
+
 async def _launch_daemon(host: Any, sentinel: str, argv: list[str]) -> None:
     """Launch one sentinel-tagged daemon on *host*, refusing what it cannot run.
 
@@ -475,15 +652,18 @@ async def _launch_daemon(host: Any, sentinel: str, argv: list[str]) -> None:
     ``impair_link`` reporting SUCCESS for an impairment whose timer does not
     exist and which therefore never expires. That is the silent failure this
     converts into a refusal.
+
+    A ``--dry-run`` asks the same guard the same question from
+    :func:`_plan_impair`, before anything else, and never arrives here. That
+    is a SECOND caller of the guard and not a second path to the gapped
+    surface: it launches nothing. The call stays spelled out here rather than
+    behind a shared wrapper because the ``daemon-launch`` record's
+    ``GapPath(site="otto.link.manage._launch_daemon", checked_by=…)`` is pinned
+    by an AST scan of THIS function for THAT name
+    (``tests/unit/host/test_gap_registry.py::…::test_the_site_calls_the_guard_it_names``);
+    only the message is shared, via :func:`_expire_refusal_context`.
     """
-    refuse_if_launch_wrapper_needs_bash(
-        host,
-        attempted=(
-            f"an expire-timer daemon tagged {sentinel!r}, which otto launches through "
-            f"`bash -c 'exec -a …'`. Impair without `--expire` and repair the link when "
-            f"you are done — the impairment itself needs no bash, only the timer does"
-        ),
-    )
+    refuse_if_launch_wrapper_needs_bash(host, attempted=_expire_refusal_context(sentinel))
     await _root_run(host, launch_command(sentinel, argv))
 
 
@@ -702,6 +882,265 @@ def _raise_whole_link_exclusivity(link_id: str) -> None:
     raise ValueError(f"link {link_id} has a whole-link impairment — repair it first")
 
 
+####################
+#  --dry-run planning: what lab data and the given arguments alone can say
+####################
+
+_UNCHECKED_LOCKOUT = (
+    "the two self-lockout refusals. otto refuses a placement whose netdev carries the "
+    "management address it reaches that host through, or the transit path of a host that "
+    "hops through it — and BOTH refuse only on a positive match against the host's live "
+    "`ip -o addr show`, which was not run. A dry run therefore CANNOT tell you this "
+    "impairment would be allowed, let alone that it is safe"
+)
+"""The headline. Stated on every plan that names a placement, impair or repair.
+
+Worth its own constant because it is the one thing an operator would otherwise
+take from silence: before this, ``--dry-run`` of an impair that would cut otto
+off from the bed printed no refusal at all — the guards parse an EMPTY address
+table out of the synthetic reply, and an empty table can never match.
+"""
+
+_UNCHECKED_FOREIGN = (
+    "the netdev's current SHAPE, which carries two more refusals — a foreign qdisc otto did "
+    "not create is never touched, and whole-link and port-scoped impairment never mix on one "
+    "netdev. Both are read off the device, so either could turn this call into a refusal"
+)
+
+_UNCHECKED_TIMERS_AND_VERIFY = (
+    "live expire timers (a real run scans `ps` on each host and cancels this link's own "
+    "before mutating) and the post-apply verify (a real run re-reads the netdev and fails "
+    "loudly, rolling everything back, if the impairment did not take)"
+)
+
+_UNCHECKED_BAND = (
+    "the prio band this selector would land in. It is the lowest band still free on the "
+    "netdev, so the exact `tc qdisc replace … parent 1:<band>` and `tc filter add … pref "
+    "<n>` lines cannot be shown without reading the netdev's current selectors"
+)
+
+
+def _inpath_unresolved(link: Link) -> str:
+    """Why an in-path link's placements cannot be named without a device."""
+    return (
+        f"every placement. {link.impair!r} is this link's in-path middlebox, and which of its "
+        f"interfaces faces each endpoint is resolved by subnet-matching the middlebox's live "
+        f"`ip -o addr show`, which was not run. With no netdev there is no command line, no "
+        f"current state and no self-lockout check to show for this link"
+    )
+
+
+def _planned_placements(
+    lab: Any, link: Link, directions: frozenset[FlowDirection]
+) -> list[Placement] | None:
+    """Placements a dry run can name, or ``None`` when only a device could say.
+
+    The pure half of :func:`_resolve_placements`, and the split between the two
+    modes is the sharpest constraint on this whole feature:
+
+    * ENDPOINT mode is pure. :func:`~otto.link.placement.endpoint_placements`
+      reads the DECLARED ``link.a.interface`` / ``link.b.interface``, so a dry
+      run names host and netdev exactly, with no approximation.
+    * IN-PATH mode is not. :func:`~otto.link.placement.inpath_placements`
+      subnet-matches the middlebox's live address table to find the netdev
+      facing each endpoint, so a dry run cannot resolve a single placement and
+      must SAY that. Guessing is not available and neither is the old
+      behaviour, which raised ``'mb' has no interface on 'x's subnet`` — a real
+      sentence about a fabricated measurement, and the wrong story for the
+      actual cause.
+
+    ``ensure_not_local_link`` runs here, exactly as it does at the top of
+    :func:`_resolve_placements`: it needs no lab and no device, so a dry run
+    refuses a local link for the same reason and with the same message a real
+    run does.
+    """
+    ensure_not_local_link(link)
+    if link.impair:
+        # Resolves the middlebox so a lab-data error (a link naming a host that
+        # is not in the lab) is still the loud ValueError a real run raises,
+        # rather than being lost behind "could not be resolved".
+        _host(lab, link.impair)
+        return None
+    return endpoint_placements(link, directions)
+
+
+def _plan_one_placement(
+    placement: Placement,
+    impairer: LinkImpairer,
+    params: ImpairmentParams,
+    selector: Selector | None,
+    expire: int | None,
+) -> list[str]:
+    """Render the ``would`` lines for one placement, from the given params alone.
+
+    The params are merged over an EMPTY base rather than used as given, which
+    is what makes ``--delay 0`` plan a ``tc qdisc del`` instead of a nonsense
+    ``netem delay 0ms``: merging is where an explicit zero becomes "clear this
+    one param" (:meth:`~otto.link.params.ImpairmentParams.merged_over`). An
+    empty base is the honest model of "as if the netdev were clean", which is
+    exactly the caveat :data:`_UNCHECKED_MERGE` carries.
+
+    A coupling failure is reported, not raised.
+    :meth:`~otto.link.params.ImpairmentParams.validate` documents itself as
+    evaluated AFTER the merge — ``--jitter`` may be joining a delay applied by
+    an earlier call — so a dry run must not turn "cannot be shown" into a
+    refusal a real run would not make. It also must not render the command
+    anyway: ``describe()`` drops a jitter with no delay, so the line would come
+    out as a truncated ``tc qdisc replace … root netem`` that no run emits.
+    """
+    where = f"{placement.direction.value} on {placement.host_id}/{placement.netdev}"
+    as_if_clean = params.merged_over(ImpairmentParams())
+    try:
+        as_if_clean.validate()
+    except ValueError as e:
+        return [
+            (
+                f"{where}: no command line can be shown — {e}, and what is already "
+                f"applied is precisely what a dry run does not read"
+            )
+        ]
+    if selector is not None:
+        desc = as_if_clean.describe() or "clear this selector"
+        lines = [f"{where}: {selector.describe()} {desc}"]
+    elif as_if_clean.is_empty():
+        lines = [f"{where}: {impairer.clear_command(placement.netdev)}"]
+    else:
+        lines = [f"{where}: {impairer.apply_command(placement.netdev, as_if_clean)}"]
+    if expire is not None:
+        lines.append(f"{where}: launch an expire timer that clears it after {expire}s")
+    return lines
+
+
+_UNCHECKED_MERGE = (
+    "what is CURRENTLY applied to the netdev. A real run merges the given parameters over "
+    "it per-param, so any command line above is the one a CLEAN netdev would get and "
+    "nothing else — re-impairing a link that already carries an impairment produces a "
+    "different command"
+)
+
+
+def _plan_impair(
+    lab: Any,
+    link: Link,
+    directions: frozenset[FlowDirection],
+    params: ImpairmentParams,
+    *,
+    expire: int | None,
+    selector: Selector | None,
+) -> DryRunPlan:
+    """Preview :func:`impair_link` without contacting anything.
+
+    Everything reachable here is pure — the placement resolution above, the
+    per-host impairer lookup, the ``--port`` capability check, the
+    ``daemon-launch`` refusal (it reads a DECLARED ``has_bash``), and every
+    command-string builder. Each of those refusals is raised, not collected:
+    they are the same refusals a real run makes, from the same data, so a dry
+    run that swallowed them would be less faithful, not safer.
+
+    The ``--expire`` refusal is the one that MOVES. In a real run it fires from
+    :func:`_launch_daemon`, after this placement's qdisc mutation has already
+    been applied and verified, and is then rolled back. A dry run has no
+    mutation to roll back, so it asks the question first — which is also the
+    only order in which an operator previewing the command learns the answer.
+    """
+    would: list[str] = []
+    unchecked: list[str] = []
+    placements = _planned_placements(lab, link, directions)
+    if placements is None:
+        middlebox = _host(lab, link.impair or "")
+        impairer = _impairer_for(middlebox)
+        if selector is not None:
+            _ensure_selector_capable(middlebox, impairer)
+        if expire is not None:
+            refuse_if_launch_wrapper_needs_bash(middlebox, attempted=_expire_refusal_context())
+        unchecked.append(_inpath_unresolved(link))
+        unchecked.append(_UNCHECKED_TIMERS_AND_VERIFY)
+        return DryRunPlan(would, unchecked)
+    for placement in placements:
+        host = _host(lab, placement.host_id)
+        impairer = _impairer_for(host)
+        if selector is not None:
+            _ensure_selector_capable(host, impairer)
+        if expire is not None:
+            sentinel = (
+                encode_impair_sentinel_v2(link.id, placement.netdev, selector)
+                if selector is not None
+                else encode_impair_sentinel(link.id, placement.netdev)
+            )
+            refuse_if_launch_wrapper_needs_bash(host, attempted=_expire_refusal_context(sentinel))
+        would.extend(_plan_one_placement(placement, impairer, params, selector, expire))
+    if selector is not None:
+        unchecked.append(_UNCHECKED_BAND)
+    unchecked.append(_UNCHECKED_MERGE)
+    unchecked.append(_UNCHECKED_LOCKOUT)
+    unchecked.append(_UNCHECKED_FOREIGN)
+    unchecked.append(_UNCHECKED_TIMERS_AND_VERIFY)
+    return DryRunPlan(would, unchecked)
+
+
+_UNCHECKED_ANYTHING_TO_CLEAR = (
+    "whether any of these placements carries an impairment at all. A bare repair SKIPS a "
+    "netdev that is already clean, so the clears above are conditional and the count a real "
+    "run reports cannot be known here"
+)
+
+_UNCHECKED_TIMER_COUNT = (
+    "how many expire timers are live. The count comes from a `ps` scan on each placement "
+    "host, so a dry run reporting `timers cancelled 0` would be claiming a scan it never ran"
+)
+
+_UNCHECKED_REPAIR_REFUSALS = (
+    "the refusals. `repair` resolves placements exactly as `impair` does, so a netdev that "
+    "turns out to be a management or hop-transit interface, or to carry a foreign qdisc, is "
+    "REFUSED — this repair would fail rather than run, and only a device read decides that"
+)
+
+
+def _plan_repair(lab: Any, link: Link, *, selector: Selector | None) -> DryRunPlan:
+    """Preview :func:`repair_link` without contacting anything.
+
+    Every clear is conditional in a way an impair's is not: a bare repair skips
+    a placement whose netdev is already clean, and a scoped repair skips a
+    selector that is not present. So these lines say "only if", and the count
+    the real command prints — ``cleared …, timers cancelled N`` — is exactly
+    what a dry run has no way to produce.
+    """
+    would: list[str] = []
+    unchecked: list[str] = []
+    placements = _planned_placements(lab, link, _BOTH)
+    if placements is None:
+        middlebox = _host(lab, link.impair or "")
+        impairer = _impairer_for(middlebox)
+        if selector is not None:
+            _ensure_selector_capable(middlebox, impairer)
+        unchecked.append(_inpath_unresolved(link))
+        unchecked.append(_UNCHECKED_TIMER_COUNT)
+        return DryRunPlan(would, unchecked)
+    for placement in placements:
+        host = _host(lab, placement.host_id)
+        impairer = _impairer_for(host)
+        where = f"{placement.host_id}/{placement.netdev}"
+        if selector is None:
+            would.append(
+                f"{where}: {impairer.clear_command(placement.netdev)} "
+                f"(only if the netdev carries otto impairment)"
+            )
+            would.append(f"{where}: cancel every live expire timer for this link")
+        else:
+            _ensure_selector_capable(host, impairer)
+            would.append(
+                f"{where}: clear {selector.describe()} (only if that selector is present; "
+                f"clearing the last one deletes the scoped root)"
+            )
+            would.append(f"{where}: cancel {selector.describe()}'s own expire timer")
+    if selector is not None:
+        unchecked.append(_UNCHECKED_BAND)
+    unchecked.append(_UNCHECKED_ANYTHING_TO_CLEAR)
+    unchecked.append(_UNCHECKED_TIMER_COUNT)
+    unchecked.append(_UNCHECKED_REPAIR_REFUSALS)
+    return DryRunPlan(would, unchecked)
+
+
 async def impair_link(
     lab: "Lab",
     ident: str,
@@ -750,9 +1189,21 @@ async def impair_link(
     verify, host unreachable, etc.), every placement touched in this call —
     INCLUDING the one whose own mutation just failed — is restored to its
     PRIOR state before the error propagates.
+
+    Under ``--dry-run`` nothing below the short-circuit runs: the report comes
+    back with :attr:`~ImpairReport.applied` empty and
+    :attr:`~ImpairReport.plan` set. The short-circuit sits ABOVE
+    ``_resolve_placements`` — above the read backstop in ``_exec``, which would
+    otherwise raise — because the preview needs this call's whole intent and a
+    command string does not carry it.
     """
     link = find_link(lab, ident)
     directions = _directions(link, from_host)
+    if is_dry_run():
+        return ImpairReport(
+            link.id,
+            plan=_plan_impair(lab, link, directions, params, expire=expire, selector=selector),
+        )
     placements = await _resolve_placements(lab, link, directions)
 
     applied: list[AppliedPlacement] = []
@@ -836,9 +1287,18 @@ async def repair_link(lab: "Lab", ident: str, *, selector: Selector | None = Non
 
     Every clear is verified by a post-clear re-read: a clear that silently
     didn't take is a loud, host-named failure, never reported as ``cleared``.
+
+    Under ``--dry-run`` this returns a plan and clears nothing — see
+    :attr:`RepairReport.plan`. Before the short-circuit existed the synthetic
+    reply parsed as a CLEAN netdev, so every placement took the
+    ``state.kind == "clean"`` skip and the command reported
+    ``cleared (nothing to clear), timers cancelled 0`` and exited 0 — three
+    measurements, none of them taken.
     """
     link = find_link(lab, ident)
     directions = _directions(link, None)
+    if is_dry_run():
+        return RepairReport(link.id, plan=_plan_repair(lab, link, selector=selector))
     placements = await _resolve_placements(lab, link, directions)
 
     cleared: list[Placement] = []
@@ -897,15 +1357,29 @@ async def repair_all(lab: "Lab") -> RepairAllReport:
     must say so. A link whose repair fails for a live reason
     (:class:`RuntimeError` — host down, command failed) is collected into
     :attr:`~RepairAllReport.failures` instead of aborting the rest.
+
+    Under ``--dry-run`` each link's preview lands in
+    :attr:`~RepairAllReport.planned` and NOT in
+    :attr:`~RepairAllReport.repaired`, so the sweep's ``repaired N link(s)``
+    count stays a count of links actually repaired. Structural refusals still
+    fill :attr:`~RepairAllReport.skipped`, unchanged: they are decided from lab
+    data and are as true under a dry run as under a real one — which is why
+    :attr:`~RepairAllReport.dry_run` is read from the CONTEXT here rather than
+    inferred from ``planned``: a lab whose links are all refused previews
+    nothing, and a sweep that produced no output still has to be able to say it
+    was a dry run.
     """
-    report = RepairAllReport()
+    report = RepairAllReport(dry_run=is_dry_run())
     for link in lab.static_links():
         try:
-            report.repaired.append(await repair_link(lab, link.id))
+            outcome = await repair_link(lab, link.id)
         except ValueError as e:  # noqa: PERF203 — per-item resilience
             report.skipped.append(f"{link.id}: {e}")
         except RuntimeError as e:
             report.failures.append(f"{link.id}: {e}")
+        else:
+            bucket = report.planned if outcome.plan is not None else report.repaired
+            bucket.append(outcome)
     return report
 
 
@@ -941,6 +1415,18 @@ async def _link_state(lab: Any, link: Link) -> LinkState:
     predicate refuses PER DIRECTION, and ``list`` reads both, so a
     half-interfaced link is correctly reported unimpairable here while
     ``impair --from <the interfaced end>`` still works.
+
+    UNDER ``--dry-run`` THIS FUNCTION HAS NO SHORT-CIRCUIT OF ITS OWN, on
+    purpose. :func:`impair_link` and :func:`repair_link` need one because they
+    have a plan to build; ``list`` has none — reading IS its job — so the
+    honest answer is whatever the read attempt produces, and the backstop in
+    :func:`_exec` produces exactly it. The structural refusal above is still
+    answered first (it is pure, and it is real information a dry run CAN
+    give); everything after it raises :class:`LinkNotMeasuredError` from the
+    first address-table read, and the arm below turns that into
+    :attr:`LinkState.not_measured`. Routing it this way rather than adding a
+    second ``is_dry_run()`` here is what keeps that arm LIVE — a hand-written
+    short-circuit would make it a branch nothing ever takes.
     """
     refusal = impairment_refusal(link, _BOTH)
     if refusal is not None:
@@ -960,6 +1446,29 @@ async def _link_state(lab: Any, link: Link) -> LinkState:
                     scoped={sel: params for sel, (_band, params) in state.selectors.items()},
                     foreign=state.kind == "foreign",
                 )
+            except LinkNotMeasuredError:
+                # UNREACHABLE TODAY, and closed anyway. The proof, so the next
+                # reader does not have to rebuild it: under a dry run this loop
+                # is entered only if `_resolve_placements` RETURNED, and that
+                # function always issues at least one `_exec` first — the
+                # middlebox's address table in in-path mode, the first
+                # placement's in endpoint mode — and `placements` is never
+                # empty, because `impairment_refusal` above already passed. So
+                # the backstop always fires up there and the OUTER arm wins.
+                #
+                # The premise is one plausible refactor from changing: cache
+                # address tables across links and `_resolve_placements` goes
+                # pure for a warm host. Without this line the wide arm below
+                # would then file a backstop raise as a read failure — `!`
+                # cells and "host reachable, read command failed", both false,
+                # and precisely the operator misdirection `not_measured`
+                # exists to prevent. "No read path added later can quietly
+                # start fabricating" must not weaken to "fails into the wrong
+                # bucket".
+                #
+                # `raise`, not a second `LinkState(...)`: the mapping from this
+                # error to `not_measured` keeps ONE home, the outer arm.
+                raise
             except LinkHostUnreachableError:
                 unreachable = True
                 by_direction[placement.direction] = None
@@ -994,6 +1503,14 @@ async def _link_state(lab: Any, link: Link) -> LinkState:
         # hop-transit checks read each placement host's live address table,
         # and an in-path link's placements are derived from the middlebox's.
         return LinkState(link, {}, impairable=False, refusal=str(e), unreachable=False)
+    except LinkNotMeasuredError:
+        # Nothing was asked. NOT `unreachable` (no host was contacted to fail
+        # to answer) and NOT `read_errors` (no host answered), for the reason
+        # those two are themselves separate — see LinkState.not_measured.
+        # `impairable` stays True because the structural predicate above said
+        # so and that answer needed no device; what it does NOT cover is the
+        # live refusals, which is exactly what `not_measured` warns about.
+        return LinkState(link, {}, impairable=True, not_measured=True)
     except LinkHostUnreachableError:
         return LinkState(link, {}, impairable=True, unreachable=True)
     except RuntimeError as e:

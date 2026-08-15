@@ -341,7 +341,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         :class:`~otto.host.unix_host.UnixHost` parent.
         """
         if is_dry_run():
-            return self._dry_run_result(cmd)
+            return self._dry_run_result(cmd, log)
         await self._ensure_running()
         return await self._session_mgr.run_cmd(
             cmd, expects=expects, timeout=timeout, log=self._effective_log(log)
@@ -360,8 +360,14 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         """Send raw text to the container's persistent session."""
         effective = self._effective_log(log)
         if is_dry_run():
-            if effective is not LogMode.NEVER:
-                self._log_command(f"[DRY RUN] send({text!r})")
+            # The folded mode, not the default NORMAL: a dry run must not put a
+            # send on the console that a real run keeps off it. No NEVER guard
+            # here on purpose -- `_log_command` returns before it logs on NEVER,
+            # and that is the ONE home for the decision; a second copy here
+            # reads as redundant and gets deleted, taking the real one's twin
+            # with it. Building the f-string first costs nothing that matters:
+            # `text` is already a live `str` and `repr` only copies it.
+            self._log_command(f"[DRY RUN] send({text!r})", effective)
             return
         await self._ensure_running()
         await self._session_mgr.send(text, log=effective)

@@ -21,9 +21,11 @@ CLI usage, the in-path model, and the Python API.
 
 .. automodule:: otto.link
    :members:
-   :exclude-members: AppliedPlacement, DirectionState, FlowDirection, IMPAIRERS,
+   :exclude-members: AppliedPlacement, DirectionState, DryRunPlan, FlowDirection,
+      IMPAIRERS,
       ImpairReport, ImpairmentParams, Link, LinkCommandFailedError, LinkEndpoint,
-      LinkHostUnreachableError, LinkImpairer, LinkState, NetEmImpairer, Placement,
+      LinkHostUnreachableError, LinkImpairer, LinkNotMeasuredError, LinkState,
+      NetEmImpairer, Placement,
       Provenance, RepairAllReport, RepairReport, ScopedState, Selector,
       build_impairer, find_link, impair_link, make_link_id, make_static_link_id,
       parse_percent, parse_rate, parse_time_ms, read_link_states,

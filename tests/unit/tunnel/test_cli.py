@@ -26,12 +26,14 @@ from otto.cli.tunnel import (
 from otto.tunnel import (
     AddedTunnel,
     DiscoveredTunnel,
+    DryRunPlan,
     RemovedReport,
     Tunnel,
     TunnelDiscovery,
     TunnelHop,
 )
 from tests._fixtures.dispatch import DispatchRunner
+from tests.conftest import active_context
 
 runner = DispatchRunner()
 
@@ -628,3 +630,152 @@ def test_remove_with_neither_id_nor_all_exits_2():
         result = runner.invoke(tunnel_app, ["remove"])
     assert result.exit_code == 2, result.output
     assert "give a tunnel id or --all" in result.output
+
+
+# ── --dry-run rendering ──────────────────────────────────────────────────────
+#
+# `tunnel_app` is invoked directly here, so the ROOT `--dry-run` flag is not
+# parseable at this level; each test installs the context the root callback
+# would have installed.
+#
+# AND THAT CONTEXT IS INERT IN THESE FOUR, which is worth saying rather than
+# leaving for a reader to discover. The CLI branches on REPORT SHAPE
+# (`plan is not None`, `discovery.not_measured`) and never calls `is_dry_run()`
+# itself — deliberately, so the mode has exactly one home, in the manage
+# layer — and the manage layer is mocked here. So `active_context(dry_run=True)`
+# documents the situation being rendered; it does not enforce it, and dropping
+# it would not red these tests. The tests that DO inject a hostile condition
+# are in test_manage_*.py and test_discovery.py, where the real product decides.
+
+
+def test_list_dry_run_says_nothing_was_scanned_and_leaves_the_cache_alone():
+    discovery = TunnelDiscovery(tunnels=[], unreachable=[], not_measured=True)
+    with (
+        active_context(dry_run=True),
+        patch("otto.cli.tunnel.get_lab", return_value=object()),
+        patch("otto.cli.tunnel.get_repos", return_value=["repo-sentinel"]),
+        patch("otto.cli.tunnel.discover_tunnels", AsyncMock(return_value=discovery)),
+        patch("otto.cli.tunnel.record_tunnel_ids") as mock_record,
+    ):
+        result = runner.invoke(tunnel_app, ["list"])
+    assert result.exit_code == 0, result.output
+    assert "dry run" in result.output
+    assert "no host was scanned" in result.output
+    # NOT the unreachable story: nobody failed to answer.
+    assert "partial scan" not in result.output
+    # And the completion cache is not emptied from a scan that never ran.
+    mock_record.assert_not_called()
+
+
+def test_list_of_a_genuinely_empty_lab_still_prints_nothing_and_records():
+    """Positive control: the state a dry run used to be indistinguishable from."""
+    discovery = TunnelDiscovery(tunnels=[], unreachable=[])
+    with (
+        patch("otto.cli.tunnel.get_lab", return_value=object()),
+        patch("otto.cli.tunnel.get_repos", return_value=["repo-sentinel"]),
+        patch("otto.cli.tunnel.discover_tunnels", AsyncMock(return_value=discovery)),
+        patch("otto.cli.tunnel.record_tunnel_ids") as mock_record,
+    ):
+        result = runner.invoke(tunnel_app, ["list"])
+    assert result.exit_code == 0, result.output
+    assert "dry run" not in result.output
+    mock_record.assert_called_once_with(["repo-sentinel"], [])
+
+
+def _planned_add() -> AddedTunnel:
+    tunnel = Tunnel(
+        protocol="tcp",
+        service_port=161,
+        path=(TunnelHop(host="test1"), TunnelHop(host="test2")),
+    )
+    return AddedTunnel(
+        tunnel=tunnel,
+        carrier_fwd=None,
+        carrier_rev=None,
+        plan=DryRunPlan(
+            would=["carry fwd traffic on port 49152 and rev on 49153 — PROVISIONAL"],
+            unchecked=["whether this tunnel already exists"],
+        ),
+    )
+
+
+def test_add_dry_run_prints_the_plan_and_never_the_added_line():
+    with (
+        active_context(dry_run=True),
+        patch("otto.cli.tunnel.get_lab", return_value=object()),
+        patch("otto.cli.tunnel.add_tunnel", AsyncMock(return_value=_planned_add())),
+    ):
+        result = runner.invoke(tunnel_app, ["add", "--hosts", "test1,test2", "--port", "161"])
+    assert result.exit_code == 0, result.output
+    assert "dry run test1 <-> test2" in result.output
+    assert "would: carry fwd traffic" in result.output
+    assert "not checked: whether this tunnel already exists" in result.output
+    # `added … carriers None/None` is the fabrication this replaces.
+    assert "added" not in result.output
+    assert "None" not in result.output
+
+
+def test_remove_dry_run_prints_the_plan_and_never_removed_none_found():
+    report = RemovedReport(
+        removed_ids=[],
+        killed={},
+        unreachable=[],
+        survivors=[],
+        plan=DryRunPlan(would=["scan 2 has_bash host(s)"], unchecked=["which tunnels are live"]),
+    )
+    with (
+        active_context(dry_run=True),
+        patch("otto.cli.tunnel.get_lab", return_value=object()),
+        patch("otto.cli.tunnel.remove_all_tunnels", AsyncMock(return_value=report)),
+        patch("otto.cli.tunnel.get_repos", return_value=["repo-sentinel"]),
+        patch("otto.cli.tunnel.record_tunnel_ids") as mock_record,
+    ):
+        result = runner.invoke(tunnel_app, ["remove", "--all", "--yes"])
+    assert result.exit_code == 0, result.output
+    assert "dry run --all" in result.output
+    assert "would: scan 2 has_bash host(s)" in result.output
+    assert "not checked: which tunnels are live" in result.output
+    assert "(none found)" not in result.output
+    mock_record.assert_not_called()
+
+
+def test_remove_dry_run_by_id_headers_with_the_id():
+    report = RemovedReport(
+        removed_ids=[],
+        killed={},
+        unreachable=[],
+        survivors=[],
+        plan=DryRunPlan(would=["scan 2 has_bash host(s)"], unchecked=["which tunnels are live"]),
+    )
+    with (
+        active_context(dry_run=True),
+        patch("otto.cli.tunnel.get_lab", return_value=object()),
+        patch("otto.cli.tunnel.remove_tunnel", AsyncMock(return_value=report)),
+        patch("otto.cli.tunnel.get_repos", return_value=[]),
+        patch("otto.cli.tunnel.record_tunnel_ids"),
+    ):
+        result = runner.invoke(tunnel_app, ["remove", "tun-abc-161"])
+    assert result.exit_code == 0, result.output
+    assert "dry run tun-abc-161" in result.output
+
+
+def test_a_plan_row_is_printed_verbatim_without_markup_or_wrapping():
+    """An argv is not markup. Rich would eat ``[…]`` and print a command otto never sends."""
+    argv = "socat TCP4-LISTEN:8080,bind=[dead::beef],fork,reuseaddr TCP4:10.0.0.2:49152"
+    report = RemovedReport(
+        removed_ids=[],
+        killed={},
+        unreachable=[],
+        survivors=[],
+        plan=DryRunPlan(would=[argv], unchecked=["x"]),
+    )
+    with (
+        active_context(dry_run=True),
+        patch("otto.cli.tunnel.get_lab", return_value=object()),
+        patch("otto.cli.tunnel.remove_all_tunnels", AsyncMock(return_value=report)),
+        patch("otto.cli.tunnel.get_repos", return_value=[]),
+        patch("otto.cli.tunnel.record_tunnel_ids"),
+    ):
+        result = runner.invoke(tunnel_app, ["remove", "--all", "--yes"])
+    assert result.exit_code == 0, result.output
+    assert argv in result.output

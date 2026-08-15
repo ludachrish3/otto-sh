@@ -538,9 +538,26 @@ class BaseHost(ABC):
     #  Dry-run helpers
     ####################
 
-    def _dry_run_result(self, cmd: str) -> CommandResult:
-        """Return a synthetic CommandResult for dry-run mode."""
-        self._log_command(f"[DRY RUN] {cmd}")
+    def _dry_run_result(self, cmd: str, log: LogMode = LogMode.NORMAL) -> CommandResult:
+        """Return a synthetic CommandResult for dry-run mode.
+
+        *log* is the caller's per-command mode, exactly as the real runner
+        receives it, and is folded with the host's standing mode HERE rather
+        than by each call site. This method IS the dry-run path's emit seam —
+        it calls ``_log_command`` directly — and ``_effective_log`` belongs at
+        the emit seam (see :class:`HostFilter`), so folding inside is the one
+        place it cannot be forgotten. The fold is a most-restrictive ``max``
+        (:func:`~otto.logger.mode.effective_mode`), hence idempotent, so a
+        caller that hands over an already-folded mode is still correct.
+
+        Honouring the mode matters beyond noise: ``write_file`` sends the
+        file's whole body base64-encoded at ``LogMode.QUIET``, so a dry run
+        that logged at ``NORMAL`` put the contents of a credentials file on
+        the console that a real run keeps off it. ``QUIET`` removes the line
+        from the console and ``console.log``; it still reaches ``verbose.log``,
+        which carries no :class:`HostFilter`.
+        """
+        self._log_command(f"[DRY RUN] {cmd}", self._effective_log(log))
         return CommandResult(
             status=Status.Skipped, value="[DRY RUN] Command not executed", command=cmd, retcode=0
         )
@@ -564,6 +581,21 @@ class BaseHost(ABC):
         a dry run should catch it. Backend capability is **not** checked — that
         belongs to the real transfer, which is where the backend is actually
         selected and used.
+
+        **This banner is deliberately NOT folded with the host's standing mode,
+        unlike ``_dry_run_result``'s line.** The exemption is a decision, not an
+        accident of the signature: ``get``/``put``/``load``/``unload`` take no
+        per-call ``log``, but the STANDING mode is a separate input and would
+        apply if this folded — a host declared ``log = false`` in lab data
+        (coerced to ``QUIET`` by ``HostSpec._coerce_log_bool``) or a monitor
+        host pinned to ``NEVER`` (``monitor.factory``) would print nothing. It
+        prints anyway because this line is an ANNOUNCEMENT, never a payload: it
+        names an action, source files and a destination, and a dry run whose
+        output is empty is useless rather than safe. The tension is real — an
+        operator who set ``log = false`` did ask for quiet, and the real
+        transfer honours that (it runs inside ``SuppressCommandOutput``, which
+        this arm returns above) — and it is resolved in favour of the dry run
+        having a product. Payloads are the thing that must obey the mode.
         """
         from .transfer.base import parse_file_mode
 
@@ -839,7 +871,7 @@ class BaseHost(ABC):
         """
         timeout = _validate_timeout(timeout)
         if is_dry_run():
-            return self._dry_run_result(cmd)
+            return self._dry_run_result(cmd, log)
         return await self._exec_one(cmd, timeout=timeout, log=log)
 
     async def _exec_one(

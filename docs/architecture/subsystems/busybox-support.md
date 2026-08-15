@@ -497,8 +497,10 @@ record, and the other cannot be reached at all.
   `otto.link` that reaches `launch_command`, shared by both expire-timer
   flavours, so the refusal cannot be bypassed by adding a third launch.
 - `otto.tunnel.manage.add_tunnel` — **PROTECTED** by
-  `otto.tunnel.manage._resolve_chain`, which rejects a `has_bash=False` host as a
-  tunnel path member before any launch is planned. Not a hole: a guard here could
+  `otto.tunnel.manage._validate_chain_shape`, which rejects a `has_bash=False`
+  host as a tunnel path member before any launch is planned — on the real path
+  (via `_resolve_chain`) and under `--dry-run` (via `_planned_chain`, which
+  reaches no device and launches nothing) alike. Not a hole: a guard here could
   never fire.
 
 `otto.host.daemon.launch_command` wraps every daemon in a `setsid bash -c` that
@@ -527,11 +529,14 @@ cannot run this wrapper either and is refused for the same reason. Nothing is
 probed to decide this, so the refusal costs no connection.
 
 **otto's other tagged-daemon launch, tunnels, is not a second raise site** and
-does not need one: `otto.tunnel.manage._resolve_chain` already refuses a
+does not need one: `otto.tunnel.manage._validate_chain_shape` already refuses a
 `has_bash=False` host as a tunnel path member, before any launch is planned,
 because tunnel discovery and removal scan only `has_bash` hosts and would
 otherwise leak un-reapable processes. That refusal is loud and predates this
-one.
+one. It is named at `_validate_chain_shape` rather than at a caller because
+`add_tunnel` reaches it two ways — `_resolve_chain` on the real path,
+`_planned_chain` under `--dry-run` — and only the shared callee is true of
+both.
 
 **Measured:** the five matrix artifacts, 2026-08-13, running the wrapper body
 under each row's own ash. The two oldest have no `exec -a` and answer

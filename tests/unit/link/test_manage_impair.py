@@ -9,12 +9,13 @@ from dataclasses import dataclass, field
 import pytest
 
 from otto.link.impairer import LinkImpairer, register_impairer
-from otto.link.manage import find_link, impair_link
+from otto.link.manage import LinkNotMeasuredError, _exec, find_link, impair_link
 from otto.link.model import Link, LinkEndpoint
 from otto.link.params import ImpairmentParams, Selector
 from otto.link.placement import FlowDirection
 from otto.link.sentinel import IMPAIR_PS_COMMAND, encode_impair_sentinel_v2
 from otto.result import CommandResult, Results, Status
+from tests.conftest import active_context
 
 CARROT_ADDR = (
     "3: eth1    inet 10.10.200.11/24 brd 10.10.200.255 scope global eth1\\  x\n"
@@ -912,6 +913,11 @@ class TestExpireOnAHostWithoutBash:
     refuse, but these two would no longer be proving that the sites downstream
     of it exist.
 
+    The ``--dry-run`` planner asks the SAME guard the same question, up front,
+    where there is no mutation to roll back —
+    ``TestDryRunSurfacesTheExpireRefusalUpFront`` below. That is a second
+    caller of the guard and not a second launch: it emits nothing.
+
     otto's only OTHER caller of ``launch_command`` — the socat launch in
     ``otto.tunnel.manage.add_tunnel`` — is NOT reachable with such a host and
     carries no guard, deliberately: ``_resolve_chain`` refuses a
@@ -1045,4 +1051,276 @@ class TestExpireOnAHostWithoutBash:
         assert [c for c in carrot.sudo_commands if "exec -a" in c], "the launch was not attempted"
         assert carrot.sudo_commands[-1].startswith("bash -c 'if command -v systemd-run"), (
             "nothing ran after the failed launch — no re-read, no rollback, no error"
+        )
+
+
+# ===========================================================================
+# --dry-run: a preview built from lab data, never a fabricated measurement
+# ===========================================================================
+
+
+MGMT_LINK = Link(
+    a=LinkEndpoint(host="carrot_seed", interface="eth1", ip="10.10.200.11"),
+    b=LinkEndpoint(host="tomato_seed", interface="eth1", ip="10.10.200.12"),
+    name="mgmt-edge",
+)
+"""A link declaring each endpoint's MANAGEMENT interface as its data interface.
+
+``CARROT_ADDR``/``TOMATO_ADDR`` put ``10.10.200.11``/``10.10.200.12`` — the
+hosts' own ``ip`` — on ``eth1``, so ``ensure_not_mgmt`` matches positively and a
+real impair of this link is refused as a self-lockout. That refusal is what a
+dry run cannot make, and this link is the bed for proving it says so.
+"""
+
+
+class TestDryRunImpairPlansWithoutContact:
+    """`impair --dry-run` previews from lab data and touches nothing.
+
+    The hostile condition is INJECTED, not inherited: every test here installs
+    ``active_context(dry_run=True)`` itself, and every one asserts against a
+    fake whose ``commands`` list would record any contact. ``is_dry_run()`` is
+    ``False`` with no context installed, so a test that forgot the context
+    would exercise the real path and fail on the plan being ``None`` rather
+    than passing quietly.
+    """
+
+    @pytest.mark.asyncio
+    async def test_endpoint_mode_names_host_netdev_and_the_exact_command(self) -> None:
+        lab, carrot, tomato, _ = _bed()
+        with active_context(dry_run=True):
+            report = await impair_link(lab, "edge", ImpairmentParams(delay_ms=50.0))
+
+        assert report.plan is not None
+        assert report.applied == [], (
+            "`applied` means 'verified present after the mutation'; a dry run mutated and "
+            "verified nothing, so anything here is a fabricated measurement"
+        )
+        assert carrot.commands + tomato.commands == [], "a dry run contacted a host"
+        assert report.plan.would == [
+            "a->b on carrot_seed/eth1.100: tc qdisc replace dev eth1.100 root netem delay 50ms",
+            "b->a on tomato_seed/eth1.200: tc qdisc replace dev eth1.200 root netem delay 50ms",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_the_self_lockout_refusals_are_named_as_unchecked(self) -> None:
+        """THE HEADLINE. A dry run must never read as "no lockout risk here".
+
+        ``ensure_not_mgmt``/``ensure_not_hop_transit`` refuse only on a POSITIVE
+        match in the host's live address table, and the synthetic dry-run reply
+        parses to an EMPTY table — so before this change a dry run of an impair
+        that WOULD lock otto out of the bed printed no refusal at all, silently.
+        Both halves are asserted on the SAME bed: the real run refuses, and the
+        dry run says out loud that it could not make that call.
+        """
+        lab, carrot, _, _ = _bed(link=MGMT_LINK)
+
+        with pytest.raises(ValueError, match="self-lockout") as excinfo:
+            await impair_link(lab, "mgmt-edge", ImpairmentParams(delay_ms=50.0))
+        assert "management interface" in str(excinfo.value), (
+            "the control: without a bed whose REAL answer is a refusal, the dry-run half "
+            "below would be asserting about a link that was never at risk"
+        )
+
+        carrot.commands.clear()
+        with active_context(dry_run=True):
+            report = await impair_link(lab, "mgmt-edge", ImpairmentParams(delay_ms=50.0))
+
+        assert report.plan is not None
+        unchecked = " ".join(report.plan.unchecked)
+        assert "self-lockout" in unchecked, (
+            f"a dry run of an impair that would lock otto out said nothing about it: "
+            f"{report.plan.unchecked}"
+        )
+        assert "management address" in unchecked, (
+            "the refusal is named but not the interface it protects"
+        )
+        assert "hops through it" in unchecked, "the hop-transit half of the refusal is unnamed"
+        assert not carrot.commands, "the dry run read the address table after all"
+
+    @pytest.mark.asyncio
+    async def test_in_path_says_placements_are_unresolvable_not_that_none_exist(self) -> None:
+        """The in-path story used to be actively wrong, not merely absent.
+
+        `inpath_placements` subnet-matches the middlebox's live table; on the
+        EMPTY one a dry run parses out, `_facing_netdev` finds nothing and the
+        command died with `'pepper_seed' has no interface on 'tomato_seed''s
+        subnet` — a real sentence about a host it never asked, and pepper does
+        have that interface (the control below).
+        """
+        lab, _, _, pepper = _bed(link=INPATH)
+        pepper.qdisc_texts = ["", DELAY_50_TEXT, "", DELAY_50_TEXT]
+        real = await impair_link(lab, "dataplane", ImpairmentParams(delay_ms=50.0))
+        assert {a.placement.netdev for a in real.applied} == {"eth1.100", "eth1.200"}, (
+            "the control: pepper really does face both endpoints, so 'no interface on that "
+            "subnet' was never a true statement about this bed"
+        )
+
+        pepper.commands.clear()
+        with active_context(dry_run=True):
+            report = await impair_link(lab, "dataplane", ImpairmentParams(delay_ms=50.0))
+
+        assert report.plan is not None
+        assert report.plan.would == [], "an in-path placement cannot be named without a device"
+        assert "in-path middlebox" in report.plan.unchecked[0]
+        assert "no interface on" not in " ".join(report.plan.unchecked), (
+            "the dry run repeated the old fabricated finding"
+        )
+        assert not pepper.commands
+
+    @pytest.mark.asyncio
+    async def test_an_explicit_zero_plans_a_clear_not_a_zero_valued_netem(self) -> None:
+        """`--delay 0` clears that param; the clear only appears after a merge.
+
+        Planning from the params AS GIVEN would render
+        `tc qdisc replace ... root netem delay 0ms`, a command otto never emits.
+        """
+        lab, *_ = _bed()
+        with active_context(dry_run=True):
+            report = await impair_link(lab, "edge", ImpairmentParams(delay_ms=0.0))
+
+        assert report.plan is not None
+        assert report.plan.would == [
+            "a->b on carrot_seed/eth1.100: tc qdisc del dev eth1.100 root",
+            "b->a on tomato_seed/eth1.200: tc qdisc del dev eth1.200 root",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_a_coupling_that_only_the_merge_can_satisfy_is_reported_not_raised(self) -> None:
+        """`--jitter` with no `--delay` may be joining an already-applied delay.
+
+        `ImpairmentParams.validate` documents itself as evaluated AFTER the
+        merge for exactly that reason, so a dry run must neither refuse (a real
+        run might not) nor render the command anyway — `describe()` drops a
+        jitter with no delay, so the line would come out as a truncated
+        `tc qdisc replace dev eth1.100 root netem ` that no run emits.
+        """
+        lab, *_ = _bed()
+        with active_context(dry_run=True):
+            report = await impair_link(
+                lab, "edge", ImpairmentParams(jitter_ms=5.0), from_host="carrot_seed"
+            )
+
+        assert report.plan is not None
+        (line,) = report.plan.would
+        assert "no command line can be shown" in line
+        assert "--jitter requires a delay" in line
+        assert "root netem" not in line, f"a truncated netem command was rendered: {line}"
+
+    @pytest.mark.asyncio
+    async def test_a_scoped_impair_does_not_render_a_whole_link_command(self) -> None:
+        """A `--port` impair never touches the root netem, and its band is live data.
+
+        Falling through to the whole-link branch would print
+        `tc qdisc replace ... root netem delay 50ms` — the command for the
+        OTHER kind of impairment, and the one this call is refused for
+        colliding with.
+        """
+        lab, *_ = _bed()
+        with active_context(dry_run=True):
+            report = await impair_link(
+                lab,
+                "edge",
+                ImpairmentParams(delay_ms=50.0),
+                from_host="carrot_seed",
+                selector=Selector(5201, "tcp"),
+            )
+
+        assert report.plan is not None
+        assert report.plan.would == ["a->b on carrot_seed/eth1.100: 5201/tcp delay 50ms"]
+        assert "prio band" in report.plan.unchecked[0]
+
+    @pytest.mark.asyncio
+    async def test_a_local_link_is_refused_by_a_dry_run_too(self) -> None:
+        """`ensure_not_local_link` needs no device, so the dry run makes the same call.
+
+        A planner that swallowed the pure refusals would be LESS faithful than
+        the real command, not safer.
+        """
+        local_link = Link(
+            a=LinkEndpoint(host="local", interface="eth0", ip="10.0.0.1"),
+            b=LinkEndpoint(host="tomato_seed", interface="eth1.200", ip="10.10.202.12"),
+            name="loopback-edge",
+        )
+        lab, *_rest = _bed(link=local_link)
+        with active_context(dry_run=True), pytest.raises(ValueError, match="local host"):
+            await impair_link(lab, "loopback-edge", ImpairmentParams(delay_ms=50.0))
+
+    @pytest.mark.asyncio
+    async def test_a_dry_run_never_reaches_the_read_backstop(self) -> None:
+        """`impair_link` short-circuits ABOVE `_exec`, so its raise never fires here.
+
+        Asserted because the backstop is real and loud: if the short-circuit
+        were removed or moved below `_resolve_placements`, this command would
+        report `LinkNotMeasuredError` instead of a plan — honest, and not a
+        product.
+        """
+        lab, *_ = _bed()
+        with active_context(dry_run=True):
+            report = await impair_link(lab, "edge", ImpairmentParams(delay_ms=50.0))
+        assert report.plan is not None
+
+        # The control: the backstop IS armed, on the same lab and the same context.
+        with active_context(dry_run=True), pytest.raises(LinkNotMeasuredError, match="no device"):
+            await _exec(lab.hosts["carrot_seed"], "ip -o addr show")
+
+    @pytest.mark.asyncio
+    async def test_the_backstop_is_inert_outside_a_dry_run(self) -> None:
+        _lab, carrot, _, _ = _bed()
+        result = await _exec(carrot, "ip -o addr show")
+        assert result.value == CARROT_ADDR
+
+
+class TestDryRunSurfacesTheExpireRefusalUpFront:
+    """The `daemon-launch` refusal a real run only reaches AFTER mutating.
+
+    `_launch_daemon` sits below this placement's applied-and-verified qdisc
+    mutation, so a real `--expire` against a bash-less host mutates, refuses,
+    and rolls back (`TestExpireOnAHostWithoutBash`). It reads a DECLARED
+    `has_bash` and needs no device, so a dry run can and does ask first.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_bashless_expire_is_refused_before_anything_is_planned(self) -> None:
+        from otto.host.errors import UnsupportedOnUserlandError
+
+        lab, carrot, _, _ = _bed(has_bash=False)
+        with (
+            active_context(dry_run=True),
+            pytest.raises(UnsupportedOnUserlandError, match="daemon-launch") as excinfo,
+        ):
+            await impair_link(
+                lab, "edge", ImpairmentParams(delay_ms=50.0), from_host="carrot_seed", expire=30
+            )
+        assert "--expire" in str(excinfo.value), (
+            "the refusal has to name the option the operator can drop"
+        )
+        assert not carrot.commands, "a refusal that costs a round trip is not a dry run"
+
+    @pytest.mark.asyncio
+    async def test_the_same_dry_run_without_expire_is_not_refused(self) -> None:
+        """Only the TIMER needs bash; the impairment itself does not.
+
+        Without this, the test above passes against a planner that refused
+        every bash-less host outright.
+        """
+        lab, *_rest = _bed(has_bash=False)
+        with active_context(dry_run=True):
+            report = await impair_link(
+                lab, "edge", ImpairmentParams(delay_ms=50.0), from_host="carrot_seed"
+            )
+        assert report.plan is not None
+        assert report.plan.would == [
+            "a->b on carrot_seed/eth1.100: tc qdisc replace dev eth1.100 root netem delay 50ms"
+        ]
+
+    @pytest.mark.asyncio
+    async def test_a_bash_host_plans_the_timer_instead(self) -> None:
+        lab, *_ = _bed()
+        with active_context(dry_run=True):
+            report = await impair_link(
+                lab, "edge", ImpairmentParams(delay_ms=50.0), from_host="carrot_seed", expire=30
+            )
+        assert report.plan is not None
+        assert report.plan.would[-1] == (
+            "a->b on carrot_seed/eth1.100: launch an expire timer that clears it after 30s"
         )

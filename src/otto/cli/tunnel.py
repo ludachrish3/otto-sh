@@ -8,7 +8,9 @@ keeps internal host I/O quiet (only warnings/errors surface).
 from typing import TYPE_CHECKING
 
 import typer
+from rich import get_console
 from rich import print as rprint
+from rich.markup import escape
 
 from ..config import get_lab, get_repos
 from ..config.completion_cache import read_tunnel_ids, record_tunnel_ids
@@ -24,7 +26,7 @@ from .invoke import fail, print_error
 
 if TYPE_CHECKING:
     from ..config.repo import Repo
-    from ..tunnel import Tunnel
+    from ..tunnel import DryRunPlan, Tunnel
 
 tunnel_app = typer.Typer(
     name="tunnel",
@@ -154,6 +156,40 @@ def _fmt_via(tunnel: "Tunnel") -> str:
     return " ".join(parts) or "-"
 
 
+def _row(text: str) -> None:
+    """Print one detail row verbatim: no markup parsing, no width wrapping.
+
+    Every field on a ``--dry-run`` row is user-supplied lab data (a host id, an
+    interface) or a shell command built from it, and rich would read the
+    ``socat`` address ``TCP4-LISTEN:49152,fork,reuseaddr`` — or an interface
+    named ``eth0[dataplane]`` — as markup and print something otto never sends.
+    Soft-wrapped for the same reason: a broken argv is worse than a long line.
+    """
+    get_console().print(text, markup=False, soft_wrap=True)
+
+
+def _print_dry_run_plan(header: str, plan: "DryRunPlan") -> None:
+    """Render one command's ``--dry-run`` preview: what would happen, and what was not checked.
+
+    BOTH SECTIONS, ALWAYS. ``would`` alone reads as a verified promise — the
+    carrier ports in every argv were picked without probing a host, and the
+    refusals that could stop the call outright have not run. ``not checked``
+    alone is a dry run with no preview, which is useless rather than safe. The
+    ``would`` section is legitimately short for a chain with a container
+    endpoint, whose argv cannot be built without ``docker inspect``; the header
+    still prints, so the command never answers with silence.
+    """
+    get_console().print(
+        f"[cyan]dry run[/cyan] {escape(header)}: no device was contacted — "
+        f"nothing was read and nothing was changed",
+        soft_wrap=True,
+    )
+    for line in plan.would:
+        _row(f"  would: {line}")
+    for line in plan.unchecked:
+        _row(f"  not checked: {line}")
+
+
 @tunnel_app.command()
 async def add(
     hosts: str = typer.Option(
@@ -182,6 +218,14 @@ async def add(
         # a normal user outcome, never a traceback.
         fail(e)
     t = added.tunnel
+    if added.plan is not None:
+        # A dry run launched nothing, so the `added …` line below would be
+        # three claims — that it exists, that it came up, and which two ports
+        # it holds — none of them measured. `carrier_fwd`/`carrier_rev` are
+        # None here by construction; the provisional pair is in the plan,
+        # marked as provisional.
+        _print_dry_run_plan(f"{t.path[0].host} <-> {t.path[-1].host}", added.plan)
+        return
     rprint(
         f"[green]added[/green] {t.id} "
         f"({t.path[0].host} <-> {t.path[-1].host}, via {_fmt_via(t)}, "
@@ -196,6 +240,29 @@ async def list_tunnels() -> None:
 
     lab = get_lab()
     discovery = await discover_tunnels(lab)
+    if discovery.not_measured:
+        # BEFORE `record_tunnel_ids`, which is the part that would otherwise
+        # outlive the command: caching `[]` from a scan that never ran empties
+        # the `remove <TAB>` completion set for the next REAL invocation, and
+        # nothing repairs it until someone runs `list` again. A dry run must
+        # not leave that behind — when it declined to look. On a lab with no
+        # `has_bash` host there was nothing to look AT, `not_measured` is
+        # False, and the cache write below happens and is correct: it stores
+        # the same `[]` a real pass stores, from the same lab data.
+        #
+        # Says the consequence, not just the cause. The rest of this command's
+        # output is a table of observed processes, so a dry run has literally
+        # no row to hang a "not read" cell on — the whole answer has to be this
+        # line, or the command is silently indistinguishable from a lab with no
+        # tunnels running. It also does NOT print `partial scan — could not
+        # reach: …`: nobody was unreachable, nobody was asked.
+        get_console().print(
+            "[cyan bold]dry run[/cyan bold] — no device was contacted, so no host was "
+            "scanned; otto cannot say which tunnels are live, which are degraded, or "
+            "which hosts are unreachable",
+            soft_wrap=True,
+        )
+        return
     record_tunnel_ids(get_repos(), [d.tunnel.id for d in discovery.tunnels])
     if discovery.tunnels:
         # Borderless + single-space gaps: the worst-case row (20-char id,
@@ -261,6 +328,14 @@ async def remove(
             report = await remove_tunnel(lab, tunnel_id or "")
     except (ValueError, RuntimeError) as e:
         fail(e)
+    if report.plan is not None:
+        # Never the line below under a dry run: `removed (none found)` is a
+        # claim about live processes on hosts nobody scanned, and it exits 0
+        # byte-identically to a real reap of a clean lab. The cache is left
+        # alone for the same reason `list` leaves it alone — invalidating it
+        # here would make a preview change state a real run changes.
+        _print_dry_run_plan("--all" if all_ else (tunnel_id or ""), report.plan)
+        return
     record_tunnel_ids(get_repos(), [])  # invalidate; next scan refreshes
     removed = ", ".join(report.removed_ids) if report.removed_ids else "(none found)"
     rprint(f"[green]removed[/green] {removed}")

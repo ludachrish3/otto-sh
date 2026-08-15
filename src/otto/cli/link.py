@@ -16,6 +16,7 @@ from ..config import get_lab, get_repos
 from ..config.completion_cache import collect_link_ids
 from ..link import (
     DirectionState,
+    DryRunPlan,
     FlowDirection,
     ImpairmentParams,
     ImpairReport,
@@ -92,7 +93,47 @@ def _parse_params(given: dict[str, str | None]) -> ImpairmentParams:
     return ImpairmentParams(**kwargs)  # ty: ignore[invalid-argument-type]
 
 
+def _row(text: str) -> None:
+    """Print one detail row verbatim: no markup parsing, no width wrapping.
+
+    Shared by ``list``'s rows and the ``--dry-run`` plan rows below, and for
+    the same reason: every field on them is user-supplied lab data (a link
+    name, a host id, a netdev) or a shell command built from it, and rich
+    would read ``eth0[dataplane]`` as a style tag and print ``eth0`` — naming
+    an interface that does not exist.
+    """
+    get_console().print(text, markup=False, soft_wrap=True)
+
+
+def _print_dry_run_plan(link_id: str, plan: DryRunPlan) -> None:
+    """Render one link's ``--dry-run`` preview: what would happen, and what was not checked.
+
+    BOTH SECTIONS, ALWAYS. ``would`` alone reads as a verified promise — every
+    command line in it is the one a CLEAN netdev would get, and the refusals
+    that could stop the call outright have not run. ``not checked`` alone is a
+    dry run with no preview, which is useless rather than safe. The ``would``
+    section is legitimately empty for an in-path link, whose placements cannot
+    be resolved without the middlebox's live address table; the header still
+    prints, so the command never answers with silence.
+    """
+    get_console().print(
+        f"[cyan]dry run[/cyan] {escape(link_id)}: no device was contacted — "
+        f"nothing was read and nothing was changed",
+        soft_wrap=True,
+    )
+    for line in plan.would:
+        _row(f"  would: {line}")
+    for line in plan.unchecked:
+        _row(f"  not checked: {line}")
+
+
 def _print_impair_report(report: ImpairReport) -> None:
+    if report.plan is not None:
+        # A dry run applied nothing, so there is nothing for the loop below to
+        # render — and `applied` being empty is exactly why the preview cannot
+        # be left to it.
+        _print_dry_run_plan(report.link_id, report.plan)
+        return
     for applied in report.applied:
         placement = applied.placement
         desc = applied.params.describe() or "cleared"
@@ -188,6 +229,11 @@ async def impair(  # noqa: PLR0913 — CLI command params
 
 
 def _print_repair_report(report: RepairReport) -> None:
+    if report.plan is not None:
+        # Never the line below under a dry run: `cleared (nothing to clear),
+        # timers cancelled 0` is three claims and none of them was measured.
+        _print_dry_run_plan(report.link_id, report.plan)
+        return
     cleared = ", ".join(f"{p.host_id}/{p.netdev}" for p in report.cleared)
     rprint(
         f"[green]repaired[/green] {report.link_id}: cleared {cleared or '(nothing to clear)'}, "
@@ -233,7 +279,20 @@ async def repair(
     lab = get_lab()
     if all_:
         sweep = await repair_all(lab)
-        rprint(f"[green]repaired[/green] {len(sweep.repaired)} link(s)")
+        if sweep.dry_run:
+            # On `sweep.dry_run`, NOT on `sweep.planned` being non-empty: a lab
+            # whose links are all structurally refused (every implicit link is)
+            # previews nothing, and keying off the previews would print
+            # `repaired 0 link(s)` — true, mute, and byte-identical to a real
+            # sweep. `repaired` is empty here by construction.
+            for planned in sweep.planned:
+                _print_repair_report(planned)
+            rprint(
+                f"[cyan]dry run[/cyan] — previewed {len(sweep.planned)} link(s); "
+                f"nothing was read and nothing was changed"
+            )
+        else:
+            rprint(f"[green]repaired[/green] {len(sweep.repaired)} link(s)")
         if sweep.skipped:
             # Named, and deliberately BEFORE the failures block so it prints
             # even on the success path: a skip used to be a silent `continue`,
@@ -260,12 +319,24 @@ async def repair(
 def _dir_text(state: LinkState, direction: FlowDirection) -> str:
     dstate: DirectionState | None = state.by_direction.get(direction)
     if dstate is None:
-        # Three ways to have no shape, and they are not the same news: "!"
-        # this direction's host answered and the read failed (the message is
-        # on its own row below), "?" nobody answered, "-" never read.
-        # read_errors is consulted FIRST and per direction — `unreachable` is
-        # link-wide, so on a link with one endpoint down and the other's tc
-        # broken it would otherwise claim "?" for both cells.
+        # Four ways to have no shape, and they are not the same news:
+        # "not read" nobody was ASKED (--dry-run), "!" this direction's host
+        # answered and the read failed (the message is on its own row below),
+        # "?" nobody answered, "-" never read.
+        #
+        # `not_measured` is consulted FIRST because it is the strongest claim
+        # and the only one that is link-wide-by-construction; the other three
+        # describe an attempt, and under it there was none. It is also spelled
+        # in words rather than given a fourth glyph: "-" is already overloaded
+        # (this branch's "never read" and, below, a CLEAN placement), and that
+        # overload is exactly how a dry run used to report every endpoint-mode
+        # link as unimpaired.
+        #
+        # read_errors is consulted before `unreachable` and per direction —
+        # `unreachable` is link-wide, so on a link with one endpoint down and
+        # the other's tc broken it would otherwise claim "?" for both cells.
+        if state.not_measured:
+            return "not read"
         if direction in state.read_errors:
             return "!"
         return "?" if state.unreachable else "-"
@@ -276,11 +347,6 @@ def _dir_text(state: LinkState, direction: FlowDirection) -> str:
     if dstate.whole is not None:
         return dstate.whole.describe()
     return "-"
-
-
-def _row(text: str) -> None:
-    """Print one `list` row verbatim: no markup parsing, no width wrapping."""
-    get_console().print(text, markup=False, soft_wrap=True)
 
 
 def _read_error_rows(state: LinkState) -> list[str]:
@@ -375,5 +441,18 @@ async def list_links() -> None:
         get_console().print(
             f"[yellow bold]read failed[/yellow bold] — host reachable, read command failed: "
             f"{escape(', '.join(read_failed_ids))}",
+            soft_wrap=True,
+        )
+    if any(state.not_measured for state in states):
+        # A THIRD summary line, and the one that has to say what the cells
+        # cannot: the rest of every row above is lab data, which a dry run
+        # reads perfectly well, so a reader skimming host/interface/via sees a
+        # table that looks fully populated. Says the consequence, not just the
+        # cause — the live refusals are the part an operator would otherwise
+        # assume `list` had cleared them for.
+        get_console().print(
+            "[cyan bold]dry run[/cyan bold] — no device was contacted, so no link's "
+            "impairment state was read; the management-interface and hop-transit refusals "
+            "were not evaluated either",
             soft_wrap=True,
         )

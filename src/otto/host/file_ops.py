@@ -29,7 +29,8 @@ from typing import Annotated
 
 from ..logger.mode import LogMode
 from ..result import Result
-from ..utils import Arg, cli_exposed
+from ..utils import Arg, Status, cli_exposed
+from .host import is_dry_run
 from .userland import Userland, UserlandHost, refuse_if_gapped
 
 
@@ -289,6 +290,20 @@ class PosixFileOps(UserlandHost):
         with ``log=LogMode.QUIET`` so large bodies stay out of the console
         (still recorded in verbose.log).
 
+        **A dry run announces the write without carrying the payload.**
+        The encoded body IS the command string here, so the ``[DRY RUN]`` echo
+        of that command was the file's contents on the console — and once
+        ``_dry_run_result`` learned to honour ``QUIET``, suppressing it left an
+        operator with nothing at all. Both are wrong: SUPPRESS THE PAYLOAD,
+        NEVER THE ANNOUNCEMENT. A dry run whose output is empty is not a safe
+        dry run, it is a useless one. So this returns above the encoding with a
+        banner in ``BaseHost._dry_run_transfer``'s shape —
+        the action (``WRITE`` vs ``APPEND``, which is what changes the
+        outcome), the byte count (cheap, and says the body is non-empty), and
+        the destination. Never the body, at any mode. The decomposition into
+        "announcement" and "payload" is known only here, which is why this
+        branch lives in the caller and not in ``_dry_run_result``.
+
         The decode spelling is fixed, so a device with no ``base64`` is
         REFUSED before anything is sent — see
         :func:`refuse_if_base64_is_absent`. Refusing rather than emitting
@@ -315,7 +330,13 @@ class PosixFileOps(UserlandHost):
                 f"base64-encoded and decodes it on the device with `base64 -d`"
             ),
         )
-        encoded = base64.b64encode(data.encode()).decode()
+        body = data.encode()
+        if is_dry_run():
+            action = "APPEND" if append else "WRITE"
+            banner = f"[DRY RUN] {action}: {len(body)} bytes -> {path}"
+            self._log_command(banner)  # ty: ignore[unresolved-attribute]
+            return Result(Status.Skipped, msg=banner)
+        encoded = base64.b64encode(body).decode()
         redirect = ">>" if append else ">"
         cmd = f"echo {encoded} | base64 -d {redirect} {self._q(path)}"
         result = await self.exec(cmd, log=LogMode.QUIET)  # ty: ignore[unresolved-attribute]

@@ -20,7 +20,8 @@ chains, docker endpoints, and host requirements, see the
    :exclude-members: CARRIERS, TunnelCarrier, build_carrier, register_carrier,
       Tunnel, TunnelHop, Direction, Role, ProcKey, make_tunnel_id,
       SENTINEL_PREFIX, ParsedSentinel, encode_sentinel, parse_sentinel,
-      DiscoveredTunnel, TunnelDiscovery, discover_tunnels, AddedTunnel,
+      DiscoveredTunnel, TunnelDiscovery, TunnelNotMeasuredError,
+      discover_tunnels, AddedTunnel, DryRunPlan,
       RemovedReport, add_tunnel, remove_tunnel, remove_all_tunnels
 
 .. automodule:: otto.tunnel.model

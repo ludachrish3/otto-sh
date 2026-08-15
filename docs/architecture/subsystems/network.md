@@ -167,7 +167,15 @@ an empty lab:
 `discover_tunnel_records` raises rather than returning `[]`, so the
 collector's tunnel loop keeps the last known set — never blanks it — and
 logs a warning, the same "guard what you emit" rule the metric-collection
-paths already follow. The monitor's topology view renders this set as an
+paths already follow. A scan that was never *issued* — `otto -n`, where
+`otto.tunnel`'s read funnel refuses before any host is contacted and
+`TunnelDiscovery.not_measured` comes back `True` — is the second way to reach
+that raise, and it needs its own arm: the discovery is empty with an **empty**
+`unreachable` list, so the all-unreachable count can never fire for it. It
+raises `TunnelNotMeasuredError` rather than `TunnelScanFailedError`, because
+the warning the collector logs is the whole product there and "reached none of
+the lab's N scannable hosts" would accuse a bed nobody spoke to. The monitor's
+topology view renders this set as an
 overlay along the links each tunnel's hop path traverses; see
 {doc}`../../guide/monitor`'s Topology view section for what that looks like.
 

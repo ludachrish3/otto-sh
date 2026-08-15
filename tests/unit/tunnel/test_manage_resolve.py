@@ -7,9 +7,11 @@ from typing import Any
 import pytest
 
 from otto.result import CommandResult
-from otto.tunnel.discovery import DiscoveredTunnel, TunnelDiscovery
+from otto.tunnel.discovery import DiscoveredTunnel, TunnelDiscovery, TunnelNotMeasuredError
 from otto.tunnel.manage import (
     _check_conflicts,
+    _container_ip,
+    _planned_chain,
     _process_plan,
     _resolve_chain,
     _resolve_one,
@@ -17,6 +19,7 @@ from otto.tunnel.manage import (
 from otto.tunnel.model import Direction, Role, Tunnel, TunnelHop
 from otto.tunnel.socat import SocatCarrier
 from otto.utils import Status
+from tests.conftest import active_context
 
 
 @dataclass
@@ -398,3 +401,117 @@ class TestProcessPlan:
         by_key = {(p.hop_index, p.direction): p for p in plan}
         assert by_key[(1, Direction.FWD)].argv[2] == "UDP4:10.9.9.9:5000"
         assert by_key[(0, Direction.REV)].argv[2] == "UDP4:127.0.0.1:5000"
+
+
+# ── --dry-run: the pure/device split in hop resolution ───────────────────────
+
+
+class TestPlannedChainRefusesFromLabDataAlone:
+    """``_planned_chain`` must make the SAME refusals ``_resolve_chain`` does.
+
+    Every one of them is decided from declared lab fields, so a dry run
+    answers each completely — a chain refused here is not "not measured", it
+    is decided, and swallowing the refusal would make the preview less
+    faithful rather than safer.
+    """
+
+    def test_it_resolves_a_normal_chain_exactly_and_touches_nothing(self) -> None:
+        lab = _lab(
+            a=FakeUnix("a", interfaces={"eth1": "10.0.0.1"}),
+            b=FakeUnix("b", ip="10.0.0.2"),
+        )
+        with active_context(dry_run=True):
+            planned = _planned_chain(lab, [("a", "eth1"), ("b", None)])
+        assert [p.ip for p in planned] == ["10.0.0.1", "10.0.0.2"]
+        assert [p.hop for p in planned] == [TunnelHop("a", "eth1"), TunnelHop("b", None)]
+
+    @pytest.mark.parametrize(
+        ("specs", "match"),
+        [
+            ([("a", None)], "at least 2"),
+            ([("a", None), ("b", None), ("a", None)], "more than once"),
+            ([("a", None), ("ghost", None)], "unknown host"),
+            ([("a", "eth9"), ("b", None)], "no interface"),
+            ([("m", None), ("b", None)], "ambiguous interface"),
+            ([("bare", None), ("b", None)], "no usable address"),
+            ([("nobash", None), ("b", None)], "has_bash=False"),
+        ],
+    )
+    def test_each_pure_refusal_still_fires(self, specs, match: str) -> None:
+        lab = _lab(
+            a=FakeUnix("a", interfaces={"eth1": "10.0.0.1"}),
+            b=FakeUnix("b", ip="10.0.0.2"),
+            m=FakeUnix("m", interfaces={"eth0": "10.0.0.3", "eth1": "10.0.1.3"}),
+            bare=FakeUnix("bare"),
+            nobash=FakeUnix("nobash", ip="10.0.0.9", has_bash=False),
+        )
+        with active_context(dry_run=True), pytest.raises(ValueError, match=match):
+            _planned_chain(lab, specs)
+
+    def test_a_container_hop_is_named_but_its_address_is_left_unread(self) -> None:
+        parent = FakeUnix("carrot_seed", ip="10.10.200.11")
+        ctr = _container("carrot_seed.repo2.oldos", parent)
+        other = FakeUnix("tomato_soil", ip="10.10.200.12")
+        lab = _lab(**{parent.id: parent, ctr.id: ctr, other.id: other})
+
+        # POSITIVE CONTROL: a real run DOES resolve it, off the device, to the
+        # ip the parent's `docker inspect` reports.
+        chain = [(other.id, None), (parent.id, None), (ctr.id, None)]
+        real = asyncio.run(_resolve_chain(lab, chain))
+        assert real[-1].ip == "172.17.0.2"
+        ctr.parent.calls.clear()
+
+        with active_context(dry_run=True):
+            planned = _planned_chain(lab, chain)
+
+        # The hop's IDENTITY is declared, so it is known; its ADDRESS is not.
+        assert planned[-1].hop == TunnelHop(ctr.id, None)
+        assert planned[-1].ip is None
+        assert [p.ip for p in planned[:-1]] == ["10.10.200.12", "10.10.200.11"]
+        assert ctr.parent.calls == []
+
+    def test_the_container_interface_refusal_still_fires(self) -> None:
+        parent = FakeUnix("carrot_seed", ip="10.10.200.11")
+        ctr = _container("carrot_seed.repo2.oldos", parent)
+        other = FakeUnix("tomato_soil", ip="10.10.200.12")
+        lab = _lab(**{parent.id: parent, ctr.id: ctr, other.id: other})
+        with active_context(dry_run=True), pytest.raises(ValueError, match="no @interface"):
+            _planned_chain(lab, [(other.id, None), (parent.id, None), (ctr.id, "eth0")])
+
+
+class TestTheBackstopGuardsResolutionToo:
+    """``_resolve_one`` is public-API-reachable; a dry run must not fabricate there.
+
+    Unreachable from ``add_tunnel`` today — it short-circuits into
+    ``_plan_add`` above — and closed anyway, because ``_resolve_one`` is what
+    a future caller (or a re-ordered ``add_tunnel``) reaches first. Before the
+    backstop, the ``docker ps -q`` probe's synthetic reply made the container
+    read as RUNNING and cached the banner as its container id, and
+    ``docker inspect``'s made that same banner the hop's IP ADDRESS.
+    """
+
+    def test_a_container_hop_raises_instead_of_answering(self) -> None:
+        parent = FakeUnix("carrot_seed", ip="10.10.200.11")
+        ctr = _real_placeholder(running_cid="abc123")
+        other = FakeUnix("tomato_soil", ip="10.10.200.12")
+        lab = _lab(**{parent.id: parent, ctr.id: ctr, other.id: other})
+
+        with (
+            active_context(dry_run=True),
+            pytest.raises(TunnelNotMeasuredError, match="not probed for liveness"),
+        ):
+            asyncio.run(_resolve_one(lab, (ctr.id, None)))
+        assert ctr.container_id == ""
+
+    def test_container_ip_raises_instead_of_returning_the_banner(self) -> None:
+        parent = FakeUnix("carrot_seed", ip="10.10.200.11")
+        ctr = _container("carrot_seed.repo2.oldos", parent)
+
+        # POSITIVE CONTROL: outside a dry run it really does read an address.
+        assert asyncio.run(_container_ip(ctr)) == "172.17.0.2"
+
+        with (
+            active_context(dry_run=True),
+            pytest.raises(TunnelNotMeasuredError, match="docker inspect"),
+        ):
+            asyncio.run(_container_ip(ctr))

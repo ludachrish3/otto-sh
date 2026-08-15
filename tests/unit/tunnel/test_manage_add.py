@@ -25,6 +25,7 @@ from otto.tunnel.model import Direction, ProcKey, Role, Tunnel, TunnelHop
 from otto.tunnel.sentinel import ParsedSentinel, encode_sentinel, parse_sentinel
 from otto.tunnel.socat import FREE_PORT_PROBE_COMMAND, SocatCarrier
 from otto.utils import Status
+from tests.conftest import active_context
 
 _LAUNCH_PREFIX = "bash -c 'if command -v systemd-run"
 _SENTINEL_RE = re.compile(r"otto-tunnel:v1:\S+")
@@ -685,3 +686,146 @@ class TestCarrierSelection:
     def test_protocol_unsupported_by_carrier_names_the_carrier(self) -> None:
         with pytest.raises(ValueError, match="carrier 'socat' does not support protocol 'sctp'"):
             asyncio.run(add_tunnel(_lab(), [("a", None), ("b", None)], port=8080, protocol="sctp"))
+
+
+# ── --dry-run: the preview, and what it refuses to claim ─────────────────────
+
+
+class TestAddDryRunPlansInsteadOfAccusing:
+    """A dry run of `add` previews; it does not measure and does not accuse.
+
+    What it replaces, measured through the real dispatch seam against the
+    `veggies` lab: `otto -n tunnel add --hosts carrot_seed@eth2,tomato_seed@eth2
+    --port 8080` printed `host 'carrot_seed' is missing socat and/or bash
+    (required for tunnels)` and exited 1 — `_require_tools` looks for a bare
+    `ok` LINE and the synthetic reply has none.
+    """
+
+    def _dry_add(self, lab, specs, **kw):
+        with active_context(dry_run=True):
+            return asyncio.run(add_tunnel(lab, specs, **kw))
+
+    def test_it_previews_every_argv_and_launches_nothing(self) -> None:
+        lab, calls, tunnel = _pair()
+
+        added = self._dry_add(lab, [("a", None), ("b", None)], port=8080)
+
+        assert calls == []
+        assert added.plan is not None
+        assert added.tunnel.id == tunnel.id
+        would = "\n".join(added.plan.would)
+        # 2n argv, exact, with the real bind/deliver addresses from lab data.
+        assert "a fwd/ingress: socat TCP4-LISTEN:8080,bind=10.0.0.1,fork,reuseaddr" in would
+        assert f"TCP4:10.0.0.2:{_LO}" in would
+        assert f"b fwd/egress: socat TCP4-LISTEN:{_LO},fork,reuseaddr TCP4:127.0.0.1:8080" in would
+        assert "b rev/ingress: socat TCP4-LISTEN:8080,bind=10.0.0.2," in would
+        assert sum(line.count("socat") for line in added.plan.would) == 4
+
+    def test_the_carrier_ports_are_marked_provisional_and_kept_off_the_report(self) -> None:
+        lab, _calls, _tunnel = _pair()
+
+        added = self._dry_add(lab, [("a", None), ("b", None)], port=8080)
+
+        # NOT presented as an allocation: a real run picks these from every
+        # hop's listening ports, and this one probed nobody.
+        assert added.carrier_fwd is None
+        assert added.carrier_rev is None
+        would = "\n".join(added.plan.would)
+        assert f"carry fwd traffic on port {_LO} and rev on {_LO + 1}" in would
+        assert "PROVISIONAL" in would
+        assert any("`ss -Htln`" in line and "PROVISIONAL" in line for line in added.plan.unchecked)
+
+    def test_it_names_the_four_reads_it_did_not_make(self) -> None:
+        lab, _calls, _tunnel = _pair()
+        plan = self._dry_add(lab, [("a", None), ("b", None)], port=8080).plan
+        joined = "\n".join(plan.unchecked)
+        assert "which ports are already bound" in joined
+        assert "whether this tunnel already exists" in joined
+        assert "socat and/or bash" in joined
+        assert "the 4 launches themselves and the post-add verify" in joined
+        # BOTH SECTIONS OR NEITHER: `would` alone reads as a verified promise.
+        assert plan.would
+        assert plan.unchecked
+
+    def test_a_real_add_still_reports_measured_ports_and_no_plan(self) -> None:
+        """Positive control on the same bed — the preview did not eat the product."""
+        lab, _calls, tunnel = _pair()
+        a, b = lab.hosts["a"], lab.hosts["b"]
+        a.ps_texts = ["", _full_ps(tunnel, "a", _LO, _LO + 1)]
+        b.ps_texts = ["", _full_ps(tunnel, "b", _LO, _LO + 1)]
+
+        added = asyncio.run(add_tunnel(lab, [("a", None), ("b", None)], port=8080))
+
+        assert added.plan is None
+        assert {added.carrier_fwd, added.carrier_rev} == {_LO, _LO + 1}
+
+    def test_a_bad_protocol_is_still_refused_before_the_short_circuit(self) -> None:
+        lab, _calls, _tunnel = _pair()
+        with pytest.raises(ValueError, match="does not support protocol"):
+            self._dry_add(lab, [("a", None), ("b", None)], port=8080, protocol="sctp")
+
+    def test_a_dest_inside_the_chain_is_still_refused(self) -> None:
+        calls: list = []
+        lab = _lab(
+            a=FakeHost("a", ip="10.0.0.1", calls=calls),
+            b=FakeHost("b", ip="10.0.0.2", calls=calls),
+        )
+        with pytest.raises(ValueError, match="must be a host OUTSIDE"):
+            self._dry_add(lab, [("a", None), ("b", None)], port=8080, dest=("b", None))
+
+    def test_a_dest_outside_the_chain_becomes_the_egress_delivery_address(self) -> None:
+        calls: list = []
+        lab = _lab(
+            a=FakeHost("a", ip="10.0.0.1", calls=calls),
+            b=FakeHost("b", ip="10.0.0.2", calls=calls),
+            far=FakeHost("far", ip="10.0.0.9", calls=calls),
+        )
+        added = self._dry_add(lab, [("a", None), ("b", None)], port=8080, dest=("far", None))
+        would = "\n".join(added.plan.would)
+        assert "delivering to far (10.0.0.9)" in would
+        assert "b fwd/egress: socat" in would
+        assert "TCP4:10.0.0.9:8080" in would
+        assert calls == []
+
+
+class TestAddDryRunWithAContainerEndpoint:
+    """A container's address needs `docker inspect`, so the argv cannot be shown.
+
+    Before this, the probe's synthetic reply made the container read as
+    RUNNING and `docker inspect`'s made the literal string `"[DRY RUN] Command
+    not executed"` the container's IP — which then flowed into a socat argv.
+    """
+
+    def _lab(self):
+        from tests.unit.tunnel.test_manage_resolve import _container
+
+        parent = FakeHost("carrot_seed", ip="10.10.200.11")
+        ctr = _container("carrot_seed.repo2.oldos", parent)
+        other = FakeHost("tomato_soil", ip="10.10.200.12")
+        return _lab_from(parent, ctr, other), parent, ctr, other
+
+    def test_the_chain_and_id_are_named_but_no_argv_is_shown(self) -> None:
+        lab, parent, ctr, other = self._lab()
+        with active_context(dry_run=True):
+            added = asyncio.run(
+                add_tunnel(lab, [(other.id, None), (parent.id, None), (ctr.id, None)], port=8080)
+            )
+        assert ctr.parent.calls == []
+        would = "\n".join(added.plan.would)
+        # The id IS knowable: it hashes path+protocol+port, none of it read.
+        assert added.tunnel.id in would
+        assert ctr.id in would
+        assert "socat" not in would
+        assert any("every process argv" in line and ctr.id in line for line in added.plan.unchecked)
+
+    def test_a_resolvable_chain_on_the_same_bed_does_show_argv(self) -> None:
+        """Positive control: the missing argv is the CONTAINER's doing, not the mode's."""
+        lab, parent, _ctr, other = self._lab()
+        with active_context(dry_run=True):
+            added = asyncio.run(add_tunnel(lab, [(other.id, None), (parent.id, None)], port=8080))
+        assert "socat" in "\n".join(added.plan.would)
+
+
+def _lab_from(*hosts) -> "FakeLab":
+    """A FakeLab keyed by each host's own id — for mixed unix/container beds."""
+    return _lab(**{h.id: h for h in hosts})

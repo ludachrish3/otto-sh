@@ -20,8 +20,9 @@ from otto.link import (
 )
 from otto.link.model import Link, LinkEndpoint
 from tests._fixtures.dispatch import DispatchRunner
+from tests.conftest import active_context
 
-from .test_manage_impair import INPATH, LINK
+from .test_manage_impair import INPATH, LINK, MGMT_LINK, _bed
 
 runner = DispatchRunner()
 
@@ -424,3 +425,138 @@ class TestCompleter:
             ),
         ):
             assert _link_completer(None, "e") == ["edge"]
+
+
+class TestDryRunRendering:
+    """The CLI must never render a preview as a result.
+
+    `test_cli.py` invokes `link_app` directly, so the ROOT `--dry-run` flag is
+    not parseable here — the context is installed around the invoke instead,
+    which is where the flag would have put it anyway (`main`'s callback →
+    `OttoContext(dry_run=...)`).
+
+    The library calls are real (no `AsyncMock`): the whole property under test
+    is that `impair_link`/`repair_link` hand back a plan and the renderer
+    branches on it, and a patched return value would let either half rot.
+    """
+
+    @staticmethod
+    def _dry_invoke(lab, args: list[str]):
+        with (
+            active_context(dry_run=True),
+            patch("otto.cli.link.get_lab", return_value=lab),
+        ):
+            return runner.invoke(link_app, args)
+
+    def test_impair_prints_the_plan_and_no_green_impaired_line(self) -> None:
+        lab, *_ = _bed()
+        result = self._dry_invoke(lab, ["impair", "edge", "--delay", "50"])
+        assert result.exit_code == 0, result.output
+        assert "dry run" in result.output
+        assert "would: a->b on carrot_seed/eth1.100: tc qdisc replace" in result.output
+        assert "not checked: " in result.output
+        assert "impaired " not in result.output, (
+            f"a dry run reported an impairment as applied: {result.output}"
+        )
+
+    def test_impair_names_the_lockout_refusals_it_could_not_make(self) -> None:
+        """The headline finding, at the surface an operator actually reads."""
+        lab, *_ = _bed(link=MGMT_LINK)
+        result = self._dry_invoke(lab, ["impair", "mgmt-edge", "--delay", "50"])
+        assert result.exit_code == 0, result.output
+        assert "self-lockout" in result.output
+        assert "management address" in result.output
+
+    def test_repair_never_says_cleared_nothing_to_clear(self) -> None:
+        lab, *_ = _bed()
+        result = self._dry_invoke(lab, ["repair", "edge"])
+        assert result.exit_code == 0, result.output
+        assert "would: carrot_seed/eth1.100: tc qdisc del" in result.output
+        assert "repaired " not in result.output
+        assert "nothing to clear" not in result.output
+        assert "timers cancelled 0" not in result.output.replace(
+            "a dry run reporting `timers cancelled 0`", ""
+        ), "the fabricated count reached the console outside the sentence disowning it"
+
+    def test_repair_all_does_not_report_repaired_n_links(self) -> None:
+        lab, *_ = _bed()
+        result = self._dry_invoke(lab, ["repair", "--all"])
+        assert result.exit_code == 0, result.output
+        assert "previewed 1 link(s)" in result.output
+        assert "repaired 1 link(s)" not in result.output
+
+    def test_a_sweep_that_previews_nothing_still_says_it_was_dry(self) -> None:
+        """The vacuous shape: a dry sweep whose output is byte-identical to a real one.
+
+        Every IMPLICIT link is structurally refused, so on a lab that declares
+        none the whole sweep lands in `skipped` and previews nothing. A banner
+        gated on `sweep.planned` having content then falls through to
+        `repaired 0 link(s)` — true, mute, and indistinguishable from the real
+        sweep asserted below, which is the exact shape this commit exists to
+        remove.
+        """
+        bare = Link(
+            a=LinkEndpoint(host="carrot_seed", ip="10.10.201.11"),
+            b=LinkEndpoint(host="tomato_seed", ip="10.10.202.12"),
+            name="bare-edge",
+        )
+        dry = self._dry_invoke(_bed(link=bare)[0], ["repair", "--all"])
+        assert dry.exit_code == 0, dry.output
+        assert "dry run" in dry.output
+        assert "repaired 0 link(s)" not in dry.output
+        assert "no named interface" in dry.output, (
+            "the skip itself is lab data and must still be reported"
+        )
+
+        with patch("otto.cli.link.get_lab", return_value=_bed(link=bare)[0]):
+            real = runner.invoke(link_app, ["repair", "--all"])
+        assert "repaired 0 link(s)" in real.output, (
+            "the control: without it, a renderer that had lost the success line "
+            "entirely would satisfy the assertions above"
+        )
+        assert "dry run" not in real.output
+        assert dry.output != real.output, (
+            "the two runs printed the same bytes, which is the whole defect"
+        )
+
+    def test_a_real_repair_all_still_reports_repaired_n_links(self) -> None:
+        """The positive control for the branch above: without it, a renderer
+        that had lost the success line entirely would pass."""
+        from otto.link import RepairAllReport, RepairReport
+
+        sweep = RepairAllReport(repaired=[RepairReport("lnk-abc")])
+        with (
+            patch("otto.cli.link.get_lab", return_value=object()),
+            patch("otto.cli.link.repair_all", AsyncMock(return_value=sweep)),
+        ):
+            result = runner.invoke(link_app, ["repair", "--all"])
+        assert "repaired 1 link(s)" in result.output
+        assert "dry run" not in result.output
+
+    def test_list_says_not_read_rather_than_showing_a_clean_link(self) -> None:
+        lab, *_ = _bed()
+        result = self._dry_invoke(lab, ["list"])
+        assert result.exit_code == 0, result.output
+        assert "a->b: not read  b->a: not read" in result.output
+        assert "dry run" in result.output
+        assert "management-interface and hop-transit refusals" in result.output
+        assert "partial scan" not in result.output, "not_measured is not unreachable"
+        assert "read failed" not in result.output, "not_measured is not a failed read"
+
+    def test_a_real_list_of_a_clean_link_still_shows_the_dash(self) -> None:
+        """The control that makes the assertion above about the DRY RUN.
+
+        `-` is the clean cell and it is also the `never read` cell, and that
+        overload is precisely how a dry run used to report every endpoint-mode
+        link as unimpaired. Both spellings have to be observed on the same bed
+        for either to mean anything.
+        """
+        lab, carrot, tomato, _ = _bed()
+        carrot.qdisc_texts = [""]
+        tomato.qdisc_texts = [""]
+        with patch("otto.cli.link.get_lab", return_value=lab):
+            result = runner.invoke(link_app, ["list"])
+        assert result.exit_code == 0, result.output
+        assert "a->b: -  b->a: -" in result.output
+        assert "not read" not in result.output
+        assert "dry run" not in result.output

@@ -89,3 +89,87 @@ def test_no_scannable_hosts_is_a_successful_empty_scan(
 
     monkeypatch.setattr(mod, "discover_tunnels", fake_discover)
     assert asyncio.run(mod.discover_tunnel_records(_Lab())) == []
+
+
+def test_a_dry_run_of_a_lab_with_no_scannable_host_still_returns_empty() -> None:
+    """The vacuous case, driven through the REAL discovery rather than a stub.
+
+    `discover_tunnel_records` raises on a dry run because nothing was scanned —
+    except here, where there was nothing to scan. Discovery only ever visits
+    `has_bash` hosts, so "no otto tunnels" follows from lab data and the
+    monitor gets the same complete `[]` a real pass produces, rather than a
+    keep-the-last-set raise it would have to log a warning for.
+    """
+    import asyncio
+
+    from otto.tunnel import records as mod
+    from tests.conftest import active_context
+
+    class _Host:
+        has_bash: ClassVar = False
+        id: ClassVar = "h1"
+
+    class _Lab:
+        hosts: ClassVar = {"h1": _Host()}
+
+    with active_context(dry_run=True):
+        assert asyncio.run(mod.discover_tunnel_records(_Lab())) == []
+
+
+def test_a_dry_run_raises_rather_than_blanking_the_monitor_s_tunnel_layer() -> None:
+    """The monitor's contract survives the third discovery state.
+
+    ``discover_tunnel_records`` "raises rather than returning ``[]``" so the
+    collector's tunnel loop keeps its last known set
+    (``docs/architecture/subsystems/network.md``). A ``not_measured``
+    discovery is empty with an EMPTY ``unreachable`` list, so the
+    all-unreachable count above can never fire for it — without its own arm it
+    would return ``[]`` and blank the topology overlay.
+    """
+    import asyncio
+
+    from otto.tunnel import records as mod
+    from otto.tunnel.discovery import TunnelDiscovery, TunnelNotMeasuredError
+
+    class _Host:
+        has_bash: ClassVar = True
+        id: ClassVar = "h1"
+
+    class _Lab:
+        hosts: ClassVar = {"h1": _Host()}
+
+    async def fake_discover(lab: object) -> TunnelDiscovery:
+        return TunnelDiscovery(tunnels=[], unreachable=[], not_measured=True)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(mod, "discover_tunnels", fake_discover)
+        with pytest.raises(TunnelNotMeasuredError, match="was not issued"):
+            asyncio.run(mod.discover_tunnel_records(_Lab()))
+
+    # POSITIVE CONTROL: the same lab shape, measured and genuinely empty, is
+    # still the successful `[]` this must not be confused with.
+    async def measured_empty(lab: object) -> TunnelDiscovery:
+        return TunnelDiscovery(tunnels=[], unreachable=[])
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(mod, "discover_tunnels", measured_empty)
+        assert asyncio.run(mod.discover_tunnel_records(_Lab())) == []
+
+
+def test_the_collector_keeps_its_last_set_when_the_scan_was_never_issued() -> None:
+    """The raise has to be one the collector's tunnel loop actually catches."""
+    import asyncio
+
+    from otto.models.monitor import TunnelRecord
+    from otto.monitor.collector import MetricCollector
+    from otto.tunnel.discovery import TunnelNotMeasuredError
+
+    known = [TunnelRecord.model_construct(id="tun-x", hops=["a"], status="ok")]
+
+    async def refuse() -> list[TunnelRecord]:
+        raise TunnelNotMeasuredError("this is a dry run")
+
+    collector = MetricCollector(hosts=[], tunnel_source=refuse)
+    collector._tunnels = known
+    asyncio.run(collector._tunnel_pass())
+    assert collector._tunnels == known

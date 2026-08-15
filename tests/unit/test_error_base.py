@@ -60,7 +60,11 @@ from otto.host.login_proxy import LoginProxyError
 from otto.host.transport import HopTransportTornDownError
 from otto.labs.errors import LabNotFoundError, LabRepositoryError
 from otto.lifecycle import SyncPhaseInterrupt
-from otto.link.manage import LinkCommandFailedError, LinkHostUnreachableError
+from otto.link.manage import (
+    LinkCommandFailedError,
+    LinkHostUnreachableError,
+    LinkNotMeasuredError,
+)
 from otto.monitor.archive_edit import ArchiveLockedError
 from otto.monitor.db import UnsupportedDBError
 from otto.monitor.event_ops import EventValidationError
@@ -68,6 +72,7 @@ from otto.reservations.check import MissingReservationError, ReservationBackendE
 from otto.suite._retry import RetryAttemptTimeoutError
 from otto.suite.run import NoTestsMatchedError
 from otto.suite.selection import UnknownSelectionError
+from otto.tunnel.discovery import TunnelNotMeasuredError
 from otto.tunnel.records import TunnelScanFailedError
 from otto.tunnel.socat import NoFreePortError
 from otto.utils import WaitTimeoutError
@@ -107,9 +112,11 @@ CASES: list[tuple[type[BaseException], type[BaseException]]] = [
     (RetryAttemptTimeoutError, TimeoutError),
     (UnknownSelectionError, ValueError),
     (TunnelScanFailedError, RuntimeError),
+    (TunnelNotMeasuredError, RuntimeError),
     (NoFreePortError, RuntimeError),
     (LinkHostUnreachableError, RuntimeError),
     (LinkCommandFailedError, RuntimeError),
+    (LinkNotMeasuredError, RuntimeError),
 ]
 
 
