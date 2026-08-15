@@ -54,7 +54,7 @@
     "@vitest/coverage-v8": "4.1.10",
     "jsdom": "30.0.1",
     "json-schema-to-typescript": "15.0.4",
-    "knip": "6.31.0",
+    "knip": "6.32.2",
     "monocart-coverage-reports": "2.12.12",
     "nyc": "18.0.0",
     "typescript": "7.0.2",
