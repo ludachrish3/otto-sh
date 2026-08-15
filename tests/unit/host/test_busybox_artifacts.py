@@ -494,34 +494,36 @@ def test_a_write_that_fails_after_creating_the_part_removes_it(tmp_path, monkeyp
 
     Every other stub in this file raises from `read()`, i.e. BEFORE
     `tmp.write_bytes` is reached, so no test created a `.part` at all and the
-    `tmp.unlink(missing_ok=True)` in `_fetch`'s handler was guarded by nothing
-    — deleting it left the module green at 26 passed. A left-behind `.part` is
-    not cosmetic: `busybox_binary` decides "already cached" by `target.exists()`
+    `tmp.unlink(missing_ok=True)` in `_fetch` was guarded by nothing — deleting
+    it left the module green at 26 passed. A left-behind `.part` is not
+    cosmetic: `busybox_binary` decides "already cached" by `target.exists()`
     and the debris sits next to it in a user-owned `~/.cache/otto/busybox`
-    forever, one per failed fetch per arch.
+    forever. It used to be one file per artifact, truncated by whatever attempt
+    came next; now that the temp name carries a per-call token (see
+    `test_two_fetchers_of_one_release_do_not_share_a_temp_file`) nothing
+    truncates it, so every failed fetch would orphan a fresh ~1 MB.
 
     A partial write that then fails is the real shape of this: `_fetch` wraps
     the download AND the write in one `try`, and ENOSPC arrives from
-    `write_bytes` after bytes are already on disk. It is also the ONLY shape —
-    a successful write breaks the loop, and a local `OSError` is not transient
-    (`_is_transient`), so a `.part` can exist only on the final, fatal attempt.
-    The unlink sitting inside the loop rather than after it is therefore
-    defensive against a future transient-after-write case, not load-bearing
-    today; the earlier claim that this guard covered the between-retries case
-    was wrong in both directions.
+    `write_bytes` after bytes are already on disk. It is the only shape the
+    RETRY path can produce — a successful write breaks the loop, and a local
+    `OSError` is not transient (`_is_transient`), so a `.part` can exist there
+    only on the final, fatal attempt. That is why the unlink is a `finally`
+    around the whole body rather than a line in the retry handler: the handler
+    cannot see the two remaining exits, a failing chmod (asserted by
+    `test_a_failed_chmod_publishes_nothing`) and a Ctrl-C mid-download.
     """
     release = BUSYBOX_MATRIX[0]
     target = tmp_path / release.filename
-    part = tmp_path / f"{release.filename}.part"
     _record_sleeps(monkeypatch)
     _stub_transport(monkeypatch, body=b"#!/bin/false\n")
 
     real_write_bytes = Path.write_bytes
-    existed: "list[bool]" = []
+    created: "list[Path]" = []
 
     def write_then_fail(self, data):
         real_write_bytes(self, data)
-        existed.append(self == part and self.exists())
+        created.append(self)
         raise OSError(28, "No space left on device")
 
     monkeypatch.setattr(Path, "write_bytes", write_then_fail)
@@ -529,14 +531,18 @@ def test_a_write_that_fails_after_creating_the_part_removes_it(tmp_path, monkeyp
     with pytest.raises(BusyBoxUnavailableError, match="after 1 attempt"):
         busybox._fetch(release, target)
 
-    # Premise first: without it this is another "did nothing" pass.
-    assert existed == [True], (
-        f"the stub must have created {part.name} before failing, or the cleanup "
-        f"below is asserted against a file that never existed (saw {existed})"
+    # Premise first: without it this is another "did nothing" pass. The path is
+    # OBSERVED rather than re-derived, because the per-call token makes it
+    # unguessable — a name written out here would be one no fetch ever uses,
+    # and the cleanup assertion below would hold against a file that never was.
+    assert len(created) == 1, f"one attempt, one write — saw {created}"
+    assert created[0].name.startswith(f"{release.filename}."), (
+        f"the stub must have created THIS release's .part before failing, or the "
+        f"cleanup below is asserted against a file that never existed (saw {created})"
     )
-    assert not part.exists(), (
-        "the failed attempt left its .part behind — `_fetch`'s handler must "
-        "unlink it, or a user-owned cache accumulates one per failed fetch"
+    assert not created[0].exists(), (
+        f"the failed attempt left {created[0].name} behind — `_fetch` must unlink "
+        f"it, or a user-owned cache accumulates one per failed fetch"
     )
     assert not target.exists(), "and a failed fetch must publish nothing"
 
@@ -549,6 +555,16 @@ def test_the_partial_file_is_named_for_the_whole_artifact(tmp_path, monkeypatch)
     every arch of every 1.16.x entry. Two xdist workers fetching two arches of
     one version would then write one temp file. Observed by recording what the
     fetch actually writes, rather than by re-deriving the name here.
+
+    A PREFIX now, not an equality, and that change is the half this guard was
+    missing rather than a loosening. The whole artifact name is still ONE name,
+    so fixing the two-arches collision left the two-workers-one-release
+    collision wide open — see
+    `test_two_fetchers_of_one_release_do_not_share_a_temp_file`, which is the
+    flake this stopped one step short of. The per-call token that closed it
+    goes on the END, so the artifact name stays at the front of the name a
+    human reads in `ls`, and the file stays beside the target it publishes to,
+    which is what keeps `replace` a same-filesystem rename.
     """
     release = BUSYBOX_MATRIX[0]
     target = tmp_path / release.filename
@@ -564,9 +580,151 @@ def test_the_partial_file_is_named_for_the_whole_artifact(tmp_path, monkeypatch)
 
     busybox._fetch(release, target)
 
-    assert written == [tmp_path / f"{release.filename}.part"], (
-        f"the temp file must carry the whole artifact name, not {written[0].name!r}"
+    assert len(written) == 1, f"one fetch writes one temp file, not {written}"
+    name = written[0].name
+    assert name.startswith(f"{release.filename}."), (
+        f"the temp file must carry the whole artifact name, not {name!r}"
     )
+    assert name.endswith(".part"), (
+        f"and must keep the .part suffix last, where a `*.part` sweep still sees it — not {name!r}"
+    )
+    assert written[0].parent == target.parent, (
+        f"the temp file must sit beside its target, or `replace` stops being an "
+        f"atomic rename — {written[0].parent} vs {target.parent}"
+    )
+
+
+# ─── two fetchers at once: the -n auto collision, forced deterministically ──
+#
+# `make busybox` is `pytest -m busybox` with no path, so it inherits addopts'
+# `-n auto --dist loadgroup` and runs the tier on every core, against a
+# deliberately cold cache in CI. Several workers therefore reach
+# `busybox_binary` for ONE release at the same moment, all see
+# `target.exists()` false, and all enter `_fetch`.
+#
+# The interleaving is forced by RE-ENTRANCY, not by threads. A thread pair has
+# to be steered with events to be deterministic anyway, and adds a deadlock to
+# the failure modes of a guard whose entire value is being trustworthy;
+# nesting one fetch inside another's write suspends the outer call at exactly
+# the instant that matters — its `.part` written, not yet published — with no
+# scheduler in the loop. What that produces is a real interleaving: every
+# statement of the inner fetch runs between two statements of the outer one.
+#
+# Being single-process is also what makes these honest about the fix they
+# demand. A temp name keyed on `os.getpid()` would still collide here and
+# would still red — correctly: two calls in one process are the same hazard as
+# two processes, and two machines sharing an `OTTO_BUSYBOX_CACHE` do not have
+# unique pids either. The claim is per-CALL uniqueness, so that is what is
+# driven.
+
+
+def _interleave_at_the_unpublished_part(monkeypatch, other_fetcher):
+    """Run *other_fetcher* while the first fetch's `.part` is written but unpublished.
+
+    Returns the list of paths `_fetch` writes to, in order, so a test can
+    assert the two fetchers did not share one. *other_fetcher* is handed the
+    first fetch's in-flight temp path — observed rather than passed in, since
+    a per-call token makes it unguessable by design.
+    """
+    real_write_bytes = Path.write_bytes
+    writes: "list[Path]" = []
+
+    def spy(self, data):
+        writes.append(self)
+        first = len(writes) == 1
+        result = real_write_bytes(self, data)
+        if first:
+            other_fetcher(self)
+        return result
+
+    monkeypatch.setattr(Path, "write_bytes", spy)
+    return writes
+
+
+def test_two_fetchers_of_one_release_do_not_share_a_temp_file(tmp_path, monkeypatch):
+    """The CI flake: one fetcher's rename strands the other on its very next line.
+
+    Both write one `.part`; the first to reach `tmp.replace(target)` RENAMES it
+    away, and the second's next statement is
+    `tmp.chmod(tmp.stat().st_mode | stat.S_IXUSR)`, which raises
+    FileNotFoundError on a file it had just finished writing. That is CI run
+    31893627225's arm64 leg verbatim — no such file
+    `~/.cache/otto/busybox/busybox-1.21.1-i686.part`, from
+    `test_applet_enumeration_is_unavailable_on_the_oldest_row[1.21.1]` — and
+    against a shared temp name this test reproduces it as that same
+    FileNotFoundError rather than as an assertion, because the traceback is
+    the claim.
+
+    Publishing TWICE is not a defect and is deliberately not asserted against:
+    `replace` is atomic and both fetchers downloaded the same URL, so the
+    loser's rename changes nothing anyone can observe, and `_verify` hashes
+    what was published afterwards. That is what makes unique names sufficient
+    and a lock unnecessary. So the assertion is that neither fetcher can touch
+    the other's file, and the completed publish is the proof it mattered.
+    """
+    release = BUSYBOX_MATRIX[0]
+    target = tmp_path / release.filename
+    body = b"#!/bin/false\n"
+    _stub_transport(monkeypatch, body=body)
+    writes = _interleave_at_the_unpublished_part(
+        monkeypatch, lambda _in_flight: busybox._fetch(release, target)
+    )
+
+    busybox._fetch(release, target)
+
+    assert len(writes) == 2, f"both fetchers must have written a .part — saw {writes}"
+    assert writes[0] != writes[1], (
+        f"both fetchers wrote {writes[0].name} — one temp file with two owners. "
+        f"The first to publish renames it away and the other dies in `tmp.stat()`"
+    )
+    assert target.read_bytes() == body, "the published artifact must be the fetched bytes"
+    assert target.stat().st_mode & stat.S_IXUSR, "and must be runnable"
+    leftovers = sorted(p.name for p in tmp_path.glob("*.part"))
+    assert not leftovers, f"both fetchers must leave the cache clean, found {leftovers}"
+
+
+def test_a_failing_fetcher_does_not_delete_another_ones_download(tmp_path, monkeypatch):
+    """The same collision with the sign reversed: cleanup as cross-worker deletion.
+
+    A shared temp name turns `_fetch`'s own hygiene into a weapon. One worker's
+    fetch fails — a blip from busybox.net, a 404 on a new matrix entry — and
+    the unlink that exists to keep ITS debris out of the cache removes a
+    download another worker still has in flight, converting one worker's
+    transient error into another's FileNotFoundError. The failing fetcher here
+    never writes a byte, which is what makes the deletion unambiguous: the only
+    `.part` in the cache is the other fetcher's.
+
+    Asserted INSIDE the interleaved callback, at the instant the cleanup has
+    run, rather than after the outer fetch returns. The stranded fetch dies in
+    `tmp.stat()` on its way out, so an assertion placed after it would never be
+    reached — it would report the symptom the sibling test above already owns
+    instead of this cause.
+    """
+    release = BUSYBOX_MATRIX[0]
+    target = tmp_path / release.filename
+    body = b"#!/bin/false\n"
+    _record_sleeps(monkeypatch)
+    attempts = _stub_attempts(monkeypatch, [body, OSError(28, "No space left on device")])
+    survived: "list[bool]" = []
+
+    def failing_fetcher(in_flight):
+        with pytest.raises(BusyBoxUnavailableError, match="after 1 attempt"):
+            busybox._fetch(release, target)
+        assert in_flight.exists(), (
+            f"the failed fetch deleted {in_flight.name}, a file it never wrote — "
+            f"that .part belongs to a fetch still in flight, and removing it makes "
+            f"one worker's transient error crash a different worker"
+        )
+        survived.append(True)
+
+    writes = _interleave_at_the_unpublished_part(monkeypatch, failing_fetcher)
+
+    busybox._fetch(release, target)
+
+    assert survived == [True], "the interleaved failing fetch never ran — nothing was tested"
+    assert attempts == [1, 2], f"one attempt each, the second fatal — saw {attempts}"
+    assert len(writes) == 1, f"only the surviving fetcher writes bytes here — saw {writes}"
+    assert target.read_bytes() == body, "the surviving fetcher must still publish"
 
 
 def test_the_published_artifact_is_executable(tmp_path, monkeypatch):
@@ -607,6 +765,12 @@ def test_a_failed_chmod_publishes_nothing(tmp_path, monkeypatch):
     assert not target.exists(), (
         "chmod failed, so nothing may be published — a cached artifact that is "
         "not executable fails the NEXT run, blaming the interpreter"
+    )
+    leftovers = sorted(p.name for p in tmp_path.glob("*.part"))
+    assert not leftovers, (
+        f"and the failed publish must not leave {leftovers} behind. This exit is "
+        f"outside the retry handler, so only `_fetch`'s `finally` covers it — and "
+        f"a per-call temp name has nothing to truncate it on the next attempt"
     )
 
 

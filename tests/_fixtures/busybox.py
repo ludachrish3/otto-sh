@@ -51,6 +51,7 @@ import subprocess
 import time
 import urllib.error
 import urllib.request
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -338,37 +339,80 @@ def _fetch(release: BusyBoxRelease, target: Path) -> None:
     # version separators, so with_suffix would rewrite `busybox-1.16.1-i686`
     # to `busybox-1.16.part` — eating the patch digit AND the arch, so two
     # arches of one version would race for one temp file under `-n auto`.
-    tmp = target.with_name(target.name + ".part")
-    for attempt in range(1, len(_RETRY_BACKOFF_S) + 2):
-        try:
-            with urllib.request.urlopen(release.url, timeout=_FETCH_TIMEOUT_S) as resp:
-                tmp.write_bytes(resp.read())
-            break
-        except (urllib.error.URLError, http.client.HTTPException, TimeoutError, OSError) as e:
-            # HTTPException is NOT an OSError, and it is the truncation case:
-            # a short read against a declared Content-Length raises
-            # http.client.IncompleteRead, which without this clause escapes as
-            # itself, leaves the .part behind, and denies the caller the priming
-            # instructions below — the one failure that most needs them.
-            tmp.unlink(missing_ok=True)
-            if _is_transient(e) and attempt <= len(_RETRY_BACKOFF_S):
-                time.sleep(_RETRY_BACKOFF_S[attempt - 1])
-                continue
-            raise BusyBoxUnavailableError(
-                f"could not fetch BusyBox {release.version} ({release.arch}) from "
-                f"{release.url} after {attempt} attempt(s): {e}. Prime the cache on a "
-                f"networked machine with `make busybox-cache`, or set "
-                f"OTTO_BUSYBOX_CACHE to a populated dir."
-            ) from e
-    # Mode before publish, then rename. Rename only after a complete download,
-    # so an interrupted fetch cannot leave a truncated binary that later runs
-    # treat as cached and valid — and chmod before that rename, so it cannot
-    # leave a COMPLETE, hash-valid, non-executable one either. `replace` is
-    # atomic; a chmod after it is a second window in which the artifact is
-    # already cached but not yet runnable, and the next run's failure would be
-    # an EACCES that probe_banner reports as a missing qemu-user-static.
-    tmp.chmod(tmp.stat().st_mode | stat.S_IXUSR)
-    tmp.replace(target)
+    #
+    # That analysis was right and stopped one step short of the same hazard's
+    # other half: the WHOLE artifact name is still ONE name, and `-n auto` puts
+    # several workers on the SAME release at once — five releases, four
+    # workers, and a cold cache in CI, where nothing primes the cache before
+    # the tier starts. Both workers see `target.exists()` false, both enter
+    # here, both write one `.part`; the first to reach `tmp.replace(target)`
+    # renames it away, and the second is stranded on the very next line, where
+    # `tmp.stat()` raises FileNotFoundError (CI run 31893627225, arm64 leg,
+    # 1.21.1). The error path collides the same way with the sign reversed:
+    # the cleanup below would delete a download still in flight in another
+    # worker, turning one worker's transient blip into another's corruption.
+    #
+    # So the temp name carries a token unique to THIS CALL. The pid names the
+    # owner for a human running `ls` during a hung fetch; the uuid is what
+    # makes it unique, and it is per CALL rather than per process because two
+    # calls in one process are the same hazard as two processes — and because
+    # `OTTO_BUSYBOX_CACHE` may point two machines at one shared directory,
+    # where pids are not unique at all.
+    #
+    # Uniqueness alone is the whole fix; no lock is needed. `replace` is
+    # atomic, so two workers fetching the same bytes and both publishing is
+    # harmless — the loser's rename is a no-op in effect — and `_verify` hashes
+    # what was published afterwards, so a wrong publish is caught rather than
+    # trusted. A lock would serialise a cost that does not need serialising.
+    tmp = target.with_name(f"{target.name}.{os.getpid()}.{uuid.uuid4().hex}.part")
+    try:
+        for attempt in range(1, len(_RETRY_BACKOFF_S) + 2):
+            try:
+                with urllib.request.urlopen(release.url, timeout=_FETCH_TIMEOUT_S) as resp:
+                    tmp.write_bytes(resp.read())
+                break
+            except (urllib.error.URLError, http.client.HTTPException, TimeoutError, OSError) as e:
+                # HTTPException is NOT an OSError, and it is the truncation
+                # case: a short read against a declared Content-Length raises
+                # http.client.IncompleteRead, which without this clause escapes
+                # as itself and denies the caller the priming instructions
+                # below — the one failure that most needs them.
+                if _is_transient(e) and attempt <= len(_RETRY_BACKOFF_S):
+                    time.sleep(_RETRY_BACKOFF_S[attempt - 1])
+                    continue
+                raise BusyBoxUnavailableError(
+                    f"could not fetch BusyBox {release.version} ({release.arch}) from "
+                    f"{release.url} after {attempt} attempt(s): {e}. Prime the cache on a "
+                    f"networked machine with `make busybox-cache`, or set "
+                    f"OTTO_BUSYBOX_CACHE to a populated dir."
+                ) from e
+        # Mode before publish, then rename. Rename only after a complete
+        # download, so an interrupted fetch cannot leave a truncated binary
+        # that later runs treat as cached and valid — and chmod before that
+        # rename, so it cannot leave a COMPLETE, hash-valid, non-executable one
+        # either. `replace` is atomic; a chmod after it is a second window in
+        # which the artifact is already cached but not yet runnable, and the
+        # next run's failure would be an EACCES that probe_banner reports as a
+        # missing qemu-user-static.
+        tmp.chmod(tmp.stat().st_mode | stat.S_IXUSR)
+        tmp.replace(target)
+    finally:
+        # Unique names make this cleanup mandatory rather than self-correcting.
+        # A shared `.part` was at worst ONE stale file per artifact, truncated
+        # by the next attempt; a unique one is a fresh orphan every time. So
+        # the unlink moved out of the retry handler — where it also could not
+        # see a failing chmod or a Ctrl-C mid-download — into a `finally` that
+        # covers every in-process exit. It is a no-op after a successful
+        # publish: `replace` has already renamed the file away.
+        #
+        # What no `finally` covers is a SIGKILL mid-download, which does orphan
+        # one file. That is accepted rather than swept, and the reason it does
+        # not grow is that a POPULATED cache never calls `_fetch` again:
+        # `busybox_binary` fetches only when `target.exists()` is false, so the
+        # number of fetches a cache ever sees is the length of the matrix, not
+        # the number of runs. The debris is also inert — nothing reads a
+        # `.part` — and `rm ~/.cache/otto/busybox/*.part` clears it.
+        tmp.unlink(missing_ok=True)
 
 
 def _verify(release: BusyBoxRelease, target: Path) -> None:
