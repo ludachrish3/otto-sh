@@ -255,6 +255,10 @@ class RootOptions:
     dry_run: bool
     as_user: "str | None"
     skip_reservation_check: bool
+    probe: bool = False
+    """``--probe``: under a dry run, open a connection to each host the command
+    names (spec §3). Defaults so a caller that predates the flag still builds;
+    the root callback always passes it, and rejects it without ``--dry-run``."""
 
 
 def ensure_cli_session(ctx: typer.Context) -> None:
@@ -297,12 +301,62 @@ def ensure_cli_session(ctx: typer.Context) -> None:
 
     logger = getLogger(__name__)
     if opts.dry_run:
-        logger.info(
-            "[magenta][DRY RUN] Commands and file transfers will be skipped. "
-            "Connections will still be verified."
+        # Says which of the two dry runs this is. The old wording ("Connections
+        # will still be verified") became false the moment the seam landed: a
+        # bare dry run now touches NOTHING, and a connection happens only when
+        # the operator asks for one with --probe.
+        contact = (
+            "--probe will open a connection to each named host, and run no command."
+            if opts.probe
+            else "No device will be contacted."
         )
+        logger.info(f"[magenta][DRY RUN] Commands and file transfers will be skipped. {contact}")
     for repo in get_repos():
-        logger.debug(f"{repo.sut_dir}: {repo.commit}")
+        logger.debug(f"{repo.sut_dir}: {repo_provenance(repo)}")
+
+
+PROVENANCE_NOT_READ = "commit not read (the query was declined)"
+"""Stand-in logged when a repo's HEAD could not be read. See :func:`repo_provenance`."""
+
+
+def repo_provenance(repo: "Repo") -> str:
+    """Return *repo*'s commit SHA, or a stand-in saying it could not be read.
+
+    **A log line must never be able to fail the invocation it describes.**
+    ``Repo.commit`` shells out to git, so it can come back declined, and
+    reading a declined result's payload raises. The caller is a
+    ``logger.debug`` f-string, which is evaluated whatever the log level — so
+    before this function existed, a declined provenance query aborted the
+    command with a traceback from a line whose only job was to write one
+    sentence into ``verbose.log``.
+
+    That is the shape the dry-run sweep found eight times over in
+    ``otto.docker``: an eager ``.value`` inside a log string, surfacing a WRONG
+    STORY (here: "git was not run") in place of the real one (here: nothing,
+    because the line does not matter). Naming the error at the read is right
+    for a parser and wrong for a narrator.
+
+    This is the SECOND of two independent defences, and the other one is why
+    the ``except`` arm below does not fire today:
+    :meth:`~otto.config.repo.Repo.run_git_command` is exempt from the dry-run
+    decline (it reads the local checkout's HEAD and contacts no device), so
+    the provenance query succeeds and a dry run logs the same real SHA a live
+    run logs. Either defence alone stops the traceback; both are kept because
+    they fail for different reasons — the exemption could be dropped in a
+    refactor, and a future provenance source could decline for a reason that
+    has nothing to do with dry runs.
+
+    A NAMED arm above nothing wider, deliberately. Anything that is not a
+    decline — a git binary that is missing, a permission error — still
+    propagates, because those are real failures of a real query and this
+    function has no business swallowing them.
+    """
+    from ..result import CommandNotRunError
+
+    try:
+        return str(repo.commit)
+    except CommandNotRunError:
+        return PROVENANCE_NOT_READ
 
 
 def build_lab_from_repos(repos: "list[Repo]", labnames: "str | list[str]") -> "Lab":
@@ -568,10 +622,19 @@ def ensure_help_banner(ctx: typer.Context) -> None:
 def command_preamble(ctx: typer.Context) -> None:
     """Run once when a real (non-help) command invocation starts.
 
-    Order: bootstrap errors fail loud → lab-free commands are done → CLI
-    session (logging) → lab context → per-command output dir → reservation
-    gate. ``--help`` paths never reach this function: click's help option
-    exits during leaf parse, before ``Command.invoke``.
+    Order: bootstrap errors fail loud → lab-free commands skip the lab slice →
+    CLI session (logging) → lab context → per-command output dir → reservation
+    gate → the dry-run seam. ``--help`` paths never reach this function:
+    click's help option exits during leaf parse, before ``Command.invoke``.
+
+    The seam is LAST on purpose. Everything above it is the validating half of
+    the dry-run contract (spec §1: arguments coerce, the lab loads, references
+    resolve, the gate speaks), and a dry run has to pay all of it before it is
+    allowed to claim the command "would run" — otherwise ``-n`` degrades into
+    print-and-exit and a typo'd host reference exits 0. The seam adds only the
+    stop, and it applies to ``lab_free`` commands too: ``lab_free`` means "I
+    drive the lifecycle myself", which is exactly the command that could still
+    reach a device (``otto monitor --live``) with nobody watching.
     """
     meta = ctx.meta
     if meta.get("_otto_preamble_done"):
@@ -581,13 +644,274 @@ def command_preamble(ctx: typer.Context) -> None:
     fail_loud_on_bootstrap_errors()
 
     spec: CommandSpec = meta["_otto_command_spec"]
-    if spec.lab_free:
+    if not spec.lab_free:
+        ensure_lab_session(ctx, spec)
+        if spec.gate:
+            present_reservation_gate(ctx)
+
+    stop_at_dry_run_seam(ctx, spec)
+
+
+# ---------------------------------------------------------------------------
+# The --dry-run seam: validate, print what would run, stop before the body
+# ---------------------------------------------------------------------------
+
+DRY_RUN_PREVIEW_ATTR = "__cli_dry_run_preview__"
+"""Per-leaf opt-out marker read off the resolved command's callback.
+
+Stamped by ``@cli_exposed(dry_run_preview=True)`` (host verbs) and by
+``otto.suite.register`` (suite leaves); read here the same way
+``ensure_lab_session`` reads ``__cli_output_dir__``, so a third-party leaf
+opts in through exactly the mechanism otto's own leaves use.
+"""
+
+DRY_RUN_REFS_ATTR = "__otto_dry_run_refs__"
+"""Per-leaf hook naming the lab references a dry run must still resolve.
+
+A callable ``(ctx) -> Iterable[LabReference]``. The seam runs it BEFORE it
+prints anything, so an unknown host/link/tunnel reference fails the way it
+always did instead of being echoed back as if it existed. It exists because
+reference resolution lives in command BODIES, and the seam's whole job is not
+running those -- the hook lets a leaf lend the seam the same resolver its body
+would have used (``otto host`` lends :func:`~otto.cli.host.resolve_cli_host`),
+so there is one authority rather than a mirrored copy that can drift.
+"""
+
+
+@dataclasses.dataclass(frozen=True)
+class LabReference:
+    """One lab entity a command names, resolved before the dry run reports it."""
+
+    kind: str
+    """What kind of entity this is -- ``"host"``, ``"link"`` or ``"tunnel"``."""
+
+    name: str
+    """The resolved identifier, as the block should print it."""
+
+    host_ids: "list[str]" = dataclasses.field(default_factory=list)
+    """Lab host ids this reference names, for ``--dry-run --probe`` to dial."""
+
+    term: "str | None" = None
+    """Per-invocation terminal-protocol override applying to :attr:`host_ids`
+    (``otto host --term``), or ``None`` for the host's configured default.
+
+    Carried on the reference so ``--probe`` dials the transport the command
+    would actually have used. Without it the probe re-fetches the lab-default
+    instance and can report a host reachable over SSH for an invocation that
+    was going to use telnet -- a true statement about the wrong question."""
+
+    transfer: "str | None" = None
+    """Per-invocation file-transfer override applying to :attr:`host_ids`
+    (``otto host --transfer``), or ``None``. Same reason as :attr:`term`, and it
+    is not cosmetic: ``transfer='ftp'`` makes one probe open the FTP control
+    channel as well as the term channel."""
+
+
+def dry_run_requested(ctx: typer.Context) -> bool:
+    """Whether this invocation is a dry run.
+
+    Prefers the root callback's recorded options (the flag the user actually
+    typed) and falls back to the active :class:`~otto.context.OttoContext` —
+    which is what a sub-app driven without the root callback (unit tests, an
+    embedder) installs, and what ``ensure_lab_context`` derives from the flag
+    anyway, so the two can only ever agree on the real dispatch path.
+
+    Read with ``getattr``, not attribute access: ``_otto_root_options`` is a
+    plain ``ctx.meta`` slot, and several preamble tests park a bare sentinel
+    there. A seam that raised ``AttributeError`` on an unfamiliar stash would
+    fail the invocation at the one line whose job is to answer a yes/no.
+    """
+    flag = getattr(ctx.meta.get("_otto_root_options"), "dry_run", None)
+    if flag is not None:
+        return bool(flag)
+    from ..context import try_get_context
+
+    active = try_get_context()
+    return bool(active is not None and active.dry_run)
+
+
+def probe_requested(ctx: typer.Context) -> bool:
+    """Whether this dry run may open connections (``--probe``, spec §3).
+
+    Read ONLY from the root callback's recorded options — no
+    :class:`~otto.context.OttoContext` fallback, unlike
+    :func:`dry_run_requested`. ``dry_run`` lives on the context because the
+    LIBRARY layer branches on it at every device boundary; ``--probe`` is a CLI
+    presentation choice that nothing below the seam consults, and putting it on
+    the context would invite exactly that. A sub-app driven without the root
+    callback therefore never probes, which is the safe answer.
+    """
+    return bool(getattr(ctx.meta.get("_otto_root_options"), "probe", False))
+
+
+def _leaf_declares_preview(ctx: typer.Context) -> bool:
+    """Whether the resolved leaf stamped itself as owning its own dry-run preview."""
+    return bool(getattr(getattr(ctx.command, "callback", None), DRY_RUN_PREVIEW_ATTR, False))
+
+
+def resolve_dry_run_references(ctx: typer.Context) -> "list[LabReference]":
+    """Resolve the lab references the leaf names, or return an empty list.
+
+    Any failure propagates: a leaf's resolver raises/exits exactly as its body
+    would have, so ``otto host nosuchbox exec 'uptime' -n`` still exits
+    non-zero with the resolution error.
+    """
+    resolver = getattr(getattr(ctx.command, "callback", None), DRY_RUN_REFS_ATTR, None)
+    if resolver is None:
+        return []
+    return list(resolver(ctx))
+
+
+def _param_words(ctx: typer.Context) -> "list[str]":
+    """Echo one context's non-default parameters back as command-line words."""
+    import shlex
+
+    words: list[str] = []
+    for param in getattr(ctx.command, "params", ()):
+        name = getattr(param, "name", None)
+        if name is None or name not in ctx.params:
+            continue
+        value = ctx.params[name]
+        if value is None or value == param.default:
+            continue
+        opts = [o for o in (getattr(param, "opts", None) or []) if o.startswith("-")]
+        items = list(value) if isinstance(value, (list, tuple)) else [value]
+        for item in items:
+            if not opts:  # a positional argument: the value IS the word
+                words.append(shlex.quote(str(item)))
+            elif isinstance(item, bool):
+                if item:
+                    words.append(max(opts, key=len))
+            else:
+                words.extend((max(opts, key=len), shlex.quote(str(item))))
+    return words
+
+
+def would_run_line(ctx: typer.Context) -> str:
+    """Rebuild the invocation from the parsed context chain, root command first.
+
+    Reconstructed from what click PARSED rather than from ``sys.argv``, so it
+    reflects the values the command would actually have received (env-var
+    defaults included) and stays correct under any runner. The root context's
+    own options are omitted: ``--lab`` is what the lab line reports, and
+    echoing ``--dry-run`` back at someone who just typed it is noise.
+    """
+    chain: list[typer.Context] = []
+    node: Any = ctx
+    while node is not None:
+        chain.append(node)
+        node = node.parent
+    chain.reverse()
+
+    words: list[str] = []
+    for depth, node in enumerate(chain):
+        if node.info_name:
+            words.append(node.info_name)
+        if depth:
+            words.extend(_param_words(node))
+    return " ".join(words)
+
+
+def _lab_line(references: "list[LabReference]") -> str:
+    """Describe the lab the dry run validated against, and what resolved in it."""
+    from ..context import try_get_context
+
+    active = try_get_context()
+    lab = getattr(active, "lab", None) if active is not None else None
+    if lab is None:
+        line = "lab: not loaded (lab-free command)"
+    else:
+        count = len(getattr(lab, "hosts", ()) or ())
+        line = f"lab: {lab.name} ({count} host{'' if count == 1 else 's'})"
+    if references:
+        resolved = ", ".join(f"{ref.kind} {ref.name!r}" for ref in references)
+        line = f"{line}; references resolve: {resolved}"
+    return line
+
+
+def print_dry_run_block(
+    ctx: typer.Context,
+    references: "list[LabReference] | None" = None,
+    contacted: bool = False,
+) -> None:
+    """Print the dry run's product: what would run, and what it was checked against.
+
+    Printed straight to the console, never through a logger. A dry run whose
+    output is empty is a bug (spec §2), so the announcement must not be
+    foldable by ``LogMode.QUIET``, a log level, or a capture filter — the
+    payload is what gets suppressed under a dry run, never the announcement.
+
+    *contacted* is ``True`` when ``--probe`` actually dialed at least one host,
+    and it selects the headline. The default headline ends "and no device was
+    contacted" — printing that immediately below a table reporting a host
+    reachable would be a plain falsehood, and the one thing this contract
+    cannot ship is a dry run that says something untrue about device contact.
+    """
+    from rich import print as rprint
+
+    from ..utils import DRY_RUN_HEADLINE, DRY_RUN_HEADLINE_PROBED
+
+    headline = DRY_RUN_HEADLINE_PROBED if contacted else DRY_RUN_HEADLINE
+    rprint(f"[magenta]{escape(headline)}[/magenta]")
+    rprint(f"  would run: {escape(would_run_line(ctx))}")
+    rprint(f"  {escape(_lab_line(references or []))}")
+
+
+def stop_at_dry_run_seam(ctx: typer.Context, spec: "CommandSpec") -> None:
+    """Under ``--dry-run``, print what would run and exit 0 before the body.
+
+    The default for every registered command, first- and third-party alike:
+    zero author effort, and safe when the author never thought about dry runs
+    at all. A command buys depth deliberately — ``dry_run_preview=True`` at
+    registration (the whole group) or on the leaf's own ``@cli_exposed``
+    stamp — and then owns its ``is_dry_run()`` branch.
+
+    A no-op when this is not a dry run, which is every non-``-n`` invocation.
+
+    ``--probe`` (spec §3) is the one thing that happens ahead of the preview
+    check: the reachability table is printed for a previewing command
+    (``link``/``tunnel``) and a seam-stopped one alike, and in both cases
+    BEFORE the thing it informs. Without the flag not a single transport is
+    opened here, which is what keeps every guard Tasks 5-5c added — "a dry run
+    makes no device contact" — true by default.
+    """
+    if not dry_run_requested(ctx):
         return
 
-    ensure_lab_session(ctx, spec)
-    if spec.gate:
-        present_reservation_gate(ctx)
+    contacted = False
+    references: "list[LabReference] | None" = None
+    if probe_requested(ctx):
+        from .probe import print_probe_report, probe_contacted, run_probe
 
+        # Resolution first, and its failure still wins: dialing a host set
+        # derived from an unresolvable reference would be acting on a
+        # reference the command could not use.
+        references = resolve_dry_run_references(ctx)
+        results = run_probe(references)
+        print_probe_report(results)
+        # `probe_contacted`, not `bool(results)`: a result set that is entirely
+        # `not probed`, or entirely LocalHost, opened no socket, and the probed
+        # headline would then assert a connection nobody made.
+        contacted = probe_contacted(results)
+
+    if spec.dry_run_preview or _leaf_declares_preview(ctx):
+        return
+    # Before the print, not after: the resolution error is the answer when a
+    # reference does not exist, and a block claiming a bad command "would run"
+    # is exactly the fabrication this whole contract exists to remove.
+    if references is None:
+        references = resolve_dry_run_references(ctx)
+    print_dry_run_block(ctx, references, contacted=contacted)
+    raise typer.Exit(0)
+
+
+DRY_RUN_DECLINE = "dry run: this command was not run"
+"""Per-RESULT decline announcement, distinct from ``DRY_RUN_HEADLINE``.
+
+The run-level headline makes a device-contact claim; this one is printed for a
+single declined result, possibly after ``--probe`` already dialed, so it says
+only what that result knows. See ``_render_dry_run_decline``.
+"""
 
 RENDER_POLICY_KEY = "_otto_render_policy"
 
@@ -603,6 +927,53 @@ class RenderPolicy:
     """Message rendered (green) when the leaf returns None; None = silent."""
 
 
+def _payload_or_decline(value: Any) -> Any:
+    """Read a Result's payload, or report the decline and yield ``None``.
+
+    A :class:`~otto.result.NotRunResult` raises on ``.value`` — deliberately,
+    at the line that mistook a non-measurement for a measurement. That is
+    right for a PARSER and wrong for a RENDERER: an error thrown at the print
+    statement reports the mistake at a line that made none, which is the same
+    misdirection the raising property exists to prevent, pointed the other
+    way. So the renderer names the decline and prints nothing else.
+    """
+    from ..result import CommandNotRunError
+
+    try:
+        return value.value
+    except CommandNotRunError as e:
+        print_error(e)
+        return None
+
+
+def _render_dry_run_decline(value: Any) -> None:
+    """Announce a result a dry run declined to produce, and never parse it.
+
+    Exit code 0 is the point. ``NotRunResult.exit_code`` is 255 (ssh's
+    "never connected"), which is the right answer to a LIBRARY caller asking
+    whether the command ran, and the wrong answer to a USER who asked for a
+    dry run and got exactly what they asked for. The seam stops most bodies
+    long before here; this covers a command that opted into a preview and
+    handed its decline back for rendering.
+
+    The msg-less fallback deliberately does NOT reuse ``DRY_RUN_HEADLINE``.
+    That constant ends "and no device was contacted" — a claim about the whole
+    invocation, which a per-RESULT announcement is in no position to make, and
+    which ``--dry-run --probe`` can falsify outright (spec §3): the preview path
+    reaches this printer *after* the probe may have dialed. Saying only what
+    this one result knows removes the claim instead of trying to keep it
+    accurate from a function that cannot see the probe.
+    """
+    from rich import print as rprint
+
+    if value.msg:
+        rprint(f"[magenta]{escape(str(value.msg))}[/magenta]")
+        return
+    command = str(getattr(value, "command", "") or "")
+    detail = f" ({escape(command)})" if command else ""
+    rprint(f"[magenta]{escape(DRY_RUN_DECLINE)}{detail}[/magenta]")
+
+
 def render_leaf_value(value: Any, policy: "RenderPolicy | None" = None) -> None:
     """Render a leaf command's return value and signal failure via exit code.
 
@@ -614,33 +985,44 @@ def render_leaf_value(value: Any, policy: "RenderPolicy | None" = None) -> None:
     every side-effect-only first-party leaf returns it, so a leaf that wants a
     completion message must say so via :class:`RenderPolicy` (installed on
     ``ctx.meta[RENDER_POLICY_KEY]``, e.g. by the ``otto host`` verb bodies).
+
+    A ``Status.NotRun`` result is a dry run's decline, not a failure: it is
+    announced, never parsed, and never turned into a non-zero exit (the
+    library-facing 255 answers a different question than the user's).
     """
     from rich import print as rprint
 
     from ..result import CommandResult, Result, Results
+    from ..utils import Status
 
     success = policy.success if policy else None
 
     if isinstance(value, Result):
+        if value.status is Status.NotRun:
+            _render_dry_run_decline(value)
+            return
         is_command = isinstance(value, (CommandResult, Results))
         if value.is_ok:
             if is_command:
                 pass  # command output already streamed during execution
             elif success:
                 rprint(f"[green]{success}[/green]")
-            elif isinstance(value.value, dict):
-                for src, entry in value.value.items():
-                    rprint(f"{src} -> {entry.value}")
-            elif isinstance(value.value, list):
-                for item in value.value:
-                    rprint(item)
-            elif value.value is not None:
-                rprint(value.value)
+            else:
+                payload = _payload_or_decline(value)
+                if isinstance(payload, dict):
+                    for src, entry in payload.items():
+                        rprint(f"{src} -> {_payload_or_decline(entry)}")
+                elif isinstance(payload, list):
+                    for item in payload:
+                        rprint(item)
+                elif payload is not None:
+                    rprint(payload)
             return
         if value.msg:
             print_error(value.msg)
-        if isinstance(value.value, dict):
-            for entry in value.value.values():
+        payload = _payload_or_decline(value)
+        if isinstance(payload, dict):
+            for entry in payload.values():
                 if isinstance(entry, Result) and not entry.is_ok and entry.msg:
                     print_error(entry.msg)
         elif isinstance(value, Results):

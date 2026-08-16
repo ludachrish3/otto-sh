@@ -1,5 +1,17 @@
 # Registry hygiene — register built-ins through the public entry point
 
+> **Do this together with two siblings.** Same problem, three places:
+> registration truth lives in more than one location, so otto's own path and
+> the path everyone else uses can drift. See
+> [cli-dispatch-metadata-one-declaration-2026-08-15.md](cli-dispatch-metadata-one-declaration-2026-08-15.md)
+> (dispatch metadata declared in three signatures) and
+> [test-harness-declares-registration-2026-08-16.md](test-harness-declares-registration-2026-08-16.md)
+> (`DispatchRunner` declares registration instead of reading it). **Read this
+> file first of the three** — its resolved section already demonstrates the fix
+> direction the other two need: empty seed dict plus a `_register_builtin_*()`
+> bootstrap through the public function, so one authority is read by everyone
+> including otto itself.
+
 ## The asymmetry
 
 Several of otto's string registries load their **built-in** entries by directly

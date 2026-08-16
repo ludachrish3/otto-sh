@@ -23,9 +23,9 @@ from ..config.lab import Lab
 from ..config.repo import DockerCompose, Repo
 from ..host.docker_host import DockerContainerHost
 from ..host.errors import HostCommandError
-from ..host.host import Host
+from ..host.host import Host, is_dry_run, refuse_declined_fact
 from ..host.unix_host import UnixHost
-from ..result import CommandResult
+from ..result import CommandNotRunError, CommandResult
 from ..utils import Status
 
 logger = logging.getLogger(__name__)
@@ -147,10 +147,16 @@ async def _stack_already_up(parent: Host, project_name: str) -> bool | None:
       Unknown read as False means "nobody had it", so the teardown yanks a
       stack an outer fixture is holding — precisely what that contract
       promises not to do. It raises instead.
+
+    ``None`` is NOT the answer for a dry run, even though the type can hold
+    it: "unknown" here means *the probe ran and could not tell*, and
+    ``compose_up`` responds to it by running the convergent ``up -d`` — an
+    ACTION. A dry run must not buy that arm with a shrug, so it refuses.
     """
     result = await parent.exec(
         f"docker ps -q --filter label=com.docker.compose.project={shlex.quote(project_name)}"
     )
+    refuse_declined_fact(result, asked=f"stack_already_up({project_name!r})")
     if not result.status.is_ok:
         logger.warning(
             rf"\[docker] could not tell whether {project_name} was already running on "
@@ -175,6 +181,11 @@ async def _resolve_container_id(
     short backoff; since compose has guaranteed the container exists, this only
     waits out the visibility lag rather than masking a missing container.
     Returns ``None`` if it never becomes visible within the bounded polls.
+
+    A dry run's decline is refused rather than polled: ``None`` would mean
+    "compose started it and it never appeared", the caller warns and skips
+    the service, and four rounds of ``_CONTAINER_ID_RESOLVE_BACKOFF_S`` would
+    be spent waiting for a container nobody asked docker about.
     """
     for attempt in range(_CONTAINER_ID_RESOLVE_ATTEMPTS):
         result = await parent.exec(
@@ -182,6 +193,7 @@ async def _resolve_container_id(
             f"--filter label=com.docker.compose.project={shlex.quote(project_name)} "
             f"--filter label=com.docker.compose.service={shlex.quote(service)}"
         )
+        refuse_declined_fact(result, asked=f"resolve_container_id({project_name}/{service})")
         if result.status.is_ok:
             cid = result.value.strip().splitlines()
             if cid:
@@ -225,6 +237,13 @@ async def compose_up(
             is cheap when nothing changed. Pass ``build=False`` if the
             compose file references only published images (or if you
             already built explicitly).
+
+    Raises:
+        ~otto.result.CommandNotRunError: this is a dry run. Bringing a stack
+            up is the package's most consequential verb and its return type
+            -- a dict of LIVE container hosts -- is the least able to say it
+            did not happen. ``{}`` reads as "the stack registered nothing",
+            which is a real and different outcome this function raises on.
     """
     settings = repo.docker_settings
     if not settings.composes:
@@ -232,6 +251,19 @@ async def compose_up(
 
     parent = _resolve_parent(repo, lab, on, list(settings.composes))
     proj = project_name or get_user_compose_project(repo.name)
+
+    # Below _resolve_parent, so a dry run still fails on an unknown host, a
+    # non-UnixHost parent or one that is not docker_capable -- those refusals
+    # are settled from configuration and must fire identically either way.
+    # Above everything else, because everything else is a device touch or a
+    # mutation of `lab.hosts`.
+    if is_dry_run():
+        raise CommandNotRunError(
+            f"compose_up({repo.name}: {proj})",
+            parent.id,
+            "No image was built, no file was staged, no container was started "
+            "and no host was registered.",
+        )
 
     if build and settings.images:
         # Late import to avoid a circular `compose <-> build` import.
@@ -449,6 +481,19 @@ async def compose_down(
     yields a ``Status.Skipped`` result that never ran (``retcode`` ``-1``).
     A failed tear-down is logged and returned, never raised — callers sweep
     the rest of their repos.
+
+    Raises:
+        ~otto.result.CommandNotRunError: this is a dry run. The one exception
+            to "never raised", and the arm has to be HERE rather than deeper:
+            the ``except RuntimeError`` below catches
+            :class:`~otto.result.CommandNotRunError` (it is a ``RuntimeError``
+            by declaration), so a decline raised inside ``stage_compose_files``
+            was caught and returned as ``Status.Failed`` -- a tear-down that
+            never ran, reported as a tear-down that failed. Returning a
+            ``Status.NotRun`` result instead of raising would keep the sweep
+            going, but it would also let this function's other half -- the
+            loop that pops container hosts out of ``lab.hosts`` and closes
+            them -- run against a lab a dry run must leave alone.
     """
     settings = repo.docker_settings
     if not settings.composes:
@@ -456,6 +501,13 @@ async def compose_down(
 
     parent = _resolve_parent(repo, lab, on, list(settings.composes))
     proj = project_name or get_user_compose_project(repo.name)
+
+    if is_dry_run():
+        raise CommandNotRunError(
+            f"compose_down({repo.name}: {proj})",
+            parent.id,
+            "No container was stopped and no host was unregistered from the lab.",
+        )
 
     from .staging import stage_compose_files
 
@@ -522,9 +574,26 @@ async def composed(
     from each other. Pass ``own=True`` to force teardown.
 
     *build* is forwarded to :func:`compose_up`.
+
+    Raises:
+        ~otto.result.CommandNotRunError: this is a dry run. Its own arm
+            rather than an inherited one: with ``own=True`` the probe below
+            is skipped and the decline would come from ``compose_up``, with
+            ``own=False`` it would come from ``_stack_already_up``, so the
+            documented entry point of this package would name one of two
+            different callees depending on a flag. It also declines before
+            the ``finally`` exists, so no teardown is armed for a stack that
+            was never brought up.
     """
     parent = _resolve_parent(repo, lab, on, list(repo.docker_settings.composes))
     proj = project_name or get_user_compose_project(repo.name)
+
+    if is_dry_run():
+        raise CommandNotRunError(
+            f"composed({repo.name}: {proj})",
+            parent.id,
+            "No stack was brought up, so none was torn down either.",
+        )
 
     # Only consulted when `own` is False (see the gate in the finally below),
     # so do not pay for the probe — or fail on it — when the caller has
@@ -572,8 +641,18 @@ async def compose_ps(parent: Host) -> list[dict[str, Any]]:
     warn, though — an empty list is otherwise indistinguishable from a host
     that simply has no containers, which is the same silent-wrong shape this
     module is being swept for.
+
+    The best-effort fold stops at a dry run's decline, for the reason the
+    paragraph above already gives about the empty list. No arm at the top:
+    ``docker ps`` IS this function's only device touch, so the refusal below
+    already names the right thing, and letting the call reach the primitive
+    keeps its ``[DRY RUN]`` announcement.
+
+    Raises:
+        ~otto.result.CommandNotRunError: this is a dry run.
     """
     result = await parent.exec("docker ps --format '{{json .}}'")
+    refuse_declined_fact(result, asked=f"compose_ps({parent.id})")
     if not result.status.is_ok:
         logger.warning(
             rf"\[docker] could not list containers on {parent.id} — reporting none "

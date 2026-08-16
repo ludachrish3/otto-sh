@@ -43,5 +43,6 @@ Each area corresponds to a first-party command:
    monitor
    coverage
    reservations
+   dry-run
    extending-cli
    cli-reference

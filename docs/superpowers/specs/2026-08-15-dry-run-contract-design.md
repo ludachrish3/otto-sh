@@ -77,7 +77,21 @@ never carries file bodies or secrets, and a dry run whose output is empty is a b
 (a dry run with no product is useless; one with an invented product is dangerous).
 
 `link` and `tunnel` conform by adding the registration flag; their bodies do not
-change. `write_file`'s announcement is the same pattern at the library layer.
+change. `write_file`'s announcement is the same pattern at the library layer —
+and its declined return is `Status.NotRun`, not `Status.Skipped`.
+
+> **Owner's ruling (Chris, 2026-08-15), overriding the implementation plan.**
+> The plan had `write_file` keep `Result(Status.Skipped, msg=banner)` on the
+> grounds that only the *announcement* mattered. It does not: `Skipped.is_ok`
+> is `True`, so `if (await host.write_file(...)).is_ok:` under a dry run tells
+> a library caller the file was written. That is the contract's own fabrication
+> bug wearing a different enum name, and it survives the CLI seam entirely
+> because it is a LIBRARY-layer return. It returns
+> `Result(Status.NotRun, msg=banner)` — a plain `Result`, `value` still `None`,
+> deliberately **not** a `NotRunResult`: a write measures nothing, so there is
+> no payload to poison, and a raising `value` would only relocate the explosion
+> into the renderer, which reads it in order to print. The banner still reaches
+> the console because `render_leaf_value` prints `msg` on the not-ok path.
 
 ## 3. Reachability: `--dry-run --probe`
 
@@ -100,10 +114,24 @@ dry run touches nothing whatsoever.
   the exact line that mistook a non-measurement for a measurement. The PARSE class —
   the always-wrong class — breaks loudly; fire-and-forget callers keep working.
 
-`is_ok=False` is itself a deliberate break, not collateral: it is what stops
-`BaseHost.reboot`'s `rebuild_connections()` firing on a reboot that never happened,
-and what makes `exec_or_raise`-style callers fail loudly instead of proceeding on a
-fiction. Anything that *believed* the fake success stops believing it.
+`is_ok=False` is itself a deliberate break, not collateral: it is what a library
+caller's `if (await host.<verb>(...)).is_ok:` acts on, what the CLI renderer keys on
+to announce a decline rather than parse it, and what makes `exec_or_raise`-style
+callers fail loudly instead of proceeding on a fiction. Anything that *believed* the
+fake success stops believing it.
+
+> **ERRATUM (Task 5, 2026-08-15).** This paragraph originally cited
+> `BaseHost.reboot`'s `rebuild_connections()` as what `is_ok=False` stops. **That
+> example was wrong, and its wrongness is why §5's "nearly free" below was wrong
+> too.** Two independent reasons: (1) a `NotRun` never reached that gate in the first
+> place, because `_soft_reboot` swallows the declined `run("reboot")` and returns
+> `Status.Success`; and (2) the shipped fix is an early return at the top of `reboot`,
+> so the rebuild is now unreachable under a dry run by CONTROL FLOW, not by the
+> result's status. Verified by mutation: making the decline `Status.Skipped` leaves
+> both the "no command issued" and "no rebuild" assertions green and fails only on the
+> status. The general lesson for the rest of this spec: a hardened RETURN VALUE
+> protects callers that branch on it; only a guard that returns early protects
+> ACTIONS below it.
 
 The `[DRY RUN]` announcement machinery (LogMode fold at the emit seam, `write_file`'s
 announcement) survives unchanged; only the returned object hardens. The link/tunnel
@@ -112,10 +140,20 @@ funnels) remain — belt and braces above the primitive.
 
 ## 5. Consequences and scope
 
-**Falls out nearly for free:** the queued `BaseHost.reboot` holes
-(`todo/dry-run-followups-2026-08-15.md` §1) — `is_ok=False` stops the transport
-teardown; the hard-reboot power-cycle and the wait-phase dialing still need their
-explicit guards (a PowerController spy test with both halves asserted).
+**~~Falls out nearly for free:~~ REAL WORK, and it was every hole, not one.** The
+queued `BaseHost.reboot` holes (`todo/dry-run-followups-2026-08-15.md` §1) were
+originally scoped here as "`is_ok=False` stops the transport teardown; only the
+hard-reboot power-cycle and the wait-phase dialing need explicit guards".
+
+> **ERRATUM (Task 5, 2026-08-15).** `is_ok=False` stopped nothing on this path — see
+> the erratum in §4. `_soft_reboot` discards the decline and answers `Success`, so the
+> transport teardown fired exactly as before; `shutdown` branched on `Status.Failed`
+> alone, so a folded `NotRun` fell through to a fabricated power-off; and
+> `_confirm_recovered` polled `False` until the recovery deadline burned. Every one of
+> the four needed the same explicit guard, which is one `is_dry_run()` arm at the top
+> of each verb (`reboot`, `UnixHost.shutdown`, `BaseHost.power`) returning
+> `Status.NotRun` above any action. The PowerController spy test with both halves
+> asserted was the one part of this prediction that held.
 
 **Known breaks, to state in the implementation plan:**
 

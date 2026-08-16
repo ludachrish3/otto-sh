@@ -6,6 +6,14 @@ a host that cannot be reached (or never answered) is an infrastructure problem
 to report and move past, while a command that RAN and failed is a result about
 the system under test.
 
+There is a THIRD outcome that is not defined here: ``CommandNotRunError``, for
+a command a dry run declined to issue, lives in ``otto.result`` next to the
+only thing that raises it (``NotRunResult.value``). It cannot live here —
+``otto.result`` would have to import this module to raise it, and this module
+imports ``CommandResult`` from ``otto.result``, so the edge is a circular
+import at runtime and a layering inversion in ``tach.toml`` (``otto.host``
+depends on ``otto.result``, never the reverse).
+
 The two classes are PEERS, not parent and child — neither implies the other,
 and a caller catching one must not silently catch the other. Both keep
 ``RuntimeError`` so the ``except (ValueError, RuntimeError)`` clauses in

@@ -44,7 +44,7 @@ class TunnelNotMeasuredError(OttoError, RuntimeError):
     under one has to come from lab data and the caller's own arguments.
 
     ``_device_read`` and ``_device_running`` raise this rather than
-    letting the synthetic reply through, because ``BaseHost.exec`` answers a
+    letting the synthetic reply through, because ``BaseHost.exec`` ANSWERED a
     dry run with ``Status.Skipped`` — whose ``is_ok`` is ``True`` — carrying
     the literal value ``"[DRY RUN] Command not executed"``, and this package
     PARSES what it gets. That string has no bare ``ok`` line, so
@@ -56,6 +56,13 @@ class TunnelNotMeasuredError(OttoError, RuntimeError):
     ``result.value.strip()`` made it a container's IP ADDRESS, which then flowed
     into a socat argv. A raise cannot be mistaken for a measurement; a clean
     read can.
+
+    The primitive now returns a ``Status.NotRun`` decline whose ``value``
+    raises (:exc:`~otto.result.CommandNotRunError`), so every one of those
+    parses would break rather than lie. This backstop STAYS — it names the
+    tunnel and the read, it fires before a device call is attempted at all,
+    and belt-and-braces above the primitive is the design's stated position
+    (dry-run contract spec, section 4).
 
     ``RuntimeError``, like :class:`~otto.tunnel.socat.NoFreePortError` and
     ``otto.tunnel.records.TunnelScanFailedError``, because the consumers

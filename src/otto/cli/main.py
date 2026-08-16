@@ -490,6 +490,16 @@ def main(  # noqa: PLR0913 — CLI command params
             help="Preview what would be executed without running commands on hosts.",
         ),
     ] = False,
+    probe: Annotated[
+        bool,
+        typer.Option(
+            "--probe",
+            help=(
+                "With --dry-run: open a connection to each host the command names "
+                "and report reachability. A connection only — never a command."
+            ),
+        ),
+    ] = False,
     version: Annotated[  # noqa: ARG001 — required by Typer eager callback option signature
         bool | None,
         typer.Option(
@@ -554,6 +564,19 @@ def main(  # noqa: PLR0913 — CLI command params
         report_lab_context_error,
     )
 
+    if probe and not dry_run:
+        # A usage error, not a silent promotion to a dry run: --probe DIALS
+        # hosts, and the only thing that makes dialing safe is that no command
+        # can follow it. That guarantee is --dry-run's, so the dependency is
+        # stated rather than assumed. BadParameter exits 2 like every other
+        # click usage error.
+        raise typer.BadParameter(
+            "--probe requires --dry-run/-n: it opens a connection to each host "
+            "the command names, which is only safe because a dry run runs no "
+            "command afterwards.",
+            param_hint="--probe",
+        )
+
     ctx.meta["_otto_root_options"] = RootOptions(
         labs=labs,
         xdir=xdir,
@@ -562,6 +585,7 @@ def main(  # noqa: PLR0913 — CLI command params
         rich_log_file=rich_log_file,
         show_time=show_time,
         dry_run=dry_run,
+        probe=probe,
         as_user=as_user,
         skip_reservation_check=skip_reservation_check,
     )

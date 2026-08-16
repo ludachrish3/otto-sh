@@ -829,7 +829,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     ####################
 
     @override
-    @cli_exposed(success="Download complete.")
+    @cli_exposed(success="Download complete.", dry_run_preview=True)
     async def get(
         self,
         src_files: Annotated[
@@ -857,7 +857,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     # go to multiple hosts. It would be most efficient if they could all be done in a
     # single asyncio.gather() rather than multiple.
     @override
-    @cli_exposed(success="Transfer complete.")
+    @cli_exposed(success="Transfer complete.", dry_run_preview=True)
     async def put(
         self,
         src_files: Annotated[
@@ -903,13 +903,22 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
 
         World-readable (no sudo), no ``lsmod`` binary dependency; column
         one is the module name, already ``-``→``_`` normalized by the kernel.
-        ``value`` is the module list — empty (``Skipped``) under dry-run, empty
-        (``Error``) when the read fails. ``log=LogMode.QUIET`` keeps the
-        (potentially long) module dump out of the console (still recorded in
-        verbose.log).
+        ``value`` is the module list, empty (``Error``) when the read fails;
+        a dry run DECLINES instead (``Status.NotRun``, ``value`` raises).
+        ``log=LogMode.QUIET`` keeps the (potentially long) module dump out of
+        the console (still recorded in verbose.log).
+
+        The dry-run arm used to answer ``Result(Status.Skipped, value=[])``,
+        and that empty list was fabricated device data of the worst kind: a
+        caller asking "is module X loaded?" was told **no** by a machine
+        nobody contacted, and ``Skipped.is_ok`` is True so nothing downstream
+        could tell. It goes through :meth:`~otto.host.host.BaseHost._dry_run_result`
+        rather than hand-building a decline, which keeps the ``[DRY RUN]``
+        announcement (at the same ``QUIET`` the real read uses) and names the
+        exact command that was not issued.
         """
         if is_dry_run():
-            return Result(Status.Skipped, value=[])
+            return self._dry_run_result("cat /proc/modules", LogMode.QUIET)
         result = await self.exec("cat /proc/modules", log=LogMode.QUIET)
         if not result.status.is_ok:
             return Result(
@@ -959,6 +968,13 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         resolved = name.replace("-", "_")
         # A failed module read yields value=[] -> treated as not-resident
         # (old-behavior parity; lsmod carries the failure channel).
+        #
+        # The `not is_dry_run()` half is what keeps the residency logic from
+        # RUNNING AT ALL under a dry run — the third of the three honest
+        # behaviours, and the only one available here. Reading `.value` would
+        # raise (`_loaded_modules` declines), and before it declined the
+        # fabricated empty list made a dry-run unload short-circuit to Success
+        # without ever naming an `rmmod`.
         if not is_dry_run() and resolved not in (await self._loaded_modules()).value:
             return Result(Status.Success)
         need_sudo = self.current_user != "root"
@@ -973,6 +989,14 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
 
     @override
     async def _soft_reboot(self) -> Result:
+        # UNREACHABLE UNDER A DRY RUN, and this method is not safe there: the
+        # `Success` below is returned whatever `run` answered, so a dry run's
+        # `NotRun` decline becomes a reported reboot. `BaseHost.reboot`'s
+        # dry-run arm returns above the only call site, which is why nothing
+        # here checks `is_dry_run()` — a future caller that reaches this from a
+        # dry run needs its own arm, not a fix here (the tolerance below is
+        # deliberate and must not become a decline).
+        #
         # Issuing `reboot` races the connection teardown: on a fast host the
         # transport can drop before the command's round-trip completes, and
         # that failure is indistinguishable from the host obeying quickly.
@@ -1046,11 +1070,33 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         non-zero is :attr:`~otto.utils.Status.Failed`, because the device
         answered and it said no.
 
+        **Under a dry run this reports the plan and sends nothing**, with
+        ``is_ok`` False. The status check below reads ``Status.Failed`` alone,
+        so a declined round trip — ``Results.collect`` folds the single
+        ``NotRunResult`` to ``NotRun`` — fell straight through to
+        ``Result(Status.Success)``: a FABRICATED POWER-OFF, and the worst place
+        in the file for one, because ``shutdown`` has no wait behind it the way
+        ``reboot(wait=True)`` does and nothing downstream would ever notice.
+
         Raises:
             ~otto.host.errors.UnsupportedOnUserlandError: the device has neither
                 spelling, or this userland offers no elevation. Nothing was sent
                 in either case.
         """
+        if is_dry_run():
+            # ABOVE the resolution, and the spelling is deliberately named as a
+            # CHOICE rather than as a fact. A dry run settles no capability
+            # (`Userland._send` declines), so the applets read their assumed
+            # defaults and `shutdown_command` would degrade to the GNU spelling
+            # — reporting that as the command otto WILL send would be a
+            # fabricated measurement about a device nobody contacted.
+            return self._dry_run_power_report(
+                "SHUTDOWN",
+                f"would power the host off from its own shell "
+                f"({GNU_SHUTDOWN!r} or {BUSYBOX_POWEROFF!r}, whichever the device "
+                f"has). Not done: no command issued, no applet probe, the host "
+                f"stays up",
+            )
         # THE SPELLING IS THE DEVICE'S, not otto's. `shutdown` is absent on
         # every BusyBox matrix row and `poweroff` is present on all five, so a
         # hard-coded `shutdown -h now` is a command a whole class of device

@@ -261,15 +261,45 @@ class RemoteHost(BaseHost):
         live reachability path) and by dry-run mode to validate connectivity.
         The probe itself is family-specific (``_probe_connection``); this
         template owns the logging and the ``CommandResult`` shape.
+
+        **The label follows the invocation, not the file.** Both log lines
+        below were unconditionally prefixed ``[DRY RUN]``, which was false on
+        the busier of the two call paths: ``otto host <id> reboot --wait``
+        with no ``-n`` anywhere dials for real through ``is_reachable`` once
+        per poll, and printed ``[DRY RUN] Connection FAILED`` about a live
+        socket. Deleting the prefix outright would then be wrong in the other
+        direction, because the second caller is ``--dry-run --probe``
+        (``otto.cli.probe``), where the connection is the one device contact
+        the flag authorises and a reader must be told which mode produced it.
+        So the condition is read here — ``is_dry_run()``, the only thing this
+        template can honestly know about its caller — and the line says which
+        world it is in.
+
+        The dry-run line keeps the ``[DRY RUN]`` token but does NOT stop
+        there, because everywhere else in this tree that token marks a thing
+        otto DID NOT DO (``no session opened``, ``no elevation attempted``,
+        ``Command not executed``). Left bare it would read as "the connection
+        was skipped" — the mirror image of the original lie. The clause
+        carries the truth, matching ``open_session``'s ``[DRY RUN]
+        open_session(...) — no session opened`` shape.
+
+        Neither path goes silent: SUPPRESS THE PAYLOAD, NEVER THE
+        ANNOUNCEMENT. A probe whose dial left no trace in the log would be its
+        own defect.
         """
+        # Read once, above the try: both arms must agree, and a second call
+        # inside the ``except`` would be a second chance to disagree.
+        dry_run = is_dry_run()
+        label = "[DRY RUN] " if dry_run else ""
+        note = " — a real connection; no command was run" if dry_run else ""
         try:
             await self._probe_connection()
-            self._log_command("[DRY RUN] Connection verified")
+            self._log_command(f"{label}Connection verified{note}")
             return CommandResult(
                 status=Status.Success, value="Connection successful", command="connect", retcode=0
             )
         except Exception as e:  # noqa: BLE001 — verify_connection probes all failure modes
-            self._log_command(f"[DRY RUN] Connection FAILED: {e}")
+            self._log_command(f"{label}Connection FAILED: {e}{note}")
             return CommandResult(status=Status.Error, value=str(e), command="connect", retcode=1)
 
     ####################
@@ -377,12 +407,16 @@ class RemoteHost(BaseHost):
             A :class:`~otto.host.session.HostSession` proxy exposing ``run``, ``send``,
             ``expect``, and ``close``.
 
+        Under a dry run nothing is dialled and the handle is a
+        :class:`~otto.host.session.DeclinedSession` — see
+        ``BaseHost._dry_run_session``.
+
         See Also:
             :meth:`~otto.host.host.BaseHost.exec`: stateless alternative for one-off commands.
             :meth:`~otto.host.host.BaseHost.run`: default persistent session.
         """
         if is_dry_run():
-            self._log_command(f"[DRY RUN] open_session({name!r})")
+            return self._dry_run_session(name)
         return await self._session_mgr.open_session(name)
 
     @override

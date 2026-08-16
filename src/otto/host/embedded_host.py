@@ -66,7 +66,13 @@ from .capability import TERM_RESOLVER, TRANSFER_RESOLVER
 from .command_frame import CommandFrame, ZephyrFrame
 from .connections import ConnectionManager
 from .embedded_filesystem import EmbeddedFileSystem, NoFileSystem
-from .host import DEFAULT_COMMAND_TIMEOUT, Host, SuppressCommandOutput, is_dry_run
+from .host import (
+    DEFAULT_COMMAND_TIMEOUT,
+    Host,
+    SuppressCommandOutput,
+    is_dry_run,
+    refuse_declined_fact,
+)
 from .interface import Interface
 from .login_proxy import Cred
 from .options import SnmpOptions, TelnetOptions
@@ -372,6 +378,13 @@ class EmbeddedHost(RemoteHost):
             log_output=self._log_output,
             command_frame=self.command_frame,
             init_timeout=_EMBEDDED_INIT_TIMEOUT,
+            # This family was the only one omitting it, so every session-layer
+            # message that names a host — `perform_switch`'s proxy errors, a
+            # dry run's `CommandNotRunError` — said `host ''` here. `self.id`
+            # rather than `self.name` to match the three sibling families
+            # (unix, local, docker) and the field's own name; `__post_init__`
+            # assigns it above, so it is populated by this line.
+            host_id=self.id,
         )
         self._file_transfer = cast(
             "EmbeddedFileTransfer",
@@ -444,7 +457,7 @@ class EmbeddedHost(RemoteHost):
     ####################
 
     @override
-    @cli_exposed(success="Download complete.")
+    @cli_exposed(success="Download complete.", dry_run_preview=True)
     async def get(
         self,
         src_files: Annotated[
@@ -469,7 +482,7 @@ class EmbeddedHost(RemoteHost):
             return await self._file_transfer.get_files(src_files, dest_dir, show_progress)
 
     @override
-    @cli_exposed(success="Transfer complete.")
+    @cli_exposed(success="Transfer complete.", dry_run_preview=True)
     async def put(
         self,
         src_files: Annotated[
@@ -514,18 +527,31 @@ class EmbeddedHost(RemoteHost):
 
     @cli_exposed(output_dir=False)
     async def exists(self, path: "str | Path") -> bool:
-        """Return ``True`` when *path* exists on the device (via ``fs ls``)."""
+        """Return ``True`` when *path* exists on the device (via ``fs ls``).
+
+        Raises:
+            ~otto.result.CommandNotRunError: under a dry run, which asked the
+                device nothing — see
+                :func:`~otto.host.host.refuse_declined_fact`.
+        """
         result = await self._run_one(
             self.filesystem.ls_command(str(path)), timeout=DEFAULT_COMMAND_TIMEOUT
         )
+        refuse_declined_fact(result, asked=f"exists({str(path)!r})")
         return result.status.is_ok
 
     @cli_exposed(output_dir=False)
     async def ls(self, path: "Annotated[str | Path, Arg()]" = ".", all: bool = False) -> list[str]:  # noqa: A002, ARG002 — A002: CLI-exposed param name; ARG002: required by UnixHost.ls override signature
-        """List entry names in *path* via the device ``fs ls`` former."""
+        """List entry names in *path* via the device ``fs ls`` former.
+
+        Raises:
+            ~otto.result.CommandNotRunError: under a dry run — see
+                :func:`~otto.host.host.refuse_declined_fact`.
+        """
         result = await self._run_one(
             self.filesystem.ls_command(str(path)), timeout=DEFAULT_COMMAND_TIMEOUT
         )
+        refuse_declined_fact(result, asked=f"ls({str(path)!r})")
         if not result.status.is_ok:
             return []
         return [line for line in result.value.splitlines() if line]
@@ -583,7 +609,7 @@ class EmbeddedHost(RemoteHost):
     #  Binary load
     ####################
 
-    @cli_exposed(success="Binary loaded.")
+    @cli_exposed(success="Binary loaded.", dry_run_preview=True)
     async def load(
         self,
         file: Annotated[Path, Arg(help="Binary to load into the device runtime.")],
@@ -633,7 +659,7 @@ class EmbeddedHost(RemoteHost):
             return Result(Status.Success)
         return Result(Status.Error, msg=f"load {name} from {file} failed: {reason}")
 
-    @cli_exposed(success="Binary unloaded.")
+    @cli_exposed(success="Binary unloaded.", dry_run_preview=True)
     async def unload(
         self,
         name: Annotated[str, Arg(help="Name of the binary to unload.")],
@@ -696,5 +722,11 @@ class ZephyrHost(EmbeddedHost):
 
     @override
     async def _soft_reboot(self) -> Result:
+        # UNREACHABLE UNDER A DRY RUN, and unsafe there: the `Success` is
+        # returned whatever `run` answered, so a dry run's `NotRun` decline
+        # would be reported as a reboot. `BaseHost.reboot`'s dry-run arm
+        # returns above the only call site — a future caller reaching this
+        # under a dry run needs its own arm. Same note as
+        # `UnixHost._soft_reboot`.
         await self.run("kernel reboot cold", timeout=10.0)
         return Result(Status.Success)

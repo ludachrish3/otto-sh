@@ -400,10 +400,13 @@ never-silently-wrong philosophy as `otto tunnel list`.
 ## Previewing: `--dry-run`
 
 `--dry-run` (`-n`) is a **global** option — `otto -n --lab veggies link impair
-edge --delay 50ms`. It is documented as "Preview without running commands", and
-that is literal here: **a dry run contacts no device at all**, not even for the
+edge --delay 50ms`. **A dry run contacts no device at all**, not even for the
 read-only commands. So every answer it gives comes from lab data and the
 options you typed, and it says plainly what it could not check.
+
+`otto link` is one of the commands that opts into a deeper preview instead of
+stopping at the CLI seam — see {doc}`../dry-run` for the contract every command
+follows, what the opt-in buys, and `--probe`.
 
 ```console
 $ otto -n --lab veggies link impair edge --delay 50ms

@@ -69,6 +69,7 @@ from otto.monitor.archive_edit import ArchiveLockedError
 from otto.monitor.db import UnsupportedDBError
 from otto.monitor.event_ops import EventValidationError
 from otto.reservations.check import MissingReservationError, ReservationBackendError
+from otto.result import CommandNotRunError
 from otto.suite._retry import RetryAttemptTimeoutError
 from otto.suite.run import NoTestsMatchedError
 from otto.suite.selection import UnknownSelectionError
@@ -108,6 +109,7 @@ CASES: list[tuple[type[BaseException], type[BaseException]]] = [
     (EventValidationError, ValueError),
     (ReservationBackendError, Exception),
     (MissingReservationError, Exception),
+    (CommandNotRunError, RuntimeError),
     (NoTestsMatchedError, ValueError),
     (RetryAttemptTimeoutError, TimeoutError),
     (UnknownSelectionError, ValueError),

@@ -1,50 +1,33 @@
-# Two dry-run follow-ups the contract work left open
+# A dry-run follow-up the contract work left open
 
-Both were found while making `host`, `link` and `tunnel` honest under
-`--dry-run` (that work is on main). Neither was folded in: the first is a
-different subsystem with a real safety question, the second is presentation.
-This file exists because that commit message called them "queued" and, until
-now, nothing was.
+Found while making `host`, `link` and `tunnel` honest under `--dry-run` (that
+work is on main). Not folded in, because it is presentation rather than a
+correctness question.
 
-## 1. `BaseHost.reboot` has NO dry-run guard, and `hard=True` really power-cycles
+(§1 was `BaseHost.reboot` having no dry-run guard, with `hard=True`
+power-cycling a real machine. RESOLVED — `reboot` and `UnixHost.shutdown` now
+announce and return `Status.NotRun` above every action, and the guards live in
+`tests/unit/host/test_dry_run.py`.)
 
-`src/otto/host/host.py:1120` — the body contains zero `is_dry_run()` checks
-(verified by grep, not by reading around it). Three separate consequences, in
-descending order of how much they should worry you:
+The correctness follow-ups from the same workstream are separate, because they
+are a defect family rather than presentation:
+[dry-run-failure-message-relay-family-2026-08-16.md](dry-run-failure-message-relay-family-2026-08-16.md)
+— six library verbs that build a failure message out of a declined result, plus
+`Userland.probe`, the last `is_ok=True` dry-run arm in the tree.
 
-**`hard=True` power-cycles a real machine.** `:1144-1145` goes straight to
-`self._require_power_control().cycle(...)`. `PowerController` drives the actual
-PDU/hypervisor, not a host command, so nothing in the dry-run plumbing is even
-in the path. `otto -n ... reboot --hard` cycles the box. This is the one that
-matters: `--dry-run` is what someone types when they are NOT sure, and the
-project rule is that otto never powers a real VM without asking.
+## A seam-side "extra lines" hook would let the power verbs keep their richness
 
-**A soft reboot drops live transports.** `:1147` `_soft_reboot()` goes through
-the command path, so under a dry run it gets the synthetic
-`Status.Skipped, retcode=0` — and `Skipped.is_ok` is **True**. So `:1161-1162`
-fires `rebuild_connections()` on a reboot that never happened, tearing down
-every cached transport for a host that is still up. A dry run with a real side
-effect.
+`reboot`, `shutdown` and `power` deliberately keep the `--dry-run` seam stop
+(they are the verbs that touch power, so the library arm is a second guard, not
+the only one). Two things are lost at the CLI by that choice and both are
+reclaimable without ever running a body: the deep announcement (`reboot`'s
+controller name and resolved wait bounds) and the local feasibility check (a
+controller-less `--hard` exits 0 printing "would run" instead of raising).
+Shape: a per-leaf hook in the `__otto_dry_run_refs__` pattern that returns extra
+lines for `print_dry_run_block` and may raise — no body code runs. Not built,
+and not worth building until a second caller wants it.
 
-**The wait phase really probes.** `:1163+` — `wait_until_down` /
-`wait_until_up` reach `is_reachable` → `verify_connection`, which logs
-`[DRY RUN] Connection verified` and then genuinely dials
-(`remote_host.py:265-273`). So a dry run also burns the full down/up timeout
-against a live host.
-
-Shape: the same rule the rest of the contract now follows — announce what would
-happen (which host, soft vs hard, which power controller, the wait bounds), do
-nothing, and return a report that is not `is_ok` in a way that makes
-`rebuild_connections()` fire. Note the `is_ok` interaction specifically: fixing
-only the top of the function and leaving `Skipped.is_ok` True downstream is how
-the transport teardown survives a partial fix.
-
-Guard it with an injected hostile condition, not an inherited one: a host whose
-`PowerController` is a spy that records calls, asserting the spy was NOT called
-under `--dry-run` and IS called without it. The positive half is what stops the
-test passing against a `reboot` that does nothing at all.
-
-## 2. `otto link repair --all -n` repeats its caveats once per link
+## `otto link repair --all -n` repeats its caveats once per link
 
 The dry-run sweep prints the same "not checked:" paragraphs verbatim for every
 link — roughly 15+ terminal lines each at 80 columns, so a lab with a handful of

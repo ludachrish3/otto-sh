@@ -70,6 +70,11 @@ executing commands or transferring files:
 otto --lab my_lab --dry-run host router1 run "make install"
 ```
 
+Add `--probe` to also learn whether the host is up before committing to a real
+run.  That opens a connection and nothing else — no command is issued over it,
+and an unreachable host is reported rather than treated as a failure.  See
+{doc}`../cli-reference` for the full rules.
+
 ## From Python
 
 The `otto host` subcommands map directly to methods on the

@@ -2081,23 +2081,43 @@ async def test_unload_error_maps_rmmod_failure():
 
 
 @pytest.mark.asyncio
-async def test_lsmod_dry_run_returns_empty():
-    """Dry-run yields no module list (not the dry-run banner parsed as a name)."""
+async def test_lsmod_dry_run_declines_rather_than_reporting_no_modules():
+    """Dry-run refuses to answer, instead of answering "nothing is loaded".
+
+    It used to return ``Result(Status.Skipped, value=[])`` -- ok, and an empty
+    module list, so a caller asking "is module X loaded?" was told **no** by a
+    machine that was never contacted. See
+    ``docs/superpowers/specs/2026-08-15-dry-run-contract-design.md`` section 4;
+    the full guard (announcement, host naming, the genuine-read-failure
+    control) is ``tests/unit/host/test_dry_run.py``.
+    """
+    from otto.result import CommandNotRunError
     from tests.conftest import active_context
 
     host = _unix_host()
     with active_context(dry_run=True):
         lsmod_result = await host.lsmod()
-    assert lsmod_result.status is Status.Skipped
-    assert lsmod_result.value == []
+    assert lsmod_result.status is Status.NotRun
+    assert lsmod_result.is_ok is False
+    with pytest.raises(CommandNotRunError):
+        _ = lsmod_result.value
 
 
 @pytest.mark.asyncio
 async def test_unload_dry_run_issues_rmmod_without_idempotency_check():
     """Under dry-run the idempotency check is skipped, so the would-be ``rmmod``
-    is still issued (symmetric with load's dry-run insmod)."""
+    is still the command that gets announced (symmetric with load's insmod).
+
+    The mocked ``run`` returns the DECLINE the real primitive now produces, not
+    the old ``Skipped``/``retcode 0`` synthetic -- a stale double here would
+    keep this green against a product that had stopped declining at all.
+    ``unload`` then reads that decline's value to build its failure message, so
+    the contract fires; the point of the test is that ``_loaded_modules`` was
+    never consulted, which the raise's own text proves.
+    """
     from unittest.mock import AsyncMock, MagicMock
 
+    from otto.result import CommandNotRunError, NotRunResult, Results
     from otto.utils import Status
     from tests.conftest import active_context
 
@@ -2107,13 +2127,16 @@ async def test_unload_dry_run_issues_rmmod_without_idempotency_check():
     host._loaded_modules = AsyncMock(
         return_value=Result(Status.Success, value=[])
     )  # would short-circuit if consulted
-    host.run = AsyncMock(return_value=_run_result("rmmod foo", "[DRY RUN]", Status.Skipped, 0))
-    with active_context(dry_run=True):
-        result = await host.unload("foo")
+    declined = Results.collect(
+        [NotRunResult(status=Status.NotRun, command="rmmod foo", retcode=-1, host_name=host.name)]
+    )
+    host.run = AsyncMock(return_value=declined)
+    with active_context(dry_run=True), pytest.raises(CommandNotRunError) as exc:
+        await host.unload("foo")
     host.run.assert_awaited_once()
     assert host.run.await_args.args[0] == "rmmod foo"
     host._loaded_modules.assert_not_awaited()  # idempotency check skipped in dry-run
-    assert result.status is Status.Success
+    assert "rmmod foo" in str(exc.value)
 
 
 class TestSshExecTimeout:

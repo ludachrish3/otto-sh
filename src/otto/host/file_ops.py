@@ -30,7 +30,7 @@ from typing import Annotated
 from ..logger.mode import LogMode
 from ..result import Result
 from ..utils import Arg, Status, cli_exposed
-from .host import is_dry_run
+from .host import is_dry_run, refuse_declined_fact
 from .userland import Userland, UserlandHost, refuse_if_gapped
 
 
@@ -156,15 +156,30 @@ class PosixFileOps(UserlandHost):
 
     @cli_exposed(output_dir=False)
     async def exists(self, path: "str | Path") -> bool:
-        """Return True when *path* exists on the host (``test -e``)."""
+        """Return True when *path* exists on the host (``test -e``).
+
+        Raises:
+            ~otto.result.CommandNotRunError: under a dry run, which asked the
+                device nothing — see :func:`~otto.host.host.refuse_declined_fact`.
+                ``False`` would be a fabricated absence.
+        """
         result = await self.exec(f"test -e {self._q(path)}")  # ty: ignore[unresolved-attribute]
+        refuse_declined_fact(result, asked=f"exists({str(path)!r})")
         return result.status.is_ok
 
     @cli_exposed(output_dir=False)
     async def ls(self, path: "Annotated[str | Path, Arg()]" = ".", all: bool = False) -> list[str]:  # noqa: A002 — CLI-exposed param name, maps to --all flag
-        """List entry names in *path* (``ls -1``; *all* adds ``-A`` for dotfiles)."""
+        """List entry names in *path* (``ls -1``; *all* adds ``-A`` for dotfiles).
+
+        Raises:
+            ~otto.result.CommandNotRunError: under a dry run — see
+                :func:`~otto.host.host.refuse_declined_fact`. The empty list is
+                reserved for a real ``ls`` that failed, and a dry run must not
+                be able to spell an empty directory.
+        """
         flags = "-1A" if all else "-1"
         result = await self.exec(f"ls {flags} {self._q(path)}")  # ty: ignore[unresolved-attribute]
+        refuse_declined_fact(result, asked=f"ls({str(path)!r})")
         if not result.status.is_ok:
             return []
         return [line for line in result.value.splitlines() if line]
@@ -281,7 +296,7 @@ class PosixFileOps(UserlandHost):
             ) from exc
         return decoded.decode()
 
-    @cli_exposed
+    @cli_exposed(dry_run_preview=True)
     async def write_file(self, path: "str | Path", data: str, append: bool = False) -> Result:
         """Write *data* to *path* (overwrite, or append).
 
@@ -303,6 +318,19 @@ class PosixFileOps(UserlandHost):
         the destination. Never the body, at any mode. The decomposition into
         "announcement" and "payload" is known only here, which is why this
         branch lives in the caller and not in ``_dry_run_result``.
+
+        **The status is ``NotRun``, not ``Skipped``** (Chris's ruling,
+        2026-08-15, overriding the implementation plan). ``Skipped.is_ok`` is
+        ``True``, so a library caller writing
+        ``if (await host.write_file(...)).is_ok:`` was told the file had been
+        written by a dry run that wrote nothing — the same fabrication the
+        contract exists to remove, one layer above the enum name the sweep
+        keyed on. A plain :class:`~otto.result.Result` and not a
+        :class:`~otto.result.NotRunResult`: ``value`` is legitimately ``None``
+        here (a write measures nothing), and a raising ``value`` would only
+        move the explosion onto the renderer, which reads it to print. The
+        announcement survives the change because the renderer prints ``msg``
+        on the ``NotRun`` path.
 
         The decode spelling is fixed, so a device with no ``base64`` is
         REFUSED before anything is sent — see
@@ -335,7 +363,7 @@ class PosixFileOps(UserlandHost):
             action = "APPEND" if append else "WRITE"
             banner = f"[DRY RUN] {action}: {len(body)} bytes -> {path}"
             self._log_command(banner)  # ty: ignore[unresolved-attribute]
-            return Result(Status.Skipped, msg=banner)
+            return Result(Status.NotRun, msg=banner)
         encoded = base64.b64encode(body).decode()
         redirect = ">>" if append else ">"
         cmd = f"echo {encoded} | base64 -d {redirect} {self._q(path)}"

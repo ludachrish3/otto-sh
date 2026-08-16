@@ -45,11 +45,13 @@ from typing import TYPE_CHECKING
 from ..logger.mode import LogMode
 from .command_frame import history_prefix
 from .errors import UnsupportedOnUserlandError
-from .host import DEFAULT_COMMAND_TIMEOUT
+from .host import DEFAULT_COMMAND_TIMEOUT, is_dry_run, refuse_declined_elevation
 from .login_proxy import _SU_PROMPT, Cred, cred_for, perform_switch, run_undo
 from .userland import UserlandHost
 
 if TYPE_CHECKING:
+    from typing_extensions import Never
+
     from .session import Expect
 
 # Recognizable, locale-independent sudo prompt we match on.
@@ -262,6 +264,31 @@ class PosixPrivilege(UserlandHost):
             getattr(self, "command_frame", None), getattr(self, "shell_history", True)
         )
 
+    def _refuse_elevation(self, verb: str, user: str) -> "Never":
+        """Bind this host's identity to the shared elevation refusal.
+
+        The reasoning lives with the refusal itself
+        (:func:`~otto.host.host.refuse_declined_elevation`), which
+        :class:`~otto.host.session.HostSession` shares: same refusal, two
+        objects, one wording. ``getattr`` for the name and the log sink
+        because this mixin declares neither — it has whatever the concrete
+        host it is composed into supplies, the same reason ``_HostProxyIO``
+        exists.
+
+        Args:
+            verb: the method the caller invoked, named in the caller's words.
+            user: the elevation target, already defaulted for display.
+
+        Raises:
+            ~otto.result.CommandNotRunError: always.
+        """
+        refuse_declined_elevation(
+            verb,
+            user,
+            getattr(self, "name", ""),
+            self._log_command,  # ty: ignore[unresolved-attribute]
+        )
+
     async def switch_user(self, user: str = "", password: str | None = None) -> None:
         """``su`` the persistent (default) session to *user* (default root).
 
@@ -270,7 +297,13 @@ class PosixPrivilege(UserlandHost):
         records the new user so ``current_user`` reflects it. Mutates
         session state — affects subsequent ``run`` calls until the user
         exits back.
+
+        Raises:
+            ~otto.result.CommandNotRunError: this is a dry run — see
+                :func:`~otto.host.host.refuse_declined_elevation`.
         """
+        if is_dry_run():
+            self._refuse_elevation("switch_user", user or "root")
         applied = await perform_switch(
             _HostProxyIO(self),
             self._switch_creds(),
@@ -294,7 +327,15 @@ class PosixPrivilege(UserlandHost):
         Tracks ``current_user`` across the switch and restores the prior
         user when the block exits, undoing each applied hop in reverse
         (innermost first) so a multi-hop ``via`` chain unwinds correctly.
+
+        Raises:
+            ~otto.result.CommandNotRunError: this is a dry run — see
+                :func:`~otto.host.host.refuse_declined_elevation`. It fires on
+                ENTRY, above the ``try``, so no undo is scheduled for a switch
+                that never happened.
         """
+        if is_dry_run():
+            self._refuse_elevation("as_user", user)
         prev = self._session_mgr.current_user  # ty: ignore[unresolved-attribute]
         applied = await perform_switch(
             _HostProxyIO(self),

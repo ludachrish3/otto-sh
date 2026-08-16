@@ -15,7 +15,7 @@ import pytest
 
 from otto.host.docker_host import DockerContainerHost
 from otto.host.login_proxy import Cred
-from otto.result import CommandResult, Result
+from otto.result import CommandNotRunError, CommandResult, Result
 from otto.utils import Status
 from tests.conftest import active_context
 
@@ -514,26 +514,27 @@ async def test_login_as_user_raises_not_implemented():
 
 
 @pytest.mark.asyncio
-async def test_exec_dry_run_skips_parent():
+async def test_exec_dry_run_declines_without_reaching_the_parent():
     parent = _mock_parent()
     h = _make_container(parent=parent)
     with active_context(dry_run=True):
         result = await h.exec("echo hi")
     parent.exec.assert_not_awaited()
-    assert result.status == Status.Skipped
-    assert result.command == "echo hi"
-    assert "[DRY RUN]" in result.value
+    assert result.status == Status.NotRun
+    assert result.command == "echo hi"  # the caller's, not the docker-exec wrapper
+    with pytest.raises(CommandNotRunError):
+        _ = result.value
 
 
 @pytest.mark.asyncio
 async def test_run_dry_run_skips_session():
-    """_run_one returns dry-run sentinel without opening a session."""
+    """_run_one declines without opening a session."""
     parent = _mock_parent()
     h = _make_container(parent=parent)
     with active_context(dry_run=True):
         result = await h.run("ls /")
     parent.exec.assert_not_awaited()
-    assert result.only.status == Status.Skipped
+    assert result.only.status == Status.NotRun
     assert result.only.command == "ls /"
 
 
@@ -549,12 +550,15 @@ async def test_send_dry_run_returns_without_session():
 
 
 @pytest.mark.asyncio
-async def test_expect_dry_run_returns_empty_string():
+async def test_expect_dry_run_declines_rather_than_reporting_no_match():
+    """Was `assert result == ""` — an empty MATCH, which a caller reads as "absent"."""
     parent = _mock_parent()
     h = _make_container(parent=parent)
-    with active_context(dry_run=True):
-        result = await h.expect("prompt> ")
-    assert result == ""
+    with active_context(dry_run=True), pytest.raises(CommandNotRunError) as exc:
+        await h.expect("prompt> ")
+    assert "prompt> " in str(exc.value)
+    # `_expect_one` calls `_ensure_running()`, so this also pins that a dry-run
+    # expect never reaches the daemon (and so can never auto-start the stack).
     parent.exec.assert_not_awaited()
 
 
@@ -568,7 +572,7 @@ async def test_put_dry_run_skips_transfer(tmp_path):
         status, msg = _sm(await h.put([f], Path("/dest")))
     parent.exec.assert_not_awaited()
     parent.put.assert_not_awaited()
-    assert status == Status.Skipped
+    assert status == Status.NotRun
     assert "[DRY RUN]" in msg
     assert "PUT" in msg
 
@@ -581,7 +585,7 @@ async def test_get_dry_run_skips_transfer():
         status, msg = _sm(await h.get(Path("/etc/hosts"), Path("./out")))
     parent.exec.assert_not_awaited()
     parent.get.assert_not_awaited()
-    assert status == Status.Skipped
+    assert status == Status.NotRun
     assert "[DRY RUN]" in msg
     assert "GET" in msg
 

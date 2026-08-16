@@ -23,7 +23,7 @@ import typer
 from ..params import build_options, options_params
 from ..registry import Registry
 from ..result import CommandResult
-from ..utils import Status
+from ..utils import DRY_RUN_HEADLINE, Status
 
 if TYPE_CHECKING:
     from _typeshed import DataclassInstance
@@ -64,6 +64,45 @@ def _options_params(opts_cls: "type[DataclassInstance]") -> list[inspect.Paramet
     return options_params(opts_cls)
 
 
+def bound_test_names(suite_class: type) -> list[str]:
+    """Return the suite's ``test_*`` methods, in definition order across the MRO.
+
+    Read off the bound class, not from a pytest collection: the class object
+    IS the binding, so this needs no conftest, no fixtures and no import of
+    anything the suite would touch at run time. Parametrizations are not
+    expanded — they are a collection-time fact, and a dry run that pretended
+    to know them would be inventing exactly the kind of detail this contract
+    exists to stop inventing.
+    """
+    names: list[str] = []
+    for klass in reversed(suite_class.__mro__):
+        for name, member in vars(klass).items():
+            if name.startswith("test") and callable(member) and name not in names:
+                names.append(name)
+    return names
+
+
+def _print_suite_dry_run(ctx: typer.Context, suite_class: type) -> None:
+    """Print ``otto test``'s preview: the suite bound, the tests, and nothing run.
+
+    Printed to the console rather than logged, for the reason the CLI seam
+    prints its own block that way — a dry run whose output is empty is a bug,
+    so the announcement must not be foldable by a log mode or a level.
+    """
+    from rich import print as rprint
+    from rich.markup import escape
+
+    names = bound_test_names(suite_class)
+    rprint(f"[magenta]{escape(DRY_RUN_HEADLINE)}[/magenta]")
+    rprint(f"  would run: {escape(ctx.command_path)}")
+    rprint(
+        f"  suite: {escape(suite_class.__name__)} imported and bound; "
+        f"{len(names)} test(s), no test body will run"
+    )
+    for name in names:
+        rprint(f"    - {escape(name)}")
+
+
 # ---------------------------------------------------------------------------
 # register_suite_class
 # ---------------------------------------------------------------------------
@@ -99,13 +138,27 @@ def register_suite_class(suite_class: type) -> None:
     _opts_cls = opts_cls
     _suite_cls = suite_class
 
-    def runner(**kw: Any) -> CommandResult:
+    def runner(**kw: Any) -> "CommandResult | None":
         ctx = kw.pop("ctx")
         opts_instance = (
             build_options(_opts_cls, kw)
             if (_opts_cls is not None and dataclasses.is_dataclass(_opts_cls))
             else None
         )
+
+        # The dry-run preview, and the reason this leaf opts out of the CLI's
+        # seam default (stamped below). Reaching this line already IS the
+        # preview's substance: the suite module imported and this class bound
+        # at registration time, its Options dataclass built above, and every
+        # `test_*` on the class is therefore known — all without pytest
+        # collecting, and with no device contacted. Printing the bound tests
+        # and returning is where `otto test -n` stops; run_suite (the thing
+        # that runs bodies) is never reached.
+        from ..host.host import is_dry_run
+
+        if is_dry_run():
+            _print_suite_dry_run(ctx, _suite_cls)
+            return None
 
         # Call the suite-run library directly (class-first). The engine derives
         # the suite's source file itself (inspect.getfile) and returns a
@@ -136,6 +189,13 @@ def register_suite_class(suite_class: type) -> None:
         )
 
     runner.__signature__ = inspect.Signature(params)  # ty: ignore[unresolved-attribute]
+    # Opt this leaf out of the CLI's `--dry-run` seam default: the branch above
+    # IS `otto test -n`'s preview, and it can only run if the seam lets the
+    # body start. Stamped on the leaf rather than on the `test` COMMAND SPEC so
+    # the suite-less selection path (`otto test --tests ...`, whose group
+    # callback runs the preamble itself) keeps the safe default and stops at
+    # the seam instead of running the selection for real.
+    runner.__cli_dry_run_preview__ = True  # ty: ignore[unresolved-attribute]
     runner.__name__ = suite_class.__name__
     runner.__doc__ = suite_class.__doc__ or f"Run the {suite_class.__name__} test suite."
 

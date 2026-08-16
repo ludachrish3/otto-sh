@@ -26,10 +26,10 @@ from typing import (
     cast,
 )
 
-from typing_extensions import Self, override
+from typing_extensions import Never, Self, override
 
 from ..logger.mode import LogMode, effective_mode
-from ..result import CommandResult, Result, Results
+from ..result import CommandNotRunError, CommandResult, NotRunResult, Result, Results
 from ..utils import (
     Arg,
     Exclude,
@@ -113,6 +113,154 @@ def is_dry_run() -> bool:
 
     ctx = try_get_context()
     return ctx.dry_run if ctx is not None else False
+
+
+def refuse_declined_fact(result: "Result", *, asked: str) -> None:
+    """Raise instead of inventing a device fact a dry run declined to measure.
+
+    For a verb whose RETURN TYPE cannot carry a status -- ``exists() -> bool``,
+    ``ls() -> list[str]`` -- there is nowhere to put "I did not look". The
+    contract allows exactly three behaviours when logic branches on a device
+    fact: fabricate it, decline loudly, or never run the logic. The caller's
+    ``if`` is the logic here and otto does not own it, so only the middle one
+    is available -- and returning the falsy default is the FIRST one wearing a
+    plausible face. ``ls`` answered ``[]`` (an empty directory, indistinguishable
+    from a real one) and ``exists`` answered ``False`` (the file is not there):
+    both silent, both immediately actionable, both fiction. The
+    :class:`~otto.result.NotRunResult` primitive does not reach these callers
+    at all, which is why the ``Status.Skipped``-keyed sweep walked past them.
+
+    A no-op for every other status, a genuine device failure included: a real
+    ``ls`` of a path that does not exist IS a measurement, and what those verbs
+    return for it is not this function's business.
+
+    Args:
+        result: the command result the verb just obtained.
+        asked: the question in the CALLER's vocabulary (``"exists('/etc/hosts')"``),
+            so the error names the API call rather than only the shell line otto
+            would have sent.
+
+    Raises:
+        ~otto.result.CommandNotRunError: *result* is a dry run's decline.
+    """
+    if result.status is not Status.NotRun:
+        return
+    raise CommandNotRunError(asked, str(getattr(result, "host_name", "")))
+
+
+def refuse_declined_match(
+    pattern: "str | re.Pattern[str]",
+    host: str,
+    log_command: "Callable[[str, LogMode], None]",
+) -> Never:
+    """Announce the wait a dry run declines, then refuse to invent its match.
+
+    ``expect()`` returns a ``str`` -- the matched text -- and a ``str`` cannot
+    carry "I did not look", so this is ``refuse_declined_fact``'s problem in a
+    second shape and it gets the same answer. What it replaced was the empty
+    string, which is the fabrication wearing the most plausible face available:
+    the caller's ``if "READY" in await host.expect(...)`` reads it as *the
+    pattern did not match*, and drives the failure path of a device that was
+    never asked. A ``send`` + ``expect`` pair is the drive-an-interactive-prompt
+    idiom, so that fiction steered menu walks and login dialogues.
+
+    Unlike ``refuse_declined_fact`` this ALWAYS raises: there is no result to
+    adjudicate, and the only callers are the two ``is_dry_run()`` arms
+    (:meth:`BaseHost.expect` and
+    :meth:`~otto.host.session.HostSession.expect`), which is also why it takes
+    the announcement sink rather than a host object -- the two live on
+    different classes and must not grow two wordings of the same line.
+
+    SUPPRESS THE PAYLOAD, NEVER THE ANNOUNCEMENT: the banner is emitted before
+    the raise, so the dry run still says what it declined to wait for, and
+    every announcement made before this point has already reached the sinks.
+
+    **This is usually where a session preview ENDS, and that is by design.** A
+    session script is ``send`` -> ``expect`` -> ``send`` -> ``expect``, where
+    step N+1 is chosen from step N's output: the dry run announces the part
+    configuration alone can produce and then reaches a wait it cannot answer
+    without the device. That is the same three-part shape the link and tunnel
+    previews ship (the plan, the pure refusals, the honest gap), so the raised
+    message says so -- a caller who hits it should understand the preview ran
+    out of things it can know, not that something broke.
+
+    Args:
+        pattern: the pattern the caller asked to wait for, named in the banner
+            and in the error exactly as passed.
+        host: the host (or host id) the wait would have run against.
+        log_command: the caller's own command-log sink, called at
+            :attr:`~otto.logger.mode.LogMode.NORMAL` -- an announcement, never
+            a payload.
+
+    Raises:
+        ~otto.result.CommandNotRunError: always.
+    """
+    log_command(
+        f"[DRY RUN] expect({pattern!r}) — nothing was read; a dry run issues no "
+        f"command for a pattern to match",
+        LogMode.NORMAL,
+    )
+    raise CommandNotRunError(
+        f"expect({pattern!r})",
+        host,
+        detail=(
+            "A session preview is a PREFIX: everything announced above is what "
+            "configuration alone can produce, and this wait is the point where the "
+            "script needs the device's answer to choose what to send next. The "
+            "preview ended here because it ran out of things it can know — nothing "
+            "is wrong with the script."
+        ),
+    )
+
+
+def refuse_declined_elevation(
+    verb: str,
+    user: str,
+    host: str,
+    log_command: "Callable[[str, LogMode], None]",
+) -> Never:
+    """Announce the elevation a dry run declines, and refuse to claim it happened.
+
+    Elevation returns ``None``, so there is no status to harden -- but unlike
+    ``send`` it is NOT safe to announce and return, because every caller
+    finishes by STAMPING the tracked user (``HostSession.switch_user``,
+    ``PosixPrivilege.switch_user`` via ``SessionManager._set_current_user``,
+    and both ``as_user`` forms). A session reporting a user it never became
+    steers ``as_user``'s undo chain and every "am I root here?" check.
+
+    It also raises rather than letting the failure emerge on its own. Without
+    an arm the declines DO stop the device work -- every ``send`` and
+    ``expect`` underneath is guarded -- but the first ``expect`` raises inside
+    :func:`~otto.host.login_proxy.run_proxy`, whose blanket ``except
+    Exception`` re-reports it as
+    :class:`~otto.host.login_proxy.LoginProxyError`: "login proxy failed
+    becoming 'root'". That is a diagnosis of a device that was never
+    contacted -- the same wrong-story defect a fabricated payload is, pointed
+    at the operator instead of the parser.
+
+    Shared by the HOST-level elevation
+    (:class:`~otto.host.privilege.PosixPrivilege`, which drives the default
+    session) and the SESSION-level one
+    (:meth:`~otto.host.session.HostSession.switch_user`), because they are the
+    same refusal on two objects and must not grow two wordings of it.
+
+    Args:
+        verb: the method the caller invoked, named in the caller's words.
+        user: the elevation target, already defaulted for display.
+        host: the host (or host id) the elevation would have run on.
+        log_command: the caller's own command-log sink, called at
+            :attr:`~otto.logger.mode.LogMode.NORMAL` -- an announcement, never
+            a payload.
+
+    Raises:
+        ~otto.result.CommandNotRunError: always.
+    """
+    asked = f"{verb}({user!r})"
+    log_command(
+        f"[DRY RUN] {asked} — no elevation attempted; the session's user is unchanged",
+        LogMode.NORMAL,
+    )
+    raise CommandNotRunError(asked, host)
 
 
 @dataclass(slots=True)
@@ -326,6 +474,11 @@ class Host(Protocol):
         session and of each other, allowing concurrent shell interactions.
         The caller is responsible for closing the returned
         :class:`~otto.host.session.HostSession` when done.
+
+        Under a dry run nothing is opened and the handle is a
+        :class:`~otto.host.session.DeclinedSession`, whose methods announce
+        what they would have done and decline at the point of use. Closing it
+        is safe and does nothing.
         """
         ...
 
@@ -354,6 +507,11 @@ class Host(Protocol):
 
         Returns:
             The matched text.
+
+        Raises:
+            ~otto.result.CommandNotRunError: this is a dry run, which issues no
+                command for a pattern to match — see
+                :func:`refuse_declined_match`.
         """
         ...
 
@@ -375,7 +533,11 @@ class Host(Protocol):
         :attr:`~otto.utils.Status.Skipped` (``"not attempted (earlier failure)"``)
         for a file a sequential backend never reached. The aggregate status is
         the first non-ok entry's status (Skipped counts as ok, so a trailing run
-        of Skipped never fails the aggregate on its own).
+        of Skipped never fails the aggregate on its own). Under ``--dry-run``
+        every entry is :attr:`~otto.utils.Status.NotRun` instead, which is NOT
+        ok, so the aggregate is non-ok and no caller reads the transfer as
+        having happened; the per-file ``value`` still carries the destination
+        path, because that is computed locally and IS the preview.
         """
         ...
 
@@ -401,7 +563,11 @@ class Host(Protocol):
         :attr:`~otto.utils.Status.Skipped` (``"not attempted (earlier failure)"``)
         for a file a sequential backend never reached. The aggregate status is
         the first non-ok entry's status (Skipped counts as ok, so a trailing run
-        of Skipped never fails the aggregate on its own). A file that
+        of Skipped never fails the aggregate on its own). Under ``--dry-run``
+        every entry is :attr:`~otto.utils.Status.NotRun` instead, which is NOT
+        ok, so the aggregate is non-ok and no caller reads the transfer as
+        having happened; the per-file ``value`` still carries the destination
+        path, because that is computed locally and IS the preview. A file that
         transferred but whose ``mode`` could not be applied is an error entry
         that still carries its ``dest_path``.
         """
@@ -539,7 +705,28 @@ class BaseHost(ABC):
     ####################
 
     def _dry_run_result(self, cmd: str, log: LogMode = LogMode.NORMAL) -> CommandResult:
-        """Return a synthetic CommandResult for dry-run mode.
+        """Announce *cmd* and return a decline that cannot be read as its answer.
+
+        The returned :class:`~otto.result.NotRunResult` is ``Status.NotRun``
+        (``is_ok`` False) and RAISES
+        :exc:`~otto.result.CommandNotRunError` on ``value``. It replaced a
+        synthetic SUCCESS — ``Status.Skipped`` / ``retcode 0`` / ``is_ok``
+        True, carrying the literal string ``"[DRY RUN] Command not executed"``
+        — which was a poison pill shaped exactly like data: every status
+        branch passed it and every parser chewed it, so userland probes
+        settled fabricated capabilities, ``link list`` reported every link
+        clean and ``tunnel add`` accused hosts of missing socat. See the
+        design spec, ``docs/superpowers/specs/2026-08-15-dry-run-contract-design.md``
+        section 4.
+
+        ``retcode=-1`` is this family's documented "the command never ran"
+        sentinel (see :attr:`~otto.result.CommandResult.retcode`), not a
+        second invention. ``value`` is left at its default and never reaches
+        the instance: the property absorbs the write and poisons the read.
+
+        SUPPRESS THE PAYLOAD, NEVER THE ANNOUNCEMENT: hardening the returned
+        object changes nothing about the ``[DRY RUN]`` line below, which is
+        the dry run's entire product.
 
         *log* is the caller's per-command mode, exactly as the real runner
         receives it, and is folded with the host's standing mode HERE rather
@@ -558,9 +745,7 @@ class BaseHost(ABC):
         which carries no :class:`HostFilter`.
         """
         self._log_command(f"[DRY RUN] {cmd}", self._effective_log(log))
-        return CommandResult(
-            status=Status.Skipped, value="[DRY RUN] Command not executed", command=cmd, retcode=0
-        )
+        return NotRunResult(status=Status.NotRun, command=cmd, retcode=-1, host_name=self.name)
 
     def _dry_run_transfer(
         self,
@@ -573,8 +758,17 @@ class BaseHost(ABC):
 
         Builds the same ``value: dict[Path, Result]`` shape as a real transfer,
         keyed by the source paths exactly as passed. Every file is marked
-        ``Status.Skipped`` (which counts as ok) with a ``[DRY RUN]`` diagnostic,
-        so the folded aggregate is Skipped and its ``msg`` names the action.
+        ``Status.NotRun`` (which does NOT count as ok) with a ``[DRY RUN]``
+        diagnostic, so the folded aggregate is NotRun and its ``msg`` names the
+        action.
+
+        **Only the STATUS hardens here — the values stay plain, readable
+        Results.** A transfer entry's ``value`` is the destination path, which
+        this method computes locally from *dest* and the caller's own file
+        names; it is never a device measurement, so it is the preview rather
+        than the fabrication. Poisoning it the way
+        :meth:`_dry_run_result` poisons a command's output would delete the
+        dry run's product and leave the hazard untouched.
 
         A *mode* is parsed here even though nothing is transferred: a typo'd
         ``--mode 789`` is the caller's own input and costs nothing to catch, so
@@ -611,15 +805,103 @@ class BaseHost(ABC):
         file_names = ", ".join(str(f) for f in files)
         self._log_command(f"[DRY RUN] {action}: {file_names} -> {dest}{suffix}")
         per_file = {
-            src: Result(Status.Skipped, value=dest / src.name, msg=f"[DRY RUN] {action}: {src}")
+            src: Result(Status.NotRun, value=dest / src.name, msg=f"[DRY RUN] {action}: {src}")
             for src in files
         }
-        # Every file is Skipped (ok), so the fold would report Success; a dry-run
-        # transfer is explicitly Skipped, and the aggregate msg carries the banner.
+        # Built here rather than through `aggregate_transfer` so the aggregate
+        # `msg` is the single banner an operator reads, not the per-file
+        # diagnostics joined; the status it would compute is the same NotRun.
         return Result(
-            Status.Skipped,
+            Status.NotRun,
             value=per_file,
             msg=f"[DRY RUN] {action}: {file_names} -> {dest}{suffix}",
+        )
+
+    def _dry_run_power_report(self, action: str, detail: str) -> Result:
+        """Announce a power action a dry run declines to take, and return the decline.
+
+        The vocabulary for the verbs that do not go through the command path at
+        all: :meth:`reboot` ``hard=True`` drives a
+        :class:`~otto.host.power.PowerController` — a PDU or a hypervisor, not
+        a shell — so :meth:`_dry_run_result`, ``Status.NotRun`` and every other
+        primitive the contract built are nowhere near the line that cycles the
+        box. *action* names the verb (``"REBOOT (hard)"``), *detail* says what
+        WOULD happen and, explicitly, what did not.
+
+        ``Status.NotRun`` and a plain :class:`~otto.result.Result`, deliberately
+        matching ``write_file``'s decline rather than
+        :class:`~otto.result.NotRunResult`: nothing was measured, so ``value``
+        is honestly ``None`` and the renderer — which reads it in order to
+        print — has nothing to detonate on.
+
+        ``is_ok`` False is what a LIBRARY caller acts on
+        (``if (await host.reboot()).is_ok:``), and it is deliberately NOT what
+        keeps :meth:`reboot` from rebuilding its transports — the early return
+        above that gate is. Worth stating, because the follow-up that
+        commissioned this guard predicted the opposite: hardening the status
+        and leaving the body to run would have left every ACTION below it
+        happening, which is the whole defect.
+
+        **The banner is NOT folded with the host's standing log mode**, for the
+        same reason :meth:`_dry_run_transfer`'s is not: these verbs take no
+        per-call ``log``, so folding would let a host declared ``log = false``
+        in lab data print nothing at all. This line is an ANNOUNCEMENT, never a
+        payload — a dry run whose output is empty is a bug.
+        """
+        banner = f"[DRY RUN] {action}: {self.name} — {detail}"
+        self._log_command(banner)
+        return Result(Status.NotRun, msg=banner)
+
+    def _dry_run_session(self, name: str) -> "HostSession":
+        """Announce the session a dry run declines to open, and return the decline.
+
+        The :class:`~otto.result.NotRunResult` philosophy one level up: the
+        caller gets a handle that is safe to hold and to hand around, and every
+        method that would touch the device declines AT THE POINT OF USE. One
+        mental model applies at both layers — ``host.exec`` under a dry run
+        answers ``NotRun``, so ``session.run`` does too — and the caller still
+        gets the preview, because each declined call announces the command it
+        would have sent.
+
+        See :class:`~otto.host.session.DeclinedSession` for the per-method
+        contract and for why ``expect`` is the one method that raises.
+
+        SUPPRESS THE PAYLOAD, NEVER THE ANNOUNCEMENT: the banner is the right
+        idea from the version this replaced, which logged
+        ``[DRY RUN] open_session(...)`` and then genuinely opened the session —
+        the announcement-without-the-suppression inversion, where the log line
+        is what makes the hole look handled. On
+        :class:`~otto.host.docker_host.DockerContainerHost` that arm ran
+        ``_ensure_running()`` immediately after the banner, so a dry run could
+        reach ``compose_up`` and start a real container.
+
+        Args:
+            name: the session name the caller asked for.
+
+        Returns:
+            A :class:`~otto.host.session.DeclinedSession` for *name*.
+        """
+        from .session import DeclinedSession
+
+        self._log_command(f"[DRY RUN] open_session({name!r}) — no session opened")
+        # The login user is CONFIGURATION, not a measurement, so the declined
+        # handle reports it exactly as a real one would — read from the same
+        # `_login_user()` that `SessionManager._seed_user` stamps a live named
+        # session with. `getattr` because `_session_mgr` is a concrete
+        # family's field, not `BaseHost`'s; the three `open_session` overrides
+        # that reach here all have one.
+        mgr = getattr(self, "_session_mgr", None)
+        login_user = mgr._login_user() if mgr is not None else ""  # noqa: SLF001 — intra-package read of the manager's configured login user
+        # `self.name`, not `self.id`, and deliberately: this identifier is
+        # read by humans in a `[DRY RUN]` banner or a CommandNotRunError
+        # message, and every other dry-run decline on this class names the
+        # host the same way (`_dry_run_result`, `_dry_run_power_report`).
+        return DeclinedSession(
+            name=name,
+            log_command=self._log_command,
+            log_output=self._log_output,
+            host_id=self.name,
+            current_user=login_user,
         )
 
     ####################
@@ -716,12 +998,30 @@ class BaseHost(ABC):
         locally without ending the remote session; type ``exit`` or ``logout``
         to end the session normally.
 
+        Under a dry run this announces and returns without connecting. It is
+        the ``send`` shape, not the ``expect`` shape: ``login`` returns
+        ``None``, so returning early invents no device fact — its product is a
+        side effect (a terminal bridged to a real shell), and declining to
+        perform it is the whole point. On
+        :class:`~otto.host.docker_host.DockerContainerHost` the arm matters
+        twice over: ``_login`` calls ``_ensure_running()``, which can reach
+        ``compose_up`` and START A CONTAINER. The CLI's ``--dry-run`` seam
+        already stops this verb before its body (it declares no preview), so
+        the exposed caller is the LIBRARY one.
+
         Args:
             as_user: Land the session on this login instead of the
                 connection's configured default, replaying any login-proxy
                 hops needed to reach it (see :mod:`otto.host.login_proxy`).
                 Hosts that cannot proxy raise :exc:`NotImplementedError`.
         """
+        if is_dry_run():
+            target = f"as {as_user!r}" if as_user is not None else "as the configured login user"
+            self._log_command(
+                f"[DRY RUN] login({self.name}) {target} — no interactive shell opened, "
+                f"no connection made"
+            )
+            return
         await self._login(as_user)
 
     @cli_exposed
@@ -948,13 +1248,19 @@ class BaseHost(ABC):
             timeout: Maximum seconds to wait. Defaults to
                 :data:`DEFAULT_COMMAND_TIMEOUT`; pass ``float("inf")`` to wait
                 indefinitely.
+
+        Returns:
+            The matched text.
+
+        Raises:
+            ~otto.result.CommandNotRunError: this is a dry run, which issues no
+                command for a pattern to match — see
+                :func:`refuse_declined_match` for why the empty string this
+                replaced was a fabrication and not a safe default.
         """
         timeout = _validate_timeout(timeout)
         if is_dry_run():
-            self._log_command(
-                "[DRY RUN] expect() skipped — pattern would never match without a live session"
-            )
-            return ""
+            refuse_declined_match(pattern, self.name, self._log_command)
         return await self._expect_one(pattern, timeout)
 
     async def _expect_one(
@@ -1086,6 +1392,30 @@ class BaseHost(ABC):
         Toggling reads the controller's :meth:`~otto.host.power.PowerController.status`;
         if the controller can't report state, pass an explicit ``state``. On
         success ``value`` is the commanded :class:`~otto.host.power.PowerState`.
+
+        **Under a dry run this reports the plan and commands nothing** —
+        ``Status.NotRun``, ``is_ok`` False. The same hazard as
+        :meth:`reboot` ``hard=True`` and for the same reason: the controller is
+        a PDU or a hypervisor, not a shell, so no part of the command path's
+        dry-run plumbing is in the way of ``await host.power('off')``. The CLI
+        stops above this verb at the ``--dry-run`` seam, which makes the live
+        surface the LIBRARY layer — an embedder or an in-process caller holding
+        an :class:`~otto.context.OttoContext` with ``dry_run=True``.
+
+        THE TOGGLE ARM CANNOT SAY WHICH DIRECTION IT WOULD GO, and says so.
+        Deciding requires ``controller.status()``, which is a device read; a
+        preview naming ``'off'`` because that is the likely answer would be a
+        fabricated measurement dressed as a plan, and the caller would confirm
+        a direction otto never established.
+
+        Raises:
+            ValueError: no ``power_control`` on this host, or *state* is not
+                ``'on'`` / ``'off'`` / ``None``. Both checks read local values
+                only, so a dry run raises them from the same lines: previewing
+                a power command that cannot be issued would fabricate
+                feasibility. The third ``ValueError`` — a toggle against a
+                controller that cannot report state — needs the device and is
+                therefore reachable only on a real run.
         """
         from .power import PowerState
 
@@ -1093,22 +1423,37 @@ class BaseHost(ABC):
             value = commanded if result.is_ok else None
             return Result(result.status, value=value, msg=result.msg)
 
+        # Both checks hoisted above the dry-run arm so there is ONE authority
+        # for each error rather than a preview-side copy that can drift.
         controller = self._require_power_control()
+        if state not in ("on", "off", None):
+            raise ValueError(f"invalid power state {state!r}; expected 'on', 'off', or None")
+        if is_dry_run():
+            if state is None:
+                return self._dry_run_power_report(
+                    "POWER (toggle)",
+                    f"would read {type(controller).__name__}'s reported state and command "
+                    f"the opposite. Not done: current state not read, no power command "
+                    f"issued, direction undetermined",
+                )
+            return self._dry_run_power_report(
+                f"POWER ({state})",
+                f"would command power {state} via {type(controller).__name__}. "
+                f"Not done: no power command issued",
+            )
         if state == "on":
             return _with_state(await controller.on(cast("Host", self)), PowerState.ON)
         if state == "off":
             return _with_state(await controller.off(cast("Host", self)), PowerState.OFF)
-        if state is None:
-            current = await controller.status(cast("Host", self))
-            if current is None:
-                raise ValueError(
-                    f"power(toggle) on {self.name!r} needs a controller that "
-                    f"reports status; pass state='on' or 'off'."
-                )
-            if current is PowerState.ON:
-                return _with_state(await controller.off(cast("Host", self)), PowerState.OFF)
-            return _with_state(await controller.on(cast("Host", self)), PowerState.ON)
-        raise ValueError(f"invalid power state {state!r}; expected 'on', 'off', or None")
+        current = await controller.status(cast("Host", self))
+        if current is None:
+            raise ValueError(
+                f"power(toggle) on {self.name!r} needs a controller that "
+                f"reports status; pass state='on' or 'off'."
+            )
+        if current is PowerState.ON:
+            return _with_state(await controller.off(cast("Host", self)), PowerState.OFF)
+        return _with_state(await controller.on(cast("Host", self)), PowerState.ON)
 
     async def _soft_reboot(self) -> Result:
         """Issue the in-shell reboot command. Per-family override; default raises."""
@@ -1140,7 +1485,72 @@ class BaseHost(ABC):
         an embedded target reached through a console server that stays up
         across the reboot). Either phase expiring downgrades the result to
         :attr:`~otto.utils.Status.Failed` with a message naming the phase.
+
+        **Under a dry run this reports the plan and does nothing at all** —
+        ``Status.NotRun``, ``is_ok`` False. THE HARD ARM IS WHY THE ARM IS AT
+        THE TOP: it calls the power controller, which drives a PDU or a
+        hypervisor rather than a host command, so none of the dry-run plumbing
+        in the command path is anywhere near it and ``otto -n … reboot --hard``
+        cycled a real machine. Three more consequences ride on the same guard,
+        each of them a real side effect of a run that was supposed to have
+        none: ``_soft_reboot`` discards the declined ``run("reboot")`` and
+        answers Success, so ``rebuild_connections()`` below tore down every
+        cached transport for a host that is still up; and both wait phases dial
+        for real (``is_reachable`` → ``verify_connection``), burning the whole
+        down/up deadline against a live host. Returning early is the contract's
+        third honest behaviour — never run the logic — and it is the only one
+        available, because there is no measurement here to decline: the harms
+        are the ACTIONS.
+
+        **The arm is a SECOND guard, not the only one, and deliberately so.**
+        This verb keeps the CLI's ``--dry-run`` seam default, so
+        ``otto -n host <id> reboot`` never reaches this body at all — every
+        other verb with a richer preview than the seam's block opts in with
+        ``dry_run_preview=True``, and this one does not. The stakes are
+        asymmetric in a way no other verb's are: a regressed transfer preview
+        mutates a file, a regressed reboot arm power-cycles hardware, on the
+        one flag that means "I am not sure". The two guards are genuinely
+        independent — the seam reads the typed root options
+        (``dry_run_requested``) while this arm reads the active context
+        (``is_dry_run``) — so a context-plumbing regression takes out one and
+        not the other. The rule: opt in whenever the preview is richer, EXCEPT
+        for verbs that touch power.
+
+        Raises:
+            ValueError: ``hard=True`` on a host with no ``power_control``. A
+                dry run raises it too, from the same line: the check reaches no
+                device, and previewing a power cycle that cannot happen would
+                fabricate feasibility.
         """
+        if is_dry_run():
+            if hard:
+                # Asked even though nothing will be cycled: it names the
+                # controller in the preview, and a host with no power backend
+                # must fail here exactly as it would have for real.
+                controller = self._require_power_control()
+                would = f"would power-cycle via {type(controller).__name__}"
+                not_done = "no power cycle issued"
+            else:
+                would = "would issue the in-shell reboot command"
+                not_done = "no reboot command issued"
+            if not wait:
+                waiting = "no wait"
+            elif down_timeout > 0:
+                waiting = (
+                    f"then wait up to {min(down_timeout, timeout)}s for it to go down "
+                    f"and {timeout}s in total for it to come back, polling every "
+                    f"{poll_interval}s"
+                )
+            else:
+                waiting = (
+                    f"then wait up to {timeout}s for it to come back (down phase "
+                    f"skipped), polling every {poll_interval}s"
+                )
+            return self._dry_run_power_report(
+                f"REBOOT ({'hard' if hard else 'soft'})",
+                f"{would}, {waiting}. Not done: {not_done}, host not probed, "
+                f"cached transports kept",
+            )
         if hard:
             result = await self._require_power_control().cycle(cast("Host", self))
         else:

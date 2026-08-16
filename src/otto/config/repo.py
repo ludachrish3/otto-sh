@@ -955,7 +955,18 @@ class Repo:
             self._git_description = ""
 
     async def set_commit_hash(self) -> None:
-        """Populate ``_git_hash`` with the full SHA of the current HEAD commit."""
+        """Populate ``_git_hash`` with the full SHA of the current HEAD commit.
+
+        The unguarded ``result.value`` is deliberate, and was reconsidered when
+        the dry-run contract landed. :meth:`run_git_command` is exempt from the
+        decline, so this read CANNOT see a ``Status.NotRun`` — a dry-run branch
+        here would be a guard that cannot fail, which this codebase treats as a
+        defect in its own right rather than as cheap insurance. The defence
+        that belongs to the consumer lives at the consumer:
+        :func:`otto.cli.invoke.repo_provenance` keeps a declined provenance
+        query from failing the log line that reads it, and it is exercised by
+        injecting the decline rather than by hoping for one.
+        """
         result = await self.run_git_command("log -1 --format=%H")
         self._git_hash = result.value
 
@@ -999,6 +1010,29 @@ class Repo:
     ) -> CommandResult:
         """Run a git sub-command in this repo's ``sut_dir`` and return the result.
 
+        Runs under a dry run, deliberately. The ``LocalHost`` below is not a
+        lab host being driven — it is a throwaway subprocess runner for a
+        question about the checkout otto is reading its own configuration from,
+        and it is constructed ``dry_run_exempt=True`` for that reason. The
+        exemption's three-part test (no device, no mutation, otto's own
+        bookkeeping) is documented on
+        :attr:`~otto.host.local_host.LocalHost.dry_run_exempt`; this method
+        passes it on every count, and so does each of its two call sites,
+        which are the only ones in the tree:
+
+        * :meth:`set_commit_hash` — ``git log -1 --format=%H``, read-only
+        * :meth:`set_git_description` — ``git describe``, read-only
+
+        Both exist to stamp provenance on the run. If a future caller wants a
+        git sub-command that WRITES, it does not inherit this exemption — it
+        needs its own host, and its own justification.
+
+        Without it, ``--dry-run`` declined the read and the caller's
+        ``result.value`` raised :exc:`~otto.result.CommandNotRunError`, which
+        took out every ``otto host <id> <verb> -n`` invocation: ``HostGroup``
+        installs the dry-run context at PARSE time, so the CLI preamble's
+        provenance log line ran with the decline already armed.
+
         Args:
             cmd: The git sub-command and its arguments (e.g. ``"log -1 --format=%H"``).
 
@@ -1009,7 +1043,7 @@ class Repo:
         from ..host.local_host import LocalHost
         from ..logger.mode import LogMode
 
-        host = LocalHost(log=LogMode.QUIET)
+        host = LocalHost(log=LogMode.QUIET, dry_run_exempt=True)
         try:
             return (await host.run(f"git -C {self.sut_dir} {cmd}")).only
         finally:

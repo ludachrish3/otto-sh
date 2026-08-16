@@ -11,8 +11,8 @@ import shlex
 from collections.abc import Iterable
 
 from ..config.repo import DockerImage, DockerSettings, Repo
-from ..host.host import Host
-from ..result import CommandResult
+from ..host.host import Host, is_dry_run, refuse_declined_fact
+from ..result import CommandNotRunError, CommandResult
 from ..utils import Status
 from ._context_hash import context_hash
 from .staging import stage_image_context
@@ -55,8 +55,17 @@ async def _image_exists(parent: Host, full_tag: str) -> bool:
     both into False means otto REBUILDS. That is correct-but-slow, the safe
     direction — the alternative, treating an unanswerable query as "cached",
     would skip a build the user asked for.
+
+    A dry run's decline is NOT that failure and does not get that fold. The
+    reasoning above turns on a daemon that answered badly; a dry run never
+    asked, and "correct-but-slow" inverts the moment the query is a
+    non-measurement — ``False`` sends ``_build_one`` down the BUILD arm, so
+    the fabrication does not merely mislead a branch, it commissions work.
+    The return type is ``bool`` and cannot carry "I did not look", which is
+    :func:`~otto.host.host.refuse_declined_fact`'s exact case.
     """
     result = await parent.exec(f"docker image inspect {shlex.quote(full_tag)}")
+    refuse_declined_fact(result, asked=f"image_exists({full_tag!r})")
     return result.status.is_ok
 
 
@@ -166,6 +175,11 @@ async def build_images(
         status otherwise. ``value`` is the full tag on success/skip; on
         failure the parent's own result is returned whole, so ``value`` holds
         the captured output and ``command`` / ``retcode`` are preserved.
+
+    Raises:
+        ~otto.result.CommandNotRunError: this is a dry run, and at least one
+            image was selected. A dry run builds nothing, so there is no
+            honest dict to return -- see the arm below.
     """
     settings = repo.docker_settings
     if not settings.images:
@@ -176,6 +190,23 @@ async def build_images(
         if image_names is not None
         else list(settings.images)
     )
+
+    # Below the pure filtering, above every device touch. An empty selection
+    # still answers {} because "this repo declares no such image" is settled
+    # from configuration and is equally true in a dry run; a NON-empty one has
+    # no honest answer at all. Every value in the dict is documented to carry
+    # the tag that now exists on the parent, and under a dry run none does --
+    # so a synthesized dict would fabricate one verdict per image. Raising
+    # here rather than at the first `exec` is what makes the message name the
+    # BUILD; the decline reached from `_image_exists` or `stage_image_context`
+    # names a `docker image inspect` or an `rm -rf`, which is the wrong story
+    # told at the wrong altitude.
+    if selected and is_dry_run():
+        raise CommandNotRunError(
+            f"build_images({repo.name}: {', '.join(img.name for img in selected)})",
+            parent.id,
+            "No context was staged and no image was built or inspected.",
+        )
 
     results: dict[str, CommandResult] = {}
     for image in selected:

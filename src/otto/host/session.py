@@ -20,7 +20,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager, suppress
 from typing import TYPE_CHECKING, Any
 
-from typing_extensions import Self, override
+from typing_extensions import Never, Self, override
 
 from .command_frame import AshFrame, BashFrame, CommandFrame, SessionMarkers, history_prefix
 from .login_proxy import Cred, LoginProxyError, cred_for, perform_switch, run_proxy, run_undo
@@ -36,9 +36,16 @@ if TYPE_CHECKING:
 import logging
 
 from ..logger.mode import LogMode
-from ..result import CommandResult, Results
+from ..result import CommandNotRunError, CommandResult, NotRunResult, Results
 from ..utils import Status
-from .host import _EXEC_REAP_TIMEOUT, DEFAULT_COMMAND_TIMEOUT, ShellCommand
+from .host import (
+    _EXEC_REAP_TIMEOUT,
+    DEFAULT_COMMAND_TIMEOUT,
+    ShellCommand,
+    is_dry_run,
+    refuse_declined_elevation,
+    refuse_declined_match,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1138,6 +1145,23 @@ class HostSession:
     Obtained via ``await host.open_session(name)``. Supports the async context
     manager protocol for automatic cleanup.
 
+    **This class answers for itself under a dry run.** It talks to its
+    :class:`ShellSession` directly and never passes through ``BaseHost.run`` /
+    ``exec`` / ``expect``, so none of the host-layer dry-run hardening reaches
+    it — until 2026-08-15 there was no ``is_dry_run()`` anywhere in the class
+    and a dry run drove real commands down a session it already held. The arms
+    now live on :meth:`run`, :meth:`send`, :meth:`expect`, :meth:`switch_user`
+    and :meth:`as_user`, which is deliberately a SECOND guard rather than a
+    redundant one: ``host.open_session`` hands out a
+    :class:`DeclinedSession` under a dry run, but a handle opened in setup and
+    used inside a LATER dry-run block is a real session that never went near
+    that path.
+
+    :meth:`close` is exempt, and that is a decision. Closing a transport the
+    caller owns is not a command on a device, it is the caller's own cleanup,
+    and it runs in ``finally`` blocks (including this class's ``__aexit__``)
+    where raising would mask the exception that got there first.
+
     Example::
 
         async with await host.open_session("monitor") as mon:
@@ -1192,14 +1216,37 @@ class HostSession:
         """
         return self._session.current_user
 
+    def _refuse_elevation(self, verb: str, user: str) -> Never:
+        """Bind this session's identity to the shared elevation refusal.
+
+        The reasoning lives with the refusal itself
+        (:func:`~otto.host.host.refuse_declined_elevation`), which the
+        HOST-level ``switch_user``/``as_user`` share: same refusal, two
+        objects, one wording.
+
+        Args:
+            verb: the method the caller invoked, named in the caller's words.
+            user: the elevation target, already defaulted for display.
+
+        Raises:
+            ~otto.result.CommandNotRunError: always.
+        """
+        refuse_declined_elevation(verb, user, self._host_id, self._log_command)
+
     async def switch_user(self, user: str = "", password: str | None = None) -> None:
         """``su`` *this* session to *user* (default root), tracking :attr:`current_user`.
 
         Posix-only — raises ``NotImplementedError`` on
         hosts whose sessions do not support elevation (no creds).
+
+        Raises:
+            ~otto.result.CommandNotRunError: this is a dry run — see
+                ``_refuse_elevation``.
         """
         if self._creds is None:
             raise NotImplementedError("switch_user is not supported on this host's sessions")
+        if is_dry_run():
+            self._refuse_elevation("switch_user", user or "root")
         applied = await perform_switch(
             self,
             self._creds,
@@ -1220,9 +1267,17 @@ class HostSession:
         Undoes each applied hop in reverse (innermost first) so a multi-hop
         ``via`` chain unwinds correctly, mirroring
         :meth:`~otto.host.privilege.PosixPrivilege.as_user`.
+
+        Raises:
+            ~otto.result.CommandNotRunError: this is a dry run — see
+                ``_refuse_elevation``. It fires on ENTRY, above the
+                ``try``, so no undo is scheduled for a switch that never
+                happened.
         """
         if self._creds is None:
             raise NotImplementedError("as_user is not supported on this host's sessions")
+        if is_dry_run():
+            self._refuse_elevation("as_user", user)
         prev = self.current_user
         applied = await perform_switch(
             self, self._creds, user, password, prev, self._host_id, self._history_prefix
@@ -1279,6 +1334,9 @@ class HostSession:
         and behaves exactly as on :meth:`~otto.host.host.Host.run`: a
         per-command bound for a single command, a cumulative budget for a
         sequence. Pass ``float("inf")`` for a deliberately unbounded command.
+
+        Under a dry run every command is announced and declined; see
+        ``_declined_results``.
         """
         from .host import (
             _normalize_expects,
@@ -1286,6 +1344,17 @@ class HostSession:
             _run_cmds_with_budget,
             _validate_timeout,
         )
+
+        if is_dry_run():
+            # ABOVE everything, so there is no arrangement of arguments that
+            # reaches `self._session.run_cmd` below. A hardened return value
+            # protects a caller that BRANCHES on it; only an early return
+            # protects the ACTION, and sending a command IS the action.
+            # `_declined_results` runs the caller-input validation
+            # (`_validate_timeout`, `_normalize_expects`, `_resolve_command`)
+            # for both of its callers -- `DeclinedSession.run` has nothing
+            # above it -- so it is deliberately not repeated here.
+            return self._declined_results(cmds, expects, timeout, log)
 
         timeout = _validate_timeout(timeout)
         default_expects = _normalize_expects(expects)
@@ -1312,12 +1381,75 @@ class HostSession:
         resolved = [_resolve_command(c, default_expects, None, log) for c in cmds]
         return await _run_cmds_with_budget(_run_sc, resolved, timeout)
 
+    def _decline_command(self, sc: ShellCommand) -> CommandResult:
+        """Announce a command this session will not send, and return the decline.
+
+        The session-level twin of
+        :meth:`~otto.host.host.BaseHost._dry_run_result`, and identical to it
+        in product: ``Status.NotRun`` (``is_ok`` False), ``retcode`` -1, and a
+        :class:`~otto.result.NotRunResult` whose ``value`` RAISES rather than
+        handing a parser something that was never measured.
+
+        Two things differ, both because this object is a session and not a
+        host. The host name is ``host_id`` — the correlation id the manager
+        stamped on this session, which is the only host identity a
+        :class:`HostSession` holds. And the mode is the caller's own,
+        unfolded: this class's real path logs at ``sc.log`` with no standing
+        host mode folded in, and a dry run must put on the console exactly
+        what a real run puts there — no more (it would leak) and no less (an
+        empty dry run is a bug).
+        """
+        mode = sc.log if sc.log is not None else LogMode.NORMAL
+        self._log_command(f"[DRY RUN] {sc.cmd}", mode)
+        return NotRunResult(
+            status=Status.NotRun, command=sc.cmd, retcode=-1, host_name=self._host_id
+        )
+
+    def _declined_results(
+        self,
+        cmds: "str | ShellCommand | Sequence[str | ShellCommand]",
+        expects: "Expect | list[Expect] | None",
+        timeout: float,
+        log: LogMode,
+    ) -> Results:
+        """Announce every command in *cmds* and return one decline per command.
+
+        The ONE authority for what a declined ``run`` produces, shared by this
+        class's dry-run arm and by :class:`DeclinedSession`, which has no other
+        behaviour. Two objects reaching the same answer by two routes is the
+        mirrored-default drift this codebase has been bitten by before.
+
+        ``_resolve_command`` still runs, deliberately: a :class:`ShellCommand`
+        carrying its own ``timeout=float("nan")`` is the CALLER's input and
+        costs no device contact to reject, so a dry run should reject it
+        exactly where a real run does. Nothing else it computes is used — the
+        decline reads only ``cmd`` and ``log``.
+        """
+        from .host import _normalize_expects, _resolve_command, _validate_timeout
+
+        _validate_timeout(timeout)
+        default_expects = _normalize_expects(expects)
+        items = [cmds] if isinstance(cmds, (str, ShellCommand)) else list(cmds)
+        return Results.collect(
+            [self._decline_command(_resolve_command(c, default_expects, None, log)) for c in items]
+        )
+
     async def send(self, text: str, log: LogMode = LogMode.NORMAL) -> None:
         """Send raw text to this session's stdin.
 
-        See :meth:`~otto.host.remote_host.RemoteHost.send`.
+        See :meth:`~otto.host.remote_host.RemoteHost.send`. Under a dry run the
+        text is announced and nothing is written to the transport — the same
+        arm the host-level ``send`` carries, and for the same reason: a raw
+        write is an action, and returning ``None`` invents no device fact.
         """
         mode = log
+        if is_dry_run():
+            # The caller's mode, not the default NORMAL: a dry run must not put
+            # a send on the console that a real run keeps off it. No NEVER
+            # guard here on purpose — `_log_command` returns before it logs on
+            # NEVER, and that is the ONE home for the decision.
+            self._log_command(f"[DRY RUN] send({text!r})", mode)
+            return
         if mode is not LogMode.NEVER:
             self._log_command(text.rstrip(), mode)
         await self._session.send(text)
@@ -1327,16 +1459,27 @@ class HostSession:
         pattern: str | re.Pattern[str],
         timeout: float = DEFAULT_COMMAND_TIMEOUT,
     ) -> str:
-        """Wait for a pattern in this session's output. See :meth:`~otto.host.host.BaseHost.expect`."""  # noqa: E501 — Sphinx xref
+        """Wait for a pattern in this session's output. See :meth:`~otto.host.host.BaseHost.expect`.
+
+        Raises:
+            ~otto.result.CommandNotRunError: this is a dry run, which issues no
+                command for a pattern to match — see
+                :func:`~otto.host.host.refuse_declined_match`.
+        """
         from .host import _validate_timeout
 
         timeout = _validate_timeout(timeout)
+        if is_dry_run():
+            refuse_declined_match(pattern, self._host_id, self._log_command)
         result = await self._session.expect(pattern, timeout)
         self._log_output(result, LogMode.NORMAL)
         return result
 
     async def close(self) -> None:
-        """Close this session and remove it from the host's session registry."""
+        """Close this session and remove it from the host's session registry.
+
+        Deliberately has NO dry-run arm; see the class docstring.
+        """
         await self._session.close()
         self._deregister(self._name)
 
@@ -1345,6 +1488,197 @@ class HostSession:
 
     async def __aexit__(self, *args: object) -> None:
         await self.close()
+
+
+class _NoTransport(ShellSession):
+    """The :class:`ShellSession` a :class:`DeclinedSession` holds, which never opened.
+
+    Its only job is FULL SURFACE FIDELITY. :class:`DeclinedSession` overrides
+    every :class:`HostSession` method that reaches a device today; this covers
+    the ones that do not exist yet. Anything inherited that reaches through to
+    the transport — a method added upstream, a caller poking
+    ``session._session`` — lands here and declines, instead of raising
+    ``AttributeError`` at a line that made no mistake. That "error at a place
+    that is not the mistake" failure is the one this whole workstream keeps
+    fighting; see :class:`~otto.result.NotRunResult`'s dunder note for the
+    other half of the same rule.
+
+    ``close`` is the exception and returns quietly: nothing was opened, so
+    there is nothing to tear down, and a teardown that raises in a ``finally``
+    masks the exception that got there first.
+    """
+
+    def __init__(self, host_id: str = "") -> None:
+        super().__init__()
+        self._host_id = host_id
+
+    @override
+    async def _open(self) -> None:
+        raise CommandNotRunError("open a shell session", self._host_id)
+
+    @override
+    async def _write(self, data: str) -> None:
+        raise CommandNotRunError(data, self._host_id)
+
+    @override
+    async def _read_until_pattern(self, pattern: re.Pattern[str]) -> str:
+        raise CommandNotRunError(f"read until {pattern.pattern!r}", self._host_id)
+
+    @override
+    async def close(self) -> None:
+        """Nothing was opened, so there is nothing to close."""
+
+
+class DeclinedSession(HostSession):
+    """The handle a dry run returns instead of opening a session.
+
+    :class:`~otto.result.NotRunResult`'s philosophy one level up: hold it,
+    pass it, close it — every method that would touch a device declines AT THE
+    POINT OF USE, and each declined call announces the command it would have
+    sent, so the caller still gets a preview. One mental model covers both
+    layers: ``host.exec`` under a dry run answers ``Status.NotRun``, and so
+    does ``session.run``.
+
+    Per method, the shape follows the RETURN TYPE, exactly as it does on
+    :class:`~otto.host.host.BaseHost`:
+
+    * :meth:`run` returns :class:`~otto.result.Results` — a collection, which
+      carries declines natively. One :class:`~otto.result.NotRunResult` per
+      command, announced.
+    * :meth:`send` returns ``None``. Nothing to harden; announce and do
+      nothing.
+    * :meth:`expect` returns ``str``, and **a ``str`` cannot carry a decline**.
+      The empty string IS the fabrication — a caller's
+      ``if "READY" in await s.expect(...)`` reads it as "the pattern did not
+      appear" — so this raises, in ``refuse_declined_fact``'s vocabulary
+      (:exc:`~otto.result.CommandNotRunError`). It is usually where a
+      session preview ENDS, which is honest rather than broken: see
+      :func:`~otto.host.host.refuse_declined_match`.
+    * :attr:`alive` is ``False``. A fact about this object, not about the
+      device: nothing was opened, and ``False`` is also the branch that keeps
+      a caller from driving it.
+    * ``current_user`` ANSWERS, and is not overridden at all — the inherited
+      read path returns what the transport was stamped with, exactly as a live
+      handle's does. **It is not a device fact and never was.** On the real
+      path every writer of a named session's user is config-derived or already
+      refused: ``ShellSession.__init__`` (``""``), ``SessionManager._seed_user``
+      (``_login_user()``), ``SessionManager._apply_login_proxy``
+      (``login_target``), and :meth:`HostSession.switch_user` /
+      :meth:`HostSession.as_user`, whose dry-run arms refuse above the stamp.
+      ``SessionManager.current_user`` already answers this question from
+      configuration before any session exists, so declining here would invent
+      a gap the product does not have — and it would make two handles disagree
+      under one dry run, because a LIVE handle held from setup still reports
+      its stamped user inside a dry-run block. Seeded by
+      ``BaseHost._dry_run_session`` from the same ``_login_user()`` the real
+      seeding uses.
+    * :meth:`switch_user` / :meth:`as_user` raise. They return ``None``, so
+      ``send``'s announce-and-return looks safe, but both finish by STAMPING
+      ``current_user``; a session claiming a user it never became steers
+      ``as_user``'s undo chain and every "am I root here?" check.
+    * :meth:`close` (and therefore ``__aexit__``) does nothing at all. A
+      fabricated teardown is the same class of bug as a fabricated open, and a
+      raise there would mask whatever exception reached the ``finally`` first.
+
+    Subclassing :class:`HostSession` rather than hand-rolling a stand-in, so
+    the surface cannot drift: a method nobody thought to override is inherited
+    rather than missing, and what it reaches is ``_NoTransport``, which
+    declines. A duck-typed lookalike would also fail ``isinstance`` checks and
+    the declared ``-> HostSession`` return type of every ``open_session``.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        log_command: Callable[[str, LogMode], None],
+        log_output: Callable[[str, LogMode], None],
+        host_id: str = "",
+        current_user: str = "",
+    ) -> None:
+        transport = _NoTransport(host_id)
+        # The same stamp `SessionManager._seed_user` puts on a real named
+        # session, from the same `_login_user()`. Set on the TRANSPORT rather
+        # than shadowed by a property override, so the declined handle and a
+        # live one answer `current_user` through ONE read path
+        # (`HostSession.current_user` -> `self._session.current_user`) and
+        # cannot drift.
+        transport.current_user = current_user
+        super().__init__(
+            name=name,
+            session=transport,
+            log_command=log_command,
+            log_output=log_output,
+            deregister=lambda _name: None,
+            creds=None,
+            host_id=host_id,
+        )
+
+    @property
+    @override
+    def alive(self) -> bool:
+        """Always ``False`` — no session was opened."""
+        return False
+
+    @override
+    async def run(
+        self,
+        cmds: str | ShellCommand | Sequence[str | ShellCommand],
+        expects: "Expect | list[Expect] | None" = None,
+        timeout: float = DEFAULT_COMMAND_TIMEOUT,
+        log: LogMode = LogMode.NORMAL,
+    ) -> Results:
+        """Announce each command and return one decline per command."""
+        return self._declined_results(cmds, expects, timeout, log)
+
+    @override
+    async def send(self, text: str, log: LogMode = LogMode.NORMAL) -> None:
+        """Announce the text and write nothing."""
+        self._log_command(f"[DRY RUN] send({text!r})", log)
+
+    @override
+    async def expect(
+        self,
+        pattern: str | re.Pattern[str],
+        timeout: float = DEFAULT_COMMAND_TIMEOUT,
+    ) -> str:
+        """Announce the wait and refuse to invent its match.
+
+        Raises:
+            ~otto.result.CommandNotRunError: always — see
+                :func:`~otto.host.host.refuse_declined_match`.
+        """
+        from .host import _validate_timeout
+
+        _validate_timeout(timeout)
+        refuse_declined_match(pattern, self._host_id, self._log_command)
+
+    @override
+    async def switch_user(self, user: str = "", password: str | None = None) -> None:
+        """Announce the elevation and refuse to claim it happened.
+
+        Raises:
+            ~otto.result.CommandNotRunError: always — see
+                ``HostSession._refuse_elevation``.
+        """
+        self._refuse_elevation("switch_user", user or "root")
+
+    @asynccontextmanager
+    @override
+    async def as_user(
+        self, user: str = "root", password: str | None = None
+    ) -> "AsyncIterator[HostSession]":
+        """Announce the elevation and refuse to claim it happened.
+
+        Raises:
+            ~otto.result.CommandNotRunError: always, on ENTRY, so no undo is
+                scheduled for a switch that never happened.
+        """
+        self._refuse_elevation("as_user", user)
+        yield self  # pragma: no cover — unreachable; the line above always raises
+
+    @override
+    async def close(self) -> None:
+        """Tear down nothing — nothing was opened, so there is nothing to close."""
 
 
 class _SessionProxyIO:

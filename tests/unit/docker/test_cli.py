@@ -396,6 +396,105 @@ async def test_down_skipped(tmp_path):
     assert "nothing to tear down" in all_calls
 
 
+class TestGenuineSkipsStayedSkipped:
+    """The dry-run contract's ``Status.NotRun`` sweep must not have touched these.
+
+    ``docs/superpowers/specs/2026-08-15-dry-run-contract-design.md`` section 4
+    introduced ``Status.NotRun`` for "a dry run declined this" and left
+    ``Status.Skipped`` (whose ``is_ok`` is True) for genuine skips. Two
+    genuine skips live in this package -- a build-cache hit and a repo with no
+    ``[[docker.composes]]`` -- and ``otto/cli/docker.py`` branches on
+    ``Status.Skipped`` to print ``cached`` and ``nothing to tear down``. Flip
+    either producer and those two lines print the wrong thing.
+
+    The mocked ``test_build_skipped`` / ``test_down_skipped`` above cannot
+    catch that: they HARDCODE ``Status.Skipped`` in the double, so they stay
+    green against a producer that stopped emitting it. These run the REAL
+    producer and feed its own result to the real CLI branch, so the two ends
+    are pinned together.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_cache_hit_is_a_genuine_skip_and_still_prints_cached(self, tmp_path):
+        from otto.docker.build import _build_one
+
+        repo = _make_repo_with_image(tmp_path / "r1", name="myrepo", default_host="pepper_seed")
+        settings = repo.docker_settings
+
+        class _CachedParent:
+            """A parent on which ``docker image inspect`` and ``docker tag`` succeed.
+
+            That IS the cache hit -- the condition is injected here rather than
+            inherited from a canned Result, so the Skipped under assertion is
+            ``_build_one``'s own.
+            """
+
+            async def exec(self, cmd, **_kw):
+                return CommandResult(Status.Success, value="", command=cmd, retcode=0)
+
+        cached = await _build_one(
+            _CachedParent(), "myrepo", settings, settings.images[0], rebuild=False
+        )
+        assert cached.status is Status.Skipped, (
+            "a build-cache hit is a genuine skip -- nothing was declined, the "
+            "image is already there"
+        )
+        assert cached.is_ok is True
+
+        mock_rprint = MagicMock()
+        with (
+            patch.object(docker_cli, "_select_repos", return_value=[repo]),
+            patch.object(docker_cli, "get_lab", return_value=MagicMock()),
+            patch.object(docker_cli, "_resolve_parent_for_repo", return_value=MagicMock()),
+            patch.object(docker_cli, "build_images", AsyncMock(return_value={"myimage": cached})),
+            patch.object(docker_cli, "rprint", mock_rprint),
+        ):
+            await docker_cli._build(repo=None, on=None, rebuild=False, image=None)
+
+        printed = " ".join(str(c) for c in mock_rprint.call_args_list)
+        assert "cached" in printed, f"the cache-hit line stopped saying 'cached': {printed}"
+        assert "FAILED" not in printed
+
+    @pytest.mark.asyncio
+    async def test_a_repo_with_no_composes_is_a_genuine_skip_and_prints_nothing_to_tear_down(
+        self, tmp_path
+    ):
+        from otto.docker.compose import compose_down
+
+        composeless = Repo(sut_dir=make_sut_repo(tmp_path / "r1", name="myrepo"))
+        assert not composeless.docker_settings.composes  # the injected condition
+
+        skipped = await compose_down(composeless, MagicMock())
+        assert skipped.status is Status.Skipped, (
+            "'this repo declares no composes' is a genuine skip -- it is a fact "
+            "about the repo, not something a dry run declined to find out"
+        )
+        assert skipped.is_ok is True
+
+        # `_down` skips composeless repos before it ever calls `compose_down`,
+        # so drive its branch with a repo that HAS composes and the real
+        # producer's result; the branch is what must keep reading Skipped.
+        mock_rprint = MagicMock()
+        with (
+            patch.object(
+                docker_cli,
+                "_select_repos",
+                return_value=[
+                    _make_repo(tmp_path / "r2", name="other", default_host="pepper_seed")
+                ],
+            ),
+            patch.object(docker_cli, "get_lab", return_value=MagicMock()),
+            patch.object(docker_cli, "compose_down", AsyncMock(return_value=skipped)),
+            patch.object(docker_cli, "rprint", mock_rprint),
+        ):
+            await docker_cli._down(repo=None, on=None)
+
+        printed = " ".join(str(c) for c in mock_rprint.call_args_list)
+        assert "nothing to tear down" in printed, (
+            f"the no-composes line stopped saying 'nothing to tear down': {printed}"
+        )
+
+
 @pytest.mark.asyncio
 async def test_down_success(tmp_path):
     """_down prints a green 'stack down' line on a Success result."""

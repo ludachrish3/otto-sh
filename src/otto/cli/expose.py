@@ -165,6 +165,44 @@ def iter_exposed_verbs() -> Iterable[tuple[str, str, str, Callable[..., Any]]]:
             yield cli_name, attr_name, help_text, fn
 
 
+def host_dry_run_references(ctx: typer.Context) -> "list[Any]":
+    """Resolve the host an ``otto host`` invocation names, for the dry-run seam.
+
+    Lent to :func:`~otto.cli.invoke.stop_at_dry_run_seam` through the
+    ``__otto_dry_run_refs__`` marker, and deliberately the SAME call the verb
+    body makes (:func:`~otto.cli.host.resolve_cli_host`) rather than a
+    lookalike: an unknown id, an unreachable ``--hop`` id, an unknown
+    ``--term``/``--transfer`` all fail here exactly as they fail in a real run,
+    so ``-n`` validates for real instead of echoing a command back at someone
+    whose host does not exist. Resolution builds the host object; it opens no
+    transport and issues no command, which is what makes it legal under a dry
+    run at all.
+
+    The ``--term``/``--transfer`` overrides travel WITH the reference. They have
+    to: :func:`resolve_cli_host` applies them by building an override copy that
+    lives on ``ctx.obj`` and not in the lab, so a consumer that re-fetched the
+    id alone (``--dry-run --probe``) would dial the lab default and report
+    reachability for a transport this invocation is not going to use. Read back
+    out of the same ``_otto_host_request`` stash the resolver itself reads, so
+    there is still one authority for what the invocation asked for.
+    """
+    from .host import resolve_cli_host
+    from .invoke import LabReference
+
+    host_id = str(getattr(resolve_cli_host(ctx), "id", "") or "")
+    request = getattr(ctx, "meta", None) or {}
+    overrides = request.get("_otto_host_request") or {}
+    return [
+        LabReference(
+            kind="host",
+            name=host_id,
+            host_ids=[host_id],
+            term=overrides.get("term") or None,
+            transfer=overrides.get("transfer") or None,
+        )
+    ]
+
+
 def _synthesize_command(
     cli_name: str, attr_name: str, help_text: str, sample_func: Callable[..., Any]
 ) -> Any:
@@ -182,6 +220,15 @@ def _synthesize_command(
     # Typer's own callback shim functools-wraps cmd_fn, carrying the marker
     # through to the resolved command's callback.
     cmd_fn.__cli_output_dir__ = getattr(sample_func, "__cli_output_dir__", True)  # ty: ignore[unresolved-attribute]
+    # Same idiom, same reader, for the dry-run seam: whether this verb owns its
+    # own preview, and how to resolve the host it names before the seam reports
+    # it. Without the first line every host verb would be seam-stopped
+    # regardless of what its author declared; without the second, `-n` would
+    # exit 0 on a host that does not exist.
+    from .invoke import DRY_RUN_PREVIEW_ATTR, DRY_RUN_REFS_ATTR
+
+    setattr(cmd_fn, DRY_RUN_PREVIEW_ATTR, getattr(sample_func, DRY_RUN_PREVIEW_ATTR, False))
+    setattr(cmd_fn, DRY_RUN_REFS_ATTR, host_dry_run_references)
     tmp = typer.Typer()
     tmp.command(name=cli_name, help=help_text or None)(cmd_fn)
     converted: Any = typer.main.get_command(tmp)

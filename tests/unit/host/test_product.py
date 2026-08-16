@@ -221,7 +221,12 @@ async def test_install_under_dry_run_does_not_transfer(tmp_path):
     host = _host_with([_StageOnlyProduct(artifact=artifact, dest_dir=dest)])
     with active_context(dry_run=True):
         result = await host.install(stage_only=True)
-    assert result.is_ok
+    # NOT ok, deliberately: `stage` returns `put`'s result whole, and a dry
+    # run's transfer is a decline. Reporting success here is what let a caller
+    # believe an artifact had been placed when nothing left this machine.
+    assert result.status is Status.NotRun
+    assert result.is_ok is False
+    assert "[DRY RUN] PUT" in result.msg  # ...and it says what it did not do
     assert not dest.exists()  # LocalHost.put was a dry-run no-op
 
 

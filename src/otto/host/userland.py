@@ -747,10 +747,10 @@ class Userland:
         **A DRY RUN CANNOT ASK, AND THAT IS THE ARM IT TAKES.** Every path into
         this method reads the answer as a measurement:
         :meth:`_probe` believes the exit code and ``_probe_applets`` believes
-        the stdout. ``BaseHost.exec`` answers a dry run with
+        the stdout. ``BaseHost.exec`` answered a dry run with
         ``_dry_run_result`` — ``retcode=0``, without leaving this machine — so
-        every probe issued under one comes back a YES and every capability
-        settles on an answer nobody took. That is not a cosmetic wrong value:
+        every probe issued under one came back a YES and every capability
+        settled on an answer nobody took. That is not a cosmetic wrong value:
         SETTLED is precisely what :meth:`as_lab_json` offers as a pasteable
         ``userland_options``, and inside a JSON payload a guess is
         indistinguishable from a measurement. Refusing here rather than at each
@@ -769,6 +769,12 @@ class Userland:
         silent anyway — but silence there is a redaction, and this arm is the
         stronger property: the probe is never ASKED, so there is no answer to
         mistake for a measurement.
+
+        ``_dry_run_result`` has since been hardened too — it returns a
+        ``Status.NotRun`` decline whose ``value`` raises — so a probe that
+        reached it would now break loudly rather than settle a fiction. This
+        arm still comes first and still earns its place: belt and braces, and
+        "never asked" beats "asked and refused to read the answer".
 
         The dry-run arm reuses this method's own "could not be asked" template
         rather than adding a second one, on the same ground ``_probe_applets``
@@ -1493,10 +1499,9 @@ def _dry_run_report() -> "list[str]":
         "",
         (
             "Deliberate. `Userland._send` declines to issue a probe under a dry run -- a "
-            "dry-run `exec` answers `retcode 0` without leaving this machine, and a probe "
-            "keyed to that exit code would read it as a yes -- so nothing settles and there "
-            "is genuinely nothing measured to show. Run this without --dry-run to reach the "
-            "device."
+            "dry run reaches no device, so a probe would have no exit code to read and "
+            "nothing settles. There is genuinely nothing measured to show. Run this "
+            "without --dry-run to reach the device."
         ),
     ]
 

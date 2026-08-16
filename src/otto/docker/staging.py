@@ -24,8 +24,8 @@ from pathlib import Path
 
 from ..config.repo import DockerCompose, DockerImage
 from ..host.errors import HostCommandError, HostUnreachableError
-from ..host.host import Host
-from ..result import CommandResult
+from ..host.host import Host, is_dry_run
+from ..result import CommandNotRunError, CommandResult
 
 PARENT_ROOT = Path("/tmp/otto-docker")  # noqa: S108 — deliberate staging path
 
@@ -69,7 +69,21 @@ async def stage_image_context(
     Returns the absolute path on the parent of the extracted context
     directory. The Dockerfile is included verbatim under its declared
     name so ``docker build -f`` resolves it.
+
+    Raises:
+        ~otto.result.CommandNotRunError: this is a dry run. Staging is four
+            device touches (``rm -rf``, ``mkdir``, a ``put``, an untar) and a
+            ``Path`` cannot carry "I staged nothing", so the only honest
+            answer is to decline -- above the local tar as well as the remote
+            copy, since a dry run should not write a tarball either.
     """
+    if is_dry_run():
+        raise CommandNotRunError(
+            f"stage_image_context({project}/{image.name})",
+            getattr(parent, "id", ""),
+            "Nothing was tarred locally and nothing was copied to the parent.",
+        )
+
     remote_dir = image_build_dir(project, image.name)
 
     # Wipe and recreate to avoid mixing leftover files from an earlier build.
@@ -140,7 +154,22 @@ async def stage_compose_files(
     Numbered directories preserve the order the project listed them
     (which determines override precedence in ``docker compose -f a -f b``).
     Returns the absolute paths on the parent in the same order.
+
+    Raises:
+        ~otto.result.CommandNotRunError: this is a dry run -- same reasoning
+            as :func:`stage_image_context`, and the same reason the refusal
+            is at the top rather than on the first result: ``compose_down``
+            catches ``RuntimeError`` around this call, and
+            ``CommandNotRunError`` IS one, so a decline raised from inside
+            here is swallowed and re-reported as a failed tear-down.
     """
+    if is_dry_run():
+        raise CommandNotRunError(
+            f"stage_compose_files({project})",
+            getattr(parent, "id", ""),
+            "No compose file was copied to the parent.",
+        )
+
     base = compose_dir(project)
     prepared = await parent.exec(
         f"rm -rf {shlex.quote(str(base))} && mkdir -p {shlex.quote(str(base))}"

@@ -149,16 +149,16 @@ class TestHop:
 
 class TestDryRun:
     @pytest.mark.asyncio
-    async def test_run_in_dry_run_skips(self, host: EmbeddedHost):
+    async def test_run_in_dry_run_declines(self, host: EmbeddedHost):
         with active_context(dry_run=True):
             result = await host.run("kernel version")
-        assert result.only.status == Status.Skipped
+        assert result.only.status == Status.NotRun
 
     @pytest.mark.asyncio
-    async def test_exec_in_dry_run_skips(self, host: EmbeddedHost):
+    async def test_exec_in_dry_run_declines(self, host: EmbeddedHost):
         with active_context(dry_run=True):
             result = await host.exec("kernel uptime")
-        assert result.status == Status.Skipped
+        assert result.status == Status.NotRun
 
 
 # ---------------------------------------------------------------------------
@@ -207,16 +207,16 @@ class TestFileTransfer:
         assert isinstance(host._file_transfer, TftpFileTransfer)
 
     @pytest.mark.asyncio
-    async def test_get_dry_run_skips(self, host: EmbeddedHost, tmp_path):
+    async def test_get_dry_run_declines(self, host: EmbeddedHost, tmp_path):
         with active_context(dry_run=True):
             result = await host.get(tmp_path / "f", tmp_path)
-        assert result.status == Status.Skipped
+        assert result.status == Status.NotRun
 
     @pytest.mark.asyncio
-    async def test_put_dry_run_skips(self, host: EmbeddedHost, tmp_path):
+    async def test_put_dry_run_declines(self, host: EmbeddedHost, tmp_path):
         with active_context(dry_run=True):
             result = await host.put(tmp_path / "f", tmp_path)
-        assert result.status == Status.Skipped
+        assert result.status == Status.NotRun
 
 
 # ---------------------------------------------------------------------------

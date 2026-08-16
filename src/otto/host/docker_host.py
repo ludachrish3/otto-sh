@@ -34,11 +34,11 @@ from typing import TYPE_CHECKING, Annotated
 from typing_extensions import override
 
 from ..logger.mode import LogMode
-from ..result import CommandResult, Result
+from ..result import CommandNotRunError, CommandResult, Result
 from ..utils import Arg, Opt, Status, cli_exposed
 from .connections import teardown_step
 from .file_ops import PosixFileOps
-from .host import BaseHost, Host, is_dry_run
+from .host import BaseHost, Host, is_dry_run, refuse_declined_fact
 from .privilege import PosixPrivilege
 from .product import Product
 
@@ -192,9 +192,18 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         ``com.docker.compose.project={self.compose_project}`` and
         ``com.docker.compose.service={self.service}``. If found, cache the
         id on ``self``. If not, auto-start the stack via :func:`compose_up`
-        and re-resolve. ``compose_up`` is reached only on real-access paths
-        — every dry-run path short-circuits on :func:`is_dry_run` before
-        calling this method.
+        and re-resolve.
+
+        :func:`compose_up` **starts a container, so every caller of this method
+        owes a dry run an arm above its own call**, and the list of them is the
+        invariant: ``_docker_exec`` (via ``_exec_via_parent``), ``_run_one``,
+        ``send``, ``put``, ``get`` and ``open_session`` return a decline;
+        ``_expect_one``'s caller (``BaseHost.expect``) raises above it; ``login``
+        announces and returns. A new caller that forgets is a dry run that
+        starts a container. This paragraph asserted the invariant before it was
+        true: ``open_session`` logged ``[DRY RUN] open_session(...)`` and then
+        called this method anyway, and ``login`` had no dry-run arm at all
+        (both fixed 2026-08-15).
         """
         if self.container_id:
             return
@@ -219,6 +228,19 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         container trivially carries no processes). A placeholder whose
         container turns out to be running caches the resolved id, so
         subsequent ``exec`` calls skip both probe and auto-up.
+
+        Side-effect-free is not the same as dry-run-safe: it is a ``bool``
+        answering a question about a device, which is exactly the shape a
+        dry run has no honest value for, and ``False`` is the actionable
+        fiction ("the container is down"). It therefore declines, from
+        ``_resolve_container_id``. otto's own two callers no longer
+        depend on that — ``otto.tunnel.discovery._device_running`` refuses
+        one level above — so this is a LIBRARY-surface backstop, for a caller
+        outside otto that has no funnel of its own.
+
+        Raises:
+            ~otto.result.CommandNotRunError: this is a dry run and the
+                container id is not already cached.
         """
         if self.container_id:
             return True
@@ -229,13 +251,26 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         return False
 
     async def _resolve_container_id(self, log: LogMode = LogMode.NORMAL) -> str:
-        """Return the running container id for this service, or ``""``."""
+        """Return the running container id for this service, or ``""``.
+
+        ``""`` is this method's whole vocabulary for "not running", so a dry
+        run's decline cannot be folded into it: :meth:`is_running` turns it
+        into ``False`` and reports a container down that was never asked
+        about, and ``_ensure_running`` turns it into an ``_auto_up`` that
+        STARTS ONE. The refusal is here rather than in each caller because
+        the fabrication is born here -- one funnel, two callers, no drift.
+
+        Raises:
+            ~otto.result.CommandNotRunError: this is a dry run, so nothing
+                about this container's state was measured.
+        """
         result = await self.parent.exec(
             f"docker ps -q "
             f"--filter label=com.docker.compose.project={shlex.quote(self.compose_project)} "
             f"--filter label=com.docker.compose.service={shlex.quote(self.service)}",
             log=log,
         )
+        refuse_declined_fact(result, asked=f"is_running({self.id})")
         if result.status.is_ok and result.value.strip():
             return result.value.strip().splitlines()[0]
         return ""
@@ -246,6 +281,10 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         Called when the container is declared but not running. Uses
         :func:`compose_up` with ``build=False`` so access never triggers an
         image rebuild — a missing image fails fast with an actionable error.
+
+        Raises:
+            ~otto.result.CommandNotRunError: :func:`compose_up` declined,
+                unwrapped. See the arm below for why it is spelled out.
         """
         from ..config import get_lab as _get_lab
         from ..config import get_repos as _get_repos
@@ -273,6 +312,30 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
                 project_name=self.compose_project,
                 build=False,
             )
+        except CommandNotRunError:
+            # BEFORE the wide arm, which would otherwise STRIP THE TYPE:
+            # `compose_up` declines a dry run by raising
+            # `CommandNotRunError`, and refiling that as `RuntimeError("...
+            # auto-start failed: ...")` tells the operator a start was
+            # attempted and failed when nothing was attempted at all. It is
+            # the last of the conversions the dry-run contract work removed
+            # from `compose_down` and its siblings — see
+            # docs/superpowers/specs/2026-08-15-dry-run-contract-design.md.
+            # A fabricated failure is worse here than a missing guard would
+            # be: it is indistinguishable from a real one, so the decline
+            # stops being visible as a decline anywhere upstream.
+            #
+            # UNREACHABLE TODAY, and closed anyway. `_ensure_running` — the
+            # only caller — asks `_resolve_container_id` first, and that
+            # refuses a dry run outright (`refuse_declined_fact`), so no dry
+            # run reaches this call. The premise is one plausible refactor
+            # from changing: a cached container id, or any second caller that
+            # skips the probe, and the wide arm below starts fabricating.
+            #
+            # Bare `raise`, not a rewrap: the decline's own message already
+            # names `compose_up(<repo>: <project>)` and says no image was
+            # built, no file staged, no container started.
+            raise
         except Exception as e:
             raise RuntimeError(
                 f"Container {self.id!r} is declared but not running, and "
@@ -317,7 +380,26 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         timeout: float,
         log: LogMode = LogMode.NORMAL,
     ) -> CommandResult:
-        """Wrap *cmd* in ``docker exec`` and dispatch through the parent."""
+        """Wrap *cmd* in ``docker exec`` and dispatch through the parent.
+
+        Declines a dry run HERE rather than relabelling the parent's decline
+        below, for three reasons that all point the same way. The parent
+        returns a :class:`~otto.result.NotRunResult` whose ``value`` raises by
+        contract, and ``dataclasses.replace`` reads every init field — so the
+        relabel line, whose only job is cosmetic, would be where the contract
+        fired. The parent's decline also names the ``docker exec`` WRAPPER, and
+        a decline that names a command the caller never issued is the wrong
+        error however it is delivered. And ``_docker_exec`` below calls
+        ``_ensure_running``, which resolves (and can auto-start) the container
+        on the daemon — a dry run must reach neither.
+
+        Public ``exec``/``run`` short-circuit above this in ``BaseHost``, so
+        today nothing arrives here under a dry run. This method is also
+        ``SessionManager``'s ``exec_factory``, which is reached by a different
+        route, and a seam that dispatches to a device answers for itself.
+        """
+        if is_dry_run():
+            return self._dry_run_result(cmd, log)
         wrapped = await self._docker_exec(cmd)
         result = await self.parent.exec(wrapped, timeout=timeout, log=self._effective_log(log))
         # Replace the wrapped command in the result so callers see what they
@@ -349,9 +431,18 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
 
     @override
     async def open_session(self, name: str) -> "HostSession":
-        """Open a named persistent shell session inside the container."""
+        """Open a named persistent shell session inside the container.
+
+        The dry-run arm sits ABOVE ``_ensure_running()``, which is the whole
+        point of it: the previous shape logged the ``[DRY RUN]`` line and then
+        ran ``_ensure_running()`` anyway, so a dry run could resolve the
+        container and — via ``_auto_up`` → ``compose_up`` — START ONE. The
+        daemon is not asked, no container is started, and the handle is a
+        :class:`~otto.host.session.DeclinedSession` — see
+        ``BaseHost._dry_run_session``.
+        """
         if is_dry_run():
-            self._log_command(f"[DRY RUN] open_session({name!r})")
+            return self._dry_run_session(name)
         await self._ensure_running()
         return await self._session_mgr.open_session(name)
 
@@ -428,7 +519,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         return Path(f"/tmp/otto-docker-stage/{container_id}")  # noqa: S108 — deliberate staging path
 
     @override
-    @cli_exposed(success="Transfer complete.")
+    @cli_exposed(success="Transfer complete.", dry_run_preview=True)
     async def put(
         self,
         src_files: Annotated[
@@ -535,7 +626,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
                 await self.parent.exec(f"rm -rf {shlex.quote(str(stage))}")
 
     @override
-    @cli_exposed(success="Download complete.")
+    @cli_exposed(success="Download complete.", dry_run_preview=True)
     async def get(
         self,
         src_files: Annotated[

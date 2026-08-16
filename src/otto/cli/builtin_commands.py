@@ -89,6 +89,13 @@ def register_builtin_commands() -> None:
         # reservation-gated, like host/run/test) but the group needs no
         # per-invocation output directory of its own.
         output_dir=False,
+        # Owns its own dry run (spec §2): every tunnel verb already
+        # short-circuits at the device boundary on `is_dry_run()` and renders a
+        # `DryRunPlan` (`would:` / `not checked:`), and the two `_device_*`
+        # funnels raise `TunnelNotMeasuredError` if anything tries to read a
+        # device fact anyway. Stopping at the seam would replace that plan with
+        # the generic block and delete the shipped preview.
+        dry_run_preview=True,
     )
     register_cli_command(
         "link",
@@ -97,6 +104,13 @@ def register_builtin_commands() -> None:
         # Short-lived host-touching group like tunnel: no per-invocation
         # output directory of its own.
         output_dir=False,
+        # Owns its own dry run (spec §2), same terms as tunnel: `link impair -n`
+        # resolves placements and directions from configuration, prints the
+        # exact `tc` command lines it would issue, names the lockout refusals it
+        # could not make, and `_exec` raises `LinkNotMeasuredError` rather than
+        # letting a device fact be invented. That preview is the reason the
+        # flag exists.
+        dry_run_preview=True,
     )
     register_cli_command(
         "init",

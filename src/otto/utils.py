@@ -306,6 +306,29 @@ class _Exclude:
 Exclude = _Exclude()
 
 
+DRY_RUN_HEADLINE = "dry run: no command body was run and no device was contacted"
+"""First line of every seam-default dry-run block, and of ``otto test``'s preview.
+
+Lives in this leaf module because the two printers sit on opposite sides of a
+module boundary -- ``otto.cli.invoke`` prints the generic seam block and
+``otto.suite.register`` prints the suite preview, and ``otto.suite`` may not
+import ``otto.cli`` (``tach.toml``). One constant instead of two string
+literals that would drift apart the first time either is reworded.
+"""
+
+DRY_RUN_HEADLINE_PROBED = (
+    "dry run: no command body was run; --probe opened a connection only, and ran no command"
+)
+"""Replaces :data:`DRY_RUN_HEADLINE` when ``--dry-run --probe`` actually dialed.
+
+Kept beside its sibling precisely because the two say incompatible things about
+device contact: the default headline's "no device was contacted" is FALSE once
+``--probe`` opens a transport, and a reader reworking either line needs to see
+both at once. ``--probe`` is a CLI flag with no library equivalent, so only
+``otto.cli.invoke`` prints this one -- the suite preview never probes.
+"""
+
+
 def cli_exposed(
     fn: Callable[..., Any] | None = None,
     *,
@@ -313,6 +336,7 @@ def cli_exposed(
     help_: str | None = None,
     success: str | None = None,
     output_dir: bool = True,
+    dry_run_preview: bool = False,
 ) -> Callable[..., Any]:
     """Mark a host coroutine method for auto-exposure as an ``otto host`` subcommand.
 
@@ -321,6 +345,11 @@ def cli_exposed(
     result (e.g. "Transfer complete.").
     ``output_dir=False`` marks a read-only verb that creates no per-invocation
     output directory (e.g. ``exists``/``lsmod``); the default ``True`` keeps one.
+    ``dry_run_preview=True`` opts the verb out of the CLI's seam default under
+    ``--dry-run`` -- otto stops before an ordinary verb's body runs, but an
+    opted-in verb runs its body so its own ``is_dry_run()`` branch can render a
+    configuration-only preview. Default ``False``, so a verb author who never
+    thought about dry runs still cannot contact a device under one.
 
     Usable bare (``@cli_exposed``) or called (``@cli_exposed(name=..., ...)``).
     """
@@ -331,6 +360,7 @@ def cli_exposed(
         f.__cli_help__ = help_  # ty: ignore[unresolved-attribute]
         f.__cli_success__ = success  # ty: ignore[unresolved-attribute]
         f.__cli_output_dir__ = output_dir  # ty: ignore[unresolved-attribute]
+        f.__cli_dry_run_preview__ = dry_run_preview  # ty: ignore[unresolved-attribute]
         return f
 
     return deco(fn) if fn is not None else deco
@@ -359,6 +389,8 @@ class Status(Enum):
     <Status.Failed: 1>
     >>> Status(0) is Status.Success
     True
+    >>> Status.Skipped.is_ok, Status.NotRun.is_ok
+    (True, False)
     """
 
     Success = 0
@@ -366,6 +398,19 @@ class Status(Enum):
     Error = 2
     Unstable = 3
     Skipped = 4
+    NotRun = 5
+    """A dry run declined this command -- nothing issued, nothing measured.
+
+    NOT ok, deliberately -- Skipped stays ok for genuine skips, but code that
+    branches on a NotRun's is_ok must take its failure arm, so nothing
+    proceeds on a fiction. See the design spec
+    ``docs/superpowers/specs/2026-08-15-dry-run-contract-design.md`` #4.
+
+    NO COLON in the summary line above, and that is load-bearing rather than
+    style: napoleon parses an attribute docstring's ``prefix: rest`` as
+    ``type: description``, so a colon here makes Sphinx look up the prefix as
+    a class and ``-W -n`` fails the build on the missing target.
+    """
 
     @property
     def is_ok(self) -> bool:

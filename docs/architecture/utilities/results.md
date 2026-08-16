@@ -25,9 +25,21 @@ are *derived* from results.
   entry's status; `only` asserts exactly one command ran and returns it;
   `first_failure` finds the culprit in a batch. Transfer verbs aggregate
   per-file results the same way.
+- {class}`~otto.result.NotRunResult` — a `CommandResult` for a command a dry
+  run declined to issue. The one member of the family that is deliberately
+  *not* data: reading `value` raises
+  {class}`~otto.result.CommandNotRunError` naming the command and the host,
+  so the always-wrong class of caller — the one that parses a device's answer
+  — breaks at the line that mistook a non-measurement for a measurement,
+  while `status`, `retcode`, `timed_out` and `command` stay plain reads for
+  fire-and-forget callers.
 
 The shared vocabulary is {class}`~otto.utils.Status`: `Success`, `Failed`,
-`Error`, `Unstable`, `Skipped`.
+`Error`, `Unstable`, `Skipped`, `NotRun`. `Skipped` is ok and `NotRun` is not,
+and the split is load-bearing: `Skipped` marks a *genuine* skip (a test step,
+a transfer fold) that callers should sail past, so it cannot be made non-ok;
+`NotRun` means a dry run declined to contact a device, and every `is_ok`
+branch must take its failure arm rather than proceed on a fiction.
 
 ## Exit codes
 

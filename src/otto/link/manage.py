@@ -92,13 +92,20 @@ class LinkNotMeasuredError(OttoError, RuntimeError):
     under one has to come from lab data and the user's own arguments.
 
     ``_exec`` raises this rather than letting ``BaseHost.exec``'s synthetic
-    reply through, because that reply is ``Status.Skipped`` (``is_ok`` is
+    reply through, because that reply WAS ``Status.Skipped`` (``is_ok`` is
     ``True``) with the literal value ``"[DRY RUN] Command not executed"`` and
-    this package PARSES it: the impairer sees ``"[DRY"`` as ``tokens[0]`` and
-    reports the netdev CLEAN, ``parse_ip_addr`` yields an EMPTY address table
-    so the two self-lockout refusals cannot match, and ``impair_link``'s
-    post-apply verify compares one fabrication against another. A raise cannot
+    this package PARSES it: the impairer saw ``"[DRY"`` as ``tokens[0]`` and
+    reported the netdev CLEAN, ``parse_ip_addr`` yielded an EMPTY address table
+    so the two self-lockout refusals could not match, and ``impair_link``'s
+    post-apply verify compared one fabrication against another. A raise cannot
     be mistaken for a measurement; a clean read can.
+
+    The primitive has since been hardened to return a ``Status.NotRun``
+    decline whose ``value`` raises
+    (:exc:`~otto.result.CommandNotRunError`), so those parses would now break
+    instead of lying. This backstop STAYS: it names the link and the read, it
+    is raised before any device call is even attempted, and belt-and-braces is
+    the design's stated position (see the dry-run contract spec, section 4).
 
     ``RuntimeError``, like the two errors above, because three consumers bucket
     on that base and all three must keep working: :func:`read_link_states`

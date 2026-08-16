@@ -4,8 +4,8 @@ A :class:`CommandSpec` describes one top-level command or group: its name, a
 loader (a live Typer app, a plain/async function, or a lazy ``"pkg.mod:attr"``
 string imported only on dispatch), the help line shown by ``otto --help``
 *without* importing the module, and dispatch metadata (``lab_free``,
-``output_dir``, ``gate``). First-party subcommands and third-party plugins
-register through the same :func:`register_cli_command`.
+``output_dir``, ``gate``, ``dry_run_preview``). First-party subcommands and
+third-party plugins register through the same :func:`register_cli_command`.
 """
 
 import importlib
@@ -42,6 +42,18 @@ class CommandSpec:
 
     gate: bool = True
     """Whether invocations run the reservation gate (ignored when ``lab_free``)."""
+
+    dry_run_preview: bool = False
+    """Whether ``--dry-run`` lets this command's leaves run their bodies.
+
+    ``False`` (the default) means the seam stops the invocation after
+    validation and prints the would-run block, so a command author who never
+    considered dry runs cannot contact a device under one. ``True`` buys the
+    deeper, configuration-only preview: the body runs and short-circuits at
+    its own ``is_dry_run()`` branch (the shape ``link``/``tunnel`` ship). An
+    individual leaf may opt itself in without opting in the whole group -- see
+    ``cli_exposed(dry_run_preview=True)`` and
+    :func:`~otto.cli.invoke.stop_at_dry_run_seam`."""
 
     async_leaves: bool = False
     """True when every leaf under this command must be ``async def``.
@@ -80,6 +92,7 @@ def register_cli_command(
     output_dir: bool = True,
     gate: bool = True,
     async_leaves: bool = False,
+    dry_run_preview: bool = False,
 ) -> None:
     """Register a top-level ``otto`` command or group.
 
@@ -87,6 +100,9 @@ def register_cli_command(
     command), or a ``"pkg.mod:attr"`` string resolved lazily on dispatch.
     Name collisions raise immediately, naming both registering modules —
     there is deliberately no overwrite escape hatch for CLI commands.
+
+    *dry_run_preview* opts every leaf under this command out of the
+    ``--dry-run`` seam default (see :attr:`CommandSpec.dry_run_preview`).
     """
     if help is None and isinstance(loader, typer.Typer):
         # A live app already carries its Typer-native help — read it once here
@@ -104,6 +120,7 @@ def register_cli_command(
         output_dir=output_dir,
         gate=gate,
         async_leaves=async_leaves,
+        dry_run_preview=dry_run_preview,
         origin=origin,
     )
     CLI_COMMANDS.register(name, spec, origin=origin)
@@ -117,6 +134,7 @@ def cli_command(
     lab_free: bool = False,
     output_dir: bool = True,
     gate: bool = True,
+    dry_run_preview: bool = False,
 ) -> Callable[..., Any]:
     """Register an async function as a top-level ``otto`` command.
 
@@ -162,6 +180,7 @@ def cli_command(
             lab_free=lab_free,
             output_dir=output_dir,
             gate=gate,
+            dry_run_preview=dry_run_preview,
         )
         return func
 

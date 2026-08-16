@@ -15,7 +15,8 @@ These options are available on every `otto` command:
 | `--log-level` | `OTTO_LOG_LEVEL` | `INFO` | Logging level |
 | `--rich-log-file / --no-rich-log-file` | `OTTO_LOG_RICH` | `--no-rich-log-file` | Rich formatting in log files |
 | `--show-time` | | `False` | Show per-line timestamps on the live console (log files are always timestamped) |
-| `--dry-run, -n` | | `False` | Preview without running commands |
+| `--dry-run, -n` | | `False` | Validate, print what would run, and exit 0 **before the command body runs**. Never runs a command on any device — see {doc}`dry-run` |
+| `--probe` | | `False` | With `--dry-run`: open a connection to each host the command names and report reachability. A connection only — never a command |
 | `--as-user USERNAME` | | current user | Check reservations as USERNAME instead of the current user |
 | `--skip-reservation-check, -R` | | `False` | Bypass the reservation check entirely (emergency use only) |
 | `--list-labs` | | | List available lab names and exit |
@@ -40,6 +41,34 @@ The same rule applies to `--dry-run`, `--xdir`, `--log-level`, and every
 other option listed above.  Subcommand-specific options (like `--firmware`
 for a suite, or `--interval` for `monitor`) go **after** the subcommand.
 ```
+
+### `--dry-run --probe`
+
+A plain `--dry-run` contacts **nothing**: it parses the arguments, loads the
+lab, resolves every host/link/tunnel the command names, prints what would run,
+and stops.  Adding `--probe` buys exactly one extra thing — otto opens a
+connection to each host in that resolved set and prints whether it answered:
+
+```console
+$ otto --lab my_lab --dry-run --probe host router1 run "make install"
+probe: a connection only -- no command was run
+  router1: unreachable
+dry run: no command body was run; --probe opened a connection only, and ran no command
+  would run: otto host router1 run 'make install'
+  lab: my_lab (3 hosts); references resolve: host 'router1'
+```
+
+A host that answers is reported `reachable (connect <N> ms)` instead, and the
+dry run exits 0 either way — **reachability is information, not a gate.**
+
+- **A connection, never a command.**  `--probe` opens **and authenticates** the
+  connection(s) this invocation would use, and no command follows.
+- **`--probe` requires `--dry-run`.**  On its own it is a usage error (exit 2):
+  the only thing that makes dialing safe here is that no command can follow it.
+
+{doc}`dry-run` has the rest — what authenticating puts on the wire, the three
+reachability states, which commands can dial at all, and the library-side
+contract for suites and scripts.
 
 ## Shell completion
 

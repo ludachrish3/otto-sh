@@ -178,7 +178,13 @@ depends_on = ["otto.registry", "otto.utils", "otto.models", "otto.config", "otto
 
 [[modules]]
 path = "otto.result"
-depends_on = ["otto.utils"]
+# otto.errors is for CommandNotRunError's OttoError base. Like config's edge
+# below, this cannot invert layering or create a cycle: otto.errors is a
+# zero-import leaf. The error is defined HERE, not in otto.host.errors with its
+# two peers, precisely to avoid a result->host edge -- otto.host depends on
+# otto.result, so that direction is both a runtime circular import and a fifth
+# cycle against the four this file is trying to retire.
+depends_on = ["otto.utils", "otto.errors"]
 
 [[modules]]
 path = "otto.suite"
