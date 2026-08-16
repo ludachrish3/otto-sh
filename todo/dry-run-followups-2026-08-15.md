@@ -1,5 +1,13 @@
 # A dry-run follow-up the contract work left open
 
+> **One of four dry-run leftovers.** Siblings:
+> [dry-run-failure-message-relay-family-2026-08-16.md](dry-run-failure-message-relay-family-2026-08-16.md)
+> (correctness — do that one first),
+> [dry-run-ledgered-minors-2026-08-16.md](dry-run-ledgered-minors-2026-08-16.md)
+> (the five minors the final review kept), and
+> [plan-and-review-practice-2026-08-16.md](plan-and-review-practice-2026-08-16.md)
+> (process).
+
 Found while making `host`, `link` and `tunnel` honest under `--dry-run` (that
 work is on main). Not folded in, because it is presentation rather than a
 correctness question.

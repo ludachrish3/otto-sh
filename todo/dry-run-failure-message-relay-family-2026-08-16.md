@@ -1,5 +1,13 @@
 # The failure-message relay: six library verbs that read a decline's `.value`
 
+> **One of four dry-run leftovers.** Siblings:
+> [dry-run-followups-2026-08-15.md](dry-run-followups-2026-08-15.md)
+> (presentation), [dry-run-ledgered-minors-2026-08-16.md](dry-run-ledgered-minors-2026-08-16.md)
+> (the five minors the final review kept), and
+> [plan-and-review-practice-2026-08-16.md](plan-and-review-practice-2026-08-16.md)
+> (process). This file is the only one of the four that is a correctness
+> hazard — do it first if only one gets done.
+
 Found by the whole-branch review of the dry-run contract work. **No task on that
 branch claimed this family and the roll-up missed it**, which is the only reason
 it is written down rather than fixed: it is a package-sized job and the branch
