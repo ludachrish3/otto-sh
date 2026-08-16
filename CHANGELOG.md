@@ -5,20 +5,125 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.8.4] - 2026-08-16
 
 ### Added
 
+- **BREAKING** **dry-run**: a dry run contacts no device, and says what it would do
+- **BREAKING** a dry run contacts no device, and says what it did not check
+- **host**: sftp cannot be pre-checked, so its failure is named instead
+- **BREAKING** **host**: the nc GET refuses a device whose own nc rejects `-N`
+- **BREAKING** **host**: the scp backend refuses a device measured to have no scp
+- **host**: shutdown picks the spelling the device has, and reports the answer
+- **host**: the shell backend transfers over uu where the device has no base64
+- **host**: recon once with `otto host <id> probe`, then pin and pay nothing
+- **host**: Userland answers "has applet X", in one round trip for all of them
+- **busybox**: Tier 3 over real ssh, and the userland gaps declared once
+- **host**: a shell-only transfer backend, so BusyBox devices can move files
+- **host**: BusyBox host support phase 3 — the ash frame and the busybox profile
+- **host**: ask the device what its userland can do, instead of assuming
+- **quality**: a gate now reproduces its own CI twin's environment, in a pristine worktree
+- **quality**: library failures carry their domain, and unreachable is not failed
+- **quality**: readiness is an event, and startup failure reaches the waiter
+- **quality**: poll-until-deadline has one spelling, and expiry is never silent
+- **quality**: the subprocess env dance and the path anchors each live once
+- **quality**: a raises-check on ValidationError must name the field it means
+- **quality**: a raises-check on typer.Exit must name the code it expects
+- **quality**: the hermeticity strip has no back door — conftest env writes are gated at the import/runtime boundary
+- **quality**: a dead probe now says so — the chaos oracles stop reading error text as a clean bed
+- **quality**: retry means retried — one implementation, evidence, and a ban on lidding our own flakes
+- **cli**: remote path tab completion for host get/put, reservation-gated
+- **quality**: the gates can now see the tests, and the lanes stop lying
+- **quality**: the two house rules that were only prose are now gates
 - **link**: say why a link cannot be impaired, instead of a bare n/a
+
+
+### Changed
+
+- **host**: the shell backend's chunk loop is a codec, and base64 moves onto it unchanged
+- **host**: the gap registry records PATHS, so a coverage hole cannot hide
+- **BREAKING** **bootstrap**: discover() returns a DiscoveryResult, not a 3-tuple
+
+
+### Dependencies
+
+- **deps**: bump react-aria-components from 1.19.0 to 1.20.0 in /web
+- **deps**: bump @internationalized/date from 3.12.2 to 3.12.3 in /web
+- **deps-dev**: bump ty from 0.0.64 to 0.0.66
+- **deps**: bump fastapi from 0.140.13 to 0.141.1
+- **deps-dev**: bump pyinstrument from 5.1.2 to 5.1.3
+- **deps-dev**: bump vite from 8.1.5 to 8.2.0 in /web
+- **deps**: bump react-aria from 3.50.0 to 3.51.0 in /web
+- **deps-dev**: bump hypothesis from 6.163.0 to 6.165.1
+- **deps-dev**: bump @types/react-dom from 19.2.3 to 19.2.4 in /web
+- **deps**: bump typer from 0.27.0 to 0.27.1
+- **deps**: bump uvicorn from 0.52.0 to 0.52.1
+- **deps-dev**: bump @testing-library/user-event in /web
+- **deps**: bump pysnmp from 7.1.27 to 7.1.28
+- **deps-dev**: bump knip from 6.29.0 to 6.31.0 in /web
+- **deps**: bump starlette from 1.3.1 to 1.4.0
+- **deps-dev**: bump @vitejs/plugin-react from 6.0.4 to 6.0.5 in /web
+- **deps-dev**: bump @biomejs/biome from 2.5.6 to 2.5.7 in /web
+- **deps-dev**: bump @types/react from 19.2.17 to 19.2.18 in /web
+- **deps-dev**: bump ruff from 0.16.0 to 0.16.1
+- **deps**: bump aioftp from 0.27.2 to 0.28.0
 
 
 ### Documentation
 
+- **todo**: rescue the dry-run workstream's open items from scratch
+- **todo**: add plans for default instructions and host method improvements
+- **todo**: add plans for distributed lab host definitions
+- **spec**: the dry-run contract -- validate-and-stop by default, previews by opt-in
+- **todo**: reboot ignores dry run entirely, and the sweep repeats its caveats
+- **todo**: dry-run discards the caller's log mode, so quiet payloads get echoed
+- **host**: the two open base64 paths stay open, and now carry the measurement
+- **todo**: queue the shell encoding restructure alongside the uu codec
+- **todo**: uu is a container format, so it needs the opposite loop from base64
+- **todo**: the empty-lane-leg gate is built, and why the obvious one would not have been
+- **host**: install/stage was cleared by reasoning, so it is untested now
+- **todo**: criterion 7 is closed -- CI proved the three preconditions
+- **todo**: track what phase 5 left open, with the evidence for each
+- **gates**: the xdist complement is not gated, and never was
+- **todo**: correct the record on `no such table: context` + xdist INTERNALERROR
+- **spec**: the testing-infra review, and the fix-with-gate plan that burns it down
+- **architecture**: the pages describe the code, and the gates get a page
+- **spec**: the docs-alignment design, and what the churn review still owes
+- **suite**: suite registration reads the top level, and now says so
 - **errors**: the OttoError convention says what it actually covers
 
 
 ### Fixed
 
+- **test**: two workers fetching one BusyBox artifact stop sharing a temp file
+- **host**: a dry run cannot ask, so it settles nothing and pins nothing
+- **BREAKING** **host**: read_file/write_file refuse a device with no base64, instead of blaming the file
+- **BREAKING** **link**: --expire on a bash-less host is refused, not reported as success
+- **BREAKING** **host**: run() refuses the line ash would truncate, instead of being truncated
+- **test**: own the applet symlink targets, and prove the root runs
+- **test**: stop the rootfs harness needing an applet to find applets
+- **host**: spend the remote sshd's channel budget, don't overrun it
+- **host**: end a generation of hop resources, not the transport
+- **host**: probe the `timeout` calling convention, not its name
+- **host**: release the hop port forward with the port, not with the host
+- **host**: reap the remote nc listener; `-w` never bounded it
+- **test**: warm the forkserver too, not just the shared-memory arena
+- **test**: re-seat the second subprocess capture, and pin the seam
+- **host**: close the subprocess transport when a local exec times out
+- **test**: read the fixture's commit time as epoch seconds, not strict ISO
+- **lifecycle**: sync_phase forces on the second signal even when no handler runs
+- **BREAKING** **host**: recovery-timeout rebinds go live, and wall-clock discriminators get a serial lane
+- **test**: harness guards fail loud, restore snapshots, and bind what pytest drops
+- **test**: the bed-certifying lanes fail loud or pass — never skip
+- **test**: the marker rule fails its offender, and cleanup stops eating errors
+- **test**: registry discovery is uncached — the count key was identity-blind
+- **test**: the SIGWINCH e2e test covered nothing — the child had no ctty
+- **test**: a --collect-only session must not trip the browser build gate
+- **transfer**: the hop-nc hang dies bounded, and the retry ban is fully armed
+- **tests**: the interact e2e must lease the host whose history it dirties
+- **bootstrap**: contain a user module that declines to load
+- **changelog**: git-cliff must not phone GitHub to render a changelog
+- **changelog**: a breaking change is marked, and a scope says what broke
 - **labs**: a host summary must agree with the host it summarizes, and cannot stall the shell
 - **cli**: stop rich eating brackets out of user-facing errors
 - **cli**: a lab-bound command must be async, at the decorator and at invocation
@@ -1183,7 +1288,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - added GitHub templates
 - set up release management
 
-[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.8.3...HEAD
+[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.8.4...HEAD
+[0.8.4]: https://github.com/ludachrish3/otto-sh/compare/v0.8.3...v0.8.4
 [0.8.3]: https://github.com/ludachrish3/otto-sh/compare/v0.8.2...v0.8.3
 [0.8.2]: https://github.com/ludachrish3/otto-sh/compare/v0.8.1...v0.8.2
 [0.8.1]: https://github.com/ludachrish3/otto-sh/compare/v0.8.0...v0.8.1
