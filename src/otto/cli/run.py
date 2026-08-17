@@ -3,6 +3,7 @@
 import inspect
 from collections.abc import Callable, Coroutine
 from typing import (
+    TYPE_CHECKING,
     Annotated,
     Any,
     ParamSpec,
@@ -12,9 +13,13 @@ import typer
 from rich import print as rprint
 from rich.table import Table
 
-from ..instructions import INSTRUCTIONS, InstructionEntry
+from ..instructions import FIRST_PARTY_INSTRUCTIONS, INSTRUCTIONS, InstructionEntry
+from ..registry import get_registering_repo
 from ..result import CommandResult
 from .invoke import make_registry_group, prepare_command_target
+
+if TYPE_CHECKING:
+    from rich.panel import Panel
 
 P = ParamSpec("P")
 
@@ -32,6 +37,40 @@ run_app = typer.Typer(
 )
 
 
+def first_party_instructions_panel() -> "Panel | None":
+    """Build the ``otto defaults`` panel, or None when otto registered nothing.
+
+    Attribution is by MODULE, exactly like ``Repo.get_instructions_panel``'s
+    ``init``-prefix match, so every instruction lands in exactly one panel:
+    otto's defaults live in ``otto.project.instructions`` and a repo's live
+    under its own init modules. Matching on the first-party NAMES instead would
+    put a repo's instruction in otto's panel the day one slips past the
+    decorator's guard -- hiding the very collision the guard exists to shout
+    about.
+
+    None rather than an empty panel: otto always has defaults in a real run
+    (bootstrap imports them), so an empty one only ever appears in a test that
+    stripped the registry, and advertising a section with nothing in it reads
+    like otto lost them.
+    """
+    from rich.panel import Panel
+    from rich.text import Text
+
+    names = [entry.name for _, entry in INSTRUCTIONS.items() if entry.module.startswith("otto.")]
+    if not names:
+        return None
+    # No subtitle, where a repo panel carries its dependency summary: panels
+    # share the terminal's width, so anything written there is truncated
+    # mid-sentence as soon as a second repo shows up.
+    return Panel(
+        Text("\n".join(f"• {name}" for name in names)),
+        title=Text("otto defaults", style="bold not dim"),
+        border_style="dim",
+        padding=(1, 5, 1, 1),
+        expand=True,
+    )
+
+
 def list_instructions_callback(value: bool) -> None:
     """Print all available run instructions (one panel per repo) and exit when the flag is set."""
     if not value:
@@ -39,6 +78,11 @@ def list_instructions_callback(value: bool) -> None:
     from ..config import get_repos  # lazy import — avoids circular dependency
 
     panels = [repo.get_instructions_panel() for repo in get_repos()]
+    # Ahead of the repos: these are the verbs every lab has, and the ones a
+    # reader must recognize as taken before writing an instruction of their own.
+    first_party = first_party_instructions_panel()
+    if first_party is not None:
+        panels.insert(0, first_party)
     table = Table(show_header=False, show_footer=False, box=None, expand=True, padding=(0, 1, 1, 1))
     for _ in panels:
         table.add_column(ratio=1)
@@ -163,6 +207,27 @@ def instruction(*args: Any, options: type | None = None, **kwargs: Any) -> Calla
         func_name = getattr(func, "__name__", repr(func))
         explicit_name = args[0] if args and isinstance(args[0], str) else kwargs.get("name")
         cmd_name = explicit_name or typer.main.get_command_name(func_name)
+
+        # A repo may not claim a first-party name. Overriding lab behavior
+        # happens in ProjectActions -- which `otto run install` AND the
+        # ensure_installed fixture both route through -- so shadowing the
+        # instruction would move only the CLI half and let the two answer
+        # differently. Refused BEFORE the register call below: otherwise the
+        # repo's entry lands first and the collision surfaces (if at all) as
+        # the registry's generic "already registered", which says nothing
+        # about where the override belongs.
+        #
+        # Keyed on the registering-repo marker, never on the name alone:
+        # otto's own registration runs outside any repo's init (bootstrap
+        # phase 2) and must pass whatever order the imports happen in.
+        repo_name = get_registering_repo()
+        if repo_name is not None and cmd_name in FIRST_PARTY_INSTRUCTIONS:
+            raise ValueError(
+                f"repo {repo_name!r} defines instruction {cmd_name!r}, which is a "
+                "first-party default. Override lab behavior by registering a "
+                "ProjectActions subclass instead (see docs/guide/run/defaults.md), "
+                "or rename the instruction."
+            )
 
         func_module = getattr(func, "__module__", "<unknown>")
         INSTRUCTIONS.register(

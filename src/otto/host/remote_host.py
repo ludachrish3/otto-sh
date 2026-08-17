@@ -42,12 +42,14 @@ if TYPE_CHECKING:
 
     from ..config.lab import Lab
     from .connections import ConnectionManager
+    from .dev_tool import DevTool
     from .host import Expect
     from .interface import Interface
     from .options import SnmpOptions
     from .power import PowerController
     from .product import Product
     from .session import HostSession, SessionManager
+    from .toolchain import Toolchain
     from .transport import SshHopTransport
 
 logger = logging.getLogger(__name__)
@@ -160,6 +162,10 @@ class RemoteHost(BaseHost):
     resources: set[str]
     """Names of resources required to use this host."""
 
+    debug_log_globs: list[str]
+    """Remote paths/glob patterns ``get_debug_logs`` fetches (see
+    :attr:`~otto.host.host.BaseHost.debug_log_globs`)."""
+
     log: LogMode
     """Standing per-host logging disposition. ``QUIET`` keeps command I/O in
     ``verbose.log`` but off the console; ``NEVER`` redacts it everywhere."""
@@ -225,6 +231,14 @@ class RemoteHost(BaseHost):
     products: "list[Product]"
     """Software-under-test deployed to this host (see
     :attr:`~otto.host.host.BaseHost.products`)."""
+
+    dev_tools: "list[DevTool]"
+    """Repo-internal tooling deployed to this host (see
+    :attr:`~otto.host.host.BaseHost.dev_tools`)."""
+
+    toolchain: "Toolchain"
+    """Toolchain for this host's products (see
+    :attr:`~otto.host.host.BaseHost.toolchain`)."""
 
     power_control: "PowerController | None"
     """Pluggable power backend (see :attr:`~otto.host.host.BaseHost.power_control`)."""

@@ -317,6 +317,23 @@ from {options_module} import RepoOptions
 
 logger = logging.getLogger(__name__)
 
+# `install`, `uninstall`, `cleanup`, `get-logs`, `install-tools` and `status`
+# already exist — otto registers them for every lab, over your registered
+# products. Do NOT define instructions with those names here: they are refused
+# at startup. To change what they do for this repo, subclass ProjectActions and
+# register it from this module:
+#
+#     from otto.project import ProjectActions, register_project_actions
+#
+#     @register_project_actions
+#     class RepoActions(ProjectActions):
+#         async def install(self):
+#             ...                       # your work
+#             return await super().install()
+#
+# One override point, so `otto run install`, a script, a suite, and the
+# ensure_installed fixture all pick it up. See docs/guide/run/defaults.md.
+
 
 @options
 class _Options(RepoOptions):

@@ -1032,7 +1032,9 @@ class TestProductProviders:
         from otto.host.product import register_product_provider
 
         register_product_provider(
-            lambda host: [SimpleNamespace(name="myapp")] if host.os_type == "unix" else None
+            lambda host: (
+                [SimpleNamespace(name="myapp", owner=None)] if host.os_type == "unix" else None
+            )
         )
         host = create_host_from_dict(
             {
@@ -1052,6 +1054,50 @@ class TestProductProviders:
             }
         )
         assert host.products == []
+
+
+class TestDevToolProviders:
+    @pytest.fixture(autouse=True)
+    def _isolate_provider_registry(self):
+        from otto.host import dev_tool as dev_tool_mod
+
+        saved = list(dev_tool_mod._DEV_TOOL_PROVIDERS)
+        try:
+            yield
+        finally:
+            dev_tool_mod._DEV_TOOL_PROVIDERS[:] = saved
+
+    def test_provider_dev_tools_attached_at_ingest(self):
+        # Kills: omitting apply_dev_tool_providers from the ingest chokepoint.
+        # The unit tests call apply directly, so they stay green while every
+        # real lab-ingested host silently carries no dev tools.
+        from types import SimpleNamespace
+
+        from otto.host.dev_tool import register_dev_tool_provider
+
+        register_dev_tool_provider(
+            lambda host: (
+                [SimpleNamespace(name="gdbserver", owner=None)] if host.os_type == "unix" else None
+            )
+        )
+        host = create_host_from_dict(
+            {
+                "ip": "10.10.200.13",
+                "element": "plum",
+                "creds": [{"login": "vagrant", "password": "vagrant"}],
+            }
+        )
+        assert [t.name for t in host.dev_tools] == ["gdbserver"]
+
+    def test_no_provider_means_empty_dev_tools(self):
+        host = create_host_from_dict(
+            {
+                "ip": "10.10.200.14",
+                "element": "fig",
+                "creds": [{"login": "vagrant", "password": "vagrant"}],
+            }
+        )
+        assert host.dev_tools == []
 
 
 # ---------------------------------------------------------------------------

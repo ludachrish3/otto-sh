@@ -393,6 +393,12 @@ raise rather than fabricate:
 CommandNotRunError: "exists('/etc/hostname')" was not run on host 'localhost': …
 >>> await host.ls("/etc")
 CommandNotRunError: "ls('/etc')" was not run on host 'localhost': …
+>>> await host.glob("/var/log/messages*")
+CommandNotRunError: "glob('/var/log/messages*')" was not run on host 'localhost': …
+>>> await host.toolchain_tools_absent()
+CommandNotRunError: "toolchain_tools_absent('gdb')" was not run on host 'localhost': …
+>>> await host.is_clean()
+CommandNotRunError: "toolchain_tools_absent('gdb')" was not run on host 'localhost': …
 >>> await host.expect("prompt")
 CommandNotRunError: "expect('prompt')" was not run on host 'localhost': …
 ```
@@ -400,8 +406,24 @@ CommandNotRunError: "expect('prompt')" was not run on host 'localhost': …
 A `bool` has only `True` and `False`, and both are lies: `exists` returning
 `False` under a dry run reports a path absent that may well be there, and a
 caller that then creates it has acted on a fact nobody measured. `ls` returning
-`[]` is a fabricated empty directory. `expect` returning `""` is a fabricated
+`[]` is a fabricated empty directory, and `glob` returning `[]` a fabricated
+"nothing matched" — the shape a log collector reads as "this host has no logs".
+`toolchain_tools_absent` returning `True` — and `is_clean`, which asks it —
+would report a host clean that nobody looked at, and send a converge into a
+cleanup on a fact nobody established. `expect` returning `""` is a fabricated
 prompt. Raising is the only honest answer these signatures allow.
+
+The *acting* verbs beside them decline rather than raise, because a `Result` has
+somewhere to put "I did not look": `install`, `uninstall`, `cleanup`,
+`get-logs`, `install-tools`, `install-dev-tools`, `install-toolchain-tools` and
+`remove-toolchain-tools` each hand back the `Status.NotRun` of the first
+transfer or command they would have made. `get-debug-logs` is the exception in
+the other direction — a `debug_log_globs` entry that is a *pattern* has to be
+expanded by `glob` first, and that is a raise. It is not only reachable by
+name: `uninstall`, `cleanup` and `get-logs` all gather debug logs by default,
+so on a host whose `debug_log_globs` carries a pattern, each of those three
+raises where the rest of this paragraph would have you expect a decline. Turn
+that verb's debug half off, or declare concrete paths, to get the decline back.
 
 `write_file` is the shape in between: it returns
 `Result(Status.NotRun, msg="[DRY RUN] WRITE: 11 bytes -> /etc/motd")` with

@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from .errors import OttoError, is_containable
+from .registry import registering_repo
 
 if TYPE_CHECKING:
     from .config.repo import Repo
@@ -79,6 +80,8 @@ class BootstrapResult:
     repos: list["Repo"]
     errors: list[BootstrapError] = field(default_factory=list)
     warnings: list[BootstrapWarning] = field(default_factory=list)
+    ordered_repos: list["Repo"] = field(default_factory=list)
+    """Repos in the dependency pass's topological order (skipped repos excluded)."""
 
 
 _discovered: "DiscoveryResult | None" = None
@@ -131,23 +134,40 @@ def bootstrap() -> BootstrapResult:
 
     resolution = resolve_dependencies(repos)
     errors.extend(resolution.errors)
+    # First-party default instructions (install/uninstall/cleanup/get-logs/
+    # install-tools/status) register before any repo's init runs. Not contained
+    # like the per-repo imports below: this is otto's own module, so a failure
+    # here is a bug in otto, not a repo's, and framing it as one repo's
+    # containable error would hide it.
+    #
+    # The decorator's collision guard keys on the registering-repo marker, so
+    # this ordering is belt-and-braces rather than the mechanism -- but a repo
+    # init module that reads INSTRUCTIONS should see the full first-party set.
+    importlib.import_module("otto.project.instructions")
     for repo in resolution.ordered:
         repo.add_libs_to_pythonpath()
-        for mod in repo.init:
-            try:
-                importlib.import_module(mod)
-            except BaseException as e:  # noqa: PERF203 — containment seam: per-item resilience, ANY user-code failure becomes a framed error
-                if not is_containable(e):
-                    raise
-                errors.append(BootstrapError(repo.sut_dir, mod, e))
-        for test_file in repo.iter_test_files():
-            try:
-                repo.import_test_file(test_file)
-            except BaseException as e:  # noqa: PERF203 — containment seam: per-item resilience, ANY user-code failure becomes a framed error
-                if not is_containable(e):
-                    raise
-                errors.append(BootstrapError(repo.sut_dir, test_file.name, e))
-    _result = BootstrapResult(env=env, repos=repos, errors=errors, warnings=resolution.warnings)
+        with registering_repo(repo.name):
+            for mod in repo.init:
+                try:
+                    importlib.import_module(mod)
+                except BaseException as e:  # noqa: PERF203 — containment seam: per-item resilience, ANY user-code failure becomes a framed error
+                    if not is_containable(e):
+                        raise
+                    errors.append(BootstrapError(repo.sut_dir, mod, e))
+            for test_file in repo.iter_test_files():
+                try:
+                    repo.import_test_file(test_file)
+                except BaseException as e:  # noqa: PERF203 — containment seam: per-item resilience, ANY user-code failure becomes a framed error
+                    if not is_containable(e):
+                        raise
+                    errors.append(BootstrapError(repo.sut_dir, test_file.name, e))
+    _result = BootstrapResult(
+        env=env,
+        repos=repos,
+        errors=errors,
+        warnings=resolution.warnings,
+        ordered_repos=resolution.ordered,
+    )
     return _result
 
 

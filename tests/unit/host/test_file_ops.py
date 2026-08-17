@@ -39,6 +39,104 @@ async def test_ls_all_includes_dotfiles(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_glob_expands_on_the_hosts_own_shell(tmp_path):
+    """The device expands the pattern; otto only reads back concrete paths.
+
+    Run against a REAL shell rather than a scripted `exec`, because the one
+    mutation worth catching is invisible to a string check: quoting the
+    pattern (`self._q(pattern)`, the spelling every other verb in this module
+    uses) stops expansion dead — the shell then iterates the literal, the
+    `[ -e ]` guard drops it, and `glob` answers `[]` for a directory that
+    plainly has matches. Only a real expansion tells those apart.
+    """
+    host = LocalHost()
+    (tmp_path / "messages").write_text("x")
+    (tmp_path / "messages.1").write_text("y")
+    (tmp_path / "syslog").write_text("z")  # non-matching: the pattern must select
+    matched = await host.glob(str(tmp_path / "messages*"))
+    assert sorted(matched) == [str(tmp_path / "messages"), str(tmp_path / "messages.1")]
+
+
+@pytest.mark.asyncio
+async def test_glob_sends_the_pattern_unquoted():
+    """The command carries the RAW pattern — quoting it is the whole failure.
+
+    The companion to the test above, at the other end: that one proves the
+    expansion happened, this one proves WHY it can, so a future edit that
+    reaches for `self._q` here fails with a message about quoting rather than
+    about an empty list.
+    """
+    host = LocalHost()
+    host.exec = AsyncMock(  # type: ignore[method-assign]
+        return_value=CommandResult(status=Status.Success, value="", command="", retcode=0)
+    )
+    await host.glob("/var/log/messages*")
+    sent = host.exec.await_args.args[0]
+    assert "/var/log/messages*" in sent, f"the pattern never reached the device: {sent!r}"
+    assert "'/var/log/messages*'" not in sent, (
+        f"the pattern was shell-quoted, which is exactly what stops it expanding: {sent!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_glob_of_an_unmatched_pattern_is_an_empty_list(tmp_path):
+    # POSIX sh leaves an unmatched pattern LITERAL — the `[ -e ]` guard is what
+    # keeps that literal from being handed back as a path that exists. Zero
+    # matches is success (no logs is a legitimate answer), not an error.
+    assert await LocalHost().glob(str(tmp_path / "nothing-here-*.log")) == []
+
+
+@pytest.mark.asyncio
+async def test_glob_keeps_its_matches_when_the_last_expanded_entry_fails_the_guard(tmp_path):
+    """A failing FINAL iteration must not discard the matches already found.
+
+    THE HOSTILE CONDITION IS INJECTED, not waited for: a broken symlink whose
+    name sorts LAST among the pattern's matches. `[ -e ]` is false for it, and
+    with the payload written as `[ -e "$p" ] && printf ...` that false test
+    became the LOOP's exit status — the command came back non-ok and the
+    `if not result.status.is_ok: return []` branch threw away two real paths
+    the device had already printed. Measured `[]`, deterministically, for a
+    directory with two matching files in it.
+
+    That is a fabricated absence arriving from a REAL run rather than a dry
+    one, and the silent-and-total kind: a log collector reads it as "this host
+    has no logs". `if`/`fi` is the fix, because a POSIX `if` with no `else`
+    exits 0 when its condition is false.
+    """
+    (tmp_path / "messages").write_text("x")
+    (tmp_path / "messages.1").write_text("y")
+    (tmp_path / "messages.zz").symlink_to(tmp_path / "nonexistent-target")
+
+    # SETUP CHECKS: this test measures nothing unless the failing iteration is
+    # genuinely the LAST one, which is a fact about sort order and about the
+    # link being broken. A rename that quietly moved it earlier would leave the
+    # test green against the `&&` construct it exists to red.
+    assert max(p.name for p in tmp_path.iterdir()) == "messages.zz", (
+        "the dangling entry must sort last, or the loop's final iteration is a "
+        "successful one and the discard this test is about never triggers"
+    )
+    assert not (tmp_path / "messages.zz").exists(), (
+        "the symlink must be BROKEN — `[ -e ]` is what has to come back false"
+    )
+
+    matched = await LocalHost().glob(str(tmp_path / "messages*"))
+    assert matched == [str(tmp_path / "messages"), str(tmp_path / "messages.1")], (
+        f"the two real matches were discarded because the last expanded entry "
+        f"failed the `-e` guard: {matched!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_glob_of_a_metacharacter_free_pattern_returns_the_concrete_path(tmp_path):
+    # A caller may configure a plain path where another configures a pattern;
+    # the plain one must come back as itself, and a missing one as nothing.
+    present = tmp_path / "otto.log"
+    present.write_text("x")
+    assert await LocalHost().glob(str(present)) == [str(present)]
+    assert await LocalHost().glob(str(tmp_path / "absent.log")) == []
+
+
+@pytest.mark.asyncio
 async def test_mkdir_creates_nested(tmp_path):
     host = LocalHost()
     target = tmp_path / "a" / "b" / "c"

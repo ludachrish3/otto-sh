@@ -10,8 +10,10 @@ is for and how to use it.
 | Capability | CLI verbs | Python-only |
 |------------|-----------|-------------|
 | Power, reboot & reachability | `power`, `reboot`, `shutdown` | `is_reachable`, `wait_until_up`, `wait_until_down` |
-| Products & lifecycle | `stage`, `install`, `uninstall`, `is-installed`, `is-uninstalled` | — |
-| Remote file operations | `exists`, `ls`, `mkdir`, `rm`, `cp`, `mv`, `read-file`, `write-file` | — |
+| Products & lifecycle | `stage`, `install`, `uninstall`, `cleanup`, `is-installed`, `is-uninstalled`, `is-clean` | — |
+| Log retrieval | `get-logs`, `get-product-logs`, `get-debug-logs` | `log_dest` |
+| Dev tools & toolchain tools | `install-tools`, `install-dev-tools`, `install-toolchain-tools`, `remove-toolchain-tools` | `toolchain_tools_absent` |
+| Remote file operations | `exists`, `ls`, `glob`, `mkdir`, `rm`, `cp`, `mv`, `read-file`, `write-file` | — |
 | Kernel modules | `lsmod`, `load`, `unload` | — |
 | Userland capabilities | `probe` | — |
 | Privilege elevation | — | `run(sudo=True)`, `as_user`, `switch_user`, `current_user` |
@@ -118,16 +120,53 @@ with several products there is no single result to hand back.
 
 ### Lifecycle verbs
 
-| Method | Behavior |
-|--------|----------|
-| `await host.stage()` | Stage every product (no install). |
-| `await host.install(stage_only=False)` | Stage, then install (unless `stage_only`). |
-| `await host.uninstall()` | Uninstall every product (best-effort). |
-| `await host.is_installed()` | True iff ≥1 product and all installed. |
-| `await host.is_uninstalled()` | Inverse of `is_installed()`. |
+| Method | `owner=` | Behavior |
+|--------|----------|----------|
+| `await host.stage()` | yes | Stage every product (no install). |
+| `await host.install(stage_only=False)` | yes | Stage, then install (unless `stage_only`). |
+| `await host.uninstall()` | yes | Product logs, uninstall every product, debug logs (best-effort). |
+| `await host.is_installed()` | yes | True iff ≥1 product and all installed. |
+| `await host.is_uninstalled()` | yes | Inverse of `is_installed()`. |
+| `await host.cleanup()` | no | `uninstall()`, then remove dev tools and toolchain tools. |
+| `await host.is_clean()` | no | True iff no product, dev tool, or toolchain tool is present. |
 
 With no products, `stage`/`install`/`uninstall` are successful no-ops and
 `is_installed()` is `False`.
+
+The five product verbs take `owner=` — the name of the repo whose products to
+act on (`None`, the default, means all of them). That is what keeps one repo's
+`install` off another repo's products on a shared host; the empty-list rule
+above applies to the *filtered* list, so a repo with nothing here is not
+reported installed by someone else's products. `cleanup()` and `is_clean()`
+have no `owner=`: both reach past products into the host's dev tools and
+toolchain tools, which are host-wide, so there is no per-repo answer to give.
+
+### Log retrieval
+
+`uninstall()` gathers product logs **before** tearing anything down and debug
+logs **after** — teardown activity is usually exactly what debug logs exist to
+capture. Both halves are also callable directly:
+
+| Method | Behavior |
+|--------|----------|
+| `await host.get_logs(product=True, debug=True)` | Both halves; `require_product_logs=True` makes an empty product haul a failure. |
+| `await host.get_product_logs()` | Each product's `get_logs(host, dest)` hook (best-effort). |
+| `await host.get_debug_logs()` | Fetch the host's `debug_log_globs`. |
+
+Retrieving zero logs is success. Files land in a documented tree, keyed by host
+id the way the coverage pipeline keys its own output:
+
+```text
+<output-dir>/logs/<host-id>/product/…
+<output-dir>/logs/<host-id>/debug/…
+```
+
+`<output-dir>` is the active command's output directory unless a caller passes
+`dest=`. `debug_log_globs` is a host field (settable per host class, per OS
+profile, and per host in `lab.json`) holding remote paths — a pattern entry is
+expanded on the device by `glob`, so a host family without that capability
+(embedded, today) declares concrete paths or overrides `get_debug_logs`; a
+pattern there fails loudly rather than silently retrieving nothing.
 
 ### Registering products from a product repo
 
@@ -155,6 +194,82 @@ registration order and dedupe by `Product.name`.
 
 Code-constructed hosts (`UnixHost(..., products=[...])`) keep their explicit
 list; providers apply only to hosts built from lab data.
+
+## Dev tools & toolchain tools
+
+Full signatures: {class}`~otto.host.dev_tool.DevTool` and
+{class}`~otto.host.toolchain.ToolchainTool`.
+
+Tooling is not product: a debug probe on a board is not software under test, so
+it lives in its own list and is never part of `is_installed()`'s answer. Two
+seams, because the two kinds of tooling are owned differently:
+
+| Kind | Declared | Owned by | Installed by |
+|------|----------|----------|--------------|
+| **Dev tool** | in code, via a provider | the repo that registered it | `install-tools` (on by default) |
+| **Toolchain tool** | in lab data, per host | the host — shared by every repo | `install-tools --toolchain` |
+
+| Method | Behavior |
+|--------|----------|
+| `await host.install_tools(dev=True, toolchain=False)` | Dispatcher over the two below. |
+| `await host.install_dev_tools()` | Stage then install each dev tool, in declaration order (first failure wins). |
+| `await host.install_toolchain_tools()` | Put each declared tool, rename it to its declared `name`, `chown` it to its declared `user`. |
+| `await host.remove_toolchain_tools()` | Remove each declared tool (best-effort). |
+| `await host.toolchain_tools_absent()` | True iff none of them is present — the host-wide half of `is_clean()`. |
+
+The asymmetric defaults are deliberate: dev tools are small and wanted on
+nearly every run, while toolchain artifacts are large and rarely needed, so
+asking for them is a decision.
+
+### Registering dev tools from a repo
+
+The dev-tool twin of the product provider above, and the same authoring model —
+a `DevTool` implements `stage`, `install`, `uninstall` and `is_installed`:
+
+    from otto.host import register_dev_tool_provider
+
+    def _provide(host):
+        if host.os_type == "unix":
+            return [TraceHelper()]
+        return None
+
+    register_dev_tool_provider(_provide)
+
+Providers run once per lab-ingested host, aggregate in registration order, and
+dedupe by `DevTool.name`. Each attached tool is stamped with the registering
+repo as its owner, which is what lets one repo's `install-tools` leave another
+repo's tooling alone.
+
+### Declaring toolchain tools in lab data
+
+Toolchain tools are host-wide artifacts (a cross-built `gdbserver`, a runtime
+`.so`), so they *are* lab data — declared alongside the coverage toolchain in
+the host's `lab.json` entry:
+
+```json
+"toolchain": {
+    "sysroot": "/opt/arm-toolchain",
+    "tools": [
+        {
+            "name": "gdb",
+            "source": "build/arm-linux-gnueabihf-gdb",
+            "dest": "/usr/local/bin",
+            "user": "root",
+            "mode": "755"
+        }
+    ]
+}
+```
+
+`name` is a **rename target**, not a label: `put` lands every file under its
+source basename, so a tool whose `name` differs is `mv`'d there before it is
+chowned — which is how `arm-linux-gnueabihf-gdb` installs as plain `gdb`. Those
+destinations are usually root-owned, hence the per-tool `user` and `mode`.
+
+One toolchain serves every owner on a host, so placing and removing it is a
+host-wide step: no repo's actions touch it (see
+{doc}`../run/defaults`), and the default `install_toolchain_tools` is the method
+most likely to need project surgery — override it on the host class.
 
 ## Remote file operations
 

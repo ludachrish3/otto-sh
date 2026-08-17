@@ -3,6 +3,7 @@
 import asyncio
 import math
 import re
+import shlex
 import uuid
 from abc import ABC
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
@@ -42,9 +43,11 @@ from ..utils import (
 
 if TYPE_CHECKING:
     from .app_shell import AppShell
+    from .dev_tool import DevTool
     from .power import PowerController
     from .product import Product
     from .session import HostSession
+    from .toolchain import Toolchain
 
     # Quoted-forward-ref only (see BaseHost.app_shell); keeping this TypeVar
     # under TYPE_CHECKING avoids a runtime import of otto.host.app_shell,
@@ -400,6 +403,15 @@ class Host(Protocol):
     products: list["Product"]
     """Software-under-test deployed to this host (default empty)."""
 
+    dev_tools: list["DevTool"]
+    """Repo-internal tooling deployed to this host (default empty)."""
+
+    toolchain: "Toolchain"
+    """Toolchain this host's products are built with, and the tools it installs."""
+
+    debug_log_globs: list[str]
+    """Remote paths/glob patterns ``get_debug_logs`` fetches (default empty)."""
+
     power_control: "PowerController | None"
     """Pluggable power backend, or None when this host can't be power-controlled."""
 
@@ -633,36 +645,95 @@ class Host(Protocol):
         """Close the host's persistent session and release any held resources."""
         ...
 
-    async def stage(self) -> Result:
+    async def stage(self, owner: str | None = None) -> Result:
         """Stage every product onto this host (transfer/place, no install).
 
-        Returns a :class:`~otto.result.Result`.
+        *owner* narrows the walk to that repo's products; ``None`` is every
+        product. Returns a :class:`~otto.result.Result`.
         """
         ...
 
-    async def install(self, stage_only: bool = False) -> Result:
+    async def install(self, stage_only: bool = False, owner: str | None = None) -> Result:
         """Stage and then install every product on this host.
 
         When *stage_only* is ``True``, stops after staging without installing.
-        Returns a :class:`~otto.result.Result`, short-circuiting on the first
-        failure.
+        *owner* narrows the walk to that repo's products. Returns a
+        :class:`~otto.result.Result`, short-circuiting on the first failure.
         """
         ...
 
-    async def uninstall(self) -> Result:
-        """Uninstall every product from this host (best-effort).
+    async def uninstall(
+        self,
+        get_product_logs: bool = True,
+        get_debug_logs: bool = True,
+        owner: str | None = None,
+    ) -> Result:
+        """Gather logs, uninstall every product, gather debug logs (best-effort).
 
         Returns a :class:`~otto.result.Result` — the first non-ok outcome, after
-        attempting every product.
+        attempting every step.
         """
         ...
 
-    async def is_installed(self) -> bool:
+    async def cleanup(self, get_product_logs: bool = True, get_debug_logs: bool = True) -> Result:
+        """Uninstall, then remove dev tools and toolchain tools (best-effort)."""
+        ...
+
+    async def is_installed(self, owner: str | None = None) -> bool:
         """Return ``True`` iff at least one product is declared and all are installed."""
         ...
 
-    async def is_uninstalled(self) -> bool:
+    async def is_uninstalled(self, owner: str | None = None) -> bool:
         """Return ``True`` iff :meth:`is_installed` returns ``False``."""
+        ...
+
+    async def is_clean(self) -> bool:
+        """Return ``True`` iff no product, dev tool, or toolchain tool is present."""
+        ...
+
+    def log_dest(self, dest: "Path | None" = None) -> Path:
+        """Local root for this host's retrieved logs: ``<base>/logs/<host-id>``."""
+        ...
+
+    async def get_logs(
+        self,
+        product: bool = True,
+        debug: bool = True,
+        require_product_logs: bool = False,
+        dest: "Path | None" = None,
+        owner: str | None = None,
+    ) -> Result:
+        """Gather product and debug logs into this host's log destination."""
+        ...
+
+    async def get_product_logs(
+        self, dest: "Path | None" = None, owner: str | None = None
+    ) -> Result:
+        """Retrieve each product's logs into ``…/logs/<host-id>/product/``."""
+        ...
+
+    async def get_debug_logs(self, dest: "Path | None" = None) -> Result:
+        """Fetch ``debug_log_globs`` matches into ``…/logs/<host-id>/debug/``."""
+        ...
+
+    async def install_dev_tools(self) -> Result:
+        """Stage then install every dev tool (declaration order, first failure wins)."""
+        ...
+
+    async def install_toolchain_tools(self) -> Result:
+        """Install the toolchain's declared tools (transfer, rename, chown, per tool)."""
+        ...
+
+    async def remove_toolchain_tools(self) -> Result:
+        """Remove the toolchain's declared tools from this host (best-effort)."""
+        ...
+
+    async def toolchain_tools_absent(self) -> bool:
+        """Return ``True`` iff none of the toolchain's declared tools is present."""
+        ...
+
+    async def install_tools(self, dev: bool = True, toolchain: bool = False) -> Result:
+        """Install tool kinds conditionally: dev tools on, toolchain artifacts off."""
         ...
 
     async def __aenter__(self) -> Self: ...
@@ -687,7 +758,18 @@ class BaseHost(ABC):
     log: LogMode
     resources: set[str]
     products: list["Product"]
+    dev_tools: list["DevTool"]
+    toolchain: "Toolchain"
     power_control: "PowerController | None"
+
+    debug_log_globs: list[str]
+    """Remote paths/glob patterns the default :meth:`get_debug_logs` fetches.
+
+    Settable per host class, per OS profile, and per host in ``lab.json``;
+    default empty. A pattern (``*``, ``?``, ``[``) is expanded on the device by
+    :meth:`~otto.host.file_ops.PosixFileOps.glob`, so a host family without
+    that capability must declare concrete paths or override the method.
+    """
 
     @override
     def __str__(self) -> str:
@@ -1306,14 +1388,22 @@ class BaseHost(ABC):
     #  Product lifecycle
     ####################
 
+    def _owned_products(self, owner: str | None) -> "list[Product]":
+        """Products filtered by owner; ``None`` = all (the pre-owner behavior)."""
+        if owner is None:
+            return list(self.products)
+        return [p for p in self.products if p.owner == owner]
+
     @cli_exposed
-    async def stage(self) -> Result:
+    async def stage(self, owner: str | None = None) -> Result:
         """Stage every product onto this host (transfer/place, no install).
 
         Iterates :attr:`products` in declaration order, returning the first
         non-ok :class:`~otto.result.Result`; an empty list is a successful no-op.
+        *owner* narrows the walk to the products that repo attached, so one
+        repo's default actions never touch another's.
         """
-        for product in self.products:
+        for product in self._owned_products(owner):
             result = await product.stage(cast("Host", self))
             if not result.is_ok:
                 # Returned whole: a product's CommandResult carries the retcode
@@ -1322,55 +1412,376 @@ class BaseHost(ABC):
         return Result(Status.Success)
 
     @cli_exposed
-    async def install(self, stage_only: bool = False) -> Result:
+    async def install(self, stage_only: bool = False, owner: str | None = None) -> Result:
         """Stage, then install every product.
 
         Calls :meth:`stage` first; returns early if ``stage_only`` is set or the
         stage step failed. Otherwise installs each product in declaration order,
-        short-circuiting on the first failure. Projects may override for
-        cross-product ordering/dependencies.
+        short-circuiting on the first failure. *owner* scopes both halves.
+        Projects may override for cross-product ordering/dependencies.
         """
-        stage_result = await self.stage()
+        stage_result = await self.stage(owner=owner)
         if stage_only or not stage_result.is_ok:
             return stage_result
-        for product in self.products:
+        for product in self._owned_products(owner):
             result = await product.install(cast("Host", self))
             if not result.is_ok:
                 return result
         return Result(Status.Success)
 
     @cli_exposed
-    async def uninstall(self) -> Result:
-        """Uninstall every product (best-effort).
+    async def uninstall(
+        self,
+        get_product_logs: bool = True,
+        get_debug_logs: bool = True,
+        owner: str | None = None,
+    ) -> Result:
+        """Gather product logs, uninstall every product, gather debug logs.
 
-        Attempts every product even if one fails, returning the first non-ok
-        result seen (so cleanup is not abandoned halfway).
+        **The order is the contract.** Product logs come off the host BEFORE
+        anything is torn down — a lost log set is the frustration this whole
+        surface exists to prevent — and debug logs come off AFTER, because
+        teardown-time activity is typically exactly what they exist to capture.
+
+        Best-effort throughout: every product is attempted even if one fails,
+        and a failed log haul is recorded as a failure but never aborts the
+        uninstall (that would strand products on the host over a lost log).
+        The first non-ok result seen is what returns. *owner* scopes both the
+        product walk and the product-log haul; debug logs are host-level and
+        unscoped, which is why the per-repo walk turns them off with
+        ``get_debug_logs=False`` rather than filtering them.
         """
         first_failure: Result | None = None
-        for product in self.products:
-            result = await product.uninstall(cast("Host", self))
+
+        def note(result: Result) -> None:
+            nonlocal first_failure
             if not result.is_ok and first_failure is None:
                 first_failure = result
+
+        if get_product_logs:
+            note(await self.get_product_logs(owner=owner))
+        for product in self._owned_products(owner):
+            note(await product.uninstall(cast("Host", self)))
+        if get_debug_logs:
+            note(await self.get_debug_logs())
         return first_failure if first_failure is not None else Result(Status.Success)
 
     @cli_exposed(output_dir=False)
-    async def is_installed(self) -> bool:
+    async def is_installed(self, owner: str | None = None) -> bool:
         """Return True iff there is at least one product and all are installed.
 
         An empty :attr:`products` list is **not installed** (avoids the
-        vacuous-truth surprise of ``all([])``).
+        vacuous-truth surprise of ``all([])``) — and the rule applies to the
+        *owner*-filtered list, so a repo with nothing on this host is not
+        reported installed by another repo's products.
         """
-        if not self.products:
+        owned = self._owned_products(owner)
+        if not owned:
             return False
-        for product in self.products:
+        for product in owned:
             if not await product.is_installed(cast("Host", self)):
                 return False
         return True
 
     @cli_exposed(output_dir=False)
-    async def is_uninstalled(self) -> bool:
+    async def is_uninstalled(self, owner: str | None = None) -> bool:
         """Inverse of :meth:`is_installed`."""
-        return not await self.is_installed()
+        return not await self.is_installed(owner=owner)
+
+    @cli_exposed
+    async def cleanup(self, get_product_logs: bool = True, get_debug_logs: bool = True) -> Result:
+        """Uninstall, then remove dev tools and toolchain tools (best-effort).
+
+        Strictly more than :meth:`uninstall`, in that order: products first (a
+        dev tool may be what a product's uninstall needs), then the tooling.
+        The log flags are forwarded to :meth:`uninstall`, which owns the log
+        ordering. Project-specific remnant removal belongs in an override.
+
+        Each removal result is reported WHOLE. Repacking one as
+        ``Result(status, msg=result.value)`` would read ``value`` on the
+        :class:`~otto.result.NotRunResult` a dry run returns, which raises
+        :exc:`~otto.result.CommandNotRunError` — a traceback where the contract
+        says decline.
+        """
+        first_failure: Result | None = None
+
+        def note(result: Result) -> None:
+            nonlocal first_failure
+            if not result.is_ok and first_failure is None:
+                first_failure = result
+
+        note(await self.uninstall(get_product_logs=get_product_logs, get_debug_logs=get_debug_logs))
+        for tool in self.dev_tools:
+            note(await tool.uninstall(cast("Host", self)))
+        note(await self.remove_toolchain_tools())
+        return first_failure if first_failure is not None else Result(Status.Success)
+
+    @cli_exposed(output_dir=False)
+    async def is_clean(self) -> bool:
+        """No products installed, no dev tools installed, no toolchain tools present.
+
+        The matching question to :meth:`cleanup`, and it ASKS rather than
+        infers: the toolchain probe refuses under a dry run
+        (:func:`refuse_declined_fact`) instead of reporting a host clean that
+        nobody looked at.
+        """
+        if not await self.is_uninstalled():
+            return False
+        for tool in self.dev_tools:
+            if await tool.is_installed(cast("Host", self)):
+                return False
+        return await self.toolchain_tools_absent()
+
+    ####################
+    #  Logs
+    ####################
+
+    def log_dest(self, dest: "Path | None" = None) -> Path:
+        """Local root for this host's retrieved logs: ``<base>/logs/<host-id>``.
+
+        *base* is *dest* when given, else the active command's output
+        directory, else the CWD. The subtree below (``product/``, ``debug/``)
+        is a documented contract — the mirror of the coverage pipeline's
+        per-host-id keying — so consumers may read it by path.
+        """
+        from ..context import try_get_context  # lazy — host must not import context at import time
+
+        ctx = try_get_context()
+        if dest is not None:
+            base = dest
+        else:
+            base = ctx.output_dir if ctx and ctx.output_dir else Path.cwd()
+        return base / "logs" / self.id
+
+    @cli_exposed
+    async def get_product_logs(
+        self, dest: "Path | None" = None, owner: str | None = None
+    ) -> Result:
+        """Retrieve each product's logs into ``…/logs/<host-id>/product/``.
+
+        Best-effort: every product's :meth:`~otto.host.product.Product.get_logs`
+        hook is called even after one fails, and the first failure is what
+        returns. The hook need not run anything on the host — an external
+        retrieval mechanism is equally welcome — it just has to land its files
+        under the directory it is handed.
+        """
+        target = self.log_dest(dest) / "product"
+        target.mkdir(parents=True, exist_ok=True)
+        first_failure: Result | None = None
+        for product in self._owned_products(owner):
+            result = await product.get_logs(cast("Host", self), target)
+            if not result.is_ok and first_failure is None:
+                first_failure = result
+        return first_failure if first_failure is not None else Result(Status.Success)
+
+    @cli_exposed
+    async def get_debug_logs(self, dest: "Path | None" = None) -> Result:
+        """Fetch :attr:`debug_log_globs` matches into ``…/logs/<host-id>/debug/``.
+
+        An entry with no glob metacharacter is fetched as declared, so a host
+        family with no shell needs nothing new. An entry WITH one needs
+        :meth:`~otto.host.file_ops.PosixFileOps.glob`; a host class without it
+        (embedded, for now) must declare concrete paths or override this
+        method — a pattern there fails LOUD rather than being silently
+        skipped, because a skipped log set looks exactly like a host that had
+        no logs.
+        """
+        target = self.log_dest(dest) / "debug"
+        target.mkdir(parents=True, exist_ok=True)
+        paths: list[Path] = []
+        for entry in self.debug_log_globs:
+            if any(ch in entry for ch in "*?["):
+                glob = getattr(self, "glob", None)
+                if glob is None:
+                    return Result(
+                        Status.Error,
+                        msg=(
+                            f"debug_log_globs entry {entry!r} is a glob pattern, but "
+                            f"{type(self).__name__} has no glob support — declare "
+                            "concrete paths or override get_debug_logs."
+                        ),
+                    )
+                paths.extend(Path(p) for p in await glob(entry))
+            else:
+                paths.append(Path(entry))
+        if not paths:
+            # Not an empty get(): several transfer backends report a no-file
+            # transfer as a failure, and zero logs is success.
+            return Result(Status.Success)
+        return await self.get(paths, target)
+
+    @cli_exposed
+    async def get_logs(
+        self,
+        product: bool = True,
+        debug: bool = True,
+        require_product_logs: bool = False,
+        dest: "Path | None" = None,
+        owner: str | None = None,
+    ) -> Result:
+        """Conditionally gather product and debug logs (both by default).
+
+        Zero retrieved logs is success; *require_product_logs* turns an empty
+        product-log haul into a failure (there is deliberately no debug twin —
+        no case was made for one, and symmetry alone does not buy a flag).
+
+        *require_product_logs* with ``product=False`` is a contradiction and is
+        refused up front rather than ignored: the flag pair is expressible from
+        the CLI (``get-logs --no-product --require-product-logs``), and a
+        requirement that is parsed but unenforceable would exit 0 having
+        promised logs nobody went looking for.
+        """
+        if require_product_logs and not product:
+            return Result(
+                Status.Error,
+                msg=(
+                    "require_product_logs cannot be satisfied with product=False: "
+                    "the product-log haul it requires is the step being skipped. "
+                    "Gather product logs, or drop the requirement."
+                ),
+            )
+        if product:
+            result = await self.get_product_logs(dest=dest, owner=owner)
+            if not result.is_ok:
+                return result
+            if require_product_logs:
+                product_dir = self.log_dest(dest) / "product"
+                if not any(product_dir.iterdir()):
+                    return Result(
+                        Status.Error,
+                        msg=f"require_product_logs: no product logs retrieved from {self.id}",
+                    )
+        if debug:
+            return await self.get_debug_logs(dest=dest)
+        return Result(Status.Success)
+
+    ####################
+    #  Tools
+    ####################
+
+    @cli_exposed
+    async def install_dev_tools(self) -> Result:
+        """Stage then install every dev tool (declaration order, first failure wins).
+
+        Each tool is carried through both phases before the next one starts, so
+        a tool that stages but cannot install stops the walk rather than
+        leaving later tools installed on top of a half-placed prerequisite.
+        """
+        for tool in self.dev_tools:
+            result = await tool.stage(cast("Host", self))
+            if not result.is_ok:
+                # Returned whole: a tool's CommandResult carries the retcode
+                # and output that the CLI turns into an exit code.
+                return result
+            result = await tool.install(cast("Host", self))
+            if not result.is_ok:
+                return result
+        return Result(Status.Success)
+
+    @cli_exposed
+    async def install_toolchain_tools(self) -> Result:
+        """Install the toolchain's declared tools (transfer, rename, chown, per tool).
+
+        Default implementation, per tool: ``put`` it with its declared mode,
+        then as root ``mv`` it to its declared
+        :attr:`~otto.host.toolchain.ToolchainTool.name` if that differs from
+        the source basename, and ``chown`` it to its declared user. Projects
+        whose toolchain installs need more than that override this — that is
+        expected, not a failure of the default.
+
+        **The transfer must stay first.** Under ``--dry-run`` ``put`` returns a
+        ``NotRun`` decline and this returns it, which is the only reason the
+        verb never reaches ``as_user`` — elevation does not decline, it RAISES
+        :exc:`~otto.result.CommandNotRunError`
+        (:func:`~otto.host.host.refuse_declined_elevation`). Hoisting the
+        elevation above the transfer, or out around the loop, turns a clean
+        dry-run decline into a traceback. Pinned by
+        ``test_install_toolchain_tools_declines_before_elevating_under_dry_run``.
+        """
+        for tool in self.toolchain.tools:
+            result = await self.put(tool.source, tool.dest, mode=tool.mode)
+            if not result.is_ok:
+                return result
+            # ``put`` lands every file under its SOURCE basename — no transfer
+            # backend renames — so a declared name that differs is a rename
+            # this verb owes, and nothing can address the tool by that name
+            # (chown included) until it is done.
+            landed = shlex.quote(str(tool.dest / tool.source.name))
+            installed = shlex.quote(str(tool.dest / tool.name))
+            async with self.as_user("root"):
+                if tool.name != tool.source.name:
+                    moved = await self.exec(f"mv {landed} {installed}")
+                    if not moved.is_ok:
+                        return moved
+                chown = await self.exec(f"chown {tool.user} {installed}")
+                if not chown.is_ok:
+                    return chown
+        return Result(Status.Success)
+
+    @cli_exposed
+    async def remove_toolchain_tools(self) -> Result:
+        """Remove the toolchain's declared tools from this host (best-effort).
+
+        The removal twin of :meth:`install_toolchain_tools`, and a step of its
+        own rather than a loop inside :meth:`cleanup`, because ONE TOOLCHAIN
+        SERVES EVERY OWNER on a host: the per-repo project actions must not
+        touch it (a repo tearing it down would take its neighbours' tooling
+        with it), so the ``otto.project`` orchestrator sweeps it across the
+        fleet exactly once at the end of a lab-level cleanup. Both callers ask
+        the same method so the path a tool is removed from cannot drift from
+        the path it was installed to.
+
+        Every tool is attempted even after one fails -- one immovable artifact
+        must not strand the rest -- and the first failure is returned WHOLE,
+        for the same reason :meth:`cleanup` reports removals whole: repacking
+        one as ``Result(status, msg=result.value)`` reads ``value`` on the
+        :class:`~otto.result.NotRunResult` a dry run returns, which raises
+        :exc:`~otto.result.CommandNotRunError`.
+        """
+        first_failure: Result | None = None
+        for tc_tool in self.toolchain.tools:
+            # dest/name, NOT dest/source.name: install_toolchain_tools renames
+            # each tool to its declared name, and that is what is on the host.
+            result = await self.exec(f"rm -f {shlex.quote(str(tc_tool.dest / tc_tool.name))}")
+            if not result.is_ok and first_failure is None:
+                first_failure = result
+        return first_failure if first_failure is not None else Result(Status.Success)
+
+    async def toolchain_tools_absent(self) -> bool:
+        """Whether none of the toolchain's declared tools is present on this host.
+
+        The matching question to :meth:`remove_toolchain_tools`, extracted for
+        the same reason: it is the host-global half of :meth:`is_clean`, and the
+        orchestrator asks it across the fleet without re-asking the per-repo
+        product questions that its own walk already covered.
+
+        ASKS rather than infers -- the probe refuses under a dry run
+        (:func:`refuse_declined_fact`) instead of reporting an absence nobody
+        looked for. Python-only, unlike its removal twin: ``otto host <id>
+        is-clean`` is the CLI-shaped question, and this is one term of it.
+        """
+        for tc_tool in self.toolchain.tools:
+            present = await self.exec(f"test -e {shlex.quote(str(tc_tool.dest / tc_tool.name))}")
+            refuse_declined_fact(present, asked=f"toolchain_tools_absent({tc_tool.name!r})")
+            if present.status.is_ok:
+                return False
+        return True
+
+    @cli_exposed
+    async def install_tools(self, dev: bool = True, toolchain: bool = False) -> Result:
+        """Install tool kinds conditionally, dev on and toolchain off by default.
+
+        The asymmetric defaults are the point: dev tools are small and wanted
+        on nearly every run, while toolchain artifacts are large and rarely
+        needed, so asking for them is deliberate.
+        """
+        if dev:
+            result = await self.install_dev_tools()
+            if not result.is_ok:
+                return result
+        if toolchain:
+            return await self.install_toolchain_tools()
+        return Result(Status.Success)
 
     ####################
     #  Power / reboot

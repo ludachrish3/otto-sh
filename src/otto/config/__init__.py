@@ -72,6 +72,19 @@ def get_repos() -> list[Repo]:
     return bootstrap().repos
 
 
+def get_ordered_repos() -> list[Repo]:
+    """Return configured repos in dependency-topological order (bootstraps lazily).
+
+    Dependencies first, dependents after — the walk order the ``otto.project``
+    orchestrator installs in (and reverses to uninstall). Skipped repos
+    (unsatisfied required deps) are absent, exactly as they are absent from
+    phase-2 registration.
+    """
+    from ..bootstrap import bootstrap
+
+    return bootstrap().ordered_repos
+
+
 def get_env() -> "OttoEnvSettings":
     """Return the startup environment settings (bootstraps discovery lazily)."""
     from ..bootstrap import discover

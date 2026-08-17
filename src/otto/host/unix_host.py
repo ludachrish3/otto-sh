@@ -79,6 +79,7 @@ from .connections import (
     build_term_backend,
     teardown_step,
 )
+from .dev_tool import DevTool
 from .errors import UnsupportedOnUserlandError
 from .file_ops import PosixFileOps
 from .host import (
@@ -417,6 +418,10 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     resources: set[str] = field(default_factory=set[str])
     """Names of resources required to use this host."""
 
+    debug_log_globs: list[str] = field(default_factory=list)
+    """Remote paths/glob patterns ``get_debug_logs`` fetches. Default empty.
+    See :attr:`~otto.host.host.BaseHost.debug_log_globs`."""
+
     interfaces: dict[str, Interface] = field(default_factory=dict, repr=False)
     """Named network devices
     (see :attr:`~otto.host.remote_host.RemoteHost.interfaces`).
@@ -425,6 +430,10 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     products: list["Product"] = field(default_factory=list)
     """Software-under-test deployed to this host. Default empty. See
     :attr:`~otto.host.host.BaseHost.products`."""
+
+    dev_tools: list["DevTool"] = field(default_factory=list)
+    """Repo-internal tooling deployed to this host. Default empty. See
+    :attr:`~otto.host.host.BaseHost.dev_tools`."""
 
     power_control: "PowerController | None" = None
     """Pluggable power backend. Lab data declares it by string (a config-free

@@ -33,6 +33,7 @@ otto.host.builtin_hosts
 otto.host.capability
 otto.host.command_frame
 otto.host.connections
+otto.host.dev_tool
 otto.host.docker_host
 otto.host.embedded_filesystem
 otto.host.embedded_host

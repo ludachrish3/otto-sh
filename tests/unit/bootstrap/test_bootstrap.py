@@ -246,6 +246,57 @@ def test_module_level_pytest_outcome_in_init_module_is_contained(tmp_path, monke
     assert "failed to load" in str(result.errors[0])
 
 
+def test_init_module_imports_run_under_the_registering_repo_marker(tmp_path, monkeypatch):
+    """Phase-2 imports must be attributable to the repo whose imports they are.
+
+    Registration seams read ``otto.registry.get_registering_repo()`` to record
+    WHICH repo registered an entry; only bootstrap can tell them, and only
+    while the import is on the stack. Observed from inside the init module
+    itself — asserting it after ``bootstrap()`` returns would pass just as well
+    with the marker never set at all.
+    """
+    seen = tmp_path / "seen.txt"
+    body = f"""
+        import pathlib
+
+        from otto.registry import get_registering_repo
+
+        pathlib.Path({str(seen)!r}).write_text(repr(get_registering_repo()))
+    """
+    monkeypatch.setenv("OTTO_SUT_DIRS", _write_repo_with_init_module(tmp_path, "marked", body))
+    result = bs.bootstrap()
+    assert result.errors == []
+    assert seen.read_text() == "'marked'"
+    # And the marker is bootstrap-scoped: nothing after it inherits the name.
+    from otto.registry import get_registering_repo
+
+    assert get_registering_repo() is None
+
+
+def test_test_file_imports_run_under_the_registering_repo_marker(tmp_path, monkeypatch):
+    """The test-file leg needs its own guard — it is not the init-module leg.
+
+    Same split as the containment seams above: bootstrap imports init modules
+    and top-level ``test_*.py`` files through SEPARATE loops that merely happen
+    to share one ``with registering_repo(...)`` block. Dedenting the test-file
+    loop back out of that block is a one-line refactor the init-module guard
+    cannot see — and test files are where ``@instruction`` registrations live,
+    so this is the leg later attribution work leans on hardest.
+    """
+    seen = tmp_path / "seen.txt"
+    body = f"""
+        import pathlib
+
+        from otto.registry import get_registering_repo
+
+        pathlib.Path({str(seen)!r}).write_text(repr(get_registering_repo()))
+    """
+    monkeypatch.setenv("OTTO_SUT_DIRS", _write_repo_with_test_body(tmp_path, "markedtest", body))
+    result = bs.bootstrap()
+    assert result.errors == []
+    assert seen.read_text() == "'markedtest'"
+
+
 def test_discovery_seam_contains_a_base_exception(tmp_path, monkeypatch):
     """The phase-1 seam is defensive, and defensive code still needs a guard.
 

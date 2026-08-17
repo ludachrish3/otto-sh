@@ -5,6 +5,7 @@ from typing import Any
 
 from ..models.host import HostSpec
 from .capability import select_option_defaults, select_preferences
+from .dev_tool import apply_dev_tool_providers
 from .os_profile import (
     build_host_class,
     build_host_spec,
@@ -163,6 +164,7 @@ def create_host_from_dict(
     spec = spec_cls.model_validate(merged)
     host = spec.to_host(cls, preferences=flat_prefs)
     apply_product_providers(host)
+    apply_dev_tool_providers(host)
     return host
 
 

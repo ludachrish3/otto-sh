@@ -18,8 +18,8 @@ def _isolate_provider_registry():
 
 
 def _prod(name):
-    """Minimal product double — apply_product_providers only reads ``.name``."""
-    return SimpleNamespace(name=name)
+    """Minimal product double — apply_product_providers reads ``.name``/``.owner``."""
+    return SimpleNamespace(name=name, owner=None)
 
 
 def _host(**attrs):
@@ -95,3 +95,37 @@ def test_public_reexports_available():
 
     assert hasattr(host_pkg, "register_product_provider")
     assert hasattr(host_pkg, "ProductProvider")
+
+
+def test_products_are_stamped_with_registering_repo():
+    # Kills: capturing the marker at APPLY time instead of REGISTER time —
+    # apply runs at lab ingest, long after init imports, when the marker is
+    # None, so every product would be unowned.
+    from otto.registry import registering_repo
+
+    with registering_repo("acme"):
+        register_product_provider(lambda host: [_prod("app")])
+    host = _host()
+    apply_product_providers(host)
+    assert host.products[0].owner == "acme"
+
+
+def test_products_registered_outside_any_repo_stay_unowned():
+    register_product_provider(lambda host: [_prod("app")])
+    host = _host()
+    apply_product_providers(host)
+    assert host.products[0].owner is None
+
+
+def test_explicit_owner_is_not_clobbered():
+    # Kills: unconditional stamping, which would erase a provider that
+    # deliberately hands one repo's product to another's ownership.
+    from otto.registry import registering_repo
+
+    explicit = _prod("app")
+    explicit.owner = "other"
+    with registering_repo("acme"):
+        register_product_provider(lambda host: [explicit])
+    host = _host()
+    apply_product_providers(host)
+    assert host.products[0].owner == "other"

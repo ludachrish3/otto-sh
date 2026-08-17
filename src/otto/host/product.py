@@ -32,7 +32,9 @@ from typing import TYPE_CHECKING
 
 from typing_extensions import override
 
+from ..registry import get_registering_repo
 from ..result import Result
+from ..utils import Status
 
 if TYPE_CHECKING:
     from .host import Host
@@ -46,6 +48,11 @@ class Product(ABC):
     name: str
     """Logical identity — used for logging, ``is_installed`` lookups, and dedup.
     Not a file path: a product may be multi-file or installed from a repo."""
+
+    owner: str | None = None
+    """Owning repo's name, stamped at lab ingest from the registering-repo
+    marker (see :func:`otto.registry.registering_repo`). ``None`` = attached
+    outside any repo's init import. Default per-repo actions filter on this."""
 
     @abstractmethod
     async def stage(self, host: "Host") -> Result:
@@ -71,6 +78,16 @@ class Product(ABC):
     async def is_installed(self, host: "Host") -> bool:
         """Return True when this product is currently installed on *host*."""
         ...
+
+    async def get_logs(self, host: "Host", dest: Path) -> Result:  # noqa: ARG002 — required by the Product.get_logs hook signature; overrides use host/dest, this retrieves-nothing default does not
+        """Retrieve this product's log files into local directory *dest*.
+
+        Default: retrieves nothing, successfully — zero logs is not a
+        failure. Override when the product produces logs; retrieval need
+        not run on *host* (an external mechanism is fine). Write files
+        under *dest*; the caller owns the directory layout above it.
+        """
+        return Result(Status.Success)
 
 
 @dataclass(slots=True)
@@ -111,7 +128,8 @@ Registered from a ``.otto`` init module via :func:`register_product_provider`
 and run once per lab-ingested host. All product knowledge stays in product-repo
 code; lab data never names a product."""
 
-_PRODUCT_PROVIDERS: list[ProductProvider] = []
+_PRODUCT_PROVIDERS: list[tuple[ProductProvider, str | None]] = []
+"""Registered providers paired with the repo that registered each one."""
 
 
 def register_product_provider(provider: ProductProvider) -> None:
@@ -123,8 +141,12 @@ def register_product_provider(provider: ProductProvider) -> None:
     (``element``, ``element_id``, ``os_type``, ``id``, ``ip``, ``resources``)
     and return the products that host should carry (or ``None``/``[]`` for
     none). Behavior lives in code; lab data stays product-agnostic.
+
+    The registering repo is captured **here**, not at ingest: this call runs
+    inside that repo's init import, whereas the provider runs long after,
+    when the marker is gone.
     """
-    _PRODUCT_PROVIDERS.append(provider)
+    _PRODUCT_PROVIDERS.append((provider, get_registering_repo()))
 
 
 def apply_product_providers(host: "Host") -> None:
@@ -137,9 +159,13 @@ def apply_product_providers(host: "Host") -> None:
     the host is skipped (deduplication guards two overlapping providers). A
     provider that raises propagates — a misconfigured provider fails ingest
     loudly.
+
+    Each attached product is stamped with :attr:`Product.owner` — the repo that
+    registered the provider — unless the product already names an owner, which
+    lets one repo hand a product to another's ownership deliberately.
     """
     seen = {p.name for p in host.products}
-    for provider in _PRODUCT_PROVIDERS:
+    for provider, provider_owner in _PRODUCT_PROVIDERS:
         for product in provider(host) or ():
             if product.name in seen:
                 logger.debug(
@@ -148,5 +174,7 @@ def apply_product_providers(host: "Host") -> None:
                     host.id,
                 )
                 continue
+            if product.owner is None:
+                product.owner = provider_owner
             host.products.append(product)
             seen.add(product.name)

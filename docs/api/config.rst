@@ -4,6 +4,8 @@ config
 The config package handles environment variables, repository discovery,
 settings parsing, and lab loading.
 
+.. automodule:: otto.config
+
 .. automodule:: otto.config.fleet
 
 .. automodule:: otto.config.env

@@ -34,6 +34,7 @@ local and remote machines.
    interface
    interact
    product
+   dev_tool
    power
    privilege
    file_ops

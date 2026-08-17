@@ -19,6 +19,9 @@ from .command_frame import register_command_frame as register_command_frame
 from .connections import ConnectionManager as ConnectionManager
 from .connections import build_term_backend as build_term_backend
 from .connections import register_term_backend as register_term_backend
+from .dev_tool import DevTool as DevTool
+from .dev_tool import DevToolProvider as DevToolProvider
+from .dev_tool import register_dev_tool_provider as register_dev_tool_provider
 from .docker_host import DockerContainerHost as DockerContainerHost
 from .embedded_host import EmbeddedHost as EmbeddedHost
 from .embedded_host import ZephyrHost as ZephyrHost
@@ -58,6 +61,7 @@ from .session import SessionManager as SessionManager
 from .session import ShellSession as ShellSession
 from .session import TelnetSession as TelnetSession
 from .toolchain import Toolchain as Toolchain
+from .toolchain import ToolchainTool as ToolchainTool
 from .transfer import EmbeddedFileTransfer as EmbeddedFileTransfer
 from .transfer import NcListenerCheck as NcListenerCheck
 from .transfer import NcPortStrategy as NcPortStrategy

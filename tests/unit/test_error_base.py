@@ -49,7 +49,7 @@ from otto.coverage.errors import (
 )
 from otto.coverage.overrides import OverrideConfigError
 from otto.coverage.tickets import TicketConfigError
-from otto.errors import OttoError
+from otto.errors import EnsureStateError, OttoError
 from otto.host.app_shell import AppShellActiveError, AppShellTimeoutError, ParseMismatch
 from otto.host.errors import (
     HostCommandError,
@@ -87,6 +87,7 @@ CASES: list[tuple[type[BaseException], type[BaseException]]] = [
     (GitMissingError, RuntimeError),
     (NotAGitRepoError, RuntimeError),
     (GitCommandFailedError, RuntimeError),
+    (EnsureStateError, RuntimeError),
     (CoverageToolVersionError, RuntimeError),
     (CoverageConfigError, ValueError),
     (NoCoverageDataError, ValueError),

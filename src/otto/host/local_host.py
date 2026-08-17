@@ -29,6 +29,7 @@ from typing_extensions import override
 from ..logger.mode import LogMode
 from ..result import CommandResult, Result
 from ..utils import Arg, Exclude, Opt, Status, cli_exposed
+from .dev_tool import DevTool
 from .file_ops import PosixFileOps
 from .host import _EXEC_REAP_TIMEOUT, BaseHost, is_dry_run
 from .power import PowerController
@@ -40,6 +41,7 @@ from .session import (
     LocalSession,
     SessionManager,
 )
+from .toolchain import Toolchain
 from .transfer import BaseFileTransfer, TransferProgressFactory
 from .transfer.base import mark_skipped
 
@@ -161,8 +163,20 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
     resources: set[str] = field(default_factory=set, repr=False)
     """Resources required to reserve this host — always empty for LocalHost."""
 
+    debug_log_globs: list[str] = field(default_factory=list, repr=False)
+    """Paths/glob patterns ``get_debug_logs`` fetches. Default empty. See
+    :attr:`~otto.host.host.BaseHost.debug_log_globs`."""
+
     products: list[Product] = field(default_factory=list, repr=False)
     """Software-under-test deployed to this host. Default empty."""
+
+    dev_tools: list[DevTool] = field(default_factory=list, repr=False)
+    """Repo-internal tooling deployed to this host. Default empty."""
+
+    toolchain: Toolchain = field(default_factory=Toolchain, repr=False)
+    """Toolchain for this host's products — the system one by default, which is
+    the right answer for the machine otto is already running on. See
+    :attr:`~otto.host.host.BaseHost.toolchain`."""
 
     power_control: "PowerController | None" = field(default=None, repr=False)
     """Always None — LocalHost/DockerContainerHost are not power-controlled."""

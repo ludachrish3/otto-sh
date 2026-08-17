@@ -184,6 +184,37 @@ class PosixFileOps(UserlandHost):
             return []
         return [line for line in result.value.splitlines() if line]
 
+    @cli_exposed(output_dir=False)
+    async def glob(self, pattern: "Annotated[str, Arg()]") -> list[str]:
+        """Expand *pattern* on the host via its POSIX shell; return matching paths.
+
+        The shell does the expansion (``for p in <pattern>``), so every glob
+        dialect question has the host's own answer, and transfer backends
+        only ever see concrete paths. *pattern* is deliberately NOT quoted —
+        quoting is what would stop expansion; it comes from repo-controlled
+        configuration, the same trust domain as every ``exec`` argument. An
+        unmatched pattern stays literal in POSIX sh and the ``-e`` guard
+        drops it: empty list, not an error (zero logs is success).
+
+        Raises:
+            ~otto.result.CommandNotRunError: under a dry run — an empty list
+                would be a fabricated absence.
+        """
+        result = await self.exec(  # ty: ignore[unresolved-attribute]
+            f'for p in {pattern}; do if [ -e "$p" ]; then printf \'%s\\n\' "$p"; fi; done'
+        )
+        # `if`/`fi`, NOT `[ -e ] &&`: with `&&`, a non-matching final iteration
+        # (e.g. a broken symlink sorting last) makes the LOOP's exit status
+        # non-zero, and the non-ok branch below would discard matches already
+        # printed — a deterministic fabricated absence. A POSIX `if` with no
+        # `else` exits 0 on a false condition, so non-ok keeps meaning "the
+        # command itself failed". Pinned by a red-first test injecting a
+        # dangling entry that sorts last among real matches.
+        refuse_declined_fact(result, asked=f"glob({pattern!r})")
+        if not result.status.is_ok:
+            return []
+        return [line for line in result.value.splitlines() if line]
+
     @cli_exposed
     async def mkdir(self, path: "str | Path", parents: bool = True) -> Result:
         """Create directory *path* (``mkdir``; *parents* adds ``-p``)."""

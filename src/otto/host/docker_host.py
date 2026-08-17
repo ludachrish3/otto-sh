@@ -37,6 +37,7 @@ from ..logger.mode import LogMode
 from ..result import CommandNotRunError, CommandResult, Result
 from ..utils import Arg, Opt, Status, cli_exposed
 from .connections import teardown_step
+from .dev_tool import DevTool
 from .file_ops import PosixFileOps
 from .host import BaseHost, Host, is_dry_run, refuse_declined_fact
 from .privilege import PosixPrivilege
@@ -47,6 +48,7 @@ if TYPE_CHECKING:
 
 from .power import PowerController
 from .session import Expect, HostSession, SessionManager, ShellSession, _DockerSshSession
+from .toolchain import Toolchain
 
 logger = logging.getLogger(__name__)
 
@@ -117,9 +119,21 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
     system as UnixHosts; the compose module typically copies the parent's
     tags so concurrent test runs serialize through reservations."""
 
+    debug_log_globs: list[str] = field(default_factory=list, repr=False)
+    """Container paths/glob patterns ``get_debug_logs`` fetches. Default empty.
+    See :attr:`~otto.host.host.BaseHost.debug_log_globs`."""
+
     products: list[Product] = field(default_factory=list, repr=False)
     """Software-under-test deployed to this host. Default empty. See
     :attr:`~otto.host.host.BaseHost.products`."""
+
+    dev_tools: list[DevTool] = field(default_factory=list, repr=False)
+    """Repo-internal tooling deployed to this host. Default empty. See
+    :attr:`~otto.host.host.BaseHost.dev_tools`."""
+
+    toolchain: Toolchain = field(default_factory=Toolchain, repr=False)
+    """Toolchain for this container's products. Defaults to the image's
+    system-installed tools. See :attr:`~otto.host.host.BaseHost.toolchain`."""
 
     power_control: "PowerController | None" = field(default=None, repr=False)
     """Always None — LocalHost/DockerContainerHost are not power-controlled."""

@@ -49,6 +49,36 @@ def test_toolchain_spec_forbids_unknown():
         ToolchainSpec(sysrot="/x")  # typo
 
 
+def test_toolchain_spec_tools_reach_runtime():
+    # Kills: adding the spec field but forgetting the to_runtime() mapping —
+    # lab.json-declared tools would silently vanish.
+    spec = ToolchainSpec(tools=[{"name": "gdb", "source": "/tc/bin/gdb", "dest": "/usr/local/bin"}])
+    tc = spec.to_runtime()
+    assert tc.tools[0].name == "gdb"
+    assert tc.tools[0].user == "root"
+
+
+def test_toolchain_spec_tool_paths_and_mode_reach_runtime():
+    # Kills: dropping any of source/dest/mode on the way across the boundary,
+    # and kills leaving them as raw strings (the runtime wants Paths).
+    spec = ToolchainSpec(
+        tools=[
+            {"name": "gdbinit", "source": "/tc/gdbinit", "dest": "/etc", "mode": "644"},
+        ]
+    )
+    tool = spec.to_runtime().tools[0]
+    assert (tool.source, tool.dest, tool.mode) == (Path("/tc/gdbinit"), Path("/etc"), "644")
+
+
+def test_toolchain_spec_declares_no_tools_by_default():
+    assert ToolchainSpec().to_runtime().tools == []
+
+
+def test_toolchain_tool_spec_forbids_unknown():
+    with pytest.raises(ValidationError, match=r"dst\s+Extra inputs are not permitted"):
+        ToolchainSpec(tools=[{"name": "gdb", "source": "/a", "dst": "/b"}])
+
+
 def test_hostspec_requires_ip_and_element():
     with pytest.raises(ValidationError, match=r"element\s+Field required") as exc:
         HostSpec(ip="10.0.0.1")  # missing element
@@ -215,8 +245,10 @@ def test_embedded_spec_rejects_unix_only_field():
 # Runtime host init fields applied by overridable repo logic (NOT lab data) —
 # intentionally absent from the lab.json spec, so the drift guard skips them.
 # ``products`` is user product data, independent of lab data; it is attached to
-# hosts by repo logic, never declared in lab.json.
-_NON_SPEC_RUNTIME_FIELDS = frozenset({"products"})
+# hosts by repo logic, never declared in lab.json. ``dev_tools`` is the same
+# category for the same reason — repo-defined tooling attached by a registered
+# provider at ingest, deliberately not declarable in lab data.
+_NON_SPEC_RUNTIME_FIELDS = frozenset({"products", "dev_tools"})
 
 
 @pytest.mark.parametrize(("spec_cls", "runtime_cls"), HOST_SPEC_RUNTIME_PAIRS)

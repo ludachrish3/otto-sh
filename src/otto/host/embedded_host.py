@@ -65,6 +65,7 @@ from .binary_loader import BinaryLoader
 from .capability import TERM_RESOLVER, TRANSFER_RESOLVER
 from .command_frame import CommandFrame, ZephyrFrame
 from .connections import ConnectionManager
+from .dev_tool import DevTool
 from .embedded_filesystem import EmbeddedFileSystem, NoFileSystem
 from .host import (
     DEFAULT_COMMAND_TIMEOUT,
@@ -251,6 +252,12 @@ class EmbeddedHost(RemoteHost):
     resources: set[str] = field(default_factory=set[str])
     """Names of resources required to use this host."""
 
+    debug_log_globs: list[str] = field(default_factory=list)
+    """Remote paths ``get_debug_logs`` fetches. Default empty. Embedded hosts
+    have no shell to expand a pattern with, so entries here must be concrete
+    paths (or the host class overrides ``get_debug_logs``). See
+    :attr:`~otto.host.host.BaseHost.debug_log_globs`."""
+
     interfaces: dict[str, Interface] = field(default_factory=dict, repr=False)
     """Named network devices
     (see :attr:`~otto.host.remote_host.RemoteHost.interfaces`).
@@ -259,6 +266,10 @@ class EmbeddedHost(RemoteHost):
     products: list["Product"] = field(default_factory=list)
     """Software-under-test deployed to this host. Default empty. See
     :attr:`~otto.host.host.BaseHost.products`."""
+
+    dev_tools: list["DevTool"] = field(default_factory=list)
+    """Repo-internal tooling deployed to this host. Default empty. See
+    :attr:`~otto.host.host.BaseHost.dev_tools`."""
 
     power_control: "PowerController | None" = None
     """Pluggable power backend. Lab data declares it by string (a config-free

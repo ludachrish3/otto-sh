@@ -316,8 +316,18 @@ to see what is available for a specific host.
 | `uninstall` | Uninstall products |
 | `is-installed` | Exit 0 if all products are installed |
 | `is-uninstalled` | Exit 0 if no products are installed |
+| `cleanup` | Uninstall products, then remove dev tools and toolchain tools |
+| `is-clean` | Exit 0 if no product, dev tool, or toolchain tool is present |
+| `get-logs` | Retrieve product and debug logs into `logs/<host-id>/` |
+| `get-product-logs` | Retrieve each product's logs into `logs/<host-id>/product/` |
+| `get-debug-logs` | Fetch the host's `debug_log_globs` into `logs/<host-id>/debug/` |
+| `install-tools` | Install the host's dev tools, and its toolchain tools with `--toolchain` |
+| `install-dev-tools` | Stage then install every dev tool attached to the host |
+| `install-toolchain-tools` | Put each declared toolchain tool, renamed and chowned |
+| `remove-toolchain-tools` | Remove every declared toolchain tool from the host |
 | `exists` | Exit 0 if a path exists on the host |
 | `ls` | List directory contents on the host |
+| `glob` | Expand a pattern on the host and print the matching paths |
 | `mkdir` | Create a directory on the host |
 | `rm` | Remove a path on the host |
 | `cp` | Copy a path on the host |

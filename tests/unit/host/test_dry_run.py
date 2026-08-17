@@ -789,7 +789,7 @@ def _zephyr_with_fs(log: LogMode = LogMode.QUIET):
 
 
 class TestADryRunInventsNoListingAndNoFileFact:
-    """`ls` and `exists` decline instead of answering from nothing.
+    """`ls`, `exists` and `glob` decline instead of answering from nothing.
 
     THE LIBRARY-LAYER TWIN of the primitive, and the one Task 2's sweep could
     not see: it keyed on the `Status.Skipped` TOKEN, and these two carry no
@@ -798,7 +798,10 @@ class TestADryRunInventsNoListingAndNoFileFact:
     directory and a missing file — silently, with no raise, and entirely past
     the CLI seam, because these are LIBRARY calls that no `--dry-run` stop
     intercepts. (`exists` fabricated `True` before Task 2; Task 2 flipped the
-    direction of the lie without removing it.)
+    direction of the lie without removing it.) `glob` arrived later and never
+    had the defect — it is held to the same contract here so it cannot acquire
+    one, since its empty list is the same fabricated absence in a shape a
+    caller is even likelier to act on ("this host has no logs").
 
     Neither return type can carry a status, so of the contract's three
     behaviours — fabricate it, decline loudly, or never run the logic — only
@@ -839,6 +842,21 @@ class TestADryRunInventsNoListingAndNoFileFact:
         present.write_text("x")
         assert await _local().exists(present) is True
         assert await _local().exists(tmp_path / "gone") is False
+
+    @pytest.mark.asyncio
+    async def test_unix_glob_declines_rather_than_reporting_no_matches(self, tmp_path):
+        # The third of the same family, and the one born declining: `glob`
+        # returning `[]` under a dry run is a fabricated "nothing matched",
+        # which a caller reads as "this host has no logs to collect".
+        with active_context(dry_run=True), pytest.raises(CommandNotRunError) as exc:
+            await _unix().glob("/var/log/messages*")
+        assert "glob('/var/log/messages*')" in str(exc.value)
+
+        # POSITIVE CONTROL, same verb, real host: BOTH answers still work, so
+        # this cannot be passing against a `glob` that raises always.
+        (tmp_path / "messages").write_text("x")
+        assert await _local().glob(str(tmp_path / "messages*")) == [str(tmp_path / "messages")]
+        assert await _local().glob(str(tmp_path / "no-such-*")) == []
 
     @pytest.mark.asyncio
     async def test_embedded_ls_and_exists_decline_on_the_device_shell_too(self):

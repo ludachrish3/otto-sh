@@ -3,6 +3,7 @@
 import pytest
 
 from otto import bootstrap as bs
+from otto.config import get_ordered_repos
 from tests._fixtures.sutrepo import make_sut_repo
 
 
@@ -64,6 +65,12 @@ def test_required_dep_reorders_registration(tmp_path, monkeypatch, order_file):
     result = bs.bootstrap()
     assert result.errors == []
     assert _order(order_file) == ["a", "b"]
+    # ordered_repos must carry the SAME order the imports ran in -- it is what
+    # the otto.project orchestrator walks, so a result that kept discovery
+    # order (b, a) would install a dependent before its dependency.
+    assert [r.name for r in result.ordered_repos] == ["a", "b"]
+    # ...and the public accessor reads THAT field, not the discovery-order one.
+    assert [r.name for r in get_ordered_repos()] == ["a", "b"]
 
 
 def test_missing_required_skips_registration(tmp_path, monkeypatch, order_file):
@@ -73,6 +80,7 @@ def test_missing_required_skips_registration(tmp_path, monkeypatch, order_file):
     result = bs.bootstrap()
     assert _order(order_file) == ["b"]  # a never registered
     assert len(result.repos) == 2  # but still discovered/visible
+    assert [r.name for r in result.ordered_repos] == ["b"]  # and absent from the walk order
     (err,) = result.errors
     assert "ghost" in str(err)
     a_repo = next(r for r in result.repos if r.name == "a")

@@ -10,6 +10,16 @@ CLI options.
 :file: ../../_static/generated/termynal/help-run.html
 ```
 
+## Instructions you already have
+
+Six of them — `install`, `uninstall`, `cleanup`, `get-logs`, `install-tools`
+and `status` — ship with otto and work in any lab whose repos have declared
+products, with no code of your own.  They are ordinary instructions over the
+`otto.project` library, listed in their own panel by
+`otto run --list-instructions`.  A repo customizes what they do by registering
+a `ProjectActions` subclass, never by defining an instruction of the same name
+(which is refused at startup).  See {doc}`defaults`.
+
 ## Defining an instruction
 
 Decorate an async function with `@instruction()` in a module listed in your
@@ -318,5 +328,6 @@ otto --lab my_lab --dry-run run deploy
 Commands and file transfers are skipped, but connections are still verified.
 
 ```{toctree}
+defaults
 options
 ```

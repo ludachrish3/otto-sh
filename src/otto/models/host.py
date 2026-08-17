@@ -24,7 +24,7 @@ from ..host.embedded_host import EmbeddedHost
 from ..host.interface import Interface
 from ..host.login_proxy import LOGIN_PROXIES, Cred, LoginProxyError, resolve_chain
 from ..host.remote_host import RemoteHost
-from ..host.toolchain import Toolchain
+from ..host.toolchain import Toolchain, ToolchainTool
 from ..host.transfer import TRANSFER_BACKENDS
 from ..host.unix_host import UnixHost
 from ..link import IMPAIRERS
@@ -42,16 +42,47 @@ from .options import (
 )
 
 
+class ToolchainToolSpec(OttoModel):
+    """One ``toolchain.tools`` entry: an artifact the toolchain installs on the host.
+
+    ``user`` and ``mode`` default to a root-owned executable, which is what a
+    cross-built binary dropped into ``/usr/local/bin`` needs; a library or a
+    config file overrides ``mode`` (and sometimes ``user``).
+    """
+
+    name: str
+    source: Path
+    dest: Path
+    user: str = "root"
+    mode: str = "755"
+
+    def to_runtime(self) -> ToolchainTool:
+        """Build the runtime ``ToolchainTool`` dataclass from the validated fields."""
+        return ToolchainTool(
+            name=self.name,
+            source=self.source,
+            dest=self.dest,
+            user=self.user,
+            mode=self.mode,
+        )
+
+
 class ToolchainSpec(OttoModel):
     """Toolchain paths: the ``sysroot`` directory plus the ``lcov`` and ``gcov`` binaries."""
 
     sysroot: Path = Path("/")
     lcov: Path = Path("usr/bin/lcov")
     gcov: Path = Path("usr/bin/gcov")
+    tools: list[ToolchainToolSpec] = Field(default_factory=list)
 
     def to_runtime(self) -> Toolchain:
-        """Build the runtime ``Toolchain`` dataclass from the validated path fields."""
-        return Toolchain(sysroot=self.sysroot, lcov=self.lcov, gcov=self.gcov)
+        """Build the runtime ``Toolchain`` dataclass from the validated fields."""
+        return Toolchain(
+            sysroot=self.sysroot,
+            lcov=self.lcov,
+            gcov=self.gcov,
+            tools=[t.to_runtime() for t in self.tools],
+        )
 
 
 class InterfaceSpec(OttoModel):
@@ -247,6 +278,7 @@ class HostSpec(OttoModel):
     default_dest_dir: Path = Path()
     max_filename_len: int = 255
     resources: set[str] = Field(default_factory=set)
+    debug_log_globs: list[str] = Field(default_factory=list)
     interfaces: dict[str, InterfaceSpec] = Field(default_factory=dict)
     log: LogMode = LogMode.NORMAL
     log_stdout: bool = True  # common: both UnixHost and EmbeddedHost declare it
@@ -383,6 +415,10 @@ class HostSpec(OttoModel):
             kw["default_dest_dir"] = Path(self.default_dest_dir)
         if "resources" in s:
             kw["resources"] = set(self.resources)
+        if "debug_log_globs" in s:
+            # Copied, like ``resources``: the host must not share a mutable
+            # container with the spec that built it.
+            kw["debug_log_globs"] = list(self.debug_log_globs)
         if "interfaces" in s:
             kw["interfaces"] = {k: e.to_runtime() for k, e in self.interfaces.items()}
         if "telnet_options" in s:

@@ -28,7 +28,7 @@ Typical usage from the ``otto cov`` CLI command::
 
 import json
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -156,11 +156,13 @@ def read_cov_toolchains(cov_dirs: list[Path]) -> "dict[str, Toolchain]":
     raw_toolchains: dict[str, Any] = meta.get("toolchains", {})
     result: "dict[str, Toolchain]" = {}
     for host_id, tc_data in raw_toolchains.items():
-        kwargs = {}
-        for key in ("sysroot", "lcov", "gcov"):
-            if key in tc_data:
-                kwargs[key] = Path(tc_data[key])
-        result[host_id] = Toolchain(**kwargs)
+        # Only the three coverage paths are serialized into cov metadata — a
+        # toolchain's installable ``tools`` are not — so start from the
+        # defaults and replace whichever of the three the metadata carries.
+        # (Unpacking a ``dict[str, Path]`` straight into the constructor no
+        # longer type-checks now that not every field is a Path.)
+        paths = {key: Path(tc_data[key]) for key in ("sysroot", "lcov", "gcov") if key in tc_data}
+        result[host_id] = replace(Toolchain(), **paths)
     return result
 
 

@@ -7,6 +7,11 @@ and per-entry origin attribution. Domain modules keep their public
 ``register_*``/``build_*`` wrapper functions; this class is the shared engine
 behind them.
 
+The module also holds the *registering-repo marker* (:func:`registering_repo`,
+:func:`get_registering_repo`): the context variable ``bootstrap()`` sets around
+each repo's init imports, so those same registration seams can record *which
+repo* an entry came from rather than only which module.
+
 >>> r: Registry[str] = Registry("demo backend", register_hint="register_demo()")
 >>> r.register("json", "the-json-backend", origin="example")
 >>> r.get("json")
@@ -15,8 +20,11 @@ behind them.
 ['json']
 """
 
+import contextlib
+import contextvars
 import difflib
 import inspect
+from collections.abc import Iterator
 from typing import Generic, TypeVar
 
 T = TypeVar("T")
@@ -132,3 +140,30 @@ class Registry(Generic[T]):
     def __len__(self) -> int:
         """Return the number of registered entries."""
         return len(self._entries)
+
+
+# ── Registering-repo marker ─────────────────────────────────────────────
+# Bootstrap wraps each repo's init-module imports in registering_repo(name)
+# so registration functions (product/dev-tool providers, project actions)
+# can attribute what they register to the repo whose import is running.
+# A ContextVar, not a module global: exception-safe restore for free, and
+# nested use (a repo importing another's init helper) unwinds correctly.
+
+_REGISTERING_REPO: "contextvars.ContextVar[str | None]" = contextvars.ContextVar(
+    "otto_registering_repo", default=None
+)
+
+
+def get_registering_repo() -> str | None:
+    """Name of the repo whose init modules are currently being imported, if any."""
+    return _REGISTERING_REPO.get()
+
+
+@contextlib.contextmanager
+def registering_repo(name: str) -> "Iterator[None]":
+    """Attribute registrations inside this block to repo *name* (bootstrap-only)."""
+    token = _REGISTERING_REPO.set(name)
+    try:
+        yield
+    finally:
+        _REGISTERING_REPO.reset(token)

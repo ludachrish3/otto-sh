@@ -22,7 +22,16 @@ exclude = ["tests", "docs", "web", "scripts"]
 
 [[modules]]
 path = "otto.bootstrap"
-depends_on = ["otto.config", "otto.errors"]
+depends_on = [
+    "otto.config",
+    "otto.errors",
+    # Phase-2 registration wraps each repo's init imports in
+    # `registry.registering_repo(name)` so registration seams can attribute an
+    # entry to the repo that registered it. otto.registry is a zero-import
+    # leaf (same standing as otto.errors), so this cannot invert layering or
+    # create a cycle.
+    "otto.registry",
+]
 
 [[modules]]
 path = "otto.cli"
@@ -170,6 +179,43 @@ depends_on = ["otto.host", "otto.models", "otto._webassets", "otto.result", "ott
 path = "otto.params"
 
 [[modules]]
+path = "otto.project"
+# The project layer sits ABOVE hosts and below the CLI: it drives host verbs
+# across the fleet on behalf of one repo. Every edge here points down.
+#
+# otto.host is imported LAZILY inside the methods that dispatch (BaseHost.install
+# and friends) — `import otto.project` must stay cheap, because the default
+# instructions import it at CLI startup. tach counts a function-scope import as
+# an edge regardless, which is why it is declared.
+#
+# otto.config and otto.context are TYPE_CHECKING-only in actions.py (Repo,
+# OttoContext): the per-repo actions are HANDED both at construction and never
+# look either up. The orchestrator DOES look them up -- ambient-context module
+# functions are its whole shape -- but only from inside the call
+# (orchestrator._lab), for the same reason otto.host is lazy here: `import
+# otto.project` must stay cheap, and a module-scope import of either would join
+# the config<->context and host<->context cycles.
+#
+# otto.cli is ONE FILE's edge and points UP, deliberately: project/instructions.py
+# imports `@instruction` to register the six first-party `otto run` verbs. They
+# are ordinary instructions, so they register through the ordinary decorator --
+# the alternative (a second, CLI-side registration path for otto's own verbs)
+# would be a private seam nobody else can use, to avoid an edge that costs
+# nothing: otto.cli does not import otto.project (bootstrap reaches this module
+# by name, through importlib), so there is no cycle to hold apart. Every OTHER
+# module in the package stays CLI-free, which is what lets a fixture or a suite
+# call the orchestrator without dragging typer in.
+depends_on = [
+    "otto.registry",
+    "otto.result",
+    "otto.utils",
+    "otto.host",
+    "otto.config",
+    "otto.context",
+    "otto.cli",
+]
+
+[[modules]]
 path = "otto.registry"
 
 [[modules]]
@@ -188,7 +234,21 @@ depends_on = ["otto.utils", "otto.errors"]
 
 [[modules]]
 path = "otto.suite"
-depends_on = ["otto.context", "otto.config", "otto.lifecycle", "otto.registry", "otto.monitor", "otto.version", "otto.models", "otto.host", "otto.coverage", "otto.params", "otto.errors", "otto.result", "otto.utils"]
+# otto.project is the ensure_installed / ensure_uninstalled / ensure_clean
+# fixtures in pytest_plugin.py, imported INSIDE each fixture body (tach counts
+# it as an edge anyway). The edge points DOWN — project drives hosts on behalf
+# of a repo, a suite consumes that — and it is the point of the layer: `otto
+# run install` and the fixture call the same function, so the CLI and the
+# suites cannot diverge on what "installed" means.
+#
+# It does complete a LOOP in this file's graph — otto.project -> otto.cli ->
+# otto.suite -> otto.project — which is a fifth alongside the four the header
+# lists as blocking `forbid_circular_dependencies`. It is not a runtime cycle:
+# only project/instructions.py reaches otto.cli (for the `@instruction`
+# decorator), and nothing in otto.suite imports it. Retiring it means giving
+# instruction registration a home that is not otto.cli, which is the same fix
+# the config<->cli DEBT edge needs and belongs with it, not here.
+depends_on = ["otto.context", "otto.config", "otto.lifecycle", "otto.registry", "otto.monitor", "otto.version", "otto.models", "otto.host", "otto.coverage", "otto.params", "otto.errors", "otto.result", "otto.utils", "otto.project"]
 
 [[modules]]
 path = "otto.testing"

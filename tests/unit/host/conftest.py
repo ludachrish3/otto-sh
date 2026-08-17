@@ -40,9 +40,19 @@ allowlist here and nothing for a future author to remember to update.
 """
 
 import multiprocessing as mp
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
+from contextlib import asynccontextmanager
+from dataclasses import replace
+from pathlib import Path
 
 import pytest
+
+from otto.host.file_ops import PosixFileOps
+from otto.host.host import BaseHost, is_dry_run, refuse_declined_elevation
+from otto.host.toolchain import Toolchain
+from otto.logger.mode import LogMode
+from otto.result import CommandResult, Result
+from otto.utils import Status
 
 # Deliberately NOT importing the authority's ``_fd_watermark`` fixture the way
 # the chaos lanes do: pytest registers a fixture under its function's own name,
@@ -108,3 +118,150 @@ def _fd_watermark() -> Iterator[None]:
     one place.
     """
     yield from fd_watermark_bracket(tolerance=0, gc_policy="on-suspicion")
+
+
+class RecordingHost(BaseHost):
+    """Concrete ``BaseHost`` double: records exec/put/get calls, returns scripted results.
+
+    The shared minimal-host idiom for the *lifecycle* surface (products, dev
+    tools, toolchain tools). It implements only the family hooks those verbs
+    reach — ``_exec_one`` / ``put`` / ``get`` / ``as_user`` / ``close`` — and
+    sets the identity attributes ``BaseHost`` reads directly, so it needs no
+    dataclass machinery and no transport.
+
+    ``_exec_one`` is the override point rather than ``exec``: ``exec`` is
+    documented as final (it validates the timeout and applies the dry-run
+    decline above the family hook), so overriding it would take the double off
+    the path every real host uses.
+
+    This class carries NO posix file-ops family, exactly like
+    :class:`~otto.host.embedded_host.EmbeddedHost`, so it has no ``glob`` — the
+    shape ``get_debug_logs`` has to refuse a pattern on. The ``recording_host``
+    fixture hands out :class:`PosixRecordingHost` (the common case, glob and
+    all); ``embedded_recording_host`` hands out this one.
+    """
+
+    def __init__(self) -> None:
+        # Identity: the attributes BaseHost's own methods read (``__str__``,
+        # the lifecycle loops, the power guard).
+        self.id = "h1"
+        self.name = "h1"
+        self.log = LogMode.NORMAL
+        self.resources: set[str] = set()
+        self.products: list = []
+        self.dev_tools: list = []
+        self.power_control = None
+        self.toolchain = Toolchain()
+        self.debug_log_globs: list[str] = []
+        # Recorders.
+        self.exec_calls: list[str] = []
+        self.put_calls: list[tuple] = []
+        self.get_calls: list[tuple] = []
+        self.as_user_calls: list[str] = []
+        self.event_log: list[str] = []
+        self.closed = False
+        self._scripted_exec: list[CommandResult] = []
+
+    def script_exec(self, output: str = "", ok: bool = True) -> None:
+        """Queue the result the next ``exec`` returns (FIFO).
+
+        Calls beyond the script get a plain success, so a test scripts only the
+        one command it cares about.
+        """
+        self._scripted_exec.append(
+            CommandResult(
+                Status.Success if ok else Status.Failed,
+                value=output,
+                retcode=0 if ok else 1,
+            )
+        )
+
+    def _next_exec_result(self, cmd: str) -> CommandResult:
+        if self._scripted_exec:
+            return replace(self._scripted_exec.pop(0), command=cmd)
+        return CommandResult(Status.Success, value="", command=cmd, retcode=0)
+
+    async def _exec_one(
+        self, cmd: str, timeout: float, log: LogMode = LogMode.NORMAL
+    ) -> CommandResult:
+        del timeout, log
+        self.exec_calls.append(cmd)
+        self.event_log.append(f"exec:{cmd}")
+        return self._next_exec_result(cmd)
+
+    async def put(
+        self,
+        src_files: list[Path] | Path,
+        dest_dir: Path,
+        mode: int | str | None = None,
+    ) -> Result:
+        """Record the transfer, and DECLINE it under a dry run like a real host.
+
+        The decline is not decoration. A verb that transfers and then elevates
+        is only dry-run-safe because ``put`` returns a ``NotRun`` result the
+        verb reports and returns on, ahead of an ``as_user`` that would raise;
+        a double whose ``put`` always succeeds cannot tell that ordering apart
+        from the broken one.
+        """
+        self.put_calls.append((src_files, dest_dir, mode))
+        self.event_log.append(f"put:{src_files}")
+        files = src_files if isinstance(src_files, list) else [src_files]
+        if is_dry_run():
+            return self._dry_run_transfer("PUT", files, dest_dir, mode)
+        return Result(Status.Success)
+
+    async def get(self, src_files: list[Path] | Path, dest_dir: Path) -> Result:
+        self.get_calls.append((src_files, dest_dir))
+        self.event_log.append(f"get:{src_files}")
+        files = src_files if isinstance(src_files, list) else [src_files]
+        if is_dry_run():
+            return self._dry_run_transfer("GET", files, dest_dir)
+        return Result(Status.Success)
+
+    @asynccontextmanager
+    async def as_user(  # ty: ignore[invalid-overload] — the double supplies the elevation BaseHost's default refuses
+        self, user: str = "root", password: str | None = None
+    ) -> AsyncIterator["RecordingHost"]:
+        """Record the elevation and run the block; no su, no session.
+
+        Under a dry run this RAISES, exactly as ``PosixPrivilege.as_user``
+        does: elevation returns nothing, so there is no status to harden and
+        the shared refusal is the only honest answer. Keeping that arm on the
+        double is what lets a test prove a verb declines *before* it elevates.
+        """
+        del password
+        if is_dry_run():
+            refuse_declined_elevation("as_user", user, self.name, self._log_command)
+        self.as_user_calls.append(user)
+        self.event_log.append(f"as_user:{user}")
+        yield self
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+class PosixRecordingHost(PosixFileOps, RecordingHost):
+    """:class:`RecordingHost` with the real posix file-ops family mixed in.
+
+    The mixin is the production one, so ``glob`` here is
+    :meth:`~otto.host.file_ops.PosixFileOps.glob` itself — shell round-trip,
+    dry-run refusal and all — driven by whatever :meth:`script_glob` queued for
+    the next ``exec``. A hand-rolled ``glob`` on the double would have proved
+    only that the double agrees with itself.
+    """
+
+    def script_glob(self, paths: "list[str]") -> None:
+        """Queue *paths* as the next ``glob``'s matches (one per output line)."""
+        self.script_exec("\n".join(paths))
+
+
+@pytest.fixture
+def recording_host() -> PosixRecordingHost:
+    """A fresh :class:`PosixRecordingHost` per test — the default double."""
+    return PosixRecordingHost()
+
+
+@pytest.fixture
+def embedded_recording_host() -> RecordingHost:
+    """A fresh glob-less double, for the verbs that must name that gap."""
+    return RecordingHost()

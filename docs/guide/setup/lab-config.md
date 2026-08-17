@@ -75,6 +75,7 @@ alongside it.
 | `slot` | integer | Physical slot number of the board to which this host belongs.  Appended to the host id, but only when `board` is also set — see {ref}`host-identity` below. |
 | `hop` | string | Host id of an intermediate SSH jump host.  Otto opens an SSH tunnel through it and routes all subsequent connections automatically.  Hops can chain. |
 | `resources` | array of strings | Free-form resource tags used by the reservation backend. |
+| `debug_log_globs` | array of strings | Remote log paths `get_debug_logs` fetches off this host.  A pattern (`*`, `?`, `[`) is expanded on the device itself, so embedded hosts — which have no shell to expand with — declare concrete paths.  See {doc}`../hosts/capabilities`. |
 | `is_virtual` | boolean | `true` when the host is a VM or emulator. |
 | `log` | boolean | Whether to log output to stdout and log files (default `true`). |
 | `log_stdout` | boolean | Whether to log output to stdout (default `true`).  Setting `log` to `false` overrides this. |
@@ -310,6 +311,7 @@ coverage pipeline.  See {doc}`../coverage`.
 | `toolchain.sysroot` | string | Path to the cross-toolchain sysroot. |
 | `toolchain.gcov` | string | Path to `gcov` relative to `sysroot`, or an absolute path. |
 | `toolchain.lcov` | string | Path to the `lcov` binary. |
+| `toolchain.tools` | array of objects | Artifacts otto *installs onto* this host (`name`, `source`, `dest`, `user`, `mode`) — the inverse of the three fields above, which otto only reads from.  See {doc}`../hosts/capabilities`. |
 
 ## Example
 

@@ -10,7 +10,7 @@ the same ``try`` — the first lexical match wins.
 DEFINES, not raises, and the difference is not small: otto also raises plain
 stdlib exceptions at 301 sites — an argument otto validates and rejects is
 usually a bare ``ValueError``, not a named class. ``except OttoError``
-therefore means "one of otto's 39 NAMED failures", not "anything otto
+therefore means "one of otto's 40 NAMED failures", not "anything otto
 raised".
 
 There is no one clause that catches everything, and it is worth being exact
@@ -24,11 +24,11 @@ rather than offering a comforting near-miss:
   :class:`~otto.lifecycle.SyncPhaseInterrupt`, a ``KeyboardInterrupt`` on
   purpose (see below).
 * ``except (ValueError, RuntimeError)`` covers 254 of the 301 raise sites,
-  and 28 of the 39 named classes. Of the other 11, seven are rooted at plain
+  and 29 of the 40 named classes. Of the other 11, seven are rooted at plain
   ``Exception`` (the bootstrap, lab-context, lab-repository and reservation
   errors) and four sit under ``OSError`` (``AppShellTimeoutError``,
   ``LoginProxyError``, ``RetryAttemptTimeoutError``, ``WaitTimeoutError``) —
-  28 + 7 + 4 = 39, so the split accounts for every named class.
+  29 + 7 + 4 = 40, so the split accounts for every named class.
 
 Those counts are measured, not maintained by arithmetic: a *raise site* is a
 ``raise`` of a name that is a BUILTIN exception type (so ``typer.Exit`` and
@@ -127,3 +127,23 @@ def is_containable(exc: BaseException) -> bool:
 
 class OttoError(Exception):
     """Base class for every exception otto defines (not every one it raises)."""
+
+
+class EnsureStateError(OttoError, RuntimeError):
+    """A converge could not reach the lab state it was asked to guarantee.
+
+    Raised by the ``ensure_installed`` / ``ensure_uninstalled`` /
+    ``ensure_clean`` suite fixtures when :mod:`otto.project`'s converge layer
+    answers non-ok. It is an ERROR and never a skip, by house rule: a host
+    that cannot be brought to the state a test requires fails that test with
+    the host named, rather than quietly removing the test from the run.
+
+    ``RuntimeError``, like the host errors whose message it usually carries,
+    so the ``except (ValueError, RuntimeError)`` clauses that already bracket
+    lab work keep catching it.
+
+    It lives here rather than in ``otto.suite`` because the state it reports
+    on is the PROJECT's, not the suite's; ``otto.errors`` is the zero-import
+    leaf both layers already depend on, so neither has to import the other to
+    name this failure.
+    """

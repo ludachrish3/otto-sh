@@ -39,6 +39,22 @@ def test_product_cannot_be_instantiated_directly():
         Product()  # type: ignore[abstract]
 
 
+def test_product_is_unowned_until_ingest_stamps_it():
+    assert _DummyFileProduct(artifact=Path("/builds/app.bin")).owner is None
+
+
+@pytest.mark.asyncio
+async def test_get_logs_default_is_successful_noop(tmp_path):
+    # Kills: an abstract get_logs, which would break every existing Product
+    # subclass in every repo at import time — _DummyFileProduct declares only
+    # the four abstract verbs that predate the hook.
+    result = await _DummyFileProduct(artifact=Path("/builds/app.bin")).get_logs(
+        host=None, dest=tmp_path
+    )
+    assert result.is_ok
+    assert list(tmp_path.iterdir()) == []
+
+
 @pytest.mark.asyncio
 async def test_fileproduct_stage_delegates_to_host_put():
     from unittest.mock import AsyncMock

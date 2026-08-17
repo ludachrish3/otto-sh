@@ -125,6 +125,42 @@ otto's options lifecycle. See {doc}`run/options` for how to define,
 validate, and share an options class (including inheriting a repo-wide base
 across suites).
 
+## Fixtures otto provides
+
+Every suite run under `otto test` gets these fixtures from otto's own pytest
+plugin — request them by name like any other fixture. Your repo's `conftest.py`
+fixtures are unaffected and sit alongside them.
+
+| Fixture | Scope | Gives you |
+| ------- | ----- | --------- |
+| `suite_options` | class | The suite's `Options` instance (see above) |
+| `ctx` | function | The active {class}`~otto.context.OttoContext` for this invocation |
+| `ensure_installed` | function | A lab converged to fully-installed before the test |
+| `ensure_uninstalled` | function | A lab converged to fully-uninstalled before the test |
+| `ensure_clean` | function | A lab with no products, dev tools or toolchain tools left |
+
+The three `ensure_*` fixtures declare a test's *starting state* instead of
+scripting it:
+
+```python
+class TestWidget(OttoSuite):
+    async def test_service_answers(self, ensure_installed) -> None:
+        """Runs against a fully-installed lab, whatever the last test left."""
+        self.logger.info("lab is installed")
+
+    async def test_installs_from_scratch(self, ensure_clean) -> None:
+        """Runs against a lab with nothing of ours on it."""
+        self.logger.info("lab is clean")
+```
+
+Each is a one-line wrapper over the same `otto.project` converge functions
+`otto run install --ensure` calls, so a fixture and the command can never
+diverge. They are function-scoped because the guarantee is per test *case*;
+when the state already holds the cost is one status sweep. A convergence that
+fails **errors the test with the failing host named** — never a skip
+({class}`~otto.errors.EnsureStateError`). See {doc}`run/defaults` for what each
+one converges and how a repo customizes it.
+
 ## Running suites
 
 ```bash
