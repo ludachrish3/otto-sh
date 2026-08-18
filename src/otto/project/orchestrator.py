@@ -27,7 +27,10 @@ THREE RULES DECIDE EVERY WALK BELOW.
   fleet: the debug sweep AFTER teardown -- teardown-time activity is what those
   logs exist to capture -- and the toolchain steps at the far end, where one
   toolchain shared by every owner can be placed or removed without a repo
-  taking its neighbours' tooling with it.
+  taking its neighbours' tooling with it. Netem impairments and otto tunnels
+  join them in :func:`cleanup` for the same reason, one step further out: they
+  belong to the LAB rather than to any host, and no repo's products or dev
+  tools put them there.
 
 The orchestrator itself is not overrideable in v1 (recorded decision): a repo
 customizes by registering its own :class:`~otto.project.actions.ProjectActions`.
@@ -49,6 +52,7 @@ from .state import InstallState, ProjectStatus
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Iterable
 
+    from ..config.lab import Lab
     from ..config.repo import Repo
     from ..context import OttoContext
     from ..host.host import Host
@@ -76,6 +80,39 @@ def _first(*results: Result) -> Result:
     """
     for result in results:
         if not result.is_ok:
+            return result
+    return Result(Status.Success)
+
+
+def _reported(*results: Result) -> Result:
+    """Return the first failure, else the first DECLINE, else Success.
+
+    :func:`_first` with one more rung, and the rung exists for exactly one
+    caller: :func:`cleanup`'s impairment reset, which answers
+    ``Status.Skipped`` when :func:`otto.link.manage.repair_all` DECLINED a link
+    it might otherwise have repaired (a foreign qdisc, a management-interface
+    refusal) rather than failing on it. A decline is ``is_ok`` -- it must not
+    abort a best-effort teardown and it is not a failure, because otto never
+    applied what it is refusing to remove -- but it is not Success either:
+    something is still on the wire that ``cleanup`` did not take off, and
+    returning a bare ``Result(Success)`` over it would say the opposite in the
+    one field a caller reads.
+
+    A FAILURE OUTRANKS A DECLINE IN EITHER ARGUMENT ORDER, which is why the
+    failure pass runs over all of them BEFORE the decline pass starts rather
+    than one loop returning the first non-Success it meets. That one loop
+    passes every test written in the order the steps run -- and is wrong in
+    exactly the case a real lab produces: the impairment reset declines first
+    (any lab with an unreadable or foreign-qdisc link), the tunnel reap fails
+    after it, and "first non-Success" hands back the DECLINE. ``is_ok`` is
+    ``True`` on it, so ``otto run cleanup`` would exit 0 with tunnel processes
+    still running and ``ensure_clean`` would call the lab converged.
+    """
+    failure = _first(*results)
+    if not failure.is_ok:
+        return failure
+    for result in results:
+        if result.status is not Status.Success:
             return result
     return Result(Status.Success)
 
@@ -146,6 +183,146 @@ async def _sweep_debug_logs(ctx: "OttoContext") -> Result:
 
 
 ####################
+#  Lab infrastructure
+####################
+
+# NEITHER OF THE TWO STEPS BELOW IS A FLEET WALK, and that is why they do not
+# dispatch through ``do_for_all_hosts`` like everything above. A netem qdisc
+# and a tunnel are LAB objects: an impairment is placed per LINK (whose two
+# ends are two different hosts), and a tunnel is a chain of processes across
+# every hop it crosses. ``otto.link`` and ``otto.tunnel`` already own the
+# lab-wide sweeps -- with the refusals, the post-mutation verifies and the
+# dry-run planning that go with them -- so this layer hands each the lab and
+# reports what comes back. Nothing here builds a `tc` or a `kill`.
+#
+# Both are imported inside the call, like everything else this module looks up:
+# ``import otto.project`` must stay cheap, because the default instructions
+# import it at CLI startup, and ``otto.link.manage`` alone drags in the daemon
+# and sentinel modules that ``otto.link``'s own package __getattr__ exists to
+# keep off cheap importers.
+
+
+def _live_refusals(lab: "Lab", skipped: "list[str]") -> "list[str]":
+    """Return the ``repair_all`` skips worth reporting, dropping the structural ones.
+
+    ``repair_all`` files every refusal in one bucket, and two very different
+    facts land there. A link that could NEVER carry otto's impairment -- every
+    implicit hop edge is one, because
+    :func:`~otto.link.derive.implicit_links` builds endpoints with no named
+    interface -- was refused before any device was asked, and there is nothing
+    for a cleanup to say about it: the lab is not dirtier for having hop edges.
+    A link that COULD have been impaired and was declined anyway (a foreign
+    qdisc, a management-interface or hop-transit refusal, a host with no
+    impairer) is the opposite: something may well be on that netdev, and otto
+    has just declined to take it off.
+
+    Reporting both would make ``cleanup`` unable to return Success on any real
+    lab -- an N-host lab resolves at least N implicit ids -- which would drain
+    the decline of its meaning exactly when it carries the most: a genuine
+    foreign-qdisc refusal would be status-indistinguishable from the standing
+    noise, and every message would carry N lines nobody can act on.
+
+    The split is asked, not parsed:
+    :func:`~otto.link.placement.impairment_refusal` is the same pure predicate
+    ``otto link list`` prints its refusals from, so this cannot drift from the
+    placement layer's own answer. Only the ids it names are dropped, matched on
+    ``repair_all``'s own ``"<link id>: <why>"`` prefix, so a live refusal
+    against one of those links -- there is none today, since the structural
+    check fires first -- would still be reported.
+    """
+    from ..link.placement import BOTH_DIRECTIONS, impairment_refusal
+
+    structural = tuple(
+        f"{link.id}: "
+        for link in lab.static_links()
+        if impairment_refusal(link, BOTH_DIRECTIONS) is not None
+    )
+    if not structural:
+        return list(skipped)
+    return [entry for entry in skipped if not entry.startswith(structural)]
+
+
+async def _reset_impairments(ctx: "OttoContext") -> Result:
+    """Repair every lab link that can carry otto's netem, refusals and all.
+
+    Goes through :func:`otto.link.manage.repair_all`, which walks the lab's own
+    static links -- refusing the ones it could never have impaired -- and keeps
+    the ``_ensure_not_foreign`` rail: a root qdisc otto did not create is never
+    cleared. That rail is the reason this step is not a device-side "delete
+    every qdisc" enumeration -- such a sweep would clobber the ``tc``
+    configuration a human put on a shared host, and a cleanup that does that
+    once is a cleanup nobody runs again.
+
+    ``repair_all`` never raises. Its outcomes become three different answers,
+    because they are three different facts:
+
+    * :attr:`~otto.link.manage.RepairAllReport.failures` -- a link otto tried
+      and could not repair (host down, a clear that did not take). A failure.
+    * :attr:`~otto.link.manage.RepairAllReport.skipped` -- a link otto DECLINED
+      to touch, once :func:`_live_refusals` has dropped the links that were
+      never impairable in the first place. Not a failure, and not a success
+      either: see :func:`_reported`. The reasons are named rather than counted,
+      matching what ``otto link repair --all`` prints from the same bucket.
+    * :attr:`~otto.link.manage.RepairAllReport.dry_run` -- nothing was read and
+      nothing was reset. ``Status.NotRun``, the dry-run contract's own answer
+      for an acting verb, rather than the Success an empty report would
+      otherwise be indistinguishable from.
+    """
+    from ..link.manage import repair_all
+
+    report = await repair_all(ctx.lab)
+    if report.dry_run:
+        return Result(
+            Status.NotRun,
+            msg="dry run: no link was read and no impairment was reset",
+        )
+    declined = "; ".join(_live_refusals(ctx.lab, report.skipped))
+    if report.failures:
+        also = f" (declined: {declined})" if declined else ""
+        failed = "; ".join(report.failures)
+        return Result(Status.Failed, msg=f"impairment reset failed: {failed}{also}")
+    if declined:
+        return Result(Status.Skipped, msg=f"impairment reset declined: {declined}")
+    return Result(Status.Success)
+
+
+async def _remove_tunnels(ctx: "OttoContext") -> Result:
+    """Reap every otto tunnel in the lab, and report anything that survived.
+
+    Goes through :func:`otto.tunnel.manage.remove_all_tunnels`, which is
+    already discovery-driven, lab-wide and owner-agnostic: it reaps every
+    sentinel-tagged process on every ``has_bash`` host, from the processes
+    themselves rather than from lab data, so a tunnel added by a colleague or
+    by a crashed run comes down with the rest.
+
+    :attr:`~otto.tunnel.manage.RemovedReport.survivors` is a FAILURE, and it is
+    the whole reason that report re-scans after killing: a process still
+    present after the kill is a tunnel still carrying traffic, and reporting
+    the reap on the strength of ``removed_ids`` alone would call that clean.
+    An unreachable host is a failure for the sibling reason -- the scan never
+    saw it, so a tunnel outlives the reap on exactly those hosts, which is why
+    ``otto tunnel remove --all`` exits 1 on them too.
+    """
+    from ..tunnel.manage import remove_all_tunnels
+
+    report = await remove_all_tunnels(ctx.lab)
+    if report.plan is not None:
+        return Result(
+            Status.NotRun,
+            msg="dry run: no host was scanned for tunnel processes and none was reaped",
+        )
+    if report.survivors:
+        still = ", ".join(f"{host_id}/{pid}" for host_id, pid in report.survivors)
+        return Result(Status.Failed, msg=f"tunnel processes survived the kill: {still}")
+    if report.unreachable:
+        return Result(
+            Status.Failed,
+            msg=f"tunnel reap could not reach: {', '.join(report.unreachable)}",
+        )
+    return Result(Status.Success)
+
+
+####################
 #  Lifecycle
 ####################
 
@@ -187,19 +364,41 @@ async def uninstall(get_product_logs: bool = True, get_debug_logs: bool = True) 
     return _first(torn, await _sweep_debug_logs(ctx))
 
 
-async def cleanup(get_product_logs: bool = True, get_debug_logs: bool = True) -> Result:
-    """Clean up every repo in reverse order, sweep debug logs, then remove the toolchain.
+async def cleanup(
+    get_product_logs: bool = True,
+    get_debug_logs: bool = True,
+    reset_impairments: bool = True,
+    remove_tunnels: bool = True,
+) -> Result:
+    """Clean the lab: every repo, the debug logs, the toolchain, impairments, tunnels.
 
     Strictly more than :func:`uninstall`: each repo also removes its own dev
-    tools, and the host-global toolchain tools come off at the end. That last
-    step is here and nowhere else -- one toolchain serves every owner on a
-    host, so a repo removing it would take its neighbours' tooling with it.
+    tools, the host-global toolchain tools come off, and the lab's own
+    infrastructure -- netem impairments and otto tunnels -- comes down with
+    them. The last three steps are here and nowhere else: one toolchain serves
+    every owner on a host, and an impairment or a tunnel belongs to no repo at
+    all, so a repo performing any of them would act for its neighbours.
 
-    Ordering, twice over: the debug sweep is taken before the toolchain goes,
-    so no log retrieval depends on tooling this step is deleting; and the
-    toolchain removal runs even when the sweep or a repo failed, because a
-    best-effort teardown that abandons the last step leaves exactly the
-    remnants ``cleanup`` exists to remove.
+    ORDERING, AND THE LAST STEP IS THE ONE THAT MATTERS. The debug sweep is
+    taken before the toolchain goes, so no log retrieval depends on tooling
+    this step is deleting. **The tunnel reap is last of all, because a tunnel
+    can BE the access path to a host**: reaping it earlier severs the
+    connection the repo walk, the log sweep and the toolchain removal still
+    need. Resetting impairments sits immediately before it for the mirrored
+    reason -- clearing delay and loss off a link only improves the path
+    everything above ran over, so it can afford to wait until they are done.
+
+    Every step runs even when an earlier one failed, and the first failure is
+    what returns: a best-effort teardown that abandons the steps after a
+    failure leaves exactly the remnants ``cleanup`` exists to remove. A link
+    otto DECLINED to repair -- a foreign qdisc, a management-interface refusal
+    -- is reported WITHOUT failing the run: the result comes back
+    ``Status.Skipped`` naming each one, which is ``is_ok`` and is deliberately
+    not ``Status.Success``, because something otto did not take off is still
+    there. A link that could never have been impaired at all -- every implicit
+    hop edge -- is dropped from that report instead, because a lab is not
+    dirtier for having hop edges and reporting them would leave ``cleanup``
+    unable to answer Success on any real lab.
     """
     ctx, repos = _lab()
     cleaned = await _walk(
@@ -211,7 +410,9 @@ async def cleanup(get_product_logs: bool = True, get_debug_logs: bool = True) ->
     )
     swept = await _sweep_debug_logs(ctx) if get_debug_logs else Result(Status.Success)
     removed = _reduce_results(await ctx.do_for_all_hosts(_dispatch_remove_toolchain_tools))
-    return _first(cleaned, swept, removed)
+    repaired = await _reset_impairments(ctx) if reset_impairments else Result(Status.Success)
+    reaped = await _remove_tunnels(ctx) if remove_tunnels else Result(Status.Success)
+    return _reported(cleaned, swept, removed, repaired, reaped)
 
 
 ####################
@@ -329,14 +530,114 @@ async def status() -> ProjectStatus:
     return ProjectStatus(overall=_aggregate(states.values()), repos=states)
 
 
+async def _impairment_present(ctx: "OttoContext") -> bool:
+    """Whether any lab link carries an impairment :func:`cleanup` would reset.
+
+    Reads through :func:`otto.link.manage.read_link_states` -- the read-side
+    twin of the ``repair_all`` this answers for -- so asking the question
+    changes nothing.
+
+    THE SCOPE IS THE ONE ``repair_all`` ACTS ON, deliberately, and the foreign
+    qdisc is where that bites: :func:`otto.link.manage._ensure_not_foreign`
+    refuses to clear a root qdisc otto did not create, so a link carrying one
+    is a link ``cleanup`` provably cannot change. Counting it as unclean would
+    make every ``ensure_clean`` run a cleanup that cannot move the answer,
+    forever. A link that is structurally unimpairable (every implicit hop edge)
+    has no state to read and none to remove.
+
+    A link whose state could not be READ raises instead of answering.
+    ``read_link_states`` promises never to raise per link -- it reports the
+    three ways a read can fail as flags -- so this is the layer that has to
+    refuse: "clean" would be a fabrication (the dry-run case is exactly a link
+    nobody looked at), and "not clean" would send a converge into a cleanup on
+    a fact nobody established. That is the same rule the toolchain probe above
+    follows, in the same words.
+    """
+    from ..link.manage import (
+        LinkCommandFailedError,
+        LinkHostUnreachableError,
+        LinkNotMeasuredError,
+        read_link_states,
+    )
+
+    for state in await read_link_states(ctx.lab):
+        if state.not_measured:
+            raise LinkNotMeasuredError(
+                f"link {state.link.id!r}: nothing was read, so whether it carries an "
+                f"impairment is unknown"
+            )
+        if state.unreachable:
+            raise LinkHostUnreachableError(
+                f"link {state.link.id!r}: a placement host could not be reached, so "
+                f"whether it carries an impairment is unknown"
+            )
+        if state.read_errors:
+            raise LinkCommandFailedError(
+                f"link {state.link.id!r}: the impairment read failed: "
+                f"{'; '.join(sorted(state.read_errors.values()))}"
+            )
+        for direction in state.by_direction.values():
+            if direction is not None and (direction.whole is not None or direction.scoped):
+                return True
+    return False
+
+
+async def _tunnel_present(ctx: "OttoContext") -> bool:
+    """Whether any otto tunnel is running in the lab.
+
+    Reads through :func:`otto.tunnel.discovery.discover_tunnels` -- the read
+    side of the ``remove_all_tunnels`` this answers for, and the same scan the
+    reap itself starts from, so the two cannot disagree about what a tunnel is.
+
+    A scan that measured nothing raises, for the reason the link read above
+    does: an empty tunnel list is precisely what a clean lab returns, so a dry
+    run's declined scan and a host that never answered would both come back as
+    "clean" from a check that never looked.
+
+    A TUNNEL ALREADY IN HAND ANSWERS FIRST, and the order of the two checks
+    below is that decision. An incomplete scan matters only while the answer is
+    still open: once ANY tunnel has been seen, the lab is dirty and no host
+    that failed to answer can make it clean again, so raising there would
+    refuse a question otto has already answered -- and would strand
+    ``ensure_clean`` on a lab it can see needs cleaning. It applies to
+    ``unreachable`` alone: ``not_measured`` means nothing was asked at all, so
+    the tunnel list is empty by construction and the raise below is the only
+    outcome available.
+    """
+    from ..host.errors import HostUnreachableError
+    from ..tunnel.discovery import TunnelNotMeasuredError, discover_tunnels
+
+    discovery = await discover_tunnels(ctx.lab)
+    if discovery.tunnels:
+        return True
+    if discovery.not_measured:
+        raise TunnelNotMeasuredError(
+            "no host was scanned for tunnel processes, so whether the lab carries a "
+            "tunnel is unknown"
+        )
+    if discovery.unreachable:
+        raise HostUnreachableError(
+            f"tunnel scan could not reach {', '.join(discovery.unreachable)}, so whether "
+            f"the lab carries a tunnel is unknown"
+        )
+    return False
+
+
 async def is_clean() -> bool:
-    """Whether no repo's products or dev tools, and no host's toolchain tools, remain.
+    """Whether nothing :func:`cleanup` removes is left in the lab.
 
     EVERY repo is asked, not only the counted ones. The counted-repo rule
     exists to keep an opinionless repo from dragging an AGGREGATE STATE, and a
     repo with nothing installed answers True here for free -- while skipping it
     would miss the dev tools of a tooling repo that owns no products at all
     (``owns_products`` cannot see tools).
+
+    THE QUESTION MATCHES THE VERB, step for step: products and dev tools, the
+    hosts' toolchain tools, then the lab's own impairments and tunnels, in
+    ``cleanup``'s own order. That agreement is the whole contract -- without
+    the last two, ``ensure_clean`` would report a lab dirty only in tunnels as
+    already clean while ``otto run cleanup`` visibly reaped them, which is the
+    surface split-brain this package exists to prevent.
 
     A host that could not answer RAISES rather than counting as unclean.
     ``do_for_all_hosts`` captures exceptions as values, and reading a dry run's
@@ -352,7 +653,9 @@ async def is_clean() -> bool:
             raise outcome
         if not outcome:
             return False
-    return True
+    if await _impairment_present(ctx):
+        return False
+    return not await _tunnel_present(ctx)
 
 
 ####################

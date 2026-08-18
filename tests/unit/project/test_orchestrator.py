@@ -25,8 +25,27 @@ from types import SimpleNamespace
 import pytest
 
 from otto import project
+from otto.link import (
+    DirectionState,
+    FlowDirection,
+    ImpairmentParams,
+    Link,
+    LinkEndpoint,
+    LinkState,
+    RepairAllReport,
+    RepairReport,
+    Selector,
+)
 from otto.project import PROJECT_ACTIONS, InstallState, ProjectActions
 from otto.result import CommandNotRunError, Result
+from otto.tunnel import (
+    DiscoveredTunnel,
+    DryRunPlan,
+    RemovedReport,
+    Tunnel,
+    TunnelDiscovery,
+    TunnelHop,
+)
 from otto.utils import Status
 
 # ── doubles ──────────────────────────────────────────────────────────────
@@ -80,11 +99,40 @@ class _FakeHost:
         return self._record("toolchain_tools_absent", self.toolchain_absent)
 
 
-class _FakeCtx:
-    """OttoContext double — the two dispatch seams the orchestrator uses."""
+def _fake_lab(links=()):
+    """A Lab double: an identity to pass through, and the static links it declares.
 
-    def __init__(self, hosts):
+    ``static_links()`` is the one method the orchestrator itself calls (to ask
+    :func:`~otto.link.placement.impairment_refusal` which skipped links could
+    never have been impaired); everything else about the lab is
+    ``otto.link``'s / ``otto.tunnel``'s business, and those are doubles here.
+    """
+    return SimpleNamespace(name="fake-lab", static_links=lambda: list(links))
+
+
+def _link(link_id="core", *, impairable=True):
+    """One static link — interfaced on both ends, or the shape no command can act on.
+
+    ``impairable=False`` is the implicit-hop-edge shape:
+    :func:`~otto.link.derive.implicit_links` builds endpoints with no named
+    interface, which is exactly what ``impairment_refusal`` refuses.
+    """
+    iface = "eth1" if impairable else None
+    return Link(a=LinkEndpoint("h0", iface), b=LinkEndpoint("h1", iface), id=link_id)
+
+
+class _FakeCtx:
+    """OttoContext double — the two dispatch seams the orchestrator uses, and the lab.
+
+    ``lab`` is near enough a sentinel: the orchestrator reads only
+    ``static_links()`` off it and otherwise HANDS it to ``otto.link`` /
+    ``otto.tunnel``, and the tests assert the object those two were given is
+    this one.
+    """
+
+    def __init__(self, hosts, lab=None):
         self.hosts = list(hosts)
+        self.lab = _fake_lab() if lab is None else lab
 
     def all_hosts(self):
         return iter(self.hosts)
@@ -160,16 +208,73 @@ def _wire_lab(monkeypatch, repo_names, ctx):
     return ordered
 
 
-def _wire(monkeypatch, repos, hosts=0, **actions_kwargs):
+def _wire_infra(monkeypatch, events, *, repair=None, reap=None, states=(), discovery=None):
+    """Point the four lab-infrastructure seams at doubles, and record every call.
+
+    PATCHED ON ``otto.link.manage`` / ``otto.tunnel.manage`` /
+    ``otto.tunnel.discovery``, which is where the orchestrator looks them up:
+    it imports all four inside the call (the package's circular-import idiom,
+    the same reasoning as ``_lab``), so the attribute read happens on those
+    modules at call time.
+
+    The two MUTATING seams also append to *events*, so cleanup's ordering is
+    asserted against one list. The two READING seams do not — ``events`` is
+    what the lab was made to DO — but every call of all four lands in the
+    returned list, which is what lets ``status`` prove it asked neither.
+    """
+    calls = []
+
+    async def _repair_all(lab):
+        calls.append(("repair_all", lab))
+        events.append(("lab", "repair_all"))
+        return RepairAllReport() if repair is None else repair
+
+    async def _remove_all_tunnels(lab):
+        calls.append(("remove_all_tunnels", lab))
+        events.append(("lab", "remove_all_tunnels"))
+        return RemovedReport([], {}, [], []) if reap is None else reap
+
+    async def _read_link_states(lab):
+        calls.append(("read_link_states", lab))
+        return list(states)
+
+    async def _discover_tunnels(lab):
+        calls.append(("discover_tunnels", lab))
+        return TunnelDiscovery([], []) if discovery is None else discovery
+
+    monkeypatch.setattr("otto.link.manage.repair_all", _repair_all)
+    monkeypatch.setattr("otto.link.manage.read_link_states", _read_link_states)
+    monkeypatch.setattr("otto.tunnel.manage.remove_all_tunnels", _remove_all_tunnels)
+    monkeypatch.setattr("otto.tunnel.discovery.discover_tunnels", _discover_tunnels)
+    return calls
+
+
+def _wire(
+    monkeypatch,
+    repos,
+    hosts=0,
+    *,
+    repair=None,
+    reap=None,
+    states=(),
+    discovery=None,
+    links=(),
+    **actions_kwargs,
+):
     """A lab of *repos* (topological order) with recording actions and *hosts* fleet hosts."""
     events, flags = [], []
     cls = _recording_actions(events, flags, **actions_kwargs)
     for name in repos:
         PROJECT_ACTIONS.register(name, cls, overwrite=True, origin="test")
     fleet = [_FakeHost(f"h{i}", events) for i in range(hosts)]
-    ctx = _FakeCtx(fleet)
+    ctx = _FakeCtx(fleet, lab=_fake_lab(links))
     ordered = _wire_lab(monkeypatch, repos, ctx)
-    return SimpleNamespace(events=events, flags=flags, hosts=fleet, ctx=ctx, ordered=ordered)
+    calls = _wire_infra(
+        monkeypatch, events, repair=repair, reap=reap, states=states, discovery=discovery
+    )
+    return SimpleNamespace(
+        events=events, flags=flags, hosts=fleet, ctx=ctx, ordered=ordered, infra=calls
+    )
 
 
 def _verbs(events, *names):
@@ -300,10 +405,18 @@ async def test_debug_sweep_runs_even_when_a_repo_failed_to_uninstall(monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_cleanup_walks_reverse_then_sweeps_then_removes_the_toolchain(monkeypatch):
+async def test_cleanup_walks_reverse_sweeps_untools_then_repairs_and_reaps_last(monkeypatch):
     # The toolchain is HOST-global (one per host, shared by every owner), so it
     # is removed once at the end rather than by any repo. Kills: a per-repo
     # toolchain removal, which would take a neighbour's tooling with it.
+    #
+    # THE LAST TWO ARE THE ORDER THAT MATTERS MOST, and this is the only place
+    # it is asserted: a tunnel can BE the access path to a host, so reaping it
+    # before the repo walk, the sweep or the toolchain removal severs the
+    # connection the rest of cleanup still needs. Resetting impairments first
+    # only improves that path, which is why it comes second-to-last rather
+    # than last. Kills: either step hoisted anywhere earlier, and the two
+    # swapped.
     lab = _wire(monkeypatch, repos=["base", "app"], hosts=2)
     assert (await project.cleanup()).is_ok
     assert _verbs(lab.events) == [
@@ -313,8 +426,23 @@ async def test_cleanup_walks_reverse_then_sweeps_then_removes_the_toolchain(monk
         "get_debug_logs",
         "remove_toolchain_tools",
         "remove_toolchain_tools",
+        "repair_all",
+        "remove_all_tunnels",
     ]
     assert [e[0] for e in lab.events if e[1] == "cleanup"] == ["app", "base"]
+
+
+@pytest.mark.asyncio
+async def test_cleanup_hands_both_lab_sweeps_the_active_context_lab(monkeypatch):
+    # Kills: loading a second lab, or passing the context itself — both library
+    # functions take the Lab, and the one that matters is the one the rest of
+    # cleanup just acted on.
+    lab = _wire(monkeypatch, repos=["app"], hosts=1)
+    await project.cleanup()
+    assert [(name, obj is lab.ctx.lab) for name, obj in lab.infra] == [
+        ("repair_all", True),
+        ("remove_all_tunnels", True),
+    ]
 
 
 @pytest.mark.asyncio
@@ -342,7 +470,12 @@ async def test_cleanup_get_debug_logs_false_still_removes_the_toolchain(monkeypa
     # unrelated host-global steps that happen to sit next to each other.
     lab = _wire(monkeypatch, repos=["app"], hosts=1)
     assert (await project.cleanup(get_debug_logs=False)).is_ok
-    assert _verbs(lab.events) == ["cleanup", "remove_toolchain_tools"]
+    assert _verbs(lab.events) == [
+        "cleanup",
+        "remove_toolchain_tools",
+        "repair_all",
+        "remove_all_tunnels",
+    ]
 
 
 @pytest.mark.asyncio
@@ -350,6 +483,281 @@ async def test_cleanup_forwards_get_product_logs(monkeypatch):
     lab = _wire(monkeypatch, repos=["app"])
     await project.cleanup(get_product_logs=False)
     assert lab.flags == [("app", "cleanup", {"get_product_logs": False})]
+
+
+# ── cleanup: the lab's own infrastructure ────────────────────────────────
+#
+# Impairments and tunnels belong to no repo, exactly like the debug sweep and
+# the toolchain above: nothing in a repo's products or dev tools put them
+# there. Both go through the library functions — `repair_all` keeps the
+# refuse-a-foreign-qdisc rail, `remove_all_tunnels` keeps the post-kill verify
+# — so nothing here reimplements `tc` or `kill`.
+
+
+@pytest.mark.asyncio
+async def test_cleanup_reports_a_link_the_impairment_reset_failed_on(monkeypatch):
+    # repair_all NEVER raises: a live failure (host down, a clear that did not
+    # take) lands in `failures`. Kills: reading the report's existence as
+    # success, which is what dropping the failures bucket looks like.
+    lab = _wire(
+        monkeypatch,
+        repos=["app"],
+        hosts=1,
+        repair=RepairAllReport(failures=["core: host 'r1' unreachable"]),
+    )
+    result = await project.cleanup()
+    assert not result.is_ok
+    assert "core" in result.msg
+    assert "unreachable" in result.msg
+    # …and the reap still ran: cleanup is best-effort all the way down.
+    assert ("lab", "remove_all_tunnels") in lab.events
+
+
+@pytest.mark.asyncio
+async def test_cleanup_a_refused_impairment_does_not_read_as_success(monkeypatch):
+    # THE REFUSAL CASE. A foreign qdisc otto did not create is DECLINED, not
+    # failed — repair_all files it under `skipped` — and cleanup must neither
+    # report Success (the impairment is still on the wire) nor fail (declining
+    # a qdisc otto never applied is not a teardown failure).
+    #
+    # THE LINK IS DECLARED IMPAIRABLE in the lab, which is what makes this a
+    # refusal worth reporting rather than the structural noise below.
+    lab = _wire(
+        monkeypatch,
+        repos=["app"],
+        hosts=1,
+        links=[_link("core")],
+        repair=RepairAllReport(skipped=["core: r1/eth1 has a foreign qdisc otto did not create"]),
+    )
+    result = await project.cleanup()
+    assert result.status is not Status.Success  # kills: swallowing the bucket
+    assert result.status is Status.Skipped
+    assert result.is_ok  # kills: aborting a best-effort teardown over a decline
+    assert "core" in result.msg
+    assert "foreign qdisc" in result.msg
+    assert ("lab", "remove_all_tunnels") in lab.events
+
+
+@pytest.mark.asyncio
+async def test_cleanup_says_nothing_about_a_link_that_could_never_be_impaired(monkeypatch):
+    # THE OTHER HALF OF THE SAME BUCKET, and the reason the decline means
+    # anything at all. `repair_all` files a refusal per implicit hop edge —
+    # every lab has at least one per host — so reporting the bucket whole would
+    # make Success unreachable on every real lab, bury each message under N
+    # unactionable lines, and leave a genuine foreign-qdisc refusal
+    # indistinguishable from standing noise.
+    #
+    # The link declared here is the implicit shape (no named interface), which
+    # `impairment_refusal` refuses without asking a device.
+    _wire(
+        monkeypatch,
+        repos=["app"],
+        hosts=1,
+        links=[_link("h0--h1", impairable=False)],
+        repair=RepairAllReport(skipped=["h0--h1: 'h0', 'h1' has no named interface"]),
+    )
+    result = await project.cleanup()
+    assert result.status is Status.Success  # kills: reporting structural refusals
+    assert result.msg == ""
+
+
+@pytest.mark.asyncio
+async def test_cleanup_a_failed_reap_outranks_an_earlier_decline(monkeypatch):
+    """A DECLINE THAT ARRIVES FIRST MUST NOT SHADOW A FAILURE THAT ARRIVES AFTER IT.
+
+    This is the production default, not an exotic case: a lab carrying one
+    foreign qdisc declines at the impairment reset, which runs BEFORE the
+    tunnel reap. "Return the first non-Success result in argument order" passes
+    every other test in this file and fails here — it would hand back the
+    decline, whose `is_ok` is True, so `otto run cleanup` would exit 0 with
+    tunnel processes still running and `ensure_clean` would call the lab
+    converged.
+    """
+    _wire(
+        monkeypatch,
+        repos=["app"],
+        hosts=1,
+        links=[_link("core")],
+        repair=RepairAllReport(skipped=["core: foreign qdisc"]),
+        reap=RemovedReport([], {}, [], [("h0", 42)]),
+    )
+    result = await project.cleanup()
+    assert not result.is_ok
+    assert result.status is Status.Failed
+    assert "survived" in result.msg
+    assert "h0/42" in result.msg
+
+
+@pytest.mark.asyncio
+async def test_cleanup_names_the_declines_alongside_an_impairment_failure(monkeypatch):
+    # The failure is what to act on, but the decline is still the operator's
+    # business: both buckets came back from one sweep, and dropping either
+    # loses a link that needs a human. Kills: a failure message built from
+    # `failures` alone.
+    _wire(
+        monkeypatch,
+        repos=["app"],
+        hosts=1,
+        links=[_link("core"), _link("edge")],
+        repair=RepairAllReport(
+            failures=["edge: host 'r2' unreachable"],
+            skipped=["core: foreign qdisc"],
+        ),
+    )
+    result = await project.cleanup()
+    assert not result.is_ok
+    assert "edge" in result.msg
+    assert "declined" in result.msg
+    assert "core" in result.msg
+
+
+@pytest.mark.asyncio
+async def test_cleanup_a_repo_failure_outranks_a_refused_impairment(monkeypatch):
+    # The decline is `is_ok`, so it must never displace a real failure in the
+    # reported result. Kills: a reduction that returns the last non-Success.
+    _wire(
+        monkeypatch,
+        repos=["app"],
+        hosts=1,
+        failing=("app", "cleanup"),
+        repair=RepairAllReport(skipped=["core: no named interface"]),
+    )
+    result = await project.cleanup()
+    assert not result.is_ok
+    assert "cleanup refused" in result.msg
+
+
+@pytest.mark.asyncio
+async def test_cleanup_reports_tunnel_processes_that_survived_the_kill(monkeypatch):
+    # THE WHOLE POINT of remove_all_tunnels' post-kill re-scan: a process still
+    # present after the kill is a tunnel still carrying traffic. Kills: reading
+    # `removed_ids` as the outcome and ignoring `survivors`.
+    _wire(
+        monkeypatch,
+        repos=["app"],
+        hosts=1,
+        reap=RemovedReport(
+            removed_ids=["tun-abc-5201"],
+            killed={"h0": [42]},
+            unreachable=[],
+            survivors=[("h0", 42)],
+        ),
+    )
+    result = await project.cleanup()
+    assert not result.is_ok
+    assert "h0" in result.msg
+    assert "42" in result.msg
+
+
+@pytest.mark.asyncio
+async def test_cleanup_reports_a_host_the_tunnel_reap_could_not_reach(monkeypatch):
+    # A tunnel outlives a partial reap on exactly those hosts, so an
+    # unreachable host is a reap that did NOT finish — the CLI's `tunnel
+    # remove --all` exits 1 on it for the same reason.
+    _wire(
+        monkeypatch,
+        repos=["app"],
+        hosts=1,
+        reap=RemovedReport(removed_ids=[], killed={}, unreachable=["h9"], survivors=[]),
+    )
+    result = await project.cleanup()
+    assert not result.is_ok
+    assert "h9" in result.msg
+
+
+@pytest.mark.asyncio
+async def test_cleanup_no_reset_impairments_skips_only_that_step(monkeypatch):
+    lab = _wire(monkeypatch, repos=["app"], hosts=1)
+    assert (await project.cleanup(reset_impairments=False)).is_ok
+    assert "repair_all" not in _verbs(lab.events)
+    assert ("lab", "remove_all_tunnels") in lab.events
+
+
+@pytest.mark.asyncio
+async def test_cleanup_no_remove_tunnels_skips_only_that_step(monkeypatch):
+    lab = _wire(monkeypatch, repos=["app"], hosts=1)
+    assert (await project.cleanup(remove_tunnels=False)).is_ok
+    assert "remove_all_tunnels" not in _verbs(lab.events)
+    assert ("lab", "repair_all") in lab.events
+
+
+@pytest.mark.asyncio
+async def test_cleanup_a_dry_run_declines_both_steps_rather_than_reporting_them_done(monkeypatch):
+    # THE REAL LIBRARY FUNCTIONS, not the doubles: both short-circuit above
+    # device contact and hand back a plan-carrying report, and the point of
+    # this test is that cleanup goes THROUGH them (never reimplementing `tc`
+    # or `kill`) and turns "nothing was read, nothing was killed" into a
+    # decline rather than into `Success`. An empty report is what a real sweep
+    # of a clean lab produces too, so Success here would be the one wrong
+    # answer indistinguishable from a right one.
+    class _Unaskable:
+        """A lab host that fails the test if anything reaches for the wire."""
+
+        def __init__(self, host_id):
+            self.id = host_id
+            self.has_bash = True
+            self.ip = "10.0.0.1"
+            self.interfaces = {"eth1": "10.0.0.1"}
+            self.impairer = "netem"
+            self.current_user = "root"
+
+        async def exec(self, *args, **kwargs):
+            raise AssertionError("a dry run contacted a device")
+
+        async def run(self, *args, **kwargs):
+            raise AssertionError("a dry run contacted a device")
+
+        async def is_running(self):
+            raise AssertionError("a dry run probed a device")
+
+    link = Link(a=LinkEndpoint("r1", "eth1"), b=LinkEndpoint("r2", "eth1"), id="core")
+    fake_lab = SimpleNamespace(
+        name="dry",
+        hosts={"r1": _Unaskable("r1"), "r2": _Unaskable("r2")},
+        static_links=lambda: [link],
+    )
+    ctx = _FakeCtx([], lab=fake_lab)
+    ctx.dry_run = True
+    _wire_lab(monkeypatch, [], ctx)
+    monkeypatch.setattr("otto.context.try_get_context", lambda: ctx)
+
+    result = await project.cleanup()
+
+    assert result.status is Status.NotRun  # not Success, and not a fabricated failure
+    assert "dry run" in result.msg
+
+
+@pytest.mark.asyncio
+async def test_cleanup_dry_run_preview_of_the_impairment_reset_is_not_a_repair(monkeypatch):
+    # repair_all under a dry run files its previews in `planned` and leaves
+    # `repaired` empty. Kills: counting `planned` as work done.
+    _wire(
+        monkeypatch,
+        repos=[],
+        hosts=0,
+        repair=RepairAllReport(planned=[RepairReport("core")], dry_run=True),
+    )
+    result = await project.cleanup()
+    assert result.status is Status.NotRun
+    assert "dry run" in result.msg
+
+
+@pytest.mark.asyncio
+async def test_cleanup_dry_run_preview_of_the_tunnel_reap_is_not_a_reap(monkeypatch):
+    # ASKED WITH THE IMPAIRMENT RESET OFF, on purpose: with both steps
+    # declining, the reset's own decline is the one that returns and this
+    # step's could be dropped entirely without a test noticing. A reap that
+    # scanned nothing has all four of its fields empty by CONSTRUCTION, which
+    # is precisely what a real reap of a tunnel-free lab reports.
+    _wire(
+        monkeypatch,
+        repos=[],
+        hosts=0,
+        reap=RemovedReport([], {}, [], [], plan=DryRunPlan(["scan 0 has_bash host(s)"], ["what"])),
+    )
+    result = await project.cleanup(reset_impairments=False)
+    assert result.status is Status.NotRun
+    assert "dry run" in result.msg
 
 
 # ── get_logs ─────────────────────────────────────────────────────────────
@@ -543,6 +951,36 @@ async def test_status_aggregate_is_uninstalled_when_every_counted_repo_is(monkey
     assert (await project.status()).overall is InstallState.UNINSTALLED
 
 
+@pytest.mark.asyncio
+async def test_status_is_immune_to_impairments_and_tunnels(monkeypatch):
+    """INSTALL STATE IS ABOUT PRODUCTS AND NOTHING ELSE (the repo owner's rule).
+
+    An impaired link and a live tunnel are lab infrastructure: `cleanup`
+    removes them and `is_clean` counts them, but the tri-state answer stays a
+    product count. A lab under test with 200ms of delay on a link is still
+    INSTALLED, and reporting it PARTIAL would send `ensure_installed` into a
+    teardown-and-reinstall over an impairment somebody deliberately applied.
+
+    Asserted as "neither read seam was CALLED", not merely as the state: a
+    status that consulted them and happened to ignore the answer would pass a
+    state-only assertion and fail the day someone folded the answer in.
+    """
+    ctx = _FakeCtx([_FakeHost("h0", [], products=[_FakeItem("app", installed=True)])])
+    _wire_lab(monkeypatch, ["app"], ctx)
+    calls = _wire_infra(
+        monkeypatch,
+        [],
+        states=[_state(whole=ImpairmentParams(delay_ms=200.0))],
+        discovery=TunnelDiscovery([_live_tunnel()], []),
+    )
+
+    report = await project.status()
+
+    assert report.overall is InstallState.INSTALLED
+    assert report.repos == {"app": InstallState.INSTALLED}
+    assert calls == []
+
+
 # ── is_clean ─────────────────────────────────────────────────────────────
 
 
@@ -578,6 +1016,157 @@ async def test_is_clean_asks_a_repo_that_status_does_not_count(monkeypatch):
     ctx = _FakeCtx([_FakeHost("h0", [], dev_tools=[tool])])
     _wire_lab(monkeypatch, ["tools"], ctx)
     assert await project.is_clean() is False
+
+
+def _state(*, impairable=True, direction=FlowDirection.A_TO_B, **shape):
+    """One link's read state, with *shape* applied to *direction* and the other clean.
+
+    THE DIRECTION IS A PARAMETER because the two land on different hosts and
+    are read separately: an impairment applied with ``--from`` the b end shows
+    up in exactly one of these two cells, and a check that consulted only the
+    first would report that lab clean.
+    """
+    link = _link()
+    if not impairable:
+        return LinkState(link, {}, impairable=False, refusal="no named interface")
+    # BUILT IN PLACEMENT ORDER (a->b, then b->a) whichever direction carries
+    # the shape, exactly as `endpoint_placements` walks it. Keying the impaired
+    # direction in first would put it at the head of the dict in both cases,
+    # and a check that read only `by_direction`'s first entry would then pass
+    # the b->a case it cannot actually see.
+    return LinkState(
+        link,
+        {
+            d: DirectionState(**shape) if d is direction else DirectionState()
+            for d in (FlowDirection.A_TO_B, FlowDirection.B_TO_A)
+        },
+    )
+
+
+def _live_tunnel():
+    """One discovered tunnel — the shape ``tunnel list`` renders a row for."""
+    tunnel = Tunnel(protocol="tcp", service_port=5201, path=(TunnelHop("h0"), TunnelHop("h1")))
+    return DiscoveredTunnel(
+        tunnel=tunnel, present=set(), missing=set(), age_seconds=7, uncertain=False
+    )
+
+
+@pytest.mark.asyncio
+async def test_is_clean_is_true_with_links_read_clean_and_no_tunnel(monkeypatch):
+    # Kills: treating the mere PRESENCE of a link state as dirt — every lab has
+    # link states, so that reading would make ensure_clean run cleanup forever.
+    lab = _wire(monkeypatch, repos=["app"], hosts=1, states=[_state(), _state(impairable=False)])
+    assert await project.is_clean() is True
+    assert [name for name, _lab in lab.infra] == ["read_link_states", "discover_tunnels"]
+    assert all(obj is lab.ctx.lab for _name, obj in lab.infra)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("direction", [FlowDirection.A_TO_B, FlowDirection.B_TO_A])
+async def test_is_clean_is_false_while_a_link_carries_a_whole_link_impairment(
+    monkeypatch, direction
+):
+    # THE agreement rule: cleanup resets impairments, so is_clean must see one.
+    # Without this, `ensure_clean` no-ops on a lab `otto run cleanup` would
+    # visibly change — the split-brain the whole project layer exists to stop.
+    #
+    # BOTH DIRECTIONS, because they are read off different hosts and land in
+    # different cells: `impair --from <b>` fills only the second, so a check
+    # that consulted `by_direction`'s first entry alone would call that lab
+    # clean and every one-direction test would still pass.
+    _wire(
+        monkeypatch,
+        repos=["app"],
+        hosts=1,
+        states=[_state(direction=direction, whole=ImpairmentParams(delay_ms=50.0))],
+    )
+    assert await project.is_clean() is False
+
+
+@pytest.mark.asyncio
+async def test_is_clean_is_false_while_a_link_carries_a_port_scoped_impairment(monkeypatch):
+    # Kills: reading `whole` alone. A port-scoped impairment leaves `whole`
+    # None and lives in `scoped`, and `repair_all` clears it just the same.
+    _wire(
+        monkeypatch,
+        repos=["app"],
+        hosts=1,
+        states=[_state(scoped={Selector(5201, "tcp"): ImpairmentParams(loss_pct=2.0)})],
+    )
+    assert await project.is_clean() is False
+
+
+@pytest.mark.asyncio
+async def test_is_clean_ignores_a_foreign_qdisc_because_cleanup_refuses_it(monkeypatch):
+    # AGREEMENT CUTS BOTH WAYS. A qdisc otto did not create is one `repair_all`
+    # declines to touch (`_ensure_not_foreign`), deliberately — clearing it
+    # would clobber tc config a human put on a shared host. Reporting the lab
+    # unclean for it would send every `ensure_clean` into a cleanup that
+    # provably cannot change the answer.
+    _wire(monkeypatch, repos=["app"], hosts=1, states=[_state(foreign=True)])
+    assert await project.is_clean() is True
+
+
+@pytest.mark.asyncio
+async def test_is_clean_is_false_while_a_tunnel_is_live(monkeypatch):
+    # The second half of the agreement rule, and the one with no other witness:
+    # a lab dirty ONLY in tunnels was clean to every surface before this.
+    _wire(
+        monkeypatch,
+        repos=["app"],
+        hosts=1,
+        discovery=TunnelDiscovery([_live_tunnel()], []),
+    )
+    assert await project.is_clean() is False
+
+
+@pytest.mark.asyncio
+async def test_is_clean_raises_when_a_links_impairment_state_was_not_read(monkeypatch):
+    # `read_link_states` never raises per link — it REPORTS the three ways a
+    # read can fail — so this layer is the one that must refuse to answer.
+    # Reading "we could not look" as clean is the fabrication the dry-run
+    # contract is built around; reading it as dirty sends a converge into a
+    # cleanup on a fact nobody established. Both are wrong, so neither is
+    # chosen.
+    link = Link(a=LinkEndpoint("h0", "eth1"), b=LinkEndpoint("h1", "eth1"), id="core")
+    for state in (
+        LinkState(link, {}, not_measured=True),
+        LinkState(link, {}, unreachable=True),
+        LinkState(link, {}, read_errors={FlowDirection.A_TO_B: "tc: not found"}),
+    ):
+        _wire(monkeypatch, repos=["app"], hosts=1, states=[state])
+        with pytest.raises(RuntimeError, match="core"):
+            await project.is_clean()
+
+
+@pytest.mark.asyncio
+async def test_is_clean_answers_dirty_on_a_tunnel_seen_during_a_partial_scan(monkeypatch):
+    # A DEFINITIVE ANSWER BEATS AN INCOMPLETE SCAN. The unreachable host below
+    # would raise on its own — nobody knows what it is running — but a tunnel
+    # has already been SEEN, and no host that failed to answer can make the lab
+    # clean again. Raising here would refuse a question otto has answered, and
+    # strand `ensure_clean` on a lab it can see needs cleaning.
+    _wire(
+        monkeypatch,
+        repos=["app"],
+        hosts=1,
+        discovery=TunnelDiscovery([_live_tunnel()], ["h9"]),
+    )
+    assert await project.is_clean() is False
+
+
+@pytest.mark.asyncio
+async def test_is_clean_raises_when_the_tunnel_scan_measured_nothing(monkeypatch):
+    # Same rule for the reap's read side: a dry run's declined scan and a host
+    # that never answered both leave "is a tunnel running?" unanswered, and an
+    # empty tunnel list is exactly what a clean lab returns.
+    for discovery in (
+        TunnelDiscovery([], [], not_measured=True),
+        TunnelDiscovery([], ["h9"]),
+    ):
+        _wire(monkeypatch, repos=["app"], hosts=1, discovery=discovery)
+        with pytest.raises(RuntimeError):
+            await project.is_clean()
 
 
 @pytest.mark.asyncio

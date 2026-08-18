@@ -22,12 +22,18 @@
 #
 # THOSE PAIRS ARE NOT THE WHOLE FORMATION — they account for only TWELVE of the
 # sixteen. The other four join through longer loops that contain no mutual pair
-# of their own, every one of them closing through otto.cli:
+# of their own:
 #
 #   project  -> cli -> suite -> project          (documented on otto.suite below)
 #   coverage -> config -> cli -> coverage
 #   monitor  -> host -> config -> cli -> monitor
 #   tunnel   -> host -> config -> cli -> tunnel
+#   tunnel   -> host -> config -> suite -> project -> tunnel   (2026-08-17)
+#
+# Every one of those closed through otto.cli until the project->link/tunnel
+# edges landed (2026-08-17, `otto run cleanup` resetting impairments and
+# reaping tunnels — see otto.project below). The last line is the one that does
+# not, and it is why the both-cuts figure below moved.
 #
 # FOUR OF THOSE PAIRS HAVE OWNERS, and are the ones the DEBT/NOTE comments in
 # this file track: cli<->config, config<->context, context<->host and
@@ -35,9 +41,17 @@
 # is recorded here so that the marked backlog is never mistaken for the whole
 # count. EXPECT NO SINGLE-EDGE FIX: otto.cli has exactly two inbound edges from
 # inside the component (config->cli and project->cli), and cutting EITHER alone
-# leaves it at sixteen — measured. Cutting both drops it to fourteen, which is
+# leaves it at sixteen — measured. Cutting both drops it to FIFTEEN, which is
 # where the real work starts rather than ends. Re-measure with the flag before
 # quoting any of these numbers; never adjust them by guess.
+#
+# THAT LAST FIGURE WAS FOURTEEN until 2026-08-17, and what moved it belongs in
+# writing because nothing else in this file would show it: with both cli edges
+# cut, otto.cli and otto.tunnel used to leave the component together — tunnel's
+# only loop ran through cli. The project->tunnel edge added that day gives it a
+# second one that does not (the fifth loop above), so cutting cli out now
+# strands cli alone. All four states re-measured the same day: sixteen with the
+# new edges, sixteen with either cli edge cut, fifteen with both.
 #
 # Note tach counts function-scope (lazy) imports as edges, same as module
 # scope. Scope-sensitive rules (e.g. "models may import config lazily but
@@ -240,6 +254,19 @@ path = "otto.project"
 # other half of this note. Every OTHER module in the package stays CLI-free,
 # which is what lets a fixture or a suite call the orchestrator without
 # dragging typer in.
+#
+# otto.link and otto.tunnel are `cleanup`'s last two steps and `is_clean`'s
+# last two questions (2026-08-17): a netem impairment and a tunnel belong to
+# the LAB rather than to any repo, so the orchestrator resets and reaps them
+# once, exactly as it does the debug sweep and the toolchain. BOTH EDGES POINT
+# DOWN and both are function-scope, in orchestrator.py alone — the four calls
+# are `link.manage.repair_all` / `read_link_states` and
+# `tunnel.manage.remove_all_tunnels` / `tunnel.discovery.discover_tunnels`,
+# each handed `ctx.lab` and nothing else. Neither package knows this one
+# exists, so neither edge is a mutual pair; the component is unchanged at
+# sixteen (re-measured, see the header). What DID move is the header's
+# both-cuts figure: project->tunnel is now tunnel's only cli-free way back
+# into the component.
 depends_on = [
     "otto.registry",
     "otto.result",
@@ -248,6 +275,8 @@ depends_on = [
     "otto.config",
     "otto.context",
     "otto.cli",
+    "otto.link",
+    "otto.tunnel",
 ]
 
 [[modules]]

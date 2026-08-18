@@ -137,7 +137,7 @@ fixtures are unaffected and sit alongside them.
 | `ctx` | function | The active {class}`~otto.context.OttoContext` for this invocation |
 | `ensure_installed` | function | A lab converged to fully-installed before the test |
 | `ensure_uninstalled` | function | A lab converged to fully-uninstalled before the test |
-| `ensure_clean` | function | A lab with no products, dev tools or toolchain tools left |
+| `ensure_clean` | function | A lab with no products, dev tools, toolchain tools, impairments or tunnels left |
 
 The three `ensure_*` fixtures declare a test's *starting state* instead of
 scripting it:

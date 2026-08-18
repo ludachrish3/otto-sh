@@ -107,14 +107,27 @@ async def cleanup(
     debug_logs: Annotated[
         bool, typer.Option(help="Sweep every host's debug logs once, after every repo is down.")
     ] = True,
+    reset_impairments: Annotated[
+        bool, typer.Option(help="Repair every lab link, clearing otto's netem impairments.")
+    ] = True,
+    remove_tunnels: Annotated[
+        bool, typer.Option(help="Reap every otto tunnel in the lab -- the very last step.")
+    ] = True,
 ) -> Result:
-    """Uninstall every repo, and remove its dev tools and the hosts' toolchains.
+    """Uninstall every repo, remove its dev tools, and clear what the lab is left wearing.
 
     Strictly more than uninstall: each repo also gives up its own dev tools,
-    and the host-global toolchain tools come off at the very end -- one
-    toolchain serves every owner on a host, so no single repo may remove it.
+    the host-global toolchain tools come off, and the lab's own leftovers --
+    netem impairments and otto tunnels -- come down after them. Those last two
+    belong to no repo, and the tunnel reap is last of all because a tunnel can
+    be the access path the rest of the cleanup is running over.
     """
-    return await orchestrator.cleanup(get_product_logs=product_logs, get_debug_logs=debug_logs)
+    return await orchestrator.cleanup(
+        get_product_logs=product_logs,
+        get_debug_logs=debug_logs,
+        reset_impairments=reset_impairments,
+        remove_tunnels=remove_tunnels,
+    )
 
 
 @instruction("get-logs")

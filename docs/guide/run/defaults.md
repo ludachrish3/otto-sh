@@ -67,7 +67,7 @@ The other five follow the same shape:
 | ----------- | ----------------- | ---- |
 | `install` | `--ensure` (off), `--recover-partial` (on, meaningful with `--ensure`) | dependencies first, fail-fast |
 | `uninstall` | `--product-logs` (on), `--debug-logs` (on) | dependents first, best-effort |
-| `cleanup` | `--product-logs` (on), `--debug-logs` (on) | dependents first, best-effort |
+| `cleanup` | `--product-logs` (on), `--debug-logs` (on), `--reset-impairments` (on), `--remove-tunnels` (on) | dependents first, best-effort |
 | `get-logs` | `--product-logs` (on), `--debug-logs` (on), `--require-product-logs` (off) | order immaterial, best-effort |
 | `install-tools` | `--dev` (on), `--toolchain` (off) | dependencies first, fail-fast |
 | `status` | — | reads only; changes nothing |
@@ -75,9 +75,12 @@ The other five follow the same shape:
 Every one of those is a `--flag / --no-flag` pair, as usual.
 
 `cleanup` is strictly more than `uninstall`: each repo also gives up its own dev
-tools, and the host-global toolchain tools come off at the very end. `--ensure`
-turns `install` into a converge — the lab's current state is read and only the
-missing work is done — which is what the fixtures do before a test.
+tools, the host-global toolchain tools come off, and the lab's own leftovers go
+with them — netem impairments are reset and every otto tunnel is reaped. See
+[What `cleanup` takes off the lab](#what-cleanup-takes-off-the-lab) for what
+those last two do and do not touch. `--ensure` turns `install` into a converge —
+the lab's current state is read and only the missing work is done — which is
+what the fixtures do before a test.
 
 ## The override ladder
 
@@ -140,12 +143,57 @@ the same repo fails loud. Different repos each registering their own is the
 intended composition, not a collision. A repo that registers nothing gets
 `ProjectActions` itself.
 
-Two things are deliberately *not* per-repo, and the defaults refuse them:
-**debug logs** and **toolchain tools**. Both belong to a host, not to a repo —
-N repos each sweeping the same host's debug logs means N transfers each
+Some things are deliberately *not* per-repo, and the defaults refuse them:
+**debug logs** and **toolchain tools** belong to a host, not to a repo — N
+repos each sweeping the same host's debug logs means N transfers each
 overwriting the last, and one toolchain serves every owner on a host, so a repo
-removing it would take its neighbours' tooling with it. Both are performed
-once, by the layer above.
+removing it would take its neighbours' tooling with it. **Impairments and
+tunnels** are one step further out again: they belong to the lab rather than to
+any single host, and nothing in a repo's products or dev tools put them there.
+All of them are performed once, by the layer above.
+
+## What `cleanup` takes off the lab
+
+The last two steps of `cleanup` are lab infrastructure, and each goes through
+the library that owns it rather than issuing `tc` or `kill` itself:
+
+| Step | Call | Scope |
+| ---- | ---- | ----- |
+| `--reset-impairments` | `otto.link.manage.repair_all(lab)` | every static link in the lab — only the impairable ones can carry otto's netem |
+| `--remove-tunnels` | `otto.tunnel.manage.remove_all_tunnels(lab)` | every otto tunnel, found by scanning |
+
+Two consequences worth knowing before you rely on either.
+
+**A qdisc otto did not create is left alone.** `repair_all` refuses to clear a
+foreign root qdisc — the `tc` configuration a colleague put on a shared host is
+not otto's to delete — and it refuses a management or hop-transit interface for
+the self-lockout reasons `link impair` refuses them. Those refusals are
+reported: `cleanup` comes back `Skipped` naming each declined link, which is
+`is_ok` (a decline is not a teardown failure and must not abort the rest of a
+best-effort cleanup) but is deliberately *not* `Success` — something may still
+be on that netdev, and otto has just declined to take it off. A link otto tried
+and failed to repair is a failure, as usual.
+
+**A link that could never have been impaired is not a decline at all.**
+`repair_all` files those in the same bucket — every implicit hop edge is one,
+since they carry no named interface — and `cleanup` drops them before
+reporting, asking the same pure `impairment_refusal` predicate `otto link list`
+prints its reasons from. Otherwise `Success` would be unreachable on every real
+lab (an N-host lab resolves at least N implicit ids), each message would carry N
+lines nobody can act on, and a genuine foreign-qdisc refusal would be
+indistinguishable from that standing noise.
+
+**The tunnel reap is owner-agnostic and verified.** It finds tunnels by
+scanning every `has_bash` host for otto's process tag, so a tunnel left behind
+by a crashed run comes down with the rest — and it re-scans after killing. A
+process still present in that second scan, or a host the scan could not reach,
+fails the cleanup: those are the two ways a tunnel outlives its own reap.
+
+**Order: the tunnel reap is last of all.** A tunnel can *be* the access path to
+a host, so reaping it earlier would sever the connection the repo walk, the log
+sweep and the toolchain removal still need. Resetting impairments sits
+immediately before it for the mirrored reason — clearing delay and loss off a
+link only improves the path everything above ran over.
 
 ## Many repos: composition and order
 
@@ -164,8 +212,9 @@ cross-repo subclassing — you cannot subclass a class that may be absent, and a
   `uninstall failed in repo 'widget': …`.
 - **Host-global steps happen once, at the ends.** The debug sweep runs after
   every repo has torn down (teardown-time activity is what those logs exist to
-  capture); the toolchain removal is the last step of `cleanup`, after the
-  sweep, so no log retrieval depends on tooling that step is deleting.
+  capture); the toolchain removal follows it, so no log retrieval depends on
+  tooling that step is deleting. `cleanup` then finishes with the lab's own
+  infrastructure — impairments, and the tunnel reap last of all.
 
 Ordering beyond dependency order is not configurable, and the orchestrator
 itself is not overrideable: a repo customizes by overriding its own actions.
@@ -216,15 +265,33 @@ CLI calls, so a fixture and `otto run install --ensure` cannot diverge. See
   holds, the cost is one probe of it — but not the same probe for all three.
   `ensure_installed` and `ensure_uninstalled` ask `status()`, which counts the
   *counted* repos' products. `ensure_clean` asks `is_clean()` instead, and that
-  is the heavier sweep: **every** repo is asked (not only the counted ones), dev
-  tools are probed alongside products, and each host is asked once more for
-  `toolchain_tools_absent()`.
+  is much the heavier sweep: **every** repo is asked (not only the counted
+  ones), dev tools are probed alongside products, each host is asked once more
+  for `toolchain_tools_absent()`, every impairable link's netem state is read,
+  and the lab is scanned for tunnel processes.
 - **`ensure_installed` recovers a PARTIAL lab** by tearing it down and
   installing fresh — installing over remnants is how a lab got into that state
   in the first place.
-- **`ensure_clean` is stronger than `ensure_uninstalled`**: dev tools and
-  toolchain tools are not products, so an uninstalled-but-tooled lab still gets
-  cleaned.
+- **`ensure_clean` is stronger than `ensure_uninstalled`**: dev tools,
+  toolchain tools, impairments and tunnels are not products, so an
+  uninstalled-but-tooled — or merely impaired — lab still gets cleaned.
+- **`is_clean()` answers for exactly what `cleanup` removes**, which is the
+  rule that keeps the two from drifting: a lab dirty only in tunnels is not
+  clean, and `otto run cleanup` is what the fixture runs to fix it. It cuts the
+  other way too — a *foreign* qdisc leaves the lab "clean", because `cleanup`
+  provably will not remove one, and reporting otherwise would send every
+  `ensure_clean` into a cleanup that cannot change the answer.
+- **A state that could not be read is an error, never an answer.** A host that
+  did not respond to the toolchain probe, a link whose impairment could not be
+  read, a tunnel scan that reached nobody: each raises out of `is_clean()`
+  rather than being counted clean (a fact nobody measured) or dirty (a converge
+  into a cleanup on the same non-fact). The exception proves the rule: if the
+  scan *did* find a tunnel before running out of hosts, the lab is dirty and
+  says so — an unreachable host cannot unmake an answer otto already has.
+- **`status()` never moves for either of them.** An impaired link and a live
+  tunnel are lab infrastructure; the tri-state install answer stays a count of
+  products, so a lab under test with 200 ms of injected delay still reads
+  INSTALLED.
 - **Failure errors the test, naming the host — never a skip.** A host that
   cannot be brought to the state a test requires fails that test
   ({class}`~otto.errors.EnsureStateError`), rather than quietly removing it from

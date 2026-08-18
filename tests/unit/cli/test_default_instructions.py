@@ -284,13 +284,33 @@ async def test_uninstall_forwards_both_log_flags(monkeypatch, registered):
 
 
 @pytest.mark.asyncio
-async def test_cleanup_forwards_both_log_flags(monkeypatch, registered):
+async def test_cleanup_forwards_all_four_flags(monkeypatch, registered):
+    """Both log flags AND the two lab-infrastructure ones.
+
+    Asserted as an exact mapping, defaults included: a flag the wrapper accepts
+    and drops is a `--no-remove-tunnels` that reaps the tunnels anyway, and it
+    would pass any assertion that only checked the flags it bothered to pass.
+    """
     rec = _Recorder()
     monkeypatch.setattr(orchestrator, "cleanup", rec)
 
-    await registered.cleanup(product_logs=True, debug_logs=False)
+    await registered.cleanup(product_logs=True, debug_logs=False, remove_tunnels=False)
+    await registered.cleanup(reset_impairments=False)
 
-    assert rec.calls == [{"get_product_logs": True, "get_debug_logs": False}]
+    assert rec.calls == [
+        {
+            "get_product_logs": True,
+            "get_debug_logs": False,
+            "reset_impairments": True,
+            "remove_tunnels": False,
+        },
+        {
+            "get_product_logs": True,
+            "get_debug_logs": True,
+            "reset_impairments": False,
+            "remove_tunnels": True,
+        },
+    ]
 
 
 @pytest.mark.asyncio

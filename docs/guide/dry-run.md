@@ -451,6 +451,30 @@ poison — but `is_ok` is `False`, so
 `if (await host.write_file(...)).is_ok:` no longer tells a caller the file was
 written.
 
+### The lab-level verbs answer the same way
+
+`otto.project`'s verbs — what `otto run install` and the `ensure_*` fixtures
+call — compose the host verbs above, and inherit their answers. Two of them
+have an answer of their own, and both are reached from a *library* caller: the
+`otto run` group keeps the seam default, so `otto -n run cleanup` prints the
+block and runs no body at all, while a suite requesting `ensure_clean` calls
+the converge directly.
+
+- `cleanup()` finishes with two lab-wide steps, and neither pretends to have
+  run: `otto.link.manage.repair_all` reads no netdev and
+  `otto.tunnel.manage.remove_all_tunnels` scans no host, so each is reported
+  `Status.NotRun` ("dry run: no link was read and no impairment was reset").
+  Their empty reports are exactly what a real sweep of an already-clean lab
+  produces, which is why the status carries the difference.
+- `is_clean()` returns a `bool` and so, like `host.is_clean()`, raises rather
+  than answering as soon as something it needs was not measured — the
+  toolchain probe, a link whose impairment state was declined
+  ({class}`~otto.link.manage.LinkNotMeasuredError`), or a tunnel scan that
+  asked nobody ({class}`~otto.tunnel.discovery.TunnelNotMeasuredError`). It is
+  the same rule in the same words: reporting a lab clean on the strength of
+  reads nobody took would send a converge into a cleanup on a fact nobody
+  established.
+
 ### Adapting run-parse-branch code
 
 The pattern needing attention is the one that reads a device fact and decides
