@@ -17,6 +17,7 @@ from .actions import PROJECT_ACTIONS as PROJECT_ACTIONS
 from .actions import ProjectActions as ProjectActions
 from .actions import actions_for as actions_for
 from .actions import register_project_actions as register_project_actions
+from .orchestrator import cleanliness as cleanliness
 from .orchestrator import cleanup as cleanup
 from .orchestrator import ensure_clean as ensure_clean
 from .orchestrator import ensure_installed as ensure_installed
@@ -25,7 +26,12 @@ from .orchestrator import get_logs as get_logs
 from .orchestrator import install as install
 from .orchestrator import install_tools as install_tools
 from .orchestrator import is_clean as is_clean
+from .orchestrator import is_uninstalled as is_uninstalled
 from .orchestrator import status as status
 from .orchestrator import uninstall as uninstall
+from .state import Cleanliness as Cleanliness
+from .state import CleanlinessItem as CleanlinessItem
+from .state import CleanlinessKind as CleanlinessKind
+from .state import CleanlinessReport as CleanlinessReport
 from .state import InstallState as InstallState
 from .state import ProjectStatus as ProjectStatus

@@ -19,7 +19,7 @@ keywords out. A wrapper thick enough to have a bug of its own belongs in the
 orchestrator, where the fixtures reach it too.
 """
 
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 
 import typer
 
@@ -27,7 +27,12 @@ from ..cli.run import instruction
 from ..result import Result
 from ..utils import Status
 from . import orchestrator
-from .state import InstallState
+from .state import Cleanliness, CleanlinessKind, InstallState
+
+if TYPE_CHECKING:
+    from rich.table import Table
+
+    from .state import CleanlinessReport
 
 _STATE_ANSWERS: "dict[InstallState, Result]" = {
     InstallState.INSTALLED: Result(Status.Success, value="lab is installed"),
@@ -56,6 +61,38 @@ _STATE_STYLES: "dict[InstallState, str]" = {
     InstallState.UNINSTALLED: "dim",
     InstallState.PARTIAL: "yellow",
 }
+
+_CLEANLINESS_STYLES: "dict[Cleanliness, str]" = {
+    Cleanliness.CLEAN: "green",
+    Cleanliness.DIRTY: "yellow",
+    Cleanliness.UNKNOWN: "red",
+}
+"""UNKNOWN is the loud one, not DIRTY.
+
+A dirty lab is an ordinary lab with a command that fixes it; a row nobody could
+read is the one an operator has to go and do something about before any of this
+means anything.
+"""
+
+_CLEANLINESS_LABELS: "dict[CleanlinessKind, str]" = {
+    CleanlinessKind.REPO: "products & dev tools",
+    CleanlinessKind.TOOLCHAIN: "toolchain tools",
+    CleanlinessKind.IMPAIRMENT: "impairments",
+    CleanlinessKind.TUNNEL: "tunnels",
+}
+"""Section headings, in ``cleanup``'s own step order (the report's row order)."""
+
+_CLEANLINESS_SUMMARY: "dict[Cleanliness, str]" = {
+    Cleanliness.CLEAN: "lab is clean",
+    Cleanliness.DIRTY: "lab is dirty — otto run cleanup takes it off",
+    Cleanliness.UNKNOWN: "lab cleanliness is unknown — see the unknown rows above",
+}
+"""The aggregate, which has nowhere else to go.
+
+The install aggregate rides out on the returned :class:`~otto.result.Result`
+and the leaf renderer prints it; the cleanliness axis has no such carrier,
+because it deliberately does not touch the exit code.
+"""
 
 
 @instruction()
@@ -166,7 +203,12 @@ async def install_tools(
 
 
 @instruction()
-async def status() -> Result:
+async def status(
+    full: Annotated[
+        bool,
+        typer.Option(help="Also report cleanliness: dev tools, toolchains, impairments, tunnels."),
+    ] = False,
+) -> Result:
     """Report each repo's install state, and the lab's.
 
     THE EXIT CODE IS THE ANSWER, so a script branches on it without parsing
@@ -178,6 +220,13 @@ async def status() -> Result:
     A repo with nothing to say about its install state (no products anywhere,
     no registered actions) is absent from the table rather than listed with a
     made-up state.
+
+    --full adds the lab's OTHER axis: what cleanup would still find on it --
+    dev tools, toolchain tools, netem impairments, otto tunnels -- row by row,
+    marking anything that could not be read rather than guessing at it. It
+    costs a link read per link and a process scan per host, which is why it is
+    a flag; it does NOT touch the exit code, which keeps meaning install state
+    and nothing else, so a fully installed but filthy lab still exits 0.
     """
     from rich import print as rprint
     from rich.table import Table
@@ -188,4 +237,42 @@ async def status() -> Result:
         for repo_name, state in report.repos.items():
             table.add_row(repo_name, f"[{_STATE_STYLES[state]}]{state.value}[/]")
         rprint(table)
+    if full:
+        _print_cleanliness(await orchestrator.cleanliness())
     return _STATE_ANSWERS[report.overall]
+
+
+def _print_cleanliness(report: "CleanlinessReport") -> None:
+    """Print the cleanliness rows and their aggregate, in the status table's style."""
+    from rich import print as rprint
+
+    rprint(_cleanliness_table(report))
+    rprint(f"[{_CLEANLINESS_STYLES[report.overall]}]{_CLEANLINESS_SUMMARY[report.overall]}[/]")
+
+
+def _cleanliness_table(report: "CleanlinessReport") -> "Table":
+    """Render the report as section / name / state rows.
+
+    The section heading is printed on the row where the kind CHANGES, which
+    needs no sorting: the report hands its rows back in cleanup's own step
+    order and grouped by kind, and that grouping is part of its contract.
+
+    THE STATE CELL IS A ``Text``, NOT A MARKUP STRING like the install table's
+    above, and the difference is where the words come from. That table renders
+    an enum otto owns; this one appends details that came off a device -- a
+    ``tc`` error, an exception's repr -- and any ``[`` in one of those would be
+    read as markup by the console and swallow the rest of the cell.
+    """
+    from rich.table import Table
+    from rich.text import Text
+
+    table = Table(show_header=False, box=None, padding=(0, 2, 0, 0))
+    heading = ""
+    for item in report.items:
+        label = _CLEANLINESS_LABELS[item.kind]
+        cell = Text(item.state.value, style=_CLEANLINESS_STYLES[item.state])
+        if item.detail:
+            cell.append(f" — {item.detail}", style="dim")
+        table.add_row("" if label == heading else label, item.name, cell)
+        heading = label
+    return table

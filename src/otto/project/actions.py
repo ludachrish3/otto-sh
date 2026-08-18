@@ -347,6 +347,20 @@ class ProjectActions:
             return InstallState.UNINSTALLED
         return InstallState.INSTALLED if installed == total else InstallState.PARTIAL
 
+    async def is_uninstalled(self) -> bool:
+        """Whether none of this repo's products is installed anywhere on the fleet.
+
+        DELIBERATELY UNPAIRED: there is no ``is_installed()`` at this layer.
+        False on such a boolean would cover PARTIAL and UNINSTALLED alike,
+        which is the exact conflation :meth:`status`' third member exists to
+        resolve, and the caller most likely to ask -- a converge -- is the one
+        that must tell them apart. Hosts carry the symmetric pair because a
+        host's own answer is per-product; a repo's is an aggregate, and an
+        aggregate is where the middle state appears. Ask :meth:`status` for
+        anything except "is there nothing of mine left to find".
+        """
+        return await self.status() is InstallState.UNINSTALLED
+
     async def is_clean(self) -> bool:
         """Whether none of this repo's products or dev tools remain installed.
 

@@ -21,7 +21,15 @@ from rich.console import Console
 from typer.testing import CliRunner
 
 from otto.instructions import FIRST_PARTY_INSTRUCTIONS, INSTRUCTIONS
-from otto.project import InstallState, ProjectStatus, orchestrator
+from otto.project import (
+    Cleanliness,
+    CleanlinessItem,
+    CleanlinessKind,
+    CleanlinessReport,
+    InstallState,
+    ProjectStatus,
+    orchestrator,
+)
 from otto.result import Result
 from otto.utils import Status
 from tests._fixtures.sutrepo import make_sut_repo
@@ -434,6 +442,186 @@ async def test_status_prints_every_repos_state(monkeypatch, registered, capsys):
         "widgets": "uninstalled",
     }
     assert "partially installed" in answer.msg  # the lab-level aggregate the renderer prints
+
+
+# ── status --full: the cleanliness axis ──────────────────────────────────────
+
+
+def _report(*rows):
+    """A cleanliness report of *rows*, in the order the orchestrator hands them over."""
+    return CleanlinessReport(items=list(rows))
+
+
+def _clean_row(kind, name, state, detail="", error=None):
+    """One row; UNKNOWN rows must carry the error is_clean would have raised."""
+    return CleanlinessItem(kind=kind, name=name, state=state, detail=detail, error=error)
+
+
+def _wire_status(monkeypatch, overall, repos=None, report=None):
+    """Point both orchestrator questions at doubles; return the cleanliness one."""
+    monkeypatch.setattr(
+        orchestrator, "status", _Recorder(ProjectStatus(overall=overall, repos=repos or {}))
+    )
+    probe = _Recorder(_report() if report is None else report)
+    monkeypatch.setattr(orchestrator, "cleanliness", probe)
+    return probe
+
+
+_SECTIONS = ("products & dev tools", "toolchain tools", "impairments", "tunnels")
+
+
+def _row_line(out: str, name: str) -> str:
+    """The one line of the CLEANLINESS section whose NAME column is *name*.
+
+    Sliced from the first section heading down, because the install table
+    prints first and names the same repos: a parser over the whole output finds
+    two lines for one repo and cannot say which axis it just read. Matched
+    line-wise within that slice for the reason the install table's own parser
+    is -- "clean" is a substring of the summary line below it, so a renderer
+    that painted every row alike satisfies a bare ``in out`` check and fails
+    the only assertion that matters, that THIS row says THIS.
+    """
+    lines = out.splitlines()
+    start = next(i for i, line in enumerate(lines) if line.startswith(_SECTIONS))
+    (row,) = [line for line in lines[start:] if name in line.split()]
+    return row
+
+
+@pytest.mark.asyncio
+async def test_bare_status_asks_for_no_cleanliness_at_all(monkeypatch, registered):
+    """`otto run status` stays exactly as cheap as it was: no new device reads.
+
+    Asserted as "the probe was never CALLED", not as "the output has no
+    cleanliness rows": a status that ran the link reads and the process scan
+    and then printed none of it passes the output check and charges every
+    caller the device work anyway.
+    """
+    probe = _wire_status(monkeypatch, InstallState.INSTALLED, {"acme": InstallState.INSTALLED})
+
+    await registered.status()
+
+    assert probe.calls == []
+
+
+@pytest.mark.asyncio
+async def test_status_full_leaves_the_exit_code_to_the_install_axis(monkeypatch, registered):
+    """A fully installed but filthy lab still exits 0.
+
+    THE CONTRACT SCRIPTS BRANCH ON: `--full` changes what is DISPLAYED, never
+    what is returned. Dev tools left behind and a tunnel still up are real dirt
+    and the rows below say so, while the code keeps meaning "are the products
+    on?" -- fold cleanliness into it and every script that reads `otto run
+    status` starts getting a different answer to the question it asked.
+    """
+    _wire_status(
+        monkeypatch,
+        InstallState.INSTALLED,
+        {"acme": InstallState.INSTALLED},
+        _report(
+            _clean_row(CleanlinessKind.REPO, "acme", Cleanliness.DIRTY),
+            _clean_row(CleanlinessKind.TUNNEL, "h0-h1-tcp-5201", Cleanliness.DIRTY),
+        ),
+    )
+
+    answer = await registered.status(full=True)
+
+    assert answer.exit_code == 0
+    assert answer is await registered.status()  # the same carrier the bare run returns
+
+
+@pytest.mark.asyncio
+async def test_status_full_prints_a_row_per_thing_and_heads_each_section_once(
+    monkeypatch, registered, capsys
+):
+    _wire_status(
+        monkeypatch,
+        InstallState.INSTALLED,
+        {"acme": InstallState.INSTALLED},
+        _report(
+            _clean_row(CleanlinessKind.REPO, "acme", Cleanliness.CLEAN),
+            _clean_row(CleanlinessKind.REPO, "widgets", Cleanliness.DIRTY),
+            _clean_row(CleanlinessKind.TUNNEL, "lab", Cleanliness.CLEAN),
+        ),
+    )
+
+    await registered.status(full=True)
+    out = capsys.readouterr().out
+
+    # Row-wise, because "clean" is a substring of nothing here by luck alone:
+    # a renderer reading the state off the report's AGGREGATE would paint both
+    # repo rows the same and still contain both words somewhere.
+    assert "clean" in _row_line(out, "acme")
+    assert "dirty" in _row_line(out, "widgets")
+    assert out.count("products & dev tools") == 1  # heading on the row the kind changes
+    assert out.count("tunnels") == 1
+    assert "lab is dirty" in out  # the aggregate, which no exit code carries
+
+
+@pytest.mark.asyncio
+async def test_status_full_renders_a_cell_for_what_could_not_be_read(
+    monkeypatch, registered, capsys
+):
+    """A DISPLAY'S DUTY ON A NON-FACT is the opposite of a converge's.
+
+    `is_clean` raises on an unread state, deliberately -- a cleanup decided on
+    something nobody measured is not a decision. A `--full` built on it would
+    die on one unreachable host and show nothing about the hosts that answered,
+    so the row is printed and marked instead.
+    """
+    _wire_status(
+        monkeypatch,
+        InstallState.UNINSTALLED,
+        {"acme": InstallState.UNINSTALLED},
+        _report(
+            _clean_row(CleanlinessKind.TOOLCHAIN, "h0", Cleanliness.CLEAN),
+            _clean_row(
+                CleanlinessKind.TOOLCHAIN,
+                "h9",
+                Cleanliness.UNKNOWN,
+                detail="host unreachable",
+                error=RuntimeError("h9 never answered"),
+            ),
+        ),
+    )
+
+    answer = await registered.status(full=True)
+    out = capsys.readouterr().out
+
+    assert "clean" in _row_line(out, "h0")
+    assert "unknown" in _row_line(out, "h9")
+    assert "host unreachable" in _row_line(out, "h9")
+    assert answer.exit_code == 1  # still the install axis, untouched
+
+
+@pytest.mark.asyncio
+async def test_status_full_does_not_read_a_device_message_as_markup(
+    monkeypatch, registered, capsys
+):
+    """The detail column carries text off a device, not words otto wrote.
+
+    A `tc` error or an exception repr can hold square brackets, and a cell
+    built by markup interpolation would read `[no such file]` as a style tag --
+    swallowing it and everything after it, or dying on the unknown tag.
+    """
+    detail = "read failed: [no such file]"
+    _wire_status(
+        monkeypatch,
+        InstallState.INSTALLED,
+        {"acme": InstallState.INSTALLED},
+        _report(
+            _clean_row(
+                CleanlinessKind.IMPAIRMENT,
+                "core",
+                Cleanliness.UNKNOWN,
+                detail=detail,
+                error=RuntimeError(detail),
+            )
+        ),
+    )
+
+    await registered.status(full=True)
+
+    assert detail in _row_line(capsys.readouterr().out, "core")
 
 
 # ── --list-instructions: the first-party panel ───────────────────────────────

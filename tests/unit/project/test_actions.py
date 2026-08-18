@@ -16,6 +16,10 @@ import pytest
 
 from otto.project import (
     PROJECT_ACTIONS,
+    Cleanliness,
+    CleanlinessItem,
+    CleanlinessKind,
+    CleanlinessReport,
     InstallState,
     ProjectActions,
     ProjectStatus,
@@ -542,6 +546,44 @@ async def test_status_with_no_owned_products_is_uninstalled():
     assert await ProjectActions(repo=REPO, ctx=ctx).status() is InstallState.UNINSTALLED
 
 
+@pytest.mark.asyncio
+async def test_is_uninstalled_is_false_at_partial_not_only_at_installed():
+    # THE BOUNDARY, and the reason this is not spelled `not is_installed()`: a
+    # half-installed repo is neither installed nor uninstalled, and a boolean
+    # that answered True here would let a converge skip the teardown over
+    # remnants still on the fleet.
+    for flags, expected in [
+        ([True, True], False),
+        ([True, False], False),
+        ([False, False], True),
+    ]:
+        ctx, _ = _ctx_with_products("acme", flags)
+        assert await ProjectActions(repo=REPO, ctx=ctx).is_uninstalled() is expected, flags
+
+
+@pytest.mark.asyncio
+async def test_is_uninstalled_reads_status_rather_than_counting_again():
+    # ONE AUTHORITY. A repo whose install state comes from something otto
+    # cannot see overrides status() and nothing else; a boolean built from its
+    # own product walk would ignore that override entirely and answer for a
+    # fleet the repo has already said not to read.
+    class _Opinionated(ProjectActions):
+        async def status(self):
+            return InstallState.UNINSTALLED
+
+    ctx, _ = _ctx_with_products("acme", [True, True])
+    assert await _Opinionated(repo=REPO, ctx=ctx).is_uninstalled() is True
+
+
+def test_no_is_installed_boolean_on_project_actions():
+    # DELIBERATE ASYMMETRY, and this is the note to whoever comes to "fix" it.
+    # A host carries the is_installed/is_uninstalled pair because its answer is
+    # per product; a repo's is an aggregate over the fleet, and an aggregate is
+    # where PARTIAL appears -- which False would bury alongside UNINSTALLED,
+    # the exact ambiguity the tri-state status() exists to resolve.
+    assert not hasattr(ProjectActions, "is_installed")
+
+
 def test_owns_products_sees_only_this_repos_products():
     ctx, _ = _ctx_with_products("acme", [False], other_flags=[True])
     assert ProjectActions(repo=REPO, ctx=ctx).owns_products is True
@@ -658,6 +700,38 @@ def test_actions_for_hands_the_instance_its_repo_and_context():
 
 
 # ── state vocabulary ─────────────────────────────────────────────────────
+
+
+def test_a_cleanliness_row_is_unknown_exactly_when_it_carries_an_error():
+    # THE INVARIANT `_verdict` LEANS ON. It raises the first UNKNOWN row's own
+    # error with no arm for "unreadable, and yet nothing to raise" -- because
+    # that shape cannot be built. The mirror half matters just as much: an
+    # error on a row that DID answer is a measurement contradicting itself.
+    for state, error in [
+        (Cleanliness.UNKNOWN, None),
+        (Cleanliness.CLEAN, RuntimeError("h9 never answered")),
+        (Cleanliness.DIRTY, RuntimeError("h9 never answered")),
+    ]:
+        with pytest.raises(ValueError, match="UNKNOWN"):
+            CleanlinessItem(kind=CleanlinessKind.REPO, name="acme", state=state, error=error)
+
+
+def test_the_cleanliness_aggregate_keeps_a_dirty_row_over_an_unreadable_one():
+    # An answer in hand is never discarded for a scan that fell short: once
+    # something has been SEEN, the lab needs cleaning, and the host nobody
+    # reached cannot make it clean again.
+    dirty = CleanlinessItem(kind=CleanlinessKind.TUNNEL, name="h0-h1", state=Cleanliness.DIRTY)
+    unknown = CleanlinessItem(
+        kind=CleanlinessKind.TOOLCHAIN,
+        name="h9",
+        state=Cleanliness.UNKNOWN,
+        error=RuntimeError("h9 never answered"),
+    )
+    assert CleanlinessReport([unknown, dirty]).overall is Cleanliness.DIRTY
+    assert CleanlinessReport([dirty, unknown]).overall is Cleanliness.DIRTY
+    assert CleanlinessReport([unknown]).overall is Cleanliness.UNKNOWN
+    # A lab with nothing that could be left over has nothing left over.
+    assert CleanlinessReport().overall is Cleanliness.CLEAN
 
 
 def test_project_status_defaults_to_an_empty_per_repo_map():

@@ -47,7 +47,14 @@ from .actions import (
     _reduce_results,
     actions_for,
 )
-from .state import InstallState, ProjectStatus
+from .state import (
+    Cleanliness,
+    CleanlinessItem,
+    CleanlinessKind,
+    CleanlinessReport,
+    InstallState,
+    ProjectStatus,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Iterable
@@ -206,15 +213,26 @@ def _live_refusals(lab: "Lab", skipped: "list[str]") -> "list[str]":
     """Return the ``repair_all`` skips worth reporting, dropping the structural ones.
 
     ``repair_all`` files every refusal in one bucket, and two very different
-    facts land there. A link that could NEVER carry otto's impairment -- every
+    facts land there. A link ``repair_all`` COULD NEVER HAVE REPAIRED -- every
     implicit hop edge is one, because
     :func:`~otto.link.derive.implicit_links` builds endpoints with no named
     interface -- was refused before any device was asked, and there is nothing
     for a cleanup to say about it: the lab is not dirtier for having hop edges.
-    A link that COULD have been impaired and was declined anyway (a foreign
+    A link that COULD have been repaired and was declined anyway (a foreign
     qdisc, a management-interface or hop-transit refusal, a host with no
     impairer) is the opposite: something may well be on that netdev, and otto
     has just declined to take it off.
+
+    "COULD NEVER HAVE REPAIRED" IS NOT "COULD NEVER HAVE BEEN IMPAIRED", and
+    the difference is one real shape: a link with a named interface on ONE end
+    is refused by ``impairment_refusal(link, BOTH_DIRECTIONS)`` while ``otto
+    link impair --from <that end>`` places netem on it happily. The filter is
+    right anyway, because it is asked in the directions the sweep it filters
+    actually works in -- ``repair_all`` goes through ``repair_link``, which
+    takes ``_directions(link, None)``, both of them -- so a half-named link is
+    one the sweep can never clear either. Only the CLAIM has to stay the
+    narrower one: this drops links a cleanup could not have acted on, not links
+    that could not be impaired.
 
     Reporting both would make ``cleanup`` unable to return Success on any real
     lab -- an N-host lab resolves at least N implicit ids -- which would drain
@@ -225,10 +243,17 @@ def _live_refusals(lab: "Lab", skipped: "list[str]") -> "list[str]":
     The split is asked, not parsed:
     :func:`~otto.link.placement.impairment_refusal` is the same pure predicate
     ``otto link list`` prints its refusals from, so this cannot drift from the
-    placement layer's own answer. Only the ids it names are dropped, matched on
-    ``repair_all``'s own ``"<link id>: <why>"`` prefix, so a live refusal
-    against one of those links -- there is none today, since the structural
-    check fires first -- would still be reported.
+    placement layer's own answer. THE DROP IS BY LINK ID, NOT BY REASON: the
+    match is on ``repair_all``'s own ``"<link id>: <why>"`` prefix, so every
+    skip filed against a structurally-refused link goes, whatever text it
+    carries. That discards nothing today, because such a link cannot also
+    produce a live refusal: both structural causes -- the local-host rule and
+    an endpoint with no named interface -- are decided from lab data before any
+    device is contacted (``ensure_not_local_link`` then ``endpoint_placements``,
+    on the dry-run path as well as the real one), so the link's one skip entry
+    IS the structural one, and the live refusals a scan finds
+    (management interface, hop transit) are only reachable past a check it
+    never passes.
     """
     from ..link.placement import BOTH_DIRECTIONS, impairment_refusal
 
@@ -530,8 +555,155 @@ async def status() -> ProjectStatus:
     return ProjectStatus(overall=_aggregate(states.values()), repos=states)
 
 
-async def _impairment_present(ctx: "OttoContext") -> bool:
-    """Whether any lab link carries an impairment :func:`cleanup` would reset.
+async def is_uninstalled() -> bool:
+    """Whether the lab aggregate is UNINSTALLED -- no counted repo has a product on.
+
+    DELIBERATELY UNPAIRED: there is no lab-level ``is_installed()``, and adding
+    one is the change to refuse. False on such a boolean would mean PARTIAL and
+    UNINSTALLED alike -- the exact conflation
+    :class:`~otto.project.state.InstallState`'s third
+    member exists to resolve, and the callers most likely to ask are the
+    converges, which must tell those two apart to choose between installing and
+    tearing the remnants down first. Everything except "is there nothing
+    installed at all" reads :func:`status`.
+    """
+    return (await status()).overall is InstallState.UNINSTALLED
+
+
+####################
+#  Cleanliness probes
+####################
+
+# ONE PROBE PER AXIS, TWO CONSUMERS, AND THEY DIFFER ONLY IN WHAT THEY DO WITH
+# A NON-FACT. :func:`is_clean` must refuse to answer when something would not
+# say -- a converge that cleans on an unread state acts on nothing anybody
+# established -- while :func:`cleanliness` must print the rows it did get and
+# MARK the rest, because a display that dies on one unreachable host shows
+# nothing about the twelve that answered. Both duties are real, and neither may
+# get its own copy of "what does a leftover look like": that mirrored logic is
+# precisely what drifts, and a cleanliness check that disagreed with `cleanup`
+# is the split-brain this package exists to prevent.
+#
+# So every probe below answers in :class:`~otto.project.state.CleanlinessItem`
+# rows that CARRY the refusal instead of raising it, and each consumer decides
+# what to do with one.
+
+
+def _row(kind: "CleanlinessKind", name: str, clean: bool, detail: str = "") -> CleanlinessItem:
+    """One row whose answer was actually obtained."""
+    return CleanlinessItem(
+        kind=kind,
+        name=name,
+        state=Cleanliness.CLEAN if clean else Cleanliness.DIRTY,
+        detail=detail,
+    )
+
+
+def _unreadable(
+    kind: "CleanlinessKind", name: str, error: BaseException, detail: str
+) -> CleanlinessItem:
+    """One row nobody could read: the refusal held, plus a phrase to print.
+
+    *detail* is deliberately not ``str(error)``. The exception is raised on its
+    own by :func:`is_clean` and has to name its subject to be readable there;
+    the row already carries that name in a column of its own, so repeating it
+    in the cell beside it is noise in the only surface that prints both.
+    """
+    return CleanlinessItem(
+        kind=kind, name=name, state=Cleanliness.UNKNOWN, detail=detail, error=error
+    )
+
+
+def _verdict(items: "Iterable[CleanlinessItem]") -> bool:
+    """Reduce one axis' rows to ``is_clean``'s boolean, raising what nobody read.
+
+    A DEFINITIVE DIRTY ANSWER OUTRANKS AN UNREADABLE ROW IN EITHER ORDER, which
+    is why nothing is raised until the whole axis has been walked. An
+    incomplete scan matters only while the answer is still open: once one link
+    has been seen carrying netem -- or one tunnel found running -- the lab needs
+    cleaning, and a host that failed to answer cannot make it clean again.
+    Raising there would refuse a question otto has already answered, and strand
+    :func:`ensure_clean` on a lab it can see needs cleaning.
+
+    Otherwise the first unreadable row's own exception is raised UNWRAPPED: an
+    unreachable host, a ``tc`` that is not installed and a dry run's declined
+    read are three different classes, and the callers that handle them are
+    written against those types. ``error`` is non-None on exactly the UNKNOWN
+    rows -- :class:`~otto.project.state.CleanlinessItem` pins the two to each
+    other in both directions -- which is what makes the single assignment below
+    total, with no arm for a row that is unreadable and yet has nothing to
+    raise.
+    """
+    unreadable: "BaseException | None" = None
+    for item in items:
+        if item.state is Cleanliness.DIRTY:
+            return False
+        if unreadable is None:
+            unreadable = item.error
+    if unreadable is not None:
+        raise unreadable
+    return True
+
+
+async def _repo_items(ctx: "OttoContext", repos: "Iterable[Repo]") -> "list[CleanlinessItem]":
+    """One row per repo, from that repo's OWN ``is_clean`` -- products and dev tools.
+
+    EVERY repo is asked, not only the counted ones. The counted-repo rule
+    exists to keep an opinionless repo from dragging an install AGGREGATE, and
+    a repo with nothing installed answers clean here for free -- while skipping
+    it would miss the dev tools of a tooling repo that owns no products at all
+    (``owns_products`` cannot see tools).
+
+    A repo whose probe RAISES becomes an unreadable row rather than taking the
+    whole report down with it. :func:`is_clean` keeps a loop of its own over
+    the same method instead of reusing this one, and that is not a second copy
+    of anything: both call :meth:`~otto.project.actions.ProjectActions.is_clean`,
+    the single authority on what one repo's leftovers are. What differs is only
+    the walk -- the boolean stops at the first dirty repo, because the repos
+    after it cannot change the answer and probing them is device work for
+    nothing, while a report has to ask them all to have anything to show.
+    """
+    items: "list[CleanlinessItem]" = []
+    for repo in repos:
+        try:
+            clean = await actions_for(repo, ctx).is_clean()
+        except Exception as exc:  # noqa: BLE001,PERF203 — a display marks what it could not learn; is_clean is the surface that refuses to answer
+            items.append(
+                _unreadable(CleanlinessKind.REPO, repo.name, exc, f"the repo probe failed: {exc!r}")
+            )
+        else:
+            items.append(_row(CleanlinessKind.REPO, repo.name, clean))
+    return items
+
+
+async def _toolchain_items(ctx: "OttoContext") -> "list[CleanlinessItem]":
+    """One row per fleet host, on whether the toolchain tools :func:`cleanup` removes are gone.
+
+    Host-global, which is why this is the orchestrator's question and no
+    repo's: one toolchain serves every owner on a host.
+    :meth:`~otto.context.OttoContext.do_for_all_hosts` captures a host's
+    refusal as a VALUE, so a dry run's decline or a dead transport arrives here
+    as an entry to file rather than as a raise to catch.
+    """
+    outcomes = await ctx.do_for_all_hosts(_dispatch_toolchain_tools_absent)
+    items: "list[CleanlinessItem]" = []
+    for host_id, outcome in outcomes.items():
+        if isinstance(outcome, BaseException):
+            items.append(
+                _unreadable(
+                    CleanlinessKind.TOOLCHAIN,
+                    host_id,
+                    outcome,
+                    f"the toolchain probe did not answer: {outcome!r}",
+                )
+            )
+        else:
+            items.append(_row(CleanlinessKind.TOOLCHAIN, host_id, outcome))
+    return items
+
+
+async def _impairment_items(ctx: "OttoContext") -> "list[CleanlinessItem]":
+    """One row per lab link that could carry an impairment :func:`cleanup` would reset.
 
     Reads through :func:`otto.link.manage.read_link_states` -- the read-side
     twin of the ``repair_all`` this answers for -- so asking the question
@@ -541,11 +713,35 @@ async def _impairment_present(ctx: "OttoContext") -> bool:
     qdisc is where that bites: :func:`otto.link.manage._ensure_not_foreign`
     refuses to clear a root qdisc otto did not create, so a link carrying one
     is a link ``cleanup`` provably cannot change. Counting it as unclean would
-    make every ``ensure_clean`` run a cleanup that cannot move the answer,
-    forever. A link that is structurally unimpairable (every implicit hop edge)
-    has no state to read and none to remove.
+    make every :func:`ensure_clean` run a cleanup that cannot move the answer,
+    forever -- so a foreign tree leaves the row CLEAN.
 
-    A link whose state could not be READ raises instead of answering.
+    ANY LINK OTTO REFUSED TO IMPAIR GETS NO ROW AT ALL, which is WIDER than
+    the structural refusals :func:`_live_refusals` drops from ``cleanup``'s own
+    report. ``read_link_states`` clears ``impairable`` for both kinds: the
+    structural ones, decided from lab data (every implicit hop edge -- no named
+    interface -- and any link with the local host as an endpoint), and the LIVE
+    ones only a scan can find (a management interface, a hop-transit netdev, an
+    in-path placement that would not resolve).
+
+    Skipping both is deliberate, and the first reason applies to every refused
+    link: a refusal is answered BEFORE the read, so ``by_direction`` comes back
+    empty and there is nothing to show. Rendering that as a clean row would
+    claim a link is clear that nobody looked at -- the fabrication this whole
+    axis is built to avoid -- and it is not the kind of unknown an operator can
+    act on either, since otto refusing to touch a link is a fact about the
+    lab's shape rather than about what is left on it.
+
+    Beyond that they are dropped for different reasons. The structural ones are
+    standing noise: an N-host lab resolves at least N implicit hop edges, none
+    with any state to read or to remove, and N rows saying so would bury the
+    handful that mean something. The live ones have a better place to be said,
+    and ``cleanup`` says it: they are exactly the bucket ``_live_refusals``
+    KEEPS, so a declined management interface comes back named in cleanup's own
+    ``Skipped`` message, from the verb that declined it, rather than as a status
+    row that could only repeat the refusal without the action behind it.
+
+    A link whose state could not be READ becomes an unreadable row.
     ``read_link_states`` promises never to raise per link -- it reports the
     three ways a read can fail as flags -- so this is the layer that has to
     refuse: "clean" would be a fabrication (the dry-run case is exactly a link
@@ -560,102 +756,183 @@ async def _impairment_present(ctx: "OttoContext") -> bool:
         read_link_states,
     )
 
+    kind = CleanlinessKind.IMPAIRMENT
+    items: "list[CleanlinessItem]" = []
     for state in await read_link_states(ctx.lab):
+        link_id = state.link.id
+        if not state.impairable:
+            continue
         if state.not_measured:
-            raise LinkNotMeasuredError(
-                f"link {state.link.id!r}: nothing was read, so whether it carries an "
-                f"impairment is unknown"
+            items.append(
+                _unreadable(
+                    kind,
+                    link_id,
+                    LinkNotMeasuredError(
+                        f"link {link_id!r}: nothing was read, so whether it carries an "
+                        f"impairment is unknown"
+                    ),
+                    "nothing was read",
+                )
             )
-        if state.unreachable:
-            raise LinkHostUnreachableError(
-                f"link {state.link.id!r}: a placement host could not be reached, so "
-                f"whether it carries an impairment is unknown"
+        elif state.unreachable:
+            items.append(
+                _unreadable(
+                    kind,
+                    link_id,
+                    LinkHostUnreachableError(
+                        f"link {link_id!r}: a placement host could not be reached, so "
+                        f"whether it carries an impairment is unknown"
+                    ),
+                    "a placement host could not be reached",
+                )
             )
-        if state.read_errors:
-            raise LinkCommandFailedError(
-                f"link {state.link.id!r}: the impairment read failed: "
-                f"{'; '.join(sorted(state.read_errors.values()))}"
+        elif state.read_errors:
+            why = "; ".join(sorted(state.read_errors.values()))
+            items.append(
+                _unreadable(
+                    kind,
+                    link_id,
+                    LinkCommandFailedError(f"link {link_id!r}: the impairment read failed: {why}"),
+                    f"the read failed: {why}",
+                )
             )
-        for direction in state.by_direction.values():
-            if direction is not None and (direction.whole is not None or direction.scoped):
-                return True
-    return False
+        else:
+            impaired = sorted(
+                direction.value
+                for direction, shape in state.by_direction.items()
+                if shape is not None and (shape.whole is not None or shape.scoped)
+            )
+            items.append(_row(kind, link_id, not impaired, detail=", ".join(impaired)))
+    return items
 
 
-async def _tunnel_present(ctx: "OttoContext") -> bool:
-    """Whether any otto tunnel is running in the lab.
+async def _tunnel_items(ctx: "OttoContext") -> "list[CleanlinessItem]":
+    """One row per otto tunnel running in the lab, plus what the scan could not see.
 
     Reads through :func:`otto.tunnel.discovery.discover_tunnels` -- the read
     side of the ``remove_all_tunnels`` this answers for, and the same scan the
     reap itself starts from, so the two cannot disagree about what a tunnel is.
 
-    A scan that measured nothing raises, for the reason the link read above
-    does: an empty tunnel list is precisely what a clean lab returns, so a dry
-    run's declined scan and a host that never answered would both come back as
-    "clean" from a check that never looked.
+    A scan that measured nothing is unreadable, for the reason the link read
+    above is: an empty tunnel list is precisely what a clean lab returns, so a
+    dry run's declined scan and a host that never answered would both come back
+    as "clean" from a check that never looked. Those two rows belong to the
+    SCAN rather than to any tunnel, so they are filed against the lab -- there
+    is no tunnel id to name when the whole point is that nobody found out.
 
-    A TUNNEL ALREADY IN HAND ANSWERS FIRST, and the order of the two checks
-    below is that decision. An incomplete scan matters only while the answer is
-    still open: once ANY tunnel has been seen, the lab is dirty and no host
-    that failed to answer can make it clean again, so raising there would
-    refuse a question otto has already answered -- and would strand
-    ``ensure_clean`` on a lab it can see needs cleaning. It applies to
-    ``unreachable`` alone: ``not_measured`` means nothing was asked at all, so
-    the tunnel list is empty by construction and the raise below is the only
-    outcome available.
+    A tunnel already in hand still outranks an incomplete scan, but that rule
+    lives in :func:`_verdict` now rather than in an early return here: it is
+    the same rule on every axis, and a report wants BOTH the tunnel that was
+    found and the host that was missed.
     """
     from ..host.errors import HostUnreachableError
     from ..tunnel.discovery import TunnelNotMeasuredError, discover_tunnels
 
+    kind = CleanlinessKind.TUNNEL
     discovery = await discover_tunnels(ctx.lab)
-    if discovery.tunnels:
-        return True
+    items = [
+        _row(kind, found.tunnel.id, clean=False, detail=found.status) for found in discovery.tunnels
+    ]
     if discovery.not_measured:
-        raise TunnelNotMeasuredError(
-            "no host was scanned for tunnel processes, so whether the lab carries a "
-            "tunnel is unknown"
+        items.append(
+            _unreadable(
+                kind,
+                "lab",
+                TunnelNotMeasuredError(
+                    "no host was scanned for tunnel processes, so whether the lab carries a "
+                    "tunnel is unknown"
+                ),
+                "no host was scanned for tunnel processes",
+            )
         )
     if discovery.unreachable:
-        raise HostUnreachableError(
-            f"tunnel scan could not reach {', '.join(discovery.unreachable)}, so whether "
-            f"the lab carries a tunnel is unknown"
+        missed = ", ".join(discovery.unreachable)
+        items.append(
+            _unreadable(
+                kind,
+                "lab",
+                HostUnreachableError(
+                    f"tunnel scan could not reach {missed}, so whether the lab carries a "
+                    f"tunnel is unknown"
+                ),
+                f"the scan could not reach {missed}",
+            )
         )
-    return False
+    if not items:
+        items.append(_row(kind, "lab", clean=True, detail="no otto tunnel is running"))
+    return items
+
+
+####################
+#  Cleanliness
+####################
+
+
+async def cleanliness() -> CleanlinessReport:
+    """Report every leftover :func:`cleanup` would find, and mark what could not be read.
+
+    THE READ-ONLY TWIN OF :func:`is_clean`, over the same probes, differing in
+    exactly one thing: a state nobody could read is a ROW here and a raise
+    there. That is not a softer rule, it is the other half of the same one --
+    a converge must never act on a non-fact, and a display must never hide the
+    twelve facts it does have behind the one it does not.
+
+    Every row is something ``cleanup`` acts on, in ``cleanup``'s own order:
+    each repo's products and dev tools, each host's toolchain tools, each
+    impairable link's netem, then the tunnels. Nothing short-circuits -- a
+    dirty first repo does not stop the scan, because "which of them" is the
+    whole question a report is asked.
+
+    No converge consults this, and neither does ``otto run status`` unless
+    ``--full`` is passed: it is device work (a link read per link, a process
+    scan per host) that the install answer does not need.
+    """
+    ctx, repos = _lab()
+    return CleanlinessReport(
+        items=[
+            *await _repo_items(ctx, repos),
+            *await _toolchain_items(ctx),
+            *await _impairment_items(ctx),
+            *await _tunnel_items(ctx),
+        ]
+    )
 
 
 async def is_clean() -> bool:
     """Whether nothing :func:`cleanup` removes is left in the lab.
 
-    EVERY repo is asked, not only the counted ones. The counted-repo rule
-    exists to keep an opinionless repo from dragging an AGGREGATE STATE, and a
-    repo with nothing installed answers True here for free -- while skipping it
-    would miss the dev tools of a tooling repo that owns no products at all
-    (``owns_products`` cannot see tools).
+    EVERY repo is asked, not only the counted ones -- see ``_repo_items``
+    for why, and for why the repo walk here stops at the first dirty repo where
+    the report's does not.
 
     THE QUESTION MATCHES THE VERB, step for step: products and dev tools, the
     hosts' toolchain tools, then the lab's own impairments and tunnels, in
     ``cleanup``'s own order. That agreement is the whole contract -- without
-    the last two, ``ensure_clean`` would report a lab dirty only in tunnels as
-    already clean while ``otto run cleanup`` visibly reaped them, which is the
-    surface split-brain this package exists to prevent.
+    the last two, :func:`ensure_clean` would report a lab dirty only in tunnels
+    as already clean while ``otto run cleanup`` visibly reaped them, which is
+    the surface split-brain this package exists to prevent.
 
-    A host that could not answer RAISES rather than counting as unclean.
+    A state that could not be read RAISES rather than counting as unclean.
     ``do_for_all_hosts`` captures exceptions as values, and reading a dry run's
     refusal -- or a dead transport -- as "not clean" would send a converge into
-    a cleanup on a fact nobody established.
+    a cleanup on a fact nobody established. ``_verdict`` is where that
+    happens, so this refusal and the report's "unknown" cell are one decision
+    seen from two sides.
+
+    AN AXIS THAT CANNOT ANSWER STOPS THE WALK rather than letting the later
+    axes run to look for a dirty row that would outrank it. Reading them is
+    device work whose only purpose would be to strengthen a verdict already
+    unavailable, and this is the cheap path a converge takes before every test.
     """
     ctx, repos = _lab()
     for repo in repos:
         if not await actions_for(repo, ctx).is_clean():
             return False
-    for outcome in (await ctx.do_for_all_hosts(_dispatch_toolchain_tools_absent)).values():
-        if isinstance(outcome, BaseException):
-            raise outcome
-        if not outcome:
-            return False
-    if await _impairment_present(ctx):
-        return False
-    return not await _tunnel_present(ctx)
+    return (
+        _verdict(await _toolchain_items(ctx))
+        and _verdict(await _impairment_items(ctx))
+        and _verdict(await _tunnel_items(ctx))
+    )
 
 
 ####################
@@ -693,7 +970,7 @@ async def ensure_uninstalled() -> Result:
     PARTIAL runs the uninstall -- that is the case a boolean ``is_installed``
     could not see, and leaving half a lab installed is what it would do.
     """
-    if (await status()).overall is InstallState.UNINSTALLED:
+    if await is_uninstalled():
         return Result(Status.Skipped, msg="already uninstalled")
     return await uninstall()
 

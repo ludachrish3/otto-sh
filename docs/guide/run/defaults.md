@@ -70,7 +70,7 @@ The other five follow the same shape:
 | `cleanup` | `--product-logs` (on), `--debug-logs` (on), `--reset-impairments` (on), `--remove-tunnels` (on) | dependents first, best-effort |
 | `get-logs` | `--product-logs` (on), `--debug-logs` (on), `--require-product-logs` (off) | order immaterial, best-effort |
 | `install-tools` | `--dev` (on), `--toolchain` (off) | dependencies first, fail-fast |
-| `status` | — | reads only; changes nothing |
+| `status` | `--full` (off) | reads only; changes nothing |
 
 Every one of those is a `--flag / --no-flag` pair, as usual.
 
@@ -285,9 +285,18 @@ CLI calls, so a fixture and `otto run install --ensure` cannot diverge. See
   did not respond to the toolchain probe, a link whose impairment could not be
   read, a tunnel scan that reached nobody: each raises out of `is_clean()`
   rather than being counted clean (a fact nobody measured) or dirty (a converge
-  into a cleanup on the same non-fact). The exception proves the rule: if the
-  scan *did* find a tunnel before running out of hosts, the lab is dirty and
-  says so — an unreachable host cannot unmake an answer otto already has.
+  into a cleanup on the same non-fact). The exception proves the rule, on every
+  one of those axes: if the sweep *did* read one link carrying netem, or find
+  one tunnel, before it ran out of hosts, the lab is dirty and says so — an
+  unreachable host cannot unmake an answer otto already has. That holds within
+  an axis. Once one of them cannot answer, the axes after it are not read at
+  all, because the only thing they could do is strengthen a verdict that is
+  already unavailable.
+- **`otto run status --full` asks the same probes and never raises.** A
+  display's duty on a state nobody could read is the opposite of a converge's,
+  so it prints an `unknown` cell where `is_clean()` refuses to answer. Both
+  come off the same probe, which is what keeps them from disagreeing; see
+  [Reading `status`](#reading-status).
 - **`status()` never moves for either of them.** An impaired link and a live
   tunnel are lab infrastructure; the tri-state install answer stays a count of
   products, so a lab under test with 200 ms of injected delay still reads
@@ -316,6 +325,59 @@ A repo with nothing to say about its install state — no products anywhere, no
 registered actions, a docs-only repo — is **not counted**: it is absent from the
 table rather than listed with a made-up state, and it cannot drag the aggregate
 to PARTIAL forever.
+
+`await otto.project.is_uninstalled()` is that first row as a boolean, for a
+script that only wants to know whether the lab is empty. There is deliberately
+**no** `is_installed()` at this layer: `False` on it would cover PARTIAL and
+UNINSTALLED alike, which is exactly the ambiguity the tri-state exists to
+resolve — so every other question reads `status()`.
+
+### `--full`: the lab's other axis
+
+`status` answers about *products*. `otto run status --full` adds the second
+axis — everything [`cleanup` takes off the lab](#what-cleanup-takes-off-the-lab)
+— one row per thing it would act on:
+
+```text
+acme     installed
+widgets  uninstalled
+products & dev tools  acme     clean
+                      widgets  dirty
+toolchain tools       test1    clean
+                      test2    unknown — the toolchain probe did not answer: …
+impairments           core     dirty — a->b
+                      edge     clean
+tunnels               lab      unknown — the scan could not reach test2
+lab is dirty — otto run cleanup takes it off
+```
+
+Three things about that are contracts rather than styling:
+
+- **The exit code does not move.** It still means install state and nothing
+  else — the run above exits `2` because the *install* aggregate is PARTIAL,
+  and a fully installed lab with dev tools left on it and a tunnel up still
+  exits `0`. Scripts branch on that code; folding a second axis into it would
+  change the answer to a question nobody re-asked. The cleanliness aggregate is
+  the last line instead.
+- **`unknown` is a cell, not a crash.** `is_clean()` *raises* on a state nobody
+  could read, deliberately — a converge must not clean on a non-fact. A display
+  has the opposite duty: an unreachable host must not hide the twelve hosts
+  that answered. Both read the same probes, so the rows and the boolean cannot
+  drift; `--full` is not `is_clean()` with the exception swallowed.
+- **It costs device work, which is why it is a flag.** Bare `otto run status`
+  counts products and nothing else. `--full` adds a netem read per impairable
+  link and a process scan per `has_bash` host — the same reads `ensure_clean`
+  makes. Links otto refuses to impair get no row at all — every implicit hop
+  edge, and also the management or hop-transit interfaces a scan turns down.
+  A refused link is never read, so there is no state to show and a "clean" row
+  would be a claim about something nobody looked at; `cleanup` names the
+  scan-found refusals in its own `Skipped` message, which is where an operator
+  can act on one.
+
+The same report is a library call: `await otto.project.cleanliness()` returns
+one `CleanlinessItem` per row, grouped in `cleanup`'s own step order, plus the
+`overall` aggregate — in which a **dirty** row outranks an unreadable one,
+because an answer already in hand is not discarded for a scan that fell short.
 
 ## The collision error
 

@@ -36,7 +36,13 @@ from otto.link import (
     RepairReport,
     Selector,
 )
-from otto.project import PROJECT_ACTIONS, InstallState, ProjectActions
+from otto.project import (
+    PROJECT_ACTIONS,
+    Cleanliness,
+    CleanlinessKind,
+    InstallState,
+    ProjectActions,
+)
 from otto.result import CommandNotRunError, Result
 from otto.tunnel import (
     DiscoveredTunnel,
@@ -1018,15 +1024,19 @@ async def test_is_clean_asks_a_repo_that_status_does_not_count(monkeypatch):
     assert await project.is_clean() is False
 
 
-def _state(*, impairable=True, direction=FlowDirection.A_TO_B, **shape):
+def _state(*, link_id="core", impairable=True, direction=FlowDirection.A_TO_B, **shape):
     """One link's read state, with *shape* applied to *direction* and the other clean.
 
     THE DIRECTION IS A PARAMETER because the two land on different hosts and
     are read separately: an impairment applied with ``--from`` the b end shows
     up in exactly one of these two cells, and a check that consulted only the
     first would report that lab clean.
+
+    THE LINK ID IS ONE TOO, because a report has a ROW per link: two states
+    built from the same id collapse into one row, and an assertion about which
+    links got listed would then pass whatever the code did.
     """
-    link = _link()
+    link = _link(link_id)
     if not impairable:
         return LinkState(link, {}, impairable=False, refusal="no named interface")
     # BUILT IN PLACEMENT ORDER (a->b, then b->a) whichever direction carries
@@ -1041,6 +1051,16 @@ def _state(*, impairable=True, direction=FlowDirection.A_TO_B, **shape):
             for d in (FlowDirection.A_TO_B, FlowDirection.B_TO_A)
         },
     )
+
+
+def _unread_state(link_id="core", **flags):
+    """One link whose impairment state was NOT read; *flags* says which way.
+
+    ``read_link_states`` never raises per link -- it reports ``not_measured`` /
+    ``unreachable`` / ``read_errors`` as fields on an otherwise empty state --
+    so this is that shape, named once.
+    """
+    return LinkState(_link(link_id), {}, **flags)
 
 
 def _live_tunnel():
@@ -1180,6 +1200,275 @@ async def test_is_clean_surfaces_a_hosts_refusal_instead_of_answering(monkeypatc
         await project.is_clean()
 
 
+# ── is_uninstalled ───────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_is_uninstalled_follows_the_aggregate_through_all_three_states(monkeypatch):
+    # PARTIAL IS THE ROW THAT MATTERS. A lab with half its products on is not
+    # uninstalled, and a boolean that said otherwise would let
+    # `ensure_uninstalled` skip the teardown over remnants still on the fleet --
+    # the same conflation the tri-state exists to resolve, reached from the
+    # other side.
+    for state, expected in [
+        (InstallState.UNINSTALLED, True),
+        (InstallState.PARTIAL, False),
+        (InstallState.INSTALLED, False),
+    ]:
+        _wire(monkeypatch, repos=["app"], state=state)
+        assert await project.is_uninstalled() is expected, state
+
+
+@pytest.mark.asyncio
+async def test_a_partial_lab_is_neither_uninstalled_nor_clean(monkeypatch):
+    # THE TWO AXES AT THEIR SHARED BOUNDARY, in one lab. Half the products on
+    # is not "uninstalled" (ensure_uninstalled must still tear down) and it is
+    # not "clean" either (cleanup still has products to remove). A layer that
+    # derived either answer from the other gets exactly one of these wrong.
+    _wire(monkeypatch, repos=["app"], hosts=1, state=InstallState.PARTIAL, dirty=("app",))
+    assert await project.is_uninstalled() is False
+    assert await project.is_clean() is False
+
+
+def test_the_project_layer_exposes_no_lab_level_is_installed():
+    # DELIBERATE ASYMMETRY, and this is the note to whoever comes to "fix" it:
+    # False on a lab-level `is_installed()` would cover PARTIAL and UNINSTALLED
+    # alike, and the callers that would ask are the converges, which have to
+    # tell those two apart to choose between installing and tearing down first.
+    # Hosts carry the symmetric pair because a host's answer is per product; a
+    # lab's is an aggregate, and an aggregate is where the middle state lives.
+    assert not hasattr(project, "is_installed")
+
+
+# ── cleanliness ──────────────────────────────────────────────────────────
+
+
+def _rows(report):
+    """The report as ``{(kind, name): (state, detail)}`` -- one entry per row."""
+    return {(item.kind, item.name): (item.state, item.detail) for item in report.items}
+
+
+@pytest.mark.asyncio
+async def test_cleanliness_reports_a_row_on_every_axis_of_a_clean_lab(monkeypatch):
+    # ONE ROW PER THING CLEANUP ACTS ON, the clean ones included: a report that
+    # listed only the dirt cannot be told apart from a report of a lab nobody
+    # asked.
+    _wire(monkeypatch, repos=["base", "app"], hosts=2, states=[_state()])
+
+    report = await project.cleanliness()
+
+    assert _rows(report) == {
+        (CleanlinessKind.REPO, "base"): (Cleanliness.CLEAN, ""),
+        (CleanlinessKind.REPO, "app"): (Cleanliness.CLEAN, ""),
+        (CleanlinessKind.TOOLCHAIN, "h0"): (Cleanliness.CLEAN, ""),
+        (CleanlinessKind.TOOLCHAIN, "h1"): (Cleanliness.CLEAN, ""),
+        (CleanlinessKind.IMPAIRMENT, "core"): (Cleanliness.CLEAN, ""),
+        (CleanlinessKind.TUNNEL, "lab"): (Cleanliness.CLEAN, "no otto tunnel is running"),
+    }
+    assert report.overall is Cleanliness.CLEAN
+
+
+@pytest.mark.asyncio
+async def test_cleanliness_rows_arrive_grouped_in_cleanups_own_order(monkeypatch):
+    # THE RENDERER'S CONTRACT: `--full` prints a section heading on the row
+    # where the kind changes, so a report that interleaved kinds would print
+    # the same heading four times. The grouping is promised, not incidental.
+    _wire(monkeypatch, repos=["app"], hosts=1, states=[_state()])
+
+    kinds = [item.kind for item in (await project.cleanliness()).items]
+
+    assert kinds == [
+        CleanlinessKind.REPO,
+        CleanlinessKind.TOOLCHAIN,
+        CleanlinessKind.IMPAIRMENT,
+        CleanlinessKind.TUNNEL,
+    ]
+
+
+@pytest.mark.asyncio
+async def test_cleanliness_marks_what_it_could_not_read_instead_of_refusing(monkeypatch):
+    # THE OPPOSITE DUTY TO is_clean, and the whole reason `--full` does not
+    # just call it: every unreadable row below makes is_clean raise, and a
+    # DISPLAY that raised would show nothing about the rows that did answer.
+    lab = _wire(
+        monkeypatch,
+        repos=["app"],
+        hosts=1,
+        states=[_state(), _unread_state("edge", unreachable=True)],
+        discovery=TunnelDiscovery([], ["h9"]),
+    )
+    lab.hosts[0].script("toolchain_tools_absent", CommandNotRunError("test -e /d/gdb", "h0"))
+
+    report = await project.cleanliness()
+    rows = _rows(report)
+
+    assert rows[(CleanlinessKind.TOOLCHAIN, "h0")][0] is Cleanliness.UNKNOWN
+    assert rows[(CleanlinessKind.IMPAIRMENT, "edge")][0] is Cleanliness.UNKNOWN
+    # ...and the link that DID answer keeps its answer, which is the half a
+    # raise destroys.
+    assert rows[(CleanlinessKind.IMPAIRMENT, "core")][0] is Cleanliness.CLEAN
+    assert rows[(CleanlinessKind.TUNNEL, "lab")] == (
+        Cleanliness.UNKNOWN,
+        "the scan could not reach h9",
+    )
+    assert report.overall is Cleanliness.UNKNOWN
+    # The same lab, asked for a DECISION, still refuses to make one up.
+    with pytest.raises(CommandNotRunError):
+        await project.is_clean()
+
+
+@pytest.mark.asyncio
+async def test_cleanliness_marks_a_repo_whose_own_probe_failed(monkeypatch):
+    # A repo's is_clean walks products and dev tools on real hosts, so it can
+    # raise like anything else that touches one. Kills a report that dies with
+    # the first repo it asked.
+    class _Raising(ProjectActions):
+        async def is_clean(self):
+            raise CommandNotRunError("test -e /opt/acme", "h0")
+
+    PROJECT_ACTIONS.register("app", _Raising, overwrite=True, origin="test")
+    _wire_lab(monkeypatch, ["app"], _FakeCtx([_FakeHost("h0", [])]))
+    _wire_infra(monkeypatch, [])
+
+    rows = _rows(await project.cleanliness())
+
+    assert rows[(CleanlinessKind.REPO, "app")][0] is Cleanliness.UNKNOWN
+    with pytest.raises(CommandNotRunError):
+        await project.is_clean()
+
+
+@pytest.mark.asyncio
+async def test_cleanliness_names_the_impaired_directions(monkeypatch):
+    # A row that only said "dirty" would leave the operator to run `otto link
+    # list` to learn which way the delay points -- and `impair --from` places
+    # it in exactly one direction, so the two cells are not interchangeable.
+    _wire(
+        monkeypatch,
+        repos=["app"],
+        hosts=1,
+        states=[_state(direction=FlowDirection.B_TO_A, whole=ImpairmentParams(delay_ms=50.0))],
+    )
+
+    rows = _rows(await project.cleanliness())
+
+    assert rows[(CleanlinessKind.IMPAIRMENT, "core")] == (Cleanliness.DIRTY, "b->a")
+
+
+@pytest.mark.asyncio
+async def test_cleanliness_leaves_out_links_that_could_never_be_impaired(monkeypatch):
+    # Every implicit hop edge is one, and an N-host lab resolves at least N of
+    # them, none with any state to read or to remove. N rows saying "clean"
+    # about links no cleanup can act on would bury the handful that mean
+    # something -- the reason `_live_refusals` drops them from cleanup's own
+    # report.
+    _wire(
+        monkeypatch,
+        repos=["app"],
+        hosts=1,
+        states=[_state(), _state(link_id="hop-h0-h1", impairable=False)],
+    )
+
+    listed = [
+        item.name
+        for item in (await project.cleanliness()).items
+        if item.kind is CleanlinessKind.IMPAIRMENT
+    ]
+
+    assert listed == ["core"]
+
+
+@pytest.mark.asyncio
+async def test_cleanliness_shows_both_the_tunnel_it_found_and_the_host_it_missed(monkeypatch):
+    # DIRTY AND UNKNOWN ARE NOT EXCLUSIVE. The aggregate is dirty -- an answer
+    # in hand -- but the host nobody reached is still worth printing, because
+    # it may be carrying more.
+    found = _live_tunnel()
+    _wire(monkeypatch, repos=["app"], hosts=1, discovery=TunnelDiscovery([found], ["h9"]))
+
+    report = await project.cleanliness()
+    rows = _rows(report)
+
+    assert rows[(CleanlinessKind.TUNNEL, found.tunnel.id)][0] is Cleanliness.DIRTY
+    assert rows[(CleanlinessKind.TUNNEL, "lab")][0] is Cleanliness.UNKNOWN
+    assert report.overall is Cleanliness.DIRTY
+
+
+@pytest.mark.asyncio
+async def test_cleanliness_asks_every_repo_even_past_a_dirty_one(monkeypatch):
+    # "Which of them" is the whole question a report is asked, so nothing here
+    # short-circuits -- where the boolean below deliberately does.
+    _wire(monkeypatch, repos=["base", "app"], hosts=1, dirty=("base",))
+
+    rows = _rows(await project.cleanliness())
+
+    assert rows[(CleanlinessKind.REPO, "base")][0] is Cleanliness.DIRTY
+    assert rows[(CleanlinessKind.REPO, "app")][0] is Cleanliness.CLEAN
+
+
+@pytest.mark.asyncio
+async def test_is_clean_stops_before_the_device_reads_once_a_repo_is_dirty(monkeypatch):
+    # THE CONVERGE'S CHEAP PATH, and the reason is_clean is not `cleanliness()`
+    # reduced: a lab already known to need cleaning is not worth a link read
+    # per link and a process scan per host, and `ensure_clean` takes this path
+    # before every test case.
+    lab = _wire(monkeypatch, repos=["app"], hosts=1, dirty=("app",))
+
+    assert await project.is_clean() is False
+    assert lab.infra == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("hostile", [True, False])
+async def test_is_clean_answers_dirty_with_one_link_impaired_and_another_unreadable(
+    monkeypatch, hostile
+):
+    # THE ASYMMETRY THAT WAS: the tunnel side already answered dirty from a
+    # partial scan, while the link side raised on the first unreadable link and
+    # threw away an answer it already had. A definitive dirty answer outranks a
+    # scan that fell short, on every axis.
+    #
+    # `hostile=True` puts the UNREADABLE link first -- the order that raises
+    # without the fix. The other order passes either way, and is here only to
+    # prove the fix is the rule rather than a lucky iteration order.
+    impaired = _state(whole=ImpairmentParams(delay_ms=50.0))
+    unreadable = _unread_state("edge", unreachable=True)
+    states = [unreadable, impaired] if hostile else [impaired, unreadable]
+    _wire(monkeypatch, repos=["app"], hosts=1, states=states)
+
+    assert await project.is_clean() is False
+
+
+@pytest.mark.asyncio
+async def test_is_clean_answers_dirty_with_one_host_tooled_and_another_unreachable(monkeypatch):
+    # THE SAME RULE ON THE TOOLCHAIN AXIS, and it needs a guard of its own: the
+    # rule lives in the shared `_verdict`, so re-inlining a raise-first loop
+    # over this one axis regresses the behaviour while every other test here
+    # stays green.
+    #
+    # THE HOSTILE ORDER IS THE POINT: the host that cannot answer is asked
+    # FIRST, so a walk that raises the moment it meets one never reaches the
+    # host that is provably still carrying a toolchain. An answer in hand is
+    # not discarded for a probe that fell short.
+    lab = _wire(monkeypatch, repos=["app"], hosts=2)
+    lab.hosts[0].script("toolchain_tools_absent", CommandNotRunError("test -e /d/gdb", "h0"))
+    lab.hosts[1].toolchain_absent = False
+
+    assert await project.is_clean() is False
+
+
+@pytest.mark.asyncio
+async def test_is_clean_stops_at_the_axis_that_could_not_answer(monkeypatch):
+    # Kills: reducing the whole report. Reading the axes after one that cannot
+    # answer is device work whose only purpose would be to strengthen a verdict
+    # already unavailable.
+    lab = _wire(monkeypatch, repos=["app"], hosts=1, states=[_unread_state(unreachable=True)])
+
+    with pytest.raises(RuntimeError, match="core"):
+        await project.is_clean()
+
+    assert [name for name, _lab in lab.infra] == ["read_link_states"]
+
+
 # ── ensure_* ─────────────────────────────────────────────────────────────
 
 
@@ -1280,7 +1569,9 @@ def test_orchestrator_functions_are_reachable_from_the_package():
         "get_logs",
         "install_tools",
         "status",
+        "is_uninstalled",
         "is_clean",
+        "cleanliness",
         "ensure_installed",
         "ensure_uninstalled",
         "ensure_clean",
