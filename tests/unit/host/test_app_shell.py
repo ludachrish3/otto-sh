@@ -641,8 +641,14 @@ class RecordingHostSession(FakeHostSession):
         self.closed = True
 
 
-class RecordingHost(BaseHost):
-    """Minimal BaseHost whose open_session hands back a fixed recording session."""
+class AppShellHost(BaseHost):
+    """Minimal BaseHost whose open_session hands back a fixed recording session.
+
+    NOT the ``RecordingHost`` of ``tests/unit/host/conftest.py`` — that one is
+    the shared lifecycle double (products, dev tools, exec/put/get recording),
+    and this one exists solely to hand ``AppShell.attach`` a scripted session.
+    Named apart so a reader of either file knows which double is in play.
+    """
 
     def __init__(self, session):
         self._session = session
@@ -658,10 +664,10 @@ class RecordingHost(BaseHost):
 
 
 def _recording_demo(script=None):
-    """Build a (RecordingHost, RecordingHostSession) pair scripted with ``script``."""
+    """Build an (AppShellHost, RecordingHostSession) pair scripted with ``script``."""
     inner = FakeShellSession()
     session = RecordingHostSession(inner, script=script or ["\nmysql> "])
-    host = RecordingHost(session)
+    host = AppShellHost(session)
     return host, session
 
 

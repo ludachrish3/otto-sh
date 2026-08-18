@@ -172,6 +172,98 @@ async def test_is_uninstalled_carries_the_owner_through(recording_host):
 
 
 # =========================================================================== #
+# Owner filter on the dev-tool lifecycle
+#
+# The twin of the product filter above, and it exists for the same reason: the
+# per-repo project actions drive these two verbs owner-scoped, so the filter
+# has to be IN the verb. It was a pair of module-level walkers in
+# otto.project.actions until the verbs learned ``owner=``; the tests came with
+# it, because the behaviour they pin is the behaviour, wherever it lives.
+# =========================================================================== #
+
+
+@pytest.mark.asyncio
+async def test_install_dev_tools_owner_filter_touches_only_owned_tools(recording_host):
+    # Kills: forgetting the filter — repo A's install_tools would stage and
+    # install repo B's tooling, the cross-repo bleed the owner scope forbids.
+    events = []
+    recording_host.dev_tools = [
+        _ScriptedTool("mine", owner="acme", events=events),
+        _ScriptedTool("theirs", owner="other", events=events),
+    ]
+    assert (await recording_host.install_dev_tools(owner="acme")).is_ok
+    assert events == ["mine:stage", "mine:install"]
+
+
+@pytest.mark.asyncio
+async def test_install_dev_tools_owner_none_keeps_the_pre_owner_behavior(recording_host):
+    # Kills: treating None as a sentinel owner value (matching only unowned
+    # tools) — `otto host <id> install-tools` would go silent on every lab
+    # whose tools are attached by a repo.
+    events = []
+    recording_host.dev_tools = [
+        _ScriptedTool("mine", owner="acme", events=events),
+        _ScriptedTool("loose", owner=None, events=events),
+    ]
+    assert (await recording_host.install_dev_tools()).is_ok
+    assert events == ["mine:stage", "mine:install", "loose:stage", "loose:install"]
+
+
+@pytest.mark.asyncio
+async def test_install_dev_tools_stops_the_walk_at_a_tool_that_cannot_install(recording_host):
+    # A tool that staged but will not install stops the walk, so later tools
+    # are not installed on top of a half-placed prerequisite. Kills:
+    # best-effort continuation (the uninstall half's rule, which is NOT this
+    # one), and kills staging everything before installing anything.
+    events = []
+    recording_host.dev_tools = [
+        _ScriptedTool("first", owner="acme", events=events, fail_on="install"),
+        _ScriptedTool("second", owner="acme", events=events),
+    ]
+    result = await recording_host.install_dev_tools(owner="acme")
+    assert not result.is_ok
+    assert result.msg == "first install failed"
+    assert events == ["first:stage", "first:install"]
+
+
+@pytest.mark.asyncio
+async def test_uninstall_dev_tools_owner_filter_removes_only_owned_tools(recording_host):
+    events = []
+    recording_host.dev_tools = [
+        _ScriptedTool("mine", owner="acme", events=events),
+        _ScriptedTool("theirs", owner="other", events=events),
+    ]
+    assert (await recording_host.uninstall_dev_tools(owner="acme")).is_ok
+    assert events == ["mine:uninstall"]
+
+
+@pytest.mark.asyncio
+async def test_uninstall_dev_tools_is_best_effort_and_reports_the_first_failure(recording_host):
+    # Kills: returning at the first failure — a tool that refuses to go would
+    # strand the rest of the repo's tooling on the board.
+    events = []
+    recording_host.dev_tools = [
+        _ScriptedTool("stuck", owner="acme", events=events, fail_on="uninstall"),
+        _ScriptedTool("fine", owner="acme", events=events),
+    ]
+    result = await recording_host.uninstall_dev_tools(owner="acme")
+    assert not result.is_ok
+    assert result.msg == "stuck uninstall failed"
+    assert events == ["stuck:uninstall", "fine:uninstall"]
+
+
+@pytest.mark.asyncio
+async def test_uninstall_dev_tools_owner_none_removes_every_tool(recording_host):
+    events = []
+    recording_host.dev_tools = [
+        _ScriptedTool("mine", owner="acme", events=events),
+        _ScriptedTool("loose", owner=None, events=events),
+    ]
+    assert (await recording_host.uninstall_dev_tools()).is_ok
+    assert events == ["mine:uninstall", "loose:uninstall"]
+
+
+# =========================================================================== #
 # cleanup
 # =========================================================================== #
 
@@ -218,6 +310,29 @@ async def test_cleanup_is_best_effort_and_reports_the_first_failure(recording_ho
     assert result.msg == "app uninstall failed"
     assert "gdbserver:uninstall" in events
     assert any("/d/gdb" in c for c in recording_host.exec_calls)
+
+
+@pytest.mark.asyncio
+async def test_cleanup_removes_dev_tools_through_the_extracted_verb(recording_host, tmp_path):
+    # Kills: a re-inlined tool loop in cleanup. The per-repo project actions
+    # call uninstall_dev_tools(owner=…) for their half of the same teardown, so
+    # a second copy here drifts from it the moment either changes -- exactly
+    # the reason remove_toolchain_tools was extracted below.
+    calls = []
+
+    async def _removal(owner=None):
+        calls.append(owner)
+        return Result(Status.Success)
+
+    recording_host.uninstall_dev_tools = _removal
+    events = []
+    recording_host.dev_tools = [_ScriptedTool("gdbserver", events=events)]
+    with active_context(output_dir=tmp_path):
+        assert (await recording_host.cleanup()).is_ok
+    # Unscoped: `otto host <id> cleanup` is the host-global verb, and every
+    # tool on the host is its business.
+    assert calls == [None]
+    assert events == []  # nothing removed behind the verb's back
 
 
 @pytest.mark.asyncio

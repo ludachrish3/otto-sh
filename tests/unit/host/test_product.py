@@ -48,10 +48,16 @@ async def test_get_logs_default_is_successful_noop(tmp_path):
     # Kills: an abstract get_logs, which would break every existing Product
     # subclass in every repo at import time — _DummyFileProduct declares only
     # the four abstract verbs that predate the hook.
+    #
+    # The exact status, not `is_ok`: `Status.Skipped.is_ok` is True, so a
+    # default that DECLINED ("no log hook here") instead of succeeding ("there
+    # were no logs") passes an is_ok assertion. The two are different claims —
+    # only the second is the documented "zero logs is not a failure" — and the
+    # host's require_product_logs check reads the haul as ok either way.
     result = await _DummyFileProduct(artifact=Path("/builds/app.bin")).get_logs(
         host=None, dest=tmp_path
     )
-    assert result.is_ok
+    assert result.status is Status.Success
     assert list(tmp_path.iterdir()) == []
 
 

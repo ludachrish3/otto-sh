@@ -141,8 +141,14 @@ def bootstrap() -> BootstrapResult:
     # containable error would hide it.
     #
     # The decorator's collision guard keys on the registering-repo marker, so
-    # this ordering is belt-and-braces rather than the mechanism -- but a repo
-    # init module that reads INSTRUCTIONS should see the full first-party set.
+    # for a repo using `@instruction` this ordering is belt-and-braces: the
+    # guard fires whichever import ran first. It is the MECHANISM for the
+    # routes the decorator never sees -- a repo that registers an
+    # InstructionEntry with INSTRUCTIONS.register() directly is refused here
+    # only because the first-party names are already taken by the line below,
+    # and then by the registry's generic "already registered" rather than the
+    # guard's "register a ProjectActions subclass instead". A repo init module
+    # that reads INSTRUCTIONS should also see the full first-party set.
     importlib.import_module("otto.project.instructions")
     for repo in resolution.ordered:
         repo.add_libs_to_pythonpath()

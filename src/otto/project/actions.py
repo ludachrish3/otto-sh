@@ -44,12 +44,36 @@ _OwnedT = TypeVar("_OwnedT", "Product", "DevTool")
 def _owned(items: "list[_OwnedT]", owner: str) -> "list[_OwnedT]":
     """Return the *items* stamped with *owner*.
 
-    The dev-tool twin of :meth:`otto.host.host.BaseHost._owned_products`, which
-    filters the product list the same way for the host verbs that take an
-    ``owner=`` argument. Nothing here filters on ``None``: an unowned
-    attachment belongs to no repo's actions, so no repo's default touches it.
+    The read-side twin of :meth:`otto.host.host.BaseHost._owned_products` and
+    :meth:`~otto.host.host.BaseHost._owned_dev_tools`, which filter the same
+    way inside the host verbs. This copy exists because the QUESTIONS below
+    (:attr:`ProjectActions.owns_products`, :meth:`~ProjectActions.status`,
+    :meth:`~ProjectActions.is_clean`) count attachments rather than driving a
+    verb; every ACTION passes ``owner=`` down and lets the host filter.
+
+    Nothing here filters on ``None``: an unowned attachment belongs to no
+    repo's actions, so no repo's default touches it.
     """
     return [item for item in items if item.owner == owner]
+
+
+_REQUIRE_PRODUCT_LOGS_CONTRADICTION = (
+    "require_product_logs cannot be satisfied with product=False: "
+    "the product-log haul it requires is the step being skipped. "
+    "Gather product logs, or drop the requirement."
+)
+"""The refusal both project-layer log verbs return for the contradictory flag pair.
+
+One literal, two callers: :meth:`ProjectActions.get_logs` refuses it per repo
+and :func:`otto.project.orchestrator.get_logs` refuses it for the lab (whose
+own refusal is the one that fires in a lab with no repos at all). They are the
+same refusal, so they are the same words.
+
+:meth:`otto.host.host.BaseHost.get_logs` refuses the same pair in the same
+words and deliberately keeps its own copy: the host layer sits BELOW this one
+and may not import it, and a runtime import in the other direction to share
+three sentences would buy a package cycle.
+"""
 
 
 def _reduce_results(results: "dict[str, Result | BaseException]") -> Result:
@@ -93,8 +117,13 @@ def _reduce_results(results: "dict[str, Result | BaseException]") -> Result:
 #
 # Dispatching through the instance puts the attribute lookup back on the object
 # at call time. It is the same idiom the coverage fetchers use
-# (:mod:`otto.coverage.fetcher.remote`), and the one the owned-dev-tool walkers
-# below already had for free by taking ``host`` as a parameter.
+# (:mod:`otto.coverage.fetcher.remote`).
+#
+# EVERY ONE OF THESE IS A ONE-LINE FORWARD, and that is the whole design: the
+# behaviour -- what to filter, in what order, and whether to stop at the first
+# failure -- belongs to the host verb, so this layer never carries a second
+# copy of it to drift from. The dev-tool pair below were such a copy until
+# ``install_dev_tools``/``uninstall_dev_tools`` learned ``owner=``.
 
 
 async def _dispatch_install(host: "Host", owner: "str | None" = None) -> Result:
@@ -121,41 +150,19 @@ async def _dispatch_get_product_logs(host: "Host", owner: "str | None" = None) -
     return await host.get_product_logs(owner=owner)
 
 
-async def _install_owned_dev_tools(host: "Host", owner: str) -> Result:
-    """Stage then install each of *owner*'s dev tools on *host* (first failure wins).
+async def _dispatch_install_dev_tools(host: "Host", owner: "str | None" = None) -> Result:
+    """Install *host*'s ``owner``-scoped dev tools through the host's OWN method."""
+    return await host.install_dev_tools(owner=owner)
 
-    The owner-scoped twin of
-    :meth:`otto.host.host.BaseHost.install_dev_tools`, which is host-global:
-    tool installation has no ``owner=`` argument at the host layer, so the
-    per-repo walk lives here. Each tool is carried through both phases before
-    the next one starts, matching the host verb -- a tool that stages but
-    cannot install stops the walk rather than leaving later tools installed on
-    top of a half-placed prerequisite.
+
+async def _dispatch_uninstall_dev_tools(host: "Host", owner: "str | None" = None) -> Result:
+    """Remove *host*'s ``owner``-scoped dev tools through the host's OWN method.
+
+    Not ``host.cleanup(...)``: that verb's third step removes the toolchain
+    tools, which one host shares with every owner on it, so a repo calling it
+    would take its neighbours' tooling down with its own.
     """
-    for tool in _owned(host.dev_tools, owner):
-        result = await tool.stage(host)
-        if not result.is_ok:
-            return result
-        result = await tool.install(host)
-        if not result.is_ok:
-            return result
-    return Result(Status.Success)
-
-
-async def _uninstall_owned_dev_tools(host: "Host", owner: str) -> Result:
-    """Uninstall each of *owner*'s dev tools on *host* (best-effort).
-
-    Every tool is attempted even after one fails -- a tool that refuses to go
-    must not strand the rest of the repo's tooling on the board -- and the
-    first failure seen is what returns, mirroring
-    :meth:`otto.host.host.BaseHost.cleanup`'s tool loop.
-    """
-    first_failure: "Result | None" = None
-    for tool in _owned(host.dev_tools, owner):
-        result = await tool.uninstall(host)
-        if not result.is_ok and first_failure is None:
-            first_failure = result
-    return first_failure if first_failure is not None else Result(Status.Success)
+    return await host.uninstall_dev_tools(owner=owner)
 
 
 class ProjectActions:
@@ -227,7 +234,7 @@ class ProjectActions:
         """
         uninstalled = await self.uninstall(get_product_logs=get_product_logs)
         tools = _reduce_results(
-            await self.ctx.do_for_all_hosts(_uninstall_owned_dev_tools, owner=self.repo.name)
+            await self.ctx.do_for_all_hosts(_dispatch_uninstall_dev_tools, owner=self.repo.name)
         )
         return uninstalled if not uninstalled.is_ok else tools
 
@@ -255,14 +262,7 @@ class ProjectActions:
         report success having promised logs nobody went looking for.
         """
         if require_product_logs and not product:
-            return Result(
-                Status.Error,
-                msg=(
-                    "require_product_logs cannot be satisfied with product=False: "
-                    "the product-log haul it requires is the step being skipped. "
-                    "Gather product logs, or drop the requirement."
-                ),
-            )
+            return Result(Status.Error, msg=_REQUIRE_PRODUCT_LOGS_CONTRADICTION)
         if not product:
             return Result(Status.Success)
         haul = _reduce_results(
@@ -303,7 +303,7 @@ class ProjectActions:
         if not dev:
             return Result(Status.Success)
         return _reduce_results(
-            await self.ctx.do_for_all_hosts(_install_owned_dev_tools, owner=self.repo.name)
+            await self.ctx.do_for_all_hosts(_dispatch_install_dev_tools, owner=self.repo.name)
         )
 
     ####################

@@ -65,7 +65,13 @@ class _FakeItem:
 # The host verbs ProjectActions' dispatch helpers call on each fleet host.
 # Anything else asked of the double is a mistake and raises AttributeError,
 # rather than being silently recorded as a verb the host layer does not have.
-_HOST_VERBS = ("install", "uninstall", "get_product_logs")
+_HOST_VERBS = (
+    "install",
+    "uninstall",
+    "get_product_logs",
+    "install_dev_tools",
+    "uninstall_dev_tools",
+)
 
 
 class _FakeHost:
@@ -208,10 +214,16 @@ async def test_uninstall_forwards_get_product_logs_false():
 
 
 @pytest.mark.asyncio
-async def test_cleanup_uninstalls_then_removes_only_owned_dev_tools():
-    # Kills: cleanup that skips the tools (leaving probes behind), that removes
-    # another repo's tools, or that removes tools BEFORE the products that may
-    # need them (the host-level order this mirrors).
+async def test_cleanup_uninstalls_then_removes_owner_scoped_dev_tools():
+    # Kills: cleanup that skips the tools (leaving probes behind), that drops
+    # the owner scope (removing another repo's tools), or that removes tools
+    # BEFORE the products that may need them.
+    #
+    # The tool WALK is the host verb's -- filter, order and best-effort rule
+    # are pinned in tests/unit/host/test_host_lifecycle_filters.py. What this
+    # layer owes is dispatching it once per host, owner-scoped, second; the
+    # empty tool records below are the other half of that claim (a re-inlined
+    # walk here would show up as calls on the tools themselves).
     mine = _FakeItem("probe", "acme")
     theirs = _FakeItem("their-probe", "other")
     ctx, hosts = _fake_ctx(n=1, dev_tools=[mine, theirs])
@@ -219,74 +231,116 @@ async def test_cleanup_uninstalls_then_removes_only_owned_dev_tools():
     assert result.is_ok
     assert hosts[0].calls == [
         ("uninstall", {"get_product_logs": True, "get_debug_logs": False, "owner": "acme"}),
+        ("uninstall_dev_tools", {"owner": "acme"}),
     ]
-    assert mine.calls == [("uninstall", "h0")]
+    assert mine.calls == []
     assert theirs.calls == []
 
 
 @pytest.mark.asyncio
+async def test_cleanup_forwards_get_product_logs_to_the_uninstall_half():
+    # Kills: `await self.uninstall()` with the flag dropped on the floor.
+    # `cleanup` is `uninstall` plus the tooling, so a caller that asked to skip
+    # the log haul asked cleanup's uninstall half to skip it too — and hard-
+    # wiring True passes every other cleanup test in this file, all of which
+    # take the default.
+    ctx, hosts = _fake_ctx(n=1, dev_tools=[_FakeItem("probe", "acme")])
+    result = await ProjectActions(repo=REPO, ctx=ctx).cleanup(get_product_logs=False)
+    assert result.is_ok
+    assert hosts[0].calls == [
+        ("uninstall", {"get_product_logs": False, "get_debug_logs": False, "owner": "acme"}),
+        ("uninstall_dev_tools", {"owner": "acme"}),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_cleanup_reports_a_failed_dev_tool_removal():
-    mine = _FakeItem("probe", "acme", uninstall=_fail("busy"))
-    ctx, _ = _fake_ctx(n=1, dev_tools=[mine])
+    ctx, hosts = _fake_ctx(n=1, dev_tools=[_FakeItem("probe", "acme")])
+    hosts[0].script("uninstall_dev_tools", _fail("busy"))
     result = await ProjectActions(repo=REPO, ctx=ctx).cleanup()
     assert not result.is_ok
     assert "h0" in result.msg
+    assert "busy" in result.msg
 
 
 @pytest.mark.asyncio
 async def test_cleanup_still_removes_dev_tools_after_a_failed_uninstall():
     # Best-effort teardown: a stranded product must not strand the tooling too.
-    mine = _FakeItem("probe", "acme")
-    ctx, hosts = _fake_ctx(n=1, dev_tools=[mine])
+    ctx, hosts = _fake_ctx(n=1, dev_tools=[_FakeItem("probe", "acme")])
     hosts[0].script("uninstall", _fail("busy"))
     result = await ProjectActions(repo=REPO, ctx=ctx).cleanup()
     assert not result.is_ok
     assert "busy" in result.msg  # the FIRST failure is what is reported
-    assert mine.calls == [("uninstall", "h0")]
+    assert hosts[0].calls[-1] == ("uninstall_dev_tools", {"owner": "acme"})
+
+
+@pytest.mark.asyncio
+async def test_dev_tool_walks_dispatch_through_the_host_instance():
+    """A host CLASS that overrides either verb must be the one that runs.
+
+    Kills: handing ``do_for_all_hosts`` an unbound ``BaseHost.<verb>``, which
+    calls that body with no attribute lookup on the host -- freezing the walk
+    to ``BaseHost`` and silently bypassing every registered host-class
+    override, so ``otto host <id> …`` and ``otto run …`` would disagree while
+    both reported success.
+    """
+
+    class _OverridingHost(_FakeHost):
+        async def install_dev_tools(self, owner=None):
+            self.calls.append(("overridden-install", {"owner": owner}))
+            return Result(Status.Success)
+
+        async def uninstall_dev_tools(self, owner=None):
+            self.calls.append(("overridden-uninstall", {"owner": owner}))
+            return Result(Status.Success)
+
+    host = _OverridingHost("h0", dev_tools=[_FakeItem("probe", "acme")])
+    actions = ProjectActions(repo=REPO, ctx=_FakeCtx([host]))
+    assert (await actions.install_tools()).is_ok
+    assert (await actions.cleanup()).is_ok
+    assert ("overridden-install", {"owner": "acme"}) in host.calls
+    assert ("overridden-uninstall", {"owner": "acme"}) in host.calls
 
 
 # ── tools ────────────────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
-async def test_install_tools_stages_then_installs_only_owned_dev_tools():
+async def test_install_tools_dispatches_the_owner_scoped_dev_tool_install():
+    # Kills: dropping the owner scope (this repo's install_tools would place a
+    # neighbour's tooling), and kills re-walking the tools here -- the walk's
+    # order and stop-on-first-failure rule belong to the host verb, and a copy
+    # at this layer drifts from it (it did, until the verb learned owner=).
     mine = _FakeItem("probe", "acme")
     theirs = _FakeItem("their-probe", "other")
-    ctx, _ = _fake_ctx(n=1, dev_tools=[mine, theirs])
+    ctx, hosts = _fake_ctx(n=2, dev_tools=[mine, theirs])
     result = await ProjectActions(repo=REPO, ctx=ctx).install_tools()
     assert result.is_ok
-    assert mine.calls == [("stage", "h0"), ("install", "h0")]
+    for h in hosts:
+        assert h.calls == [("install_dev_tools", {"owner": "acme"})]
+    assert mine.calls == []
     assert theirs.calls == []
 
 
 @pytest.mark.asyncio
-async def test_install_tools_stops_a_tool_that_cannot_stage():
-    mine = _FakeItem("probe", "acme", stage=_fail("no room"))
-    ctx, _ = _fake_ctx(n=1, dev_tools=[mine])
+async def test_install_tools_reports_a_failed_dev_tool_install_naming_the_host():
+    # The walk's own rules -- stage before install, first failure stops it --
+    # are the host verb's and are pinned in tests/unit/host/. What this layer
+    # owes is reporting that failure WITH the host that produced it.
+    ctx, hosts = _fake_ctx(n=1, dev_tools=[_FakeItem("probe", "acme")])
+    hosts[0].script("install_dev_tools", _fail("exec format error"))
     result = await ProjectActions(repo=REPO, ctx=ctx).install_tools()
     assert not result.is_ok
     assert "h0" in result.msg
-    assert mine.calls == [("stage", "h0")]  # never installed on top of a failed stage
-
-
-@pytest.mark.asyncio
-async def test_install_tools_stops_the_walk_at_a_tool_that_cannot_install():
-    # A tool that staged but will not install stops the walk, so later tools
-    # are not installed on top of a half-placed prerequisite.
-    first = _FakeItem("probe", "acme", install=_fail("exec format error"))
-    second = _FakeItem("tracer", "acme")
-    ctx, _ = _fake_ctx(n=1, dev_tools=[first, second])
-    result = await ProjectActions(repo=REPO, ctx=ctx).install_tools()
-    assert not result.is_ok
     assert "exec format error" in result.msg
-    assert second.calls == []
 
 
 @pytest.mark.asyncio
 async def test_install_tools_dev_false_touches_nothing():
     mine = _FakeItem("probe", "acme")
-    ctx, _ = _fake_ctx(n=1, dev_tools=[mine])
+    ctx, hosts = _fake_ctx(n=1, dev_tools=[mine])
     assert (await ProjectActions(repo=REPO, ctx=ctx).install_tools(dev=False)).is_ok
+    assert hosts[0].calls == []
     assert mine.calls == []
 
 
@@ -302,6 +356,24 @@ async def test_install_tools_toolchain_is_a_repo_level_noop_by_design():
     assert result.is_ok
     assert hosts[0].calls == []
     assert mine.calls == []
+
+
+@pytest.mark.asyncio
+async def test_install_tools_toolchain_true_does_not_swallow_the_dev_walk():
+    # THE COMBINATION is the case the two single-flag tests cannot reach.
+    # `install_tools(dev=True, toolchain=True)` is what a subclass calling
+    # `super().install_tools(**caller_flags)` forwards, and what the host and
+    # orchestrator verbs' shared signature invites. Kills an implementation
+    # that spells the toolchain no-op as an early return on `toolchain` ahead
+    # of the dev walk, which reports success having installed NOTHING -- and
+    # which passes both the dev-only test above (toolchain=False never reaches
+    # the return) and the toolchain-only one (dev=False, so there was nothing
+    # to install either way).
+    mine = _FakeItem("probe", "acme")
+    ctx, hosts = _fake_ctx(n=1, dev_tools=[mine])
+    result = await ProjectActions(repo=REPO, ctx=ctx).install_tools(dev=True, toolchain=True)
+    assert result.is_ok
+    assert hosts[0].calls == [("install_dev_tools", {"owner": "acme"})]
 
 
 # ── logs ─────────────────────────────────────────────────────────────────

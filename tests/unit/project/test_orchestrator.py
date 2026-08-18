@@ -184,7 +184,15 @@ def _verbs(events, *names):
 async def test_install_walks_repos_in_topological_order(monkeypatch):
     # Kills: any walk that ignores the resolved order — a dependent installed
     # before the dependency it needs.
-    lab = _wire(monkeypatch, repos=["base", "app"])  # base is the dependency
+    #
+    # A FLEET IS WIRED so the event list is exhaustive rather than merely
+    # correctly ordered. `install` is the one lifecycle verb with NO
+    # host-global step (the toolchain belongs to `install_tools`, the debug
+    # sweep to the teardown verbs), and with `hosts=0` the two dispatch seams
+    # return an empty mapping: a sweep grown here by mirroring a neighbouring
+    # verb would emit nothing at all and this test would stay green while
+    # every real lab placed toolchain artifacts on a plain install.
+    lab = _wire(monkeypatch, repos=["base", "app"], hosts=2)  # base is the dependency
     assert (await project.install()).is_ok
     assert lab.events == [("base", "install"), ("app", "install")]
 
@@ -193,9 +201,15 @@ async def test_install_walks_repos_in_topological_order(monkeypatch):
 async def test_install_is_fail_fast(monkeypatch):
     # Kills: a best-effort install — installing a dependent on top of a
     # dependency that is known not to be there.
-    lab = _wire(monkeypatch, repos=["base", "app"], failing=("base", "install"))
+    #
+    # Exhaustive too, and for a second reason: the fleet is wired, so a
+    # host-global step appended in the shape `cleanup` uses (run it anyway,
+    # reduce the failures afterwards) is caught here even though it does not
+    # touch the repo walk. Fail-fast means the FAILURE STOPS EVERYTHING after
+    # it, not just the next repo.
+    lab = _wire(monkeypatch, repos=["base", "app"], hosts=2, failing=("base", "install"))
     result = await project.install()
-    assert ("app", "install") not in lab.events
+    assert lab.events == [("base", "install")]
     assert not result.is_ok
     assert result.status is Status.Failed  # the repo's own status, not a generic one
     assert "base" in result.msg  # kills: dropping WHICH repo failed

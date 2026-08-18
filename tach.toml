@@ -9,8 +9,35 @@
 # Maintain BY HAND. `tach sync` REWRITES this file and strips every comment —
 # never run it to "fix" a check failure; add or (preferably) question the edge.
 #
-# End state: forbid_circular_dependencies = true. Blocked today by the cycles
-# marked below (host<->docker, config<->cli, config<->context, host<->context).
+# End state: forbid_circular_dependencies = true. Blocked today by far more
+# than the four edges this line used to name. MEASURED by setting the flag and
+# running `tach check` (2026-08-17): SIXTEEN of the modules below are in one
+# strongly connected component — bootstrap, cli, config, context, coverage,
+# docker, host, labs, lifecycle, link, models, monitor, project, reservations,
+# suite, tunnel. THIRTEEN mutually-importing pairs run through it:
+#
+#   bootstrap<->config, cli<->config, config<->context, config<->host,
+#   config<->labs, config<->lifecycle, config<->models, config<->reservations,
+#   config<->suite, context<->host, docker<->host, host<->models, link<->models
+#
+# THOSE PAIRS ARE NOT THE WHOLE FORMATION — they account for only TWELVE of the
+# sixteen. The other four join through longer loops that contain no mutual pair
+# of their own, every one of them closing through otto.cli:
+#
+#   project  -> cli -> suite -> project          (documented on otto.suite below)
+#   coverage -> config -> cli -> coverage
+#   monitor  -> host -> config -> cli -> monitor
+#   tunnel   -> host -> config -> cli -> tunnel
+#
+# FOUR OF THOSE PAIRS HAVE OWNERS, and are the ones the DEBT/NOTE comments in
+# this file track: cli<->config, config<->context, context<->host and
+# docker<->host (spelled host<->context and host<->docker down there). The rest
+# is recorded here so that the marked backlog is never mistaken for the whole
+# count. EXPECT NO SINGLE-EDGE FIX: otto.cli has exactly two inbound edges from
+# inside the component (config->cli and project->cli), and cutting EITHER alone
+# leaves it at sixteen — measured. Cutting both drops it to fourteen, which is
+# where the real work starts rather than ends. Re-measure with the flag before
+# quoting any of these numbers; never adjust them by guess.
 #
 # Note tach counts function-scope (lazy) imports as edges, same as module
 # scope. Scope-sensitive rules (e.g. "models may import config lazily but
@@ -201,10 +228,18 @@ path = "otto.project"
 # are ordinary instructions, so they register through the ordinary decorator --
 # the alternative (a second, CLI-side registration path for otto's own verbs)
 # would be a private seam nobody else can use, to avoid an edge that costs
-# nothing: otto.cli does not import otto.project (bootstrap reaches this module
-# by name, through importlib), so there is no cycle to hold apart. Every OTHER
-# module in the package stays CLI-free, which is what lets a fixture or a suite
-# call the orchestrator without dragging typer in.
+# little. It is not free, and this comment used to say it was: otto.cli does
+# not import otto.project DIRECTLY (bootstrap reaches this module by name,
+# through importlib), but the loop still closes one hop further out — project
+# -> cli -> suite -> project, because otto.cli imports otto.suite and the
+# suite's ensure_* fixtures import this package. It is not a RUNTIME circular
+# import (nothing in otto.suite imports otto.cli, and the fixture import is
+# inside the fixture body), which is why it survives; the retirement is the
+# same one the config<->cli DEBT edge needs — a home for instruction
+# registration that is not otto.cli. See otto.suite below, which carries the
+# other half of this note. Every OTHER module in the package stays CLI-free,
+# which is what lets a fixture or a suite call the orchestrator without
+# dragging typer in.
 depends_on = [
     "otto.registry",
     "otto.result",
@@ -228,8 +263,9 @@ path = "otto.result"
 # below, this cannot invert layering or create a cycle: otto.errors is a
 # zero-import leaf. The error is defined HERE, not in otto.host.errors with its
 # two peers, precisely to avoid a result->host edge -- otto.host depends on
-# otto.result, so that direction is both a runtime circular import and a fifth
-# cycle against the four this file is trying to retire.
+# otto.result, so that direction is both a runtime circular import and one more
+# mutually-importing pair added to the inventory the header measures and this
+# file is trying to shrink.
 depends_on = ["otto.utils", "otto.errors"]
 
 [[modules]]
@@ -242,8 +278,9 @@ path = "otto.suite"
 # suites cannot diverge on what "installed" means.
 #
 # It does complete a LOOP in this file's graph — otto.project -> otto.cli ->
-# otto.suite -> otto.project — which is a fifth alongside the four the header
-# lists as blocking `forbid_circular_dependencies`. It is not a runtime cycle:
+# otto.suite -> otto.project — the one loop in the header's inventory that is
+# not a mutually-importing pair, and the reason the header counts loops
+# separately from pairs. It is not a runtime cycle:
 # only project/instructions.py reaches otto.cli (for the `@instruction`
 # decorator), and nothing in otto.suite imports it. Retiring it means giving
 # instruction registration a home that is not otto.cli, which is the same fix

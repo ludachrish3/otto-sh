@@ -67,6 +67,30 @@ def test_duplicate_against_preexisting_product_is_skipped():
     assert [p.name for p in host.products] == ["pre"]
 
 
+def test_a_preexisting_product_is_never_stamped_by_a_provider_run():
+    # Kills: stamping the host's WHOLE product list rather than the instances
+    # this run attached — a sweep like `for p in host.products: p.owner = ...`
+    # after the loop. That hands a product the host already carried (lab data,
+    # a host class's own construction, an earlier repo's ingest) to whichever
+    # repo happened to register a provider, and every owner-scoped verb then
+    # acts on it. The dedup test above cannot see this: the NAMES are identical
+    # either way, so only the owner stamp distinguishes them.
+    #
+    # NOT killed, and not a hole: a `seen`-based skip that stamped before it
+    # `continue`d would stamp the PROVIDER'S instance — the one the skip
+    # discards — so `preexisting.owner` stays None and nothing here could
+    # observe the difference.
+    from otto.registry import registering_repo
+
+    preexisting = _prod("pre")
+    with registering_repo("acme"):
+        register_product_provider(lambda host: [_prod("pre"), _prod("fresh")])
+    host = _host(products=[preexisting])
+    apply_product_providers(host)
+    assert preexisting.owner is None, "a product otto did not attach here is not otto's to own"
+    assert [(p.name, p.owner) for p in host.products] == [("pre", None), ("fresh", "acme")]
+
+
 def test_none_and_empty_returns_are_noops():
     register_product_provider(lambda host: None)
     register_product_provider(lambda host: [])

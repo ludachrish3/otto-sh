@@ -196,6 +196,60 @@ def test_bootstrap_imports_the_defaults_before_any_repo_init(tmp_path, monkeypat
     assert seen.index("otto.project.instructions") < seen.index("acme_init")
 
 
+def test_a_repos_collision_reaches_the_user_as_a_framed_error_not_a_crash(
+    tmp_path, monkeypatch, registered
+):
+    """END TO END: the guard's ValueError is CONTAINED, and its advice survives.
+
+    The two decorator tests above catch the raise at the decoration site, where
+    ``pytest.raises`` sees the exception object directly. Nobody runs otto that
+    way. On the real path the raise happens inside bootstrap's init-import
+    loop, which frames ANY containable failure as a ``BootstrapError`` and
+    keeps going — so what the user is actually told is bootstrap's framing of
+    it, and a message that does not survive that framing is a message that does
+    not exist.
+
+    Kills a framing that drops the cause (``failed to load acme_init`` with no
+    reason, which is the shape a caller reads when the repo is skipped), and
+    kills a containment seam that lets this one through and bricks the process
+    over a repo naming its instruction badly.
+    """
+    from otto import bootstrap as bs
+    from otto.bootstrap import BootstrapError
+
+    # A MODULE NAME OF ITS OWN: init modules are imported by bare name into the
+    # one process-wide sys.modules, so reusing another test's name here would
+    # hand this bootstrap that test's already-cached module and import nothing.
+    repo = make_sut_repo(
+        tmp_path / "acme",
+        name="acme",
+        extra='libs = ["lib"]\ninit = ["acme_collision_init"]\n',
+        files={
+            "lib/acme_collision_init.py": (
+                "from otto.cli.run import instruction\n\n\n"
+                "@instruction()\n"
+                "async def install() -> None: ...\n"
+            )
+        },
+    )
+    monkeypatch.setenv("OTTO_SUT_DIRS", str(repo))
+    bs._reset()
+    try:
+        result = bs.bootstrap()  # must NOT raise — that is half the claim
+    finally:
+        bs._reset()
+
+    (err,) = result.errors
+    assert isinstance(err, BootstrapError)
+    assert isinstance(err.__cause__, ValueError)  # the guard's, framed — not re-typed
+    assert "acme_collision_init" in str(err), "the framing still names the file that failed"
+    # …and the guard's whole point survives it: WHERE to put the override.
+    assert "ProjectActions" in str(err)
+    assert "docs/guide/run/defaults.md" in str(err)
+    # otto keeps the name; the repo did not shadow it on the way past.
+    assert INSTRUCTIONS.get("install").module == "otto.project.instructions"
+
+
 # ── Dispatch: every flag reaches the orchestrator ────────────────────────────
 
 
@@ -285,6 +339,21 @@ def test_a_skipped_result_renders_as_success():
 # ── status: the table and the three exit codes ───────────────────────────────
 
 
+def _state_rows(out: str) -> dict[str, str]:
+    """Parse the status table into ``{repo: state}``, one entry per printed row.
+
+    The table is ``repo_name`` then the state, so the FIRST token names the
+    repo and the rest is its state ("partially installed" is two words).
+    """
+    rows = {}
+    for line in out.splitlines():
+        if not line.strip():
+            continue
+        name, _, state = line.strip().partition(" ")
+        rows[name] = state.strip()
+    return rows
+
+
 @pytest.mark.parametrize(
     ("state", "code"),
     [(InstallState.INSTALLED, 0), (InstallState.UNINSTALLED, 1), (InstallState.PARTIAL, 2)],
@@ -334,11 +403,16 @@ async def test_status_prints_every_repos_state(monkeypatch, registered, capsys):
 
     answer = await registered.status()
 
-    out = capsys.readouterr().out
-    assert "acme" in out
-    assert "widgets" in out
-    assert "installed" in out
-    assert "uninstalled" in out
+    # ROW-WISE, because "installed" is a SUBSTRING of "uninstalled": a renderer
+    # that printed every repo as uninstalled — or as installed — satisfies both
+    # bare `in out` checks, and this table exists precisely to tell the two
+    # apart per repo. Pairing each name with its own cell is the only form that
+    # can fail. Kills a row built from the wrong side of the mapping, a state
+    # column read off the aggregate, and the substring accident itself.
+    assert _state_rows(capsys.readouterr().out) == {
+        "acme": "installed",
+        "widgets": "uninstalled",
+    }
     assert "partially installed" in answer.msg  # the lab-level aggregate the renderer prints
 
 
@@ -364,7 +438,7 @@ def test_no_panel_when_otto_registered_nothing():
     assert first_party_instructions_panel() is None
 
 
-def test_list_instructions_shows_the_defaults_ahead_of_the_repos(registered):
+def test_list_instructions_shows_the_defaults_with_no_repos_configured(registered):
     from unittest.mock import patch
 
     from otto.cli.run import run_app
@@ -375,3 +449,43 @@ def test_list_instructions_shows_the_defaults_ahead_of_the_repos(registered):
     assert result.exit_code == 0, result.output
     assert "otto defaults" in result.output
     assert "install-tools" in result.output
+
+
+class _PanelRepo:
+    """Repo double for the listing: contributes one panel with a known title."""
+
+    def __init__(self, title: str) -> None:
+        self.title = title
+
+    def get_instructions_panel(self):
+        from rich.panel import Panel
+        from rich.text import Text
+
+        return Panel(Text("• deploy"), title=Text(self.title), expand=True)
+
+
+def test_list_instructions_puts_the_defaults_ahead_of_the_repo_panels(registered):
+    """The ``otto defaults`` panel is the FIRST column, before every repo's.
+
+    ORDERING NEEDS A REPO TO BE AHEAD OF. With ``get_repos`` patched to ``[]``
+    the panel list has one element, so ``insert(0, …)`` and ``append(…)`` are
+    the same program — and "ahead of the repos" is asserted by a test that
+    configured no repos. Kills the append, which is the natural edit (the
+    first-party panel is built last) and which buries the six verbs every lab
+    has behind however many repos the lab happens to configure.
+
+    The panels are columns of a single-row table, so both titles land on the
+    same output line and their column order IS their character order there.
+    """
+    from unittest.mock import patch
+
+    from otto.cli.run import run_app
+
+    repos = [_PanelRepo("first-repo 1.0"), _PanelRepo("second-repo 1.0")]
+    with patch("otto.config.get_repos", return_value=repos):
+        result = runner.invoke(run_app, ["--list-instructions"])
+
+    assert result.exit_code == 0, result.output
+    (titles,) = [ln for ln in result.output.splitlines() if "otto defaults" in ln]
+    assert "first-repo" in titles, "the repo panels share the title line with otto's"
+    assert titles.index("otto defaults") < titles.index("first-repo") < titles.index("second-repo")

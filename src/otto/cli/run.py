@@ -126,10 +126,13 @@ def instruction(*args: Any, options: type | None = None, **kwargs: Any) -> Calla
     one. Lab work belongs in ``await host.…``; local blocking work belongs in
     ``asyncio.to_thread``.
 
-    This is the sugar's check. The same rule is re-applied when ``otto run``
-    INVOKES a leaf (``CommandSpec.async_leaves``), so a directly-registered
-    ``InstructionEntry``, an ``@run_app.command()``, or a sub-group added with
-    ``add_typer`` cannot route around it.
+    This is the sugar's check, and THE ASYNC RULE IS THE ONLY ONE THAT IS
+    RE-APPLIED when ``otto run`` INVOKES a leaf (``CommandSpec.async_leaves``),
+    so a directly-registered ``InstructionEntry``, an ``@run_app.command()``,
+    or a sub-group added with ``add_typer`` cannot route around *that*. The
+    first-party name guard further down this function has no such twin: it runs
+    at decoration or not at all — see the comment beside it for what covers the
+    routes it never sees.
 
     When *options* is a dataclass, the decorator expands its fields (including
     inherited ones) into individual CLI flags — exactly like ``OttoSuite``'s
@@ -220,6 +223,15 @@ def instruction(*args: Any, options: type | None = None, **kwargs: Any) -> Calla
         # Keyed on the registering-repo marker, never on the name alone:
         # otto's own registration runs outside any repo's init (bootstrap
         # phase 2) and must pass whatever order the imports happen in.
+        #
+        # THIS GUARD COVERS THE DECORATOR AND NOTHING ELSE. A repo that builds
+        # an InstructionEntry and calls INSTRUCTIONS.register() itself never
+        # reaches this line. What stops it there is bootstrap's ORDER —
+        # otto.project.instructions is imported before any repo init, so the
+        # six names are already taken and the registry refuses the second
+        # registration — with the registry's generic "already registered",
+        # which is exactly the message this guard exists to improve on. The
+        # order is load-bearing on that route, not belt-and-braces.
         repo_name = get_registering_repo()
         if repo_name is not None and cmd_name in FIRST_PARTY_INSTRUCTIONS:
             raise ValueError(

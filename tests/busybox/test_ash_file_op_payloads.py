@@ -16,9 +16,14 @@ both load-bearing and both measured here per row:
    pattern LITERAL, and `glob`'s `[ -e "$p" ]` guard is the only thing
    standing between that literal and a caller that believes it is holding a
    real path. The empty answer is the contract (zero logs is success), so the
-   row that breaks it breaks it silently — an ash with `nullglob`-like
-   behaviour would pass half of this and a literal-returning one would pass
-   the other half, which is why both are asserted on every row.
+   row that breaks it breaks it silently. What this half pins is THE COMPOSED
+   PAYLOAD, not the row's raw dialect: an ash with `nullglob`-like behaviour
+   satisfies it legitimately — the word expands to nothing, the loop body
+   never runs, the answer is empty — while on a literal-returning ash (what
+   POSIX asks for, and what these rows are expected to have) it goes red the
+   moment the `-e` guard leaves the shell line. Both halves are asserted on
+   every row because the payload has to hold on whichever dialect the row
+   turns out to have.
 
 THE PAYLOAD IS TAKEN FROM THE PRODUCT, never retyped — `_glob_payload` drives
 the real `PosixFileOps.glob` with a recording `exec` and uses the exact string

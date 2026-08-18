@@ -33,6 +33,14 @@ class Surface:
     argv: list[str]
     deny: tuple[str, ...]
     cap: int | None = None
+    bootstrap: bool = False
+    """Run the composition root before resolving the dispatch target.
+
+    Off for the surfaces that measure LAZY DISPATCH — how much a command
+    resolution costs on its own, which is what the completion fast path pays.
+    On for the surface that measures a REAL INVOCATION, where
+    ``otto.cli.main.entry`` calls ``bootstrap()`` before argv is parsed.
+    """
 
 
 # Heavy third-party stacks that must stay off the surfaces that don't own them.
@@ -60,6 +68,20 @@ SURFACES: list[Surface] = [
     Surface(
         "cov", ["otto", "cov", "--help"], ("fastapi", "uvicorn", "starlette", "pytest"), cap=272
     ),
+    # THE COMPOSITION ROOT IS ON THE PATH OF EVERY REAL INVOCATION, and until
+    # this surface existed nothing measured it: every surface above resolves a
+    # dispatch target through the root group WITHOUT calling `bootstrap()`, so
+    # when bootstrap grew an import (it now imports `otto.project.instructions`
+    # to register the first-party `otto run` verbs, which pulls otto.project
+    # and its dependents) the guard measured none of it and stayed green.
+    #
+    # Deliberately a SECOND surface over the same argv as `run` rather than a
+    # change to that one: the pair is the measurement. `run` keeps reporting
+    # what lazy dispatch costs by itself (what the completion fast path pays,
+    # which never bootstraps), and the DIFFERENCE between the two snapshots is
+    # the composition root's own footprint. `run` is the argv because the verbs
+    # bootstrap registers are `otto run`'s.
+    Surface("run_bootstrapped", ["otto", "run", "--help"], _ALL_HEAVY, cap=276, bootstrap=True),
 ]
 
 # non_stdlib_modules is the gated metric: total sys.modules minus the stdlib
@@ -85,11 +107,22 @@ print(json.dumps({"count": len(mods), "modules": mods, "otto_modules": otto_mods
 # renderer, pygments, etc. — a measurement artifact unrelated to otto's own
 # lazy-import footprint). Every surface's argv is `[..., "<name>", "--help"]`
 # except the bare `help` surface (`["otto", "--help"]`, no dispatch target).
+#
+# `Surface.bootstrap` additionally runs the composition root, in the position
+# `otto.cli.main.entry` runs it: BEFORE argv is parsed, so every import
+# bootstrap performs is charged to the surface. It needs no lab and reads no
+# repo — the sanitized env strips OTTO_*, `sut_dirs` then defaults to empty,
+# and discovery finds zero repos — so the surface stays as host-independent
+# and deterministic as the rest of the table while covering otto's own
+# startup graph.
 _CHILD_CLI = """
 import sys, json
 import typer
 sys.argv = {argv!r}
 import otto
+if {bootstrap!r}:
+    from otto import bootstrap as _bs
+    _bs.bootstrap()
 cmd = typer.main.get_command(otto.app)
 ctx = cmd.make_context("otto", sys.argv[1:], resilient_parsing=True)
 target = sys.argv[1] if len(sys.argv) > 1 and not sys.argv[1].startswith("-") else None
@@ -158,9 +191,16 @@ def _is_measurement_artifact(module: str) -> bool:
     return module.endswith("__mypyc")
 
 
-def measure(argv: list[str]) -> dict:
-    """Import otto in a fresh sanitized subprocess for *argv*; return its module inventory."""
-    code = _CHILD_IMPORT if argv[:1] == ["python"] else _CHILD_CLI.format(argv=argv)
+def measure(argv: list[str], *, bootstrap: bool = False) -> dict:
+    """Import otto in a fresh sanitized subprocess for *argv*; return its module inventory.
+
+    *bootstrap* additionally runs the composition root, as a real invocation does.
+    """
+    code = (
+        _CHILD_IMPORT
+        if argv[:1] == ["python"]
+        else _CHILD_CLI.format(argv=argv, bootstrap=bootstrap)
+    )
     result = json.loads(_run_child(code))
     baseline = baseline_modules()
     result["non_stdlib_modules"] = [
@@ -169,6 +209,19 @@ def measure(argv: list[str]) -> dict:
         if m not in baseline and not _is_measurement_artifact(m)
     ]
     return result
+
+
+def measure_surface(surface: Surface) -> dict:
+    """Measure *surface* with its own options — the one way to measure a surface.
+
+    Every caller goes through this rather than ``measure(surface.argv)``: a
+    surface carries options (``bootstrap``) that a bare argv does not, and a
+    caller that dropped one would measure a DIFFERENT surface than the one
+    whose snapshot it then compares against. The script and
+    ``tests/unit/import_budget/`` share this for the same reason they share
+    :func:`check_surface`.
+    """
+    return measure(surface.argv, bootstrap=surface.bootstrap)
 
 
 def snapshot_path(key: str) -> Path:
@@ -258,7 +311,7 @@ def main() -> int:
     print(f"{'surface':14} {'total':>6} {'non_std':>7} {'otto':>5}  heavy_present", flush=True)
     failed = False
     for s in SURFACES:
-        r = measure(s.argv)
+        r = measure_surface(s)
         present = [d for d in s.deny if d in r["modules"]]
         non_std, otto = len(r["non_stdlib_modules"]), len(r["otto_modules"])
         print(f"{s.key:14} {r['count']:6d} {non_std:7d} {otto:5d}  {present}", flush=True)

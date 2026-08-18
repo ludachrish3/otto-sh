@@ -35,9 +35,20 @@ def test_marker_nests():
         assert get_registering_repo() == "outer"
 
 
-def test_bootstrap_result_carries_ordered_repos():
-    # Kills: forgetting to store resolution.ordered — get_ordered_repos()
-    # would return [] and the orchestrator would silently walk zero repos.
+def test_bootstrap_result_declares_an_ordered_repos_field():
+    # Kills: the FIELD never landing on the carrier (dropped, or renamed out
+    # from under `otto.config.get_ordered_repos`, which is nothing but this
+    # attribute read) — every orchestrator walk would die on an AttributeError.
+    #
+    # IT DOES NOT KILL AN UNPOPULATED FIELD, though the shape invites the
+    # claim: `ordered_repos` has a `default_factory=list`, so a bootstrap that
+    # builds its result WITHOUT `ordered_repos=resolution.ordered` leaves it []
+    # and this assertion passes unchanged. The VALUE is pinned where it can be
+    # observed against a real resolution — tests/unit/bootstrap/
+    # test_bootstrap_dependencies.py::test_required_dep_reorders_registration,
+    # which asserts the resolved order both on the field and through
+    # get_ordered_repos(), and ::test_missing_required_skips_registration,
+    # which asserts a skipped repo is absent from it.
     import dataclasses
 
     from otto.bootstrap import BootstrapResult

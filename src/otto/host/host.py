@@ -377,6 +377,47 @@ async def _run_cmds_with_budget(
     return Results.collect(entries)
 
 
+def _log_tree_state(directory: "Path") -> "set[tuple[str, int, int, int]]":
+    """Identity of every file under *directory*: relative path, size, mtime, ctime.
+
+    Taken before and after a haul, the DIFFERENCE is what that haul retrieved
+    — which is the only honest reading of ``require_product_logs``. A ``dest``
+    is routinely reused (last run's output dir, ``--dest ./logs``), so "the
+    product directory has files in it" answers a question nobody asked: it is
+    satisfied by an earlier haul's files while this one retrieved nothing.
+
+    Stamps are carried, not just the path, so a log re-fetched under the name
+    it already had counts — that is the ordinary second run.
+
+    **ctime is the load-bearing component**, because mtime can be forged and
+    is: ``ScpOptions.preserve`` (:mod:`otto.host.options`) forwards straight to
+    ``asyncssh.scp``'s ``preserve``, so a re-fetch of an unchanged log lands
+    with byte-identical size AND mtime. On such a lab every ordinary run would
+    be failed for retrieving exactly what it was asked for. No userspace API
+    can set ctime, so any re-write advances it.
+
+    Size and mtime stay in the tuple even though ctime dominates them on
+    POSIX: another component can only ever make MORE things count as
+    retrieved, never fewer, so carrying them cannot manufacture a false pass —
+    at worst they are redundant on a filesystem that maintains ctime properly.
+    """
+    if not directory.exists():
+        return set()
+    state: set[tuple[str, int, int, int]] = set()
+    for path in directory.rglob("*"):
+        if path.is_file():
+            stat = path.stat()
+            state.add(
+                (
+                    str(path.relative_to(directory)),
+                    stat.st_size,
+                    stat.st_mtime_ns,
+                    stat.st_ctime_ns,
+                )
+            )
+    return state
+
+
 class Host(Protocol):
     """Structural protocol defining the public interface every otto host must satisfy.
 
@@ -716,8 +757,15 @@ class Host(Protocol):
         """Fetch ``debug_log_globs`` matches into ``…/logs/<host-id>/debug/``."""
         ...
 
-    async def install_dev_tools(self) -> Result:
-        """Stage then install every dev tool (declaration order, first failure wins)."""
+    async def install_dev_tools(self, owner: str | None = None) -> Result:
+        """Stage then install every dev tool (declaration order, first failure wins).
+
+        *owner* narrows the walk to that repo's tools; ``None`` is every tool.
+        """
+        ...
+
+    async def uninstall_dev_tools(self, owner: str | None = None) -> Result:
+        """Remove every dev tool (best-effort), narrowed to *owner*'s when given."""
         ...
 
     async def install_toolchain_tools(self) -> Result:
@@ -1497,6 +1545,13 @@ class BaseHost(ABC):
         The log flags are forwarded to :meth:`uninstall`, which owns the log
         ordering. Project-specific remnant removal belongs in an override.
 
+        HOST-GLOBAL, and takes no ``owner``: its last step removes the
+        toolchain tools, which one host shares with every owner on it. A repo
+        scoping its own teardown composes ``uninstall(owner=…)`` with
+        :meth:`uninstall_dev_tools` instead — an owner-scoped ``cleanup`` would
+        be a verb that honours the scope for two of its three steps and takes
+        the neighbours' tooling with it on the third.
+
         Each removal result is reported WHOLE. Repacking one as
         ``Result(status, msg=result.value)`` would read ``value`` on the
         :class:`~otto.result.NotRunResult` a dry run returns, which raises
@@ -1511,8 +1566,7 @@ class BaseHost(ABC):
                 first_failure = result
 
         note(await self.uninstall(get_product_logs=get_product_logs, get_debug_logs=get_debug_logs))
-        for tool in self.dev_tools:
-            note(await tool.uninstall(cast("Host", self)))
+        note(await self.uninstall_dev_tools())
         note(await self.remove_toolchain_tools())
         return first_failure if first_failure is not None else Result(Status.Success)
 
@@ -1641,16 +1695,19 @@ class BaseHost(ABC):
                 ),
             )
         if product:
+            product_dir = self.log_dest(dest) / "product"
+            # Snapshot BEFORE the haul: the requirement is about what THIS call
+            # retrieved, and a reused dest already holds an earlier haul's
+            # files. Skipped unless asked for — it is a directory walk.
+            before = _log_tree_state(product_dir) if require_product_logs else set()
             result = await self.get_product_logs(dest=dest, owner=owner)
             if not result.is_ok:
                 return result
-            if require_product_logs:
-                product_dir = self.log_dest(dest) / "product"
-                if not any(product_dir.iterdir()):
-                    return Result(
-                        Status.Error,
-                        msg=f"require_product_logs: no product logs retrieved from {self.id}",
-                    )
+            if require_product_logs and _log_tree_state(product_dir) <= before:
+                return Result(
+                    Status.Error,
+                    msg=f"require_product_logs: no product logs retrieved from {self.id}",
+                )
         if debug:
             return await self.get_debug_logs(dest=dest)
         return Result(Status.Success)
@@ -1659,15 +1716,31 @@ class BaseHost(ABC):
     #  Tools
     ####################
 
+    def _owned_dev_tools(self, owner: str | None) -> "list[DevTool]":
+        """Dev tools filtered by owner; ``None`` = all (the pre-owner behavior).
+
+        The twin of :meth:`_owned_products`, deliberately identical in shape:
+        both attachment kinds carry the same ``owner`` stamp, so a reader who
+        knows one filter knows the other. ``None`` is "every tool", not "the
+        tools with no owner" — the pre-owner callers (``otto host <id>
+        install-tools``, :meth:`cleanup`) are host-global and must stay so.
+        """
+        if owner is None:
+            return list(self.dev_tools)
+        return [t for t in self.dev_tools if t.owner == owner]
+
     @cli_exposed
-    async def install_dev_tools(self) -> Result:
+    async def install_dev_tools(self, owner: str | None = None) -> Result:
         """Stage then install every dev tool (declaration order, first failure wins).
 
         Each tool is carried through both phases before the next one starts, so
         a tool that stages but cannot install stops the walk rather than
         leaving later tools installed on top of a half-placed prerequisite.
+        *owner* narrows the walk to the tools that repo attached, exactly as on
+        the product verbs: it is what lets one repo's project actions place its
+        own tooling on a shared host without touching a neighbour's.
         """
-        for tool in self.dev_tools:
+        for tool in self._owned_dev_tools(owner):
             result = await tool.stage(cast("Host", self))
             if not result.is_ok:
                 # Returned whole: a tool's CommandResult carries the retcode
@@ -1677,6 +1750,31 @@ class BaseHost(ABC):
             if not result.is_ok:
                 return result
         return Result(Status.Success)
+
+    @cli_exposed
+    async def uninstall_dev_tools(self, owner: str | None = None) -> Result:
+        """Remove this host's dev tools (best-effort), scoped by *owner*.
+
+        The removal twin of :meth:`install_dev_tools`, and a verb of its own
+        rather than a loop inside :meth:`cleanup` for the same reason
+        :meth:`remove_toolchain_tools` is one: a caller needs exactly this step
+        on its own. The per-repo project actions tear down with
+        ``uninstall(owner=…)`` followed by ``uninstall_dev_tools(owner=…)`` --
+        never :meth:`cleanup`, whose third step is the host-global toolchain a
+        repo must not touch -- and a second copy of the loop over there drifted
+        from this one the moment either changed.
+
+        Best-effort, unlike the installation walk: every tool is attempted even
+        after one fails, because a tool that refuses to go must not strand the
+        rest of the tooling on the host. The first failure is what returns, and
+        it is returned WHOLE (see :meth:`cleanup`).
+        """
+        first_failure: Result | None = None
+        for tool in self._owned_dev_tools(owner):
+            result = await tool.uninstall(cast("Host", self))
+            if not result.is_ok and first_failure is None:
+                first_failure = result
+        return first_failure if first_failure is not None else Result(Status.Success)
 
     @cli_exposed
     async def install_toolchain_tools(self) -> Result:
@@ -1713,7 +1811,7 @@ class BaseHost(ABC):
                     moved = await self.exec(f"mv {landed} {installed}")
                     if not moved.is_ok:
                         return moved
-                chown = await self.exec(f"chown {tool.user} {installed}")
+                chown = await self.exec(f"chown {shlex.quote(tool.user)} {installed}")
                 if not chown.is_ok:
                     return chown
         return Result(Status.Success)

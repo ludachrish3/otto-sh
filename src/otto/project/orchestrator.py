@@ -37,7 +37,13 @@ from typing import TYPE_CHECKING
 
 from ..result import Result
 from ..utils import Status
-from .actions import PROJECT_ACTIONS, ProjectActions, _reduce_results, actions_for
+from .actions import (
+    _REQUIRE_PRODUCT_LOGS_CONTRADICTION,
+    PROJECT_ACTIONS,
+    ProjectActions,
+    _reduce_results,
+    actions_for,
+)
 from .state import InstallState, ProjectStatus
 
 if TYPE_CHECKING:
@@ -229,14 +235,7 @@ async def get_logs(
     for.
     """
     if require_product_logs and not product:
-        return Result(
-            Status.Error,
-            msg=(
-                "require_product_logs cannot be satisfied with product=False: "
-                "the product-log haul it requires is the step being skipped. "
-                "Gather product logs, or drop the requirement."
-            ),
-        )
+        return Result(Status.Error, msg=_REQUIRE_PRODUCT_LOGS_CONTRADICTION)
     ctx, repos = _lab()
     hauled = await _walk(
         "get_logs",

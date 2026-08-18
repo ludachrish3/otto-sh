@@ -403,6 +403,14 @@ CommandNotRunError: "toolchain_tools_absent('gdb')" was not run on host 'localho
 CommandNotRunError: "expect('prompt')" was not run on host 'localhost': …
 ```
 
+That last line is the **example host's** answer, not a universal one.
+`is_clean` asks this host's products and dev tools before it asks the
+toolchain, and those two questions run project-supplied `is_installed` hooks —
+what they do under a dry run is the hook's business, so a host carrying them
+can refuse earlier and name something else. The example host carries neither
+and declares a `gdb` toolchain tool, which is why the toolchain probe is both
+the first thing it asks and the only thing it can refuse on.
+
 A `bool` has only `True` and `False`, and both are lies: `exists` returning
 `False` under a dry run reports a path absent that may well be there, and a
 caller that then creates it has acted on a fact nobody measured. `ls` returning
@@ -421,9 +429,20 @@ transfer or command they would have made. `get-debug-logs` is the exception in
 the other direction — a `debug_log_globs` entry that is a *pattern* has to be
 expanded by `glob` first, and that is a raise. It is not only reachable by
 name: `uninstall`, `cleanup` and `get-logs` all gather debug logs by default,
-so on a host whose `debug_log_globs` carries a pattern, each of those three
-raises where the rest of this paragraph would have you expect a decline. Turn
-that verb's debug half off, or declare concrete paths, to get the decline back.
+so on a host whose `debug_log_globs` carries a pattern they raise where the
+rest of this paragraph would have you expect a decline. `uninstall` and
+`cleanup` always get that far — they are best-effort, so a declined product-log
+haul is recorded and the walk continues to the debug half regardless.
+`get-logs` is the one that may not: it returns as soon as its product half comes
+back **non-ok**, so a host whose product-log haul declines hands back that
+decline and never reaches the glob. Carrying products is not by itself enough to
+get that decline — `get_product_logs` contacts nothing on its own, and
+`Product.get_logs`'s default retrieves nothing *successfully*, so a host whose
+products leave that hook alone still passes an ok product half through to the
+raise. What declines is a hook that actually attempts a transfer or a command,
+which is the same "it is the hook's business" point made two paragraphs above.
+Turn the debug half off, or declare concrete paths, to get the decline back
+everywhere.
 
 `write_file` is the shape in between: it returns
 `Result(Status.NotRun, msg="[DRY RUN] WRITE: 11 bytes -> /etc/motd")` with

@@ -24,14 +24,51 @@ that leaked the tree into the repo would be doing exactly the thing the design
 prevents in production.
 """
 
+import os
 from pathlib import Path
 
 import pytest
 
 from otto.host.product import Product
 from otto.result import Result
-from otto.utils import Status
+from otto.utils import Status, wait_for
 from tests.conftest import active_context
+
+# A fixed stamp in the past (2001-09-09), used to age a "left by an earlier
+# haul" file. Aging by an explicit utime rather than by waiting is what keeps
+# the mtime half of these tests off the wall clock entirely.
+_AGED_NS = 1_000_000_000_000_000_000
+
+
+def _await_a_new_filesystem_timestamp(reference: Path, probe: Path) -> None:
+    """Block until the kernel's file-timestamp clock has moved past *reference*'s.
+
+    File stamps come from the kernel's COARSE clock and are one tick granular,
+    so two writes in the same tick get byte-identical mtime AND ctime —
+    measured on this bed at 1775 collisions in 2000 back-to-back rewrites. A
+    test that lays down a stale file and then hauls a fresh one over it cannot
+    tell them apart ~90% of the time, so it must wait for the clock to move.
+
+    Waits on the OBSERVABLE condition (a probe file stamped later than
+    *reference*) rather than sleeping a guessed interval: one tick is 1-4 ms
+    here, but that is a kernel build option, not a contract. Expiry raises
+    (``wait_for``'s contract) as a runaway guard — if it ever fires, the
+    filesystem is not maintaining ctime and the tests below are meaningless
+    rather than merely slow.
+    """
+    was = reference.stat().st_ctime_ns
+
+    def _clock_moved() -> bool:
+        probe.write_text("tick", encoding="utf-8")
+        return probe.stat().st_ctime_ns != was
+
+    wait_for(
+        _clock_moved,
+        timeout=5.0,
+        interval=0.001,  # a tick, not a poll interval — this resolves in ones of ms
+        on_timeout=lambda: f"filesystem timestamp clock never advanced past {was}",
+    )
+    probe.unlink()
 
 
 class _LoggingProduct(Product):
@@ -77,6 +114,24 @@ class _LoggingProduct(Product):
         if self.fail_logs:
             return Result(Status.Failed, msg=f"{self.name} logs failed")
         return Result(Status.Success)
+
+
+class _MtimePreservingProduct(_LoggingProduct):
+    """A product whose fetch restores the source's mtime — ``scp`` with ``preserve``.
+
+    The local file is written for real (so its ctime advances, as any write
+    does) and then stamped back to *mtime_ns*, which is exactly what a
+    preserving transfer leaves behind.
+    """
+
+    def __init__(self, name, writes, mtime_ns):
+        super().__init__(name, writes=writes)
+        self.mtime_ns = mtime_ns
+
+    async def get_logs(self, host, dest):
+        result = await super().get_logs(host, dest)
+        os.utime(dest / self.writes, ns=(self.mtime_ns, self.mtime_ns))
+        return result
 
 
 # =========================================================================== #
@@ -236,6 +291,77 @@ async def test_require_product_logs_is_satisfied_by_a_retrieved_file(recording_h
 
 
 @pytest.mark.asyncio
+async def test_require_product_logs_is_not_satisfied_by_an_earlier_hauls_files(
+    recording_host, tmp_path
+):
+    """A REUSED ``dest`` is the common case, and its leftovers prove nothing.
+
+    ``--dest`` (or an output dir) pointed at last run's tree already contains
+    ``logs/<id>/product/…``. Kills: asking whether the directory is non-empty,
+    which reports "logs retrieved" for a haul that retrieved NOTHING and hands
+    the caller yesterday's logs as today's evidence.
+    """
+    stale = tmp_path / "logs" / recording_host.id / "product"
+    stale.mkdir(parents=True)
+    (stale / "app.log").write_text("from an earlier haul\n", encoding="utf-8")
+
+    recording_host.products = [_LoggingProduct("app")]  # writes nothing this time
+    result = await recording_host.get_logs(require_product_logs=True, dest=tmp_path)
+    assert not result.is_ok
+    assert recording_host.id in result.msg
+    assert (stale / "app.log").exists()  # …and the requirement check destroys nothing
+
+
+@pytest.mark.asyncio
+async def test_require_product_logs_counts_an_overwritten_file_as_retrieved(
+    recording_host, tmp_path
+):
+    """Re-hauling a log under the name it already had IS a retrieval.
+
+    THE STALE FILE HOLDS THE SAME BYTES the product is about to write, so the
+    path and the size are identical and only a STAMP can decide this. Kills a
+    check that looks for new filenames, and kills a ``(path, size)``
+    fingerprint — each of which fails the ordinary second run, where every host
+    writes ``app.log`` again into a dest that already has one.
+    """
+    product_dir = tmp_path / "logs" / recording_host.id / "product"
+    product_dir.mkdir(parents=True)
+    stale = product_dir / "app.log"
+    stale.write_text("log line\n", encoding="utf-8")  # byte-for-byte what the product writes
+    os.utime(stale, ns=(_AGED_NS, _AGED_NS))  # an earlier haul's file, aged deterministically
+
+    recording_host.products = [_LoggingProduct("app", writes="app.log")]
+    assert (await recording_host.get_logs(require_product_logs=True, dest=tmp_path)).is_ok
+
+
+@pytest.mark.asyncio
+async def test_require_product_logs_sees_a_refetch_that_preserved_size_and_mtime(
+    recording_host, tmp_path
+):
+    """``scp`` with ``preserve`` reproduces the source mtime, so mtime cannot decide.
+
+    ``ScpOptions.preserve`` forwards to ``asyncssh.scp``'s ``preserve``, so on
+    a lab that sets it, re-fetching an unchanged log lands byte-identical size
+    AND mtime into a reused dest — indistinguishable from "nothing arrived".
+    Kills a ``(path, size, mtime)`` fingerprint, which would fail every
+    ordinary run on such a lab for retrieving exactly what it was asked for.
+    ctime is what closes it: no userspace API can set it, so the re-write
+    advances it.
+    """
+    product_dir = tmp_path / "logs" / recording_host.id / "product"
+    product_dir.mkdir(parents=True)
+    stale = product_dir / "app.log"
+    stale.write_text("log line\n", encoding="utf-8")
+    os.utime(stale, ns=(_AGED_NS, _AGED_NS))
+    # The stale file's ctime is NOW (utime just changed its metadata); the
+    # fetch below must land in a later tick or nothing could tell them apart.
+    _await_a_new_filesystem_timestamp(stale, tmp_path / ".tick-probe")
+
+    recording_host.products = [_MtimePreservingProduct("app", "app.log", _AGED_NS)]
+    assert (await recording_host.get_logs(require_product_logs=True, dest=tmp_path)).is_ok
+
+
+@pytest.mark.asyncio
 async def test_requiring_product_logs_while_skipping_them_is_an_error(recording_host, tmp_path):
     """The contradiction fails LOUD, before anything is gathered.
 
@@ -252,6 +378,23 @@ async def test_requiring_product_logs_while_skipping_them_is_an_error(recording_
     # And it refused BEFORE the debug half ran, rather than reporting an error
     # after doing half the work.
     assert recording_host.get_calls == []
+
+
+@pytest.mark.asyncio
+async def test_the_contradiction_refusal_matches_the_project_layers_wording(
+    recording_host, tmp_path
+):
+    """Three verbs refuse this flag pair; one wording, or the CLI teaches three.
+
+    ``otto host <id> get-logs``, ``otto run get-logs`` and the lab-level verb
+    all express the same contradiction, and the project layer holds its two in
+    one constant. It cannot hold this one -- the host layer sits below it and
+    may not import it -- so the guard against that copy drifting is here.
+    """
+    from otto.project.actions import _REQUIRE_PRODUCT_LOGS_CONTRADICTION
+
+    result = await recording_host.get_logs(product=False, require_product_logs=True, dest=tmp_path)
+    assert result.msg == _REQUIRE_PRODUCT_LOGS_CONTRADICTION
 
 
 @pytest.mark.asyncio
@@ -342,3 +485,39 @@ async def test_uninstall_owner_filter_scopes_the_log_haul_too(recording_host, tm
     with active_context(output_dir=tmp_path):
         assert (await recording_host.uninstall(owner="acme")).is_ok
     assert events == ["a:get_logs", "a:uninstall"]
+
+
+@pytest.mark.asyncio
+async def test_uninstall_debug_logs_stay_unscoped_when_an_owner_is_given(recording_host, tmp_path):
+    """``owner`` narrows the product halves and NOTHING ELSE.
+
+    Debug logs are host-level: the globs belong to the host, no repo stamps
+    them, and there is nothing on them an owner could filter. The per-repo
+    layer therefore turns them OFF explicitly (``get_debug_logs=False``) rather
+    than relying on the scope to do it — which is only a real decision if this
+    verb would in fact sweep them when scoped.
+
+    Kills ``if get_debug_logs and owner is None:`` — the tempting shortcut,
+    since every owner-scoped caller in the tree passes ``get_debug_logs=False``
+    today, so it costs nothing in-tree and silently ignores the flag the moment
+    a caller (an override, ``otto host <id> uninstall --owner``) asks for both.
+    The two owner tests either side of this one cannot see it: neither sets a
+    debug glob, so the debug half is a no-op whether it runs or not.
+    """
+    events = recording_host.event_log
+    recording_host.products = [
+        _LoggingProduct("a", events, owner="acme"),
+        _LoggingProduct("b", events, owner="other"),
+    ]
+    recording_host.debug_log_globs = ["/var/log/messages"]
+
+    with active_context(output_dir=tmp_path):
+        assert (await recording_host.uninstall(owner="acme")).is_ok
+
+    debug_dest = tmp_path / "logs" / recording_host.id / "debug"
+    assert recording_host.get_calls == [([Path("/var/log/messages")], debug_dest)]
+    # …and the sweep still lands AFTER the scoped teardown, where uninstall's
+    # ordering contract puts it — the scope must not reorder the halves either.
+    fetched = next(i for i, e in enumerate(events) if e.startswith("get:"))
+    assert events.index("a:uninstall") < fetched
+    assert "b:uninstall" not in events  # the PRODUCT half is still scoped

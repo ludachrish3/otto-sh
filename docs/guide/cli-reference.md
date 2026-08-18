@@ -323,6 +323,7 @@ to see what is available for a specific host.
 | `get-debug-logs` | Fetch the host's `debug_log_globs` into `logs/<host-id>/debug/` |
 | `install-tools` | Install the host's dev tools, and its toolchain tools with `--toolchain` |
 | `install-dev-tools` | Stage then install every dev tool attached to the host |
+| `uninstall-dev-tools` | Remove every dev tool attached to the host (best-effort) |
 | `install-toolchain-tools` | Put each declared toolchain tool, renamed and chowned |
 | `remove-toolchain-tools` | Remove every declared toolchain tool from the host |
 | `exists` | Exit 0 if a path exists on the host |

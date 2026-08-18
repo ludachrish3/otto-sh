@@ -111,6 +111,29 @@ async def test_install_toolchain_tools_chowns_the_installed_path_as_root(recordi
 
 
 @pytest.mark.asyncio
+async def test_install_toolchain_tools_quotes_the_declared_user(recording_host):
+    """*user* is lab-declared data, so it is quoted exactly as the path is.
+
+    Kills: interpolating ``tool.user`` bare. A declared user carrying a space
+    makes ``chown`` a three-argument command that chowns the wrong file (and
+    one carrying a metacharacter makes it two commands) — the same hazard the
+    path is already quoted against, on the other half of the same line.
+    """
+    recording_host.toolchain = Toolchain(
+        tools=[
+            ToolchainTool(
+                name="libfoo.so",
+                source=Path("/build/out/libfoo.so"),
+                dest=Path("/usr/lib"),
+                user="app user",
+            )
+        ]
+    )
+    assert (await recording_host.install_toolchain_tools()).is_ok
+    assert recording_host.exec_calls == ["chown 'app user' /usr/lib/libfoo.so"]
+
+
+@pytest.mark.asyncio
 async def test_install_toolchain_tools_honors_per_tool_mode(recording_host):
     """A tool's declared mode reaches ``put`` — kills a hard-coded 755."""
     recording_host.toolchain = Toolchain(

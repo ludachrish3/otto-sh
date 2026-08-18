@@ -165,8 +165,8 @@ from otto.suite import OttoSuite
 from otto.suite.pytest_plugin import OttoOptionsPlugin
 
 class TestEnsures(OttoSuite):
-    async def test_requests_the_fixture(self, ensure_installed):
-        assert ensure_installed is None
+    async def test_requests_the_fixture(self, {fixture}):
+        assert {fixture} is None
         # The converge has to run on the loop the TEST runs on: it opens host
         # connections, and a connection bound to a loop that is no longer
         # running is unusable here. `_converge_loop` is stashed by the stub
@@ -175,21 +175,32 @@ class TestEnsures(OttoSuite):
         # converge on a third loop and fails right here.
         assert OttoOptionsPlugin._converge_loop is asyncio.get_running_loop()
 
-async def test_plain_function_requests_the_fixture(ensure_installed):
+async def test_plain_function_requests_the_fixture({fixture}):
     # The other shape `otto test` runs: a module-level async test, no class.
     # A class-scoped loop has nothing to attach to here.
-    assert ensure_installed is None
+    assert {fixture} is None
     assert OttoOptionsPlugin._converge_loop is asyncio.get_running_loop()
 """
 
 
-def _stub(calls: list[str], name: str, outcome: Any) -> Callable[..., Any]:
-    """One converge stand-in: records *name* and its loop, then returns/raises *outcome*."""
+def _stub(calls: list[tuple], name: str, outcome: Any) -> Callable[..., Any]:
+    """One converge stand-in: records the CALL and its loop, then returns/raises *outcome*.
+
+    The recorded entry is ``(name, args, kwargs)`` — the arguments included,
+    not swallowed by an unexamined ``*args``. The fixtures call their converge
+    function with NOTHING, taking the orchestrator's own defaults, and that is
+    the documented behaviour of all three (``ensure_installed`` "a PARTIAL lab
+    is uninstalled first, then installed fresh" IS ``recover_partial=True``).
+    A stub that recorded only the name would let a fixture quietly pass
+    ``recover_partial=False`` — which inverts that sentence, installs straight
+    over known remnants, and reproduces the PARTIAL state the converge was
+    requested to fix.
+    """
 
     async def _fake(*args: Any, **kwargs: Any) -> Any:
         from otto.suite.pytest_plugin import OttoOptionsPlugin
 
-        calls.append(name)
+        calls.append((name, args, kwargs))
         OttoOptionsPlugin._converge_loop = asyncio.get_running_loop()
         if isinstance(outcome, BaseException):
             raise outcome
@@ -198,7 +209,12 @@ def _stub(calls: list[str], name: str, outcome: Any) -> Callable[..., Any]:
     return _fake
 
 
-def _stub_ensures(monkeypatch: pytest.MonkeyPatch, calls: list[str], outcome: Any) -> list[str]:
+def _called(fixture_name: str, times: int = 1) -> list[tuple]:
+    """The expected ``calls`` record: *fixture_name*'s converge, with no arguments."""
+    return [(fixture_name, (), {})] * times
+
+
+def _stub_ensures(monkeypatch: pytest.MonkeyPatch, calls: list[tuple], outcome: Any) -> list[tuple]:
     """Replace ALL THREE converge functions, each recording its own name.
 
     All three, not just the one under test: that is what makes ``calls ==
@@ -254,14 +270,17 @@ def _drive_and_catch(fixture_name: str) -> BaseException | None:
 def test_ensure_fixture_awaits_its_converge_function(
     fixture_name: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Each fixture awaits ITS OWN converge function, exactly once.
+    """Each fixture awaits ITS OWN converge function, exactly once, with no arguments.
 
-    Kills a fixture that requests the wrong converge function, and one that
-    returns the coroutine without awaiting it (silently a no-op).
+    Kills a fixture that requests the wrong converge function, one that returns
+    the coroutine without awaiting it (silently a no-op), and one that passes
+    the converge layer a flag of its own — ``recover_partial=False`` above all,
+    which is a real behaviour change (install over known remnants) that no
+    assertion on the NAME alone can see.
     """
     calls = _stub_ensures(monkeypatch, [], Result(Status.Success, msg="converged"))
     _run_fixture(fixture_name)
-    assert calls == [fixture_name]
+    assert calls == _called(fixture_name)
 
 
 @pytest.mark.parametrize("fixture_name", ENSURE_FIXTURES)
@@ -274,13 +293,22 @@ def test_ensure_fixture_failure_errors_not_skips(
     ``EnsureStateError``, so a ``Skipped`` fails the isinstance assertion
     instead of quietly marking the case skipped. Also kills a fixture that
     ignores ``is_ok`` and returns anyway (``raised is None``).
+
+    THE VERB LABEL IS PART OF THE MESSAGE, and pinned per fixture. The three
+    fixtures pass their own name to one shared ``_raise_unless_converged``, so
+    the label is a hand-written string argument at each call site: the
+    copy-paste that gives ``ensure_clean`` the message ``ensure_installed
+    failed: …`` is a one-word slip that leaves the reader debugging the wrong
+    converge entirely, and every other assertion here is blind to it.
     """
     _stub_ensures(monkeypatch, [], Result(Status.Failed, msg="host test1: unreachable"))
     raised = _drive_and_catch(fixture_name)
     assert isinstance(raised, EnsureStateError), (
         f"convergence failure must ERROR the test, never skip it; got {raised!r}"
     )
-    assert "test1" in str(raised), "the failing host must be named in the message"
+    assert str(raised) == f"{fixture_name} failed: host test1: unreachable", (
+        "the message must name THIS fixture's verb and the failing host"
+    )
 
 
 @pytest.mark.parametrize("fixture_name", ENSURE_FIXTURES)
@@ -296,7 +324,7 @@ def test_ensure_fixture_accepts_a_skipped_no_op(
     """
     calls = _stub_ensures(monkeypatch, [], Result(Status.Skipped, msg="already installed"))
     assert _drive_and_catch(fixture_name) is None
-    assert calls == [fixture_name]
+    assert calls == _called(fixture_name)
 
 
 @pytest.mark.parametrize("fixture_name", ENSURE_FIXTURES)
@@ -318,10 +346,11 @@ def test_ensure_fixture_propagates_a_dry_run_refusal(
     )
 
 
+@pytest.mark.parametrize("fixture_name", ENSURE_FIXTURES)
 def test_ensure_fixtures_are_available_to_a_suite(
-    pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
+    fixture_name: str, pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Both shapes ``otto test`` runs can REQUEST ``ensure_installed``.
+    """Both shapes ``otto test`` runs can REQUEST each of the three.
 
     The direct-call tests above exercise the fixture BODIES; only a real inner
     session proves the registration works — right name, resolvable from an
@@ -332,11 +361,19 @@ def test_ensure_fixtures_are_available_to_a_suite(
     this task was briefed with — pytest-asyncio hands the fixture a loop that
     NO test runs on, and the converge's host connections would be stranded on
     it. This test fails in that configuration.
+
+    PARAMETRIZED OVER ALL THREE, because registration and loop scope are
+    per-fixture declarations: they are three separate decorators, so one of
+    them carrying the wrong scope (or not being a ``pytest_asyncio`` fixture at
+    all, which makes it resolve to an un-awaited coroutine) is invisible to a
+    test that only ever requests ``ensure_installed``. The direct-call tests
+    are parametrized precisely because the three bodies drift independently;
+    the declarations above them drift the same way.
     """
     from otto.suite.pytest_plugin import OttoOptionsPlugin
 
     calls = _stub_ensures(monkeypatch, [], Result(Status.Success, msg="converged"))
-    pytester.makepyfile(test_inner=ENSURE_SUITE_SRC)
+    pytester.makepyfile(test_inner=ENSURE_SUITE_SRC.format(fixture=fixture_name))
     result = pytester.runpytest_inprocess(
         "-k",
         "requests_the_fixture",
@@ -344,4 +381,4 @@ def test_ensure_fixtures_are_available_to_a_suite(
         plugins=[OttoPlugin(), OttoOptionsPlugin(None)],
     )
     assert result.ret == pytest.ExitCode.OK
-    assert calls == ["ensure_installed", "ensure_installed"]
+    assert calls == _called(fixture_name, times=2)  # the class test and the plain one

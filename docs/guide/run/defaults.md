@@ -213,7 +213,12 @@ CLI calls, so a fixture and `otto run install --ensure` cannot diverge. See
 {doc}`../test` for the full fixture list.
 
 - **Function-scoped**: the guarantee is per test *case*. When the state already
-  holds, the cost is one `status()` sweep.
+  holds, the cost is one probe of it — but not the same probe for all three.
+  `ensure_installed` and `ensure_uninstalled` ask `status()`, which counts the
+  *counted* repos' products. `ensure_clean` asks `is_clean()` instead, and that
+  is the heavier sweep: **every** repo is asked (not only the counted ones), dev
+  tools are probed alongside products, and each host is asked once more for
+  `toolchain_tools_absent()`.
 - **`ensure_installed` recovers a PARTIAL lab** by tearing it down and
   installing fresh — installing over remnants is how a lab got into that state
   in the first place.

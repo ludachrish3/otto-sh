@@ -58,8 +58,12 @@ modules inside a per-repo loop, in topological dependency order. It gains a modu
 "currently registering repo" marker set around each repo's imports.
 `register_product_provider`, the new `register_dev_tool_provider`, and
 `register_project_actions` capture it at call time. `apply_product_providers` (and the
-dev-tool twin) stamp each attached instance with `owner: str` — the owning repo's name;
-attachments made outside any repo's init import get a sentinel owner.
+dev-tool twin) stamp each attached instance with `owner: str | None` — the owning
+repo's name; attachments made outside any repo's init import keep `owner = None`.
+There is no sentinel string: `None` **is** the unowned value, and the filters read it
+as "belongs to no repo's actions" rather than matching it against a reserved name.
+Stamping is conditional — an instance that already names an owner keeps it, so one repo
+can hand an attachment to another's ownership deliberately.
 
 Consequence: default `ProjectActions` methods filter each host's attachments by
 `owner == self.repo.name`, so one repo's actions never install, uninstall, or log-gather
@@ -172,13 +176,31 @@ class ProjectActions:
     ctx: OttoContext    # provided at construction, per command
 
     async def install(self) -> Result
-    async def uninstall(self) -> Result
-    async def cleanup(self) -> Result
-    async def get_logs(self, product=True, debug=True, require_product_logs=False) -> Result
+    async def uninstall(self, get_product_logs=True) -> Result
+    async def cleanup(self, get_product_logs=True) -> Result
+    async def get_logs(self, product=True, require_product_logs=False) -> Result
     async def install_tools(self, dev=True, toolchain=False) -> Result
+
+    @property
+    def owns_products(self) -> bool             # what the counted-repo rule reads
     async def status(self) -> InstallState      # INSTALLED | PARTIAL | UNINSTALLED
     async def is_clean(self) -> bool
 ```
+
+**Two host-global concerns are deliberately absent from these signatures** (§5 owns
+both), which is why the shapes here differ from the host verbs of §3:
+
+- **No debug half.** `get_logs` has no `debug` parameter and `uninstall` hard-wires
+  `get_debug_logs=False` down to the host verb, rather than exposing a flag a repo
+  could turn on. N repos each sweeping the same host's debug logs means N transfers,
+  each overwriting the last.
+- **No toolchain half.** `install_tools`'s `toolchain` is accepted and is a *declared
+  no-op* at this layer — kept in the signature so an override has somewhere to hang
+  toolchain work of its own and so `super().install_tools(...)` takes the caller's
+  flags unchanged. Symmetrically, this `cleanup` uninstalls the repo's products and
+  then its dev tools (`uninstall_dev_tools(owner=…)`) and stops there; it does **not**
+  remove toolchain tools the way `Host.cleanup` (§3.4) does, because one host's
+  toolchain is shared by every owner on it.
 
 - Defaults iterate the lab's fleet hosts (`ctx.all_hosts()` membership — `local` and
   Docker containers excluded, as everywhere else) and drive each host's methods
@@ -224,7 +246,10 @@ idiom — zero-argument from instructions, suites, and fixtures alike):
   counted — it opted into having an opinion. Zero counted repos aggregate to
   UNINSTALLED, mirroring `Host.is_installed`'s empty-products rule — nothing that
   could be installed is not "installed".
-- `is_clean() -> bool` — AND across counted repos.
+- `is_clean() -> bool` — AND across **every** repo, not only the counted ones (a
+  tooling repo that owns no products still owns dev tools, and `owns_products` cannot
+  see those), plus one host-global `toolchain_tools_absent()` sweep. A host that could
+  not answer raises rather than counting as unclean.
 
 The converge layer (used by fixtures, callable from anywhere, also reachable from the
 CLI via `install --ensure`):

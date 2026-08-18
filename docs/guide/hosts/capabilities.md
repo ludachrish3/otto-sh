@@ -12,7 +12,7 @@ is for and how to use it.
 | Power, reboot & reachability | `power`, `reboot`, `shutdown` | `is_reachable`, `wait_until_up`, `wait_until_down` |
 | Products & lifecycle | `stage`, `install`, `uninstall`, `cleanup`, `is-installed`, `is-uninstalled`, `is-clean` | — |
 | Log retrieval | `get-logs`, `get-product-logs`, `get-debug-logs` | `log_dest` |
-| Dev tools & toolchain tools | `install-tools`, `install-dev-tools`, `install-toolchain-tools`, `remove-toolchain-tools` | `toolchain_tools_absent` |
+| Dev tools & toolchain tools | `install-tools`, `install-dev-tools`, `uninstall-dev-tools`, `install-toolchain-tools`, `remove-toolchain-tools` | `toolchain_tools_absent` |
 | Remote file operations | `exists`, `ls`, `glob`, `mkdir`, `rm`, `cp`, `mv`, `read-file`, `write-file` | — |
 | Kernel modules | `lsmod`, `load`, `unload` | — |
 | Userland capabilities | `probe` | — |
@@ -212,7 +212,8 @@ seams, because the two kinds of tooling are owned differently:
 | Method | Behavior |
 |--------|----------|
 | `await host.install_tools(dev=True, toolchain=False)` | Dispatcher over the two below. |
-| `await host.install_dev_tools()` | Stage then install each dev tool, in declaration order (first failure wins). |
+| `await host.install_dev_tools(owner=None)` | Stage then install each dev tool, in declaration order (first failure wins). `owner` narrows the walk to one repo's tools. |
+| `await host.uninstall_dev_tools(owner=None)` | Remove each dev tool (best-effort, first failure returned), narrowed by `owner`. |
 | `await host.install_toolchain_tools()` | Put each declared tool, rename it to its declared `name`, `chown` it to its declared `user`. |
 | `await host.remove_toolchain_tools()` | Remove each declared tool (best-effort). |
 | `await host.toolchain_tools_absent()` | True iff none of them is present — the host-wide half of `is_clean()`. |
@@ -237,8 +238,16 @@ a `DevTool` implements `stage`, `install`, `uninstall` and `is_installed`:
 
 Providers run once per lab-ingested host, aggregate in registration order, and
 dedupe by `DevTool.name`. Each attached tool is stamped with the registering
-repo as its owner, which is what lets one repo's `install-tools` leave another
-repo's tooling alone.
+repo as its owner **unless it already names one** — a tool that arrives with
+`owner` already set keeps it, so one repo can hand a tool to another's
+ownership deliberately.
+
+That stamp is what the **owner-scoped** walk reads: `otto run install-tools`
+runs per repo and passes `owner=` down to `install_dev_tools`, so one repo's
+tooling installs while another's is left alone. The host verb above is the
+host-wide one — `otto host <id> install-tools` (and `host.install_tools()`)
+takes no `owner=` and acts on every dev tool the host carries, whichever repo
+registered it.
 
 ### Declaring toolchain tools in lab data
 

@@ -51,13 +51,33 @@ def test_surfaces_table_well_formed():
         "monitor",
         "test",
         "cov",
+        "run_bootstrapped",
     }
     assert set(keys) == expected
 
 
+def test_exactly_one_surface_covers_the_composition_root():
+    """A bootstrap-inclusive surface must exist, and the lazy ones must stay lazy.
+
+    Kills the blind spot this surface was added for: every other surface
+    resolves a dispatch target WITHOUT calling `bootstrap()`, so bootstrap-time
+    imports went unmeasured. Deleting `bootstrap=True` from the table (or
+    letting `measure_surface` drop the flag) restores that hole silently — the
+    snapshots would simply be regenerated smaller — so the presence of the
+    surface is asserted here rather than inferred from a passing budget.
+    """
+    bootstrapped = [s for s in harness.SURFACES if s.bootstrap]
+    assert [s.key for s in bootstrapped] == ["run_bootstrapped"]
+    # And the flag has to reach the child, or the surface measures its twin.
+    assert (
+        harness.measure_surface(bootstrapped[0])["otto_modules"]
+        != harness.measure(bootstrapped[0].argv)["otto_modules"]
+    )
+
+
 def test_check_surface_passes_for_real_measurement():
     surface = harness.SURFACES[0]  # import_otto
-    result = harness.measure(surface.argv)
+    result = harness.measure_surface(surface)
     assert harness.check_surface(surface, result) == []
 
 
@@ -65,7 +85,7 @@ def test_check_surface_flags_cap_violation():
     import dataclasses
 
     surface = harness.SURFACES[0]
-    result = harness.measure(surface.argv)
+    result = harness.measure_surface(surface)
     # Force the cap below the real count; the snapshot still matches, so only
     # the cap check fires.
     tight = dataclasses.replace(surface, cap=0)
@@ -75,7 +95,7 @@ def test_check_surface_flags_cap_violation():
 
 @pytest.mark.parametrize("surface", harness.SURFACES, ids=lambda s: s.key)
 def test_import_budget(surface):
-    result = harness.measure(surface.argv)
+    result = harness.measure_surface(surface)
     violations = harness.check_surface(surface, result)
     assert not violations, "\n".join(violations)
 
