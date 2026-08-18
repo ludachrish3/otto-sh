@@ -161,14 +161,14 @@ generated with — including a report opened years later from a bundle built
 against different settings. Persisting the cutoffs in the store is what
 makes that possible.
 
-## The store (v5)
+## The store (v6)
 
 `store.json` is the canonical, versioned artifact `otto cov report`
 writes for downstream consumers — external tooling, a foreign report
 viewer — to read back; the in-process renderer consumes the same store
 directly, in memory, before it is ever serialized. `CoverageStore.save`/
 `.load` (`otto.coverage.store.model`) stamp every file with a top-level
-`"format"` key equal to `STORE_FORMAT_VERSION` (`5`). The loader is
+`"format"` key equal to `STORE_FORMAT_VERSION` (`6`). The loader is
 **exact-match**: a file whose `"format"` is missing, the wrong type, or
 any version other than the one the running otto expects fails loud with
 a `ValueError` naming both versions and telling the caller to
@@ -184,43 +184,90 @@ does not control, `tickets.json` (`--tickets-json` / `--cov-tickets-json`),
 deliberately does **not** share this version counter; see
 {ref}`coverage-tickets-json`.
 
-Version 4 adds three things to the schema. Each `RunRecord` grows an
-explicit **`host`** identity (the capture's board id; `""` for a
-synthetic or legacy-merged run with no single host behind it) —
-sharpening the `(tier, label, host)` context identity the supersede
-logic ({doc}`merging`) keys on from an implicit board-string convention
-into an explicit field, with `label` unchanged as the display string a
-drilldown chip shows. The store gained top-level
-**`thresholds`** (`Thresholds.high`/`.medium`, sourced from
-`[coverage.report]`; see {doc}`../../../guide/coverage`), making the render
-cutoffs part of the persisted contract — and **`stat_types`**, the
-type-extensible stats vocabulary `("line", "branch", "decision")`:
-`decision` is a declared slot with no producer yet, so a `store.json`
-consumer should render "no decision data" rather than assume every
-declared type carries values. Each `LineRecord` also grew a reserved
-**`ticket`** slot at v4, `None` until the per-commit ticket plumbing
-existed — v5 (below) is what finally writes it.
+### Top-level keys
 
-Version 5 settles that reservation and adds the ticket table it feeds.
-`LineRecord.ticket` becomes a **`list[str]`** (the v4 slot was
-single-valued; a commit naming several ticket ids attributes its lines to
-*all* of them — {doc}`attribution`'s "overlap" ruling — so a reserved
-scalar could never have held the real shape), omitted from the serialized
-line entirely when empty rather than written as `null` or `[]`. A new
-top-level **`tickets`** table maps each ticket id to its `TicketRecord`
-(`url` — `None` when `[coverage.tickets]` configures no template, or the
-id doesn't match one — and `commits`, the shas that named it). Both are
-populated by exactly one thing: `[coverage.tickets]` being configured at
-all ({doc}`attribution`) — a report with no such config still writes the
-v5 shape (`"format": 5`, a present-but-empty top-level `tickets` table,
-every `LineRecord` omitting `ticket`) rather than reverting to v4's, but
-the coverage numbers themselves are exactly what a v4 report would have
-produced.
+`CoverageStore.save` writes exactly ten:
 
-Per-host breakdowns are **derived, not stored** — the schema adds no
-new per-line data for them. One capture is exactly one host and exactly
-one run, so grouping a line's existing `run_hits` (run id → hit count)
-by that run's `RunRecord.host` reconstructs per-host line counts
+- **`format`** — `STORE_FORMAT_VERSION`, the exact-match key above.
+- **`tier_order`** — the tier precedence list, first entry highest. Drives
+  column order and the winner-take-all row colouring.
+- **`tier_colors`** — tier name → colour string, seeded from each
+  `TierConfig.color`.
+- **`thresholds`** — `{"high", "medium"}`, sourced from `[coverage.report]`
+  (see {doc}`../../../guide/coverage`); the render cutoffs above.
+- **`stat_types`** — the type-extensible stats vocabulary `("line",
+  "branch", "decision")`. `decision` is a declared slot with no producer,
+  so a consumer should render "no decision data" rather than assume every
+  declared type carries values.
+- **`runs`** — the run table, one `RunRecord` per capture or synthetic
+  per-tier load; a record's `id` is its index here.
+- **`tickets`** — ticket id → `TicketRecord`: `id`, `url` (`None` when
+  `[coverage.tickets]` configures no template, or the id doesn't match
+  one), and `commits`, the shas that named it.
+- **`files`** — one `FileRecord` each: `path`, `lines`, and
+  `excluded_lines` (the render-time marker scan, {doc}`renderer`).
+- **`overrides`** — the asserted-entry table, one `OverrideRecord` per
+  entry loaded from the override file ({doc}`../../../guide/coverage`):
+  `id` (what per-line `asserted` refs point at, so a `reason` is stored
+  once rather than repeated on every line it marks), `tier`, `key` (the
+  entry's display identity, `ticket:PROJ-412` or `commit:<full sha>`),
+  `reason`, and `as_of` (`None` for a commit entry; required on a ticket
+  entry, which would otherwise bless future commits under an old ticket).
+- **`overrides_file_active`** — true whenever an override file is
+  configured and loaded, **independent of whether it carries any asserted
+  entries**. Deliberately not `bool(overrides)`: a reattribute-only file,
+  or one whose every entry is currently inert, is still active — the file
+  is present and validated. `tickets.json`'s `overrides_active` reads this
+  flag for exactly that reason.
+
+### Per-run fields (`RunRecord`)
+
+- **`id`**, **`tier`** — index into `runs`, and the tier this run credits.
+- **`label`** — what a drilldown chip shows: the host display name when
+  the capture carries one, else the board id, else the tier name.
+- **`board`**, **`host`** — the capture's board id. `host` is the explicit
+  host identity, `""` for a synthetic or legacy-merged run with no single
+  host behind it; together with `tier` and `label` it forms the
+  `(tier, label, host)` context identity supersede keys on ({doc}`merging`).
+- **`labs`**, **`captured_at`**, **`tester`**, **`ticket`**, **`note`**,
+  **`base_commit`**, **`dirty_remap`**, **`aging`** — capture provenance,
+  carried straight through from `capture.json`.
+
+### Per-line fields (`LineRecord`, under each file's `lines`)
+
+- **`hits`** — tier name → execution count; **`branches`** — one entry per
+  `(block, branch)` on the line, each with its own per-tier counts and
+  tri-state reachability (above).
+- **`state`** — `"stale"`, `"aging"`, or absent, set by the manual-capture
+  validity pass ({doc}`manual`).
+- **`run`** — run id → hit count, written only for runs that actually
+  executed the line; **`stale_run`** — ids of runs whose evidence for this
+  line was revoked.
+- **`ticket`** — the ticket id(s) named by the commit that last touched the
+  line. A **list**, because a commit may name several ids and every one of
+  them owns the line ({doc}`attribution`'s "overlap" ruling).
+- **`asserted`** — tier name → the `overrides` ids that asserted this line
+  in that tier. Present **only while the tier's sole hits are
+  override-sourced**: a real run covering the line clears the mark, so the
+  key answers "is this tier's evidence here manual?" rather than "was an
+  override ever written for it".
+
+`run`, `stale_run`, `ticket`, and `asserted` are omitted from the
+serialized line entirely when empty, rather than written as `null`, `[]`,
+or `{}`.
+
+`ticket` and the `tickets` table are populated by exactly one thing:
+`[coverage.tickets]` being configured at all ({doc}`attribution`). A report
+without it still writes the full shape — a present-but-empty `tickets`
+table and every `LineRecord` omitting `ticket` — and the coverage numbers
+are identical either way, since attribution annotates lines and never
+changes what counts as covered.
+
+### Per-host breakdowns are derived, not stored
+
+The schema carries no per-line host data at all. One capture is exactly one
+host and exactly one run, so grouping a line's `run` map (run id → hit
+count) by that run's `RunRecord.host` reconstructs per-host line counts
 without a persisted per-host table; this is pinned by
 `tests/unit/cov/test_model.py::TestRunHost::test_per_host_lines_derivable_from_run_hits`.
 
