@@ -43,6 +43,17 @@ __version__ = get_version()
 # Uncomment the line below to remove rich help menu formatting globally
 # typer.core.HAS_RICH = False  # noqa: ERA001 — intentional documented escape-hatch example
 
+_root_log_level: str | None = None
+"""The ``--log-level`` value the root callback resolved, or None before it ran.
+
+Read by :func:`entry`'s boundary frame to decide whether a demoted traceback
+is wanted. It cannot ask the ``otto`` logger instead: logging is initialised
+from the lab session, and a ``lab_free`` command never opens one — so the
+logger would report "not debug" for a user who typed ``--log-level debug``.
+Set from the callback because by the time the frame runs, the Typer context
+that carried ``RootOptions`` is gone.
+"""
+
 _field_default = os.environ.get(FIELD_DEFAULT_ENV_VAR) is not None
 """Determines the default for debug or field. If OTTO_FIELD_DEFAULT is set to
 anything at all, then field is the default. A bare env-presence check —
@@ -577,6 +588,9 @@ def main(  # noqa: PLR0913 — CLI command params
             param_hint="--probe",
         )
 
+    global _root_log_level  # noqa: PLW0603 — one per-invocation value, read by entry()'s frame
+    _root_log_level = log_level
+
     ctx.meta["_otto_root_options"] = RootOptions(
         labs=labs,
         xdir=xdir,
@@ -738,9 +752,56 @@ def entry() -> None:
                 hosts_by_lab=collect_host_ids_by_lab(result.repos),
             )
 
+    import traceback
+
     from ..context import reset_cli_context
+    from ..errors import OttoError
+    from .invoke import print_error
 
     try:
         app()
+    except OttoError as e:
+        # THE BOUNDARY FRAME. Every exception otto defines is a sentence
+        # written for the person who typed the command — it names the host,
+        # the repo, the file to edit. A leaf that forgets to catch its own
+        # therefore does not merely look untidy: the message the taxonomy
+        # exists to deliver arrives buried under a stack trace of otto's
+        # internals, and the reader's takeaway is "otto crashed".
+        #
+        # Leaves still catch what they can say something BETTER about (a usage
+        # hint, a different exit code); this is the floor under the ones that
+        # do not, so a new pattern-walking command cannot ship with a traceback
+        # for its empty-selection case the way `otto monitor` and `otto cov`
+        # both did.
+        #
+        # Deliberately NOT a bare `except Exception`: anything that is not an
+        # OttoError is either click's own control flow (SystemExit, Exit,
+        # ClickException — none of them subclasses) or a genuine bug, and a
+        # bug's traceback is the most useful thing otto can print about it.
+        #
+        # The stack is not DESTROYED, only demoted: an OttoError raised from
+        # somewhere it has no business being is a bug, and the maintainer
+        # chasing it needs the frames. Debug logging prints them.
+        #
+        # Both spellings of that one knob count, and neither can be answered
+        # by the logger: `init_cli_logging` runs from the lab session, which a
+        # `lab_free` leaf never opens — so for exactly the commands most likely
+        # to reach this boundary the "otto" logger is still at its inherited
+        # level no matter what the user typed. `_root_log_level` is what the
+        # root callback actually resolved (the flag, or OTTO_LOG_LEVEL through
+        # Typer's `envvar=`), and the environment is read as well for the case
+        # where the callback never got to run.
+        #
+        # Printed straight to stderr rather than through `logger.debug`: otto's
+        # log sinks belong to a RUN, and a lab-free leaf opens none — measured,
+        # the logging route emitted nothing at all, so it would have silently
+        # dropped the traceback it promised.
+        if "DEBUG" in (
+            (_root_log_level or "").upper(),
+            os.environ.get(LOG_LVL_ENV_VAR, "").upper(),
+        ):
+            traceback.print_exc()
+        print_error(f"error: {e}")
+        raise SystemExit(1) from e
     finally:
         reset_cli_context()

@@ -478,3 +478,108 @@ def test_providerless_repo_may_declare_an_empty_scope(tmp_path, monkeypatch):
     )
     monkeypatch.setenv("OTTO_SUT_DIRS", str(repo))
     assert bs.bootstrap().errors == []
+
+
+# ── reentrance: the import phase can land back in bootstrap() ─────────────
+
+
+def _reentrant_repo(tmp_path, body: str) -> str:
+    """A SUT repo whose init module runs *body* while bootstrap imports it."""
+    return str(
+        make_sut_repo(
+            tmp_path / "repo",
+            name="repo",
+            extra='init = ["reenter"]\nlibs = ["pylib"]\n',
+            files={"pylib/reenter.py": textwrap.dedent(body)},
+        )
+    )
+
+
+def test_an_init_module_that_reenters_gets_the_settled_repos(tmp_path, monkeypatch):
+    """A repo init calling ``get_repos()`` is answered, not recursed.
+
+    The import phase runs USER code, and user code reaching
+    ``otto.config.get_repos()`` re-enters ``bootstrap()`` with ``_result``
+    still unset — directly, or by way of a stamped host whose product
+    providers consult ``scope_for_repo``. Discovery and the dependency pass
+    are already done by then, so the honest answer is the repo list the outer
+    call is about to publish.
+    """
+    monkeypatch.setenv(
+        "OTTO_SUT_DIRS",
+        _reentrant_repo(
+            tmp_path,
+            """
+            from otto.config import get_repos
+
+            SEEN = [r.name for r in get_repos()]
+            """,
+        ),
+    )
+
+    result = bs.bootstrap()
+
+    import reenter  # the init module, imported by the bootstrap above
+
+    assert reenter.SEEN == ["repo"]  # the settled list, not an empty degraded one
+    assert [r.name for r in result.repos] == ["repo"]
+
+
+def test_reentrance_does_not_compose_the_root_twice(tmp_path, monkeypatch):
+    """The re-entrant call must NOT run a second, nested composition root.
+
+    Nesting is not merely wasteful: the inner pass publishes ``_result`` from a
+    world whose init modules are still half-imported, and every consumer that
+    asks between then and the outer call's own assignment reads that half-built
+    answer. Counting the dependency pass is the discriminator — a nested root
+    resolves dependencies again, an answered one does not.
+    """
+    from otto.config import dependencies as deps_mod
+
+    calls = []
+    real = deps_mod.resolve_dependencies
+
+    def _counting(repos):
+        calls.append([r.name for r in repos])
+        return real(repos)
+
+    monkeypatch.setattr(deps_mod, "resolve_dependencies", _counting)
+    monkeypatch.setenv(
+        "OTTO_SUT_DIRS",
+        _reentrant_repo(
+            tmp_path,
+            """
+            from otto.config import get_repos
+
+            SEEN = [r.name for r in get_repos()]
+            """,
+        ),
+    )
+
+    bs.bootstrap()
+
+    assert calls == [["repo"]]  # exactly once — the re-entrant call was answered
+
+
+def test_a_raising_bootstrap_leaves_no_partial_view_behind(tmp_path, monkeypatch):
+    """A bootstrap that dies must not leave its in-progress view standing.
+
+    D2's refusal and any uncontainable init failure raise straight out of the
+    import phase. If the partial survived, the NEXT ``bootstrap()`` would read
+    a half-built answer and report success for a run that never finished.
+    """
+    monkeypatch.setenv(
+        "OTTO_SUT_DIRS",
+        _reentrant_repo(
+            tmp_path,
+            """
+            raise KeyboardInterrupt("uncontainable: not a repo bug")
+            """,
+        ),
+    )
+
+    with pytest.raises(KeyboardInterrupt):
+        bs.bootstrap()
+
+    assert bs._in_progress is None
+    assert bs._result is None  # nothing was published

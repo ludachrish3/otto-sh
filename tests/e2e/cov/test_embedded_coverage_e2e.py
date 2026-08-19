@@ -212,6 +212,23 @@ def test_embedded_coverage_cli_e2e(clean_sprout_cov, tmp_path):
     assert gcda.exists(), f"no decoded .gcda staged for sprout-cov\n{result.stdout[-2000:]}"
     assert (report_dir / "index.html").exists(), "no HTML report rendered"
 
+    # BOTH beds, not just the first. repo3's `[coverage] hosts` selector is
+    # "sprout-cov.*" and its trailing wildcard is the whole point: the intent is
+    # coverage across two Zephyr versions (3.7 and 4.4). Under fullmatch a bare
+    # "sprout-cov" selects only the 3.7 bed — which would NOT fail anything
+    # above, because every assertion so far names sprout-cov alone. It would
+    # quietly halve the collection and stay green, so the selector's intent is
+    # pinned here rather than left to the settings comment.
+    staged = sorted(d.name for d in cov_dir.iterdir() if d.is_dir())
+    assert staged == ["sprout-cov", "sprout-cov44"], (
+        f"expected both Zephyr coverage beds to be collected, got {staged} — "
+        f"check `[coverage] hosts` in tests/repo3/.otto/settings.toml\n"
+        f"{result.stdout[-2000:]}"
+    )
+    assert (cov_dir / "sprout-cov44" / "cov_ext.c.gcda").exists(), (
+        "no decoded .gcda staged for the 4.4 bed sprout-cov44"
+    )
+
     # The product file is covered (the cross-gcov processed the .gcda + .gcno).
     # The collection model stages the per-host lcov capture next to the decoded
     # .gcda at collect time (board.info, plus a path-resolved variant); the

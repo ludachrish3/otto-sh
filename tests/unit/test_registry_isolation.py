@@ -208,3 +208,83 @@ def test_the_restore_mutates_in_place_so_from_import_readers_see_it() -> None:
 
     assert bound is products  # same object: the restore never rebound the attribute
     assert bound == before
+
+
+# ── the hole: a registry whose module was imported DURING the test ────────
+
+
+def _late_module(name: str, reg: Registry) -> types.ModuleType:
+    """An ``otto.*`` module carrying *reg*, as if imported mid-test."""
+    mod = types.ModuleType(name)
+    mod.LATE = reg
+    sys.modules[name] = mod
+    return mod
+
+
+def test_a_registry_that_first_appeared_mid_test_is_not_left_polluted() -> None:
+    """An entry a test adds must not survive just because the registry is new.
+
+    ``_isolate_registries`` snapshots what is REACHABLE at setup, so a registry
+    living in an ``otto.*`` module the test itself imports has no snapshot —
+    and the restore, iterating snapshots alone, never looked at it. Everything
+    the test registered there leaked into the next test with nothing to notice.
+    """
+    reg = Registry("late", register_hint="register_late()")
+    reg.register("from_import", object(), origin="otto._fake_late_pkg")
+    _late_module("otto._fake_late_pkg", reg)
+    before = frozenset(sys.modules) - {"otto._fake_late_pkg"}
+    try:
+        reg.register("from_test", object(), origin="tests.unit.test_registry_isolation")
+
+        _restore_registries([], before)
+
+        assert list(reg.names()) == ["from_import"]
+    finally:
+        sys.modules.pop("otto._fake_late_pkg", None)
+
+
+def test_a_late_registrys_own_import_time_entries_survive() -> None:
+    """otto's own import-time registrations are the new baseline — never dropped.
+
+    Once ``otto.project.instructions`` (say) is imported, its six first-party
+    entries ARE the process's state: the module stays in ``sys.modules``, so a
+    re-import is a no-op and anything dropped here could never be re-registered.
+    Clearing them would leave otto missing its own defaults for every later
+    test — a cure far worse than the leak.
+    """
+    reg = Registry("late", register_hint="register_late()")
+    for name in ("install", "uninstall"):
+        reg.register(name, object(), origin="otto._fake_late_defaults")
+    _late_module("otto._fake_late_defaults", reg)
+    before = frozenset(sys.modules) - {"otto._fake_late_defaults"}
+    try:
+        _restore_registries([], before)
+
+        assert sorted(reg.names()) == ["install", "uninstall"]
+    finally:
+        sys.modules.pop("otto._fake_late_defaults", None)
+
+
+def test_a_late_registrys_extension_origin_is_evicted_so_reimport_re_registers() -> None:
+    """A non-otto origin the test imported is dropped AND evicted, as elsewhere.
+
+    Same rule the snapshotted path already follows: the entry goes, and its
+    module leaves ``sys.modules`` so the next ``import_module`` re-runs the
+    registration instead of silently no-opping into a registry that no longer
+    holds it.
+    """
+    reg = Registry("late", register_hint="register_late()")
+    _late_module("otto._fake_late_ext_home", reg)
+    ext = types.ModuleType("custom_frames_ext")
+    sys.modules["custom_frames_ext"] = ext
+    before = frozenset(sys.modules) - {"otto._fake_late_ext_home", "custom_frames_ext"}
+    try:
+        reg.register("zephyr_ish", object(), origin="custom_frames_ext")
+
+        _restore_registries([], before)
+
+        assert list(reg.names()) == []
+        assert "custom_frames_ext" not in sys.modules
+    finally:
+        sys.modules.pop("otto._fake_late_ext_home", None)
+        sys.modules.pop("custom_frames_ext", None)

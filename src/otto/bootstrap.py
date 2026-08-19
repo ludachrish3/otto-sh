@@ -107,6 +107,18 @@ class BootstrapResult:
 
 _discovered: "DiscoveryResult | None" = None
 _result: BootstrapResult | None = None
+_in_progress: BootstrapResult | None = None
+"""What :func:`bootstrap` already knows while its import phase is still running.
+
+Set once discovery and the dependency pass are done — which is when ``repos``
+and ``ordered_repos`` are final — and cleared when ``bootstrap()`` leaves. It
+exists so a RE-ENTRANT ``bootstrap()`` has something true to answer with, and
+the reentrance is real: the import phase runs repo ``init`` modules and test
+files, i.e. user code, and anything there that reaches ``config.get_repos()``
+— directly, or by way of a stamped host whose product providers consult
+:func:`~otto.config.scope.scope_for_repo` — lands back here with ``_result``
+still unset. Without this, that call composed a SECOND, nested root.
+"""
 _completion_names: dict[str, Any] | None = None
 
 
@@ -212,9 +224,18 @@ def discover() -> DiscoveryResult:
 
 def bootstrap() -> BootstrapResult:
     """Run the composition root (idempotent): discovery, dependency pass, registration."""
-    global _result  # noqa: PLW0603 — module-level singleton/cache
+    global _result, _in_progress  # noqa: PLW0603 — module-level singleton/cache
     if _result is not None:
         return _result
+    if _in_progress is not None:
+        # Re-entered from our own import phase (see _in_progress). Answer with
+        # what is already settled rather than composing the root a second time:
+        # `repos`/`ordered_repos` are final by then, so a repo init module
+        # asking `get_repos()` gets the same list the outer call will publish.
+        # `errors` is the SAME list object the outer call keeps appending to,
+        # so this view is live rather than a stale copy — but it is necessarily
+        # partial: inits that have not run yet cannot have failed yet.
+        return _in_progress
     discovered = discover()
     env, repos = discovered.env, discovered.repos
     errors: list[BootstrapError] = list(discovered.errors)
@@ -237,37 +258,51 @@ def bootstrap() -> BootstrapResult:
     # and then by the registry's generic "already registered" rather than the
     # guard's "register a ProjectActions subclass instead". A repo init module
     # that reads INSTRUCTIONS should also see the full first-party set.
-    importlib.import_module("otto.project.instructions")
-    for repo in resolution.ordered:
-        repo.add_libs_to_pythonpath()
-        with registering_repo(repo.name):
-            for mod in repo.init:
-                try:
-                    importlib.import_module(mod)
-                except BaseException as e:  # noqa: PERF203 — containment seam: per-item resilience, ANY user-code failure becomes a framed error
-                    if not is_containable(e):
-                        raise
-                    errors.append(BootstrapError(repo.sut_dir, mod, e))
-            for test_file in repo.iter_test_files():
-                try:
-                    repo.import_test_file(test_file)
-                except BaseException as e:  # noqa: PERF203 — containment seam: per-item resilience, ANY user-code failure becomes a framed error
-                    if not is_containable(e):
-                        raise
-                    errors.append(BootstrapError(repo.sut_dir, test_file.name, e))
-    # Only now are the provider registries populated, so only now can D2 ask
-    # what each repo registered. It raises rather than joining `errors`: the
-    # contained failures above are "one repo's file is broken, the rest still
-    # work", while an unscoped providing repo would silently apply its products
-    # to every host in every lab — there is no degraded mode to offer.
-    _check_providing_repos_declare_scope(resolution.ordered)
-    _result = BootstrapResult(
+    _in_progress = BootstrapResult(
         env=env,
         repos=repos,
         errors=errors,
         warnings=resolution.warnings,
         ordered_repos=resolution.ordered,
     )
+    try:
+        importlib.import_module("otto.project.instructions")
+        for repo in resolution.ordered:
+            repo.add_libs_to_pythonpath()
+            with registering_repo(repo.name):
+                for mod in repo.init:
+                    try:
+                        importlib.import_module(mod)
+                    except BaseException as e:  # noqa: PERF203 — containment seam: per-item resilience, ANY user-code failure becomes a framed error
+                        if not is_containable(e):
+                            raise
+                        errors.append(BootstrapError(repo.sut_dir, mod, e))
+                for test_file in repo.iter_test_files():
+                    try:
+                        repo.import_test_file(test_file)
+                    except BaseException as e:  # noqa: PERF203 — containment seam: per-item resilience, ANY user-code failure becomes a framed error
+                        if not is_containable(e):
+                            raise
+                        errors.append(BootstrapError(repo.sut_dir, test_file.name, e))
+        # Only now are the provider registries populated, so only now can D2 ask
+        # what each repo registered. It raises rather than joining `errors`: the
+        # contained failures above are "one repo's file is broken, the rest still
+        # work", while an unscoped providing repo would silently apply its products
+        # to every host in every lab — there is no degraded mode to offer.
+        _check_providing_repos_declare_scope(resolution.ordered)
+        _result = BootstrapResult(
+            env=env,
+            repos=repos,
+            errors=errors,
+            warnings=resolution.warnings,
+            ordered_repos=resolution.ordered,
+        )
+    finally:
+        # Cleared whichever way this leaves. A bootstrap that RAISED (D2's
+        # refusal, an uncontainable init failure) must not leave a partial view
+        # standing as though it were the composition root: the next call has to
+        # re-run and fail the same way, not read a half-built answer.
+        _in_progress = None
     return _result
 
 
@@ -290,9 +325,14 @@ def invalidate() -> None:
     prior discovery's errors are discarded together with the discovery that
     produced them.
     """
-    global _discovered, _result, _completion_names  # noqa: PLW0603 — module-level singleton/cache
+    global _discovered, _result, _in_progress, _completion_names  # noqa: PLW0603 — module-level singleton/cache
     _discovered = None
     _result = None
+    # Defence in depth. `bootstrap()` clears this in a `finally`, so it is
+    # already None whenever anyone can call this — but "drop every cached
+    # bootstrap result" must mean every one, or the day that invariant breaks
+    # this function silently stops being the recovery path it advertises.
+    _in_progress = None
     _completion_names = None
 
 

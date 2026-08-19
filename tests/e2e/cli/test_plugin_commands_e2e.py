@@ -120,3 +120,80 @@ class TestDiscoveryContainment:
         assert "Traceback" not in r.stderr
         assert "unscoped" in r.stderr
         assert 'lab_patterns = [".*"]' in r.stderr
+
+
+class TestOttoErrorFraming:
+    """An OttoError that reaches the CLI boundary is a message, not a stack.
+
+    The leaf here (``e2e-raises``) deliberately does NOT catch its own error,
+    standing in for the class of bug that shipped twice for real: ``otto
+    monitor`` and ``otto cov`` both let ``EmptySelectionError`` escape and
+    tracebacked at whoever typed the command.
+    """
+
+    def test_an_uncaught_otto_error_is_framed_not_tracebacked(self, tmp_path: Path) -> None:
+        r = run_otto(["e2e-raises"], xdir=tmp_path, sut_dirs=REPO_E2E)
+
+        out = r.stdout + r.stderr
+        assert r.returncode == 1
+        assert "the lab is on fire" in out
+        assert "Traceback (most recent call last)" not in out
+        assert "OttoError" not in out  # the class name is otto's business, not the user's
+
+    def test_the_stack_is_one_env_var_away(self, tmp_path: Path) -> None:
+        """Framing must not DESTROY the traceback — DEBUG still prints it.
+
+        A maintainer chasing an OttoError raised from somewhere it has no
+        business being needs the frames, so the boundary demotes the stack
+        rather than dropping it. Without this the fix would trade one bad
+        failure mode for another.
+
+        Written to stderr directly, not via ``logger.debug``: otto's log sinks
+        belong to a RUN, and a lab-free leaf like this one never opens any —
+        the logging route printed nothing at all here (measured), which is
+        what a promise of "the stack is one env var away" must not do.
+        """
+        r = run_otto(
+            ["e2e-raises"],
+            xdir=tmp_path,
+            sut_dirs=REPO_E2E,
+            extra_env={"OTTO_LOG_LEVEL": "DEBUG"},
+        )
+
+        out = r.stdout + r.stderr
+        assert r.returncode == 1
+        assert "Traceback (most recent call last)" in out
+        assert "plugin_commands.py" in out  # the frame that actually raised
+        # AND still framed. Asserting the stack alone would pass against a
+        # boundary that does not frame at ALL — an unhandled OttoError prints a
+        # traceback too, so "there is a stack" is true either way. The
+        # lower-case `error:` prefix comes only from print_error; the crash
+        # route spells it `otto.errors.OttoError: ...`.
+        assert "error: the lab is on fire" in out
+
+    def test_the_flag_spelling_of_the_knob_arms_the_stack_too(self, tmp_path: Path) -> None:
+        """``--log-level debug`` must mean what ``OTTO_LOG_LEVEL=DEBUG`` means.
+
+        They are two spellings of ONE knob, and a user who typed the flag and
+        got no traceback would reasonably conclude otto had none to give. The
+        flag reaches the ``otto`` logger via init_cli_logging rather than the
+        environment, so the boundary has to ask both.
+        """
+        r = run_otto(
+            ["--log-level", "debug", "e2e-raises"],
+            xdir=tmp_path,
+            sut_dirs=REPO_E2E,
+        )
+
+        out = r.stdout + r.stderr
+        assert r.returncode == 1
+        assert "Traceback (most recent call last)" in out
+        assert "plugin_commands.py" in out
+        assert "error: the lab is on fire" in out  # framed, not merely crashed
+
+    def test_a_working_command_is_untouched(self, tmp_path: Path) -> None:
+        """The frame must be invisible to every command that does not fail."""
+        r = run_otto(["e2e-hello", "--who", "otto"], xdir=tmp_path, sut_dirs=REPO_E2E)
+
+        assert r.returncode == 0, r.stderr
+        assert "hello otto" in r.stdout

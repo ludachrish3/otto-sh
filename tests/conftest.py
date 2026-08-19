@@ -721,13 +721,23 @@ def _restore_bootstrap_state():
     """
     from otto import bootstrap
 
-    saved = (bootstrap._discovered, bootstrap._result, bootstrap._completion_names)
+    saved = (
+        bootstrap._discovered,
+        bootstrap._result,
+        bootstrap._in_progress,
+        bootstrap._completion_names,
+    )
     yield
     # Direct rebinds, same access the _ADD_LOCKS guard below uses. A rename of
     # these globals fails loudly at the snapshot READ above (setup raises
     # AttributeError); this teardown setattr alone would silently mint new
     # attributes, so the read is the guard (fable's final-review find).
-    bootstrap._discovered, bootstrap._result, bootstrap._completion_names = saved
+    (
+        bootstrap._discovered,
+        bootstrap._result,
+        bootstrap._in_progress,
+        bootstrap._completion_names,
+    ) = saved
 
 
 @pytest.fixture(autouse=True)
@@ -1672,19 +1682,48 @@ def _restore_registries(
     later registration in it.
     """
     evict_origins: set[str] = set()
+
+    def _drop_added(reg: Registry, name: str) -> None:
+        """Unregister *name*, evicting its origin when a re-import can restore it."""
+        origin = reg.origin(name)
+        if (
+            origin
+            and origin not in modules_before
+            and origin != "otto"
+            and not origin.startswith("otto.")
+        ):
+            evict_origins.add(origin)
+        reg.unregister(name)
+
     for reg, parked in snapshots:
         for name in list(reg.names()):
             if name not in parked:
-                origin = reg.origin(name)
-                if (
-                    origin
-                    and origin not in modules_before
-                    and origin != "otto"
-                    and not origin.startswith("otto.")
-                ):
-                    evict_origins.add(origin)
-                reg.unregister(name)
+                _drop_added(reg, name)
         for name, (entry, origin) in parked.items():
             reg.register(name, entry, overwrite=True, origin=origin)
+
+    # Registries that did not EXIST at snapshot time. The snapshot can only
+    # cover what was reachable when the test started, so a registry living in
+    # an ``otto.*`` module the test itself imported has no entry above — and
+    # iterating snapshots alone left everything the test registered there
+    # standing for the next test to trip over.
+    #
+    # Their baseline cannot be recovered by re-import (the module stays in
+    # ``sys.modules``, so a second import is a no-op), which is why the rule
+    # here is by ORIGIN rather than wholesale: an entry registered by otto's
+    # own module as an import side effect IS the process's state now, and
+    # dropping it would leave otto missing its own defaults for every later
+    # test — a worse failure than the leak. Anything else in a brand-new
+    # registry arrived from the test, and goes.
+    snapshotted = {id(reg) for reg, _ in snapshots}
+    for reg in _loaded_registries():
+        if id(reg) in snapshotted:
+            continue
+        for name in list(reg.names()):
+            origin = reg.origin(name)
+            if origin == "otto" or origin.startswith("otto."):
+                continue
+            _drop_added(reg, name)
+
     for origin in evict_origins:
         sys.modules.pop(origin, None)
