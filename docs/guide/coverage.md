@@ -97,16 +97,21 @@ auto-detected by walking up from the current directory to find the
 `.otto/` directory.  Path mappings between build-host paths and local
 source paths are auto-discovered from the `.info` and `.gcno` files.
 
-An optional `hosts` regex scopes collection to a subset of the lab
-(matched against each host id) — this is how an SSH hop that fronts a
-coverage target is kept out of the coverage set without otto having to
-guess which hosts emit `.gcda`:
+An optional `hosts` regex scopes collection to a subset of the lab — this is
+how an SSH hop that fronts a coverage target is kept out of the coverage set
+without otto having to guess which hosts emit `.gcda`:
 
 ```toml
 [coverage]
 gcda_remote_dir = "/var/coverage/myproduct"
-hosts = "^device.*"
+hosts = "device.*"
 ```
+
+The regex is **fully matched** against each host id (`re.fullmatch`), never
+searched within it: `device` selects the host whose id is exactly `device`, so
+write `device.*` to match a family.  A pattern that matches none of the hosts
+the run may walk fails the command with the pattern and the wildcard hint,
+rather than collecting from nothing and reporting a coverage run that happened.
 
 ### Declarative Tiers
 

@@ -691,12 +691,19 @@ def entry() -> None:
     if bs.get_completion_names() is None:
         try:
             result = bs.bootstrap()
-        except (FileNotFoundError, ValueError) as e:
+        except (FileNotFoundError, ValueError, bs.BootstrapError) as e:
             # Env-level discovery failure (bad OTTO_SUT_DIRS / OTTO_* values;
             # pydantic validation errors are ValueErrors): nothing user-specific
             # can load, so there is no degraded help worth rendering — fail
             # loud but CLEAN (one line, no traceback). Per-repo config-data
             # errors never reach here; discover() contains those.
+            #
+            # BootstrapError joins them for the ONE variety bootstrap raises
+            # instead of containing: ``ProjectScopeError``, a repo that
+            # registered providers without declaring the labs it applies to.
+            # That refusal is a message the user is meant to act on — it names
+            # the repo and prints the TOML block to paste — and a traceback in
+            # front of it is noise, not information.
             typer.echo(f"error: {e}", err=True)
             raise SystemExit(1) from e
         _emit_bootstrap_findings(result)

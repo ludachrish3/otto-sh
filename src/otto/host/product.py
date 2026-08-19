@@ -163,9 +163,38 @@ def apply_product_providers(host: "Host") -> None:
     Each attached product is stamped with :attr:`Product.owner` — the repo that
     registered the provider — unless the product already names an owner, which
     lets one repo hand a product to another's ownership deliberately.
+
+    A provider is SKIPPED — not called — when its registering repo's
+    ``[project]`` declaration does not target ``(host.source_lab, host.id)``
+    (spec §5). This is the admission half of scoping: the fleet walks bound
+    which hosts a repo may reach, and without this a repo declared for one lab
+    still hangs its products on every host of every other lab the run happens
+    to load. Skipping before the call rather than filtering the return is the
+    point — a provider that ran has already been handed a machine its repo
+    never declared, and providers inspect hosts and keep their own state.
+
+    Two carve-outs admit, both because a gate that cannot compute a narrowing
+    must narrow nothing. An UNSTAMPED host (``source_lab == ""``) is not
+    judged at all: hosts built outside the loader — direct
+    :func:`~otto.host.factory.create_host_from_dict` use, container hosts, the
+    built-in ``local`` — predate scoping and behave exactly as before. And an
+    owner whose declaration cannot be resolved admits, which
+    :func:`~otto.config.scope.scope_for_repo` decides and documents.
     """
+    from ..config.scope import repo_targets, scope_for_repo  # function-scope: import-light seam
+
     seen = {p.name for p in host.products}
     for provider, provider_owner in _PRODUCT_PROVIDERS:
+        if host.source_lab and not repo_targets(
+            scope_for_repo(provider_owner), host.source_lab, host.id
+        ):
+            logger.debug(
+                "product provider: repo %r does not target host %s of lab %r — not run",
+                provider_owner,
+                host.id,
+                host.source_lab,
+            )
+            continue
         for product in provider(host) or ():
             if product.name in seen:
                 logger.debug(

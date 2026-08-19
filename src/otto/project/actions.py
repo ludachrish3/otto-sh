@@ -2,15 +2,23 @@
 
 A repo gets ONE :class:`ProjectActions` -- otto's default, or the subclass it
 registered from its init module -- constructed per command with that repo's
-:class:`~otto.config.repo.Repo` and the live
-:class:`~otto.context.OttoContext`. The defaults drive the fleet's hosts through
-the host verbs, scoped to ``owner == repo.name``, so one repo's install can
-never touch another repo's products.
+:class:`~otto.config.repo.Repo` and a repo-scoped view of the live context
+(:class:`~otto.context.ProjectContextView`). The defaults drive the fleet's
+hosts through the host verbs, scoped to ``owner == repo.name``, so one repo's
+install can never touch another repo's products.
 
 THE OWNER SCOPE IS THE WHOLE POINT of this layer. The host verbs already know
 how to install products; what they cannot know is which of the products a host
-carries belong to the repo whose action is running. Every default below passes
-``owner=self.repo.name``, and the tests mutate that argument away to prove it.
+carries belong to the repo whose action is running.
+
+NOT ONE ``owner=`` IS SPELLED BELOW, and that is the design (spec section 7).
+The scope rides the CONTEXT VIEW every action dispatches through:
+``self.ctx`` is ``ctx.for_repo(repo.name)``, which bounds each walk to that
+repo's fleet of interest and supplies ``owner=`` to the host verb itself. An
+argument is forgettable exactly once per new call site -- and a forgotten one
+here is not a crash but a silently WIDER sweep, repo A's uninstall taking repo
+B's products off a host they share. A subclass that dispatches a host verb
+taking no ``owner`` passes ``with_owner=False``.
 
 Two things are deliberately ABSENT from these signatures, both for the same
 reason -- they are host-global, so they belong to no repo and are the
@@ -32,7 +40,7 @@ from .state import InstallState
 
 if TYPE_CHECKING:
     from ..config.repo import Repo
-    from ..context import OttoContext
+    from ..context import OttoContext, ProjectContextView
     from ..host.dev_tool import DevTool
     from ..host.host import Host
     from ..host.product import Product
@@ -73,6 +81,37 @@ same refusal, so they are the same words.
 words and deliberately keeps its own copy: the host layer sits BELOW this one
 and may not import it, and a runtime import in the other direction to share
 three sentences would buy a package cycle.
+"""
+
+
+_UNSCOPED_CONTEXT = """\
+ProjectActions for repo '{repo}' was handed a plain OttoContext, which is not a
+repo scope.
+
+No default below spells owner= any more -- the scope rides the context view --
+so this object would walk the whole ambient union AND call every host verb with
+owner=None, which the host layer reads as EVERY owner's products. Its cleanup()
+would uninstall its neighbours' products and remove their dev tools, on every
+host, reporting success.
+
+Build actions with otto.project.actions_for(repo, ctx). It supplies
+ctx.for_repo(repo.name) -- the view that bounds the fleet and stamps the owner.\
+"""
+"""The refusal :meth:`ProjectActions.__init__` raises for an unscoped context.
+
+REFUSED RATHER THAN DOCUMENTED, and the asymmetry with the pre-view code is the
+reason. ``ProjectActions(repo, ctx)`` was legal and owner-SAFE before the scope
+moved onto the view: the bodies carried ``owner=repo.name`` themselves, so a
+hand-built instance narrowed correctly even over a plain context. The same
+spelled code is now destructive, which makes this the one migration hazard that
+cannot be left to a docstring -- it is silent, it is a WIDENING, and it is
+exactly the failure this design exists to abolish.
+
+A refusal, not a repair: wrapping the context in a view here would put a second
+copy of :func:`actions_for`'s wiring in the class, and two constructors that
+both know how to scope is how they drift apart. The check is narrow on purpose
+-- it names the one type known to be unscoped, so a caller's own double, which
+is not an ``OttoContext``, passes untouched.
 """
 
 
@@ -180,12 +219,33 @@ class ProjectActions:
     host.install()`` for chosen hosts) -- nothing here is privileged.
     """
 
-    def __init__(self, repo: "Repo", ctx: "OttoContext") -> None:
+    def __init__(self, repo: "Repo", ctx: "ProjectContextView") -> None:
+        """Bind *repo* and its context view, refusing a context that is not a scope.
+
+        Args:
+            repo: The repo these actions act for.
+            ctx: This repo's :class:`~otto.context.ProjectContextView`.
+
+        Raises:
+            TypeError: *ctx* is a plain :class:`~otto.context.OttoContext`. See
+                :data:`_UNSCOPED_CONTEXT` for why that is refused rather than
+                accepted-and-documented.
+        """
+        from ..context import OttoContext  # function-scope: keeps this module import-light
+
+        if isinstance(ctx, OttoContext):
+            raise TypeError(_UNSCOPED_CONTEXT.format(repo=repo.name))
+
         self.repo = repo
         """The repo these actions act for; its ``name`` is the owner scope."""
 
         self.ctx = ctx
-        """The live context, providing the fleet and its dispatch."""
+        """This repo's view of the live context -- its bounded fleet and its dispatch.
+
+        :func:`actions_for` supplies ``ctx.for_repo(repo.name)``, and THAT VIEW
+        is what carries the owner scope now that no body below spells
+        ``owner=``.
+        """
 
     ####################
     #  Lifecycle
@@ -199,9 +259,7 @@ class ProjectActions:
         bootstrap imports init modules topologically and providers append in
         registration order.
         """
-        return _reduce_results(
-            await self.ctx.do_for_all_hosts(_dispatch_install, owner=self.repo.name)
-        )
+        return _reduce_results(await self.ctx.do_for_all_hosts(_dispatch_install))
 
     async def uninstall(self, get_product_logs: bool = True) -> Result:
         """Uninstall this repo's products on every fleet host.
@@ -216,7 +274,6 @@ class ProjectActions:
                 _dispatch_uninstall,
                 get_product_logs=get_product_logs,
                 get_debug_logs=False,
-                owner=self.repo.name,
             )
         )
 
@@ -233,9 +290,7 @@ class ProjectActions:
         a repo tearing it down would take its neighbours' tooling with it.
         """
         uninstalled = await self.uninstall(get_product_logs=get_product_logs)
-        tools = _reduce_results(
-            await self.ctx.do_for_all_hosts(_dispatch_uninstall_dev_tools, owner=self.repo.name)
-        )
+        tools = _reduce_results(await self.ctx.do_for_all_hosts(_dispatch_uninstall_dev_tools))
         return uninstalled if not uninstalled.is_ok else tools
 
     ####################
@@ -265,9 +320,7 @@ class ProjectActions:
             return Result(Status.Error, msg=_REQUIRE_PRODUCT_LOGS_CONTRADICTION)
         if not product:
             return Result(Status.Success)
-        haul = _reduce_results(
-            await self.ctx.do_for_all_hosts(_dispatch_get_product_logs, owner=self.repo.name)
-        )
+        haul = _reduce_results(await self.ctx.do_for_all_hosts(_dispatch_get_product_logs))
         if not haul.is_ok or not require_product_logs:
             # The haul's own failure returns unchanged: it says WHY nothing
             # arrived, which a derived "no logs" verdict would replace with a
@@ -302,9 +355,7 @@ class ProjectActions:
         """
         if not dev:
             return Result(Status.Success)
-        return _reduce_results(
-            await self.ctx.do_for_all_hosts(_dispatch_install_dev_tools, owner=self.repo.name)
-        )
+        return _reduce_results(await self.ctx.do_for_all_hosts(_dispatch_install_dev_tools))
 
     ####################
     #  Questions
@@ -419,6 +470,12 @@ def actions_for(repo: "Repo", ctx: "OttoContext") -> ProjectActions:
 
     A repo that registers nothing gets :class:`ProjectActions` itself, so the
     zero-effort case is a working lifecycle rather than an error.
+
+    THE INSTANCE IS HANDED A REPO-SCOPED VIEW, never the plain context. This
+    one line is where a repo's whole lifecycle acquires its fleet of interest
+    and its owner stamp (spec section 7) -- every walk the returned object
+    drives, including every walk a SUBCLASS otto has never seen drives, is
+    bound by construction rather than by an argument each of them remembers.
     """
     cls = PROJECT_ACTIONS.get(repo.name) if repo.name in PROJECT_ACTIONS else ProjectActions
-    return cls(repo=repo, ctx=ctx)
+    return cls(repo=repo, ctx=ctx.for_repo(repo.name))

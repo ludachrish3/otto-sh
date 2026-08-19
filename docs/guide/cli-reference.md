@@ -225,6 +225,15 @@ otto run --list-instructions
 Each instruction defines its own options via Typer annotations.  Use
 `otto run <instruction> --help` to see them.
 
+The six first-party instructions (`install`, `uninstall`, `cleanup`,
+`get-logs`, `install-tools`, `status`) walk each repo's
+{ref}`fleet of interest <project-scope>` rather than the whole loaded lab.  A
+repo whose declaration admits no host in this run — no loaded lab applies to
+it, or none of their hosts match its `host_patterns` — is skipped with a
+`WARNING` and reported by `otto run status` as `not applicable` or
+`no matching hosts`; if it is the project driving the run, the verb aborts
+instead.  See {doc}`run/defaults`.
+
 ## otto test
 
 Run registered test suites — or, without a suite name, a suite-less
@@ -270,7 +279,7 @@ are applied.
 | `--monitor / --no-monitor` | off | Collect host performance metrics for the entire run |
 | `--monitor-interval SECONDS` | `5.0` | Sampling interval for `--monitor` (minimum 1.0) |
 | `--monitor-output PATH` | `<output>/monitor.json` | Override monitor data destination (`.json` or `.db`) |
-| `--monitor-hosts REGEX` | all hosts | Regex restricting which hosts `--monitor` samples |
+| `--monitor-hosts REGEX` | all hosts | Regex FULLY matched against host IDs (`re.fullmatch`) restricting which hosts `--monitor` samples — `sensor` does not select `sensor-1`; write `sensor.*` |
 
 Each suite also defines its own options via its `Options` dataclass — these
 flags only exist on that suite's own subcommand (`otto test <Suite>
@@ -294,6 +303,12 @@ otto host <HOST_ID> power [STATE]
 otto host <HOST_ID> ls [PATH] [--all]
 otto host --list-hosts
 ```
+
+`otto host` is **not** scoped by any repo's `[project]` declaration: naming a
+host explicitly reaches it wherever it is in the loaded lab, and the "Available
+hosts" listing printed for an unknown id enumerates the whole lab for the same
+reason.  Explicit targeting beats scoping — see
+{ref}`project-scope`.
 
 ### Subcommands
 
@@ -425,14 +440,30 @@ prints usage and exits 2; giving both is a mutually exclusive error.
 | Option | Default | Description |
 | ------ | ------- | ----------- |
 | `--live` | off | Collect from lab hosts (explicit opt-in; reservation-gated) |
-| `--hosts REGEX` | all hosts | Regex matched against host IDs via `re.search` |
+| `--hosts REGEX` | all hosts | Regex FULLY matched against host IDs (`re.fullmatch`) — `sensor` does not select `sensor-1`; write `sensor.*`. Matching nothing is a loud error, not an empty run |
 | `--interval, -i SECS` | `5.0` | Collection interval (minimum 1.0) |
 | `--db PATH` | | Persist this `--live` run as a session in a SQLite archive; reusing a path appends another session |
 | `--label TEXT` | | Human-readable label stored with this session |
 | `--note TEXT` | | Free-form note stored with this session (shown as the dashboard's session-picker tooltip) |
 | `SOURCE` (argument) | | Review a saved `.json` export or `.db` session archive instead of collecting live |
 
-Docker container hosts are excluded from the default monitored fleet.
+Docker container hosts are excluded from the default monitored fleet, as is the
+built-in `local` host; the fleet `--hosts` selects from is the run's
+{ref}`fleet of interest <project-scope>`, not necessarily the whole lab.
+
+`otto monitor --live` can come up empty in four distinguishable ways, and each
+says which one it is:
+
+| What went wrong | What you get |
+| --------------- | ------------ |
+| `--hosts` matched no host the run may walk | The pattern, the number of hosts it was matched against, and the wildcard to append |
+| `--hosts` matched only hosts a membership flag holds out of fleet sweeps | Says the regex is **not** the problem, and names the flag instead |
+| Nothing was selected at all (nothing to select from) | `No hosts available in the active lab.` — no mention of the pattern, which is innocent here |
+| Hosts were selected but none can be sampled | The count and the ids, plus the two routes otto samples over: a shell (Unix hosts) or an `snmp` block in the lab entry |
+
+All four exit 1 with the message on stderr. The first two come from the
+selection layer and are caught and framed by `otto monitor` itself, so an empty
+`--hosts` is one line rather than a traceback.
 
 ## otto cov
 

@@ -14,14 +14,6 @@ labs = [
     "../_fixtures/lab_data/tech1",
 ]
 
-# Labs this repo supports. The repo3 coverage product is a Zephyr LLEXT and only
-# runs in the embedded lab — declaring it here lets otto reject an unsupported
-# lab (e.g. `veggies`) rather than fail deep in host setup. (Enforcement is not
-# yet wired in; see Repo.valid_labs.)
-valid_labs = [
-    "embedded",
-]
-
 libs = [
     "pylib",
     # Shared, third-party-style module. repo3 only targets sprout_cov, but
@@ -67,19 +59,21 @@ max_filename_len = 32
 # hex stream to .gcda on the host, and runs a cross-gcov (arm-zephyr-eabi-gcov)
 # discovered from the .gcno under [coverage.embedded].build_dir.
 
-# Which hosts to collect coverage from: a host-id regex (matched with
-# re.search), defaulting to every host in the lab when unset. This selects the
-# coverage target(s) out of the shared `embedded` lab — keeping the plain
-# embedded test hosts and the `basil` SSH hop out — so the collect-from set is
-# repo-declared, not inferred from which hosts happen to emit .gcda. The same
-# selector scopes the TestEmbeddedCoverage suite (which hosts it loads the
-# instrumented extension onto). The re.search match means "sprout-cov" selects
-# BOTH coverage beds — sprout-cov (3.7) and sprout-cov44 (4.4) — so coverage is
-# collected across multiple Zephyr versions. (The ids are hyphenated: the
+# Which hosts to collect coverage from: a host-id regex FULLY matched against
+# each id (re.fullmatch), defaulting to every host in the lab when unset. This
+# selects the coverage target(s) out of the shared `embedded` lab — keeping the
+# plain embedded test hosts and the `basil` SSH hop out — so the collect-from
+# set is repo-declared, not inferred from which hosts happen to emit .gcda. The
+# same selector scopes the TestEmbeddedCoverage suite (which hosts it loads the
+# instrumented extension onto). The trailing wildcard is load-bearing and not
+# tidiness: the intent is BOTH coverage beds — sprout-cov (3.7) and
+# sprout-cov44 (4.4) — so coverage is collected across multiple Zephyr
+# versions, and a bare "sprout-cov" fullmatches only the 3.7 bed. That would
+# not fail; it would quietly halve the collection. (The ids are hyphenated: the
 # elements "sprout_cov"/"sprout_cov44" slug their underscore to a hyphen under
 # the host-id rules.) Future (per embedded_cortex_m_migration.md): when every
-# QEMU host can emit coverage, widen this further (e.g. "sprout").
-hosts = "sprout-cov"
+# QEMU host can emit coverage, widen this further (e.g. "sprout.*").
+hosts = "sprout-cov.*"
 
 [coverage.embedded]
 # LLEXT extension name — matches add_llext_target(cov_ext) in product/. otto

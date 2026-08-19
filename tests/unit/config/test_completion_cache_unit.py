@@ -327,11 +327,32 @@ def test_clear_cache_returns_false_when_missing(tmp_path: Path, monkeypatch) -> 
 class TestCollectCurrentCommands:
     """collect_current_commands() reads the live INSTRUCTIONS/SUITES registries."""
 
-    def test_no_instructions_module_imported_yields_empty_instructions(self, monkeypatch) -> None:
-        """If otto.cli.run was never imported, instructions is empty (not an error)."""
-        import sys
+    def test_nothing_registered_yields_empty_instructions(self, monkeypatch) -> None:
+        """A run where no init module registered anything reports [], never an error.
 
-        monkeypatch.delitem(sys.modules, "otto.cli.run", raising=False)
+        THE EMPTINESS IS INJECTED, not inherited. This test used to delete
+        ``otto.cli.run`` from ``sys.modules`` and assert the result was empty —
+        which stopped meaning anything when the registry moved to
+        ``otto.instructions``: deleting a module that merely re-exports
+        ``INSTRUCTIONS`` leaves the registry object, and its contents, exactly
+        where they were. What made it pass was collection ORDER. Run alone, or
+        after tests that never bootstrap, ``otto.project.instructions`` had not
+        been imported and the registry really was empty; run after anything that
+        calls ``bootstrap()`` — ``tests/unit/config/test_scope.py`` is one — the
+        six first-party instructions are registered as an import side effect and
+        the assertion failed. Nothing leaked: those six are otto's own
+        import-time baseline, and ``importlib.import_module`` is a no-op on the
+        second call, so no snapshot/restore guard may remove them either.
+
+        Replacing the registry with an empty one states the condition the test
+        is actually about and holds under every seed.
+        """
+        from otto.registry import Registry
+
+        monkeypatch.setattr(
+            "otto.instructions.INSTRUCTIONS",
+            Registry("instruction", register_hint="@otto.instruction()"),
+        )
         instructions, _suites = cc.collect_current_commands()
         assert instructions == []
 

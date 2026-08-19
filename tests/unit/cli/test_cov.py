@@ -1517,6 +1517,34 @@ class TestCovCleanValidation:
         assert "Traceback" not in result.output
         assert mock_err.called
 
+    def test_empty_selection_from_the_hosts_pattern_is_framed(self):
+        """A ``[coverage].hosts`` regex that selects nothing prints a line, not a traceback.
+
+        ``_connect_cov_hosts`` runs BEFORE every one of this command's own
+        checks, and the walk it starts is a generator — so its empty-selection
+        refusal surfaces from inside the ``list(...)``, ahead of any handler
+        that would have framed it. The fake is a generator function to keep
+        that timing honest.
+        """
+        from otto.config.scope import EmptySelectionError
+
+        def _raising_all_hosts(*args, **kwargs):
+            raise EmptySelectionError("sensor", 3)
+            yield  # pragma: no cover — unreachable; makes this a generator function
+
+        repo = self._repo({"hosts": "sensor", "gcda_remote_dir": "/remote"})
+        with (
+            patch("otto.config.get_repos", return_value=[repo]),
+            patch("otto.config.all_hosts", _raising_all_hosts),
+            patch.object(cov_module.logger, "error") as mock_err,
+        ):
+            result = runner.invoke(cov_app, ["clean"])
+        assert result.exit_code == 1
+        assert not isinstance(result.exception, EmptySelectionError), (
+            "the selection error reached typer unframed — the user gets a traceback"
+        )
+        assert "fullmatches none of the 3 host(s)" in " ".join(mock_err.call_args[0][0].split())
+
 
 # ── clean command — success (fetch layer stubbed at the I/O boundary) ───────
 

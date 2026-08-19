@@ -14,6 +14,7 @@ order.
 """
 
 import io
+import re
 
 import pytest
 import typer
@@ -28,6 +29,7 @@ from otto.project import (
     CleanlinessReport,
     InstallState,
     ProjectStatus,
+    RepoScope,
     orchestrator,
 )
 from otto.result import Result
@@ -457,10 +459,12 @@ def _clean_row(kind, name, state, detail="", error=None):
     return CleanlinessItem(kind=kind, name=name, state=state, detail=detail, error=error)
 
 
-def _wire_status(monkeypatch, overall, repos=None, report=None):
+def _wire_status(monkeypatch, overall, repos=None, report=None, scoping=None):
     """Point both orchestrator questions at doubles; return the cleanliness one."""
     monkeypatch.setattr(
-        orchestrator, "status", _Recorder(ProjectStatus(overall=overall, repos=repos or {}))
+        orchestrator,
+        "status",
+        _Recorder(ProjectStatus(overall=overall, repos=repos or {}, scoping=scoping or {})),
     )
     probe = _Recorder(_report() if report is None else report)
     monkeypatch.setattr(orchestrator, "cleanliness", probe)
@@ -622,6 +626,308 @@ async def test_status_full_does_not_read_a_device_message_as_markup(
     await registered.status(full=True)
 
     assert detail in _row_line(capsys.readouterr().out, "core")
+
+
+# ── status: the repos this run does not apply to ─────────────────────────────
+
+
+def _cells(line: str) -> list[str]:
+    """One table row split back into its cells (the columns are two spaces apart)."""
+    return [cell.strip() for cell in re.split(r"\s{2,}", line.strip()) if cell.strip()]
+
+
+def _fleet_line(out: str, name: str) -> str:
+    """The one FLEET-OF-INTEREST line whose first cell is *name*.
+
+    Sliced between its own heading and the first cleanliness heading, for the
+    reason ``_row_line`` is sliced: the install table above names the same
+    repos, so a parser over the whole output finds two lines for one repo and
+    cannot say which of them it just read.
+    """
+    lines = out.splitlines()
+    start = next(i for i, line in enumerate(lines) if line.startswith("fleet of interest"))
+    stop = next((i for i, line in enumerate(lines) if line.startswith(_SECTIONS)), len(lines))
+    (row,) = [line for line in lines[start:stop] if _cells(line)[:1] == [name]]
+    return row
+
+
+@pytest.mark.asyncio
+async def test_status_prints_a_not_applicable_row_for_the_repo_the_walks_skipped(
+    monkeypatch, registered, capsys
+):
+    """A repo no loaded lab applies to gets a row that SAYS SO (D3).
+
+    Whole-cell equality, never ``in``: "applicable" is a substring of "not
+    applicable" exactly as "installed" is of "uninstalled", so a renderer that
+    painted every scoped-out repo as in-scope — or every in-scope repo as
+    skipped — passes a containment check and fails the only question the row
+    is asked. The labs are IN the cell because "not applicable" without them
+    reads as a bug in otto rather than as the wrong ``-l``.
+    """
+    monkeypatch.setattr(
+        orchestrator,
+        "status",
+        _Recorder(
+            ProjectStatus(
+                overall=InstallState.INSTALLED,
+                repos={"acme": InstallState.INSTALLED},
+                scoping={
+                    "acme": RepoScope(
+                        applicable=True,
+                        loaded_labs=("bench", "floor"),
+                        applicable_labs=("bench",),
+                        universe=("h0",),
+                    ),
+                    "widgets": RepoScope(
+                        applicable=False, usable=False, loaded_labs=("bench", "floor")
+                    ),
+                },
+            )
+        ),
+    )
+
+    await registered.status()
+
+    assert _state_rows(capsys.readouterr().out) == {
+        "acme": "installed",
+        "widgets": "not applicable (labs: bench, floor)",
+    }
+
+
+@pytest.mark.asyncio
+async def test_status_prints_a_no_matching_hosts_row_for_the_host_starved_repo(
+    monkeypatch, registered, capsys
+):
+    """The OTHER skipped shape gets the OTHER text — the axis that actually failed.
+
+    This repo's labs DO apply; its ``host_patterns`` match nothing in them. The
+    "not applicable (labs: ...)" cell would be a lie here and would send the
+    reader to change ``-l``. Whole-cell equality for the reason its twin uses
+    it: one text printed for both conditions passes every containment check.
+    """
+    _wire_status(
+        monkeypatch,
+        InstallState.INSTALLED,
+        {"acme": InstallState.INSTALLED},
+        scoping={
+            "acme": RepoScope(
+                applicable=True,
+                usable=True,
+                loaded_labs=("bench", "floor"),
+                applicable_labs=("bench",),
+                universe=("h0",),
+            ),
+            "widgets": RepoScope(
+                applicable=True,
+                usable=False,
+                loaded_labs=("bench", "floor"),
+                applicable_labs=("bench",),
+                host_patterns=("sensor-.*",),
+            ),
+        },
+    )
+
+    await registered.status()
+
+    assert _state_rows(capsys.readouterr().out) == {
+        "acme": "installed",
+        "widgets": "no matching hosts (host_patterns: sensor-.*)",
+    }
+
+
+@pytest.mark.asyncio
+async def test_status_full_lists_each_repos_labs_and_hosts(monkeypatch, registered, capsys):
+    """``--full`` shows the fleet each repo actually resolved, cell for cell.
+
+    Cells rather than substrings, because the two lab columns are prefixes of
+    each other in the commonest lab: a section that printed the LOADED labs
+    where it promised the APPLICABLE ones renders "labs: bench, floor" where
+    "labs: bench" belongs, and every containment check passes.
+    """
+    _wire_status(
+        monkeypatch,
+        InstallState.INSTALLED,
+        {"acme": InstallState.INSTALLED},
+        scoping={
+            "acme": RepoScope(
+                applicable=True,
+                loaded_labs=("bench", "floor"),
+                applicable_labs=("bench",),
+                universe=("h0", "h1"),
+            ),
+            "widgets": RepoScope(applicable=False, usable=False, loaded_labs=("bench", "floor")),
+        },
+    )
+
+    await registered.status(full=True)
+    out = capsys.readouterr().out
+
+    assert _cells(_fleet_line(out, "acme")) == ["acme", "labs: bench", "hosts: h0, h1"]
+    assert _cells(_fleet_line(out, "widgets")) == ["widgets", "labs: (none)", "hosts: (none)"]
+
+
+@pytest.mark.asyncio
+async def test_status_full_prints_no_section_for_an_empty_scoping_mapping(
+    monkeypatch, registered, capsys
+):
+    """An empty mapping renders no section — a heading over an empty table is worse.
+
+    A RENDERER-LEVEL pin, and the title says which emptiness it is about. An
+    empty ``scoping`` means nothing was RESOLVED — a library context, an
+    unavailable bootstrap — and it is the only input that reaches the early
+    return. It is emphatically NOT the whole-lab fallback: an undeclared repo
+    still gets a verdict, so a lab where nobody wrote ``[project]`` arrives
+    here with a row per repo and prints one. This test used to claim it proved
+    that fallback case, while wiring the empty mapping by hand — pinning its
+    own premise. ``test_status_full_renders_a_row_per_repo_on_an_undeclared_lab``
+    asks the real pipeline instead.
+    """
+    _wire_status(monkeypatch, InstallState.INSTALLED, {"acme": InstallState.INSTALLED})
+
+    await registered.status(full=True)
+
+    assert "fleet of interest" not in capsys.readouterr().out
+
+
+@pytest.mark.asyncio
+async def test_status_full_renders_a_row_per_repo_on_an_undeclared_lab(
+    monkeypatch, registered, capsys
+):
+    """The whole-lab fallback still gets a fleet-of-interest row per repo.
+
+    THE PIPELINE, NOT A HAND-WIRED REPORT. Every other test in this section
+    hands the renderer a ``ProjectStatus`` it built itself, which can only ever
+    prove what the renderer does with an input someone chose. The question here
+    is which inputs ``orchestrator.status()`` actually PRODUCES, and the answer
+    for a lab where no repo declared ``[project]`` is a verdict per repo — the
+    fallback resolves to "applies to every loaded lab, targets every host",
+    which is a fact about the run and not an absence of one. So the section
+    renders, and each row names the whole lab.
+
+    ``_counts`` is stubbed False so no repo is asked for an install state:
+    that keeps the test on the one thing it is about (what ``scoping`` gets
+    filled with) instead of dragging in fleet walks that would need hosts.
+    ``_lab`` is stubbed with a context carrying REAL verdicts from
+    :func:`~otto.config.scope.resolve_scopes` — the fallback has to come out of
+    the resolver, not out of the test, or the pin is worth nothing.
+
+    Cell equality, matching this section's other assertions: a renderer that
+    printed the applicable labs where the universe belongs, or "(none)" for a
+    fallback repo, passes any containment check.
+    """
+    import types
+
+    from otto.config.scope import resolve_scopes
+
+    repos = [
+        types.SimpleNamespace(name="acme", sut_dir="/repos/acme", project_scope=None),
+        types.SimpleNamespace(name="widgets", sut_dir="/repos/widgets", project_scope=None),
+    ]
+    hosts = {
+        "h0": types.SimpleNamespace(source_lab="bench"),
+        "h1": types.SimpleNamespace(source_lab="floor"),
+    }
+    ctx = types.SimpleNamespace(scopes=resolve_scopes(repos, ["bench", "floor"], hosts))
+    ctx.for_repo = lambda name: types.SimpleNamespace(_repo=name)
+
+    monkeypatch.setattr(orchestrator, "_lab", lambda: (ctx, repos))
+    monkeypatch.setattr(orchestrator, "_counts", lambda actions: False)
+    monkeypatch.setattr(orchestrator, "cleanliness", _Recorder(_report()))
+
+    await registered.status(full=True)
+    out = capsys.readouterr().out
+
+    # Asserted before the row parser runs: `_fleet_line` locates its slice with
+    # a bare `next()`, so a missing section raises StopIteration out of this
+    # coroutine and reports as a RuntimeError naming asyncio internals. The
+    # regression this pins is exactly "the section is absent", and it has to say
+    # so.
+    assert "fleet of interest" in out
+    assert _cells(_fleet_line(out, "acme")) == ["acme", "labs: bench, floor", "hosts: h0, h1"]
+    assert _cells(_fleet_line(out, "widgets")) == [
+        "widgets",
+        "labs: bench, floor",
+        "hosts: h0, h1",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_status_full_renders_both_rows_for_a_host_starved_repo(
+    monkeypatch, registered, capsys
+):
+    """THE PIPELINE, not a hand-built report: real verdicts, real ``status()``, real cells.
+
+    The regression this pins crashed ``status()`` outright — a declared repo
+    whose labs apply while its ``host_patterns`` match nothing raised out of its
+    own fleet walk — so the pin has to come from
+    :func:`~otto.project.orchestrator.status` over verdicts
+    :func:`~otto.config.scope.resolve_scopes` produced, not from a
+    ``ProjectStatus`` the test wrote. A hand-wired renderer test hid exactly
+    this kind of divergence once already (056b1032).
+
+    BOTH surfaces, because they answer different questions: the status table
+    says why the repo has no state, and ``--full``'s fleet-of-interest row says
+    what it resolved to (its labs DO apply; the host column is empty). Cell
+    equality throughout.
+    """
+    import re as _re
+    import types
+
+    from otto.config.scope import ProjectScopeConfig, resolve_scopes
+
+    repos = [
+        types.SimpleNamespace(name="acme", sut_dir="/repos/acme", project_scope=None),
+        types.SimpleNamespace(
+            name="widgets",
+            sut_dir="/repos/widgets",
+            project_scope=ProjectScopeConfig([_re.compile("bench")], [_re.compile("sensor-.*")]),
+        ),
+    ]
+    hosts = {
+        "h0": types.SimpleNamespace(source_lab="bench"),
+        "h1": types.SimpleNamespace(source_lab="floor"),
+    }
+    ctx = types.SimpleNamespace(scopes=resolve_scopes(repos, ["bench", "floor"], hosts))
+    ctx.for_repo = lambda name: types.SimpleNamespace(_repo=name)
+
+    monkeypatch.setattr(orchestrator, "_lab", lambda: (ctx, repos))
+    monkeypatch.setattr(orchestrator, "_counts", lambda actions: False)
+    monkeypatch.setattr(orchestrator, "cleanliness", _Recorder(_report()))
+
+    await registered.status(full=True)
+    out = capsys.readouterr().out
+
+    assert "fleet of interest" in out
+    assert _cells(_fleet_line(out, "widgets")) == ["widgets", "labs: bench", "hosts: (none)"]
+    # The status table is everything ABOVE the fleet-of-interest heading: both
+    # sections print a row per repo, so a parser over the whole output finds
+    # two lines for `widgets` and cannot say which one it just read.
+    lines = out.splitlines()
+    heading = next(i for i, line in enumerate(lines) if line.startswith("fleet of interest"))
+    (row,) = [line for line in lines[:heading] if _cells(line)[:1] == ["widgets"]]
+    assert _cells(row) == ["widgets", "no matching hosts (host_patterns: sensor-.*)"]
+
+
+@pytest.mark.asyncio
+async def test_bare_status_prints_no_fleet_of_interest_section(monkeypatch, registered, capsys):
+    """The scoping detail is ``--full``'s, so a plain status stays one line per repo."""
+    _wire_status(
+        monkeypatch,
+        InstallState.INSTALLED,
+        {"acme": InstallState.INSTALLED},
+        scoping={
+            "acme": RepoScope(
+                applicable=True,
+                loaded_labs=("bench",),
+                applicable_labs=("bench",),
+                universe=("h0",),
+            )
+        },
+    )
+
+    await registered.status()
+
+    assert "fleet of interest" not in capsys.readouterr().out
 
 
 # ── --list-instructions: the first-party panel ───────────────────────────────

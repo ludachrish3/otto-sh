@@ -456,6 +456,9 @@ class Host(Protocol):
     power_control: "PowerController | None"
     """Pluggable power backend, or None when this host can't be power-controlled."""
 
+    source_lab: str
+    """Lab this host came from, stamped by the loader (see :attr:`BaseHost.source_lab`)."""
+
     async def _login(self, as_user: str | None = None) -> None: ...
 
     async def login(self, as_user: str | None = None) -> None:
@@ -817,6 +820,23 @@ class BaseHost(ABC):
     default empty. A pattern (``*``, ``?``, ``[``) is expanded on the device by
     :meth:`~otto.host.file_ops.PosixFileOps.glob`, so a host family without
     that capability must declare concrete paths or override the method.
+    """
+
+    source_lab: str = ""
+    """Name of the lab this host came from — assigned by the LOADER, not lab data.
+
+    Not a ``lab.json`` field: the host specs are ``extra='forbid'``, so a lab
+    file can neither set it nor lie about it. It is stamped by
+    :func:`otto.host.factory.create_host_from_dict` (``lab_name=``), swept in
+    per component by :func:`otto.config.lab.load_lab`, and backstopped by
+    :meth:`otto.config.lab.Lab.add_host` for hosts built outside the loader
+    (container hosts, the built-in ``local``).
+
+    It exists because merging erases attribution: ``a + b`` yields ONE lab
+    named ``a+b``, and from then on the lab cannot say which of its components
+    any given host was declared in. This stamp is that memory, per host.
+    The default ``""`` means "never registered with a lab" (a bare factory
+    call), which is a different statement from any lab name.
     """
 
     @override

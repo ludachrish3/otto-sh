@@ -12,6 +12,7 @@ otto.config.env
 otto.config.fleet
 otto.config.lab
 otto.config.repo
+otto.config.scope
 otto.config.version
 otto.console
 otto.context

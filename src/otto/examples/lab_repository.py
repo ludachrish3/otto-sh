@@ -105,7 +105,7 @@ class ExampleLabRepository:
             raise LabNotFoundError(f"Lab {name!r} not found. Known labs: {known}")
         lab = Lab(name=name)
         for host_data in self._labs[name]:
-            host = create_host_from_dict(host_data, preferences=preferences)
+            host = create_host_from_dict(host_data, preferences=preferences, lab_name=name)
             lab.add_host(host)
             lab.resources.update(host.resources)
         return lab

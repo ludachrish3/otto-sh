@@ -99,6 +99,21 @@ class TestTestHelp:
         for flag in ("--iterations", "--duration", "--threshold", "--results", "--markers"):
             assert flag in result.output
 
+    def test_monitor_hosts_help_states_fullmatch_semantics(self):
+        """``--monitor-hosts`` narrows the fleet the same way ``otto monitor --hosts`` does.
+
+        It reaches the identical ``all_hosts(pattern=...)`` seam, so its help
+        has to describe the identical matching rule — a second option still
+        promising ``re.search`` is how a reader learns the wrong semantics from
+        the tool itself. Asserted on the RENDERED table, widened so truncation
+        cannot masquerade as a missing phrase.
+        """
+        result = runner.invoke(suite_app, ["--help"], env={"COLUMNS": "300"})
+        assert result.exit_code == 0
+        rendered = " ".join(result.output.split())
+        assert "--monitor-hosts" in rendered
+        assert "(fullmatch)" in rendered
+
     def test_suite_help_omits_runner_options(self):
         """Runner options must NOT appear in the per-suite ``--help`` output."""
 

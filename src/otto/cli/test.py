@@ -125,7 +125,11 @@ either limit is reached first.
     <path>``.
 
 ``--monitor-hosts REGEX``
-    Restrict ``--monitor`` to host IDs matching this regex (``re.search``).
+    Restrict ``--monitor`` to host IDs this regex FULLY matches
+    (``re.fullmatch``): ``sensor`` does not select ``sensor-1`` — write
+    ``sensor.*``.  A regex matching none of the hosts the run may walk stops
+    the run before any test executes; hosts that matched but cannot be sampled
+    only disable collection, with a warning naming them.
 
 **Examples**::
 
@@ -511,7 +515,10 @@ def main(  # noqa: PLR0913 — CLI command params
         typer.Option(
             "--monitor-hosts",
             metavar="REGEX",
-            help="Regex matched against host IDs to restrict --monitor (re.search).",
+            help=(
+                "Regex matched against whole host IDs (fullmatch) to restrict --monitor: "
+                "'sensor' does not select 'sensor-1' — write 'sensor.*'."
+            ),
         ),
     ] = None,
 ) -> None:

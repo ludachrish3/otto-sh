@@ -35,21 +35,18 @@ def fake_config_module():
 
     Yields ``set_hosts(*hosts)`` to register the host list for the test.
     """
-    current: dict[str, MagicMock] = {}
-
-    class _FakeHostsDict(dict):
-        def values(self):
-            return list(current.values())
-
     lab = Lab(name="test_lab")
-    lab.hosts = _FakeHostsDict()  # type: ignore[assignment]
     ctx = OttoContext(lab=lab)
     token = set_context(ctx)
 
     def set_hosts(*hosts: MagicMock) -> None:
-        current.clear()
+        # The lab's REAL mapping, mutated in place — see the twin fixture in
+        # ``tests/unit/cov/test_fetcher.py``: fleet scoping iterates and
+        # ``.items()``s ``lab.hosts``, which a ``values()``-only double answers
+        # from the empty dict underneath instead of failing.
+        lab.hosts.clear()
         for h in hosts:
-            current[h.id] = h
+            lab.hosts[h.id] = h
 
     yield set_hosts
     reset_context(token)

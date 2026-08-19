@@ -80,6 +80,29 @@ class Lab:
     links: "list[Link]" = field(default_factory=list)
     """Declared links loaded from lab data (implicit links are derived, not stored)."""
 
+    component_names: list[str] = field(default_factory=list)
+    """The lab names this lab was assembled from, in merge order.
+
+    A lab loaded on its own holds ``[name]``; ``a + b`` holds ``["a", "b"]``
+    while ``name`` becomes ``"a+b"``. Carried rather than re-derived by
+    splitting ``name`` on :data:`LAB_SEPARATOR`: the composite name is a
+    display string assembled by ``__add__``, and re-parsing it would make
+    every reader re-implement (and eventually disagree about) the merge.
+
+    Declared last so positional construction (``Lab("name", resources, hosts,
+    links)``) keeps working; leave it unset and ``__post_init__`` seeds it.
+    """
+
+    def __post_init__(self) -> None:
+        """Seed ``component_names`` with this lab's own name when the caller left it empty.
+
+        So an unmerged lab is its own single component, and every lab — however
+        it was built — answers ``component_names`` truthfully without callers
+        having to special-case "never merged".
+        """
+        if not self.component_names:
+            self.component_names = [self.name]
+
     def add_host(
         self,
         host: "Host",
@@ -100,6 +123,16 @@ class Lab:
 
         if isinstance(host, RemoteHost):
             host._lab = self  # noqa: SLF001 — intra-package back-link set by Lab at host registration
+
+        # Attribution backstop for hosts built outside the loader: container
+        # hosts registered by `otto docker up` and the built-in `local` never
+        # pass through the factory's ``lab_name``. ``or`` so an existing stamp
+        # always wins — a host declared in lab "a" keeps saying "a" even when
+        # some other lab registers it. Pre-merge, ``self.name`` IS the component
+        # lab; a host joining a lab AFTER a merge gets the composite name
+        # ("a+b"), which is the honest answer — a container registered into a
+        # composite lab belongs to no single component of it.
+        host.source_lab = host.source_lab or self.name
 
         self.hosts[host.id] = host
 
@@ -194,6 +227,13 @@ class Lab:
 
         pre_merge_name = self.name
         self.name = f"{self.name}{LAB_SEPARATOR}{other.name}"
+        # Beside the name concatenation, because it repairs what the name
+        # concatenation costs: the merged lab used to remember only "a+b", so
+        # every question about the parts ("which labs is this?", "which lab is
+        # this host from?") could only be answered by re-parsing a display
+        # string. Carry the components instead — per-host attribution rides on
+        # ``Host.source_lab``, stamped before the hosts ever reach this method.
+        self.component_names = [*self.component_names, *other.component_names]
         self.resources = self.resources.union(other.resources)
         for host in other.hosts.values():
             if isinstance(host, RemoteHost):
@@ -311,7 +351,18 @@ def load_lab(
     Returns
     -------
     Lab
-        Fully defined lab instance.
+        Fully defined lab instance. Every host carries a non-empty
+        ``source_lab`` naming the COMPONENT lab it came from (never the
+        composite), and ``component_names`` lists those components in order.
+
+    Notes
+    -----
+    The built-in ``local`` host is injected after the merge and belongs to no
+    component, so it is attributed to ``component_names[0]`` — the first lab
+    the caller named. Attributing it to the composite ("a+b") would name a lab
+    no component owns; picking the first component keeps ``local`` inside a lab
+    the caller actually selected, and for the overwhelmingly common
+    single-lab case the two answers coincide.
     """
     match labnames:
         case str():
@@ -323,6 +374,17 @@ def load_lab(
         repository = JsonFileLabRepository(search_paths=search_paths or [])
 
     labs = [repository.load_lab(name, preferences=preferences) for name in lab_names]
+
+    # Attribution sweep, BEFORE the merge. After ``+`` every host lives in a lab
+    # named "a+b", so a sweep run one line later would answer "which lab is this
+    # host from?" with the composite for every host — the exact erasure
+    # ``source_lab`` exists to prevent. Running it per component also covers
+    # backends that build hosts without the factory's ``lab_name`` or drop them
+    # straight into ``Lab.hosts`` (bypassing ``add_host``'s own backstop).
+    for component in labs:
+        for component_host in component.hosts.values():
+            component_host.source_lab = component_host.source_lab or component.name
+
     lab = labs[0]
     for additional_lab in labs[1:]:
         lab += additional_lab
@@ -333,7 +395,14 @@ def load_lab(
     from ..host.builtin_hosts import BUILTIN_LOCAL_HOST_ID, make_builtin_local_host
 
     if BUILTIN_LOCAL_HOST_ID not in lab.hosts:
-        lab.add_host(make_builtin_local_host())
+        local_host = make_builtin_local_host()
+        # `local` is injected after the merge, so the lab it joins is the
+        # COMPOSITE ("a+b") — a name no component owns and no lab-scoped filter
+        # will ever match. Attribute it to the first component instead (see the
+        # docstring); the explicit stamp also pre-empts ``add_host``'s
+        # composite-name backstop.
+        local_host.source_lab = lab.component_names[0]
+        lab.add_host(local_host)
     else:
         getLogger(__name__).debug(
             "Lab %r defines its own %r host; skipping the built-in local host.",

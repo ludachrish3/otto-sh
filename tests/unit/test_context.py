@@ -160,8 +160,10 @@ def test_context_get_host_and_all_hosts_resolve_from_lab():
     ctx = OttoContext(lab=lab)
     first_id = next(iter(lab.hosts))
     assert ctx.get_host(first_id) is lab.hosts[first_id]
-    # Filter to only carrot and tomato — not pepper
-    ids = {h.id for h in ctx.all_hosts(re.compile("carrot|tomato"))}
+    # Filter to only carrot and tomato — not pepper. The trailing `.*` is
+    # load-bearing: ids are FULLMATCHED (D6), so a bare alternation of the
+    # element names selects nothing (and now raises).
+    ids = {h.id for h in ctx.all_hosts(re.compile("(carrot|tomato).*"))}
     assert ids
     assert all("carrot" in i or "tomato" in i for i in ids)
     # "pepper" should not appear in the filtered result
@@ -240,6 +242,30 @@ async def test_run_on_all_hosts_normalizes_str_to_list():
     # str normalized to a single-element list; timeout defaults to DEFAULT_COMMAND_TIMEOUT
     assert h.run_calls == [(["uname -a"], DEFAULT_COMMAND_TIMEOUT)]
     assert results["h1"] == "ran:h1"
+
+
+def test_for_repo_is_a_facade_over_the_same_context_not_a_copy(tmp_path):
+    """``for_repo`` narrows walks and nothing else — same lab, same scope, live flags.
+
+    A view that COPIED the context would pass every scoping test in
+    ``tests/unit/config/test_fleet_scoping.py`` and still be wrong twice over:
+    hosts handed out by the view would register into a second
+    :class:`~otto.context.HostScope` that nothing closes, and a flag set on the
+    context after the view was built (``output_dir``, which the CLI stamps
+    per-run) would never reach the repo acting under it.
+    """
+    lab = _lab_with("carrot")
+    ctx = OttoContext(lab=lab, dry_run=True)
+    view = ctx.for_repo("acme")
+
+    assert view.lab is ctx.lab
+    assert view.scope is ctx.scope  # ONE lifecycle scope, or hosts leak
+    assert view.dry_run is True
+    first_id = next(iter(lab.hosts))
+    assert view.get_host(first_id) is lab.hosts[first_id]  # explicit targeting delegates
+
+    ctx.output_dir = tmp_path  # a snapshot would go stale here
+    assert view.output_dir == tmp_path
 
 
 def test_context_runtime_flags_default_and_override():

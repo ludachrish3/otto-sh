@@ -438,6 +438,54 @@ class DependenciesSpec(OttoModel):
         return v
 
 
+class ProjectScopeSpec(OttoModel):
+    """``[project]`` — the labs and hosts this repo is about (its "fleet of interest").
+
+    A repo declares its reach as regexes rather than names so a lab family
+    (``tech-1``, ``tech-2``, …) is one line that keeps working as the lab set
+    grows.  Both axes are matched with ``re.fullmatch`` at runtime, never
+    ``re.search``: ``"bench"`` does not admit ``"bench-overflow"``.  Write
+    ``".*"`` to mean everything — match-all is a visible choice here, never a
+    default that quietly widens a project's fleet.
+
+    ``lab_patterns`` is optional in the schema and required in practice for any
+    repo that registers product or dev-tool providers; that check runs at
+    bootstrap phase 2, after init imports have registered them, so it can name
+    what registered.  Leaving it unset does NOT mean "every lab" — it compiles
+    to no patterns at all (see
+    :class:`otto.config.scope.ProjectScopeConfig`).
+
+    Patterns are compiled here, at settings parse, so an unclosed group fails
+    the parse instead of silently fullmatching nothing on every later fleet
+    walk.  The message names the pattern and the ``re`` complaint but not the
+    repo — the repo is the caller's frame to add.
+    """
+
+    lab_patterns: list[str] | None = None
+    """Labs this project applies to; a lab is applicable when ANY entry fullmatches."""
+
+    host_patterns: list[str] = Field(default_factory=lambda: [".*"])
+    """Hosts of interest within those labs; ORed, and defaulting to all of them."""
+
+    @field_validator("lab_patterns", "host_patterns")
+    @classmethod
+    def _validate_patterns(cls, v: list[str] | None) -> list[str] | None:
+        """Reject a pattern ``re`` cannot compile, naming it and the complaint.
+
+        One ``try`` around the whole loop (not one per entry): ``re.error``
+        carries the offending ``pattern`` itself, so the message loses nothing.
+        Pydantic supplies the field name — the caller supplies the repo.
+        """
+        try:
+            for pattern in v or []:
+                re.compile(pattern)
+        except re.error as e:
+            raise ValueError(
+                f"[project] pattern {e.pattern!r} is not a valid regular expression: {e}"
+            ) from None
+        return v
+
+
 class SettingsModel(OttoModel):
     """Boundary model for a repo's ``.otto/settings.toml``.
 
@@ -455,7 +503,6 @@ class SettingsModel(OttoModel):
 
     # paths + module/name lists
     labs: list[RepoPath] = Field(default_factory=list)
-    valid_labs: list[str] = Field(default_factory=list)
     libs: list[RepoPath] = Field(default_factory=list)
     tests: list[RepoPath] = Field(default_factory=list)
     init: list[str] = Field(default_factory=list)
@@ -469,6 +516,7 @@ class SettingsModel(OttoModel):
     logging: LoggingConfigSpec = LoggingConfigSpec()
     reservations: ReservationConfigSpec = ReservationConfigSpec()
     dependencies: DependenciesSpec = DependenciesSpec()
+    project: ProjectScopeSpec | None = None
 
     @model_validator(mode="before")
     @classmethod

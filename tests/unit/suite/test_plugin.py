@@ -12,6 +12,8 @@ from otto.models import MetricPoint
 from otto.monitor.collector import MetricCollector
 from otto.suite.plugin import OttoPlugin
 
+pytest_plugins = ["pytester"]
+
 SUT_DIR = Path("/sut/repo1/tests")
 
 
@@ -113,6 +115,154 @@ async def test_session_monitor_disabled_is_noop():
         await _FixtureRunner.teardown(gen)
     p_hosts.assert_not_called()
     p_build.assert_not_called()
+
+
+# ── --monitor-hosts: three emptinesses, three texts ─────────────────────────
+
+# THE SAME DISCIPLINE `otto monitor` KEEPS (see otto/cli/monitor.py's four
+# outcomes). A `--monitor-hosts` run that collects nothing ends up in exactly
+# one of three states, and the user must be able to tell which from the text:
+#
+# 1. the pattern fullmatched nothing        -> EmptySelectionError (regex)
+# 2. every match was flag-excluded          -> EmptySelectionError (flag)
+# 3. hosts WERE selected, none monitorable  -> this plugin's own warning
+#
+# The first two are a USAGE mistake in the invocation: the run was asked for
+# something it cannot deliver, so it stops with the error's own message and no
+# traceback rather than erroring one fixture per test. The third is not the
+# user's selection at all — it is a lab where nothing can be sampled — so it
+# disables collection and lets the tests run, and it must not blame the regex:
+# reaching it PROVES the regex matched.
+
+_INNER_SUITE = """\
+def test_one():
+    assert True
+"""
+
+_INNER_ARGS = (
+    # A nested in-process session: pytest-playwright's session-wide call
+    # wrapper rejects re-entry, and the outer suite's `filterwarnings=error`
+    # turns pytest-asyncio's unset-loop-scope deprecation into an
+    # INTERNALERROR at inner configure. Same overrides as
+    # test_options_plugin.py's inner runs.
+    "-p",
+    "no:cacheprovider",
+    "-p",
+    "no:playwright",
+    "-o",
+    "asyncio_default_fixture_loop_scope=function",
+    # The warning below is the ARTIFACT under test, so the inner session has to
+    # print it: pytest holds captured logs back unless a test fails.
+    "-o",
+    "log_cli=true",
+    "-o",
+    "log_cli_level=WARNING",
+)
+
+
+def _inner_run(pytester, plugin, hosts):
+    """Run a one-test session under *plugin*, with ``all_hosts`` answering *hosts*.
+
+    *hosts* is either a list to yield or an exception to raise from INSIDE the
+    generator — which is where the real ``all_hosts`` raises it, at the first
+    ``next()``, so a guard around the call alone would not catch it. The two
+    doubles are written separately for exactly that reason: one has to BE a
+    generator function, and folding the yield into the other would make its
+    ``return iter(hosts)`` a ``StopIteration`` value nobody sees.
+    """
+    if isinstance(hosts, BaseException):
+
+        def _all_hosts(*args, **kwargs):
+            del args, kwargs
+            raise hosts
+            yield  # pragma: no cover — unreachable; makes this a generator function
+
+    else:
+
+        def _all_hosts(*args, **kwargs):
+            del args, kwargs
+            return iter(hosts)
+
+    pytester.makepyfile(test_inner=_INNER_SUITE)
+    with patch("otto.config.all_hosts", _all_hosts):
+        return pytester.runpytest_inprocess(*_INNER_ARGS, plugins=[plugin])
+
+
+def test_monitor_hosts_matching_nothing_stops_the_run_with_one_line(pytester):
+    """A stale ``--monitor-hosts`` regex fails LOUD, framed — never a fixture traceback.
+
+    Post-D6 the fleet surface refuses an empty selection instead of yielding
+    nothing, and that refusal was escaping a session-scoped fixture raw: a
+    traceback through pytest-asyncio's internals, repeated for every test in
+    the session, for what is a one-line mistake in the invocation. The user
+    asked for a monitored run over hosts that do not exist; the honest outcome
+    is to stop and say so, in the error's own words.
+    """
+    from otto.config.scope import EmptySelectionError
+
+    result = _inner_run(
+        pytester,
+        OttoPlugin(monitor=True, monitor_hosts="sensor"),
+        EmptySelectionError("sensor", 3),
+    )
+
+    assert result.ret == pytest.ExitCode.USAGE_ERROR
+    out = " ".join(result.outlines)
+    assert "--monitor-hosts" in out
+    assert "fullmatches none of the 3 host(s)" in out
+    assert "'sensor.*'" in out  # the wildcard to add
+    assert "Traceback" not in out
+    assert "no tests ran" in out
+
+
+def test_monitor_hosts_hidden_by_a_flag_says_the_regex_is_not_the_problem(pytester):
+    """The other EmptySelectionError, and it must arrive with its own text intact.
+
+    A pattern that MATCHED and was then emptied by a membership flag needs the
+    opposite advice from one that matched nothing — widening it changes
+    nothing — so the framing must not flatten the two into one message.
+    """
+    from otto.config.scope import EmptySelectionError
+
+    result = _inner_run(
+        pytester,
+        OttoPlugin(monitor=True, monitor_hosts="box.*"),
+        EmptySelectionError("box.*", 3, excluded_by=["include_containers"], matched_size=2),
+    )
+
+    assert result.ret == pytest.ExitCode.USAGE_ERROR
+    out = " ".join(result.outlines)
+    assert "--monitor-hosts" in out
+    assert "The regex is not the problem" in out
+    assert "include_containers=True" in out
+
+
+def test_selected_but_unmonitorable_hosts_blame_the_hosts_not_the_regex(pytester):
+    """The surviving false blame, fixed: reaching this branch PROVES the regex matched.
+
+    ``no hosts matching "X"`` was the old label, and after the D6 guard landed
+    it could only fire here — where the pattern matched and every match was
+    unmonitorable. It sent the reader to widen a regex that was already right,
+    past the real cause. The truthful message names the hosts and the reason,
+    and the run CONTINUES: an unmonitorable lab is not a reason to fail tests
+    that were never about monitoring.
+    """
+    from otto.host.factory import create_host_from_dict
+
+    # Through the factory, like the monitor CLI's twin test: a MagicMock would
+    # answer the production predicate (``isinstance(h, UnixHost)``) however the
+    # test wanted, and prove nothing about a real console host.
+    board = create_host_from_dict(
+        {"element": "board", "os_type": "zephyr", "ip": "10.0.0.9", "board": "mps2"}
+    )
+    result = _inner_run(pytester, OttoPlugin(monitor=True, monitor_hosts="board.*"), [board])
+
+    assert result.ret == pytest.ExitCode.OK
+    out = " ".join(result.outlines)
+    assert board.id in out
+    assert "shell" in out  # what a monitorable host has to offer
+    assert "collection disabled" in out
+    assert "board.*" not in out  # the retracted claim: the regex is innocent here
 
 
 @pytest.mark.asyncio

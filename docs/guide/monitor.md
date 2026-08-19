@@ -63,16 +63,53 @@ that declares `snmp` (polled over SNMP — see
 
 ### Selecting hosts
 
-Pass a regex to `--hosts` (matched against host IDs via `re.search`) to
-narrow the live host set:
+Pass a regex to `--hosts` to narrow the live host set. It is a FULL match
+against each host ID (`re.fullmatch`), never a substring search: `router`
+selects the host whose ID is exactly `router`, and nothing else. To match by
+prefix, append a wildcard — wrapping any alternation first:
 
 ```bash
-otto --lab my_lab monitor --live --hosts 'router|switch'
+otto --lab my_lab monitor --live --hosts '(router|switch).*'
 otto --lab my_lab monitor --live --hosts router1
 ```
 
+A pattern that matches none of the hosts the run may walk is an error, not an
+empty run: `otto monitor` prints the pattern, how many hosts it was matched
+against, and the wildcard to add.
+
 Omit the option to monitor every real host in the lab (Docker containers
 excluded).
+
+"The hosts the run may walk" is the run's **fleet of interest**, not
+necessarily every host in the lab: when a repo declares a `[project]` table in
+its `.otto/settings.toml`, `--hosts` selects a subset of what that declaration
+admits. See {ref}`project-scope`.
+
+If the **driving** project's own declaration admits no host here — no loaded lab
+applies to it, or none of their hosts match its `host_patterns` — `--live`
+refuses before it builds a fleet at all, naming the repo and the file to edit.
+A dependency's declaration never refuses: a lab that another project narrowed
+out is still this one's to watch.
+
+#### When nothing gets monitored
+
+Four different emptinesses, four different messages — because the next edit is
+different in each case:
+
+- **The pattern matched nothing.** You get the pattern, the size of the set it
+  was matched against, and the wildcard form to try. Fix the regex.
+- **The pattern matched, but every match is held out of fleet sweeps** by
+  `include_containers` / `include_local`. The message opens by saying the regex
+  is *not* the problem and names the flag, because widening an already-matching
+  regex is the natural first guess and changes nothing. To reach one of those
+  hosts, use `otto host <id> <verb>`.
+- **Nothing was selected at all.** `No hosts available in the active lab.` —
+  deliberately silent about `--hosts`, because with nothing to select from the
+  pattern is innocent.
+- **Hosts were selected, but none can be sampled.** You get the count and the
+  ids (up to five, then a summary), and a reminder that otto samples over a
+  shell or over SNMP. Give the host an `snmp` block, or point `--hosts` at a
+  Unix host — widening the selection will not help.
 
 ### Collection interval
 

@@ -32,7 +32,7 @@ from .state import Cleanliness, CleanlinessKind, InstallState
 if TYPE_CHECKING:
     from rich.table import Table
 
-    from .state import CleanlinessReport
+    from .state import CleanlinessReport, RepoScope
 
 _STATE_ANSWERS: "dict[InstallState, Result]" = {
     InstallState.INSTALLED: Result(Status.Success, value="lab is installed"),
@@ -230,16 +230,95 @@ async def status(
     """
     from rich import print as rprint
     from rich.table import Table
+    from rich.text import Text
 
     report = await orchestrator.status()
-    if report.repos:
+    skipped = [(name, row) for name, row in report.scoping.items() if not row.usable]
+    if report.repos or skipped:
         table = Table(show_header=False, box=None, padding=(0, 2, 0, 0))
         for repo_name, state in report.repos.items():
             table.add_row(repo_name, f"[{_STATE_STYLES[state]}]{state.value}[/]")
+        for repo_name, row in skipped:
+            # A ``Text``, not a markup string like the states above, because the
+            # lab names and the patterns in this cell come from a settings file:
+            # a '[' in one -- and a host_patterns entry like `[a-z]+` is a
+            # character class -- would be read as markup and swallow the rest of
+            # the row.
+            table.add_row(repo_name, Text(_skipped_cell(row), style="dim"))
         rprint(table)
     if full:
+        _print_scoping(report.scoping)
         _print_cleanliness(await orchestrator.cleanliness())
     return _STATE_ANSWERS[report.overall]
+
+
+def _skipped_cell(row: "RepoScope") -> str:
+    """Say why the walks left this repo out, in the terms of the axis that failed.
+
+    The display twin of the orchestrator's skip WARNING and of D3's abort
+    message, and it splits on the same flag both of those do. A repo the walks
+    skipped is either EXCLUDED -- it declared labs and none of them was loaded,
+    so the loaded labs are what it needs to see -- or applicable to a loaded
+    lab and matching no host in it, where naming the labs would blame the one
+    thing that is already right and hide the ``host_patterns`` that are not.
+
+    Args:
+        row: A skipped repo's row (``usable`` False).
+
+    Returns:
+        The cell text, patterns and all.
+    """
+    if not row.applicable:
+        return f"not applicable (labs: {_joined(row.loaded_labs)})"
+    return f"no matching hosts (host_patterns: {_joined(row.host_patterns)})"
+
+
+def _joined(names: "tuple[str, ...]") -> str:
+    """Render a name list for a cell, spelling emptiness out rather than leaving a blank.
+
+    An empty cell reads as a renderer that lost the value; ``(none)`` is the
+    same phrasing the scoping errors use for the same fact.
+    """
+    return ", ".join(names) or "(none)"
+
+
+def _print_scoping(scoping: "dict[str, RepoScope]") -> None:
+    """Print each repo's fleet of interest -- the labs it applies to, the hosts it targets.
+
+    ``--full`` only, and for the reason the cleanliness rows are: the answer a
+    bare ``otto run status`` is asked is "are the products on?", and the
+    resolved fleet is a second axis, not part of it.
+
+    ONE ROW PER RESOLVED REPO, declared or not. An undeclared repo is not
+    skipped here: its verdict is the whole-lab fallback, so its row says every
+    loaded lab and every host, which is the true answer to "which hosts does
+    this repo even mean" and the only way an operator can tell a repo that
+    narrowed nothing from a repo that narrowed to everything by writing
+    ``[".*"]``. The early return below is NOT a fallback rule -- it covers a
+    genuinely empty mapping, which means nothing was RESOLVED (a library
+    context, an unavailable bootstrap), and an announced heading over an empty
+    table reads as a renderer that lost its data.
+
+    The hosts are the resolve-time universe. It is display data by
+    construction (a walk re-derives membership live), which is exactly what
+    makes it safe to print: this is the operator's answer to "which hosts does
+    this repo even mean", not a walk's answer to "which host next".
+    """
+    if not scoping:
+        return
+    from rich import print as rprint
+    from rich.table import Table
+    from rich.text import Text
+
+    table = Table(show_header=False, box=None, padding=(0, 2, 0, 0))
+    for repo_name, row in scoping.items():
+        table.add_row(
+            repo_name,
+            Text(f"labs: {_joined(row.applicable_labs)}"),
+            Text(f"hosts: {_joined(row.universe)}"),
+        )
+    rprint("[bold]fleet of interest[/]")
+    rprint(table)
 
 
 def _print_cleanliness(report: "CleanlinessReport") -> None:

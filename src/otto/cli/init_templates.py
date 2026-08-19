@@ -27,9 +27,6 @@ tests = ["tests"]     # defines where test discovery happens
 libs = ["pylib"]      # added to sys.path at startup
 init = ["{init_module}"]           # modules imported at startup (register instructions)
 
-# Restrict --lab/OTTO_LAB to an allowlist (default: any lab found in labs dirs).
-#valid_labs = ["example_lab"]
-
 # --- [dependencies] — other OTTO_SUT_DIRS projects this repo depends on ------
 # Entries are "name" or "name <op> X.Y.Z[, <op> X.Y.Z ...]"; names match other
 # repos' `name` fields (case/punctuation-insensitive). Required deps must be
@@ -38,6 +35,14 @@ init = ["{init_module}"]           # modules imported at startup (register instr
 #[dependencies]
 #required = ["other-project >= 1.0"]
 #optional = ["nice-to-have-project"]
+
+# --- [project] — which labs and hosts this project targets -------------------
+# Optional until this repo registers a product/dev-tool provider; REQUIRED
+# after (bootstrap fails loud without it). Regexes are FULL matches: "bench"
+# does not match "bench-2"; write "bench.*" to prefix-match.
+#[project]
+#lab_patterns = ["example_lab"]   # labs this project applies to
+#host_patterns = [".*"]           # hosts of interest within those labs
 
 # --- [lab] — host-source backend selection (default: built-in "json") --------
 # Backend-specific settings live in [lab.<backend>]; see docs/guide/setup/host-database.md.

@@ -128,9 +128,29 @@ def apply_dev_tool_providers(host: "Host") -> None:
     Each attached dev tool is stamped with :attr:`DevTool.owner` — the repo that
     registered the provider — unless the tool already names an owner, which lets
     one repo hand a tool to another's ownership deliberately.
+
+    A provider is SKIPPED — not called — when its registering repo's
+    ``[project]`` declaration does not target ``(host.source_lab, host.id)``
+    (spec §5), under the identical rule and the identical carve-outs
+    :func:`otto.host.product.apply_product_providers` documents. Gated here in
+    its own right, not inherited from that seam: the two registries are
+    deliberately separate, so a gate present in one loop and absent from the
+    other would leave a repo free to hang debug tooling on any host it liked.
     """
+    from ..config.scope import repo_targets, scope_for_repo  # function-scope: import-light seam
+
     seen = {t.name for t in host.dev_tools}
     for provider, provider_owner in _DEV_TOOL_PROVIDERS:
+        if host.source_lab and not repo_targets(
+            scope_for_repo(provider_owner), host.source_lab, host.id
+        ):
+            logger.debug(
+                "dev tool provider: repo %r does not target host %s of lab %r — not run",
+                provider_owner,
+                host.id,
+                host.source_lab,
+            )
+            continue
         for tool in provider(host) or ():
             if tool.name in seen:
                 logger.debug(

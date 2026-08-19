@@ -8,8 +8,12 @@ are unsatisfied (framed ``DependencyError``\ s), and orders phase-2 registration
 topologically (stable — sut-dir order when no deps are declared). Phase 2
 (*registration*) imports each repo's init modules and test files, wrapping
 every user-module exec so one broken file becomes a framed
-:class:`BootstrapError` instead of bricking the process. Lab loading is
-deliberately NOT part of bootstrap — it happens lazily at first access.
+:class:`BootstrapError` instead of bricking the process. After phase 2 — and
+only after, because the registries it reads are populated BY those imports —
+one check runs that does NOT get contained: a repo that registered product or
+dev-tool providers must have declared the labs it applies to
+(:class:`ProjectScopeError`, spec §D2). Lab loading is deliberately NOT part of
+bootstrap — it happens lazily at first access.
 
 ``bootstrap()`` is idempotent: the CLI entrypoint calls it before argv
 parsing, ``open_context()`` calls it lazily, and repeated calls return the
@@ -47,6 +51,23 @@ class DependencyError(BootstrapError):
         Exception.__init__(self, f"repo {sut_dir}: {message}")
         self.sut_dir = sut_dir
         self.source = "dependencies"
+
+
+class ProjectScopeError(BootstrapError):
+    """A repo registered providers without declaring the labs it applies to (D2).
+
+    Unlike its siblings this one is NOT contained: a repo whose providers can
+    never reach a host is a configuration mistake with no degraded mode worth
+    offering, and the whole point of the check is that it is impossible to
+    ignore. *message* is used verbatim — it already opens with the repo's name,
+    so the ``repo <sut_dir>:`` prefix its siblings add would say it twice.
+    """
+
+    def __init__(self, sut_dir: Any, message: str) -> None:
+        """Carry *message* unframed; keep *sut_dir* on the exception for callers."""
+        Exception.__init__(self, message)
+        self.sut_dir = sut_dir
+        self.source = "project_scope"
 
 
 @dataclass(frozen=True)
@@ -87,6 +108,73 @@ class BootstrapResult:
 _discovered: "DiscoveryResult | None" = None
 _result: BootstrapResult | None = None
 _completion_names: dict[str, Any] | None = None
+
+
+_NO_LAB_PATTERNS = """\
+repo '{name}' registers product/dev-tool providers but declares no
+[project] lab_patterns in .otto/settings.toml. A providing repo must say
+which labs it applies to. Add:
+
+    [project]
+    lab_patterns = [".*"]   # every lab — make the reach explicit
+    #host_patterns = [".*"]
+
+and narrow the patterns to the labs this project actually targets.\
+"""
+"""D2's refusal. An empty ``lab_patterns = []`` gets this same text: it is not
+a narrower declaration, it is the same "no lab" the missing key compiles to."""
+
+_NO_HOST_PATTERNS = """\
+repo '{name}' registers product/dev-tool providers but declares an empty
+[project] host_patterns in .otto/settings.toml, which admits no host in any
+lab — so every provider it registers is dead code. Either drop the key (it
+defaults to every host) or name them:
+
+    [project]
+    host_patterns = [".*"]   # every host in those labs\
+"""
+"""The other axis. ``host_patterns = []`` is reachable only by writing it out —
+the field defaults to ``[".*"]`` — so it is always a deliberate keystroke, and
+always the wrong one on a repo that registers providers."""
+
+
+def _check_providing_repos_declare_scope(repos: "list[Repo]") -> None:
+    """Refuse a repo that registered providers without declaring its fleet (D2).
+
+    Runs after phase 2, which is the earliest moment the question can be
+    answered: the registries are populated BY the init imports, so a check
+    that ran any sooner would see an empty registry and pass every repo.
+
+    Both registries are read because they are separate lists (a provider can
+    only ever land in one of them). Providers with no owner — registered
+    outside any repo's init import, which in practice means test code calling
+    the register function directly — are skipped: there is no repo to name and
+    no ``settings.toml`` to point at. So is an owner naming a repo that is not
+    among *repos*, which is the same "nothing to point at" case reached from
+    the other side.
+
+    Args:
+        repos: The repos whose init modules ran (the dependency pass's order);
+            a skipped repo cannot have registered anything.
+
+    Raises:
+        ProjectScopeError: On the first offending repo, sorted by name so a
+            fleet with two of them always reports the same one.
+    """
+    from .host.dev_tool import _DEV_TOOL_PROVIDERS
+    from .host.product import _PRODUCT_PROVIDERS
+
+    owners = {owner for _, owner in [*_PRODUCT_PROVIDERS, *_DEV_TOOL_PROVIDERS] if owner}
+    by_name = {repo.name: repo for repo in repos}
+    for name in sorted(owners):
+        repo = by_name.get(name)
+        if repo is None:
+            continue
+        scope = repo.project_scope
+        if scope is None or not scope.lab_patterns:
+            raise ProjectScopeError(repo.sut_dir, _NO_LAB_PATTERNS.format(name=name))
+        if not scope.host_patterns:
+            raise ProjectScopeError(repo.sut_dir, _NO_HOST_PATTERNS.format(name=name))
 
 
 def discover() -> DiscoveryResult:
@@ -167,6 +255,12 @@ def bootstrap() -> BootstrapResult:
                     if not is_containable(e):
                         raise
                     errors.append(BootstrapError(repo.sut_dir, test_file.name, e))
+    # Only now are the provider registries populated, so only now can D2 ask
+    # what each repo registered. It raises rather than joining `errors`: the
+    # contained failures above are "one repo's file is broken, the rest still
+    # work", while an unscoped providing repo would silently apply its products
+    # to every host in every lab — there is no degraded mode to offer.
+    _check_providing_repos_declare_scope(resolution.ordered)
     _result = BootstrapResult(
         env=env,
         repos=repos,

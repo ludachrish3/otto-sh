@@ -198,22 +198,275 @@ class TestHostsArgument:
         assert p.call_args.kwargs.get("pattern") is None
 
     def test_hosts_regex_passed_to_all_hosts(self, live_mode_mocks):
-        """A --hosts regex is compiled and forwarded to all_hosts(pattern=...)."""
+        """A --hosts regex is compiled and forwarded to all_hosts(pattern=...).
+
+        Asserted against ``fullmatch``, which is how ``all_hosts`` applies it
+        (D6) — so the trailing ``.*`` is what makes ``router1`` selectable at
+        all, and a bare ``router`` would select nothing.
+        """
         with patch(
             "otto.cli.monitor.all_hosts",
             return_value=iter([live_mode_mocks["host"]]),
         ) as p:
-            runner.invoke(monitor_app, ["--live", "--hosts", "router"])
+            runner.invoke(monitor_app, ["--live", "--hosts", "router.*"])
         p.assert_called_once()
         pattern = p.call_args.kwargs.get("pattern")
         assert pattern is not None
-        assert pattern.search("router1")
-        assert pattern.search("switch1") is None
+        assert pattern.fullmatch("router1")
+        assert pattern.fullmatch("switch1") is None
 
     def test_no_matching_hosts_exits_nonzero(self, live_mode_mocks):
         with patch("otto.cli.monitor.all_hosts", return_value=iter([])):
             result = runner.invoke(monitor_app, ["--live", "--hosts", "nope"])
         assert result.exit_code != 0
+
+    def test_help_states_fullmatch_semantics(self):
+        """The rendered help says how ``--hosts`` matches — asserted on the OUTPUT.
+
+        Grepping the source would pass on a help string typer never renders
+        (an option in a table too narrow for it, a leaf whose help is
+        overridden). ``COLUMNS`` is widened so a truncated cell cannot read as
+        a missing phrase.
+        """
+        result = runner.invoke(monitor_app, ["--help"], env={"COLUMNS": "300"})
+        assert "(fullmatch)" in " ".join(result.output.split())
+
+
+class TestNoMonitorableHosts:
+    """The third empty outcome, and the only one the regex is innocent of.
+
+    Three ways ``otto monitor --live`` ends up with nothing to collect, and a
+    user must be able to tell which one they are in from the text alone:
+
+    1. the pattern fullmatched nothing              -> EmptySelectionError (regex)
+    2. every match was flag-excluded                -> EmptySelectionError (flag)
+    3. hosts WERE selected, none can be monitored   -> this branch
+
+    Case 3 used to print ``No hosts match regex "X"``, which after the D6 guard
+    landed is false every time it fires with a pattern: reaching it at all means
+    the regex matched. That sends the reader off to widen a pattern that is
+    already correct, past the real cause — a host otto has no way to collect
+    from.
+    """
+
+    @staticmethod
+    def _unmonitorable(element: str = "board"):
+        """A real console host: not a UnixHost, and declaring no ``snmp`` block.
+
+        Built through the factory rather than mocked: ``getattr(h, "snmp", None)``
+        is the production predicate, and a MagicMock answers it with a truthy
+        Mock — a stub would pass this branch and never reach the message.
+        """
+        from otto.host.factory import create_host_from_dict
+
+        return create_host_from_dict(
+            {"element": element, "os_type": "zephyr", "ip": "10.0.0.9", "board": "mps2"}
+        )
+
+    def test_selected_but_unmonitorable_blames_the_host_not_the_regex(self, live_mode_mocks):
+        host = self._unmonitorable()
+        with patch("otto.cli.monitor.all_hosts", return_value=iter([host])):
+            result = runner.invoke(
+                monitor_app, ["--live", "--hosts", "board.*"], env={"COLUMNS": "300"}
+            )
+        assert result.exit_code == 1
+        err = " ".join(result.stderr.split())
+        assert "none of them can be monitored" in err
+        assert host.id in err
+        assert "snmp" in err
+        # The retracted claim: reaching this branch MEANS the regex matched.
+        assert "No hosts match regex" not in err
+
+    def test_the_message_says_what_makes_a_host_monitorable(self, live_mode_mocks):
+        """Actionable, not merely accurate — it must name both collection routes."""
+        with patch("otto.cli.monitor.all_hosts", return_value=iter([self._unmonitorable()])):
+            result = runner.invoke(monitor_app, ["--live"], env={"COLUMNS": "300"})
+        err = " ".join(result.stderr.split())
+        assert "shell" in err
+        assert "SNMP" in err
+
+    def test_an_empty_walk_still_blames_the_lab(self, live_mode_mocks):
+        """The other reach of the same branch: nothing was selected at all.
+
+        A pattern cannot reach here having matched nothing (that raises), but it
+        CAN reach here over an empty base set — which is why this message must
+        not mention the pattern either.
+        """
+        with patch("otto.cli.monitor.all_hosts", return_value=iter([])):
+            result = runner.invoke(
+                monitor_app, ["--live", "--hosts", "anything.*"], env={"COLUMNS": "300"}
+            )
+        assert result.exit_code == 1
+        err = " ".join(result.stderr.split())
+        assert "No hosts available in the active lab." in err
+        assert "anything" not in err
+
+
+class TestEmptySelectionIsFramed:
+    """``--hosts`` selecting nothing must print one line, not a traceback.
+
+    ``all_hosts`` raises :class:`EmptySelectionError` from INSIDE the generator
+    — at the first ``next()``, i.e. inside the list comprehension that consumes
+    it — so a leaf that guarded only the call and not the comprehension would
+    still hand typer an unhandled exception and the user a rich traceback with
+    locals. The fake below is a generator function for exactly that reason.
+    """
+
+    @staticmethod
+    def _raising_all_hosts(*args, **kwargs):
+        from otto.config.scope import EmptySelectionError
+
+        raise EmptySelectionError("sensor", 3)
+        yield  # pragma: no cover — unreachable; makes this a generator function
+
+    def test_message_is_rendered_and_the_error_never_escapes(self, live_mode_mocks):
+        from otto.config.scope import EmptySelectionError
+
+        with patch("otto.cli.monitor.all_hosts", self._raising_all_hosts):
+            result = runner.invoke(
+                monitor_app, ["--live", "--hosts", "sensor"], env={"COLUMNS": "300"}
+            )
+        assert result.exit_code == 1
+        assert not isinstance(result.exception, EmptySelectionError), (
+            "the selection error reached typer unframed — the user gets a traceback"
+        )
+        out = " ".join(result.output.split())
+        assert "fullmatches none of the 3 host(s)" in out
+        assert "'sensor.*'" in out
+
+
+class TestDrivingRepoScopeGate:
+    """Spec §5: D3 fires at the MONITOR FLEET BUILD, not only at ``otto run``'s verbs.
+
+    The gap this closes is invisible in a single-repo world — there the union
+    is empty too, and ``require_nonempty_fleet`` refuses. With a DEPENDENCY
+    admitting hosts, the union is healthy and ``otto monitor --live`` happily
+    dashboards the dependency's machines while the driving project's own
+    declaration says this lab is not its world.
+
+    Every fixture below gives the driving repo and the dependency DIFFERENT
+    verdicts, and ``get_repos()`` hands back bootstrap's order (driving first)
+    while the walk order elsewhere heads with a dependency — so a gate asking
+    about the wrong repo is visible in both directions.
+    """
+
+    @staticmethod
+    def _scope(name, *, excluded):
+        from otto.config.scope import ProjectScope
+
+        return ProjectScope(
+            repo_name=name,
+            declared=True,
+            config=None,
+            applicable_labs=frozenset() if excluded else frozenset({"bench"}),
+            universe=frozenset() if excluded else frozenset({"box"}),
+            excluded=excluded,
+            sut_dir=f"/repos/{name}",
+            loaded_labs=("bench",),
+            lab_patterns=(f"{name}-lab",),
+            host_patterns=(".*",),
+        )
+
+    @classmethod
+    def _world(cls, monkeypatch, excluded):
+        """Wire a two-repo world (driving ``app``, dependency ``base``) and record contacts.
+
+        The fleet build is RECORDED, never made to raise: a probe that raised
+        would be captured by any surrounding handler and read as the gate's own
+        refusal. An empty list is then the only evidence that nothing was
+        walked.
+        """
+        from types import SimpleNamespace
+
+        contacted = []
+
+        def _all_hosts(*args, **kwargs):
+            del args, kwargs
+            contacted.append("walked")
+            return iter([_make_host()])
+
+        scopes = {
+            "app": cls._scope("app", excluded=excluded == "app"),
+            "base": cls._scope("base", excluded=excluded == "base"),
+        }
+        monkeypatch.setattr("otto.cli.monitor.all_hosts", _all_hosts)
+        monkeypatch.setattr(
+            "otto.config.get_repos",
+            lambda: [SimpleNamespace(name="app"), SimpleNamespace(name="base")],
+        )
+        monkeypatch.setattr("otto.context.get_context", lambda: SimpleNamespace(scopes=scopes))
+        return contacted
+
+    def test_the_driving_repos_unusable_scope_refuses_the_fleet_build(
+        self, live_mode_mocks, monkeypatch
+    ):
+        """Framed, naming the driving repo — and nothing walked.
+
+        The contact list is what makes this more than "it exited 1": a gate
+        that fired after the fleet was built would still refuse, having already
+        walked hosts the declaration says are none of this project's business.
+        """
+        from otto.bootstrap import ProjectScopeError
+
+        contacted = self._world(monkeypatch, excluded="app")
+
+        result = runner.invoke(monitor_app, ["--live"], env={"COLUMNS": "300"})
+
+        assert result.exit_code == 1
+        assert not isinstance(result.exception, ProjectScopeError), (
+            "the scope refusal reached typer unframed — the user gets a traceback"
+        )
+        out = " ".join(result.output.split())
+        assert "'app'" in out
+        assert "app-lab" in out
+        assert "base" not in out  # a healthy dependency is not a suspect
+        assert contacted == []
+
+    def test_an_excluded_dependency_does_not_stop_the_monitor(self, live_mode_mocks, monkeypatch):
+        """D3's asymmetry, and the mirror that kills a gate pointed at the wrong repo.
+
+        ``get_repos()[0]`` is the driving project; the walk order's first entry
+        is a dependency (``get_ordered_repos`` is a topological reorder). A gate
+        reading the latter refuses here, where the monitor must simply run.
+        """
+        contacted = self._world(monkeypatch, excluded="base")
+
+        result = runner.invoke(monitor_app, ["--live"], env={"COLUMNS": "300"})
+
+        assert result.exit_code == 0, result.output
+        assert contacted == ["walked"]
+
+    def test_a_world_with_no_repos_is_untouched(self, live_mode_mocks, monkeypatch):
+        """Monitoring a lab from outside any project is not a project activity to refuse.
+
+        A library lab, or a checkout with no ``OTTO_SUT_DIRS``: there is no
+        current repo, so there is no verdict to enforce and the gate must not
+        invent one (nor die indexing an empty list).
+        """
+        monkeypatch.setattr("otto.config.get_repos", list)
+
+        result = runner.invoke(monitor_app, ["--live"], env={"COLUMNS": "300"})
+
+        assert result.exit_code == 0, result.output
+
+    def test_an_unreachable_bootstrap_leaves_the_monitor_alone(self, live_mode_mocks, monkeypatch):
+        """The lookups are guarded, not the refusal.
+
+        ``otto monitor`` runs in worlds where ``get_repos()`` raises outright (a
+        bare CliRunner invocation, a lab loaded by a library caller). A gate
+        that could not compute a verdict has no verdict to enforce — but the
+        guard must sit on the LOOKUP, never around ``require_current_scope``,
+        or a real refusal would be swallowed with it.
+        """
+
+        def _boom():
+            raise RuntimeError("no bootstrap here")
+
+        monkeypatch.setattr("otto.config.get_repos", _boom)
+
+        result = runner.invoke(monitor_app, ["--live"], env={"COLUMNS": "300"})
+
+        assert result.exit_code == 0, result.output
 
 
 # ── --db option ───────────────────────────────────────────────────────────────

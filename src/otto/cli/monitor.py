@@ -3,9 +3,13 @@ otto monitor — interactive performance dashboard.
 
 Live mode (collects from lab hosts; explicit opt-in, never the default):
     otto monitor --live
-    otto monitor --live --hosts 'router|switch'
+    otto monitor --live --hosts '(router|switch).*'
     otto monitor --live --hosts router1 --interval 5
     otto monitor --live --db metrics.db --label "regression run" --note "pre-release smoke"
+
+``--hosts`` is a FULL match against each host id, so the alternation above is
+wrapped and wildcarded: bare ``router|switch`` selects the hosts named exactly
+``router`` or ``switch`` and nothing else.
 
 Review mode (serves a previously saved export; no live collection):
     otto monitor metrics.db
@@ -33,11 +37,114 @@ from ..models import MIN_INTERVAL_SECONDS, MonitorExport
 # ever touch it (import budget). Each use site imports what it needs.
 if TYPE_CHECKING:
     from ..config import MonitorSettings
+    from ..host.remote_host import RemoteHost
     from ..monitor.collector import MetricCollector
     from ..monitor.db import MetricDB
     from ..monitor.server import MonitorServer
 
 logger = logging.getLogger(__name__)
+
+
+_EMPTY_LAB = "No hosts available in the active lab."
+"""Nothing was selected AT ALL — so this one must not mention the pattern.
+
+Reachable with a ``--hosts`` regex as well as without: a pattern over an EMPTY
+base set yields an empty walk rather than raising (the pattern is not what went
+wrong when the lab holds nothing to select), so blaming the regex here would
+misdirect exactly the reader who has the least to go on."""
+
+
+_MAX_NAMED_HOSTS = 5
+"""How many ids the no-monitorable-hosts message spells out before summarizing.
+
+The ids are what make this message actionable — the fix is per-host lab config,
+so "which host" IS the question — but this branch fires only when EVERY selected
+host is unmonitorable, which on a large fleet is a whole-lab misconfiguration
+and a wall of ids nobody reads."""
+
+
+def _no_monitorable_hosts_message(walked: "list[RemoteHost]") -> str:
+    """Explain an empty collection set that a NON-empty selection produced.
+
+    One of ``otto monitor``'s four empty outcomes, and the only one the
+    user's regex is innocent of. Two others — a pattern that fullmatched
+    nothing, and one whose every match a membership flag removed — are raised as
+    :class:`~otto.config.scope.EmptySelectionError` before this function is ever
+    reached, which is exactly why this text must not offer to widen a pattern:
+    getting here proves the selection worked. The fourth, an empty lab where
+    there was nothing to match against, is announced separately (``_EMPTY_LAB``)
+    without mentioning the pattern at all.
+
+    What failed instead is collection. otto reads metrics over a shell (any
+    :class:`~otto.host.unix_host.UnixHost`) or over SNMP (any host declaring an
+    ``snmp`` block — the route embedded targets take, since an RTOS console
+    cannot share its single session with a metrics poller). A host that offers
+    neither cannot be sampled at all, so the message names both routes and the
+    hosts that took neither.
+
+    Args:
+        walked: The hosts the selection actually yielded — non-empty by
+            construction; the empty case is :data:`_EMPTY_LAB`.
+
+    Returns:
+        The one-paragraph stderr message, ids included.
+    """
+    ids = sorted(h.id for h in walked)
+    shown = ", ".join(ids[:_MAX_NAMED_HOSTS])
+    if len(ids) > _MAX_NAMED_HOSTS:
+        shown += f" (+{len(ids) - _MAX_NAMED_HOSTS} more)"
+    return (
+        f"{len(ids)} host(s) selected, but none of them can be monitored: {shown}. "
+        "otto samples metrics over a shell (Unix hosts) or over SNMP (any host "
+        "declaring an `snmp` block in its lab entry), and these declare neither. "
+        "The selection is not the problem — widening it will not help; give the "
+        "host(s) you want monitored an `snmp` block, or point --hosts at a Unix host."
+    )
+
+
+def _enforce_driving_repo_scope() -> None:
+    """Raise when the DRIVING repo's own fleet declaration cannot work (D3, spec §5).
+
+    Spec §5 names the monitor fleet build as one of D3's project-layer entries,
+    alongside the default instructions and the ``ensure_*`` fixtures, and this
+    is that entry. A single-repo world fails loud without it — the union comes
+    out empty and ``require_nonempty_fleet`` refuses at the walk — but a lab
+    where a DEPENDENCY admits hosts has a healthy union, so the driving
+    project's own "this lab is not my world" verdict would go unread and the
+    dashboard would quietly monitor the dependency's machines.
+
+    THE DRIVING REPO IS ``bootstrap().repos[0]`` -- the first ``OTTO_SUT_DIRS``
+    entry -- and NOT the head of ``get_ordered_repos()``, which is a
+    topological reorder whose first element is a dependency. Gating on that one
+    would let a dependency's declaration veto this project's run, which is
+    exactly the asymmetry D3 exists to prevent (see
+    :func:`otto.project.orchestrator._enforce_current_scope`, the same reading).
+
+    THE GUARD SITS ON THE LOOKUPS, NEVER AROUND THE REFUSAL. ``otto monitor``
+    runs in worlds with no repos and no bootstrap at all -- a library caller's
+    lab, a checkout with no ``OTTO_SUT_DIRS`` -- and monitoring one of those is
+    not a project activity to refuse. But a ``try`` wide enough to cover
+    :func:`~otto.config.scope.require_current_scope` would swallow the very
+    error this exists to raise.
+
+    Raises:
+        otto.bootstrap.ProjectScopeError: The driving repo declared a
+            ``[project]`` scope that admits no host here. The caller frames it
+            like the leaf's other refusals -- one line, no traceback.
+    """
+    from ..config import get_repos
+    from ..config.scope import require_current_scope
+    from ..context import get_context
+
+    try:
+        repos = get_repos()
+        scopes = get_context().scopes
+    except Exception as exc:  # noqa: BLE001 — no repos/context to read ⇒ no verdict to enforce
+        logger.debug(f"monitor: fleet scoping unavailable ({exc!r}); not enforcing D3")
+        return
+    if repos:
+        require_current_scope(scopes, repos[0].name)
+
 
 monitor_app = typer.Typer(
     help="Launch an interactive performance dashboard.",
@@ -60,7 +167,10 @@ def monitor(
         typer.Option(
             "--hosts",
             metavar="REGEX",
-            help="Regex matched against host IDs (via re.search). Default: all hosts.",
+            help=(
+                "Regex matched against whole host IDs (fullmatch): 'sensor' does not "
+                "select 'sensor-1' — write 'sensor.*'. Default: all hosts."
+            ),
         ),
     ] = None,
     interval: Annotated[
@@ -170,29 +280,56 @@ def monitor(
     # which mock out get_lab()/all_hosts() instead) never went through the
     # root callback, so there is no root state to resolve a lab from and
     # nothing to enforce.
-    from .invoke import ensure_lab_session, present_reservation_gate
+    from .invoke import ensure_lab_session, fail, present_reservation_gate
 
     if ctx.meta.get("_otto_root_options") is not None and not ctx.meta.get("_otto_lab_ready"):
         ensure_lab_session(ctx, ctx.meta["_otto_command_spec"])
 
     present_reservation_gate(ctx)
 
+    from ..bootstrap import ProjectScopeError
+    from ..config.scope import EmptySelectionError
     from ..host import UnixHost
+
+    # D3 at the fleet build (spec §5), BEFORE the walk: a project whose own
+    # declaration admits no host here must not dashboard the lab through a
+    # dependency's universe. Framed like the selection refusal below it — one
+    # line, an exit code, no traceback — because both are user configuration
+    # mistakes rather than otto bugs.
+    try:
+        _enforce_driving_repo_scope()
+    except ProjectScopeError as e:
+        fail(e)
 
     pattern = re.compile(hosts) if hosts else None
     # Monitorable hosts: any Unix host (shell metrics), plus any host declaring
     # an `snmp` block (collected over SNMP — this is how embedded targets, which
     # can't share their single shell session, get monitored).
+    #
+    # The try wraps the `list(...)`, not just the `all_hosts(...)` call:
+    # `all_hosts` is a generator, so its empty-selection refusal is raised at the
+    # first `next()` — inside that list. Guarding only the call would leave the
+    # error to typer, which renders a full traceback with locals for what is a
+    # plain "your --hosts regex selected nothing" message.
+    try:
+        walked = list(all_hosts(pattern=pattern))
+    except EmptySelectionError as e:
+        fail(e)
     selected = [
-        h
-        for h in all_hosts(pattern=pattern)
-        if isinstance(h, UnixHost) or getattr(h, "snmp", None) is not None
+        h for h in walked if isinstance(h, UnixHost) or getattr(h, "snmp", None) is not None
     ]
     if not selected:
-        msg = (
-            f'No hosts match regex "{hosts}".' if hosts else "No hosts available in the active lab."
+        # Two DIFFERENT emptinesses, and the old single message described
+        # neither once the D6 guard landed upstream. Reaching this branch with a
+        # pattern means the pattern MATCHED — a pattern that matched nothing, or
+        # only flag-excluded hosts, raised EmptySelectionError above and never
+        # got here. So "No hosts match regex" was false every time it fired with
+        # a pattern, and it sent the reader to widen a regex that was already
+        # right. `walked` is materialized above precisely to tell the two apart.
+        typer.echo(
+            _no_monitorable_hosts_message(walked) if walked else _EMPTY_LAB,
+            err=True,
         )
-        typer.echo(msg, err=True)
         raise typer.Exit(1)
 
     from ..monitor.export import build_session_metric_db

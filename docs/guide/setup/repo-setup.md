@@ -128,6 +128,16 @@ init
   > **Migration note:** `[host_defaults]` was removed; its option
   > tables move under `[host_preferences."<selector>".<opt>]`.
 
+\[project\]
+: Optional table declaring this repo's **fleet of interest** — `lab_patterns`
+  (the labs it applies to) and `host_patterns` (the hosts it targets inside
+  them).  Both are Python regexes matched with `re.fullmatch`; `host_patterns`
+  defaults to `[".*"]` and `lab_patterns` has no default.  It bounds every
+  fleet walk the repo drives and gates its product/dev-tool providers, and it
+  becomes **required** the moment the repo registers one of those providers.
+  See {ref}`project-scope` in {doc}`lab-config` for the full schema and
+  {doc}`../run/defaults` for what it does to a walk.
+
 \[os_profiles\]
 : Optional table of named OS-profile bundles.  Each `[os_profiles.<name>]`
   sub-table must contain a `base` key naming a registered host class

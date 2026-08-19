@@ -195,6 +195,43 @@ registration order and dedupe by `Product.name`.
 Code-constructed hosts (`UnixHost(..., products=[...])`) keep their explicit
 list; providers apply only to hosts built from lab data.
 
+(provider-scope-gate)=
+
+#### A provider only runs inside its repo's universe
+
+Registering a provider makes the `[project]` declaration in your
+`.otto/settings.toml` **required**: bootstrap refuses a repo that registers
+products or dev tools without saying which labs it applies to (see
+{ref}`project-scope`).
+
+Once declared, that reach is enforced at ingest. A provider is **not called** —
+not called and then filtered, but never called — for a host its repo's
+declaration does not target:
+
+```toml
+[project]
+lab_patterns  = ["bench.*"]
+host_patterns = ["sensor-.*"]
+```
+
+With that in place, `_provide` above never sees a host of lab `floor`, and
+never sees `gw-1` in `bench1` either. Skipping *before* the call is the point:
+a provider that ran has already been handed a machine its repo never declared,
+and providers inspect hosts and keep their own state.
+
+Two cases are admitted rather than judged, because a gate that cannot compute a
+narrowing must narrow nothing:
+
+- **A host with no lab attribution** — one built outside the lab loader by a
+  direct `create_host_from_dict` call, and the built-in `local` host. These
+  predate scoping and behave exactly as before.
+- **A registering repo otto cannot resolve** — a provider carrying a repo name
+  this process has no settings for. Refusing there would turn "otto could not
+  find its config" into "your host has no products", which is the same
+  silent-wrong-answer the scoping exists to prevent, pointed the other way.
+
+Skips are logged at DEBUG, naming the repo, the host and the host's lab.
+
 ## Dev tools & toolchain tools
 
 Full signatures: {class}`~otto.host.dev_tool.DevTool` and
@@ -248,6 +285,12 @@ tooling installs while another's is left alone. The host verb above is the
 host-wide one — `otto host <id> install-tools` (and `host.install_tools()`)
 takes no `owner=` and acts on every dev tool the host carries, whichever repo
 registered it.
+
+Dev-tool providers are gated by the registering repo's `[project]` declaration
+under exactly the rule and the carve-outs products use
+({ref}`provider-scope-gate`) — the two
+registries are separate, so the gate is applied separately, and registering
+either kind makes `lab_patterns` required.
 
 ### Declaring toolchain tools in lab data
 

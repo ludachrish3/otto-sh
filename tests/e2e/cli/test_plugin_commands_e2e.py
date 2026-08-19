@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from tests._fixtures.sutrepo import make_sut_repo
 from tests.e2e._otto_subprocess import PROJECT_ROOT, REPO_E2E, assert_no_output_dir, run_otto
 
 REPO_BROKEN = PROJECT_ROOT / "tests" / "repo_broken"
@@ -94,3 +95,28 @@ class TestDiscoveryContainment:
         assert r.returncode != 0
         assert "Traceback" not in r.stderr
         assert "does not exist" in r.stderr
+
+    def test_unscoped_provider_repo_refuses_clean(self, tmp_path: Path) -> None:
+        """D2's refusal is a message to act on, so it must not arrive under a traceback.
+
+        The check RAISES out of ``bootstrap()`` rather than joining the
+        contained errors above, which puts it on a path where nothing had been
+        catching it — the console entry printed a stack trace with the TOML
+        block the user is meant to paste buried at the bottom of it.
+        """
+        repo = make_sut_repo(
+            tmp_path / "unscoped",
+            name="unscoped",
+            extra='libs = ["lib"]\ninit = ["unscoped_init"]\n',
+            files={
+                "lib/unscoped_init.py": (
+                    "from otto.host.product import register_product_provider\n\n"
+                    "register_product_provider(lambda host: [])\n"
+                )
+            },
+        )
+        r = run_otto(["--help"], xdir=tmp_path, sut_dirs=repo)
+        assert r.returncode != 0
+        assert "Traceback" not in r.stderr
+        assert "unscoped" in r.stderr
+        assert 'lab_patterns = [".*"]' in r.stderr

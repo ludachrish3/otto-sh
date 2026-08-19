@@ -36,6 +36,7 @@ The orchestrator itself is not overrideable in v1 (recorded decision): a repo
 customizes by registering its own :class:`~otto.project.actions.ProjectActions`.
 """
 
+import logging
 from typing import TYPE_CHECKING
 
 from ..result import Result
@@ -54,6 +55,7 @@ from .state import (
     CleanlinessReport,
     InstallState,
     ProjectStatus,
+    RepoScope,
 )
 
 if TYPE_CHECKING:
@@ -61,22 +63,170 @@ if TYPE_CHECKING:
 
     from ..config.lab import Lab
     from ..config.repo import Repo
+    from ..config.scope import ProjectScope
     from ..context import OttoContext
     from ..host.host import Host
 
+logger = logging.getLogger(__name__)
+
 
 def _lab() -> "tuple[OttoContext, list[Repo]]":
-    """Return the active context and the repos to walk, dependencies first.
+    """Return the active context and the repos to walk, dependencies first -- D3 enforced.
 
     Both lookups are imported HERE rather than at module scope, matching the
     package's circular-import idiom (:mod:`otto.config` and :mod:`otto.context`
     reach back into hosts): ``import otto.project`` must stay cheap, because
     the default instructions import it at CLI startup.
+
+    THE D3 GATE LIVES HERE BECAUSE THIS IS WHAT EVERY PUBLIC VERB CALLS FIRST,
+    and "first" is the whole requirement: the refusal has to land before any
+    device is contacted. One seam rather than a line repeated down the module
+    means a verb added later cannot forget it, and the two facts the gate needs
+    -- the live context and the driving repo -- are exactly what this helper
+    already goes and gets. The verbs that never reach it directly
+    (:func:`is_uninstalled`, the three ``ensure_*``, and ``install --ensure``)
+    are gated by the verb they delegate to, before that delegate does anything
+    either.
     """
     from ..config import get_ordered_repos
     from ..context import get_context
 
-    return get_context(), get_ordered_repos()
+    ctx = get_context()
+    _enforce_current_scope(ctx)
+    return ctx, get_ordered_repos()
+
+
+def _enforce_current_scope(ctx: "OttoContext") -> None:
+    """Raise when the DRIVING repo's own fleet declaration cannot work (D3's abort).
+
+    THE DRIVING REPO IS ``bootstrap().repos[0]`` -- the first ``OTTO_SUT_DIRS``
+    entry, the project whose run this is -- and NOT the first repo of the walk
+    order this module iterates. Those are two different repos in any lab with a
+    dependency: :func:`~otto.config.get_ordered_repos` hands back a topological
+    reorder, dependencies first, so its head is the thing being depended ON.
+    Gating on that one would abort a healthy project's run over a dependency's
+    declaration, which is precisely the veto D3's asymmetry exists to prevent.
+
+    The message is :func:`~otto.config.scope.require_current_scope`'s own: it
+    holds the verdict, and one place rendering "this repo's scope cannot work"
+    is what keeps the CLI's wording, bootstrap's D2 refusal and this one
+    identical.
+
+    A run with no repos at all has no current repo to enforce, and that is
+    legal -- ``otto run`` in a bare lab directory -- so the lookup is guarded
+    rather than indexed.
+    """
+    from ..config import get_repos
+    from ..config.scope import require_current_scope
+
+    repos = get_repos()
+    if repos:
+        require_current_scope(ctx.scopes, repos[0].name)
+
+
+def _skip_message(scope: "ProjectScope", verb: str) -> str:
+    """Render WHY a repo is being left out of *verb*'s walk, per condition.
+
+    TWO CONDITIONS, TWO TEXTS, each reachable only under its own -- the same
+    split ``otto.config.scope._unusable_scope_message`` makes for the
+    abort, and for the same reason: "no loaded lab applies to you" and "no host
+    in the labs that do apply matches your host_patterns" have different fixes,
+    and one text covering both sends half its readers to edit the wrong line.
+    The excluded repo's reader needs the loaded labs beside the declared
+    ``lab_patterns``; the host-starved one's needs the ``host_patterns``,
+    because its ``-l`` and its ``lab_patterns`` are already right and saying
+    otherwise would send it to change them.
+
+    Args:
+        scope: The verdict being skipped -- unusable by
+            :func:`~otto.config.scope.unusable_scope`.
+        verb: What is being skipped, so the reader knows which operation left
+            the repo out.
+
+    Returns:
+        The WARNING line, ready to log.
+    """
+    if scope.excluded:
+        return (
+            f"repo {scope.repo_name!r} is not applicable to the loaded lab(s) "
+            f"[{', '.join(scope.loaded_labs) or '(none)'}] "
+            f"(lab_patterns: {', '.join(scope.lab_patterns) or '(none)'}) "
+            f"— skipping it for {verb}"
+        )
+    return (
+        f"repo {scope.repo_name!r} applies to lab(s) "
+        f"[{', '.join(sorted(scope.applicable_labs)) or '(none)'}] but its [project] "
+        f"host_patterns ({', '.join(scope.host_patterns) or '(none)'}) match no host there "
+        f"— skipping it for {verb}"
+    )
+
+
+def _applicable(ctx: "OttoContext", repos: "Iterable[Repo]", verb: str) -> "list[Repo]":
+    """Return the repos this run applies to, announcing every one it drops (D3's skip).
+
+    THE DEPENDENCY HALF OF D3. A repo whose declaration admits no host in this
+    run has nothing here to act on, so every walk below leaves it out -- and
+    says so, once, at WARNING. Loud is the requirement, not merely correct: a
+    lab silently missing one project's products looks exactly like a lab where
+    that project's install did nothing, and the operator has no reason to
+    suspect a settings file.
+
+    Skipping is also what keeps the walk WORKING rather than merely quiet. Such
+    a repo's own fleet walk is refused by
+    :func:`~otto.config.scope.require_nonempty_fleet` -- its base set is empty
+    by construction -- so asking it to install, or merely to answer
+    ``is_clean``, raises rather than returning, and one inapplicable dependency
+    would take down every verb of the project that depends on it. That is why
+    the condition is :func:`~otto.config.scope.unusable_scope`'s WHOLE
+    condition and not just ``excluded``: a repo whose ``lab_patterns`` match a
+    loaded lab while its ``host_patterns`` match no host there is admitted by
+    the narrower test, raises out of its own walk, and takes the run with it --
+    including ``cleanup``, whose every-step-runs contract then strands the
+    debug sweep, the toolchain removal and the tunnel reap.
+
+    An UNDECLARED repo is never dropped: no declaration is the whole-lab
+    fallback (§6), not an exclusion, and confusing the two would silently
+    remove every product-less repo from the walks it has always been in.
+
+    Args:
+        ctx: The live context, for its resolved verdicts.
+        repos: The repos about to be walked, in walk order.
+        verb: What is being skipped, named in the log line so the reader knows
+            which operation left the repo out.
+
+    Returns:
+        The repos to walk, in the order they arrived.
+    """
+    from ..config.scope import unusable_scope
+
+    keep: "list[Repo]" = []
+    for repo in repos:
+        scope = ctx.scopes.get(repo.name)
+        if scope is not None and unusable_scope(scope):
+            logger.warning(_skip_message(scope, verb))
+            continue
+        keep.append(repo)
+    return keep
+
+
+def _scope_row(scope: "ProjectScope") -> RepoScope:
+    """Project one resolved verdict into the row :func:`status` reports it as.
+
+    Sorted here rather than at the renderer because two surfaces already print
+    these sets and a frozenset iterates in whatever order it likes: an
+    operator comparing two runs must not have to wonder whether the fleet
+    changed or only the ordering did.
+    """
+    from ..config.scope import unusable_scope
+
+    return RepoScope(
+        applicable=not scope.excluded,
+        usable=not unusable_scope(scope),
+        loaded_labs=tuple(scope.loaded_labs),
+        applicable_labs=tuple(sorted(scope.applicable_labs)),
+        universe=tuple(sorted(scope.universe)),
+        host_patterns=tuple(scope.host_patterns),
+    )
 
 
 def _first(*results: Result) -> Result:
@@ -139,9 +289,14 @@ async def _walk(
     first failure seen. The repo name is baked into the message because the
     :class:`~otto.result.Result` cannot carry it, and "install failed" without
     a repo name is not actionable in a multi-repo lab.
+
+    A repo no loaded lab applies to is not walked at all (see
+    :func:`_applicable`), and its absence is a log line rather than a result:
+    it is not a failure, and reporting it as one would make every mixed lab
+    exit non-zero on a correct run.
     """
     first_failure: "Result | None" = None
-    for repo in repos:
+    for repo in _applicable(ctx, repos, verb):
         result = await call(actions_for(repo, ctx))
         if result.is_ok:
             continue
@@ -540,19 +695,43 @@ def _aggregate(states: "Iterable[InstallState]") -> InstallState:
 
 
 async def status() -> ProjectStatus:
-    """Report each counted repo's install state and the lab-level aggregate.
+    """Report each counted repo's install state, the lab aggregate, and who was left out.
 
     A repo the counted-repo rule excludes is absent from
     :attr:`~otto.project.state.ProjectStatus.repos` entirely rather than
     present with a made-up state.
+
+    A repo WHOSE DECLARATION ADMITS NO HOST HERE -- no loaded lab applies to
+    it, or none of the hosts in the labs that do match its ``host_patterns`` --
+    is left out for a different reason and reported differently. It is never
+    asked: ``status()`` reaches the fleet, and its fleet is empty by
+    declaration, so it has no state to fold, and
+    folding one in would drag a lab of applicable repos to PARTIAL and send
+    :func:`ensure_installed` into a teardown over a repo it cannot install.
+    But dropping it silently would leave an operator with a repo that simply
+    vanished from the report meant to explain the lab, so
+    :attr:`~otto.project.state.ProjectStatus.scoping` carries every repo's
+    verdict and the renderer prints "not applicable" beside it. No warning is
+    logged here, unlike the acting walks: the answer IS the display.
     """
+    from ..config.scope import unusable_scope
+
     ctx, repos = _lab()
     states: "dict[str, InstallState]" = {}
+    scoping: "dict[str, RepoScope]" = {}
     for repo in repos:
+        scope = ctx.scopes.get(repo.name)
+        if scope is not None:
+            scoping[repo.name] = _scope_row(scope)
+            # The walks' own predicate: a repo they leave out has no state to
+            # fold, and asking it for one reaches a fleet that is empty by
+            # declaration -- which raises, out of a READING verb.
+            if unusable_scope(scope):
+                continue
         actions = actions_for(repo, ctx)
         if _counts(actions):
             states[repo.name] = await actions.status()
-    return ProjectStatus(overall=_aggregate(states.values()), repos=states)
+    return ProjectStatus(overall=_aggregate(states.values()), repos=states, scoping=scoping)
 
 
 async def is_uninstalled() -> bool:
@@ -662,9 +841,15 @@ async def _repo_items(ctx: "OttoContext", repos: "Iterable[Repo]") -> "list[Clea
     the walk -- the boolean stops at the first dirty repo, because the repos
     after it cannot change the answer and probing them is device work for
     nothing, while a report has to ask them all to have anything to show.
+
+    "EVERY REPO" STILL MEANS EVERY APPLICABLE REPO. A repo no loaded lab
+    applies to gets no row rather than an unreadable one: its probe cannot
+    answer -- an empty fleet is refused, not walked -- and an UNKNOWN row is
+    for a fact nobody could read, not for a question that was never this run's
+    to ask.
     """
     items: "list[CleanlinessItem]" = []
-    for repo in repos:
+    for repo in _applicable(ctx, repos, "cleanliness"):
         try:
             clean = await actions_for(repo, ctx).is_clean()
         except Exception as exc:  # noqa: BLE001,PERF203 — a display marks what it could not learn; is_clean is the surface that refuses to answer
@@ -901,9 +1086,10 @@ async def cleanliness() -> CleanlinessReport:
 async def is_clean() -> bool:
     """Whether nothing :func:`cleanup` removes is left in the lab.
 
-    EVERY repo is asked, not only the counted ones -- see ``_repo_items``
-    for why, and for why the repo walk here stops at the first dirty repo where
-    the report's does not.
+    EVERY APPLICABLE repo is asked, not only the counted ones -- see
+    ``_repo_items`` for why, for why a repo this run does not apply to is
+    asked nothing at all, and for why the repo walk here stops at the first
+    dirty repo where the report's does not.
 
     THE QUESTION MATCHES THE VERB, step for step: products and dev tools, the
     hosts' toolchain tools, then the lab's own impairments and tunnels, in
@@ -925,7 +1111,7 @@ async def is_clean() -> bool:
     unavailable, and this is the cheap path a converge takes before every test.
     """
     ctx, repos = _lab()
-    for repo in repos:
+    for repo in _applicable(ctx, repos, "is_clean"):
         if not await actions_for(repo, ctx).is_clean():
             return False
     return (

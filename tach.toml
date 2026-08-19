@@ -72,6 +72,18 @@ depends_on = [
     # leaf (same standing as otto.errors), so this cannot invert layering or
     # create a cycle.
     "otto.registry",
+    # The D2 scope check (2026-08-18) reads the provider registries — the
+    # question "did this repo register a product/dev-tool provider?" can only
+    # be answered by the lists those registration seams append to, and reading
+    # them THERE is what keeps one source of truth (a mirrored ledger in a
+    # lower module would drift the moment a test cleared one and not the
+    # other). Function-scope inside the check, so `import otto.bootstrap`
+    # stays as cheap as the import-budget snapshots say it is, and no earlier
+    # than after phase 2, when a bootstrap() call has already pulled otto.host
+    # in via config's os_profile registration anyway. Adds NO new mutual pair
+    # (otto.host does not import otto.bootstrap) and no new module to the
+    # sixteen-member component — both ends were already in it.
+    "otto.host",
 ]
 
 [[modules]]

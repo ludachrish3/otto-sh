@@ -48,10 +48,13 @@ That walk is:
 1. Otto resolves the configured repos in dependency order (bootstrap already
    computes it).
 2. Each repo gets its `ProjectActions` — the subclass it registered, or otto's
-   default — constructed with that repo and the live context.
-3. Each repo's `install()` fans out across the **fleet**: `ctx.all_hosts()`, so
-   the built-in `local` host and Docker containers are excluded exactly as they
-   are everywhere else. Hosts proceed in parallel.
+   default — constructed with that repo and that repo's *view* of the live
+   context.
+3. Each repo's `install()` fans out across its **fleet of interest**:
+   `ctx.all_hosts()`, so the built-in `local` host and Docker containers are
+   excluded exactly as they are everywhere else, and so are hosts outside the
+   repo's declared universe (see [The fleet of
+   interest](#the-fleet-of-interest)). Hosts proceed in parallel.
 4. On each host, `install(owner=<repo name>)` installs that repo's products in
    declaration order.
 5. The first repo that will not install stops the walk. Installing a dependent
@@ -81,6 +84,144 @@ with them — netem impairments are reset and every otto tunnel is reaped. See
 those last two do and do not touch. `--ensure` turns `install` into a converge —
 the lab's current state is read and only the missing work is done — which is
 what the fixtures do before a test.
+
+(fleet-of-interest)=
+
+## The fleet of interest
+
+Step 3 above says the walk fans out across "the fleet". The fleet is not
+automatically the whole loaded lab: it is the set of hosts the repos in this
+run declared an interest in.
+
+A repo declares that in the `[project]` table of its `.otto/settings.toml` —
+`lab_patterns` and `host_patterns`, both matched with `re.fullmatch` (see
+{ref}`project-scope` for the schema):
+
+```toml
+[project]
+lab_patterns  = ["bench.*"]
+host_patterns = ["sensor-.*"]
+```
+
+From there, which hosts a walk reaches is decided by **which object the call
+goes through**, never by an argument the call site has to remember:
+
+| Walk goes through | Base set |
+| ----------------- | -------- |
+| `self.ctx` inside a `ProjectActions` (the repo's view) | that repo's universe |
+| the plain context (`otto.context.get_context()`, host-global steps) | the **union** of every declaring repo's universe |
+| either, when **no** repo in the run declared `[project]` | the whole loaded lab — today's behavior, unchanged |
+
+That last row is why a product-less project and every repo written before
+`[project]` existed are untouched by any of this. The fallback is all-or-
+nothing on purpose: it applies when *nothing* declared, not per repo, so a
+product-less repo joining a run cannot quietly restore the whole lab for
+everyone.
+
+Two things are deliberately **outside** the fleet, exactly as before:
+the built-in `local` host (pass `include_local=True`) and Docker containers
+(`include_containers=True`). Both flags are applied *after* scoping, so they
+still work under a declaration.
+
+### Narrowing further: `pattern=`
+
+`pattern=` picks a **subset** of that base set, never a superset, and it is a
+full match:
+
+```python
+import re
+
+await self.ctx.do_for_all_hosts(_dispatch_install, pattern=re.compile("sensor-.*"))
+```
+
+A pattern that matches none of the hosts the walk may reach raises
+{class}`~otto.config.scope.EmptySelectionError` rather than doing nothing:
+
+```text
+pattern 'sensor' fullmatches none of the 6 host(s) this run may walk,
+so the selection is empty and nothing would be contacted.
+
+Host patterns are FULL matches, never substring searches. To match by prefix,
+append a wildcard — 'sensor.*' — wrapping any alternation first, as
+'(sensor).*'.
+```
+
+A silently empty sweep is the one failure worse than a crash: it reports
+success over a lab nothing happened on. When the pattern *did* match and
+`include_containers` / `include_local` then removed every match, the same class
+is raised with the other of its two messages — that one names the flag and
+tells you **not** to widen the regex, because the regex was already right.
+
+### Explicit targeting is never scoped
+
+`otto host <id> <verb>`, `ctx.get_host("id")` and the host-id listing
+`otto host` prints reach any host in the loaded lab, declaration or not.
+A repo that has to hop through a machine it does not own must still be able to
+name it, and a scoping typo must never brick the one command that could
+diagnose it.
+
+### When a declaration and the loaded lab disagree
+
+The consequence depends on **whose** declaration it is, and the asymmetry is
+deliberate — one project's scoping must not veto another project's run.
+
+- **The driving project** — the first `OTTO_SUT_DIRS` entry, whose run this is
+  — applying to none of the loaded labs, or applying but targeting no host in
+  them, **aborts** at every project-layer verb. The error names the loaded
+  labs, the declared patterns, and the `settings.toml` to edit; the two cases
+  get different messages, because "load a different lab" and "widen
+  `host_patterns`" are different fixes. The abort happens at the verb, not at
+  startup, so `otto host <id> <verb>` still works while you fix it.
+- **A dependency** whose declaration admits no host here is **skipped**,
+  loudly — one `WARNING` per verb. Either shape can be the reason, and each
+  gets the text its own fix needs. No loaded lab applies to it:
+
+  ```text
+  repo 'sensors' is not applicable to the loaded lab(s) [floor] (lab_patterns:
+  bench.*) — skipping it for install
+  ```
+
+  …or a loaded lab does apply and no host in it matches — where naming the labs
+  would blame the one thing that is already right:
+
+  ```text
+  repo 'sensors' applies to lab(s) [bench] but its [project] host_patterns
+  (gw-.*) match no host there — skipping it for install
+  ```
+
+  `otto run status` shows it as a row of its own and leaves it out of the
+  tri-state fold, so a skipped dependency can neither vanish from the report
+  nor drag the lab to PARTIAL — and the row says which of the two it was:
+
+  ```text
+  acme     installed
+  sensors  not applicable (labs: floor)
+  gateway  no matching hosts (host_patterns: gw-.*)
+  ```
+
+- **Every repo's declaration excluding every host** fails the fleet walk itself
+  with the same class of error, naming the loaded labs and each declaring repo.
+  Under the whole-lab fallback the same emptiness stays silent: an empty walk
+  over an undeclared fleet means the *lab* is empty, which is a lab problem and
+  has always been quiet.
+
+`otto run status --full` prints the resolved answer for every repo — the labs
+it applies to, and the hosts it targets:
+
+```text
+fleet of interest
+acme     labs: bench1        hosts: sensor-1, sensor-2
+sensors  labs: bench1, bench2  hosts: sensor-1
+```
+
+Every repo otto resolved gets a row, declared or not — a repo with no
+`[project]` table shows every loaded lab and every host, which is what the
+fallback means. Those are the sets as they stood when the run resolved them:
+display data, not a walk's answer, since a walk re-derives membership live so a
+container that joins later is scoped rather than frozen out.
+
+Context creation also logs one line at INFO, and only when something actually
+narrowed: `fleet of interest: 6 of 214 lab hosts (2 repos, 1 excluded)`.
 
 ## The override ladder
 
@@ -134,9 +275,23 @@ Two things that example relies on:
   with the per-host verbs (`await host.install()` for chosen hosts) — nothing in
   the defaults is privileged.
 - **`self.repo` and `self.ctx` are provided.** `self.repo.name` is the owner
-  scope the defaults filter on, and `self.ctx` is the live context, so
+  scope, and `self.ctx` is this repo's *view* of the live context —
   `self.ctx.all_hosts()` and `self.ctx.do_for_all_hosts(...)` are the fleet and
-  its dispatch.
+  its dispatch, already bounded to this repo's fleet of interest and already
+  supplying `owner=` to the host verb. Subclass code spells neither. To
+  dispatch a host verb that takes no owner, pass
+  `self.ctx.do_for_all_hosts(verb, with_owner=False)`.
+
+```{important}
+**Let `actions_for` build it.** `otto.project.actions_for(repo, ctx)` is what
+hands the instance `ctx.for_repo(repo.name)` — the view that both bounds the
+fleet and supplies the `owner=`. Constructing `ProjectActions(repo, ctx)` by
+hand with a plain `OttoContext` raises `TypeError`, deliberately: no default
+body spells `owner=` any more, so that object would walk the whole union *and*
+call every host verb with `owner=None`, which the host layer reads as **every**
+owner's products. Its `cleanup()` would uninstall the neighbours' products and
+report success.
+```
 
 A repo registers **at most one** `ProjectActions`; a second registration from
 the same repo fails loud. Different repos each registering their own is the
@@ -325,6 +480,13 @@ A repo with nothing to say about its install state — no products anywhere, no
 registered actions, a docs-only repo — is **not counted**: it is absent from the
 table rather than listed with a made-up state, and it cannot drag the aggregate
 to PARTIAL forever.
+
+A repo whose declaration **admits no host** in this run is left out for a
+different reason and shown differently — `not applicable (labs: …)` or
+`no matching hosts (host_patterns: …)` on a row of its own. It is never asked,
+because its fleet is empty by declaration, so it has no state to fold;
+see [When a declaration and the loaded lab
+disagree](#when-a-declaration-and-the-loaded-lab-disagree).
 
 `await otto.project.is_uninstalled()` is that first row as a boolean, for a
 script that only wants to know whether the lab is empty. There is deliberately

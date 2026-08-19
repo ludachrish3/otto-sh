@@ -103,17 +103,27 @@ module helpers:
 import re
 from otto.config import all_hosts, get_host
 
-# Iterate (optionally filtered by a regex on host ID)
+# Iterate (optionally narrowed by a regex FULLY matched against host ID)
 for host in all_hosts():
     await host.run("uname -a")
 
-for host in all_hosts(pattern=re.compile(r"router")):
+for host in all_hosts(pattern=re.compile(r"router.*")):
     await host.run("show version")
 
 # Fetch a specific host by ID
 router = get_host("router1")
 result = await router.run("show version")
 ```
+
+`pattern` is `re.fullmatch`, never `re.search`: `router` selects the host whose
+id is exactly `router`, so write `router.*` to match by prefix.  A pattern that
+matches none of the hosts the run may walk raises
+{class}`~otto.config.scope.EmptySelectionError` rather than iterating nothing.
+
+`all_hosts()` walks the run's **fleet of interest** — the hosts the active
+repos' `[project]` declarations admit — which is the whole loaded lab when no
+repo declared one.  `get_host()` is deliberately unscoped and reaches any host.
+See [The fleet of interest](defaults.md#the-fleet-of-interest).
 
 For fan-out across the lab — running the same command or async
 operation on every host concurrently — use

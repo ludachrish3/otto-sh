@@ -156,11 +156,16 @@ def _run_monitor_briefly(
     no wall-clock: SIGINT is sent as soon as the first tick's rows land, not
     after the interval elapses.
     """
+    # `--hosts` FULLY matches the host id, and callers lease an *element*
+    # ("carrot") whose id is "<element>_seed" — so the wildcard is what makes
+    # this select anything at all. A bare element now selects nothing and
+    # `otto monitor` refuses loudly, which reads as "the bed is down" when it
+    # is really "the selector is a full match".
     proc = _start_monitor(
         [
             "--live",
             "--hosts",
-            host,
+            f"{host}.*",
             "--interval",
             str(interval),
             "--db",
@@ -253,10 +258,10 @@ def _run_monitor_briefly(
 def monitor_host(tmp_path_factory) -> str:  # type: ignore[type-arg]
     """Lease one Unix host from the pool for the monitor test's duration.
 
-    Yields the host's *element* name (e.g. ``"carrot"``).  The ``--hosts``
-    regex passed to ``otto monitor`` matches this element against the host id
-    (``carrot_seed``) via ``re.search``, so ``"carrot"`` is a valid regex that
-    matches ``"carrot_seed"``.
+    Yields the host's *element* name (e.g. ``"carrot"``).  ``otto monitor``
+    FULLY matches its ``--hosts`` regex against the host id (``carrot_seed``),
+    so the element alone selects nothing — :func:`_run_monitor_briefly` appends
+    the ``.*`` that turns it back into the prefix this fixture means.
     """
     lock_dir = tmp_path_factory.getbasetemp().parent
     with lease_unix_host(lock_dir, _MONITOR_POOL) as element:
@@ -272,14 +277,14 @@ def test_monitor_collects_and_persists(monitor_host: str, tmp_path: Path) -> Non
     """otto monitor writes metrics rows to the SQLite DB for a live Unix host.
 
     Steps:
-    1. Start ``otto monitor --hosts <element> --interval 1 --db <tmp/monitor.db>``.
+    1. Start ``otto monitor --hosts <element>.* --interval 1 --db <tmp/monitor.db>``.
     2. Poll the DB every 0.5 s until rows appear OR 6 s elapse.
     3. Send SIGINT; wait up to 30 s for a clean exit.
     4. Assert the process exited without SIGKILL (returncode 0 or -SIGINT/-2).
     5. Assert the ``metrics`` table has ≥1 row where the host matches the leased element.
     """
     db_path = tmp_path / "monitor.db"
-    element = monitor_host  # e.g. "carrot" — matches "carrot_seed" via re.search
+    element = monitor_host  # e.g. "carrot" — "carrot.*" fullmatches "carrot_seed"
 
     result = _run_monitor_briefly(element, db_path, extra_env=None)
 
@@ -354,7 +359,7 @@ def test_per_host_parser_scoping_via_init_module(monitor_host: str, tmp_path: Pa
     """
     # repo1_monitor_uptime.py's register_host_parsers() call keys on the exact
     # host *id* (otto/monitor/factory.py: get_host_parsers(host.id)), not the
-    # short pool element --hosts matches by regex. The tech1 lab fixture (see
+    # short pool element --hosts fullmatches (with a trailing wildcard). The tech1 lab fixture (see
     # tests/_fixtures/lab_data/tech1/lab.json) gives every veggies-pool host
     # board="seed", so RemoteHost._generate_id() composes "<element>_seed" —
     # e.g. "carrot_seed" for the leased element "carrot" (verified against

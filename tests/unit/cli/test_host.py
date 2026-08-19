@@ -198,10 +198,12 @@ class TestResolveHost:
         assert result is mock_host
 
     def test_invalid_host_exits(self):
-        with (
-            patch.object(host_module, "get_host", side_effect=KeyError("nope")),
-            patch.object(host_module, "all_hosts", return_value=iter([_make_host()])),
-        ):
+        # The "Available hosts" listing reads the lab's mapping directly rather
+        # than the fleet generator (explicit targeting is unscoped), so there is
+        # no all_hosts to stand in for — an empty lab is enough here, and
+        # tests/unit/config/test_fleet_scoping.py owns the unscoped-listing
+        # guard itself.
+        with patch.object(host_module, "get_host", side_effect=KeyError("nope")):
             result = runner.invoke(host_app, ["nonexistent", "run", "ls"])
 
         assert result.exit_code == 1

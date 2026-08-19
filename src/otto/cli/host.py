@@ -10,8 +10,9 @@ from typing import Annotated
 import typer
 from rich import print as rprint
 
-from ..config import all_hosts, get_host
+from ..config import get_host
 from ..config.fleet import _apply_option_overrides
+from ..context import get_context
 from ..host.remote_host import RemoteHost
 from ..host.unix_host import UnixHost
 from .callbacks import list_hosts_callback
@@ -89,10 +90,16 @@ def _resolve_host(host_id: str) -> UnixHost:
     except KeyError:
         print_error(f"No host with ID {host_id!r}.")
         rprint("Available hosts:")
-        # include_local: `local` IS a valid `otto host` target — this listing
-        # enumerates addressable hosts, not the fleet.
-        for h in all_hosts(include_containers=True, include_local=True):
-            rprint(f"  - {h.id}")
+        # The lab's mapping directly, NOT `all_hosts`: this listing enumerates
+        # what `otto host <id>` can ADDRESS, and explicit targeting is
+        # deliberately unscoped by the project-universe design — so a host
+        # outside every repo's fleet of interest must still be offered here,
+        # exactly as `get_host` would still resolve it. Going through the fleet
+        # generator would also make this error path raise its own error when
+        # the universe came out empty, replacing "No host with ID x" with a
+        # scoping complaint about a lab the user was not asking about.
+        for known_id in get_context().lab.hosts:
+            rprint(f"  - {known_id}")
         raise typer.Exit(1) from None
 
 

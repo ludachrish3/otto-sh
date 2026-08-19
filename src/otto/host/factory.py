@@ -134,6 +134,7 @@ def host_identity(host_data: dict[str, Any]) -> HostIdentity:
 def create_host_from_dict(
     host_data: dict[str, Any],
     preferences: dict[str, dict[str, Any]] | None = None,
+    lab_name: str | None = None,
 ) -> RemoteHost:
     """Create the appropriate :class:`~otto.host.remote_host.RemoteHost` subclass from a host dict.
 
@@ -142,6 +143,13 @@ def create_host_from_dict(
     factory cascades it by ``id`` into capability selections (forwarded to
     ``to_host``) and option-value defaults (merged per-key, product-wins). With
     ``preferences=None`` the result is identical to a bare host dict.
+
+    ``lab_name`` is the lab the caller is loading, stamped onto
+    :attr:`~otto.host.host.BaseHost.source_lab` before the product providers
+    run — a provider may be gated on the host's lab, and a gate cannot read a
+    stamp applied after it. It is a LOADER argument, deliberately separate from
+    ``host_data``: the host specs forbid extras, so lab data cannot set it.
+    Omitted, the host is left unattributed (``""``) rather than guessed at.
     """
     selector = host_data.get("os_type", "unix")
     profile = build_os_profile(selector)
@@ -163,6 +171,10 @@ def create_host_from_dict(
     merged["os_type"] = selector
     spec = spec_cls.model_validate(merged)
     host = spec.to_host(cls, preferences=flat_prefs)
+    # Before the providers, not after: provider selection is allowed to depend
+    # on which lab the host came from, and a stamp applied afterwards would be
+    # invisible to exactly the code that needs it.
+    host.source_lab = lab_name or ""
     apply_product_providers(host)
     apply_dev_tool_providers(host)
     return host

@@ -14,6 +14,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from otto.config.lab import Lab
+from otto.context import OttoContext, ProjectContextView
 from otto.project import (
     PROJECT_ACTIONS,
     Cleanliness,
@@ -112,15 +114,34 @@ class _FakeHost:
 
 
 class _FakeCtx:
-    """OttoContext double — the two dispatch seams ProjectActions uses."""
+    """OttoContext double — the two dispatch seams ProjectActions uses.
+
+    A PLAIN-CONTEXT double, deliberately: ``ProjectActions`` is constructed
+    around ``ctx.for_repo(name)``, so what these tests exercise is the REAL
+    :class:`~otto.context.ProjectContextView` sitting on top of this. The owner
+    every host verb below records therefore comes from production code, not
+    from a double reimplementing the injection it is meant to certify.
+
+    ``_scope_owner`` is the view's other half — the universe binding — and is
+    recorded rather than honoured (this double holds a list, not a lab, so
+    there is nothing here to narrow). Recording it is what lets a test assert
+    the project layer's walks are BOUND as well as stamped.
+    """
+
+    # The real seam, applied to the double: `for_repo` only wraps, so borrowing
+    # OttoContext's own method keeps a second copy of the wiring out of the
+    # tests that exist to certify it.
+    for_repo = OttoContext.for_repo
 
     def __init__(self, hosts):
         self.hosts = list(hosts)
+        self.scope_owners = []
 
-    def all_hosts(self):
+    def all_hosts(self, _scope_owner=None):
+        self.scope_owners.append(_scope_owner)
         return iter(self.hosts)
 
-    async def do_for_all_hosts(self, method, *args, **kwargs):
+    async def do_for_all_hosts(self, method, *args, _scope_owner=None, **kwargs):
         """Apply *method* per host EXACTLY as the production seam does.
 
         The call shape is ``method(host, ...)`` -- the function object it was
@@ -135,6 +156,7 @@ class _FakeCtx:
         against the double -- the dispatch helpers land on the recorded fleet
         verbs below, and the owned-dev-tool walkers on its product/tool lists.
         """
+        self.scope_owners.append(_scope_owner)
         out = {}
         for host in self.hosts:
             try:
@@ -147,6 +169,19 @@ class _FakeCtx:
 def _fake_ctx(n=2, **host_kwargs):
     hosts = [_FakeHost(f"h{i}", **host_kwargs) for i in range(n)]
     return _FakeCtx(hosts), hosts
+
+
+def _actions(ctx, repo=REPO, cls=ProjectActions):
+    """Build actions the way production does — around ``ctx.for_repo(repo.name)``.
+
+    ``actions_for`` is the only constructor a user's repo ever reaches, and the
+    repo-scoped view it supplies is what carries the owner scope now that no
+    ``ProjectActions`` body spells ``owner=``. Constructing around the plain
+    double instead would exercise an unscoped instance nothing produces, and
+    every ``{"owner": "acme"}`` assertion below would be measuring the absence
+    of a seam rather than the seam.
+    """
+    return cls(repo=repo, ctx=ctx.for_repo(repo.name))
 
 
 def _ctx_with_products(owner, installed_flags, other_flags=()):
@@ -165,17 +200,36 @@ async def test_default_install_dispatches_owner_scoped_to_all_hosts():
     # Kills: forgetting the owner filter — repo A's actions would install
     # repo B's products (the exact cross-repo bleed the design forbids).
     ctx, hosts = _fake_ctx(n=2)
-    result = await ProjectActions(repo=REPO, ctx=ctx).install()
+    result = await _actions(ctx).install()
     assert result.is_ok
     for h in hosts:
         assert h.calls == [("install", {"owner": "acme"})]
 
 
 @pytest.mark.asyncio
+async def test_every_project_walk_is_bound_to_its_own_repos_universe():
+    """The view's OTHER half: this layer's walks name their repo as well as stamp it.
+
+    Every ``{"owner": "acme"}`` assertion in this file reads the stamp, which
+    the host verbs record. The universe binding is a second, separate override
+    on the view and leaves no trace in those records at all — a view that bound
+    nothing would pass every other test here while walking the whole union.
+    Both surfaces are exercised because both are overridden: ``install``
+    dispatches, ``owns_products`` iterates.
+    """
+    ctx, _ = _fake_ctx(n=1)
+    actions = _actions(ctx)
+
+    assert (await actions.install()).is_ok
+    assert actions.owns_products is False
+    assert ctx.scope_owners == ["acme", "acme"]
+
+
+@pytest.mark.asyncio
 async def test_default_install_reduces_first_host_failure():
     ctx, hosts = _fake_ctx(n=2)
     hosts[1].script("install", _fail("no space"))
-    result = await ProjectActions(repo=REPO, ctx=ctx).install()
+    result = await _actions(ctx).install()
     assert not result.is_ok
     assert result.status is Status.Failed  # the host's own status, not a generic one
     assert hosts[1].id in result.msg  # kills: dropping WHICH host failed
@@ -188,7 +242,7 @@ async def test_install_reduces_a_captured_host_exception():
     # understands Results would treat a crashed host as a pass.
     ctx, hosts = _fake_ctx(n=2)
     hosts[0].script("install", OSError("ssh died"))
-    result = await ProjectActions(repo=REPO, ctx=ctx).install()
+    result = await _actions(ctx).install()
     assert not result.is_ok
     assert "h0" in result.msg
     assert "ssh died" in result.msg
@@ -204,7 +258,7 @@ async def test_uninstall_hardwires_debug_logs_off():
     # overwriting the last). Kills: forwarding get_debug_logs, or omitting it
     # and inheriting the host default of True.
     ctx, hosts = _fake_ctx(n=1)
-    await ProjectActions(repo=REPO, ctx=ctx).uninstall()
+    await _actions(ctx).uninstall()
     assert hosts[0].calls == [
         ("uninstall", {"get_product_logs": True, "get_debug_logs": False, "owner": "acme"}),
     ]
@@ -213,7 +267,7 @@ async def test_uninstall_hardwires_debug_logs_off():
 @pytest.mark.asyncio
 async def test_uninstall_forwards_get_product_logs_false():
     ctx, hosts = _fake_ctx(n=1)
-    await ProjectActions(repo=REPO, ctx=ctx).uninstall(get_product_logs=False)
+    await _actions(ctx).uninstall(get_product_logs=False)
     assert hosts[0].calls[0][1]["get_product_logs"] is False
 
 
@@ -231,7 +285,7 @@ async def test_cleanup_uninstalls_then_removes_owner_scoped_dev_tools():
     mine = _FakeItem("probe", "acme")
     theirs = _FakeItem("their-probe", "other")
     ctx, hosts = _fake_ctx(n=1, dev_tools=[mine, theirs])
-    result = await ProjectActions(repo=REPO, ctx=ctx).cleanup()
+    result = await _actions(ctx).cleanup()
     assert result.is_ok
     assert hosts[0].calls == [
         ("uninstall", {"get_product_logs": True, "get_debug_logs": False, "owner": "acme"}),
@@ -249,7 +303,7 @@ async def test_cleanup_forwards_get_product_logs_to_the_uninstall_half():
     # wiring True passes every other cleanup test in this file, all of which
     # take the default.
     ctx, hosts = _fake_ctx(n=1, dev_tools=[_FakeItem("probe", "acme")])
-    result = await ProjectActions(repo=REPO, ctx=ctx).cleanup(get_product_logs=False)
+    result = await _actions(ctx).cleanup(get_product_logs=False)
     assert result.is_ok
     assert hosts[0].calls == [
         ("uninstall", {"get_product_logs": False, "get_debug_logs": False, "owner": "acme"}),
@@ -261,7 +315,7 @@ async def test_cleanup_forwards_get_product_logs_to_the_uninstall_half():
 async def test_cleanup_reports_a_failed_dev_tool_removal():
     ctx, hosts = _fake_ctx(n=1, dev_tools=[_FakeItem("probe", "acme")])
     hosts[0].script("uninstall_dev_tools", _fail("busy"))
-    result = await ProjectActions(repo=REPO, ctx=ctx).cleanup()
+    result = await _actions(ctx).cleanup()
     assert not result.is_ok
     assert "h0" in result.msg
     assert "busy" in result.msg
@@ -272,7 +326,7 @@ async def test_cleanup_still_removes_dev_tools_after_a_failed_uninstall():
     # Best-effort teardown: a stranded product must not strand the tooling too.
     ctx, hosts = _fake_ctx(n=1, dev_tools=[_FakeItem("probe", "acme")])
     hosts[0].script("uninstall", _fail("busy"))
-    result = await ProjectActions(repo=REPO, ctx=ctx).cleanup()
+    result = await _actions(ctx).cleanup()
     assert not result.is_ok
     assert "busy" in result.msg  # the FIRST failure is what is reported
     assert hosts[0].calls[-1] == ("uninstall_dev_tools", {"owner": "acme"})
@@ -299,7 +353,7 @@ async def test_dev_tool_walks_dispatch_through_the_host_instance():
             return Result(Status.Success)
 
     host = _OverridingHost("h0", dev_tools=[_FakeItem("probe", "acme")])
-    actions = ProjectActions(repo=REPO, ctx=_FakeCtx([host]))
+    actions = _actions(_FakeCtx([host]))
     assert (await actions.install_tools()).is_ok
     assert (await actions.cleanup()).is_ok
     assert ("overridden-install", {"owner": "acme"}) in host.calls
@@ -318,7 +372,7 @@ async def test_install_tools_dispatches_the_owner_scoped_dev_tool_install():
     mine = _FakeItem("probe", "acme")
     theirs = _FakeItem("their-probe", "other")
     ctx, hosts = _fake_ctx(n=2, dev_tools=[mine, theirs])
-    result = await ProjectActions(repo=REPO, ctx=ctx).install_tools()
+    result = await _actions(ctx).install_tools()
     assert result.is_ok
     for h in hosts:
         assert h.calls == [("install_dev_tools", {"owner": "acme"})]
@@ -333,7 +387,7 @@ async def test_install_tools_reports_a_failed_dev_tool_install_naming_the_host()
     # owes is reporting that failure WITH the host that produced it.
     ctx, hosts = _fake_ctx(n=1, dev_tools=[_FakeItem("probe", "acme")])
     hosts[0].script("install_dev_tools", _fail("exec format error"))
-    result = await ProjectActions(repo=REPO, ctx=ctx).install_tools()
+    result = await _actions(ctx).install_tools()
     assert not result.is_ok
     assert "h0" in result.msg
     assert "exec format error" in result.msg
@@ -343,7 +397,7 @@ async def test_install_tools_reports_a_failed_dev_tool_install_naming_the_host()
 async def test_install_tools_dev_false_touches_nothing():
     mine = _FakeItem("probe", "acme")
     ctx, hosts = _fake_ctx(n=1, dev_tools=[mine])
-    assert (await ProjectActions(repo=REPO, ctx=ctx).install_tools(dev=False)).is_ok
+    assert (await _actions(ctx).install_tools(dev=False)).is_ok
     assert hosts[0].calls == []
     assert mine.calls == []
 
@@ -356,7 +410,7 @@ async def test_install_tools_toolchain_is_a_repo_level_noop_by_design():
     # DECLARED contract of this seam, not an oversight a reader has to guess at.
     mine = _FakeItem("probe", "acme")
     ctx, hosts = _fake_ctx(n=1, dev_tools=[mine])
-    result = await ProjectActions(repo=REPO, ctx=ctx).install_tools(dev=False, toolchain=True)
+    result = await _actions(ctx).install_tools(dev=False, toolchain=True)
     assert result.is_ok
     assert hosts[0].calls == []
     assert mine.calls == []
@@ -375,7 +429,7 @@ async def test_install_tools_toolchain_true_does_not_swallow_the_dev_walk():
     # to install either way).
     mine = _FakeItem("probe", "acme")
     ctx, hosts = _fake_ctx(n=1, dev_tools=[mine])
-    result = await ProjectActions(repo=REPO, ctx=ctx).install_tools(dev=True, toolchain=True)
+    result = await _actions(ctx).install_tools(dev=True, toolchain=True)
     assert result.is_ok
     assert hosts[0].calls == [("install_dev_tools", {"owner": "acme"})]
 
@@ -386,7 +440,7 @@ async def test_install_tools_toolchain_true_does_not_swallow_the_dev_walk():
 @pytest.mark.asyncio
 async def test_get_logs_dispatches_owner_scoped_product_haul():
     ctx, hosts = _fake_ctx(n=2)
-    result = await ProjectActions(repo=REPO, ctx=ctx).get_logs()
+    result = await _actions(ctx).get_logs()
     assert result.is_ok
     for h in hosts:
         assert h.calls == [("get_product_logs", {"owner": "acme"})]
@@ -397,7 +451,7 @@ async def test_get_logs_product_false_gathers_nothing():
     # There is no debug half here on purpose (host debug logs belong to no
     # repo), so product=False leaves this action with nothing to do.
     ctx, hosts = _fake_ctx(n=1)
-    assert (await ProjectActions(repo=REPO, ctx=ctx).get_logs(product=False)).is_ok
+    assert (await _actions(ctx).get_logs(product=False)).is_ok
     assert hosts[0].calls == []
 
 
@@ -429,7 +483,7 @@ async def test_get_logs_require_product_logs_fails_when_an_owning_host_retrieved
             ),
         ]
     )
-    result = await ProjectActions(repo=REPO, ctx=ctx).get_logs(require_product_logs=True)
+    result = await _actions(ctx).get_logs(require_product_logs=True)
     assert not result.is_ok
     assert "h1" in result.msg
     assert "h0" not in result.msg  # the host that DID deliver is not accused
@@ -448,7 +502,7 @@ async def test_get_logs_require_product_logs_only_asks_hosts_this_repo_owns(tmp_
         products=[_FakeItem("their-app", "other")],
         log_dir=_log_dir(tmp_path, "bare", delivered=False),
     )
-    actions = ProjectActions(repo=REPO, ctx=_FakeCtx([owner_host, bare_host]))
+    actions = _actions(_FakeCtx([owner_host, bare_host]))
     assert (await actions.get_logs(require_product_logs=True)).is_ok
 
     # …and the OWNING host delivering nothing is still a failure that names it,
@@ -467,7 +521,7 @@ async def test_get_logs_require_product_logs_is_satisfied_by_a_haul(tmp_path):
         log_dir=_log_dir(tmp_path, "logs", delivered=True),
     )
     ctx = _FakeCtx([host])
-    assert (await ProjectActions(repo=REPO, ctx=ctx).get_logs(require_product_logs=True)).is_ok
+    assert (await _actions(ctx).get_logs(require_product_logs=True)).is_ok
 
 
 @pytest.mark.asyncio
@@ -475,9 +529,7 @@ async def test_get_logs_require_product_logs_with_product_false_is_refused():
     # A requirement that cannot be met is refused, not ignored: the haul it
     # requires is the step being skipped.
     ctx, hosts = _fake_ctx(n=1)
-    result = await ProjectActions(repo=REPO, ctx=ctx).get_logs(
-        product=False, require_product_logs=True
-    )
+    result = await _actions(ctx).get_logs(product=False, require_product_logs=True)
     assert not result.is_ok
     assert "require_product_logs" in result.msg
     assert hosts[0].calls == []
@@ -494,9 +546,7 @@ async def test_get_logs_requirement_is_not_checked_after_a_failed_haul(tmp_path)
         log_dir=_log_dir(tmp_path, "logs", delivered=False),
     )
     host.script("get_product_logs", _fail("transfer refused"))
-    result = await ProjectActions(repo=REPO, ctx=_FakeCtx([host])).get_logs(
-        require_product_logs=True
-    )
+    result = await _actions(_FakeCtx([host])).get_logs(require_product_logs=True)
     assert not result.is_ok
     assert "transfer refused" in result.msg
 
@@ -516,7 +566,7 @@ async def test_status_tristate():
         ([False, False], InstallState.UNINSTALLED),
     ]:
         ctx, _ = _ctx_with_products("acme", installed_flags)
-        state = await ProjectActions(repo=REPO, ctx=ctx).status()
+        state = await _actions(ctx).status()
         assert state is expected, installed_flags
 
 
@@ -526,7 +576,7 @@ async def test_status_is_partial_across_hosts_not_only_within_one():
     # is_installed() reduction would call this INSTALLED-somewhere or clean.
     a = _FakeHost("h0", products=[_FakeItem("p", "acme", installed=True)])
     b = _FakeHost("h1", products=[_FakeItem("p", "acme", installed=False)])
-    state = await ProjectActions(repo=REPO, ctx=_FakeCtx([a, b])).status()
+    state = await _actions(_FakeCtx([a, b])).status()
     assert state is InstallState.PARTIAL
 
 
@@ -535,7 +585,7 @@ async def test_status_ignores_another_repos_products():
     # Kills: counting the whole fleet's products — another repo's half-install
     # would drag this repo to PARTIAL and its full install would fake ours.
     ctx, _ = _ctx_with_products("acme", [True, True], other_flags=[False, False])
-    assert await ProjectActions(repo=REPO, ctx=ctx).status() is InstallState.INSTALLED
+    assert await _actions(ctx).status() is InstallState.INSTALLED
 
 
 @pytest.mark.asyncio
@@ -543,7 +593,7 @@ async def test_status_with_no_owned_products_is_uninstalled():
     # Mirrors Host.is_installed's empty-products rule: nothing that could be
     # installed is not vacuously "installed".
     ctx, _ = _ctx_with_products("acme", [], other_flags=[True])
-    assert await ProjectActions(repo=REPO, ctx=ctx).status() is InstallState.UNINSTALLED
+    assert await _actions(ctx).status() is InstallState.UNINSTALLED
 
 
 @pytest.mark.asyncio
@@ -558,7 +608,7 @@ async def test_is_uninstalled_is_false_at_partial_not_only_at_installed():
         ([False, False], True),
     ]:
         ctx, _ = _ctx_with_products("acme", flags)
-        assert await ProjectActions(repo=REPO, ctx=ctx).is_uninstalled() is expected, flags
+        assert await _actions(ctx).is_uninstalled() is expected, flags
 
 
 @pytest.mark.asyncio
@@ -572,7 +622,7 @@ async def test_is_uninstalled_reads_status_rather_than_counting_again():
             return InstallState.UNINSTALLED
 
     ctx, _ = _ctx_with_products("acme", [True, True])
-    assert await _Opinionated(repo=REPO, ctx=ctx).is_uninstalled() is True
+    assert await _actions(ctx, cls=_Opinionated).is_uninstalled() is True
 
 
 def test_no_is_installed_boolean_on_project_actions():
@@ -586,20 +636,20 @@ def test_no_is_installed_boolean_on_project_actions():
 
 def test_owns_products_sees_only_this_repos_products():
     ctx, _ = _ctx_with_products("acme", [False], other_flags=[True])
-    assert ProjectActions(repo=REPO, ctx=ctx).owns_products is True
-    assert ProjectActions(repo=OTHER_REPO, ctx=ctx).owns_products is True
-    assert ProjectActions(repo=SimpleNamespace(name="docs"), ctx=ctx).owns_products is False
+    assert _actions(ctx).owns_products is True
+    assert _actions(ctx, OTHER_REPO).owns_products is True
+    assert _actions(ctx, SimpleNamespace(name="docs")).owns_products is False
 
 
 def test_owns_products_is_false_for_an_empty_fleet():
     ctx, _ = _fake_ctx(n=0)
-    assert ProjectActions(repo=REPO, ctx=ctx).owns_products is False
+    assert _actions(ctx).owns_products is False
 
 
 @pytest.mark.asyncio
 async def test_is_clean_is_false_while_an_owned_product_is_installed():
     ctx, _ = _ctx_with_products("acme", [False, True])
-    assert await ProjectActions(repo=REPO, ctx=ctx).is_clean() is False
+    assert await _actions(ctx).is_clean() is False
 
 
 @pytest.mark.asyncio
@@ -608,7 +658,7 @@ async def test_is_clean_is_false_while_an_owned_dev_tool_is_installed():
     # the board is exactly what cleanup() removes and is_clean() must see.
     tool = _FakeItem("probe", "acme", installed=True)
     ctx, _ = _fake_ctx(n=1, dev_tools=[tool])
-    assert await ProjectActions(repo=REPO, ctx=ctx).is_clean() is False
+    assert await _actions(ctx).is_clean() is False
 
 
 @pytest.mark.asyncio
@@ -618,7 +668,7 @@ async def test_is_clean_ignores_another_repos_leftovers():
         products=[_FakeItem("p", "other", installed=True)],
         dev_tools=[_FakeItem("probe", "other", installed=True)],
     )
-    assert await ProjectActions(repo=REPO, ctx=_FakeCtx([host])).is_clean() is True
+    assert await _actions(_FakeCtx([host])).is_clean() is True
 
 
 @pytest.mark.asyncio
@@ -628,7 +678,7 @@ async def test_is_clean_is_true_when_owned_products_and_tools_are_gone():
         products=[_FakeItem("p", "acme", installed=False)],
         dev_tools=[_FakeItem("probe", "acme", installed=False)],
     )
-    assert await ProjectActions(repo=REPO, ctx=_FakeCtx([host])).is_clean() is True
+    assert await _actions(_FakeCtx([host])).is_clean() is True
 
 
 # ── registration ─────────────────────────────────────────────────────────
@@ -692,11 +742,47 @@ def test_actions_for_prefers_registered_class_else_default():
     assert type(actions_for(SimpleNamespace(name="unregistered"), ctx)) is ProjectActions
 
 
-def test_actions_for_hands_the_instance_its_repo_and_context():
+def test_actions_for_hands_the_instance_a_view_bound_to_its_own_repo():
+    """THE ONE LINE that scopes a repo's whole lifecycle (spec §7).
+
+    Not ``actions.ctx is ctx`` any more, and the difference is the feature: an
+    instance handed the plain context walks the union and stamps no owner —
+    which, at the host layer, means *every* repo's products. Nothing else in
+    this file can catch that, because every test above builds its actions
+    through the same view ``actions_for`` does.
+    """
     ctx, _ = _fake_ctx(n=0)
     actions = actions_for(REPO, ctx)
     assert actions.repo is REPO
-    assert actions.ctx is ctx
+    assert isinstance(actions.ctx, ProjectContextView)
+    assert actions.ctx._repo_name == REPO.name
+    assert actions.ctx.hosts is ctx.hosts  # the SAME context underneath, not a copy
+
+
+def test_hand_building_actions_around_a_plain_context_refuses():
+    """The constructor's side door is shut, because the same spelled code turned destructive.
+
+    ``ProjectActions(repo, ctx)`` was legal AND owner-safe before the scope
+    moved onto the view: the bodies passed ``owner=repo.name`` themselves. Now
+    they do not, so a hand-built instance over a plain context would walk the
+    ambient union with ``owner=None`` — which the host layer reads as every
+    owner's products, making its ``cleanup()`` a silent teardown of the
+    neighbours. A docstring cannot be the only thing standing in front of that.
+    """
+    ctx = OttoContext(lab=Lab(name="t"))
+
+    with pytest.raises(TypeError) as excinfo:
+        ProjectActions(repo=REPO, ctx=ctx)
+    message = str(excinfo.value)
+    assert "actions_for" in message  # the constructor to use instead
+    assert "acme" in message
+    assert "owner=None" in message  # WHY it is refused, not just that it is
+
+    # The two constructions that ARE the seam are untouched: the real context's
+    # own view, and a double that borrows `for_repo` to build one.
+    assert isinstance(actions_for(REPO, ctx).ctx, ProjectContextView)
+    fake, _ = _fake_ctx(n=0)
+    assert isinstance(actions_for(REPO, fake).ctx, ProjectContextView)
 
 
 # ── state vocabulary ─────────────────────────────────────────────────────

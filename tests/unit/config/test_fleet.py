@@ -12,6 +12,7 @@ from otto.config.fleet import (
     run_on_all_hosts,
 )
 from otto.config.lab import Lab
+from otto.config.scope import EmptySelectionError
 from otto.context import OttoContext, reset_context, set_context
 from otto.host import EmbeddedHost, UnixHost
 from otto.host.factory import create_host_from_dict
@@ -92,30 +93,103 @@ class TestAllHosts:
         assert len(result) == 3
 
     def test_pattern_matches_subset(self, three_hosts):
-        """A pattern that matches some host IDs filters correctly."""
-        pat = re.compile(r"tomato")
+        """A pattern that fullmatches some host IDs filters correctly."""
+        pat = re.compile(r"tomato.*")
         result = list(all_hosts(pattern=pat))
         assert len(result) == 1
         assert result[0].id == "tomato_seed"
 
     def test_pattern_matches_multiple(self, three_hosts):
-        """A pattern matching multiple hosts returns all matches."""
-        pat = re.compile(r"(carrot|pepper)")
+        """A pattern fullmatching multiple hosts returns all matches."""
+        pat = re.compile(r"(carrot|pepper).*")
         result = list(all_hosts(pattern=pat))
         ids = {h.id for h in result}
         assert ids == {"carrot_seed", "pepper_seed"}
 
-    def test_pattern_matches_none(self, three_hosts):
-        """A pattern matching no hosts yields nothing."""
+    def test_pattern_matching_no_host_raises_rather_than_yielding_nothing(self, three_hosts):
+        """D6: a selection that would be empty fails loud, naming what to type instead."""
         pat = re.compile(r"nonexistent")
-        result = list(all_hosts(pattern=pat))
-        assert result == []
+        with pytest.raises(EmptySelectionError, match="nonexistent"):
+            list(all_hosts(pattern=pat))
 
-    def test_pattern_uses_search_not_fullmatch(self, three_hosts):
-        """pattern.search is used, so partial matches work."""
-        pat = re.compile(r"seed$")
-        result = list(all_hosts(pattern=pat))
-        assert len(result) == 3
+    def test_pattern_uses_fullmatch_not_search(self, three_hosts):
+        """``pattern.fullmatch`` is used, so a partial match selects nothing (D6).
+
+        ``seed$`` matched all three under the old ``search`` semantics — that
+        is exactly the widening D6 removes — and ``.*seed`` is how the same
+        intent is written now.
+        """
+        with pytest.raises(EmptySelectionError):
+            list(all_hosts(pattern=re.compile(r"seed$")))
+        assert len(list(all_hosts(pattern=re.compile(r".*seed")))) == 3
+
+
+class TestSelectionHiddenByMembershipFlags:
+    """A pattern that MATCHED, whose every match a membership flag then removed.
+
+    The D6 guard counts fullmatches against the base set, so this cell used to
+    slip past it and hand the caller the silently empty walk D6 exists to
+    abolish: the pattern was right, the hosts were there, and the only thing
+    that emptied the sweep was a default the caller never typed. It is the
+    harder failure to diagnose of the two — "matched nothing" at least sends
+    you to your regex — so the error has to say which flag did it.
+    """
+
+    def test_pattern_matching_only_local_raises_naming_include_local(self, three_hosts_plus_local):
+        with pytest.raises(EmptySelectionError) as excinfo:
+            list(all_hosts(pattern=re.compile(r"local")))
+        assert excinfo.value.excluded_by == ["include_local"]
+        assert "include_local=True" in str(excinfo.value)
+
+    def test_the_named_flag_is_the_one_that_makes_the_same_pattern_work(
+        self, three_hosts_plus_local
+    ):
+        """The message is actionable, not just accurate: doing what it says works."""
+        ids = [h.id for h in all_hosts(pattern=re.compile(r"local"), include_local=True)]
+        assert ids == ["local"]
+
+    def test_hidden_message_is_not_the_matched_nothing_message(self, three_hosts_plus_local):
+        """The two cells read differently — the fix for each is a different edit.
+
+        ``fullmatches none`` sends the reader to the regex; the hidden-by-flag
+        text must not, because the regex is already correct.
+        """
+        with pytest.raises(EmptySelectionError) as hidden:
+            list(all_hosts(pattern=re.compile(r"local")))
+        with pytest.raises(EmptySelectionError) as nothing:
+            list(all_hosts(pattern=re.compile(r"nonexistent")))
+        assert "fullmatches none" in str(nothing.value)
+        assert "fullmatches none" not in str(hidden.value)
+        assert hidden.value.matched_size == 1
+        assert nothing.value.excluded_by == []
+
+    def test_one_surviving_match_is_not_a_raise(self, three_hosts_plus_local):
+        """A pattern that also matches a fleet host walks it — the flag hid only ``local``."""
+        ids = {h.id for h in all_hosts(pattern=re.compile(r"local|carrot_seed"))}
+        assert ids == {"carrot_seed"}
+
+    def test_pattern_matching_only_containers_raises_naming_include_containers(self, three_hosts):
+        from otto.context import get_context
+        from otto.host.docker_host import DockerContainerHost
+
+        lab = get_context().lab
+        lab.add_host(
+            DockerContainerHost(
+                parent=lab.hosts["carrot_seed"],
+                container_id="cid-api",
+                project="r1",
+                service="api",
+                compose_project="otto-r1",
+            )
+        )
+        pat = re.compile(r".*\.r1\.api")
+        with pytest.raises(EmptySelectionError) as excinfo:
+            list(all_hosts(pattern=pat))
+        assert excinfo.value.excluded_by == ["include_containers"]
+        assert "include_containers=True" in str(excinfo.value)
+        assert {h.id for h in all_hosts(pattern=pat, include_containers=True)} == {
+            "carrot_seed.r1.api"
+        }
 
 
 @pytest.fixture
@@ -200,8 +274,8 @@ class TestDoForAllHosts:
 
     @pytest.mark.asyncio
     async def test_pattern_filters_hosts(self, three_hosts):
-        """Only matching hosts are included in the result."""
-        pat = re.compile(r"carrot")
+        """Only fullmatching hosts are included in the result."""
+        pat = re.compile(r"carrot.*")
         result = await do_for_all_hosts(_echo_id, pattern=pat)
         assert set(result.keys()) == {"carrot_seed"}
 
@@ -286,7 +360,7 @@ class TestRunOnAllHosts:
         ):
             result = await run_on_all_hosts(
                 "ls",
-                pattern=re.compile(r"pepper"),
+                pattern=re.compile(r"pepper.*"),
                 concurrent=False,
             )
 

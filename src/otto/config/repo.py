@@ -21,6 +21,7 @@ import tomli
 
 from ..result import CommandResult
 from ..utils import Status
+from .scope import ProjectScopeConfig
 from .version import Version
 
 if TYPE_CHECKING:
@@ -310,14 +311,14 @@ class Repo:
     labs: list[Path] = field(default_factory=list[Path], init=False)
     """Paths to lab data"""
 
-    valid_labs: list[str] = field(default_factory=list[str], init=False)
-    """Lab names this repo supports (by ``labs`` membership), e.g. an embedded
-    product that only runs in an embedded lab. Empty when the key is unset.
+    project_scope: ProjectScopeConfig | None = field(default=None, init=False)
+    """Compiled ``[project]`` declaration — the labs and hosts this repo targets.
 
-    Parsed here; *enforcement* — rejecting a selected ``--lab`` that is not in
-    this list, and treating an empty list as "the repo must declare its labs"
-    rather than allow-all — is intentionally deferred to lab-selection time and
-    not yet wired in. Parsing must not silently treat unset as allow-all."""
+    ``None`` when the repo declares no ``[project]`` table, which every
+    consumer reads through :func:`otto.config.scope.repo_targets` as "targets
+    everything"; that is what the whole-lab fallback for product-less repos is
+    built on. Membership is never re-derived from this by hand — the predicate
+    is the only reader of the patterns."""
 
     libs: list[Path] = field(default_factory=list[Path], init=False)
     """Extra paths to add to the PYTHONPATH"""
@@ -762,11 +763,9 @@ class Repo:
         self.name = model.name
         self.version = Version(model.version)
         self.labs = list(model.labs)
-        # valid_labs are lab *names*, not paths — populate from the raw dict
-        # directly rather than through the model, so they are never coerced
-        # into RepoPath/anchored (the model still validates them as a
-        # list[str]). Preserves the pre-pydantic behavior.
-        self.valid_labs = list(self.settings.get("valid_labs", []))
+        # Compiled here, at parse, so an unusable regex is a settings error rather
+        # than a fleet walk that silently matches nothing later on.
+        self.project_scope = ProjectScopeConfig.from_spec(model.project) if model.project else None
         self.libs = list(model.libs)
         self.tests = list(model.tests)
         self.init = list(model.init)

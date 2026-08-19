@@ -760,6 +760,87 @@ def _reset_tunnel_add_locks():
         manage._ADD_LOCKS.clear()
 
 
+# The provider seams, as ``(module, attribute)``. Plain lists rather than
+# ``otto.registry.Registry`` singletons, which is exactly why ``_isolate_registries``
+# cannot see them: its discovery scans for ``Registry`` instances.
+_PROVIDER_REGISTRIES = (
+    ("otto.host.product", "_PRODUCT_PROVIDERS"),
+    ("otto.host.dev_tool", "_DEV_TOOL_PROVIDERS"),
+)
+
+
+def _provider_snapshot() -> "list[tuple[str, str, list | None]]":
+    """Copy each provider list, recording ``None`` when its module is not loaded.
+
+    ``None`` is not "empty" — it is "there was nothing to snapshot", which is
+    the case :func:`_restore_provider_snapshot` has to treat specially. Both
+    modules define their list as ``[]`` at import, so a module the TEST
+    imported has an import-time baseline of empty and nothing else.
+    """
+    out: "list[tuple[str, str, list | None]]" = []
+    for mod_name, attr in _PROVIDER_REGISTRIES:
+        mod = sys.modules.get(mod_name)
+        # `getattr` with no default: a rename of either global fails loudly
+        # here, at the snapshot READ, rather than silently minting a new
+        # attribute in the restore below (the `_restore_bootstrap_state` rule).
+        out.append((mod_name, attr, None if mod is None else list(getattr(mod, attr))))
+    return out
+
+
+def _restore_provider_snapshot(snapshot: "list[tuple[str, str, list | None]]") -> None:
+    """Put each provider list back to what *snapshot* recorded.
+
+    IN PLACE (``[:] =``), never a rebind: ``otto.bootstrap`` binds
+    ``_PRODUCT_PROVIDERS``/``_DEV_TOOL_PROVIDERS`` by ``from … import`` at call
+    time, so a rebound module attribute would leave that reader holding the
+    leaked list.
+    """
+    for mod_name, attr, saved in snapshot:
+        mod = sys.modules.get(mod_name)
+        if mod is None:
+            continue
+        getattr(mod, attr)[:] = [] if saved is None else saved
+
+
+@pytest.fixture(autouse=True)
+def _restore_provider_registries():
+    """Snapshot-restore the product and dev-tool PROVIDER lists around every test.
+
+    ``register_product_provider`` / ``register_dev_tool_provider`` append to two
+    module-global lists, and nothing ever unregisters. Every ``bootstrap()``
+    that imports a repo init module registering one leaves it there for the rest
+    of the process — and both lists are read at the single lab-ingest chokepoint
+    (``create_host_from_dict``), so a leaked provider hangs products or dev tools
+    on hosts in every later test that builds one. ``bootstrap`` also re-reads
+    them for its D2 refusal, so a leaked provider owned by a repo NAME a later
+    test happens to reuse fails that test's bootstrap over a registration it
+    never made.
+
+    ``_isolate_registries`` does not cover these: it discovers state by scanning
+    loaded ``otto.*`` modules for ``otto.registry.Registry`` instances, and these
+    are plain lists. Five test files carry their own local copy of this
+    snapshot/restore (``tests/unit/host/test_product_providers.py``,
+    ``test_dev_tool_providers.py``, ``test_factory.py``,
+    ``tests/unit/project/test_composed_lab.py``, ``tests/unit/bootstrap/
+    test_bootstrap.py``) — one of them says in so many words that the list is
+    "a plain list the root guard cannot see". That is the tell: the state is
+    process-global, so a per-file guard is scoped narrower than the hazard, and
+    the next file to register a provider inherits no protection at all. Root
+    conftest, per the #132/#133 rule that put ``_isolate_registries`` here.
+
+    Lazy ``sys.modules.get``, like ``_reset_tunnel_add_locks``: a test that never
+    imports the host package must not be made to. That laziness is also why the
+    snapshot distinguishes "not loaded" from "loaded and empty" — a test that
+    imports the module ITSELF and registers into it would otherwise leak
+    everything it added, which is precisely the hole that let the first-party
+    instructions escape ``_isolate_registries`` (see
+    ``tests/unit/config/test_completion_cache_unit.py``).
+    """
+    snapshot = _provider_snapshot()
+    yield
+    _restore_provider_snapshot(snapshot)
+
+
 @pytest.fixture(autouse=True)
 def _no_real_signal_handlers():
     """Force every in-process ``run_command`` call to skip real signal handlers.

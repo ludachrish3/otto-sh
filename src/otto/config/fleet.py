@@ -121,17 +121,25 @@ def all_hosts(  # noqa: PLR0913 — wide host-dispatch API (mirrors do_for_all_h
     nc_options: "NcOptions | None" = None,
     userland_options: "UserlandOptions | None" = None,
 ) -> Generator["RemoteHost", Any, Any]:
-    """Yield the active lab's real remote hosts, optionally filtered by regex.
+    """Yield this run's fleet of interest, optionally narrowed by regex.
 
     This is the *fleet* generator: it yields every network-reached
-    :class:`~otto.host.remote_host.RemoteHost` in the active lab — both
-    :class:`~otto.host.unix_host.UnixHost`
+    :class:`~otto.host.remote_host.RemoteHost` the active project universe
+    admits — both :class:`~otto.host.unix_host.UnixHost`
     (SSH/telnet to a shell) and :class:`~otto.host.embedded_host.EmbeddedHost` (telnet to an RTOS
     console). :class:`~otto.host.docker_host.DockerContainerHost` entries are skipped by default
     because containers aren't operated on as part of the host fleet
     (e.g. ``otto monitor``, coverage collection); containers remain
     reachable for targeted use via tab completion and ``get_host``.
     Pass ``include_containers=True`` to yield container hosts as well.
+
+    The base set is NOT the whole loaded lab: it is the union of the
+    ``[project]`` universes the run's repos declared (spec §6), re-derived
+    live per walk. When no repo declares ``[project]`` it *is* the whole
+    loaded lab, so product-less projects see no change. Everything here
+    delegates to :meth:`otto.context.OttoContext.all_hosts`, which owns the
+    rules and their two loud failures — see it for the empty-fleet and
+    empty-selection errors.
 
     The built-in ``local`` host (the machine otto itself runs on, injected
     into every lab for targeted ``otto host local`` use) is likewise NOT part
@@ -141,8 +149,14 @@ def all_hosts(  # noqa: PLR0913 — wide host-dispatch API (mirrors do_for_all_h
 
     Args:
         pattern: Compiled regex matched against each host's ``id`` via
-            ``pattern.search()``.  When *None* (the default), all hosts
-            are yielded.
+            ``pattern.fullmatch()`` — never ``search`` (D6), so ``sensor``
+            does not select ``sensor-1``; write ``sensor.*``. A pattern that
+            fullmatches none of the base set raises
+            :class:`~otto.config.scope.EmptySelectionError` instead of
+            yielding nothing, as does one whose every match
+            ``include_containers``/``include_local`` then holds back — same
+            class, and it names the flag instead of the regex. When *None*
+            (the default), the whole base set is yielded.
         include_containers: When ``True``, also yield
             :class:`~otto.host.docker_host.DockerContainerHost` entries. Defaults to ``False``.
         term, transfer: optional active-protocol override; see
@@ -168,12 +182,13 @@ def all_hosts(  # noqa: PLR0913 — wide host-dispatch API (mirrors do_for_all_h
         :class:`~otto.host.embedded_host.EmbeddedHost` from the lab configuration.
 
     Examples:
-        Filter the active lab's hosts by id pattern (see
-        :doc:`/library/index` for a runnable, in-memory example)::
+        Narrow the fleet by id pattern — a FULL match, so the trailing
+        ``.*`` is what makes this a prefix (see :doc:`/library/index` for a
+        runnable, in-memory example)::
 
             import re
 
-            seeds = list(all_hosts(re.compile(r"tomato")))
+            seeds = list(all_hosts(re.compile(r"tomato.*")))
     """
     from ..context import get_context
 

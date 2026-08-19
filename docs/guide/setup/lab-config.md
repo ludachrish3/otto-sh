@@ -478,6 +478,111 @@ re-resolved at use time.
 For the full `*_options` field reference and per-field semantics, see
 {doc}`../hosts/configuration`.
 
+(project-scope)=
+
+## Project scope: the labs and hosts a repo targets
+
+A lab database can describe every host an organization owns; a given repo
+usually cares about a fraction of them.  The `[project]` table in
+`.otto/settings.toml` is where a repo declares its **fleet of interest** — the
+labs it applies to, and the hosts it targets inside them.
+
+```toml
+# .otto/settings.toml
+
+[project]
+lab_patterns  = ["tech-.*", "bench1"]     # labs this project applies to
+host_patterns = ["sensor-.*", "gw-\\d+"]  # hosts of interest within those labs
+```
+
+Both keys hold **Python regexes**, and both are matched with `re.fullmatch`
+against a whole name — never `re.search`.  `bench` does not admit
+`bench-overflow`; write `bench.*` (wrapping any alternation first, as
+`(bench|floor).*`).  Entries within a key are OR-ed: a lab is applicable when
+**any** `lab_patterns` entry matches it, and a host is in the universe when its
+lab is applicable **and any** `host_patterns` entry matches its id.
+
+`lab_patterns`
+: The labs this project applies to.  There is **no default**, and leaving the
+  key out of a `[project]` table you did write is not "every lab" — it compiles
+  to no patterns, which matches nothing.  Every-lab is spelled `[".*"]`, out
+  loud: match-all is a visible choice here, never a default that quietly widens
+  a project's reach.
+
+`host_patterns`
+: The hosts of interest within those labs.  Defaults to `[".*"]` — every host
+  of every applicable lab — so a repo that only needs the lab axis writes only
+  `lab_patterns`.
+
+```{warning}
+Writing `[project]` **without** `lab_patterns` declares a repo that applies to
+no lab at all.  That is not a quiet no-op: the repo is excluded, and if it is
+the project driving the run, every project-layer verb aborts naming the loaded
+labs and your patterns.  A `[project]` table with only `host_patterns` in it is
+the shape that hits this.
+```
+
+An invalid regex fails at settings parse — the moment the repo is discovered,
+not on the first fleet walk — naming the offending pattern and what `re` made
+of it:
+
+```text
+[project] pattern 'bench(' is not a valid regular expression: missing ), unterminated subpattern at position 5
+```
+
+### Required once a repo registers providers
+
+A repo that registers a product or dev-tool provider (see
+{doc}`../hosts/capabilities`) **must** declare `lab_patterns`.  The check runs
+at bootstrap, right after init modules have been imported — the earliest moment
+the registries can answer — and it aborts the whole run rather than being
+downgraded to a warning:
+
+```text
+repo 'sensors' registers product/dev-tool providers but declares no
+[project] lab_patterns in .otto/settings.toml. A providing repo must say
+which labs it applies to. Add:
+
+    [project]
+    lab_patterns = [".*"]   # every lab — make the reach explicit
+    #host_patterns = [".*"]
+
+and narrow the patterns to the labs this project actually targets.
+```
+
+`lab_patterns = []` gets the same refusal: an empty list is not a narrower
+declaration, it is the same "no lab" the missing key compiles to.  An empty
+`host_patterns = []` is refused separately — it admits no host in any lab, so
+every provider the repo registers would be dead code.
+
+A repo that registers **no** providers needs no `[project]` table at all.
+
+### What the declaration changes
+
+- **Fleet walks are bounded by it.**  `ctx.all_hosts()`,
+  `ctx.do_for_all_hosts(...)` and `ctx.run_on_all_hosts(...)` iterate the
+  declared universe rather than the whole loaded lab.  See
+  {doc}`../run/defaults` for the walk semantics, the union across repos, and
+  the whole-lab fallback for repos that declare nothing.
+- **Providers are gated by it.**  A repo's product and dev-tool providers are
+  not invoked at all on a host outside its universe, so nothing that repo owns
+  can attach to a machine it never declared.
+- **Explicit targeting is not bounded by it.**  `otto host <id> <verb>`,
+  `ctx.get_host("id")` and the `otto host` id listing reach any host in the
+  loaded lab.  Explicit targeting beats scoping: a repo naming a jump host it
+  does not own must still be able to reach it.
+
+### Merged labs and containers
+
+A host is matched against the **component** lab it came from, never a
+composite display name.  Under `otto --lab lab_a+lab_b` a repo declaring
+`lab_patterns = ["lab_a"]` still applies — its hosts are stamped `lab_a` — and
+it targets the `lab_a` hosts only.  A pattern written to match the merged name
+(`lab_a\+lab_b`) matches nothing.
+
+Docker containers created during a run inherit their parent host's lab, so a
+container joins the same universes its parent is in.
+
 ## Merging labs
 
 Combine lab names with `+` to merge them:

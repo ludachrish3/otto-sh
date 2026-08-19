@@ -27,23 +27,19 @@ def fake_config_module():
     Yields a callable ``set_hosts(*hosts)`` that callers use to register
     the host list for the duration of the test.
     """
-    current: dict[str, MagicMock] = {}
-
-    class _FakeHostsDict(dict):
-        """Dict that always reflects the latest `current` mapping."""
-
-        def values(self):
-            return list(current.values())
-
     lab = Lab(name="test_lab")
-    lab.hosts = _FakeHostsDict()  # type: ignore[assignment]
     ctx = OttoContext(lab=lab)
     token = set_context(ctx)
 
     def set_hosts(*hosts: MagicMock) -> None:
-        current.clear()
+        # Mutate the lab's REAL mapping in place. A `dict` subclass overriding
+        # only `values()` used to stand in here, which worked exactly as long as
+        # `all_hosts` touched nothing else; fleet scoping also iterates and
+        # `.items()`s the mapping, and a half-implemented double answers those
+        # with the empty dict underneath rather than failing.
+        lab.hosts.clear()
         for h in hosts:
-            current[h.id] = h
+            lab.hosts[h.id] = h
 
     yield set_hosts
     reset_context(token)
@@ -160,7 +156,8 @@ class TestGcdaFetcher:
             h.get.return_value = Result(Status.Success, value={})
         fake_config_module(host1, host2)
 
-        fetcher = GcdaFetcher(tmp_path / "staging", pattern=re.compile(r"carrot"))
+        # `carrot` alone selects nothing now — host ids are FULLMATCHED (D6).
+        fetcher = GcdaFetcher(tmp_path / "staging", pattern=re.compile(r"carrot.*"))
         result = await fetcher.fetch_all("/var/cov")
 
         assert set(result.keys()) == {"carrot_seed"}

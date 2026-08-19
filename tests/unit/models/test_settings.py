@@ -297,12 +297,10 @@ def test_settings_paths_coerce_to_path_lists():
             "libs": ["/a/lib"],
             "tests": ["/a/tests"],
             "init": ["mod_a"],
-            "valid_labs": ["embedded"],
         }
     )
     assert m.labs == [Path("/a/lab")]
     assert m.init == ["mod_a"]
-    assert m.valid_labs == ["embedded"]
 
 
 def test_host_preferences_accepts_selections_and_option_tables():
@@ -675,3 +673,55 @@ def test_coverage_overrides_unknown_key_fails():
         ValidationError, match=r"(?m)^overrides\.path\n\s+Extra inputs are not permitted"
     ):
         CoverageSettingsSpec.model_validate({"overrides": {"path": "x"}})
+
+
+def test_project_block_accepts_patterns():
+    from otto.models.settings import ProjectScopeSpec
+
+    spec = ProjectScopeSpec.model_validate(
+        {"lab_patterns": ["tech-.*"], "host_patterns": ["sensor-.*"]}
+    )
+    assert spec.lab_patterns == ["tech-.*"]
+
+
+def test_project_block_host_patterns_default_matches_all():
+    from otto.models.settings import ProjectScopeSpec
+
+    spec = ProjectScopeSpec.model_validate({"lab_patterns": ["a"]})
+    assert spec.host_patterns == [".*"]
+
+
+def test_project_block_invalid_regex_fails_at_validation():
+    from otto.models.settings import ProjectScopeSpec
+
+    with pytest.raises(ValidationError, match="lab_patterns"):
+        ProjectScopeSpec.model_validate({"lab_patterns": ["("]})
+
+
+def test_project_block_invalid_host_regex_fails_at_validation():
+    from otto.models.settings import ProjectScopeSpec
+
+    with pytest.raises(ValidationError, match="host_patterns"):
+        ProjectScopeSpec.model_validate({"lab_patterns": ["a"], "host_patterns": ["gw-["]})
+
+
+def test_project_block_regex_error_names_the_pattern():
+    """The message must carry the offending pattern; Repo adds the repo name."""
+    from otto.models.settings import ProjectScopeSpec
+
+    with pytest.raises(ValidationError, match=r"'gw-\['"):
+        ProjectScopeSpec.model_validate({"host_patterns": ["gw-["]})
+
+
+def test_project_block_absent_is_none():
+    from otto.models.settings import SettingsModel
+
+    model = SettingsModel.model_validate({"name": "x", "version": "0.1.0"})
+    assert model.project is None
+
+
+def test_project_block_unknown_key_fails():
+    from otto.models.settings import ProjectScopeSpec
+
+    with pytest.raises(ValidationError, match=r"(?m)^labs\n\s+Extra inputs are not permitted"):
+        ProjectScopeSpec.model_validate({"labs": ["a"]})

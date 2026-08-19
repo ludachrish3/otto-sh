@@ -624,6 +624,7 @@ async def _connect_cov_hosts() -> tuple[
     import re
 
     from ..config import all_hosts, get_repos
+    from ..config.scope import EmptySelectionError
     from ..coverage.config import get_cov_config, get_cov_repo
     from ..host import UnixHost
 
@@ -638,7 +639,16 @@ async def _connect_cov_hosts() -> tuple[
     hosts_pattern: str | None = cov_config.get("hosts")
     cov_pattern = re.compile(hosts_pattern) if hosts_pattern else None
 
-    cov_hosts = list(all_hosts(pattern=cov_pattern))
+    # Re-framed as a `_CovError`, which is what every caller's sync wrapper
+    # already prints without a traceback. The message is passed through
+    # verbatim — it explains fullmatch semantics and what to type instead, and
+    # this site knows nothing the reader needs that it does not. Wrapping the
+    # `list(...)`, not the call: `all_hosts` is a generator, so the refusal
+    # arrives at the first `next()`.
+    try:
+        cov_hosts = list(all_hosts(pattern=cov_pattern))
+    except EmptySelectionError as e:
+        raise _CovError(str(e)) from e
     unix_hosts = [h for h in cov_hosts if isinstance(h, UnixHost)]
     gcda_remote_dir = cov_config.get("gcda_remote_dir", "")
 
@@ -654,9 +664,10 @@ def _unix_only_pattern(unix_hosts: "list[UnixHost]") -> "re.Pattern[str]":
     raw ``[coverage].hosts`` pattern would therefore let ``clean_remote`` send
     an embedded board a bogus ``find ... -delete`` on a mixed lab. Scoping to
     the already-computed ``unix_hosts`` list closes that. Matching is
-    ``pattern.search(host.id)`` (see :meth:`OttoContext.all_hosts`), so each
-    alternative is fullmatch-anchored to keep a host id like ``"sprout"`` from
-    also matching a sibling ``"sprout2"``.
+    ``pattern.fullmatch(host.id)`` (see :meth:`OttoContext.all_hosts`); the
+    ``^``/``$`` anchors are therefore redundant and kept only because they say
+    out loud that a host id like ``"sprout"`` must not also select a sibling
+    ``"sprout2"``.
     """
     import re
 

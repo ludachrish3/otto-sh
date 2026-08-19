@@ -50,6 +50,54 @@ logger = logging.getLogger(__name__)
 otto_cov_key: pytest.StashKey[bool] = pytest.StashKey()
 
 
+_MAX_NAMED_HOSTS = 5
+"""How many ids the no-monitorable-hosts warning spells out before summarizing.
+
+The ids are what make the message actionable — the fix is per-host lab config,
+so "which host" IS the question — but this branch fires only when EVERY selected
+host is unmonitorable, which on a large fleet is a whole-lab misconfiguration
+and a wall of ids nobody reads.
+"""
+
+
+def _no_monitorable_hosts_message(walked: "list[Any]") -> str:
+    """Explain a ``--monitor`` run that has nothing to sample, per condition.
+
+    THE REGEX IS INNOCENT HERE, and saying otherwise was the defect. A
+    ``--monitor-hosts`` pattern that fullmatched nothing — or whose every match
+    a membership flag removed — raises
+    :class:`~otto.config.scope.EmptySelectionError` before this is reached, so
+    getting here with a pattern PROVES the pattern matched. The old label
+    (``no hosts matching "X"``) sent that reader off to widen a regex that was
+    already right, past the real cause: a host otto's suite collector cannot
+    sample. That collector reads metrics over a shell, so a non-Unix host — an
+    embedded RTOS console, whose single session cannot be shared with a metrics
+    poller — offers it nothing. (``otto monitor`` can also poll SNMP; the suite
+    collector cannot, so this message must not offer that route.)
+
+    The other reach of the same branch is an EMPTY walk, which a pattern can
+    also arrive at over an empty base set. That one must not mention the
+    pattern either — the lab held nothing to select.
+
+    Args:
+        walked: The hosts the selection yielded, monitorable or not.
+
+    Returns:
+        The one-line WARNING, ids included when there are any.
+    """
+    if not walked:
+        return "--monitor: no hosts available to monitor — collection disabled."
+    ids = sorted(host.id for host in walked)
+    shown = ", ".join(ids[:_MAX_NAMED_HOSTS])
+    if len(ids) > _MAX_NAMED_HOSTS:
+        shown += f" (+{len(ids) - _MAX_NAMED_HOSTS} more)"
+    return (
+        f"--monitor: {len(ids)} host(s) selected, but none of them can be monitored: "
+        f"{shown}. The suite collector samples metrics over a shell (Unix hosts) and "
+        "these offer none, so the selection is not the problem — collection disabled."
+    )
+
+
 class StabilityCollector:
     """Accumulates per-test pass/fail counts across multiple stability runs."""
 
@@ -326,6 +374,7 @@ class OttoPlugin:
             return
 
         from ..config import all_hosts
+        from ..config.scope import EmptySelectionError
         from ..host import UnixHost
         from ..monitor.db import MetricDB
         from ..monitor.export import build_live_export, build_session_metric_db, document_json
@@ -334,12 +383,25 @@ class OttoPlugin:
         from .suite import OttoSuite
 
         pattern = re.compile(self._monitor_hosts) if self._monitor_hosts else None
+        # The list() is INSIDE the guard, not just the call: `all_hosts` is a
+        # generator, so its empty-selection refusal (D6) is raised at the first
+        # `next()`. Unguarded it escapes a session-scoped fixture as a raw
+        # errored-fixture traceback through pytest-asyncio's internals, once
+        # per test in the session, for a one-line mistake in the invocation.
+        # `pytest.exit` because that IS the truthful outcome: the user asked
+        # for a monitored run over hosts this lab does not have, so the run
+        # stops with the error's own words and pytest's usage-error code
+        # rather than quietly running unmonitored (the pre-D6 behavior, which
+        # answered a question nobody asked) or failing every test.
+        try:
+            walked = list(all_hosts(pattern=pattern))
+        except EmptySelectionError as exc:
+            pytest.exit(f"--monitor-hosts: {exc}", returncode=pytest.ExitCode.USAGE_ERROR)
         # build_monitor_collector only handles UnixHost; embedded RTOS
         # targets don't expose the metric-collection commands it issues.
-        hosts = [h for h in all_hosts(pattern=pattern) if isinstance(h, UnixHost)]
+        hosts = [h for h in walked if isinstance(h, UnixHost)]
         if not hosts:
-            label = f'matching "{self._monitor_hosts}"' if self._monitor_hosts else ""
-            logger.warning(f"--monitor: no hosts {label} — collection disabled.")
+            logger.warning(_no_monitorable_hosts_message(walked))
             yield
             return
 

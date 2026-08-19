@@ -12,6 +12,7 @@ from otto.models.settings import (
     LabConfigSpec,
     LoggingConfigSpec,
     MonitorSettingsSpec,
+    ProjectScopeSpec,
     ReservationConfigSpec,
     SettingsModel,
 )
@@ -31,6 +32,7 @@ _SECTION_SPECS = {
     "coverage": (CoverageSettingsSpec, {"embedded"}),
     "docker": (DockerSettingsSpec, set()),
     "dependencies": (DependenciesSpec, set()),
+    "project": (ProjectScopeSpec, set()),
 }
 
 

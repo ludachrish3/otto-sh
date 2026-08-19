@@ -433,6 +433,14 @@ async def _up_and_register(
             compose_project=proj,
             resources=set(parent.resources),
         )
+        # A container's lab is its PARENT's lab, never the lab it is registered
+        # INTO: in a multi-lab session that lab is the composite ("a+b"), a name
+        # no component owns and no `lab_patterns` entry matches — so the very
+        # repo that declared this compose would stop seeing its own containers.
+        # The parent was built by the factory and carries the component name.
+        # An unattributed parent leaves this empty and falls through to
+        # ``Lab.add_host``'s backstop, which stays a pure backstop.
+        host.source_lab = parent.source_lab
         # Register in the lab so otto host <id> finds it. compose_up is
         # idempotent and re-registers on every call — replacing a placeholder
         # from register_declared_container_hosts, or a prior compose_up's
@@ -709,6 +717,10 @@ def register_declared_container_hosts(lab: Lab, repos: list[Repo]) -> int:
                         compose_project=get_user_compose_project(repo.name),
                         resources=set(parent.resources),
                     )
+                    # Same rule as compose_up's registration: the container
+                    # belongs to its parent's lab, not to whatever composite the
+                    # session assembled.
+                    placeholder.source_lab = parent.source_lab
                     if placeholder.id in lab.hosts:
                         continue
                     lab.add_host(placeholder)

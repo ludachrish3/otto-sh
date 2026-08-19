@@ -11,9 +11,24 @@ from tests._fixtures.sutrepo import make_sut_repo
 
 @pytest.fixture(autouse=True)
 def _fresh(monkeypatch):
+    """Reset bootstrap's caches, and un-register anything a test's init module registered.
+
+    The provider registries are plain module-level lists, so ``_isolate_registries``
+    (which walks ``otto.registry.Registry`` singletons) does not cover them —
+    ``tests/unit/host`` and ``tests/unit/project`` each snapshot them by hand for
+    the same reason. It matters more here than there: the D2 check below reads
+    those lists on EVERY ``bootstrap()``, so a provider leaked by one test, owned
+    by a repo name a later test happens to reuse, would fail that later test's
+    bootstrap for a repo it never registered anything from.
+    """
+    from otto.host import dev_tool as dev_tool_mod
+    from otto.host import product as product_mod
+
+    saved = (list(product_mod._PRODUCT_PROVIDERS), list(dev_tool_mod._DEV_TOOL_PROVIDERS))
     bs._reset()
     yield
     bs._reset()
+    product_mod._PRODUCT_PROVIDERS[:], dev_tool_mod._DEV_TOOL_PROVIDERS[:] = saved
 
 
 def _write_repo(tmp_path, *, broken_test: bool = False) -> str:
@@ -339,3 +354,127 @@ def test_composition_root_does_not_import_asyncio():
         "otto.errors.UNCONTAINABLE's docstring is stale — revisit whether "
         "asyncio.CancelledError should be listed."
     )
+
+
+# --- D2: a repo that registers providers must declare the labs it applies to ---
+
+
+def _write_provider_repo(tmp_path, stem: str, *, project: str = "", seam: str = "product") -> str:
+    """A repo whose init module registers a real provider on *seam*, plus *project* TOML.
+
+    The registration goes through ``register_*_provider`` rather than poking the
+    module-level list, because the owner name D2 reads is captured THERE, from
+    the ``registering_repo`` marker bootstrap sets around the init import. A
+    fixture appending to the list directly would carry ``None`` for the owner
+    and every check below would pass vacuously.
+    """
+    register = {
+        "product": "from otto.host.product import register_product_provider as register",
+        "dev_tool": "from otto.host.dev_tool import register_dev_tool_provider as register",
+    }[seam]
+    repo = make_sut_repo(
+        tmp_path / stem,
+        name=stem,
+        extra=f'libs = ["lib"]\ninit = ["{stem}_init"]\n' + textwrap.dedent(project),
+        files={f"lib/{stem}_init.py": f"{register}\n\nregister(lambda host: [])\n"},
+    )
+    return str(repo)
+
+
+def _assert_names_the_missing_declaration(msg: str, stem: str) -> None:
+    """The refusal must name the repo AND spell the escape hatch verbatim."""
+    assert stem in msg  # which repo — a fleet has a dozen
+    assert "lab_patterns" in msg
+    assert "[project]" in msg
+    assert 'lab_patterns = [".*"]' in msg  # the explicit match-all, copy-pasteable
+
+
+def test_provider_registering_repo_without_lab_patterns_fails_bootstrap(tmp_path, monkeypatch):
+    """D2: registering a provider makes ``[project] lab_patterns`` mandatory."""
+    monkeypatch.setenv("OTTO_SUT_DIRS", _write_provider_repo(tmp_path, "provnolabs"))
+    with pytest.raises(bs.BootstrapError) as exc:
+        bs.bootstrap()
+    _assert_names_the_missing_declaration(str(exc.value), "provnolabs")
+    # And the refusal is not a one-shot: a second call must not find a cached
+    # success left behind by the raising one.
+    with pytest.raises(bs.BootstrapError):
+        bs.bootstrap()
+
+
+def test_provider_repo_with_lab_patterns_bootstraps(tmp_path, monkeypatch):
+    """The declared case is the whole point — and the fixture really does register."""
+    repo = _write_provider_repo(
+        tmp_path, "provlabs", project='\n[project]\nlab_patterns = [".*"]\n'
+    )
+    monkeypatch.setenv("OTTO_SUT_DIRS", repo)
+    result = bs.bootstrap()
+    assert result.errors == []
+    assert [r.name for r in result.repos] == ["provlabs"]
+    # Without this the negative tests would pass just as well against a fixture
+    # whose init module registered nothing at all.
+    from otto.host.product import _PRODUCT_PROVIDERS
+
+    assert "provlabs" in {owner for _, owner in _PRODUCT_PROVIDERS}
+
+
+def test_providerless_repo_needs_no_declaration(tmp_path, monkeypatch):
+    """A repo that registers no provider owes no ``[project]`` block."""
+    monkeypatch.setenv("OTTO_SUT_DIRS", _write_repo(tmp_path))
+    assert bs.bootstrap().errors == []
+
+
+# An explicitly empty declaration is the SAME defect as a missing one: both
+# compile to a scope that fullmatches no lab, so the providers are dead code.
+EMPTY_LAB_SCOPES = [
+    ("emptylablist", "\n[project]\nlab_patterns = []\n"),
+    ("nolabkey", '\n[project]\nhost_patterns = [".*"]\n'),
+]
+
+
+@pytest.mark.parametrize(
+    ("stem", "project"), EMPTY_LAB_SCOPES, ids=[stem for stem, _ in EMPTY_LAB_SCOPES]
+)
+def test_explicitly_empty_lab_scope_fails_like_a_missing_one(tmp_path, monkeypatch, stem, project):
+    """``lab_patterns = []`` (and a ``[project]`` without the key) must refuse too."""
+    monkeypatch.setenv("OTTO_SUT_DIRS", _write_provider_repo(tmp_path, stem, project=project))
+    with pytest.raises(bs.BootstrapError) as exc:
+        bs.bootstrap()
+    _assert_names_the_missing_declaration(str(exc.value), stem)
+
+
+def test_provider_repo_with_empty_host_patterns_fails(tmp_path, monkeypatch):
+    """``host_patterns = []`` admits no host — distinct from the ``[".*"]`` default."""
+    project = '\n[project]\nlab_patterns = [".*"]\nhost_patterns = []\n'
+    monkeypatch.setenv(
+        "OTTO_SUT_DIRS", _write_provider_repo(tmp_path, "emptyhosts", project=project)
+    )
+    with pytest.raises(bs.BootstrapError) as exc:
+        bs.bootstrap()
+    msg = str(exc.value)
+    assert "emptyhosts" in msg
+    assert "host_patterns" in msg  # the axis at fault, not the lab one
+
+
+def test_dev_tool_provider_repo_needs_lab_patterns_too(tmp_path, monkeypatch):
+    """The dev-tool registry is a SEPARATE list — a check reading only products passes above."""
+    monkeypatch.setenv(
+        "OTTO_SUT_DIRS", _write_provider_repo(tmp_path, "devtoolrepo", seam="dev_tool")
+    )
+    with pytest.raises(bs.BootstrapError) as exc:
+        bs.bootstrap()
+    _assert_names_the_missing_declaration(str(exc.value), "devtoolrepo")
+
+
+def test_providerless_repo_may_declare_an_empty_scope(tmp_path, monkeypatch):
+    """The check is gated on what a repo REGISTERED, never on the shape of its config.
+
+    A repo with no providers is free to scope itself to nothing — that is a repo
+    saying "none of these labs are mine", which costs nobody anything.
+    """
+    repo = make_sut_repo(
+        tmp_path / "quiet",
+        name="quiet",
+        extra="[project]\nlab_patterns = []\nhost_patterns = []\n",
+    )
+    monkeypatch.setenv("OTTO_SUT_DIRS", str(repo))
+    assert bs.bootstrap().errors == []

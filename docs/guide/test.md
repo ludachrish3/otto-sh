@@ -306,8 +306,16 @@ suite name on the command line (when a suite name is given at all — see
   `otto monitor <path>`.  Implies `--monitor`.
 
 `--monitor-hosts REGEX`
-: Restrict `--monitor` to host IDs matching this regex (`re.search`).
-  Implies `--monitor`.
+: Restrict `--monitor` to host IDs this regex FULLY matches
+  (`re.fullmatch`): `sensor` does not select `sensor-1` — write `sensor.*`.
+  Implies `--monitor`.  A regex that matches none of the hosts the run may
+  walk **stops the run** before any test executes, with the pattern, the size
+  of the set it was matched against, and the wildcard to add — you asked for a
+  monitored run over hosts that are not there, and running unmonitored would
+  answer a different question.  Hosts that matched but cannot be sampled (an
+  embedded console has no shell for the collector to read) are a different
+  thing: that logs a warning naming them, disables collection, and lets the
+  tests run.
 
 ## Markers
 

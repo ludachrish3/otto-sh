@@ -35,3 +35,4 @@ from .state import CleanlinessKind as CleanlinessKind
 from .state import CleanlinessReport as CleanlinessReport
 from .state import InstallState as InstallState
 from .state import ProjectStatus as ProjectStatus
+from .state import RepoScope as RepoScope

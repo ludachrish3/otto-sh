@@ -38,6 +38,81 @@ class InstallState(enum.Enum):
     UNINSTALLED = "uninstalled"
 
 
+@dataclass(frozen=True)
+class RepoScope:
+    """What per-project scoping decided about one repo, in display terms.
+
+    The rendering projection of :class:`otto.config.scope.ProjectScope` --
+    sorted, stringly, and without the compiled patterns -- so that a status
+    row can be printed from the report alone. It is a projection rather than
+    the verdict itself for two reasons. This module is deliberately free of
+    otto imports (see the module docstring). And the verdict's ``universe`` is
+    a resolve-time snapshot that a live fleet walk must never iterate: a
+    display type, reachable only from a finished report, is one no walk can
+    pick it up from by accident.
+
+    >>> from otto.project.state import RepoScope
+    >>> RepoScope(applicable=False, loaded_labs=("bench", "floor")).universe
+    ()
+    """
+
+    applicable: bool
+    """Whether any loaded lab applies to this repo.
+
+    False is D3's exclusion -- the repo DECLARED labs and none of them was
+    loaded -- which is why it is reported rather than implied by an empty
+    :attr:`applicable_labs`. An undeclared repo applies to everything (the
+    whole-lab fallback), so silence and exclusion must not render alike.
+    """
+
+    usable: bool = True
+    """Whether this run's walks acted on the repo at all -- D3's skip, either way.
+
+    NOT a synonym for :attr:`applicable`, and the pair is what makes the two
+    skipped rows tellable apart. A repo can apply to a loaded lab and still be
+    left out, because its ``host_patterns`` match no host there; its fleet is
+    as empty as an excluded repo's, but its ``-l`` and its ``lab_patterns`` are
+    right and a row blaming the labs would send the reader to change them. So
+    ``applicable and not usable`` is exactly the host-starved case, and
+    ``not applicable`` is exactly the excluded one.
+
+    Computed once, from :func:`~otto.config.scope.unusable_scope` -- the same
+    predicate the walks skip on and the current repo aborts on -- rather than
+    re-derived here from the other fields, which would put D3's condition in a
+    third place.
+    """
+
+    loaded_labs: "tuple[str, ...]" = ()
+    """Every lab this run loaded, in load order -- the "not applicable to WHAT" half.
+
+    Carried even when the repo is applicable, because the row that needs it
+    most is the one that has nothing else to say: "not applicable" without the
+    labs reads as a bug in otto rather than as the wrong ``-l``.
+    """
+
+    applicable_labs: "tuple[str, ...]" = ()
+    """The loaded labs this repo does apply to, sorted (empty when it applies to none)."""
+
+    universe: "tuple[str, ...]" = ()
+    """Host ids the repo targeted AT RESOLVE TIME, sorted -- display only.
+
+    A snapshot, never a walk list: fleet iteration re-derives membership per
+    host so a container that joins after resolution is scoped correctly. It is
+    here because ``status --full`` is where an operator asks "which hosts does
+    this repo even mean", and answering that from anything else would mean a
+    second membership rule.
+    """
+
+    host_patterns: "tuple[str, ...]" = ()
+    """The declared ``host_patterns``, as written (empty when undeclared).
+
+    Carried for the row that has nothing else to say: a repo left out because
+    its patterns matched no host is unactionable without the patterns that
+    did not match, exactly as an excluded repo's row is unactionable without
+    the loaded labs.
+    """
+
+
 @dataclass
 class ProjectStatus:
     """Lab-level aggregate plus the per-repo detail behind it.
@@ -53,7 +128,23 @@ class ProjectStatus:
     """The lab's answer across every counted repo."""
 
     repos: "dict[str, InstallState]" = field(default_factory=dict)
-    """Per-repo state, keyed by repo name; counted repos only."""
+    """Per-repo state, keyed by repo name; counted and applicable repos only."""
+
+    scoping: "dict[str, RepoScope]" = field(default_factory=dict)
+    """Per-repo scoping verdict, keyed by repo name, in walk order.
+
+    A SEPARATE MAPPING FROM :attr:`repos`, not a richer value in it, because a
+    repo this run does not apply to has no install state at all -- otto never
+    asked it, and asking would have contacted hosts outside its fleet of
+    interest. Folding the two would force either a fabricated state or an
+    ``InstallState | None`` that every existing reader would have to learn.
+
+    Empty ONLY when nothing was resolved -- a library context, an unavailable
+    bootstrap. Not the whole-lab fallback, which is a different thing and does
+    populate this: an undeclared repo still gets a verdict (it applies to every
+    loaded lab and targets every host), so a lab where no repo declared
+    ``[project]`` reports a row per repo rather than nothing at all.
+    """
 
 
 class Cleanliness(enum.Enum):

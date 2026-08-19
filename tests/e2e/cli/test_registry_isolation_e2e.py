@@ -41,6 +41,7 @@ GLOBAL_GUARDS = (
     "_reset_otto_context",
     "_restore_otto_logger_state",
     "_restore_bootstrap_state",
+    "_restore_provider_registries",
     "_coverage_preinit_failure_is_loud",
 )
 

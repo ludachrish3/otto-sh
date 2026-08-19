@@ -152,7 +152,7 @@ class JsonFileLabRepository:
 
         for idx, host_data in enumerate(matching):
             try:
-                host = create_host_from_dict(host_data, preferences=preferences)
+                host = create_host_from_dict(host_data, preferences=preferences, lab_name=name)
                 lab.add_host(host)
                 lab.resources.update(host.resources)
             except Exception as e:  # noqa: PERF203 — per-item resilience

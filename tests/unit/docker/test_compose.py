@@ -702,6 +702,58 @@ def test_placeholder_id_collision_with_different_host_is_rejected(tmp_path):
     assert lab.hosts[placeholder.id] is existing
 
 
+def _merged_lab_with_stamped_parent() -> Lab:
+    """A COMPOSITE lab ("a+b") whose docker-capable parent came from component "a".
+
+    The hostile condition, injected rather than inherited: the lab a container
+    is registered into no longer names any single component, so a container
+    stamped from the lab (``Lab.add_host``'s backstop) says "a+b" — a name no
+    ``lab_patterns`` entry fullmatches.
+    """
+    lab_a = Lab(name="a")
+    parent = _wire_parent_mock(_capable_host())
+    parent.source_lab = "a"
+    lab_a.add_host(parent)
+
+    merged = lab_a + Lab(name="b")
+    assert merged.name == "a+b"
+    return merged
+
+
+def test_declared_container_inherits_its_parents_lab_not_the_composite(tmp_path):
+    """A placeholder container is attributed to its parent's lab, not the merge's name."""
+    repo = _make_repo(tmp_path)
+    lab = _merged_lab_with_stamped_parent()
+
+    assert register_declared_container_hosts(lab, [repo]) == 1
+
+    (container,) = [h for h in lab.hosts.values() if isinstance(h, DockerContainerHost)]
+    assert container.source_lab == "a"
+
+
+@pytest.mark.asyncio
+async def test_compose_up_container_inherits_its_parents_lab_not_the_composite(tmp_path):
+    """Same rule on the live registration path: parent's lab wins over the composite."""
+    repo = _make_repo(tmp_path)
+    lab = _merged_lab_with_stamped_parent()
+    parent = lab.hosts["pepper_seed"]
+
+    async def exec_side_effect(cmd, *_, **__):
+        if "label=com.docker.compose.project=" in cmd and "service=" not in cmd:
+            return _ok("xyz\n")  # stack IS up
+        if "config" in cmd and "--services" in cmd:
+            return _ok("api\n")
+        if "label=com.docker.compose.project=" in cmd and "service=" in cmd:
+            return _ok("abc111\n")
+        return _ok()
+
+    parent.exec.side_effect = exec_side_effect  # type: ignore[union-attr]
+
+    hosts = await compose_up(repo, lab, build=False)
+
+    assert hosts["api"].source_lab == "a"
+
+
 def _make_bare_repo(tmp: Path, *, name: str = "bare1") -> Repo:
     """Build a Repo with NO [[docker.composes]] entries."""
     return Repo(sut_dir=make_sut_repo(tmp / name, name=name))

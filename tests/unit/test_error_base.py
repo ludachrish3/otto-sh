@@ -19,9 +19,9 @@ proves a class keeps its stdlib root. But nothing made a NEW class appear in
 ``CASES``, and a ``CASES`` row declaring bare ``Exception`` asserts nothing —
 every exception is an ``Exception``. So ``class FooError(OttoError)`` passed
 both while being uncatchable by any ``except ValueError`` in a caller's code,
-and ``(FooError, Exception)`` "fixed" it without changing anything. Seven
+and ``(FooError, Exception)`` "fixed" it without changing anything. Eight
 classes genuinely have no stdlib root; they are now listed by name, which is
-what lets the assertion fail for the eighth.
+what lets the assertion fail for the ninth.
 
 This file owns the RAISES half of the convention. The RETURNS half — public
 API returns a Result-family value, never a bare ``Status`` — is gated by
@@ -33,8 +33,9 @@ import builtins
 
 import pytest
 
-from otto.bootstrap import BootstrapError, DependencyError
+from otto.bootstrap import BootstrapError, DependencyError, ProjectScopeError
 from otto.cli.invoke import LabContextError
+from otto.config.scope import EmptySelectionError
 from otto.coverage.capture.gitio import (
     GitCommandFailedError,
     GitMissingError,
@@ -82,6 +83,8 @@ from tests._fixtures.paths import PROJECT_ROOT
 CASES: list[tuple[type[BaseException], type[BaseException]]] = [
     (BootstrapError, Exception),
     (DependencyError, Exception),
+    (ProjectScopeError, Exception),
+    (EmptySelectionError, ValueError),
     (LabContextError, Exception),
     (GitUnavailableError, RuntimeError),
     (GitMissingError, RuntimeError),
@@ -133,6 +136,7 @@ DELIBERATELY_ROOTLESS: frozenset[type[BaseException]] = frozenset(
         # asserts nothing at all.
         BootstrapError,
         DependencyError,
+        ProjectScopeError,
         LabContextError,
         LabRepositoryError,
         LabNotFoundError,
