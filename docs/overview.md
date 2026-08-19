@@ -232,6 +232,7 @@ Monitoring can also be started from within a test suite using
 ## Where to go next
 
 - {doc}`getting-started` — Installation and first steps
+- {doc}`installation` — Air-gapped installs, team setup, offline docs
 - {ref}`team-setup-checklist` — One-time team setup (host source, reservations, libs)
 - {doc}`guide/index` — Detailed guides for each CLI command
 - {doc}`guide/run/options` — Shared options classes for instructions and suites

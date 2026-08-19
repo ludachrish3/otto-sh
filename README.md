@@ -23,15 +23,18 @@ data.
 
 ## Installation
 
-Otto requires **Python 3.10** or later. Install the latest release from PyPI:
+Otto requires **Python 3.10** or later. Install the latest release from PyPI into a
+virtual environment:
 
 ```bash
+python3 -m venv .venv
+source .venv/bin/activate
 pip install otto-sh
 ```
 
 The distribution is named `otto-sh`; the CLI command it installs is `otto`.
 For development installs, building from a wheel, GitHub-release artifacts, and
-air-gapped installation, see [docs/getting-started.md](docs/getting-started.md).
+air-gapped installation, see [docs/installation.md](docs/installation.md).
 
 ## Key concepts
 
@@ -235,6 +238,7 @@ The same content lives under `docs/` and can be built locally with `make docs`
 — the generated HTML is written to `docs/_build/html/`. Key entry points:
 
 - `docs/getting-started.md` — installation and first steps
+- `docs/installation.md` — air-gapped installs, team setup, offline docs
 - `docs/guide/` — detailed guides for each CLI command
 - `docs/guide/setup/lab-config.md` — full lab/host schema
 - `docs/guide/coverage.md` — coverage collection & reports (GCC, clang, embedded)

@@ -5,154 +5,21 @@ and running your first command.
 
 ## Installation
 
-Otto requires **Python 3.10** or later.
-
-### From PyPI
-
-For most users this is all you need — install the latest release from PyPI:
+Otto requires **Python 3.10** or later. Install the latest release from PyPI into a
+virtual environment:
 
 ```bash
+python3 -m venv .venv
+source .venv/bin/activate
 pip install otto-sh
 ```
 
-The distribution is named `otto-sh`; the command it installs is `otto`. To
-install an exact version, pin it: `pip install otto-sh==0.5.4`.
+The distribution is named `otto-sh`; the command it installs is `otto`.
 
-### From source (development)
-
-If you have a clone of the otto repository and an internet connection, use
-uv to install otto along with its dev dependencies (pytest, sphinx, ruff,
-etc.):
-
-```bash
-uv sync           # installs otto + runtime deps + dev deps
-```
-
-Dev dependencies are only needed for running tests, building docs, and
-linting.  They are **not** included in the otto wheel and are not needed
-on machines that only run otto.
-
-### From a wheel (internet-connected)
-
-Build a wheel and install it.  The wheel only declares runtime
-dependencies — dev tools like pytest and sphinx are excluded.  The web
-frontends (monitor dashboard, coverage report) ship inside the wheel, so the
-build refuses to run until they exist — build them first (needs Node, see
-`.nvmrc`):
-
-```bash
-make web-install && make web       # builds the web frontends the wheel embeds
-uv build --wheel                   # produces dist/otto_sh-<version>-py3-none-any.whl
-pip install dist/otto_sh-*.whl     # installs otto + downloads runtime deps from PyPI
-```
-
-### From a GitHub release
-
-Each tagged release on
-[GitHub Releases](https://github.com/ludachrish3/otto-sh/releases)
-attaches the same `.whl` and `.tar.gz` artifacts that are published to PyPI.
-This is useful when you cannot reach PyPI but can reach GitHub, or when you
-want to pin to an exact build.
-
-Download the wheel for the version you want and install it directly:
-
-```bash
-VERSION=0.3.0
-curl -LO "https://github.com/ludachrish3/otto-sh/releases/download/v${VERSION}/otto_sh-${VERSION}-py3-none-any.whl"
-pip install "otto_sh-${VERSION}-py3-none-any.whl"
-```
-
-Or with the GitHub CLI:
-
-```bash
-gh release download v0.3.0 --repo ludachrish3/otto-sh --pattern '*.whl'
-pip install otto_sh-*.whl
-```
-
-`pip` will still need internet access to fetch otto's runtime dependencies
-from PyPI.  For a fully offline install, follow the air-gapped instructions
-below using the downloaded wheel as the starting point.
-
-### Air-gapped installation
-
-Otto is designed to work on air-gapped networks.  Since `pip install` and
-`uv sync` cannot reach PyPI on an isolated host, you must pre-download all
-wheel files on an internet-connected machine and transfer them to the
-target.
-
-#### Step 1: Build the otto wheel (internet-connected machine)
-
-The air-gapped host installs the web frontends from the wheel — they cannot
-be fetched or rebuilt there.  The build backend enforces this: it refuses to
-produce a wheel until `make web` has built them (needs Node, see `.nvmrc`):
-
-```bash
-make web-install && make web
-uv build --wheel          # produces dist/otto_sh-<version>-py3-none-any.whl
-```
-
-#### Step 2: Download all runtime dependency wheels
-
-Use `pip download` to fetch every dependency as a wheel file.  You must
-target the same Python version and platform as the air-gapped host:
-
-```bash
-pip download \
-    dist/otto_sh-*.whl \
-    --dest ./wheels \
-    --python-version 3.10 \
-    --platform manylinux2014_x86_64 \
-    --only-binary :all:
-```
-
-This places the otto wheel **and** all of its transitive runtime
-dependencies into `./wheels/`.  Dev dependencies (pytest, sphinx, etc.)
-are **not** included because they are not declared in the wheel's metadata.
-
-```{note}
-Three of otto's transitive dependencies ship **platform-specific binary
-wheels**: `cryptography`, `cffi`, and `pydantic-core`.  The `--platform`
-and `--python-version` flags must match the target host.  Common platform
-tags:
-
-- `manylinux2014_x86_64` — most Linux x86-64 systems
-- `manylinux2014_aarch64` — Linux ARM64
-- `macosx_11_0_arm64` — macOS Apple Silicon
-- `win_amd64` — Windows 64-bit
-
-If your air-gapped host runs a different architecture, adjust accordingly.
-```
-
-Alternatively, you can export a pinned requirements file first:
-
-```bash
-uv export --no-dev --no-hashes > requirements.txt
-pip download -r requirements.txt --dest ./wheels --only-binary :all:
-cp dist/otto_sh-*.whl ./wheels/
-```
-
-#### Step 3: Transfer the wheels directory
-
-Copy the entire `wheels/` directory to the air-gapped host using whatever
-transfer method is available (USB drive, SCP to a bastion, shared
-filesystem, etc.).
-
-#### Step 4: Install from the local wheels directory
-
-On the air-gapped host:
-
-```bash
-pip install --no-index --find-links ./wheels/ otto-sh
-```
-
-Or with uv:
-
-```bash
-uv pip install --no-index --find-links ./wheels/ otto-sh
-```
-
-The `--no-index` flag tells the installer to look *only* in `./wheels/`
-and never contact PyPI.
+Setting up a team, working on an air-gapped network, or managing otto alongside your
+project's other Python dependencies? {doc}`installation` covers the recommended
+`pyproject.toml`/uv setup, downloading wheels, internal package indexes, and reading
+these docs offline.
 
 ### Verifying the installation
 
@@ -173,73 +40,6 @@ source ~/.bash_completions/otto.sh
 
 To make tab completion available in every new shell, add those two lines to
 your `~/.bashrc` (or `~/.profile`) so they run automatically at login.
-
-### Dependencies
-
-Otto's direct runtime dependencies (declared in `pyproject.toml` under
-`[project] dependencies`):
-
-| Package | Min version | Purpose |
-| ------- | ----------- | ------- |
-| `aioftp` | 0.27.2 | Async FTP client for file transfers |
-| `aiosqlite` | 0.21.0 | Async SQLite for persisting monitor metrics |
-| `asyncssh` | 2.22.0 | SSH connections to remote hosts |
-| `fastapi` | 0.135.1 | Monitor dashboard web server |
-| `pydantic` | 2.6 | Boundary validation models for lab JSON, host records, and settings |
-| `pydantic-settings` | 2.2 | Environment-variable settings (`OTTO_*`) |
-| `pysnmp` | 7.1.0 | Async SNMP manager for separate-channel host monitoring |
-| `pytest` | 9.1.1 | Test runner; otto imports user test files at runtime |
-| `pytest-asyncio` | 1.4.0 | Async test support for pytest |
-| `pytest-timeout` | 2.3.1 | Per-test timeouts for `otto test` (`@pytest.mark.timeout`) |
-| `rich` | 15.0.0 | Terminal formatting, panels, and tables |
-| `sse-starlette` | 3.3.3 | Server-sent events for live dashboard updates |
-| `starlette` | 0.52.1 | ASGI request types used directly by the monitor server |
-| `telnetlib3` | 4.0.1 | Async Telnet client for telnet-based hosts |
-| `tomli` | 2.4.0 | TOML parser for `.otto/settings.toml` |
-| `typer` | 0.26 | CLI framework (builds `otto run`, `otto test`, etc.) |
-| `typing-extensions` | 4.12.0 | Backport of `typing.override` (PEP 698) for Python < 3.12 |
-| `uvicorn` | 0.42.0 | ASGI server for the monitor dashboard |
-
-These pull in additional transitive dependencies (approximately 25 packages
-total at runtime).  Notable transitive dependencies with **native (C/Rust)
-extensions** that require platform-specific wheels:
-
-| Package | Pulled in by | Notes |
-| ------- | ------------ | ----- |
-| `cryptography` | asyncssh | SSH encryption; links against OpenSSL |
-| `cffi` | cryptography | C FFI bindings |
-| `pydantic-core` | pydantic | Rust-based data validation |
-
-Dev dependencies (pytest, sphinx, ruff, pyinstrument, etc.) are declared
-in the `[dependency-groups] dev` section of `pyproject.toml` and are **not**
-included in the otto wheel.  They are only installed by `uv sync` for
-development purposes.
-
-### Air-gapped considerations
-
-Beyond installation, keep the following in mind when running otto without
-internet access:
-
-Monitor dashboard assets
-: The monitor's web dashboard bundles all static assets (HTML, CSS,
-  JavaScript, and Plotly.js) inside the otto package itself.  **No CDN or
-  external network access is needed** to serve the dashboard.
-
-SSH host key verification
-: `asyncssh` will attempt to verify SSH host keys.  On first connection
-  to a new host, you may need to pre-populate `~/.ssh/known_hosts` or
-  configure your hosts to skip strict host key checking, depending on
-  your security requirements.
-
-Log retention
-: Otto stores logs and artifacts under the `--xdir` directory.  On
-  isolated systems with limited disk, use the `--log-days` setting
-  (default: 30 days) to control automatic cleanup.
-
-Python availability
-: Ensure the air-gapped host has Python 3.10+ installed.  If the system
-  Python is older, you will need to transfer a compatible Python build as
-  well.
 
 ## Project setup
 

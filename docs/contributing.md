@@ -520,6 +520,7 @@ change shows up in the docs on the next build with zero manual work.
 docs/
 ├── overview.md          # Project overview
 ├── getting-started.md   # Installation and first steps
+├── installation.md      # Install flows: air-gapped, teams, offline docs
 ├── guide/               # Narrative user guides (Markdown)
 ├── library/             # Using otto as a library + recipes (Markdown)
 ├── architecture/        # How otto is built and why (Markdown)

@@ -6,6 +6,7 @@ otto
 
    overview
    getting-started
+   installation
    guide/index
    library/index
    architecture/index

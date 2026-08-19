@@ -66,6 +66,74 @@ jobs:
           name: dist
           path: dist/
 
+  # Every release attaches two documentation tarballs so otto's docs can be
+  # read inside an air gap — the stock HTML build, and a copy whose external
+  # documentation links are rewritten to relative sibling paths. Both names
+  # and the `otto/` top-level directory are promised by the "Offline
+  # documentation" section of docs/installation.md.
+  docs:
+    name: Build docs tarballs
+    needs: guard
+    if: needs.guard.outputs.is_release == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - name: Set up Node
+        uses: actions/setup-node@v7.0.0
+        with:
+          node-version-file: .nvmrc
+
+      - uses: astral-sh/setup-uv@v10.0.1
+        with:
+          enable-cache: true
+
+      # graphviz `dot` renders the architecture-docs diagrams; ubuntu-latest
+      # preinstalls it today, but that set is not contractual.
+      - run: sudo apt-get install -y graphviz
+
+      - run: uv python install 3.10
+
+      # The prerequisite chain below mirrors ci.yml's `docs` job, which is the
+      # proven wiring for a docs build on a GitHub runner: scripts/
+      # capture_docs_media.py (hooked from docs/conf.py on every HTML build)
+      # drives a real MonitorServer that refuses to start without a built
+      # React dashboard, and headless Chromium takes the screenshots.
+      - name: Build the React dashboard (needed by capture_docs_media.py)
+        run: make web
+
+      # --with-deps apt-installs the browser's runtime libraries, so this job
+      # carries the same third-party-apt-source exposure as ci.yml's docs and
+      # dashboard-e2e jobs (issue #129) and takes the same guard.
+      - run: |
+          scripts/ci_drop_unused_apt_sources.sh
+          uv run playwright install --with-deps chromium
+
+      # Same flags as the nox `docs` session's HTML build (-E fresh env, -a
+      # write all, -W warnings are errors). The session's lint gates and
+      # doctests are not repeated here — ci.yml already ran them on this
+      # commit; this job only needs the artifact.
+      - name: Build HTML docs
+        run: uv run sphinx-build -E -a -W -b html docs/ docs/_build/html
+
+      - name: Derive the offline (relative-link) copy
+        run: uv run python scripts/relativize_docs_links.py docs/_build/html docs/_build/offline
+
+      # --transform renames the archive's top-level directory to `otto`, the
+      # sibling-directory name docs/installation.md's Option B bundle expects.
+      - name: Pack tarballs
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          V="${TAG#v}"
+          tar -C docs/_build -czf "otto-docs-${V}.tar.gz" --transform "s,^html,otto," html
+          tar -C docs/_build -czf "otto-docs-offline-${V}.tar.gz" --transform "s,^offline,otto," offline
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: docs-tarballs
+          path: otto-docs-*.tar.gz
+
   publish:
     name: Publish to PyPI
     needs: [guard, build]
@@ -86,7 +154,7 @@ jobs:
 
   github-release:
     name: Create GitHub Release
-    needs: [guard, build]
+    needs: [guard, build, docs]
     if: needs.guard.outputs.is_release == 'true'
     runs-on: ubuntu-latest
     permissions:
@@ -101,6 +169,13 @@ jobs:
         with:
           name: dist
           path: dist/
+
+      # No `path:` — the tarballs land in the workspace root, where the
+      # `otto-docs-*.tar.gz` glob below picks them up.
+      - name: Download docs tarballs
+        uses: actions/download-artifact@v8
+        with:
+          name: docs-tarballs
 
       - name: Generate release notes with git-cliff
         uses: orhun/git-cliff-action@v4
@@ -119,4 +194,4 @@ jobs:
             --title "$TAG" \
             --notes-file RELEASE_NOTES.md \
             --verify-tag \
-            dist/*.whl dist/*.tar.gz
+            dist/*.whl dist/*.tar.gz otto-docs-*.tar.gz

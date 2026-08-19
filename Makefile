@@ -1046,6 +1046,9 @@ docs-lint:
 	@$(SAY) "doc8 + markdown-doctest lint (docs/)"
 	@uv run doc8 docs/
 	@uv run python scripts/lint_markdown_doctests.py docs/
+	@$(SAY) "version-literal + dependency-table gates (docs/)"
+	@uv run python scripts/lint_docs_versions.py docs/
+	@uv run python scripts/check_docs_dependency_table.py
 
 docs-html: docs/_build/html/index.html
 

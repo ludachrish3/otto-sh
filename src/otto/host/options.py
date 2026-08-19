@@ -87,9 +87,9 @@ class SshOptions:
 
     known_hosts: Any = None
     """asyncssh known_hosts. ``None`` disables host-key verification
-    (otto's historical default). Passed to asyncssh as-is — otto does not
-    ``~``-expand this value — so a path string must be absolute (a list of
-    keys is also accepted)."""
+    (otto's historical default). Passed to asyncssh as-is; asyncssh expands
+    ``~`` itself when it reads the file, so ``"~/.ssh/known_hosts"`` resolves
+    against the caller's home directory (a list of keys is also accepted)."""
 
     connect_timeout: float | None = None
     """Seconds to wait for the TCP + SSH handshake. ``None`` = asyncssh default."""

@@ -274,7 +274,7 @@ otto for a team:
    `otto run smoke` share a `--message` flag out of the box. `otto init --all`
    scaffolds everything with no prompts; bare `otto init` asks per missing
    area; `otto init --schemas` also *refreshes* the generated schemas after an
-   otto upgrade. See {doc}`../../getting-started` and {doc}`../cli-reference`.
+   otto upgrade. See {doc}`../../installation` and {doc}`../cli-reference`.
 2. **Choose a host source** — the built-in `json` source (commit `lab.json`
    under a `labs` directory) is the default; point `[lab] backend` at a CMDB or
    inventory API if you have one. See {doc}`host-database`.

@@ -17,6 +17,20 @@ version = release
 # and noisy. The Read the Docs version selector already reports exactly which
 # version (latest/stable/tag) the reader is on, so keep the title version-free.
 html_title = f"{project} documentation"
+# Otto version numbers in prose and code fences are never hand-written — pages
+# use the %OTTO_VERSION% token and this source-read hook replaces it with the
+# release version (bump-my-version keeps that identical to the latest tag).
+# A source-read hook rather than MyST's substitution extension because the
+# token must substitute inside fenced code blocks (`pip install otto-sh==X`),
+# where MyST substitutions do not reach. scripts/lint_docs_versions.py bans
+# hand-written version literals so the token stays the only spelling.
+OTTO_VERSION_TOKEN = "%OTTO_VERSION%"  # noqa: S105 — a text placeholder, not a credential
+
+
+def _substitute_version_token(app, docname, source):  # noqa: ARG001 — Sphinx event signature
+    source[0] = source[0].replace(OTTO_VERSION_TOKEN, release)
+
+
 # Treat all unresolved cross-references as errors.
 nitpicky = True
 
@@ -446,6 +460,7 @@ def _generate_docs_media(app):
 
 
 def setup(app):
+    app.connect("source-read", _substitute_version_token)
     app.connect("builder-inited", _generate_docs_media)
     app.connect("missing-reference", _resolve_short_types)
     app.connect("missing-reference", _resolve_internal_aliases)
