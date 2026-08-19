@@ -193,6 +193,26 @@ exclude = ["tests", "typings", "docs", "build", "dist"]
 [tool.ty.rules]
 all = "error"
 
+# Demoted 2026-08-18, on the bump that introduced it (present in 0.0.71 and
+# 0.0.72; absent in 0.0.66). 52 hits across 30 files in src/. The rule flags
+# returning a gradual (`Any`/`Unknown`) value from a function with a declared
+# return type. Here that is the DESIGN, not a defect: `Result.value` is typed
+# `Any` on purpose — it is the payload slot a host verb fills with whatever
+# that verb returns (a str, a `list[CommandResult]`, a `Link`) — so every
+# accessor that reads it (`Results.__getitem__`, `.only`, `.first_failure`)
+# is structurally unsound to this rule and always will be. The rest are the
+# same shape at other gradual boundaries: `getattr()` walks over Click/Typer
+# contexts, and untyped third-party returns (asyncssh, docker).
+#
+# Not silenced blind — 5 of the 52 sites already carried mypy's
+# `# type: ignore[no-any-return]`, i.e. this exact class was triaged and
+# accepted here before ty could see it; ty does not read those comments.
+#
+# What would earn it back: making `Result` generic (`Result[T]`) so the payload
+# carries its type. That is a real improvement and a breaking API change across
+# ~30 files — its own workstream, not a dev-dependency bump.
+unsound-return-statement = "ignore"
+
 [tool.pytest.ini_options]
 testpaths = [
     "tests/unit",
