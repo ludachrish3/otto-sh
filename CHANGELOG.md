@@ -5,6 +5,53 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.5] - 2026-08-20
+
+### Added
+
+- **BREAKING** **project**: per-project lab/host scoping — fleet-of-interest universes
+- **project**: status --full shows the lab's other axis, and is_uninstalled says it plainly
+- **project**: cleanup takes the lab's own leftovers off, and is_clean says so
+- **project**: first-party project actions, default instructions, and ensure_* fixtures
+
+
+### Dependencies
+
+- **deps-dev**: bump @biomejs/biome from 2.5.7 to 2.5.8 in /web
+- **deps-dev**: bump nox from 2026.7.11 to 2026.8.10
+- **deps-dev**: demote unsound-return-statement, which this ty bump adds
+- **deps-dev**: bump ty from 0.0.66 to 0.0.72
+- **deps-dev**: bump vite from 8.2.0 to 8.2.1 in /web
+- **deps-dev**: bump ast-grep-cli from 0.45.0 to 0.45.1
+- **deps-dev**: bump @testing-library/user-event in /web
+- **deps**: bump sse-starlette from 3.4.6 to 3.4.8
+- **deps-dev**: bump bump-my-version from 1.5.0 to 1.5.1
+- **deps**: bump @xyflow/react from 12.11.2 to 12.11.3 in /web
+- **deps**: bump pydantic-settings from 2.14.2 to 2.15.0
+- **deps**: bump shiki from 4.3.1 to 4.4.3 in /web
+- **deps-dev**: bump knip from 6.31.0 to 6.32.2 in /web
+- **deps-dev**: bump @types/node from 26.1.2 to 26.2.0 in /web
+- **deps-dev**: bump hypothesis from 6.165.1 to 6.165.3
+- **deps**: bump starlette from 1.4.0 to 1.6.0
+- **deps-dev**: bump pytest-playwright from 0.8.0 to 0.9.0
+- **deps-dev**: bump ruff from 0.16.1 to 0.16.2
+- **deps**: take setup-uv 10.0.1, not 10.0.0 — the manifest retry is the point
+- **deps**: bump astral-sh/setup-uv from 9.0.0 to 10.0.0
+
+
+### Documentation
+
+- **install**: a dedicated installation page, and the gates that keep it true
+- **cov**: the store schema page is a snapshot, and it says v6
+- **spec**: first-party project actions and default instructions
+
+
+### Fixed
+
+- close the four follow-ups the scoping review parked
+- **project**: close the review debts from the first-party actions branch
+
+
 ## [0.8.4] - 2026-08-16
 
 ### Added
@@ -1288,7 +1335,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - added GitHub templates
 - set up release management
 
-[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.8.4...HEAD
+[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.8.5...HEAD
+[0.8.5]: https://github.com/ludachrish3/otto-sh/compare/v0.8.4...v0.8.5
 [0.8.4]: https://github.com/ludachrish3/otto-sh/compare/v0.8.3...v0.8.4
 [0.8.3]: https://github.com/ludachrish3/otto-sh/compare/v0.8.2...v0.8.3
 [0.8.2]: https://github.com/ludachrish3/otto-sh/compare/v0.8.1...v0.8.2
