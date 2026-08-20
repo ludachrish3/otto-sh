@@ -16,8 +16,9 @@ from types import SimpleNamespace
 import pytest
 
 from otto.config.completion_cache import collect_link_ids
-from otto.labs.json_repository import JsonFileLabRepository
+from otto.labs import build_lab_sources
 from otto.link.placement import BOTH_DIRECTIONS, endpoint_placements, ensure_not_local_link
+from tests._fixtures.labdata import json_lab_sources
 
 _CARROT = {
     "ip": "1.1.1.1",
@@ -43,7 +44,11 @@ def _repo_with_lab(
     lab_dir.mkdir(parents=True, exist_ok=True)
     hosts = [{**h, "labs": h.get("labs", [lab])} for h in hosts]
     (lab_dir / "lab.json").write_text(json.dumps({"hosts": hosts, "links": links}))
-    return SimpleNamespace(labs=[lab_dir], lab_settings={}, sut_dir=tmp_path, name="fake")
+    return SimpleNamespace(
+        lab_sources=json_lab_sources(tmp_path, [lab_dir]),
+        sut_dir=tmp_path,
+        name="fake",
+    )
 
 
 def _impairable(link) -> bool:
@@ -134,7 +139,7 @@ def test_every_offered_id_resolves_and_is_impairable(tmp_path: Path) -> None:
             }
         ],
     )
-    lab = JsonFileLabRepository(list(repo.labs)).load_lab("veggies")
+    lab = build_lab_sources([repo]).load_lab("veggies")
     by_ident = {link.id: link for link in lab.static_links()}
     by_ident.update({link.name: link for link in lab.static_links() if link.name})
 
@@ -150,7 +155,7 @@ def test_implicit_links_are_offered_by_nobody_because_nothing_can_impair_them(
 ) -> None:
     """Pins the reason for the exclusion, so a future widening has to face it."""
     repo = _repo_with_lab(tmp_path, hosts=[_CARROT, {**_TOMATO, "hop": "carrot_seed"}], links=[])
-    lab = JsonFileLabRepository(list(repo.labs)).load_lab("veggies")
+    lab = build_lab_sources([repo]).load_lab("veggies")
 
     implicit = [link for link in lab.static_links() if link.provenance.value == "implicit"]
     assert implicit, "positive control: the lab must have implicit links"

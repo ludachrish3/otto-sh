@@ -38,11 +38,9 @@ pytestmark = pytest.mark.hostless
 LAB_DATA_DIR = lab_data_dir() / "tech1"
 
 SETTINGS_EXTRA = """\
-lab_data_type = "json"
-labs = ["{lab_data_dir}"]
-
-[lab]
+[[lab.sources]]
 backend = "json"
+paths = ["{lab_data_dir}"]
 """
 
 

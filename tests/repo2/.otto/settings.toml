@@ -1,9 +1,5 @@
 name = "repo2"
 version = "1.0.4"
-lab_data_type = "json"
-labs = [
-    "../_fixtures/lab_data/tech2",
-]
 libs = [
     "pylib",
 ]
@@ -12,6 +8,12 @@ tests = [
 ]
 init = [
     'repo2_instructions',
+]
+
+[[lab.sources]]
+backend = "json"
+paths = [
+    "../_fixtures/lab_data/tech2",
 ]
 
 [docker]

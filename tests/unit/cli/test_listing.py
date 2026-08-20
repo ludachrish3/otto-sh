@@ -172,7 +172,9 @@ class TestRegisteredSuites:
 class TestGetLabPanel:
     def test_lists_lab_names_from_host_source(self, tmp_path):
         """The default json backend's lab names render as bulleted entries."""
-        sut_dir = _make_sut(tmp_path, extra_toml='labs = ["labdata"]\n')
+        sut_dir = _make_sut(
+            tmp_path, extra_toml='[[lab.sources]]\nbackend = "json"\npaths = ["labdata"]\n'
+        )
         labdata = sut_dir / "labdata"
         labdata.mkdir()
         (labdata / "lab.json").write_text('{"hosts": [{"labs": ["alpha", "beta"]}]}')
@@ -181,9 +183,20 @@ class TestGetLabPanel:
         assert "alpha" in text
         assert "beta" in text
 
+    def test_declaring_no_source_says_so_instead_of_rendering_blank(self, tmp_path):
+        """A repo with no host source names the missing declaration.
+
+        The empty composite lists no labs, so the bulleted branch would render
+        an empty panel — indistinguishable from a source that answered with
+        zero labs. The two are different problems and must read differently.
+        """
+        repo = Repo(sut_dir=_make_sut(tmp_path))
+        assert repo.lab_sources == []
+        assert "no [[lab.sources]] declared" in _render(repo.get_lab_panel())
+
     def test_unknown_backend_renders_error_not_traceback(self, tmp_path):
-        """A misconfigured [lab] backend surfaces in-panel instead of crashing."""
-        sut_dir = _make_sut(tmp_path, extra_toml='[lab]\nbackend = "does-not-exist"\n')
+        """A misconfigured [[lab.sources]] backend surfaces in-panel instead of crashing."""
+        sut_dir = _make_sut(tmp_path, extra_toml='[[lab.sources]]\nbackend = "does-not-exist"\n')
         repo = Repo(sut_dir=sut_dir)
         # Must not raise — get_lab_panel catches the build failure.
         text = _render(repo.get_lab_panel())

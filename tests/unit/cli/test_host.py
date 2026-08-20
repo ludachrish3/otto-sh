@@ -26,6 +26,7 @@ from otto.logger.mode import LogMode
 from otto.result import Result
 from otto.utils import Status
 from tests._fixtures.dispatch import DispatchRunner
+from tests._fixtures.labdata import json_lab_sources
 
 # The dynamic verbs are plain ``async def`` leaves bridged by the leaf-invoke
 # wrapper, so host_app invocations go through the production dispatch seam;
@@ -487,20 +488,22 @@ def _write_hosts_json(path: Path, hosts: list[dict]) -> Path:
 
 
 def _fake_repo(*lab_paths: Path) -> SimpleNamespace:
-    """Stand-in for :class:`Repo` that only exposes the attribute the
-    completer actually reads (``labs``)."""
+    """Stand-in for :class:`Repo` exposing what the completer reads.
+
+    ``lab_sources`` is the whole of it: the compiled ``[[lab.sources]]`` list
+    the host source is built from."""
+    sut_dir = lab_paths[0].parent if lab_paths else Path()
     return SimpleNamespace(
-        labs=list(lab_paths),
-        lab_settings={},
-        sut_dir=lab_paths[0].parent if lab_paths else Path(),
+        lab_sources=json_lab_sources(sut_dir, list(lab_paths)),
+        sut_dir=sut_dir,
     )
 
 
 class TestHostIdCompleter:
     """``_host_id_completer`` runs during tab completion, before
     :func:`otto.bootstrap.bootstrap` registers repo init modules.  It must
-    therefore derive host IDs straight from the ``lab.json`` files
-    referenced by each repo's ``labs`` search paths."""
+    therefore derive host IDs straight from the lab files each repo's
+    ``[[lab.sources]]`` json entries name."""
 
     def test_returns_all_host_ids(self, tmp_path):
         lab = tmp_path / "labA"

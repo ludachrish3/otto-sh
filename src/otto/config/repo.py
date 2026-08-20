@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     from rich.text import Text
 
     from ..host.os_profile import OsProfile
+    from ..labs.sources import CompiledLabSource
     from ..models.dependencies import ParsedDependency
     from ..models.settings import OsProfileSpec
     from .dependencies import ResolvedDependency
@@ -308,8 +309,15 @@ class Repo:
     version: Version = field(init=False)
     """Product version"""
 
-    labs: list[Path] = field(default_factory=list[Path], init=False)
-    """Paths to lab data"""
+    lab_sources: list["CompiledLabSource"] = field(default_factory=list, init=False)
+    """Compiled ``[[lab.sources]]`` declarations, in declaration order.
+
+    Built by :func:`otto.labs.sources.compile_lab_sources` at parse, so a
+    malformed declaration is a settings error rather than a backend that fails
+    to construct much later. The single input to the process-wide
+    ``build_lab_sources`` construction seam; also read directly by the
+    completion cache (fingerprint + raw link scan) via
+    :meth:`~otto.labs.sources.CompiledLabSource.lab_files`."""
 
     project_scope: ProjectScopeConfig | None = field(default=None, init=False)
     """Compiled ``[project]`` declaration — the labs and hosts this repo targets.
@@ -403,19 +411,20 @@ class Repo:
         from rich.panel import Panel
         from rich.text import Text
 
-        from ..labs import LabRepositoryError, build_lab_repository
+        from ..labs import LabRepositoryError, build_lab_sources
 
-        try:
-            repository = build_lab_repository(
-                self.lab_settings, self.sut_dir, search_paths=self.labs
-            )
-            lab_names = repository.list_labs()
-        except (ValueError, LabRepositoryError) as e:
-            # Panel rendering must never crash on a misconfigured/unreachable
-            # host source; surface the reason in-panel instead of a traceback.
-            lab_name_text = Text(f"⚠ host source unavailable: {e}", style="red")
+        if not self.lab_sources:
+            lab_name_text = Text("no [[lab.sources]] declared", style="dim")
         else:
-            lab_name_text = Text("\n".join(f"• {lab_name}" for lab_name in lab_names))
+            try:
+                repository = build_lab_sources([self])
+                lab_names = repository.list_labs()
+            except (ValueError, LabRepositoryError) as e:
+                # Panel rendering must never crash on a misconfigured/unreachable
+                # host source; surface the reason in-panel instead of a traceback.
+                lab_name_text = Text(f"⚠ host source unavailable: {e}", style="red")
+            else:
+                lab_name_text = Text("\n".join(f"• {lab_name}" for lab_name in lab_names))
 
         return Panel(
             lab_name_text,
@@ -762,7 +771,11 @@ class Repo:
 
         self.name = model.name
         self.version = Version(model.version)
-        self.labs = list(model.labs)
+        from ..labs.sources import compile_lab_sources
+
+        self.lab_sources = compile_lab_sources(
+            model.lab, repo_name=model.name, sut_dir=self.sut_dir
+        )
         # Compiled here, at parse, so an unusable regex is a settings error rather
         # than a fleet walk that silently matches nothing later on.
         self.project_scope = ProjectScopeConfig.from_spec(model.project) if model.project else None
@@ -830,17 +843,6 @@ class Repo:
         literal parsed TOML — no path expansion or anchoring is applied.
         """
         return self.settings.get("reservations", {}) or {}
-
-    @property
-    def lab_settings(self) -> dict[str, Any]:
-        """Return the raw ``[lab]`` settings sub-dict.
-
-        Returns an empty dict when the section is absent, so the host-source
-        factory falls back to the built-in ``json`` backend over this repo's
-        ``labs`` search paths. Values are the literal parsed TOML — no path
-        expansion or anchoring is applied.
-        """
-        return self.settings.get("lab", {}) or {}
 
     def add_libs_to_pythonpath(self) -> None:
         """Add configured library directories to the PYTHONPATH."""

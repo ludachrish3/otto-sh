@@ -127,13 +127,11 @@ def _make_sprout_target(root: Path) -> ChaosTarget:
         name="sprout_console_harness",
         version="0.1.0",
         extra=f"""\
-lab_data_type = "json"
-labs = [
+[[lab.sources]]
+backend = "json"
+paths = [
     "{tech_dir}",
 ]
-
-[lab]
-backend = "json"
 """,
     )
     cred = basil["creds"][0]

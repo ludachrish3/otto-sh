@@ -45,7 +45,7 @@ def test_custom_dataset_overrides_demo():
 
 
 def test_accepts_repo_dir_for_registry_compatibility(tmp_path):
-    # build_lab_repository constructs a custom backend as cls(repo_dir=..., **kwargs)
+    # build_lab_sources constructs a custom backend as cls(repo_dir=..., **kwargs)
     repo = ExampleLabRepository(repo_dir=tmp_path)
     assert repo.list_labs() == ["east", "west"]
 

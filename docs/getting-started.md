@@ -82,8 +82,9 @@ exits with code 1 if any *existing* area fails validation.
 The five areas `otto init` manages:
 
 settings
-: `.otto/settings.toml`, pre-wired with `labs`/`tests`/`libs` paths and a
-  `#:schema` editor directive, pointing at the other four areas.
+: `.otto/settings.toml`, pre-wired with a json `[[lab.sources]]` entry, the
+  `tests`/`libs` paths and a `#:schema` editor directive, pointing at the
+  other four areas.
 
 schemas
 : `.otto/schemas/*.schema.json` — generated editor schemas for `lab.json`,
@@ -154,10 +155,13 @@ The settings file tells otto where to find your code:
 name = "my_project"
 version = "0.1.0"
 
-labs  = ["lab_data"]
 tests = ["tests"]
 libs  = ["pylib"]
 init  = ["my_project_instructions"]
+
+[[lab.sources]]
+backend = "json"
+paths = ["lab_data"]
 ```
 
 Relative paths resolve against the repository root; `~` expands to your home
@@ -167,7 +171,7 @@ directory.  See {doc}`guide/setup/repo-setup` for the full rule.
 | ----- | ------- |
 | `name` | Product or repo name (shown in CLI output) |
 | `version` | Semantic version string |
-| `labs` | Paths to directories containing lab JSON files |
+| `[[lab.sources]]` | Ordered host-data sources. Each entry names a registered `backend`; the built-in `json` one takes `paths` — directories holding a `lab.json`, or `.json` files. Later sources override earlier ones per host record ([details](guide/setup/host-database.md)) |
 | `libs` | Python package directories added to `PYTHONPATH` at startup |
 | `tests` | Where test discovery happens. Each directory's **top-level** `test_*.py` files are imported at startup, registering their `Test*` `OttoSuite` subclasses; pytest itself recurses normally when tests are run ([details](guide/test.md#suite-registration)) |
 | `init` | Python modules imported at startup (registers instructions and shared options) |
@@ -206,9 +210,9 @@ section explains the format so you can add real hosts by hand.
 
 A lab file is a JSON object with a `hosts` array (and an optional `links`
 array declaring data-plane routes between hosts — see {doc}`guide/setup/lab-config`).
-Place lab files in one of the directories listed in your `labs` setting; each
-host joins one or more labs through its `labs` field, and `--lab <name>`
-selects the matching hosts:
+Place lab files in one of the directories a json source's `paths` lists (or
+point `paths` straight at a `.json` file); each host joins one or more labs
+through its `labs` field, and `--lab <name>` selects the matching hosts:
 
 ```json
 {

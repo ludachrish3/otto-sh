@@ -90,15 +90,20 @@ test suites, run instructions, and lab data:
 name = "my_project"
 version = "1.0.0"
 
-labs  = ["${sutDir}/../lab_data"]
-libs  = ["${sutDir}/pylib"]
-tests = ["${sutDir}/tests"]
+libs  = ["pylib"]
+tests = ["tests"]
 init  = ["my_instructions"]
+
+[[lab.sources]]
+backend = "json"
+paths = ["../lab_data"]
 ```
 
-`${sutDir}` is replaced with the repository root at load time. The `init` list
-names Python modules that otto imports at startup — this is where you
-register your instructions and shared options.
+Relative paths resolve against the repository root at load time. The `init`
+list names Python modules that otto imports at startup — this is where you
+register your instructions and shared options. `[[lab.sources]]` declares
+where hosts come from, in order; several sources combine, with later ones
+overriding earlier ones per host record.
 
 ### Instructions (`otto run`)
 

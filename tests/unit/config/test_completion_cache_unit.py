@@ -23,6 +23,9 @@ import typer
 
 from otto.config import completion_cache as cc
 from otto.config.repo import PYTEST_CONFIG_NAMES, configured_python_files
+from otto.labs.json_repository import LAB_FILENAME
+from otto.labs.sources import CompiledLabSource
+from tests._fixtures.labdata import json_lab_sources
 from tests._fixtures.sutrepo import touch_settings
 
 
@@ -52,24 +55,27 @@ def test_read_cache_returns_none_for_empty_repos(tmp_path: Path, monkeypatch) ->
 # ── Effective TTL: a non-file host source has no invalidation signal ─────────
 
 
-def _ttl_repo(tmp_path: Path, lab_settings: dict | None = None) -> MagicMock:
-    """A repo whose [lab] block is exactly *lab_settings* (None = no block)."""
+def _ttl_repo(tmp_path: Path, backend: str | None = None) -> MagicMock:
+    """A repo declaring one [[lab.sources]] entry on *backend* (None = none)."""
     repo = MagicMock()
     repo.sut_dir = tmp_path / "sut"
-    repo.labs = []
     repo.init = []
     repo.libs = []
     repo.tests = []
-    repo.lab_settings = {} if lab_settings is None else lab_settings
+    repo.lab_sources = (
+        []
+        if backend is None
+        else [CompiledLabSource(label=f"ttl/{backend}#1", backend=backend, repo_dir=repo.sut_dir)]
+    )
     repo.reservation_settings = {}
     return repo
 
 
 def test_json_backends_keep_the_long_ttl(tmp_path: Path) -> None:
-    """No [lab] block, or an explicit json one, means a lab.json fingerprint."""
+    """No source at all, or an explicit json one, means a lab.json fingerprint."""
     assert cc._cache_ttl_seconds([]) == cc.CACHE_TTL_SECONDS
     assert cc._cache_ttl_seconds([_ttl_repo(tmp_path)]) == cc.CACHE_TTL_SECONDS
-    assert cc._cache_ttl_seconds([_ttl_repo(tmp_path, {"backend": "json"})]) == cc.CACHE_TTL_SECONDS
+    assert cc._cache_ttl_seconds([_ttl_repo(tmp_path, "json")]) == cc.CACHE_TTL_SECONDS
 
 
 def test_a_reservation_backend_also_shortens_the_ttl(tmp_path: Path) -> None:
@@ -86,27 +92,26 @@ def test_a_reservation_backend_also_shortens_the_ttl(tmp_path: Path) -> None:
 
 def test_a_custom_backend_shortens_the_ttl(tmp_path: Path) -> None:
     """A non-file host source's digest never moves, so the TTL is the only bound."""
-    repos = [_ttl_repo(tmp_path, {"backend": "cmdb"})]
+    repos = [_ttl_repo(tmp_path, "cmdb")]
     assert cc._cache_ttl_seconds(repos) == cc.UNFINGERPRINTED_CACHE_TTL_SECONDS
     assert cc.UNFINGERPRINTED_CACHE_TTL_SECONDS < cc.CACHE_TTL_SECONDS
 
     # One custom repo among json ones is enough — the cache entry is shared.
-    mixed = [_ttl_repo(tmp_path), _ttl_repo(tmp_path, {"backend": "cmdb"})]
+    mixed = [_ttl_repo(tmp_path), _ttl_repo(tmp_path, "cmdb")]
     assert cc._cache_ttl_seconds(mixed) == cc.UNFINGERPRINTED_CACHE_TTL_SECONDS
 
 
-def test_a_repo_double_without_lab_settings_reads_as_json(tmp_path: Path) -> None:
-    """A MagicMock's auto-attribute must not be mistaken for a custom backend.
+def test_a_repo_double_without_lab_sources_reads_as_json(tmp_path: Path) -> None:
+    """A double that declares no source must not be mistaken for a custom backend.
 
-    Guards the isinstance(...) check in _uses_non_json_lab_backend: without it,
-    every mock-based repo double in the suite would silently take the short TTL.
+    Guards the getattr(...) default and the reservations isinstance(...) check in
+    _has_unfingerprinted_source: without them, every mock-based repo double in
+    the suite would silently take the short TTL.
     """
-    bare = MagicMock(spec=["sut_dir", "labs"])
-    bare.labs = []
+    bare = MagicMock(spec=["sut_dir"])
     assert cc._cache_ttl_seconds([bare]) == cc.CACHE_TTL_SECONDS
 
-    automocked = MagicMock()  # .lab_settings.get(...) returns a MagicMock
-    automocked.labs = []
+    automocked = MagicMock()  # .lab_sources iterates empty; .reservation_settings is a Mock
     assert cc._cache_ttl_seconds([automocked]) == cc.CACHE_TTL_SECONDS
 
 
@@ -162,7 +167,7 @@ def _tests_repo(tmp_path: Path) -> MagicMock:
     repo.sut_dir = tmp_path
     repo.init = []
     repo.libs = []
-    repo.labs = []
+    repo.lab_sources = []
     repo.tests = [tmp_path / "tests"]
     (tmp_path / "tests").mkdir(parents=True, exist_ok=True)
     return repo
@@ -244,6 +249,95 @@ def test_fingerprint_and_static_scan_read_the_same_patterns(tmp_path: Path) -> N
         )
 
 
+# ── Fingerprint coverage of the [[lab.sources]] host data ────────────────────
+
+
+@pytest.mark.parametrize(
+    ("spelling", "path_of"),
+    [
+        pytest.param("directory", lambda lab_dir: lab_dir, id="directory"),
+        pytest.param("json file", lambda lab_dir: lab_dir / "lab.json", id="json-file"),
+    ],
+)
+def test_fingerprint_moves_when_a_source_lab_file_is_edited(
+    tmp_path: Path, spelling: str, path_of
+) -> None:
+    """Editing a json source's lab file must move the digest.
+
+    The host ids behind ``otto host <TAB>`` come from these files, so a digest
+    that ignores them serves a stale host list until the 24h TTL expires — the
+    exact staleness the file-backed source is entitled to escape (a backend
+    with no file signal falls back to the short TTL instead).
+
+    Parametrized over BOTH ``paths`` spellings because the digest reads them
+    through :meth:`~otto.labs.sources.CompiledLabSource.lab_files`: a digest
+    wired to the directory form alone would silently stop tracking a source
+    that names its ``.json`` file directly.
+    """
+    sut_dir = tmp_path / "sut"
+    sut_dir.mkdir(parents=True)
+    touch_settings(sut_dir)
+    lab_dir = tmp_path / "lab"
+    lab_dir.mkdir(parents=True)
+    lab_file = lab_dir / "lab.json"
+    lab_file.write_text(json.dumps({"hosts": [{"ip": "10.0.0.1", "element": "carrot"}]}))
+
+    repo = MagicMock()
+    repo.sut_dir = sut_dir
+    repo.init = []
+    repo.libs = []
+    repo.tests = []
+    repo.lab_sources = [
+        CompiledLabSource(
+            label=f"fp/{spelling}", backend="json", repo_dir=sut_dir, paths=[path_of(lab_dir)]
+        )
+    ]
+
+    before = cc.compute_fingerprint([repo])
+    lab_file.write_text(
+        json.dumps(
+            {
+                "hosts": [
+                    {"ip": "10.0.0.1", "element": "carrot"},
+                    {"ip": "10.0.0.2", "element": "tomato"},
+                ]
+            }
+        )
+    )
+
+    assert cc.compute_fingerprint([repo]) != before, (
+        f"editing the lab file of a {spelling} source left the digest unchanged — "
+        "the cache cannot self-invalidate on host-data edits"
+    )
+
+
+def test_fingerprint_ignores_a_custom_source_with_no_files(tmp_path: Path) -> None:
+    """A non-json source contributes nothing — the TTL fallback covers it.
+
+    Pins the other half of the rule: ``lab_files()`` is empty for a custom
+    backend, so its digest is constant and ``_has_unfingerprinted_source``
+    is what shortens the TTL. Hashing the repo_dir here would give a custom
+    source a false invalidation signal.
+    """
+    sut_dir = tmp_path / "sut"
+    sut_dir.mkdir(parents=True)
+    touch_settings(sut_dir)
+
+    repo = MagicMock()
+    repo.sut_dir = sut_dir
+    repo.init = []
+    repo.libs = []
+    repo.tests = []
+    repo.lab_sources = [
+        CompiledLabSource(label="fp/cmdb#1", backend="cmdb", repo_dir=sut_dir, paths=[])
+    ]
+
+    before = cc.compute_fingerprint([repo])
+    (sut_dir / "anything.json").write_text("{}")
+    assert cc.compute_fingerprint([repo]) == before
+    assert cc._has_unfingerprinted_source([repo]) is True
+
+
 def test_write_cache_skips_empty_repos(tmp_path: Path, monkeypatch) -> None:
     """Writing for empty repos must be a no-op — no file, no poisoned entry."""
     monkeypatch.setenv("OTTO_XDIR", str(tmp_path))
@@ -262,7 +356,6 @@ def test_read_cache_rejects_schema_mismatch(tmp_path: Path, monkeypatch) -> None
     fake_repo.init = []
     fake_repo.libs = []
     fake_repo.tests = []
-    fake_repo.labs = []
 
     monkeypatch.setenv("OTTO_XDIR", str(tmp_path))
     cache_file = cc._cache_path()
@@ -497,7 +590,6 @@ def test_write_read_cache_round_trips_backend_names(tmp_path: Path, monkeypatch)
     fake_repo.init = []
     fake_repo.libs = []
     fake_repo.tests = []
-    fake_repo.labs = []
 
     cc.write_cache(
         [fake_repo],
@@ -708,7 +800,6 @@ def test_write_read_cache_round_trips_commands(tmp_path: Path, monkeypatch) -> N
     fake_repo.init = []
     fake_repo.libs = []
     fake_repo.tests = []
-    fake_repo.labs = []
 
     cc.write_cache(
         [fake_repo],
@@ -732,7 +823,6 @@ def test_read_cache_defaults_commands_to_empty_list(tmp_path: Path, monkeypatch)
     fake_repo.init = []
     fake_repo.libs = []
     fake_repo.tests = []
-    fake_repo.labs = []
 
     cc.write_cache([fake_repo], instructions=[], suites=[], hosts=[])
     out = cc.read_cache([fake_repo])
@@ -750,7 +840,6 @@ def test_write_read_cache_round_trips_hosts_by_lab(tmp_path: Path, monkeypatch) 
     fake_repo.init = []
     fake_repo.libs = []
     fake_repo.tests = []
-    fake_repo.labs = []
 
     cc.write_cache(
         [fake_repo],
@@ -774,7 +863,6 @@ def test_read_cache_defaults_hosts_by_lab_to_empty_dict(tmp_path: Path, monkeypa
     fake_repo.init = []
     fake_repo.libs = []
     fake_repo.tests = []
-    fake_repo.labs = []
 
     cc.write_cache([fake_repo], instructions=[], suites=[], hosts=[])
     out = cc.read_cache([fake_repo])
@@ -817,10 +905,9 @@ def _make_fake_repo(tmp_path: Path) -> MagicMock:
     fake_repo.init = []
     fake_repo.libs = []
     fake_repo.tests = []
-    fake_repo.labs = [tmp_path / "lab"]
-    # A repo that declares no [lab] block — the host source is the built-in
-    # json backend over `labs`, which is what these tests exercise.
-    fake_repo.lab_settings = {}
+    # One json source over tmp_path/lab — the built-in backend, which is what
+    # these tests exercise.
+    fake_repo.lab_sources = json_lab_sources(fake_repo.sut_dir, [tmp_path / "lab"])
     return fake_repo
 
 
@@ -828,7 +915,7 @@ def test_collect_returns_only_capable_sorted(tmp_path: Path) -> None:
     """Only docker_capable hosts are returned, sorted, and non-dict entries are skipped."""
     lab_path = tmp_path / "lab"
     lab_path.mkdir(parents=True)
-    lab_file = lab_path / cc.LAB_FILENAME
+    lab_file = lab_path / LAB_FILENAME
     # docker_capable host "b_seed", non-docker host "a_seed", junk non-dict entry
     lab_file.write_text(
         json.dumps({"hosts": [_DOCKER_HOST, _NON_DOCKER_HOST, "junk-string-not-a-dict"]})
@@ -854,7 +941,7 @@ def test_collect_skips_non_list_hosts_section(tmp_path: Path) -> None:
     """A lab.json whose ``hosts`` section is not a JSON array is skipped."""
     lab_path = tmp_path / "lab"
     lab_path.mkdir(parents=True)
-    (lab_path / cc.LAB_FILENAME).write_text(json.dumps({"hosts": {"not": "a list"}}))
+    (lab_path / LAB_FILENAME).write_text(json.dumps({"hosts": {"not": "a list"}}))
     repo = _make_fake_repo(tmp_path)
 
     assert cc.collect_docker_capable_host_ids([repo]) == []
@@ -880,7 +967,7 @@ def _make_fingerprint_repo(
     fake_repo.init = init
     fake_repo.libs = libs
     fake_repo.tests = []
-    fake_repo.labs = labs or []
+    fake_repo.lab_sources = json_lab_sources(fake_repo.sut_dir, labs) if labs else []
     return fake_repo
 
 
@@ -964,7 +1051,7 @@ def test_collect_skips_corrupt_json(tmp_path: Path) -> None:
     """A lab.json with invalid JSON (JSONDecodeError branch) is silently skipped."""
     lab_path = tmp_path / "lab"
     lab_path.mkdir(parents=True)
-    (lab_path / cc.LAB_FILENAME).write_text("not valid json }{")
+    (lab_path / LAB_FILENAME).write_text("not valid json }{")
     repo = _make_fake_repo(tmp_path)
 
     assert cc.collect_docker_capable_host_ids([repo]) == []
@@ -976,7 +1063,7 @@ def test_collect_skips_invalid_host_dict(tmp_path: Path) -> None:
     lab_path.mkdir(parents=True)
     # docker_capable=True but missing required fields (no 'ip', invalid os_type, etc.)
     bad_host = {"docker_capable": True, "element": "x", "os_type": "nonexistent_profile"}
-    (lab_path / cc.LAB_FILENAME).write_text(json.dumps({"hosts": [bad_host]}))
+    (lab_path / LAB_FILENAME).write_text(json.dumps({"hosts": [bad_host]}))
     repo = _make_fake_repo(tmp_path)
 
     assert cc.collect_docker_capable_host_ids([repo]) == []

@@ -14,6 +14,7 @@ from typing import Any
 
 from otto.host.login_proxy import Cred
 from otto.host.unix_host import UnixHost
+from otto.labs.sources import CompiledLabSource
 
 _LAB_DATA_DIR = Path(__file__).resolve().parent / "lab_data"
 
@@ -48,3 +49,23 @@ def make_host(ne: str, **kwargs: Any) -> UnixHost:
         is_virtual=data.get("is_virtual", False),
         **kwargs,
     )
+
+
+def json_lab_sources(
+    sut_dir: Path, paths: list[Path], *, name: str = "fake"
+) -> list[CompiledLabSource]:
+    """The compiled ``[[lab.sources]]`` list a Repo STAND-IN must carry.
+
+    Repo stand-ins (``SimpleNamespace``/``MagicMock``) that only set the old
+    ``labs`` list model a ``Repo`` that no longer exists: ``build_lab_sources``
+    and the completion cache read :attr:`~otto.config.repo.Repo.lab_sources`,
+    so such a double contributes no host source at all and silently completes
+    nothing. One home for the shape, so the doubles cannot drift from what
+    :func:`~otto.labs.sources.compile_lab_sources` actually produces for a repo
+    whose only host source is json files under *paths*.
+    """
+    return [
+        CompiledLabSource(
+            label=f"{name}/json#1", backend="json", repo_dir=sut_dir, paths=list(paths)
+        )
+    ]

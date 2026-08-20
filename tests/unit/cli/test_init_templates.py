@@ -21,8 +21,9 @@ from otto.models.settings import (
 # The "#:schema" editor directive is excluded by its ":".
 _COMMENTED = re.compile(r"^#(?![ :])")
 
-# Intentionally omitted from the template: legacy passthrough consumed by nobody.
-_OMITTED_TOP_LEVEL = {"lab_data_type"}
+# Every top-level SettingsModel field is templated — nothing is intentionally
+# omitted now that the legacy passthrough fields are gone.
+_OMITTED_TOP_LEVEL: set[str] = set()
 # Per-section omissions: free-form sub-tables pointed at docs instead.
 _SECTION_SPECS = {
     "lab": (LabConfigSpec, set()),
@@ -48,7 +49,10 @@ def test_uncommented_template_is_settings_model_valid() -> None:
     model = SettingsModel.model_validate(_uncommented())
     assert model.name == "widget"
     # spot-check each section survived into the model, not just parsed
-    assert model.lab.backend == "json"
+    assert model.lab is not None
+    assert [(s.backend, s.model_extra) for s in model.lab.sources] == [
+        ("json", {"paths": ["lab_data"]})
+    ]
     assert model.reservations.backend == "none"
     assert "nightly" in model.coverage.tiers
     assert model.docker.images[0].name == "widget-test"

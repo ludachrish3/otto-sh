@@ -62,10 +62,12 @@ otto.host.unix_host
 otto.host.userland
 otto.instructions
 otto.labs
+otto.labs.composite
 otto.labs.errors
 otto.labs.json_repository
 otto.labs.protocol
 otto.labs.registry
+otto.labs.sources
 otto.link
 otto.link.impairer
 otto.link.model

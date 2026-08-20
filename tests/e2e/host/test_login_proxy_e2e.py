@@ -361,7 +361,10 @@ def _scaffold_sut_dir(sut_dir: Path, ip: str, element: str) -> str:
     make_sut_repo(
         sut_dir,
         name="lp_e2e",
-        extra='labs = ["lab_data"]\nlibs = ["initlib"]\ninit = ["lp_e2e_init"]\n',
+        extra=(
+            'libs = ["initlib"]\ninit = ["lp_e2e_init"]\n'
+            '\n[[lab.sources]]\nbackend = "json"\npaths = ["lab_data"]\n'
+        ),
         files={
             "initlib/lp_e2e_init.py": _INIT_MODULE_SOURCE,
             "lab_data/lab.json": json.dumps({"hosts": hosts}),

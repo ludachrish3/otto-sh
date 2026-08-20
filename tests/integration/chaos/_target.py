@@ -67,13 +67,11 @@ def make_loopback_target(root: Path, *, port: int, client_key: Path) -> ChaosTar
         name="chaos_harness",
         version="0.1.0",
         extra=f"""\
-lab_data_type = "json"
-labs = [
+[[lab.sources]]
+backend = "json"
+paths = [
     "{tech_dir}",
 ]
-
-[lab]
-backend = "json"
 """,
     )
     return ChaosTarget(

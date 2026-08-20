@@ -10,6 +10,7 @@ from otto.config.completion_cache import (
     collect_host_ids_by_lab,
 )
 from otto.host.builtin_hosts import BUILTIN_LOCAL_HOST_ID
+from tests._fixtures.labdata import json_lab_sources
 
 
 def _repo_with_hosts(tmp_path: Path, hosts: list[dict]) -> SimpleNamespace:
@@ -17,7 +18,10 @@ def _repo_with_hosts(tmp_path: Path, hosts: list[dict]) -> SimpleNamespace:
     lab = tmp_path / "lab"
     lab.mkdir(parents=True, exist_ok=True)
     (lab / "lab.json").write_text(json.dumps({"hosts": hosts}))
-    return SimpleNamespace(labs=[lab], lab_settings={}, sut_dir=tmp_path)
+    return SimpleNamespace(
+        lab_sources=json_lab_sources(tmp_path, [lab]),
+        sut_dir=tmp_path,
+    )
 
 
 _CARROT = {

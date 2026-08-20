@@ -182,7 +182,18 @@ depends_on = [
 
 [[modules]]
 path = "otto.labs"
-depends_on = ["otto.registry", "otto.link", "otto.config", "otto.models", "otto.host", "otto.errors"]
+# otto.utils: sources.py anchors `[[lab.sources]]` json paths through the same
+# `anchor_path` every other settings path goes through — one authority for the
+# rule, not a copy. A zero-import leaf, so the edge cannot cycle.
+depends_on = [
+    "otto.registry",
+    "otto.link",
+    "otto.config",
+    "otto.models",
+    "otto.host",
+    "otto.errors",
+    "otto.utils",
+]
 
 [[modules]]
 path = "otto.lifecycle"

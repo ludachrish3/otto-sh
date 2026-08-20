@@ -139,11 +139,9 @@ def _make_hop_target(tmp_path) -> ChaosTarget:
         name="chaosdrop_harness",
         version="0.1.0",
         extra=f"""\
-lab_data_type = "json"
-labs = ["{tech_dir}"]
-
-[lab]
+[[lab.sources]]
 backend = "json"
+paths = ["{tech_dir}"]
 """,
     )
     tomato_cred = tomato["creds"][0]

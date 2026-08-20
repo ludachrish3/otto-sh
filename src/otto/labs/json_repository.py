@@ -86,19 +86,31 @@ def parse_lab_sections(data: object, source: str) -> dict[str, list[Any]]:
 
 
 class JsonFileLabRepository:
-    """Load labs from ``lab.json`` files under a fixed set of search paths.
+    """Load labs from ``lab.json`` files across a fixed set of search paths.
 
-    Each ``lab.json`` is a JSON object with array sections —
+    A search path takes one of two forms: a **directory**, which is searched
+    for a ``lab.json``, or a path ending in **``.json``**, which *is* the lab
+    file and is read directly. Either form is skipped silently when it does not
+    resolve to an existing file, so a repository may draw on several sources
+    and tolerate absent ones.
+
+    Each lab file is a JSON object with array sections —
     ``{"hosts": [...], "links": [...]}``. The search paths are supplied once at
     construction — this is the built-in ``"json"`` backend, and
-    :func:`otto.labs.build_lab_repository` feeds it the aggregated ``labs``
-    directories. The ``hosts`` section holds all known hosts; a host's ``labs``
-    field lists the labs it belongs to, mirroring a row-with-membership database
-    design. Top-level ``_``-prefixed keys are comment space; unknown sections
-    fail loud.
+    :func:`otto.labs.build_lab_sources` feeds it the ``paths`` of the
+    ``[[lab.sources]]`` entry that selected it. The ``hosts`` section holds all
+    known hosts; a host's ``labs`` field lists the labs it belongs to, mirroring
+    a row-with-membership database design. Top-level ``_``-prefixed keys are
+    comment space; unknown sections fail loud.
     """
 
     def __init__(self, search_paths: list[Path] | None = None) -> None:
+        """Configure the paths this repository draws lab data from.
+
+        Each entry of *search_paths* is either a directory (searched for a
+        ``lab.json``) or a path ending in ``.json`` (read directly as the lab
+        file). Entries that do not resolve to an existing file are skipped.
+        """
         self.search_paths: list[Path] = list(search_paths or [])
 
     def load_lab(
@@ -111,7 +123,7 @@ class JsonFileLabRepository:
         Raises
         ------
         LabNotFoundError
-            If no lab.json exists in any search path, or no host belongs to
+            If no lab file exists in any search path, or no host belongs to
             the requested lab.
         LabRepositoryError
             If a lab.json is malformed or a host's data is invalid.
@@ -297,24 +309,30 @@ class JsonFileLabRepository:
         return sorted(lab_names)
 
     def _find_lab_files(self) -> list[Path]:
-        """Find all lab.json files across the configured search paths.
+        """Find all lab files across the configured search paths.
+
+        A directory entry contributes its ``lab.json``; a ``.json`` entry is
+        itself the lab file. Entries that resolve to nothing are skipped.
 
         Raises
         ------
         FileNotFoundError
             Internal signal (translated to LabNotFoundError by ``load_lab`` and
-            swallowed by ``list_labs``) when no lab.json is found.
+            swallowed by ``list_labs``) when no lab file is found.
         """
         found: list[Path] = []
         for search_path in self.search_paths:
-            candidate = search_path / LAB_FILENAME
+            # A path ending in .json IS the lab file; anything else is a
+            # directory searched for lab.json (spec 2026-08-19 §4).
+            candidate = search_path if search_path.suffix == ".json" else search_path / LAB_FILENAME
             if candidate.exists() and candidate.is_file():
                 found.append(candidate)
 
         if not found:
             searched = "\n  ".join(str(p) for p in self.search_paths)
             raise FileNotFoundError(
-                f"No {LAB_FILENAME} found in any search path:\n  {searched}"
+                f"No lab data found in any search path (directories are searched "
+                f"for {LAB_FILENAME}; .json entries are read directly):\n  {searched}"
             ) from None
 
         return found

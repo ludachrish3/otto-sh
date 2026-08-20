@@ -11,8 +11,9 @@ repo-level settings (paths, libs, init modules) see {doc}`repo-setup`.
 
 ## Lab files
 
-Each directory listed under the `labs` key in `.otto/settings.toml` may
-contain a `lab.json` file.  The file is a JSON **object** with two array
+Each directory a json `[[lab.sources]]` entry lists in `paths` (in
+`.otto/settings.toml`) may contain a `lab.json` file — and a `paths` entry may
+name a `.json` file directly.  The file is a JSON **object** with two array
 sections, `hosts` and `links`:
 
 ```json

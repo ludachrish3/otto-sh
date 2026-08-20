@@ -364,17 +364,16 @@ def build_lab_from_repos(repos: "list[Repo]", labnames: "str | list[str]") -> "L
 
     The lab-construction slice of :func:`ensure_lab_context`, factored out so
     completion (``otto.cli.remote_completion``) builds the identical lab the
-    real command would — same search paths, preference merge, and host-source
+    real command would — same sources, preference merge, and host-source
     backend selection. Raises :class:`LabContextError` when the host source is
     unavailable.
+
+    Every repo's ``[[lab.sources]]`` entries aggregate, in OTTO_SUT_DIRS
+    order, into one composite: ALL declared sources are live, and a later
+    source's host record overrides an earlier one's. No repo's declaration
+    shadows another's.
     """
     from ..config import load_lab
-
-    # Extract + aggregate lab search paths across all repos (for the default
-    # json backend).
-    lab_search_paths: list[Path] = []
-    for repo in repos:
-        lab_search_paths.extend(repo.labs)
 
     # Reduce repos' [host_preferences] tables in OTTO_SUT_DIRS order; later repos
     # overlay earlier ones. Selections (list) are atomic — last repo to set a
@@ -389,24 +388,10 @@ def build_lab_from_repos(repos: "list[Repo]", labnames: "str | list[str]") -> "L
                 else:
                     dest.setdefault(key, {}).update(val)
 
-    # Select the host-source backend: the first repo that declares a [lab] block
-    # wins (mirrors reservations' "first repo declares" rule). With no [lab]
-    # block anywhere, lab_settings stays {} and the factory falls back to the
-    # built-in json backend over the aggregated search paths.
-    lab_settings: dict[str, Any] = {}
-    lab_repo_dir: Path = repos[0].sut_dir if repos else Path.cwd()
-    for repo in repos:
-        if repo.lab_settings:
-            lab_settings = repo.lab_settings
-            lab_repo_dir = repo.sut_dir
-            break
-
-    from ..labs import LabRepositoryError, build_lab_repository
+    from ..labs import LabRepositoryError, build_lab_sources
 
     try:
-        lab_repository = build_lab_repository(
-            lab_settings, lab_repo_dir, search_paths=lab_search_paths
-        )
+        lab_repository = build_lab_sources(repos)
     except (ValueError, LabRepositoryError) as e:
         raise LabContextError(
             f"[bold red]Host source unavailable:[/bold red] {escape(str(e))}",

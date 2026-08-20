@@ -1,13 +1,14 @@
 labs
 ====
 
-The labs package provides a DB-agnostic host-source (``LabRepository``)
-backend, selected by name and constructed via :func:`otto.labs.build_lab_repository`.
+The labs package provides DB-agnostic host-source (``LabRepository``) backends,
+selected by name per ``[[lab.sources]]`` entry and constructed via
+:func:`otto.labs.build_lab_sources`.
 The built-in ``json`` backend reads ``lab.json`` files; custom backends
 register a name via :func:`otto.labs.register_lab_repository` from an
 ``init`` module.
 
-.. autofunction:: otto.labs.build_lab_repository
+.. autofunction:: otto.labs.build_lab_sources
 
 .. autofunction:: otto.labs.register_lab_repository
 
@@ -20,6 +21,10 @@ register a name via :func:`otto.labs.register_lab_repository` from an
 .. automodule:: otto.labs.protocol
 
 .. automodule:: otto.labs.json_repository
+
+.. automodule:: otto.labs.composite
+
+.. automodule:: otto.labs.sources
 
 .. automodule:: otto.labs.registry
 

@@ -226,18 +226,49 @@ class LoggingConfigSpec(OttoModel):
     capture: list[str] = Field(default_factory=list)
 
 
-class LabConfigSpec(OttoModel):
-    """The otto-owned ``[lab]`` envelope: which host-source ``backend`` to use.
+class LabSourceSpec(OttoModel):
+    """One ``[[lab.sources]]`` entry: a host-data source declaration.
 
-    ``extra='allow'`` keeps the backend-specific ``[lab.<backend>]`` sub-table
-    open — otto-core cannot type a third-party backend's kwargs. Defaults to the
-    built-in ``"json"`` backend so repos with no ``[lab]`` block behave exactly
-    as before.
+    ``extra='allow'`` because everything beyond ``backend``/``name`` is the
+    selected backend's constructor kwargs (the built-in ``json`` backend's
+    ``paths``, a custom backend's connection settings). Structural validation
+    of those kwargs happens in :func:`otto.labs.sources.compile_lab_sources`,
+    which knows which backend the entry selected.
     """
 
     model_config = ConfigDict(extra="allow")
 
-    backend: str = "json"
+    backend: str
+    name: str | None = None
+
+
+class LabConfigSpec(OttoModel):
+    """The otto-owned ``[lab]`` envelope: the ordered ``sources`` list, nothing else.
+
+    Backend selection and kwargs live inline in each ``[[lab.sources]]``
+    entry; there is no per-process ``backend`` key and no ``[lab.<backend>]``
+    kwarg tables (spec 2026-08-19 §4). ``extra='forbid'`` (inherited) is what
+    turns a leftover ``[lab.cmdb]`` table into an error that names the key.
+    """
+
+    sources: list[LabSourceSpec]
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_removed_shape(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            if "backend" in data:
+                raise ValueError(
+                    "[lab] `backend` was removed; select backends per source: "
+                    '[[lab.sources]] backend = "<name>", with its kwargs inline '
+                    "in the entry."
+                )
+            if not data.get("sources"):
+                raise ValueError(
+                    "the [lab] table declares no sources; add [[lab.sources]] "
+                    "entries or delete the table."
+                )
+        return data
 
 
 def _iso8601_utc(value: object) -> object:
@@ -496,13 +527,9 @@ class SettingsModel(OttoModel):
     name: str
     version: str
 
-    # legacy / passthrough — present in every fixture, consumed by nobody in
-    # parse_settings, but must be tolerated under extra='forbid'.
-    lab_data_type: str = "json"
     coverage: CoverageSettingsSpec = CoverageSettingsSpec()
 
     # paths + module/name lists
-    labs: list[RepoPath] = Field(default_factory=list)
     libs: list[RepoPath] = Field(default_factory=list)
     tests: list[RepoPath] = Field(default_factory=list)
     init: list[str] = Field(default_factory=list)
@@ -512,7 +539,7 @@ class SettingsModel(OttoModel):
     os_profiles: dict[str, OsProfileSpec] = Field(default_factory=dict)
     docker: DockerSettingsSpec = DockerSettingsSpec()
     monitor: MonitorSettingsSpec = MonitorSettingsSpec()
-    lab: LabConfigSpec = LabConfigSpec()
+    lab: LabConfigSpec | None = None
     logging: LoggingConfigSpec = LoggingConfigSpec()
     reservations: ReservationConfigSpec = ReservationConfigSpec()
     dependencies: DependenciesSpec = DependenciesSpec()
@@ -520,13 +547,24 @@ class SettingsModel(OttoModel):
 
     @model_validator(mode="before")
     @classmethod
-    def _reject_legacy_host_defaults(cls, data: Any) -> Any:
-        if isinstance(data, dict) and "host_defaults" in data:
-            raise ValueError(
-                "[host_defaults] was removed; declare option values under "
-                '[host_preferences."<selector>".<opt>], e.g. '
-                '[host_preferences.".*".ssh_options].'
-            )
+    def _reject_removed_keys(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            if "host_defaults" in data:
+                raise ValueError(
+                    "[host_defaults] was removed; declare option values under "
+                    '[host_preferences."<selector>".<opt>], e.g. '
+                    '[host_preferences.".*".ssh_options].'
+                )
+            if "labs" in data:
+                raise ValueError(
+                    "`labs = [...]` was removed; declare host-data sources instead:\n"
+                    '[[lab.sources]]\nbackend = "json"\npaths = ["lab_data"]'
+                )
+            if "lab_data_type" in data:
+                raise ValueError(
+                    "`lab_data_type` was removed; host-data sources are declared "
+                    "as [[lab.sources]] entries."
+                )
         return data
 
     @field_validator("version")

@@ -33,6 +33,7 @@ from otto.tunnel import (
     TunnelHop,
 )
 from tests._fixtures.dispatch import DispatchRunner
+from tests._fixtures.labdata import json_lab_sources
 from tests.conftest import active_context
 
 runner = DispatchRunner()
@@ -92,7 +93,10 @@ def _repo_with_hosts(tmp_path: Path, hosts: list[dict]) -> SimpleNamespace:
     lab = tmp_path / "lab"
     lab.mkdir(parents=True, exist_ok=True)
     (lab / "lab.json").write_text(json.dumps({"hosts": hosts}))
-    return SimpleNamespace(labs=[lab], lab_settings={}, sut_dir=tmp_path)
+    return SimpleNamespace(
+        lab_sources=json_lab_sources(tmp_path, [lab]),
+        sut_dir=tmp_path,
+    )
 
 
 _A = {"ip": "10.0.0.1", "element": "a", "creds": [{"login": "u", "password": "p"}]}

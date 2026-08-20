@@ -268,17 +268,46 @@ def test_settings_version_allows_semver_suffix():
     assert m.version == "1.2.3-rc1"
 
 
-def test_settings_allows_legacy_lab_data_type_and_typed_coverage():
+def test_settings_allows_typed_coverage():
     m = SettingsModel.model_validate(
         {
             **_minimal(),
-            "lab_data_type": "json",
             "coverage": {"gcda_remote_dir": "/var/cov", "embedded": {"extension": "cov"}},
         }
     )
-    assert m.lab_data_type == "json"
     assert m.coverage.gcda_remote_dir == "/var/cov"
     assert m.coverage.embedded == {"extension": "cov"}
+
+
+@pytest.mark.parametrize(
+    ("extra", "match"),
+    [
+        # (?s): the `labs` message prints the replacement TOML block, so the
+        # key it names and the spelling it points at land on different lines.
+        ({"labs": ["lab_data"]}, r"(?s)labs.*\[\[lab\.sources\]\]"),
+        ({"lab_data_type": "json"}, r"lab_data_type.*removed"),
+        ({"lab": {"backend": "json"}}, r"backend.*\[\[lab\.sources\]\]"),
+        ({"lab": {"sources": []}}, r"declares no sources"),
+        ({"lab": {}}, r"declares no sources"),
+    ],
+)
+def test_removed_lab_spellings_fail_with_migration_message(extra, match):
+    data = {"name": "r", "version": "1.0.0", **extra}
+    with pytest.raises((ValidationError, ValueError), match=match):
+        SettingsModel.model_validate(data)
+
+
+def test_lab_subtable_kwargs_are_rejected():
+    data = {
+        "name": "r",
+        "version": "1.0.0",
+        "lab": {
+            "sources": [{"backend": "json", "paths": ["l"]}],
+            "cmdb": {"server": "db"},  # the removed [lab.cmdb] kwarg-table spelling
+        },
+    }
+    with pytest.raises(ValidationError, match="cmdb"):
+        SettingsModel.model_validate(data)
 
 
 def test_settings_forbids_unknown_top_level_key():
@@ -293,13 +322,13 @@ def test_settings_paths_coerce_to_path_lists():
     m = SettingsModel.model_validate(
         {
             **_minimal(),
-            "labs": ["/a/lab"],
             "libs": ["/a/lib"],
             "tests": ["/a/tests"],
             "init": ["mod_a"],
         }
     )
-    assert m.labs == [Path("/a/lab")]
+    assert m.libs == [Path("/a/lib")]
+    assert m.tests == [Path("/a/tests")]
     assert m.init == ["mod_a"]
 
 
@@ -561,32 +590,34 @@ def test_teardown_deadline_default(clean_otto_env):
 
 
 # ---------------------------------------------------------------------------
-# Task 4 (Plan A): LabConfigSpec + SettingsModel.lab wiring
+# LabConfigSpec + SettingsModel.lab wiring
 # ---------------------------------------------------------------------------
 
 
-def test_lab_config_spec_defaults_to_json():
-    cfg = LabConfigSpec.model_validate({})
-    assert cfg.backend == "json"
-    assert cfg.model_extra == {}
+def test_lab_source_entry_keeps_backend_kwargs_inline():
+    """A custom backend's kwargs ride IN the entry — that is what keeps
+    ``[lab.<backend>]`` tables unnecessary (and, above, rejected)."""
+    cfg = LabConfigSpec.model_validate({"sources": [{"backend": "myteam", "url": "https://cmdb"}]})
+    assert [s.backend for s in cfg.sources] == ["myteam"]
+    assert cfg.sources[0].model_extra == {"url": "https://cmdb"}
 
 
-def test_lab_config_spec_keeps_backend_subtable_open():
-    cfg = LabConfigSpec.model_validate({"backend": "myteam", "myteam": {"url": "https://cmdb"}})
-    assert cfg.backend == "myteam"
-    assert cfg.model_extra == {"myteam": {"url": "https://cmdb"}}
-
-
-def test_settings_model_accepts_lab_block():
+def test_settings_model_accepts_lab_sources_block():
     m = SettingsModel.model_validate(
-        {"name": "demo", "version": "1.0.0", "lab": {"backend": "json"}}
+        {
+            "name": "demo",
+            "version": "1.0.0",
+            "lab": {"sources": [{"backend": "json", "paths": ["lab_data"]}]},
+        }
     )
-    assert m.lab.backend == "json"
+    assert m.lab is not None
+    assert [s.backend for s in m.lab.sources] == ["json"]
 
 
-def test_settings_model_lab_defaults_when_absent():
+def test_settings_model_lab_is_none_when_absent():
+    """No ``[lab]`` table means no host sources at all — not a defaulted one."""
     m = SettingsModel.model_validate({"name": "demo", "version": "1.0.0"})
-    assert m.lab.backend == "json"
+    assert m.lab is None
 
 
 class TestMonitorSettings:
@@ -725,3 +756,18 @@ def test_project_block_unknown_key_fails():
 
     with pytest.raises(ValidationError, match=r"(?m)^labs\n\s+Extra inputs are not permitted"):
         ProjectScopeSpec.model_validate({"labs": ["a"]})
+
+
+def test_lab_sources_parse_and_reach_repo(tmp_path):
+    from otto.config.repo import Repo
+    from tests._fixtures.sutrepo import make_sut_repo
+
+    sut = make_sut_repo(
+        tmp_path / "sut",
+        name="srcrepo",
+        extra='[[lab.sources]]\nbackend = "json"\npaths = ["lab_data"]\n',
+    )
+    repo = Repo(sut)
+    (src,) = repo.lab_sources
+    assert src.label == "srcrepo/json#1"
+    assert src.paths == [sut / "lab_data"]

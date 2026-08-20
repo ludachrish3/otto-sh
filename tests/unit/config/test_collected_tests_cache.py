@@ -25,7 +25,6 @@ def _fake_repo(tmp_path: Path):
     repo.init = []
     repo.libs = []
     repo.tests = []
-    repo.labs = []
     return repo
 
 

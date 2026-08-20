@@ -18,10 +18,15 @@ Create `.otto/settings.toml` in your repo root:
 name = "my_project"
 version = "1.0.0"
 
-labs  = ["../lab_data"]
 libs  = ["pylib"]
 tests = ["tests"]
 init  = ["my_instructions", "my_shared_options"]
+
+# Where otto's hosts come from, read in order — later sources override
+# earlier ones per host record.
+[[lab.sources]]
+backend = "json"
+paths = ["../lab_data"]
 
 # Optional: product preferences applied to every host this repo touches.
 # Selector = Python regex matched against the host id; ".*" = all hosts.
@@ -64,10 +69,10 @@ gets a directory literally named `${sut_dir}`.
 Drop the prefix: `"${sut_dir}/tests"` becomes `"tests"`, and
 `"${sut_dir}/../shared"` becomes `"../shared"`.
 
-Values otto hands to a backend without interpreting them
-(`[lab.<backend>]`, `[reservations.<backend>]`, `ssh_options`) must now
-be absolute.  Custom lab and reservation backends both receive
-`repo_dir` and can anchor their own paths.
+Values otto hands to a backend without interpreting them (a custom
+backend's kwargs in a `[[lab.sources]]` entry, `[reservations.<backend>]`,
+`ssh_options`) must now be absolute.  Custom lab and reservation backends
+both receive `repo_dir` and can anchor their own paths.
 
 One exception worth knowing: `[reservations.json] path` is read by otto
 itself, not passed through, so a relative value there still resolves
@@ -82,17 +87,15 @@ name
 version
 : **Required.** Semantic version string (e.g. `"1.0.0"`).
 
-labs
-: List of directory paths to search for lab JSON files.  When you pass
-  `--lab my_lab`, otto looks in these directories for a file matching that
-  name.  Defaults to `[]`.
-
-\[lab\]
-: Optional table selecting the **host-source backend** — where otto's hosts come
-  from. `backend` names a registered source (defaults to `"json"`, which reads
-  `lab.json` from the `labs` directories); a `[lab.<name>]` sub-table holds
-  that backend's keyword arguments. See {doc}`host-database` for the full
-  treatment.
+\[\[lab.sources\]\]
+: Ordered array of **host-data source** declarations — where otto's hosts come
+  from.  Each entry names a registered `backend` (`"json"` ships with otto), an
+  optional `name` labelling it in warnings and errors, and that backend's own
+  keys inline — for `json` that is `paths`, a non-empty list of directories
+  (searched for `lab.json`) or `.json` files.  Every declared source is read,
+  in order, and a later one overrides an earlier one per host record.  A repo
+  may declare none; the `[lab]` table holds nothing but `sources`.  See
+  {doc}`host-database` for the full treatment.
 
 libs
 : List of Python package directories to add to `sys.path` at startup.
@@ -171,12 +174,13 @@ occurs:
    - Auto-imports each `test_*.py` at the top level of a `tests` directory
      (this registers suites; it does not recurse — see above)
 
-4. **Lab loading** -- Otto builds the host source via `build_lab_repository`
-   (selected by `[lab] backend`, defaulting to the built-in `json` source over
-   the merged `labs` search paths) and loads the lab(s) named by `--lab` or
-   `OTTO_LAB`. Multiple labs are merged, combining their hosts — name them with
-   `+` (`--lab lab_a+lab_b`). The host source
-   is pluggable — see {doc}`host-database`.
+4. **Lab loading** -- Otto builds the host source via `build_lab_sources`,
+   concatenating every repo's `[[lab.sources]]` entries in `OTTO_SUT_DIRS`
+   order, and loads the lab(s) named by `--lab` or `OTTO_LAB`. Every declared
+   source is live: a later one overrides an earlier one per host record, with
+   a warning naming both. Multiple labs are merged, combining their hosts —
+   name them with `+` (`--lab lab_a+lab_b`). The sources are pluggable — see
+   {doc}`host-database`.
 
 5. **Context creation** -- The global `OttoContext` is created with the
    loaded repos and lab and installed via `set_context()`, making hosts
@@ -217,9 +221,10 @@ comma-separated list:
 export OTTO_SUT_DIRS=/path/to/repo1,/path/to/repo2
 ```
 
-Each repo has its own settings, libs, tests, and lab search paths.  They
+Each repo has its own settings, libs, tests, and host-data sources.  They
 are all merged at startup -- instructions and suites from every repo appear
-in the CLI, and lab search paths from all repos are combined.
+in the CLI, and every repo's `[[lab.sources]]` entries are concatenated in
+`OTTO_SUT_DIRS` order.
 
 ### Declaring dependencies between repos
 
@@ -263,8 +268,9 @@ version.
 
 ## Lab files
 
-Each directory listed under `labs` holds a `lab.json` file describing the
-hosts at that location.  The full per-host schema — every field, the
+Each directory a json source's `paths` names holds a `lab.json` file
+describing the hosts at that location (a `paths` entry may also name a `.json`
+file directly).  The full per-host schema — every field, the
 connection-option tables, repo-level host defaults, and how labs merge — lives
 in {doc}`lab-config`.
 
@@ -275,9 +281,10 @@ Most of otto's configuration is a **one-time, team-level** decision. New
 contributors then just clone and run. Work through this map once when adopting
 otto for a team:
 
-1. **Run `otto init`** — scaffolds `.otto/settings.toml` (`name`, `version`, and
-   the `labs` / `libs` / `tests` / `init` paths — this page, above) with every
-   optional section present but commented out, the generated editor schemas
+1. **Run `otto init`** — scaffolds `.otto/settings.toml` (`name`, `version`, a
+   json `[[lab.sources]]` entry, and the `libs` / `tests` / `init` paths — this
+   page, above) with every optional section present but commented out, the
+   generated editor schemas
    (`.otto/schemas/` + `.vscode` wiring, see {doc}`editor-schemas`), an example
    lab host, and a shared `RepoOptions` class inherited by both an example test
    suite and an example instructions module — so `otto test TestExample` and
@@ -285,9 +292,12 @@ otto for a team:
    scaffolds everything with no prompts; bare `otto init` asks per missing
    area; `otto init --schemas` also *refreshes* the generated schemas after an
    otto upgrade. See {doc}`../../installation` and {doc}`../cli-reference`.
-2. **Choose a host source** — the built-in `json` source (commit `lab.json`
-   under a `labs` directory) is the default; point `[lab] backend` at a CMDB or
-   inventory API if you have one. See {doc}`host-database`.
+2. **Choose your host sources** — `otto init` scaffolds one `[[lab.sources]]`
+   entry on the built-in `json` backend (commit `lab.json` under `lab_data/`).
+   Add an entry for a CMDB or inventory API if you have one, and mind the
+   order: sources are read in order and a later one overrides an earlier one
+   per host record, which is how a repo layers its own hosts over a global
+   database. See {doc}`host-database`.
 3. **Decide on reservation gating** — leave it off (`backend = "none"`, the
    default) for sandbox labs, or wire `[reservations]` to your scheduler so otto
    refuses to clobber a held rack. Tell the team about the `--as-user` and

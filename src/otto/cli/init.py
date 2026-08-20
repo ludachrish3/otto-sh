@@ -56,33 +56,87 @@ class Area:
     scaffold: Callable[[Path, InitConfig], list[Path]]
 
 
+def _settings_data(root: Path) -> dict[str, Any] | None:
+    """Return the raw parsed ``.otto/settings.toml`` (``None`` if absent/unparseable).
+
+    Returning ``None`` (rather than raising) is what lets every doctor check
+    fall back to the conventional layout on a repo otto has not scaffolded
+    yet; the settings area itself reports the parse error.
+    """
+    settings_path = root / ".otto" / "settings.toml"
+    if not settings_path.is_file():
+        return None
+    try:
+        return tomli.loads(settings_path.read_text())
+    except (tomli.TOMLDecodeError, OSError):
+        return None
+
+
 def _settings_paths(root: Path) -> dict[str, list[Path]] | None:
-    """Parse ``.otto/settings.toml`` and anchor its path lists to *root*.
+    """Parse ``.otto/settings.toml`` and anchor its ``tests``/``libs`` lists to *root*.
 
     Returns ``None`` when the settings file is absent or fails to parse, so
     callers fall back to the conventional path instead of erroring.
 
     Applies phase 1 anchoring via :func:`otto.utils.anchor_path`: ``~`` expands
     to the user's home, and whatever is still relative afterwards is anchored
-    to *root*.
+    to *root*. Host data is NOT one of these lists — it is declared as
+    ``[[lab.sources]]`` entries and read through :func:`_lab_files`.
     """
     from ..utils import anchor_path
 
-    settings_path = root / ".otto" / "settings.toml"
-    if not settings_path.is_file():
-        return None
-    try:
-        data = tomli.loads(settings_path.read_text())
-    except (tomli.TOMLDecodeError, OSError):
+    data = _settings_data(root)
+    if data is None:
         return None
     resolved: dict[str, list[Path]] = {}
-    for key in ("labs", "tests", "libs"):
+    for key in ("tests", "libs"):
         values = data.get(key, [])
         if not isinstance(values, list):
             continue
         paths = [Path(str(v)) for v in values]
         resolved[key] = [anchor_path(p, root) for p in paths]
     return resolved
+
+
+def _lab_files(root: Path) -> list[Path]:
+    """Every lab file this repo's json ``[[lab.sources]]`` entries name.
+
+    THE single reader of a repo's host-data declaration inside ``otto init``:
+    detection and validation both go through it, so the doctor can never
+    disagree with the runtime — or with itself — about which files hold this
+    repo's hosts. Compiles the entries with the SAME
+    :func:`otto.labs.sources.compile_lab_sources` ``Repo.parse_settings``
+    uses, then asks each json source for its files (a directory entry
+    contributes its ``lab.json``; a ``.json`` entry IS the file).
+
+    Falls back to the conventional ``lab_data/lab.json`` only when there is no
+    readable ``settings.toml`` at all — init must work on a repo it has not
+    scaffolded yet. Settings that parse but declare no ``[lab]`` table declare
+    no host data, so they yield no files; a malformed ``[lab]`` yields none
+    either, because the settings area validates the very same file through
+    ``SettingsModel`` and reports the pydantic error itself.
+    """
+    from ..labs.json_repository import LAB_FILENAME
+    from ..labs.sources import compile_lab_sources
+    from ..models.settings import LabConfigSpec
+
+    data = _settings_data(root)
+    if data is None:
+        return [root / "lab_data" / LAB_FILENAME]
+    lab = data.get("lab")
+    if lab is None:
+        return []
+    try:
+        # pydantic's ValidationError IS a ValueError, so one arm covers both
+        # the envelope check and compile_lab_sources' own shape errors.
+        sources = compile_lab_sources(
+            LabConfigSpec.model_validate(lab),
+            repo_name=str(data.get("name") or root.name),
+            sut_dir=root,
+        )
+    except ValueError:
+        return []
+    return [f for src in sources if src.backend == "json" for f in src.lab_files()]
 
 
 def _ensure_options_module(root: Path, cfg: InitConfig) -> list[Path]:
@@ -260,12 +314,7 @@ def _detect_settings(root: Path) -> bool:
 
 
 def _detect_lab(root: Path) -> bool:
-    paths = _settings_paths(root)
-    lab_dirs = paths["labs"] if paths is not None else [root / "lab_data"]
-    # NB: `any(p.glob(...) for p in dirs)` is a bug trap — a Path.glob()
-    # generator object is truthy even when empty, so `any()` would see it as
-    # a hit regardless of matches. Force each generator to yield to check.
-    return any(next(lab_dir.glob("lab.json"), None) is not None for lab_dir in lab_dirs)
+    return any(lab_file.is_file() for lab_file in _lab_files(root))
 
 
 def _detect_tests(root: Path) -> bool:
@@ -315,7 +364,7 @@ def _validate_settings(root: Path) -> list[str]:
 
 
 def _validate_lab(root: Path) -> list[str]:
-    """Validate every ``lab.json`` under the settings' ``labs`` dirs via the real specs.
+    """Validate every lab file the settings' ``[[lab.sources]]`` name, via the real specs.
 
     The top-level section shape (object guard, ``_``-comment allowance — also
     tolerating a top-level ``$schema`` key, the editor-wiring idiom —
@@ -337,11 +386,8 @@ def _validate_lab(root: Path) -> list[str]:
     from ..labs.json_repository import parse_lab_sections
     from ..models.link import LinkSpec
 
-    paths = _settings_paths(root)
-    lab_dirs = paths["labs"] if paths is not None else [root / "lab_data"]
     problems: list[str] = []
-    for lab_dir in lab_dirs:
-        lab_file = lab_dir / "lab.json"
+    for lab_file in _lab_files(root):
         if not lab_file.is_file():
             continue
         try:

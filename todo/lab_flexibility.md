@@ -1,21 +1,37 @@
-# Lab Definition Philosophy and Combinations
+# Lab and Environment Metadata
 
-## Issue
+## What already shipped (not this file's business)
 
-Parts of the lab data is truly global and practically set in stone due to them being physical devices. The database can change, but when it does, it's a global truth - all teams everywhere at that current moment in time should be served the same host data. These kinds of lab host entries are likely to be in a database or some globally referenced json file if a database is not stood up.
+The multi-source half of this thread is **done**: a repo declares an ordered
+list of host-data sources as `[[lab.sources]]` entries, otto reads all of them
+across all repos, and a later source overrides an earlier one per host record
+with a warning naming both. That covers combining a global database with
+repo-owned VM/QEMU definitions, and the collision question ("fail loudly?" —
+answered: override, loudly).
 
-However, there are times that host entries are virtual and closer to being owned by the product repo. My reasoning is that VMs can change easily - they can be quickly deployed at larger scale, re-imaged, reconfigured, etc. Each project's *team* really controls that defintion, and it can change over time as their emulation needs change. QEMU hosts are another good examplep of host images possibly needing to be cheap to configure and deploy.
+- Design: `docs/superpowers/specs/2026-08-19-multi-source-lab-data-design.md`
+- User guide: `docs/guide/setup/host-database.md`
 
-If a virtual host is deemed to be globally defined, it could live in the global database. Otherwise, it could go in the project's repo. So the global database(s) can still hold virtual hosts - this just gives projects more flexibility to have project-defined hosts as well.
+## What is still open: metadata
 
-## Questions
+Lab data today is *hosts and links* — records about individual devices. There
+is no home for data that belongs to a **lab** or to an **environment** as a
+whole, opaque to otto. The motivating example is a lab-scoped set of usernames
+valid to query there; the general shape is a configuration blob a repo's own
+code reads, keyed by lab and/or environment, that otto stores and hands over
+without interpreting.
 
-* How do we combine these two needs?
-  * Do we have multiple lab "database" entries?
-  * Read in the global database, and then consume repo databases/json files?
-* What do we do about collisions?
-  * Possibly just fail loudly and refuse to go on?
+Open questions for whoever picks this up:
 
-## My Thoughts
+* What is the scoping model — lab-scoped, environment-scoped, or both, and how
+  do the two compose when a lab appears in several environments?
+* Where does it live: a new section in the lab data (so a host source
+  provides it, like hosts and links), a settings table, or both?
+* If a host source provides it, how does it survive multi-source merging —
+  the same later-wins override as hosts, per-key merge, or something else?
+* What is the read API (`get_lab_metadata(...)`? an attribute on `Lab`?), and
+  what does otto guarantee about the shape it stores (deliberately: nothing
+  beyond "JSON-ish and opaque")?
 
-I'd like for this to be a general mechanism. An arbitrary list of host data sources can be defined by each repo - databases (either by IP, DNS, or file path location) and json files (either absolute paths or relative to the repo root).
+Deferred deliberately in the multi-source spec (§3, §12) — it is a data-model
+question, not a source-plumbing one, and wants its own spec.

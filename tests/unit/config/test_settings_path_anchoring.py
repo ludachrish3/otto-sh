@@ -22,9 +22,12 @@ def test_relative_paths_anchor_to_repo_root_not_cwd(tmp_path, monkeypatch):
     sut = _write_repo(
         tmp_path / "repo",
         """
-        labs  = ["lab_data"]
         libs  = ["pylib"]
         tests = ["tests"]
+
+        [[lab.sources]]
+        backend = "json"
+        paths = ["lab_data"]
         """,
     )
     elsewhere = tmp_path / "elsewhere"
@@ -33,7 +36,7 @@ def test_relative_paths_anchor_to_repo_root_not_cwd(tmp_path, monkeypatch):
 
     repo = Repo(sut_dir=sut)
 
-    assert repo.labs == [sut / "lab_data"]
+    assert repo.lab_sources[0].paths == [sut / "lab_data"]
     assert repo.libs == [sut / "pylib"]
     assert repo.tests == [sut / "tests"]
 

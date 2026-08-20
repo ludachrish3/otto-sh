@@ -15,6 +15,7 @@ from otto.config.repo import Repo
 from otto.host.unix_host import UnixHost
 from otto.result import CommandResult
 from otto.utils import Status
+from tests._fixtures.labdata import json_lab_sources
 from tests._fixtures.sutrepo import make_sut_repo
 
 _DOCKER_FILES = {"docker/Dockerfile": "FROM alpine\n", "docker/compose.yml": "services: {}\n"}
@@ -803,7 +804,11 @@ def test_completer_cache_miss_filters_by_selected_lab(tmp_path):
             }
         )
     )
-    repo = SimpleNamespace(labs=[lab], docker_settings=None, lab_settings={}, sut_dir=tmp_path)
+    repo = SimpleNamespace(
+        lab_sources=json_lab_sources(tmp_path, [lab]),
+        docker_settings=None,
+        sut_dir=tmp_path,
+    )
     with (
         patch("otto.config.get_completion_names", return_value=None),
         patch("otto.config.get_repos", return_value=[repo]),

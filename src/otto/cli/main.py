@@ -570,6 +570,7 @@ def main(  # noqa: PLR0913 — CLI command params
     from .invoke import (
         LabContextError,
         RootOptions,
+        ensure_cli_session,
         ensure_lab_context,
         fail_loud_on_bootstrap_errors,
         report_lab_context_error,
@@ -609,6 +610,19 @@ def main(  # noqa: PLR0913 — CLI command params
         # registered world — fail the same way dispatch does rather than
         # surfacing a confusing secondary error from a half-registered world.
         fail_loud_on_bootstrap_errors()
+        # Open the CLI session BEFORE loading the lab. `init_cli_logging` is
+        # what puts a console handler on the "otto" logger; until it runs the
+        # tree still carries only the library NullHandler, which counts as a
+        # handler to `logging.callHandlers` and so suppresses even the
+        # last-resort stderr sink. Everything the lab load has to say —
+        # notably the cross-source override warning
+        # (`otto.labs.composite`: "host X in lab Y: A overrides B"), the one
+        # notice that tells an operator a local source is shadowing the
+        # global database — was therefore emitted into a void on exactly the
+        # two flags whose whole purpose is inspecting that lab. Every other
+        # lab-loading path opens the session first (`ensure_lab_session`);
+        # this one had grown its own inline load and skipped it.
+        ensure_cli_session(ctx)
         # Load the lab now, print, exit.
         try:
             ensure_lab_context(ctx)

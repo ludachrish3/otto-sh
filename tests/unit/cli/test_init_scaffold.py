@@ -26,7 +26,7 @@ def test_settings_scaffold_parses_via_settings_model(tmp_path: Path) -> None:
     model = SettingsModel.model_validate(data)  # adapt: match how Repo parses (see repo.py:532-561)
     assert model.name == "widget"
     # conventional paths pre-wired so later area scaffolds never edit settings
-    assert data["labs"] == ["lab_data"]
+    assert data["lab"]["sources"] == [{"backend": "json", "paths": ["lab_data"]}]
     assert data["tests"] == ["tests"]
     assert data["libs"] == ["pylib"]
     assert data["init"] == ["widget_instructions"]
@@ -190,32 +190,80 @@ def test_existing_vscode_settings_left_byte_for_byte_untouched(tmp_path: Path) -
     assert vscode / "extensions.json" in created  # independent only-if-absent check
 
 
-def test_settings_paths_anchors_relative_and_tilde_paths(tmp_path: Path, monkeypatch) -> None:
-    """_settings_paths anchors bare relative paths to root and expands ~ to home."""
-    from otto.cli.init import _settings_paths
-
+def _anchoring_repo(tmp_path: Path, monkeypatch) -> tuple[Path, Path]:
+    """A SUT repo whose path lists mix relative, ``~``-rooted and absolute entries."""
     repo = tmp_path / "repo"
     repo.mkdir()
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
-
-    # Settings with bare relative and tilde paths
     make_sut_repo(
         repo,
         name="test",
         tests=["tests"],
-        extra='labs = ["lab_data", "~/custom_labs"]\nlibs = ["pylib"]',
+        # [[lab.sources]] is a table-array header: every top-level key must
+        # precede it or it swallows them as source kwargs.
+        extra=(
+            'libs = ["pylib"]\n'
+            "\n"
+            "[[lab.sources]]\n"
+            'backend = "json"\n'
+            'paths = ["lab_data", "~/custom_labs", "/abs/global.json"]\n'
+        ),
     )
+    return repo, home
+
+
+def test_settings_paths_anchors_relative_and_tilde_paths(tmp_path: Path, monkeypatch) -> None:
+    """_settings_paths anchors bare relative paths to root and expands ~ to home."""
+    from otto.cli.init import _settings_paths
+
+    repo, _home = _anchoring_repo(tmp_path, monkeypatch)
 
     paths = _settings_paths(repo)
     assert paths is not None
 
     # Bare relative paths should anchor to repo root
-    assert paths["labs"][0] == repo / "lab_data"
     assert paths["tests"][0] == repo / "tests"
     assert paths["libs"][0] == repo / "pylib"
+    # Host data is NOT one of these lists — it is read through _lab_files.
+    assert set(paths) == {"tests", "libs"}
 
-    # Tilde paths should expand to home, not anchor to repo root
-    assert paths["labs"][1] == home / "custom_labs"
-    assert not str(paths["labs"][1]).startswith(str(repo))
+
+def test_lab_files_anchor_relative_expand_tilde_and_pass_absolutes_through(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The lab files init checks come from [[lab.sources]], anchored like every path.
+
+    Same three cases the runtime compiler pins (repo-relative, ``~``-rooted,
+    absolute), asserted through init's own reader so the doctor can never
+    drift from what otto would actually load.
+    """
+    from otto.cli.init import _lab_files
+
+    repo, home = _anchoring_repo(tmp_path, monkeypatch)
+
+    assert _lab_files(repo) == [
+        repo / "lab_data" / "lab.json",  # relative -> anchored to the repo root
+        home / "custom_labs" / "lab.json",  # ~ -> home, never the repo
+        Path("/abs/global.json"),  # absolute .json entry IS the lab file
+    ]
+
+
+def test_lab_files_falls_back_to_convention_without_settings(tmp_path: Path) -> None:
+    """A repo otto has not scaffolded yet still gets checked at lab_data/lab.json."""
+    from otto.cli.init import _lab_files
+
+    assert _lab_files(tmp_path) == [tmp_path / "lab_data" / "lab.json"]
+
+
+def test_lab_files_empty_when_settings_declare_no_lab_table(tmp_path: Path) -> None:
+    """Settings that declare no [lab] declare no host data — no conventional guess."""
+    from otto.cli.init import _lab_files
+
+    repo = tmp_path / "repo"
+    make_sut_repo(repo, name="test", tests=["tests"])
+    (repo / "lab_data").mkdir()
+    (repo / "lab_data" / "lab.json").write_text("{}")
+
+    assert _lab_files(repo) == []

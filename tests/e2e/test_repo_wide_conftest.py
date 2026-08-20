@@ -17,11 +17,9 @@ LAB_DATA_DIR = lab_data_dir() / "tech1"
 
 # Appended verbatim after make_sut_repo's name/version/tests header.
 SETTINGS_EXTRA = """\
-lab_data_type = "json"
-labs = ["{lab_data_dir}"]
-
-[lab]
+[[lab.sources]]
 backend = "json"
+paths = ["{lab_data_dir}"]
 """
 
 ROOT_CONFTEST = """\

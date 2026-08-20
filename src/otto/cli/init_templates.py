@@ -22,10 +22,18 @@ version = "{version}"
 
 # Where otto looks for things. Relative paths resolve against this repo's
 # root (the directory holding .otto/); "~" expands to your home directory.
-labs = ["lab_data"]   # directories searched for lab.json
 tests = ["tests"]     # defines where test discovery happens
 libs = ["pylib"]      # added to sys.path at startup
 init = ["{init_module}"]           # modules imported at startup (register instructions)
+
+# Host-data sources, read in order — later sources override earlier ones per
+# host record (a warning names both). The built-in "json" backend reads
+# lab.json from directories, or a .json file directly; custom backends are
+# selected by registered name with their kwargs inline. See
+# docs/guide/setup/host-database.md.
+[[lab.sources]]
+backend = "json"
+paths = ["lab_data"]
 
 # --- [dependencies] — other OTTO_SUT_DIRS projects this repo depends on ------
 # Entries are "name" or "name <op> X.Y.Z[, <op> X.Y.Z ...]"; names match other
@@ -43,11 +51,6 @@ init = ["{init_module}"]           # modules imported at startup (register instr
 #[project]
 #lab_patterns = ["example_lab"]   # labs this project applies to
 #host_patterns = [".*"]           # hosts of interest within those labs
-
-# --- [lab] — host-source backend selection (default: built-in "json") --------
-# Backend-specific settings live in [lab.<backend>]; see docs/guide/setup/host-database.md.
-#[lab]
-#backend = "json"
 
 # --- [logging] — extra top-level logger prefixes routed into otto's sinks ----
 #[logging]

@@ -1,9 +1,5 @@
 name = "repo1"
 version = "1.0.0"
-lab_data_type = "json"
-labs = [
-    "../_fixtures/lab_data/tech1",
-]
 libs = [
     "pylib",
     # Shared, third-party-style module providing the Zephyr 2.7 `zephyr-inline`
@@ -17,6 +13,12 @@ init = [
     'repo1_instructions',
     'custom_hosts',
     'repo1_monitor_uptime',
+]
+
+[[lab.sources]]
+backend = "json"
+paths = [
+    "../_fixtures/lab_data/tech1",
 ]
 
 # Named OS profiles: bundle each Zephyr version's common attributes once so a

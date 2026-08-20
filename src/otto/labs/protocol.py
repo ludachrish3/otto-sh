@@ -24,7 +24,8 @@ class LabRepository(Protocol):
     A backend is configured at construction time (the built-in JSON backend
     takes its ``search_paths`` in ``__init__``), then queried through the two
     methods below. Selection and construction happen in
-    :func:`otto.labs.build_lab_repository`.
+    :func:`otto.labs.build_lab_sources`, one instance per ``[[lab.sources]]``
+    entry.
     """
 
     def load_lab(

@@ -101,16 +101,21 @@ test suites, run instructions, and lab data:
 name = "my_project"
 version = "1.0.0"
 
-labs  = ["../lab_data"]
 libs  = ["pylib"]
 tests = ["tests"]
 init  = ["my_instructions"]
+
+[[lab.sources]]
+backend = "json"
+paths = ["../lab_data"]
 ```
 
 Relative paths resolve against the repository root — see
 {doc}`guide/setup/repo-setup`.  The `init` list names Python modules that
 otto imports at startup — this is where you register your instructions and
-shared options.
+shared options.  `[[lab.sources]]` is an ordered list: declare several and
+otto combines them, later sources overriding earlier ones per host record
+(see {doc}`guide/setup/host-database`).
 
 ### Instructions (`otto run`)
 

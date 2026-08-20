@@ -344,7 +344,7 @@ def load_lab(
         ``None`` reproduces today's behavior.
     repository : LabRepository | None
         A pre-built host-source backend (e.g. from
-        :func:`otto.labs.build_lab_repository`). When ``None``, a built-in
+        :func:`otto.labs.build_lab_sources`). When ``None``, a built-in
         json backend over ``search_paths`` is used — preserving library/script
         behavior.
 

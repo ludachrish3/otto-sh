@@ -19,8 +19,9 @@ LAB_DATA_DIR = lab_data_dir() / "tech1"
 
 # Appended verbatim after make_sut_repo's name/version/tests header.
 SETTINGS_EXTRA = """\
-lab_data_type = "json"
-{labs_line}
+[[lab.sources]]
+backend = "json"
+paths = ["{lab_data_dir}"]
 """
 
 SUITE_SRC = """\
@@ -77,10 +78,10 @@ def make_selection_repo(
 
     ``with_lab`` controls whether this repo contributes ``LAB_DATA_DIR`` to
     the aggregated lab search paths (see ``ensure_lab_context`` in
-    ``otto.cli.invoke``, which concatenates every repo's ``labs`` list
-    unchanged). Pass ``False`` for every repo but one in a multi-repo test —
-    two repos both pointing at the same lab data dir would load the same
-    ``lab.json`` twice and collide on duplicate host IDs.
+    ``otto.cli.invoke``, which concatenates every repo's ``[[lab.sources]]``
+    entries unchanged). Pass ``False`` for every repo but one in a multi-repo
+    test — two repos both pointing at the same lab data dir would load the
+    same ``lab.json`` twice and collide on duplicate host IDs.
 
     The test module is named ``test_selection_<name>.py`` (not a fixed
     ``test_selection.py``): two repos collected in the same otto process
@@ -88,12 +89,11 @@ def make_selection_repo(
     ``sys.modules`` key, and the second repo's file loses to the first's
     already-cached module — silently collecting zero tests.
     """
-    labs_line = f'labs = ["{LAB_DATA_DIR}"]' if with_lab else ""
     return make_sut_repo(
         root / name,
         name=name,
         version="0.1.0",
         tests=["tests"],
-        extra=SETTINGS_EXTRA.format(labs_line=labs_line),
+        extra=SETTINGS_EXTRA.format(lab_data_dir=LAB_DATA_DIR) if with_lab else "",
         files={f"tests/test_selection_{name}.py": suite_src},
     )

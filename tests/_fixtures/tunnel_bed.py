@@ -334,11 +334,9 @@ def cli_sut_dir(tmp_path: Path) -> Path:
         sut,
         name="repo1",
         extra=(
-            f'lab_data_type = "json"\n'
-            f'labs = ["{lab_dir}"]\n'
-            f"\n"
-            f"[lab]\n"
+            f"[[lab.sources]]\n"
             f'backend = "json"\n'
+            f'paths = ["{lab_dir}"]\n'
             f"\n"
             f"[[docker.composes]]\n"
             f'path = "{REPO1 / "docker" / "compose.yml"}"\n'

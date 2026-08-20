@@ -71,12 +71,19 @@ graph into every boundary crossing.
 
 Lab loading is behind a protocol so hosts don't have to come from JSON files:
 `LabRepository` (in {mod}`otto.labs.protocol`) is the host-source
-contract, the built-in `json` backend reads `lab.json` files from the
-configured lab paths, and alternatives (a database, an inventory service)
+contract, the built-in `json` backend reads `lab.json` files from the paths a
+source declares, and alternatives (a database, an inventory service)
 register a name via {func}`otto.labs.register_lab_repository`.
 {func}`otto.testing.assert_lab_repository_conforms` verifies a custom backend
 against the contract, and `otto.examples.lab_repository` is a copyable
 reference implementation. See {doc}`../../guide/setup/host-database`.
+
+A process reads *every* source every repo declares:
+{func}`otto.labs.build_lab_sources` constructs each `[[lab.sources]]` entry
+and, past the first, wraps them in a `CompositeLabRepository` that consults
+them in order and lets a later source override an earlier one per host record,
+with a warning naming both. The composite satisfies the same protocol, so
+nothing downstream can tell how many sources there are.
 
 Naming a host is a separate, cheaper query than loading one: tab completion
 and tunnel narrowing go through {func}`otto.labs.host_summaries`, which uses a

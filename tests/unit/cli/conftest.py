@@ -138,7 +138,11 @@ def _make_lab_fs(tmp_path: Path) -> tuple[Path, Path]:
     lab_data_dir.mkdir()
     (lab_data_dir / "lab.json").write_text(json.dumps({"hosts": HOSTS_DATA}))
 
-    sut_dir = make_sut_repo(tmp_path / "sut", name="test_repo", extra='labs = ["../lab_data"]')
+    sut_dir = make_sut_repo(
+        tmp_path / "sut",
+        name="test_repo",
+        extra='[[lab.sources]]\nbackend = "json"\npaths = ["../lab_data"]',
+    )
 
     return sut_dir, lab_data_dir
 

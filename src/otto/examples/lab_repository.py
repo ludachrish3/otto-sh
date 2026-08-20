@@ -15,7 +15,7 @@ Register it from an ``init`` module and select it by name::
 
 then in ``.otto/settings.toml``::
 
-    [lab]
+    [[lab.sources]]
     backend = "example"
 
 Direct usage:
@@ -70,7 +70,7 @@ class ExampleLabRepository:
     Parameters
     ----------
     repo_dir : Path | None
-        Accepted for factory/registry uniformity — :func:`otto.labs.build_lab_repository`
+        Accepted for factory/registry uniformity — :func:`otto.labs.build_lab_sources`
         constructs a custom backend as ``cls(repo_dir=..., **kwargs)``. This
         in-memory sample has no files to resolve, so it is ignored.
     labs : dict[str, list[dict]] | None
@@ -81,7 +81,7 @@ class ExampleLabRepository:
     def __init__(
         self,
         *,
-        repo_dir: Path | None = None,  # noqa: ARG002 — required by registry-seam constructor signature (build_lab_repository passes repo_dir= to all backends)
+        repo_dir: Path | None = None,  # noqa: ARG002 — required by registry-seam constructor signature (build_lab_sources passes repo_dir= to all backends)
         labs: dict[str, list[dict[str, Any]]] | None = None,
     ) -> None:
         self._labs: dict[str, list[dict[str, Any]]] = (

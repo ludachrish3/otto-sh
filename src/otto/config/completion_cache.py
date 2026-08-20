@@ -105,8 +105,9 @@ would alter the registered name sets: each SUT's ``settings.toml``, every
 ``.py`` file under any ``init`` module, every test file (pytest's default
 ``python_files`` — or the repo's own override of it — plus ``conftest.py``)
 anywhere under a configured ``tests`` directory or on the path from one up to
-the SUT root, every ``lab.json`` under a configured ``labs`` search path, and
-every file pytest would read settings from (``python_files`` decides which
+the SUT root, every lab file named by a repo's json ``[[lab.sources]]`` entries
+(directory entries contribute their ``lab.json``; ``.json`` entries are the file
+themselves), and every file pytest would read settings from (``python_files`` decides which
 files count, so it is a source in its own right). File contents are never
 read, so the fingerprint is cheap to compute even when SUTs are large.
 
@@ -118,9 +119,9 @@ one stat, and being wrong about ``python_files`` blinds both readers.
 A stale fingerprint is always safe: the fast path is skipped, the slow path
 runs as normal and rewrites the cache afterward.
 
-A *constant* fingerprint is the failure mode worth knowing about. A repo whose
-``[lab]`` backend is not the built-in json one, or which configures a
-``[reservations]`` backend, keeps its inventory somewhere no stat can see —
+A *constant* fingerprint is the failure mode worth knowing about. A repo with a
+``[[lab.sources]]`` entry on a non-json backend, or which configures a
+``[reservations]`` backend, keeps that inventory somewhere no stat can see —
 so edits to it never move the digest, even though the repo may still have a
 ``lab.json`` on disk for other reasons. Those repos fall back to a short TTL
 (``UNFINGERPRINTED_CACHE_TTL_SECONDS``) rather than the usual day, which is the
@@ -161,8 +162,6 @@ CACHE_FILENAME = "completion_cache.json"
 # v11: host-ID sources now hash lab.json (renamed from hosts.json), so cached
 #      fingerprints reference a different filename.
 SCHEMA_VERSION = 11
-
-LAB_FILENAME = "lab.json"
 
 # One home, two readers: `collect_test_names` decides which files to PARSE for
 # names, and `compute_fingerprint` decides which files to STAT for
@@ -326,13 +325,13 @@ def clear_cache() -> bool:
 def _has_unfingerprinted_source(repos: list["Repo"]) -> bool:
     """Report whether any repo's completion data comes from outside the digest.
 
-    Two such sources, both pure dict reads of already-parsed settings — no
-    pydantic, no backend construction, no I/O, so this is safe on the
-    completion fast path:
+    Two such sources, both read off already-parsed settings — the compiled
+    source list and the raw ``[reservations]`` dict — with no pydantic, no
+    backend construction and no I/O, so this is safe on the completion fast
+    path:
 
-    - a ``[lab] backend`` other than ``"json"`` (hosts, lab names). ``backend``
-      defaults to ``"json"`` (:class:`~otto.models.settings.LabConfigSpec`), so
-      an absent ``[lab]`` block reads as json.
+    - any ``[[lab.sources]]`` entry with a non-json backend (hosts, lab
+      names).
     - any ``[reservations]`` backend (``--as-user`` names). The built-in json
       reservation backend does not implement username completion at all, so
       that field is populated *exclusively* by custom, typically networked
@@ -345,17 +344,18 @@ def _has_unfingerprinted_source(repos: list["Repo"]) -> bool:
 
     Known limitation: a repo may re-register ``"json"`` with a replacement
     class (``register_lab_repository("json", ..., overwrite=True)``), which
-    this cannot see without constructing the backend. ``build_lab_repository``
+    this cannot see without constructing the backend. ``build_lab_sources``
     hardcodes the ``cls(search_paths=...)`` contract for that name, so a
     replacement is deliberately impersonating the file backend; it inherits
     file-backed invalidation and ``--clear-autocomplete-cache``.
     """
     for repo in repos:
-        backend = getattr(repo, "lab_settings", {}).get("backend", "json")
-        if isinstance(backend, str) and backend != "json":
+        if any(src.backend != "json" for src in getattr(repo, "lab_sources", [])):
             return True
-        # `isinstance(..., dict)` for the same reason as the `str` check above:
-        # a test double's auto-attribute is truthy but is not settings.
+        # `isinstance(..., dict)`: a test double's auto-attribute is truthy but
+        # is not settings. The lab check above needs no such guard — a double
+        # with no `lab_sources` reads as the empty list, and a MagicMock's
+        # auto-attribute iterates empty.
         reservations = getattr(repo, "reservation_settings", None)
         if isinstance(reservations, dict) and reservations:
             return True
@@ -493,13 +493,14 @@ def compute_fingerprint(repos: list["Repo"]) -> str:
                 for t in sorted(_test_sources(test_dir, repo.sut_dir, patterns)):
                     _hash_file(h, t)
 
-        # Host-ID sources: lab.json under each configured lab search path.
-        # Adding these to the fingerprint lets the cache self-invalidate on
-        # edits. A non-file backend has no such signal — its digest never
-        # moves — so it falls back to a short TTL instead
-        # (_cache_ttl_seconds / UNFINGERPRINTED_CACHE_TTL_SECONDS).
-        for lab_path in repo.labs:
-            _hash_file(h, lab_path / LAB_FILENAME)
+        # Host-ID sources: the lab files every compiled [[lab.sources]] entry
+        # reads. Adding these to the fingerprint lets the cache self-invalidate
+        # on edits. A non-file backend has no such signal — it contributes no
+        # lab files, so its digest never moves — and it falls back to a short
+        # TTL instead (_cache_ttl_seconds / UNFINGERPRINTED_CACHE_TTL_SECONDS).
+        for src in repo.lab_sources:
+            for lab_file in src.lab_files():
+                _hash_file(h, lab_file)
 
     return h.hexdigest()
 
@@ -1079,19 +1080,18 @@ def _bounded(
 def repo_host_summaries(repo: "Repo") -> list["HostSummary"]:
     """Every host *repo*'s configured host source knows — best-effort.
 
-    Goes through the repo's own ``[lab]`` backend rather than reading its
-    ``lab.json`` files directly, so a project with a custom host source gets
-    completion from it (previously a custom backend contributed nothing here
-    — completion only ever saw ``lab.json``).
+    Goes through the repo's own ``[[lab.sources]]`` backends rather than
+    reading its ``lab.json`` files directly, so a project with a custom host
+    source gets completion from it (previously a custom backend contributed
+    nothing here — completion only ever saw ``lab.json``).
 
-    Scoped PER REPO, which preserves what completion did before: each repo
-    contributed the hosts under its own ``labs`` paths, and the container ids
-    synthesized below pair a repo's ``[docker]`` composes with its own
-    docker-capable parents. Note this is NOT how dispatch selects a backend —
-    ``cli/invoke`` builds ONE backend from the FIRST repo declaring ``[lab]``
-    — so with two repos both declaring one, completion enumerates both while
-    dispatch honours only the first. Reconciling the two selection rules is
-    its own change.
+    Scoped PER REPO: each repo contributes the hosts of its own sources, and
+    the container ids synthesized below pair a repo's ``[docker]`` composes
+    with its own docker-capable parents. Dispatch composes the SAME per-repo
+    source lists into one backend (``build_lab_sources``), so the two agree on
+    which sources exist; they differ only in that completion keeps each repo's
+    hosts separate where dispatch merges them (later sources overriding
+    earlier ones).
 
     Never raises, and never hangs: an unregistered backend, malformed
     settings, or a backend that explodes yields an empty list, because every
@@ -1121,12 +1121,10 @@ _SUMMARY_MEMO: dict[str, list["HostSummary"]] = {}
 def _enumerate_host_summaries(
     repo: "Repo", abandoned: "threading.Event | None" = None
 ) -> list["HostSummary"]:
-    from ..labs import build_lab_repository, host_summaries
+    from ..labs import build_lab_sources, host_summaries
 
     try:
-        repository = build_lab_repository(
-            repo.lab_settings, repo.sut_dir, search_paths=list(repo.labs)
-        )
+        repository = build_lab_sources([repo])
         return host_summaries(repository)
     except Exception as e:  # noqa: BLE001 — completion never crashes the shell
         if abandoned is None or not abandoned.is_set():
@@ -1306,23 +1304,24 @@ def collect_link_ids(
 
     ids: set[str] = set()
     for repo in repos:
-        for lab_path in repo.labs:
-            for entry in _read_lab_links(lab_path / LAB_FILENAME):
-                if not isinstance(entry, dict):
-                    continue
-                if loaded_ids is not None and not any(
-                    host_id in loaded_ids for host_id in raw_endpoint_host_ids(entry)
-                ):
-                    continue
-                name = entry.get("name")
-                if isinstance(name, str) and name:
-                    ids.add(name)
-                    continue
-                hosts = raw_endpoint_host_ids(entry)
-                if len(hosts) != 2 or not all(h for h in hosts):  # noqa: PLR2004
-                    continue
-                a, b = (LinkEndpoint(host=h) for h in hosts)
-                ids.add(make_static_link_id(a, b, None))
+        for src in repo.lab_sources:
+            for lab_file in src.lab_files():
+                for entry in _read_lab_links(lab_file):
+                    if not isinstance(entry, dict):
+                        continue
+                    if loaded_ids is not None and not any(
+                        host_id in loaded_ids for host_id in raw_endpoint_host_ids(entry)
+                    ):
+                        continue
+                    name = entry.get("name")
+                    if isinstance(name, str) and name:
+                        ids.add(name)
+                        continue
+                    hosts = raw_endpoint_host_ids(entry)
+                    if len(hosts) != 2 or not all(h for h in hosts):  # noqa: PLR2004
+                        continue
+                    a, b = (LinkEndpoint(host=h) for h in hosts)
+                    ids.add(make_static_link_id(a, b, None))
     return sorted(ids)
 
 
@@ -1340,14 +1339,12 @@ def collect_lab_names(repos: list["Repo"]) -> list[str]:
     completion fast path as well as the cache writer. A backend that fails is
     skipped; any unexpected error yields ``[]`` so completion never crashes.
     """
-    from ..labs import build_lab_repository
+    from ..labs import build_lab_sources
 
     names: set[str] = set()
     for repo in repos:
         try:
-            repository = build_lab_repository(
-                repo.lab_settings, repo.sut_dir, search_paths=list(repo.labs)
-            )
+            repository = build_lab_sources([repo])
             names.update(repository.list_labs())
         except Exception as e:  # noqa: BLE001, PERF203 — per-repo resilience: one bad backend must not deny the rest
             logging.getLogger(__name__).warning(

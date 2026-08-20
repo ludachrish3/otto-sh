@@ -217,8 +217,9 @@ def _reservation_repo(root: Path, holder: str) -> Path:
         root,
         name="reservation_fixture",
         extra=(
-            'lab_data_type = "json"\n'
-            'labs = ["lab_data"]\n'  # search paths anchor at the repo root
+            "[[lab.sources]]\n"
+            'backend = "json"\n'
+            'paths = ["lab_data"]\n'  # search paths anchor at the repo root
             "\n"
             "[reservations]\n"
             'backend = "json"\n'

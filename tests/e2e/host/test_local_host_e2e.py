@@ -8,7 +8,7 @@ network transport or remote VM.
 The ``local`` host ID is a built-in host: :func:`otto.config.lab.load_lab`
 injects a ``LocalHost()`` into every lab it returns, on any backend, so
 ``otto host local`` resolves without a custom lab-repository. This fixture repo
-uses the standard ``json`` backend (``[lab] backend = "json"`` in
+uses the standard ``json`` backend (``[[lab.sources]] backend = "json"`` in
 ``.otto/settings.toml``); the ``local`` host comes from the built-in injection.
 
 Login note: ``LocalHost._login`` is not implemented — ``otto host local

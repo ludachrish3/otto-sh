@@ -5,6 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from otto.config.completion_cache import collect_lab_names, collect_test_names
+from tests._fixtures.labdata import json_lab_sources
 
 _HOSTS = [
     {"ip": "10.0.0.1", "element": "r", "labs": ["tech1", "shared"]},
@@ -42,17 +43,16 @@ def _repo(
     tests: list[Path] | None = None,
     sut_dir: Path | None = None,
 ):
-    """A stand-in Repo. `lab_settings={}` means "declares no [lab] block", so
-    the host source is the built-in json backend over `labs` — what a real
-    repo without a custom backend looks like."""
+    """A stand-in Repo whose only host source is a json one over `labs` —
+    what a real repo without a custom backend compiles to."""
+    # NOT Path("."): `collect_test_names` reads the SUT's pytest config for
+    # `python_files`, so a CWD-relative default would read otto's own
+    # pyproject.toml out of whatever directory pytest ran from.
+    resolved_sut_dir = sut_dir or (labs or tests or [Path()])[0]
     return SimpleNamespace(
-        labs=labs or [],
+        lab_sources=json_lab_sources(resolved_sut_dir, labs or []) if labs else [],
         tests=tests or [],
-        lab_settings={},
-        # NOT Path("."): `collect_test_names` reads the SUT's pytest config
-        # for `python_files`, so a CWD-relative default would read otto's own
-        # pyproject.toml out of whatever directory pytest ran from.
-        sut_dir=sut_dir or (labs or tests or [Path()])[0],
+        sut_dir=resolved_sut_dir,
     )
 
 

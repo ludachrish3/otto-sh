@@ -79,7 +79,7 @@ def build_backend(
         The SUT repo root.  Used to expand the JSON backend's ``path``
         setting when it is relative, and forwarded as ``repo_dir=`` to a
         custom backend's constructor, mirroring
-        :func:`otto.labs.build_lab_repository`.
+        :func:`otto.labs.build_lab_sources`.
 
     Returns
     -------
