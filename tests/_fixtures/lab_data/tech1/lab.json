@@ -20,7 +20,8 @@
                 "eth2": {"ip": "192.168.1.11", "subnet": "192.168.1.0/24"}
             },
             "labs": [
-                "veggies"
+                "veggies",
+                "busybox"
             ]
         },
         {
@@ -275,6 +276,116 @@
             ],
             "labs": [
                 "embedded"
+            ]
+        },
+        {
+            "ip": "127.0.0.1",
+            "element": "bb1161",
+            "os_type": "unix",
+            "board": "qemu",
+            "sw_version": "1.16.1",
+            "valid_terms": ["telnet"],
+            "valid_transfers": ["shell", "nc"],
+            "is_virtual": true,
+            "hop": "carrot_seed",
+            "creds": [
+                {"login": "root", "password": "otto"}
+            ],
+            "telnet_options": {"port": 2316},
+            "nc_options": {"port": 9160},
+            "resources": [
+                "bb1161"
+            ],
+            "labs": [
+                "busybox"
+            ]
+        },
+        {
+            "ip": "127.0.0.1",
+            "element": "bb1211",
+            "os_type": "unix",
+            "board": "qemu",
+            "sw_version": "1.21.1",
+            "valid_terms": ["telnet"],
+            "valid_transfers": ["shell", "nc"],
+            "is_virtual": true,
+            "hop": "carrot_seed",
+            "creds": [
+                {"login": "root", "password": "otto"}
+            ],
+            "telnet_options": {"port": 2321},
+            "nc_options": {"port": 9210},
+            "resources": [
+                "bb1211"
+            ],
+            "labs": [
+                "busybox"
+            ]
+        },
+        {
+            "ip": "127.0.0.1",
+            "element": "bb1281",
+            "os_type": "unix",
+            "board": "qemu",
+            "sw_version": "1.28.1",
+            "valid_terms": ["telnet"],
+            "valid_transfers": ["shell", "nc"],
+            "is_virtual": true,
+            "hop": "carrot_seed",
+            "creds": [
+                {"login": "root", "password": "otto"}
+            ],
+            "telnet_options": {"port": 2328},
+            "nc_options": {"port": 9280},
+            "resources": [
+                "bb1281"
+            ],
+            "labs": [
+                "busybox"
+            ]
+        },
+        {
+            "ip": "127.0.0.1",
+            "element": "bb1310",
+            "os_type": "unix",
+            "board": "qemu",
+            "sw_version": "1.31.0",
+            "valid_terms": ["telnet"],
+            "valid_transfers": ["shell", "nc"],
+            "is_virtual": true,
+            "hop": "carrot_seed",
+            "creds": [
+                {"login": "root", "password": "otto"}
+            ],
+            "telnet_options": {"port": 2331},
+            "nc_options": {"port": 9310},
+            "resources": [
+                "bb1310"
+            ],
+            "labs": [
+                "busybox"
+            ]
+        },
+        {
+            "ip": "127.0.0.1",
+            "element": "bb1350",
+            "os_type": "unix",
+            "board": "qemu",
+            "sw_version": "1.35.0",
+            "valid_terms": ["telnet"],
+            "valid_transfers": ["shell", "nc"],
+            "is_virtual": true,
+            "hop": "carrot_seed",
+            "creds": [
+                {"login": "root", "password": "otto"}
+            ],
+            "telnet_options": {"port": 2335},
+            "nc_options": {"port": 9350},
+            "resources": [
+                "bb1350"
+            ],
+            "labs": [
+                "busybox"
             ]
         }
     ],

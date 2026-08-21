@@ -1,23 +1,25 @@
 #!/usr/bin/env python3
-"""Probe every lab VM + Zephyr QEMU instance and report health + timestamps.
+"""Probe every lab VM + QEMU guest and report health + timestamps.
 
 Reads the lab data (``tests/_fixtures/lab_data/tech1/lab.json`` by default) and, for
 each defined host, reports reachability and a timestamp:
 
-* **Unix VMs** (``os_type == "unix"``) are reached over SSH; the script reads
-  each VM's wall clock and prints the **drift** against this machine's clock,
-  so you can spot NTP/clock-skew problems at a glance.
+* **Unix VMs** (``os_type == "unix"``, no hop) are reached over SSH; the script
+  reads each VM's wall clock and prints the **drift** against this machine's
+  clock, so you can spot NTP/clock-skew problems at a glance.
 
-* **Embedded console instances** (the ``EmbeddedHost`` family — e.g.
-  ``os_type == "zephyr"``) carry no SSH creds of their own: they sit behind an
-  SSH hop VM and are reached by SSHing to the hop and telnetting to the guest
-  console (the same path otto uses). Zephyr has no RTC, so these report
-  **kernel uptime** + console responsiveness rather than wall-clock drift.
+* **Console guests behind a hop** are reached by SSHing to the hop and
+  telnetting to the guest console (the same path otto uses). Two families
+  qualify: the Zephyr instances (the ``EmbeddedHost`` family, no creds of their
+  own) and the BusyBox bed guests (unix-family, own creds, but reachable only
+  from inside their hop). Zephyr has no RTC, so these report **kernel uptime**
+  + console responsiveness rather than wall-clock drift; a BusyBox guest
+  answers its telnet ``login:`` prompt and is reported as such.
 
-With ``--restart-qemu`` the script first restarts the ``zephyr-qemu-*`` and
-``zephyr-snmp-relay-*`` systemd units on each hop VM, waits for the guests to
-boot, then runs the health check. Use it to recover a wedged bed (e.g. after
-the embedded test gate reports "console wedged").
+With ``--restart-qemu`` the script first restarts the ``zephyr-qemu-*``,
+``zephyr-snmp-relay-*`` and ``busybox-qemu-*`` systemd units on each hop VM,
+waits for the guests to boot, then runs the health check. Use it to recover a
+wedged bed (e.g. after the embedded test gate reports "console wedged").
 
 Exit status is non-zero if any host is unreachable/unresponsive.
 
@@ -58,14 +60,24 @@ _SSH_OPTS = [
 # Flag a Unix VM whose clock differs from this host by more than this (seconds).
 _DRIFT_WARN_S = 2.0
 
+# Boot settle after a restart: Zephyr guests are up in ~5 s, but the
+# BusyBox guests boot a full Linux kernel under TCG on a 2-core VM and
+# need ~15-30 s before telnetd answers.
+_RESTART_SETTLE_S = 20
+
 # Runs on the hop VM (which has python3) to probe a guest telnet console: open
-# the port, nudge the shell, and read the uptime line back. Prints one of
-# "OK <ms>" / "NOOUT" (TCP open but the guest emitted nothing — the classic
-# wedge) / "CONNFAIL <err>". The port is argv[2], NOT hardcoded: the x86 net
-# beds expose the in-guest shell on :23 (reached over their TAP), but the ARM
-# serial beds bridge UART to a telnet listener on a loopback /32 at 2323+. A
-# hardcoded :23 would connect to the hop's own 0.0.0.0:23 telnetd for those
-# loopback addresses and report a false "up" — so honor telnet_options.port.
+# the port, nudge the shell, and read what comes back. Prints one of
+# "OK <ms>" (a Zephyr uptime line) / "OK login" (a telnet login prompt — how
+# the BusyBox bed guests announce themselves; they run BusyBox telnetd, which
+# answers with option negotiation plus "<host> login: " and never with an
+# uptime) / "OK ?" (talking, but neither shape) / "NOOUT" (TCP open but the
+# guest emitted nothing — the classic wedge) / "CONNFAIL <err>". The port is
+# argv[2], NOT hardcoded: the x86 net beds expose the in-guest shell on :23
+# (reached over their TAP), but the ARM serial beds bridge UART to a telnet
+# listener on a loopback /32 at 2323+, and the BusyBox guests sit behind QEMU
+# user-net hostfwds on 127.0.0.1 at 2316+. A hardcoded :23 would connect to the
+# hop's own 0.0.0.0:23 telnetd for those loopback addresses and report a false
+# "up" — so honor telnet_options.port.
 _CONSOLE_PROBE = r"""
 import re, socket, sys, time
 ip = sys.argv[1]
@@ -93,7 +105,12 @@ if not data:
     print("NOOUT")
 else:
     m = re.search(rb"Uptime:\s*(\d+)\s*ms", data)
-    print("OK", m.group(1).decode() if m else "?")
+    if m:
+        print("OK", m.group(1).decode())
+    elif b"login:" in data:
+        print("OK login")
+    else:
+        print("OK", "?")
 """
 
 
@@ -130,18 +147,23 @@ def _hop_index(hosts: list[dict]) -> dict[str, dict]:
 def _is_ssh_host(host: dict) -> bool:
     """Return True if we log in directly over SSH (the ``UnixHost`` family).
 
-    Returns False if the host is an embedded console reached via a hop
-    (``EmbeddedHost`` / ``ZephyrHost`` family).
+    Route on shape, not on ``os_type`` literals (see the history below).
+    Two shapes are NOT direct-SSH: an embedded console (no ``creds`` of
+    its own — it borrows the hop's), and a hop-fronted guest that carries
+    its own creds but is only reachable from inside its hop (the BusyBox
+    bed guests: ``ip`` is the hop's loopback, so a direct SSH from here
+    would hit the wrong machine entirely). A host with creds and NO hop
+    stays on the SSH path.
 
-    Route on the credential shape, not a hardcoded ``os_type`` literal. The SSH
-    probe dereferences the host's own ``creds``; embedded consoles carry none
-    and borrow their hop's. Keying on ``os_type == "embedded"`` silently
-    misrouted every console — straight into a ``KeyError('creds')`` — once the
-    lab data moved to ``os_type: "zephyr"`` (commit 41cf70c). The credential
-    shape also survives the next os_type rename, and correctly keeps a Unix VM
-    that fronts a guest (its own ``hop``, e.g. ``pepper``) on the SSH path.
+    The history the ``os_type`` half of that rule comes from: the SSH probe
+    dereferences the host's own ``creds``, and keying the routing on
+    ``os_type == "embedded"`` silently misrouted every console — straight into
+    a ``KeyError('creds')`` — once the lab data moved to ``os_type: "zephyr"``
+    (commit 41cf70c). Shape-based routing survives the next os_type rename;
+    it is also why the BusyBox guests, which ARE ``os_type: "unix"``, need no
+    new literal here — their hop is what routes them.
     """
-    return "creds" in host
+    return "creds" in host and not host.get("hop")
 
 
 def _check_unix(host: dict) -> dict:
@@ -164,13 +186,14 @@ def _check_unix(host: dict) -> dict:
 
 
 def _check_embedded(host: dict, hops: dict[str, dict]) -> dict:
-    """Console responsiveness + uptime for an embedded QEMU guest."""
+    """Console responsiveness + uptime for a QEMU guest reached through its hop."""
     hop = hops.get(host.get("hop", ""))
     if hop is None:
         return {"ok": False, "status": "NO-HOP", "info": f"hop {host.get('hop')!r} not in lab"}
     user, password = _ssh_user_pass(hop["creds"])
-    # ARM serial beds carry the console on telnet_options.port (2323+); x86 net
-    # beds have no telnet_options and use the in-guest shell on :23.
+    # ARM serial beds carry the console on telnet_options.port (2323+) and the
+    # BusyBox guests on their hostfwd port (2316+); x86 net beds have no
+    # telnet_options and use the in-guest shell on :23.
     port = host.get("telnet_options", {}).get("port", 23)
     remote_cmd = f"python3 -c {shlex.quote(_CONSOLE_PROBE)} {shlex.quote(host['ip'])} {port}"
     rc, out, err = _run_ssh(hop["ip"], user, password, remote_cmd)
@@ -179,6 +202,8 @@ def _check_embedded(host: dict, hops: dict[str, dict]) -> dict:
     if out.startswith("OK"):
         parts = out.split()
         ms = parts[1] if len(parts) > 1 else "?"
+        if ms == "login":
+            return {"ok": True, "status": "up", "info": "login prompt"}
         uptime = f"up {int(ms) // 1000}s" if ms.isdigit() else "up ?"
         return {"ok": True, "status": "up", "info": uptime}
     if out.startswith("NOOUT"):
@@ -188,14 +213,15 @@ def _check_embedded(host: dict, hops: dict[str, dict]) -> dict:
 
 def _restart_qemu(hosts: list[dict], hops: dict[str, dict]) -> int:
     """Restart the QEMU + SNMP-relay units on every hop that fronts a guest."""
-    # Select embedded guests by credential shape (no own ``creds`` — they
-    # borrow the hop's), exactly like ``_is_ssh_host``/``_print_report``. Keying
-    # on ``os_type == "embedded"`` here silently matched nothing once the lab
-    # data moved to ``os_type: "zephyr"`` (commit 41cf70c) — the same trap
-    # ``_is_ssh_host`` documents.
+    # Select console guests by the SAME shape rule as ``_is_ssh_host`` /
+    # ``_print_report`` (credentials plus hop), never by an ``os_type``
+    # literal: keying on ``os_type == "embedded"`` here silently matched
+    # nothing once the lab data moved to ``os_type: "zephyr"`` (commit
+    # 41cf70c), and would today miss the BusyBox guests, which are
+    # ``os_type: "unix"``.
     hop_ids = sorted({h["hop"] for h in hosts if not _is_ssh_host(h) and h.get("hop")})
     if not hop_ids:
-        print("No embedded guests with a hop in the lab; nothing to restart.")
+        print("No console guests with a hop in the lab; nothing to restart.")
         return 0
     failures = 0
     for hop_id in hop_ids:
@@ -206,8 +232,11 @@ def _restart_qemu(hosts: list[dict], hops: dict[str, dict]) -> int:
             continue
         user, password = _ssh_user_pass(hop["creds"])
         # `systemctl restart` accepts a unit glob, expanded against loaded
-        # units. sudo -S reads the password from the piped echo.
-        units = "'zephyr-qemu-*.service' 'zephyr-snmp-relay-*.service'"
+        # units. sudo -S reads the password from the piped echo. Every hop gets
+        # every glob: on a hop with no busybox units the pattern matches
+        # nothing and is a no-op, the same reason the zephyr globs are safe on
+        # carrot.
+        units = "'zephyr-qemu-*.service' 'zephyr-snmp-relay-*.service' 'busybox-qemu-*.service'"
         cmd = f"echo {shlex.quote(password)} | sudo -S systemctl restart {units}"
         rc, _out, err = _run_ssh(hop["ip"], user, password, cmd, timeout=60)
         if rc == 0:
@@ -267,7 +296,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--restart-qemu",
         action="store_true",
-        help="restart Zephyr QEMU + relay units on each hop, then health-check",
+        help="restart Zephyr + BusyBox QEMU + relay units on each hop, then health-check",
     )
     args = parser.parse_args(argv)
 
@@ -282,11 +311,11 @@ def main(argv: list[str] | None = None) -> int:
     hops = _hop_index(hosts)
 
     if args.restart_qemu:
-        print("Restarting Zephyr QEMU instances…")
+        print("Restarting Zephyr + BusyBox QEMU instances…")
         if _restart_qemu(hosts, hops):
             print("One or more restarts failed; health may be incomplete.\n")
         # Give the guests time to boot and the relays to re-peer before probing.
-        time.sleep(10)
+        time.sleep(_RESTART_SETTLE_S)
         print()
 
     return 0 if _print_report(hosts, hops) else 1

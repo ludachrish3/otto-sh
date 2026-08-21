@@ -851,12 +851,12 @@ repeat: ## Run the full local suite (unit + integration + e2e) under pytest-repe
 
 # ═══ Lab ════════════════════════════════════════════════════════════════════
 
-vm-health: ## (Lab) Probe every lab VM + Zephyr QEMU instance; prints per-host timestamps + clock drift. Requires the Vagrant lab up.
-	@$(SAY) "probing lab VMs + Zephyr QEMU (timestamps + clock drift)"
+vm-health: ## (Lab) Probe every lab VM + Zephyr/BusyBox QEMU guest; prints per-host timestamps + clock drift. Requires the Vagrant lab up.
+	@$(SAY) "probing lab VMs + Zephyr/BusyBox QEMU (timestamps + clock drift)"
 	@uv run python scripts/lab_health.py
 
-qemu-restart: ## (Lab) Restart the Zephyr QEMU + SNMP-relay units on the hop VM(s), then health-check. Use to recover a wedged embedded bed.
-	@$(SAY) "restarting Zephyr QEMU + SNMP relay, then health-checking"
+qemu-restart: ## (Lab) Restart the Zephyr + BusyBox QEMU and SNMP-relay units on the hop VM(s), then health-check. Use to recover a wedged embedded or BusyBox bed.
+	@$(SAY) "restarting Zephyr + BusyBox QEMU + SNMP relay, then health-checking"
 	@uv run python scripts/lab_health.py --restart-qemu
 
 # ═══ Quality: static analysis + autofix ═════════════════════════════════════

@@ -542,6 +542,19 @@ Vagrant.configure("2") do |config|
             provision_data_plane(node, ip)
             provision_docker(node, name)
             provision_mysql(node, name)
+
+            # test1 additionally hosts the BusyBox QEMU bed (spec
+            # 2026-08-20-busybox-bed-and-tier-migration-design.md): five
+            # per-milestone-version guests behind this VM as hop. TCG
+            # emulation + five resident guests need headroom beyond the
+            # 1552 MB test-VM default (a provider block later in the
+            # define wins over provision_test_vm's).
+            if name == "test1"
+                node.vm.provider "virtualbox" do |vb|
+                    vb.memory = 2560
+                end
+                provision_busybox_bed(node)
+            end
         end
     end
 
@@ -1685,6 +1698,157 @@ CREATE DATABASE IF NOT EXISTS otto_test;
 GRANT ALL PRIVILEGES ON otto_test.* TO 'mysql'@'localhost';
 FLUSH PRIVILEGES;
 SQL
+        SHELL
+    end
+
+    # BusyBox QEMU bed on test1 (spec 2026-08-20-busybox-bed-and-tier-
+    # migration-design.md). Five guests, one per pinned milestone version,
+    # each a tiny x86 initramfs whose userland IS the pinned artifact,
+    # reachable only from inside this VM: QEMU user-net with one hostfwd
+    # for telnet (127.0.0.1:<telnet_port> -> guest :23) plus a 10-port nc
+    # data window (<nc_base>..<nc_base>+9, guest-side port == host-side
+    # port, which is what otto's hop port-forward + remote-listener nc
+    # shape requires). The host VM is aarch64, the guests are x86 — same
+    # TCG arrangement the zephyr VM already runs. The guest kernel is
+    # Ubuntu's amd64 generic vmlinuz (fetched via foreign-arch apt; one
+    # kernel serves i686 userlands too via IA32 emulation) plus its
+    # e1000.ko, decompressed at provision time because BusyBox insmod
+    # cannot read .ko.zst.
+    def provision_busybox_bed(vm)
+        vm.vm.provision "shell", name: "busybox-qemu", keep_color: true, inline: <<-SHELL
+            set -e
+            export DEBIAN_FRONTEND=noninteractive
+            apt -y install qemu-system-x86 zstd
+
+            BED=/home/vagrant/busybox-bed
+            mkdir -p "$BED"
+
+            # amd64 foreign arch, scoped: pin the existing ports source to
+            # arm64 first or `apt-get update` 404s chasing amd64 indexes
+            # on ports.ubuntu.com.
+            if ! grep -q '^Architectures:' /etc/apt/sources.list.d/ubuntu.sources; then
+                sed -i '/^Components:/a Architectures: arm64' /etc/apt/sources.list.d/ubuntu.sources
+            fi
+            dpkg --print-foreign-architectures | grep -qx amd64 || dpkg --add-architecture amd64
+            cat > /etc/apt/sources.list.d/amd64-archive.sources <<'EOF'
+Types: deb
+URIs: http://archive.ubuntu.com/ubuntu
+Suites: noble noble-updates noble-security
+Components: main universe
+Architectures: amd64
+EOF
+            apt-get update
+
+            if [ ! -f "$BED/vmlinuz" ] || [ ! -f "$BED/e1000.ko" ]; then
+                workdir=$(mktemp -d)
+                (
+                    # Trapped inside the subshell rather than removed after
+                    # it: any failure below aborts under `set -e`, which
+                    # skips a trailing rm and strands the tree in /tmp on
+                    # test1. EXIT fires on the clean path too.
+                    trap 'rm -rf "$workdir"' EXIT
+                    cd "$workdir"
+                    # `[^ :]*`, not `[^ ]*`: apt-cache prints the arch
+                    # qualifier for every NON-native package, so this line
+                    # reads `Depends: linux-image-6.8.0-51-generic:amd64` on
+                    # this arm64 host. Swallowing the `:amd64` would make
+                    # kver `...-generic:amd64` and the download below ask for
+                    # `linux-image-...-generic:amd64:amd64`, which apt cannot
+                    # resolve. Kernel package names carry no colon of their
+                    # own, so stopping at one is safe either way.
+                    kdep=$(apt-cache depends linux-image-virtual:amd64 \
+                        | sed -n 's/.*Depends: \\(linux-image-[0-9][^ :]*\\).*/\\1/p' | head -1)
+                    kver=${kdep#linux-image-}
+                    echo "=== fetching amd64 guest kernel ${kver} ==="
+                    apt-get download "linux-image-${kver}:amd64" "linux-modules-${kver}:amd64"
+                    dpkg-deb --fsys-tarfile linux-image-${kver}_*.deb \
+                        | tar -xO ./boot/vmlinuz-${kver} > "$BED/vmlinuz"
+                    dpkg-deb --fsys-tarfile linux-modules-${kver}_*.deb \
+                        | tar -xO ./lib/modules/${kver}/kernel/drivers/net/ethernet/intel/e1000/e1000.ko.zst \
+                        > "$BED/e1000.ko.zst"
+                    zstd -d -f "$BED/e1000.ko.zst" -o "$BED/e1000.ko"
+                )
+            fi
+            chown -R vagrant:vagrant "$BED"
+
+            # Build (or refresh) the five images from the pinned artifacts.
+            sudo -u vagrant env OTTO_BUSYBOX_CACHE="$BED/cache" \
+                python3 /vagrant/scripts/build_busybox_guest_images.py \
+                --dest "$BED" --kernel-module "$BED/e1000.ko" \
+                --emit-changed "$BED/changed.txt"
+
+            # version:telnet_port:nc_base — mirrors GUEST_TABLE in
+            # scripts/build_busybox_guest_images.py. Drift is caught
+            # hostless: tests/unit/scripts/test_build_busybox_guest_images.py
+            # reads this file and pins this table, the enable list below and
+            # the nc window width to GUEST_TABLE / NC_WINDOW. Edit that table
+            # and this one in the same commit, or the guard reds.
+            for entry in "1.16.1:2316:9160" "1.21.1:2321:9210" \
+                         "1.28.1:2328:9280" "1.31.0:2331:9310" \
+                         "1.35.0:2335:9350"; do
+                ver=$(echo "$entry" | cut -d: -f1)
+                tport=$(echo "$entry" | cut -d: -f2)
+                ncbase=$(echo "$entry" | cut -d: -f3)
+
+                fwds="hostfwd=tcp:127.0.0.1:${tport}-:23"
+                p=$ncbase
+                while [ $p -lt $((ncbase + 10)) ]; do
+                    fwds="${fwds},hostfwd=tcp:127.0.0.1:${p}-:${p}"
+                    p=$((p + 1))
+                done
+
+                cat > /home/vagrant/run-busybox-qemu-${ver}.sh <<EOF
+#!/usr/bin/env bash
+# Launch the BusyBox ${ver} bed guest (telnet 127.0.0.1:${tport}).
+# TCG (no KVM on this aarch64 VM). -no-reboot + panic=-1 turn a guest
+# kernel panic — or any in-guest reboot — into a qemu EXIT instead of an
+# endless in-place reset. That exit carries status 0: qemu forces a
+# failure status only for host errors and for a pvpanic-reported panic
+# under -action panic=exit-failure, and there is no pvpanic device here.
+# So Restart=on-failure would leave a panicked guest DOWN, and the unit
+# uses Restart=always instead. A deliberate 'systemctl stop' still
+# sticks — systemd never applies Restart= to a stop it initiated.
+set -euo pipefail
+exec qemu-system-x86_64 \\
+    -m 96 \\
+    -nographic \\
+    -no-reboot \\
+    -kernel /home/vagrant/busybox-bed/vmlinuz \\
+    -initrd /home/vagrant/busybox-bed/initramfs-${ver}.cpio.gz \\
+    -append "console=ttyS0 rdinit=/init panic=-1" \\
+    -netdev user,id=n0,${fwds} \\
+    -device e1000,netdev=n0
+EOF
+                chown vagrant:vagrant /home/vagrant/run-busybox-qemu-${ver}.sh
+                chmod +x /home/vagrant/run-busybox-qemu-${ver}.sh
+
+                cat > /etc/systemd/system/busybox-qemu-${ver}.service <<EOF
+[Unit]
+Description=BusyBox ${ver} bed guest under QEMU (telnet 127.0.0.1:${tport})
+After=network.target
+
+[Service]
+Type=simple
+User=vagrant
+ExecStart=/home/vagrant/run-busybox-qemu-${ver}.sh
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+EOF
+            done
+
+            systemctl daemon-reload
+            for entry in "1.16.1" "1.21.1" "1.28.1" "1.31.0" "1.35.0"; do
+                systemctl enable busybox-qemu-${entry}.service
+                # Restart when the image changed or the unit is not
+                # running; leave healthy unchanged guests alone (spec §6).
+                if grep -qx "${entry}" "$BED/changed.txt" 2>/dev/null \
+                    || ! systemctl is-active --quiet busybox-qemu-${entry}.service; then
+                    systemctl restart busybox-qemu-${entry}.service
+                fi
+            done
         SHELL
     end
 
