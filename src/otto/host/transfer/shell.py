@@ -9,7 +9,9 @@ what the second codec is for.
 TWO LAYERS, AND THE SPLIT IS THE POINT. ``ShellFileTransfer`` owns the
 STAGING SKELETON -- name a temp in the destination's own directory and inside
 the filename budget, fill it, verify it BEFORE the rename, rename it, clean
-up on any failure -- and a :class:`ShellCodec` owns the FILLING, whole chunk
+up on any failure AND on an interrupt (``ShellFileTransfer._cleanup_temp``,
+``ShellFileTransfer._cleanup_temp_interrupted``) -- and a
+:class:`ShellCodec` owns the FILLING, whole chunk
 loop and all. There are two: :class:`Base64Codec`, which does exactly what
 this module always did, and :class:`UuencodeCodec` for the rows with no
 ``base64`` applet. Which one a transfer gets is
@@ -59,8 +61,10 @@ Registers ``shell`` into the shared transfer registry on import, and is the
 _register_builtin_os_profiles``).
 """
 
+import asyncio
 import base64
 import binascii
+import contextlib
 import hashlib
 import logging
 import shlex
@@ -270,6 +274,35 @@ that is loud rather than silent: PUT verifies the TEMP (see
 :meth:`ShellFileTransfer._verify_integrity`) before the ``mv``, so a
 clobbered temp fails its own check instead of landing wrong bytes at the
 destination.
+"""
+
+_INTERRUPTED_CLEANUP_TIMEOUT = 2.0
+"""Seconds an INTERRUPTED put may spend removing its staged temp before giving up.
+
+Bounds :meth:`ShellFileTransfer._cleanup_temp_interrupted` and nothing else.
+The ordinary failure paths keep the host's own
+:data:`~otto.host.host.DEFAULT_COMMAND_TIMEOUT` (30 s), which is the right
+bound when nothing is racing them; the interrupted path runs inside the
+graceful window an interrupt promises (``otto.lifecycle`` runs teardown
+under a 10 s ``DEFAULT_TEARDOWN_DEADLINE``), where 30 s is not a bound at
+all -- one hung ``rm`` on a session that is itself dying would hold teardown
+three times past the deadline otto just told the operator about, which is a
+worse bug than the leak this cleanup exists to close.
+
+TWO SECONDS IS ~45x THE MEASURED COST, on the slowest transport this backend
+has. On the bed's ``bb1350`` guest -- telnet through the ``carrot`` hop into
+a QEMU guest -- a warm-session ``rm -f -- <temp>`` round trip measured
+42-45 ms over seven consecutive samples (2026-08-21), identical whether the
+temp existed (64 KiB) or not; an ``ssh`` exec channel is faster still. The
+expensive part of that path is the LOGIN (0.57 s, measured in the same run)
+and this cleanup never pays it: it rides the session the transfer was already
+using. So the bound cannot truncate a healthy cleanup, and an unhealthy one
+costs a fifth of the teardown window instead of all of it -- the remaining
+~8 s is what the session teardown behind it still needs.
+
+At most one temp is ever cleaned up per interrupt, whatever the batch size:
+:meth:`ShellFileTransfer._run_put` is strictly sequential, so exactly one
+file is in flight when the cancellation lands.
 """
 
 
@@ -1462,6 +1495,18 @@ class ShellFileTransfer(UnixFileTransfer):
         validated the file list -- this is a race, not a precondition otto
         skipped.
 
+        AN INTERRUPT IS NOT A FAILURE PATH and does not reach any of those
+        calls: ``asyncio.CancelledError`` is a ``BaseException``, so a
+        cancelled chunk loop walks straight past ``except OSError`` and out
+        of this method with no cleanup reached at all. It gets its own
+        handler, and the awaited removal there needs shielding and a bound
+        that a plain error path does not -- see
+        :meth:`_cleanup_temp_interrupted`. What is NOT at risk either way is
+        the destination: the temp-then-``mv`` discipline above means an
+        interrupt can only ever leave an inert staged temp, never a short
+        file at the real path (measured on the bed, and asserted by
+        ``tests/e2e/chaos/test_transfer_chaos.py``'s BusyBox arm).
+
         Verification (see :meth:`_verify_integrity`) runs on the TEMP, after
         every chunk has landed and before the ``mv`` -- a mismatch is
         therefore caught before it ever reaches the real destination, not
@@ -1538,6 +1583,9 @@ class ShellFileTransfer(UnixFileTransfer):
                         f"(exit {mv_result.retcode}): {mv_result.value or mv_result.msg}"
                     ),
                 )
+        except asyncio.CancelledError:
+            await self._cleanup_temp_interrupted(quoted_temp)
+            raise
         except OSError as e:
             await self._cleanup_temp(quoted_temp)
             return Result(Status.Error, msg=f"{src}: could not read local file: {e}")
@@ -1558,6 +1606,102 @@ class ShellFileTransfer(UnixFileTransfer):
                 f"{self._name}: cleanup of {quoted_temp} failed (ignored): "
                 f"{result.value or result.msg}"
             )
+
+    async def _cleanup_temp_interrupted(self, quoted_temp: str) -> None:
+        """Remove the staged temp on the way out of a CANCELLED put: shielded and bounded.
+
+        The same best-effort ``rm`` :meth:`_cleanup_temp` issues, run in the
+        one place a plain ``await`` cannot be trusted to finish. The gap was
+        MEASURED, not reasoned about: the BusyBox arm of
+        ``tests/e2e/chaos/test_transfer_chaos.py`` SIGINTs a shell PUT
+        mid-chunk-loop and found the ``<dest>.otto-<token>`` temp still on the
+        guest afterwards -- an inert file, one per interrupted transfer, since
+        ``except OSError`` never sees a ``CancelledError``.
+
+        THIS METHOD NEVER SWALLOWS A CANCELLATION. Its caller re-raises the
+        one it caught; a cancellation arriving DURING the cleanup propagates
+        out of here in its place. Neither is ever converted into an ordinary
+        exception -- an operator who pressed Ctrl+C must get the interrupt's
+        exit path, not a transfer that looks like it failed. The one thing
+        that DOES outrank a cancellation here is another ``BaseException``:
+        ``KeyboardInterrupt`` and ``SystemExit`` are deliberately outside the
+        ``except Exception`` below, because an interpreter that is exiting
+        outranks a temp file.
+
+        THREE CASES, AND THE CONSTRUCT HAS TO ANSWER ALL THREE.
+
+        ONE CANCEL (the ordinary Ctrl+C). The ``CancelledError`` has already
+        been delivered by the time the handler runs and asyncio does not
+        redeliver it, so awaiting here completes normally. This case alone
+        would need no shield -- only the bound below, because the ``rm``
+        inherits a 30 s command timeout that outlasts the teardown deadline.
+
+        A SECOND CANCEL DURING THE CLEANUP (a second Ctrl+C, or the run's
+        force deadline firing). That one IS delivered, and it lands on this
+        method's own await -- tearing the ``rm`` mid-flight and stranding
+        exactly the file this method exists to remove. ``asyncio.shield``
+        alone does not fix it: shield keeps the cancellation off the inner
+        task, but the AWAITING side still raises at once, so the ``rm`` would
+        be left running detached -- a leaked temp traded for a stray task,
+        which this repo's coverage lanes arm a detector for.
+        :func:`otto.lifecycle.compensate` is the shape that does hold: it
+        keeps the shielded task running, HOLDS the second cancellation, and
+        re-raises it once the cleanup resolves or the bound below expires
+        (cancelling and joining the inner task first, so nothing outlives
+        this call either way). Same helper the nc backend's listener reap
+        uses for the same reason, with the same bound turned on.
+
+        THE SESSION ALREADY GONE, so the ``rm`` raises instead of returning a
+        failing :class:`~otto.result.CommandResult` -- a transport torn down
+        under a dying process is the likeliest way this method is ever
+        reached. Caught here, at ``Exception`` and never ``BaseException``,
+        and logged at debug: a raise would replace the caller's cancellation
+        with an ``OSError``, and there is nothing to report anyway, since the
+        file this belongs to is already interrupted. ``BaseException`` is
+        excluded on purpose -- that is how compensate's held cancellation
+        gets out.
+
+        THE BOUND (:data:`_INTERRUPTED_CLEANUP_TIMEOUT`) IS COMPENSATE'S OWN
+        ``timeout=``, not a wrapper around the ``rm``: the helper arms it at
+        the call, so it is the same 2 s in every case above -- whether or not
+        a second interrupt ever arrives -- and on expiry the helper cancels
+        the shielded ``rm``, joins it, and returns. No ``deadline=`` rides
+        along with it, deliberately: that bound is armed by the first HELD
+        cancellation, so an equal one could only ever expire LATER than this
+        one, and the default it resolves to (``OTTO_TEARDOWN_DEADLINE``) is
+        the very window this bound exists to fit inside.
+
+        Expiry is not a raise: the cleanup is abandoned with a WARNING naming
+        the action -- a temp this method promised to remove may still be on
+        the device, which is not something to hide in a debug line -- the
+        caller's cancellation still propagates, and teardown keeps its
+        deadline.
+        """
+        # Imported here, not at module scope: otto.lifecycle is only needed
+        # once a compensating action actually runs, and a top-level import
+        # drags it onto every CLI --help path (import-budget guard). Mirrors
+        # `otto.host.transfer.nc`'s own compensate import.
+        from ...lifecycle import compensate
+
+        async def _suppressed_cleanup() -> None:
+            # The suppression is CALLER POLICY and stays out here rather than
+            # moving into compensate(): the helper re-raises an inner failure
+            # when no cancellation is held, so an `rm` that raises on a torn
+            # transport would reach `_put_one` IN PLACE OF the CancelledError
+            # it is unwinding. Nothing about a bound changes that.
+            try:
+                await self._cleanup_temp(quoted_temp)
+            except Exception as e:  # noqa: BLE001 — a dying transport must not replace the interrupt
+                _logger.debug(
+                    f"{self._name}: cleanup of {quoted_temp} failed during an interrupted "
+                    f"put (ignored): {e}"
+                )
+
+        await compensate(
+            _suppressed_cleanup(),
+            timeout=_INTERRUPTED_CLEANUP_TIMEOUT,
+            what=f"{self._name}: staged temp removal after an interrupted put",
+        )
 
     # ------------------------------------------------------------------
     # Shell get
@@ -1625,11 +1769,24 @@ class ShellFileTransfer(UnixFileTransfer):
         exception: its failure (``_remote_size`` returning ``None``) returns
         before the chunk loop or the ``temp.open()`` call ever runs, so
         there is no local temp yet to remove -- see the ``total is None``
-        branch below. A source path is a REMOTE path here (unlike PUT's
-        *src*, which is local), so there is nothing local to race against
-        before the loop starts -- only ``dst``'s directory needs to exist,
-        and if it does not, the ``OSError`` from opening the local temp is
-        caught the same way every other local write failure is.
+        branch below. An INTERRUPT has the same hole PUT's did and gets the
+        same handler for the same reason (``CancelledError`` is a
+        ``BaseException``, so ``except OSError`` never sees it, and a
+        cancelled chunk loop would leave ``<dst>.otto-<token>`` sitting in
+        the destination's directory) -- but none of PUT's machinery, because
+        removing this temp is a local ``unlink`` and not an await: there is
+        no round trip to shield from a second cancellation and nothing to
+        bound. See :meth:`_cleanup_local_temp`. What the interrupt path DOES
+        need here is the temp file's own ``close()`` kept off it -- see the
+        comment on the ``temp.open("wb")`` below, since a flush failure
+        raised while unwinding would replace the cancellation with an
+        ``OSError`` and report an interrupted GET as a failed one.
+
+        A source path is a REMOTE path here (unlike PUT's *src*, which is
+        local), so there is nothing local to race against before the loop
+        starts -- only ``dst``'s directory needs to exist, and if it does
+        not, the ``OSError`` from opening the local temp is caught the same
+        way every other local write failure is.
 
         Verification (see :meth:`_verify_integrity`) runs on the local temp,
         after every chunk has been decoded and written and before
@@ -1657,7 +1814,19 @@ class ShellFileTransfer(UnixFileTransfer):
             # a security boundary, so the collision-resistance ruff's S324
             # warns about does not apply here.
             local_digest = hashlib.md5()  # noqa: S324
-            with temp.open("wb") as f:
+            # NOT `with temp.open(...)`, and the difference is a cancellation:
+            # closing a buffered file FLUSHES it, so `close()` can raise
+            # (ENOSPC, EIO) -- and a `with` block raises that from its
+            # `__exit__` while an exception is already in flight, REPLACING
+            # it. On the cancel-unwind path the replacement is an `OSError`,
+            # which this method's own `except OSError` then turns into a
+            # failed :class:`~otto.result.Result` -- an interrupted GET
+            # reported as a failed one, the exact defect the PUT path's
+            # interrupt handling exists to avoid. So the normal close stays
+            # inside the try (where a flush failure IS the transfer's error,
+            # as it has always been) and the unwind close is best-effort.
+            f = temp.open("wb")
+            try:
 
                 def _received(decoded: bytes) -> None:
                     nonlocal bytes_done
@@ -1675,6 +1844,13 @@ class ShellFileTransfer(UnixFileTransfer):
                         on_received=_received,
                     )
                 )
+                f.close()
+            finally:
+                # Idempotent: on the normal path the close above already ran
+                # and this one is a no-op (a `close()` that raises still
+                # closes the file), so this only ever fires while unwinding.
+                with contextlib.suppress(OSError):
+                    f.close()
             if outcome.error is not None:
                 self._cleanup_local_temp(temp)
                 return Result(Status.Error, msg=f"{src}: {outcome.error}")
@@ -1694,6 +1870,9 @@ class ShellFileTransfer(UnixFileTransfer):
                 return Result(Status.Error, msg=f"{src}: integrity check failed -- {mismatch}")
 
             temp.replace(dst)
+        except asyncio.CancelledError:
+            self._cleanup_local_temp(temp)
+            raise
         except OSError as e:
             self._cleanup_local_temp(temp)
             return Result(Status.Error, msg=f"{src}: local write failed: {e}")
@@ -1843,6 +2022,14 @@ class ShellFileTransfer(UnixFileTransfer):
         time. Local, not remote, so there is no exec round trip:
         ``Path.unlink(missing_ok=True)`` covers "never created" the way
         PUT's ``rm -f`` does, without an extra command against the device.
+
+        BEING LOCAL IS ALSO WHY THE INTERRUPT PATH REUSES THIS UNCHANGED,
+        where PUT needed :meth:`_cleanup_temp_interrupted` built around its
+        remote one. This method does not await, so a cancellation cannot
+        land inside it: there is no window for a second Ctrl+C to tear, no
+        detached task to strand, and nothing for a timeout to bound. It
+        cannot swallow a cancellation either -- the ``except`` below is
+        ``OSError``, and ``CancelledError`` is not one.
         """
         try:
             temp.unlink(missing_ok=True)

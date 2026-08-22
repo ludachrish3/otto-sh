@@ -292,12 +292,12 @@ def _guest_names(directory: str) -> list:
 
 
 @pytest.mark.no_hygiene_bracket  # the guest is not the veggies pool the autouse bracket leases
-def test_sigint_mid_shell_put_leaves_nothing_at_the_destination_on_the_busybox_guest(
+def test_sigint_mid_shell_put_leaves_nothing_behind_on_the_busybox_guest(
     busybox_chaos_bed, chaos_rng, tmp_path
 ):
-    """Interrupt a shell PUT mid-stream on the BusyBox guest: no truncated
-    file may appear at the real destination, and the console must still serve
-    a shell afterwards.
+    """Interrupt a shell PUT mid-stream on the BusyBox guest: nothing may be
+    left on the device -- no truncated file at the real destination, no staged
+    temp beside it -- and the console must still serve a shell afterwards.
 
     WHY ``--transfer shell`` AND NOT ``nc``. The two nc arms above are this
     module's premise on a veggies host: an interrupted transfer must not
@@ -326,14 +326,30 @@ def test_sigint_mid_shell_put_leaves_nothing_at_the_destination_on_the_busybox_g
     assertion. The payload is sized (see ``_GUEST_PAYLOAD_SIZE``) so the
     second case takes a wide margin to reach.
 
-    THE LEFTOVER TEMP IS CHARACTERIZED, NOT ASSERTED, exactly as the nc arms
-    characterize their partial local file. Measured: the staged temp DOES
-    survive a SIGINT (``_cleanup_temp`` is a best-effort ``rm`` that cannot
-    run its own await once the task is cancelled). Asserting either way would
-    be wrong -- asserting it survives would pin a wart as a contract and go
-    red on a fix; asserting it is gone would fail today for a behaviour the
-    product never promised. It is printed so a change in either direction is
-    visible in the run.
+    THE LEFTOVER TEMP IS NOW ASSERTED TOO, and it was this arm that found it.
+    The first version of this test only CHARACTERIZED what the interrupt left
+    behind, printing it rather than asserting either way, because the
+    product had not decided: measured here, the staged temp DID survive a
+    SIGINT, since ``asyncio.CancelledError`` is a ``BaseException`` and walked
+    past ``_put_one``'s ``except OSError`` without reaching any of the
+    ``_cleanup_temp`` calls its error paths make. Pinning that would have
+    fixed a wart as a contract; pinning its absence would have failed against
+    a promise the product had not made. The decision is made now -- an
+    interrupted PUT cleans up after itself
+    (``ShellFileTransfer._cleanup_temp_interrupted``, shielded and bounded) --
+    so the leftover is a second hard assertion rather than a printed number.
+
+    The two assertions are NOT redundant, and neither implies the other: the
+    destination check is about the temp-then-``mv`` skeleton (a file at the
+    real path means the rename ran early), the leftover check is about the
+    interrupt's own cleanup (a file at ``<dest>.otto-*`` means the unwind
+    skipped it). The shipped defect failed the second while passing the
+    first, which is exactly why both are here.
+
+    The staged temps' SIZES are still printed rather than asserted: how many
+    chunk commands landed before the signal is a property of the injection
+    window, not of the product, and the number that matters is that the set
+    is empty.
     """
     src = tmp_path / "guest-payload.bin"
     with src.open("wb") as f:
@@ -394,9 +410,15 @@ def test_sigint_mid_shell_put_leaves_nothing_at_the_destination_on_the_busybox_g
             f"Directory contents: {names}"
         )
 
-        # Characterization (not asserted -- see the docstring).
         staged = [n for n in names if n.startswith(f"{dest}.otto-")]
         sizes = {n: busybox_probe_text(f"stat -c %s {n}") for n in staged}
+        assert staged == [], (
+            f"{busybox_chaos_bed.element}: interrupted shell PUT left its staged temp on the "
+            f"device -- the interrupt's own cleanup did not run. Sizes: {sizes} "
+            f"(of {_GUEST_PAYLOAD_SIZE} bytes). Directory contents: {names}"
+        )
+
+        # Characterization of the injection window only -- see the docstring.
         log_text = "\n".join(
             f.read_text(errors="replace") for f in sorted(tmp_path.rglob("verbose.log"))
         )

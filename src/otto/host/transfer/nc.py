@@ -94,6 +94,30 @@ _NC_STALL_TIMEOUT = 5.0
 # channel must fail the attempt, not hang it.
 _NC_FORWARD_SETUP_TIMEOUT = 5.0
 
+_INTERRUPTED_REAP_TIMEOUT = 5.0
+"""Seconds an INTERRUPTED transfer may spend reaping its remote listener.
+
+Passed as :func:`otto.lifecycle.compensate`'s opt-in ``timeout=`` at the two
+cancellation handlers below, and nowhere else. Same argument the shell
+backend's :data:`~otto.host.transfer.shell._INTERRUPTED_CLEANUP_TIMEOUT`
+makes, with nc's numbers: comfortably above the reap's healthy cost, and a
+fraction of the window the interrupt promised.
+
+A HEALTHY REAP IS MILLISECONDS -- joining a cancelled local task, then a
+connect-and-close through a forward that already exists -- and its
+healthy-but-slow worst case is 3 s: `_connect_with_retry`'s 2 s budget for a
+listener that has not bound yet, plus the 1 s ``wait_closed``. 5 s clears
+that with room and still cuts the UNhealthy shape, where this method's own
+sub-bounds stack: `_NC_FORWARD_SETUP_TIMEOUT` (5 s) + connect (2 s) + close
+(1 s) = 8 s, four-fifths of ``DEFAULT_TEARDOWN_DEADLINE`` spent on ONE file's
+listener with the session teardown still queued behind it. A listener behind a
+forward that is itself stalling is unreachable by definition (see
+`_reap_nc_listener`), so giving up on it early costs nothing the remote-side
+hard cap (`_NC_LISTENER_HARD_CAP_S`) does not already cover -- while the leak
+this reap exists to close is measured in the todo as a listener outliving the
+10 s teardown deadline by up to 20 s.
+"""
+
 # Hard lifetime cap for a remote `nc -l`, applied via `timeout` (see
 # `_nc_listener_prefix`). One hour, not `listener_timeout`: this is the backstop
 # for otto dying with a listener up, so it only needs to beat "unnoticed for
@@ -1448,7 +1472,11 @@ class NcFileTransfer(UnixFileTransfer):
                 # deadline by up to 20s). compensate() holds any FURTHER
                 # cancellation until the reap resolves (chaos spec: shielded
                 # compensating actions) — without it a second Ctrl+C tears
-                # the reap and strands the listener after all.
+                # the reap and strands the listener after all — and bounds the
+                # reap itself at `_INTERRUPTED_REAP_TIMEOUT`, armed at the
+                # call, so a reap that cannot finish cannot become the very
+                # teardown overrun it exists to prevent. The handler still
+                # re-raises either way.
                 if listen_task is not None and not listen_task.done():
                     # Imported here, not at module scope: otto.lifecycle is
                     # only needed once a compensating action actually runs,
@@ -1458,6 +1486,7 @@ class NcFileTransfer(UnixFileTransfer):
 
                     await compensate(
                         self._cancel_and_reap(listen_task, port),
+                        timeout=_INTERRUPTED_REAP_TIMEOUT,
                         what=f"{self._name}: nc get listener reap (port {port})",
                     )
                 raise
@@ -1548,10 +1577,11 @@ class NcFileTransfer(UnixFileTransfer):
 
         ``suppress(Exception)``, not ``BaseException``: this runs inside
         ``compensate()``'s shield, so a genuine ``CancelledError`` landing
-        here (compensate's own deadline-fired ``task.cancel()``, or a caller
-        cancellation racing the join) must propagate — swallowing it would
-        let the reap start fresh network I/O AFTER the deadline already
-        fired, which the caller's one remaining cancel can't then kill.
+        here (compensate cancelling this work when
+        :data:`_INTERRUPTED_REAP_TIMEOUT` expires, or a caller cancellation
+        racing the join) must propagate — swallowing it would let the reap
+        start fresh network I/O AFTER the bound already fired, which the
+        caller's one remaining cancel can't then kill.
         ``gather(..., return_exceptions=True)`` only raises when THIS await
         itself is cancelled, so ``Exception`` alone still covers every
         listener-join failure ``_reap_nc_listener`` doesn't already
@@ -1706,7 +1736,10 @@ class NcFileTransfer(UnixFileTransfer):
                 # ever connects. compensate() holds any FURTHER cancellation
                 # until the reap resolves (chaos spec: shielded compensating
                 # actions) — without it a second Ctrl+C tears the reap and
-                # strands the listener after all.
+                # strands the listener after all — and bounds the reap itself
+                # at `_INTERRUPTED_REAP_TIMEOUT`, armed at the call, so a reap
+                # that cannot finish cannot become the very teardown overrun
+                # it exists to prevent. The handler still re-raises either way.
                 if listen_task is not None and not listen_task.done():
                     # Imported here, not at module scope: otto.lifecycle is only
                     # needed once a compensating action actually runs, and a
@@ -1716,6 +1749,7 @@ class NcFileTransfer(UnixFileTransfer):
 
                     await compensate(
                         self._cancel_and_reap(listen_task, port),
+                        timeout=_INTERRUPTED_REAP_TIMEOUT,
                         what=f"{self._name}: nc listener reap (port {port})",
                     )
                 raise

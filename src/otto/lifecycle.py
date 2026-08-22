@@ -24,7 +24,7 @@ import signal
 import sys
 import threading
 from collections.abc import Callable, Coroutine, Iterator
-from typing import Any, TypeVar
+from typing import Any, TypeVar, overload
 
 R = TypeVar("R")
 
@@ -403,38 +403,199 @@ def _run_force_exit_hooks() -> None:
             hook()
 
 
+class _CompensationExpired(Exception):  # noqa: N818 — internal control-flow signal, never leaves compensate()
+    """Internal: :func:`compensate`'s always-armed *timeout* fired first."""
+
+
+def _mark_expired(expiry: "asyncio.Future[None]") -> None:
+    """Timer callback for *timeout*: SIGNAL the bound, never touch the work.
+
+    Deliberately not ``task.cancel``: see :func:`_shielded_or_expired` for
+    why cancelling the work from a timer makes the expiry indistinguishable
+    from the caller's own interrupt.
+    """
+    if not expiry.done():
+        expiry.set_result(None)
+
+
+async def _shielded_or_expired(
+    task: "asyncio.Task[R]", expiry: "asyncio.Future[None] | None"
+) -> "R":
+    """Await *task* under a shield; raise :class:`_CompensationExpired` if *expiry* fires first.
+
+    Without *expiry* this IS the plain shielded await :func:`compensate` has
+    always done, statement for statement — the bound-free path is not
+    re-implemented, it is the first branch.
+
+    With one, the shield and the expiry signal are raced through
+    :func:`asyncio.wait`, which never reports a CHILD's outcome as an
+    exception. So a ``CancelledError`` leaving this coroutine means the
+    CALLER was cancelled and nothing else, and expiry arrives as its own
+    exception rather than as a cancellation. That distinction is the whole
+    reason the bound is not a simple ``call_later(timeout, task.cancel)``:
+    cancelling the work under a shield raises ``CancelledError`` in the
+    awaiting frame too, and before 3.11's ``Task.cancelling`` there is no way
+    to tell that from an interrupt the caller sent — which would leave
+    :func:`compensate` either inventing a cancellation for a caller who never
+    asked for one, or swallowing a real one.
+
+    The shield wrapper is dropped on every exit but the one that consumed it,
+    exactly as a bare ``await asyncio.shield(task)`` does when cancelled:
+    cancelling the wrapper is also what marks the inner task's eventual
+    exception retrieved.
+
+    On the expiry side the TASK, not the wrapper, decides whether there was
+    anything left to abandon — see the second branch below for the
+    one-callback-hop window that makes the difference.
+    """
+    if expiry is None:
+        return await asyncio.shield(task)
+    shielded = asyncio.shield(task)
+    try:
+        await asyncio.wait({shielded, expiry}, return_when=asyncio.FIRST_COMPLETED)
+        if shielded.done():
+            # A compensation that resolves in the same turn its bound expires
+            # is honored, not abandoned: result, failure, or the inner task's
+            # own cancellation, all raised/returned as the bound-free path
+            # would.
+            return shielded.result()
+        if task.done():
+            # SAME RULE, ONE CALLBACK HOP LATER, and the wrapper cannot be
+            # trusted to say so: ``Future.set_result`` schedules done-callbacks
+            # with ``call_soon``, so the expiry signal can reach
+            # ``asyncio.wait``'s waiter while the shield wrapper's own callback
+            # is STILL QUEUED over work that has already finished. Reading the
+            # wrapper alone then reports a completed compensation as abandoned
+            # and throws its result away — reproduced deterministically at a
+            # two-hop offset on 3.10 and 3.14 (a rollback that yields twice
+            # before returning). The task is the authority on whether the work
+            # is done; the wrapper is only how we wait for it.
+            return task.result()
+        raise _CompensationExpired
+    finally:
+        if not shielded.done():
+            shielded.cancel()
+
+
+# Two overloads for one runtime signature: the ``None`` in the return type is
+# the *timeout* expiry's answer (see the docstring), so it exists only for
+# callers that opt in — a caller that passes no bound still gets ``R``, and the
+# static contract of every pre-existing call site is unchanged.
+@overload
+async def compensate(
+    coro: "Coroutine[Any, Any, R]",
+    *,
+    deadline: "float | None" = ...,
+    timeout: None = ...,
+    what: str = ...,
+) -> "R": ...
+
+
+@overload
+async def compensate(
+    coro: "Coroutine[Any, Any, R]",
+    *,
+    deadline: "float | None" = ...,
+    timeout: float,
+    what: str = ...,
+) -> "R | None": ...
+
+
 async def compensate(
     coro: "Coroutine[Any, Any, R]",
     *,
     deadline: "float | None" = None,
+    timeout: "float | None" = None,
     what: str = "compensating action",
-) -> "R":
+) -> "R | None":
     """Run a rollback/undo coroutine to completion even if the caller is cancelled.
 
     The chaos spec's shielded-compensating-action helper: an interrupt
     landing mid-compensation must not tear it (a half-run rollback is worse
     than none). Cancellation arriving while *coro* runs is HELD — the inner
     work continues under ``asyncio.shield`` — and re-raised once the
-    compensation resolves. The first held cancellation arms *deadline*
-    (``None`` resolves ``OTTO_TEARDOWN_DEADLINE``) so a hung compensation
-    cannot stall teardown: on expiry the inner task is cancelled, the
-    abandonment is logged, and the held cancellation still re-raises. With
-    no cancellation this is a plain await — results and exceptions pass
-    through unchanged. Once a cancellation is held it wins over a late
-    compensation failure (the failure is logged, the cancellation
-    re-raises).
+    compensation resolves. With no cancellation this is a plain await —
+    results and exceptions pass through unchanged. Once a cancellation is
+    held it wins over a late compensation failure (the failure is logged,
+    the cancellation re-raises).
 
-    Tier-1 determinism: expiry is a ``call_later`` armed only when a
-    cancellation is held — tests drive it with ``deadline=0`` (fires on the
-    next loop turn), never wall-clock waits.
+    TWO BOUNDS, AND THEY ARE NOT ALTERNATIVES — they differ in WHEN THE CLOCK
+    STARTS, which is what the two names say:
+
+    *deadline* is TEARDOWN PRESSURE. It is armed by the FIRST HELD
+    CANCELLATION and by nothing else (``None`` resolves
+    ``OTTO_TEARDOWN_DEADLINE``): with nobody interrupting, a compensating
+    action is allowed to take as long as it takes, because a rollback torn
+    off half-run is worse than a slow one. A caller that passes neither bound
+    gets exactly that, forever.
+
+    *timeout* is the CALLER'S OWN BOUND on the work, counted from the call
+    (the sense :func:`asyncio.wait_for` gives the word) and armed whether or
+    not anyone ever interrupts. It is opt-in for the same reason *deadline*
+    is conditional: it is right only where the compensating action is itself
+    best-effort AND its healthy cost is known — a single remote ``rm`` (the
+    shell backend's interrupted-put cleanup), a listener reap (the nc
+    backend's) — so that truncating it beats holding teardown. Do not give it
+    to a rollback that must not be left half-run.
+
+    With BOTH set the earlier expiry wins, and neither restarts: *timeout*
+    counts from the call and *deadline* from the interrupt, so a *timeout* no
+    larger than *deadline* makes *deadline* dead weight, and a second
+    interrupt re-enters the shielded await without rearming either timer.
+
+    A TIE GOES TO THE WORK: a compensation that has finished when its bound
+    is observed is honored — result, failure or cancellation — never reported
+    abandoned, at every scheduling offset between the two events: the task,
+    not the shield wrapper, is what gets asked, because the wrapper's own
+    done-callback can still be a hop behind the work.
+
+    ON EXPIRY, either bound: the inner task is cancelled and joined, so
+    nothing outlives this call, and the abandonment is logged at WARNING
+    naming *what* — a compensating action that did not finish is
+    operator-visible state (a temp left on a device, a rollback half-applied),
+    whatever the caller does next. The OUTCOME follows the caller's own: a
+    held cancellation still re-raises, so an interrupted caller keeps its
+    interrupt; with no cancellation held — reachable only under *timeout* —
+    the call RETURNS ``None`` instead of inventing a ``CancelledError`` for a
+    caller who never asked for one. Hence the ``R | None`` return: the
+    ``None`` is the "bound fired, nothing to report" answer, and it exists
+    only for callers that opt in.
+
+    Tier-1 determinism: both expiries are ``call_later`` timers — tests drive
+    them with ``deadline=0`` / ``timeout=0`` (fires on the next loop turn),
+    never wall-clock waits.
     """
     task = asyncio.ensure_future(coro)
     held: "asyncio.CancelledError | None" = None
-    timer: "asyncio.TimerHandle | None" = None
+    deadline_timer: "asyncio.TimerHandle | None" = None
+    timeout_timer: "asyncio.TimerHandle | None" = None
+    expiry: "asyncio.Future[None] | None" = None
+    if timeout is not None:
+        loop = asyncio.get_running_loop()
+        expiry = loop.create_future()
+        timeout_timer = loop.call_later(timeout, _mark_expired, expiry)
     try:
         while True:
             try:
-                result = await asyncio.shield(task)
+                result = await _shielded_or_expired(task, expiry)
+            except _CompensationExpired:
+                # The caller's own bound, and the one path that reaches here
+                # with the work still RUNNING: cancel it, then join it, so a
+                # compensation this call gave up on cannot outlive the call.
+                task.cancel()
+                logger.warning(f"otto: {what} abandoned before completion")
+                try:
+                    # gather(return_exceptions=True), so the join neither
+                    # raises the work's own failure nor leaves it unretrieved;
+                    # a cancellation landing HERE is the caller's, and is held
+                    # like any other.
+                    await asyncio.gather(task, return_exceptions=True)
+                except asyncio.CancelledError as exc:
+                    if held is None:
+                        held = exc
+                if held is not None:
+                    raise held from None
+                return None
             except asyncio.CancelledError as exc:
                 if not task.cancelled():
                     # OUR wrapper was cancelled, not the work: hold the
@@ -442,7 +603,7 @@ async def compensate(
                     if held is None:
                         held = exc
                         bound = _resolve_teardown_deadline() if deadline is None else deadline
-                        timer = asyncio.get_running_loop().call_later(bound, task.cancel)
+                        deadline_timer = asyncio.get_running_loop().call_later(bound, task.cancel)
                     continue
                 # The deadline (or loop shutdown) cancelled the work itself.
                 logger.warning(f"otto: {what} abandoned before completion")
@@ -458,8 +619,9 @@ async def compensate(
                 raise held from None
             return result
     finally:
-        if timer is not None:
-            timer.cancel()
+        for timer in (deadline_timer, timeout_timer):
+            if timer is not None:
+                timer.cancel()
 
 
 _INTERRUPT_STATUS_LINE = (

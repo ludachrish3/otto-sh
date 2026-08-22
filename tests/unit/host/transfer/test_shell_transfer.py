@@ -137,6 +137,7 @@ substitute for one another.
 
 import asyncio
 import base64
+import errno
 import hashlib
 import itertools
 import os
@@ -145,7 +146,8 @@ import shlex
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from typing import IO
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -1436,6 +1438,332 @@ class TestShellPutSequentialFailure:
 
 
 # ---------------------------------------------------------------------------
+# Interrupt (cancellation), both directions -- mutation "an interrupted
+# transfer skips the cleanup its failure paths run"
+# ---------------------------------------------------------------------------
+
+
+def _after_the_first(prefix: str) -> "Callable[[str], bool]":
+    """Predicate: true for every command starting with *prefix* EXCEPT the first.
+
+    Lets a cancellation land mid-loop rather than before it: the first chunk
+    genuinely runs, so a real staged temp holding real bytes exists on disk
+    when the interrupt arrives.
+    """
+    seen = itertools.count()
+    return lambda cmd: cmd.startswith(prefix) and next(seen) > 0
+
+
+class _ParkingExec(_ShellExecutingExec):
+    """``_ShellExecutingExec`` that PARKS (or raises) on the commands a predicate picks.
+
+    The shape the cancellation tests need and neither existing fake can give:
+    a real ``/bin/sh`` for every command EXCEPT the one an interrupt is aimed
+    at. The chunk writes before the park run for real, and so does the
+    cleanup ``rm`` after it -- so "the staged temp survived the interrupt" is
+    a fact about a real file in a real directory, the same thing the BusyBox
+    chaos arm reads off the guest, rather than a missing line in a command
+    transcript that a differently-shaped cleanup could still satisfy.
+
+    *release*, when given, un-parks a parked command and lets it run for real
+    afterwards; without it the park ends only in a cancellation. One event
+    for all parks is enough here because these tests never have two parked at
+    once -- ``_run_put`` is sequential and each park is cancelled or released
+    before the next command is issued.
+
+    *raise_when* makes a command RAISE instead of returning a failing
+    ``CommandResult`` -- the shape a torn-down transport has, which
+    ``_ShellExecutingExec``'s own ``fail_when`` cannot express.
+
+    ``parked_commands`` and ``cancelled_parks`` record which commands parked
+    and which of those ended in a cancellation rather than a release: the
+    direct observation that a bound fired and took its inner task down with
+    it (or, in the shielded case, that it did not).
+    """
+
+    def __init__(
+        self,
+        cwd: Path,
+        *,
+        park_when: "Callable[[str], bool] | None" = None,
+        raise_when: "Callable[[str], bool] | None" = None,
+        release: "asyncio.Event | None" = None,
+    ) -> None:
+        super().__init__(cwd=cwd)
+        self._park_when = park_when
+        self._raise_when = raise_when
+        self._release = release
+        self.parked = asyncio.Event()  # set on EVERY park entry; tests clear it
+        self.parked_commands: list[str] = []
+        self.cancelled_parks: list[str] = []
+
+    async def __call__(
+        self, cmd: str, timeout: "float | None" = None, **kwargs: object
+    ) -> CommandResult:
+        if self._raise_when is not None and self._raise_when(cmd):
+            raise OSError("transport already closed")
+        if self._park_when is not None and self._park_when(cmd):
+            self.parked_commands.append(cmd)
+            self.parked.set()
+            try:
+                if self._release is None:
+                    await asyncio.Event().wait()
+                else:
+                    await self._release.wait()
+            except asyncio.CancelledError:
+                self.cancelled_parks.append(cmd)
+                raise
+        return await super().__call__(cmd, timeout, **kwargs)
+
+
+def _parked_rm(exec_cmd: _ParkingExec) -> list[str]:
+    return [c for c in exec_cmd.parked_commands if c.startswith("rm ")]
+
+
+async def _wait_parked(exec_cmd: _ParkingExec, what: str) -> None:
+    """Wait for the next park, naming what was expected instead of raising a bare timeout.
+
+    The 10 s is a runaway guard, never a measurement -- every park these
+    tests wait on is entered within a loop turn of the step that triggers it.
+    Without the message a mutation that simply never issues the command reads
+    as an unexplained ``TimeoutError`` deep in ``asyncio.tasks``, which is the
+    hardest kind of red to diagnose.
+    """
+    try:
+        await asyncio.wait_for(exec_cmd.parked.wait(), timeout=10.0)
+    except (asyncio.TimeoutError, TimeoutError):
+        pytest.fail(f"{what}: no such command was issued within 10s")
+
+
+class TestShellPutInterruptRemovesTheStagedTemp:
+    """An interrupted PUT cleans up after itself, and stays interrupted.
+
+    The defect these pin was CHARACTERIZED on the live bed before it was
+    fixed (``tests/e2e/chaos/test_transfer_chaos.py``'s BusyBox arm): a SIGINT
+    mid-chunk-loop left ``<dest>.otto-<token>`` on the guest, because
+    ``asyncio.CancelledError`` is a ``BaseException`` and walks past
+    ``_put_one``'s ``except OSError`` without reaching any of the
+    ``_cleanup_temp`` calls every error path makes. The destination was never
+    at risk -- temp-then-``mv`` covers that, and the same arm asserts it -- so
+    what leaked was hygiene: one inert file per interrupted transfer.
+
+    FOUR TESTS BECAUSE THERE ARE FOUR WAYS TO GET THIS WRONG, and only the
+    first is about the leak itself:
+
+    * the cleanup does not run at all (the shipped defect) -- test 1;
+    * it runs, but a SECOND interrupt tears it and the temp survives after
+      all -- test 2, which is why the cleanup is shielded
+      (:func:`otto.lifecycle.compensate`) rather than plainly awaited;
+    * its own failure escapes and REPLACES the cancellation, so an interrupt
+      reports as a failed transfer -- test 3;
+    * it never returns, holding teardown past the deadline the interrupt
+      promised -- test 4.
+
+    Every one of them also asserts the cancellation still propagates, so a
+    "fix" that swallowed it (returning a ``Result`` from a cancelled call)
+    reddens all four rather than passing three.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_cancelled_put_removes_the_temp_it_staged(self, tmp_path: Path) -> None:
+        """RED pre-fix: the staged temp is still on disk after the cancellation.
+
+        Not a transcript check -- the assertion is that the FILE is gone,
+        read from the directory the transfer staged into. The positive
+        control before the cancel (exactly one temp, holding the first
+        chunk's real bytes) is what keeps it from passing vacuously on a
+        transfer that never got far enough to stage anything.
+        """
+        payload = b"x" * (_SHELL_CHUNK_BYTES * 2)
+        src = tmp_path / "payload.bin"
+        src.write_bytes(payload)
+        dest_dir = tmp_path / "dest"
+        dest_dir.mkdir()
+
+        exec_cmd = _ParkingExec(cwd=tmp_path, park_when=_after_the_first("printf "))
+        ft = _make_ft(exec_cmd)
+
+        task = asyncio.create_task(ft._run_put([src], dest_dir, None))
+        await _wait_parked(exec_cmd, "the chunk loop never reached its second chunk")
+
+        staged = list(dest_dir.glob("payload.bin.otto-*"))
+        assert len(staged) == 1, f"expected exactly one staged temp mid-transfer, got {staged}"
+        assert staged[0].stat().st_size == _SHELL_CHUNK_BYTES, (
+            "the first chunk must really have landed, or 'the temp was removed' is vacuous"
+        )
+
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        leftover = list(dest_dir.glob("*.otto-*"))
+        assert leftover == [], f"an interrupted PUT left its staged temp behind: {leftover}"
+        assert not (dest_dir / "payload.bin").exists(), (
+            "temp-then-mv must still hold: an interrupted PUT may not land the destination"
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_second_interrupt_during_the_cleanup_still_removes_the_temp(
+        self, tmp_path: Path
+    ) -> None:
+        """The case ``asyncio.shield`` alone does not cover, and a plain await loses.
+
+        The FIRST cancel has already been delivered by the time the handler
+        runs, and asyncio does not redeliver it -- so an unshielded ``await``
+        there survives that one, and test 1 alone would not tell the two
+        constructs apart. This test is what does: it parks the cleanup ``rm``
+        itself, cancels the task a SECOND time while the ``rm`` is in flight
+        (a second Ctrl+C, or the run's force deadline firing), and only then
+        releases it.
+
+        Measured against the simpler fix: replacing the ``compensate`` call
+        with ``await self._cleanup_temp(quoted_temp)`` leaves this test red
+        (the second cancel tears the ``rm``, the temp survives) while test 1
+        stays green.
+
+        The first cancel is aimed at the ``mv``, not at a chunk, so the temp
+        is fully staged and verified when the interrupt lands -- the state a
+        real second-Ctrl+C is most likely to find. The bound is patched UP:
+        what is under test is the shield, and the 2 s default would make this
+        a wall-clock race against the machine's load rather than a statement
+        about cancellation.
+        """
+        payload = b"x" * (_SHELL_CHUNK_BYTES * 2)
+        src = tmp_path / "payload.bin"
+        src.write_bytes(payload)
+        dest_dir = tmp_path / "dest"
+        dest_dir.mkdir()
+
+        release = asyncio.Event()
+        exec_cmd = _ParkingExec(
+            cwd=tmp_path,
+            park_when=lambda c: c.startswith(("mv ", "rm ")),
+            release=release,
+        )
+        ft = _make_ft(exec_cmd)
+
+        with patch.object(shell_module, "_INTERRUPTED_CLEANUP_TIMEOUT", 30.0):
+            task = asyncio.create_task(ft._run_put([src], dest_dir, None))
+            await _wait_parked(exec_cmd, "the transfer never reached its final mv")
+            assert list(dest_dir.glob("payload.bin.otto-*")), "nothing was staged to clean up"
+            exec_cmd.parked.clear()
+
+            task.cancel()  # first interrupt: lands on the parked mv
+            await _wait_parked(exec_cmd, "the interrupted PUT attempted no cleanup at all")
+            assert _parked_rm(exec_cmd), f"no cleanup was attempted: {exec_cmd.parked_commands}"
+
+            task.cancel()  # second interrupt: lands on the cleanup itself
+            await asyncio.sleep(0)  # let it reach the shielded await before releasing
+            release.set()
+
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+        assert not [c for c in exec_cmd.cancelled_parks if c.startswith("rm ")], (
+            "the second interrupt tore the cleanup instead of being held until it finished"
+        )
+        leftover = list(dest_dir.glob("*.otto-*"))
+        assert leftover == [], (
+            f"a second interrupt during the cleanup stranded the staged temp: {leftover}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_cleanup_that_raises_does_not_replace_the_cancellation(
+        self, tmp_path: Path
+    ) -> None:
+        """A dead transport is the likeliest way this cleanup is ever reached.
+
+        The session is being torn down under the interrupt, so the ``rm``'s
+        exec can raise rather than return a failing ``CommandResult``. That
+        exception must not escape: a caller that asked for a cancellation and
+        got an ``OSError`` sees a transfer that FAILED rather than one that
+        was interrupted, and the interrupt's whole exit path (including the
+        130 exit code) hangs off the cancellation.
+
+        Reddens against the wrong fix rather than against the shipped defect
+        -- pre-fix no cleanup runs at all, so nothing can raise. Drop the
+        ``except Exception`` from the bounded cleanup and this reports
+        ``OSError`` where it demands ``CancelledError``.
+        """
+        payload = b"x" * (_SHELL_CHUNK_BYTES * 2)
+        src = tmp_path / "payload.bin"
+        src.write_bytes(payload)
+        dest_dir = tmp_path / "dest"
+        dest_dir.mkdir()
+
+        exec_cmd = _ParkingExec(
+            cwd=tmp_path,
+            park_when=_after_the_first("printf "),
+            raise_when=lambda c: c.startswith("rm "),
+        )
+        ft = _make_ft(exec_cmd)
+
+        task = asyncio.create_task(ft._run_put([src], dest_dir, None))
+        await _wait_parked(exec_cmd, "the chunk loop never reached its second chunk")
+
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    @pytest.mark.asyncio
+    async def test_a_cleanup_that_never_returns_is_abandoned_at_the_bound(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Teardown keeps its deadline, and the abandoned ``rm`` is not left running.
+
+        The cleanup runs inside the graceful window an interrupt promises, on
+        a session that may itself be dying; unbounded, its ``rm`` inherits the
+        host's 30 s command timeout and would hold teardown three times past
+        that window. The bound is patched to 0.05 s so this states the
+        property rather than measuring the constant.
+
+        ``cancelled_parks`` is the direct observation, not a stand-in for one:
+        the parked ``rm`` was CANCELLED, so the bound both fired and took its
+        inner task down with it. A bound that merely stopped waiting would
+        leave that task running and trip this repo's asyncio leak detector.
+
+        The ``otto.lifecycle`` warning is asserted because WHOSE bound this is
+        is part of the contract now: it is :func:`otto.lifecycle.compensate`'s
+        opt-in ``timeout=``, not a local ``asyncio.wait_for`` this backend
+        wraps around the ``rm``. Reverting the adoption to any local wrapper
+        leaves the temp removal bounded but silent, and reddens here.
+        """
+        payload = b"x" * (_SHELL_CHUNK_BYTES * 2)
+        src = tmp_path / "payload.bin"
+        src.write_bytes(payload)
+        dest_dir = tmp_path / "dest"
+        dest_dir.mkdir()
+
+        exec_cmd = _ParkingExec(cwd=tmp_path, park_when=lambda c: c.startswith(("mv ", "rm ")))
+        ft = _make_ft(exec_cmd)
+
+        with (
+            patch.object(shell_module, "_INTERRUPTED_CLEANUP_TIMEOUT", 0.05),
+            caplog.at_level("WARNING", logger="otto.lifecycle"),
+        ):
+            task = asyncio.create_task(ft._run_put([src], dest_dir, None))
+            await _wait_parked(exec_cmd, "the transfer never reached its final mv")
+            task.cancel()
+            # Runaway guard, not a measurement: an unbounded cleanup parks
+            # forever and would otherwise burn the suite's 180 s cap.
+            _done, pending = await asyncio.wait({task}, timeout=10.0)
+            assert not pending, "the cleanup bound never fired: the cancelled PUT never finished"
+            with pytest.raises(asyncio.CancelledError):
+                task.result()
+
+        assert any(
+            "staged temp removal after an interrupted put" in r.message for r in caplog.records
+        ), (
+            "the abandonment was never announced: the bound is compensate's, and compensate "
+            f"names what it gave up on -- got {[r.message for r in caplog.records]}"
+        )
+        assert _parked_rm(exec_cmd), f"no cleanup was attempted: {exec_cmd.parked_commands}"
+        assert [c for c in exec_cmd.cancelled_parks if c.startswith("rm ")], (
+            "the abandoned cleanup command was left running instead of being cancelled"
+        )
+
+
+# ---------------------------------------------------------------------------
 # Empty source file
 # ---------------------------------------------------------------------------
 
@@ -2203,6 +2531,37 @@ class TestShellGetWrappedAndValidatedDecode:
 # ---------------------------------------------------------------------------
 
 
+def _make_the_staged_temps_close_fail(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make the local staged temp's ``close()`` raise ENOSPC -- and only that file's.
+
+    A buffered writer FLUSHES on close, so the close is itself a write that
+    can fail, and it is the one local write GET makes that no test could
+    otherwise reach (filling a disk is not something a unit test may do).
+    Only handles for ``*.otto-*`` paths are wrapped; every other file the fake
+    shell opens behaves normally. The underlying file really is closed before
+    the raise, exactly as CPython closes it even when the flush fails, so a
+    second close is a no-op and no test here can pass by leaking a handle.
+    """
+    real_open = Path.open
+
+    class _CloseFails:
+        def __init__(self, handle: "IO[bytes]") -> None:
+            self._handle = handle
+
+        def write(self, data: bytes) -> int:
+            return self._handle.write(data)
+
+        def close(self) -> None:
+            self._handle.close()
+            raise OSError(errno.ENOSPC, "No space left on device")
+
+    def open_with_a_failing_close(self: Path, *args: object, **kwargs: object) -> object:
+        handle = real_open(self, *args, **kwargs)  # type: ignore[arg-type]
+        return _CloseFails(handle) if ".otto-" in self.name else handle
+
+    monkeypatch.setattr(Path, "open", open_with_a_failing_close)
+
+
 class TestShellGetSequentialFailure:
     @pytest.mark.asyncio
     async def test_a_failed_size_probe_fails_before_any_chunk_read(self, tmp_path: Path) -> None:
@@ -2279,6 +2638,38 @@ class TestShellGetSequentialFailure:
         )
 
     @pytest.mark.asyncio
+    async def test_a_temp_that_fails_to_flush_on_close_fails_the_transfer(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The close is a WRITE, and an undisturbed transfer answers for it.
+
+        GET closes its temp INSIDE the try, deliberately: an ENOSPC that only
+        surfaces when Python flushes the last buffer must fail the file, not
+        be swallowed on the way out and reported as a success over a
+        truncated temp. The best-effort close is the OTHER one, on the
+        cancel-unwind path -- see
+        ``TestShellGetInterruptRemovesTheLocalTemp``'s second test, which is
+        the same injection with an interrupt in flight.
+        """
+        payload = b"x" * (_SHELL_CHUNK_BYTES * 2)
+        src = tmp_path / "payload.bin"
+        src.write_bytes(payload)
+        dest_dir = tmp_path / "dest"
+        dest_dir.mkdir()
+
+        _make_the_staged_temps_close_fail(monkeypatch)
+        ft = _make_ft(_ShellExecutingExec(cwd=tmp_path))
+
+        per_file = await ft._run_get([src], dest_dir, None)
+
+        assert per_file[src].status is Status.Error
+        assert "local write failed" in (per_file[src].msg or ""), per_file[src].msg
+        assert not (dest_dir / "payload.bin").exists(), (
+            "a transfer whose final flush failed must not land the destination"
+        )
+        assert list(dest_dir.glob("*.otto-*")) == [], "the failed temp was left behind"
+
+    @pytest.mark.asyncio
     async def test_a_failed_file_skips_remaining_files(self, tmp_path: Path) -> None:
         src1 = tmp_path / "a.bin"
         src1.write_bytes(b"x" * 10)
@@ -2300,6 +2691,114 @@ class TestShellGetSequentialFailure:
         assert per_file[src2].status is Status.Skipped
         assert not any("/b.bin" in c for c in exec_cmd.calls if c.startswith("dd ")), (
             "the second file must never be attempted after the first fails"
+        )
+
+
+class TestShellGetInterruptRemovesTheLocalTemp:
+    """GET's face of the same interrupt hole, on the local side.
+
+    The severity is lower and the shape is identical: ``CancelledError``
+    walks past ``_get_one``'s ``except OSError`` exactly as it walked past
+    PUT's, so a cancelled chunk loop left ``<dst>.otto-<token>`` in the
+    destination's own directory -- on the operator's machine rather than on
+    the device, but just as inert and just as unowned. Fixed in the same
+    change for consistency; skipping it would have left the module claiming
+    a discipline it only half kept.
+
+    TWO TESTS, NOT PUT'S FOUR, and the two that are missing are the point
+    rather than an omission: removing this temp is a local ``unlink``, not an
+    exec round trip, so there is no await for a second interrupt to tear
+    (PUT's test 2) and nothing to bound (test 4). The machinery those two
+    exist to check does not exist here, and should not.
+
+    PUT'S TEST 3 DOES HAVE A COUNTERPART, found by review after the PUT fix
+    landed: "nothing local can replace the cancellation" was wrong. The local
+    temp is a BUFFERED writer, and closing it flushes -- so its ``close()``
+    can raise ``OSError`` while the ``CancelledError`` is still unwinding,
+    which is precisely how an interrupted GET used to report itself as a
+    failed one.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_cancelled_get_removes_the_temp_it_staged(self, tmp_path: Path) -> None:
+        """RED pre-fix: the local temp is still on disk after the cancellation."""
+        payload = b"x" * (_SHELL_CHUNK_BYTES * 2)
+        src = tmp_path / "payload.bin"
+        src.write_bytes(payload)
+        dest_dir = tmp_path / "dest"
+        dest_dir.mkdir()
+
+        exec_cmd = _ParkingExec(cwd=tmp_path, park_when=_after_the_first("dd "))
+        ft = _make_ft(exec_cmd)
+
+        task = asyncio.create_task(ft._run_get([src], dest_dir, None))
+        await _wait_parked(exec_cmd, "the chunk loop never reached its second chunk read")
+
+        staged = list(dest_dir.glob("payload.bin.otto-*"))
+        assert len(staged) == 1, f"expected exactly one local temp mid-transfer, got {staged}"
+        # Non-vacuity is read off the transcript here, not off the temp's
+        # size: the local temp is a BUFFERED writer, so the first chunk's
+        # decoded bytes are still in Python's buffer (measured: 0 bytes on
+        # disk mid-transfer) and only reach the file when `_get_one`'s `with`
+        # block closes it on the way out. What the temp holds is beside the
+        # point anyway -- an empty leftover is as unowned as a full one.
+        assert [c for c in exec_cmd.calls if c.startswith("dd ")], (
+            "no chunk was ever read, so 'the temp was removed' would be vacuous"
+        )
+
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        leftover = list(dest_dir.glob("*.otto-*"))
+        assert leftover == [], f"an interrupted GET left its local temp behind: {leftover}"
+        assert not (dest_dir / "payload.bin").exists(), (
+            "temp-then-replace must still hold: an interrupted GET may not land the destination"
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_temp_whose_close_fails_does_not_replace_the_cancellation(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """RED before the fix: the cancelled GET returns a failed ``Result`` instead of raising.
+
+        The mechanism is the ``with`` block this method used to open its
+        local temp in. A buffered writer flushes on ``close()``, so the close
+        can raise (ENOSPC and EIO are the realistic spellings), and a ``with``
+        raises that from ``__exit__`` while the ``CancelledError`` is in
+        flight -- Python REPLACES the exception in flight rather than chaining
+        past it. ``_get_one``'s own ``except OSError`` then catches the
+        replacement and returns "local write failed", so an operator who
+        pressed Ctrl+C gets a transfer that looks like it failed and a
+        command that never takes the interrupt's exit path.
+
+        The failing close is injected rather than provoked (see
+        :func:`_make_the_staged_temps_close_fail`): filling a disk is not
+        something a unit test may do, and what this pins is the SHAPE --
+        close raises while unwinding -- not any one errno.
+        """
+        payload = b"x" * (_SHELL_CHUNK_BYTES * 2)
+        src = tmp_path / "payload.bin"
+        src.write_bytes(payload)
+        dest_dir = tmp_path / "dest"
+        dest_dir.mkdir()
+
+        _make_the_staged_temps_close_fail(monkeypatch)
+
+        exec_cmd = _ParkingExec(cwd=tmp_path, park_when=_after_the_first("dd "))
+        ft = _make_ft(exec_cmd)
+
+        task = asyncio.create_task(ft._run_get([src], dest_dir, None))
+        await _wait_parked(exec_cmd, "the chunk loop never reached its second chunk read")
+        assert list(dest_dir.glob("payload.bin.otto-*")), "nothing was staged to fail on"
+
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        leftover = list(dest_dir.glob("*.otto-*"))
+        assert leftover == [], (
+            f"the temp survived a cancellation its own close() failed during: {leftover}"
         )
 
 

@@ -674,7 +674,16 @@ class TestPutFilesNcConnectFailure:
 
 
 class TestNcPutCancellationReap:
-    """A cancelled put must reap its remote listener even under a second cancel."""
+    """A cancelled put must reap its remote listener even under a second cancel.
+
+    And must not spend the whole teardown window doing it: the reap runs
+    inside the graceful window an interrupt promised, and its own sub-bounds
+    stack to 8 s (forward setup + connect + close), so it is handed
+    ``compensate``'s opt-in ``timeout=`` -- see
+    :data:`otto.host.transfer.nc._INTERRUPTED_REAP_TIMEOUT`. The two tests
+    here are the two halves of that: the shield must hold a second cancel,
+    and the bound must fire when the reap cannot finish.
+    """
 
     @pytest.mark.asyncio
     async def test_cancel_mid_put_reaps_listener_despite_second_cancel(self, tmp_path: Path):
@@ -719,6 +728,81 @@ class TestNcPutCancellationReap:
                 await task
 
         assert reap_done == [True], "the second cancellation tore the listener reap"
+
+    @pytest.mark.asyncio
+    async def test_a_reap_that_never_returns_is_abandoned_at_the_bound(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The reap is bounded FROM THE CALL, with no second interrupt needed to arm it.
+
+        The listener leak this handler exists to close was measured (todo,
+        chaos-teardown-followups §1) as a remote ``nc -l`` outliving the 10 s
+        teardown deadline by up to 20 s. A reap that itself cannot finish --
+        a wedged hop, a forward that never comes up -- would recreate exactly
+        that overrun in the fix, so ``compensate`` is given
+        ``_INTERRUPTED_REAP_TIMEOUT`` and the bound is patched to 0.05 s here
+        to state the property rather than measure the constant.
+
+        ``reap_cancelled`` is the direct observation: the parked reap was
+        CANCELLED, so the bound took its work down rather than walking away
+        from it and leaving fresh network I/O running behind the interrupt.
+        The ``otto.lifecycle`` warning pins WHOSE bound it is -- reverting the
+        adoption leaves the handler unbounded and reddens the whole test.
+        """
+        src = tmp_path / "small.bin"
+        src.write_bytes(b"hello world")
+
+        connect_reached = asyncio.Event()
+        reap_started = asyncio.Event()
+        reap_cancelled: "list[bool]" = []
+
+        async def scripted_exec(cmd: str, timeout: "float | None" = None, **kw: object):
+            if " -l " in cmd:
+                await asyncio.Event().wait()  # the remote listener runs until reaped
+            return _ok("9000\n")
+
+        async def parked_connect(host: str, port: int, timeout: float = 2.0):
+            connect_reached.set()
+            await asyncio.Event().wait()  # park until the test cancels the put
+            raise AssertionError("unreachable")
+
+        async def parked_reap(self, port: int) -> None:
+            reap_started.set()
+            try:
+                await asyncio.Event().wait()  # a reap that never returns
+            except asyncio.CancelledError:
+                reap_cancelled.append(True)
+                raise
+
+        ft = _make_ft(AsyncMock(side_effect=scripted_exec))
+
+        with (
+            patch.object(transfer_mod, "_INTERRUPTED_REAP_TIMEOUT", 0.05),
+            patch.object(transfer_mod, "_connect_with_retry", new=parked_connect),
+            patch.object(
+                NcFileTransfer, "_wait_for_remote_listener", new=AsyncMock(return_value=None)
+            ),
+            patch.object(NcFileTransfer, "_reap_nc_listener", new=parked_reap),
+            caplog.at_level("WARNING", logger="otto.lifecycle"),
+        ):
+            task = asyncio.ensure_future(ft._put_files_nc([src], tmp_path / "dst"))
+            await connect_reached.wait()
+            task.cancel()
+            # Runaway guard, not a measurement: an unbounded reap parks
+            # forever and would otherwise burn the suite's cap.
+            _done, pending = await asyncio.wait({task}, timeout=10.0)
+            assert not pending, "the reap bound never fired: the cancelled put never finished"
+            with pytest.raises(asyncio.CancelledError):
+                task.result()
+
+        assert reap_started.is_set(), "no reap was attempted at all"
+        assert reap_cancelled == [True], (
+            "the abandoned reap was left running instead of being cancelled with the bound"
+        )
+        assert any("nc listener reap" in r.message for r in caplog.records), (
+            "the abandonment was never announced: the bound is compensate's, and compensate "
+            f"names what it gave up on -- got {[r.message for r in caplog.records]}"
+        )
 
     @pytest.mark.asyncio
     async def test_cancel_and_reap_propagates_cancellation_instead_of_swallowing_it(self):

@@ -697,6 +697,81 @@ class TestNcGetTunneledCancellation:
             f"cancellation must reap the remote nc GET listener, got {reap_calls}"
         )
 
+    @pytest.mark.asyncio
+    async def test_a_reap_that_never_returns_is_abandoned_at_the_bound(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """GET's reap is bounded from the call, exactly as PUT's is.
+
+        Same argument, same constant
+        (:data:`otto.host.transfer.nc._INTERRUPTED_REAP_TIMEOUT`), same
+        failure it prevents: a reap that cannot finish -- a wedged hop, a
+        forward that never comes up -- would hold teardown past the deadline
+        the interrupt promised, which is the very overrun the listener reap
+        exists to end. Patched to 0.05 s so this states the property rather
+        than measuring the constant; ``reap_cancelled`` is the direct
+        observation that the bound took the work down rather than walking
+        away from it. The mirror of
+        ``test_transfer_nc_put.py::TestNcPutCancellationReap``'s bound test.
+        """
+        src_remote = Path("/remote/data.bin")
+        dst_dir = tmp_path / "dst"
+        dst_dir.mkdir()
+
+        listener_started = asyncio.Event()
+        reap_started = asyncio.Event()
+        reap_cancelled: "list[bool]" = []
+
+        async def exec_side_effect(cmd: str, timeout: "float | None" = None, **kw: object):
+            if "-Nl" in cmd:
+                listener_started.set()
+                await asyncio.Event().wait()  # the remote listener runs until reaped
+            return _ok("9000\n")
+
+        async def parked_reap(port: int) -> None:
+            reap_started.set()
+            try:
+                await asyncio.Event().wait()  # a reap that never returns
+            except asyncio.CancelledError:
+                reap_cancelled.append(True)
+                raise
+
+        async def block_forever(*args: object, **kwargs: object) -> None:
+            await asyncio.Event().wait()
+
+        ft = _make_ft(AsyncMock(side_effect=exec_side_effect), has_tunnel=True)
+        ft._connections.forward_port = AsyncMock(return_value=15000)
+
+        with (
+            patch.object(transfer_mod, "_INTERRUPTED_REAP_TIMEOUT", 0.05),
+            patch.object(ft, "_reap_nc_listener", new=parked_reap),
+            patch.object(
+                NcFileTransfer,
+                "_wait_for_remote_listener",
+                new=AsyncMock(side_effect=block_forever),
+            ),
+            caplog.at_level("WARNING", logger="otto.lifecycle"),
+        ):
+            task = asyncio.create_task(ft._get_files_nc_tunneled([src_remote], dst_dir))
+            await asyncio.wait_for(listener_started.wait(), timeout=2.0)
+            await asyncio.sleep(0)  # let _get_one reach _wait_for_remote_listener
+            task.cancel()
+            # Runaway guard, not a measurement: an unbounded reap parks
+            # forever and would otherwise burn the suite's cap.
+            _done, pending = await asyncio.wait({task}, timeout=10.0)
+            assert not pending, "the reap bound never fired: the cancelled get never finished"
+            with pytest.raises(asyncio.CancelledError):
+                task.result()
+
+        assert reap_started.is_set(), "no reap was attempted at all"
+        assert reap_cancelled == [True], (
+            "the abandoned reap was left running instead of being cancelled with the bound"
+        )
+        assert any("nc get listener reap" in r.message for r in caplog.records), (
+            "the abandonment was never announced: the bound is compensate's, and compensate "
+            f"names what it gave up on -- got {[r.message for r in caplog.records]}"
+        )
+
 
 class TestNcGetStallBoundAndRetry:
     """The GET face of the LISTEN-vs-accept race (the hop-nc transfer hang,
