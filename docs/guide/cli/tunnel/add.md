@@ -5,9 +5,9 @@ otto tunnel add --hosts <h0[@if0],h1[@if1],...,hn-1[@ifn-1]> --port <P> [--proto
 ```
 
 ```bash
-otto --lab veggies tunnel add --hosts carrot_seed,tomato_seed --port 6001
+otto --lab veggies tunnel add --hosts carrot_seed@eth2,tomato_seed --port 6001
 otto --lab veggies tunnel add --hosts carrot_seed@eth1,tomato_seed@eth1 --port 6001 --protocol udp
-otto --lab veggies tunnel add --hosts carrot_seed,compost,tomato_seed --port 6001
+otto --lab veggies tunnel add --hosts carrot_seed@eth2,compost,tomato_seed --port 6001
 ```
 
 | Option | Required | Description |
@@ -60,7 +60,7 @@ receives is sourced from the far endpoint's own interface — an ordinary
 `ssh -L` forward would deliver it:
 
 ```bash
-otto --lab veggies tunnel add --hosts carrot_seed,tomato_seed --port 6001 --dest sprout
+otto --lab veggies tunnel add --hosts carrot_seed@eth2,tomato_seed --port 6001 --dest sprout
 ```
 
 Here `carrot_seed` and `tomato_seed` are the tunnel's two endpoints and

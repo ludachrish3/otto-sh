@@ -602,7 +602,7 @@ def test_cli_cycle_add_list_remove_list_docker_free(tmp_path: Path) -> None:
                 "tunnel",
                 "add",
                 "--hosts",
-                "carrot_seed,tomato_seed",
+                "carrot_seed@eth2,tomato_seed",
                 "--port",
                 str(_PORT_CLI_CYCLE),
                 "--protocol",

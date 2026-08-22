@@ -165,7 +165,7 @@ def test_sigkill_mid_tunnel_recovers_via_remove_all(tmp_path):
             "tunnel",
             "add",
             "--hosts",
-            "carrot_seed,tomato_seed",
+            "carrot_seed@eth2,tomato_seed",
             "--port",
             str(_TUNNEL_SIGKILL_PORT),
         ],
@@ -303,7 +303,14 @@ def test_interrupt_during_rollback_still_reaps(tmp_path):
         # still be running on carrot -- the finally's release must still fire.
         _hold_tcp_port("carrot", carrot_ip, _ROLLBACK_PORT)
         p = spawn_otto(
-            ["tunnel", "add", "--hosts", "carrot_seed,tomato_seed", "--port", str(_ROLLBACK_PORT)],
+            [
+                "tunnel",
+                "add",
+                "--hosts",
+                "carrot_seed@eth2,tomato_seed",
+                "--port",
+                str(_ROLLBACK_PORT),
+            ],
             xdir=tmp_path,
             target=target,
             extra_env=_WIDE_CONSOLE_ENV,
