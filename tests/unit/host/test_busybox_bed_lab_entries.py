@@ -14,6 +14,7 @@ from otto.host.factory import create_host_from_dict
 from otto.host.unix_host import UnixHost
 from scripts.build_busybox_guest_images import GUEST_TABLE
 from tests._fixtures.labdata import lab_data_path
+from tests.conftest import BUSYBOX_GUEST_NES
 
 
 def _guest_entries():
@@ -61,3 +62,38 @@ def test_guest_entries_address_the_ports_the_bed_actually_forwards():
         for g in guests
     ]
     assert committed == [(g.version, g.element, g.telnet_port, g.nc_base) for g in GUEST_TABLE]
+
+
+def test_the_parity_backend_map_names_exactly_the_bed_roster():
+    """The guest SET has three authorities; this is the third edge.
+
+    lab.json is pinned to the image builder's ``GUEST_TABLE`` by the test
+    above, and the bed suite derives its ``GUESTS`` from lab.json directly
+    (``tests/integration/busybox_bed/conftest.py`` does this same walk). The
+    first-party parity rows come from somewhere else entirely: the hand-written
+    ``_BUSYBOX_BACKEND_NE`` map in ``tests/conftest.py``, which is what puts the
+    guests into the generic ``host1`` / ``transfer_host`` / stability suites.
+    Nothing tied that map to the roster.
+
+    So consider adding a sixth guest. The existing roster pins (the element
+    list above, and ``test_busybox_bed_guests_hop_through_carrot``) do red, and
+    an implementer fixes them mechanically -- neither one mentions the parity
+    map, so the mechanical fix leaves it behind. The new guest then joins the
+    bed suite, which reads lab.json, and silently misses every host1, transfer
+    and stability row, which read the map: the "silently half-moved" migration
+    §5 forbids by name, arrived at by doing exactly what the failing tests
+    asked. This is the assertion that names the map.
+
+    Equality, not containment, so the reverse fails just as loudly: a map entry
+    naming a guest the lab no longer provisions parametrizes rows against a
+    host that cannot be built.
+    """
+    roster = {g["element"] for g in _guest_entries()}
+    mapped = set(BUSYBOX_GUEST_NES)
+    assert mapped == roster, (
+        f"the parity map and the bed roster disagree — in lab.json only: "
+        f"{sorted(roster - mapped)} (these guests run the bed suite but no host1, "
+        f"transfer or stability row); in tests/conftest.py only: "
+        f"{sorted(mapped - roster)} (these parametrize rows name a guest the lab "
+        f"does not provision)"
+    )

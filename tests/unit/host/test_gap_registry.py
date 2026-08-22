@@ -515,7 +515,7 @@ class TestProductLifecycleIsUntestedBecauseOttoShipsNoImplementation:
     ``install`` works on a BusyBox device is project code otto does not own.
 
     WHY THAT MAKES A MEASUREMENT MEANINGLESS RATHER THAN MERELY EXPENSIVE, and
-    why this guard is on the structure rather than on a Tier 3 run: a test that
+    why this guard is on the structure rather than on a live run: a test that
     staged a ``Product`` against a real BusyBox root would exercise the
     subclass the test itself wrote, plus a ``for`` loop. It could not fail for
     a BusyBox reason, which is this repo's recurring defect, not evidence.
@@ -550,7 +550,7 @@ class TestProductLifecycleIsUntestedBecauseOttoShipsNoImplementation:
         That single call is the whole reason ``product-lifecycle`` adds no new
         device contact: whatever BusyBox does to it is already answered by
         ``shell-transfer-base64``, ``sftp-transfer``, ``scp-transfer`` and
-        ``nc-transfer``, and measured over real ssh in Tier 3.
+        ``nc-transfer``, each measured on a real device of its own.
         """
         reached = _host_attributes_reached_for_by(inspect.getsource(FileProduct.stage))
         assert reached == {"put"}, (
@@ -927,6 +927,39 @@ class TestTheFourthStateIsNotEitherOfTheOtherTwo:
             "and none of them reads this record, which is why the derived value is called "
             "`fully_covered` and not `fully_wired`. A single predicate would have to lie "
             "about one of these two facts."
+        )
+
+
+class TestTheAttributedStateIsWhatTheSftpRecordStillClaims:
+    """``sftp-transfer`` is why :data:`PATH_ATTRIBUTED` exists, and the mirror image.
+
+    Nothing otto can read BEFORE the operation distinguishes a device serving
+    sftp from one that is not: ``sftp-server`` is off ``PATH`` even on Debian,
+    its absolute path is compiled into the daemon, and the daemon is not the
+    authority. So the operation is its own probe and the only thing a call site
+    can improve is the sentence the failure arrives as -- which is what
+    ATTRIBUTED means and what ``open_sftp_or_attribute`` does.
+
+    RELOCATED HERE FROM THE RETIRED ARTIFACT HARNESS, where it sat beside the
+    live put/get pair it guarded: those two drove a real ``UnixHost`` at a
+    dropbear grafted onto a chroot, and the state pin kept them from asserting
+    a contract the table no longer claimed. The live proof is not replaceable
+    on the BusyBox bed -- sftp needs an ssh carrier and the guests are
+    telnet-only by design -- so what survives the deletion is the registry
+    content half, unmarked, next to the other per-surface state pins.
+    :mod:`tests.unit.host.test_sftp_transfer_attribution` holds the guard's
+    contract against a scripted manager.
+    """
+
+    def test_the_sftp_transfer_paths_are_both_attributed(self) -> None:
+        gap = gap_for("sftp-transfer")
+        assert gap is not None, "the sftp transfer record is gone from GAPS"
+        assert [p.state for p in gap.paths] == [PATH_ATTRIBUTED, PATH_ATTRIBUTED], (
+            f"the `sftp-transfer` record's paths are {[p.state for p in gap.paths]}. Both "
+            f"directions reach the device and are attributed on the way back out; a record "
+            f"that had moved to a pre-emptive refusal would be claiming a fact otto cannot "
+            f"read (every candidate answers `absent` on hosts where sftp works), and one "
+            f"that had moved back to OPEN would mean the attribution is gone"
         )
 
 

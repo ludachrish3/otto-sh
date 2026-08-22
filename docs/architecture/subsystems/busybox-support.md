@@ -14,12 +14,13 @@ this page still claims it is open, or the reverse.
 
 ```{note}
 **Division of labour with the {doc}`BusyBox matrix page <../../guide/hosts/busybox>`,
-so the two do not drift.** That page is about *running otto's BusyBox matrix*: the
-prerequisites (`qemu-user-static`, `dropbear-bin`, `openssh-client`), which upstream artifacts are
-pinned and why, the lanes, and the trust note for executing an unsigned
-third-party binary. This page is about *otto's behaviour against such a device*.
-Facts about the test harness live there; facts about what otto can and cannot do
-live here. Neither restates the other.
+so the two do not drift.** That page is about *running otto's BusyBox harness*: the
+prerequisite for executing the artifacts (`qemu-user-static`, off x86_64), which
+upstream artifacts are pinned and why, the five live guests and how to provision,
+recover and read the logs of them, which lane runs which half, and the trust note for
+executing an unsigned third-party binary. This page is about *otto's behaviour against
+such a device*. Facts about the test harness live there; facts about what otto can and
+cannot do live here. Neither restates the other.
 ```
 
 ## Most differences are adaptations, not gaps
@@ -176,7 +177,7 @@ error prints it verbatim; the sections below are its readable form.
 | [`run-command-line-length`](#run-command-line-length) | `measured-broken` | `Host.run()` refuses a command whose typed line would exceed 1022 characters, rather than let ash truncate it. `Host.exec()` is safe and is not refused. |
 | [`product-lifecycle`](#product-lifecycle) | `untested` | otto's `stage`/`install`/`uninstall` verbs emit no command of their own. Whether they work on your device is decided by your own product code. |
 | [`legacy-dropbear-crypto`](#legacy-dropbear-crypto) | `untested` | An old dropbear may need `ssh_options` to negotiate at all. Nobody has tried. |
-| [`busybox-over-a-real-network`](#busybox-over-a-real-network) | `untested` | Every tier is loopback, so nothing has met a real path's MTU, latency or window. |
+| [`busybox-over-a-real-network`](#busybox-over-a-real-network) | `untested` | The last leg to every target is local or emulated, so nothing has met a real path's MTU, latency or window. |
 
 ### shell-transfer-base64
 
@@ -212,17 +213,19 @@ row in this matrix, 1.16.1 included. Only a device with *neither* is refused, an
 then nothing is attempted, because every file in the batch would fail
 identically.
 
-**Measured:** BusyBox 1.16.1 ships no `base64` applet. `tests/busybox/test_applet_resolution.py`
-records `False` for that row and `tests/busybox/test_shell_codec_contracts.py`
-records a `None` decode flag, while 1.21.1 and every later matrix row decode
-with `-d`. The same module round-trips a 10253-byte binary-hostile payload
-through the uu codec's own emitted commands on all five rows, 1.16.1 among them.
+**Measured:** BusyBox 1.16.1 ships no `base64` applet.
+`tests/integration/busybox_bed/test_applet_userland.py` records `False` for that
+row and `tests/integration/busybox_bed/test_shell_codec.py` records a `None`
+decode flag, while 1.21.1 and every later matrix row decode with `-d`. The same
+module puts and gets a multi-chunk payload through each guest's own codec — uu
+on 1.16.1, base64 on the rest — and compares the bytes that come back.
 
-**Queued for:** nothing for the codec itself. What remains unmeasured is the
-*pty* path: a `term: telnet` BusyBox host routes this backend through a pooled
-shell session whose line editor truncates at 1022 characters (see
-[`run-command-line-length`](#run-command-line-length)), and neither codec's chunk
-command has been measured there.
+**Queued for:** nothing. The *pty* path that used to be queued here is measured:
+a `term: telnet` BusyBox host routes this backend through a pooled shell session
+whose line editor truncates at 1022 characters (see
+[`run-command-line-length`](#run-command-line-length)), so PUT now **sizes its
+chunk lines to that budget**, and multi-chunk round trips run over telnet on all
+five guests — uuencode on 1.16.1, base64 on the rest.
 
 ### file-ops-base64
 
@@ -309,10 +312,11 @@ against a 17-byte file answered `sh: base64: not found` and left that file at
 0 bytes, while `>>` left it intact.
 
 **Queued for:** the refusal has landed; a *fix* is still the full-parity
-workstream's, with the entry above — the codec probe queued there is what these
-two would read, so the two are one change and not two. The record stays
-`measured-broken` because the surface still is: otto now declines the operation
-instead of emitting one it cannot run.
+workstream's, with the entry above — the codec SELECTION that landed there
+(`_select_codec`, which degrades to `uuencode` where `base64` is absent) is what
+these two would need to read, so the two are one change and not two. The record
+stays `measured-broken` because the surface still is: otto now declines the
+operation instead of emitting one it cannot run.
 
 ### sftp-transfer
 
@@ -353,10 +357,11 @@ avoid, and the reason the `busybox` profile keeps `sftp` in its
 *is* the operation. So the operation runs, and the record improves its failure
 rather than preventing it.
 
-**Measured:** twice, on the same device. Tier 3, 2026-08-13 — an `sftp(1)`
+**Measured:** twice, on the same device. The dropbear rig, 2026-08-13 — an
+`sftp(1)`
 session into the pinned BusyBox root fails with
 `/bin/sh: /usr/lib/sftp-server: not found`, ash inside the chroot rather than
-the host's shell. Then otto's own backend against that same tier, 2026-08-14 —
+the host's shell. Then otto's own backend against that same dropbear rig, 2026-08-14 —
 `UnixHost.put` on a host built with `transfer: sftp` raised
 `asyncssh.sftp.SFTPConnectionLost: 0 bytes read on a total of 4 expected bytes`
 in 22ms, moved no bytes and left nothing behind on either side. That message is
@@ -364,8 +369,11 @@ what this record now replaces: it names no subsystem, no device and no
 alternative, and it reads like a dropped connection.
 
 **Queued for:** nothing for a fix, deliberately — the `shell` backend is the
-answer for these devices and it is verified over real ssh in Tier 3. What landed
-instead is the attribution above.
+answer for these devices, and it is verified end to end on five live BusyBox
+guests (`tests/integration/busybox_bed/test_shell_codec.py`). That verification
+originally ran over real ssh against a dropbear rig that has since been retired;
+the guests carry it over telnet instead. What landed instead of a fix is the
+attribution above.
 
 ### scp-transfer
 
@@ -408,12 +416,12 @@ is the protocol's rather than otto's — which is also what separates this from
 *an* `nc` is not the question.
 
 **Measured:** two measurements, and the second is what the refusal keys on.
-Tier 3, 2026-08-13: `scp -O` into the pinned BusyBox root fails with
+The dropbear rig, 2026-08-13: `scp -O` into the pinned BusyBox root fails with
 `/bin/sh: scp: not found`, and the file does not land — measured separately from
 `sftp-transfer` on purpose, since `scp -O` reaches for a remote binary while
 `sftp` opens a subsystem. Then the five matrix artifacts through the batched
 applet probe, 2026-08-14: `scp` is absent from the applet list on all five
-(`tests/busybox/test_applet_resolution.py` records it per row).
+(`tests/integration/busybox_bed/test_applet_userland.py` records it per row).
 
 **Queued for:** nothing for a *fix*, deliberately, for the same reason as
 `sftp-transfer` — the `shell` backend is the answer for these devices. The
@@ -590,7 +598,8 @@ being torn down and that is not evidence the device disobeyed.
 **Measured:** the five matrix artifacts, 2026-08-13, re-measured through the
 batched applet probe 2026-08-14. `shutdown` is absent from the applet list on all
 five, while `reboot` and `poweroff` are present on all five
-(`tests/busybox/test_applet_resolution.py` records it per row). BusyBox runs only
+(`tests/integration/busybox_bed/test_applet_userland.py` records it per row).
+BusyBox runs only
 what its own applet list carries, so the list is the whole answer here — and it
 is also why the choice always has somewhere to go.
 
@@ -651,12 +660,15 @@ possible.
 directly. Not every BusyBox-userland host and not every host without bash: the
 buffer belongs to ash's line editor, and dash or ksh hosts have no such limit.
 
-**Measured:** two measurements. First the phase-5 spike, 2026-08-13, dropbear
-2022.83 against BusyBox 1.35.0: largest line delivered intact 1022, first
+**Measured:** two measurements, both on rigs of their day. First the phase-5
+spike, 2026-08-13, over the since-retired dropbear rig — dropbear 2022.83 in
+front of a BusyBox 1.35.0 chroot: largest line delivered intact 1022, first
 truncated 1023, with no error and no log line — identical against OpenSSH and
 against a bare local pty, which is what identifies it as BusyBox ash's
 `CONFIG_FEATURE_EDITING_MAX_LEN` rather than any transport, while the exec
-channel took 9000 characters intact and broke at 9001. Then, because that
+channel took 9000 characters intact and broke at 9001. (That rig is gone; the
+bound it found is not a property of it, which is the point of the second
+measurement.) Then, because that
 config is set at *build time* and one artifact cannot speak for the matrix, all
 five pinned rows (1.16.1, 1.21.1, 1.28.1, 1.31.0, 1.35.0) were driven through a
 local pty and answered 1022/1023 identically; the same harness carried 18437
@@ -686,8 +698,8 @@ tier can, because **those four emit no command of their own**. Each iterates
 `Host.products` and delegates to a {class}`~otto.host.product.Product`, and
 `Product` declares all four of its methods abstract. otto ships exactly one
 concrete body — {meth}`~otto.host.product.FileProduct.stage`, a single
-`await host.put(...)` — and `put` is a surface this table already covers and
-Tier 3 already exercises over real ssh.
+`await host.put(...)` — and `put` is a surface this table already covers and the
+five live BusyBox guests already exercise end to end.
 
 Everything else that would reach the device comes from **your** product code.
 The documented shape (see {doc}`../../guide/hosts/capabilities`) has `install`
@@ -723,26 +735,31 @@ blocked and nothing should be.
 this row does not refuse.
 
 **Queued for:** Tier 3 fidelity item C, `todo/busybox-tier3-fidelity-2026-08-13.md`:
-run the phase-5 harness against a period-appropriate dropbear instead of
-2022.83. Two things it has to measure first — whether an old dropbear even
+measure a period-appropriate dropbear instead of 2022.83. Note what moved under
+that item: the phase-5 harness it named has been retired, and the live BusyBox
+guests that replaced it run no ssh daemon at all, so closing this now needs a rig
+of its own. Two things it has to measure first — whether an old dropbear even
 builds on a modern toolchain, and whether `ssh_options` really suffices.
 
 ### busybox-over-a-real-network
 
 **Status:** `untested` — otto attempts it, and the outcome is the measurement.
 
-No BusyBox target is exercised over a real network path. Every tier is local:
-Tier 1 runs the artifact as a subprocess, and Tiers 2 and 3 run it inside an
-unprivileged namespace on loopback. Loopback has a ~64 KB MTU and no real
-latency, so nothing measured so far can surface an interaction between the
-transfer's chunking and a real path's MTU, window or timeouts.
+No BusyBox target is exercised over a real network path. The artifact tier runs
+the binary as a local subprocess, and the live BusyBox guests answer through
+QEMU's user-mode networking behind a hop — so the last leg to the device is
+emulated, with no real latency, MTU or loss on it. Nothing measured so far can
+surface an interaction between the transfer's chunking and a real path's MTU,
+window or timeouts.
 
 **Measured:** nothing yet, by construction — this row exists to say that the
-green Tier 1-3 lanes do not cover it.
+green lanes do not cover it.
 
 **Queued for:** Tier 3 fidelity item B, `todo/busybox-tier3-fidelity-2026-08-13.md`:
-let the harness aim at a remote host when one is configured, defaulting to
-loopback.
+aim a BusyBox target across a physical link. The harness that item would have
+extended is retired, and the bed that replaced it moved the target only part of
+the way — otto reaches the guests over the lab network, but the last hop into
+each one is emulated.
 
 ## Keeping this page true
 

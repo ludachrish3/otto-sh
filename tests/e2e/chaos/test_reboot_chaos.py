@@ -4,6 +4,22 @@ reboots were Chris-approved for Plan 4; the controller re-confirms before this
 module runs. Records down/up/recovery timings for the deferred _confirm_
 recovered tuning (todo/chaos-reboot-followups.md §3/§4).
 
+NO BUSYBOX GUEST ARM. Two of the three scenarios are the tunnel-x-reboot and
+link-x-reboot pairs, which are inherently carrot+tomato (see
+test_tunnel_link_chaos.py's own note on why neither half travels to a
+guest). The happy-path arm is the interesting one, because it WOULD run --
+the guests have a ``reboot`` applet -- and it is still declined, on what it
+would actually be measuring. QEMU runs each guest with ``-no-reboot``
+(Vagrantfile), so an in-guest reboot does not reboot anything: it EXITS the
+qemu process, and what brings a guest back is systemd's ``Restart=always``
+on test1, booting a fresh copy of the same initramfs with every byte of
+guest state gone. A green ``reboot --wait`` would therefore be evidence
+about a unit file on the hop, not about otto's two-phase down/up watch
+recovering a host. It is also, unavoidably, a deliberate power cycle of a
+shared bed guest, which this lane does not do on its own initiative -- the
+bed's recovery paths (``Restart=always``, ``make qemu-restart``) exist for
+wedges chaos CAUSES, not as a reboot verb to drive.
+
 The two multi-host scenarios (tunnel/link x reboot) pin carrot_seed/
 tomato_seed directly, the same shape Task 8's test_tunnel_link_chaos.py uses
 for its own inherently-two-host scenarios: no `chaos_bed` lease on either

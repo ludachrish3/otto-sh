@@ -3,6 +3,12 @@ listener beyond the teardown deadline and characterize partial-file state.
 Forces the nc backend (``--transfer nc``) so the GET-path reap (Task 7's
 product fix) is exercised on whichever host was leased.
 
+A THIRD ARM asks the same question of the BusyBox bed's guest, where the
+answer has a different shape: nc is refused there by a registered userland
+gap, ``shell`` is the transfer those devices actually get, and its remote
+state is a staged temp rather than a listener. The two premises do not
+substitute for each other -- see that test's own docstring.
+
 Self-match note: the nc-listener probe IS
 ``tests/_fixtures/bed_hygiene.py``'s ``_NC_LISTENER_PROBE`` (imported, not
 mirrored — a verbatim copy here silently missed that module's move to the
@@ -30,14 +36,16 @@ TestNcGetTunneledCancellation``, which drives ``_get_files_nc_tunneled``
 directly with ``has_tunnel=True`` (RED pre-fix, GREEN post-fix).
 """
 
+import re
 import time
+import uuid
 
 import pytest
 
 from otto.logger.mode import LogMode
 from otto.utils import wait_for
 from tests._fixtures.bed_hygiene import _NC_LISTENER_PROBE
-from tests.e2e.chaos._bed import probe_text, run_probe
+from tests.e2e.chaos._bed import busybox_probe_text, probe_text, run_probe
 from tests.e2e.chaos._seed import offset_in
 from tests.integration.chaos._driver import BANNER, spawn_otto
 
@@ -63,6 +71,18 @@ _PAYLOAD_SIZE = 512 * 1024 * 1024
 
 _REMOTE_PUT_DIR = "/tmp/otto-chaos-put"
 _REMOTE_GET_SRC = "/tmp/otto-chaos-src"
+
+# --- BusyBox guest arm ------------------------------------------------------
+# 512 KiB, calibrated live the same way `_PAYLOAD_SIZE` was, against the guest
+# rather than against a veggies host: a shell PUT to bb1350 through the hop
+# measured 32 KiB in 1.5s, 128 KiB in 3.1s and 512 KiB in 9.9s wall (2026-08-21,
+# CLI-to-CLI including ~1.3s of connect/probe setup), i.e. ~60 KiB/s of actual
+# streaming. 512 KiB therefore buys ~8.6s of in-flight transfer, which is a wide
+# margin around the 0.5-2.0s injection window below. Two orders of magnitude
+# smaller than the nc arms' payload and NOT an oversight: base64 over a typed
+# pty line is a fundamentally slower channel than a raw socket, and the number
+# that matters is the injection window's margin, not the byte count.
+_GUEST_PAYLOAD_SIZE = 512 * 1024
 
 
 def _nc_listeners(element: str) -> list:
@@ -244,3 +264,155 @@ def test_sigint_mid_get_no_orphan_listener(chaos_bed, chaos_rng, tmp_path):
             # `_reap_new_nc_listeners`'s docstring for why a `pkill -f` on the
             # redirect-operand token can't do this.
             _reap_new_nc_listeners(chaos_bed.element, before)
+
+
+# The first chunk command's INFO echo (`Host._log_command`). Codec-specific by
+# construction: `Base64Codec.send_chunks` writes each chunk as
+# `printf '%s' '<b64>' | base64 -d >> <temp>`, and the anchor guest is pinned
+# partly BECAUSE its userland has a real base64 applet (see
+# `_bed.BUSYBOX_CHAOS_ELEMENT`) -- on the 1.16.1 guest the same transfer would
+# run the uuencode codec and emit a heredoc, not this line.
+_GUEST_CHUNK_MARKER = "| printf '%s'"
+
+
+def _guest_names(directory: str) -> list:
+    """Every name in *directory* on the guest, via the shell's own glob.
+
+    NOT ``ls``: BusyBox ``ls`` colours its output whenever stdout is a tty,
+    and every command on a ``term: telnet`` host is on one -- a bare ``ls``
+    comes back wrapped in SGR escapes (measured on this guest), so a name
+    comparison would silently be comparing against ``\\x1b[0;0mfoo\\x1b[m``.
+    ``printf '%s\\n' <dir>/*`` is expanded by ash itself: no applet, no
+    colour, one absolute path per line. An unmatched glob comes back as the
+    literal pattern (ash has no nullglob), which is why the ``*`` filter is
+    here rather than a directory-empty special case.
+    """
+    out = busybox_probe_text(f"printf '%s\\n' {directory}/*")
+    return [ln.strip() for ln in out.splitlines() if ln.strip() and "*" not in ln]
+
+
+@pytest.mark.no_hygiene_bracket  # the guest is not the veggies pool the autouse bracket leases
+def test_sigint_mid_shell_put_leaves_nothing_at_the_destination_on_the_busybox_guest(
+    busybox_chaos_bed, chaos_rng, tmp_path
+):
+    """Interrupt a shell PUT mid-stream on the BusyBox guest: no truncated
+    file may appear at the real destination, and the console must still serve
+    a shell afterwards.
+
+    WHY ``--transfer shell`` AND NOT ``nc``. The two nc arms above are this
+    module's premise on a veggies host: an interrupted transfer must not
+    strand a remote ``nc -l``. That premise does not travel to the guest --
+    otto REFUSES nc transfers to these guests by the registered
+    ``nc_dash_n`` gap, so an nc arm here could only certify the refusal,
+    which ``tests/integration/busybox_bed/test_nc_refusal.py`` already pins
+    on all five guests. ``shell`` is the transfer the guests actually use,
+    and it has its own remote-state question, which is what this arm asks.
+
+    THE INVARIANT IS THE STAGING SKELETON'S, and it is genuinely at risk
+    here. ``ShellFileTransfer`` names a temp in the destination's own
+    directory, fills it chunk by chunk, verifies it, and only then ``mv``s it
+    onto the real path -- so an interrupt is supposed to be unable to leave a
+    short file where the real one goes. Every step of that runs as a separate
+    typed command over the pty, and the interrupt lands between two of them,
+    which is precisely the window an eager rename (or a chunk loop writing
+    straight to the destination) would lose.
+
+    THE ASSERTION IS FALSIFIABLE FROM BOTH SIDES, which is worth stating
+    because "file absent" is the shape that usually is not. It cannot pass
+    vacuously on a transfer that never started: ``wait_for_log`` on the first
+    chunk command raises unless chunks were genuinely being dispatched. And
+    it cannot pass vacuously on a transfer that FINISHED before the signal --
+    that outcome leaves the destination present, which fails this same
+    assertion. The payload is sized (see ``_GUEST_PAYLOAD_SIZE``) so the
+    second case takes a wide margin to reach.
+
+    THE LEFTOVER TEMP IS CHARACTERIZED, NOT ASSERTED, exactly as the nc arms
+    characterize their partial local file. Measured: the staged temp DOES
+    survive a SIGINT (``_cleanup_temp`` is a best-effort ``rm`` that cannot
+    run its own await once the task is cancelled). Asserting either way would
+    be wrong -- asserting it survives would pin a wart as a contract and go
+    red on a fix; asserting it is gone would fail today for a behaviour the
+    product never promised. It is printed so a change in either direction is
+    visible in the run.
+    """
+    src = tmp_path / "guest-payload.bin"
+    with src.open("wb") as f:
+        f.truncate(_GUEST_PAYLOAD_SIZE)
+    # Unique per run: the guest's /tmp is a tmpfs that outlives any single
+    # test (only a guest restart clears it), and it already carries other
+    # suites' files. A fresh directory IS this arm's hygiene bracket -- its
+    # "before" is empty by construction, so anything found afterwards is
+    # unambiguously this scenario's, with no snapshot/diff needed.
+    remote_dir = f"/tmp/otto-chaos-guest-put-{uuid.uuid4().hex[:8]}"
+    dest = f"{remote_dir}/{src.name}"
+    p = None  # bound inside the try; finally must not assume it got there
+    try:
+        # otto's `put` never mkdir's the remote destination itself.
+        busybox_probe_text(f"mkdir -p {remote_dir}")
+        p = spawn_otto(
+            [
+                "host",
+                "--transfer",
+                "shell",
+                busybox_chaos_bed.target.host_id,
+                "put",
+                str(src),
+                remote_dir,
+            ],
+            xdir=tmp_path,
+            target=busybox_chaos_bed.target,
+        )
+        p.wait_for_log(re.escape(_GUEST_CHUNK_MARKER), timeout=120.0)  # phase: chunks streaming
+        # the ONE deliberate sleep: seeded injection offset. Floor at 0.5s
+        # rather than the nc arms' 0.0: the chunk command's log line is
+        # written BEFORE the command is typed, so an offset of ~0 could
+        # signal with zero bytes actually landed -- a state indistinguishable
+        # from "never started" in the leftover characterization below.
+        time.sleep(offset_in(chaos_rng, 0.5, 2.0))
+        p.signal(2)  # SIGINT
+        p.wait_for_stderr(BANNER, timeout=15.0)  # phase: teardown running
+        rc = p.wait(timeout=60.0)
+        assert rc == 130, p.stderr_text()
+        p.assert_no_process_group()
+
+        # Guest-specific risk, asserted before anything is read off the
+        # device: an interrupt lands mid-typed-command, and a console left
+        # waiting at ash's PS2 continuation prompt would wedge every later
+        # session. This probe is a FRESH login through the hop, so it fails
+        # loud (and guest-named, via the G5 probe contract) if the console
+        # did not recover -- rather than surfacing as a confusing timeout
+        # inside the leftover read.
+        assert "GUEST-USABLE" in busybox_probe_text("echo GUEST-USABLE"), (
+            f"{busybox_chaos_bed.element}: console did not serve a clean shell after "
+            "an interrupted shell PUT"
+        )
+
+        names = _guest_names(remote_dir)
+        assert dest not in names, (
+            f"{busybox_chaos_bed.element}: interrupted shell PUT left a file AT THE REAL "
+            f"DESTINATION {dest} -- the staged-temp-then-rename skeleton did not hold. "
+            f"Directory contents: {names}"
+        )
+
+        # Characterization (not asserted -- see the docstring).
+        staged = [n for n in names if n.startswith(f"{dest}.otto-")]
+        sizes = {n: busybox_probe_text(f"stat -c %s {n}") for n in staged}
+        log_text = "\n".join(
+            f.read_text(errors="replace") for f in sorted(tmp_path.rglob("verbose.log"))
+        )
+        print(  # noqa: T201 — characterization output is the point; captured on failure/verbose
+            "partial-file policy (shell put, interrupted): "
+            f"chunk-command echoes before the signal = {log_text.count(_GUEST_CHUNK_MARKER)}, "
+            f"destination {dest} absent, staged temps left = {sizes} "
+            f"(of {_GUEST_PAYLOAD_SIZE} bytes)"
+        )
+    finally:
+        # Belt for the assert-failure path: `p.wait_for_log` above can raise
+        # before `p` is ever signaled/reaped, leaving the local subprocess
+        # running. SIGKILL it if it's still alive before doing anything else.
+        if p is not None and p.proc.poll() is None:
+            p.signal(9)
+        # The guest's tmpfs only clears on a restart, and this test's own
+        # staged temp is EXPECTED to be here -- so removing the whole unique
+        # directory is the cleanup, not an admission of a leak.
+        busybox_probe_text(f"rm -rf {remote_dir} || true")

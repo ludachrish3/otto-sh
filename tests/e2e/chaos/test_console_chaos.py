@@ -17,6 +17,23 @@ from `tests/_fixtures/lab_data/tech1/lab.json` -- mirrors
 `labs/<name>/tech1/lab.json` + a matching `settings.toml`), with each host's
 `labs` list rewritten to the private lab name.
 
+NO BUSYBOX GUEST ARM, even though the guests are also telnet consoles behind
+an SSH hop -- the resemblance is the transport, and the premise here is
+CONTENTION. This module exists because the board serves exactly one console
+session, so a client that dies holding it can leave the next client with a
+connection that accepts and never produces a shell ("accept != shell"). The
+bed guests have no such single session: their init runs ``telnetd -F -l
+/bin/login`` (``scripts/build_busybox_guest_images.py``), which forks a fresh
+login per connection. MEASURED, not read off the applet's reputation, because
+the whole disposition rests on it: two otto sessions opened against bb1350 at
+once both answered -- shell pids 4393 and 4395, the first still answering
+while the second was live, against a single ``telnetd`` process (2026-08-21).
+So "the next client" never waits on the previous one
+and the wedge this module reproduces has nothing to reproduce with. The
+guest-relevant part of client death -- whether the device reaps the dead
+client's shell -- is the pty-HUP mechanism, and it is asserted directly by
+test_session_chaos.py's guest arm.
+
 Mid-handshake variant, deliberately PARKED (not shipped): a live probe
 against the real board (see task-10-report.md) measured the marker handshake
 (`SessionManager._ensure_initialized`'s READY round-trip) completing in

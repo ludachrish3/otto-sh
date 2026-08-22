@@ -163,7 +163,13 @@ _INITTAB = """::sysinit:/bin/busybox sh /etc/init.d/rcS
 
 
 def cpio_newc_entries(busybox: Path, kernel_module: Path, hostname: str) -> "list[CpioEntry]":
-    """Build the full member list for one guest image."""
+    """Build the full member list for one guest image.
+
+    No /etc/motd or /etc/issue is baked, and scripts/lab_health.py's
+    login-probe needle precedence RELIES on that: a pre-login banner could
+    carry a needle substring and change a probe verdict. Adding one means
+    re-checking that probe's needle handling first.
+    """
     dirs = [
         "bin",
         "dev",

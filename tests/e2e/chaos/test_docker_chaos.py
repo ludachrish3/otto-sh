@@ -13,6 +13,16 @@ pepper is serialized against ``tests/integration/test_docker_compose.py``'s
 own docker suite via the same fd-flock lease that module holds
 (``lease_unix_host(..., ["pepper"])``), so this lane's docker chaos never
 races that daemon.
+
+NO BUSYBOX GUEST ARM: every scenario here needs one of the venue's two
+roles, and a bed guest can hold neither. The PARENT role runs a docker
+daemon and is driven over SSH (``compose_up``/``compose_down`` stage a
+project on it); the guest has no docker and no sshd at all, and 49 MB of
+usable RAM in an initramfs. The CHILD role is a ``DockerContainerHost``,
+i.e. a ``docker exec`` target inside that parent -- a QEMU guest reached by
+telnet through a hop is not one. This is the one disposition in the lane
+that needs no measurement to argue, but it was measured anyway (no
+``docker`` on the anchor guest) rather than assumed from the OS profile.
 """
 
 import asyncio

@@ -57,6 +57,18 @@ class TransferContext:
     # that needs to know how the device spells something reads it here rather
     # than probing on its own account.
     userland: "Userland | None" = None
+    # How long a single line of a command this host's `exec_cmd` can carry, or
+    # None when nothing bounds it -- asked of the host's SessionManager (see
+    # `otto.host.session.SessionManager.exec_line_budget`) rather than derived
+    # here, because the answer depends on which primitive `exec` routes
+    # through and on the host's shell dialect, neither of which a transfer
+    # backend can see. A CALLABLE, not a number: `term` has a setter and a
+    # proxied login can be re-targeted, so the route is read when bytes are
+    # about to move rather than when the backend was built. Read today only by
+    # `ShellFileTransfer`, whose commands carry their payload IN the command
+    # line; a backend that moves bytes some other way ignores it, and the
+    # default None keeps every builder that does not pass it unchanged.
+    exec_line_budget: "Callable[[], int | None] | None" = None
     # embedded-family fields
     filesystem: "EmbeddedFileSystem | None" = None
 

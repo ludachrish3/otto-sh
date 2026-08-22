@@ -15,6 +15,7 @@ parametrized ``host1`` fixture lives in :mod:`tests.conftest` and resolves
 ``ssh`` / ``telnet`` / ``local`` to :class:`UnixHost` / :class:`LocalHost`.
 """
 
+import hashlib
 import logging
 import time
 from pathlib import Path
@@ -26,7 +27,7 @@ from otto.host.login_proxy import Cred
 from otto.host.session import ShellSession
 from otto.host.unix_host import UnixHost
 from otto.utils import Status
-from tests.conftest import host_data, make_host
+from tests.conftest import BUSYBOX_GUEST_NES, host_data, make_host
 from tests.integration.host._transfer_retry import transfer_with_retry
 
 pytestmark = pytest.mark.timeout(30)
@@ -41,6 +42,22 @@ _ALL_TRANSFERS = pytest.mark.parametrize(
         "ftp",
         "nc",
         pytest.param(("nc", "telnet"), id="nc-telnet"),
+        # The BusyBox bed's five pinned userlands, on the transfer their lab
+        # entries resolve to — `shell`, over the telnet console, through the
+        # carrot hop. This is where transfer parity across userland versions
+        # is asserted: the same two round trips every other transfer takes.
+        #
+        # NO `nc` ROWS, and that is a ruling rather than an omission (Chris,
+        # 2026-08-21). otto's nc backend cannot round-trip with ANY BusyBox
+        # userland by measured design: GET is refused up front (all five
+        # guests settle `nc_dash_n: rejected`, and the `nc-transfer` gap
+        # record is `measured-broken`), and PUT spawns an OpenBSD-spelling
+        # listener the applet does not parse. What this phase certifies about
+        # nc is the LOUD refusal, in
+        # `tests/integration/busybox_bed/test_nc_refusal.py`; making nc work
+        # is a follow-up spec, and a row here that enshrined today's PUT
+        # outcome would have to be torn up by it.
+        *(pytest.param(("shell", ne), id=f"shell-{ne}") for ne in BUSYBOX_GUEST_NES),
     ],
     indirect=True,
 )
@@ -384,7 +401,7 @@ class TestCredentials:
 
 
 # ---------------------------------------------------------------------------
-# File transfer (SCP, SFTP, FTP, nc)
+# File transfer (SCP, SFTP, FTP, nc — and `shell` on the five BusyBox guests)
 # ---------------------------------------------------------------------------
 
 
@@ -396,17 +413,35 @@ class TestCredentials:
 class TestFileTransfer:
     @pytest.mark.asyncio
     async def test_get_file(self, transfer_host: UnixHost, tmp_path: Path):
-        """Download /etc/hostname and verify it matches the hostname command."""
-        result = (await transfer_host.run("hostname")).only
-        expected_hostname = result.value.strip()
+        """Download /etc/passwd and verify the bytes against the host's own md5sum.
 
-        res = await transfer_with_retry(
-            lambda: transfer_host.get([Path("/etc/hostname")], tmp_path)
-        )
+        ``/etc/passwd``, not ``/etc/hostname``, because the busybox rows added
+        with the bed have no ``/etc/hostname``: their whole rootfs is the
+        initramfs ``scripts/build_busybox_guest_images.py`` builds, and it sets
+        the hostname with the ``hostname`` applet rather than by shipping the
+        file. ``/etc/passwd`` is on every backend this fixture can produce —
+        it is a member of that initramfs and of every unix pool host — so the
+        row asserts otto's transfer instead of a rootfs layout.
+
+        Verified by checksum rather than by text so the assertion is
+        byte-exact, and so the only thing crossing the console is 32 hex
+        characters: the ``nc-telnet`` row reads its truth through a telnet
+        session, where ``cat``-ing a multi-kilobyte file back would be
+        asserting the console's fidelity, not the transfer's.
+        """
+        digest = (await transfer_host.run("md5sum /etc/passwd")).only
+        assert digest.status == Status.Success, f"md5sum failed: {digest.value!r}"
+        expected = digest.value.split()[0]
+
+        res = await transfer_with_retry(lambda: transfer_host.get([Path("/etc/passwd")], tmp_path))
         assert res.status == Status.Success, f"get failed: {res.msg}"
 
-        local_hostname = (tmp_path / "hostname").read_text().strip()
-        assert local_hostname == expected_hostname
+        landed = (tmp_path / "passwd").read_bytes()
+        actual = hashlib.md5(landed, usedforsecurity=False).hexdigest()
+        assert actual == expected, (
+            f"/etc/passwd came back with a different checksum "
+            f"({actual} local vs {expected} on the host); {len(landed)} bytes landed"
+        )
 
     @pytest.mark.asyncio
     async def test_put_file(self, transfer_host: UnixHost, tmp_path: Path):

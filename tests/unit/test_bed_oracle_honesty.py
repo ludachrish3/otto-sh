@@ -22,12 +22,19 @@ from types import SimpleNamespace
 
 import pytest
 
+from otto.context import _active
 from otto.result import CommandResult, Result
 from otto.utils import Status
 from tests._fixtures.bed_hygiene import ProbeFailedError, argv_pattern, snapshot_host
 from tests._fixtures.paths import TESTS_ROOT
 from tests.e2e.chaos import _bed
-from tests.e2e.chaos._bed import probe_text, run_probe, veggies_link_id
+from tests.e2e.chaos._bed import (
+    busybox_probe,
+    busybox_probe_text,
+    probe_text,
+    run_probe,
+    veggies_link_id,
+)
 from tests.e2e.chaos.conftest import _hygiene_bracket_impl
 
 _TIMEOUT_TEXT = "Command timed out after 30s"
@@ -119,6 +126,78 @@ def test_probe_text_raises_on_failed_probe(stub_bed_host):
 def test_probe_text_returns_checked_stripped_output(stub_bed_host):
     stub_bed_host.canned["tc qdisc show dev eth2"] = "qdisc noqueue 0: root refcnt 2\n"
     assert probe_text("stub-elem", "tc qdisc show dev eth2") == "qdisc noqueue 0: root refcnt 2"
+
+
+# ---------------------------------------------------------------------------
+# busybox_probe / busybox_probe_text: the SAME contract on the guest path.
+#
+# The guest oracle is a second implementation of the same idea (factory ->
+# fresh host -> status check -> unwrap), reached through a different seam --
+# the host factory rather than build_bed_host -- so the G5 contract has to be
+# pinned twice or it is only pinned on the veggies side. The stub is placed
+# on `create_host_from_dict` because that is what `_bed.busybox_probe` calls;
+# `busybox_hop_context` still runs for real, which is deliberate: it is
+# hostless (it builds a Lab from committed lab data) and it is the piece
+# whose ContextVar restore the last pin here is about.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def stub_guest_host(monkeypatch):
+    """Route ``_bed.busybox_probe``'s factory build at a scripted host."""
+    host = _StubHost(id="bb1350")
+    monkeypatch.setattr(_bed, "create_host_from_dict", lambda *_a, **_k: host)
+    return host
+
+
+def test_busybox_probe_raises_on_failed_probe_result(stub_guest_host):
+    stub_guest_host.fail = True
+    with pytest.raises(ProbeFailedError) as excinfo:
+        busybox_probe(lambda h: h.exec("printf '%s\\n' /tmp/otto-chaos-guest-put-abc/*"))
+    msg = str(excinfo.value)
+    assert _bed.BUSYBOX_CHAOS_ELEMENT in msg, f"probe failure must name the guest: {msg}"
+    assert "Error" in msg, f"probe failure must quote the status: {msg}"
+    assert "/tmp/otto-chaos-guest-put-abc" in msg, f"probe failure must name the command: {msg}"
+
+
+def test_busybox_probe_returns_ok_result_with_payload(stub_guest_host):
+    """Positive control for the stub seam: the real guest probe path runs it."""
+    stub_guest_host.canned["echo GUEST-USABLE"] = "GUEST-USABLE\n"
+    out = busybox_probe(lambda h: h.exec("echo GUEST-USABLE"))
+    assert isinstance(out, Result)
+    assert out.is_ok
+    assert out.value == "GUEST-USABLE\n"
+
+
+def test_busybox_probe_text_raises_on_failed_probe(stub_guest_host):
+    stub_guest_host.fail = True
+    with pytest.raises(ProbeFailedError):
+        busybox_probe_text("pgrep -af '[s]leep 315' || true")
+
+
+def test_busybox_probe_text_returns_checked_stripped_output(stub_guest_host):
+    stub_guest_host.canned["stat -c %s /tmp/x.otto-1"] = "54549\n"
+    assert busybox_probe_text("stat -c %s /tmp/x.otto-1") == "54549"
+
+
+@pytest.mark.parametrize("failing", [False, True])
+def test_busybox_probe_restores_the_context_it_installed(stub_guest_host, failing):
+    """The hop lab is process-global state, and a probe must not leave it behind.
+
+    ``busybox_hop_context`` installs an ``OttoContext`` so the guest's
+    ``hop: carrot_seed`` resolves, and every other module in this lane builds
+    its own hosts against whatever context it finds. Parametrized over the
+    RAISING case too, because that is the one an ordinary green run never
+    exercises and the one a missing ``finally`` would leak on.
+    """
+    before = _active.get()
+    stub_guest_host.fail = failing
+    if failing:
+        with pytest.raises(ProbeFailedError):
+            busybox_probe_text("echo x")
+    else:
+        busybox_probe_text("echo x")
+    assert _active.get() is before, "busybox_probe leaked its hop context into the process"
 
 
 # ---------------------------------------------------------------------------
@@ -274,6 +353,18 @@ def _parsed_or_fail(path: Path) -> ast.AST:
         )
 
 
+# Every probe helper that takes a coroutine FACTORY and vets its Result, and
+# where that factory sits positionally. ``run_probe(element, factory)`` names
+# the veggies host it dials; ``busybox_probe(factory)`` does not, because the
+# chaos lane's guest is a fixed anchor (``_bed.BUSYBOX_CHAOS_ELEMENT``) rather
+# than a leased choice. Both forfeit the status check the same way if a
+# factory unwraps ``.value`` first, so both are scanned -- a second seam added
+# without a line here would be a silent hole, which is what
+# ``test_every_probe_helper_is_actually_exercised_in_the_lanes`` below refuses
+# to allow.
+_PROBE_FACTORY_ARG = {"run_probe": 1, "busybox_probe": 0}
+
+
 def _factory_value_offenders(tree) -> list:
     local_defs: dict = {}
     for node in ast.walk(tree):
@@ -284,9 +375,10 @@ def _factory_value_offenders(tree) -> list:
         if not isinstance(node, ast.Call):
             continue
         name = getattr(node.func, "id", None) or getattr(node.func, "attr", None)
-        if name != "run_probe":
+        if name not in _PROBE_FACTORY_ARG:
             continue
-        factory = node.args[1] if len(node.args) >= 2 else None
+        index = _PROBE_FACTORY_ARG[name]
+        factory = node.args[index] if len(node.args) > index else None
         if factory is None:
             factory = next((kw.value for kw in node.keywords if kw.arg == "coro_factory"), None)
         if factory is None:
@@ -400,6 +492,17 @@ def test_factory_value_scan_positive_control():
     assert not _factory_value_offenders(good)
     imported_ok = ast.parse("run_probe(e, snapshot_host)")
     assert not _factory_value_offenders(imported_ok)
+    # The guest helper's factory is args[0], not args[1]: a scan that only
+    # knew run_probe's shape would read the LAMBDA as an element argument and
+    # find nothing to walk.
+    guest_bad = ast.parse("busybox_probe(lambda h: h.exec(c).value)")
+    assert _factory_value_offenders(guest_bad), (
+        "the scan must flag a value-unwrapping factory on the guest helper too"
+    )
+    guest_kwarg_bad = ast.parse("busybox_probe(coro_factory=lambda h: h.exec(c).value)")
+    assert _factory_value_offenders(guest_kwarg_bad)
+    guest_ok = ast.parse("busybox_probe(lambda h: h.exec(c))")
+    assert not _factory_value_offenders(guest_ok)
 
 
 def test_pattern_kill_scan_positive_control():
@@ -424,6 +527,28 @@ def test_no_value_reads_inside_run_probe_factories_across_lanes():
     assert not offenders, (
         "run_probe factory unwraps .value before the status check can vet it "
         f"(use probe_text, or return the Result): {offenders}"
+    )
+
+
+def test_every_probe_helper_is_actually_exercised_in_the_lanes():
+    """Anti-vacuity, per helper: the scan above audits call TEXT, so a helper
+    nobody calls contributes a clean result forever.
+
+    A rename -- or a lane that stops using one of them -- must fail HERE,
+    loudly, rather than quietly reducing that scan to auditing one seam while
+    still reading as if it covered every entry in the table.
+    """
+    called = {
+        getattr(node.func, "id", None) or getattr(node.func, "attr", None)
+        for _path, tree in _lane_sources()
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+    }
+    missing = sorted(set(_PROBE_FACTORY_ARG) - called)
+    assert not missing, (
+        f"probe helpers named in _PROBE_FACTORY_ARG but called nowhere in the scanned "
+        f"lanes: {missing} -- the scan is auditing a seam that no longer exists "
+        "(renamed? moved out of tests/e2e/chaos?), so its green says nothing about it"
     )
 
 

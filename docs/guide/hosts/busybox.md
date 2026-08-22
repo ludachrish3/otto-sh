@@ -5,8 +5,11 @@ mock of one. A BusyBox userland differs from GNU/coreutils in argument parsing, 
 codes and applet availability, and those differences move between releases — the only
 honest way to pin them is to run the releases.
 
-This page is the prerequisite list for running that matrix on your machine, plus the
-trust note that comes with executing someone else's binary.
+It is run in two places, and the split is deliberate. Pinned **artifacts** answer
+questions about the binaries themselves; five live QEMU **guests** answer what otto
+does to a BusyBox device. This page is how to run both on your machine: what each one
+needs, what it covers, and the trust note that comes with executing someone else's
+binary.
 
 ```{note}
 **It does not say what otto can and cannot do against a BusyBox host.** That is
@@ -15,6 +18,29 @@ registry: the surfaces otto has measured broken on such a userland, the surfaces
 are merely untested, and the evidence behind each verdict. This page is about the
 harness; that page is about the behaviour. Neither restates the other.
 ```
+
+## The two halves, and which one answers what
+
+| | Artifact tier | The bed |
+| --- | --- | --- |
+| Question it answers | Are these bytes the version they claim, and how does *this build* spell an applet? | What does otto do when it talks to a BusyBox device? |
+| What it drives | The pinned binary as a local subprocess, from dash with `PATH` scoped to a symlink dir | Five QEMU guests over telnet, through a hop, via otto's own host API |
+| Needs | An x86 interpreter (native or `qemu-user-static`), and the network on a cold cache | The Vagrant lab up |
+| How to run it | `make busybox` | `make coverage-unix`, `make stability-unix`, `make chaos` |
+| Runs in CI | Yes — the `busybox-artifacts` job, on x86_64 and arm64 | No: it needs the lab |
+| Lives in | `tests/busybox/` | `tests/integration/busybox_bed/`, plus BusyBox rows in the generic suites |
+
+The line between them is "does this question need a kernel". Applet argument parsing
+does not — the binary answers it as a subprocess, hermetically, on any machine. A
+transfer over a real transport into a real filesystem does, and no local rig
+substitutes for one convincingly; an earlier chroot-and-dropbear harness tried, and
+the bed replaced it.
+
+Both halves rest on the **same bytes**: `scripts/build_busybox_guest_images.py` builds
+each guest's initramfs from the artifact the pin file names, through the same
+fetch-and-verify layer the artifact tier uses. That is why the narrow CI job still
+guards the bed — a pin or a banner that drifts there is a guest whose userland is no
+longer the version its lab entry claims.
 
 ## The artifacts
 
@@ -45,11 +71,11 @@ Two facts decide this, and both are measured rather than assumed:
   AArch32 EL0, so a 32-bit ARM static binary fails with `ENOEXEC` there regardless of
   the kernel's `CONFIG_COMPAT=y`.
 
-So otto always tests the x86 artifact: natively on x86_64 (which CI is), and under
-`qemu-user-static` everywhere else. That is not merely a portability workaround — it
-means the dev VM and CI execute **identical bytes**. Building or fetching a native
-artifact per architecture would silently test two different builds and call the result
-one matrix.
+So otto always tests the x86 artifact: natively on x86_64 (which CI's first leg is),
+and under `qemu-user-static` everywhere else. That is not merely a portability
+workaround — it means the dev VM and CI execute **identical bytes**. Building or
+fetching a native artifact per architecture would silently test two different builds
+and call the result one matrix.
 
 Note that the matrix is mixed: 1.16.1 and 1.21.1 are **i686**, because upstream
 published no x86_64 build before 1.28.1. An `x86_64` interpreter does not run an i686
@@ -92,60 +118,7 @@ repository's `Vagrantfile`, so a rebuilt VM has it. Installing it by hand on a V
 without that entry lasts only until the next `vagrant destroy`.
 ```
 
-## Prerequisite: `dropbear-bin`
-
-Needed on every machine, unlike `qemu-user-static`. The tier that logs into the BusyBox
-root over **real ssh** runs a throwaway dropbear on loopback, because a real BusyBox
-device runs dropbear rather than OpenSSH and the two disagree exactly where that tier
-measures — channel behaviour and legacy crypto.
-
-```console
-$ sudo apt update && sudo apt install dropbear-bin
-```
-
-`dropbear-bin`, **not** `dropbear` and not `dropbear-run`. The `-bin` package ships only
-the binaries — `dropbear`, `dbclient`, `dropbearkey`, `dropbearconvert` — and registers
-no service, so installing it starts nothing listening on your machine:
-
-```console
-$ systemctl is-enabled dropbear
-not-found
-```
-
-The tier brings up its own foreground daemon on `127.0.0.1` at an ephemeral port and
-reaps it when the run ends. The package is in Ubuntu's `universe` component, and the
-index refresh matters here for the same reason it does above.
-
-```{note}
-On the otto dev VM this package is installed by the `dev-root` provisioner in the
-repository's `Vagrantfile`, so a rebuilt VM has it.
-```
-
-## Prerequisite: `openssh-client`
-
-Also needed on every machine, and it is the one prerequisite here that nothing
-installs for you — neither the `Vagrantfile` nor the CI job lists it, because it is
-present by default on Ubuntu and on the dev VM. It is listed anyway so this page stays
-a complete answer to "what does the matrix need".
-
-```console
-$ sudo apt update && sudo apt install openssh-client
-```
-
-Two separate needs, and `dropbear-bin` covers neither:
-
-- **`ssh-keygen`**, for the CLIENT key. `dropbearkey` writes dropbear's own private-key
-  format, which asyncssh cannot read, so the host keys and the client key come from
-  different generators. See `SSH_KEYGEN` in `tests/_fixtures/busybox_dropbear.py`.
-- **`scp` and `sftp`**, which the tier drives on purpose — the
-  [`scp-transfer`](../../architecture/subsystems/busybox-support.md#scp-transfer) and
-  [`sftp-transfer`](../../architecture/subsystems/busybox-support.md#sftp-transfer)
-  refusals are measured by running the real clients against the BusyBox root.
-
-Absence is already diagnosed by name rather than by a skip: `generate_keys` refuses with
-the `apt install` line above.
-
-## Running the matrix
+## Running the artifact tier
 
 ```console
 $ make busybox
@@ -155,6 +128,12 @@ This is the only lane that selects `-m busybox`; every catch-all selector exclud
 That is deliberate — the tier reaches the public internet on a cold cache, so an
 upstream outage must not be able to redden the per-task gate. See {doc}`../test` for
 the lane layout generally.
+
+What it measures is the artifacts and nothing else: each file still hashing to its
+committed SHA-256, each binary announcing the version it is filed under, and the argv
+spellings otto's userland probe depends on (`timeout`, `base64`, `stat`, `wc`, `nc`)
+read off each build. Behaviour against a BusyBox *host* is not here — it is on the bed
+below.
 
 If the interpreter is missing, the tier says so by name and points back here. It does
 **not** quietly skip: a silent skip is how BusyBox coverage evaporates while the lane
@@ -182,6 +161,106 @@ $ OTTO_BUSYBOX_CACHE=/srv/busybox-artifacts make busybox   # on the lab machine
 A cold cache with no network fails with a named error identifying the artifact and how
 to prime it, rather than skipping.
 
+## The bed: five guests, one per pinned version
+
+Each guest is a tiny x86 initramfs whose **userland is the pinned artifact itself** —
+BusyBox 1.16.1 the device is really running BusyBox 1.16.1, not a modern build asked
+to behave like an old one. They run under QEMU on `test1` (the lab VM otto's lab data
+calls `carrot`) and are reachable only from inside it, so every guest is addressed
+through the hop:
+
+| Version | Lab `ne` | `host1` backend id | Telnet port on the hop | `nc` data window | systemd unit |
+| --- | --- | --- | --- | --- | --- |
+| 1.16.1 | `bb1161` | `busybox_1161` | 2316 | 9160-9169 | `busybox-qemu-1.16.1.service` |
+| 1.21.1 | `bb1211` | `busybox_1211` | 2321 | 9210-9219 | `busybox-qemu-1.21.1.service` |
+| 1.28.1 | `bb1281` | `busybox_1281` | 2328 | 9280-9289 | `busybox-qemu-1.28.1.service` |
+| 1.31.0 | `bb1310` | `busybox_1310` | 2331 | 9310-9319 | `busybox-qemu-1.31.0.service` |
+| 1.35.0 | `bb1350` | `busybox_1350` | 2335 | 9350-9359 | `busybox-qemu-1.35.0.service` |
+
+Facts worth knowing before you read a failure:
+
+- **Telnet only, and that is the device being honest.** These guests run no ssh
+  daemon — real BusyBox devices frequently do not either — so their lab entries
+  declare `telnet` and hop through `carrot_seed`. Their transfers are `shell` and
+  `nc`; `nc` is *declared and refused*, by a measured gap in the `nc` applet's
+  argument parsing, and the refusal itself is pinned by the bed suite.
+- **One account: `root`.** The password is baked into the image by the builder and
+  recorded in the guests' lab-data credentials.
+- **They are emulated, on two cores.** x86 guests on an aarch64 host means TCG with no
+  KVM, and all five share `test1`. That is why every test that touches a guest joins
+  ONE xdist group (`busybox_bed`) rather than one group per guest: a second worker
+  would not parallelise them, it would timeshare the same two cores and take cycles
+  from guests that already pay for emulation.
+- **The port windows are not decoration.** The `nc` transfer needs the guest-side and
+  hop-side port numbers to match, which is why each guest gets a ten-port window
+  forwarded straight through rather than a single mapped port.
+
+## Provisioning, recovery and logs
+
+The bed is provisioned by the `busybox-qemu` provisioner in the repository's
+`Vagrantfile`, on `test1`:
+
+```console
+$ vagrant provision test1
+```
+
+It fetches an Ubuntu amd64 kernel (one kernel serves the i686 userlands too, via IA32
+emulation) and its `e1000.ko`, decompressing the module because BusyBox `insmod`
+cannot read `.ko.zst`; then it builds the five images from the pinned artifacts and
+writes one systemd unit per guest. Re-provisioning is safe and cheap: the builder
+reports which images actually changed, and only those guests — plus any that are not
+running — are restarted. A healthy, unchanged guest is left alone.
+
+Health and recovery are the same two commands the Zephyr bed uses:
+
+```console
+$ make vm-health      # every lab VM + every QEMU guest, with uptimes
+$ make qemu-restart   # restart the QEMU units on the hops, then health-check
+```
+
+Both shell out to `ssh` through `sshpass`, so those two programs must be on your
+`PATH`; they are present on the dev VM but nothing in this repository installs them.
+
+For anything deeper than "is it up", read the guest's console log on `test1`, where
+each unit's stdout is its guest's serial console:
+
+```console
+$ vagrant ssh test1 -c 'journalctl -u busybox-qemu-1.35.0 -n 100'
+```
+
+One restart policy is worth understanding before it surprises you. The guests run with
+`-no-reboot` and `panic=-1`, so a kernel panic — or any in-guest reboot — makes QEMU
+*exit* rather than reset in place, and that exit carries status **0**. `Restart=always`
+is therefore deliberate: `Restart=on-failure` would read a panicked guest as a clean
+shutdown and leave the bed one guest short. A deliberate `systemctl stop` still sticks,
+because systemd never applies `Restart=` to a stop it initiated.
+
+## First-party parity: where the BusyBox rows live
+
+BusyBox is not a special case with a suite of its own. The guests are backends in the
+same machinery every other first-party OS rides, which is what keeps their coverage
+honest as otto changes:
+
+- **Host contract** — `tests/integration/host/test_host_contract.py`. The guests are
+  `host1` backend ids, in the same parametrized matrix as the other hosts.
+- **Transfers** — `tests/integration/host/test_unix_host_integration.py`, through the
+  `transfer_host` parametrization: the `shell` backend against each of the five
+  userlands.
+- **Stability** — `tests/integration/host/test_host_stability_contract.py`, riding
+  `make stability-unix` with everything else in that lane.
+- **Chaos** — `tests/e2e/chaos/`. A guest arm lands in each module whose injection
+  mechanism genuinely reaches a telnet-over-hop QEMU guest; where it does not, the
+  module says so and why, next to the mechanism it is about.
+- **Bed-only questions** — `tests/integration/busybox_bed/`. What is left when parity
+  is subtracted: applet resolution in the guest's own ash, the shell transfer's codec
+  choice per version, the session frame, the `nc` refusal, and a smoke test per guest.
+
+Lane-wise that means the contract and transfer rows ride `make coverage-unix`, the
+stability rows ride `make stability-unix`, and the chaos arms ride `make chaos` — the
+same lanes, the same gates, no BusyBox-shaped exception. The one accommodation is the
+`busybox_bed` xdist group described above, and it is enforced rather than remembered:
+an item that reaches a guest from outside the group fails at setup.
+
 ## Trust: the one unsigned executable otto runs in CI
 
 State this plainly, because it is true: **the BusyBox prebuilts are the only unsigned
@@ -207,13 +286,26 @@ which is an ordinary persistent user-owned directory, not a scratch space that
 disappears after the run. What bounds it is that it is never installed, is never added
 to the system `PATH`, and runs as whatever user runs the tests — which on a developer
 machine and on CI is an unprivileged one. Nothing in the fixture *enforces* that: run
-the suite as root, in a root container, and the artifact runs as root too. A future
-tier that drives individual applets will symlink them into a per-test temporary
-directory and put *that* on the `PATH` of the test's own shell only.
+the suite as root, in a root container, and the artifact runs as root too. The applet
+tier does scope its own `PATH`: it symlinks the applet names it is measuring into a
+per-test temporary directory and runs dash with `PATH` set to that directory alone —
+but the symlinks resolve to the cached binary, so the bytes still execute from the
+cache.
 
-Container-isolated tiers, which will additionally run the artifact inside an
-unprivileged user namespace, are planned for a later phase and do not exist yet. Do not
-read the paragraph above as describing containment it does not have today.
+The one place the artifact runs somewhere other than a developer machine or a CI
+runner is inside a bed guest, where it *is* the userland of a throwaway initramfs on
+an emulated machine — and the reach of that machine is worth stating exactly, since
+this is the section where a comforting summary does the most damage. The guest is
+unaddressable: it sits behind QEMU's user-mode (slirp) networking on `test1`, so
+nothing on the lab network can open a connection to it and the only way in is a
+hostfwd bound to `test1`'s own loopback. Outbound is the other direction and is not
+closed: the guest takes a default route to slirp's gateway (`10.0.2.2`), which NATs
+through `test1`, which has internet. So the isolation here is locality and a one-way
+door, not an absence of egress — and it is isolation by virtue of where the guests
+live, not a sandbox the artifact tier applies to itself. Container-isolated
+local tiers were once planned and are not coming: the bed answered the question they
+were for. Do not read the paragraph above as describing containment the local tier does
+not have.
 
 If that trade is not acceptable in your environment, prime the cache from artifacts you
 built or vetted yourself, point `OTTO_BUSYBOX_CACHE` at them, and record their hashes

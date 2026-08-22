@@ -3,13 +3,14 @@
 DRIVEN FROM /bin/sh (dash), NEVER from `busybox sh`. Applet resolution that
 ignores PATH is a BUILD-CONFIG property (`CONFIG_FEATURE_SH_STANDALONE`), not
 a universal fact about "BusyBox's ash" — measured off in every busybox.net
-prebuilt this project fetches, see `tests/busybox/test_applet_resolution.py`'s
+prebuilt this project fetches, see
+`tests/integration/busybox_bed/test_applet_userland.py`'s
 `_EXPECTED_STANDALONE_SHELL` table — but the system package apt installs for
 the `system` row below HAS it on: during the 2026-08-10 timeout work a control
 'verified' broken code because `busybox sh` resolved applets internally
 regardless of PATH, silently exercising BusyBox's own builtin instead of the
-shim under test. Anything asserting applet RESOLUTION belongs in Tier 2, not
-here.
+shim under test. Anything asserting applet RESOLUTION belongs on the live
+guests (`tests/integration/busybox_bed/test_applet_userland.py`), not here.
 
 The command SPELLINGS measured here have two other copies, and all three have
 to agree: `src/otto/host/userland.py` issues them at runtime, and
@@ -25,7 +26,7 @@ presence checks, `Userland.shell_dialect`'s `$BASH_VERSION` variable read, and
 `Userland.checksum`'s single-spelling `md5sum < /dev/null` probe have no such
 question, so they carry no Tier 1 row and only the other two copies exist for
 them -- `checksum`'s PRESENCE and OUTPUT format (not this exact probe
-spelling) is substantiated instead by `test_shell_codec_contracts.py`'s real
+spelling) is substantiated instead by the live bed's real
 `md5sum` round trips over the matrix.
 """
 
@@ -129,7 +130,8 @@ _ROWS = [pytest.param(release, id=release.version) for release in BUSYBOX_MATRIX
 def test_the_system_busybox_is_the_standalone_counterexample():
     """The only `True` in the standalone-shell story, pinned rather than prose.
 
-    `_EXPECTED_STANDALONE_SHELL` in `tests/busybox/test_applet_resolution.py`
+    `_EXPECTED_STANDALONE_SHELL` in
+    `tests/integration/busybox_bed/test_applet_userland.py`
     is five identical `False`s. Without an assertion somewhere that a
     DIFFERENT build measures `True`, that table is a constant wearing a
     discrimination's clothing: if Ubuntu ever shipped a `busybox` without

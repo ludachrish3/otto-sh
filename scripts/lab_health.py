@@ -65,29 +65,169 @@ _DRIFT_WARN_S = 2.0
 # need ~15-30 s before telnetd answers.
 _RESTART_SETTLE_S = 20
 
+# SSH budget for the AUTHENTICATED console probe. Its four bounded reads (three
+# login steps at `step` = 8 s, then uptime at 0.75 * step = 6 s) can spend 30 s
+# before it gives up and prints "OK login", which overruns `_run_ssh`'s 25 s
+# default — and an ssh timeout there reports HOP-FAIL for a guest that is
+# merely slow to answer, i.e. the loudest possible verdict for the mildest
+# possible fault. Raise both together if those budgets ever change. The
+# credential-less call keeps the default; nothing about it got slower.
+_LOGIN_PROBE_SSH_TIMEOUT_S = 45.0
+
 # Runs on the hop VM (which has python3) to probe a guest telnet console: open
 # the port, nudge the shell, and read what comes back. Prints one of
-# "OK <ms>" (a Zephyr uptime line) / "OK login" (a telnet login prompt — how
-# the BusyBox bed guests announce themselves; they run BusyBox telnetd, which
-# answers with option negotiation plus "<host> login: " and never with an
-# uptime) / "OK ?" (talking, but neither shape) / "NOOUT" (TCP open but the
-# guest emitted nothing — the classic wedge) / "CONNFAIL <err>". The port is
-# argv[2], NOT hardcoded: the x86 net beds expose the in-guest shell on :23
-# (reached over their TAP), but the ARM serial beds bridge UART to a telnet
-# listener on a loopback /32 at 2323+, and the BusyBox guests sit behind QEMU
-# user-net hostfwds on 127.0.0.1 at 2316+. A hardcoded :23 would connect to the
-# hop's own 0.0.0.0:23 telnetd for those loopback addresses and report a false
-# "up" — so honor telnet_options.port.
+# "OK <ms>" (an uptime, in milliseconds — from a Zephyr "Uptime: N ms" line, or
+# from /proc/uptime once the login branch below has a shell) / "OK login" (a
+# telnet login prompt and nothing more: alive and answering, but this probe
+# could not get past it) / "OK refused" (the console REFUSED the credentials
+# the guest's own lab entry carries — see the login branch) / "OK ?" (talking,
+# but neither shape) / "NOOUT" (TCP open but the guest emitted nothing — the
+# classic wedge) / "CONNFAIL <err>".
+#
+# The port is argv[2], NOT hardcoded: the x86 net beds expose the in-guest
+# shell on :23 (reached over their TAP), but the ARM serial beds bridge UART to
+# a telnet listener on a loopback /32 at 2323+, and the BusyBox guests sit
+# behind QEMU user-net hostfwds on 127.0.0.1 at 2316+. A hardcoded :23 would
+# connect to the hop's own 0.0.0.0:23 telnetd for those loopback addresses and
+# report a false "up" — so honor telnet_options.port.
+#
+# argv[3]/argv[4] are an OPTIONAL user/password, and supplying them selects a
+# different probe entirely: log in, then read /proc/uptime. Only the BusyBox
+# bed guests get them, because only they carry creds of their own (see
+# `_check_embedded`). The reason the login is worth the extra reads: the
+# guests run under `Restart=always` — a guest kernel panic exits qemu with
+# status 0 under -no-reboot, so systemd's only workable policy restarts it —
+# and a freshly restarted guest serves the very same "<host> login: " banner as
+# one that has been healthy for a day. Without an uptime, "OK login" cannot
+# tell a stable bed from one silently panic-looping, which is the bed's actual
+# failure mode. The one thing this branch must never print is an uptime it did
+# not read.
+#
+# A login that does not reach a shell fails in two ways, and they are two
+# findings, not one. A console that goes QUIET — no challenge, no answer, an
+# EOF — keeps the "OK login" fallback: the unauthenticated sighting is still
+# true, this probe simply could not measure further, and printing anything
+# worse would turn a slow guest into a false alarm. A console that REFUSES the
+# credentials is different in kind: those creds come from the guest's own
+# committed lab entry, so a refusal is deterministic evidence that the image's
+# /etc/shadow and the lab data disagree — a broken credential bake. That prints
+# "OK refused" and `_check_embedded` renders it as a not-ok row, which is spec
+# §6's requirement that a bad bake fail `vm-health` by name instead of
+# surfacing later as the first bed test's login failure.
+#
+# The credential-less call is untouched, byte for byte. The Zephyr consoles
+# reach this same script and have no login to offer; typing a username at that
+# shell is the regression this arrangement exists to prevent.
 _CONSOLE_PROBE = r"""
 import re, socket, sys, time
 ip = sys.argv[1]
 port = int(sys.argv[2])
+user, password = (sys.argv[3], sys.argv[4]) if len(sys.argv) > 4 else ("", "")
+# Seconds each login step may wait. argv[5] is a TEST AFFORDANCE and nothing
+# else: `_check_embedded` never passes it, so every real probe runs on the 8/6
+# defaults that `_LOGIN_PROBE_SSH_TIMEOUT_S` is sized against. It exists because
+# the branch worth testing -- a console that answers `login:` and then goes
+# quiet -- is only reachable by letting a budget expire, and a suite that waits
+# 8 real seconds to watch that happen pays it on every hostless gate and every
+# CI interpreter. Shortening the budget keeps the observation exactly as it was
+# (the console is held open and silent; the probe still times out) and only
+# changes how long the test stares at it.
+step = float(sys.argv[5]) if len(sys.argv) > 5 else 8.0
+uptime_budget = step * 0.75
 try:
     s = socket.create_connection((ip, port), timeout=4)
 except Exception as e:
     print("CONNFAIL", e)
     raise SystemExit(0)
 s.settimeout(4)
+
+def read_until(needles, budget):
+    # Read until one of *needles* (lowercase bytes) shows up in the accumulated
+    # buffer, or *budget* seconds pass. Returns (needle_or_None, buffer). The
+    # needles are ordered by the caller and checked in that order, so a refusal
+    # marker is recognised ahead of a prompt character that may share a chunk
+    # with it.
+    end = time.time() + budget
+    buf = b""
+    while True:
+        left = end - time.time()
+        if left <= 0:
+            return None, buf
+        try:
+            s.settimeout(left)
+            chunk = s.recv(512)
+        except Exception:
+            return None, buf
+        if not chunk:
+            return None, buf
+        buf += chunk
+        low = buf.lower()
+        for n in needles:
+            if n in low:
+                return n, buf
+
+if user:
+    hit, seen = read_until([b"login:"], step)
+    if hit is None:
+        print("OK ?" if seen else "NOOUT")
+        raise SystemExit(0)
+    s.sendall(user.encode() + b"\r\n")
+    hit, _ = read_until([b"password:"], step)
+    if hit is None:
+        print("OK login")
+        raise SystemExit(0)
+    s.sendall(password.encode() + b"\r\n")
+    # "incorrect" and a second "login:" are how a refusal announces itself, and
+    # "#" is the ash root prompt. Three outcomes, three verdicts: a refusal is a
+    # broken credential bake and says so; a timeout or an EOF (hit is None) is
+    # an unmeasurable console and keeps the "OK login" fallback; only "#" is a
+    # shell to read an uptime from. See the note above the script for why those
+    # first two must not be collapsed.
+    #
+    # Listed refusal-first because read_until scans its needles in order, so a
+    # buffer holding both resolves to the refusal. That precedence now picks a
+    # VERDICT rather than merely stopping the probe, so what makes it safe is
+    # worth stating: the guest images bake no /etc/motd and no /etc/issue
+    # (`scripts/build_busybox_guest_images.py` writes passwd/shadow/group and
+    # nothing else), so the only thing between the password and the "#" is
+    # BusyBox's own ash banner, which contains neither needle.
+    hit, _ = read_until([b"incorrect", b"login:", b"#"], step)
+    if hit in (b"incorrect", b"login:"):
+        print("OK refused")
+        raise SystemExit(0)
+    if hit != b"#":
+        print("OK login")
+        raise SystemExit(0)
+    s.sendall(b"cat /proc/uptime\r\n")
+    end = time.time() + uptime_budget
+    up = None
+    buf = b""
+    while up is None:
+        left = end - time.time()
+        if left <= 0:
+            break
+        try:
+            s.settimeout(left)
+            chunk = s.recv(512)
+        except Exception:
+            break
+        if not chunk:
+            break
+        buf += chunk
+        # The whole /proc/uptime line, not a leading float: the command echo
+        # and the prompt share this buffer, and "12.345 98.765" on a line of
+        # its own is the only thing in it that is the file's contents.
+        m = re.search(rb"(?m)^\s*(\d+\.\d+)\s+\d+\.\d+\s*$", buf)
+        if m:
+            up = round(float(m.group(1)) * 1000)
+    try:
+        s.sendall(b"exit\r\n")
+    except Exception:
+        pass
+    s.close()
+    print("OK", up if up is not None else "login")
+    raise SystemExit(0)
+
 try:
     s.sendall(b"\r\nkernel uptime\r\n")
     time.sleep(1.2)
@@ -196,12 +336,41 @@ def _check_embedded(host: dict, hops: dict[str, dict]) -> dict:
     # telnet_options and use the in-guest shell on :23.
     port = host.get("telnet_options", {}).get("port", 23)
     remote_cmd = f"python3 -c {shlex.quote(_CONSOLE_PROBE)} {shlex.quote(host['ip'])} {port}"
-    rc, out, err = _run_ssh(hop["ip"], user, password, remote_cmd)
+    # A guest carrying creds of ITS OWN can be logged into for a real uptime;
+    # that is the BusyBox bed's shape. A Zephyr console carries none (it
+    # borrows its hop's, which are already in `user`/`password` above and are
+    # the wrong credentials for the guest anyway), so it keeps the two-argument
+    # call and the default budget — byte-identical to before this branch
+    # existed. Read off the entry's shape, never an os_type literal, for the
+    # same reason `_is_ssh_host` does.
+    guest_login = ""
+    if host.get("creds"):
+        guest_user, guest_password = _ssh_user_pass(host["creds"])
+        guest_login = guest_user
+        remote_cmd += f" {shlex.quote(guest_user)} {shlex.quote(guest_password)}"
+        rc, out, err = _run_ssh(
+            hop["ip"], user, password, remote_cmd, timeout=_LOGIN_PROBE_SSH_TIMEOUT_S
+        )
+    else:
+        rc, out, err = _run_ssh(hop["ip"], user, password, remote_cmd)
     if rc != 0:
         return {"ok": False, "status": "HOP-FAIL", "info": err or f"rc={rc}"}
     if out.startswith("OK"):
         parts = out.split()
         ms = parts[1] if len(parts) > 1 else "?"
+        if ms == "refused":
+            # The console answered, and it turned away the login committed in
+            # this guest's OWN lab entry. Not-ok on purpose (spec §6): the row
+            # names the guest and the credential, so a bad `/etc/shadow` bake
+            # fails `vm-health` here rather than surfacing an hour later as the
+            # first bed test's login failure. The probe prints this for the
+            # refusal needles ONLY -- a console that merely goes quiet still
+            # arrives as `login` below and is still reported healthy.
+            return {
+                "ok": False,
+                "status": "BAD-CREDS",
+                "info": f"{guest_login or '?'} login refused",
+            }
         if ms == "login":
             return {"ok": True, "status": "up", "info": "login prompt"}
         uptime = f"up {int(ms) // 1000}s" if ms.isdigit() else "up ?"

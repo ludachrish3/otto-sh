@@ -293,6 +293,22 @@
             ],
             "telnet_options": {"port": 2316},
             "nc_options": {"port": 9160},
+            "userland_options": {
+                "applet_base64": "absent",
+                "applet_nc": "present",
+                "applet_poweroff": "present",
+                "applet_scp": "absent",
+                "applet_shutdown": "absent",
+                "applet_uudecode": "present",
+                "applet_uuencode": "present",
+                "base64_flag": "absent",
+                "checksum": "md5sum",
+                "elevation": "su",
+                "nc_dash_n": "rejected",
+                "shell_dialect": "ash",
+                "stat_size": "stat",
+                "timeout_style": "dash-t"
+            },
             "resources": [
                 "bb1161"
             ],
@@ -315,6 +331,22 @@
             ],
             "telnet_options": {"port": 2321},
             "nc_options": {"port": 9210},
+            "userland_options": {
+                "applet_base64": "present",
+                "applet_nc": "present",
+                "applet_poweroff": "present",
+                "applet_scp": "absent",
+                "applet_shutdown": "absent",
+                "applet_uudecode": "present",
+                "applet_uuencode": "present",
+                "base64_flag": "-d",
+                "checksum": "md5sum",
+                "elevation": "su",
+                "nc_dash_n": "rejected",
+                "shell_dialect": "ash",
+                "stat_size": "stat",
+                "timeout_style": "dash-t"
+            },
             "resources": [
                 "bb1211"
             ],
@@ -337,6 +369,22 @@
             ],
             "telnet_options": {"port": 2328},
             "nc_options": {"port": 9280},
+            "userland_options": {
+                "applet_base64": "present",
+                "applet_nc": "present",
+                "applet_poweroff": "present",
+                "applet_scp": "absent",
+                "applet_shutdown": "absent",
+                "applet_uudecode": "present",
+                "applet_uuencode": "present",
+                "base64_flag": "-d",
+                "checksum": "md5sum",
+                "elevation": "su",
+                "nc_dash_n": "rejected",
+                "shell_dialect": "ash",
+                "stat_size": "stat",
+                "timeout_style": "dash-t"
+            },
             "resources": [
                 "bb1281"
             ],
@@ -359,6 +407,22 @@
             ],
             "telnet_options": {"port": 2331},
             "nc_options": {"port": 9310},
+            "userland_options": {
+                "applet_base64": "present",
+                "applet_nc": "present",
+                "applet_poweroff": "present",
+                "applet_scp": "absent",
+                "applet_shutdown": "absent",
+                "applet_uudecode": "present",
+                "applet_uuencode": "present",
+                "base64_flag": "-d",
+                "checksum": "md5sum",
+                "elevation": "su",
+                "nc_dash_n": "rejected",
+                "shell_dialect": "ash",
+                "stat_size": "stat",
+                "timeout_style": "coreutils"
+            },
             "resources": [
                 "bb1310"
             ],
@@ -381,6 +445,22 @@
             ],
             "telnet_options": {"port": 2335},
             "nc_options": {"port": 9350},
+            "userland_options": {
+                "applet_base64": "present",
+                "applet_nc": "present",
+                "applet_poweroff": "present",
+                "applet_scp": "absent",
+                "applet_shutdown": "absent",
+                "applet_uudecode": "present",
+                "applet_uuencode": "present",
+                "base64_flag": "-d",
+                "checksum": "md5sum",
+                "elevation": "su",
+                "nc_dash_n": "rejected",
+                "shell_dialect": "ash",
+                "stat_size": "stat",
+                "timeout_style": "coreutils"
+            },
             "resources": [
                 "bb1350"
             ],

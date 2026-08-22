@@ -143,7 +143,7 @@ BUSYBOX_POWEROFF = "poweroff"
 
 ``shutdown`` is absent and ``poweroff`` present on all five matrix artifacts --
 1.16.1, 1.21.1, 1.28.1, 1.31.0 and 1.35.0 -- recorded per row by
-``tests/busybox/test_applet_resolution.py`` and by the ``shutdown-command``
+``tests/integration/busybox_bed/test_applet_userland.py`` and by the ``shutdown-command``
 record in :data:`~otto.host.userland.GAPS`. Not a BusyBox-only spelling: a GNU
 host normally has ``poweroff`` too, so this arm is only ever reached on a device
 that answered "no ``shutdown``".
@@ -651,6 +651,12 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
                     userland=self._userland(),
                     get_local_ip=lambda: self._get_local_ip(),  # noqa: PLW0108 — late-bind self for monkeypatching
                     exec_cmd=lambda *a, **kw: self.exec(*a, **kw),  # noqa: PLW0108 — late-bind self for monkeypatching
+                    # Asked of the session manager, never predicted from
+                    # `self.term`: whether `exec` types into a line-disciplined
+                    # shell is that object's decision (a proxied login routes
+                    # through the pooled path on ssh too), and the framing it
+                    # subtracts is its frame's.
+                    exec_line_budget=lambda: self._session_mgr.exec_line_budget,
                     max_filename_len=self.max_filename_len,
                 )
             ),

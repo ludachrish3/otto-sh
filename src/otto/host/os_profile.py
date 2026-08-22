@@ -429,7 +429,7 @@ def _register_builtin_os_profiles() -> None:
         A truthful name for the shell. `AshFrame` overrides nothing —
         its rendered payloads (handshake, frame, recover, quiet_history) are
         byte-identical to `BashFrame`'s, measured both under real BusyBox ash
-        across the artifact matrix (``tests/busybox/test_ash_frame_payloads.py``)
+        across the version matrix (``tests/integration/busybox_bed/test_session_frame.py``)
         and directly against `BashFrame`'s output
         (``test_ash_inherits_bashs_marker_scheme_rather_than_restating_it`` in
         ``tests/unit/host/test_command_frame.py``). So this changes no bytes on

@@ -26,7 +26,8 @@ unguarded. :class:`TestTheResolverIsOptionalBecauseScpIsTheDefaultTransfer`
 holds each fact that argument rests on.
 
 **The scripted device below reproduces a measurement; it is not the evidence
-for it.** The evidence is in the record's ``measured_on`` — Tier 3's real
+for it.** The evidence is in the record's ``measured_on`` — the retired
+dropbear rig's real
 ``scp -O`` into the pinned BusyBox root, and the batched applet probe against
 all five matrix artifacts. :class:`_ProbingRunner` exists so these tests can
 watch what otto does at the call site without a rootfs.

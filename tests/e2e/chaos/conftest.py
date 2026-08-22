@@ -12,13 +12,34 @@ import pytest
 from tests._fixtures.fd_watermark import (
     _fd_watermark,  # noqa: F401 — imported fixture, registered by name
 )
-from tests.e2e.chaos._bed import ChaosBed, leased_bed
+from tests.e2e.chaos._bed import BusyboxChaosBed, ChaosBed, busybox_bed, leased_bed
 
 
 @pytest.fixture(scope="session")
 def chaos_bed(tmp_path_factory: pytest.TempPathFactory) -> Iterator[ChaosBed]:
     lock_dir = tmp_path_factory.getbasetemp().parent
     with leased_bed(lock_dir) as bed:
+        yield bed
+
+
+@pytest.fixture(scope="session")
+def busybox_chaos_bed() -> Iterator[BusyboxChaosBed]:
+    """The lane's BusyBox guest, session-scoped like ``chaos_bed`` — and,
+    unlike it, UNLEASED and pool-free.
+
+    It takes no ``tmp_path_factory`` precisely because it needs no lock dir:
+    requesting this fixture must never reach ``lease_unix_host``, or a guest
+    scenario would hold a veggies VM hostage for the whole session while
+    touching only a QEMU guest and its hop. See ``_bed.busybox_bed`` for why
+    no lease is the correct answer rather than a shortcut.
+
+    Every consumer also carries ``no_hygiene_bracket``: the autouse bracket
+    below snapshots whichever veggies host the POOL leased, which is neither
+    the guest nor reliably even its hop, so leaving it armed would both force
+    that lease and assert cleanliness of a host the scenario never touched.
+    Guest arms bracket their own remote state instead, on the guest.
+    """
+    with busybox_bed() as bed:
         yield bed
 
 

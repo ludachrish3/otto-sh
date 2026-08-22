@@ -722,7 +722,19 @@ dashboard-soak: $(DASHBOARD_DIST) ## Run the dashboard replay soak (Tier-3, `soa
 # (native on x86_64; qemu-user-static with binfmt elsewhere). Deliberately NOT
 # a `coverage` prerequisite the way `dashboard` is: an upstream outage must
 # not be able to red the per-task gate.
-busybox: ## Run the BusyBox artifact tier (`busybox`-marked; excluded from every default lane). Fetches real prebuilt binaries from busybox.net into ~/.cache/otto/busybox on a cold cache (override with OTTO_BUSYBOX_CACHE); needs qemu-user-static registered on non-x86_64. JUnit XML lands in reports/junit/busybox/.
+#
+# ARTIFACTS ONLY, AND THAT IS THE WHOLE SCOPE NOW. What otto DOES to a BusyBox
+# userland is measured on five live QEMU guests — `tests/integration/busybox_bed/`
+# plus the busybox rows the generic host, transfer, stability and chaos suites
+# carry — which ride `make coverage-unix`, `make stability-unix` and `make chaos`
+# with every other first-party OS. What is left here is what needs no device:
+# each pinned artifact still hashing to its committed SHA-256 and announcing
+# the version it is filed under, and the argv spellings
+# `src/otto/host/userland.py` probes for (`timeout`, `base64`, `stat`, `wc`,
+# `nc`) measured per build. Same bytes the bed's guest images are built from
+# (`scripts/build_busybox_guest_images.py`), which is why this lane still
+# guards the bed even though it never touches it.
+busybox: ## Run the BusyBox artifact tier (`busybox`-marked; excluded from every default lane): SHA-256 pin + version-banner integrity and argv-level applet contracts, against the five pinned binaries the bed's guests are built from. Behaviour on a BusyBox userland is the live bed's, not this lane's. Fetches from busybox.net into ~/.cache/otto/busybox on a cold cache (override with OTTO_BUSYBOX_CACHE); needs qemu-user-static registered on non-x86_64. JUnit XML lands in reports/junit/busybox/.
 	@$(SAY) "pytest: BusyBox artifact tier (fetches + verifies real binaries)"
 	@$(TIMEOUT_CMD) uv run pytest -m "busybox" --no-cov $(call junitxml,busybox)
 

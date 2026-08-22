@@ -9,6 +9,7 @@ import asyncio
 import contextlib
 import json
 import os
+import re
 import socket
 from pathlib import Path
 from typing import Any
@@ -21,8 +22,17 @@ from otto.host.login_proxy import Cred
 from otto.host.unix_host import UnixHost
 from tests._fixtures.labdata import lab_data_path
 from tests._fixtures.paths import default_sut_dir
+from tests.conftest import BUSYBOX_BED_GROUP, BUSYBOX_PARAM_TOKENS
 
 _INTEGRATION_ROOT = Path(__file__).parent
+_BUSYBOX_BED_ROOT = _INTEGRATION_ROOT / "busybox_bed"
+
+# The bracketed parametrize id at the end of a nodeid, with or without the
+# ``@group`` suffix xdist appends to it. Written as one pattern because both
+# halves of the guard below need the same answer about where the id ends: a
+# nodeid is ``file::test[a-b]`` or ``file::test[a-b]@group``, and the id
+# itself never contains a bracket.
+_NODEID_ID = re.compile(r"\[([^\[\]]*)\](?:@[^\[\]]*)?$")
 
 
 def pytest_collection_modifyitems(config, items):
@@ -195,3 +205,155 @@ async def tomato():
     )
     yield h
     await h.close()
+
+
+# ---------------------------------------------------------------------------
+# The BusyBox bed's family xdist group, re-checked at setup
+#
+# Two hooks put guest-driving items into one xdist group: the bed suite's own
+# conftest stamps everything under ``tests/integration/busybox_bed/``, and
+# ``tests/integration/host/conftest.py`` stamps the parametrized rows in the
+# generic suites by param value. Both are ``tryfirst`` because pluggy
+# dispatches same-phase impls in LIFO registration order and xdist's own
+# ``pytest_collection_modifyitems`` is what turns the marker into the nodeid
+# suffix ``--dist loadgroup`` schedules on — a stamp applied after xdist ran
+# is set, ignored, and silent.
+#
+# Silent is the problem. When a Zephyr device loses its group, two workers
+# drive one console and the guest goes down: loud, and already guarded
+# (``_unhonored_group`` in the host conftest, which only ever looks at
+# ``embedded`` items). When a BusyBox row loses its group, NOTHING FAILS. The
+# five guests are TCG — x86 on an aarch64 host, no KVM — and all five live on
+# ``test1``, a two-core VM, so a second worker does not parallelise them: it
+# timeshares two cores and takes cycles from guests that are already paying
+# for emulation. The run gets slower, more timing-sensitive, and stays green,
+# which is how a lost stamp survives three reviews.
+# ---------------------------------------------------------------------------
+
+
+def _touches_the_busybox_bed(item: pytest.Item) -> bool:
+    """Whether this item drives one of the five BusyBox guests.
+
+    Read off the NODEID and the bed suite's directory — deliberately NOT off
+    ``callspec.params``, which is how the stamping hook in
+    ``tests/integration/host/conftest.py`` decides the same question. A guard
+    that shares its detector with the mechanism it guards goes quiet in
+    exactly the case the detector is wrong: a parametrize shape whose values
+    stop matching :data:`~tests.conftest.BUSYBOX_PARAM_TOKENS` (a dataclass
+    param, a dict, a deeper nesting) loses the stamp, and a guard asking the
+    same question would agree the item was never a bed item and say nothing.
+    The nodeid is also the string xdist itself keys the group onto, so it is
+    the honest side to read.
+
+    Both spellings are matched as whole id components, because the two row
+    shapes render differently: ``host1`` rows read
+    ``[busybox_1161-busybox_1161]`` and transfer rows read ``[shell-bb1161]``.
+    pytest joins id components with ``-`` and no guest token contains one, so
+    splitting on ``-`` recovers the components exactly.
+
+    The residual gap, named rather than papered over: a row that names a guest
+    ONLY through a custom ``pytest.param(..., id=...)`` that hides both
+    spellings is invisible here. The bed suite is covered by path regardless
+    of ids, so the gap is limited to a future generic-suite row that renames
+    its own id away from the guest it drives.
+    """
+    if _BUSYBOX_BED_ROOT in item.path.parents:
+        return True
+    match = _NODEID_ID.search(item.nodeid)
+    return bool(match) and bool(set(match.group(1).split("-")) & BUSYBOX_PARAM_TOKENS)
+
+
+def _in_the_bed_group(nodeid: str) -> bool:
+    """Whether xdist really put this item in the family group.
+
+    The marker proves nothing (see the note above); the ``@group`` suffix
+    xdist appends is the evidence, and this reads it. EXACT equality, not
+    containment, and the difference is the whole point of the check. xdist
+    renders an item carrying several groups as the sorted names joined with
+    ``_`` (``xdist/remote.py``: ``f"{nodeid}@{'_'.join(sorted(gnames))}"``),
+    and that joined key is a DIFFERENT scheduling unit from ``busybox_bed``:
+    ``loadgroup`` keeps each KEY on one worker, not each key that mentions a
+    name, so ``busybox_bed_<other>`` is free to run beside the family it reads
+    like. Containment would bless precisely the un-serialized case this guard
+    exists to catch.
+
+    Safe today, loud tomorrow. Measured hostlessly with ``--setup-plan -n2
+    --dist loadgroup`` (2026-08-21): 113 bed-suite items and 61 guest rows in
+    the generic suites, and every one of the 174 renders the literal
+    ``@busybox_bed`` — no joined key anywhere on the tree — so equality passes
+    everything that currently runs. The day a bed row gains a second group this
+    fails and forces the decision — one family group, or a deliberate split —
+    instead of quietly putting a second worker on the five guests' two TCG
+    cores.
+    """
+    _, sep, suffix = nodeid.rpartition("@")
+    return sep == "@" and suffix == BUSYBOX_BED_GROUP
+
+
+def pytest_runtest_setup(item: pytest.Item) -> None:
+    """Fail an item that reaches the BusyBox guests from outside the family group.
+
+    Only under xdist: without it there is one process, nothing to serialize,
+    and no suffix to read — the same precondition ``_unhonored_group`` uses.
+
+    Fires at setup, before any fixture runs, so it costs no guest contact even
+    when it is right. Deliberately not a collection-time check: at collection
+    the group suffix does not exist yet on the controller, and
+    ``--collect-only`` never renders one at all — measured twice on this
+    branch, it reports a working stamp and a broken stamp identically, so it
+    is blind to precisely this defect.
+
+    POSITIVE-CONTROLLED, on both stamping seams, with no bed contact.
+    ``--setup-plan`` is the instrument: it runs the collection and setup
+    phases (so this hook is dispatched and the ``@group`` suffix is rendered)
+    while ``_pytest.fixtures`` fakes every fixture result, so nothing dials a
+    guest. Deleting ``tryfirst`` from the bed suite's stamp and running
+    ``pytest tests/integration/busybox_bed/ --setup-plan -n2 --dist
+    loadgroup`` errors all 113 items here in 0.64s, each report naming the
+    worker (``[gw0]``/``[gw1]``) that had picked it up; deleting it from
+    ``tests/integration/host/conftest.py`` instead errors the 14
+    ``-k "busybox_1161 or bb1161"`` rows of the generic suites the same way.
+    With this hook renamed out of pluggy's reach and the same mutation in
+    place, both runs are SILENT and every nodeid is suffix-less — which is the
+    defect exactly: a lost stamp costs TCG throughput and fails nothing.
+    Restoring the decorator restores the suffix on every item.
+
+    No separate unit test, for the reason ``_unhonored_group`` gives: a
+    hand-built item would exercise a mock of xdist's behaviour, and xdist's
+    behaviour is the whole question.
+    """
+    if getattr(item.config, "workerinput", None) is None:
+        return
+    if not _touches_the_busybox_bed(item):
+        return
+    if _in_the_bed_group(item.nodeid):
+        return
+    pytest.fail(
+        f"this item drives a BusyBox bed guest but xdist did not put it in "
+        f"the {BUSYBOX_BED_GROUP!r} group (no '@{BUSYBOX_BED_GROUP}' suffix on "
+        f"the nodeid), so a second worker can be on the five guests' two TCG "
+        f"cores at the same time. Nothing about that fails on its own — it "
+        f"only makes the bed slower and more timing-sensitive — which is why "
+        f"it is asserted here.\n"
+        f"Three causes, and the fix differs:\n"
+        f"  1. A stamping hook stopped running before xdist's. Both "
+        f"pytest_collection_modifyitems impls that stamp this group "
+        f"(tests/integration/busybox_bed/conftest.py, "
+        f"tests/integration/host/conftest.py) are declared `tryfirst` for that "
+        f"reason — if a decorator was removed, restore it.\n"
+        f"  2. This row's parametrize VALUES no longer match "
+        f"BUSYBOX_PARAM_TOKENS (tests/conftest.py), so the host conftest never "
+        f"recognised it as a guest row — teach `_names_a_guest` the new shape.\n"
+        f"  3. This row's group is deliberately something ELSE. The stamper in "
+        f"tests/integration/host/conftest.py does not override an explicit "
+        f"`xdist_group` pin, and an `embedded` row that also names a guest keeps "
+        f"its Zephyr device group (losing a device group costs the device; "
+        f"losing this one costs TCG throughput). A row carrying two groups is "
+        f"the same situation rendered differently: xdist joins them into one "
+        f"key (`{BUSYBOX_BED_GROUP}_<other>`), which is a DIFFERENT scheduling "
+        f"unit and is not serialized with the family. Decide which group owns "
+        f"the row — do not let it reach the guests from another one.\n"
+        f"Whichever it is, do not silence this check: it is the only thing that "
+        f"fails when the grouping stops working.",
+        pytrace=False,
+    )

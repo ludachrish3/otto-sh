@@ -221,7 +221,7 @@ def require_interpreter(
     Raises rather than skips. A skipped BusyBox tier and a passing one are
     the same line in a pytest summary, which is how this tier's coverage
     would quietly evaporate without anyone noticing — the rule every refusal
-    in this tree follows (see `busybox_rootfs.py`'s module docstring).
+    in this tree follows.
 
     Reads binfmt_misc at the moment it is CALLED, inside the running
     session, rather than once earlier at collection. That distinction is

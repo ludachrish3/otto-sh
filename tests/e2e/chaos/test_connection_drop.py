@@ -6,6 +6,21 @@ tomato after ``otto link repair``. Self-healing ``--expire`` backstop on
 every impairment; teardown repairs unconditionally, in a ``finally``, even on
 assertion failure.
 
+NO BUSYBOX GUEST ARM, and the reason is this module's injection mechanism
+rather than its transport. Every impairment here is placed by ``otto link
+impair``, whose only argument is a DECLARED LINK id (``src/otto/cli/link.py``
+-- there is no host-and-netdev verb, by design), and a link joins two lab
+hosts. A bed guest has exactly one netdev, ``eth0``, and its far end is
+QEMU's in-process user-mode NAT at 10.0.2.2, which is not a lab host and
+never can be: there is no second endpoint to declare, so there is no link to
+name, so there is no impairment to place. The hop side is no better -- the
+telnet path arrives through a hostfwd bound on carrot's own ``127.0.0.1``,
+and netem on a leased host's loopback would blackhole all five guests plus
+every other loopback service on it at once. (``tc`` itself IS present on the
+guests -- measured. The missing piece is a link, not a tool.) The remaining
+way to sever a guest would be to stop or reconfigure its QEMU process, which
+is a bed power operation, not a chaos injection.
+
 Path A used (spec's "blackhole the SSH port"), not the SIGSTOP fallback.
 Feasibility was checked live BEFORE writing the impairing test: carrot and
 tomato share the ``192.168.1.0/24`` eth2 subnet directly (no VLAN/pepper

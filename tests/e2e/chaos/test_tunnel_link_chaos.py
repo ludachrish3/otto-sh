@@ -8,6 +8,17 @@ manually (`no_hygiene_bracket`) rather than relying on the single-host
 autouse BedHygiene bracket, which only snapshots whichever host the module's
 session-scoped ``chaos_bed`` lease happens to grab -- never necessarily one
 of the two hosts these scenarios actually dirty.
+
+NO BUSYBOX GUEST ARM, on both halves of the module's name. The TUNNEL half
+asserts that otto reconciles detached, sentinel-tagged carrier processes it
+left on endpoint hosts; the carrier is ``socat``
+(``otto.tunnel.carrier.DEFAULT_CARRIER``) and ``otto.tunnel.manage``'s own
+tool check refuses a host without it. Measured on the anchor guest: no
+``socat``, and no ``systemd-run`` for the preferred detach either. There is
+nothing to leak, so nothing to reconcile. The LINK half needs a declared
+link with a guest endpoint, and there is none to declare -- see
+test_connection_drop.py's note for why a QEMU user-net NIC has no second
+lab-host end.
 """
 
 import contextlib

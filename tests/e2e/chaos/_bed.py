@@ -7,6 +7,14 @@ reachable (fail LOUD, host-named, never skip), and expose it both as a
 driver (`tests/integration/chaos/_driver.py`) is reused unchanged — signals
 only ever go to the LOCAL otto subprocess; the bed host just runs its remote
 commands.
+
+A SECOND, UNLEASED TARGET lives at the bottom of this module: the BusyBox
+bed's ``bb1350`` guest, reached over telnet through the ``carrot_seed`` hop.
+It is deliberately NOT part of the ``UNIX_POOL`` lease — a QEMU guest is not
+a veggies host, nothing else in the lane competes for it, and the flock's
+whole job is to keep two pool consumers off one VM. See
+:data:`BUSYBOX_CHAOS_ELEMENT` for why the anchor is one fixed version rather
+than the bed's five.
 """
 
 import asyncio
@@ -16,6 +24,11 @@ import json
 from collections.abc import Iterator
 from pathlib import Path
 
+from otto.config.lab import Lab
+from otto.context import OttoContext, _active, set_context
+from otto.host.factory import create_host_from_dict
+from otto.host.login_proxy import Cred
+from otto.host.unix_host import UnixHost
 from otto.link.derive import addressing_from_dict, resolve_declared_links
 from otto.logger.mode import LogMode
 from otto.result import Result
@@ -23,6 +36,7 @@ from tests._fixtures._host_pool import lease_unix_host
 from tests._fixtures.bed_hygiene import _PROBE_TIMEOUT, check_probe_result
 from tests._fixtures.labdata import host_data, lab_data_path
 from tests._fixtures.tunnel_bed import assert_reachable, build_bed_host
+from tests.e2e._otto_subprocess import REPO_E2E
 from tests.integration.chaos._target import ChaosTarget, make_bed_target
 
 
@@ -163,3 +177,201 @@ def assert_eth2_netem_free(what: str) -> None:
     for elem in ("carrot", "tomato"):
         qdisc = probe_text(elem, "tc qdisc show dev eth2")
         assert "netem" not in qdisc, f"{elem}: netem survived {what}: {qdisc!r}"
+
+
+# ---------------------------------------------------------------------------
+# The BusyBox bed guest — the lane's second, unleased target
+# ---------------------------------------------------------------------------
+
+BUSYBOX_CHAOS_ELEMENT = "bb1350"
+"""The ONE BusyBox guest the chaos lane aims at, fixed rather than parametrized.
+
+The bed carries five guests (1.16.1 … 1.35.0) and the version matrix is
+exercised, guest by guest, in ``tests/integration/busybox_bed`` — that suite
+owns the question "does this userland differ". Chaos asks a different one:
+does otto's machinery hold up under adversity. Running the adversity five
+times over would multiply the lane's runtime (and its bed-hostility) to
+re-answer a question another suite already answers, and every failure would
+first have to be triaged as machinery-vs-userland before it meant anything.
+
+1.35.0 is the anchor because it is the newest pin and the least
+userland-constrained of the five (``base64`` applet present with a real
+``-d`` flag, ``md5sum`` for integrity, ``stat`` for sizing), so a red arm
+here is a machinery finding and not an old-applet gap. What is version-
+specific about the guests is pinned in ``userland_options`` and tested where
+those pins live, not here.
+"""
+
+BUSYBOX_HOP_ELEMENT = "carrot"
+"""The guest's hop. QEMU binds its telnet hostfwd on carrot's LOOPBACK, so the
+guest exists only at the far end of this host's own ``127.0.0.1`` — which is
+why the entry's ``ip`` is ``127.0.0.1`` and why nothing reaches it without
+``hop: carrot_seed`` resolving first (see :func:`busybox_hop_context`).
+"""
+
+
+@dataclasses.dataclass(frozen=True)
+class BusyboxChaosBed:
+    element: str  # lab element name, always BUSYBOX_CHAOS_ELEMENT
+    version: str  # the guest's pinned BusyBox version, e.g. "1.35.0"
+    telnet_port: int  # the hop-side loopback port QEMU forwards to guest :23
+    target: ChaosTarget  # aim the otto subprocess here
+
+
+def busybox_target() -> ChaosTarget:
+    """``ChaosTarget`` aiming an otto subprocess at the bed's BusyBox guest.
+
+    The SUT is ``tests/repo_e2e`` unchanged — its one ``[[lab.sources]]``
+    entry already compiles ``tech1/lab.json``, which is where the five guest
+    records and their ``carrot`` hop live, so the lab leg is a plain
+    ``-l busybox`` and no generated SUT is needed (unlike the hop-routed
+    ``chaosdrop`` and console targets, which exist only because they need lab
+    data this repo does not commit).
+
+    ``spawn_otto`` reads ``sut_dir``/``lab`` and nothing else (see
+    ``tests/integration/chaos/_driver.py::_otto_env``); the ``ssh_*`` fields
+    exist to feed the asyncssh oracle in ``tests.integration.chaos._target``,
+    which CANNOT be used here — the guest has no sshd at all, by construction.
+    They are populated from the HOP's real creds for shape parity with
+    ``make_bed_target``, and the oracle for this target is
+    :func:`busybox_probe_text`, which goes through otto's own telnet-over-hop
+    path because that is the only path there is.
+    """
+    guest = host_data(BUSYBOX_CHAOS_ELEMENT)
+    hop = host_data(BUSYBOX_HOP_ELEMENT)
+    cred = hop["creds"][0]
+    return ChaosTarget(
+        sut_dir=REPO_E2E,
+        lab="busybox",
+        host_id=f"{guest['element']}_{guest['board']}",
+        ssh_host=hop["ip"],
+        ssh_port=22,
+        ssh_username=cred["login"],
+        ssh_client_key=None,
+        ssh_password=cred["password"],
+    )
+
+
+@contextlib.contextmanager
+def busybox_hop_context() -> Iterator[None]:
+    """Install the hop host in the active context, then put it back.
+
+    An in-process guest host built from lab data carries ``hop:
+    carrot_seed``, and that id is resolved against the ACTIVE context's lab
+    when the connection dials — a pytest process has no such lab unless one
+    is installed. Mirrors the discipline in
+    ``tests/integration/busybox_bed/conftest.py`` (snapshot the ContextVar,
+    install, restore), with one deliberate difference: the scope is ONE
+    probe, not one module. The chaos lane's other modules build their own
+    hosts and spawn their own subprocesses against the veggies bed, and a
+    session-scoped context carrying a two-host lab would sit under all of
+    them for the whole run. Nothing here is worth that blast radius, and the
+    ContextVar is process-global state — the narrowest scope that works is
+    the right one.
+    """
+    snapshot = _active.get()
+    lab = Lab(name="busybox_chaos")
+    data = host_data(BUSYBOX_HOP_ELEMENT)
+    lab.add_host(
+        UnixHost(
+            ip=data["ip"],
+            element=data["element"],
+            creds=[Cred(**c) for c in data["creds"]],
+            board=data.get("board"),
+            is_virtual=True,
+            log=LogMode.QUIET,
+        )
+    )
+    set_context(OttoContext(lab=lab))
+    try:
+        yield
+    finally:
+        _active.set(snapshot)
+
+
+def busybox_probe(coro_factory):
+    """Run ``await coro_factory(guest)`` on a fresh guest host in a fresh loop.
+
+    The guest twin of :func:`run_probe`, and it carries the same G5 contract:
+    a non-ok :class:`~otto.result.Result` coming back RAISES (host-named,
+    status-quoted) rather than being returned, because an oracle reading
+    ``.value`` off a dead probe reports "clean bed" for exactly the failures
+    chaos manufactures. Factories must return the ``Result`` itself (or use
+    :func:`busybox_probe_text`), never unwrap ``.value`` first.
+
+    The host is built by the FACTORY from the committed lab entry, never by
+    hand: ``UnixHost(...)`` direct would default ``term="ssh"`` on a guest
+    that has no sshd, and the point of driving the committed record is that
+    the chaos arm exercises what an ``otto host`` user exercises.
+    """
+
+    async def _go():
+        host = create_host_from_dict(host_data(BUSYBOX_CHAOS_ELEMENT), lab_name="busybox")
+        try:
+            out = await coro_factory(host)
+        finally:
+            await host.close()
+        if isinstance(out, Result):
+            check_probe_result(BUSYBOX_CHAOS_ELEMENT, out)
+        return out
+
+    with busybox_hop_context():
+        return asyncio.run(_go())
+
+
+def busybox_probe_text(cmd: str, *, timeout: float = _PROBE_TIMEOUT) -> str:
+    """The one spelling for a checked text read off the guest.
+
+    :func:`busybox_probe` + ``exec`` + the status check + the ``.value``
+    unwrap, so guest-reading helpers cannot drift back into the unchecked
+    ``(result.value or "")`` shape.
+
+    ``exec`` on a ``term: telnet`` host has no stateless channel to open, so
+    it routes through a pooled shell session — which means every probe here
+    is also a fresh LOGIN through the hop, and its success is itself evidence
+    the guest's console still serves a shell.
+    """
+    out = busybox_probe(lambda h: h.exec(cmd, timeout=timeout, log=LogMode.QUIET))
+    return (out.value or "").strip()
+
+
+@contextlib.contextmanager
+def busybox_bed() -> Iterator[BusyboxChaosBed]:
+    """Prove the guest serves a shell, then yield the bed handle.
+
+    NO LEASE, deliberately: ``lease_unix_host`` serializes pool consumers off
+    one veggies VM, and the guest is not in that pool. What could contend for
+    it is ``tests/integration/busybox_bed``'s own rows, and nothing brings
+    those two together — every catch-all lane excludes ``chaos`` by marker
+    (``M_UNIX`` in the Makefile, the ``tests_*`` nox sessions) and the chaos
+    lane itself is path-scoped to ``tests/e2e/chaos`` (``nox -s chaos``), so
+    the two suites cannot co-run against ``bb1350``.
+
+    Reachability is proven by asking for a shell, not by a TCP connect: the
+    hop's QEMU hostfwd accepts as soon as the guest's qemu process is up,
+    long before ``telnetd`` is serving, so a connect probe would call a
+    still-booting guest healthy. Fails LOUD and guest-named on a down bed,
+    never skips, and names the operator remedy.
+    """
+    guest = host_data(BUSYBOX_CHAOS_ELEMENT)
+    port = guest["telnet_options"]["port"]
+    try:
+        answer = busybox_probe_text("echo BUSYBOX-CHAOS-READY")
+    except Exception as exc:
+        raise RuntimeError(
+            f"BusyBox bed guest {BUSYBOX_CHAOS_ELEMENT} "
+            f"({BUSYBOX_HOP_ELEMENT}:{port}) will not serve a shell: {exc!r}. "
+            "Is the bed provisioned and up? Recover with `make qemu-restart`; "
+            f"check with `scripts/lab_health.py`. (Chaos lane fails loud on a "
+            "down bed -- it never skips.)"
+        ) from exc
+    assert "BUSYBOX-CHAOS-READY" in answer, (
+        f"BusyBox bed guest {BUSYBOX_CHAOS_ELEMENT} ({BUSYBOX_HOP_ELEMENT}:{port}) "
+        f"answered a login but not the marker: {answer!r} -- console wedged?"
+    )
+    yield BusyboxChaosBed(
+        element=BUSYBOX_CHAOS_ELEMENT,
+        version=guest["sw_version"],
+        telnet_port=port,
+        target=busybox_target(),
+    )

@@ -2,12 +2,16 @@
 Cross-OS stability contract — every backend must survive a sustained
 sequential workload on a single host instance.
 
-Parametrized over the same backends as :mod:`test_host_contract`:
+Parametrized over the same backends as :mod:`test_host_contract`, except the
+BusyBox bed, which runs its version edges only (see
+``_BUSYBOX_STABILITY_BACKENDS``):
 
 - ``ssh`` / ``telnet`` / ``local`` — :class:`UnixHost` / :class:`LocalHost`.
 - the Zephyr matrix in :data:`tests.conftest.EMBEDDED_BACKENDS` —
   :class:`EmbeddedHost` against the QEMU instances on the ``zephyr`` Vagrant
   VM ({2.7, 3.7, 4.4} x {FAT-on-RAM, LittleFS, no-FS}).
+- the oldest and newest BusyBox bed guests — :class:`UnixHost` over telnet
+  through the ``carrot`` hop, at the trimmed soak sizes their kit declares.
 
 Iteration counts and payload sizes come from each backend's ``HostKit``
 (see :mod:`tests.conftest`) so the embedded backends — whose console
@@ -42,7 +46,12 @@ from pathlib import Path
 import pytest
 
 from otto.utils import Status
-from tests.conftest import EMBEDDED_BACKENDS, embedded_param_id, remote_name
+from tests.conftest import (
+    BUSYBOX_BACKENDS,
+    EMBEDDED_BACKENDS,
+    embedded_param_id,
+    remote_name,
+)
 
 # Backend ids that carry the `embedded` marker. Single-sourced from
 # :data:`tests.conftest` so the Zephyr version x filesystem matrix lives in
@@ -68,9 +77,37 @@ def _backend_param(backend_id: str) -> pytest.param:
     )
 
 
+# The BusyBox soak runs the version EDGES only — oldest and newest pinned
+# userland. Five TCG guests x this file's iteration counts is wall clock the
+# two-core bed cannot pay, and the soak's subject is endurance of otto's
+# session/transfer machinery, not per-version applet divergence (which the
+# contract suite sweeps across all five, and Task 7's bespoke matrices pin
+# guest-side). The edges bracket the shell and applet drift that could plausibly
+# change under sustained load.
+_BUSYBOX_STABILITY_BACKENDS = ("busybox_1161", "busybox_1350")
+
+# Named ids, not ``BUSYBOX_BACKENDS[0]``/``[-1]``, so the two rows this file
+# runs are greppable — but then a rename in :data:`tests.conftest` would leave
+# an id here that ``host1`` no longer recognises, and that id falls through to
+# the fixture's unix-terms tail as ``make_host("carrot", term=<id>)``: a
+# confusing carrot failure against the hop instead of "that backend is gone".
+# Fail at import, where the cause is legible — same shape as
+# ``test_embedded_host_integration``'s holdout guard, and raised rather than
+# asserted for the same reason: a guard that ``python -O`` deletes is not one.
+_unknown_stability_backends = set(_BUSYBOX_STABILITY_BACKENDS) - set(BUSYBOX_BACKENDS)
+if _unknown_stability_backends:
+    raise RuntimeError(
+        f"_BUSYBOX_STABILITY_BACKENDS names backends that no longer exist: "
+        f"{sorted(_unknown_stability_backends)}. Known backends: {sorted(BUSYBOX_BACKENDS)}. "
+        "Re-point the entry — leaving it stale sends the soak at the carrot hop."
+    )
+
 _ALL_BACKENDS = pytest.mark.parametrize(
     ("host1", "host1_kit"),
-    [_backend_param(b) for b in ("ssh", "telnet", "local", *EMBEDDED_BACKENDS)],
+    [
+        _backend_param(b)
+        for b in ("ssh", "telnet", "local", *EMBEDDED_BACKENDS, *_BUSYBOX_STABILITY_BACKENDS)
+    ],
     indirect=True,
 )
 

@@ -14,6 +14,7 @@ from asyncssh import SSHClientConnection
 from otto.host.connections import ConnectionManager
 from otto.host.login_proxy import Cred
 from otto.host.options import NcOptions
+from otto.host.session import SessionManager
 from otto.host.transport import SshHopTransport
 from otto.host.unix_host import UnixHost
 from otto.logger.mode import LogMode
@@ -201,6 +202,65 @@ class TestConnectionManagerTunnel:
             assert call_args.kwargs["password"] == "pass"
             assert call_args.kwargs["connect_port"] == 54321
             mock_tunnel.forward_local_port.assert_awaited_once_with("localhost", 0, "10.0.0.1", 23)
+
+    @pytest.mark.asyncio
+    async def test_a_named_telnet_session_dials_the_forward_not_the_devices_own_address(self):
+        """``open_session`` must reach a hop-fronted console THROUGH the hop.
+
+        This is the exec pool: ``UnixHost.exec`` on a telnet host, and every nc
+        transfer built on it, is served by ``open_session`` — not by the
+        ``ConnectionManager.telnet()`` path the default session uses. Those two
+        were separately deciding where to dial, and only one of them knew about
+        the hop. ``open_session`` passed ``connections.ip`` with no
+        ``connect_port``, which for a device behind a hop is not a route to the
+        device at all: the BusyBox bed guests carry ``ip = 127.0.0.1`` because
+        their QEMU hostfwd binds carrot's loopback, so the literal address is
+        the machine running otto. Measured against bb1350 (2026-08-21): ``run``
+        returned ``RUN-OK`` while ``exec`` raised ``ConnectionRefusedError
+        [Errno 111] Connect call failed ('127.0.0.1', 2335)`` — a live guest,
+        an unusable exec, and no error anywhere naming the hop.
+
+        Asserted on the CONSTRUCTOR ARGUMENTS, because the target is chosen
+        there and nowhere else; a test on the resulting session would pass
+        against a client pointed anywhere that happened to answer.
+        """
+        mock_tunnel = MagicMock(spec=SSHClientConnection)
+        mock_listener = MagicMock()
+        mock_listener.get_port.return_value = 54321
+        mock_tunnel.forward_local_port = AsyncMock(return_value=mock_listener)
+
+        cm = ConnectionManager(
+            ip="127.0.0.1",
+            creds=[Cred(login="root", password="otto")],
+            user=None,
+            term="telnet",
+            name="bb1350",
+            hop=SshHopTransport(AsyncMock(return_value=mock_tunnel)),
+        )
+        cm.telnet_options.port = 2335
+
+        mgr = SessionManager(connections=cm, name="bb1350")
+        with (
+            patch("otto.host.session.TelnetClient") as MockTelnet,  # noqa: N806 — CapWords for a class mock
+            patch("otto.host.session.TelnetSession") as MockSession,  # noqa: N806 — CapWords for a class mock
+        ):
+            mock_tc = MagicMock()
+            mock_tc.connect = AsyncMock()
+            mock_tc.options.write_chunk_size = None
+            mock_tc.options.write_chunk_delay = None
+            MockTelnet.return_value = mock_tc
+            shell = MockSession.return_value
+            shell._ensure_initialized = AsyncMock()
+            shell.close = AsyncMock()
+            await mgr.open_session("__exec_pool_1__")
+
+        MockTelnet.assert_called_once()
+        call = MockTelnet.call_args
+        assert call.args == ("localhost",), (
+            f"the exec pool dialed {call.args!r} — the guest's own address, not the forward"
+        )
+        assert call.kwargs["connect_port"] == 54321
+        mock_tunnel.forward_local_port.assert_awaited_once_with("localhost", 0, "127.0.0.1", 2335)
 
     @pytest.mark.asyncio
     async def test_telnet_reconnect_does_not_take_a_second_forward(self):

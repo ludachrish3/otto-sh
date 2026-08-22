@@ -15,11 +15,16 @@ this record's four facts.
 
 WHAT WAS MEASURED, AND WHY IT IS NOT IN THIS FILE. The evidence is in the
 record's ``measured_on``: ``UnixHost.put`` on a host built with
-``transfer: sftp``, against the Tier 3 dropbear serving the pinned BusyBox root
-over real ssh, raised ``asyncssh.sftp.SFTPConnectionLost: 0 bytes read on a
+``transfer: sftp``, against a dropbear serving the pinned BusyBox root over
+real ssh, raised ``asyncssh.sftp.SFTPConnectionLost: 0 bytes read on a
 total of 4 expected bytes`` in 22ms, moved no bytes and left nothing on either
-side. ``tests/busybox/test_tier3_sftp_attribution.py`` re-runs that against the
-real device. What THIS file adds is the part a real device cannot show cheaply:
+side. NOTHING RE-RUNS THAT AGAINST A DEVICE ANY MORE: the rig was retired with
+the artifact harness, and the live BusyBox guests are telnet-only by design, so
+no sftp carrier exists to fail. What survives on the other side of the seam is
+the record's own state, pinned in
+``tests/unit/host/test_gap_registry.py``'s
+``TestTheAttributedStateIsWhatTheSftpRecordStillClaims``. What THIS file adds
+is the part a real device could not show cheaply either:
 that the message is the record's and not a second copy of it, that downgrading
 the record puts asyncssh's error back untouched, and that the arms which must
 NOT fire do not.
@@ -58,7 +63,7 @@ SURFACE = "sftp-transfer"
 """The record every assertion here reads. One spelling, so a rename reds once."""
 
 _MEASURED_ASYNCSSH_TEXT = "0 bytes read on a total of 4 expected bytes"
-"""What asyncssh actually said, verbatim, against the Tier 3 BusyBox root.
+"""What asyncssh actually said, verbatim, against the pinned BusyBox root.
 
 Not invented for the fake. It is the string
 ``asyncssh.sftp.SFTPClientHandler.start`` builds when the subsystem channel

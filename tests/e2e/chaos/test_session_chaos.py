@@ -26,7 +26,7 @@ import pytest
 
 from otto.logger.mode import LogMode
 from tests._fixtures.bed_hygiene import argv_pattern
-from tests.e2e.chaos._bed import probe_text, run_probe
+from tests.e2e.chaos._bed import busybox_probe_text, probe_text, run_probe
 from tests.integration.chaos._driver import BANNER, spawn_otto
 
 pytestmark = [
@@ -46,11 +46,26 @@ pytestmark = [
 # "sleep 3xx" family that reusing that range risked a substring collision if
 # that tier-2 suite is ever pointed at the same live bed concurrently.
 _SLEEP = "sleep 311"  # seeded-SIGINT test: PTY-HUP-reaped foreground child
+_GUEST_SLEEP = "sleep 315"  # busybox guest twin of _SLEEP; 315 is clear of 311-314 above
 
 
 def _remote_pids(element: str, needle: str) -> list:
     # bracket-trick so the probe's own shell never self-matches
     out = probe_text(element, f"pgrep -af '{argv_pattern(needle)}' || true")
+    return [ln for ln in out.splitlines() if ln.strip()]
+
+
+def _guest_pids(needle: str) -> list:
+    """``_remote_pids`` for the BusyBox guest -- same probe, other transport.
+
+    ``pgrep -af`` verbatim, not a degraded spelling: BusyBox 1.35.0's pgrep
+    carries both flags (measured on the guest -- ``pgrep -af 'in[i]t'``
+    answers ``1 init``), so the argv-visible needle discipline the veggies
+    twin depends on survives intact here. The bracket trick matters MORE on
+    this device, not less: the guest's whole process table is ~60 entries, so
+    a self-matching probe would be a large fraction of what the oracle sees.
+    """
+    out = busybox_probe_text(f"pgrep -af '{argv_pattern(needle)}' || true")
     return [ln for ln in out.splitlines() if ln.strip()]
 
 
@@ -171,3 +186,64 @@ def test_nohup_remote_survives_graceful_teardown(chaos_bed, tmp_path):
                 log=LogMode.QUIET,
             ),
         )
+
+
+@pytest.mark.no_hygiene_bracket  # the guest is not the veggies pool the autouse bracket leases
+def test_seeded_sigint_mid_command_reaps_the_busybox_guest(busybox_chaos_bed, chaos_rng, tmp_path):
+    """The guest twin of ``test_seeded_sigint_mid_command_cleans_up``.
+
+    THE MECHANISM IS THE SAME ONE, over a different transport and through a
+    hop, which is exactly why this arm exists: otto never signals the remote
+    -- it drops the session and lets the DEVICE's line discipline reap. On
+    the veggies host that is an ssh channel closing and sshd HUPping its pty.
+    On the guest it is otto's telnet socket closing (through carrot's
+    hostfwd) and the guest's ``telnetd`` HUPping ITS pty, and neither the
+    hop's port forward nor a BusyBox userland is on the veggies path. The
+    guest genuinely has ptys to HUP: its init runs ``telnetd -F -l
+    /bin/login`` and its ``rcS`` mounts ``devpts``, so each login is a real
+    session leader on a real pty -- see
+    ``scripts/build_busybox_guest_images.py``.
+
+    THE OTHER TWO SCENARIOS IN THIS MODULE GET NO GUEST TWIN, and the reason
+    is mechanism rather than budget. ``test_sigint_immune_remote_hits_
+    deadline_force`` measures otto's LOCAL teardown-deadline force path
+    (``OTTO_TEARDOWN_DEADLINE`` expiring, no remote probe at all, the force
+    path abandoning the remote sweep by design) -- nothing in it reaches the
+    device, so pointing it at a guest would re-measure local code through a
+    slower transport. ``test_nohup_remote_survives_graceful_teardown``
+    characterizes the SAME PTY-HUP mechanism this test asserts, read from its
+    other side; the guest has ``nohup``, so it would answer, but it would
+    answer the identical fact twice on one device.
+    """
+    from tests.e2e.chaos._seed import offset_in
+
+    p = spawn_otto(
+        ["host", busybox_chaos_bed.target.host_id, "run", _GUEST_SLEEP, "--timeout", "300"],
+        xdir=tmp_path,
+        target=busybox_chaos_bed.target,
+    )
+    try:
+        p.wait_for_log(re.escape(f"| {_GUEST_SLEEP}"), timeout=120.0)  # phase: command running
+        # Positive control, same as the veggies twin: an absence assertion is
+        # unfalsifiable until the probe has been shown to see the presence.
+        assert _guest_pids(_GUEST_SLEEP), (
+            f"positive control: {busybox_chaos_bed.element} never showed the remote command"
+        )
+        # the ONE deliberate sleep: seeded injection offset
+        time.sleep(offset_in(chaos_rng, 0.0, 2.0))
+        p.signal(2)  # SIGINT
+        p.wait_for_stderr(BANNER, timeout=15.0)  # phase: teardown running
+        rc = p.wait(timeout=60.0)
+        assert rc == 130, p.stderr_text()
+        p.assert_no_process_group()
+        assert not _guest_pids(_GUEST_SLEEP), (
+            f"{busybox_chaos_bed.element}: remote foreground command not reaped -- "
+            "the guest's telnetd did not HUP its pty when otto dropped the session"
+        )
+    finally:
+        # Belt for the assert-failure path: an early raise can leave the local
+        # subprocess running, and a survivor on the guest would then be read as
+        # this test's own leftover on the NEXT run.
+        if p.proc.poll() is None:
+            p.signal(9)
+        busybox_probe_text(f"pkill -f '{argv_pattern(_GUEST_SLEEP)}' || true")

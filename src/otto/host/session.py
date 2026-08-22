@@ -18,6 +18,7 @@ import uuid
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager, suppress
+from enum import Enum
 from typing import TYPE_CHECKING, Any
 
 from typing_extensions import Never, Self, override
@@ -180,6 +181,90 @@ def refuse_if_line_editor_would_truncate(
             f"took 9000 characters in the same measurement, or split it"
         ),
     )
+
+
+PTY_TYPED_LINE_MAX = 4000
+"""Longest single line a pty-routed console delivers intact. A DISCRIMINATOR.
+
+THE SECOND CEILING ON A TYPED LINE, and unlike
+:data:`~otto.host.userland.ASH_TYPED_LINE_MAX` it belongs to the KERNEL rather
+than to the far shell. A pty in canonical mode holds one line at a time in
+N_TTY's 4096-byte buffer, so this bounds every line-disciplined transport
+whatever shell is reading on the other side -- which is why the two ceilings
+are separate constants and why :func:`typed_line_budget` takes whichever is
+smaller.
+
+MEASURED 2026-08-21 on the five BusyBox QEMU guests (telnet consoles behind a
+hop; ``tests/integration/busybox_bed``), with a raw ``echo <pad> | wc -c``
+probe that counts what ARRIVED, so a truncation shows up as a short count
+rather than as a pass. 500, 1000, 1022, 1023, 1100, 2000 and 4000 characters
+all arrive intact; at 4090 the command never returns at all -- the shell sits
+at its PS2 continuation prompt waiting for the rest of a line it never got.
+
+4000 is the largest value MEASURED intact, and that is deliberately what this
+constant is rather than the 4095 the buffer size would allow: the line's own
+terminator shares that buffer, a telnet transport is free to spell it
+``\\r\\n``, and the 95 characters between the two numbers buy nothing worth a
+wedge on a device with no way to report one.
+
+The same probes rule the far shell's line editor OUT on these guests -- 1022
+and 1023 both arrive intact, which is exactly where
+:data:`~otto.host.userland.ASH_TYPED_LINE_MAX` would have shown itself. Neither
+ceiling subsumes the other: a stock BusyBox build truncates at 1022 through a
+pty of any size, and these guests wedge at 4090 with no line editor in play at
+all.
+
+NEVER WIDEN THIS on an arithmetic argument, for
+:data:`~otto.host.userland.ASH_TYPED_LINE_MAX`'s reason: it is the far side's
+buffer, not a budget otto chose. Only a new measurement moves it, and then it
+moves to whatever that measurement answered.
+"""
+
+
+def typed_line_budget(frame: "CommandFrame | None") -> int:
+    """Characters of ONE line of a caller's command a line-disciplined path carries.
+
+    The BUDGET half of what :func:`refuse_if_line_editor_would_truncate`
+    REFUSES on, reading the same two measurements, and the difference between
+    the two verbs is the whole reason this exists. A refusal is right for
+    ``run()``, whose caller wrote the command and can shorten it. It is wrong
+    for a caller that is generating the line itself -- ``ShellFileTransfer``
+    sizes its own chunk commands, so telling it "no" would stop the backend on
+    exactly the devices it exists for (see the ``run-command-line-length``
+    record's OPEN paths, and the ``_SHELL_CHUNK_BYTES`` note in
+    ``otto.host.transfer.shell``). Handed a number instead, it emits a shorter
+    line and the transfer works.
+
+    Both ceilings that can apply are applied, smaller first:
+    :data:`PTY_TYPED_LINE_MAX` for the kernel's canonical-mode buffer, which
+    bounds any pty, and :data:`~otto.host.userland.ASH_TYPED_LINE_MAX` for
+    BusyBox ash's line editor, which bounds a host whose DECLARED dialect is
+    ash -- ``isinstance(frame, AshFrame)``, the same free, synchronous
+    evidence the refusal keys on, and never a userland probe (see that
+    function for why reading the probed dialect here would be the tempting
+    wrong answer).
+
+    Returns the budget for the caller's COMMAND, with otto's own BEGIN/END
+    framing already subtracted: the caller never types its command bare, and a
+    budget that ignored the framing would leave a band of commands over the
+    ceiling by exactly the framing's width. Rendered against a synthetic
+    marker set, like the refusal's, because only the marker LENGTH affects the
+    arithmetic and no session need exist to ask.
+
+    ON A MULTI-LINE COMMAND THIS IS CONSERVATIVE BY DESIGN. The framing wraps
+    the command as a whole -- its BEGIN half opens the first line and its END
+    half closes the last -- so a command of several lines pays part of the
+    overhead on each of two lines rather than all of it on one. Subtracting
+    the whole of it regardless costs a multi-line caller a few dozen
+    characters it could have spent, and the alternative is a budget whose
+    value depends on the shape of a command the caller has not built yet.
+    """
+    frame = frame or BashFrame()
+    ceiling = PTY_TYPED_LINE_MAX
+    if isinstance(frame, AshFrame):
+        ceiling = min(ceiling, ASH_TYPED_LINE_MAX)
+    markers = SessionMarkers.for_session("0" * _SESSION_ID_LEN)
+    return ceiling - len(frame.frame("", markers).rstrip("\n"))
 
 
 class ShellSession(ABC):
@@ -1710,6 +1795,37 @@ class _SessionProxyIO:
         return out
 
 
+class _ExecRoute(Enum):
+    """Which primitive :meth:`SessionManager.exec` runs a command on for this host.
+
+    Named rather than recomputed at each reader because a SECOND reader now
+    exists: :attr:`SessionManager.exec_line_budget` has to answer whether a
+    command typed through ``exec`` meets a line discipline, and the honest way
+    to answer that is to ask ``exec`` which path it takes -- not to keep a
+    parallel copy of the same three conditions that drifts the first time one
+    of them moves.
+
+    ``POOLED_SHELL`` is the one that costs anything. It is a full shell session
+    on a pty, so a command typed into it is line-edited and bounded by
+    :func:`typed_line_budget`; the other two are not (``SSH_CHANNEL`` opens a
+    bare pty-less channel, ``FACTORY`` hands the command to a caller-supplied
+    primitive -- a local subprocess, a ``docker exec`` -- that types it into no
+    shell of otto's).
+    """
+
+    FACTORY = "exec-factory"
+    """A caller-supplied stateless primitive (``LocalHost``, ``DockerContainerHost``)."""
+
+    POOLED_SHELL = "pooled-shell"
+    """A pooled pty-backed shell session: telnet, or ANY host whose login is proxied."""
+
+    SSH_CHANNEL = "ssh-channel"
+    """A bare ssh exec channel, no pty allocated."""
+
+    UNSUPPORTED = "unsupported"
+    """A term this manager cannot exec on at all; ``exec`` raises for it."""
+
+
 class SessionManager:
     """Manages persistent shell sessions for any host type.
 
@@ -2098,28 +2214,44 @@ class SessionManager:
         replays hops through ``_apply_login_proxy``) ends up as the effective
         user — which is what makes nc transfers (whose ``exec_cmd`` is
         ``UnixHost.exec``) land files owned by the proxied target.
+
+        WHICH of the three it is comes from ``_exec_route`` rather than
+        from conditions spelled out here, because a second caller needs the
+        same answer: :attr:`exec_line_budget` has to know whether this command
+        will be TYPED into a pty, and a caller that re-derived that from
+        ``term`` would get the proxied case wrong in the expensive direction.
         """
-        hops = getattr(self._connections, "proxy_hops", []) if self._connections is not None else []
-        if self._exec_factory is not None and not hops:
+        route = self._exec_route()
+        if route is _ExecRoute.FACTORY:
+            assert self._exec_factory is not None  # noqa: S101 — internal invariant: this route is defined by the factory's presence
             return await self._exec_factory(cmd, timeout)
 
         assert self._connections is not None  # noqa: S101 — internal invariant: _connections required when no exec_factory (or hops force the pool path)
         mode = log
         if mode is not LogMode.NEVER:
             self._log_command(cmd, mode)
-        if hops:
-            # A proxied login can only be reached through a full shell session
-            # (the raw SSH exec channel authenticates as the direct cred and
-            # cannot replay the proxy steps). Route through the proxied pool —
-            # the same path telnet always uses — so exec/nc run as the
-            # effective user. Files land owned by the proxied target.
-            exec_session = await self._acquire_exec_session()
-            try:
-                return (await exec_session.run(cmd, timeout=timeout, log=log)).only
-            finally:
-                self._exec_pool.append(exec_session)
-        match self._connections.term:
-            case "ssh":
+        match route:
+            case _ExecRoute.POOLED_SHELL:
+                # Telnet has no stateless exec primitive (unlike SSH which
+                # multiplexes channels over one connection), and a proxied
+                # login cannot use SSH's either — the raw exec channel
+                # authenticates as the direct cred and cannot replay the proxy
+                # steps, so exec/nc would run as the via-user rather than the
+                # target. Both therefore ride a pooled full shell session,
+                # which `open_session` builds through `_apply_login_proxy` and
+                # so ends up as the effective user (files land owned by the
+                # proxied target). Rather than open a fresh TCP+auth for every
+                # exec call — 1-2 s each on real hardware — we keep a free-list
+                # of idle persistent sessions and reuse them. Serial callers
+                # churn one session; concurrent callers (e.g. `_put_files_nc`
+                # launching multiple `nc -l` listeners in parallel) each get
+                # their own, preserving the documented concurrency contract.
+                exec_session = await self._acquire_exec_session()
+                try:
+                    return (await exec_session.run(cmd, timeout=timeout, log=log)).only
+                finally:
+                    self._exec_pool.append(exec_session)
+            case _ExecRoute.SSH_CHANNEL:
                 import asyncssh
 
                 ssh_conn = await self._connections.ssh()
@@ -2167,24 +2299,70 @@ class SessionManager:
                     command=cmd,
                     retcode=result.exit_status or 0,
                 )
-            case "telnet":
-                # Telnet has no stateless exec primitive (unlike SSH which
-                # multiplexes channels over one connection).  Rather than open
-                # a fresh TCP+auth for every exec call — which in practice cost
-                # 1-2 s each on real hardware — we keep a free-list of idle
-                # persistent sessions and reuse them.  Serial callers churn
-                # one session; concurrent callers (e.g. `_put_files_nc`
-                # launching multiple `nc -l` listeners in parallel) each get
-                # their own, preserving the documented concurrency contract.
-                exec_session = await self._acquire_exec_session()
-                try:
-                    return (await exec_session.run(cmd, timeout=timeout, log=log)).only
-                finally:
-                    self._exec_pool.append(exec_session)
             case _:
                 raise ValueError(
                     f'{self._name}: unsupported terminal type "{self._connections.term}"'
                 )
+
+    def _exec_route(self) -> _ExecRoute:
+        """Which primitive :meth:`exec` would run a command on right now.
+
+        THE THREE CONDITIONS LIVE HERE AND NOWHERE ELSE, because :meth:`exec`
+        and :attr:`exec_line_budget` both need the answer and a second copy
+        would be a prediction of this method rather than a reading of it.
+
+        Order matters and is :meth:`exec`'s own: a raw exec primitive wins
+        unless the login is PROXIED, in which case nothing raw can be used at
+        all (neither the factory nor ssh's channel can replay the hops -- see
+        :meth:`exec`), and everything else falls to the term. Read fresh on
+        every call rather than cached at construction: ``term`` has a setter,
+        and ``proxy_hops`` is derived from creds that a ``login_target`` change
+        can move, so a cached route would answer for the host as it was.
+
+        ``UNSUPPORTED`` is a real answer rather than a raise, because one of
+        the two callers is a QUERY. :meth:`exec` raises on it, exactly as it
+        always did, at the point where it has a term to name.
+        """
+        hops = getattr(self._connections, "proxy_hops", []) if self._connections is not None else []
+        if self._exec_factory is not None and not hops:
+            return _ExecRoute.FACTORY
+        if hops:
+            return _ExecRoute.POOLED_SHELL
+        match getattr(self._connections, "term", None):
+            case "ssh":
+                return _ExecRoute.SSH_CHANNEL
+            case "telnet":
+                return _ExecRoute.POOLED_SHELL
+            case _:
+                return _ExecRoute.UNSUPPORTED
+
+    @property
+    def exec_line_budget(self) -> int | None:
+        """Longest line of a command :meth:`exec` can carry here, or ``None`` if unbounded.
+
+        ``None`` is not "unknown" and not zero -- it is the answer for a route
+        that types into no line discipline at all
+        (the bare ssh exec channel, a caller-supplied exec primitive), and a
+        caller reading it should keep doing whatever it did before this
+        property existed. That is what keeps an ``ssh`` host's behaviour
+        byte-identical: the path that was never broken is asked the same
+        question and answers "nothing here bounds you".
+
+        WHO ASKS, AND WHY IT IS ANSWERED HERE. ``ShellFileTransfer`` builds its
+        own command lines and needs to know how long one may be, but the two
+        facts that decide it -- which primitive ``exec`` routes through, and
+        what otto's own framing costs on this host's dialect -- are both this
+        manager's, and neither is visible from a transfer backend. Answering
+        the whole question here is what stops the backend from re-deriving a
+        routing rule it cannot see all of (a host with an ``exec_factory``
+        looks like a plain ``term`` host from outside).
+
+        ``UNSUPPORTED`` answers ``None`` too: :meth:`exec` raises on that term
+        before any line is typed, so there is no line to budget.
+        """
+        if self._exec_route() is not _ExecRoute.POOLED_SHELL:
+            return None
+        return typed_line_budget(self._command_frame)
 
     async def _acquire_exec_session(self) -> "HostSession":
         """Pop an idle exec session off the free-list, or open a new one.
@@ -2249,11 +2427,17 @@ class SessionManager:
                         )
                     case "telnet":
                         user, password = self._connections.credentials
+                        # Ask the ConnectionManager WHERE to dial rather than
+                        # reading `.ip` off it: behind a hop those differ, and
+                        # the raw address is the guest's own loopback — i.e.
+                        # this machine. See `ConnectionManager.telnet_target`.
+                        target = await self._connections.telnet_target()
                         client = TelnetClient(
-                            self._connections.ip,
+                            target.host,
                             user=user,
                             password=password or "",
                             options=self._connections.telnet_options,
+                            connect_port=target.port,
                         )
                         # A caller-side ``wait_for`` cancellation can land
                         # anywhere in ``connect()`` (TCP, ECHO negotiation,

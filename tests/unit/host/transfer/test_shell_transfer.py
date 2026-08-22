@@ -149,9 +149,12 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from otto.host.command_frame import AshFrame, BashFrame
 from otto.host.connections import ConnectionManager
 from otto.host.errors import UnsupportedOnUserlandError
+from otto.host.factory import create_host_from_dict
 from otto.host.options import UserlandOptions
+from otto.host.session import PTY_TYPED_LINE_MAX, typed_line_budget
 from otto.host.transfer import shell as shell_module
 from otto.host.transfer.base import TransferContext
 from otto.host.transfer.shell import (
@@ -372,7 +375,19 @@ def _make_ft(
     checksum: str = "absent",
     max_filename_len: int = 255,
     applets: "dict[str, str] | None" = None,
+    line_budget: "int | None" = None,
 ) -> ShellFileTransfer:
+    """A transfer backed by *exec_cmd*, unbudgeted unless *line_budget* says otherwise.
+
+    ``line_budget=None`` is the default because it is what an ``ssh`` host --
+    and every test written before the budget existed -- gets from
+    :attr:`~otto.host.session.SessionManager.exec_line_budget`: no line
+    discipline in the way, full ``_SHELL_CHUNK_BYTES`` chunks. Passed as a
+    plain number here rather than as a real manager because what these tests
+    are about is how the backend SPENDS a budget; where the number comes from
+    is ``TestTheBudgetIsTheHostsExecRouteSpeaking``'s subject, and
+    ``tests/unit/host/test_run_line_length.py``'s.
+    """
     mock_connections = MagicMock(spec=ConnectionManager)
     return ShellFileTransfer(
         connections=mock_connections,
@@ -380,11 +395,12 @@ def _make_ft(
         exec_cmd=exec_cmd,
         userland=_declared_userland(base64_flag, stat_size, checksum, applets),
         max_filename_len=max_filename_len,
+        exec_line_budget=None if line_budget is None else (lambda: line_budget),
     )
 
 
 # `printf '%s' '<b64>' | base64 <flag> <>|>>> <path>` -- the exact shape
-# `_put_one` emits (matches what `test_shell_codec_contracts.py` measured
+# `_put_one` emits (matches what the live bed's `test_shell_codec.py` measures
 # on-device, not `echo`).
 _CHUNK_RE = re.compile(
     r"^printf '%s' '(?P<b64>[^']*)' \| base64 (?P<flag>\S+) (?P<redir>>{1,2}) (?P<path>\S+)$"
@@ -472,9 +488,10 @@ def _size_answer(total: int) -> "Callable[[str], str | None]":
 
 
 # `dd if=<if_expr> bs=<n> skip=<k> count=1 2>/dev/null | base64` -- the exact
-# shape `_get_one` emits for one chunk READ (matches what
-# `test_shell_codec_contracts.py::test_dd_reads_a_block_range_with_bs_skip_and_count`
-# measured on-device). `if_expr` is `.+` rather than `\S+` because
+# shape `_get_one` emits for one chunk READ. That the device honours `skip` and
+# `count` is measured end to end by the live bed's multi-chunk GET, which cannot
+# reassemble a byte-identical file if either is ignored.
+# `if_expr` is `.+` rather than `\S+` because
 # `shlex.quote` wraps a path containing shell metacharacters in single
 # quotes, which then contains a space -- deliberately permissive here so the
 # same regex parses both the plain and quoted forms. No decode flag anywhere
@@ -795,7 +812,7 @@ class TestShellChunkLineLength:
 
     Deliberately does NOT assert ``_SHELL_CHUNK_BYTES == 4096``: the byte
     count is a deliberate, revisable choice (see its own docstring, and
-    phase 5's Tier 3, which will re-measure it against a real transport).
+    the live bed, which re-measures it against a real transport).
     Pinning the literal value would be a change-detector, red for the wrong
     reason the moment that re-measurement moves it. Asserting the LENGTH of
     one full chunk's emitted command line means a future change to the
@@ -847,6 +864,330 @@ class TestShellChunkLineLength:
             f"transport bound (see the constant's own docstring) before updating "
             f"this assertion"
         )
+
+
+# ---------------------------------------------------------------------------
+# Step 6 / mutation "emit a chunk line the transport cannot carry"
+# ---------------------------------------------------------------------------
+
+
+class TestChunkLinesFitTheTransportsLineBudget:
+    """The bed measured what the class above only pinned: a line can be too long.
+
+    ``TestShellChunkLineLength`` pins how long one full chunk's command line
+    IS. This class is about the number it has to stay under when the host's
+    ``exec`` types into a pty rather than opening an ssh channel -- the case
+    :data:`~otto.host.transfer.shell._SHELL_CHUNK_BYTES`'s note called still
+    unmeasured until five telnet-console BusyBox guests joined the bed and
+    every PUT over ~2.8 KB wedged the guest at PS2 until otto's 30 s timeout
+    fired.
+
+    THE BUDGET IS PASSED IN, NOT MEASURED HERE. These tests hand ``_make_ft``
+    a number and assert what the backend does with it; that the number is the
+    right one for a given host is two other suites' subject
+    (``TestTheBudgetIsTheHostsExecRouteSpeaking`` below for the wiring,
+    ``tests/unit/host/test_run_line_length.py`` for the measurement itself).
+    Splitting it that way is what keeps these assertions about the CODEC:
+    a test that built a real session manager would redden here for a change to
+    the frame's sentinels, which has nothing to do with chunk sizing.
+
+    Two directions, and both are needed. Every emitted line must fit the
+    budget -- that is the defect. And the chunk must be the LARGEST that fits:
+    a fix that shrank chunks to some safe-looking constant would satisfy the
+    first while costing every transfer on every pty-routed device a multiple
+    of the round trips it needs, and nothing would say so.
+    """
+
+    @pytest.mark.asyncio
+    async def test_no_chunk_line_exceeds_the_budget(self, tmp_path: Path) -> None:
+        """The defect itself: on the bed, a 5524-character line into a 3926 budget.
+
+        RED on the code this test was written against -- one 5524-character
+        line, over by 1598 -- which on the guests was not an assertion failure
+        but a 30-second wedge at the shell's continuation prompt.
+        """
+        budget = typed_line_budget(BashFrame())
+        payload = b"x" * (_SHELL_CHUNK_BYTES * 2)
+        src = tmp_path / "payload.bin"
+        src.write_bytes(payload)
+
+        exec_cmd = _RecordingExec(answer_when=_size_answer(len(payload)))
+        ft = _make_ft(exec_cmd, line_budget=budget)
+
+        per_file = await ft._run_put([src], Path("/dest"), None)
+        assert per_file[src].status is Status.Success, per_file[src].msg
+
+        writes = [c for c in exec_cmd.calls if c.startswith("printf ")]
+        assert len(writes) > 1, "a single chunk cannot show a budget was applied at all"
+        longest = max(len(c) for c in writes)
+        assert longest <= budget, (
+            f"otto emitted a {longest}-character chunk command line into a transport "
+            f"that carries {budget} -- on a pty-routed host the tail lands inside the "
+            f"single-quoted base64 blob and the shell waits at PS2 for a quote that "
+            f"never closes (see _SHELL_CHUNK_BYTES's note)"
+        )
+
+    @pytest.mark.asyncio
+    async def test_the_chunk_is_the_largest_one_that_fits(self, tmp_path: Path) -> None:
+        """Fitting is half the requirement; not wasting the transport is the other.
+
+        base64 spends characters four at a time (three plaintext bytes make
+        four), so the most a correctly sized chunk can leave unused is three
+        characters. Anything more means the sizing gave away a whole quantum
+        it could have spent -- 256 KiB moves in 91 chunks at this budget, and
+        each quantum surrendered is round trips on a device whose console is
+        the slow part.
+        """
+        budget = typed_line_budget(BashFrame())
+        payload = b"x" * (_SHELL_CHUNK_BYTES * 2)
+        src = tmp_path / "payload.bin"
+        src.write_bytes(payload)
+
+        exec_cmd = _RecordingExec(answer_when=_size_answer(len(payload)))
+        ft = _make_ft(exec_cmd, line_budget=budget)
+
+        per_file = await ft._run_put([src], Path("/dest"), None)
+        assert per_file[src].status is Status.Success, per_file[src].msg
+
+        writes = [c for c in exec_cmd.calls if c.startswith("printf ")]
+        longest = max(len(c) for c in writes)
+        assert budget - longest < 4, (
+            f"the longest chunk line is {longest} against a budget of {budget} -- "
+            f"{budget - longest} characters unspent is at least one whole base64 "
+            f"quantum thrown away, so every transfer to this host pays extra round "
+            f"trips for nothing"
+        )
+
+    @pytest.mark.asyncio
+    async def test_an_unbudgeted_route_still_sends_a_whole_chunk(self, tmp_path: Path) -> None:
+        """``None`` means the ssh channel, and the ssh channel does not move.
+
+        The literal 5524-character consequence is pinned next door; what this
+        asserts is the plaintext side of the same claim -- a full
+        ``_SHELL_CHUNK_BYTES`` per chunk -- so that a budget accidentally
+        applied to every host (a ``None`` read as zero, a default that is not
+        ``None``) reds here rather than silently tripling a live round trip's
+        chunk count.
+        """
+        payload = b"y" * (_SHELL_CHUNK_BYTES + 10)
+        src = tmp_path / "payload.bin"
+        src.write_bytes(payload)
+
+        exec_cmd = _RecordingExec(answer_when=_size_answer(len(payload)))
+        ft = _make_ft(exec_cmd)
+
+        per_file = await ft._run_put([src], Path("/dest"), None)
+        assert per_file[src].status is Status.Success, per_file[src].msg
+
+        writes = [c for c in exec_cmd.calls if c.startswith("printf ")]
+        assert [len(_payload_of(c)) for c in writes] == [_SHELL_CHUNK_BYTES, 10]
+
+    @pytest.mark.asyncio
+    async def test_a_longer_destination_path_costs_payload_not_headroom(
+        self, tmp_path: Path
+    ) -> None:
+        """The property a smaller fixed ``_SHELL_CHUNK_BYTES`` would not have.
+
+        Every chunk command carries the staged temp's whole path, so the same
+        budget buys less payload at a deeper destination. A constant chosen
+        against one path length would be over the bound at another; a budget
+        spent against the command it is about to emit cannot be.
+        """
+        budget = typed_line_budget(BashFrame())
+        payload = b"x" * (_SHELL_CHUNK_BYTES * 2)
+        src = tmp_path / "payload.bin"
+        src.write_bytes(payload)
+
+        sizes = {}
+        for dest_dir in (Path("/d"), Path("/" + "deep/" * 20)):
+            exec_cmd = _RecordingExec(answer_when=_size_answer(len(payload)))
+            ft = _make_ft(exec_cmd, line_budget=budget)
+            per_file = await ft._run_put([src], dest_dir, None)
+            assert per_file[src].status is Status.Success, per_file[src].msg
+            writes = [c for c in exec_cmd.calls if c.startswith("printf ")]
+            assert max(len(c) for c in writes) <= budget, (
+                f"a {len(str(dest_dir))}-character destination pushed the chunk line over "
+                f"the {budget}-character budget"
+            )
+            sizes[dest_dir] = len(_payload_of(writes[0]))
+
+        shallow, deep = sizes.values()
+        assert deep < shallow, (
+            "the deeper destination bought the same payload per chunk, so the path is "
+            "not being counted against the line at all"
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_path_that_eats_the_whole_line_fails_loudly_and_sends_nothing(
+        self, tmp_path: Path
+    ) -> None:
+        """No chunk size exists here, so the answer is a failed file, not a 1-byte loop.
+
+        The one case where the budget cannot be spent at all. Clamping to some
+        minimum would emit exactly the line that wedges, one byte of payload
+        at a time; refusing the whole BACKEND (see the note on
+        ``refuse_if_line_editor_would_truncate``) would take out every other
+        file on a host over one long path. So it is this file's failure, with
+        both numbers in it, and nothing is typed at the device.
+        """
+        src = tmp_path / "payload.bin"
+        src.write_bytes(b"x" * 100)
+
+        exec_cmd = _RecordingExec(answer_when=_size_answer(100))
+        ft = _make_ft(exec_cmd, line_budget=20)
+
+        per_file = await ft._run_put([src], Path("/dest"), None)
+
+        assert per_file[src].status is Status.Error
+        msg = per_file[src].msg or ""
+        assert "20 characters on one command line" in msg, msg
+        assert "Nothing was sent" in msg, msg
+        assert [c for c in exec_cmd.calls if c.startswith("printf ")] == [], (
+            "a chunk command was typed at the device even though no chunk could fit"
+        )
+
+    @pytest.mark.asyncio
+    async def test_every_budget_around_the_boundary_lands_in_one_of_two_states(
+        self, tmp_path: Path
+    ) -> None:
+        """The whole band where a chunk shrinks to nothing, swept rather than sampled.
+
+        A budget can leave room for a payload, or for none at all, and the
+        second case has a boundary a single example keeps missing: a budget
+        that leaves one, two or three characters yields a chunk of ZERO bytes,
+        not a negative one. A read of zero returns no bytes, the loop exits as
+        if the file were empty, and the transfer goes on to stage an EMPTY
+        temp and fail its integrity check instead -- a wrong-looking failure
+        about a hash, several commands after the point where otto already knew
+        no chunk would fit. Sweeping the band pins both states and the line
+        between them without this test having to rebuild the command's shape
+        to compute where that line falls.
+        """
+        src = tmp_path / "payload.bin"
+        src.write_bytes(b"x" * 100)
+
+        for budget in range(20, 140):
+            exec_cmd = _RecordingExec(answer_when=_size_answer(100))
+            ft = _make_ft(exec_cmd, line_budget=budget)
+            result = (await ft._run_put([src], Path("/dest"), None))[src]
+            writes = [c for c in exec_cmd.calls if c.startswith("printf ")]
+            if result.status is Status.Success:
+                assert max(len(c) for c in writes) <= budget, (
+                    f"budget {budget} moved the file with a line over its own bound"
+                )
+                continue
+            assert "Nothing was sent" in (result.msg or ""), (
+                f"budget {budget} failed for some other reason than 'no chunk fits': "
+                f"{result.msg!r} -- otto knew before the first command that nothing "
+                f"could be sent, so any later failure is the wrong diagnosis"
+            )
+            assert writes == [], f"budget {budget} typed a chunk command anyway: {writes}"
+
+    @pytest.mark.asyncio
+    async def test_budgeted_chunks_reassemble_byte_identically(self, tmp_path: Path) -> None:
+        """Through a real shell: smaller chunks must still rebuild the same file.
+
+        The transcript tests above cannot see a resized chunk that slices the
+        source wrong -- an off-by-one in the read size, or a final short chunk
+        dropped -- because both produce a perfectly well-formed set of command
+        lines. This one runs every command and reads what landed.
+
+        The budget is derived from the destination rather than fixed, because
+        ``tmp_path`` embeds the test's own name and a constant that happened to
+        fit today would stop fitting when this test is renamed.
+        """
+        payload = bytes((i * 11) % 256 for i in range(1000))
+        src = tmp_path / "payload.bin"
+        src.write_bytes(payload)
+        dest_dir = tmp_path / "dest"
+        dest_dir.mkdir()
+        budget = len(str(dest_dir / src.name)) + 240
+
+        exec_cmd = _ShellExecutingExec(cwd=tmp_path)
+        ft = _make_ft(exec_cmd, line_budget=budget)
+
+        per_file = await ft._run_put([src], dest_dir, None)
+
+        assert per_file[src].status is Status.Success, per_file[src].msg
+        writes = [c for c in exec_cmd.calls if c.startswith("printf ")]
+        assert len(writes) > 4, (
+            f"the budget was meant to force many small chunks and produced {len(writes)}"
+        )
+        assert max(len(c) for c in writes) <= budget
+        landed = dest_dir / src.name
+        assert landed.exists(), exec_cmd.calls
+        assert landed.read_bytes() == payload
+
+    @pytest.mark.asyncio
+    async def test_get_is_not_budgeted(self, tmp_path: Path) -> None:
+        """GET sends a short command and receives long OUTPUT; no line bounds that.
+
+        Measured on the guest that could not PUT 3000 bytes: 256 KiB back in
+        2.9 s. Budgeting the read would triple GET's round trips to fix a
+        problem it does not have, so ``dd bs=`` stays at the full chunk even
+        on a host whose PUT is being squeezed.
+        """
+        total = _SHELL_CHUNK_BYTES * 2
+        exec_cmd = _RecordingExec(outputs=[str(total), *_get_chunk_outputs(total)])
+        ft = _make_ft(exec_cmd, line_budget=typed_line_budget(BashFrame()))
+
+        per_file = await ft._run_get([Path("/remote/f.bin")], tmp_path, None)
+        assert per_file[Path("/remote/f.bin")].status is Status.Success
+
+        reads = [_parse_get_chunk_cmd(c) for c in exec_cmd.calls if c.startswith("dd ")]
+        assert [int(m.group("bs")) for m in reads] == [_SHELL_CHUNK_BYTES] * 2
+
+
+class TestTheBudgetIsTheHostsExecRouteSpeaking:
+    """Where the number comes from: the host's session manager, asked not predicted.
+
+    The tempting shortcut is one line inside the backend --
+    ``self._connections.term == "telnet"`` -- and it is wrong twice: a PROXIED
+    login routes ``exec`` through the same pooled shell on an ``ssh`` host, and
+    the framing the budget is net of belongs to the host's command frame, which
+    a transfer backend cannot see. So the backend asks
+    :attr:`~otto.host.session.SessionManager.exec_line_budget` through the
+    context it was built with, and these two tests are the wiring's guard: a
+    build that stops passing the callable, or a backend that starts computing
+    its own, reds here rather than on the bed.
+
+    The ROUTE's own correctness (proxied logins, exec factories, unsupported
+    terms) is ``tests/unit/host/test_run_line_length.py``'s subject -- these
+    two only prove the answer reaches the codec, and that it is this host's
+    answer rather than a constant.
+    """
+
+    @staticmethod
+    def _busybox_host(term: str):
+        return create_host_from_dict(
+            {
+                "element": "bb1",
+                "os_type": "busybox",
+                "ip": "192.0.2.1",
+                "term": term,
+                "transfer": "shell",
+                "creds": [{"login": "root", "password": "otto"}],
+            },
+            lab_name="unit",
+        )
+
+    def test_a_telnet_host_hands_its_transfer_its_own_frames_budget(self) -> None:
+        host = self._busybox_host("telnet")
+        assert isinstance(host.command_frame, AshFrame), (
+            "the busybox profile stopped declaring an ash frame, so this test is no "
+            "longer about the tighter of the two ceilings"
+        )
+        budget = host._file_transfer._line_budget()
+        assert budget == typed_line_budget(host.command_frame)
+        assert budget < PTY_TYPED_LINE_MAX, (
+            "an ash host was handed the kernel's pty ceiling rather than its own line "
+            "editor's, which is the tighter of the two and the one that applies here"
+        )
+
+    def test_an_ssh_host_is_handed_no_budget_at_all(self) -> None:
+        """The path that was never broken must not move, and this is where that starts."""
+        host = self._busybox_host("ssh")
+        assert host._file_transfer._line_budget() is None
 
 
 # ---------------------------------------------------------------------------
@@ -1777,7 +2118,7 @@ class TestShellGetWrappedAndValidatedDecode:
     """The remote ``base64`` wraps its output, and a corrupt chunk must fail loudly, not silently.
 
     Measured directly against real BusyBox rootfs images in this worktree
-    (``tests/_fixtures/busybox_rootfs``, all four matrix rows with a
+    (the retired BusyBox chroot harness, all four matrix rows with a
     ``base64`` applet at all): encoding one 4096-byte chunk wraps to 72
     lines of up to 76 columns each. This class does not rely on THIS dev
     box's own ``base64`` happening to wrap the same way -- each test hands
@@ -2467,7 +2808,7 @@ Eight lowercase hex characters, exactly the shape
 length below is the length a real run emits.
 """
 
-# The binary-hostile payload `tests/busybox/test_shell_codec_contracts.py`
+# The binary-hostile payload `tests/integration/busybox_bed/test_shell_codec.py`
 # uses -- NUL, newline, CR, 0xFF, single quote, backslash -- chosen here for a
 # second reason: 13 bytes encode to 20 base64 characters, so a whole chunk
 # command fits in this file as a literal string rather than as a computed one.
@@ -2545,9 +2886,9 @@ class TestEmittedCommandLinesArePinned:
       devices this backend exists for;
     - ``bs=4096`` and the 5524/5525-character chunk lines are what actually
       crosses the wire, against the 9000-character ssh exec ceiling measured
-      in ``tests/busybox/test_tier3_shell_transfer.py``. 5535 is the longest
-      line Tier 3 itself measured; the numbers here are smaller only because
-      ``/dest`` is a shorter destination directory than Tier 3's.
+      by the retired dropbear rig. 5535 is the longest line that rig itself
+      measured; the numbers here are smaller only because ``/dest`` is a
+      shorter destination directory than the one it staged into.
 
     Mutation-verified rather than assumed -- three mutations, each run and
     counted against this class's seven tests:
@@ -2848,9 +3189,10 @@ def _uu_applet_shims(tmp_path: Path) -> Path:
     empty scratch on disk).
 
     WHAT KEEPS THE STAND-IN HONEST is not this docstring: it is
-    ``tests/busybox/test_shell_codec_contracts.py``, which runs the same three
+    ``tests/integration/busybox_bed/test_shell_codec.py``, which runs the same
+    three
     behaviours through five real BusyBox artifacts, and
-    ``tests/busybox/test_tier3_shell_transfer.py``, which runs this codec's
+    the retired dropbear rig, which ran this codec's
     real commands against a real ``uudecode`` over a real ssh channel. A
     stand-in that drifted from the applet would leave those green tests
     disagreeing with these ones.
@@ -3207,7 +3549,8 @@ class TestUuencodeEmittedCommands:
         the whole connection with no server log line
         (``_MEASURED_EXEC_LINE_LIMIT``), so a payload-dependent length turns
         "this file happens to contain a run of 0x07" into "the link is
-        flaky". The Tier 3 guard measures ONE payload and could not see it.
+        flaky". The retired dropbear guard measured ONE payload and could not
+        have seen it.
 
         Mutation-verified: emitting the ``printf`` form instead reds this
         test with the two lengths hundreds of characters apart.
@@ -3300,7 +3643,7 @@ class TestUuencodeThroughARealShell:
     async def test_a_multi_chunk_hostile_payload_round_trips(self, tmp_path: Path) -> None:
         """Three chunks including a partial tail, NUL/CR/quote/backslash and all.
 
-        The same 10253-byte payload the Tier 2 sweep measured uu against, so
+        The same 10253-byte payload the retired uu sweep measured against, so
         this test and the five-row contract are talking about the same bytes.
         """
         payload = _UU_SWEEP_PAYLOAD

@@ -10,6 +10,21 @@ Confirms the shielded compensating undo restores the login user on the SAME
 real ssh session on a live leased veggies bed host, and that the session
 stays usable afterwards.
 
+NO BUSYBOX GUEST ARM: the scenario needs a user to switch AWAY FROM and
+BACK TO, and the bed guests have exactly one account. ``as_user`` resolves
+its target through the host's own cred list (``_switch_creds`` ->
+``cred_for``), and each guest's committed record carries a single ``root``
+cred because its initramfs ``/etc/passwd`` is a single line -- ``root:x:0:0:
+root:/root:/bin/sh``, measured on the anchor guest, and the whole of ``/etc``
+is five files (``group``, ``init.d``, ``inittab``, ``passwd``, ``shadow``).
+otto already logs in as that account, so there is no elevation in flight for
+a cancel to interrupt and no login user for the shielded undo to restore.
+Adding an account would mean writing the guest's ``/etc`` -- outside the
+bed's scoped writable state, which is ``/tmp`` -- and would manufacture the
+premise rather than test it. (``su`` IS present and ``elevation: su`` is
+pinned in the guests' ``userland_options``; what is absent is a second
+identity, not the mechanism.)
+
 BedHygiene (autouse, ``tests/e2e/chaos/conftest.py``) asserts the leased
 host is left clean; this module deliberately does NOT opt out (no
 ``no_hygiene_bracket``) -- it exercises the default (now-lazy, Task 1)

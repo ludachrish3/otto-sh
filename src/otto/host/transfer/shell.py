@@ -3,7 +3,7 @@
 Moves files using nothing but command execution: no ``scp``, no ``nc``, no
 ``rsync``. Built for the devices at the bottom of the BusyBox matrix, whose
 entire toolkit is a POSIX shell plus whatever applets are actually present --
-including a Tier 2 rootfs old enough to lack ``base64`` entirely, which is
+including a BusyBox build old enough to lack ``base64`` entirely, which is
 what the second codec is for.
 
 TWO LAYERS, AND THE SPLIT IS THE POINT. ``ShellFileTransfer`` owns the
@@ -19,8 +19,10 @@ available. The codec's unit is the whole chunk loop rather than an
 ``encode()`` call because the two encodings need OPPOSITE loop orders: see
 :class:`ShellCodec` for the measurement that settled that.
 
-PUT chunks the local file into ``_SHELL_CHUNK_BYTES``-byte plaintext
-pieces, base64-encodes each locally, and appends it to a same-directory temp
+PUT chunks the local file into plaintext pieces of at most
+``_SHELL_CHUNK_BYTES`` -- fewer where the host's exec path meets a line
+discipline that would truncate the command; see that constant's note --
+base64-encodes each locally, and appends it to a same-directory temp
 file via ``printf '%s' '<chunk>' | base64 <flag> >> <temp>``; once every
 chunk has landed, an integrity check runs against the TEMP (see below), and
 only then does the last step move the temp onto the real destination with
@@ -86,28 +88,45 @@ from .unix_base import UnixFileTransfer
 _logger = logging.getLogger(__name__)
 
 _SHELL_CHUNK_BYTES = 4096
-"""Bytes of PLAINTEXT per chunk; base64 expands this to 5464 characters.
+"""CEILING on the plaintext bytes per chunk; base64 expands this to 5464 characters.
 
-Conservative, and as of Phase 5 the margin is MEASURED rather than assumed --
-but only for the channel this backend gets on an ``ssh`` host, which is not
-the channel the hostile case runs on. Three limits, in the order they were
-ruled in or out.
+The size a chunk actually takes wherever nothing bounds the command line, and
+an upper bound everywhere else: :meth:`Base64Codec.send_chunks` reads a
+:attr:`PutChunkLoop.line_budget` when its transport has one and reads less
+than this. Never MORE than this, whatever the budget -- a roomy transport is
+not a reason to re-open a size that four separate limits below were measured
+against.
+
+Conservative, and the margin is MEASURED rather than assumed on both of the
+two channels this backend can get. FOUR limits, in the order they were ruled
+in or out.
 
 ARG_MAX IS NOT THE CONSTRAINT. Measured device-side: a single exec argument
-of >=4 MB succeeds in the Tier 2 rootfs, nowhere near a chunk command's line.
+of >=4 MB succeeds inside a BusyBox-only chroot, nowhere near a chunk
+command's line.
 
 THE EXEC CHANNEL CARRIES A FULL CHUNK WITH ROOM TO SPARE, which is what Phase
 5 added and what an earlier version of this note called UNMEASURED and
-plausibly negative. ``tests/busybox/test_tier3_shell_transfer.py`` puts real
-chunk commands through a real dropbear over a real ssh exec channel and
-measures both halves of the inequality: the channel takes 9000 characters
-intact and breaks at 9001 (``_MEASURED_EXEC_LINE_LIMIT`` there, re-measured
-one character at a time), while the longest line this backend emitted for a
-full chunk measured 5535. Roughly 3465 characters of headroom, positive
-rather than negative. Note what that 5535 is attached to: the staged temp's
-whole path is interpolated into every chunk command, so it is Tier 3's own
-destination (27 characters) and a longer path spends the headroom -- the test
-pins the RELATIONSHIP for that reason, not either number.
+plausibly negative. Real chunk commands were put through a real dropbear over
+a real ssh exec channel, and both halves of the inequality measured: the
+channel takes 9000 characters intact and breaks at 9001 (re-measured one
+character at a time), while the longest line this backend emitted for a full
+chunk measured 5535. Roughly 3465 characters of headroom, positive rather
+than negative. Note what that 5535 is attached to: the staged temp's whole
+path is interpolated into every chunk command, so it was that rig's own
+destination (27 characters) and a longer path spends the headroom -- what
+matters is the RELATIONSHIP, not either number.
+
+THAT MEASUREMENT NO LONGER HAS A TEST, AND CANNOT GET ONE BACK HERE. The rig
+was a dropbear this repo grafted onto a BusyBox-only chroot, retired with the
+rest of the artifact harness; the live BusyBox bed cannot replace it, because its
+guests have no sshd at all by construction -- which is the point of the
+ssh-shaped true negative they pin. What survives is hostless: the emitted
+line lengths are computed and bounded by
+``tests/unit/host/transfer/test_shell_transfer.py``'s
+``TestShellChunkLineLength``. So after the harness's deletion NO test puts a
+full-size chunk command on a real ssh exec channel, and a regression in that
+direction would be caught by arithmetic rather than by a device.
 
 THE PTY PATH IS THE ONE WITH NO MARGIN, and it is a separate measurement this
 branch also holds. BusyBox ash's line editor
@@ -122,10 +141,68 @@ WHICH OF THE TWO THIS BACKEND GETS IS THE HOST'S ``term``, not this module's
 choice. ``_exec_cmd`` is ``UnixHost.exec``, and ``SessionManager.exec`` opens
 a bare pty-less exec channel only for ``term: "ssh"``; telnet has no
 stateless exec primitive, so it routes through a pooled SHELL session
-instead -- the line-edited path, with the 1022 ceiling. A ``term: telnet``
-BusyBox host is therefore exactly the case this note used to worry about, and
-it is STILL UNMEASURED: Tier 3 is ssh-only, and no tier puts this backend on
-a telnet transport.
+instead -- the line-edited path. A ``term: telnet`` BusyBox host is therefore
+exactly the case this note used to worry about, and it is NO LONGER
+UNMEASURED: five telnet-console BusyBox guests joined the bed, the case
+happened, and the paragraphs below are what they answered.
+
+THE PTY PATH IS MEASURED NOW, AND IT WEDGED. On the bed's guests (2026-08-21,
+``tests/integration/busybox_bed``) a PUT of more than ~2.8 KB never completes:
+bisected on the 1.35.0 guest, 2800 bytes of payload succeeds in 0.1 s and
+3000 bytes fails after 30.2 s, as do 4096, 8192, 16384 and 262144. That is
+otto's own command timeout expiring, and the tail of the error carries the
+guest's ``>`` -- ash's PS2 continuation prompt, waiting for the rest of a
+single-quoted blob that never arrived. Exactly the failure this note
+predicted, PS2 included, and the backstop predicted with it also held: the
+staged temp is never renamed, so nothing landed wrong bytes under a
+``Status.Success``.
+
+THE CEILING IS THE KERNEL'S, NOT ASH'S, on these guests. A raw
+``echo <pad> | wc -c`` probe -- counting what ARRIVED, so truncation reads as
+a short count rather than as a pass -- carries 500, 1000, 1022, 1023, 1100,
+2000 and 4000 characters intact and never returns at 4090. So the 1022 line
+editor above is measurably INACTIVE here (1023 would have been the tell) and
+what bounds the line is N_TTY's 4096-byte canonical buffer:
+:data:`~otto.host.session.PTY_TYPED_LINE_MAX`. Both ceilings are real on
+their own devices, neither subsumes the other, and
+:func:`~otto.host.session.typed_line_budget` therefore hands out the smaller
+of the two that apply to a given host.
+
+THE RESPONSE IS A BUDGET, NOT A SMALLER CONSTANT AND NOT A DIFFERENT CODEC.
+``exec``'s route decides whether a budget exists at all (``None`` on the ssh
+channel, so its chunk lines stay byte-identical -- the path that was never
+broken does not move), and :meth:`Base64Codec.send_chunks` spends whatever it
+is handed by MEASURING its own empty command line and giving the payload what
+is left, rounded down to the largest whole base64 quantum. On the bed that is
+a 2889-byte chunk against the 4096 an ssh host still sends. Two properties
+this shape has that a smaller universal ``_SHELL_CHUNK_BYTES`` would not: it
+costs the ssh path nothing, and it survives a long destination path, which is
+interpolated into every chunk command and is what the ssh-side headroom above
+is also spent on.
+
+THE ALTERNATIVE WAS PREFERRING UUENCODE ON PTY-ROUTED HOSTS, and it lost on
+three counts even though it is measured green: the 1.16.1 guest, which has no
+``base64`` applet, moves 256 KiB over the same telnet console in 3.7 s
+because uu's payload rides a HEREDOC whose body lines are at most 61
+characters. That measurement is why the budget is the right lever rather than
+evidence for switching codecs -- it shows the pty path bounds the LINE and not
+the command (uu's chunk command is ~5952 characters over 100 lines and crosses
+fine, where base64's 5535 on ONE line does not), which is precisely what
+sizing the line fixes. Against it: a pty-routed device with ``base64`` but no
+``uudecode`` would still wedge, so the defect would survive the fix; the
+preference base64 wins on measurement (:meth:`ShellFileTransfer._select_codec`)
+would be overridden by a fact about the TRANSPORT rather than about the
+device; and codec selection would acquire a second input, on a seam whose
+whole point is that one function answers it from the device's own probe.
+uu needs no budget of its own for the same reason it was a candidate: its
+longest line does not grow with the chunk, so there is nothing for a budget to
+size (its command's first line does carry the paths twice -- see
+:class:`UuencodeCodec` -- and a destination long enough to push THAT over the
+budget is a case no measurement covers and this note does not claim).
+
+GET IS UNAFFECTED AND IS NOT BUDGETED. It sends a short ``dd | base64``
+command and receives long OUTPUT, which no line discipline bounds: 16 KiB in
+0.4 s and 256 KiB in 2.9 s on the same guest that could not PUT 3000 bytes.
 
 THE ``run()`` GUARD DOES NOT REACH HERE, AND THAT IS THE POINT.
 :func:`otto.host.session.refuse_if_line_editor_would_truncate` now refuses an
@@ -139,16 +216,22 @@ turning the bounded, loud, verified-against failure described below into a
 hard block on the backend those devices depend on. Pinned by
 ``tests/unit/host/test_run_line_length.py``'s ``TestTheRefusalIsScoped``.
 
-What that would cost is bounded, which is why this is a note and not a block.
-The failure would be LOUD. Truncation lands inside the single-quoted base64
-blob of ``printf '%s' '<b64>' | base64 -d >> <temp>``, so the far side gets
-an unterminated quote rather than a valid shorter command -- it errors or
-wedges; it cannot append plausible-looking bytes. That is the opposite of the
-gap record's general case, where truncation silently runs a shorter command
-that works. And the backstop holds regardless: PUT verifies the TEMP (see
-:meth:`ShellFileTransfer._verify_integrity`) before the ``mv``, so no
+What that would cost was called bounded here before anything had measured it,
+and the bed then measured it: the failure IS loud. Truncation lands inside the
+single-quoted base64 blob of ``printf '%s' '<b64>' | base64 -d >> <temp>``, so
+the far side gets an unterminated quote rather than a valid shorter command --
+it errors or wedges, and on the guests it wedged, visibly, at PS2. It cannot
+append plausible-looking bytes. That is the opposite of the gap record's
+general case, where truncation silently runs a shorter command that works. And
+the backstop holds regardless, which the same run confirmed: PUT verifies the
+TEMP (see :meth:`ShellFileTransfer._verify_integrity`) before the ``mv``, so no
 truncation anywhere can land wrong bytes at the destination under a
 ``Status.Success``.
+
+None of that is an argument for leaving the line over the bound now that the
+budget exists -- a loud failure is still a failed transfer. It is the reason
+the ANSWER is a budget rather than a refusal, and the reason a truncation that
+somehow gets past the budget still cannot corrupt a destination.
 """
 
 _STAGING_TOKEN_HEX = 8
@@ -169,8 +252,9 @@ refusal was answering for the wrong name. See :func:`staged_temp_name`,
 which is what actually closes that gap -- this constant only makes the
 budget it enforces cheap enough to spend on almost every real name. It also
 buys 24 characters of transport headroom on every chunk command line, since
-the staged path is interpolated into each one (measured over Tier 3's real
-exec channel: 5558 characters per full chunk before, 5534 after).
+the staged path is interpolated into each one (measured over the retired
+dropbear rig's real exec channel: 5558 characters per full chunk before, 5534
+after).
 
 Collision risk, deliberately re-checked rather than waved through: two
 stagings collide only if they draw the same 32-bit token AND target the
@@ -328,6 +412,30 @@ class PutChunkLoop:
     calls it before has told the caller bytes landed that may not have.
     """
 
+    line_budget: int | None = None
+    """Characters this transport carries on ONE line of a command, or ``None``.
+
+    ``None`` means no line discipline is in the way -- an ``ssh`` host's bare
+    exec channel, or a caller-supplied exec primitive -- and a codec should
+    then do exactly what it did before this field existed. It is not "unknown"
+    and never a reason to guess: the number comes from
+    :attr:`~otto.host.session.SessionManager.exec_line_budget`, which is the
+    object that decides which primitive :meth:`~otto.host.session.SessionManager.exec`
+    routes through, and it is already net of otto's own BEGIN/END framing, so a
+    codec compares it against the command string it is about to emit and
+    nothing else.
+
+    WHY THE CODEC SPENDS IT RATHER THAN THE SKELETON. What a chunk command
+    looks like -- how many lines, what fraction is payload, whether the payload
+    affects the longest line at all -- is exactly what :class:`ShellCodec`
+    exists to vary, and the two shipped codecs answer differently:
+    :class:`Base64Codec` puts a whole chunk on one line and must shrink the
+    chunk to fit, while :class:`UuencodeCodec`'s body lines are 61 characters
+    whatever the chunk size, so no chunk size it could pick would spend this.
+    A skeleton that converted the budget into a chunk size for both would be
+    answering a question only one of them has.
+    """
+
 
 @dataclass(frozen=True)
 class GetChunkLoop:
@@ -422,8 +530,8 @@ class Base64Codec(ShellCodec):
     PUT appends each chunk's encoded text to the temp with
     ``printf '%s' '<b64>' | base64 <flag> >> <temp>`` and lets the DEVICE
     decode; GET pulls ``dd ... | base64`` and decodes LOCALLY. Both halves are
-    what ``tests/busybox/test_shell_codec_contracts.py`` measured on-device,
-    and the emitted strings are pinned byte-for-byte by
+    what ``tests/integration/busybox_bed/test_shell_codec.py`` round-trips on
+    four live guests, and the emitted strings are pinned byte-for-byte by
     ``tests/unit/host/transfer/test_shell_transfer.py``'s
     ``TestShellEmittedCommandLinesArePinned``.
 
@@ -442,16 +550,70 @@ class Base64Codec(ShellCodec):
     def __init__(self, decode_flag: str) -> None:
         self._decode_flag = decode_flag
 
+    def _chunk_command(self, encoded: str, redirect: str, quoted_temp: str) -> str:
+        """Build the one command line this codec emits for one chunk.
+
+        Extracted for a second caller rather than for tidiness:
+        :meth:`_fitted_chunk_bytes` sizes the payload by BUILDING this command
+        with an empty one and measuring what is left over. Two copies of the
+        shape -- one emitted, one estimated -- is the arrangement where a
+        budget silently stops holding the day the command grows a character,
+        and the estimate is the copy nothing would red.
+        """
+        return f"printf '%s' '{encoded}' | base64 {self._decode_flag} {redirect} {quoted_temp}"
+
+    def _fitted_chunk_bytes(self, quoted_temp: str, line_budget: "int | None") -> int:
+        """Plaintext bytes per chunk whose emitted command line fits *line_budget*.
+
+        :data:`_SHELL_CHUNK_BYTES` when there is no budget, unconditionally --
+        that is what keeps an ``ssh`` host's chunk lines byte-identical to what
+        the dropbear rig measured.
+
+        With a budget, the arithmetic is derivation and no constant.
+        Everything the command spends that is not payload is MEASURED, by
+        building :meth:`_chunk_command` with an empty payload and the LONGER of
+        the two redirects (``>>``, one character more than the ``>`` the first
+        chunk uses), so the first chunk lands one character under rather than
+        every later one landing one over. What remains is what the base64 TEXT
+        may cost, and base64 only takes lengths that are multiples of 4: ``n``
+        plaintext bytes become ``4 * ceil(n / 3)`` characters, so the largest
+        payload fitting ``a`` characters is ``3 * (a // 4)``, exactly. Rounding
+        to a whole quantum also leaves every chunk's encoding padding-free,
+        which is tidier than the 4096-byte chunk this replaces (4096 is not a
+        multiple of 3) but is not required -- each chunk command decodes on its
+        own, so padding mid-stream was always fine.
+
+        A NON-POSITIVE ANSWER IS RETURNED, NOT CLAMPED. It means the staged
+        path alone has eaten the whole line, so no chunk size exists that
+        works, and clamping to 1 would emit the wedging line one byte at a
+        time. The caller turns it into a failed file with both numbers in the
+        message.
+        """
+        if line_budget is None:
+            return _SHELL_CHUNK_BYTES
+        available = line_budget - len(self._chunk_command("", ">>", quoted_temp))
+        return min(_SHELL_CHUNK_BYTES, 3 * (available // 4))
+
     @override
     async def send_chunks(self, loop: PutChunkLoop) -> ChunkLoopOutcome:
-        """Append ``_SHELL_CHUNK_BYTES`` at a time, encoded, and let the device decode.
+        """Append a chunk at a time, encoded, and let the device decode.
+
+        A chunk is :data:`_SHELL_CHUNK_BYTES` wherever the transport carries a
+        whole one, and :meth:`_fitted_chunk_bytes` of it where it does not. The
+        read size is decided ONCE per file, before the loop: everything it
+        depends on -- the staged path, the decode flag, the budget -- is fixed
+        for the whole file, and a per-chunk answer would only invite two
+        answers to disagree.
 
         The first chunk uses ``>`` and every later one ``>>``, which is what
         makes an appending chunk's command line exactly one character longer
         than the first's. Successive ``base64 <flag>`` invocations appending
-        to one file concatenate correctly and IN ORDER -- measured on the four
-        matrix rows that have a ``base64`` applet at all
-        (``test_shell_codec_contracts.py::test_chunk_append_reassembles_in_order``).
+        to one file concatenate correctly and IN ORDER -- measured end to end on
+        the four matrix rows that have a ``base64`` applet at all, by
+        ``test_shell_codec.py::test_a_multi_chunk_payload_reassembles_in_order``
+        in the live bed suite: otto emits one decode-into-append per chunk, so a
+        byte-identical file across five chunks IS that order observed on a
+        device.
 
         The literal single quotes around the encoded text need no escaping:
         :func:`base64.b64encode` emits ``[A-Za-z0-9+/=]`` only, never wraps,
@@ -461,17 +623,26 @@ class Base64Codec(ShellCodec):
         ever measured against a 4-character probe, and its escaping and
         ``-n`` handling are userland-dependent.
         """
+        read_size = self._fitted_chunk_bytes(loop.quoted_temp, loop.line_budget)
+        if read_size <= 0:
+            empty = len(self._chunk_command("", ">>", loop.quoted_temp))
+            return ChunkLoopOutcome(
+                0,
+                f"no chunk of {loop.temp} can be written: this host's exec path carries "
+                f"{loop.line_budget} characters on one command line, and the chunk command "
+                f"for an EMPTY payload is already {empty} -- the destination path is too "
+                f"long to shell-transfer to this host. Nothing was sent",
+            )
         sent = 0
         with loop.src.open("rb") as f:
             while True:
-                chunk = f.read(_SHELL_CHUNK_BYTES)
+                chunk = f.read(read_size)
                 if not chunk:
                     break
                 encoded = base64.b64encode(chunk).decode("ascii")
                 redirect = ">>" if sent else ">"
                 result = await loop.exec_cmd(
-                    f"printf '%s' '{encoded}' | base64 {self._decode_flag} "
-                    f"{redirect} {loop.quoted_temp}"
+                    self._chunk_command(encoded, redirect, loop.quoted_temp)
                 )
                 if not result.is_ok:
                     return ChunkLoopOutcome(
@@ -584,9 +755,13 @@ def _uu_frame(chunk: bytes) -> str:
     THE CONTAINER IS THE POINT, and it is why this codec's loop is shaped the
     way it is rather than base64's way: each chunk is a WHOLE uu document that
     the device decodes on arrival. Concatenating several and decoding once
-    returns only the first -- 4096 of 10253 bytes, at rc=0, re-measured on all
-    five matrix rows for this task -- so the plaintext, never the framed text,
-    is what accumulates in the staged temp. See :class:`ShellCodec`.
+    returns only the first, silently and at rc=0 -- so the plaintext, never
+    the framed text, is what accumulates in the staged temp. That is a
+    NEGATIVE MEASUREMENT and it is kept as one:
+    ``test_shell_codec.py::test_appending_uu_frames_and_decoding_once_truncates_at_rc_zero``
+    builds frames with THIS function, puts them on each of the five live
+    guests and reads back one chunk of the several it sent. See
+    :class:`ShellCodec`.
 
     ``backtick=True`` so the zero value encodes as ``` ` ``` rather than as a
     SPACE, and that is a transport property rather than a style: with it, no
@@ -690,8 +865,8 @@ class UuencodeCodec(ShellCodec):
 
     THE ROW THIS EXISTS FOR IS 1.16.1, the one BusyBox matrix artifact that
     ships no ``base64`` applet at all; ``uudecode`` and ``uuencode`` are
-    present on all five (measured, ``test_applet_resolution.py``). It is the
-    SECOND choice wherever both are available -- see
+    present on all five (measured, ``test_applet_userland.py`` in the live bed
+    suite). It is the SECOND choice wherever both are available -- see
     :meth:`ShellFileTransfer._select_codec` for why base64 is preferred.
 
     PUT DECODES PER CHUNK AND APPENDS PLAINTEXT, which is the inverse of
@@ -711,7 +886,7 @@ class UuencodeCodec(ShellCodec):
         (exit $otto_rc)
 
     Four things in that shape are each a measurement, all re-taken for this
-    task on all five rows in the Tier 2 rootfs and on the Tier 3 ssh channel:
+    task on all five rows in a BusyBox-only chroot and on a real ssh channel:
 
     ``-o`` IS MANDATORY, and it works on 1.16.1. Without it ``uudecode``
     writes to the name in the header and exits 0, so the plaintext lands
@@ -748,10 +923,10 @@ class UuencodeCodec(ShellCodec):
     that was measured here rather than inherited: a 400-line command of
     18-character lines (8991 characters) crosses dropbear's exec channel and
     one of 500 such lines (9009) drops the connection, which is the same
-    ~9000-character boundary ``tests/busybox/test_tier3_shell_transfer.py``'s
-    ``_MEASURED_EXEC_LINE_LIMIT`` measured one character at a time for a
-    SINGLE line. So the multi-line shape buys no room against that limit and
-    is not claimed to: for a 26-character destination a full chunk's command
+    ~9000-character boundary the retired dropbear rig measured one character
+    at a time for a SINGLE line (see the module docstring on what that
+    retirement cost). So the multi-line shape buys no room against that limit
+    and is not claimed to: for a 26-character destination a full chunk's command
     is 5952 characters (5953 for an appending one) against base64's 5533,
     leaving about 3047 characters of headroom rather than base64's 3466. uu
     spends the difference on the scratch path, which appears TWICE in every
@@ -902,8 +1077,9 @@ class ShellFileTransfer(UnixFileTransfer):
     ``base64`` is available, ``UuencodeCodec`` on a device measured not to
     have it.
 
-    PUT chunks the local file into ``_SHELL_CHUNK_BYTES``-byte plaintext
-    pieces; each piece is base64-encoded locally and appended to a
+    PUT chunks the local file into plaintext pieces of at most
+    ``_SHELL_CHUNK_BYTES`` (see that constant's note for what shrinks them on a
+    line-disciplined transport); each piece is base64-encoded locally and appended to a
     same-directory temp file (``<dest>.otto-<unique>``); once every chunk has
     landed, an integrity check (see ``_verify_integrity``) runs against
     the temp, and only on a match is it moved onto the real destination with
@@ -953,6 +1129,7 @@ class ShellFileTransfer(UnixFileTransfer):
         exec_cmd: Callable[..., Coroutine[Any, Any, CommandResult]],
         userland: "Userland",
         max_filename_len: int = 255,
+        exec_line_budget: "Callable[[], int | None] | None" = None,
     ) -> None:
         super().__init__(
             connections=connections,
@@ -961,6 +1138,12 @@ class ShellFileTransfer(UnixFileTransfer):
             max_filename_len=max_filename_len,
         )
         self._userland = userland
+        # How long one line of a chunk command may be on this host, ASKED of
+        # the session manager rather than derived from `connections.term` here
+        # (see `_line_budget`). Optional so a builder that predates the seam --
+        # or a test constructing this class directly -- keeps the unbudgeted
+        # behaviour, which is also what an `ssh` host gets.
+        self._exec_line_budget = exec_line_budget
 
     @override
     @classmethod
@@ -985,6 +1168,7 @@ class ShellFileTransfer(UnixFileTransfer):
             exec_cmd=ctx.exec_cmd,
             userland=ctx.userland,
             max_filename_len=ctx.max_filename_len,
+            exec_line_budget=ctx.exec_line_budget,
         )
 
     # ------------------------------------------------------------------
@@ -1194,6 +1378,27 @@ class ShellFileTransfer(UnixFileTransfer):
             )
         return UuencodeCodec(self._max_filename_len)
 
+    def _line_budget(self) -> int | None:
+        """Characters this host's exec path carries on ONE command line, or ``None``.
+
+        ASKED, NEVER PREDICTED. The obvious cheap answer is in reach from here
+        -- ``self._connections.term`` is right there -- and it is wrong twice
+        over: a PROXIED login routes ``exec`` through the pooled shell on an
+        ``ssh`` host too, and the framing this number is net of belongs to the
+        host's command frame, which no transfer backend can see. So the
+        question goes to the object that decides both
+        (:attr:`~otto.host.session.SessionManager.exec_line_budget`, reached
+        through the context this backend was built with) and a
+        ``None`` callable -- an embedded builder, a direct construction in a
+        test -- means the same thing an unbudgeted route means.
+
+        Read per file rather than cached per transfer, because it is free and
+        because the two halves of the arithmetic belong together: the other
+        half is the staged temp's path, which :meth:`_put_one` names one file
+        at a time.
+        """
+        return self._exec_line_budget() if self._exec_line_budget is not None else None
+
     # ------------------------------------------------------------------
     # Shell put
     # ------------------------------------------------------------------
@@ -1225,9 +1430,12 @@ class ShellFileTransfer(UnixFileTransfer):
         temp are the codec's to choose (see :class:`ShellCodec` for the
         measurement that made the whole loop the unit rather than an
         ``encode()`` call, and :meth:`Base64Codec.send_chunks` for what the
-        ``base64`` one does). This method contributes exactly three things to
-        the bytes: the temp's name, the empty-file case, and the running state
-        the codec reports into.
+        ``base64`` one does). This method contributes exactly four things to
+        the bytes: the temp's name, the empty-file case, the running state the
+        codec reports into, and the transport's line budget (see
+        :meth:`_line_budget` and :attr:`PutChunkLoop.line_budget`) -- which is
+        a fact ABOUT the transport, handed over for a codec to spend or ignore,
+        not a chunk size chosen here.
 
         THE EMPTY-FILE CASE IS SHARED, and stays here because it is not an
         encoding at all -- a source with no bytes yields no chunks from any
@@ -1287,6 +1495,7 @@ class ShellFileTransfer(UnixFileTransfer):
                     temp=temp,
                     quoted_temp=quoted_temp,
                     on_sent=_sent,
+                    line_budget=self._line_budget(),
                 )
             )
             if outcome.error is not None:

@@ -126,16 +126,35 @@ jobs:
           OTTO_BROWSER_SHARD: "1"
         run: uv run nox -k ${{ matrix.browser }}
 
-  # The BusyBox artifact tier. Every default lane excludes `-m busybox`
-  # (tests/unit/test_tier_marker_invariants.py G8), so without this job the
-  # whole tier — five behavioural assertions, and everything later BusyBox
-  # work hangs off — runs nowhere but a developer's terminal.
+  # The BusyBox ARTIFACT tier — the pinned bytes, not the behaviour. Every
+  # default lane excludes `-m busybox` (G8 in
+  # tests/unit/test_tier_marker_invariants.py), so without this job the tier
+  # runs nowhere but a developer's terminal.
   #
-  # No qemu here, deliberately. The artifacts are x86 userland and
-  # ubuntu-latest is x86_64, so it executes them natively; the dev VM's
-  # qemu-user-static (see docs/guide/hosts/busybox.md) is an aarch64
-  # workaround, not a requirement of the tier. That also means CI is the
-  # reference environment for these bytes and the dev VM is the emulated one.
+  # WHAT THIS LANE IS, NOW THAT IT IS THE NARROW ONE. What otto DOES to a
+  # BusyBox userland is measured on the live bed — five QEMU guests behind
+  # carrot, driven over telnet through a hop (tests/integration/busybox_bed/,
+  # plus the busybox rows the generic host/transfer/stability/chaos suites
+  # carry). That needs the lab and cannot run on a GitHub runner. What stays
+  # here is the question a runner CAN answer, about the artifacts themselves:
+  # does each pinned file still hash to its committed SHA-256, does it
+  # announce the version it is filed under, and does this build spell
+  # `timeout` / `base64` / `stat` / `wc` / `nc` the way
+  # `src/otto/host/userland.py` probes for. Argv-level contracts against a
+  # local subprocess, no device involved.
+  #
+  # That remainder is not leftovers — it is the bed's supply chain. The guest
+  # images are built from these exact bytes, by
+  # `scripts/build_busybox_guest_images.py` through this same fetch/pin layer
+  # (tests/_fixtures/busybox.py + busybox_pins.json), so a pin or a banner
+  # that drifts here is a bed whose userland is no longer the version its lab
+  # entry claims. This job is where that is caught, on the push, rather than
+  # as a puzzling behavioural result on a guest weeks later.
+  #
+  # qemu-user only on the arm64 leg, and only because the runner is not x86:
+  # the artifacts are x86 userland, so ubuntu-latest executes them natively
+  # while the arm64 leg needs binfmt handlers registered (the step below, and
+  # docs/guide/hosts/busybox.md for the same instruction to a human).
   #
   # THE ARTIFACT CACHE IS DELIBERATELY NOT CACHED. Upstream publishes no
   # signatures, so trust rests on a committed SHA-256 whose entire stated
@@ -175,8 +194,14 @@ jobs:
   # comparison this job exists to make.
   #
   # This is the cheap half of the fix. The durable half is that the harness no
-  # longer trusts environment-sensitive values it can derive itself — see
-  # `_install_applets` in tests/_fixtures/busybox_rootfs.py.
+  # longer trusts environment-sensitive values it can derive itself: the
+  # `applet_dir` fixture in tests/busybox/test_applet_contracts.py symlinks
+  # each applet name at a path IT chose, rather than asking `busybox
+  # --install -s` to resolve `/proc/self/exe`. (The harness that made the
+  # original mistake — a chroot built by `_install_applets` in the
+  # since-deleted tests/_fixtures/busybox_rootfs.py — is gone with the
+  # behaviour tier; the two-leg matrix stays, because "does this depend on
+  # being emulated" is a question about every future artifact assertion.)
   busybox:
     name: busybox-artifacts (${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
@@ -229,59 +254,6 @@ jobs:
             [ -e "/proc/sys/fs/binfmt_misc/$handler" ] \
               || { echo "::error::$handler binfmt handler is not registered; the x86 artifact rows cannot execute on this arm64 runner"; exit 1; }
           done
-      - name: Install dropbear, for the BusyBox Tier 3 ssh tier
-        # Tier 3 logs into the Tier 2 BusyBox root over real ssh, against a
-        # throwaway rootless dropbear on loopback. BOTH legs need it: the tier
-        # runs wherever `make busybox` runs.
-        #
-        # `dropbear-bin`, not `dropbear` and not `dropbear-run` — measured on
-        # 2022.83-4: `-bin` ships only the binaries (dropbear, dbclient,
-        # dropbearkey, dropbearconvert) and registers NO service, so
-        # `systemctl is-enabled dropbear` reports `not-found` after install
-        # and this step leaves nothing listening on the runner. The tier
-        # starts its own foreground daemon on 127.0.0.1 at an ephemeral port
-        # and reaps it. The package is in `universe` and is NOT preinstalled
-        # on the runner images (measured), so this line is doing real work.
-        #
-        # No `apt-get update` here, matching the qemu step above: the
-        # busybox-static step refreshed the index already, and a stale index
-        # is what makes an install 404 on the .deb and read like the package
-        # does not exist.
-        #
-        # NO VERIFICATION LINE, unlike the two steps either side of this one,
-        # and the asymmetry is deliberate rather than an omission. Those two
-        # verify a CAPABILITY that installing a package does not guarantee (a
-        # registered binfmt handler; a uid_map write the kernel may refuse).
-        # This one has nothing of that kind to check, and the tier's own
-        # `test_the_provisioned_host_has_the_dropbear_tier3_needs` runs in
-        # THIS lane and fails by name with the apt line if the paths are not
-        # where `tests/_fixtures/busybox_dropbear.py` says they are. Re-doing
-        # that in shell here would be a second copy of a gate, which is the
-        # thing this job's own header warns drifts.
-        run: sudo apt-get install -y dropbear-bin
-      - name: Allow unprivileged user namespaces, for the BusyBox rootfs tier
-        # The tier chroots into a BusyBox-only root from an unprivileged user
-        # namespace. Ubuntu 24.04 ships
-        # kernel.apparmor_restrict_unprivileged_userns=1, which permits creating
-        # a namespace but denies the uid_map write that maps you to uid 0 —
-        # leaving no CAP_SYS_CHROOT and no chroot.
-        #
-        # The existence test is not defensive mush: A MISSING KNOB IS NOT A
-        # MISSING CAPABILITY. `sysctl -w` exits non-zero on an image without
-        # that key and steps run under `bash -e`, so writing it unconditionally
-        # reds the job on precisely the images where the tier would have worked
-        # fine. `ubuntu-latest` is 24.04 and has it today, but that pin moves.
-        #
-        # The verification line carries no `|| true` on purpose, and that
-        # asymmetry is the whole point: the capability is what we require, so
-        # that is what fails the job. A runner that cannot map to uid 0 must
-        # stop here with a reason, not skip the tier into a green report.
-        run: |
-          if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
-            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-          fi
-          unshare -r id -u | grep -qx 0 \
-            || { echo "::error::unshare -r cannot map to uid 0 on this runner; the BusyBox rootfs tier cannot build a root"; exit 1; }
       - name: Fetch, verify and run the BusyBox artifact matrix (cold cache)
         run: make busybox
 

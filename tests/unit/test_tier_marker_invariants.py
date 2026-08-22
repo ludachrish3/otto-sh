@@ -471,8 +471,9 @@ def _autostamped_markers() -> "dict[str, list[Path]]":
     last-sorted conftest survived, so a SECOND directory stamping the same
     marker evicted the first and both G8d and G8e went quiet about it — a
     stamped-only tier outside `testpaths` passed both. That is not
-    hypothetical: `tests/busybox/tier2/conftest.py` is already planned, and
-    adding it would have evicted `tests/busybox`, leaving the current tier
+    hypothetical: a second `tests/busybox/*/conftest.py` was planned while the
+    artifact tier still had sub-tiers, and adding it would have evicted
+    `tests/busybox`, leaving the current tier
     visible to these guards only because every module still happens to type
     `@pytest.mark.busybox`.
     """
@@ -604,7 +605,7 @@ def test_the_busybox_tier_is_visible_to_a_pathless_run():
     G8b and G8c pin that the lane exists and that CI invokes it. Neither can
     see this, because both reason about the lane rather than about what the
     lane can reach. Derived from where the marked modules actually live, so a
-    Tier 2 or Tier 3 directory is covered the day it lands.
+    directory that starts carrying marked modules is covered the day it lands.
     """
     ini = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text())
     roots = [PROJECT_ROOT / p for p in ini["tool"]["pytest"]["ini_options"]["testpaths"]]

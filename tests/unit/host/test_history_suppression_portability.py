@@ -1,4 +1,4 @@
-"""The history-suppression payload must be silent and effective on every POSIX shell.
+"""The first line otto writes into a fresh shell must be silent on every POSIX shell.
 
 otto prepends :meth:`~otto.host.command_frame.BashFrame.quiet_history` to the
 first line it writes into a fresh shell — the readiness handshake, and the
@@ -23,14 +23,25 @@ which is precisely what this guard tests. Shells beyond the guaranteed two are
 tested when installed rather than skipped-if-absent, so a runner with more
 shells gets more coverage and a runner with fewer never silently loses the
 baseline.
+
+THE OTHER STATEMENT ON THAT LINE IS HERE TOO — see the stty section at the
+bottom. ``handshake()`` renders ``stty -echo 2>/dev/null; echo <READY>``, and
+suppression rides in front of it, so the two share one line and one failure
+mode: anything that aborts the line strands READY and takes a working host
+offline. The stty half was measured inside a chrooted BusyBox root while that
+harness existed (it could delete ``/bin/stty`` because the root was its own);
+the live BusyBox bed that replaced the harness cannot host it, because
+removing an applet from a shared guest is a bed mutation. Injecting the same
+condition into a real shell here is what keeps the arm measured.
 """
 
+import os
 import shutil
 import subprocess
 
 import pytest
 
-from otto.host.command_frame import BashFrame
+from otto.host.command_frame import BashFrame, SessionMarkers
 
 PAYLOAD = BashFrame().quiet_history()
 
@@ -85,13 +96,25 @@ def _available() -> list[tuple[str, list[str]]]:
 SHELLS = _available()
 
 
-def _run(argv: list[str], script: str) -> subprocess.CompletedProcess[str]:
+def _run(
+    argv: list[str], script: str, env: "dict[str, str] | None" = None
+) -> subprocess.CompletedProcess[str]:
+    """Run *script* under *argv*, optionally in a replacement environment.
+
+    *env* resolves ``argv[0]`` ABSOLUTELY before launching, because the
+    environment the stty section hands in has an empty ``PATH`` — the same
+    variable ``subprocess`` searches to find the shell binary itself, so a
+    bare name would fail to launch rather than fail to find ``stty``.
+    """
+    if env is not None:
+        argv = [shutil.which(argv[0]) or argv[0], *argv[1:]]
     return subprocess.run(
         [*argv, "-c", script],
         capture_output=True,
         text=True,
         timeout=10,
         check=False,  # a non-zero exit IS the thing under test
+        env=env,
     )
 
 
@@ -264,6 +287,115 @@ def test_payload_carries_a_zsh_specific_clause():
     assert "eval " in payload, (
         "the zsh clause must use eval — a bare `export HISTFILE=...` aborts the "
         "line on zsh under readonly, reintroducing the stranded-handshake bug"
+    )
+
+
+# ---------------------------------------------------------------------------
+# The handshake's other statement: a device with no `stty`
+#
+# `handshake()` renders `stty -echo 2>/dev/null; echo <READY>`. `stty` is an
+# ORDINARY EXTERNAL COMMAND on the devices otto lands on, not a builtin, so a
+# stripped userland can simply not have it — and then the shell, not stty,
+# produces the diagnostic ("not found"). That message has to be swallowed by
+# the same `2>/dev/null`, and the line has to carry on to `echo <READY>`:
+# stdout and stderr are one merged stream on a PTY, so a leaked complaint is
+# parsed as command output, and a stranded READY hangs session startup until
+# it times out as "shell never became ready" — a working host reported
+# unreachable, blaming credentials.
+#
+# THE CONDITION IS INJECTED, NOT INHERITED. Every shell on every runner this
+# suite meets HAS stty (asserted below), so a test that merely ran the
+# handshake as-is could never exercise a shell that lacks it, whatever its
+# name claimed. The injection is an empty PATH, and it has one hole worth
+# naming: a BusyBox built with CONFIG_FEATURE_SH_STANDALONE resolves applets
+# INTERNALLY, so `stty` stays reachable there with no PATH at all. Ubuntu's
+# busybox is such a build (measured — see `_STANDALONE_SHELLS`), which is
+# exactly why the retired artifact harness had to delete `/bin/stty` from a
+# root it owned rather than edit an environment variable.
+# ---------------------------------------------------------------------------
+
+HANDSHAKE = BashFrame().handshake(SessionMarkers.for_session("cafef00d"))
+
+_STTY_PROBE = "command -v stty >/dev/null 2>&1 && echo FOUND || echo GONE"
+
+# Shells that resolve `stty` with no PATH, so an empty PATH is not a removal
+# there. Measured on this runner 2026-08-21: Ubuntu's busybox is a standalone
+# build, every other shell in the matrix answers GONE. Kept as a LIST OF NAMES
+# rather than probed per run, so a shell that quietly became standalone (or
+# stopped being one) reds `test_an_empty_path_is_what_makes_stty_unreachable`
+# instead of silently changing what the arm below covers.
+_STANDALONE_SHELLS = frozenset({"busybox-sh"})
+
+_STTY_ABSENT_SHELLS = [(name, argv) for name, argv in SHELLS if name not in _STANDALONE_SHELLS]
+
+
+def _stty_lookup(argv: list[str], env: "dict[str, str] | None" = None) -> str:
+    """``FOUND`` or ``GONE``, asked of the shell's own resolver rather than of us."""
+    return _run(argv, _STTY_PROBE, env=env).stdout.strip()
+
+
+@pytest.mark.parametrize(("name", "argv"), SHELLS, ids=[n for n, _ in SHELLS])
+def test_an_empty_path_is_what_makes_stty_unreachable(name: str, argv: list[str], tmp_path):
+    """The injection control for the arm below, one row per shell.
+
+    Both directions, because either one alone is satisfiable by an accident: a
+    runner with no ``stty`` at all would report GONE without the empty PATH
+    doing anything, and a standalone applet build reports FOUND however empty
+    the PATH is. Only the pair says "PATH is what removed it".
+
+    A shell that flips sides belongs on ``_STANDALONE_SHELLS`` with the reason
+    written down — not silently, which is what a per-run probe would allow.
+    """
+    assert _stty_lookup(argv) == "FOUND", (
+        f"{name}: this runner cannot find stty even with its ambient PATH, so "
+        f"removing it below removes nothing and the arm is inert"
+    )
+    expected = "FOUND" if name in _STANDALONE_SHELLS else "GONE"
+    assert _stty_lookup(argv, env={**os.environ, "PATH": str(tmp_path)}) == expected, (
+        f"{name}: with PATH pointed at an empty directory the shell answered the "
+        f"opposite of {expected!r}. Either it became a standalone applet build (add "
+        f"it to _STANDALONE_SHELLS and say so) or it stopped being one (remove it) — "
+        f"an unlisted standalone shell makes its row in the stty arm measure nothing"
+    )
+
+
+@pytest.mark.parametrize(
+    ("name", "argv"), _STTY_ABSENT_SHELLS, ids=[n for n, _ in _STTY_ABSENT_SHELLS]
+)
+def test_the_handshake_reaches_ready_when_stty_is_unreachable(name: str, argv: list[str], tmp_path):
+    """No stty: the shell's own "not found" must be swallowed and READY still land.
+
+    The claim is about the SURROUNDING LINE, not about stty working. otto never
+    needs the echo actually turned off to make progress — a session that reads
+    its own probe text back is noisy, not broken — but a session that never
+    sees READY is a host otto declares unreachable.
+    """
+    env = {**os.environ, "PATH": str(tmp_path)}
+    proc = _run(argv, HANDSHAKE, env=env)
+    assert SessionMarkers.for_session("cafef00d").ready in proc.stdout, (
+        f"{name}: the handshake never reached READY with stty unresolvable "
+        f"(rc={proc.returncode} stdout={proc.stdout!r} stderr={proc.stderr!r}) — a "
+        f"host on this shell would time out at startup as 'shell never became ready'"
+    )
+    assert proc.stderr == "", (
+        f"{name}: the shell's own 'not found' complaint leaked past the handshake's "
+        f"`2>/dev/null` ({proc.stderr!r}). On a PTY that text is merged into stdout "
+        f"and parsed as command output"
+    )
+
+
+def test_the_stty_arm_runs_on_the_shells_every_runner_has():
+    """A shrinking parametrization must never be why the arm above is green.
+
+    ``_STTY_ABSENT_SHELLS`` is filtered, and a filter that ate everything would
+    collect zero rows and report success. The baseline shells are required on
+    any machine that can run this suite, so they are the floor.
+    """
+    covered = {name for name, _ in _STTY_ABSENT_SHELLS}
+    assert set(_REQUIRED_SHELLS) <= covered, (
+        f"the stty-absent arm covers {sorted(covered)}, missing "
+        f"{sorted(set(_REQUIRED_SHELLS) - covered)}. Excluding a baseline shell "
+        f"leaves the arm resting on optional shells a runner may not have"
     )
 
 

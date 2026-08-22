@@ -630,7 +630,8 @@ class UserlandOptions:
     way: what exists is not what a spelling does.
 
     Measured 2026-08-14 -- ``rejected`` on all five matrix artifacts (1.16.1,
-    1.21.1, 1.28.1, 1.31.0, 1.35.0, Tier 2 rootfs), ``supported`` on OpenBSD
+    1.21.1, 1.28.1, 1.31.0, 1.35.0, in a BusyBox-only chroot), ``supported`` on
+    OpenBSD
     netcat 1.226. That split is the whole point: BusyBox is not the question,
     the netcat in front of otto is.
 
@@ -660,7 +661,7 @@ class UserlandOptions:
     undeclared, which a part-filled dict could not express without being read
     as a complete answer.
 
-    Measured on the five matrix artifacts, 2026-08-14 (Tier 2 rootfs):
+    Measured on the five matrix artifacts, 2026-08-14, in a BusyBox-only chroot:
     ``base64`` is absent on 1.16.1 and present on 1.21.1 and later — the
     transition the ``shell`` transfer backend's codec choice turns on."""
 

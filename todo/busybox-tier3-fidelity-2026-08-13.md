@@ -105,3 +105,26 @@ is Tier 3's, but any remote or CI-shape change here should settle it.
 - `docs/superpowers/plans/2026-08-13-busybox-phase-5-tier3-and-gap-registry.md`
   — phase 5's plan, whose "Measured inputs" table is the evidence base for the
   numbers quoted above.
+
+## Addendum, 2026-08-21 — after the bed migration branch
+
+The bed-and-tier-migration branch (Phase B) retired the dropbear/rootfs rig
+this document describes; `tests/_fixtures/busybox_dropbear.py` and the other
+files cited above no longer exist. The citations stand as history. Open items
+that survive that branch, queued here so they are not lost:
+
+- **BusyBox `nc` dialect** (Chris ruling, 2026-08-21): otto's nc backend
+  cannot round-trip with any BusyBox userland (`-N` rejected on get; OpenBSD
+  listener spelling on put). The bed pins the loud get-refusal as the
+  contract; making nc WORK is its own brainstorm→spec, with the five live
+  guests as the measurement instrument.
+- **Interrupted shell PUT leaves an inert staged temp** on the device
+  (`<dest>.otto-<uuid>`): `_cleanup_temp` never runs after cancellation. A
+  shielded cleanup is the candidate fix; the chaos suite characterizes the
+  behavior without pinning either direction.
+- **Bed probe ergonomics** (final-review F2 + m11): `_require_guest` and the
+  `transfer_host` busybox arm use a raw TCP connect probe that calls a
+  booting guest healthy; a login-grade probe would name the guest earlier.
+- **`chaos_lane` group-spelling exposure** (m29): ten literal spellings, no
+  shared constant, no runtime guard — same shape `busybox_bed` was given in
+  the migration branch; wants the same treatment.

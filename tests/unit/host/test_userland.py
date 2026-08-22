@@ -98,10 +98,10 @@ _P_NC = "command -v nc"
 _P_NC_DASH_N = '[ "$(nc 2>&1 </dev/null)" = "$(nc -N 2>&1 </dev/null)" ]'
 
 # The applet batch. THIS FILE'S OWN COPY of the spelling, like every other
-# constant above -- the product builds it in `_applet_probe_command` and Tier 2
-# measures it against real binaries in
-# `tests/busybox/test_applet_resolution.py`, and all three have to agree
-# without importing one another.
+# constant above -- the product builds it in `_applet_probe_command` and the
+# live bed measures it against real binaries in
+# `tests/integration/busybox_bed/test_applet_userland.py`, and all three have
+# to agree without importing one another.
 #
 # The one probe here whose spelling is not a fixed string: it is built from the
 # list of names still open, so the helper takes that list. That is the O(1)
@@ -920,9 +920,9 @@ class _Device:
     ABSENT-BY-DEFAULT for anything a row does not list, unlike ``expected``,
     which every row must fill in completely. That asymmetry is deliberate and
     it is not a weaker claim about hardware: what a real matrix row answers is
-    pinned per row and per applet in Tier 2
-    (``tests/busybox/test_applet_resolution.py``, which reds with a ``KeyError``
-    on an applet nobody recorded). These rows script a DEVICE for the resolver
+    pinned per row and per applet on the live guests
+    (``tests/integration/busybox_bed/test_applet_userland.py``, which reds with
+    a ``KeyError`` on an applet nobody recorded). These rows script a DEVICE for the resolver
     to talk to, and a new applet nobody has scripted is one the scripted device
     does not have.
     """
@@ -960,7 +960,7 @@ _DEVICES = [
             "shell_dialect": "ash",
             "nc_dash_n": "rejected",
         },
-        # Measured 2026-08-14, Tier 2 rootfs: no `base64`, no `scp`, no
+        # Measured 2026-08-14 in a BusyBox-only chroot: no `base64`, no `scp`, no
         # `shutdown`; `nc`, `poweroff` and both uu halves are there. The row
         # that makes uu the only measured codec path.
         applets=frozenset({"nc", "poweroff", "uudecode", "uuencode"}),
@@ -1880,7 +1880,8 @@ async def test_the_whole_applet_list_costs_exactly_one_round_trip():
 
     ``busybox --list`` is why this is a batched loop rather than an
     enumeration: measured, it exits 1 with ``--list: applet not found`` on
-    1.16.1 (see ``tests/busybox/test_applet_resolution.py``), so four of the
+    1.16.1 (see ``tests/integration/busybox_bed/test_applet_userland.py``), so four
+    of the
     five matrix rows would answer and the oldest would report nothing.
     """
     assert len(PROBED_APPLETS) > 1, "a one-name list cannot distinguish O(1) from O(n)"

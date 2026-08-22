@@ -42,6 +42,24 @@ if TYPE_CHECKING:
     from .transport import HopTransport
 
 
+@dataclass(frozen=True, slots=True)
+class TelnetTarget:
+    """Where a telnet client must dial to reach a device.
+
+    Two fields that are easy to swap and impossible to tell apart once they
+    are a bare pair — a hostname that is sometimes the device and sometimes
+    ``"localhost"``, and a port that is sometimes the console's and sometimes
+    an ephemeral local one. Naming them is what makes a caller's mistake
+    visible at the call site rather than at connect time.
+    """
+
+    host: str
+    """The address to dial -- the device's own ip, or ``"localhost"`` when tunnelled."""
+
+    port: int
+    """The port to dial -- ``telnet_options.port``, or the forwarded local port."""
+
+
 @dataclass(frozen=True)
 class TermContext:
     """Construction inputs a UnixHost provides to build its connection backend.
@@ -419,6 +437,40 @@ class ConnectionManager:
             logger.debug(f"FTP connected to {self._name}")
             return client
 
+    async def telnet_target(self) -> TelnetTarget:
+        """Where a NEW telnet client must dial to reach this device.
+
+        The device's own ip and ``telnet_options.port`` when it is directly
+        reachable; ``"localhost"`` and a forwarded local port when it sits
+        behind a hop, whose console is only reachable through the tunnel.
+
+        This exists as a method — rather than as the six inline lines it
+        replaces — because it had TWO callers and only one of them made the
+        decision. :meth:`telnet` (the default session's transport) forwarded;
+        ``SessionManager.open_session`` (every NAMED session, and therefore the
+        whole telnet exec pool that backs ``UnixHost.exec`` and the nc
+        transfers) hand-rolled ``TelnetClient(connections.ip, ...)`` with no
+        forward and no ``connect_port``. For a hop-fronted telnet host that
+        dials the address literally: the BusyBox bed guests advertise
+        ``127.0.0.1:2316``, which IS the guest as seen from carrot and is the
+        machine running otto as seen from here, so every exec attempt died on
+        ``ConnectionRefusedError`` against the dev VM's own loopback while
+        ``run`` worked perfectly (measured 2026-08-21 against bb1350).
+
+        The defect was invisible until this bed existed. otto's other
+        hop-fronted telnet devices are the Zephyr consoles, which are
+        single-client and only ever use the default session; the BusyBox guests
+        are the first that both sit behind a hop and open named sessions.
+
+        Forwards are cached per destination by
+        :meth:`~otto.host.transport.SshHopTransport.forward_port`, so a pool of
+        exec sessions shares one listener rather than taking one each.
+        """
+        remote_port = self._telnet_options.port
+        if self._hop is not None:
+            return TelnetTarget("localhost", await self._forward_port(remote_port))
+        return TelnetTarget(self._ip, remote_port)
+
     async def telnet(self) -> TelnetClient:
         """Return the live TelnetClient, opening it if needed.
 
@@ -442,21 +494,14 @@ class ConnectionManager:
                 return self._telnet_conn
 
             user, password = self.credentials
-            remote_port = self._telnet_options.port
-            if self._hop is not None:
-                local_port = await self._forward_port(remote_port)
-                connect_host = "localhost"
-                connect_port = local_port
-            else:
-                connect_host = self._ip
-                connect_port = remote_port
+            target = await self.telnet_target()
             logger.debug(f"Connecting to {self._name} via telnet")
             client = TelnetClient(
-                connect_host,
+                target.host,
                 user=user,
                 password=password or "",
                 options=self._telnet_options,
-                connect_port=connect_port,
+                connect_port=target.port,
             )
             # Don't publish the cached attribute until ``connect()`` succeeds.
             # ``connect()`` runs login (~1 s on real hardware), and a caller-

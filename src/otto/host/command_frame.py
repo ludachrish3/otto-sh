@@ -336,26 +336,26 @@ class AshFrame(BashFrame):
 
     The override set is EMPTY, and that is a measured result, not an
     omission. All four payloads `BashFrame` renders — `handshake`, `frame`,
-    `recover`, `quiet_history` — were run under real BusyBox ash across the
-    artifact matrix (1.16.1, 1.21.1, 1.28.1, 1.31.0, 1.35.0), inside a
-    chrooted BusyBox-only root, and every one satisfied the contract those
-    payloads make: markers in order around a command's own output, `$?`
-    baked correctly into both the END marker (exit 0, 3, 42, and
-    `/bin/false`'s own exit status 1 — a real applet exec'd through its
-    `--install -s` symlink, not a subshell-synthesized literal; a bare
-    `false` resolves to ash's own shell builtin instead and never reaches
-    it, which is why the test spells this case by absolute path) and the
-    RECOVER marker, the handshake reaching READY with
-    `/bin/stty` both present and deleted, and the shell still alive and
-    `$HISTFILE` actually set to `/dev/null` after history suppression. No
-    bash arm runs in that rootfs tier — it is a single-shell contract check
+    `recover`, `quiet_history` — run under real BusyBox ash across the
+    version matrix (1.16.1, 1.21.1, 1.28.1, 1.31.0, 1.35.0), and every one
+    satisfies the contract those payloads make: markers in order around a
+    command's own output with no sentinel bleed, `$?` baked correctly into
+    both the END marker and the RECOVER marker, the handshake reaching
+    READY, and the shell still alive with `$HISTFILE` set to `/dev/null`
+    after history suppression. The measurements live in
+    `tests/integration/busybox_bed/test_session_frame.py`, which drives one
+    telnet session per version into a booted guest. The `stty`-ABSENT arm of
+    the handshake is the one thing that cannot be measured there — removing
+    an applet would mutate a shared live guest — so it is injected into real
+    shells at unit level instead, in
+    `tests/unit/host/test_history_suppression_portability.py`.
+
+    No bash arm runs on those guests — it is a single-shell contract check
     against real ash, not a differential — so the separate claim that ash's
     payloads match bash's byte for byte rests on a different, unit-level
     test that compares `AshFrame`'s emitted strings directly against
     `BashFrame`'s: `test_ash_inherits_bashs_marker_scheme_rather_than_restating_it`
-    in `tests/unit/host/test_command_frame.py`. See
-    `tests/busybox/test_ash_frame_payloads.py` for the rootfs measurements
-    themselves.
+    in `tests/unit/host/test_command_frame.py`.
 
     One real divergence turned up: ash's `set` has no `+o history` option at
     all and rejects it outright (`illegal option +o history`) on every row.
@@ -365,10 +365,11 @@ class AshFrame(BashFrame):
     override needed because the rejection is tolerated by design" is the
     honest claim; it is not the same as "nothing differs".
 
-    What the measurement does NOT cover: it drives a non-interactive shell
-    over a pipe, with no controlling tty. Interactive echo and history
-    behavior (a real terminal, a real HISTFILE actually being written) are
-    unmeasured by this tier and may still diverge.
+    What the measurement does NOT cover: a human-interactive session. The
+    guests answer over a real pty (telnet login), which is what the earlier
+    chroot-and-pipe measurement could not offer, but otto still drives them
+    programmatically — so a real terminal's history file actually being
+    written stays unmeasured and may still diverge.
 
     The class exists anyway, for two reasons that outlive the empty body. It
     gives lab data a truthful name — a host declaring `ash` is documented as

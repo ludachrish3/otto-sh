@@ -120,23 +120,26 @@ shell-builtin variable read), and ``checksum`` (``Userland._probe_checksum``'s
 own docstring: one spelling, not a contested pair) have no such question, so
 Tier 1 carries no copy of theirs and the two-copy rule applies to them
 instead. ``checksum``'s OUTPUT format (lowercase hex, matching
-``hashlib.md5().hexdigest()``) is substantiated a different way: Tier 1's
-``tests/busybox/test_shell_codec_contracts.py`` runs a real ``md5sum
-/tmp/payload.bin`` (not this module's ``< /dev/null`` probe spelling) across
-the matrix and compares its first field byte-for-byte -- presence and format,
-not this exact probe command.
+``hashlib.md5().hexdigest()``) is substantiated a different way, and no longer
+by a probe of its own: the ``shell`` backend VERIFIES every transfer by
+comparing a device-side ``md5sum`` against a locally accumulated
+:func:`hashlib.md5` digest, so each live round trip in
+``tests/integration/busybox_bed/test_shell_codec.py`` is that comparison
+succeeding on a real device -- presence and format, and a stronger witness
+than a probe command could be.
 
-THE APPLET BATCH'S THIRD COPY IS TIER 2, NOT TIER 1, and that is a property of
-what it asks rather than a filing choice. ``_applet_probe_command`` is a
-shell CONSTRUCT (``for``/``command -v``/``&&``/``||``/``>/dev/null``) whose
-answer is "is there an applet by this name", and Tier 1 cannot substantiate an
-ABSENCE structurally: it SCOPES PATH to a directory of symlinks it wrote
-itself, so a missing applet is missing because Tier 1 did not shim it. Tier 2
-builds a root whose ``/bin`` came from BusyBox's own ``--install -s``, so a
-name that is not there was compiled out. The copy therefore lives in
-``tests/busybox/test_applet_resolution.py``, which already measured
-``command -v base64`` that way, and the three-copy rule holds with that file
-in Tier 1's place.
+THE APPLET BATCH'S THIRD COPY IS THE LIVE BED, NOT TIER 1, and that is a
+property of what it asks rather than a filing choice. ``_applet_probe_command``
+is a shell CONSTRUCT (``for``/``command -v``/``&&``/``||``/``>/dev/null``)
+whose answer is "is there an applet by this name", and Tier 1 cannot
+substantiate an ABSENCE structurally: it SCOPES PATH to a directory of
+symlinks it wrote itself, so a missing applet is missing because Tier 1 did
+not shim it. A booted guest's ``/bin`` came from BusyBox's own
+``--install -s``, so a name that is not there was compiled out. The copy
+therefore lives in
+``tests/integration/busybox_bed/test_applet_userland.py``, whose pin-less
+recon runs THIS module's own probe text against five real userlands, and the
+three-copy rule holds with that file in Tier 1's place.
 
 **The other half of this module is the GAP REGISTRY** (:class:`Gap`,
 :data:`GAPS`, :func:`gap_for`, :func:`refuse_if_gapped`, at the bottom of the
@@ -479,10 +482,10 @@ a probe that measured nothing.
 ``echo`` is the control because it is a SHELL BUILTIN -- ``command -v echo``
 answers 0 with no dependence on ``PATH``, on an applet symlink, or on
 ``CONFIG_FEATURE_SH_STANDALONE``, so a zero for it can only mean the primitive
-itself did not work. Measured 1 on all five matrix rows (2026-08-14, Tier 2
-rootfs). :meth:`Userland._probe_applets` discards the whole batch when it comes
-back anything else, which leaves the capabilities UNASKED rather than answered
--- see ``_UNASKABLE_DEFAULTS``.
+itself did not work. Measured 1 on all five matrix rows (2026-08-14, in a
+BusyBox-only chroot). :meth:`Userland._probe_applets` discards the whole batch
+when it comes back anything else, which leaves the capabilities UNASKED rather
+than answered -- see ``_UNASKABLE_DEFAULTS``.
 """
 
 
@@ -495,8 +498,8 @@ def _applet_probe_command(applets: "list[str]") -> str:
     path ``_RETRY_COOLDOWN_S`` exists to protect -- against a server that
     REFUSES excess channels rather than queueing them.
 
-    WHAT THAT IS WORTH, measured 2026-08-14 over the Tier 3 transport (real
-    ssh, rootless dropbear on loopback, BusyBox 1.35.0, connection already
+    WHAT THAT IS WORTH, measured 2026-08-14 over the since-retired dropbear rig
+    (real ssh, rootless dropbear on loopback, BusyBox 1.35.0, connection already
     warm): the batch answered all seven names in a median 10.7 ms, while seven
     separate ``command -v`` execs cost a median 61.2 ms -- 5.7x, and that is
     the FLOOR of the saving rather than a typical figure, because loopback has
@@ -507,13 +510,16 @@ def _applet_probe_command(applets: "list[str]") -> str:
 
     ENUMERATION IS NOT AVAILABLE, which is why this is per-name detection at
     all. ``busybox --list`` does not exist on 1.16.1: measured, it exits 1 with
-    ``--list: applet not found`` and enumerates nothing (the same finding that
-    made ``tests/_fixtures/busybox_rootfs.py`` build its root with
-    ``--install -s``). It works on the other four rows, so a probe built on it
-    covers four fifths of the matrix and reports success.
+    ``--list: applet not found`` and enumerates nothing -- re-measured on the
+    live guests by
+    ``tests/integration/busybox_bed/test_applet_userland.py``'s
+    ``test_applet_enumeration_is_unavailable_on_the_oldest_row``, and the same
+    finding that makes every guest image populate ``/bin`` with
+    ``--install -s`` instead. It works on the other four rows, so a probe built
+    on it covers four fifths of the matrix and reports success.
 
-    ``command -v``, MEASURED rather than assumed, 2026-08-14, in the Tier 2
-    rootfs on all five matrix rows. It answered correctly on every one --
+    ``command -v``, MEASURED rather than assumed, 2026-08-14, in a BusyBox-only
+    chroot on all five matrix rows. It answered correctly on every one --
     ``base64`` absent on 1.16.1 alone, ``scp`` and ``shutdown`` absent on all
     five, ``nc``/``poweroff``/``uuencode``/``uudecode`` present on all five.
     ``which`` and the ``type`` builtin answered identically on those same five
@@ -1107,7 +1113,7 @@ class Userland:
         destination, and a hang is bounded by ``_send``'s grant anyway.
 
         MEASURED, 2026-08-14, before it was written into this module. All five
-        Tier 2 matrix artifacts (1.16.1, 1.21.1, 1.28.1, 1.31.0, 1.35.0) answer
+        matrix artifacts (1.16.1, 1.21.1, 1.28.1, 1.31.0, 1.35.0) answer
         REJECTED; OpenBSD netcat 1.226 answers SUPPORTED, and answers REJECTED
         for the ``-Q`` control. ``tests/busybox/test_applet_contracts.py``
         carries the Tier 1 copy of the spelling, per row.
@@ -2357,19 +2363,21 @@ GAPS: list[Gap] = [
             "being the cheaper shape on the wire."
         ),
         measured_on=(
-            "BusyBox 1.16.1 ships no `base64` applet -- `tests/busybox/"
-            "test_applet_resolution.py`'s `_EXPECTED_BASE64` records False for that row "
-            "and `tests/busybox/test_shell_codec_contracts.py`'s `_EXPECTED_BASE64_FLAG` "
-            "records None, while 1.21.1 and every later matrix row decode with `-d`"
+            "BusyBox 1.16.1 ships no `base64` applet -- `tests/integration/busybox_bed/"
+            "test_applet_userland.py`'s `_EXPECTED_BASE64` records False for that row "
+            "and `tests/integration/busybox_bed/test_shell_codec.py`'s "
+            "`_EXPECTED_BASE64_FLAG` records None, while 1.21.1 and every later matrix "
+            "row decode with `-d`"
         ),
         queued_for=(
-            "nothing for the codec itself -- `todo/busybox-parity-sweep-2026-08-11.md`'s "
-            "uu item is built and covered per row in "
-            "`tests/busybox/test_shell_codec_contracts.py`. What remains queued is the "
-            "PTY path: a `term: telnet` BusyBox host routes this backend through a pooled "
-            "shell session whose line editor truncates at 1022 characters (the "
-            "`run-command-line-length` record), and neither codec's chunk command has "
-            "been measured there"
+            "nothing -- `todo/busybox-parity-sweep-2026-08-11.md`'s uu item is built and "
+            "covered per row in `tests/integration/busybox_bed/test_shell_codec.py`, and "
+            "the PTY path that used to be queued here is measured: a `term: telnet` "
+            "BusyBox host routes this backend through a pooled shell session whose line "
+            "editor truncates at 1022 characters (the `run-command-line-length` record), "
+            "so PUT now SIZES its chunk lines to that budget, and multi-chunk round "
+            "trips run over telnet on all five guests -- uuencode on 1.16.1, base64 on "
+            "the rest"
         ),
         paths=[
             GapPath(
@@ -2441,8 +2449,9 @@ GAPS: list[Gap] = [
             "already become, each off by two, in a string that renders into the "
             "operator's own error message. The DESTRUCTIVE half was "
             "measured directly, 2026-08-14, running the 1.16.1 artifact's own ash with "
-            "`PATH=/nonexistent` (the isolation `tests/busybox/"
-            "test_applet_resolution.py` records): `echo aGk= | base64 -d > <file>` "
+            "`PATH=/nonexistent`, the isolation that makes a missing applet genuinely "
+            "unreachable on a build that is not a standalone shell: "
+            "`echo aGk= | base64 -d > <file>` "
             "against a 17-byte file answered rc=127 `sh: base64: not found` and left "
             "that file at 0 bytes, since the shell opens the redirect before it "
             "resolves the command. `>>` (otto's `append=True`) left it intact"
@@ -2451,8 +2460,10 @@ GAPS: list[Gap] = [
             "the REFUSAL has landed, in `otto.host.file_ops.refuse_if_base64_is_absent` "
             "-- this registry's third product call site, and the first whose predicate "
             "is a probe rather than a declaration. A FIX is still the full-parity "
-            "workstream's, `todo/busybox-parity-sweep-2026-08-11.md`: the codec probe "
-            "queued for `shell-transfer-base64` is what these two would read, so the "
+            "workstream's, `todo/busybox-parity-sweep-2026-08-11.md`: the codec "
+            "SELECTION that landed for `shell-transfer-base64` -- "
+            "`ShellFileTransfer._select_codec`, which degrades to `uuencode` on a "
+            "settled `base64` absence -- is what these two would need to read, so the "
             "two are one change and not two. The record stays `measured-broken` because "
             "the surface still is -- otto now declines the operation instead of "
             "emitting one it cannot run"
@@ -2528,8 +2539,8 @@ GAPS: list[Gap] = [
                     "but NOT live on the flagship image: measured 2026-08-14 against "
                     "`alpine:3.20`, BusyBox 1.36.1 ships `/bin/base64` and a `base64 | "
                     "base64 -d` round trip returns its input, matching the matrix "
-                    "(`tests/busybox/test_applet_resolution.py` records `base64` absent on "
-                    "1.16.1 alone). What is exposed is an image with the applet compiled "
+                    "(`tests/integration/busybox_bed/test_applet_userland.py` records `base64` "
+                    "absent on 1.16.1 alone). What is exposed is an image with the applet compiled "
                     "out. Wiring it is held for the same shared-hook reason as `LocalHost` "
                     "-- see `UserlandHost` -- with one cost that is this class's own: every "
                     "probe is a `docker exec` dispatched as one exec channel on the PARENT, "
@@ -2560,11 +2571,14 @@ GAPS: list[Gap] = [
         ),
         measured_on=(
             "TWO measurements of the same device, and the second is what the message keys "
-            "on. Tier 3, 2026-08-13: an `sftp` session into the pinned BusyBox root fails "
+            "on. The dropbear rig, 2026-08-13: an `sftp` session into the pinned BusyBox "
+            "root fails "
             "with `/bin/sh: /usr/lib/sftp-server: not found` -- ash inside the chroot, "
-            "not the host's shell (`tests/busybox/test_tier3_session.py::"
-            "test_sftp_and_scp_are_both_refused_inside_the_root`, driven by `sftp(1)`). "
-            "Then otto's OWN backend against that same tier, 2026-08-14: "
+            "not the host's shell (driven by `sftp(1)` against a dropbear this repo "
+            "grafted onto that chroot; the rig has since been retired and the live "
+            "BusyBox bed is telnet-only by design, so this half is a standing "
+            "measurement rather than a re-runnable test). "
+            "Then otto's OWN backend against that same dropbear rig, 2026-08-14: "
             "`UnixHost.put` on a host built with `transfer: sftp` raises "
             "`asyncssh.sftp.SFTPConnectionLost: 0 bytes read on a total of 4 expected "
             "bytes` in 22ms, having moved no bytes and left nothing behind on either side "
@@ -2575,7 +2589,10 @@ GAPS: list[Gap] = [
         ),
         queued_for=(
             "nothing for a fix, deliberately: the `shell` backend is the answer for these "
-            "devices and it is verified over real ssh in Tier 3 (spec exit criterion 3). "
+            "devices and it is verified end to end on five live BusyBox guests "
+            "(`tests/integration/busybox_bed/test_shell_codec.py`). The criterion-3 "
+            "proof originally ran over real ssh against a dropbear rig that has since "
+            "been retired; the guests carry it over telnet instead. "
             "What HAS landed is the ATTRIBUTION, in "
             "`otto.host.transfer.sftp.open_sftp_or_attribute`. Note what deliberately did "
             "NOT land, because the absence is the finding: there is no pre-emptive refusal "
@@ -2641,20 +2658,22 @@ GAPS: list[Gap] = [
             "backend"
         ),
         measured_on=(
-            "TWO measurements, and the second is what the refusal keys on. Tier 3, "
-            "2026-08-13: `scp -O` into the pinned BusyBox root fails with "
+            "TWO measurements, and the second is what the refusal keys on. The dropbear "
+            "rig, 2026-08-13: `scp -O` into the pinned BusyBox root fails with "
             "`/bin/sh: scp: not found`, and the file does not land -- same test as "
             "`sftp-transfer`; the two take different routes on purpose, since `scp -O` "
             "reaches for a remote binary while `sftp` opens a subsystem. Then the five "
             "matrix artifacts through the batched applet probe, 2026-08-14: `scp` is "
             "absent from the applet list on 1.16.1, 1.21.1, 1.28.1, 1.31.0 and 1.35.0 "
-            "(`tests/busybox/test_applet_resolution.py` records it per row). The first "
-            "measurement is what a device DOES; the second is what a device can be ASKED, "
+            "(`tests/integration/busybox_bed/test_applet_userland.py` records it per row). The "
+            "first measurement is what a device DOES; the second is what a device can be "
+            "ASKED, "
             "and only the second can be read at a call site"
         ),
         queued_for=(
             "nothing for a fix, deliberately: the `shell` backend is the answer for these "
-            "devices and it is verified over real ssh in Tier 3 (spec exit criterion 3), "
+            "devices and it is verified end to end on five live BusyBox guests "
+            "(`tests/integration/busybox_bed/test_shell_codec.py`), "
             "and there is no second spelling to adapt to -- `ScpOptions` carries no "
             "binary-name override, and the name the far side runs is the legacy protocol's "
             "rather than otto's. What HAS landed is the REFUSAL, in "
@@ -2817,8 +2836,10 @@ GAPS: list[Gap] = [
         ),
         measured_on=(
             "the five matrix artifacts, 2026-08-13. `bash` is not an applet on any row, "
-            "and Tier 3 measures the pinned root as having no `/usr/bin` at all "
-            "(`tests/busybox/test_tier3_session.py`). Running the wrapper body under "
+            "and the guests carry no `/usr/bin` at all -- "
+            "`tests/integration/busybox_bed/test_guest_smoke.py`'s "
+            "`test_no_gnu_userland_hides_behind_the_guest` re-measures that per row. "
+            "Running the wrapper body under "
             "each row's own ash instead: 1.16.1 and 1.21.1 answer `ash: exec: line 1: "
             "-a: not found`, having no `exec -a`; 1.28.1, 1.31.0 and 1.35.0 DO parse "
             '`exec -a` and then mis-expand `"${@:2}"` into a substring of `$1` -- with '
@@ -2897,7 +2918,8 @@ GAPS: list[Gap] = [
             "the five matrix artifacts, 2026-08-13, re-measured through the batched applet "
             "probe 2026-08-14: `shutdown` is absent from the applet list on 1.16.1, "
             "1.21.1, 1.28.1, 1.31.0 and 1.35.0, while `reboot` and `poweroff` are present "
-            "on all five (`tests/busybox/test_applet_resolution.py` records it per row). "
+            "on all five (`tests/integration/busybox_bed/test_applet_userland.py` records it "
+            "per row). "
             "BusyBox will only run an applet its own list carries, so the list is the whole "
             "answer here -- and it is also why the choice always has somewhere to go: no "
             "measured row is refused by this record"
@@ -3074,29 +3096,35 @@ GAPS: list[Gap] = [
         ),
         measured_on="",
         queued_for=(
-            "Tier 3 fidelity item C, `todo/busybox-tier3-fidelity-2026-08-13.md`: run "
-            "the phase-5 harness against a period-appropriate dropbear instead of "
-            "2022.83. Two things it must measure first -- whether an old dropbear even "
-            "builds on a modern toolchain, and whether `ssh_options` really suffices"
+            "Tier 3 fidelity item C, `todo/busybox-tier3-fidelity-2026-08-13.md`: measure a "
+            "period-appropriate dropbear instead of 2022.83. NOTE WHAT MOVED UNDER "
+            "THAT ITEM: the phase-5 harness it named has been retired, and the live "
+            "BusyBox guests that replaced it run no ssh daemon at all, so closing "
+            "this now needs a rig of its own. Two things it must measure first -- "
+            "whether an old dropbear even builds on a modern toolchain, and whether "
+            "`ssh_options` really suffices"
         ),
     ),
     Gap(
         surface="busybox-over-a-real-network",
         status=UNTESTED,
         reason=(
-            "no BusyBox target is exercised over a real network path. Every tier is "
-            "local: Tier 1 runs the artifact as a subprocess, Tiers 2 and 3 run it "
-            "inside an unprivileged namespace on loopback. Loopback has a ~64 KB MTU and "
-            "no real latency, so nothing measured so far can surface an interaction "
-            "between the transfer's chunking and a real path's MTU, window or timeouts. "
-            "Untested, therefore not blocked"
+            "no BusyBox target is exercised over a real network path. The artifact tier "
+            "runs the binary as a local subprocess, and the live BusyBox guests answer "
+            "through QEMU's user-mode networking behind a hop -- so the last leg to "
+            "the device is emulated, with no real latency, MTU or loss on it. Nothing "
+            "measured so far can surface an interaction between the transfer's "
+            "chunking and a real path's MTU, window or timeouts. Untested, therefore "
+            "not blocked"
         ),
         measured_on="",
         queued_for=(
-            "Tier 3 fidelity item B, `todo/busybox-tier3-fidelity-2026-08-13.md`: let "
-            "the harness aim at a remote host when one is configured, defaulting to "
-            "loopback. Option A (a real BusyBox lab VM) is declined for now -- it needs "
-            "VM provisioning, which is not this workstream's call"
+            "Tier 3 fidelity item B, `todo/busybox-tier3-fidelity-2026-08-13.md`: aim a "
+            "BusyBox target across a physical link. The harness that item would have "
+            "extended is retired, and the bed that replaced it moved the target only "
+            "part of the way -- otto reaches the guests over the lab network, but the "
+            "last hop into each one is emulated. What is left to close this is a "
+            "BusyBox device on a real NIC"
         ),
     ),
 ]

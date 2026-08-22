@@ -102,6 +102,26 @@ resolution anchors on it exactly as `basil_seed` anchors the sprout entries.
   host-double machinery, and the qemu-user-static execution path for tests.
   **Retained:** `busybox.py`'s fetch/pin/verify layer (now the image-build
   input) and `busybox_pins.json`.
+- **First-party parity (Chris, 2026-08-21, governing principle):** BusyBox
+  is a first-party OS, like Linux and Zephyr, and gets the same test rigor.
+  The PRIMARY migration vehicle is therefore parameterizing the guests into
+  the **existing** unix suites, not building a parallel bespoke tree: a
+  `_BUSYBOX_BACKEND_NE` map (the `_ZEPHYR_BACKEND_NE` precedent in
+  `tests/conftest.py`) exposes the guests as `host1` backend ids, and the
+  shared host/transfer contract suites — **especially the netcat
+  file-transfer tests, and the stability and chaos lanes** where the suite's
+  premise applies — gain BusyBox rows. (The netcat clause is SUPERSEDED —
+  see the amendment at the end of this section.) Dedicated `busybox_bed` modules
+  remain only for assertions with no generic-contract home: the per-version
+  applet/codec-spelling matrices, banner gates, and other version-sensitive
+  contracts. The plan enumerates which suites take which guests (a slow
+  five-TCG-guest family may anchor broad sweeps on a trimmed subset the way
+  the Zephyr matrix deliberately trims, with the full five on the suites
+  where version variance is the point — transfers above all, and every
+  assertion about process RECOVERY: cleanup-after-cancel, listener
+  reaping, and orphan hygiene sweep all five versions, because recovery
+  rides version-variant applet semantics; only pure endurance anchors on
+  the version edges).
 - **Lane placement:** the migrated tests are bed tests. They join the
   bed-lane markers and run where bed tests run (`make coverage`'s unix lane,
   stability lanes as appropriate), excluded from hostless lanes like every
@@ -119,12 +139,32 @@ resolution anchors on it exactly as `basil_seed` anchors the sprout entries.
   and doubling as the image-build input workflow;
   `docs/guide/hosts/busybox.md` is updated to describe the guests, the
   recovery target, and the split (CI = artifact tier, bed = behavior).
+- **Amendment (Chris, 2026-08-21) — two rulings taken during
+  implementation, recorded here so the approved design matches what
+  shipped:**
+  - **netcat parity is the REFUSAL contract, not round-trips.** The nc
+    clause above is superseded. BusyBox `nc` dialects vary by version enough
+    that round-trip rows would pin a dialect survey rather than otto's
+    behavior; this phase pins the loud `get` refusal on all five guests, and
+    the round-trips belong to a follow-up "busybox nc dialect" spec.
+  - **The shell PUT pty line-budget fix is IN SCOPE for this phase.** A
+    `term: telnet` guest routes the `shell` backend through a pooled session
+    whose line editor truncates at 1022 characters, so PUT sizes its chunk
+    lines to that budget here rather than deferring it.
 
 ## 6. Health, recovery, and operations
 
 - `scripts/lab_health.py` gains the BusyBox units (status + restart), on the
   designated VM, alongside the Zephyr ones; `make qemu-restart` recovers the
   whole bed in one command; `make vm-health` reports both beds.
+- **The health probe authenticates (Phase B):** the guests' lab creds are in
+  their entries from day one; the hop-side probe logs in over telnet with
+  them and reads `/proc/uptime`, so the `bb*` rows report real uptime like
+  the Zephyr rows do — and a broken credential bake (a bad `/etc/shadow` in
+  an image) fails `vm-health` by name instead of surfacing as the first bed
+  test's login failure. An unanswered login falls back to the current
+  `login prompt` / `WEDGED` sightings, so the unauthenticated states remain
+  distinguishable.
 - The journald window is the diagnosis path (documented next to the Zephyr
   wedge post-mortem pattern): inspect before restarting when a guest wedges.
 - Provisioning is idempotent: re-running `vagrant provision` on the

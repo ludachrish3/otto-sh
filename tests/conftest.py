@@ -1024,6 +1024,52 @@ _ZEPHYR_BACKEND_NE: dict[str, str] = {
 # suites so the parametrize lists stay in lockstep with the lab matrix.
 EMBEDDED_BACKENDS: list[str] = list(_ZEPHYR_BACKEND_NE)
 
+# Mapping from `host1` parametrize value -> the BusyBox bed guest's lab `ne`.
+# First-party parity (spec 2026-08-20 §5): the guests ride the same
+# backend machinery as the Zephyr matrix. One id per pinned milestone
+# version; the ne encodes the version (bb1161 = 1.16.1).
+_BUSYBOX_BACKEND_NE: dict[str, str] = {
+    "busybox_1161": "bb1161",
+    "busybox_1211": "bb1211",
+    "busybox_1281": "bb1281",
+    "busybox_1310": "bb1310",
+    "busybox_1350": "bb1350",
+}
+
+# Ordered list of BusyBox bed backend ids — imported by the integration
+# suites (and the xdist family grouping) exactly as EMBEDDED_BACKENDS is, so
+# the guest matrix is defined here and nowhere else.
+BUSYBOX_BACKENDS: list[str] = list(_BUSYBOX_BACKEND_NE)
+
+# Ordered list of the guests' lab `ne` values — the OTHER spelling a test
+# parameter can name a guest by, and the one `transfer_host` takes (a
+# transfer's param says which BOX, not which host1 backend id, so the `ne`
+# reads as what it is). Same order as BUSYBOX_BACKENDS, from the same dict.
+BUSYBOX_GUEST_NES: list[str] = list(_BUSYBOX_BACKEND_NE.values())
+
+# Every string by which a test parameter can name a BusyBox bed guest, in one
+# place. The xdist family grouping in `tests/integration/host/conftest.py`
+# searches param VALUES against this rather than against either spelling
+# alone: `host1` rows arrive as backend ids (`busybox_1161`) and
+# `transfer_host` rows arrive as `ne`s inside a tuple (`("shell", "bb1161")`),
+# and a row that matched neither would silently leave the family group and put
+# a second worker on the two TCG cores all five guests share.
+BUSYBOX_PARAM_TOKENS: frozenset[str] = frozenset(BUSYBOX_BACKENDS) | frozenset(BUSYBOX_GUEST_NES)
+
+# The one xdist group every item that drives a guest joins — the bed suite
+# (`tests/integration/busybox_bed/conftest.py` stamps it by directory), the
+# parametrized rows in the generic host suites
+# (`tests/integration/host/conftest.py` stamps those by param value), and the
+# guard that fails an item which reaches the guests outside it
+# (`tests/integration/conftest.py`). ONE family group, not one per guest: the
+# five guests are TCG on `test1`'s two cores, so a second worker buys no
+# parallelism and takes cycles the guests already lose to emulation.
+#
+# Spelled here rather than in each of those three files because two spellings
+# would be two groups, and two groups can run at once — which is the exact
+# failure the group exists to prevent.
+BUSYBOX_BED_GROUP = "busybox_bed"
+
 
 def embedded_param_id(backend_id: str) -> str:
     """Descriptive test id for an embedded backend, derived from lab data.
@@ -1079,6 +1125,11 @@ async def host1(request):
       entry. The matrix anchors the full {FAT-on-RAM, LittleFS, no-FS} set on
       3.7, with a single fs cell on 2.7 and 4.4; see :data:`_ZEPHYR_BACKEND_NE`
       for the id -> `ne` mapping and the trim rationale.
+    - any id in :data:`BUSYBOX_BACKENDS` -> UnixHost on the matching BusyBox
+      QEMU guest (five pinned userland versions on the ``test1`` VM, reached
+      over telnet through the ``carrot`` hop), built via the host factory from
+      its lab-data entry; see :data:`_BUSYBOX_BACKEND_NE` for the id -> `ne`
+      mapping.
     """
     backend = request.param
     if backend == "local":
@@ -1090,6 +1141,14 @@ async def host1(request):
         # Embedded backends round-trip through the factory so the same lab-data
         # entry tests target as `otto host` / `EmbeddedHost(...)` users do.
         data = host_data(_ZEPHYR_BACKEND_NE[backend])
+        h = create_host_from_dict(data)
+        yield h
+        await h.close()
+        return
+    if backend in _BUSYBOX_BACKEND_NE:
+        # BusyBox bed guests round-trip through the factory: term/transfer
+        # resolve from the entry's menus (telnet/shell), hop from carrot.
+        data = host_data(_BUSYBOX_BACKEND_NE[backend])
         h = create_host_from_dict(data)
         yield h
         await h.close()
@@ -1157,14 +1216,42 @@ async def hop_host(request):
 
 @pytest_asyncio.fixture
 async def transfer_host(request, tmp_path_factory):
-    """Integration host leased from the Unix pool, parameterized by transfer
-    type ('scp', 'sftp', 'ftp', 'nc') or a ``(transfer, term)`` tuple.
+    """Integration host parameterized by transfer type.
 
-    Leases a free host from ``UNIX_POOL`` instead of always using carrot, so
-    the transfer tests spread across the veggies-lab peers (carrot/tomato/pepper)
-    rather than serializing on one VM.
+    Three param shapes:
+
+    - a transfer name (``"scp"`` / ``"sftp"`` / ``"ftp"`` / ``"nc"``) — a host
+      leased from ``UNIX_POOL`` on its default term;
+    - ``(transfer, term)`` — the same lease with the term pinned
+      (``("nc", "telnet")``);
+    - ``(transfer, ne)`` where *ne* names a BusyBox bed guest
+      (:data:`BUSYBOX_GUEST_NES`) — THAT guest, built through the host factory
+      from its lab entry so term/transfer resolve from the entry's menus and
+      the hop from carrot, exactly as ``host1``'s busybox branch does.
+
+    The first two lease a free host from ``UNIX_POOL`` instead of always using
+    carrot, so the transfer tests spread across the veggies-lab peers
+    (carrot/tomato/pepper) rather than serializing on one VM.
+
+    **A guest is never leased, and never joins the pool.** The pool's premise
+    is that its members are interchangeable — a test asks for "a unix host" and
+    gets whichever is free. The five guests are the opposite of interchangeable:
+    each one IS a specific pinned BusyBox milestone, which is the whole point of
+    the tier, and they are TCG-emulated on a two-core VM. Putting them in
+    ``UNIX_POOL`` would hand an unrelated scp/sftp/ftp test a slow guest with no
+    scp applet and a userland it never meant to ask about. So the busybox shape
+    returns before ``lease_unix_host`` is ever entered: it takes no lease, and
+    `UNIX_POOL` stays the three veggies it has always been.
     """
     param = request.param
+    if isinstance(param, tuple) and len(param) == 2 and param[1] in BUSYBOX_GUEST_NES:
+        transfer, ne = param
+        h = create_host_from_dict({**host_data(ne), "transfer": transfer})
+        try:
+            yield h
+        finally:
+            await h.close()
+        return
     lock_dir = tmp_path_factory.getbasetemp().parent
     with lease_unix_host(lock_dir) as element:
         if isinstance(param, tuple):
@@ -1296,11 +1383,31 @@ def _zephyr_kit(backend_id: str) -> HostKit:
     return HostKit(temp_remote_dir=fs.mount, **_ZEPHYR_COMMON, **_ZEPHYR_STABILITY)
 
 
+# BusyBox guests: same command shapes as _UNIX_KIT (ash has echo/ls and
+# the contract's failing path), but soak sizes trimmed for five TCG
+# guests sharing two host cores — a 5 MiB large transfer over telnet
+# base64 on TCG is minutes, not seconds. 256 KiB still spans dozens of
+# _SHELL_CHUNK_BYTES chunks, which is the property the soak exercises.
+_BUSYBOX_KIT = HostKit(
+    successful_cmd="echo hello",
+    failing_cmd="ls /this_path_does_not_exist_otto_contract",
+    temp_remote_dir="/tmp",
+    send_line_ending="\n",
+    expect_in_output="hello",
+    stability_iterations=15,
+    stability_cycle_count=6,
+    stability_large_size=256 * 1024,
+)
+
+
 _KITS: dict[str, HostKit] = {
     "ssh": _UNIX_KIT,
     "telnet": _UNIX_KIT,
     "local": _UNIX_KIT,
     **{b: _zephyr_kit(b) for b in EMBEDDED_BACKENDS},
+    # One kit object shared by all five guests — unlike the Zephyr kits,
+    # nothing here is derived per backend, and HostKit is frozen.
+    **dict.fromkeys(BUSYBOX_BACKENDS, _BUSYBOX_KIT),
 }
 
 

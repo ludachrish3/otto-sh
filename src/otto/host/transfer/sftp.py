@@ -63,11 +63,12 @@ async def open_sftp_or_attribute(
     working hosts. So the subsystem is opened, and what the registry supplies is
     the SENTENCE the caller gets when it does not start.
 
-    WHAT AN OPERATOR GOT BEFORE THIS EXISTED, measured against the Tier 3
-    BusyBox root on 2026-08-14: ``asyncssh.sftp.SFTPConnectionLost: 0 bytes read
-    on a total of 4 expected bytes``, out of ``UnixHost.put``, in 22ms. Prompt,
-    residue-free and correctly not blamed on any file -- and naming nothing an
-    operator can act on. It does not say sftp, it does not say the device, and
+    WHAT AN OPERATOR GOT BEFORE THIS EXISTED, measured on 2026-08-14 against the
+    since-retired rig -- a BusyBox root served over dropbear:
+    ``asyncssh.sftp.SFTPConnectionLost: 0 bytes read on a total of 4 expected
+    bytes``, out of ``UnixHost.put``, in 22ms. Prompt, residue-free and
+    correctly not blamed on any file -- and naming nothing an operator can act
+    on. It does not say sftp, it does not say the device, and
     it reads like a truncated connection, so the diagnosis it invites is that
     the link is unreliable. What it costs is a debugging session on a host whose
     fix is one line of lab config.

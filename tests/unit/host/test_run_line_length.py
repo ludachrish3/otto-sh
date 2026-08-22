@@ -40,6 +40,7 @@ from otto.host.command_frame import AshFrame, BashFrame, SessionMarkers, ZephyrF
 from otto.host.errors import UnsupportedOnUserlandError
 from otto.host.session import (
     _SESSION_ID_LEN,
+    PTY_TYPED_LINE_MAX,
     SessionManager,
     ShellSession,
 )
@@ -402,6 +403,153 @@ class TestTheRefusalIsScoped:
         assert sessions[0].ran == [line], (
             "the named session did not reach the device, so this test proves nothing "
             "about whether the guard fired"
+        )
+
+
+# ===========================================================================
+# The other half of the same measurement: a BUDGET, for a caller that
+# generates its own command lines
+# ===========================================================================
+
+
+class TestTheExecLineBudget:
+    """``exec_line_budget`` answers the question the refusal above declines to answer.
+
+    THE TWO ARE THE SAME MEASUREMENT WITH DIFFERENT VERBS, and the difference
+    is who wrote the command. ``run()``'s caller wrote it and can shorten it,
+    so a refusal is right. :class:`~otto.host.transfer.shell.ShellFileTransfer`
+    GENERATES its command lines -- one per chunk -- so a refusal would stop
+    every transfer to the devices the backend exists for (which is exactly why
+    ``SessionManager.exec`` is an OPEN path on the ``run-command-line-length``
+    record, and must stay one). Handed a number instead, it emits a shorter
+    line and the transfer works.
+
+    Nothing here talks to a device either: the budget is a function of the
+    route and the frame, both of which are known before anything is connected.
+    """
+
+    def test_a_telnet_host_is_budgeted_by_the_ptys_ceiling(self) -> None:
+        mgr, _ = _manager(BashFrame(), term="telnet")
+        assert mgr.exec_line_budget == PTY_TYPED_LINE_MAX - _framing_overhead(BashFrame())
+
+    def test_an_ssh_host_has_no_budget_at_all(self) -> None:
+        """``None`` is the answer that keeps the path that was never broken still.
+
+        ``exec`` opens a bare pty-less channel there, so no line discipline
+        sees the command and the shell backend keeps sending full chunks --
+        the 9000-character exec ceiling the retired dropbear rig measured (see
+        ``otto.host.transfer.shell``'s module docstring, which records both the
+        number and the fact that no test can re-take it) is a bound on the whole
+        command, not a per-line budget, and it is not this property's business.
+        """
+        mgr, _ = _manager(BashFrame(), term="ssh")
+        assert mgr.exec_line_budget is None
+
+    def test_a_proxied_login_is_budgeted_on_ssh_too(self) -> None:
+        """The case that makes ``term`` the wrong thing to read.
+
+        A proxied login cannot use the raw exec channel at all -- it
+        authenticates as the direct cred and cannot replay the hops -- so
+        ``exec`` routes through the pooled shell even here. A caller that
+        predicted the budget from ``term == "telnet"`` would hand this host
+        ``None`` and emit exactly the line that wedges.
+        """
+        mgr = SessionManager(
+            connections=cast("ConnectionManager", SimpleNamespace(term="ssh", proxy_hops=["v"])),
+            name="bb1",
+            command_frame=BashFrame(),
+        )
+        assert mgr.exec_line_budget == PTY_TYPED_LINE_MAX - _framing_overhead(BashFrame())
+
+    @pytest.mark.asyncio
+    async def test_an_exec_factory_has_no_budget(self) -> None:
+        """A local subprocess or a ``docker exec`` types into no shell of otto's."""
+
+        async def exec_factory(cmd: str, timeout: float) -> CommandResult:
+            return CommandResult(status=Status.Success, value="", command=cmd, retcode=0)
+
+        mgr = SessionManager(
+            connections=cast("ConnectionManager", SimpleNamespace(term="ssh", proxy_hops=[])),
+            name="bb1",
+            command_frame=BashFrame(),
+            exec_factory=exec_factory,
+        )
+        assert mgr.exec_line_budget is None
+
+    def test_an_ash_host_gets_the_tighter_of_the_two_ceilings(self) -> None:
+        """Both ceilings are real and neither subsumes the other.
+
+        A stock BusyBox build truncates at 1022 through a pty of any size; the
+        bed's guests have no line editor in play and wedge at the kernel's
+        4096-byte canonical buffer instead. A budget that took only one of the
+        two would be wrong on the other kind of device, so it takes the
+        smaller of the two that apply -- keyed, like the refusal, on the
+        DECLARED dialect and never on a userland probe.
+        """
+        ash, _ = _manager(AshFrame(), term="telnet")
+        bash, _ = _manager(BashFrame(), term="telnet")
+        assert ash.exec_line_budget == ASH_TYPED_LINE_MAX - _framing_overhead(AshFrame())
+        assert ash.exec_line_budget is not None
+        assert bash.exec_line_budget is not None
+        assert ash.exec_line_budget < bash.exec_line_budget
+
+    def test_the_budget_is_exactly_what_frames_inside_the_ceiling(self) -> None:
+        """The RELATIONSHIP, in both directions, so an off-by-one cannot pass.
+
+        A command of exactly the budget must type as a line of exactly the
+        ceiling, and one character more must be over it. Nothing here retypes
+        either number: both sides are computed from the frame the manager
+        actually holds, which is what makes this a guard on the arithmetic
+        rather than on the constants.
+        """
+        frame = BashFrame()
+        mgr, _ = _manager(frame, term="telnet")
+        budget = mgr.exec_line_budget
+        assert budget is not None
+        markers = SessionMarkers.for_session("0" * _SESSION_ID_LEN)
+
+        def longest_typed_line(cmd: str) -> int:
+            return max(len(line) for line in frame.frame(cmd, markers).rstrip("\n").split("\n"))
+
+        assert longest_typed_line("x" * budget) == PTY_TYPED_LINE_MAX
+        assert longest_typed_line("x" * (budget + 1)) == PTY_TYPED_LINE_MAX + 1
+
+    def test_the_route_is_read_when_asked_rather_than_cached(self) -> None:
+        """``term`` has a setter, and a proxied login can be re-targeted.
+
+        A budget resolved once at construction would answer for the host as it
+        was, which on a host whose term was switched after its transfer backend
+        was built is the wrong answer in the expensive direction.
+        """
+        connections = SimpleNamespace(term="ssh", proxy_hops=[])
+        mgr = SessionManager(
+            connections=cast("ConnectionManager", connections),
+            name="bb1",
+            command_frame=BashFrame(),
+        )
+        assert mgr.exec_line_budget is None
+        connections.term = "telnet"
+        assert mgr.exec_line_budget == PTY_TYPED_LINE_MAX - _framing_overhead(BashFrame())
+
+    def test_a_term_exec_cannot_run_on_is_not_handed_a_budget(self) -> None:
+        """``exec`` raises for it before typing anything, so there is no line to budget."""
+        mgr, _ = _manager(BashFrame(), term="serial")
+        assert mgr.exec_line_budget is None
+
+    def test_the_pty_ceiling_is_the_number_that_was_measured(self) -> None:
+        """A LITERAL, for the reason ``ASH_TYPED_LINE_MAX``'s own pin is one.
+
+        Every other assertion in this class derives its boundary from the
+        constant and so moves with it; this one is the measurement. 4000 is
+        the largest line the bed's guests delivered intact (4090 never
+        returned at all), and it is deliberately not the 4095 the kernel's
+        canonical buffer would allow -- the terminator shares that buffer and a
+        telnet transport may spell it ``\\r\\n``.
+        """
+        assert PTY_TYPED_LINE_MAX == 4000, (
+            "4000 is the far side's buffer as measured on the BusyBox bed, not a budget "
+            "otto chose -- see PTY_TYPED_LINE_MAX's own docstring, and re-measure before "
+            "editing this"
         )
 
 

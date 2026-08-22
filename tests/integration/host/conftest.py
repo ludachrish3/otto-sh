@@ -44,6 +44,8 @@ from tests._fixtures.labdata import lab_data_path
 from tests._fixtures.paths import ensure_custom_hosts_on_path
 from tests.conftest import (
     _ZEPHYR_BACKEND_NE,
+    BUSYBOX_BED_GROUP,
+    BUSYBOX_PARAM_TOKENS,
     EMBEDDED_BACKENDS,
     embedded_param_id,
     host_data,
@@ -342,7 +344,7 @@ def _guest_console_tail(backend: str) -> str:
 
 @pytest.hookimpl(tryfirst=True)
 def pytest_collection_modifyitems(config, items) -> None:
-    """Serialize each embedded *device*'s tests onto one xdist worker.
+    """Serialize each embedded *device* — and the BusyBox bed — onto one worker.
 
     ``tryfirst`` is load-bearing, not decoration. xdist's own
     ``pytest_collection_modifyitems`` (``xdist/remote.py``) is what reads the
@@ -383,16 +385,80 @@ def pytest_collection_modifyitems(config, items) -> None:
     across all devices at once). They are left in that group; the residual
     risk that a fan-out test overlaps a per-backend group on another worker is
     a narrow, known gap — see the test module note.
+
+    The BusyBox bed takes the OPPOSITE shape: one family group
+    (``busybox_bed``) covering all five guests, not one group per guest. The
+    constraint there is not a single-client console — BusyBox ``telnetd``
+    serves several clients — it is the CPU. The five guests are TCG (x86 on an
+    aarch64 host, no KVM) and all five live on ``test1``, a two-core VM, so
+    running two guests' rows on two workers does not buy parallelism: it
+    timeshares the same two cores and slows both while multiplying the load
+    the guests already lose to emulation. Per-guest groups would therefore
+    spend the wedge risk without the run-time return that makes it worth
+    paying for Zephyr. The name matches the stamp
+    ``tests/integration/busybox_bed/conftest.py`` applies to the bed's own
+    suite, so a whole-tree run keeps the bed suite and these rows on one
+    worker too — one group for everything that touches the guests.
     """
     for item in items:
-        if "embedded" not in item.keywords:
+        if "embedded" in item.keywords:
+            # Don't override an explicit group (e.g. the fan-out tests).
+            if item.get_closest_marker("xdist_group") is not None:
+                continue
+            backends = _referenced_backends(item)
+            if len(backends) == 1:
+                item.add_marker(pytest.mark.xdist_group(backends[0]))
             continue
-        # Don't override an explicit group (e.g. the fan-out tests).
+        # An `embedded` item is handled above even if it somehow also named a
+        # guest: losing the busybox family group costs TCG throughput, while
+        # losing a Zephyr device group costs the device.
         if item.get_closest_marker("xdist_group") is not None:
             continue
-        backends = _referenced_backends(item)
-        if len(backends) == 1:
-            item.add_marker(pytest.mark.xdist_group(backends[0]))
+        if _references_busybox(item):
+            item.add_marker(pytest.mark.xdist_group(_BUSYBOX_GROUP))
+
+
+# The one xdist group every BusyBox guest row joins, imported rather than
+# spelled: the bed suite's own stamp
+# (``tests/integration/busybox_bed/conftest.py``) and the guard that catches a
+# row collected outside the group (``tests/integration/conftest.py``) read the
+# same constant, because two spellings would be two groups and two groups can
+# run at once.
+_BUSYBOX_GROUP = BUSYBOX_BED_GROUP
+
+
+def _names_a_guest(value: object) -> bool:
+    """Whether one param value names a BusyBox bed guest, at any nesting.
+
+    Tuples are searched, not just bare strings, because the guest rows do not
+    all arrive in one shape: ``host1`` / ``host1_kit`` pass a backend id as a
+    scalar (``"busybox_1161"``) while ``transfer_host`` passes a
+    ``(transfer, ne)`` pair (``("shell", "bb1161")``). Matching against
+    :data:`~tests.conftest.BUSYBOX_PARAM_TOKENS` covers both spellings for the
+    same reason the nesting is walked: a row that matched neither would collect
+    UNGROUPED and put a second xdist worker on the two cores all five TCG
+    guests share — silently, since nothing fails when a stamp goes missing.
+    """
+    if isinstance(value, str):
+        return value in BUSYBOX_PARAM_TOKENS
+    if isinstance(value, tuple | list):
+        return any(_names_a_guest(v) for v in value)
+    return False
+
+
+def _references_busybox(item: pytest.Item) -> bool:
+    """Whether this item's parametrization names a BusyBox bed backend.
+
+    Value-matching, like :func:`_referenced_backends` and for the same reason:
+    the guest rows arrive as indirect params, and matching the value rather
+    than the param name keeps a new parametrize shape from silently dropping
+    out of the family group. Which guests an item names doesn't matter — they
+    all share one group — so this answers yes/no.
+    """
+    callspec = getattr(item, "callspec", None)
+    if callspec is None:
+        return False
+    return any(_names_a_guest(v) for v in callspec.params.values())
 
 
 def _referenced_backends(item: pytest.Item) -> list[str]:

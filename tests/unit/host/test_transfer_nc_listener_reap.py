@@ -535,7 +535,8 @@ def _run_prefix(prefix: str, command: str, path: str) -> subprocess.CompletedPro
 
     Not BusyBox's own shell: the ``busybox`` apt installs on this machine has
     ``CONFIG_FEATURE_SH_STANDALONE`` on (measured; busybox.net's own prebuilt
-    artifacts do not — see ``tests/busybox/test_applet_resolution.py``), so
+    artifacts do not — see
+    ``tests/integration/busybox_bed/test_applet_userland.py``), so
     its ``sh`` resolves applets internally and ignores PATH entirely, and a
     shim placed on PATH is never reached. The first version of this control
     used ``busybox sh`` and reported the old-syntax host as working — it had

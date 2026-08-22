@@ -326,19 +326,7 @@ Vagrant.configure("2") do |config|
             # a box whose apt lists have gone stale it 404s on the .deb and
             # reads like the package does not exist. The `apt update` in the
             # global provisioner above is what makes this line safe here.
-            # dropbear-bin is the THIRD test fixture in this list: the BusyBox
-            # Tier 3 tier (tests/busybox/) logs into the Tier 2 rootfs over a
-            # throwaway rootless dropbear on loopback, because real BusyBox
-            # devices run dropbear rather than OpenSSH and only dropbear
-            # reproduces its legacy crypto and channel behaviour. Deliberately
-            # the `-bin` package and NOT `dropbear-run`: -bin ships only the
-            # binaries (dropbear, dbclient, dropbearkey, dropbearconvert) and
-            # registers no service — measured, `systemctl is-enabled dropbear`
-            # reports not-found after install — so nothing listens on this box.
-            # The tier starts its own foreground daemon on 127.0.0.1 with an
-            # ephemeral port and kills it with PR_SET_PDEATHSIG.
-            apt install -y  dropbear-bin          \
-                            gcc                   \
+            apt install -y  gcc                   \
                             gh                    \
                             graphviz              \
                             lcov                  \
@@ -439,32 +427,6 @@ Vagrant.configure("2") do |config|
             # Set MTU to 1350 on all ethernet interfaces to support mobile
             # connections that have a smaller MTU size
             printf '[Match]\\nType=ether\\n\\n[Link]\\nMTUBytes=1350\\n' > /etc/systemd/network/10-mtu.link
-
-            # Unprivileged user namespaces, for the BusyBox rootfs test tier.
-            #
-            # Ubuntu 24.04 ships kernel.apparmor_restrict_unprivileged_userns=1,
-            # which permits CREATING a user namespace but denies the uid_map
-            # write that maps you to root inside it (measured: `unshare --user
-            # true` succeeds and lands on uid 65534, while `unshare -r` fails
-            # with "write failed /proc/self/uid_map: Operation not permitted").
-            # Without that mapping there is no CAP_SYS_CHROOT in the namespace,
-            # so the tier cannot chroot into a BusyBox-only root at all.
-            #
-            # The tier needs a real root — not a PATH shim — because BusyBox's
-            # ash resolves applets INTERNALLY and ignores PATH, so a PATH-based
-            # stand-in is invisible to the very shell under test. Chrooted, the
-            # rootfs proves what PATH scoping cannot: /usr/bin is absent, so
-            # code that shells out to a GNU tool fails here the way it fails on
-            # a real BusyBox device instead of silently finding the host's copy.
-            #
-            # Setting this to 0 restores the pre-24.04 behaviour (and is what
-            # rootless container tooling needs on this release anyway). It is a
-            # deliberate relaxation on a disposable lab VM, taken so the tier
-            # runs with NO privileges: with it, `unshare -r` + chroot needs no
-            # sudo, which keeps the tier honest about what a test may assume.
-            printf 'kernel.apparmor_restrict_unprivileged_userns = 0\\n' \\
-                > /etc/sysctl.d/99-otto-unprivileged-userns.conf
-            sysctl --system >/dev/null
         SHELL
 
         # Node.js 24 (matches .nvmrc) for the web/ toolchain: dashboard/covapp

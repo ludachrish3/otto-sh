@@ -14,6 +14,10 @@ Parametrized over all backends:
 - the Zephyr matrix in :data:`tests.conftest.EMBEDDED_BACKENDS` —
   :class:`EmbeddedHost` against the QEMU instances on the ``zephyr`` Vagrant
   VM ({2.7, 3.7, 4.4} x {FAT-on-RAM, LittleFS, no-FS}).
+- the BusyBox matrix in :data:`tests.conftest.BUSYBOX_BACKENDS` —
+  :class:`UnixHost` over telnet against the five pinned-userland QEMU guests
+  on the ``test1`` VM (1.16.1 … 1.35.0), reached through the ``carrot`` hop.
+  Same contract, five userlands' worth of applet and shell divergence.
 
 Unix-specific bash-isms (``cd`` / ``export`` / ``uname``) and the SSH
 transfer-protocol matrix stay in :mod:`test_unix_host_integration`. The
@@ -30,7 +34,7 @@ import pytest
 # from) otto.host.transfer.progress; patch it there, not on the package re-export.
 import otto.host.transfer.progress as transfer_mod
 from otto.utils import Status
-from tests.conftest import EMBEDDED_BACKENDS, remote_name
+from tests.conftest import BUSYBOX_BACKENDS, EMBEDDED_BACKENDS, remote_name
 
 # Backend ids that carry the `embedded` marker (the Zephyr QEMU instances on
 # the `zephyr` Vagrant VM). Single-sourced from :data:`tests.conftest` so the
@@ -52,7 +56,10 @@ def _backend_param(backend_id: str) -> pytest.param:
     ``local`` under ``integration`` makes ``pytest -m "integration and not
     embedded"`` cover ssh + telnet + local — the full Unix matrix.
 
-    Zephyr backends additionally carry ``embedded``.
+    Zephyr backends additionally carry ``embedded``. BusyBox guests carry
+    neither an extra marker nor an ``xdist_group``: they are unix hosts, so
+    ``integration`` is the right tier, and their family group is stamped by
+    this directory's collection hook rather than repeated per param.
     """
     marks = []
     if backend_id in _EMBEDDED_BACKENDS:
@@ -62,7 +69,7 @@ def _backend_param(backend_id: str) -> pytest.param:
 
 _ALL_BACKENDS = pytest.mark.parametrize(
     ("host1", "host1_kit"),
-    [_backend_param(b) for b in ("ssh", "telnet", "local", *EMBEDDED_BACKENDS)],
+    [_backend_param(b) for b in ("ssh", "telnet", "local", *EMBEDDED_BACKENDS, *BUSYBOX_BACKENDS)],
     indirect=True,
 )
 
