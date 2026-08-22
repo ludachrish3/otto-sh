@@ -1,6 +1,6 @@
 """The leaf-invoke render seam: return values become output + exit codes.
 
-Pins the documented "Return values" contract (``docs/guide/extending-cli.md``)
+Pins the documented "Return values" contract (``docs/library/extending-cli.md``)
 at the wrapper: a registered command or instruction returns an ``otto.result``
 family value and the process exit code derives from its own ``exit_code``; a
 plain non-``None`` value is printed as-is with exit 0; ``None`` renders

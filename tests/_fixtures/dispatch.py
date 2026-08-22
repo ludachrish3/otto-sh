@@ -5,7 +5,7 @@ Registered commands execute through the root dispatch's leaf-invoke wrapper
 plain ``async def`` leaf under :func:`otto.lifecycle.run_command`. A bare
 ``typer.testing.CliRunner`` invocation of a sub-app bypasses that wrapper, so
 an async leaf would return its un-awaited coroutine and never run — the
-documented loud-failure mode (see ``docs/guide/extending-cli.md``), not the
+documented loud-failure mode (see ``docs/library/extending-cli.md``), not the
 contract sub-app unit tests mean to exercise.
 
 ``DispatchRunner`` is typer's ``CliRunner`` with one substitution: the app is

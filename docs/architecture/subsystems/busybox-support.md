@@ -13,7 +13,7 @@ pins this page to it in both directions, so a gap cannot be closed in code while
 this page still claims it is open, or the reverse.
 
 ```{note}
-**Division of labour with the {doc}`BusyBox matrix page <../../guide/hosts/busybox>`,
+**Division of labour with the {doc}`BusyBox matrix page <busybox-bed>`,
 so the two do not drift.** That page is about *running otto's BusyBox harness*: the
 prerequisite for executing the artifacts (`qemu-user-static`, off x86_64), which
 upstream artifacts are pinned and why, the five live guests and how to provision,
@@ -702,7 +702,7 @@ concrete body — {meth}`~otto.host.product.FileProduct.stage`, a single
 five live BusyBox guests already exercise end to end.
 
 Everything else that would reach the device comes from **your** product code.
-The documented shape (see {doc}`../../guide/hosts/capabilities`) has `install`
+The documented shape (see {doc}`../../guide/cli/host/capabilities/index`) has `install`
 call `host.run("tar xzf …")` and `is_installed` call `host.run("test -d …")`,
 so on a BusyBox device the verdict is decided by those commands and by the
 `run`/`put` rows above — not by anything in `otto.host.product`.

@@ -34,7 +34,7 @@ digraph testpipeline {
 Both paths transform a plain signature into CLI flags with the **same
 options-to-parameters machinery**: a parameter annotated with an options
 dataclass has its fields — including inherited ones, which is how
-repo-wide `RepoOptions` bases work ({doc}`../../guide/run/options`) —
+repo-wide `RepoOptions` bases work ({doc}`../../library/options-classes`) —
 expanded into individual flags, and the populated instance is reconstructed
 at call time. One options hierarchy serves both instructions and suites.
 
@@ -64,7 +64,7 @@ things at import time — for repo test files, during bootstrap phase 2
 Because both live in a registry, tab completion of instruction and suite
 names, and `--list-instructions` / `--list-suites`, come for free — like
 every other registry ({doc}`registries`). See it captured live in
-{doc}`../../guide/run/index` and {doc}`../../guide/test`.
+{doc}`../../guide/cli/run/index` and {doc}`../../guide/cli/test/index`.
 
 ## Handing off to pytest
 
@@ -86,7 +86,7 @@ layers on otto's concerns:
 - **Retry** — `@pytest.mark.retry(n)` re-runs a failing test in place.
 - **Monitoring and coverage** — test start/end events are stamped onto the
   monitor timeline, and coverage runs fetch embedded counters after the
-  session ({doc}`../subsystems/monitoring`, {doc}`../subsystems/coverage/index`).
+  session ({doc}`monitoring`, {doc}`coverage/index`).
 
 ## Selection runs
 
@@ -117,7 +117,7 @@ the rest of the cache uses, so the collected set never goes stale silently.
 The completer itself still **never runs user code** — the collection happens
 in a disposable subprocess, never in the process answering the keystroke.
 The behavior this feeds — base-name matching, `TestClass::test_name`
-disambiguation — is documented in {doc}`../../guide/test`.
+disambiguation — is documented in {doc}`../../guide/cli/test/index`.
 
 ## Non-fatal assertions
 
@@ -134,7 +134,7 @@ Both ride the standard invoke preamble unmodified ({doc}`../lifecycle`);
 what differs is the body. An instruction's body is just the user's coroutine
 on the invocation's event loop, and its returned {class}`~otto.result.Result`
 (if any) becomes the process exit code ({doc}`../utilities/results`);
-artifacts belong in `get_context().output_dir` ({doc}`../../guide/run/index`).
+artifacts belong in `get_context().output_dir` ({doc}`../../guide/cli/run/index`).
 A suite's body hands off to pytest, as above.
 
 Both are registered callables with option classes; the split is intent.
@@ -143,7 +143,7 @@ flash, collect — with one body and an exit code from their returned
 {class}`~otto.result.Result`. Suites are *verdicts*: many independent test
 methods, pytest semantics, stability statistics, per-test artifacts. Shared
 repo-wide options classes keep the two consistent
-({doc}`../../guide/run/options`).
+({doc}`../../library/options-classes`).
 
 ## Where the code lives
 

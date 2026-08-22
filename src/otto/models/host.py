@@ -321,7 +321,7 @@ class HostSpec(OttoModel):
             raise ValueError(  # noqa: TRY004 — existing API contract; test suite expects ValueError
                 "creds is now a list of cred objects: "
                 '[{"login": "user", "password": "pw"}, ...] '
-                "(was: {user: password}). See the host-database guide."
+                "(was: {user: password}). See the host sources guide."
             )
         return v
 

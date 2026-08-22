@@ -15,7 +15,7 @@ MINIMAL = {
 
 def test_underscore_key_is_ignored() -> None:
     spec = UnixHostSpec.model_validate(
-        MINIMAL | {"_comment": "see docs/guide/setup/host-database.md"}
+        MINIMAL | {"_comment": "see docs/guide/configuration/host-sources.md"}
     )
     assert spec.element == "example-device"
 

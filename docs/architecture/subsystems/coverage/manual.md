@@ -73,7 +73,7 @@ git diff -M -w -U0 --relative <base_commit> -- .
   anything introducing NUL bytes — which git reports as `Binary files ...
   differ` with no hunks at all, so the file reads as unchanged and its
   credits stay silently valid; that hole is undetected today and is called
-  out as a limitation in {doc}`../../../guide/coverage`.
+  out as a limitation in {doc}`../../../guide/cli/cov/index`.
 
 Per line, the outcome is: `LineRemapper` maps the capture's OLD coordinates
 to the working tree's NEW ones; a line with a NEW position keeps its hits

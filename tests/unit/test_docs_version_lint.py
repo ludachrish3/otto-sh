@@ -55,7 +55,7 @@ def test_token_typo_is_flagged(tmp_path):
 
 
 def test_historical_prose_version_is_clean(tmp_path):
-    # e.g. guide/coverage.md's "v1 (shipped in v0.8.1)" must NOT be flagged.
+    # e.g. guide/cli/cov/tickets.md's "v1 (shipped in v0.8.1)" must NOT be flagged.
     assert _lint_text("This field was added in v0.8.1 and pins shape.\n", tmp_path) == []
 
 

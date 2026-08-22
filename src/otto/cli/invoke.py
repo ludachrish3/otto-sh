@@ -963,7 +963,7 @@ def render_leaf_value(value: Any, policy: "RenderPolicy | None" = None) -> None:
     """Render a leaf command's return value and signal failure via exit code.
 
     Implements the documented "Return values" contract
-    (``docs/guide/extending-cli.md``) for every registered command and
+    (``docs/library/extending-cli.md``) for every registered command and
     instruction: an ``otto.result`` family value derives the process exit code
     from its own ``exit_code`` (the ssh-like rules); any other non-``None``
     value is printed as-is, exit 0. ``None`` renders nothing by default —

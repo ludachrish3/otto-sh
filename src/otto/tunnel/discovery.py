@@ -40,7 +40,7 @@ class TunnelNotMeasuredError(OttoError, RuntimeError):
     NOT "unreachable" and NOT "the read failed": nothing was sent, so there is
     no host to blame and no tooling to go and fix. ``--dry-run`` is documented
     as "Preview without running commands"
-    (``docs/guide/cli-reference.md``), so every answer this package gives
+    (``docs/guide/cli/index.md``), so every answer this package gives
     under one has to come from lab data and the caller's own arguments.
 
     ``_device_read`` and ``_device_running`` raise this rather than

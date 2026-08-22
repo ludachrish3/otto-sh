@@ -106,7 +106,7 @@ Two entry points reach the same shell state machine:
 - {meth}`~otto.host.host.BaseHost.app_shell` (used above) — provisions a
   dedicated, auto-named session, optionally switches user first (`user=`,
   login-proxying if that cred is proxied — see
-  {doc}`Login proxies <../guide/hosts/extending-backends>`), launches the shell, and
+  {doc}`Login proxies <extending-backends>`), launches the shell, and
   tears the session down again on exit.
 - {meth}`~otto.host.app_shell.AppShell.attach` — a classmethod that layers onto
   a `HostSession` you already have open (e.g. one from

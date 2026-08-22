@@ -148,9 +148,45 @@ provisions Node 24, and `make dev` runs `make web-install` (`npm ci`) so
 web`, `web-dev`) and the TypeScript quality gates below. Everything else —
 the Python test suite and every other non-`web`/non-quality `make` target —
 works from a checkout with the dashboard already built and never needs Node.
-See {doc}`guide/monitor` for the frontend dev workflow.
+## Monitor frontend development
 
-#### Web quality gates
+The dashboard's frontend is a React + Vite + TypeScript single-page app in
+`web/`. Vite builds it into `src/otto/_webassets/monitor/dist/`, the *only*
+frontend {class}`~otto.monitor.server.MonitorServer` serves — there is no
+legacy fallback, so a checkout without a build fails loudly with a
+`make web` pointer rather than silently serving something stale.
+
+```bash
+make web-install   # npm ci, from web/package-lock.json
+make web-dev       # Vite dev server with hot reload; proxies /api to a
+                    # running `otto monitor` (default http://127.0.0.1:8080,
+                    # override with VITE_OTTO_TARGET=http://host:port)
+make web           # production build: regenerates + diffs the generated
+                    # wire types against the live pydantic models, builds,
+                    # then gates the output against absolute http(s) URLs
+                    # (labs are air-gapped)
+make test-ts       # vitest — store reducers, SSE handling, chart-series
+                    # grouping, per-chart series capping, etc.
+```
+
+`make web-dev`'s proxy target is a running server process — an `otto
+monitor --live` collector or an `otto monitor <source>` review server both
+serve `/api/*` — useful for developing against real backend responses,
+live or historical. `make web` is what actually ships in the wheel.
+
+**Behavior-spec contract.** `tests/e2e/monitor/dashboard/` is a Playwright
+suite that pins the dashboard's observable surface through `data-testid`
+attributes only — styling and DOM structure are free to change underneath
+them. Those pins adjudicate, not this page or the source: if a doc
+description and a pin ever disagree, fix the doc. Run them locally with
+`make dashboard` (Chromium only — the fast
+per-task check; needs `make browsers` once) or `make dashboard-all` for the
+full cross-engine matrix: Chromium (Blink), Firefox (Gecko), and WebKit
+(Safari). The one Safari-specific test runs on WebKit only via
+`@only_browser("webkit")`. `make release` runs all three; CI runs them as a
+parallel per-engine matrix.
+
+### Web quality gates
 
 `web/` carries the same lint / format / type-check / coverage discipline as
 the Python side. For which tool performs each kind of check on each side,
@@ -521,16 +557,21 @@ docs/
 ├── overview.md          # Project overview
 ├── getting-started.md   # Installation and first steps
 ├── installation.md      # Install flows: air-gapped, teams, offline docs
-├── guide/               # Narrative user guides (Markdown)
+├── guide/
+│   ├── cli/             # One page per command, mirroring otto's command tree
+│   └── configuration/   # settings.toml, lab.json, host sources and options
 ├── library/             # Using otto as a library + recipes (Markdown)
 ├── architecture/        # How otto is built and why (Markdown)
 ├── contributing.md      # This page
 └── api/                 # API reference (reStructuredText, auto-generated)
 ```
 
-Narrative guides go in `guide/` or as top-level Markdown files.  API
-reference pages live in `api/` and use `.. automodule::` directives to
-pull documentation from docstrings.  Design rationale and subsystem
+CLI usage goes in `guide/cli/`, on the page for the command it serves —
+that tree mirrors `otto`'s own command tree, so a new subcommand gets a page
+under its verb's directory and an entry in that verb's toctree.  Anything
+that serves a *Python* author rather than a CLI user goes in `library/`
+instead.  API reference pages live in `api/` and use `.. automodule::`
+directives to pull documentation from docstrings.  Design rationale and subsystem
 internals belong in `architecture/` — when a change alters how a
 subsystem works (not just what it does), update the matching
 architecture page in the same PR.

@@ -18,7 +18,7 @@ Import front door with a committed ``web/fixtures/`` document, the same way
 
 Live monitoring has no capture of its own: the review-first shell has no live
 page to photograph, and that mode returns at a later phase (see
-``docs/guide/monitor.md``). The coverage-report capture is unrelated to any
+``docs/guide/cli/monitor/live.md``). The coverage-report capture is unrelated to any
 of this and always runs for real.
 
 Modes — ``--mode`` flag, or the ``OTTO_DOCS_MEDIA`` env var:

@@ -250,7 +250,7 @@ def require_interpreter(
         f"The index refresh is not decoration — a stale apt list 404s on the .deb. "
         f"The package registers its handlers at install; confirm with\n"
         f"    cat {binfmt_root}/{QEMU_HANDLER[missing[0]]}\n"
-        f"whose first line must read `enabled`. See docs/guide/hosts/busybox.md."
+        f"whose first line must read `enabled`. See docs/architecture/subsystems/busybox-bed.md."
     )
 
 
@@ -318,7 +318,8 @@ def probe_banner(path: Path) -> str:
     except OSError as e:
         raise BusyBoxUnavailableError(
             f"{path} could not be executed ({e.strerror}). On aarch64 this needs "
-            f"qemu-user-static with binfmt registered; see docs/guide/hosts/busybox.md"
+            f"qemu-user-static with binfmt registered; see "
+            f"docs/architecture/subsystems/busybox-bed.md"
         ) from e
     out = (proc.stdout or proc.stderr).strip().splitlines()
     return out[0] if out else ""

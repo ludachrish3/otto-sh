@@ -12,28 +12,28 @@ registries, same CLI listing and completion, same error messages
 
 | You want to add | Register with | Guide |
 | --- | --- | --- |
-| an `otto run` subcommand | {func}`@instruction() <otto.cli.run.instruction>` | {doc}`../../guide/run/index` |
-| an `otto test` suite | `Test`-prefixed {class}`~otto.suite.suite.OttoSuite` subclass (auto-registers) | {doc}`../../guide/test` |
-| a top-level `otto` command | {func}`otto.register_cli_command <otto.cli.registry.register_cli_command>` / {func}`@otto.cli_command <otto.cli.registry.cli_command>` | {doc}`../../guide/extending-cli` |
-| a CLI verb on a host class | `@cli_exposed` on the method | {doc}`../../guide/hosts/capabilities` |
-| a host class (new `os_type` base) | `register_host_class` | {doc}`../../guide/hosts/os-profiles` |
-| an OS profile (defaults bundle) | `register_os_profile` or `[[os_profiles]]` in settings | {doc}`../../guide/hosts/os-profiles` |
-| a connection (term) backend | `register_term_backend` | {doc}`../../guide/hosts/extending-backends` |
-| a file-transfer backend | `register_transfer_backend` | {doc}`../../guide/hosts/extending-backends` |
-| a shell dialect | `register_command_frame` | {doc}`../../guide/hosts/extending-embedded` |
-| an embedded binary loader | `register_binary_loader` | {doc}`../../guide/hosts/extending-embedded` |
-| an embedded filesystem type | `register_filesystem` | {doc}`../../guide/hosts/extending-embedded` |
-| a power controller | `register_power_controller` | {doc}`../../guide/hosts/extending-backends` |
-| products on hosts | `register_product_provider` | {doc}`../../guide/hosts/capabilities` |
-| a host source (lab repository) | {func}`otto.labs.register_lab_repository` | {doc}`../../guide/setup/host-database` |
-| fast completion for a host source | optional {class}`~otto.labs.protocol.SupportsHostSummaries` on the repository | {doc}`../../guide/setup/host-database` |
-| a reservation backend | `register_reservation_backend` | {doc}`../../guide/reservations` |
-| per-host monitor parsers | `register_host_parsers` | {doc}`../../guide/monitor` |
-| SNMP metric descriptors | `register_snmp_metric` | {doc}`../../guide/monitor` |
+| an `otto run` subcommand | {func}`@instruction() <otto.cli.run.instruction>` | {doc}`../../guide/cli/run/index` |
+| an `otto test` suite | `Test`-prefixed {class}`~otto.suite.suite.OttoSuite` subclass (auto-registers) | {doc}`../../guide/cli/test/index` |
+| a top-level `otto` command | {func}`otto.register_cli_command <otto.cli.registry.register_cli_command>` / {func}`@otto.cli_command <otto.cli.registry.cli_command>` | {doc}`../../library/extending-cli` |
+| a CLI verb on a host class | `@cli_exposed` on the method | {doc}`../../library/cli-exposed-verbs` |
+| a host class (new `os_type` base) | `register_host_class` | {doc}`../../library/custom-host-classes` |
+| an OS profile (defaults bundle) | `register_os_profile` or `[[os_profiles]]` in settings | {doc}`../../guide/configuration/os-profiles` |
+| a connection (term) backend | `register_term_backend` | {doc}`../../library/extending-backends` |
+| a file-transfer backend | `register_transfer_backend` | {doc}`../../library/extending-backends` |
+| a shell dialect | `register_command_frame` | {doc}`../../library/extending-embedded` |
+| an embedded binary loader | `register_binary_loader` | {doc}`../../library/extending-embedded` |
+| an embedded filesystem type | `register_filesystem` | {doc}`../../library/extending-embedded` |
+| a power controller | `register_power_controller` | {doc}`../../library/extending-backends` |
+| products on hosts | `register_product_provider` | {doc}`../../library/cli-exposed-verbs` |
+| a host source (lab repository) | {func}`otto.labs.register_lab_repository` | {doc}`../../library/lab-source-backends` |
+| fast completion for a host source | optional {class}`~otto.labs.protocol.SupportsHostSummaries` on the repository | {doc}`../../library/lab-source-backends` |
+| a reservation backend | `register_reservation_backend` | {doc}`../../library/reservation-backends` |
+| per-host monitor parsers | `register_host_parsers` | {doc}`../../library/custom-parsers` |
+| SNMP metric descriptors | `register_snmp_metric` | {doc}`../../library/custom-parsers` |
 
 Options classes deserve a mention even though they aren't a registry: a
 repo-wide `@options` class shared by instructions and suites is the standard
-way to give a whole project consistent CLI flags ({doc}`../../guide/run/options`).
+way to give a whole project consistent CLI flags ({doc}`../../library/options-classes`).
 
 ## What keeps third-party code honest
 
@@ -78,17 +78,17 @@ converts a mistake that used to pass quietly into one that says so:
 
 Each seam's user-facing how-to lives in the guide:
 
-- Connection & transfer backends — {doc}`../../guide/hosts/extending-backends`
-- Embedded targets & command frames — {doc}`../../guide/hosts/extending-embedded`
-- Host classes, OS profiles & host verbs — {doc}`../../guide/hosts/os-profiles`,
-  {doc}`../../guide/hosts/capabilities`
-- Power controllers & product providers — {doc}`../../guide/hosts/extending-backends`,
-  {doc}`../../guide/hosts/capabilities`
-- Host sources — {doc}`../../guide/setup/host-database`
-- Reservation backends — {doc}`../../guide/reservations`
-- Monitor parsers & SNMP metrics — {doc}`../../guide/monitor`
-- Instructions, suites & options — {doc}`../../guide/run/index`, {doc}`../../guide/test`, {doc}`../../guide/run/options`
-- New top-level commands — {doc}`../../guide/extending-cli`
+- Connection & transfer backends — {doc}`../../library/extending-backends`
+- Embedded targets & command frames — {doc}`../../library/extending-embedded`
+- Host classes, OS profiles & host verbs — {doc}`../../guide/configuration/os-profiles`,
+  {doc}`../../guide/cli/host/capabilities/index`
+- Power controllers & product providers — {doc}`../../library/extending-backends`,
+  {doc}`../../guide/cli/host/capabilities/index`
+- Host sources — {doc}`../../guide/configuration/host-sources`
+- Reservation backends — {doc}`../../guide/cli/reservation/index`
+- Monitor parsers & SNMP metrics — {doc}`../../guide/cli/monitor/index`
+- Instructions, suites & options — {doc}`../../guide/cli/run/index`, {doc}`../../guide/cli/test/index`, {doc}`../../library/options-classes`
+- New top-level commands — {doc}`../../library/extending-cli`
 
 ## Where the code lives
 

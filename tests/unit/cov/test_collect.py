@@ -565,7 +565,7 @@ class TestBuildDirPathAnchoring:
     ``dict[str, Any]`` value read raw from ``cov_config`` — it never passes
     through the pydantic model's ``RepoPath``, so it must be anchored by hand
     at the point it's read to obey the documented path-resolution convention
-    (docs/guide/setup/repo-setup.md ``### Path resolution``): ``~`` expansion,
+    (docs/guide/configuration/settings.md ``### Path resolution``): ``~`` expansion,
     then repo-root anchoring for a still-relative value. Regression coverage
     for the settings-path-anchoring-phase2 gap.
     """

@@ -396,7 +396,7 @@ class TestPerCallOptionOverrides:
     def test_userland_options_are_overridable_per_call(self, three_hosts):
         """The device-facts table gets the same per-call layer as the protocol ones.
 
-        ``docs/guide/hosts/configuration.md`` tells a reader that
+        ``docs/guide/configuration/host-options.md`` tells a reader that
         ``userland_options`` "layers exactly like" its neighbours and, a few
         lines on, that per-call tuning means passing an ``*_options=`` keyword
         to ``get_host()`` / ``all_hosts()``. Left out of this signature the

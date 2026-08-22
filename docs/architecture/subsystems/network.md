@@ -2,8 +2,8 @@
 
 otto models a lab's connectivity as two layers that share the same lab data
 but answer different questions. The user-facing workflows live in
-{doc}`otto link <../../guide/network/link>` and
-{doc}`otto tunnel <../../guide/network/tunnel>`. **Static links** are the topology's *underlay*
+{doc}`otto link <../../guide/cli/link/index>` and
+{doc}`otto tunnel <../../guide/cli/tunnel/index>`. **Static links** are the topology's *underlay*
 — the `(host, interface)` edges that already exist, and the place where
 traffic impairment (`tc`) actually attaches. **Tunnels** are a *dynamic
 overlay* — end-to-end forwarding paths that `otto tunnel add` stands up over
@@ -177,7 +177,7 @@ the warning the collector logs is the whole product there and "reached none of
 the lab's N scannable hosts" would accuse a bed nobody spoke to. The monitor's
 topology view renders this set as an
 overlay along the links each tunnel's hop path traverses; see
-{doc}`../../guide/monitor`'s Topology view section for what that looks like.
+{doc}`../../guide/cli/monitor/index`'s Topology view section for what that looks like.
 
 ## Where the code lives
 

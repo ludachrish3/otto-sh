@@ -255,7 +255,7 @@ def test_a_repos_collision_reaches_the_user_as_a_framed_error_not_a_crash(
     assert "acme_collision_init" in str(err), "the framing still names the file that failed"
     # …and the guard's whole point survives it: WHERE to put the override.
     assert "ProjectActions" in str(err)
-    assert "docs/guide/run/defaults.md" in str(err)
+    assert "docs/guide/cli/run/defaults.md" in str(err)
     # otto keeps the name; the repo did not shadow it on the way past.
     assert INSTRUCTIONS.get("install").module == "otto.project.instructions"
 

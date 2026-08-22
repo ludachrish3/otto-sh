@@ -13,7 +13,7 @@ rather than a patch.
 Coverage is organized into **tiers** — `system` (e2e), `unit`, `manual`, or
 any other name — each with a `kind` (`e2e` / `unit` / `manual`) that selects
 how otto collects that tier's data; declaring tiers and driving the
-three-tier workflow is covered in {doc}`../../../guide/coverage`.
+three-tier workflow is covered in {doc}`../../../guide/cli/cov/index`.
 
 Only the **manual** tier's data is committed into the repo, even though
 every tier's data is anchored to `base_commit`: e2e and unit data are
@@ -38,7 +38,7 @@ forever: unchanged lines stay **valid**, changed/deleted lines go **stale**
 valid-but-old lines past the tier's `max_age` are flagged **aging** without
 losing coverage credit. {doc}`manual` covers that pass; the order the three
 sources fold in is {doc}`merging`'s subject. See
-{doc}`../../../guide/coverage` for the full valid/stale/aging/unverifiable
+{doc}`../../../guide/cli/cov/index` for the full valid/stale/aging/unverifiable
 state table and how each renders in a report.
 
 ## Tier mechanics: precedence, kind, color, label
@@ -194,7 +194,7 @@ deliberately does **not** share this version counter; see
 - **`tier_colors`** — tier name → colour string, seeded from each
   `TierConfig.color`.
 - **`thresholds`** — `{"high", "medium"}`, sourced from `[coverage.report]`
-  (see {doc}`../../../guide/coverage`); the render cutoffs above.
+  (see {doc}`../../../guide/cli/cov/index`); the render cutoffs above.
 - **`stat_types`** — the type-extensible stats vocabulary `("line",
   "branch", "decision")`. `decision` is a declared slot with no producer,
   so a consumer should render "no decision data" rather than assume every
@@ -207,7 +207,7 @@ deliberately does **not** share this version counter; see
 - **`files`** — one `FileRecord` each: `path`, `lines`, and
   `excluded_lines` (the render-time marker scan, {doc}`renderer`).
 - **`overrides`** — the asserted-entry table, one `OverrideRecord` per
-  entry loaded from the override file ({doc}`../../../guide/coverage`):
+  entry loaded from the override file ({doc}`../../../guide/cli/cov/index`):
   `id` (what per-line `asserted` refs point at, so a `reason` is stored
   once rather than repeated on every line it marks), `tier`, `key` (the
   entry's display identity, `ticket:PROJ-412` or `commit:<full sha>`),

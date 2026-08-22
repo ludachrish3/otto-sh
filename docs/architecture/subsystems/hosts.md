@@ -61,7 +61,7 @@ A verb's return value is rendered by one shared path: members of the
 third-party fallback, printed as-is with exit `0`. Command output itself
 streams live during execution, so a successful `run` verb prints nothing
 extra at the end — the user-facing exit-code table lives in
-{doc}`../../guide/hosts/index`.
+{doc}`../../guide/cli/host/index`.
 
 Tab completion mirrors the synthesis model at every position: host ids come
 from the completion cache's snapshot, falling back to a live lab scan on a
@@ -70,7 +70,7 @@ id is typed, the verb candidates are that host's class menu — the same
 definedness scoping that decides what is dispatchable; and option values
 backed by registries complete from the registry, so a project-registered
 term backend completes exactly like a built-in one. See these captured live
-in {doc}`../../guide/hosts/index` and {doc}`../../guide/hosts/connections`.
+in {doc}`../../guide/cli/host/index` and {doc}`../../guide/cli/host/connections`.
 
 What is unique about `host` among the first-party commands:
 
@@ -79,7 +79,7 @@ What is unique about `host` among the first-party commands:
   should not litter `--xdir` with empty run directories.
 - Per-invocation `--term` / `--transfer` / `--hop` overrides apply option
   overlays to the one resolved host before the verb runs
-  ({doc}`../../guide/hosts/connections`).
+  ({doc}`../../guide/cli/host/connections`).
 
 ## Sessions: persistent `run` vs stateless `exec`
 
@@ -145,7 +145,7 @@ Which backend a host actually uses is resolved from three inputs:
 
 The same mechanism resolves per-protocol option tables (e.g. `ssh_options`),
 so "prefer netcat on this board family, with these ports" is data, not code.
-See {doc}`../../guide/hosts/configuration` for the user-facing rules.
+See {doc}`../../guide/configuration/host-options` for the user-facing rules.
 
 ## From lab data to a host object
 
@@ -156,7 +156,7 @@ over a *base family* (`unix`, `embedded`) — the profile picks the host class
 and its pydantic spec, defaults and host fields are merged (host fields win),
 the spec validates, and `to_host()` builds the runtime object. Custom host
 classes and profiles register through `register_host_class` /
-`register_os_profile` ({doc}`../../guide/hosts/os-profiles`).
+`register_os_profile` ({doc}`../../guide/configuration/os-profiles`).
 
 Profiles are the **data** half of otto's customization split: they name a
 bundle of defaults many hosts share. The **code** half is products —

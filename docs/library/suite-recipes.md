@@ -131,13 +131,13 @@ otto test TestDevice --device-type switch --firmware 2.1
 
 The very same `RepoOptions` class can be inherited by **instructions**
 — see
-[Sharing repo-wide options](../guide/run/index.md#sharing-repo-wide-options-across-instructions-and-suites).
+[Sharing repo-wide options](options-classes.md#sharing-repo-wide-options).
 Defining it once in a shared module (e.g.
 `pylib/<repo>_common/options.py`) is the recommended way to expose
 repo-wide flags uniformly across every `otto test` and `otto run`
 subcommand.
 For the complete options reference — validation, the lifecycle, and the
-`@options` decorator — see [Options classes](../guide/run/options.md).
+`@options` decorator — see [Options classes](options-classes.md).
 
 ## Monitoring from a test
 
@@ -174,3 +174,23 @@ async def test_capture_logs(self, suite_options) -> None:
     result = (await host.run("show log")).only
     log_file.write_text(result.value)
 ```
+
+## Docker from instructions and suites
+
+The CLI is a thin wrapper around `otto.docker`. Project instructions and
+suites import the same library directly:
+
+```python
+from otto.docker import build_images, compose_up, compose_down, composed
+
+
+@instruction()
+async def smoke():
+    async with composed(repo, lab, own=True) as containers:
+        api = containers["api"]
+        await api.run(["./run-tests"])
+```
+
+`composed()` is the recommended scope — it tears the stack down on exit
+unless it found the stack already running, in which case nested users
+share without yanking the stack from peers.

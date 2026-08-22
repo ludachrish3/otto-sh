@@ -7,7 +7,7 @@ repo does to the lab — otto's owner-scoped defaults, or the subclass that repo
 registered with :func:`otto.project.actions.register_project_actions` — and
 :mod:`otto.project.orchestrator` composes those actions across every configured
 repo in dependency order, performing the host-global steps that belong to no
-repo. :doc:`../guide/run/defaults` is the guide-level treatment.
+repo. :doc:`../guide/cli/run/defaults` is the guide-level treatment.
 
 .. automodule:: otto.project
 

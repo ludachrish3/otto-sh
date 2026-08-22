@@ -10,7 +10,7 @@ implementation — shipped ones, or your own class selected by registered name i
 ``.otto/settings.toml``.
 
 For narrative setup, configuration, and writing a custom backend, see
-the :doc:`user guide <../guide/reservations>`.
+the :doc:`user guide <../guide/cli/reservation/index>`.
 
 Package summary
 ---------------
@@ -84,7 +84,7 @@ JSON backend
 
 Reference implementation and test double — also a perfectly usable
 production backend for small teams that don't have a scheduler yet.
-See the :doc:`user guide <../guide/reservations>` for the file format.
+See the :doc:`user guide <../guide/cli/reservation/index>` for the file format.
 
 .. automodule:: otto.reservations.json_backend
 
@@ -137,5 +137,5 @@ The factory calls the class as ``Class(url=url, **kwargs_from_settings)`` when `
 is set in settings, otherwise ``Class(**kwargs_from_settings)``.  Accept or omit ``url``
 as fits your deployment.
 
-See the :doc:`user guide <../guide/reservations>` for a worked example
+See the :doc:`user guide <../guide/cli/reservation/index>` for a worked example
 with request handling, credential loading, and package layout.

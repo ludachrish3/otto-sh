@@ -42,8 +42,21 @@ STAMP = OUT_DIR / ".stamp"
 # scaffold templates in cli/init.py), so the stamp covers all of src/otto.
 _STAMP_INPUTS = [Path(__file__).resolve(), REPO_ROOT / "src" / "otto"]
 
-# The nine first-party commands; each lifecycle page embeds its --help.
-COMMANDS = ["run", "test", "host", "monitor", "cov", "docker", "reservation", "schema", "init"]
+# The eleven first-party commands, in the order `otto --help` lists them;
+# each command page embeds its own --help.
+COMMANDS = [
+    "init",
+    "host",
+    "run",
+    "test",
+    "docker",
+    "link",
+    "tunnel",
+    "monitor",
+    "cov",
+    "reservation",
+    "schema",
+]
 
 # Tab-completion showcases: snippet name -> the COMP_WORDS line completed.
 # Every candidate list is served by otto's real completion machinery — the

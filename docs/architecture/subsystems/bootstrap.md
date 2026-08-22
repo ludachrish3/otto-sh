@@ -7,7 +7,7 @@ modules and test files — and bootstrap's two phases discover and register
 all of them together ({doc}`../lifecycle` walks the shared path), so
 instructions, suites, and host classes from every repo land in the same flat
 registries, indistinguishable to the CLI or to `all_hosts()`. See
-{doc}`../../guide/setup/repo-setup` for the settings a repo contributes and
+{doc}`../../guide/configuration/settings` for the settings a repo contributes and
 what happens at startup from a user's point of view. `otto init`
 (`otto.cli.init`) works one repo at a time: it gets a single repo into
 the shape bootstrap expects to compose.

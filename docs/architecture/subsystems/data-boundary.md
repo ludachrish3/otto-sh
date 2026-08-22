@@ -76,7 +76,7 @@ source declares, and alternatives (a database, an inventory service)
 register a name via {func}`otto.labs.register_lab_repository`.
 {func}`otto.testing.assert_lab_repository_conforms` verifies a custom backend
 against the contract, and `otto.examples.lab_repository` is a copyable
-reference implementation. See {doc}`../../guide/setup/host-database`.
+reference implementation. See {doc}`../../guide/configuration/host-sources`.
 
 A process reads *every* source every repo declares:
 {func}`otto.labs.build_lab_sources` constructs each `[[lab.sources]]` entry
@@ -102,7 +102,7 @@ compose without editing either.
 Because every boundary is a pydantic model, otto can *emit* its data
 contracts: `otto schema export` writes JSON Schemas for `lab.json`,
 `settings.toml`, and reservation files, which editors use for completion and
-inline validation ({doc}`../../guide/setup/editor-schemas`). The schema is
+inline validation ({doc}`../../guide/cli/schema/editors`). The schema is
 generated from the exact model that validates ingest, so the export and the
 runtime validator cannot disagree — there is no second definition to update,
 and the schema version bumps whenever host-spec fields change shape, keeping

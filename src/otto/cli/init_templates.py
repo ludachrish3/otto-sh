@@ -12,7 +12,7 @@ from typing import Any
 
 SETTINGS_TEMPLATE = """\
 #:schema ./schemas/settings.schema.json
-# {name} — otto repo settings. Reference: docs/guide/setup/repo-setup.md.
+# {name} — otto repo settings. Reference: docs/guide/configuration/settings.md.
 # Lines starting "#key" or "#[section]" are optional settings: remove the
 # leading "#" to enable them. Your editor autocompletes every field from the
 # schema line above (regenerate with `otto schema export`).
@@ -30,7 +30,7 @@ init = ["{init_module}"]           # modules imported at startup (register instr
 # host record (a warning names both). The built-in "json" backend reads
 # lab.json from directories, or a .json file directly; custom backends are
 # selected by registered name with their kwargs inline. See
-# docs/guide/setup/host-database.md.
+# docs/guide/configuration/host-sources.md.
 [[lab.sources]]
 backend = "json"
 paths = ["lab_data"]
@@ -77,7 +77,7 @@ paths = ["lab_data"]
 #base = "unix"
 #valid_terms = ["ssh"]
 
-# --- [reservations] — reservation gate; see docs/guide/reservations.md -------
+# --- [reservations] — reservation gate; see docs/guide/cli/reservation/ ------
 # Backend-specific settings live in [reservations.<backend>].
 #[reservations]
 #backend = "none"
@@ -131,7 +131,7 @@ paths = ["lab_data"]
 EXAMPLE_HOST_ENTRY = {
     "_comment": (
         "Example host — replace these values. Full host schema: "
-        "docs/guide/setup/lab-config.md or `otto schema export`. The `labs` list "
+        "docs/guide/configuration/lab-config.md or `otto schema export`. The `labs` list "
         "names the labs this host belongs to (select with --lab/OTTO_LAB)."
     ),
     "ip": "192.0.2.1",
@@ -148,7 +148,7 @@ LAB_JSON_TEMPLATE: dict[str, Any] = {
     "$schema": "../.otto/schemas/lab.schema.json",
     "_comment": (
         "otto lab database: 'hosts' lists every lab host; 'links' declares "
-        "data-plane routes between them (see docs/guide/setup/lab-config.md). "
+        "data-plane routes between them (see docs/guide/configuration/lab-config.md). "
         "Keys starting with _ are comments; $schema wires editor autocomplete."
     ),
     "hosts": [EXAMPLE_HOST_ENTRY],
@@ -163,7 +163,7 @@ JSON object with two array sections:
 
 - **`hosts`** — every lab host. Each entry is validated against a pydantic spec
   before otto will use it (`UnixHostSpec` / `EmbeddedHostSpec`, see
-  `docs/guide/setup/lab-config.md`). The scaffolded `lab.json` has one example
+  `docs/guide/configuration/lab-config.md`). The scaffolded `lab.json` has one example
   host; edit or replace it, and add as many more as your lab needs.
 - **`links`** — declared data-plane routes between hosts (routes not used for
   ssh/telnet access, carrying UDP/HTTP/RTP/etc.). Empty by default; see the
@@ -221,7 +221,7 @@ inside host/link entries. Use it freely.
 
 ## Where to go next
 
-- Full host schema reference: `docs/guide/setup/lab-config.md`
+- Full host schema reference: `docs/guide/configuration/lab-config.md`
 - Machine-readable schema (for editor validation or codegen):
   `otto schema export`
 - Confirm otto sees your hosts once you've edited this file:
@@ -234,7 +234,7 @@ OPTIONS_TEMPLATE = '''\
 ``@options`` (``from otto import options``) is pydantic's dataclass
 decorator: fields declared here become validated CLI flags on every
 ``otto test`` suite and every ``otto run`` instruction whose options class
-inherits ``RepoOptions``. See docs/guide/options.md.
+inherits ``RepoOptions``. See docs/library/options-classes.md.
 """
 
 from typing import Annotated
@@ -340,7 +340,7 @@ logger = logging.getLogger(__name__)
 #             return await super().install()
 #
 # One override point, so `otto run install`, a script, a suite, and the
-# ensure_installed fixture all pick it up. See docs/guide/run/defaults.md.
+# ensure_installed fixture all pick it up. See docs/guide/cli/run/defaults.md.
 
 
 @options

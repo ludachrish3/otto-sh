@@ -302,7 +302,7 @@ host: connections to the target are tunneled through the hop's SSH
 connection, and file transfers ride the same tunnel.  Hops chain — if the
 hop host itself declares a `hop`, the whole chain is tunneled outward-in
 (circular chains are detected and rejected).  See
-{doc}`Connections in the host guide <../guide/hosts/connections>` for details.
+{doc}`Connections in the host guide <../guide/cli/host/connections>` for details.
 
 ```{note}
 Hop hosts (`UnixHost.hop`) are resolved internally via `get_host()`.

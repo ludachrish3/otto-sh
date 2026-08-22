@@ -48,7 +48,7 @@ An unkeyed, uncookied request gets a 403 shaped for its consumer rather
 than one generic error page: `/api/*` gets a small JSON body, because the
 dashboard's boot sequence already treats any non-200 from those endpoints
 as "nothing here" (its soft-fail contract for a bare static-file deployment
-with no backend at all — see [Web dashboard](../../guide/monitor.md#web-dashboard)),
+with no backend at all — see [Web dashboard](../../guide/cli/monitor/dashboard.md#web-dashboard)),
 so an unkeyed API probe degrades exactly the same way. Everything else gets
 a plain-HTML hint page pointing back at the full keyed URL.
 
@@ -86,7 +86,7 @@ one new monitor machine means re-training every viewer to click through
 another warning. A shared CA turns that into a one-time trust decision per
 viewer, forever.
 
-See [Securing the dashboard](../../guide/monitor.md#securing-the-dashboard)
+See [Securing the dashboard](../../guide/cli/monitor/serving.md#serving-the-dashboard)
 in the guide for the operational steps — creating the CA, installing viewer
 trust, issuing and installing a leaf cert, and the `[monitor]` settings
 syntax.

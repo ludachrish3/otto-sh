@@ -70,7 +70,7 @@ The top-level CLI is itself registry-backed. A
 First-party commands in `otto/cli/builtin_commands.py` and third-party
 commands both go through {func}`~otto.cli.registry.register_cli_command` (or
 the {func}`~otto.cli.registry.cli_command` decorator) — the symmetry rule
-again. See {doc}`../../guide/extending-cli` for the how-to.
+again. See {doc}`../../library/extending-cli` for the how-to.
 
 ### Lazy dispatch
 
@@ -103,9 +103,9 @@ scaffolded demo repo at docs build time:
 ```
 
 More showcases live elsewhere: suite names and `--tests`
-({doc}`../../guide/test`), instruction names ({doc}`../../guide/run/index`),
-per-class host verbs ({doc}`../../guide/hosts/index`) plus registry-backed
-option values ({doc}`../../guide/hosts/connections`), and `--lab`
+({doc}`../../guide/cli/test/index`), instruction names ({doc}`../../guide/cli/run/index`),
+per-class host verbs ({doc}`../../guide/cli/host/index`) plus registry-backed
+option values ({doc}`../../guide/cli/host/connections`), and `--lab`
 ({doc}`../lifecycle`).
 
 The consistent rule behind all of them: the process answering the keystroke

@@ -61,7 +61,7 @@ _MATRIX_PARAMS = [
                 f"no usable {release.arch} interpreter: this "
                 f"{os.uname().machine} machine has no enabled "
                 f"{QEMU_HANDLER[release.arch]} binfmt handler; install "
-                f"qemu-user-static (see docs/guide/hosts/busybox.md)"
+                f"qemu-user-static (see docs/architecture/subsystems/busybox-bed.md)"
             ),
         ),
     )
@@ -916,7 +916,7 @@ def test_the_recovery_instructions_name_a_real_doc_and_a_real_make_target(tmp_pa
 
     Both citations in this fixture's error text were written before their
     targets existed — `make busybox-cache` in the fetch failure and
-    `docs/guide/hosts/busybox.md` in the exec failure. That is a normal way to
+    `docs/architecture/subsystems/busybox-bed.md` in the exec failure. That is a normal way to
     write a plan and a terrible way to leave a tree: the reader arrives at the
     one moment the instruction matters, follows it, and finds nothing there.
 
@@ -1002,14 +1002,14 @@ def test_the_docs_blast_radius_claim_matches_where_the_bytes_actually_run(tmp_pa
     # only that the test and the docs agree with each other.
     monkeypatch.delenv("OTTO_BUSYBOX_CACHE")
     as_written = "~/" + cache_dir().relative_to(Path.home()).as_posix()
-    page = (_REPO_ROOT / "docs/guide/hosts/busybox.md").read_text()
+    page = (_REPO_ROOT / "docs/architecture/subsystems/busybox-bed.md").read_text()
     # `split` on a missing separator returns the whole page, so a renamed
     # heading would silently widen the search to every paragraph — and
     # `~/.cache/otto/busybox` appears twice more on this page, so the widened
     # search PASSES while nothing checks the trust discussion at all. Assert
     # the anchor before scoping to it.
     assert "## Trust:" in page, (
-        "docs/guide/hosts/busybox.md has no `## Trust:` heading — this guard "
+        "docs/architecture/subsystems/busybox-bed.md has no `## Trust:` heading — this guard "
         "scopes to that section, and without it would assert against the page"
     )
     trust_section = page.split("## Trust:")[-1]
@@ -1019,18 +1019,25 @@ def test_the_docs_blast_radius_claim_matches_where_the_bytes_actually_run(tmp_pa
     )
 
 
-def test_the_busybox_doc_is_reachable_from_the_hosts_toctree():
+def test_the_busybox_doc_is_reachable_from_the_architecture_toctree():
     """An unreferenced page is a `-W` build failure, and `make docs` is not the task gate.
 
     Sphinx runs warnings-as-errors, so a page in the source tree that no
     toctree includes fails the docs build outright. `make docs` is not part of
     the per-task gate, so without this the cost of the omission is a red CI
     job on some later, unrelated commit (issue #178's shape exactly).
+
+    The page moved from `docs/guide/hosts/` to `docs/architecture/subsystems/`
+    when the user guide's CLI section was restructured to mirror the command
+    tree; the bed matrix is architecture, not CLI usage. The architecture index
+    is reStructuredText, so this reads an RST directive rather than a MyST
+    fenced block.
     """
-    index = (_REPO_ROOT / "docs/guide/hosts/index.md").read_text()
-    block = re.search(r"```\{toctree\}(.*?)```", index, re.DOTALL)
-    assert block, "docs/guide/hosts/index.md has no toctree at all"
-    assert "busybox" in block.group(1).split(), (
-        "docs/guide/hosts/busybox.md is not listed in the hosts toctree — "
-        "sphinx-build -W fails on a document included in no toctree"
+    index = (_REPO_ROOT / "docs/architecture/index.rst").read_text()
+    blocks = re.findall(r"\.\. toctree::(.*?)(?=\n\.\. |\Z)", index, re.DOTALL)
+    assert blocks, "docs/architecture/index.rst has no toctree at all"
+    assert any("subsystems/busybox-bed" in b.split() for b in blocks), (
+        "docs/architecture/subsystems/busybox-bed.md is not listed in the "
+        "architecture toctree — sphinx-build -W fails on a document included "
+        "in no toctree"
     )

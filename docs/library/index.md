@@ -155,7 +155,7 @@ If your script needs to verify reservations before running, call
 `otto.reservations.check_reservations(...)` explicitly before entering the
 block. For the full build-a-backend → resolve-identity → gate → present
 walkthrough (including a complete, runnable example CLI to copy), see
-{doc}`Using the reservation library in your own CLI <../guide/reservations>`.
+{doc}`Using the reservation library in your own CLI <reservation-backends>`.
 
 ## In-memory labs (no lab file)
 
@@ -242,7 +242,7 @@ for junit in result.junit_paths:
 3. The current working directory.
 
 Same `--xdir`-defaults-to-CWD philosophy the CLI uses (see
-[Output directories](../guide/cli-reference.md#output-directories)) — pass
+[Output directories](../guide/cli/index.md#output-directories)) — pass
 `output_dir=` explicitly, or open a context first, if a script shouldn't drop
 artifacts next to whatever its caller's CWD happens to be.
 
@@ -433,7 +433,7 @@ what `otto cov get` does, so its `--clean` flag can be scoped to just the Unix
 host ids that actually fetched — never zeroing an embedded board on a mixed lab.
 To zero the counters *before* a run instead, call `clean_remote_gcda()`.
 
-See {doc}`../guide/coverage` for the full CLI workflow, tier configuration, and
+See {doc}`../guide/cli/cov/index` for the full CLI workflow, tier configuration, and
 the report format.
 
 ## Recipes
@@ -442,8 +442,33 @@ Patterns for common situations — runnable doctests where possible,
 illustrative code where a live host is required:
 
 ```{toctree}
+:caption: Authoring
+
+writing-instructions
+writing-suites
+options-classes
+```
+
+```{toctree}
+:caption: Extending otto
+
+extending-cli
+cli-exposed-verbs
+custom-host-classes
+extending-backends
+extending-embedded
+lab-source-backends
+reservation-backends
+custom-parsers
+```
+
+```{toctree}
+:caption: Recipes
+
 async-patterns
 sessions
 suite-recipes
 connection-options
+dry-run-contract
+network-api
 ```

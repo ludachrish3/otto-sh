@@ -184,7 +184,7 @@ def test_live_requires_reservation_gate_before_host_selection() -> None:
 # Regression coverage for the live-bed-caught bug: monitor's spec set
 # gate=False but not lab_free=True, so the shared root preamble still
 # hard-required --lab even for review mode, which never loads a lab at all.
-# `otto monitor <source>` — the exact command docs/guide/monitor.md
+# `otto monitor <source>` — the exact command docs/guide/cli/monitor/review.md
 # documents — failed with "Error: Missing option '--lab'" even against a
 # fully self-contained archive. See builtin_commands.py's monitor
 # registration (lab_free=True) and monitor.py's --live branch (which now

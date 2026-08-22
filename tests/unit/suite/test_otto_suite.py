@@ -538,7 +538,7 @@ class TestAddMonitorEvent:
 
     Validation must fire synchronously, at the call site, before the
     collector is ever touched: ``add_monitor_event`` is normally awaited
-    (``await self.add_monitor_event(...)``, see ``docs/guide/monitor.md``),
+    (``await self.add_monitor_event(...)``, see ``docs/guide/cli/monitor/dashboard.md``),
     but a bad label/color/dash must raise even for a caller that never gets
     that far — calling it and discarding the result without awaiting is
     exactly what a fire-and-forget mistake looks like, and it must still be

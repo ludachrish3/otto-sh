@@ -64,7 +64,7 @@ class TestJsonBackend:
 
     def test_tilde_path_expands_via_home(self, tmp_path, monkeypatch):
         """A ``~``-prefixed path expands against ``HOME`` before repo-anchoring
-        (path-resolution convention, docs/guide/setup/repo-setup.md).
+        (path-resolution convention, docs/guide/configuration/settings.md).
 
         Without the fix, ``~`` is never expanded and the path is anchored
         literally under ``repo_dir / "~" / "reservations.json"``, which never

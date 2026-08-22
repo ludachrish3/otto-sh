@@ -383,7 +383,7 @@ export function buildStackOption(args: {
     // The wheel is freed for page scroll (it used to fight it —
     // zoomOnMouseWheel/moveOnMouseWheel both false), and pan is Ctrl-drag —
     // ECharts' modifier set has no meta key, so Ctrl is the one pan gesture
-    // available on every platform (documented in docs/guide/monitor.md).
+    // available on every platform (documented in docs/guide/cli/monitor/dashboard.md).
     // +/- buttons (SubjectPage) cover zoom instead of the wheel.
     //
     // `zoomLock: true` (found only by driving a REAL browser — the

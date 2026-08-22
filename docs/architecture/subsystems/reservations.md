@@ -24,10 +24,10 @@ starting a run.
   backend is never even constructed — a hanging scheduler cannot block lab
   access — but a factory is kept so `reservation` subcommands can still
   build it on demand. Contention errors deliberately do *not* advertise
-  `-R`; only backend-unreachable errors do ({doc}`../../guide/reservations`).
+  `-R`; only backend-unreachable errors do ({doc}`../../guide/cli/reservation/index`).
 
 - **The gate runs in completion too, on its own terms.** Remote-path tab
-  completion for `otto host <id> get` / `put` ({doc}`../../guide/cli-reference`)
+  completion for `otto host <id> get` / `put` ({doc}`../../guide/cli/index`)
   contacts a lab host, so the same required-resource check runs first — before
   the host is even constructed. Two deliberate differences from the command
   path: `-R` does *not* bypass it (the loud skip warning has nowhere to print
@@ -47,9 +47,9 @@ starting a run.
   `--clear-autocomplete-cache` handler aside.
 
 Backends are a registry like everything else (`json`, `none` built in;
-custom schedulers register by name — {doc}`../subsystems/registries`), and
+custom schedulers register by name — {doc}`registries`), and
 {func}`otto.testing.assert_reservation_backend_conforms` verifies a custom
-one against the contract. See {doc}`../../guide/reservations` for the
+one against the contract. See {doc}`../../guide/cli/reservation/index` for the
 built-in JSON backend's configuration, `--as-user`, `-R`, and the full
 walkthrough for writing and registering a custom backend.
 

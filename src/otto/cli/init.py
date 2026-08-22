@@ -5,7 +5,7 @@ validated (existing artifacts are checked via the SAME ingestion code
 bootstrap uses — never modified, except the otto-owned schemas area, which
 ``--schemas`` refreshes even when already present), or scaffolded.
 Interactive by default; ``--all`` or per-area flags skip prompts. See
-docs/guide/setup/repo-setup.md.
+docs/guide/configuration/settings.md.
 """
 
 import dataclasses
@@ -198,7 +198,7 @@ def _scaffold_editor_wiring(root: Path) -> list[Path]:
             if target.name == "settings.json":
                 typer.echo(
                     "existing .vscode/settings.json left untouched — see "
-                    "docs/guide/setup/editor-schemas.md for the schema associations"
+                    "docs/guide/cli/schema/editors.md for the schema associations"
                 )
             continue
         vscode.mkdir(exist_ok=True)

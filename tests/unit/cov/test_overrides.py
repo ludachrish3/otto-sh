@@ -79,7 +79,7 @@ def test_commit_entry_loads_with_resolved_full_sha(tmp_path):
 
 def test_tilde_overrides_file_expands_via_home(tmp_path, monkeypatch):
     """A ``~``-prefixed ``[coverage.overrides] file`` expands against ``HOME``
-    before repo-anchoring (path-resolution convention, docs/guide/setup/repo-setup.md).
+    before repo-anchoring (path-resolution convention, docs/guide/configuration/settings.md).
 
     Without the fix, ``~`` is never expanded and the path is anchored
     literally under ``sut_dir / "~" / "coverage-overrides.toml"``, which never

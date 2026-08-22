@@ -6,7 +6,7 @@ The ``otto.link`` package models connectivity between lab hosts as one
 edges and declared ``lab.json`` routes. ``otto.link.derive`` resolves those
 edges at lab-load time. A link is a topology *edge* — the route that
 exists; the live, host-resident tunnels built over it are
-``otto.tunnel``'s concern (see the :doc:`tunnel guide <../guide/network/tunnel>`
+``otto.tunnel``'s concern (see the :doc:`tunnel guide <../guide/cli/tunnel/index>`
 and :doc:`API reference <tunnel>`).
 
 Impairment builds on that same edge model: ``otto.link.params`` is the typed
@@ -16,7 +16,7 @@ parameter set and its unit/merge rules, ``otto.link.placement`` resolves
 (``otto.link.netem`` the first-party NetEm registrant), ``otto.link.manage``
 is the merge-read-modify-verify orchestration behind ``otto link
 impair``/``repair``/``list``, and ``otto.link.sentinel`` tags the detached
-``--expire`` timer processes. See the :doc:`link guide <../guide/network/link>` for
+``--expire`` timer processes. See the :doc:`link guide <../guide/cli/link/index>` for
 CLI usage, the in-path model, and the Python API.
 
 .. automodule:: otto.link

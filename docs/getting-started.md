@@ -119,8 +119,8 @@ Next steps
   7. otto run smoke
 ```
 
-See {doc}`guide/cli-reference` for the full `otto init` flag reference, and
-the {ref}`team-setup-checklist` in {doc}`guide/setup/repo-setup` for the one-time
+See {doc}`guide/cli/init` for the full `otto init` flag reference, and
+the {ref}`team-setup-checklist` in {doc}`guide/configuration/settings` for the one-time
 decisions (host source, reservations, shared libs) that come after the
 initial scaffold.
 
@@ -165,21 +165,21 @@ paths = ["lab_data"]
 ```
 
 Relative paths resolve against the repository root; `~` expands to your home
-directory.  See {doc}`guide/setup/repo-setup` for the full rule.
+directory.  See {doc}`guide/configuration/settings` for the full rule.
 
 | Field | Purpose |
 | ----- | ------- |
 | `name` | Product or repo name (shown in CLI output) |
 | `version` | Semantic version string |
-| `[[lab.sources]]` | Ordered host-data sources. Each entry names a registered `backend`; the built-in `json` one takes `paths` — directories holding a `lab.json`, or `.json` files. Later sources override earlier ones per host record ([details](guide/setup/host-database.md)) |
+| `[[lab.sources]]` | Ordered host-data sources. Each entry names a registered `backend`; the built-in `json` one takes `paths` — directories holding a `lab.json`, or `.json` files. Later sources override earlier ones per host record ([details](guide/configuration/host-sources.md)) |
 | `libs` | Python package directories added to `PYTHONPATH` at startup |
-| `tests` | Where test discovery happens. Each directory's **top-level** `test_*.py` files are imported at startup, registering their `Test*` `OttoSuite` subclasses; pytest itself recurses normally when tests are run ([details](guide/test.md#suite-registration)) |
+| `tests` | Where test discovery happens. Each directory's **top-level** `test_*.py` files are imported at startup, registering their `Test*` `OttoSuite` subclasses; pytest itself recurses normally when tests are run ([details](library/writing-suites.md#suite-registration)) |
 | `init` | Python modules imported at startup (registers instructions and shared options) |
 
 ```{tip}
 Setting otto up for a *team* is a one-time exercise — host source, reservation
 gating, shared libs, tab completion. The {ref}`team-setup-checklist` in
-{doc}`guide/setup/repo-setup` walks through it.
+{doc}`guide/configuration/settings` walks through it.
 ```
 
 ### Environment variables
@@ -205,11 +205,11 @@ Other useful environment variables:
 
 `otto init --lab` (or `--all`) scaffolds `lab_data/lab.json` with one
 example host for you, plus a `lab_data/README.md` walking through its
-fields — see {doc}`guide/setup/lab-config` for the full per-field schema. This
+fields — see {doc}`guide/configuration/lab-config` for the full per-field schema. This
 section explains the format so you can add real hosts by hand.
 
 A lab file is a JSON object with a `hosts` array (and an optional `links`
-array declaring data-plane routes between hosts — see {doc}`guide/setup/lab-config`).
+array declaring data-plane routes between hosts — see {doc}`guide/configuration/lab-config`).
 Place lab files in one of the directories a json source's `paths` lists (or
 point `paths` straight at a `.json` file); each host joins one or more labs
 through its `labs` field, and `--lab <name>` selects the matching hosts:
@@ -264,7 +264,7 @@ Every lab also automatically contains a built-in `local` host — a
 {class}`~otto.host.local_host.LocalHost` that runs commands on the machine
 otto itself runs on, with no JSON entry needed — so
 `otto --lab my_lab host local run "uname -a"` always works.  Fleet helpers
-like `all_hosts()` exclude it by default; see {doc}`guide/run/index`.
+like `all_hosts()` exclude it by default; see {doc}`guide/cli/run/index`.
 
 ## Your first instruction
 
@@ -365,7 +365,7 @@ otto --lab my_lab test -m "not integration"    # run by marker, no suite name ne
 
 The last two forms skip the suite name entirely — `--tests` and/or `-m`
 alone select matching tests across every suite (and every repo). See
-{doc}`guide/test` for the full selection-run syntax, including how a
+{doc}`guide/cli/test/index` for the full selection-run syntax, including how a
 suite's `Options` defaults apply when it's reached this way.
 
 `@options` (`from otto import options`) is otto's name for **pydantic's**
@@ -373,7 +373,7 @@ dataclass decorator: decorating an Options class with it makes the class a
 pydantic dataclass, so its fields are validated. `otto test TestExample
 --retries -1` fails with a clean CLI error (exit code 2) instead of being
 silently accepted. The same `@options` classes power `@instruction(options=...)`
-for `otto run` subcommands. See {doc}`guide/run/options` for the full picture.
+for `otto run` subcommands. See {doc}`library/options-classes` for the full picture.
 
 The validation runs at construction time, so an out-of-range value is rejected
 before the suite ever runs:
@@ -407,12 +407,13 @@ This opens a web dashboard showing CPU, memory, disk, and network metrics.
 ## Where to go next
 
 - {ref}`team-setup-checklist` -- One-time setup when adopting otto for a team
-- {doc}`guide/index` -- Detailed guides for each CLI command and project configuration
+- {doc}`guide/cli/index` -- Every `otto` command, one page per verb
+- {doc}`guide/configuration/index` -- The project and lab files every command reads
 - {doc}`library/index` -- Using otto as a Python library, plus recipes
 - {doc}`api/index` -- Full API reference
 
 ## Next steps
 
-- {doc}`guide/setup/lab-config` — configuring hosts and labs
-- {doc}`guide/hosts/embedded` — firmware/RTOS targets
-- {doc}`guide/index` — all command guides
+- {doc}`guide/configuration/lab-config` — configuring hosts and labs
+- {doc}`guide/cli/host/embedded` — firmware/RTOS targets
+- {doc}`guide/cli/index` — every command, one page per verb

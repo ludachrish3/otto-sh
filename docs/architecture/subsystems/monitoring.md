@@ -23,7 +23,7 @@ file to a React + Vite
 same observable surface, and later gained a real live producer: both live
 and review boot through the same `/api/monitor_sessions` endpoint, and a
 live tab keeps growing via `/api/stream` SSE fragments rather than
-reloading. See {doc}`../../guide/monitor` for the frontend dev workflow
+reloading. See {doc}`../../contributing` for the frontend dev workflow
 (`make web-dev`) — `tests/e2e/monitor/dashboard/` pins the exact
 ids/classes/behaviors that must survive any further change to either side.
 ```
@@ -88,11 +88,11 @@ loads) plus a live `GET /api/stream` SSE feed of `format:1`-shaped fragments
 that grows an already-open tab in real time. With `--db`, each run's
 samples persist as one session in a SQLite archive — WAL journaling on
 local disks, DELETE on network filesystems
-({doc}`../subsystems/data-boundary`); running against the same `--db` path
+({doc}`data-boundary`); running against the same `--db` path
 again appends another session rather than overwriting the archive. The
 positional `otto monitor <source>` form instead replays a saved `.json`
 export or `.db` archive without touching any host. See
-{doc}`../../guide/monitor` for the flag-level workflow — `--live`, `--db`,
+{doc}`../../guide/cli/monitor/index` for the flag-level workflow — `--live`, `--db`,
 `--label`/`--note`, and the review-mode `<SOURCE>` argument.
 
 **Gating.** `otto monitor` gates itself per branch rather than in the
