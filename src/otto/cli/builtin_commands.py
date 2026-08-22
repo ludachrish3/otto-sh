@@ -1,7 +1,7 @@
 """First-party top-level command registrations — otto's own composition list.
 
 The direct analog of the backend registries' ``_register_builtin_*``
-functions: otto's ten subcommand groups travel the same public
+functions: otto's eleven subcommand groups travel the same public
 :func:`~otto.cli.registry.register_cli_command` path a third-party plugin
 uses, with lazy ``"module:attr"`` loaders so nothing imports until dispatch.
 """
@@ -11,8 +11,19 @@ from .registry import CLI_COMMANDS, register_cli_command
 
 def register_builtin_commands() -> None:
     """Register otto's built-in subcommand groups (idempotent)."""
-    if "run" in CLI_COMMANDS:
+    if "init" in CLI_COMMANDS:
         return
+    register_cli_command(
+        "init",
+        "otto.cli.init:init_command",
+        help="Scaffold a new otto repo or validate an existing one.",
+        lab_free=True,
+        output_dir=False,
+        gate=False,
+    )
+    register_cli_command(
+        "host", "otto.cli.host:host_app", help="Run commands and transfer files on lab hosts."
+    )
     register_cli_command(
         "run",
         "otto.cli.run:run_app",
@@ -25,6 +36,43 @@ def register_builtin_commands() -> None:
     )
     register_cli_command(
         "test", "otto.cli.test:suite_app", help="Run a registered OttoSuite test suite."
+    )
+    register_cli_command(
+        "docker",
+        "otto.cli.docker:docker_app",
+        help="Build images and orchestrate compose stacks on docker-capable lab hosts.",
+        gate=False,
+    )
+    register_cli_command(
+        "link",
+        "otto.cli.link:link_app",
+        help="Inspect and impair the lab's static links.",
+        # Short-lived host-touching group like tunnel: no per-invocation
+        # output directory of its own.
+        output_dir=False,
+        # Owns its own dry run (spec §2), same terms as tunnel: `link impair -n`
+        # resolves placements and directions from configuration, prints the
+        # exact `tc` command lines it would issue, names the lockout refusals it
+        # could not make, and `_exec` raises `LinkNotMeasuredError` rather than
+        # letting a device fact be invented. That preview is the reason the
+        # flag exists.
+        dry_run_preview=True,
+    )
+    register_cli_command(
+        "tunnel",
+        "otto.cli.tunnel:tunnel_app",
+        help="Create, list, and remove host-resident bidirectional tunnels.",
+        # Short-lived like reservation: discovery/teardown touch hosts (and are
+        # reservation-gated, like host/run/test) but the group needs no
+        # per-invocation output directory of its own.
+        output_dir=False,
+        # Owns its own dry run (spec §2): every tunnel verb already
+        # short-circuits at the device boundary on `is_dry_run()` and renders a
+        # `DryRunPlan` (`would:` / `not checked:`), and the two `_device_*`
+        # funnels raise `TunnelNotMeasuredError` if anything tries to read a
+        # device fact anyway. Stopping at the seam would replace that plan with
+        # the generic block and delete the shipped preview.
+        dry_run_preview=True,
     )
     register_cli_command(
         "monitor",
@@ -53,15 +101,6 @@ def register_builtin_commands() -> None:
         gate=False,
     )
     register_cli_command(
-        "host", "otto.cli.host:host_app", help="Run commands and transfer files on lab hosts."
-    )
-    register_cli_command(
-        "docker",
-        "otto.cli.docker:docker_app",
-        help="Build images and orchestrate compose stacks on docker-capable lab hosts.",
-        gate=False,
-    )
-    register_cli_command(
         "reservation",
         "otto.cli.reservation:reservation_app",
         help="Inspect and verify lab reservations.",
@@ -77,45 +116,6 @@ def register_builtin_commands() -> None:
         "schema",
         "otto.cli.schema:schema_app",
         help="Export JSON Schema for lab.json / settings.toml / reservations.",
-        lab_free=True,
-        output_dir=False,
-        gate=False,
-    )
-    register_cli_command(
-        "tunnel",
-        "otto.cli.tunnel:tunnel_app",
-        help="Create, list, and remove host-resident bidirectional tunnels.",
-        # Short-lived like reservation: discovery/teardown touch hosts (and are
-        # reservation-gated, like host/run/test) but the group needs no
-        # per-invocation output directory of its own.
-        output_dir=False,
-        # Owns its own dry run (spec §2): every tunnel verb already
-        # short-circuits at the device boundary on `is_dry_run()` and renders a
-        # `DryRunPlan` (`would:` / `not checked:`), and the two `_device_*`
-        # funnels raise `TunnelNotMeasuredError` if anything tries to read a
-        # device fact anyway. Stopping at the seam would replace that plan with
-        # the generic block and delete the shipped preview.
-        dry_run_preview=True,
-    )
-    register_cli_command(
-        "link",
-        "otto.cli.link:link_app",
-        help="Inspect and impair the lab's static links.",
-        # Short-lived host-touching group like tunnel: no per-invocation
-        # output directory of its own.
-        output_dir=False,
-        # Owns its own dry run (spec §2), same terms as tunnel: `link impair -n`
-        # resolves placements and directions from configuration, prints the
-        # exact `tc` command lines it would issue, names the lockout refusals it
-        # could not make, and `_exec` raises `LinkNotMeasuredError` rather than
-        # letting a device fact be invented. That preview is the reason the
-        # flag exists.
-        dry_run_preview=True,
-    )
-    register_cli_command(
-        "init",
-        "otto.cli.init:init_command",
-        help="Scaffold a new otto repo or validate an existing one.",
         lab_free=True,
         output_dir=False,
         gate=False,
