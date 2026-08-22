@@ -1665,17 +1665,34 @@ SQL
 
     # BusyBox QEMU bed on test1 (spec 2026-08-20-busybox-bed-and-tier-
     # migration-design.md). Five guests, one per pinned milestone version,
-    # each a tiny x86 initramfs whose userland IS the pinned artifact,
-    # reachable only from inside this VM: QEMU user-net with one hostfwd
-    # for telnet (127.0.0.1:<telnet_port> -> guest :23) plus a 10-port nc
-    # data window (<nc_base>..<nc_base>+9, guest-side port == host-side
-    # port, which is what otto's hop port-forward + remote-listener nc
-    # shape requires). The host VM is aarch64, the guests are x86 — same
-    # TCG arrangement the zephyr VM already runs. The guest kernel is
-    # Ubuntu's amd64 generic vmlinuz (fetched via foreign-arch apt; one
-    # kernel serves i686 userlands too via IA32 emulation) plus its
-    # e1000.ko, decompressed at provision time because BusyBox insmod
-    # cannot read .ko.zst.
+    # each a tiny x86 initramfs whose userland IS the pinned artifact.
+    #
+    # Each guest gets a REAL NIC: its own TAP device on this VM, its own
+    # /30 out of TEST-NET-2, and telnetd on the honest port 23. This is the
+    # same shape the zephyr VM's instances use (see provision_zephyr_vm's
+    # `-nic tap,...` wrappers and their ExecStartPre TAP lifecycle), and it
+    # replaces QEMU user-mode networking (slirp) + hostfwd. slirp is a
+    # USERSPACE TCP/IP stack: it terminates the host-side connection and
+    # re-originates it inside the guest, so the guest's own e1000 driver
+    # and kernel stack were never on the path and no Ethernet framing, MTU,
+    # segmentation or window behaviour was ever exercised. A TAP puts all
+    # of that back. The IMAGE is unchanged in kind — e1000.ko was already
+    # in the initramfs, because slirp emulated an e1000 too; only the
+    # addressing its rcS writes moved.
+    #
+    # /30 per guest so this VM's routing table holds one distinct route per
+    # TAP; a shared /24 would overlap and the kernel would pick one, leaving
+    # four guests unreachable. TEST-NET-2 (198.51.100.0/24) because the
+    # zephyr VM's instances hold TEST-NET-1 (192.0.2.0/24) — the two blocks
+    # can never collide. No default route is configured inside the guests,
+    # so they can reach their /30 peer and nothing else: unlike slirp, this
+    # arrangement gives them NO egress.
+    #
+    # The host VM is aarch64, the guests are x86 — same TCG arrangement the
+    # zephyr VM already runs. The guest kernel is Ubuntu's amd64 generic
+    # vmlinuz (fetched via foreign-arch apt; one kernel serves i686
+    # userlands too via IA32 emulation) plus its e1000.ko, decompressed at
+    # provision time because BusyBox insmod cannot read .ko.zst.
     def provision_busybox_bed(vm)
         vm.vm.provision "shell", name: "busybox-qemu", keep_color: true, inline: <<-SHELL
             set -e
@@ -1739,29 +1756,30 @@ EOF
                 --dest "$BED" --kernel-module "$BED/e1000.ko" \
                 --emit-changed "$BED/changed.txt"
 
-            # version:telnet_port:nc_base — mirrors GUEST_TABLE in
+            # version:guest_ip:tap_ip:tap_name — mirrors GUEST_TABLE in
             # scripts/build_busybox_guest_images.py. Drift is caught
             # hostless: tests/unit/scripts/test_build_busybox_guest_images.py
             # reads this file and pins this table, the enable list below and
-            # the nc window width to GUEST_TABLE / NC_WINDOW. Edit that table
-            # and this one in the same commit, or the guard reds.
-            for entry in "1.16.1:2316:9160" "1.21.1:2321:9210" \
-                         "1.28.1:2328:9280" "1.31.0:2331:9310" \
-                         "1.35.0:2335:9350"; do
+            # the wrapper/unit templates that consume it to GUEST_TABLE. Edit
+            # that table and this one in the same commit, or the guard reds.
+            #
+            # guest_ip is not used to CONFIGURE anything here — the image's own
+            # rcS writes it — but it is carried so each unit's Description and
+            # each wrapper's header name the address an operator has to dial,
+            # and so the guard pins that copy too.
+            for entry in "1.16.1:198.51.100.1:198.51.100.2:bbeth-1161" \
+                         "1.21.1:198.51.100.5:198.51.100.6:bbeth-1211" \
+                         "1.28.1:198.51.100.9:198.51.100.10:bbeth-1281" \
+                         "1.31.0:198.51.100.13:198.51.100.14:bbeth-1310" \
+                         "1.35.0:198.51.100.17:198.51.100.18:bbeth-1350"; do
                 ver=$(echo "$entry" | cut -d: -f1)
-                tport=$(echo "$entry" | cut -d: -f2)
-                ncbase=$(echo "$entry" | cut -d: -f3)
-
-                fwds="hostfwd=tcp:127.0.0.1:${tport}-:23"
-                p=$ncbase
-                while [ $p -lt $((ncbase + 10)) ]; do
-                    fwds="${fwds},hostfwd=tcp:127.0.0.1:${p}-:${p}"
-                    p=$((p + 1))
-                done
+                gip=$(echo "$entry" | cut -d: -f2)
+                hip=$(echo "$entry" | cut -d: -f3)
+                tap=$(echo "$entry" | cut -d: -f4)
 
                 cat > /home/vagrant/run-busybox-qemu-${ver}.sh <<EOF
 #!/usr/bin/env bash
-# Launch the BusyBox ${ver} bed guest (telnet 127.0.0.1:${tport}).
+# Launch the BusyBox ${ver} bed guest on TAP ${tap} (telnet ${gip}:23).
 # TCG (no KVM on this aarch64 VM). -no-reboot + panic=-1 turn a guest
 # kernel panic — or any in-guest reboot — into a qemu EXIT instead of an
 # endless in-place reset. That exit carries status 0: qemu forces a
@@ -1770,6 +1788,11 @@ EOF
 # So Restart=on-failure would leave a panicked guest DOWN, and the unit
 # uses Restart=always instead. A deliberate 'systemctl stop' still
 # sticks — systemd never applies Restart= to a stop it initiated.
+#
+# script=no,downscript=no: qemu must not run /etc/qemu-ifup. The TAP is
+# created, addressed and torn down by the unit's ExecStartPre/ExecStopPost
+# (which need root; the qemu process itself runs as vagrant, which is why
+# the tap is made with 'user vagrant').
 set -euo pipefail
 exec qemu-system-x86_64 \\
     -m 96 \\
@@ -1778,21 +1801,22 @@ exec qemu-system-x86_64 \\
     -kernel /home/vagrant/busybox-bed/vmlinuz \\
     -initrd /home/vagrant/busybox-bed/initramfs-${ver}.cpio.gz \\
     -append "console=ttyS0 rdinit=/init panic=-1" \\
-    -netdev user,id=n0,${fwds} \\
-    -device e1000,netdev=n0
+    -nic tap,model=e1000,script=no,downscript=no,ifname=${tap}
 EOF
                 chown vagrant:vagrant /home/vagrant/run-busybox-qemu-${ver}.sh
                 chmod +x /home/vagrant/run-busybox-qemu-${ver}.sh
 
                 cat > /etc/systemd/system/busybox-qemu-${ver}.service <<EOF
 [Unit]
-Description=BusyBox ${ver} bed guest under QEMU (telnet 127.0.0.1:${tport})
+Description=BusyBox ${ver} bed guest under QEMU on ${tap} (telnet ${gip}:23)
 After=network.target
 
 [Service]
 Type=simple
 User=vagrant
+ExecStartPre=+/bin/sh -c 'ip link del ${tap} 2>/dev/null; ip tuntap add ${tap} mode tap user vagrant && ip link set ${tap} up && ip addr add ${hip}/30 dev ${tap}'
 ExecStart=/home/vagrant/run-busybox-qemu-${ver}.sh
+ExecStopPost=+/bin/sh -c 'ip link set ${tap} down 2>/dev/null; ip tuntap del ${tap} mode tap 2>/dev/null; true'
 Restart=always
 RestartSec=2
 

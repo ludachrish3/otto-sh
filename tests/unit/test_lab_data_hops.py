@@ -8,9 +8,9 @@ both are pinned below by name rather than waved through by category:
 * the embedded (Zephyr) instances, which hop through basil;
 * the BusyBox bed guests (``bb*``, spec
   ``docs/superpowers/specs/2026-08-20-busybox-bed-and-tier-migration-design.md``),
-  which are Unix hosts and hop through carrot. They sit behind QEMU user-mode
-  networking on their hop's loopback, so a hop is not scaffolding there — it is
-  the only route that exists.
+  which are Unix hosts and hop through carrot. Each one sits on its own /30
+  behind a TAP device that exists only on carrot, so a hop is not scaffolding
+  there — it is the only route that exists.
 
 Widening the first guard to "Unix hosts may hop" would delete it, so the bed
 guests are carved out by their ``busybox`` lab membership and then held to the

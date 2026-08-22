@@ -103,15 +103,25 @@ def test_unix_hosts_route_to_ssh_probe(monkeypatch):
 
 
 def test_a_cred_carrying_guest_behind_a_hop_is_probed_via_the_hop(monkeypatch):
-    """bb guests have creds AND a hop; SSHing 127.0.0.1 would probe the dev VM
-    itself. Routing must send them down the console path."""
+    """bb guests have creds AND a hop, so routing must take the console path.
+
+    Their addresses live on a /30 that exists only on the hop's own TAP, so
+    ``_is_ssh_host`` treating them as ordinary Unix hosts would aim ssh at an
+    address the machine running this script cannot reach at all.
+
+    The entry declares NO ``telnet_options``, exactly as the committed bed
+    entries do since the guests moved onto real NICs — so this also covers the
+    default-23 branch of the port lookup, which is the branch the whole BusyBox
+    bed now depends on. (Port HONORING is pinned separately, by the ARM serial
+    console's 2323 in
+    ``test_check_embedded_appends_creds_only_for_a_guest_that_has_its_own``.)
+    """
     guest = {
-        "ip": "127.0.0.1",
+        "ip": "198.51.100.1",
         "element": "bb1161",
         "os_type": "unix",
         "hop": "carrot_seed",
         "creds": [{"login": "root", "password": "otto"}],
-        "telnet_options": {"port": 2316},
     }
     assert lab_health._is_ssh_host(guest) is False
     hop = {
@@ -132,7 +142,7 @@ def test_a_cred_carrying_guest_behind_a_hop_is_probed_via_the_hop(monkeypatch):
     monkeypatch.setattr(lab_health, "_run_ssh", fake_run_ssh)
     res = lab_health._check_embedded(guest, {"carrot_seed": hop})
     assert seen["ip"] == "10.10.200.11"  # probed FROM the hop
-    assert " 2316" in seen["cmd"]  # honors telnet_options.port
+    assert " 198.51.100.1 23 " in seen["cmd"]  # the guest's own address, on :23
     assert res == {"ok": True, "status": "up", "info": "login prompt"}
 
 
@@ -523,16 +533,15 @@ def test_check_embedded_appends_creds_only_for_a_guest_that_has_its_own(monkeypa
 
     lab_health._check_embedded(
         {
-            "ip": "127.0.0.1",
+            "ip": "198.51.100.1",
             "element": "bb1161",
             "hop": "carrot_seed",
             "creds": [{"login": "root", "password": "otto"}],
-            "telnet_options": {"port": 2316},
         },
         hops,
     )
-    bb_tail = captured["cmd"].split(" 127.0.0.1 ", 1)[1]
-    assert bb_tail == "2316 root otto", f"BusyBox guest probe did not carry its creds: {bb_tail!r}"
+    bb_tail = captured["cmd"].split(" 198.51.100.1 ", 1)[1]
+    assert bb_tail == "23 root otto", f"BusyBox guest probe did not carry its creds: {bb_tail!r}"
     # The login path's four bounded reads can spend 30 s, so it must be given
     # more than `_run_ssh`'s 25 s default — otherwise ssh times out first and a
     # guest that is merely slow is reported as HOP-FAIL, the loudest verdict
@@ -567,13 +576,12 @@ def test_check_embedded_appends_creds_only_for_a_guest_that_has_its_own(monkeypa
     )
 
 
-def _bb_entry(element="bb1161", port=2316):
+def _bb_entry(element="bb1161", ip="198.51.100.1"):
     return {
-        "ip": "127.0.0.1",
+        "ip": ip,
         "element": element,
         "hop": "carrot_seed",
         "creds": [{"login": "root", "password": "otto"}],
-        "telnet_options": {"port": port},
     }
 
 

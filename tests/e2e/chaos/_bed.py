@@ -104,17 +104,25 @@ def probe_text(element: str, cmd: str, *, timeout: float = _PROBE_TIMEOUT) -> st
     return (out.value or "").strip()
 
 
-def veggies_link_id() -> str:
-    """The declared carrot_seed<->tomato_seed eth2 link's id.
+def declared_link_id(host_a: str, host_b: str) -> str:
+    """The id of the declared ``tech1/lab.json`` link joining *host_a* and *host_b*.
 
-    Hoisted from three former per-module copies (``test_connection_drop.py``,
-    ``test_tunnel_link_chaos.py``, ``test_reboot_chaos.py`` — verified
-    byte-identical before the hoist). The raw ``tech1/lab.json`` has no
-    literal ``"id"`` key on its ``links`` entries -- ``Link.id`` is
-    auto-derived at load time from the sorted endpoint host ids
-    (``otto.link.model.make_static_link_id``), so this replicates the SAME
-    load ``otto`` itself does (``otto.link.derive.resolve_declared_links``)
-    rather than guessing the computed string.
+    Hoisted from three former per-module copies of ``veggies_link_id``
+    (``test_connection_drop.py``, ``test_tunnel_link_chaos.py``,
+    ``test_reboot_chaos.py`` — verified byte-identical before the hoist). The
+    raw ``tech1/lab.json`` has no literal ``"id"`` key on its ``links``
+    entries -- ``Link.id`` is auto-derived at load time from the sorted
+    endpoint host ids (``otto.link.model.make_static_link_id``), so this
+    replicates the SAME load ``otto`` itself does
+    (``otto.link.derive.resolve_declared_links``) rather than guessing the
+    computed string.
+
+    Selected BY ENDPOINT PAIR, never by list index. The index shortcut was
+    correct only while the file declared exactly one link, and it was written
+    as ``links[0]`` with that assumption in a comment; the file now declares
+    two (the veggies eth2 route and the bb1350 TAP route), and a third would
+    have silently handed one module the other's link. The endpoint pair is
+    what every caller actually means.
     """
     data = json.loads(lab_data_path().read_text())
     # Skip records this process cannot resolve, mirroring JsonFileLabRepository:
@@ -133,12 +141,18 @@ def veggies_link_id() -> str:
         hosts[host_id] = addressing
     loaded_ids = set(hosts)
     links = resolve_declared_links(data["links"], hosts, source="lab.json", loaded_ids=loaded_ids)
-    link = links[0]  # tech1/lab.json declares exactly one link: carrot_seed:eth2<->tomato_seed:eth2
-    assert {link.a.host, link.b.host} == {"carrot_seed", "tomato_seed"}, (
-        f"expected the carrot<->tomato eth2 link at links[0], got {link!r} -- "
-        "tech1/lab.json's declared links changed shape"
+    want = {host_a, host_b}
+    matches = [link for link in links if {link.a.host, link.b.host} == want]
+    assert len(matches) == 1, (
+        f"expected exactly one declared {host_a}<->{host_b} link in tech1/lab.json, "
+        f"found {len(matches)}: {matches!r} -- the declared links changed shape"
     )
-    return link.id
+    return matches[0].id
+
+
+def veggies_link_id() -> str:
+    """The declared carrot_seed<->tomato_seed eth2 link's id."""
+    return declared_link_id("carrot_seed", "tomato_seed")
 
 
 def tunnel_target(sut_dir) -> ChaosTarget:
@@ -203,18 +217,43 @@ those pins live, not here.
 """
 
 BUSYBOX_HOP_ELEMENT = "carrot"
-"""The guest's hop. QEMU binds its telnet hostfwd on carrot's LOOPBACK, so the
-guest exists only at the far end of this host's own ``127.0.0.1`` — which is
-why the entry's ``ip`` is ``127.0.0.1`` and why nothing reaches it without
+"""The guest's hop. Each guest owns a /30 out of TEST-NET-2 whose other end is
+a TAP device on carrot, and the guests configure no default route — so the
+address in the entry's ``ip`` is a real address that is routable from carrot
+and from nowhere else, which is why nothing reaches it without
 ``hop: carrot_seed`` resolving first (see :func:`busybox_hop_context`).
 """
+
+BUSYBOX_CHAOS_HOST_ID = f"{BUSYBOX_CHAOS_ELEMENT}_qemu"
+"""The guest's HOST ID (``element_board``), which is what link endpoints,
+``--from`` and ``otto host`` all name — as distinct from the element name the
+probe helpers above take."""
+
+BUSYBOX_GUEST_NETDEV = "eth0"
+"""The guest's only netdev: its own end of the /30. Also, and this is the
+point of naming it, the netdev its management address lives on."""
+
+BUSYBOX_TAP_NETDEV = f"bbeth-{BUSYBOX_CHAOS_ELEMENT.removeprefix('bb')}"
+"""Carrot's end of the same wire. Derived from the element rather than typed,
+so the anchor and its TAP cannot drift apart."""
+
+
+def busybox_link_id() -> str:
+    """The declared ``carrot_seed:bbeth-1350 <-> bb1350_qemu:eth0`` link's id.
+
+    The guest's ONLY wire, declared in ``tech1/lab.json`` since the bed moved
+    onto real TAPs. What otto will and will not do with it is measured in
+    ``test_connection_drop.py``'s guest arm — read that before assuming this
+    id is impairable.
+    """
+    return declared_link_id("carrot_seed", BUSYBOX_CHAOS_HOST_ID)
 
 
 @dataclasses.dataclass(frozen=True)
 class BusyboxChaosBed:
     element: str  # lab element name, always BUSYBOX_CHAOS_ELEMENT
     version: str  # the guest's pinned BusyBox version, e.g. "1.35.0"
-    telnet_port: int  # the hop-side loopback port QEMU forwards to guest :23
+    ip: str  # the guest's own address on its /30, reachable from carrot only
     target: ChaosTarget  # aim the otto subprocess here
 
 
@@ -347,31 +386,31 @@ def busybox_bed() -> Iterator[BusyboxChaosBed]:
     lane itself is path-scoped to ``tests/e2e/chaos`` (``nox -s chaos``), so
     the two suites cannot co-run against ``bb1350``.
 
-    Reachability is proven by asking for a shell, not by a TCP connect: the
-    hop's QEMU hostfwd accepts as soon as the guest's qemu process is up,
-    long before ``telnetd`` is serving, so a connect probe would call a
-    still-booting guest healthy. Fails LOUD and guest-named on a down bed,
-    never skips, and names the operator remedy.
+    Reachability is proven by asking for a shell, not by a TCP connect. A
+    connect proves only that ``telnetd`` has bound 23; it says nothing about
+    the login path, and a guest that has just been restarted by
+    ``Restart=always`` serves the same banner as a healthy one. Fails LOUD and
+    guest-named on a down bed, never skips, and names the operator remedy.
     """
     guest = host_data(BUSYBOX_CHAOS_ELEMENT)
-    port = guest["telnet_options"]["port"]
+    ip = guest["ip"]
     try:
         answer = busybox_probe_text("echo BUSYBOX-CHAOS-READY")
     except Exception as exc:
         raise RuntimeError(
             f"BusyBox bed guest {BUSYBOX_CHAOS_ELEMENT} "
-            f"({BUSYBOX_HOP_ELEMENT}:{port}) will not serve a shell: {exc!r}. "
+            f"(via {BUSYBOX_HOP_ELEMENT} at {ip}:23) will not serve a shell: {exc!r}. "
             "Is the bed provisioned and up? Recover with `make qemu-restart`; "
             f"check with `scripts/lab_health.py`. (Chaos lane fails loud on a "
             "down bed -- it never skips.)"
         ) from exc
     assert "BUSYBOX-CHAOS-READY" in answer, (
-        f"BusyBox bed guest {BUSYBOX_CHAOS_ELEMENT} ({BUSYBOX_HOP_ELEMENT}:{port}) "
-        f"answered a login but not the marker: {answer!r} -- console wedged?"
+        f"BusyBox bed guest {BUSYBOX_CHAOS_ELEMENT} (via {BUSYBOX_HOP_ELEMENT} at "
+        f"{ip}:23) answered a login but not the marker: {answer!r} -- console wedged?"
     )
     yield BusyboxChaosBed(
         element=BUSYBOX_CHAOS_ELEMENT,
         version=guest["sw_version"],
-        telnet_port=port,
+        ip=ip,
         target=busybox_target(),
     )

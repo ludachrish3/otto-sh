@@ -3109,22 +3109,24 @@ GAPS: list[Gap] = [
         surface="busybox-over-a-real-network",
         status=UNTESTED,
         reason=(
-            "no BusyBox target is exercised over a real network path. The artifact tier "
-            "runs the binary as a local subprocess, and the live BusyBox guests answer "
-            "through QEMU's user-mode networking behind a hop -- so the last leg to "
-            "the device is emulated, with no real latency, MTU or loss on it. Nothing "
-            "measured so far can surface an interaction between the transfer's "
-            "chunking and a real path's MTU, window or timeouts. Untested, therefore "
-            "not blocked"
+            "no BusyBox target is exercised over a PHYSICAL network path. The artifact "
+            "tier runs the binary as a local subprocess. The live BusyBox guests moved "
+            "onto real NICs on 2026-08-22 -- each one now drives an e1000 through its "
+            "own kernel stack onto a TAP device on its hop, where QEMU's user-mode "
+            "stack used to terminate the connection and re-originate it, so Ethernet "
+            "framing, MTU and window behaviour are genuinely on the path now. What is "
+            "still missing is a wire: a TAP is host-local, with no propagation delay "
+            "and no loss, and nothing has been measured across the new path yet "
+            "either. Untested, therefore not blocked"
         ),
         measured_on="",
         queued_for=(
             "Tier 3 fidelity item B, `todo/busybox-tier3-fidelity-2026-08-13.md`: aim a "
             "BusyBox target across a physical link. The harness that item would have "
-            "extended is retired, and the bed that replaced it moved the target only "
-            "part of the way -- otto reaches the guests over the lab network, but the "
-            "last hop into each one is emulated. What is left to close this is a "
-            "BusyBox device on a real NIC"
+            "extended is retired, and the bed that replaced it has since closed the "
+            "emulated-stack half of the gap -- the guests' own drivers and kernels are "
+            "on the path. What is left is a BusyBox device across a link with real "
+            "timing and loss on it, and a measurement taken over one"
         ),
     ),
 ]

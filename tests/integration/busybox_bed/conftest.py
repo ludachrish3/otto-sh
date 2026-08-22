@@ -106,17 +106,27 @@ _bed_state: dict = {}
 
 
 def _probe_guest(ne: str) -> "str | None":
+    """Dial the guest FROM carrot, which is the only place it is routable.
+
+    The guest's ``ip`` is its own address on a /30 whose other end is a TAP
+    device on carrot, and the guests configure no default route — so this
+    connect has to originate on the hop. The port comes off the entry the same
+    way ``scripts/lab_health.py`` reads it (``telnet_options.port``, defaulting
+    to 23): the bed entries declare no override, and hardcoding 23 here would
+    stop tracking them if one ever did.
+    """
     guest = host_data(ne)
     carrot = host_data("carrot")
     user, password = _ssh_user_pass(carrot["creds"])
-    port = guest["telnet_options"]["port"]
+    ip = guest["ip"]
+    port = guest.get("telnet_options", {}).get("port", 23)
     probe = "python3 -c " + shlex.quote(
-        f"import socket; socket.create_connection(('127.0.0.1', {port}), timeout=5).close()"
+        f"import socket; socket.create_connection(({ip!r}, {port}), timeout=5).close()"
     )
     rc, _out, err = _run_ssh(carrot["ip"], user, password, probe)
     if rc != 0:
         return (
-            f"BusyBox bed guest {ne} (carrot:{port}) is unreachable: "
+            f"BusyBox bed guest {ne} ({ip}:{port}, from carrot) is unreachable: "
             f"{err or f'rc={rc}'}. Is the bed provisioned and up? "
             "Recover with `make qemu-restart`; diagnose with "
             f"`journalctl -u busybox-qemu-{guest['sw_version']}` on test1."

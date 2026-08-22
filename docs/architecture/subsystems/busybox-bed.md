@@ -169,13 +169,17 @@ to behave like an old one. They run under QEMU on `test1` (the lab VM otto's lab
 calls `carrot`) and are reachable only from inside it, so every guest is addressed
 through the hop:
 
-| Version | Lab `ne` | `host1` backend id | Telnet port on the hop | `nc` data window | systemd unit |
+| Version | Lab `ne` | `host1` backend id | Guest address | TAP on `test1` | systemd unit |
 | --- | --- | --- | --- | --- | --- |
-| 1.16.1 | `bb1161` | `busybox_1161` | 2316 | 9160-9169 | `busybox-qemu-1.16.1.service` |
-| 1.21.1 | `bb1211` | `busybox_1211` | 2321 | 9210-9219 | `busybox-qemu-1.21.1.service` |
-| 1.28.1 | `bb1281` | `busybox_1281` | 2328 | 9280-9289 | `busybox-qemu-1.28.1.service` |
-| 1.31.0 | `bb1310` | `busybox_1310` | 2331 | 9310-9319 | `busybox-qemu-1.31.0.service` |
-| 1.35.0 | `bb1350` | `busybox_1350` | 2335 | 9350-9359 | `busybox-qemu-1.35.0.service` |
+| 1.16.1 | `bb1161` | `busybox_1161` | 198.51.100.1 | `bbeth-1161` (198.51.100.2) | `busybox-qemu-1.16.1.service` |
+| 1.21.1 | `bb1211` | `busybox_1211` | 198.51.100.5 | `bbeth-1211` (198.51.100.6) | `busybox-qemu-1.21.1.service` |
+| 1.28.1 | `bb1281` | `busybox_1281` | 198.51.100.9 | `bbeth-1281` (198.51.100.10) | `busybox-qemu-1.28.1.service` |
+| 1.31.0 | `bb1310` | `busybox_1310` | 198.51.100.13 | `bbeth-1310` (198.51.100.14) | `busybox-qemu-1.31.0.service` |
+| 1.35.0 | `bb1350` | `busybox_1350` | 198.51.100.17 | `bbeth-1350` (198.51.100.18) | `busybox-qemu-1.35.0.service` |
+
+Each guest owns one /30 out of TEST-NET-2, whose other end is its TAP device on
+`test1`; telnetd binds the honest port 23. Those addresses are routable from `test1`
+and nowhere else, which is why every guest is reached through the hop.
 
 Facts worth knowing before you read a failure:
 
@@ -191,9 +195,20 @@ Facts worth knowing before you read a failure:
   ONE xdist group (`busybox_bed`) rather than one group per guest: a second worker
   would not parallelise them, it would timeshare the same two cores and take cycles
   from guests that already pay for emulation.
-- **The port windows are not decoration.** The `nc` transfer needs the guest-side and
-  hop-side port numbers to match, which is why each guest gets a ten-port window
-  forwarded straight through rather than a single mapped port.
+- **Each guest drives a real NIC.** Its QEMU attaches to a TAP device on `test1`, so
+  otto's traffic goes through the guest's own `e1000` driver and kernel stack — real
+  Ethernet framing, MTU and window behaviour, none of which a user-mode (slirp) stack
+  would have exercised. Nothing is port-forwarded and no port range is pre-mapped, so
+  the `nc` transfer picks its own ports the way it does on any other host.
+- **`bb1350`'s wire is a declared link, and otto will not impair it.** Because the far
+  end of that TAP is a real lab host, `carrot_seed:bbeth-1350 <-> bb1350_qemu:eth0` is
+  declared in `lab.json` and `otto link list` shows it. `otto link impair` refuses it
+  from both ends, and both refusals are right: on carrot the TAP carries the guest's
+  management transit, and on the guest `eth0` carries the guest's own management
+  address. A guest with one NIC has no data plane to degrade separately from its
+  management path — the impairment itself works fine on a TAP (measured: netem delay
+  and port-scoped loss both bite, emulated peer and all), otto simply declines to lock
+  itself out. The other four guests' TAPs are not declared, because nothing names them.
 
 ## Provisioning, recovery and logs
 
@@ -207,7 +222,9 @@ $ vagrant provision test1
 It fetches an Ubuntu amd64 kernel (one kernel serves the i686 userlands too, via IA32
 emulation) and its `e1000.ko`, decompressing the module because BusyBox `insmod`
 cannot read `.ko.zst`; then it builds the five images from the pinned artifacts and
-writes one systemd unit per guest. Re-provisioning is safe and cheap: the builder
+writes one systemd unit per guest. Each unit creates and addresses its guest's TAP
+before starting QEMU and deletes it again when the guest stops, so a TAP exists
+exactly as long as the guest behind it. Re-provisioning is safe and cheap: the builder
 reports which images actually changed, and only those guests — plus any that are not
 running — are restarted. A healthy, unchanged guest is left alone.
 
@@ -295,14 +312,17 @@ cache.
 The one place the artifact runs somewhere other than a developer machine or a CI
 runner is inside a bed guest, where it *is* the userland of a throwaway initramfs on
 an emulated machine — and the reach of that machine is worth stating exactly, since
-this is the section where a comforting summary does the most damage. The guest is
-unaddressable: it sits behind QEMU's user-mode (slirp) networking on `test1`, so
-nothing on the lab network can open a connection to it and the only way in is a
-hostfwd bound to `test1`'s own loopback. Outbound is the other direction and is not
-closed: the guest takes a default route to slirp's gateway (`10.0.2.2`), which NATs
-through `test1`, which has internet. So the isolation here is locality and a one-way
-door, not an absence of egress — and it is isolation by virtue of where the guests
-live, not a sandbox the artifact tier applies to itself. Container-isolated
+this is the section where a comforting summary does the most damage. Inbound, the
+guest is unaddressable from anywhere but its own hop: its /30 lives on a TAP device
+on `test1` and nothing routes or advertises those addresses, so no other machine on
+the lab network can open a connection to it. Outbound is closed as well, and the
+reason is the mechanism rather than a policy: **no default route is configured inside
+the guest and nothing NATs for it**, so its packets can reach the TAP end of its own
+/30 and nowhere else. That was not true before the guests moved onto real NICs — they
+used to take a default route to QEMU's user-mode gateway, which NATed through
+`test1`, which has internet — and it is what makes the isolation two-way now. It is
+still isolation by virtue of where the guests live, not a sandbox the artifact tier
+applies to itself. Container-isolated
 local tiers were once planned and are not coming: the bed answered the question they
 were for. Do not read the paragraph above as describing containment the local tier does
 not have.

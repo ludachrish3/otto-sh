@@ -177,7 +177,7 @@ error prints it verbatim; the sections below are its readable form.
 | [`run-command-line-length`](#run-command-line-length) | `measured-broken` | `Host.run()` refuses a command whose typed line would exceed 1022 characters, rather than let ash truncate it. `Host.exec()` is safe and is not refused. |
 | [`product-lifecycle`](#product-lifecycle) | `untested` | otto's `stage`/`install`/`uninstall` verbs emit no command of their own. Whether they work on your device is decided by your own product code. |
 | [`legacy-dropbear-crypto`](#legacy-dropbear-crypto) | `untested` | An old dropbear may need `ssh_options` to negotiate at all. Nobody has tried. |
-| [`busybox-over-a-real-network`](#busybox-over-a-real-network) | `untested` | The last leg to every target is local or emulated, so nothing has met a real path's MTU, latency or window. |
+| [`busybox-over-a-real-network`](#busybox-over-a-real-network) | `untested` | Every target is local or on host-local virtual wire, so nothing has met a physical path's latency or loss. |
 
 ### shell-transfer-base64
 
@@ -745,21 +745,25 @@ builds on a modern toolchain, and whether `ssh_options` really suffices.
 
 **Status:** `untested` — otto attempts it, and the outcome is the measurement.
 
-No BusyBox target is exercised over a real network path. The artifact tier runs
-the binary as a local subprocess, and the live BusyBox guests answer through
-QEMU's user-mode networking behind a hop — so the last leg to the device is
-emulated, with no real latency, MTU or loss on it. Nothing measured so far can
-surface an interaction between the transfer's chunking and a real path's MTU,
-window or timeouts.
+No BusyBox target is exercised over a *physical* network path. The artifact tier
+runs the binary as a local subprocess. The live BusyBox guests moved onto real
+NICs on 2026-08-22 — each one now drives an `e1000` through its own kernel stack
+onto a TAP device on its hop, where QEMU's user-mode stack used to terminate the
+connection and re-originate it, so Ethernet framing, MTU and window behaviour
+are genuinely on the path now. What is still missing is a wire: a TAP is
+host-local, with no propagation delay and no loss.
 
 **Measured:** nothing yet, by construction — this row exists to say that the
-green lanes do not cover it.
+green lanes do not cover it. Note that nothing has been measured across the new
+TAP path either; moving the guests onto real NICs changed what the bed *is*, not
+what has been observed on it.
 
 **Queued for:** Tier 3 fidelity item B, `todo/busybox-tier3-fidelity-2026-08-13.md`:
 aim a BusyBox target across a physical link. The harness that item would have
-extended is retired, and the bed that replaced it moved the target only part of
-the way — otto reaches the guests over the lab network, but the last hop into
-each one is emulated.
+extended is retired, and the bed that replaced it has since closed the
+emulated-stack half of the gap — the guests' own drivers and kernels are on the
+path. What is left is a link with real timing and loss on it, and a measurement
+taken over one.
 
 ## Keeping this page true
 

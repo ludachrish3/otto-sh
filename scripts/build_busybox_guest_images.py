@@ -61,25 +61,39 @@ ROOT_SHADOW_HASH = "$1$bb$atR8Vd4A2Wtv6xqEg8BFw1"
 
 @dataclass(frozen=True)
 class Guest:
-    """One bed guest: a pinned BusyBox version and its fixed ports."""
+    """One bed guest: a pinned BusyBox version and its own /30 on a TAP."""
 
     version: str
     element: str
-    telnet_port: int
-    nc_base: int
+    ip: str
+    """The guest's own address, configured on ``eth0`` by its ``rcS``."""
+
+    host_ip: str
+    """The hop-side end of the /30 — the address on :attr:`tap`."""
+
+    tap: str
+    """The TAP device on ``test1`` this guest's QEMU attaches to."""
 
 
-# The bed identity table (spec §2/§4). Ports are version-encoded:
-# telnet 23xx and nc 9xx0 windows derive from the version digits.
+# The bed identity table (spec §2/§4, re-cut 2026-08-22 when the guests moved
+# off QEMU user-mode networking onto real TAP NICs).
+#
+# One /30 per guest, `guest = 4n+1, host = 4n+2`, mirroring the arithmetic the
+# Zephyr instances already use on their own TAPs — a shared /24 would put five
+# overlapping routes in test1's table and the kernel would pick one, leaving
+# the other four unreachable. The block is TEST-NET-2 (198.51.100.0/24, RFC
+# 5737) precisely because the Zephyr beds hold TEST-NET-1 (192.0.2.0/24): two
+# documentation blocks on one host can never collide.
+#
+# No default route is configured in the guests (see `_rcs`), so these addresses
+# are reachable from test1 and from nowhere else.
 GUEST_TABLE = [
-    Guest("1.16.1", "bb1161", 2316, 9160),
-    Guest("1.21.1", "bb1211", 2321, 9210),
-    Guest("1.28.1", "bb1281", 2328, 9280),
-    Guest("1.31.0", "bb1310", 2331, 9310),
-    Guest("1.35.0", "bb1350", 2335, 9350),
+    Guest("1.16.1", "bb1161", "198.51.100.1", "198.51.100.2", "bbeth-1161"),
+    Guest("1.21.1", "bb1211", "198.51.100.5", "198.51.100.6", "bbeth-1211"),
+    Guest("1.28.1", "bb1281", "198.51.100.9", "198.51.100.10", "bbeth-1281"),
+    Guest("1.31.0", "bb1310", "198.51.100.13", "198.51.100.14", "bbeth-1310"),
+    Guest("1.35.0", "bb1350", "198.51.100.17", "198.51.100.18", "bbeth-1350"),
 ]
-
-NC_WINDOW = 10  # forwarded data ports per guest: nc_base .. nc_base+9
 
 
 @dataclass(frozen=True)
@@ -131,8 +145,18 @@ def cpio_newc(entries: "list[CpioEntry]") -> bytes:
     return bytes(buf)
 
 
-def _rcs(hostname: str) -> str:
-    """Render the guest's /etc/init.d/rcS: mounts, install, networking."""
+def _rcs(hostname: str, ip: str) -> str:
+    """Render the guest's /etc/init.d/rcS: mounts, install, networking.
+
+    *ip* is the guest's OWN address on its /30 (see :data:`GUEST_TABLE`), and
+    the /30 is the whole addressing story: the peer — the TAP end on test1 — is
+    on-link, so there is nothing for a gateway to do and NO DEFAULT ROUTE IS
+    CONFIGURED. That is deliberate rather than an omission. Under the QEMU
+    user-mode networking this replaced, every guest wrote the same fictional
+    ``10.0.2.15`` and took a default route to slirp's ``10.0.2.2``, which NATs
+    out through test1 — so the guests had working internet egress. They have
+    none now: no gateway is configured and nothing NATs for them.
+    """
     # /proc BEFORE --install: BusyBox resolves its own path through
     # /proc/self/exe, and 1.16.1 measured DANGLING links without it
     # (CI issues #227/#228). Everything runs via the /bin/busybox
@@ -149,8 +173,7 @@ def _rcs(hostname: str) -> str:
 done
 /bin/busybox insmod /lib/modules/e1000.ko
 /bin/busybox ifconfig lo 127.0.0.1 netmask 255.0.0.0 up
-/bin/busybox ifconfig eth0 10.0.2.15 netmask 255.255.255.0 up
-/bin/busybox route add default gw 10.0.2.2
+/bin/busybox ifconfig eth0 {ip} netmask 255.255.255.252 up
 /bin/busybox hostname {hostname}
 """
 
@@ -162,7 +185,9 @@ _INITTAB = """::sysinit:/bin/busybox sh /etc/init.d/rcS
 """
 
 
-def cpio_newc_entries(busybox: Path, kernel_module: Path, hostname: str) -> "list[CpioEntry]":
+def cpio_newc_entries(
+    busybox: Path, kernel_module: Path, hostname: str, ip: str
+) -> "list[CpioEntry]":
     """Build the full member list for one guest image.
 
     No /etc/motd or /etc/issue is baked, and scripts/lab_health.py's
@@ -190,7 +215,7 @@ def cpio_newc_entries(busybox: Path, kernel_module: Path, hostname: str) -> "lis
         CpioEntry("dev/console", 0o020600, rdev=(5, 1)),
         CpioEntry("dev/null", 0o020666, rdev=(1, 3)),
         CpioEntry("etc/inittab", 0o100644, _INITTAB.encode()),
-        CpioEntry("etc/init.d/rcS", 0o100755, _rcs(hostname).encode()),
+        CpioEntry("etc/init.d/rcS", 0o100755, _rcs(hostname, ip).encode()),
         CpioEntry("etc/passwd", 0o100644, b"root:x:0:0:root:/root:/bin/sh\n"),
         CpioEntry("etc/shadow", 0o100600, f"root:{ROOT_SHADOW_HASH}:0:0:99999:7:::\n".encode()),
         CpioEntry("etc/group", 0o100644, b"root:x:0:\n"),
@@ -199,9 +224,9 @@ def cpio_newc_entries(busybox: Path, kernel_module: Path, hostname: str) -> "lis
     return entries
 
 
-def build_initramfs_bytes(busybox: Path, kernel_module: Path, hostname: str) -> bytes:
+def build_initramfs_bytes(busybox: Path, kernel_module: Path, hostname: str, ip: str) -> bytes:
     """One guest's gzipped initramfs, byte-deterministic for stamping."""
-    archive = cpio_newc(cpio_newc_entries(busybox, kernel_module, hostname))
+    archive = cpio_newc(cpio_newc_entries(busybox, kernel_module, hostname, ip))
     return gzip.compress(archive, mtime=0)
 
 
@@ -222,7 +247,7 @@ def main(argv: "list[str] | None" = None) -> int:
             continue
         release = by_version[guest.version]
         binary = busybox_binary(release)  # fetch + sha-pin verify (cached)
-        blob = build_initramfs_bytes(binary, args.kernel_module, guest.element)
+        blob = build_initramfs_bytes(binary, args.kernel_module, guest.element, guest.ip)
         digest = hashlib.sha256(blob).hexdigest()
         image = args.dest / f"initramfs-{guest.version}.cpio.gz"
         stamp = args.dest / f"initramfs-{guest.version}.sha256"

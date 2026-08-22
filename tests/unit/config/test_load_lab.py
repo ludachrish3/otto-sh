@@ -148,8 +148,34 @@ def test_load_lab_round_trips_declared_link_from_fixture():
     """The tech1 fixture's carrot<->tomato udp link survives load_lab end to end."""
     lab = load_lab("veggies", search_paths=[lab_data_dir() / "tech1"])
 
-    assert len(lab.links) == 1
-    (link,) = lab.links
-    assert {link.a.host, link.b.host} == {"carrot_seed", "tomato_seed"}
+    by_pair = {frozenset({link.a.host, link.b.host}): link for link in lab.links}
+    link = by_pair[frozenset({"carrot_seed", "tomato_seed"})]
     assert link.protocol == "udp"
     assert {link.a.ip, link.b.ip} == {"192.168.1.11", "192.168.1.12"}
+
+
+def test_loading_one_lab_also_loads_a_link_reaching_out_of_it():
+    """``veggies`` loads the bb1350 TAP link too, and that is the containment
+    rule working rather than a leak.
+
+    ``resolve_declared_links`` keeps any entry with at least ONE endpoint in
+    the loaded lab, so a link is loaded by BOTH labs it straddles: carrot
+    belongs to ``veggies`` and ``busybox``, so ``veggies`` sees the
+    ``carrot_seed:bbeth-1350 <-> bb1350_qemu:eth0`` link and ``busybox``
+    already saw the ``carrot_seed:eth2 <-> tomato_seed:eth2`` one. Dropping
+    half-outside links instead would silently hide every cross-lab route.
+
+    Pinned as its own case because the count is load-bearing and easy to
+    "fix" the wrong way: the sibling above used to assert ``len(lab.links)
+    == 1`` and went red the moment a second link was declared, and bumping
+    that number to 2 would have recorded the arithmetic while losing the
+    reason. It also documents a sharp edge -- ``otto -l veggies`` can NAME a
+    link whose far end it never loaded, which ``link list`` reports as not
+    impairable, but which ``link impair --from carrot_seed`` will act on
+    while ``link repair`` refuses it for exactly that reason.
+    """
+    lab = load_lab("veggies", search_paths=[lab_data_dir() / "tech1"])
+
+    pairs = {frozenset({link.a.host, link.b.host}) for link in lab.links}
+    assert frozenset({"carrot_seed", "bb1350_qemu"}) in pairs, pairs
+    assert "bb1350_qemu" not in lab.hosts, "the guest is not a veggies host, only its link is"

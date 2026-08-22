@@ -16,7 +16,6 @@ import pytest
 
 from scripts.build_busybox_guest_images import (
     GUEST_TABLE,
-    NC_WINDOW,
     ROOT_SHADOW_HASH,
     build_initramfs_bytes,
     main,
@@ -46,14 +45,27 @@ def _parse_newc(blob: bytes) -> dict[str, dict]:
         out[name] = {"mode": mode, "rdev": (rdevmaj, rdevmin), "data": data}
 
 
-@pytest.fixture
-def image(tmp_path: Path) -> dict[str, dict]:
-    fake_busybox = tmp_path / "busybox"
+_ANCHOR = GUEST_TABLE[0]
+"""The guest the per-image shaping tests are read off — bb1161, by identity.
+
+Taken from the table rather than spelled out so the shaping assertions below
+cannot drift from the bed's own first row; the table itself is pinned by
+``test_the_guest_table_matches_the_pinned_bed_identities``.
+"""
+
+
+def _build(tmp_path: Path, guest) -> dict[str, dict]:
+    fake_busybox = tmp_path / f"busybox-{guest.version}"
     fake_busybox.write_bytes(b"\x7fELF-fake-busybox")
     fake_ko = tmp_path / "e1000.ko"
     fake_ko.write_bytes(b"fake-module")
-    blob = build_initramfs_bytes(fake_busybox, fake_ko, hostname="bb1161")
+    blob = build_initramfs_bytes(fake_busybox, fake_ko, guest.element, guest.ip)
     return _parse_newc(gzip.decompress(blob))
+
+
+@pytest.fixture
+def image(tmp_path: Path) -> dict[str, dict]:
+    return _build(tmp_path, _ANCHOR)
 
 
 def test_the_archive_carries_console_and_null_device_nodes(image):
@@ -77,18 +89,64 @@ def test_rcs_mounts_proc_before_running_install(image):
     assert image["etc/init.d/rcS"]["mode"] & 0o111  # executable
 
 
-def test_rcs_brings_up_usernet_addressing_and_the_nic_module(image):
+def test_rcs_addresses_the_guests_own_slash_30_and_loads_the_nic_module(image):
     rcs = image["etc/init.d/rcS"]["data"].decode()
     assert "insmod /lib/modules/e1000.ko" in rcs
-    assert "ifconfig eth0 10.0.2.15 netmask 255.255.255.0 up" in rcs
-    assert "route add default gw 10.0.2.2" in rcs
-    assert "hostname bb1161" in rcs
+    assert f"ifconfig eth0 {_ANCHOR.ip} netmask 255.255.255.252 up" in rcs
+    assert f"hostname {_ANCHOR.element}" in rcs
     assert image["lib/modules/e1000.ko"]["data"] == b"fake-module"
-    # insmod BEFORE the eth0 config, not merely somewhere in the file:
-    # user-net's NIC does not exist as an interface until the module is
-    # loaded, so the reversed order configures nothing and the guest comes
-    # up unreachable — with an rcS that still contains every line above.
+    # insmod BEFORE the eth0 config, not merely somewhere in the file: eth0
+    # does not exist as an interface until the module is loaded, so the
+    # reversed order configures nothing and the guest comes up unreachable —
+    # with an rcS that still contains every line above.
     assert rcs.index("insmod /lib/modules/e1000.ko") < rcs.index("ifconfig eth0")
+
+
+def test_rcs_configures_no_default_route(image):
+    """No gateway, and that is the guests' egress story — assert it.
+
+    The /30 peer is on-link, so a default route would have nothing to do; the
+    reason to pin its ABSENCE is what the previous arrangement did. Under QEMU
+    user-mode networking the guests took a default route to slirp's
+    ``10.0.2.2``, which NATs through test1, which has internet — so every guest
+    could reach the outside world. ``docs/guide/hosts/busybox.md`` now tells
+    operators they cannot. Re-adding a gateway line here would make that
+    sentence false again silently: nothing else in the suite looks at egress,
+    and a guest with a route still passes every reachability test there is.
+    """
+    rcs = image["etc/init.d/rcS"]["data"].decode()
+    assert "route add default" not in rcs, (
+        f"the guest rcS configures a default route — the bed's isolation claim "
+        f"in docs/guide/hosts/busybox.md is that it does not:\n{rcs}"
+    )
+    assert "10.0.2." not in rcs, (
+        f"a QEMU user-mode (slirp) address survives in the guest rcS; these "
+        f"guests are on real TAPs now:\n{rcs}"
+    )
+
+
+def test_every_guest_image_carries_its_own_address(tmp_path: Path):
+    """Five images, five distinct addresses — the per-guest fact is per-guest.
+
+    The bug this exists for shipped once already, in the arrangement this
+    replaced: ``_rcs`` hardcoded ONE address (``10.0.2.15``) for all five,
+    which was harmless only because slirp gave every guest its own private
+    10.0.2.0/24 and the host never saw those addresses. On real TAPs the same
+    shape is fatal and silent in the same way — the five images build, the five
+    units start, and four guests answer ARP for an address that is not theirs.
+    A single-guest assertion cannot see it: the anchor row above passes against
+    a builder that ignores its ``ip`` argument entirely as long as bb1161's
+    address is the constant. This one compares across the table.
+    """
+    seen = {}
+    for guest in GUEST_TABLE:
+        rcs = _build(tmp_path, guest)["etc/init.d/rcS"]["data"].decode()
+        assert f"ifconfig eth0 {guest.ip} netmask 255.255.255.252 up" in rcs, (
+            f"{guest.element}'s rcS does not configure {guest.ip}:\n{rcs}"
+        )
+        assert f"hostname {guest.element}" in rcs
+        seen[guest.element] = guest.ip
+    assert len(set(seen.values())) == len(GUEST_TABLE), f"two bed guests share an address: {seen}"
 
 
 def test_inittab_respawns_telnetd_with_an_explicit_login(image):
@@ -111,17 +169,44 @@ def test_root_login_is_md5_crypt_and_shell_is_ash(image):
 
 
 def test_the_guest_table_matches_the_pinned_bed_identities():
-    # `element` is pinned alongside the ports because main() feeds it in as
-    # the guest's hostname, and the lab data (Task 3) addresses the guests by
-    # exactly these names — a typo here ships a bed whose hostnames and whose
-    # host records disagree, which no port assertion can see.
-    assert [(g.version, g.element, g.telnet_port, g.nc_base) for g in GUEST_TABLE] == [
-        ("1.16.1", "bb1161", 2316, 9160),
-        ("1.21.1", "bb1211", 2321, 9210),
-        ("1.28.1", "bb1281", 2328, 9280),
-        ("1.31.0", "bb1310", 2331, 9310),
-        ("1.35.0", "bb1350", 2335, 9350),
+    # `element` is pinned alongside the addresses because main() feeds it in as
+    # the guest's hostname, and the lab data addresses the guests by exactly
+    # these names — a typo here ships a bed whose hostnames and whose host
+    # records disagree, which no address assertion can see.
+    #
+    # The /30 arithmetic (guest = 4n+1, tap = 4n+2) is spelled out literally
+    # rather than computed: a generated expectation would agree with a
+    # generator that had the same off-by-one as the table.
+    assert [(g.version, g.element, g.ip, g.host_ip, g.tap) for g in GUEST_TABLE] == [
+        ("1.16.1", "bb1161", "198.51.100.1", "198.51.100.2", "bbeth-1161"),
+        ("1.21.1", "bb1211", "198.51.100.5", "198.51.100.6", "bbeth-1211"),
+        ("1.28.1", "bb1281", "198.51.100.9", "198.51.100.10", "bbeth-1281"),
+        ("1.31.0", "bb1310", "198.51.100.13", "198.51.100.14", "bbeth-1310"),
+        ("1.35.0", "bb1350", "198.51.100.17", "198.51.100.18", "bbeth-1350"),
     ]
+
+
+def test_the_guest_slash_30s_do_not_collide_with_the_zephyr_beds():
+    """TEST-NET-2 here, because TEST-NET-1 is already spoken for on a hop.
+
+    The Zephyr instances take 192.0.2.x/30s on their own TAPs (see the
+    ``zeth-*`` wrappers in the Vagrantfile). Both beds are QEMU-on-a-lab-VM
+    with host-side addresses in the hop's routing table, so an overlapping
+    block would be a routing accident that only shows up live. Documentation
+    blocks are the cheap way to make the collision impossible, and picking a
+    DIFFERENT one is the whole point — so pin the block, not just the offsets.
+    """
+    for guest in GUEST_TABLE:
+        for address in (guest.ip, guest.host_ip):
+            assert address.startswith("198.51.100."), (
+                f"{guest.element} is addressed outside TEST-NET-2 at {address} — "
+                "192.0.2.0/24 belongs to the Zephyr beds"
+            )
+        octet = int(guest.ip.rsplit(".", 1)[1])
+        assert octet % 4 == 1, f"{guest.element}'s address {guest.ip} is not a /30 host"
+        assert guest.host_ip == f"198.51.100.{octet + 1}", (
+            f"{guest.element}'s tap address {guest.host_ip} is not the peer of {guest.ip}"
+        )
 
 
 # --- the Vagrantfile's hand-written copy of the same table -----------------
@@ -130,10 +215,40 @@ def test_the_guest_table_matches_the_pinned_bed_identities():
 # expected shape, so a malformed, extra or missing-quote entry fails the whole
 # match rather than being quietly skipped by a findall over the file. The
 # separator class allows the line continuations the table is wrapped with.
-_PROVISIONER_TRIPLETS = re.compile(r'for entry in\s+((?:"\d+\.\d+\.\d+:\d+:\d+"[\s\\]*)+);\s*do')
+_QUAD = r'"\d+\.\d+\.\d+:\d+\.\d+\.\d+\.\d+:\d+\.\d+\.\d+\.\d+:[a-z0-9-]+"'
+_PROVISIONER_QUADS = re.compile(rf"for entry in\s+((?:{_QUAD}[\s\\]*)+);\s*do")
 _PROVISIONER_ENABLE_LIST = re.compile(r'for entry in\s+((?:"\d+\.\d+\.\d+"[\s\\]*)+);\s*do')
-_PROVISIONER_NC_WINDOW = re.compile(
-    r"p=\$ncbase[\s\\]+while\s+\[\s*\$p\s+-lt\s+\$\(\(\s*ncbase\s*\+\s*(\d+)\s*\)\)\s*\]"
+
+# The three templates that consume the table. Spelled against the loop
+# VARIABLES (``${tap}``, ``${hip}``) rather than against any address, because
+# that is the property under test: the table is the one authority and the
+# wrapper/unit must read the row rather than carry a hardcoded copy of it.
+_PROVISIONER_NIC = re.compile(r"-nic tap,model=e1000,script=no,downscript=no,ifname=\$\{tap\}")
+_PROVISIONER_TAP_UP = re.compile(
+    r"ExecStartPre=\+/bin/sh -c 'ip link del \$\{tap\} 2>/dev/null; "
+    r"ip tuntap add \$\{tap\} mode tap user vagrant && "
+    r"ip link set \$\{tap\} up && ip addr add \$\{hip\}/30 dev \$\{tap\}'"
+)
+_PROVISIONER_TAP_DOWN = re.compile(
+    r"ExecStopPost=\+/bin/sh -c 'ip link set \$\{tap\} down 2>/dev/null; "
+    r"ip tuntap del \$\{tap\} mode tap 2>/dev/null; true'"
+)
+
+# The four ``cut`` bindings, in order and as one contiguous block. This is the
+# JOINT between the table and the templates, and pinning the two ends without
+# it leaves the whole chain forgeable: ``tap=bbeth-1161`` written straight at
+# the binding line satisfies every ``${tap}`` pattern above AND the quad
+# comparison, and strands four guests on one TAP -- the exact accident the
+# template pins were written to prevent. A swapped field number is the same
+# hazard one column over: ``hip=... -f2`` addresses each TAP with its GUEST's
+# address, so every /30 has two ends with the same address and nothing routes.
+# Anchored on ``$entry`` so a binding that stopped reading the loop variable
+# fails too.
+_PROVISIONER_BINDINGS = re.compile(
+    r'ver=\$\(echo "\$entry" \| cut -d: -f1\)\s*\n'
+    r'\s*gip=\$\(echo "\$entry" \| cut -d: -f2\)\s*\n'
+    r'\s*hip=\$\(echo "\$entry" \| cut -d: -f3\)\s*\n'
+    r'\s*tap=\$\(echo "\$entry" \| cut -d: -f4\)'
 )
 
 
@@ -149,37 +264,44 @@ def test_the_vagrantfile_provisioner_mirrors_the_guest_table():
 
     ``GUEST_TABLE`` is mirrored by the lab data (guarded by
     ``tests/unit/host/test_busybox_bed_lab_entries.py``) and again, in shell,
-    by the ``busybox-qemu`` provisioner: the ``version:telnet_port:nc_base``
-    triplets it builds each guest's QEMU hostfwds from, and the version list
-    the ``systemctl enable`` loop walks. That third copy is the one Chris
-    provisions the bed FROM. A transposed digit there ships a bed whose ports
-    disagree with lab.json and with the images' own hostnames while every
-    hostless gate stays green — only a live bed would ever say so, and the
-    live bed smoke arrives a phase later.
+    by the ``busybox-qemu`` provisioner: the
+    ``version:guest_ip:tap_ip:tap_name`` quads it builds each guest's TAP and
+    unit from, and the version list the ``systemctl enable`` loop walks. That
+    third copy is the one Chris provisions the bed FROM. A transposed digit
+    there ships a bed whose addresses disagree with lab.json and with the
+    images' own rcS while every hostless gate stays green — only a live bed
+    would ever say so.
 
-    The window width is pinned in the same breath: the wrapper's hostfwd loop
-    forwards ``nc_base .. nc_base + N``, and otto's netstat port scan starts
-    at ``nc_options.port`` and walks upward, so a window narrower than
-    ``NC_WINDOW`` silently caps concurrent transfers instead of failing.
+    The TEMPLATES that consume the quads are pinned in the same breath, and
+    against the loop variables rather than against any address. A wrapper that
+    hardcoded one ``ifname``, or a unit whose ``ExecStartPre`` addressed a tap
+    the row does not name, would satisfy a table-only comparison exactly as
+    well as the correct one — and would leave four guests sharing one TAP, or
+    a TAP with no address on it, which is a bed that answers nothing.
+
+    And so are the ``cut`` BINDINGS between them, which is the finding that
+    added them: pinning the table and pinning the ``${tap}``-shaped templates
+    still leaves the joint unguarded, and the joint is where the same accident
+    is cheapest to write. ``tap=bbeth-1161`` at the binding line, or ``hip``
+    reading field 2 instead of field 3, satisfies BOTH ends and ships the bed
+    the template pins exist to prevent.
     """
     body = _busybox_provisioner_text()
 
-    triplet_lists = _PROVISIONER_TRIPLETS.findall(body)
-    assert len(triplet_lists) == 1, (
-        "expected exactly one version:telnet:nc_base list in the busybox-qemu "
-        f"provisioner, found {len(triplet_lists)} — the table moved, changed "
-        "shape, or grew an entry that is not a well-formed triplet"
+    quad_lists = _PROVISIONER_QUADS.findall(body)
+    assert len(quad_lists) == 1, (
+        "expected exactly one version:guest_ip:tap_ip:tap_name list in the "
+        f"busybox-qemu provisioner, found {len(quad_lists)} — the table moved, "
+        "changed shape, or grew an entry that is not a well-formed quad"
     )
-    forwarded = [
-        (version, int(telnet), int(nc_base))
-        for version, telnet, nc_base in re.findall(
-            r'"(\d+\.\d+\.\d+):(\d+):(\d+)"', triplet_lists[0]
-        )
-    ]
-    assert forwarded == [(g.version, g.telnet_port, g.nc_base) for g in GUEST_TABLE], (
-        "Vagrantfile busybox-qemu hostfwd table drifted from GUEST_TABLE in "
-        "scripts/build_busybox_guest_images.py — the bed would forward ports "
-        "the lab data does not address"
+    provisioned = re.findall(
+        r'"(\d+\.\d+\.\d+):(\d+\.\d+\.\d+\.\d+):(\d+\.\d+\.\d+\.\d+):([a-z0-9-]+)"',
+        quad_lists[0],
+    )
+    assert provisioned == [(g.version, g.ip, g.host_ip, g.tap) for g in GUEST_TABLE], (
+        "Vagrantfile busybox-qemu identity table drifted from GUEST_TABLE in "
+        "scripts/build_busybox_guest_images.py — the bed would stand up TAPs "
+        "and addresses the lab data does not address"
     )
 
     enable_lists = _PROVISIONER_ENABLE_LIST.findall(body)
@@ -193,21 +315,58 @@ def test_the_vagrantfile_provisioner_mirrors_the_guest_table():
     )
     # Stated separately from the two comparisons above so the failure names
     # the real accident: the two shell lists disagreeing with each other.
-    assert enabled == [version for version, _telnet, _nc_base in forwarded], (
+    assert enabled == [version for version, _gip, _hip, _tap in provisioned], (
         "the provisioner's own two copies disagree: enable list "
-        f"{enabled} vs hostfwd table {[v for v, _t, _n in forwarded]}"
+        f"{enabled} vs identity table {[v for v, _g, _h, _t in provisioned]}"
     )
 
-    window = _PROVISIONER_NC_WINDOW.search(body)
-    assert window is not None, (
-        "could not find the nc hostfwd window loop (p=$ncbase; while [ $p -lt "
-        "$((ncbase + N)) ]) in the busybox-qemu provisioner"
+    for name, pattern in (
+        ("the four cut -d: field bindings, in table order", _PROVISIONER_BINDINGS),
+        ("the qemu -nic tap line", _PROVISIONER_NIC),
+        ("the unit's ExecStartPre TAP setup", _PROVISIONER_TAP_UP),
+        ("the unit's ExecStopPost TAP teardown", _PROVISIONER_TAP_DOWN),
+    ):
+        found = pattern.findall(body)
+        assert len(found) == 1, (
+            f"expected exactly one occurrence of {name} in the busybox-qemu "
+            f"provisioner, found {len(found)} — it was edited away, hardcoded "
+            "against something other than the loop's own row, or duplicated"
+        )
+
+
+def test_the_provisioner_keeps_no_user_mode_networking_behind():
+    """A leftover slirp flag would quietly undo the whole change.
+
+    ``-nic`` and ``-netdev``/``hostfwd`` are not mutually exclusive to QEMU: a
+    guest given both comes up with two interfaces, and the one its rcS
+    configures is whichever the kernel enumerates as ``eth0``. So a half-
+    reverted wrapper — or a commented-out copy of the old table left "for
+    reference" — is a bed that may answer on loopback ports again while every
+    address assertion above still passes. The stronger statement is that the
+    slirp spelling does not appear in this provisioner AT ALL, which is also
+    what makes a shadow copy fail closed rather than parse as documentation.
+    """
+    body = _busybox_provisioner_text()
+    for spelling in ("hostfwd", "netdev", "-net ", "user,", "10.0.2."):
+        assert spelling not in body, (
+            f"{spelling!r} survives in the busybox-qemu provisioner — the bed "
+            "guests are on real TAPs and must have no user-mode networking left"
+        )
+    # A spelling ban alone is a blocklist, and ``-nic user`` — no comma, no
+    # ``netdev``, no ``hostfwd`` — walks straight through one while adding
+    # exactly the second interface the paragraph above is about. So state the
+    # allowlist instead: EVERY ``-nic`` in this provisioner must be a tap.
+    nics = re.findall(r"-nic\s+(\S+)", body)
+    assert nics, (
+        "no -nic flag in the busybox-qemu provisioner at all — the guests have "
+        "no NIC, or the wrapper stopped being generated here"
     )
-    assert int(window.group(1)) == NC_WINDOW, (
-        f"the provisioner forwards a {window.group(1)}-port nc window but the "
-        f"builder documents NC_WINDOW={NC_WINDOW}; otto's port scan walks "
-        "upward from nc_base, so the two must agree"
-    )
+    for spec in nics:
+        assert spec.startswith("tap,"), (
+            f"the provisioner gives a guest `-nic {spec}` — anything but a tap "
+            "is user-mode networking under another name, and a guest handed two "
+            "NICs configures whichever the kernel enumerates as eth0"
+        )
 
 
 def test_the_builder_imports_under_bare_python3(tmp_path):

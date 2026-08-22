@@ -17,7 +17,8 @@
                 "carrot"
             ],
             "interfaces": {
-                "eth2": {"ip": "192.168.1.11", "subnet": "192.168.1.0/24"}
+                "eth2": {"ip": "192.168.1.11", "subnet": "192.168.1.0/24"},
+                "bbeth-1350": {"ip": "198.51.100.18", "subnet": "198.51.100.16/30"}
             },
             "labs": [
                 "veggies",
@@ -279,7 +280,7 @@
             ]
         },
         {
-            "ip": "127.0.0.1",
+            "ip": "198.51.100.1",
             "element": "bb1161",
             "os_type": "unix",
             "board": "qemu",
@@ -291,8 +292,6 @@
             "creds": [
                 {"login": "root", "password": "otto"}
             ],
-            "telnet_options": {"port": 2316},
-            "nc_options": {"port": 9160},
             "userland_options": {
                 "applet_base64": "absent",
                 "applet_nc": "present",
@@ -317,7 +316,7 @@
             ]
         },
         {
-            "ip": "127.0.0.1",
+            "ip": "198.51.100.5",
             "element": "bb1211",
             "os_type": "unix",
             "board": "qemu",
@@ -329,8 +328,6 @@
             "creds": [
                 {"login": "root", "password": "otto"}
             ],
-            "telnet_options": {"port": 2321},
-            "nc_options": {"port": 9210},
             "userland_options": {
                 "applet_base64": "present",
                 "applet_nc": "present",
@@ -355,7 +352,7 @@
             ]
         },
         {
-            "ip": "127.0.0.1",
+            "ip": "198.51.100.9",
             "element": "bb1281",
             "os_type": "unix",
             "board": "qemu",
@@ -367,8 +364,6 @@
             "creds": [
                 {"login": "root", "password": "otto"}
             ],
-            "telnet_options": {"port": 2328},
-            "nc_options": {"port": 9280},
             "userland_options": {
                 "applet_base64": "present",
                 "applet_nc": "present",
@@ -393,7 +388,7 @@
             ]
         },
         {
-            "ip": "127.0.0.1",
+            "ip": "198.51.100.13",
             "element": "bb1310",
             "os_type": "unix",
             "board": "qemu",
@@ -405,8 +400,6 @@
             "creds": [
                 {"login": "root", "password": "otto"}
             ],
-            "telnet_options": {"port": 2331},
-            "nc_options": {"port": 9310},
             "userland_options": {
                 "applet_base64": "present",
                 "applet_nc": "present",
@@ -431,7 +424,7 @@
             ]
         },
         {
-            "ip": "127.0.0.1",
+            "ip": "198.51.100.17",
             "element": "bb1350",
             "os_type": "unix",
             "board": "qemu",
@@ -443,8 +436,6 @@
             "creds": [
                 {"login": "root", "password": "otto"}
             ],
-            "telnet_options": {"port": 2335},
-            "nc_options": {"port": 9350},
             "userland_options": {
                 "applet_base64": "present",
                 "applet_nc": "present",
@@ -464,6 +455,9 @@
             "resources": [
                 "bb1350"
             ],
+            "interfaces": {
+                "eth0": {"ip": "198.51.100.17", "subnet": "198.51.100.16/30"}
+            },
             "labs": [
                 "busybox"
             ]
@@ -476,6 +470,14 @@
                 {"host": "tomato_seed", "interface": "eth2"}
             ],
             "protocol": "udp"
+        },
+        {
+            "_comment": "The bb1350 guest's /30 to its TAP on carrot -- the ONLY wire the guest has.",
+            "endpoints": [
+                {"host": "carrot_seed", "interface": "bbeth-1350"},
+                {"host": "bb1350_qemu", "interface": "eth0"}
+            ],
+            "protocol": "tcp"
         }
     ]
 }

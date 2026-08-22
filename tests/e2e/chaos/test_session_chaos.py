@@ -196,9 +196,10 @@ def test_seeded_sigint_mid_command_reaps_the_busybox_guest(busybox_chaos_bed, ch
     hop, which is exactly why this arm exists: otto never signals the remote
     -- it drops the session and lets the DEVICE's line discipline reap. On
     the veggies host that is an ssh channel closing and sshd HUPping its pty.
-    On the guest it is otto's telnet socket closing (through carrot's
-    hostfwd) and the guest's ``telnetd`` HUPping ITS pty, and neither the
-    hop's port forward nor a BusyBox userland is on the veggies path. The
+    On the guest it is otto's telnet socket closing (over the TAP link
+    between carrot and the guest) and the guest's ``telnetd`` HUPping ITS
+    pty, and neither the hop's port forward nor a BusyBox userland is on the
+    veggies path. The
     guest genuinely has ptys to HUP: its init runs ``telnetd -F -l
     /bin/login`` and its ``rcS`` mounts ``devpts``, so each login is a real
     session leader on a real pty -- see

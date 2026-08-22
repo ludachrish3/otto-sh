@@ -84,12 +84,11 @@ _LOGIN_PROBE_SSH_TIMEOUT_S = 45.0
 # but neither shape) / "NOOUT" (TCP open but the guest emitted nothing — the
 # classic wedge) / "CONNFAIL <err>".
 #
-# The port is argv[2], NOT hardcoded: the x86 net beds expose the in-guest
-# shell on :23 (reached over their TAP), but the ARM serial beds bridge UART to
-# a telnet listener on a loopback /32 at 2323+, and the BusyBox guests sit
-# behind QEMU user-net hostfwds on 127.0.0.1 at 2316+. A hardcoded :23 would
-# connect to the hop's own 0.0.0.0:23 telnetd for those loopback addresses and
-# report a false "up" — so honor telnet_options.port.
+# The port is argv[2], NOT hardcoded: the x86 net beds and the BusyBox guests
+# expose the in-guest shell on :23 (reached over their TAPs), but the ARM serial
+# beds bridge UART to a telnet listener on a loopback /32 at 2323+. A hardcoded
+# :23 would connect to the hop's own 0.0.0.0:23 telnetd for those loopback
+# addresses and report a false "up" — so honor telnet_options.port.
 #
 # argv[3]/argv[4] are an OPTIONAL user/password, and supplying them selects a
 # different probe entirely: log in, then read /proc/uptime. Only the BusyBox
@@ -331,9 +330,9 @@ def _check_embedded(host: dict, hops: dict[str, dict]) -> dict:
     if hop is None:
         return {"ok": False, "status": "NO-HOP", "info": f"hop {host.get('hop')!r} not in lab"}
     user, password = _ssh_user_pass(hop["creds"])
-    # ARM serial beds carry the console on telnet_options.port (2323+) and the
-    # BusyBox guests on their hostfwd port (2316+); x86 net beds have no
-    # telnet_options and use the in-guest shell on :23.
+    # ARM serial beds carry the console on telnet_options.port (2323+); x86 net
+    # beds and the BusyBox guests have no telnet_options and use the in-guest
+    # shell on :23, reached over their own TAP from the hop.
     port = host.get("telnet_options", {}).get("port", 23)
     remote_cmd = f"python3 -c {shlex.quote(_CONSOLE_PROBE)} {shlex.quote(host['ip'])} {port}"
     # A guest carrying creds of ITS OWN can be logged into for a real uptime;

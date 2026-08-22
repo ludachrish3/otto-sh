@@ -15,10 +15,10 @@ left on endpoint hosts; the carrier is ``socat``
 (``otto.tunnel.carrier.DEFAULT_CARRIER``) and ``otto.tunnel.manage``'s own
 tool check refuses a host without it. Measured on the anchor guest: no
 ``socat``, and no ``systemd-run`` for the preferred detach either. There is
-nothing to leak, so nothing to reconcile. The LINK half needs a declared
-link with a guest endpoint, and there is none to declare -- see
-test_connection_drop.py's note for why a QEMU user-net NIC has no second
-lab-host end.
+nothing to leak, so nothing to reconcile. The LINK half needs a DECLARED
+link with a guest endpoint, and none is declared -- see
+test_connection_drop.py's note, which also records what the move to real TAP
+NICs did and did not change about that.
 """
 
 import contextlib

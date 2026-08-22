@@ -451,11 +451,15 @@ class ConnectionManager:
         whole telnet exec pool that backs ``UnixHost.exec`` and the nc
         transfers) hand-rolled ``TelnetClient(connections.ip, ...)`` with no
         forward and no ``connect_port``. For a hop-fronted telnet host that
-        dials the address literally: the BusyBox bed guests advertise
-        ``127.0.0.1:2316``, which IS the guest as seen from carrot and is the
-        machine running otto as seen from here, so every exec attempt died on
-        ``ConnectionRefusedError`` against the dev VM's own loopback while
-        ``run`` worked perfectly (measured 2026-08-21 against bb1350).
+        dials the address literally: a BusyBox bed guest's ``ip`` is an address
+        on a /30 that exists ONLY on carrot, so dialling it from here reaches
+        nothing at all, while ``run`` — which forwards — works perfectly.
+        Measured 2026-08-21 against bb1350, when the guests were still reached
+        through a QEMU hostfwd and their ``ip`` was ``127.0.0.1``: ``exec``
+        raised ``ConnectionRefusedError [Errno 111] Connect call failed
+        ('127.0.0.1', 2335)`` against the DEV VM's own loopback. The addressing
+        has since moved onto real TAP NICs and the defect's shape is unchanged
+        — a literal dial is a dial at the wrong machine either way.
 
         The defect was invisible until this bed existed. otto's other
         hop-fronted telnet devices are the Zephyr consoles, which are

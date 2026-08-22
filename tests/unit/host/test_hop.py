@@ -213,12 +213,16 @@ class TestConnectionManagerTunnel:
         were separately deciding where to dial, and only one of them knew about
         the hop. ``open_session`` passed ``connections.ip`` with no
         ``connect_port``, which for a device behind a hop is not a route to the
-        device at all: the BusyBox bed guests carry ``ip = 127.0.0.1`` because
-        their QEMU hostfwd binds carrot's loopback, so the literal address is
-        the machine running otto. Measured against bb1350 (2026-08-21): ``run``
-        returned ``RUN-OK`` while ``exec`` raised ``ConnectionRefusedError
-        [Errno 111] Connect call failed ('127.0.0.1', 2335)`` — a live guest,
-        an unusable exec, and no error anywhere naming the hop.
+        device at all. Measured against bb1350 (2026-08-21), when the bed guests
+        still carried ``ip = 127.0.0.1`` because a QEMU hostfwd bound carrot's
+        loopback and the literal address was therefore the machine running otto:
+        ``run`` returned ``RUN-OK`` while ``exec`` raised
+        ``ConnectionRefusedError [Errno 111] Connect call failed ('127.0.0.1',
+        2335)`` — a live guest, an unusable exec, and no error anywhere naming
+        the hop. The constructed host below is that measurement's host, kept as
+        it was measured; the guests have since moved onto real TAP NICs, where
+        the literal dial reaches nothing instead of reaching the wrong machine,
+        and the seam under test is the same one either way.
 
         Asserted on the CONSTRUCTOR ARGUMENTS, because the target is chosen
         there and nowhere else; a test on the resulting session would pass

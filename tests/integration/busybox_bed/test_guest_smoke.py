@@ -15,7 +15,7 @@ device would make you take.
   ``tests/unit/host/test_busybox_bed_lab_entries.py`` pins to the image
   builder's ``GUEST_TABLE``; asserting the banner here closes the loop
   from the pinned tarball through the initramfs to the running shell. A
-  mixed-up hostfwd port would land otto on the neighbouring guest, and
+  mixed-up address would land otto on the neighbouring guest, and
   every hostless gate would still be green — this is the assertion that
   sees it.
 * **Nothing GNU is hiding behind it.** The whole point of the tier is a
