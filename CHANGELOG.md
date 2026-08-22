@@ -5,6 +5,56 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.6] - 2026-08-22
+
+### Added
+
+- **bed**: the BusyBox guests answer on real NICs
+- **BREAKING** **bed**: busybox guests become first-party; retire the contrived tier
+- **bed**: five per-version busybox qemu guests on test1, behind carrot
+- **BREAKING** **labs**: combine lab data from an ordered list of host sources
+
+
+### Changed
+
+- **cli**: order top-level help by the documented command order
+
+
+### Dependencies
+
+- **deps-dev**: bump ty from 0.0.72 to 0.0.73
+- **deps-dev**: bump ruff from 0.16.2 to 0.16.3
+- **deps-dev**: bump the vitest group in /web with 2 updates
+- **deps-dev**: bump @biomejs/biome from 2.5.8 to 2.5.9 in /web
+- **deps-dev**: bump hypothesis from 6.165.3 to 6.165.10
+- **deps-dev**: bump @testing-library/user-event in /web
+- **deps**: bump zustand from 5.0.14 to 5.0.15 in /web
+- **deps**: bump telnetlib3 from 4.0.5 to 5.0.0
+- **deps**: bump input-otp from 1.4.2 to 1.5.0 in /web
+- **deps-dev**: bump nox from 2026.8.10 to 2026.8.17
+- **deps**: bump uvicorn from 0.52.1 to 0.52.4
+
+
+### Documentation
+
+- **todo**: file the busybox and chaos-lane items the bed work left open
+- **spec**: CI confirms the support matrix, not just the code
+- **spec**: test-strategy upgrades and the unix-lab rename
+- retarget two stale busybox doc paths left by the page move
+- **guide**: the User Guide's CLI section mirrors otto's command tree
+- **spec**: the User Guide's CLI section mirrors the command tree
+
+
+### Fixed
+
+- **tests**: pin the outage banner to the clock, not to navigation time
+- **tests,docs**: name carrot's interface now that the bed multi-homed it
+- **link**: otto clears everything otto can place
+- **tests**: close the fd of a transport built after the reap's last scan
+- **typing**: keep decorated verbs' signatures instead of erasing them to Any
+- **transfer**: an interrupted transfer cleans up after itself
+
+
 ## [0.8.5] - 2026-08-20
 
 ### Added
@@ -1335,7 +1385,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - added GitHub templates
 - set up release management
 
-[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.8.5...HEAD
+[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.8.6...HEAD
+[0.8.6]: https://github.com/ludachrish3/otto-sh/compare/v0.8.5...v0.8.6
 [0.8.5]: https://github.com/ludachrish3/otto-sh/compare/v0.8.4...v0.8.5
 [0.8.4]: https://github.com/ludachrish3/otto-sh/compare/v0.8.3...v0.8.4
 [0.8.3]: https://github.com/ludachrish3/otto-sh/compare/v0.8.2...v0.8.3

@@ -1252,7 +1252,7 @@ wheels = [
 
 [[package]]
 name = "otto-sh"
-version = "0.8.5"
+version = "0.8.6"
 source = { editable = "." }
 dependencies = [
     { name = "aioftp" },
