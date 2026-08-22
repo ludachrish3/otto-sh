@@ -7,6 +7,7 @@ live streaming build against. ``/api/meta``/``/api/data`` were retired in
 Plan 5b Task 3 (both modes now hydrate through /api/monitor_sessions).
 """
 
+import asyncio
 import contextlib
 import http.client
 import json
@@ -398,6 +399,77 @@ def test_force_stop_survives_sse_opened_during_shutdown(
         hammer.join(timeout=2.0)
         for sock in held:
             sock.close()
+
+
+def _build_accepted_transport(
+    loop: asyncio.AbstractEventLoop,
+) -> tuple[Any, socket.socket]:
+    """Build a live selector transport on *loop*, the way an accept does.
+
+    ``loop._make_socket_transport`` is exactly what asyncio's
+    ``_accept_connection2`` task calls once a connection has been accepted: it
+    wraps the socket and *queues* ``connection_made``. Nothing public builds
+    that state, and the reap under test is itself written against these
+    internals (``_SelectorTransport`` / ``_sock``), so the injection uses them
+    too. The loop is re-bound through ``Any`` because these are private.
+    """
+    server_sock, peer = socket.socketpair()
+    server_sock.setblocking(False)
+    internals: Any = loop
+    return internals._make_socket_transport(server_sock, asyncio.Protocol()), peer
+
+
+def test_teardown_closes_a_transport_built_after_the_reap_s_last_scan() -> None:
+    """A transport built on the loop's *final* turn must still get its fd closed.
+
+    Regression for a rare ``tests_hostless-3.11`` teardown ``ExceptionGroup``
+    (``unclosed transport <_SelectorSocketTransport fd=32 read=idle
+    write=<idle, bufsize=0>>``). asyncio accepts a connection in a selector
+    callback but builds its transport in a *task*, so one can be created after
+    ``_reap_orphaned_transports``'s last scan — idle, unregistered, and
+    therefore invisible to both reapers: ``force_stop`` iterates uvicorn's
+    ``server_state.connections``, which a connection joins only *in*
+    ``connection_made``, and the abort pass can only abort what already exists.
+    Nothing runs after ``loop.close()``, so its fd reaches GC still open.
+
+    The injection is a callback that rebuilds itself every turn, so whichever
+    turn the reap finishes on, a transport was created on it *after* that
+    turn's scan — the hostile schedule, made deterministic instead of raced
+    for. Without the hard close it leaks; the assertion is on the fd, not on
+    which pass closed it.
+    """
+    loop = asyncio.new_event_loop()
+    harness: DashboardHarness[FakeCollector] = DashboardHarness(FakeCollector())
+    harness._loop = loop
+
+    built: list[Any] = []
+    peers: list[socket.socket] = []
+
+    def _accept_one() -> None:
+        transport, peer = _build_accepted_transport(loop)
+        built.append(transport)
+        peers.append(peer)
+        loop.call_soon(_accept_one)  # again next turn, whichever turn is last
+
+    loop.call_soon(_accept_one)
+    try:
+        harness._reap_orphaned_transports()
+        assert built, "injection never ran: the reap turned the loop zero times"
+        leaked = [t for t in built if t._sock is not None]
+        assert not leaked, (
+            f"{len(leaked)} of {len(built)} transports still hold an open fd at "
+            f"loop.close(); nothing can close them afterwards: {leaked}"
+        )
+    finally:
+        # Belt and braces: on failure the loop must not close over live fds, or
+        # the ResourceWarning this test is about would fire from the test itself.
+        for transport in built:
+            sock, transport._sock = transport._sock, None
+            if sock is not None:
+                sock.close()
+        for peer in peers:
+            peer.close()
+        loop.close()
 
 
 def _next_sse_payload(resp: http.client.HTTPResponse) -> dict[str, Any]:

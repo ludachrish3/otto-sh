@@ -149,14 +149,17 @@ class DashboardHarness(Generic[C]):
         ``ResourceWarning`` from ``__del__`` at GC time, which pytest's
         ``[unraisable]`` hook (with ``filterwarnings=error``, e.g. under
         ``OTTO_DETECT_ASYNCIO_LEAKS=1`` in ``make release``) escalates into a
-        teardown ``ExceptionGroup`` — seen on Python 3.14, whose finalizer
-        surfaces the warning. No snapshot inside ``force_stop`` can close this
-        window (registration timing is unbounded), so the hand-rolled loop
-        owner reaps here instead: settle pending ``connection_made``, abort
-        every live selector transport bound to *this* loop, and flush the
-        socket-close callbacks before closing. ``asyncio.run()`` runs extra
-        turns that let registration settle but never actively closes live
-        transports, so production only escapes this by exiting the process.
+        teardown ``ExceptionGroup`` — first seen on Python 3.14, whose finalizer
+        surfaces the warning, and since on 3.11. No snapshot inside
+        ``force_stop`` can close this window (registration timing is
+        unbounded), so the hand-rolled loop owner reaps here instead: settle
+        pending ``connection_made``, abort every live selector transport bound
+        to *this* loop, flush the socket-close callbacks, and finally hard-close
+        any fd still open — the abort pass cannot reach a transport built after
+        its last scan, and nothing runs after ``loop.close()`` to clean up.
+        ``asyncio.run()`` runs extra turns that let registration settle but
+        never actively closes live transports, so production only escapes this
+        by exiting the process.
         """
         # _SelectorTransport is the concrete base of the read/write selector
         # transports; there is no public per-loop transport registry, so scan
@@ -165,22 +168,41 @@ class DashboardHarness(Generic[C]):
 
         loop = self._loop
         assert loop is not None
-        for _ in range(10):  # loop-until-clean: a late connection_made may add one mid-reap
-            loop.run_until_complete(asyncio.sleep(0))
-            live = [
+
+        def holding_an_fd() -> list[_SelectorTransport]:
+            return [
                 obj
                 for obj in gc.get_objects()
                 if isinstance(obj, _SelectorTransport)
                 and getattr(obj, "_loop", None) is loop
                 and getattr(obj, "_sock", None) is not None
-                and not obj.is_closing()
             ]
+
+        for _ in range(10):  # loop-until-clean: a late connection_made may add one mid-reap
+            loop.run_until_complete(asyncio.sleep(0))
+            live = [t for t in holding_an_fd() if not t.is_closing()]
             if not live:
                 break
             for transport in live:
                 transport.abort()
         # Final turn so the last abort()'s _call_connection_lost closes its socket.
         loop.run_until_complete(asyncio.sleep(0))
+        # Last resort. abort() only reaches a transport that *exists* by the scan
+        # above, and asyncio accepts a connection in a selector callback but
+        # builds its transport in a *task* -- so one can be created on the very
+        # turn this reap is finishing, after the last scan, with connection_made
+        # still queued behind it. (That is also why force_stop cannot see it:
+        # uvicorn registers a connection *in* connection_made.) Such a transport
+        # is never aborted, and once the loop is closed no callback can ever run
+        # to close its socket -- it reaches GC with a live fd and fires the
+        # ResourceWarning this reap exists to prevent. So close the fd by hand,
+        # here and only here: `_call_connection_lost` would raise on a cleared
+        # `_sock`, and immediately before ``loop.close()`` is the one point where
+        # it can no longer run. `__del__` warns whenever `_sock` is set, even
+        # for an already-closed socket, so clear the attribute as well.
+        for transport in holding_an_fd():
+            sock, transport._sock = transport._sock, None
+            sock.close()
 
     def run(self, coro: Coroutine[Any, Any, T]) -> T:
         """Run *coro* on the server's loop and return its result."""
