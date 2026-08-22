@@ -38,7 +38,7 @@
     "tailwindcss-animate": "1.0.7",
     "tailwindcss-react-aria-components": "2.2.0",
     "wouter": "3.10.0",
-    "zustand": "5.0.14"
+    "zustand": "5.0.15"
   },
   "devDependencies": {
     "@bcoe/v8-coverage": "1.0.2",
