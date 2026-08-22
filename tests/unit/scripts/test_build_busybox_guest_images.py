@@ -109,7 +109,7 @@ def test_rcs_configures_no_default_route(image):
     reason to pin its ABSENCE is what the previous arrangement did. Under QEMU
     user-mode networking the guests took a default route to slirp's
     ``10.0.2.2``, which NATs through test1, which has internet — so every guest
-    could reach the outside world. ``docs/guide/hosts/busybox.md`` now tells
+    could reach the outside world. ``docs/architecture/subsystems/busybox-bed.md`` now tells
     operators they cannot. Re-adding a gateway line here would make that
     sentence false again silently: nothing else in the suite looks at egress,
     and a guest with a route still passes every reachability test there is.
@@ -117,7 +117,7 @@ def test_rcs_configures_no_default_route(image):
     rcs = image["etc/init.d/rcS"]["data"].decode()
     assert "route add default" not in rcs, (
         f"the guest rcS configures a default route — the bed's isolation claim "
-        f"in docs/guide/hosts/busybox.md is that it does not:\n{rcs}"
+        f"in docs/architecture/subsystems/busybox-bed.md is that it does not:\n{rcs}"
     )
     assert "10.0.2." not in rcs, (
         f"a QEMU user-mode (slirp) address survives in the guest rcS; these "
