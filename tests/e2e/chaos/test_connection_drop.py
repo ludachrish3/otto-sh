@@ -40,21 +40,26 @@ MEASURED ON THE LIVE BED, 2026-08-22, in this order:
    tomato still has a management eth1 to be reached on while its eth2 is
    blackholed; the guest has no eth1.
 
-The numbers in (1) were obtained by naming the link from ``-l veggies``,
-where the guest is not a loaded host and the hop-transit guard therefore
-cannot see the dependent it protects. DO NOT BUILD AN ARM ON THAT ROUTE:
-nothing can undo it afterwards. ``-l veggies link repair`` refuses the link
-for naming a host outside the lab, ``-l busybox link repair`` refuses it with
-the guard, and ``repair`` has no ``--from`` -- so the only teardown left is
-the ``--expire`` daemon, and an impairment whose repair cannot run in a
-``finally`` is not a chaos injection. That scoping asymmetry is reported, not
-exploited.
+The numbers in (1) were obtained by naming the link from ``-l veggies``, where
+the guest was not a loaded host and the hop-transit guard therefore could not
+see the dependent it protects. THAT ROUTE NO LONGER EXISTS, and closing it was
+this arm's most useful product finding: ``impair`` now refuses a link whose
+endpoints the loaded lab cannot all see, because a guard answering from an
+incomplete host set is not answering the question. The recovery half went with
+it -- ``repair`` no longer runs the self-lockout refusals at all (clearing a
+qdisc cannot lock anyone out, and the refusals are time-of-check while lab
+data drifts), and it now clears the placements it can resolve instead of
+aborting on the ones it cannot. So the ``finally`` below is a real teardown
+rather than an aspirational one. See
+``tests/unit/link/test_impair_repair_symmetry.py``.
 
-An injecting guest arm therefore needs a product decision that does not exist
+An injecting guest arm still needs a product decision that does not exist
 today: an override, or a guard that reasons about the SELECTOR rather than
 the netdev (a ``--port 9000`` blackhole leaves telnet/23 untouched and locks
-nobody out, yet is refused today, because the refusal is netdev-level). Until
-then this module injects on veggies only. The remaining way to sever a guest
+nobody out, yet is refused today, because the refusal is netdev-level). That
+one is untouched by the above -- it is about which impairments are safe to
+CREATE, not about undoing them. Until then this module injects on veggies
+only. The remaining way to sever a guest
 is to stop or reconfigure its QEMU process, which is a bed power operation,
 not a chaos injection. (``tc`` itself IS present on the guests -- measured.)
 
@@ -508,8 +513,11 @@ def test_otto_refuses_to_blackhole_the_busybox_guests_only_wire(busybox_chaos_be
             guest.diag
         )
     finally:
-        # Best-effort, and expected to be REFUSED while the guards hold: it is
-        # here for the mutation case where they do not (see the docstring).
+        # A real teardown, not an aspirational one: `repair` no longer runs the
+        # self-lockout refusals, so this reaches the TAP whether or not the
+        # refusals above held. That is exactly what a `finally` in a chaos arm
+        # has to be -- under the mutation case where a guard stops firing, this
+        # is what removes the impairment the mutation placed.
         _link_attempt(tmp_path / "repair", target, ["link", "repair", link_id])
         _assert_tap_unimpaired(
             tap_qdisc(),

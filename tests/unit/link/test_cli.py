@@ -109,6 +109,51 @@ class TestRepairCommand:
         assert "skipped 1 link(s)" in result.output
         assert "foreign qdisc otto did not create" in result.output
 
+    def test_a_partial_repair_names_what_it_could_not_reach_and_exits_1(self) -> None:
+        """ "I did not look" is not a clean bill of health.
+
+        The headline is deliberately not a green "repaired" with a warning
+        under it: the headline is the part an operator reads, and a repair that
+        could not look at one end has not repaired the link.
+        """
+        from otto.link import RepairReport
+
+        report = RepairReport(
+            link_id="lnk-abc",
+            cleared=[Placement("carrot_seed", "bbeth-1350", FlowDirection.A_TO_B)],
+            unreachable=[
+                "bb1350_qemu/eth0: link references host 'bb1350_qemu' not in the loaded lab"
+            ],
+        )
+        with (
+            patch("otto.cli.link.get_lab", return_value=object()),
+            patch("otto.cli.link.repair_link", AsyncMock(return_value=report)),
+        ):
+            result = runner.invoke(link_app, ["repair", "edge"])
+        assert result.exit_code == 1, result.output
+        assert "partially repaired" in result.output
+        assert "carrot_seed/bbeth-1350" in result.output
+        assert "could not reach" in result.output
+        assert "bb1350_qemu/eth0" in result.output
+
+    def test_a_fully_reached_repair_still_says_repaired_and_exits_0(self) -> None:
+        """The discriminator for the test above: the partial rendering must not
+        become the only rendering."""
+        from otto.link import RepairReport
+
+        report = RepairReport(
+            link_id="lnk-abc",
+            cleared=[Placement("carrot_seed", "bbeth-1350", FlowDirection.A_TO_B)],
+        )
+        with (
+            patch("otto.cli.link.get_lab", return_value=object()),
+            patch("otto.cli.link.repair_link", AsyncMock(return_value=report)),
+        ):
+            result = runner.invoke(link_app, ["repair", "edge"])
+        assert result.exit_code == 0, result.output
+        assert "partially" not in result.output
+        assert "repaired lnk-abc" in result.output
+
 
 class TestListCommand:
     def test_rows_and_partial_scan_warning(self) -> None:

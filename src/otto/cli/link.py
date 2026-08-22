@@ -235,10 +235,18 @@ def _print_repair_report(report: RepairReport) -> None:
         _print_dry_run_plan(report.link_id, report.plan)
         return
     cleared = ", ".join(f"{p.host_id}/{p.netdev}" for p in report.cleared)
+    # "partially repaired", not a green "repaired" with a warning under it: the
+    # headline is the part an operator reads, and a repair that could not look
+    # at one end has not repaired the link.
+    headline = (
+        "[yellow]partially repaired[/yellow]" if report.unreachable else "[green]repaired[/green]"
+    )
     rprint(
-        f"[green]repaired[/green] {report.link_id}: cleared {cleared or '(nothing to clear)'}, "
+        f"{headline} {report.link_id}: cleared {cleared or '(nothing to clear)'}, "
         f"timers cancelled {report.timers_cancelled}"
     )
+    for entry in report.unreachable:
+        print_error(f"  could not reach {entry}")
 
 
 @link_app.command()
@@ -314,6 +322,11 @@ async def repair(
     except (ValueError, RuntimeError) as e:
         fail(e)
     _print_repair_report(report)
+    if report.unreachable:
+        # Outside the try above on purpose: `typer.Exit` subclasses
+        # `RuntimeError` under typer's vendored click fork, so raising it inside
+        # would be re-wrapped as a spurious error message instead of exiting.
+        raise typer.Exit(1)
 
 
 def _dir_text(state: LinkState, direction: FlowDirection) -> str:

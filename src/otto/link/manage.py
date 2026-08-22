@@ -188,6 +188,15 @@ class RepairReport:
     cleared: list[Placement] = dc_field(default_factory=list)
     timers_cancelled: int = 0
 
+    unreachable: list[str] = dc_field(default_factory=list)
+    """``"<host>/<netdev>: <why>"`` per placement this lab scope could not
+    resolve, so otto could not even look at it.
+
+    A repair that cannot see one placement must still clear the ones it can:
+    the command's whole job is undoing state, and aborting the sweep over an
+    unreachable endpoint strands the reachable one. These set the exit code —
+    "I did not look" is not a clean bill of health."""
+
     plan: "DryRunPlan | None" = None
     """Set when this call was a ``--dry-run``; see :attr:`ImpairReport.plan`.
 
@@ -214,11 +223,12 @@ class RepairAllReport:
 
     failures: list[str] = dc_field(default_factory=list)
     """``"<link id>: <why>"`` per link that FAILED to repair — host down, a
-    command that errored, a clear that did not take. These set the exit code."""
+    command that errored, a clear that did not take, or a placement this lab
+    scope could not resolve. These set the exit code."""
 
     skipped: list[str] = dc_field(default_factory=list)
-    """``"<link id>: <why>"`` per link otto DECLINED to touch — no named
-    interface, a local link, a management-interface refusal, a foreign qdisc.
+    """``"<link id>: <why>"`` per link otto DECLINED to touch — neither endpoint
+    names an interface, a local link, a foreign qdisc.
 
     Reported rather than merely skipped: this bucket used to be a bare
     ``continue``, so ``repair --all`` against a link carrying a foreign qdisc
@@ -458,6 +468,52 @@ def _directions(link: Link, from_host: str | None) -> frozenset[FlowDirection]:
     )
 
 
+def _ensure_endpoints_are_loaded(lab: Any, link: Link) -> None:
+    """Refuse to impair a link whose endpoints the loaded lab cannot all see (§9).
+
+    The self-lockout refusals are only as good as the host set they read.
+    :func:`_hop_dependents` walks ``lab.hosts``, so a lab scope that excludes
+    a dependent makes the guard answer "safe" from an incomplete view rather
+    than from the bed — same wire, opposite verdict, decided by ``-l``. The
+    honest response to a view that cannot answer the question is to decline,
+    not to proceed on the optimistic half of it.
+
+    It also restores the invariant the two commands are supposed to share:
+    ``repair`` resolves BOTH directions, so an endpoint this lab cannot
+    resolve is an endpoint ``repair`` cannot reach. Without this,
+    ``impair --from <the visible end>`` places state that no ``otto`` command
+    under any single lab scope can clear. ``otto link list`` has always
+    reported such a link as unimpairable — it resolves both directions and
+    reports the missing host as the reason — so this makes ``impair`` agree
+    with what ``list`` was already saying about the same link.
+
+    Raised above the ``--dry-run`` short-circuit in :func:`impair_link`: it is
+    decided from lab data alone, so it is as true of a preview as of a real
+    run, and a preview that promised a placement this would refuse would be
+    previewing the wrong outcome.
+
+    The built-in local host is exempt, and not as a convenience:
+    :func:`~otto.link.placement.ensure_not_local_link` owns that endpoint and
+    says something far more useful about it. ``load_lab`` injects ``local``
+    into every real lab, so it is never genuinely missing — but a lab that
+    omits it must still get the local-host refusal rather than this one, and
+    running first would otherwise let this rule shadow it.
+    """
+    missing = [
+        end.host
+        for end in (link.a, link.b)
+        if end.host != BUILTIN_LOCAL_HOST_ID and end.host not in lab.hosts
+    ]
+    if missing:
+        names = ", ".join(repr(h) for h in missing)
+        raise ValueError(
+            f"link {link.id!r} names {names}, which the loaded lab does not contain — "
+            "the self-lockout guard reads the loaded lab, so it cannot tell whether "
+            "that host depends on this placement, and repair could not reach it "
+            "afterwards. Load a lab containing it and impair from there."
+        )
+
+
 def _hop_chain_includes(lab: Any, host: Any, transit_host_id: str) -> bool:
     """Walk *host*'s ``hop`` chain; ``True`` if it passes through *transit_host_id*.
 
@@ -494,8 +550,37 @@ def _hop_dependents(lab: Any, transit_host_id: str) -> list[tuple[str, str]]:
     return dependents
 
 
+def _clearable_directions(
+    link: Link, directions: frozenset[FlowDirection]
+) -> frozenset[FlowDirection]:
+    """Narrow *directions* to those whose origin endpoint names an interface.
+
+    A bare endpoint could never have been impaired —
+    :func:`~otto.link.placement.endpoint_placements` refuses to place there —
+    so the direction provably holds no otto state and dropping it loses
+    nothing. Dropping rather than raising is what lets a clear finish the
+    OTHER direction: ``impair --from <the named end>`` against a link whose far
+    end is bare is explicitly supported (:func:`~otto.link.placement.impairment_refusal`
+    documents it), and a bare far end used to make the resulting impairment
+    unrepairable — ``repair`` resolves both directions and died on the one that
+    could hold nothing.
+
+    When NO direction survives there is nothing to clear anywhere, and the link
+    is refused as before so ``repair --all`` still skips it and names it.
+    """
+    origins = {FlowDirection.A_TO_B: link.a, FlowDirection.B_TO_A: link.b}
+    named = frozenset(d for d in directions if origins[d].interface is not None)
+    if not named:
+        bare = ", ".join(repr(origins[d].host) for d in sorted(directions, key=lambda d: d.value))
+        raise ValueError(
+            f"link {link.id!r}: no endpoint names an interface ({bare}) — "
+            "nothing could have been impaired here (spec §4)"
+        )
+    return named
+
+
 async def _resolve_placements(
-    lab: Any, link: Link, directions: frozenset[FlowDirection]
+    lab: Any, link: Link, directions: frozenset[FlowDirection], *, clearing: bool = False
 ) -> list[Placement]:
     """Endpoint or in-path placements for *link*, refusals enforced first (spec §9).
 
@@ -505,6 +590,18 @@ async def _resolve_placements(
     placement is checked against its OWN host's management interface AND
     against any other host whose hop transit rides that netdev — caching each
     host's address table and hop-dependents so a shared host is queried once.
+
+    *clearing* marks a call that REMOVES state rather than creating it, and
+    turns the last two refusals off. Both exist to stop otto degrading the
+    path it reaches a host through; clearing a qdisc cannot degrade anything,
+    so applying them to a clear only ever protects the impairment from the
+    operator. The refusals are also time-of-check while lab data drifts: a
+    placement made legitimately becomes hop transit the moment some host is
+    declared behind it, and the guard would then refuse to clear otto's own
+    live impairment. ``ensure_not_local_link`` still applies (otto does not run
+    ``tc`` on its own machine), the impairer's foreign-qdisc refusal still
+    applies at the read, and a clearing call resolves no address table at all —
+    the fetch existed only to feed the two guards being skipped.
     """
     ensure_not_local_link(link)
     tables: dict[str, dict[str, list["IPv4Interface"]]] = {}
@@ -513,8 +610,12 @@ async def _resolve_placements(
         table = parse_ip_addr((await _exec(middlebox, _ADDR_SHOW_COMMAND)).value)
         tables[link.impair] = table
         placements = inpath_placements(link, link.impair, table, directions)
+    elif clearing:
+        placements = endpoint_placements(link, _clearable_directions(link, directions))
     else:
         placements = endpoint_placements(link, directions)
+    if clearing:
+        return placements
     dependents: dict[str, list[tuple[str, str]]] = {}
     for placement in placements:
         host = _host(lab, placement.host_id)
@@ -1205,6 +1306,7 @@ async def impair_link(
     command string does not carry it.
     """
     link = find_link(lab, ident)
+    _ensure_endpoints_are_loaded(lab, link)
     directions = _directions(link, from_host)
     if is_dry_run():
         return ImpairReport(
@@ -1301,17 +1403,29 @@ async def repair_link(lab: "Lab", ident: str, *, selector: Selector | None = Non
     ``state.kind == "clean"`` skip and the command reported
     ``cleared (nothing to clear), timers cancelled 0`` and exited 0 — three
     measurements, none of them taken.
+
+    Placement resolution runs in ``clearing`` mode (see
+    ``_resolve_placements``): the two self-lockout refusals do not apply to
+    a removal, and a placement whose host this lab scope cannot resolve is
+    filed in :attr:`RepairReport.unreachable` instead of aborting the call. A
+    repair that cannot see one end must still clear the other — otherwise the
+    end it CAN reach is stranded by the end it cannot.
     """
     link = find_link(lab, ident)
     directions = _directions(link, None)
     if is_dry_run():
         return RepairReport(link.id, plan=_plan_repair(lab, link, selector=selector))
-    placements = await _resolve_placements(lab, link, directions)
+    placements = await _resolve_placements(lab, link, directions, clearing=True)
 
     cleared: list[Placement] = []
+    unreachable: list[str] = []
     timers_cancelled = 0
     for placement in placements:
-        host = _host(lab, placement.host_id)
+        try:
+            host = _host(lab, placement.host_id)
+        except ValueError as e:
+            unreachable.append(f"{placement.host_id}/{placement.netdev}: {e}")
+            continue
         impairer = _impairer_for(host)
         if selector is not None:
             _ensure_selector_capable(host, impairer)
@@ -1351,19 +1465,22 @@ async def repair_link(lab: "Lab", ident: str, *, selector: Selector | None = Non
                 f"repair failed on {host.id}/{placement.netdev}: impairment still present"
             )
         cleared.append(placement)
-    return RepairReport(link.id, cleared, timers_cancelled)
+    return RepairReport(link.id, cleared, timers_cancelled, unreachable=unreachable)
 
 
 async def repair_all(lab: "Lab") -> RepairAllReport:
     """Repair every static link in *lab*; never raises.
 
-    A link that structurally can't be impaired (:class:`ValueError` — no
-    named interface, local-link, mgmt refusal, a FOREIGN qdisc otto did not
+    A link that structurally can't be impaired (:class:`ValueError` — neither
+    endpoint names an interface, local-link, a FOREIGN qdisc otto did not
     create) is SKIPPED and named: it was never impaired in the first place,
     so a sweep has nothing to do about it, but a sweep that declines a link
-    must say so. A link whose repair fails for a live reason
-    (:class:`RuntimeError` — host down, command failed) is collected into
-    :attr:`~RepairAllReport.failures` instead of aborting the rest.
+    must say so. The two self-lockout refusals are NOT in that list: they do
+    not apply to a clear (``_resolve_placements``), so links they once
+    caused to be skipped are now swept like any other. A link whose repair
+    fails for a live reason (:class:`RuntimeError` — host down, command
+    failed) is collected into :attr:`~RepairAllReport.failures` instead of
+    aborting the rest, as is a link this lab scope could only partly reach.
 
     Under ``--dry-run`` each link's preview lands in
     :attr:`~RepairAllReport.planned` and NOT in
@@ -1385,6 +1502,16 @@ async def repair_all(lab: "Lab") -> RepairAllReport:
         except RuntimeError as e:
             report.failures.append(f"{link.id}: {e}")
         else:
+            if outcome.unreachable:
+                # A partial clear is not a repair. It goes to `failures` rather
+                # than `skipped` because the sweep DID act here and could not
+                # finish — `skipped` means otto declined a link it never
+                # impaired, which would read as reassurance it has not earned.
+                report.failures.append(
+                    f"{link.id}: cleared {len(outcome.cleared)} placement(s), but could not "
+                    f"reach {'; '.join(outcome.unreachable)}"
+                )
+                continue
             bucket = report.planned if outcome.plan is not None else report.repaired
             bucket.append(outcome)
     return report
