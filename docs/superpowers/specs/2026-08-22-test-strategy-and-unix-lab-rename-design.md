@@ -193,8 +193,23 @@ can co-select it (G4/G7-style).
 
 `nightly.yml` gains a `conformance-hermetic` job: prime the artifact
 cache, run the suite at its default sample size on the hostless runner.
-Its value is contract violations surfacing nightly across a sampled
-slice of the space; it does not write matrix data (§5).
+It fails on two conditions:
+
+- a **contract violation** in any drawn cell, and
+- **matrix drift** — a drawn cell that the committed
+  `schemas/support_matrix.json` (§5) records as `measured-ok` but that
+  fails fresh measurement (or vice versa). CI thereby re-confirms the
+  committed artifact for hermetic-resolvable cells continuously, not
+  just the code.
+
+The job uploads its observation records (§5) as a workflow artifact so
+they can be collated locally; it never writes the matrix itself.
+
+Sampling stays a nightly concern, not a per-PR gate: selection is
+random per run, so a per-PR gate could fail an unrelated PR on
+pre-existing breakage in a never-before-drawn cell — the same reason
+the kernel keeps randconfig in -next and 0-day rather than per-patch
+CI.
 
 ## 5. The machine-checked support matrix
 
@@ -208,14 +223,24 @@ contracts (§4) and profiles come from §3. Each cell holds one of:
 - `untested` — the default. Matching the BusyBox stance: untested, not
   unsupported.
 
+Bed-only cells (telnet consoles, hops, Zephyr, the live bb guests) can
+only ever be measured by local bed runs — GitHub runners have no lab —
+so their currency is bounded by how often `make conformance` runs on
+the dev VM, and the rendered `as_of` dates keep that staleness visible
+rather than silent. Hermetic-resolvable cells are re-confirmed nightly
+by the drift gate (§4).
+
 Mechanics:
 
 - A conformance run **emits an observation record per cell** it
   exercised (JSON, into the run's xdir output).
 - `make conformance` ends with a **collate step** that folds
-  observations into a committed `schemas/support_matrix.json`. Chris
-  commits the update; CI never
-  writes it.
+  observations into a committed `schemas/support_matrix.json`. The
+  collate step also accepts observation artifacts downloaded from the
+  nightly `conformance-hermetic` job, recording `venue: ci-hermetic` in
+  the evidence — so hermetic rows can carry CI-measured dates without a
+  dev-VM run. Chris commits every update; CI never commits, keeping a
+  person in front of every verdict that enters the matrix.
 - A docs page (`docs/architecture/` alongside the busybox-support page)
   renders the committed JSON at docs-build time, following the
   busybox-support render pattern.
