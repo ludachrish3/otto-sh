@@ -14,6 +14,7 @@ web/src/data/exportDoc.ts) -- pushing a point for an undeclared host records
 it server-side but never surfaces a clickable element.
 """
 
+import math
 import re
 from datetime import datetime, timedelta, timezone
 
@@ -47,6 +48,37 @@ def _push_tick(
     not the lowercase ``chart="cpu"`` friendly-name parameter.
     """
     dash.run(dash.collector.push(host, "cpu", value, ts=ts))
+
+
+_BOUNDARY_SLACK_MS = 50
+"""How far an expected outage may sit from a whole second before
+:func:`_outage_text` refuses it. Generous next to the ~450ms of real margin
+that buys, and far above the sub-millisecond noise it exists to tolerate."""
+
+
+def _outage_text(elapsed_ms: float) -> str:
+    """The banner's expected text, refusing a boundary-adjacent value.
+
+    ``format_outage`` ROUNDS, so an expected value near a ``.5``-second
+    boundary is decided by sub-millisecond noise: this test computes from
+    ``stale_ms`` (a Python float) while the app computes the same span from a
+    timestamp that has been through a serialize/parse round trip, and the two
+    need only disagree by a fraction of a millisecond to round apart. That is
+    issue #259 -- CI read ``37s`` where the test computed ``36s`` from
+    ``36473.036``ms, 27ms short of flipping.
+
+    Callers align the clock so every asserted span is a whole number of
+    seconds. This refuses one that is not, so an edit that reintroduces
+    arbitrary alignment fails deterministically here rather than one run in N
+    in CI -- the failure mode that made #259 survive three earlier deflakes.
+    """
+    off = elapsed_ms % 1000
+    assert min(off, 1000 - off) <= _BOUNDARY_SLACK_MS, (
+        f"expected outage {elapsed_ms}ms sits {min(off, 1000 - off):.0f}ms from a whole "
+        f"second, so `format_outage`'s rounding is decided by sub-millisecond noise "
+        f"rather than by the clock -- align the paused clock to the sample (issue #259)"
+    )
+    return format_outage(elapsed_ms)
 
 
 def test_live_boots_hydrated_without_an_import_step(
@@ -173,7 +205,11 @@ def test_a_silent_hosts_drillin_shows_a_growing_unreachable_banner(
     read and its jump, and on a slow round-trip (firefox in CI) that drift
     crosses a second boundary and fails the exact-text assertion by 1s.
     """
-    ref = datetime.now(tz=timezone.utc)
+    # microsecond=0: `stale_ms` feeds both the pushed sample and every
+    # expected-text computation below, and a sub-millisecond fraction there is
+    # one of the two ways an asserted value drifts toward a rounding boundary
+    # (issue #259; `_outage_text` explains the other and refuses it).
+    ref = datetime.now(tz=timezone.utc).replace(microsecond=0)
     stale = ref - timedelta(seconds=20)
     stale_ms = stale.timestamp() * 1000
     _push_tick(live_stream_dash, "r1", stale, 10.0)
@@ -218,7 +254,16 @@ def test_a_silent_hosts_drillin_shows_a_growing_unreachable_banner(
     # jumped the clock x1000 and the app + this test agreed on the same
     # nonsense (issue #161). The helper converts unambiguously and
     # reality-checks the paused clock against the wall clock.
-    pause_clock_at_ms(page, page.evaluate("() => Date.now()") + 10_000)
+    # ...and land it a WHOLE number of seconds after the sample. The 10s
+    # margin alone leaves the outage at `navigation_duration + 35000`ms, an
+    # arbitrary distance from the `.5` boundary `format_outage`'s rounding
+    # turns on -- CI landed 27ms short of one and read 37s where this computed
+    # 36s (issue #259). Rounding up to the next whole second past that margin
+    # keeps the target strictly ahead of the clock (pause_at refuses a past
+    # target) while making every value asserted below an exact multiple of a
+    # second, 500ms from either boundary.
+    now_ms = page.evaluate("() => Date.now()")
+    pause_clock_at_ms(page, stale_ms + math.ceil((now_ms + 10_000 - stale_ms) / 1000) * 1000)
 
     # One full collection tick (session.meta.interval == 5s, matching
     # live_stream_dash's FakeCollector(interval=5.0)) -- fast_forward fires
@@ -228,14 +273,14 @@ def test_a_silent_hosts_drillin_shows_a_growing_unreachable_banner(
     # expected text exact regardless of how long navigation actually took.
     pre_tick1_ms = page.evaluate("() => Date.now()")
     page.clock.fast_forward(5_000)
-    outage1 = format_outage(pre_tick1_ms + 5_000 - stale_ms)
+    outage1 = _outage_text(pre_tick1_ms + 5_000 - stale_ms)
     expect(banner).to_have_text(f"Unreachable for {outage1} — showing last-known data")
 
     # A second tick, same recipe -- pins that the outage keeps GROWING (not
     # just changing once), the actual property this spec exists to cover.
     pre_tick2_ms = page.evaluate("() => Date.now()")
     page.clock.fast_forward(5_000)
-    outage2 = format_outage(pre_tick2_ms + 5_000 - stale_ms)
+    outage2 = _outage_text(pre_tick2_ms + 5_000 - stale_ms)
     expect(banner).to_have_text(f"Unreachable for {outage2} — showing last-known data")
 
     # The chart never lost or gained a point across all of this: it is
