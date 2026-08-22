@@ -15,6 +15,7 @@ from typing import (
     Union,
     get_args,
     get_origin,
+    overload,
 )
 
 from .errors import OttoError
@@ -329,15 +330,42 @@ both at once. ``--probe`` is a CLI flag with no library equivalent, so only
 """
 
 
+_CliVerb = TypeVar("_CliVerb", bound=Callable[..., Any])
+"""The decorated verb's own type, threaded through ``cli_exposed`` unchanged.
+
+``cli_exposed`` only *stamps* attributes and hands the function straight back,
+so it must be typed to say so. Returning a bare ``Callable[..., Any]`` instead
+makes every decorated verb ``Any`` at its call sites, hiding real argument
+errors from ``ty`` (and from an editor) across every host class -- which is
+what ``ty``'s ``dynamic-function-decorator-return`` rule reports.
+"""
+
+
+@overload
+def cli_exposed(fn: _CliVerb) -> _CliVerb: ...
+
+
+@overload
 def cli_exposed(
-    fn: Callable[..., Any] | None = None,
+    fn: None = None,
     *,
     name: str | None = None,
     help_: str | None = None,
     success: str | None = None,
     output_dir: bool = True,
     dry_run_preview: bool = False,
-) -> Callable[..., Any]:
+) -> Callable[[_CliVerb], _CliVerb]: ...
+
+
+def cli_exposed(
+    fn: _CliVerb | None = None,
+    *,
+    name: str | None = None,
+    help_: str | None = None,
+    success: str | None = None,
+    output_dir: bool = True,
+    dry_run_preview: bool = False,
+) -> _CliVerb | Callable[[_CliVerb], _CliVerb]:
     """Mark a host coroutine method for auto-exposure as an ``otto host`` subcommand.
 
     ``name`` defaults to the method name with underscores dashed.
@@ -354,7 +382,7 @@ def cli_exposed(
     Usable bare (``@cli_exposed``) or called (``@cli_exposed(name=..., ...)``).
     """
 
-    def deco(f: Callable[..., Any]) -> Callable[..., Any]:
+    def deco(f: _CliVerb) -> _CliVerb:
         f.__cli_exposed__ = True  # ty: ignore[unresolved-attribute]
         f.__cli_name__ = name or f.__name__.replace("_", "-")  # ty: ignore[unresolved-attribute]
         f.__cli_help__ = help_  # ty: ignore[unresolved-attribute]

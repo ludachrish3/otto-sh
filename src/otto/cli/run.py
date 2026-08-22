@@ -15,7 +15,6 @@ from rich.table import Table
 
 from ..instructions import FIRST_PARTY_INSTRUCTIONS, INSTRUCTIONS, InstructionEntry
 from ..registry import get_registering_repo
-from ..result import CommandResult
 from .invoke import make_registry_group, prepare_command_target
 
 if TYPE_CHECKING:
@@ -114,7 +113,20 @@ def main(
         return
 
 
-def instruction(*args: Any, options: type | None = None, **kwargs: Any) -> Callable[..., Any]:
+# The handler's PARAMETERS are threaded through unchanged (``P``), so a decorated
+# instruction keeps its signature at every call site instead of decaying to
+# ``Any`` -- which is what ty's ``dynamic-function-decorator-return`` reports.
+# Its RETURN stays ``Any`` on purpose: the leaf-invoke bridge renders whatever a
+# handler hands back, and first-party and repo instructions between them already
+# return ``CommandResult``, ``Result``, ``None`` and bare payloads. The narrower
+# ``CommandResult`` this used to claim was never true and never checked, because
+# the outer ``Callable[..., Any]`` erased it before anything could look.
+_Handler = Callable[P, Coroutine[Any, Any, Any]]
+
+
+def instruction(
+    *args: Any, options: type | None = None, **kwargs: Any
+) -> Callable[[_Handler[P]], _Handler[P]]:
     """Register an async function as an ``otto run`` subcommand.
 
     The handler must be ``async def`` — a plain ``def`` raises :exc:`TypeError`
@@ -173,9 +185,7 @@ def instruction(*args: Any, options: type | None = None, **kwargs: Any) -> Calla
     uniform set of repo-wide flags.
     """
 
-    def decorator(
-        func: Callable[P, Coroutine[Any, Any, CommandResult]],
-    ) -> Callable[P, Coroutine[Any, Any, CommandResult]]:
+    def decorator(func: _Handler[P]) -> _Handler[P]:
         # Checked on `func` itself, with no ``__wrapped__`` unwrap: unlike the
         # group-callback guard in cli/invoke.wrap_leaf_callbacks, which sees a
         # callback typer has already update_wrapper'd, this runs before typer
