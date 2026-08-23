@@ -33,7 +33,7 @@ per-project switches override that signal in either direction.**
 | decision | choice | rejected |
 | --- | --- | --- |
 | Enforcement point | **At use**: preflight severity, action walks, instruction dispatch. Bootstrap keeps importing everything that imports cleanly. | Hard gate at bootstrap (requires sniffing `-l` from argv before bootstrap; help/completion would see per-lab command sets; completion cache keys would grow a lab axis). Walks-only (leaves both loose ends open). |
-| Switch spelling | `--with NAME` / `--no NAME`, repeatable, top-level. | Literal `--no-<name>` synthesized flags (collide with real options, flaky completion). One `--projects a,-b` mini-language. |
+| Switch spelling | `--include-projects` / `--exclude-projects`, short `-I` / `-E`, repeatable, comma-splittable, top-level. | `--with NAME` / `--no NAME` (terse but generic — nothing in the spelling says *projects*, and both words could govern almost any noun; 2026-08-23 follow-up ruling). Literal `--no-<name>` synthesized flags (collide with real options, flaky completion). One `--projects a,-b` mini-language. |
 | Precedence | explicit switch > lab inference > default-on. | — |
 | No labs loaded | Everything active (status quo for lab-free commands, bare `otto`, help, completion). | — |
 | Required-dep vs explicit off | Dependent proceeds, provider's steps skipped, WARNING (the "I installed B by hand" case). | Refusing (would make the override useless for exactly its motivating case). |
@@ -49,7 +49,8 @@ def active(repo_name: str, ctx: OttoContext) -> bool
 
 Resolution order:
 
-1. `--no NAME` given for this repo → `False`. `--with NAME` → `True`.
+1. Excluded (`-E`/`--exclude-projects`) → `False`. Included
+   (`-I`/`--include-projects`) → `True`.
 2. No labs loaded this invocation → `True`.
 3. Otherwise delegate to the repo's resolved `ProjectScope` verdict in
    `ctx.scopes` — the same object `_applicable` reads today. A repo with an
@@ -70,17 +71,21 @@ CLI callback. Nothing else may re-derive activation from raw switches.
 Top-level options on the main app, sitting beside `-l/--lab`:
 
 ```
-otto --no repo2 -l unix run install
-otto --with repo3 --no repo2 run status
+otto -E repo2 -l unix run install
+otto --include-projects repo3 --exclude-projects repo2 run status
+otto -I repo3,repo4 run status
 ```
 
-- Repeatable; each takes one project name.
+- `--include-projects` / `-I` and `--exclude-projects` / `-E` (`-h -l -x -n
+  -R` are the taken shorts). Repeatable, and each occurrence accepts a
+  comma-separated list — the same list convention `OTTO_SUT_DIRS` parsing
+  already accepts.
 - Names are matched PEP-503-normalized against the **discovered** repo set
-  (`bootstrap().repos`), not the active set — you can `--with` a repo the labs
+  (`bootstrap().repos`), not the active set — you can include a repo the labs
   would exclude; that is the point.
 - Unknown name → usage error (exit 2) with `difflib` close-match suggestion:
   `no project 'repoo2' — did you mean 'repo2'?`
-- The same name in both `--with` and `--no` → usage error (exit 2). `--no`
+- The same name in both include and exclude → usage error (exit 2). Exclude
   does not silently win; a contradictory command line is a typo.
 - Shell completion for both options offers the discovered repo names via the
   existing completer machinery (`cli/completers.py`).
@@ -103,18 +108,19 @@ itself — bootstrap cannot know the labs, and does not need to.
 their current shape and gain the switch case:
 
 ```
-repo 'repo2' switched off for this run (--no repo2) — skipping it for install
+repo 'repo2' switched off for this run (--exclude-projects repo2) — skipping it for install
 ```
 
 Required-dependency interaction, per the decision record:
 
-- Dependent active, required provider explicitly `--no`'d → dependent walks;
-  WARNING: `repo 'repo4' requires 'repo1', which was switched off (--no
-  repo1) — proceeding as though repo1 is handled externally`.
+- Dependent active, required provider explicitly excluded → dependent walks;
+  WARNING: `repo 'repo4' requires 'repo1', which was switched off
+  (--exclude-projects repo1) — proceeding as though repo1 is handled
+  externally`.
 - Dependent active, required provider lab-inactive → error before any walk:
   `repo 'repo4' requires 'repo1', but repo1 is not applicable to the loaded
   lab(s) [unix_alt] (lab_patterns: unix). Load a lab repo1 applies to, or pass
-  --no repo1 to declare it handled externally.` Exit 1.
+  --exclude-projects repo1 to declare it handled externally.` Exit 1.
 - Optional provider inactive, either way → the existing "optional dependency
   not satisfied" WARNING, with the activation reason appended.
 
@@ -131,7 +137,7 @@ registered_by: str | None  # get_registering_repo() at registration; None = firs
 ```
 error: 'flash-b' belongs to repo 'repo2', which is inactive for the loaded
 lab(s) [unix] (lab_patterns: unix_alt)
-  activate it: -l unix_alt    or: --with repo2
+  activate it: -l unix_alt    or: -I repo2
 ```
 
 Exit 1 (not 2 — the command line is well-formed; the configuration excludes
@@ -140,7 +146,7 @@ it). The message mirrors whichever of the two skip shapes applies — excluded
 does) — the same distinction `_skip_message` already draws for the walks.
 First-party instructions (`registered_by is None`) are never refused.
 Help and completion continue to list every registered instruction: activation
-is per-invocation, and hiding entries would make `--with` undiscoverable.
+is per-invocation, and hiding entries would make `-I` undiscoverable.
 
 ## 6. Testing
 
@@ -149,7 +155,8 @@ Unit (hostless):
 - Predicate table: every cell of (switch state × labs-loaded × scope verdict)
   against `active()` — including the undeclared-repo fallback and the
   host-starved case.
-- Switch parsing: normalization, unknown-name suggestion, with+no conflict.
+- Switch parsing: normalization, comma-splitting, unknown-name suggestion,
+  include+exclude conflict.
 - `InstructionEntry.registered_by`: recorded under `registering_repo`, `None`
   outside it.
 - Required/optional interaction messages, from fakes at the orchestrator seam
@@ -160,7 +167,7 @@ Unit (hostless):
 
 E2E (hostless, CLI subprocess bed):
 
-- `otto --no repo2 -l unix run status` skips repo2's row with the switch
+- `otto -E repo2 -l unix run status` skips repo2's row with the switch
   message; without the switch, unchanged output (the discriminator).
 - Dispatching a repo2-owned instruction under `-l unix` → the §5 refusal;
   under `-l unix_alt` → runs. Existing repo1/repo2 samples suffice — they
@@ -177,5 +184,5 @@ assertion red by mutation before landing.
   the companion spec.
 - Hard bootstrap gating by lab.
 - Per-instruction (rather than per-repo) switches.
-- Persisting switches in settings (`--no` is per-invocation; a durable "this
-  repo is retired" belongs in `OTTO_SUT_DIRS`).
+- Persisting switches in settings (exclusion is per-invocation; a durable
+  "this repo is retired" belongs in `OTTO_SUT_DIRS`).
