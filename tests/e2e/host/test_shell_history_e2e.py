@@ -31,7 +31,7 @@ import pytest_asyncio
 
 from otto import register_login_proxy
 from otto.host.factory import create_host_from_dict
-from otto.utils import Status
+from otto.utils import Status, wait_for_async
 from tests._fixtures._host_pool import UNIX_POOL as _UNIX_POOL
 from tests._fixtures._host_pool import lease_unix_host
 from tests._fixtures.labdata import host_data
@@ -122,6 +122,88 @@ async def _history_digest(host, element: str) -> str:
     return str(result.value).strip()
 
 
+_WRITER_EXIT_TIMEOUT = 30.0
+"""Runaway guard on the shell's exit — deliberately NOT a discriminator.
+
+bash writes ~/.bash_history in its exit path and only then does the process go
+away, so "the session's shell is gone" *happens after* "the history write
+landed". Waiting on that predicate is what makes this module safe on a slow or
+loaded host: a wall-clock window would have to be guessed, and guessing short
+fails the positive control spuriously while guessing anything at all caps how
+long a suppression leak has to show up. A deterministic predicate just waits
+longer on a slow host and still gives the right answer.
+
+Measured on the bed: the shell disappears 0.12s after close, and the first
+sample taken afterwards saw the write 10 times out of 10. This 30s bound is
+two orders of magnitude above that, so it can only fire on a genuine hang --
+and when it fires it raises, rather than quietly letting a test decide.
+"""
+
+_WRITER_POLL = 0.05
+
+# WHY THIS MODULE IS bash-AND-THE-UNIX-BED ONLY, and must stay that way.
+#
+# The obvious extension is to point these tests at the BusyBox guests. Measured
+# on all five (1.16.1, 1.21.1, 1.28.1, 1.31.0, 1.35.0), that would produce a
+# suite of tests that CANNOT FAIL. Both primitives used above do work there --
+# `$$` names the session's shell and /proc/<pid> is observable on every version
+# -- but with recording deliberately switched ON, the only line ash ever
+# persists is otto's own opening handshake. Explicit commands sent afterwards
+# (`echo <marker>`) never reach ~/.ash_history at all, on any of the five. So a
+# digest comparison there would report "nothing leaked" on a target that
+# records nothing to begin with, which is precisely the vacuity the positive
+# control in this module exists to rule out.
+#
+# BusyBox is covered instead by tests/unit/host/test_history_suppression_portability.py,
+# which proves the payload PARSES and takes effect on the ash dialect. That is
+# the part that can actually differ between shells; "the bytes never reach the
+# disk" is proven here, once, against a shell that demonstrably writes them.
+
+
+async def _session_pid(host) -> str:
+    """PID of the interactive shell otto is driving.
+
+    Probed with ``run`` (inside the session) rather than ``exec``: ``$$`` must
+    name the shell that will do the writing. Verified against the bed --
+    ``/proc/<pid>/comm`` is ``bash`` and its cmdline is ``-bash``, the login
+    shell, not a subshell of it.
+    """
+    result = (await host.run("echo $$")).only
+    assert result.status is Status.Success, f"could not read the session pid: {result!r}"
+    return str(result.value).strip()
+
+
+async def _await_writer_exit(host, pid: str, element: str) -> None:
+    """Block until the shell that owns the history file has exited.
+
+    Sampling ~/.bash_history before this returns is meaningless: the read goes
+    over a separate exec channel from the session that writes the file, so it
+    can beat the write to disk. That cost one observed flake in the positive
+    control, and -- far more quietly -- would let every suppression assertion
+    call a not-yet-flushed leak clean.
+
+    ``wait_for_async`` owns the loop: a hand-rolled deadline poll here is what
+    the ``no-handrolled-deadline-poll`` lint rule exists to stop, and it would
+    also have swallowed the timeout into a bare ``AssertionError`` instead of
+    otto's ``WaitTimeoutError``.
+    """
+
+    async def _shell_is_gone() -> bool:
+        alive = await host.exec(f"test -d /proc/{pid} && echo ALIVE || echo GONE")
+        return str(alive.value).strip() == "GONE"
+
+    await wait_for_async(
+        _shell_is_gone,
+        timeout=_WRITER_EXIT_TIMEOUT,
+        interval=_WRITER_POLL,
+        on_timeout=(
+            f"{element}: the session's shell (pid {pid}) was still alive "
+            f"{_WRITER_EXIT_TIMEOUT:.0f}s after the session closed, so "
+            f"~/.bash_history cannot be sampled meaningfully"
+        ),
+    )
+
+
 async def _shells_histfile(host) -> str:
     """What ``$HISTFILE`` is inside the interactive session otto actually drives."""
     result = (await host.run('echo "HISTFILE=[$HISTFILE]"')).only
@@ -143,7 +225,11 @@ async def test_default_host_leaves_history_untouched(leased_host, make_host):
         assert await _shells_histfile(host) == "HISTFILE=[/dev/null]"
         for _ in range(3):
             assert (await host.run(f"echo {marker}")).only.status is Status.Success
+        pid = await _session_pid(host)
     # Leaving the context closes the session — the moment bash flushes history.
+    # Both checks below are taken after that write has provably completed, so
+    # the grep further down is protected by this wait too, not just the digest.
+    await _await_writer_exit(host, pid, element)
 
     after = await _history_digest(host, element)
     assert after == before, f"{element}: otto's commands reached ~/.bash_history"
@@ -194,8 +280,11 @@ async def test_opting_in_still_records(leased_host, make_host):
             )
             for _ in range(3):
                 assert (await host.run(f"echo {marker}")).only.status is Status.Success
+            pid = await _session_pid(host)
 
-        assert await _history_digest(host, element) != before, (
+        await _await_writer_exit(host, pid, element)
+        after = await _history_digest(host, element)
+        assert after != before, (
             f"{element}: history did not change even with recording ENABLED — the "
             f"digest cannot detect pollution, so this module's suppression "
             f"assertions are vacuous"
@@ -207,6 +296,9 @@ async def test_opting_in_still_records(leased_host, make_host):
         restore = f"cp {backup} ~/.bash_history" if existed == "yes" else "rm -f ~/.bash_history"
         await host.exec(f"{restore}; rm -f {backup}")
 
+    # No writer-exit wait here: the restore above is a synchronous `cp` over an
+    # exec channel that has already returned, so there is no pending write to
+    # race with.
     assert await _history_digest(host, element) == before, (
         f"{element}: failed to restore ~/.bash_history after the positive control"
     )
@@ -242,11 +334,21 @@ async def test_root_history_untouched_across_elevation(leased_host, make_host):
 
     async def _root_digest() -> str:
         result = await host.exec("sudo cat /root/.bash_history 2>/dev/null | sha256sum || true")
+        # Same guard `_history_digest` carries: without it a failed sample
+        # hashes to a different string and reports as "otto polluted root's
+        # history", blaming the feature for a broken measurement.
+        if result.status is not Status.Success:
+            raise AssertionError(f"{element}: could not sample root's history: {result!r}")
         return str(result.value).strip()
 
     before = await _root_digest()
     marker = f"otto-root-probe-{uuid.uuid4().hex[:8]}"
     async with host, host.as_user("root"):
         assert (await host.run(f"echo {marker}")).only.status is Status.Success
+        # Root's shell is the one that would write /root/.bash_history, so it
+        # is that shell's exit we must wait on, not the unprivileged one's.
+        root_pid = await _session_pid(host)
 
-    assert await _root_digest() == before, f"{element}: otto polluted root's history"
+    await _await_writer_exit(host, root_pid, element)
+    after = await _root_digest()
+    assert after == before, f"{element}: otto polluted root's history"
