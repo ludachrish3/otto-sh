@@ -34,6 +34,7 @@ the main repo A does not depend on it, how does otto resolve it?":
 | Environment commands | **`otto env create`** (explicit on-ramp, refuses if exists, `--force` recreates) and **`otto env sync`** (incremental, creates-if-missing, always safe — the verb every error message names). Plus `otto env show`. | One do-everything verb (create/sync semantics collide); sync-only (no clean recreate story for a wedged env). |
 | Backend | **uv when present, stdlib `venv` + pip fallback** — auto-detected; explicit override via `--backend uv|pip` and a settings key. Stdlib `venv`, not the `virtualenv` package: the fallback path adds no dependency. | uv-only (users without uv exist, per the user). |
 | otto in the env | `env create`/`sync` install otto itself (the running version) into the env and print the activation line. | Leaving otto outside (a pipx-global otto would import against the wrong site-packages — the venv would be decoration). |
+| User-level home | **`~/.otto/`** (2026-08-23 follow-up ruling): envs live at `~/.otto/envs/`, and `~/.otto` becomes otto's user-level home — one `ls`-discoverable place, one contract ("everything under it is rebuildable"), deliberately rhyming with the per-repo `.otto/` dirs. `OTTO_HOME` relocates it wholesale (containers/CI). | The XDG split (`~/.local/share/otto/envs`): lifecycle-correct but three trees to document, and a re-derivable venv is cache-lifecycle anyway. NOT moved here: `~/.cache/otto/busybox` — that is otto's own test-infra artifact cache (`tests/_fixtures/busybox.py`; nothing in `src/otto` reads it), a develop-otto concern with no place in the user-facing home. |
 
 ## 1. The model (this section is docs-bearing)
 
@@ -58,11 +59,11 @@ projects) as the power-user equivalent that needs no otto involvement.
 ### Keying and location
 
 Workspace key = the PEP-503-style slug of the sorted, absolute,
-symlink-resolved SUT dirs, plus a short hash. Envs live under the platform
-user-data dir:
+symlink-resolved SUT dirs, plus a short hash. Envs live under otto's
+user-level home (`OTTO_HOME`, default `~/.otto`):
 
 ```
-~/.local/share/otto/envs/<hash8>-<slug>/
+~/.otto/envs/<hash8>-<slug>/
 ```
 
 `otto env show` prints: path, backend recorded at creation, otto version
@@ -191,6 +192,10 @@ Tests:
 - `docs/guide/cli/index.md` command table gains `env`.
 - The `[dependencies]` docs gain the pyproject relationship: inter-repo deps
   name *repos*; Python deps live in each repo's *pyproject*.
+- `~/.otto` documented as the user-level home (`OTTO_HOME` override), and the
+  monitor-TLS convention re-pointed from `~/.config/otto/tls/` to
+  `~/.otto/tls/` — docs and the `repo.py` comment only; existing settings name
+  explicit paths and keep working unchanged.
 
 ## 6. Out of scope
 
