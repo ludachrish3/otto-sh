@@ -224,11 +224,54 @@ Generalizes the BusyBox gap-registry pattern to
 `{surface} × {profile}`, where surfaces start as the conformance
 contracts (§4) and profiles come from §3. Each cell holds one of:
 
-- `measured-ok` — evidence: test nodeid, venue, `as_of` date.
+- `measured-ok` — evidence: test nodeid, venue, `as_of` date, **the
+  observable used, and the nodeid of the positive control that showed
+  that observable can go red on this cell** (see below).
 - `measured-broken` — same evidence fields plus the failure summary,
   in the spirit of the existing gap registry's verdicts.
+- `not-observable` — the cell's environment cannot express this
+  surface's observable at all. Evidence: what was probed and what it
+  showed. This is a measurement, not the absence of one, and must not
+  be collapsed into `untested`.
 - `untested` — the default. Matching the BusyBox stance: untested, not
   unsupported.
+
+### Why a cell must name its observable
+
+A surface's observable is not the same in every environment, and the
+strong one is not always available. Shell-history suppression is the
+worked example, measured on the bed on 2026-08-22. On bash the strong
+claim is provable — otto's commands never reach `~/.bash_history` — and
+the proof is falsifiable, because bash demonstrably does record once
+recording is switched on. On all five BusyBox guests (1.16.1 through
+1.35.0) it is not provable at all: with recording deliberately enabled,
+the only line ash ever persists is otto's opening handshake, and
+explicit commands sent afterwards never reach `~/.ash_history`. A
+disk-based assertion there passes against a target that records
+nothing.
+
+Run one assertion across profiles without asking this question and the
+matrix publishes `measured-ok` for cells that proved nothing — the
+guards-that-cannot-fail defect promoted to a *published* artifact,
+which is worse than the silent version because the matrix is what
+people read instead of the tests.
+
+This is structural rather than a quirk of one surface. The bed already
+holds `zephyr37_nofs`, which has no filesystem, so the transfer
+contract's observable does not exist there either: the matrix meets the
+problem on day one, with the contracts §4 already names.
+
+Hence the rule above. It is the per-cell form of what
+`tests/e2e/host/test_shell_history_e2e.py::test_opting_in_still_records`
+already does for a single host — that test exists solely to prove the
+digest can detect pollution, and without it every suppression assertion
+in the module would be vacuous.
+
+Shell-history suppression is therefore a good candidate for an early
+surface once the initial three contracts land: the axis is known to
+matter, the bed already spans it (bash, five ash versions, plus
+dash/zsh/ksh/mksh locally via the portability guard), and it forces the
+observable machinery to be right rather than letting it be assumed.
 
 Bed-only cells (telnet consoles, hops, Zephyr, the live bb guests) can
 only ever be measured by local bed runs — GitHub runners have no lab —
@@ -252,10 +295,15 @@ Mechanics:
   renders the committed JSON at docs-build time, following the
   busybox-support render pattern.
 - Guards riding the unit gate: the committed file validates against its
-  schema; every `measured-*` cell carries complete evidence fields; the
+  schema; every `measured-*` cell carries complete evidence fields —
+  including, for `measured-ok`, the observable and the positive-control
+  nodeid — and every `not-observable` cell carries what was probed; the
   renderer fails on a surface or profile the current tree no longer
   declares. Cells can only become `measured-*` through collation, so a
   hand-edit that fabricates a verdict without evidence fails the guard.
+  A `measured-ok` cell whose positive control is missing is a defect in
+  the same class the matrix exists to expose, so the guard rejects it
+  rather than rendering it.
 
 ## 6. Fault-injection vocabulary
 
