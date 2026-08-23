@@ -22,19 +22,37 @@ network:
 | `test1`  | `10.10.200.11`  | no          | SSH + SCP test host                                       |
 | `test2`  | `10.10.200.12`  | no          | Telnet + netcat test host                                 |
 | `test3`  | `10.10.200.13`  | no          | Docker-capable test host                                  |
-| `zephyr` | `10.10.200.14`  | no          | Zephyr RTOS test bed (3 QEMU instances) + SSH hop to them |
+| `zephyr` | `10.10.200.14`  | no          | Zephyr RTOS test bed (7 QEMU instances) + SSH hop to them |
 
-The `zephyr` VM hosts **three** Zephyr QEMU instances concurrently, one per
-filesystem config. They share the SSH hop (`10.10.200.14`) but each lives on
-its own QEMU-internal `/30` so the host VM's routing table holds a distinct
-route per TAP (a shared `/24` overlaps and the kernel picks one TAP for
-all of them, making the other two unreachable):
+The `zephyr` VM — otto knows it as the host `test4` — runs **seven** Zephyr
+QEMU instances concurrently, spanning three Zephyr versions and two
+transports. All of them are reached through its SSH hop (`10.10.200.14`).
 
-| Zephyr instance | IP          | /30 subnet     | Filesystem                      | systemd unit                         |
-|-----------------|-------------|----------------|---------------------------------|--------------------------------------|
-| `zephyr37_fat`  | `192.0.2.1` | `192.0.2.0/30` | FAT on a RAM disk               | `zephyr-qemu-v3_7_fat_ram.service`   |
-| `zephyr37_lfs`  | `192.0.2.5` | `192.0.2.4/30` | LittleFS on the flash simulator | `zephyr-qemu-v3_7_lfs.service`       |
-| `zephyr37_nofs` | `192.0.2.9` | `192.0.2.8/30` | (none — no `fs` shell)          | `zephyr-qemu-v3_7_no_fs.service`     |
+**Four x86 instances are networked.** Each lives on its own QEMU-internal
+`/30` so the host VM's routing table holds a distinct route per TAP (a shared
+`/24` overlaps and the kernel picks one TAP for all of them, making the rest
+unreachable):
+
+| Zephyr instance | IP           | /30 subnet      | Zephyr | Filesystem                      | systemd unit                        |
+|-----------------|--------------|-----------------|--------|---------------------------------|-------------------------------------|
+| `zephyr37_fat`  | `192.0.2.1`  | `192.0.2.0/30`  | 3.7    | FAT on a RAM disk               | `zephyr-qemu-v3_7_fat_ram.service`  |
+| `zephyr37_lfs`  | `192.0.2.5`  | `192.0.2.4/30`  | 3.7    | LittleFS on the flash simulator | `zephyr-qemu-v3_7_lfs.service`      |
+| `zephyr27_fat`  | `192.0.2.13` | `192.0.2.12/30` | 2.7    | FAT on a RAM disk               | `zephyr-qemu-v2_7_fat_ram.service`  |
+| `zephyr44_lfs`  | `192.0.2.29` | `192.0.2.28/30` | 4.4    | LittleFS on the flash simulator | `zephyr-qemu-v4_4_lfs.service`      |
+
+**Three ARM `mps2_an385` instances are serial.** QEMU bridges each console to
+a telnet port on the hop, so they need no TAP and no `/30`; the address below
+is identity, not a route:
+
+| Zephyr instance  | Address      | Telnet | Zephyr | Sample                       | systemd unit                     |
+|------------------|--------------|--------|--------|------------------------------|----------------------------------|
+| `zephyr37_nofs`  | `192.0.2.37` | `2325` | 3.7    | `shell_module` (no `fs`)     | `zephyr-qemu-no_fs_arm.service`  |
+| `zephyr37_llext` | `192.0.2.33` | `2323` | 3.7    | `shell_loader` (LLEXT)       | `zephyr-qemu-cov.service`        |
+| `zephyr44_llext` | `192.0.2.34` | `2324` | 4.4    | `shell_loader` (LLEXT)       | `zephyr-qemu-cov44.service`      |
+
+The two `_llext` guests run the stock LLEXT `shell_loader` sample, into which
+an instrumented `.llext` is loaded at runtime; that is what backs embedded
+coverage. Every other guest runs `shell_module`.
 
 See `tests/firmware/zephyr/README.md` in the repo for the per-config
 overlay layout.
@@ -63,23 +81,30 @@ checkout; see the next subsection):
 | File                                                                | Used for                                                          |
 |---------------------------------------------------------------------|-------------------------------------------------------------------|
 | `Vagrantfile`                                                       | The provisioning definition itself                                |
-| `tests/firmware/zephyr/common/otto-overlay.conf`                    | Shared Kconfig overlay (shell, networking, runtime stats)         |
-| `tests/firmware/zephyr/configs/v3_7_fat_ram/overlay.conf`           | FAT-on-RAM-disk Kconfig delta                                     |
-| `tests/firmware/zephyr/configs/v3_7_fat_ram/app.overlay`            | FAT-on-RAM-disk devicetree (RAM disk node)                        |
-| `tests/firmware/zephyr/configs/v3_7_lfs/overlay.conf`               | LittleFS Kconfig delta                                            |
-| `tests/firmware/zephyr/configs/v3_7_lfs/app.overlay`                | LittleFS devicetree (flash simulator + fstab automount)           |
-| `tests/firmware/zephyr/configs/v3_7_no_fs/overlay.conf`             | no-filesystem Kconfig delta (graceful-degradation target)         |
+| `tests/firmware/zephyr/common/otto-overlay.conf`                    | Shared Kconfig overlay, applied to every build                    |
+| `tests/firmware/zephyr/common/otto-overlay-v3_7.conf`               | Zephyr 3.7 supplement (applied when present)                      |
+| `tests/firmware/zephyr/common/otto-overlay-v4_4.conf`               | Zephyr 4.4 supplement                                             |
+| `tests/firmware/zephyr/configs/v3_7_fat_ram/{overlay.conf,app.overlay}` | 3.7 FAT-on-RAM-disk Kconfig delta + devicetree (RAM disk node) |
+| `tests/firmware/zephyr/configs/v3_7_lfs/{overlay.conf,app.overlay}` | 3.7 LittleFS delta + devicetree (flash simulator + fstab)         |
+| `tests/firmware/zephyr/configs/v2_7_fat_ram/{overlay.conf,app.overlay}` | 2.7 FAT-on-RAM-disk delta + devicetree                        |
+| `tests/firmware/zephyr/configs/v4_4_lfs/{overlay.conf,app.overlay}` | 4.4 LittleFS delta + devicetree                                   |
+| `tests/firmware/zephyr/configs/cov_an385/overlay.conf`              | ARM LLEXT base delta (both `_llext` guests share it)              |
+| `tests/firmware/zephyr/configs/v3_7_no_fs_arm/overlay.conf`         | ARM no-filesystem delta (graceful-degradation target)             |
+| `tests/firmware/zephyr/snmp_agent/`                                 | Out-of-tree SNMP-agent module, registered on the x86 builds       |
+| `tests/firmware/zephyr/ext_svc/`                                    | Out-of-tree module registered on the ARM builds                   |
 
-The `zephyr` VM builds an **unmodified** Zephyr shell sample
-(`samples/subsys/shell/shell_module`) three times — once per filesystem
-config — layering `common/otto-overlay.conf` plus the per-config
-`overlay.conf` via `-DEXTRA_CONF_FILE="a;b"`, with the matching
-`app.overlay` via `-DEXTRA_DTC_OVERLAY_FILE=` (the `no_fs` config omits
-the DT overlay). otto ships no firmware code — the overlays only flip
-standard Zephyr Kconfig options (telnet shell backend, networking,
-runtime stats, filesystem), the same way a Unix host needs an
-`sshd_config`. If any overlay is missing, the `west build` provisioning
-step fails with a missing-file error.
+The `zephyr` VM builds **unmodified** Zephyr samples seven times, once per
+guest. The four x86 guests build `samples/subsys/shell/shell_module`, layering
+`common/otto-overlay.conf`, the per-version supplement when one exists, and the
+per-config `overlay.conf` via `-DEXTRA_CONF_FILE="a;b;c"`, with the matching
+`app.overlay` via `-DEXTRA_DTC_OVERLAY_FILE=` where the config ships one. The
+three ARM guests build from a single `overlay.conf` and no devicetree overlay:
+the two `_llext` bases build `samples/subsys/llext/shell_loader`, and
+`no_fs_arm` builds `shell_module`. otto ships no firmware code — the overlays
+only flip standard Zephyr Kconfig options (shell backend, networking, runtime
+stats, filesystem), the same way a Unix host needs an `sshd_config`. If any
+overlay is missing, the `west build` provisioning step fails with a
+missing-file error.
 
 The lab definition `tests/_fixtures/lab_data/tech1/lab.json` is read by otto at
 **runtime** (not provision time); it must be present to target the test
@@ -102,10 +127,10 @@ manual copy) that puts the changed `tests/firmware/zephyr/...` and
 
 ```bash
 # on the host, in the otto-sh checkout
-vagrant provision zephyr                                # rebuild all 3 Zephyr images
-vagrant ssh zephyr -c 'sudo systemctl restart zephyr-qemu-v3_7_fat_ram.service'
-vagrant ssh zephyr -c 'sudo systemctl restart zephyr-qemu-v3_7_lfs.service'
-vagrant ssh zephyr -c 'sudo systemctl restart zephyr-qemu-v3_7_no_fs.service'
+vagrant provision zephyr                            # rebuild all 7 Zephyr images
+# Restart by glob rather than by name: the unit set changes whenever the bed
+# gains or loses a guest, and an enumerated list here goes stale silently.
+vagrant ssh zephyr -c "sudo systemctl restart 'zephyr-qemu-*.service'"
 ```
 
 `west build` is incremental within each per-config build dir, so
