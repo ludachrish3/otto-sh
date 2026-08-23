@@ -17,6 +17,7 @@ guard uses rather than hand-built dataclasses.
 import pytest
 
 from otto.tunnel.discovery import parse_process_discovery
+from otto.tunnel.model import make_tunnel_id
 from tests._fixtures import tunnel_bed
 from tests._fixtures.tunnel_bed import format_leftover_report, owning_suite
 
@@ -26,6 +27,25 @@ _STABILITY_PS_LINE = (
     "test1%2Ctest2 UDP4-LISTEN:15130,bind=10.10.200.11,fork,reuseaddr "
     "TCP4:10.10.200.12:49152"
 )
+
+
+def test_fixture_ps_line_id_hashes_from_its_own_path() -> None:
+    """The id in the fixture's ps line must hash from the path in that same line.
+
+    A tunnel id is a sha256 of the endpoint spelling, so renaming a bed host
+    invalidates every literal id while leaving it perfectly plausible to read.
+    That is what happened when carrot/tomato became test1/test2: the path in
+    this line was swept, the digest beside it was not, and no test in the suite
+    could tell -- the guard under test never recomputes an id, it only reports
+    the one it was handed.
+
+    This comparison is real rather than circular because
+    ``parse_process_discovery`` carries the id straight off the wire
+    (``sentinel.py`` builds ``Tunnel(..., id=tunnel_id)``) instead of deriving
+    it. Change either half of the fixture without the other and this fails.
+    """
+    tunnel = parse_process_discovery(_STABILITY_PS_LINE)[0].parsed.tunnel
+    assert tunnel.id == make_tunnel_id(tuple(tunnel.path), tunnel.protocol, tunnel.service_port)
 
 
 def _found(ps_line: str = _STABILITY_PS_LINE) -> list[tuple[str, object]]:
