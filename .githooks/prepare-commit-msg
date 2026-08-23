@@ -124,16 +124,28 @@ if git interpret-trailers --parse "$COMMIT_MSG_FILE" | grep -qi '^Assisted-by:';
     exit 0
 fi
 
-# (B) No controlling terminal (agent / CI / any non-interactive commit): we
-# can't ask. Don't fall through to the "None" default, which would silently
-# mis-tag AI-assisted work as human — instead stamp a sentinel that flags the
-# commit for a human to confirm (or correct) the model at squash/merge time.
+# (B) No controlling terminal (a scripted commit, an IDE, CI, an agent): we
+# can't ask, so resolve to the same "None" the interactive default resolves to
+# and add no trailer. This is the fast path for human commits made outside a
+# terminal.
+#
+# It used to stamp a hardcoded sentinel here instead, to avoid silently
+# mis-tagging AI-assisted work as human. That traded one mis-tag for another:
+# the string named a fixed model, so it mis-attributed every commit from any
+# other model, and went stale the moment the option list moved on — while also
+# tagging genuinely human commits as AI-assisted. A tag is a claim about THIS
+# commit's provenance; no fallback can know it, and a wrong tag is worse than
+# no tag.
+#
+# AI agents do not need this branch: they self-attribute by embedding the
+# `Assisted-by:` trailer in the message they write, which branch (A) above
+# takes as authoritative. An agent that skips that gets an untagged commit —
+# which is the agent's bug to fix, not something a guess here can paper over.
+#
 # `{ : < /dev/tty; }` probes tty availability without consuming stdin and, being
 # a plain command (not `exec`), fails cleanly into the branch rather than
 # risking a shell exit on the redirect error.
 if ! { : < /dev/tty; } 2>/dev/null; then
-    git interpret-trailers --in-place \
-        --trailer "Assisted-by: Claude Opus 4.8 (unverified)" "$COMMIT_MSG_FILE"
     exit 0
 fi
 

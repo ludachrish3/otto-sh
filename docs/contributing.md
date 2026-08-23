@@ -699,8 +699,15 @@ are responsible for understanding, testing, and owning what they submit.
 
 `make dev` installs a `prepare-commit-msg` hook (from `.githooks/`) that
 prompts for the AI model used and records it as an `Assisted-by:` commit
-trailer. On a non-interactive commit (no terminal — e.g. an agent or CI
-job), the hook can't prompt, so it stamps a sentinel `Assisted-by: Claude
-Opus 4.8 (unverified)` — grep for `(unverified)` and confirm or correct the
-model when you squash/merge. If the message already carries an `Assisted-by:`
-trailer, the hook leaves it as-is.
+trailer. Pick the model that actually produced the work — the trailer is a
+per-commit provenance claim, so a stale or approximate name defeats its
+purpose. Use `Custom` for a model the menu doesn't list.
+
+If the message already carries an `Assisted-by:` trailer, the hook takes it
+as authoritative and leaves it alone. That is how an AI agent attributes its
+own commits: it writes the trailer into the message itself.
+
+On a non-interactive commit (no terminal — a scripted commit, an IDE, a CI
+job), the hook can't prompt and adds no trailer. This is the fast path for
+human commits made outside a terminal; the hook never guesses a model, since
+a wrong attribution is worse than none.
