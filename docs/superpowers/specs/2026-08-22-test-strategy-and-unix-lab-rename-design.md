@@ -127,22 +127,47 @@ root seed for all sanctioned randomness. The rules:
 ## 3. Host profiles: the machine-readable axis space
 
 Both new features consume the same description of what a host cell *is*.
-A **profile** is a dataclass:
+The dataclass is **`HostAxes`**, not `Profile`: `src/otto/host/os_profile.py`
+already defines `OsProfile`, a product concept that `os_type` *selects*,
+and two similarly-named types meaning different things in one codebase
+is a reader trap. `HostAxes` holds the axis values of one host:
 
 ```
-Profile(os_type, userland,        # "gnu" | "busybox-<ver>" | "zephyr-<ver>"
-        terms, transfers,          # the valid_* menus
-        hop_depth, docker_capable)
+HostAxes(os_type, userland,       # "gnu" | "busybox-<ver>" | "zephyr-<ver>"
+         terms, transfers,         # the resolved valid_* menus
+         hop_depth, docker_capable)
 ```
 
-It is **derived, not declared**: `lab.json` already carries
-`valid_terms`, `valid_transfers`, `hop`, `docker_capable`, `os_type`;
-userland flavor/version comes from the existing userland layer's
-knowledge of each bed host. One resolver module in `tests/_fixtures/`
-(`profiles.py`) maps a host id → `Profile` and enumerates a lab's axis
-space (every `(host, term, transfer)` combination the menus permit).
-Nothing lands in `src/otto` for this; if a product feature later needs
-profiles, promotion is a separate decision. No otto behavior changes.
+It is **derived from the constructed host, not from `lab.json`.** An
+earlier draft of this section said `lab.json` already carries
+`valid_terms`, `valid_transfers`, `hop`, `docker_capable` and `os_type`.
+Measured on 2026-08-23, that is false for 10 of the 19 bed hosts: all
+seven Zephyr guests declare no `valid_terms`, and `alt1`/`alt2`/`alt3`
+declare no `os_type`, `valid_terms` *or* `valid_transfers`. The host
+factory fills those in — `alt1` constructs as `unix` with
+`['ssh', 'telnet']` and `['scp', 'sftp', 'ftp', 'nc']`; `zephyr37_fat`
+resolves to `['telnet']` — so a resolver reading the raw JSON would
+produce wrong axes for more than half the bed.
+
+The resolver therefore **asks otto**: it builds the host through the
+same factory the suite uses and reads the resolved attributes.
+Re-implementing the factory's defaulting rules in test code is the
+defect class the rename workstream spent a day repairing (a script
+restating `make_host_id`, a docs test re-spelling the id rule without
+slugging); this section will not add a third instance.
+
+One resolver module in `tests/_fixtures/` (`profiles.py`) maps a host
+id → `HostAxes` and enumerates a lab's axis space (every
+`(host, term, transfer)` combination the menus permit). Nothing lands
+in `src/otto`; if a product feature later needs axes, promotion is a
+separate decision. No otto behavior changes.
+
+`userland` cannot be read off `os_type`: the BusyBox guests report
+`os_type: unix`. It is composed from `sw_version` plus the presence of
+`userland_options` (BusyBox), `os_version` (Zephyr), or neither (GNU).
+Per §5, `userland` alone does not settle which observables a cell
+supports — that is the cell's own evidence to record, not an inference
+from the flavor string.
 
 ## 4. The conformance suite and the randconfig sampler
 
