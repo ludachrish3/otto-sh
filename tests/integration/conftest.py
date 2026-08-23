@@ -95,7 +95,7 @@ def _default_sut_dirs_env():
 
 _LAB_DATA = lab_data_path()
 
-# Docker host the e2e/compose tests target (test VM "pepper" / test3).
+# Docker host the e2e/compose tests target (test VM "test3" / test3).
 _DOCKER_HOST_IP = "10.10.200.13"
 
 # Compose-project name fragments that only ever appear in *disposable* test
@@ -113,9 +113,8 @@ async def _reap_orphan_docker_stacks() -> None:
     docker host so address-pool exhaustion can't accumulate across runs."""
     host = UnixHost(
         ip=_DOCKER_HOST_IP,
-        element="pepper",
+        element="test3",
         creds=[Cred(login="vagrant", password="vagrant")],
-        board="seed",
         is_virtual=True,
         term="ssh",
         transfer="scp",
@@ -174,9 +173,9 @@ def _host_data(ne: str) -> dict[str, Any]:
 
 
 @pytest_asyncio.fixture
-async def carrot():
-    """UnixHost for test1 (carrot) via SSH."""
-    data = _host_data("carrot")
+async def test1():
+    """UnixHost for test1 via SSH."""
+    data = _host_data("test1")
     h = UnixHost(
         ip=data["ip"],
         element=data["element"],
@@ -191,9 +190,9 @@ async def carrot():
 
 
 @pytest_asyncio.fixture
-async def tomato():
-    """UnixHost for test2 (tomato) via SSH."""
-    data = _host_data("tomato")
+async def test2():
+    """UnixHost for test2 via SSH."""
+    data = _host_data("test2")
     h = UnixHost(
         ip=data["ip"],
         element=data["element"],

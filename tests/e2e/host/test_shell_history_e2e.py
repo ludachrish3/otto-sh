@@ -1,6 +1,6 @@
 """End-to-end proof that otto's commands stay out of a real host's shell history.
 
-Runs against the live veggies Unix bed. The unit suite proves the payload is
+Runs against the live unix bed. The unit suite proves the payload is
 composed and written; only a real interactive shell can prove the *effect* —
 that bash, having read the user's rc files and holding a real ``HISTFILE``,
 actually stops recording, and that the file on disk is untouched after the
@@ -96,7 +96,6 @@ async def make_host():
             data: dict[str, object] = {
                 "ip": ip,
                 "element": element,
-                "board": "seed",
                 "creds": [dict(c) for c in _CREDS],
             }
             data.update(overrides)

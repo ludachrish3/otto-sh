@@ -170,7 +170,7 @@ def _make_ft(*, userland: Userland | None) -> NcFileTransfer:
     connections.term = "ssh"
     return NcFileTransfer(
         connections=connections,
-        name="tomato",
+        name="test2",
         transfer="nc",
         nc_options=NcOptions(port_strategy="ss", listener_check="ss"),
         get_local_ip=lambda: "127.0.0.1",

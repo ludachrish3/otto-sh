@@ -17,15 +17,15 @@ from otto.link.sentinel import IMPAIR_PS_COMMAND, encode_impair_sentinel_v2
 from otto.result import CommandResult, Results, Status
 from tests.conftest import active_context
 
-CARROT_ADDR = (
+TEST1_ADDR = (
     "3: eth1    inet 10.10.200.11/24 brd 10.10.200.255 scope global eth1\\  x\n"
     "4: eth1.100    inet 10.10.201.11/24 brd 10.10.201.255 scope global eth1.100\\  x\n"
 )
-TOMATO_ADDR = (
+TEST2_ADDR = (
     "3: eth1    inet 10.10.200.12/24 brd 10.10.200.255 scope global eth1\\  x\n"
     "4: eth1.200    inet 10.10.202.12/24 brd 10.10.202.255 scope global eth1.200\\  x\n"
 )
-PEPPER_ADDR = (
+TEST3_ADDR = (
     "3: eth1    inet 10.10.200.13/24 brd 10.10.200.255 scope global eth1\\  x\n"
     "4: eth1.100    inet 10.10.201.13/24 brd 10.10.201.255 scope global eth1.100\\  x\n"
     "5: eth1.200    inet 10.10.202.13/24 brd 10.10.202.255 scope global eth1.200\\  x\n"
@@ -99,19 +99,19 @@ class FakeLab:
 
 
 LINK = Link(
-    a=LinkEndpoint(host="carrot_seed", interface="eth1.100", ip="10.10.201.11"),
-    b=LinkEndpoint(host="tomato_seed", interface="eth1.200", ip="10.10.202.12"),
+    a=LinkEndpoint(host="test1", interface="eth1.100", ip="10.10.201.11"),
+    b=LinkEndpoint(host="test2", interface="eth1.200", ip="10.10.202.12"),
     name="edge",
 )
-INPATH = Link(a=LINK.a, b=LINK.b, name="dataplane", impair="pepper_seed")
+INPATH = Link(a=LINK.a, b=LINK.b, name="dataplane", impair="test3")
 
 
 def _bed(link: Link = LINK, **host_kw) -> tuple[FakeLab, FakeHost, FakeHost, FakeHost]:
-    carrot = FakeHost(id="carrot_seed", ip="10.10.200.11", addr_text=CARROT_ADDR, **host_kw)
-    tomato = FakeHost(id="tomato_seed", ip="10.10.200.12", addr_text=TOMATO_ADDR)
-    pepper = FakeHost(id="pepper_seed", ip="10.10.200.13", addr_text=PEPPER_ADDR)
-    lab = FakeLab(hosts={h.id: h for h in (carrot, tomato, pepper)}, links=[link])
-    return lab, carrot, tomato, pepper
+    test1 = FakeHost(id="test1", ip="10.10.200.11", addr_text=TEST1_ADDR, **host_kw)
+    test2 = FakeHost(id="test2", ip="10.10.200.12", addr_text=TEST2_ADDR)
+    test3 = FakeHost(id="test3", ip="10.10.200.13", addr_text=TEST3_ADDR)
+    lab = FakeLab(hosts={h.id: h for h in (test1, test2, test3)}, links=[link])
+    return lab, test1, test2, test3
 
 
 class TestFindLink:
@@ -129,78 +129,76 @@ class TestFindLink:
 class TestEndpointImpair:
     @pytest.mark.asyncio
     async def test_both_directions_apply_on_both_endpoints(self) -> None:
-        lab, carrot, tomato, _ = _bed()
-        carrot.qdisc_texts = ["", DELAY_50_TEXT]  # pre-read, then post-apply verify
-        tomato.qdisc_texts = ["", DELAY_50_TEXT]
+        lab, test1, test2, _ = _bed()
+        test1.qdisc_texts = ["", DELAY_50_TEXT]  # pre-read, then post-apply verify
+        test2.qdisc_texts = ["", DELAY_50_TEXT]
         report = await impair_link(lab, "edge", ImpairmentParams(delay_ms=50.0))
-        assert [a.placement.host_id for a in report.applied] == ["carrot_seed", "tomato_seed"]
-        assert "tc qdisc replace dev eth1.100 root netem delay 50ms" in carrot.sudo_commands
-        assert "tc qdisc replace dev eth1.200 root netem delay 50ms" in tomato.sudo_commands
+        assert [a.placement.host_id for a in report.applied] == ["test1", "test2"]
+        assert "tc qdisc replace dev eth1.100 root netem delay 50ms" in test1.sudo_commands
+        assert "tc qdisc replace dev eth1.200 root netem delay 50ms" in test2.sudo_commands
 
     @pytest.mark.asyncio
     async def test_from_narrows_to_one_direction(self) -> None:
-        lab, carrot, tomato, _ = _bed()
-        tomato.qdisc_texts = ["", DELAY_50_TEXT]  # pre-read, then post-apply verify
-        report = await impair_link(
-            lab, "edge", ImpairmentParams(delay_ms=50.0), from_host="tomato_seed"
-        )
+        lab, test1, test2, _ = _bed()
+        test2.qdisc_texts = ["", DELAY_50_TEXT]  # pre-read, then post-apply verify
+        report = await impair_link(lab, "edge", ImpairmentParams(delay_ms=50.0), from_host="test2")
         assert [a.placement.direction for a in report.applied] == [FlowDirection.B_TO_A]
-        assert not carrot.sudo_commands
+        assert not test1.sudo_commands
 
     @pytest.mark.asyncio
     async def test_from_non_endpoint_rejected(self) -> None:
         lab, *_ = _bed()
-        with pytest.raises(ValueError, match="--from 'pepper_seed' is not an endpoint"):
-            await impair_link(lab, "edge", ImpairmentParams(delay_ms=1.0), from_host="pepper_seed")
+        with pytest.raises(ValueError, match="--from 'test3' is not an endpoint"):
+            await impair_link(lab, "edge", ImpairmentParams(delay_ms=1.0), from_host="test3")
 
     @pytest.mark.asyncio
     async def test_merge_reads_current_and_replaces(self) -> None:
-        lab, carrot, _, _ = _bed()
+        lab, test1, _, _ = _bed()
         applied = "qdisc netem 8001: root refcnt 2 limit 1000 delay 20ms\n"
         merged = "qdisc netem 8001: root refcnt 2 limit 1000 delay 10ms loss 2%\n"
-        carrot.qdisc_texts = [applied, merged]  # pre-read, then post-apply verify
+        test1.qdisc_texts = [applied, merged]  # pre-read, then post-apply verify
         await impair_link(
-            lab, "edge", ImpairmentParams(delay_ms=10.0, loss_pct=2.0), from_host="carrot_seed"
+            lab, "edge", ImpairmentParams(delay_ms=10.0, loss_pct=2.0), from_host="test1"
         )
-        assert "tc qdisc replace dev eth1.100 root netem delay 10ms loss 2%" in carrot.sudo_commands
+        assert "tc qdisc replace dev eth1.100 root netem delay 10ms loss 2%" in test1.sudo_commands
 
     @pytest.mark.asyncio
     async def test_merged_to_empty_clears_instead(self) -> None:
-        lab, carrot, _, _ = _bed()
-        carrot.qdisc_texts = ["qdisc netem 8001: root refcnt 2 limit 1000 delay 20ms\n", ""]
-        await impair_link(lab, "edge", ImpairmentParams(delay_ms=0.0), from_host="carrot_seed")
-        assert "tc qdisc del dev eth1.100 root" in carrot.sudo_commands
-        assert not any("replace" in c for c in carrot.sudo_commands)
+        lab, test1, _, _ = _bed()
+        test1.qdisc_texts = ["qdisc netem 8001: root refcnt 2 limit 1000 delay 20ms\n", ""]
+        await impair_link(lab, "edge", ImpairmentParams(delay_ms=0.0), from_host="test1")
+        assert "tc qdisc del dev eth1.100 root" in test1.sudo_commands
+        assert not any("replace" in c for c in test1.sudo_commands)
 
     @pytest.mark.asyncio
     async def test_post_apply_verify_mismatch_raises(self) -> None:
-        lab, carrot, _, _ = _bed()
-        carrot.qdisc_texts = ["", ""]  # post-apply read shows nothing applied
+        lab, test1, _, _ = _bed()
+        test1.qdisc_texts = ["", ""]  # post-apply read shows nothing applied
         with pytest.raises(RuntimeError, match="post-apply verify failed"):
-            await impair_link(lab, "edge", ImpairmentParams(delay_ms=50.0), from_host="carrot_seed")
+            await impair_link(lab, "edge", ImpairmentParams(delay_ms=50.0), from_host="test1")
 
     @pytest.mark.asyncio
     async def test_verify_passes_when_tc_canonicalizes_rate(self) -> None:
         # We apply `rate 1.5mbit`; tc reads it back canonicalized as `1500Kbit`.
         # Structural `==` would false-fail; verify must compare by meaning.
-        lab, carrot, _, _ = _bed()
+        lab, test1, _, _ = _bed()
         canonical = "qdisc netem 8001: root refcnt 2 limit 1000 rate 1500Kbit\n"
-        carrot.qdisc_texts = ["", canonical]  # pre-read clean, post-apply canonical form
-        await impair_link(lab, "edge", ImpairmentParams(rate="1.5mbit"), from_host="carrot_seed")
-        assert "tc qdisc replace dev eth1.100 root netem rate 1.5mbit" in carrot.sudo_commands
+        test1.qdisc_texts = ["", canonical]  # pre-read clean, post-apply canonical form
+        await impair_link(lab, "edge", ImpairmentParams(rate="1.5mbit"), from_host="test1")
+        assert "tc qdisc replace dev eth1.100 root netem rate 1.5mbit" in test1.sudo_commands
 
 
 class TestInpath:
     @pytest.mark.asyncio
     async def test_placements_land_on_middlebox(self) -> None:
-        lab, carrot, tomato, pepper = _bed(link=INPATH)
+        lab, test1, test2, test3 = _bed(link=INPATH)
         # one host, two netdevs, one shared read queue: pre-read/verify per direction
-        pepper.qdisc_texts = ["", DELAY_50_TEXT, "", DELAY_50_TEXT]
+        test3.qdisc_texts = ["", DELAY_50_TEXT, "", DELAY_50_TEXT]
         report = await impair_link(lab, "dataplane", ImpairmentParams(delay_ms=50.0))
-        assert {a.placement.host_id for a in report.applied} == {"pepper_seed"}
+        assert {a.placement.host_id for a in report.applied} == {"test3"}
         assert {a.placement.netdev for a in report.applied} == {"eth1.100", "eth1.200"}
-        assert not carrot.sudo_commands
-        assert not tomato.sudo_commands
+        assert not test1.sudo_commands
+        assert not test2.sudo_commands
 
 
 class TestRefusalsAndSafety:
@@ -213,104 +211,104 @@ class TestRefusalsAndSafety:
             b=LINK.b,
             name="to-local",
         )
-        lab, carrot, tomato, _ = _bed(link=local_link)
+        lab, test1, test2, _ = _bed(link=local_link)
         with pytest.raises(ValueError, match="local host as an endpoint"):
             await impair_link(lab, "to-local", ImpairmentParams(delay_ms=1.0))
-        assert not carrot.commands
-        assert not tomato.commands
+        assert not test1.commands
+        assert not test2.commands
 
     @pytest.mark.asyncio
     async def test_local_impair_middlebox_refused_before_any_command(self) -> None:
         from otto.host.builtin_hosts import BUILTIN_LOCAL_HOST_ID
 
         mid_link = Link(a=LINK.a, b=LINK.b, name="local-mid", impair=BUILTIN_LOCAL_HOST_ID)
-        lab, carrot, tomato, _ = _bed(link=mid_link)
+        lab, test1, test2, _ = _bed(link=mid_link)
         # Register a RESOLVABLE local host: without the refusal, impair would
         # actually resolve and run commands on otto's own machine.
-        local = FakeHost(id=BUILTIN_LOCAL_HOST_ID, ip="127.0.0.1", addr_text=PEPPER_ADDR)
+        local = FakeHost(id=BUILTIN_LOCAL_HOST_ID, ip="127.0.0.1", addr_text=TEST3_ADDR)
         lab.hosts[BUILTIN_LOCAL_HOST_ID] = local
         with pytest.raises(ValueError, match="local host as its in-path middlebox"):
             await impair_link(lab, "local-mid", ImpairmentParams(delay_ms=1.0))
         assert not local.commands
-        assert not carrot.commands
-        assert not tomato.commands
+        assert not test1.commands
+        assert not test2.commands
 
     @pytest.mark.asyncio
     async def test_mgmt_interface_placement_refused(self) -> None:
         mgmt_link = Link(
-            a=LinkEndpoint(host="carrot_seed", interface="eth1", ip="10.10.200.11"),
-            b=LinkEndpoint(host="tomato_seed", interface="eth1", ip="10.10.200.12"),
+            a=LinkEndpoint(host="test1", interface="eth1", ip="10.10.200.11"),
+            b=LinkEndpoint(host="test2", interface="eth1", ip="10.10.200.12"),
             name="mgmt-edge",
         )
-        lab, carrot, _, _ = _bed(link=mgmt_link)
+        lab, test1, _, _ = _bed(link=mgmt_link)
         with pytest.raises(ValueError, match="management interface"):
             await impair_link(lab, "mgmt-edge", ImpairmentParams(delay_ms=1.0))
-        assert not carrot.sudo_commands
+        assert not test1.sudo_commands
 
     @pytest.mark.asyncio
     async def test_hop_transit_placement_refused_before_mutation(self) -> None:
-        # A fourth host reaches otto only THROUGH pepper (its hop), with a mgmt
-        # ip inside pepper's eth1.200 subnet: impairing dataplane (in-path on
-        # pepper) would sever otto->beet. Refuse before any mutation.
-        lab, _carrot, _tomato, pepper = _bed(link=INPATH)
+        # A fourth host reaches otto only THROUGH test3 (its hop), with a mgmt
+        # ip inside test3's eth1.200 subnet: impairing dataplane (in-path on
+        # test3) would sever otto->beet. Refuse before any mutation.
+        lab, _test1, _test2, test3 = _bed(link=INPATH)
         beet = FakeHost(id="beet_seed", ip="10.10.202.77", addr_text="")
-        beet.hop = "pepper_seed"  # direct hop through the middlebox
+        beet.hop = "test3"  # direct hop through the middlebox
         lab.hosts["beet_seed"] = beet
         with pytest.raises(ValueError, match="hop transit"):
             await impair_link(lab, "dataplane", ImpairmentParams(delay_ms=1.0))
-        assert not pepper.sudo_commands
+        assert not test3.sudo_commands
 
     @pytest.mark.asyncio
     async def test_hop_transit_transitive_chain_refused(self) -> None:
-        # beet -> onion -> pepper: beet still transits pepper (transitive walk).
-        lab, _carrot, _tomato, pepper = _bed(link=INPATH)
+        # beet -> onion -> test3: beet still transits test3 (transitive walk).
+        lab, _test1, _test2, test3 = _bed(link=INPATH)
         onion = FakeHost(id="onion_seed", ip="10.10.99.1", addr_text="")
-        onion.hop = "pepper_seed"
+        onion.hop = "test3"
         beet = FakeHost(id="beet_seed", ip="10.10.202.77", addr_text="")
         beet.hop = "onion_seed"
         lab.hosts["onion_seed"] = onion
         lab.hosts["beet_seed"] = beet
         with pytest.raises(ValueError, match="beet_seed"):
             await impair_link(lab, "dataplane", ImpairmentParams(delay_ms=1.0))
-        assert not pepper.sudo_commands
+        assert not test3.sudo_commands
 
     @pytest.mark.asyncio
     async def test_rollback_restores_prior_state_on_partial_failure(self) -> None:
-        lab, carrot, tomato, _ = _bed()
-        carrot.qdisc_texts = [
+        lab, test1, test2, _ = _bed()
+        test1.qdisc_texts = [
             "qdisc netem 8001: root refcnt 2 limit 1000 delay 20ms\n",  # prior state
             "qdisc netem 8001: root refcnt 2 limit 1000 delay 50ms\n",  # verify ok
         ]
-        tomato.fail_on = "tc qdisc replace"  # second placement fails
+        test2.fail_on = "tc qdisc replace"  # second placement fails
         with pytest.raises(RuntimeError):
             await impair_link(lab, "edge", ImpairmentParams(delay_ms=50.0))
-        # carrot restored to its PRIOR params, not cleared
-        assert carrot.sudo_commands[-1] == "tc qdisc replace dev eth1.100 root netem delay 20ms"
+        # test1 restored to its PRIOR params, not cleared
+        assert test1.sudo_commands[-1] == "tc qdisc replace dev eth1.100 root netem delay 20ms"
 
     @pytest.mark.asyncio
     async def test_verify_mismatch_rolls_back_own_placement(self) -> None:
         # Single placement: apply succeeds, verify mismatches. The just-mutated
         # placement must itself be restored to prior BEFORE the error propagates
         # (its own rollback entry, not only earlier placements').
-        lab, carrot, _, _ = _bed()
-        carrot.qdisc_texts = [
+        lab, test1, _, _ = _bed()
+        test1.qdisc_texts = [
             "qdisc netem 8001: root refcnt 2 limit 1000 delay 20ms\n",  # prior state
             "",  # post-apply verify: nothing there -> mismatch
         ]
         with pytest.raises(RuntimeError, match="post-apply verify failed"):
-            await impair_link(lab, "edge", ImpairmentParams(delay_ms=50.0), from_host="carrot_seed")
+            await impair_link(lab, "edge", ImpairmentParams(delay_ms=50.0), from_host="test1")
         # restored to prior (delay 20ms), not left half-applied at delay 50ms
-        assert carrot.sudo_commands[-1] == "tc qdisc replace dev eth1.100 root netem delay 20ms"
+        assert test1.sudo_commands[-1] == "tc qdisc replace dev eth1.100 root netem delay 20ms"
 
     @pytest.mark.asyncio
     async def test_unreachable_host_fails_loud_with_host_name(self) -> None:
-        lab, carrot, _, _ = _bed()
+        lab, test1, _, _ = _bed()
 
         async def _boom(cmd: str, **_: object) -> CommandResult:
             raise ConnectionError("boom")
 
-        carrot.exec = _boom  # type: ignore[method-assign]
-        with pytest.raises(RuntimeError, match="carrot_seed"):
+        test1.exec = _boom  # type: ignore[method-assign]
+        with pytest.raises(RuntimeError, match="test1"):
             await impair_link(lab, "edge", ImpairmentParams(delay_ms=1.0))
 
     @pytest.mark.asyncio
@@ -319,8 +317,8 @@ class TestRefusalsAndSafety:
         no-half-impairments restore an Exception does; the restore itself is
         shielded by lifecycle.compensate. Today `except Exception` misses
         cancellation entirely and leaves the first placement half-impaired."""
-        lab, carrot, tomato, _ = _bed()
-        carrot.qdisc_texts = [
+        lab, test1, test2, _ = _bed()
+        test1.qdisc_texts = [
             "qdisc netem 8001: root refcnt 2 limit 1000 delay 20ms\n",  # prior state
             "qdisc netem 8001: root refcnt 2 limit 1000 delay 50ms\n",  # verify ok
         ]
@@ -340,15 +338,15 @@ class TestRefusalsAndSafety:
             host.exec = parked  # type: ignore[method-assign]
             host.run = parked  # type: ignore[method-assign]
 
-        _park(tomato)
+        _park(test2)
 
         task = asyncio.ensure_future(impair_link(lab, "edge", ImpairmentParams(delay_ms=50.0)))
-        await second_placement_reached.wait()  # carrot's placement is fully applied by now
+        await second_placement_reached.wait()  # test1's placement is fully applied by now
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
-        # carrot (the completed first placement) restored to its PRIOR params
-        assert carrot.sudo_commands[-1] == "tc qdisc replace dev eth1.100 root netem delay 20ms"
+        # test1 (the completed first placement) restored to its PRIOR params
+        assert test1.sudo_commands[-1] == "tc qdisc replace dev eth1.100 root netem delay 20ms"
 
     @pytest.mark.asyncio
     async def test_second_cancellation_mid_rollback_restore_does_not_tear_it(self) -> None:
@@ -357,9 +355,9 @@ class TestRefusalsAndSafety:
         not tear it — that is exactly what lifecycle.compensate's shield at
         this call site is for. Without it (bare `await _rollback(...)`), the
         second cancel lands inside `_restore_state`'s `_root_run` await and
-        carrot's restore command never reaches the host."""
-        lab, carrot, tomato, _ = _bed()
-        carrot.qdisc_texts = [
+        test1's restore command never reaches the host."""
+        lab, test1, test2, _ = _bed()
+        test1.qdisc_texts = [
             "qdisc netem 8001: root refcnt 2 limit 1000 delay 20ms\n",  # prior state
             "qdisc netem 8001: root refcnt 2 limit 1000 delay 50ms\n",  # verify ok
         ]
@@ -380,9 +378,9 @@ class TestRefusalsAndSafety:
             host.exec = parked  # type: ignore[method-assign]
             host.run = parked  # type: ignore[method-assign]
 
-        _park(tomato)
+        _park(test2)
 
-        orig_run = carrot.run
+        orig_run = test1.run
 
         async def gated_run(cmd: str, sudo: bool = False, **kw: object):
             if sudo and "delay 20ms" in cmd:
@@ -392,29 +390,29 @@ class TestRefusalsAndSafety:
                 await asyncio.sleep(0)
             return await orig_run(cmd, sudo=sudo, **kw)
 
-        carrot.run = gated_run  # type: ignore[method-assign]
+        test1.run = gated_run  # type: ignore[method-assign]
 
         task = asyncio.ensure_future(impair_link(lab, "edge", ImpairmentParams(delay_ms=50.0)))
-        await second_placement_reached.wait()  # carrot's placement is fully applied by now
-        task.cancel()  # 1st cancel: tears the parked tomato placement, triggers rollback
+        await second_placement_reached.wait()  # test1's placement is fully applied by now
+        task.cancel()  # 1st cancel: tears the parked test2 placement, triggers rollback
         await rollback_restoring.wait()
         task.cancel()  # 2nd cancel: lands inside the shielded restore — must be held
         with pytest.raises(asyncio.CancelledError):
             await task
-        # the restore still reached carrot despite the second, mid-restore cancel
-        assert carrot.sudo_commands[-1] == "tc qdisc replace dev eth1.100 root netem delay 20ms"
+        # the restore still reached test1 despite the second, mid-restore cancel
+        assert test1.sudo_commands[-1] == "tc qdisc replace dev eth1.100 root netem delay 20ms"
 
 
 class TestExpireTimers:
     @pytest.mark.asyncio
     async def test_expire_launches_sentinel_tagged_timer(self) -> None:
-        lab, carrot, _, _ = _bed()
-        carrot.qdisc_texts = ["", DELAY_50_TEXT]  # pre-read, then post-apply verify
+        lab, test1, _, _ = _bed()
+        test1.qdisc_texts = ["", DELAY_50_TEXT]  # pre-read, then post-apply verify
         await impair_link(
-            lab, "edge", ImpairmentParams(delay_ms=50.0), from_host="carrot_seed", expire=30
+            lab, "edge", ImpairmentParams(delay_ms=50.0), from_host="test1", expire=30
         )
         # skip the qdisc-mutation command; find the timer launch
-        launch = next(c for c in carrot.sudo_commands if "otto-impair:" in c)
+        launch = next(c for c in test1.sudo_commands if "otto-impair:" in c)
         assert "otto-impair:v1:" in launch
         assert "eth1.100" in launch
         assert "sleep 30 && tc qdisc del dev eth1.100 root" in launch
@@ -427,12 +425,12 @@ class TestExpireTimers:
     async def test_impair_cancels_stale_timers_first(self) -> None:
         from otto.link.sentinel import encode_impair_sentinel
 
-        lab, carrot, _, _ = _bed()
+        lab, test1, _, _ = _bed()
         token = encode_impair_sentinel(LINK.id, "eth1.100")
-        carrot.ps_text = f"  4242 05:00 {token} -c sleep 600 && tc qdisc del dev eth1.100 root\n"
-        carrot.qdisc_texts = ["", DELAY_50_TEXT]  # pre-read, then post-apply verify
-        await impair_link(lab, "edge", ImpairmentParams(delay_ms=50.0), from_host="carrot_seed")
-        assert "kill 4242" in carrot.sudo_commands
+        test1.ps_text = f"  4242 05:00 {token} -c sleep 600 && tc qdisc del dev eth1.100 root\n"
+        test1.qdisc_texts = ["", DELAY_50_TEXT]  # pre-read, then post-apply verify
+        await impair_link(lab, "edge", ImpairmentParams(delay_ms=50.0), from_host="test1")
+        assert "kill 4242" in test1.sudo_commands
 
 
 class TestRegistryRoundtrip:
@@ -459,28 +457,28 @@ class TestRegistryRoundtrip:
                 return ImpairmentParams(delay_ms=50.0) if "APPLIED" in output else None
 
         register_impairer("recorder", _Recorder)
-        lab, carrot, _, _ = _bed()
-        carrot.impairer = "recorder"  # the host-level pin, post-resolution
+        lab, test1, _, _ = _bed()
+        test1.impairer = "recorder"  # the host-level pin, post-resolution
 
         def _fake_result(cmd: str) -> CommandResult:
             if cmd.startswith("FAKE-READ"):
-                texts = carrot.qdisc_texts
+                texts = test1.qdisc_texts
                 text = texts.pop(0) if len(texts) > 1 else texts[0]
                 return CommandResult(status=Status.Success, value=text, command=cmd)
-            return FakeHost._result(carrot, cmd)
+            return FakeHost._result(test1, cmd)
 
-        carrot._result = _fake_result  # type: ignore[method-assign]
-        carrot.qdisc_texts = ["", "APPLIED"]
-        await impair_link(lab, "edge", ImpairmentParams(delay_ms=50.0), from_host="carrot_seed")
-        assert "FAKE-APPLY eth1.100 delay 50ms" in carrot.sudo_commands
-        assert not any(c.startswith("tc ") for c in carrot.sudo_commands)  # netem never ran
+        test1._result = _fake_result  # type: ignore[method-assign]
+        test1.qdisc_texts = ["", "APPLIED"]
+        await impair_link(lab, "edge", ImpairmentParams(delay_ms=50.0), from_host="test1")
+        assert "FAKE-APPLY eth1.100 delay 50ms" in test1.sudo_commands
+        assert not any(c.startswith("tc ") for c in test1.sudo_commands)  # netem never ran
 
     @pytest.mark.asyncio
     async def test_host_without_impairer_support_fails_loud(self) -> None:
-        lab, carrot, _, _ = _bed()
-        carrot.impairer = ""  # e.g. an embedded host: no impairer attribute/value
+        lab, test1, _, _ = _bed()
+        test1.impairer = ""  # e.g. an embedded host: no impairer attribute/value
         with pytest.raises(ValueError, match="no impairer support"):
-            await impair_link(lab, "edge", ImpairmentParams(delay_ms=1.0), from_host="carrot_seed")
+            await impair_link(lab, "edge", ImpairmentParams(delay_ms=1.0), from_host="test1")
 
 
 QDISC_SCOPED_ONE = (
@@ -501,34 +499,34 @@ FILTER_SCOPED_ONE = (
 class TestExclusivityAndForeign:
     @pytest.mark.asyncio
     async def test_bare_impair_against_scoped_state_is_loud(self) -> None:
-        lab, carrot, _, _ = _bed()
-        carrot.qdisc_texts = [QDISC_SCOPED_ONE]
-        carrot.filter_texts = [FILTER_SCOPED_ONE]
+        lab, test1, _, _ = _bed()
+        test1.qdisc_texts = [QDISC_SCOPED_ONE]
+        test1.filter_texts = [FILTER_SCOPED_ONE]
         with pytest.raises(ValueError, match="has port-scoped impairments — repair them first"):
-            await impair_link(lab, "edge", ImpairmentParams(delay_ms=50.0), from_host="carrot_seed")
-        assert not carrot.sudo_commands  # refused BEFORE any mutation
+            await impair_link(lab, "edge", ImpairmentParams(delay_ms=50.0), from_host="test1")
+        assert not test1.sudo_commands  # refused BEFORE any mutation
 
     @pytest.mark.asyncio
     async def test_bare_impair_against_foreign_root_refuses(self) -> None:
-        lab, carrot, _, _ = _bed()
-        carrot.qdisc_texts = ["qdisc htb 8001: root refcnt 2 r2q 10\n"]
+        lab, test1, _, _ = _bed()
+        test1.qdisc_texts = ["qdisc htb 8001: root refcnt 2 r2q 10\n"]
         # ValueError, like every other structural refusal in this module —
         # otto is declining, nothing failed. See repair_all's skip.
         with pytest.raises(ValueError, match="foreign qdisc otto did not create"):
-            await impair_link(lab, "edge", ImpairmentParams(delay_ms=50.0), from_host="carrot_seed")
-        assert not carrot.sudo_commands
+            await impair_link(lab, "edge", ImpairmentParams(delay_ms=50.0), from_host="test1")
+        assert not test1.sudo_commands
 
     @pytest.mark.asyncio
     async def test_exclusivity_error_mid_link_rolls_back_first_placement(self) -> None:
-        # carrot clean (applies fine), tomato scoped -> error; carrot restored to clean.
-        lab, carrot, tomato, _ = _bed()
-        carrot.qdisc_texts = ["", DELAY_50_TEXT]
-        tomato.qdisc_texts = [QDISC_SCOPED_ONE]
-        tomato.filter_texts = [FILTER_SCOPED_ONE]
+        # test1 clean (applies fine), test2 scoped -> error; test1 restored to clean.
+        lab, test1, test2, _ = _bed()
+        test1.qdisc_texts = ["", DELAY_50_TEXT]
+        test2.qdisc_texts = [QDISC_SCOPED_ONE]
+        test2.filter_texts = [FILTER_SCOPED_ONE]
         with pytest.raises(ValueError, match="port-scoped impairments"):
             await impair_link(lab, "edge", ImpairmentParams(delay_ms=50.0))
-        assert carrot.sudo_commands[-1] == "tc qdisc del dev eth1.100 root"
-        assert not tomato.sudo_commands
+        assert test1.sudo_commands[-1] == "tc qdisc del dev eth1.100 root"
+        assert not test2.sudo_commands
 
 
 QDISC_SCOPED_TWO = (
@@ -550,18 +548,18 @@ FILTER_SCOPED_TWO = FILTER_SCOPED_ONE + (
 class TestScopedImpair:
     @pytest.mark.asyncio
     async def test_first_selector_builds_root_band_filters(self) -> None:
-        lab, carrot, _, _ = _bed()
-        carrot.qdisc_texts = ["", QDISC_SCOPED_ONE]
-        carrot.filter_texts = ["", FILTER_SCOPED_ONE]
+        lab, test1, _, _ = _bed()
+        test1.qdisc_texts = ["", QDISC_SCOPED_ONE]
+        test1.filter_texts = ["", FILTER_SCOPED_ONE]
         report = await impair_link(
             lab,
             "edge",
             ImpairmentParams(delay_ms=200.0),
-            from_host="carrot_seed",
+            from_host="test1",
             selector=Selector(5201, "tcp"),
         )
         assert report.applied[0].selector == Selector(5201, "tcp")
-        assert carrot.sudo_commands == [
+        assert test1.sudo_commands == [
             (
                 "tc qdisc replace dev eth1.100 root handle 1: prio bands 11 "
                 "priomap 1 2 2 2 1 2 0 0 1 1 1 1 1 1 1 1"
@@ -579,66 +577,66 @@ class TestScopedImpair:
 
     @pytest.mark.asyncio
     async def test_second_selector_takes_next_band_no_root_reissue(self) -> None:
-        lab, carrot, _, _ = _bed()
-        carrot.qdisc_texts = [QDISC_SCOPED_ONE, QDISC_SCOPED_TWO]
-        carrot.filter_texts = [FILTER_SCOPED_ONE, FILTER_SCOPED_TWO]
+        lab, test1, _, _ = _bed()
+        test1.qdisc_texts = [QDISC_SCOPED_ONE, QDISC_SCOPED_TWO]
+        test1.filter_texts = [FILTER_SCOPED_ONE, FILTER_SCOPED_TWO]
         await impair_link(
             lab,
             "edge",
             ImpairmentParams(loss_pct=5.0),
-            from_host="carrot_seed",
+            from_host="test1",
             selector=Selector(53, "udp"),
         )
-        assert not any("prio bands" in c for c in carrot.sudo_commands)
+        assert not any("prio bands" in c for c in test1.sudo_commands)
         assert "tc qdisc replace dev eth1.100 parent 1:5 handle 50: netem loss 5%" in (
-            carrot.sudo_commands
+            test1.sudo_commands
         )
 
     @pytest.mark.asyncio
     async def test_reimpair_merges_keeps_band_no_new_filters(self) -> None:
         merged_qdisc = QDISC_SCOPED_ONE.replace("delay 200ms", "delay 200ms loss 2%")
-        lab, carrot, _, _ = _bed()
-        carrot.qdisc_texts = [QDISC_SCOPED_ONE, merged_qdisc]
-        carrot.filter_texts = [FILTER_SCOPED_ONE]
+        lab, test1, _, _ = _bed()
+        test1.qdisc_texts = [QDISC_SCOPED_ONE, merged_qdisc]
+        test1.filter_texts = [FILTER_SCOPED_ONE]
         await impair_link(
             lab,
             "edge",
             ImpairmentParams(loss_pct=2.0),
-            from_host="carrot_seed",
+            from_host="test1",
             selector=Selector(5201, "tcp"),
         )
-        assert carrot.sudo_commands == [
+        assert test1.sudo_commands == [
             "tc qdisc replace dev eth1.100 parent 1:4 handle 40: netem delay 200ms loss 2%"
         ]
 
     @pytest.mark.asyncio
     async def test_selector_merged_to_empty_clears_that_selector(self) -> None:
         # zeroing the only param of the only selector -> full clear back to pristine
-        lab, carrot, _, _ = _bed()
-        carrot.qdisc_texts = [QDISC_SCOPED_ONE, ""]
-        carrot.filter_texts = [FILTER_SCOPED_ONE, ""]
+        lab, test1, _, _ = _bed()
+        test1.qdisc_texts = [QDISC_SCOPED_ONE, ""]
+        test1.filter_texts = [FILTER_SCOPED_ONE, ""]
         await impair_link(
             lab,
             "edge",
             ImpairmentParams(delay_ms=0.0),
-            from_host="carrot_seed",
+            from_host="test1",
             selector=Selector(5201, "tcp"),
         )
-        assert carrot.sudo_commands == ["tc qdisc del dev eth1.100 root"]
+        assert test1.sudo_commands == ["tc qdisc del dev eth1.100 root"]
 
     @pytest.mark.asyncio
     async def test_scoped_against_whole_link_is_loud(self) -> None:
-        lab, carrot, _, _ = _bed()
-        carrot.qdisc_texts = ["qdisc netem 8001: root refcnt 2 limit 1000 delay 20ms\n"]
+        lab, test1, _, _ = _bed()
+        test1.qdisc_texts = ["qdisc netem 8001: root refcnt 2 limit 1000 delay 20ms\n"]
         with pytest.raises(ValueError, match="has a whole-link impairment — repair it first"):
             await impair_link(
                 lab,
                 "edge",
                 ImpairmentParams(delay_ms=1.0),
-                from_host="carrot_seed",
+                from_host="test1",
                 selector=Selector(5201),
             )
-        assert not carrot.sudo_commands
+        assert not test1.sudo_commands
 
     @pytest.mark.asyncio
     async def test_ninth_selector_hits_the_cap(self) -> None:
@@ -654,36 +652,36 @@ class TestScopedImpair:
             f"  match {(5000 + b) << 16:08x}/ffff0000 at 20\n"
             for b in range(4, 12)
         )
-        lab, carrot, _, _ = _bed()
-        carrot.qdisc_texts = [
+        lab, test1, _, _ = _bed()
+        test1.qdisc_texts = [
             "qdisc prio 1: root refcnt 2 bands 11 priomap 1 2 2 2 1 2 0 0 1 1 1 1 1 1 1 1\n" + bands
         ]
-        carrot.filter_texts = [filters]
+        test1.filter_texts = [filters]
         with pytest.raises(ValueError, match="8 port-scoped impairments"):
             await impair_link(
                 lab,
                 "edge",
                 ImpairmentParams(delay_ms=1.0),
-                from_host="carrot_seed",
+                from_host="test1",
                 selector=Selector(9999, "tcp"),
             )
         # The cap error fires inside the mutation attempt, AFTER the rollback
         # entry is registered (same posture as a validate() failure today), so
         # a best-effort restore of the untouched prior mapping may run — but
         # nothing for the rejected selector may ever have been applied.
-        assert not any("9999" in c for c in carrot.sudo_commands)
+        assert not any("9999" in c for c in test1.sudo_commands)
 
     @pytest.mark.asyncio
     async def test_capability_error_names_the_impairer(self) -> None:
-        lab, carrot, _, _ = _bed()
+        lab, test1, _, _ = _bed()
         register_impairer("plainrec", _make_plain_recorder(), overwrite=True)
-        carrot.impairer = "plainrec"
+        test1.impairer = "plainrec"
         with pytest.raises(ValueError, match="'plainrec' does not support port-scoped"):
             await impair_link(
                 lab,
                 "edge",
                 ImpairmentParams(delay_ms=1.0),
-                from_host="carrot_seed",
+                from_host="test1",
                 selector=Selector(80),
             )
 
@@ -691,18 +689,18 @@ class TestScopedImpair:
     async def test_scoped_verify_mismatch_restores_full_prior_mapping(self) -> None:
         # prior: one selector; apply second; verify re-read shows nothing -> rollback
         # must rebuild the COMPLETE prior scoped mapping (root + band + filters).
-        lab, carrot, _, _ = _bed()
-        carrot.qdisc_texts = [QDISC_SCOPED_ONE, ""]
-        carrot.filter_texts = [FILTER_SCOPED_ONE, ""]
+        lab, test1, _, _ = _bed()
+        test1.qdisc_texts = [QDISC_SCOPED_ONE, ""]
+        test1.filter_texts = [FILTER_SCOPED_ONE, ""]
         with pytest.raises(RuntimeError, match="post-apply verify failed"):
             await impair_link(
                 lab,
                 "edge",
                 ImpairmentParams(loss_pct=5.0),
-                from_host="carrot_seed",
+                from_host="test1",
                 selector=Selector(53, "udp"),
             )
-        restore = carrot.sudo_commands[-4:]
+        restore = test1.sudo_commands[-4:]
         assert restore == [
             (
                 "tc qdisc replace dev eth1.100 root handle 1: prio bands 11 "
@@ -719,7 +717,7 @@ class TestScopedImpair:
             ),
         ]
         # and the root was cleared before the rebuild
-        assert "tc qdisc del dev eth1.100 root" in carrot.sudo_commands
+        assert "tc qdisc del dev eth1.100 root" in test1.sudo_commands
 
 
 def _make_plain_recorder():
@@ -747,18 +745,18 @@ def _make_plain_recorder():
 class TestScopedTimers:
     @pytest.mark.asyncio
     async def test_expire_launches_v2_timer_with_conditional_root_cleanup(self) -> None:
-        lab, carrot, _, _ = _bed()
-        carrot.qdisc_texts = ["", QDISC_SCOPED_ONE]
-        carrot.filter_texts = ["", FILTER_SCOPED_ONE]
+        lab, test1, _, _ = _bed()
+        test1.qdisc_texts = ["", QDISC_SCOPED_ONE]
+        test1.filter_texts = ["", FILTER_SCOPED_ONE]
         await impair_link(
             lab,
             "edge",
             ImpairmentParams(delay_ms=200.0),
-            from_host="carrot_seed",
+            from_host="test1",
             selector=Selector(5201, "tcp"),
             expire=30,
         )
-        launch = next(c for c in carrot.sudo_commands if "otto-impair:" in c)
+        launch = next(c for c in test1.sudo_commands if "otto-impair:" in c)
         # LINK.id may percent-encode in the sentinel; assert the frame + payload
         # tail rather than interpolating the raw id (mirrors the v1 test).
         assert "otto-impair:v2:" in launch
@@ -776,34 +774,34 @@ class TestScopedTimers:
     async def test_scoped_impair_cancels_only_its_selectors_v2_timer(self) -> None:
         v2_mine = encode_impair_sentinel_v2(LINK.id, "eth1.100", Selector(5201, "tcp"))
         v2_other = encode_impair_sentinel_v2(LINK.id, "eth1.100", Selector(53, "udp"))
-        lab, carrot, _, _ = _bed()
-        carrot.ps_text = (
+        lab, test1, _, _ = _bed()
+        test1.ps_text = (
             f"  4242 05:00 {v2_mine} -c sleep 600\n  4243 05:00 {v2_other} -c sleep 600\n"
         )
         merged_qdisc = QDISC_SCOPED_ONE.replace("delay 200ms", "delay 200ms loss 2%")
-        carrot.qdisc_texts = [QDISC_SCOPED_ONE, merged_qdisc]
-        carrot.filter_texts = [FILTER_SCOPED_ONE]
+        test1.qdisc_texts = [QDISC_SCOPED_ONE, merged_qdisc]
+        test1.filter_texts = [FILTER_SCOPED_ONE]
         await impair_link(
             lab,
             "edge",
             ImpairmentParams(loss_pct=2.0),
-            from_host="carrot_seed",
+            from_host="test1",
             selector=Selector(5201, "tcp"),
         )
-        assert "kill 4242" in carrot.sudo_commands
-        assert not any("4243" in c for c in carrot.sudo_commands)
+        assert "kill 4242" in test1.sudo_commands
+        assert not any("4243" in c for c in test1.sudo_commands)
 
     @pytest.mark.asyncio
     async def test_whole_link_impair_does_not_cancel_v2_timers(self) -> None:
         # a v2 timer for another link's netdev-sharing selector must survive a
         # bare impair (which only owns v1 whole-link timers)
         v2 = encode_impair_sentinel_v2(LINK.id, "eth1.100", Selector(5201, "tcp"))
-        lab, carrot, _, _ = _bed()
-        carrot.ps_text = f"  4242 05:00 {v2} -c sleep 600\n"
-        carrot.qdisc_texts = ["", DELAY_50_TEXT]
-        carrot.filter_texts = [""]
-        await impair_link(lab, "edge", ImpairmentParams(delay_ms=50.0), from_host="carrot_seed")
-        assert not any(c.startswith("kill") for c in carrot.sudo_commands)
+        lab, test1, _, _ = _bed()
+        test1.ps_text = f"  4242 05:00 {v2} -c sleep 600\n"
+        test1.qdisc_texts = ["", DELAY_50_TEXT]
+        test1.filter_texts = [""]
+        await impair_link(lab, "edge", ImpairmentParams(delay_ms=50.0), from_host="test1")
+        assert not any(c.startswith("kill") for c in test1.sudo_commands)
 
     @pytest.mark.asyncio
     async def test_rollback_scoped_to_own_selector_leaves_sibling_timer_running(self) -> None:
@@ -815,31 +813,31 @@ class TestScopedTimers:
         # restored impairment with a dead timer, persisting forever instead
         # of expiring).
         v2_sibling = encode_impair_sentinel_v2(LINK.id, "eth1.100", Selector(53, "udp"))
-        lab, carrot, _, _ = _bed()
-        carrot.ps_text = f"  4243 05:00 {v2_sibling} -c sleep 600\n"
-        carrot.qdisc_texts = [QDISC_SCOPED_TWO, ""]  # prior: both selectors; verify: nothing there
-        carrot.filter_texts = [FILTER_SCOPED_TWO, ""]
+        lab, test1, _, _ = _bed()
+        test1.ps_text = f"  4243 05:00 {v2_sibling} -c sleep 600\n"
+        test1.qdisc_texts = [QDISC_SCOPED_TWO, ""]  # prior: both selectors; verify: nothing there
+        test1.filter_texts = [FILTER_SCOPED_TWO, ""]
         with pytest.raises(RuntimeError, match="post-apply verify failed"):
             await impair_link(
                 lab,
                 "edge",
                 ImpairmentParams(loss_pct=2.0),
-                from_host="carrot_seed",
+                from_host="test1",
                 selector=Selector(5201, "tcp"),
             )
         # rollback ran: the full two-selector mapping was rebuilt
-        assert "tc qdisc del dev eth1.100 root" in carrot.sudo_commands
+        assert "tc qdisc del dev eth1.100 root" in test1.sudo_commands
         assert (
             "tc qdisc replace dev eth1.100 parent 1:4 handle 40: netem delay 200ms"
-            in carrot.sudo_commands
+            in test1.sudo_commands
         )
         assert (
             "tc qdisc replace dev eth1.100 parent 1:5 handle 50: netem loss 5%"
-            in carrot.sudo_commands
+            in test1.sudo_commands
         )
         # the sibling's OWN v2 timer (53/udp, pid 4243) survived: rollback was
         # scoped to THIS run's selector (5201/tcp), not "everything"
-        assert not any("4243" in c for c in carrot.sudo_commands)
+        assert not any("4243" in c for c in test1.sudo_commands)
 
 
 class TestTimeoutStillNamesTheHost:
@@ -855,7 +853,7 @@ class TestTimeoutStillNamesTheHost:
         from otto.link.manage import _exec
 
         class _Host:
-            id = "carrot"
+            id = "test1"
 
             async def exec(self, cmd: str, timeout: float | None = None, log=None) -> CommandResult:
                 return CommandResult(
@@ -866,7 +864,7 @@ class TestTimeoutStillNamesTheHost:
                     timed_out=True,
                 )
 
-        with pytest.raises(RuntimeError, match=r"carrot.*unreachable"):
+        with pytest.raises(RuntimeError, match=r"test1.*unreachable"):
             await _exec(_Host(), "tc qdisc show")
 
     @pytest.mark.asyncio
@@ -878,7 +876,7 @@ class TestTimeoutStillNamesTheHost:
         from otto.link.manage import _root_run
 
         class _Host:
-            id = "carrot"
+            id = "test1"
             current_user = "vagrant"
 
             async def run(
@@ -896,7 +894,7 @@ class TestTimeoutStillNamesTheHost:
                     ]
                 )
 
-        with pytest.raises(RuntimeError, match=r"carrot.*unreachable"):
+        with pytest.raises(RuntimeError, match=r"test1.*unreachable"):
             await _root_run(_Host(), "tc qdisc replace dev eth1.100 root netem delay 50ms")
 
 
@@ -940,28 +938,28 @@ class TestExpireOnAHostWithoutBash:
     async def test_a_whole_link_expire_is_refused_and_rolled_back(self) -> None:
         from otto.host.errors import UnsupportedOnUserlandError
 
-        lab, carrot, _, _ = _bed(has_bash=False)
-        carrot.qdisc_texts = ["", DELAY_50_TEXT]  # pre-read, then post-apply verify
+        lab, test1, _, _ = _bed(has_bash=False)
+        test1.qdisc_texts = ["", DELAY_50_TEXT]  # pre-read, then post-apply verify
         with pytest.raises(UnsupportedOnUserlandError) as excinfo:
             await impair_link(
-                lab, "edge", ImpairmentParams(delay_ms=50.0), from_host="carrot_seed", expire=30
+                lab, "edge", ImpairmentParams(delay_ms=50.0), from_host="test1", expire=30
             )
         message = str(excinfo.value)
         assert "daemon-launch" in message
-        assert "carrot_seed" in message
+        assert "test1" in message
         assert "--expire" in message, (
             "the refusal has to name the option the operator can drop; the impairment "
             "itself needs no bash"
         )
-        assert "tc qdisc replace dev eth1.100 root netem delay 50ms" in carrot.sudo_commands, (
+        assert "tc qdisc replace dev eth1.100 root netem delay 50ms" in test1.sudo_commands, (
             "the launch site sits AFTER this mutation, so without it the test would not "
             "be reaching the site it claims to reach"
         )
-        assert not [c for c in carrot.sudo_commands if "exec -a" in c], (
+        assert not [c for c in test1.sudo_commands if "exec -a" in c], (
             "the bash-only launch line must never be emitted — refusing after sending it "
             "would be the old silent failure with extra steps"
         )
-        assert carrot.sudo_commands[-1] == "tc qdisc del dev eth1.100 root", (
+        assert test1.sudo_commands[-1] == "tc qdisc del dev eth1.100 root", (
             "no half-impairments: the refusal takes impair_link's rollback path, so the "
             "link is left as it was found (clean, here)"
         )
@@ -976,23 +974,23 @@ class TestExpireOnAHostWithoutBash:
         """
         from otto.host.errors import UnsupportedOnUserlandError
 
-        lab, carrot, _, _ = _bed(has_bash=False)
-        carrot.qdisc_texts = ["", QDISC_SCOPED_ONE]
-        carrot.filter_texts = ["", FILTER_SCOPED_ONE]
+        lab, test1, _, _ = _bed(has_bash=False)
+        test1.qdisc_texts = ["", QDISC_SCOPED_ONE]
+        test1.filter_texts = ["", FILTER_SCOPED_ONE]
         with pytest.raises(UnsupportedOnUserlandError, match="daemon-launch"):
             await impair_link(
                 lab,
                 "edge",
                 ImpairmentParams(delay_ms=200.0),
-                from_host="carrot_seed",
+                from_host="test1",
                 selector=Selector(5201, "tcp"),
                 expire=30,
             )
-        assert [c for c in carrot.sudo_commands if c.startswith("tc filter add")], (
+        assert [c for c in test1.sudo_commands if c.startswith("tc filter add")], (
             "the scoped mutation runs before the launch site, so reaching the site "
             "requires having got past it"
         )
-        assert not [c for c in carrot.sudo_commands if "exec -a" in c]
+        assert not [c for c in test1.sudo_commands if "exec -a" in c]
 
     @pytest.mark.asyncio
     async def test_an_impair_without_expire_is_not_refused(self) -> None:
@@ -1002,13 +1000,11 @@ class TestExpireOnAHostWithoutBash:
         launch would take whole-link impairment away from every BusyBox device,
         which is the one thing this workstream exists to support.
         """
-        lab, carrot, _, _ = _bed(has_bash=False)
-        carrot.qdisc_texts = ["", DELAY_50_TEXT]
-        report = await impair_link(
-            lab, "edge", ImpairmentParams(delay_ms=50.0), from_host="carrot_seed"
-        )
-        assert [a.placement.host_id for a in report.applied] == ["carrot_seed"]
-        assert "tc qdisc replace dev eth1.100 root netem delay 50ms" in carrot.sudo_commands
+        lab, test1, _, _ = _bed(has_bash=False)
+        test1.qdisc_texts = ["", DELAY_50_TEXT]
+        report = await impair_link(lab, "edge", ImpairmentParams(delay_ms=50.0), from_host="test1")
+        assert [a.placement.host_id for a in report.applied] == ["test1"]
+        assert "tc qdisc replace dev eth1.100 root netem delay 50ms" in test1.sudo_commands
 
     @pytest.mark.asyncio
     async def test_repair_is_not_refused_either(self) -> None:
@@ -1020,12 +1016,12 @@ class TestExpireOnAHostWithoutBash:
         from otto.link.manage import repair_link
         from otto.link.sentinel import encode_impair_sentinel
 
-        lab, carrot, _, _ = _bed(has_bash=False)
+        lab, test1, _, _ = _bed(has_bash=False)
         token = encode_impair_sentinel(LINK.id, "eth1.100")
-        carrot.ps_text = f"  4242 05:00 {token} -c sleep 600 && tc qdisc del dev eth1.100 root\n"
-        carrot.qdisc_texts = [DELAY_50_TEXT, ""]
+        test1.ps_text = f"  4242 05:00 {token} -c sleep 600 && tc qdisc del dev eth1.100 root\n"
+        test1.qdisc_texts = [DELAY_50_TEXT, ""]
         await repair_link(lab, "edge")
-        assert "kill 4242" in carrot.sudo_commands
+        assert "kill 4242" in test1.sudo_commands
 
     @pytest.mark.asyncio
     async def test_any_other_failed_launch_is_still_unnoticed(self) -> None:
@@ -1042,14 +1038,14 @@ class TestExpireOnAHostWithoutBash:
         change's business. Without this test the claim that the refusal
         replaces SILENCE would be prose nothing executes.
         """
-        lab, carrot, _, _ = _bed(fail_on="exec -a")
-        carrot.qdisc_texts = ["", DELAY_50_TEXT]
+        lab, test1, _, _ = _bed(fail_on="exec -a")
+        test1.qdisc_texts = ["", DELAY_50_TEXT]
         report = await impair_link(
-            lab, "edge", ImpairmentParams(delay_ms=50.0), from_host="carrot_seed", expire=30
+            lab, "edge", ImpairmentParams(delay_ms=50.0), from_host="test1", expire=30
         )
-        assert [a.placement.host_id for a in report.applied] == ["carrot_seed"]
-        assert [c for c in carrot.sudo_commands if "exec -a" in c], "the launch was not attempted"
-        assert carrot.sudo_commands[-1].startswith("bash -c 'if command -v systemd-run"), (
+        assert [a.placement.host_id for a in report.applied] == ["test1"]
+        assert [c for c in test1.sudo_commands if "exec -a" in c], "the launch was not attempted"
+        assert test1.sudo_commands[-1].startswith("bash -c 'if command -v systemd-run"), (
             "nothing ran after the failed launch — no re-read, no rollback, no error"
         )
 
@@ -1060,13 +1056,13 @@ class TestExpireOnAHostWithoutBash:
 
 
 MGMT_LINK = Link(
-    a=LinkEndpoint(host="carrot_seed", interface="eth1", ip="10.10.200.11"),
-    b=LinkEndpoint(host="tomato_seed", interface="eth1", ip="10.10.200.12"),
+    a=LinkEndpoint(host="test1", interface="eth1", ip="10.10.200.11"),
+    b=LinkEndpoint(host="test2", interface="eth1", ip="10.10.200.12"),
     name="mgmt-edge",
 )
 """A link declaring each endpoint's MANAGEMENT interface as its data interface.
 
-``CARROT_ADDR``/``TOMATO_ADDR`` put ``10.10.200.11``/``10.10.200.12`` — the
+``TEST1_ADDR``/``TEST2_ADDR`` put ``10.10.200.11``/``10.10.200.12`` — the
 hosts' own ``ip`` — on ``eth1``, so ``ensure_not_mgmt`` matches positively and a
 real impair of this link is refused as a self-lockout. That refusal is what a
 dry run cannot make, and this link is the bed for proving it says so.
@@ -1086,7 +1082,7 @@ class TestDryRunImpairPlansWithoutContact:
 
     @pytest.mark.asyncio
     async def test_endpoint_mode_names_host_netdev_and_the_exact_command(self) -> None:
-        lab, carrot, tomato, _ = _bed()
+        lab, test1, test2, _ = _bed()
         with active_context(dry_run=True):
             report = await impair_link(lab, "edge", ImpairmentParams(delay_ms=50.0))
 
@@ -1095,10 +1091,10 @@ class TestDryRunImpairPlansWithoutContact:
             "`applied` means 'verified present after the mutation'; a dry run mutated and "
             "verified nothing, so anything here is a fabricated measurement"
         )
-        assert carrot.commands + tomato.commands == [], "a dry run contacted a host"
+        assert test1.commands + test2.commands == [], "a dry run contacted a host"
         assert report.plan.would == [
-            "a->b on carrot_seed/eth1.100: tc qdisc replace dev eth1.100 root netem delay 50ms",
-            "b->a on tomato_seed/eth1.200: tc qdisc replace dev eth1.200 root netem delay 50ms",
+            "a->b on test1/eth1.100: tc qdisc replace dev eth1.100 root netem delay 50ms",
+            "b->a on test2/eth1.200: tc qdisc replace dev eth1.200 root netem delay 50ms",
         ]
 
     @pytest.mark.asyncio
@@ -1112,7 +1108,7 @@ class TestDryRunImpairPlansWithoutContact:
         Both halves are asserted on the SAME bed: the real run refuses, and the
         dry run says out loud that it could not make that call.
         """
-        lab, carrot, _, _ = _bed(link=MGMT_LINK)
+        lab, test1, _, _ = _bed(link=MGMT_LINK)
 
         with pytest.raises(ValueError, match="self-lockout") as excinfo:
             await impair_link(lab, "mgmt-edge", ImpairmentParams(delay_ms=50.0))
@@ -1121,7 +1117,7 @@ class TestDryRunImpairPlansWithoutContact:
             "below would be asserting about a link that was never at risk"
         )
 
-        carrot.commands.clear()
+        test1.commands.clear()
         with active_context(dry_run=True):
             report = await impair_link(lab, "mgmt-edge", ImpairmentParams(delay_ms=50.0))
 
@@ -1135,7 +1131,7 @@ class TestDryRunImpairPlansWithoutContact:
             "the refusal is named but not the interface it protects"
         )
         assert "hops through it" in unchecked, "the hop-transit half of the refusal is unnamed"
-        assert not carrot.commands, "the dry run read the address table after all"
+        assert not test1.commands, "the dry run read the address table after all"
 
     @pytest.mark.asyncio
     async def test_in_path_says_placements_are_unresolvable_not_that_none_exist(self) -> None:
@@ -1143,19 +1139,19 @@ class TestDryRunImpairPlansWithoutContact:
 
         `inpath_placements` subnet-matches the middlebox's live table; on the
         EMPTY one a dry run parses out, `_facing_netdev` finds nothing and the
-        command died with `'pepper_seed' has no interface on 'tomato_seed''s
-        subnet` — a real sentence about a host it never asked, and pepper does
+        command died with `'test3' has no interface on 'test2''s
+        subnet` — a real sentence about a host it never asked, and test3 does
         have that interface (the control below).
         """
-        lab, _, _, pepper = _bed(link=INPATH)
-        pepper.qdisc_texts = ["", DELAY_50_TEXT, "", DELAY_50_TEXT]
+        lab, _, _, test3 = _bed(link=INPATH)
+        test3.qdisc_texts = ["", DELAY_50_TEXT, "", DELAY_50_TEXT]
         real = await impair_link(lab, "dataplane", ImpairmentParams(delay_ms=50.0))
         assert {a.placement.netdev for a in real.applied} == {"eth1.100", "eth1.200"}, (
-            "the control: pepper really does face both endpoints, so 'no interface on that "
+            "the control: test3 really does face both endpoints, so 'no interface on that "
             "subnet' was never a true statement about this bed"
         )
 
-        pepper.commands.clear()
+        test3.commands.clear()
         with active_context(dry_run=True):
             report = await impair_link(lab, "dataplane", ImpairmentParams(delay_ms=50.0))
 
@@ -1165,7 +1161,7 @@ class TestDryRunImpairPlansWithoutContact:
         assert "no interface on" not in " ".join(report.plan.unchecked), (
             "the dry run repeated the old fabricated finding"
         )
-        assert not pepper.commands
+        assert not test3.commands
 
     @pytest.mark.asyncio
     async def test_an_explicit_zero_plans_a_clear_not_a_zero_valued_netem(self) -> None:
@@ -1180,8 +1176,8 @@ class TestDryRunImpairPlansWithoutContact:
 
         assert report.plan is not None
         assert report.plan.would == [
-            "a->b on carrot_seed/eth1.100: tc qdisc del dev eth1.100 root",
-            "b->a on tomato_seed/eth1.200: tc qdisc del dev eth1.200 root",
+            "a->b on test1/eth1.100: tc qdisc del dev eth1.100 root",
+            "b->a on test2/eth1.200: tc qdisc del dev eth1.200 root",
         ]
 
     @pytest.mark.asyncio
@@ -1197,7 +1193,7 @@ class TestDryRunImpairPlansWithoutContact:
         lab, *_ = _bed()
         with active_context(dry_run=True):
             report = await impair_link(
-                lab, "edge", ImpairmentParams(jitter_ms=5.0), from_host="carrot_seed"
+                lab, "edge", ImpairmentParams(jitter_ms=5.0), from_host="test1"
             )
 
         assert report.plan is not None
@@ -1221,12 +1217,12 @@ class TestDryRunImpairPlansWithoutContact:
                 lab,
                 "edge",
                 ImpairmentParams(delay_ms=50.0),
-                from_host="carrot_seed",
+                from_host="test1",
                 selector=Selector(5201, "tcp"),
             )
 
         assert report.plan is not None
-        assert report.plan.would == ["a->b on carrot_seed/eth1.100: 5201/tcp delay 50ms"]
+        assert report.plan.would == ["a->b on test1/eth1.100: 5201/tcp delay 50ms"]
         assert "prio band" in report.plan.unchecked[0]
 
     @pytest.mark.asyncio
@@ -1238,7 +1234,7 @@ class TestDryRunImpairPlansWithoutContact:
         """
         local_link = Link(
             a=LinkEndpoint(host="local", interface="eth0", ip="10.0.0.1"),
-            b=LinkEndpoint(host="tomato_seed", interface="eth1.200", ip="10.10.202.12"),
+            b=LinkEndpoint(host="test2", interface="eth1.200", ip="10.10.202.12"),
             name="loopback-edge",
         )
         lab, *_rest = _bed(link=local_link)
@@ -1261,13 +1257,13 @@ class TestDryRunImpairPlansWithoutContact:
 
         # The control: the backstop IS armed, on the same lab and the same context.
         with active_context(dry_run=True), pytest.raises(LinkNotMeasuredError, match="no device"):
-            await _exec(lab.hosts["carrot_seed"], "ip -o addr show")
+            await _exec(lab.hosts["test1"], "ip -o addr show")
 
     @pytest.mark.asyncio
     async def test_the_backstop_is_inert_outside_a_dry_run(self) -> None:
-        _lab, carrot, _, _ = _bed()
-        result = await _exec(carrot, "ip -o addr show")
-        assert result.value == CARROT_ADDR
+        _lab, test1, _, _ = _bed()
+        result = await _exec(test1, "ip -o addr show")
+        assert result.value == TEST1_ADDR
 
 
 class TestDryRunSurfacesTheExpireRefusalUpFront:
@@ -1283,18 +1279,18 @@ class TestDryRunSurfacesTheExpireRefusalUpFront:
     async def test_a_bashless_expire_is_refused_before_anything_is_planned(self) -> None:
         from otto.host.errors import UnsupportedOnUserlandError
 
-        lab, carrot, _, _ = _bed(has_bash=False)
+        lab, test1, _, _ = _bed(has_bash=False)
         with (
             active_context(dry_run=True),
             pytest.raises(UnsupportedOnUserlandError, match="daemon-launch") as excinfo,
         ):
             await impair_link(
-                lab, "edge", ImpairmentParams(delay_ms=50.0), from_host="carrot_seed", expire=30
+                lab, "edge", ImpairmentParams(delay_ms=50.0), from_host="test1", expire=30
             )
         assert "--expire" in str(excinfo.value), (
             "the refusal has to name the option the operator can drop"
         )
-        assert not carrot.commands, "a refusal that costs a round trip is not a dry run"
+        assert not test1.commands, "a refusal that costs a round trip is not a dry run"
 
     @pytest.mark.asyncio
     async def test_the_same_dry_run_without_expire_is_not_refused(self) -> None:
@@ -1306,11 +1302,11 @@ class TestDryRunSurfacesTheExpireRefusalUpFront:
         lab, *_rest = _bed(has_bash=False)
         with active_context(dry_run=True):
             report = await impair_link(
-                lab, "edge", ImpairmentParams(delay_ms=50.0), from_host="carrot_seed"
+                lab, "edge", ImpairmentParams(delay_ms=50.0), from_host="test1"
             )
         assert report.plan is not None
         assert report.plan.would == [
-            "a->b on carrot_seed/eth1.100: tc qdisc replace dev eth1.100 root netem delay 50ms"
+            "a->b on test1/eth1.100: tc qdisc replace dev eth1.100 root netem delay 50ms"
         ]
 
     @pytest.mark.asyncio
@@ -1318,9 +1314,9 @@ class TestDryRunSurfacesTheExpireRefusalUpFront:
         lab, *_ = _bed()
         with active_context(dry_run=True):
             report = await impair_link(
-                lab, "edge", ImpairmentParams(delay_ms=50.0), from_host="carrot_seed", expire=30
+                lab, "edge", ImpairmentParams(delay_ms=50.0), from_host="test1", expire=30
             )
         assert report.plan is not None
         assert report.plan.would[-1] == (
-            "a->b on carrot_seed/eth1.100: launch an expire timer that clears it after 30s"
+            "a->b on test1/eth1.100: launch an expire timer that clears it after 30s"
         )

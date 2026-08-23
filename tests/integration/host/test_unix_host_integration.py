@@ -44,7 +44,7 @@ _ALL_TRANSFERS = pytest.mark.parametrize(
         pytest.param(("nc", "telnet"), id="nc-telnet"),
         # The BusyBox bed's five pinned userlands, on the transfer their lab
         # entries resolve to — `shell`, over the telnet console, through the
-        # carrot hop. This is where transfer parity across userland versions
+        # test1 hop. This is where transfer parity across userland versions
         # is asserted: the same two round trips every other transfer takes.
         #
         # NO `nc` ROWS, and that is a ruling rather than an omission (Chris,
@@ -330,7 +330,7 @@ class TestReachability:
         kwargs: dict[str, str] = {"term": host1.term}
         if host1.term == "telnet":
             kwargs["transfer"] = "ftp"
-        host2 = make_host("tomato", **kwargs)
+        host2 = make_host("test2", **kwargs)
         try:
             for host in (host1, host2):
                 result = (await host.run("echo ping")).only
@@ -349,7 +349,7 @@ class TestCredentials:
     @pytest.mark.asyncio
     async def test_second_credential_works(self):
         """Verify the non-default (test) user can log in and run commands."""
-        data = host_data("tomato")
+        data = host_data("test2")
         second_user = data["creds"][1]["login"]
         host = UnixHost(
             ip=data["ip"],
@@ -378,7 +378,7 @@ class TestCredentials:
         """
         monkeypatch.setattr(ShellSession, "_init_timeout", 3.0)
 
-        data = host_data("carrot")
+        data = host_data("test1")
         user = data["creds"][0]["login"]
         host = UnixHost(
             ip=data["ip"],

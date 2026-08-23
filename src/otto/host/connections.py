@@ -452,7 +452,7 @@ class ConnectionManager:
         transfers) hand-rolled ``TelnetClient(connections.ip, ...)`` with no
         forward and no ``connect_port``. For a hop-fronted telnet host that
         dials the address literally: a BusyBox bed guest's ``ip`` is an address
-        on a /30 that exists ONLY on carrot, so dialling it from here reaches
+        on a /30 that exists ONLY on test1, so dialling it from here reaches
         nothing at all, while ``run`` — which forwards — works perfectly.
         Measured 2026-08-21 against bb1350, when the guests were still reached
         through a QEMU hostfwd and their ``ip`` was ``127.0.0.1``: ``exec``

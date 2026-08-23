@@ -1,6 +1,6 @@
 """tests/e2e/chaos — tier-3 chaos lane fixtures.
 
-Session-scoped bed lease: the whole lane runs against ONE leased veggies
+Session-scoped bed lease: the whole lane runs against ONE leased unix
 host (plus named peers in the inherently two-host scenarios), serialized by
 xdist_group("chaos_lane"). Fail-loud on host-down, never skip.
 """
@@ -29,12 +29,12 @@ def busybox_chaos_bed() -> Iterator[BusyboxChaosBed]:
 
     It takes no ``tmp_path_factory`` precisely because it needs no lock dir:
     requesting this fixture must never reach ``lease_unix_host``, or a guest
-    scenario would hold a veggies VM hostage for the whole session while
+    scenario would hold a unix VM hostage for the whole session while
     touching only a QEMU guest and its hop. See ``_bed.busybox_bed`` for why
     no lease is the correct answer rather than a shortcut.
 
     Every consumer also carries ``no_hygiene_bracket``: the autouse bracket
-    below snapshots whichever veggies host the POOL leased, which is neither
+    below snapshots whichever unix host the POOL leased, which is neither
     the guest nor reliably even its hop, so leaving it armed would both force
     that lease and assert cleanliness of a host the scenario never touched.
     Guest arms bracket their own remote state instead, on the guest.

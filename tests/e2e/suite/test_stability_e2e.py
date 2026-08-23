@@ -12,7 +12,7 @@ to the original event loop with::
     RuntimeError: Task got Future attached to a different loop
 
 Prerequisites:
-    - Vagrant test VM ``carrot`` must be running (lab ``veggies``).
+    - Vagrant test VM ``test1`` must be running (lab ``unix``).
 
 Running::
 
@@ -41,7 +41,7 @@ class TestStabilityE2E:
             ["test", "--iterations", "3", "TestStabilityFixture"],
             xdir=xdir,
             sut_dirs=REPO1,
-            lab="veggies",
+            lab="unix",
         )
 
         combined = result.stdout + result.stderr
@@ -73,7 +73,7 @@ class TestStabilityE2E:
             ["test", "TestStabilityFixture"],
             xdir=xdir,
             sut_dirs=REPO1,
-            lab="veggies",
+            lab="unix",
         )
 
         assert result.returncode == 0, (

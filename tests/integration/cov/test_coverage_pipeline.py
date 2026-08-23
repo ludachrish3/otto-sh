@@ -99,9 +99,9 @@ class TestCoverageFetch:
     """Test that .gcda files are correctly fetched from remote hosts."""
 
     @pytest.mark.asyncio
-    async def test_fetch_gcda_files(self, carrot, tomato, tmp_path):
+    async def test_fetch_gcda_files(self, test1, test2, tmp_path):
         """Deploy, run, and fetch .gcda files from two hosts."""
-        hosts = [carrot, tomato]
+        hosts = [test1, test2]
 
         # Setup
         await _compile_product()
@@ -110,8 +110,8 @@ class TestCoverageFetch:
 
         try:
             # Run the product on each host with different operations
-            await _run_product(carrot, "add", 1, 2)
-            await _run_product(tomato, "sub", 5, 3)
+            await _run_product(test1, "add", 1, 2)
+            await _run_product(test2, "sub", 5, 3)
 
             # Fetch .gcda files
             cov_dir = tmp_path / "cov"
@@ -123,8 +123,8 @@ class TestCoverageFetch:
             assert len(host_dirs) == 2, f"Expected 2 hosts, got {len(host_dirs)}"
 
             # Verify directories are named by host.id
-            assert carrot.id in host_dirs
-            assert tomato.id in host_dirs
+            assert test1.id in host_dirs
+            assert test2.id in host_dirs
 
             # Verify .gcda files exist
             for host_id, host_dir in host_dirs.items():
@@ -141,16 +141,16 @@ class TestCoverageReport:
     """Test that coverage reports are correctly generated from merged data."""
 
     @pytest.mark.asyncio
-    async def test_merged_coverage_across_hosts(self, carrot, tomato, tmp_path):
+    async def test_merged_coverage_across_hosts(self, test1, test2, tmp_path):
         """Verify that merging coverage from multiple hosts combines data.
 
-        Host 1 (carrot): runs add, multiply
-        Host 2 (tomato): runs subtract, divide
+        Host 1 (test1): runs add, multiply
+        Host 2 (test2): runs subtract, divide
 
         After merging, the report should show coverage of all four
         functions, which neither host achieved individually.
         """
-        hosts = [carrot, tomato]
+        hosts = [test1, test2]
 
         await _compile_product()
         for host in hosts:
@@ -158,10 +158,10 @@ class TestCoverageReport:
 
         try:
             # Exercise different code paths on each host
-            await _run_product(carrot, "add", 2, 3)
-            await _run_product(carrot, "mul", 4, 5)
-            await _run_product(tomato, "sub", 10, 4)
-            await _run_product(tomato, "div", 20, 5)
+            await _run_product(test1, "add", 2, 3)
+            await _run_product(test1, "mul", 4, 5)
+            await _run_product(test2, "sub", 10, 4)
+            await _run_product(test2, "div", 20, 5)
 
             # Fetch .gcda files
             run_dir = tmp_path / "run1"
@@ -198,50 +198,50 @@ class TestCoverageReport:
                 await _uninstall_from_host(host)
 
     @pytest.mark.asyncio
-    async def test_multi_run_stitching(self, carrot, tomato, tmp_path):
+    async def test_multi_run_stitching(self, test1, test2, tmp_path):
         """Verify that coverage from multiple test runs can be stitched.
 
-        Run 1: carrot runs add
-        Run 2: tomato runs clamp (all branches)
+        Run 1: test1 runs add
+        Run 2: test2 runs clamp (all branches)
 
         The merged report should cover both runs.
         """
-        hosts = [carrot, tomato]
+        hosts = [test1, test2]
 
         await _compile_product()
         for host in hosts:
             await _install_on_host(host)
 
         try:
-            # Run 1: add on carrot
+            # Run 1: add on test1
             run1_dir = tmp_path / "run1"
             cov1_dir = run1_dir / "cov"
 
             # Clean previous .gcda files
-            await carrot.exec(
+            await test1.exec(
                 f"find {GCDA_REMOTE_DIR} -name '*.gcda' -delete 2>/dev/null; true",
                 timeout=10,
             )
-            await _run_product(carrot, "add", 1, 2)
+            await _run_product(test1, "add", 1, 2)
 
-            with configured_hosts(carrot):
+            with configured_hosts(test1):
                 fetcher1 = GcdaFetcher(cov1_dir)
                 dirs1 = await fetcher1.fetch_all(GCDA_REMOTE_DIR)
             assert len(dirs1) == 1
 
-            # Run 2: clamp on tomato
+            # Run 2: clamp on test2
             run2_dir = tmp_path / "run2"
             cov2_dir = run2_dir / "cov"
 
-            await tomato.exec(
+            await test2.exec(
                 f"find {GCDA_REMOTE_DIR} -name '*.gcda' -delete 2>/dev/null; true",
                 timeout=10,
             )
-            await _run_product(tomato, "clamp", 1, 5, 10)
-            await _run_product(tomato, "clamp", 15, 5, 10)
-            await _run_product(tomato, "clamp", 7, 5, 10)
+            await _run_product(test2, "clamp", 1, 5, 10)
+            await _run_product(test2, "clamp", 15, 5, 10)
+            await _run_product(test2, "clamp", 7, 5, 10)
 
-            with configured_hosts(tomato):
+            with configured_hosts(test2):
                 fetcher2 = GcdaFetcher(cov2_dir)
                 dirs2 = await fetcher2.fetch_all(GCDA_REMOTE_DIR)
             assert len(dirs2) == 1

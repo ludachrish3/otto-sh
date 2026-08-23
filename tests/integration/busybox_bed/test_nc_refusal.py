@@ -8,7 +8,7 @@ unchanged across the call — the true-negative proving the refusal really fired
 first.
 
 **Why a listener is where a failure would show.** These guests are reached
-through the carrot hop, so ``NcFileTransfer`` takes its TUNNELLED get path,
+through the test1 hop, so ``NcFileTransfer`` takes its TUNNELLED get path,
 and that path's first wire act is to make the GUEST listen:
 ``nc -Nl -w <t> <port> < <file>``, on a port the allocator picks. A refusal
 that fired one layer too late — after ``_warmup_for_transfer``, or from inside

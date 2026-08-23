@@ -96,17 +96,17 @@ async def test_loop_converges_with_churn_and_seam_parity(tunnel_lab, reap_tunnel
 @pytest.mark.serial_timing
 @pytest.mark.asyncio
 async def test_loop_holds_last_known_under_wedge_then_reconverges(tunnel_lab, reap_tunnels) -> None:
-    """SIGSTOP tomato's sshd listener mid-monitoring: ticks keep completing
+    """SIGSTOP test2's sshd listener mid-monitoring: ticks keep completing
     within budget, the tunnel is HELD (as 'uncertain', never blanked), and the
     set reconverges to 'ok' after CONT."""
     control = tunnel_lab.hosts[EXIT]
-    tomato_ip = host_data("tomato")["ip"]
+    test2_ip = host_data("test2")["ip"]
 
     # The collector scans its OWN lab (fresh host objects) so that closing a
     # host forces the next scan through a brand-new connection — a pooled
     # pre-wedge connection would never feel the wedge.
     monitor_lab = Lab(name="monitor_wedge")
-    for ne in ("carrot", "tomato"):
+    for ne in ("test1", "test2"):
         monitor_lab.add_host(build_bed_host(ne, ssh_options=SshOptions(connect_timeout=5)))
     collector, _published = _spy_collector(monitor_lab)
 
@@ -140,7 +140,7 @@ async def test_loop_holds_last_known_under_wedge_then_reconverges(tunnel_lab, re
         cont = await control.exec(f"sudo -n kill -CONT {pid}", timeout=15, log=LogMode.QUIET)
         assert cont.is_ok
         stopped = False
-        await assert_sshd_responsive(tomato_ip)
+        await assert_sshd_responsive(test2_ip)
         await monitor_lab.hosts[EXIT].close()  # reconnect cleanly post-recovery
 
         elapsed = await _timed_pass(collector)
@@ -164,10 +164,10 @@ async def test_loop_holds_last_known_under_wedge_then_reconverges(tunnel_lab, re
             *(h.close() for h in monitor_lab.hosts.values()), return_exceptions=True
         )
         try:
-            await assert_sshd_responsive(tomato_ip)
+            await assert_sshd_responsive(test2_ip)
         except Exception as exc:
             raise AssertionError(
-                f"tomato sshd NOT responsive after wedge test — auto-CONT fires within "
+                f"test2 sshd NOT responsive after wedge test — auto-CONT fires within "
                 f"{ARM_SECONDS}s; else 'sudo kill -CONT {pid}' on test2: {exc!r}"
             ) from exc
         if succeeded:

@@ -2,9 +2,9 @@ name = "repo3"
 version = "1.0.0"
 libs = [
     "pylib",
-    # Shared, third-party-style module. repo3 only targets sprout_cov, but
+    # Shared, third-party-style module. repo3 only targets zephyr37_llext, but
     # `--lab embedded` constructs every host in the lab — including the Zephyr
-    # 2.7 sprout27, whose `zephyr-inline` frame lives here. Pulling it in lets
+    # 2.7 zephyr27_fat, whose `zephyr-inline` frame lives here. Pulling it in lets
     # repo3 load the shared lab without owning the 2.7 dialect (see
     # tests/custom_hosts).
     "../custom_hosts",
@@ -20,7 +20,7 @@ init = [
 # Embedded coverage bed. Full design: ../../../todo/embedded_coverage.md;
 # bring-up record: docs/feasibility.md.
 #
-# The coverage target is the `sprout_cov` mps2_an385 instance in the shared
+# The coverage target is the `zephyr37_llext` mps2_an385 instance in the shared
 # tech1 lab data — a stock Zephyr LLEXT loader base (built from
 # samples/subsys/llext/shell_loader, see ../../firmware/zephyr/configs/cov_an385)
 # reached over a QEMU `-serial telnet:` bridge. The instrumented product
@@ -62,18 +62,21 @@ max_filename_len = 32
 # Which hosts to collect coverage from: a host-id regex FULLY matched against
 # each id (re.fullmatch), defaulting to every host in the lab when unset. This
 # selects the coverage target(s) out of the shared `embedded` lab — keeping the
-# plain embedded test hosts and the `basil` SSH hop out — so the collect-from
+# plain embedded test hosts and the `test4` SSH hop out — so the collect-from
 # set is repo-declared, not inferred from which hosts happen to emit .gcda. The
 # same selector scopes the TestEmbeddedCoverage suite (which hosts it loads the
-# instrumented extension onto). The trailing wildcard is load-bearing and not
-# tidiness: the intent is BOTH coverage beds — sprout-cov (3.7) and
-# sprout-cov44 (4.4) — so coverage is collected across multiple Zephyr
-# versions, and a bare "sprout-cov" fullmatches only the 3.7 bed. That would
-# not fail; it would quietly halve the collection. (The ids are hyphenated: the
-# elements "sprout_cov"/"sprout_cov44" slug their underscore to a hyphen under
-# the host-id rules.) Future (per embedded_cortex_m_migration.md): when every
-# QEMU host can emit coverage, widen this further (e.g. "sprout.*").
-hosts = "sprout-cov.*"
+# instrumented extension onto). The alternation is load-bearing and not
+# tidiness: the intent is BOTH coverage beds — zephyr37-llext (3.7) and
+# zephyr44-llext (4.4) — so coverage is collected across multiple Zephyr
+# versions, and a bare "zephyr37-llext" fullmatches only the 3.7 bed. That would
+# not fail; it would quietly halve the collection. The two ids share no
+# distinguishing prefix, so no trailing wildcard can stand in for the
+# alternation — spelling both versions out is the only selector that names the
+# intent. (The ids are hyphenated: the elements "zephyr37_llext"/"zephyr44_llext"
+# slug their underscore to a hyphen under the host-id rules.) Future (per
+# embedded_cortex_m_migration.md): when every QEMU host can emit coverage, widen
+# this further (e.g. "zephyr.*").
+hosts = "zephyr(37|44)-llext"
 
 [coverage.embedded]
 # LLEXT extension name — matches add_llext_target(cov_ext) in product/. otto
@@ -93,8 +96,8 @@ build_dir = "/home/vagrant/build/cov_ext_app"
 # Per-Zephyr-version product builds. Each coverage host's os_version selects its
 # own build_dir (whose .gcno is that host's report source root); the cross-gcov
 # comes from the host's lab-data toolchain. This is what lets coverage span
-# multiple Zephyr versions: sprout_cov (3.7) -> cov_ext_app (built `build.sh
-# <dir> v3_7`); sprout_cov44 (4.4) -> cov_ext_app_v4_4 (`build.sh <dir> v4_4`).
+# multiple Zephyr versions: zephyr37_llext (3.7) -> cov_ext_app (built `build.sh
+# <dir> v3_7`); zephyr44_llext (4.4) -> cov_ext_app_v4_4 (`build.sh <dir> v4_4`).
 [coverage.embedded.builds."3.7"]
 build_dir = "/home/vagrant/build/cov_ext_app"
 

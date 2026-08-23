@@ -2,11 +2,12 @@
 
 ## Tunnel identity
 
-Every tunnel gets an id of the form `tun-<hex>-<port>`, e.g.
-`tun-0a17f76fb561-6001` — the port stays visible in `list`, in `remove <id>`,
-and in every tagged process's `argv[0]`, so two tunnels on the same route with
-different ports are visibly distinct. Ownership is **not** encoded in the id:
-`remove --all` reaps every otto tunnel it finds, whoever created it.
+Every tunnel gets an id of the form `tun-<hex>-<port>` — `--hosts
+test1@eth2,test2 --port 6001` yields `tun-48d9158aca92-6001`. The port stays
+visible in `list`, in `remove <id>`, and in every tagged process's `argv[0]`,
+so two tunnels on the same route with different ports are visibly distinct.
+Ownership is **not** encoded in the id: `remove --all` reaps every otto tunnel
+it finds, whoever created it.
 
 For how the id is derived (a hash of the ordered chain), why the path is
 deliberately not normalized, why `--dest` is excluded, and why tunnel ids never

@@ -77,7 +77,7 @@ Declare a frame by name in lab data:
 
 ```json
 {
-    "element": "sprout_no_fs",
+    "element": "zephyr37_nofs",
     "os_type": "zephyr",
     "command_frame": "zephyr-serial"
 }
@@ -119,19 +119,19 @@ are unavailable on embedded hosts — they require a POSIX shell.
 
 ## Example
 
-A `sprout` entry from the test fixture, annotated:
+A `zephyr37_fat` entry from the test fixture, annotated:
 
 ```json
 {
     "ip": "192.0.2.1",
-    "element": "sprout",
+    "element": "zephyr37_fat",
     "os_type": "zephyr",
     "os_version": "3.7",
     "transfer": "console",
     "filesystem": "fat-ram",
     "max_filename_len": 32,
     "is_virtual": true,
-    "hop": "basil_seed",
+    "hop": "test4",
     "snmp": {
         "address": "10.10.200.14",
         "port": 16101,
@@ -145,7 +145,7 @@ A `sprout` entry from the test fixture, annotated:
         ]
     },
     "resources": [
-        "sprout"
+        "zephyr37_fat"
     ],
     "labs": [
         "embedded"
@@ -162,7 +162,7 @@ Key fields:
 - `transfer: "console"` — file I/O over the device's `fs` shell commands.
 - `filesystem: "fat-ram"` — FAT on RAM disk, mounted at `/RAM:`.
 - `max_filename_len: 32` — firmware `CONFIG_FS_FATFS_MAX_LFN` ceiling.
-- `hop: "basil_seed"` — all connections route through the `basil_seed` jump host.
+- `hop: "test4"` — all connections route through the `test4` jump host.
 - `snmp` block — enables SNMP-based metric collection alongside the telnet
   console (a separate channel).
 

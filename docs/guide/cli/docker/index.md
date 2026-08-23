@@ -31,13 +31,13 @@ otto docker ps    [--on HOST]
 
 After `otto docker up`, the resulting containers appear in `--list-hosts`
 under ids of the form `<parent>.<project>.<service>` (e.g.
-`pepper_seed.repo1.api`). Use them anywhere a host id is expected:
+`test3.repo1.api`). Use them anywhere a host id is expected:
 
 ```text
-otto host pepper_seed.repo1.api login
-otto host pepper_seed.repo1.api run "uname -a"
-otto host pepper_seed.repo1.api put ./local /remote/path
-otto host pepper_seed.repo1.api get /etc/os-release ./
+otto host test3.repo1.api login
+otto host test3.repo1.api run "uname -a"
+otto host test3.repo1.api put ./local /remote/path
+otto host test3.repo1.api get /etc/os-release ./
 ```
 
 Container ids are also synthesized at lab-load time **before** any

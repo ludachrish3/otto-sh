@@ -28,7 +28,7 @@ An nc transfer holds an SSH **exec channel** for the whole life of its remote
 `nc -l`, and its readiness poll opens **another** while that one is held. A
 default OpenSSH server allows `MaxSessions 10` channels per CONNECTION and
 refuses the excess outright — it does not queue it. Measured on the bed
-(tomato via carrot, one connection), concurrent `host.exec` calls:
+(test2 via test1, one connection), concurrent `host.exec` calls:
 
     N=8   refused=0      N=20  refused=10
     N=10  refused=0      N=24  refused=14

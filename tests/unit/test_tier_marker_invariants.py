@@ -242,7 +242,7 @@ def test_catchall_nox_sessions_exclude_stability():
     """G4: negation-only nox selections must exclude the stability tier.
 
     The stability tests are bed-HOSTILE by design (e.g. the SIGSTOP-wedge
-    test stops tomato's sshd listener for tens of seconds), so they may only
+    test stops test2's sshd listener for tens of seconds), so they may only
     run where they own the bed: the dedicated `make stability-tunnel` lane
     (which selects nothing else, and whose single xdist_group serializes
     them). A catch-all session expression — one built purely from negations,

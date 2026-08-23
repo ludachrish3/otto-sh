@@ -23,33 +23,32 @@ from tests._fixtures.paths import TESTS_ROOT
 
 REPO1_DIR = TESTS_ROOT / "repo1"
 
-# All docker integration tests share /tmp/otto-docker/repo1/ on pepper
+# All docker integration tests share /tmp/otto-docker/repo1/ on test3
 # (build-context staging dir). Pin them to one xdist worker so concurrent
 # `rm -rf` calls during stage_image_context don't race.
 pytestmark = pytest.mark.xdist_group("docker_e2e")
 
 
 @pytest.fixture(scope="module")
-def pepper_lease(tmp_path_factory):
-    """Hold the pepper fd-flock for the entire module so no e2e docker test
+def test3_lease(tmp_path_factory):
+    """Hold the test3 fd-flock for the entire module so no e2e docker test
     can race against the integration docker tests on the same daemon."""
     lock_dir = tmp_path_factory.getbasetemp().parent
-    with lease_unix_host(lock_dir, ["pepper"]) as _element:
+    with lease_unix_host(lock_dir, ["test3"]) as _element:
         yield _element
 
 
 @pytest_asyncio.fixture(scope="module", loop_scope="module")
-async def parent(pepper_lease):
-    """Direct (non-hopped) connection to test3 / pepper for docker tests.
+async def parent(test3_lease):
+    """Direct (non-hopped) connection to test3 / test3 for docker tests.
 
     Module-scoped so the three tests in this file share a single SSH
     connection — the connection has no per-test state, and the savings
     are real (~1s of asyncssh handshake per test)."""
     h = UnixHost(
         ip="10.10.200.13",
-        element="pepper",
+        element="test3",
         creds=[Cred(login="vagrant", password="vagrant")],
-        board="seed",
         is_virtual=True,
         term="ssh",
         transfer="scp",

@@ -2,7 +2,7 @@
 
 Default target: a throwaway loopback sshd owned by this session — hermetic
 on the dev VM and ubuntu-latest alike. ``OTTO_CHAOS_BED_HOST`` (lab leg
-only) redirects the otto subprocess at a veggies bed host; signals still
+only) redirects the otto subprocess at a unix bed host; signals still
 only ever go to the local otto process. Host-down in bed mode fails LOUD
 with the host's name — never a skip (dev-VM rule).
 """

@@ -2030,7 +2030,7 @@ class SessionManager:
         is retried **once** with a brief backoff. The failure mode this
         addresses: concurrent fan-out across multiple embedded targets
         sharing a single SSH hop (e.g. ``do_for_all_hosts(EmbeddedHost.put,
-        …)`` to several Zephyr boards over one ``basil_seed`` hop) can land
+        …)`` to several Zephyr boards over one ``test4`` hop) can land
         a fresh telnet socket on a device whose console isn't quite ready —
         the peer accepts the TCP connection then closes it before the
         marker probe lands, producing ``IncompleteReadError(0 bytes)`` →

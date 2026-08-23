@@ -280,7 +280,7 @@ def test_fingerprint_moves_when_a_source_lab_file_is_edited(
     lab_dir = tmp_path / "lab"
     lab_dir.mkdir(parents=True)
     lab_file = lab_dir / "lab.json"
-    lab_file.write_text(json.dumps({"hosts": [{"ip": "10.0.0.1", "element": "carrot"}]}))
+    lab_file.write_text(json.dumps({"hosts": [{"ip": "10.0.0.1", "element": "test1"}]}))
 
     repo = MagicMock()
     repo.sut_dir = sut_dir
@@ -298,8 +298,8 @@ def test_fingerprint_moves_when_a_source_lab_file_is_edited(
         json.dumps(
             {
                 "hosts": [
-                    {"ip": "10.0.0.1", "element": "carrot"},
-                    {"ip": "10.0.0.2", "element": "tomato"},
+                    {"ip": "10.0.0.1", "element": "test1"},
+                    {"ip": "10.0.0.2", "element": "test2"},
                 ]
             }
         )
@@ -845,12 +845,12 @@ def test_write_read_cache_round_trips_hosts_by_lab(tmp_path: Path, monkeypatch) 
         [fake_repo],
         instructions=[],
         suites=[],
-        hosts=["carrot_seed", "apple_seed"],
-        hosts_by_lab={"veggies": ["carrot_seed"], "fruits": ["apple_seed"]},
+        hosts=["test1", "alt2"],
+        hosts_by_lab={"unix": ["test1"], "unix_alt": ["alt2"]},
     )
     out = cc.read_cache([fake_repo])
     assert out is not None
-    assert out["hosts_by_lab"] == {"veggies": ["carrot_seed"], "fruits": ["apple_seed"]}
+    assert out["hosts_by_lab"] == {"unix": ["test1"], "unix_alt": ["alt2"]}
 
 
 def test_read_cache_defaults_hosts_by_lab_to_empty_dict(tmp_path: Path, monkeypatch) -> None:
@@ -877,8 +877,8 @@ def test_read_cache_defaults_hosts_by_lab_to_empty_dict(tmp_path: Path, monkeypa
 _DOCKER_HOST = {
     "ip": "10.0.0.1",
     "element": "b",
-    "os_type": "unix",
     "board": "seed",
+    "os_type": "unix",
     "docker_capable": True,
     "creds": [{"login": "user", "password": "pass"}],
     "resources": ["b"],
@@ -887,8 +887,8 @@ _DOCKER_HOST = {
 _NON_DOCKER_HOST = {
     "ip": "10.0.0.2",
     "element": "a",
-    "os_type": "unix",
     "board": "seed",
+    "os_type": "unix",
     "docker_capable": False,
     "creds": [{"login": "user", "password": "pass"}],
     "resources": ["a"],
@@ -1387,7 +1387,7 @@ def test_a_working_host_source_is_untouched_by_the_deadline(monkeypatch) -> None
     """The bound must not cost the normal path its answer."""
     from otto.labs import HostSummary
 
-    expected = [HostSummary(id="carrot_seed", labs=["veggies"])]
+    expected = [HostSummary(id="test1", labs=["unix"])]
     monkeypatch.setattr(cc, "_enumerate_host_summaries", lambda _repo, _abandoned=None: expected)
     monkeypatch.setattr(cc, "_SUMMARY_MEMO", {})
     repo = MagicMock()
@@ -1410,7 +1410,7 @@ def test_one_enumeration_per_repo_however_many_collectors_ask(monkeypatch) -> No
     def _count(_repo, _abandoned=None):
         nonlocal calls
         calls += 1
-        return [HostSummary(id="carrot_seed", labs=["veggies"])]
+        return [HostSummary(id="test1", labs=["unix"])]
 
     monkeypatch.setattr(cc, "_enumerate_host_summaries", _count)
     monkeypatch.setattr(cc, "_SUMMARY_MEMO", {})
@@ -1418,7 +1418,7 @@ def test_one_enumeration_per_repo_however_many_collectors_ask(monkeypatch) -> No
     repo.sut_dir = Path("/memo")
 
     for _ in range(3):
-        assert [s.id for s in cc.repo_host_summaries(repo)] == ["carrot_seed"]
+        assert [s.id for s in cc.repo_host_summaries(repo)] == ["test1"]
     assert calls == 1, f"enumerated {calls} times for one repo"
 
 

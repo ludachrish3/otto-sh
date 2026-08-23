@@ -784,7 +784,7 @@ def _zephyr_with_fs(log: LogMode = LogMode.QUIET):
     from otto.host.embedded_host import ZephyrHost
 
     return ZephyrHost(
-        ip="192.0.2.1", element="sprout", log=log, filesystem=build_filesystem("fat-ram")
+        ip="192.0.2.1", element="zephyr37_fat", log=log, filesystem=build_filesystem("fat-ram")
     )
 
 
@@ -2376,7 +2376,7 @@ class TestADryRunDrivesNoSessionItAlreadyHolds:
         """
         from otto.host.embedded_host import ZephyrHost
 
-        embedded = ZephyrHost(ip="192.0.2.1", element="sprout", log=LogMode.QUIET)
+        embedded = ZephyrHost(ip="192.0.2.1", element="zephyr37_fat", log=LogMode.QUIET)
         try:
             embedded._session_mgr._session_factory = _RecordingShellSession
             session = await embedded._session_mgr.open_session("probe")

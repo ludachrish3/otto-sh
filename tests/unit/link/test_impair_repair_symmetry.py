@@ -26,20 +26,20 @@ from otto.link.manage import impair_link, repair_all, repair_link
 from otto.link.model import Link, LinkEndpoint
 from otto.link.params import ImpairmentParams
 
-from .test_manage_impair import CARROT_ADDR, FakeHost, FakeLab
+from .test_manage_impair import TEST1_ADDR, FakeHost, FakeLab
 
-# carrot as the bed's hop: its management address on eth1, and the guest's TAP
+# test1 as the bed's hop: its management address on eth1, and the guest's TAP
 # on bbeth-1350. The TAP deliberately carries NO management address, so the
 # refusal these tests provoke is hop transit and not the mgmt rule — a
 # distinction test_the_refusal_under_a_full_scope_is_hop_transit_not_lab_scope
 # pins rather than assumes.
-CARROT_WITH_TAP = CARROT_ADDR + (
+TEST1_WITH_TAP = TEST1_ADDR + (
     "9: bbeth-1350    inet 198.51.100.18/30 brd 198.51.100.19 scope global bbeth-1350\\  x\n"
 )
 GUEST_ADDR = "2: eth0    inet 198.51.100.17/30 brd 198.51.100.19 scope global eth0\\  x\n"
 
 GUEST_LINK = Link(
-    a=LinkEndpoint(host="carrot_seed", interface="bbeth-1350", ip="198.51.100.18"),
+    a=LinkEndpoint(host="test1", interface="bbeth-1350", ip="198.51.100.18"),
     b=LinkEndpoint(host="bb1350_qemu", interface="eth0", ip="198.51.100.17"),
     name="bb1350-wire",
 )
@@ -56,15 +56,15 @@ def _bed(*, see_the_guest: bool, link: Link = GUEST_LINK):
     changes. That is what makes the pair of verdicts attributable to lab scope
     rather than to anything about the link.
     """
-    carrot = FakeHost(id="carrot_seed", ip="10.10.200.11", addr_text=CARROT_WITH_TAP)
+    test1 = FakeHost(id="test1", ip="10.10.200.11", addr_text=TEST1_WITH_TAP)
     guest = FakeHost(id="bb1350_qemu", ip="198.51.100.17", addr_text=GUEST_ADDR)
-    # The hop is what makes carrot's TAP a transit netdev; without it
+    # The hop is what makes test1's TAP a transit netdev; without it
     # `_hop_dependents` finds nothing and the guard under test never arms.
-    guest.hop = "carrot_seed"
-    hosts = {carrot.id: carrot}
+    guest.hop = "test1"
+    hosts = {test1.id: test1}
     if see_the_guest:
         hosts[guest.id] = guest
-    return FakeLab(hosts=hosts, links=[link]), carrot, guest
+    return FakeLab(hosts=hosts, links=[link]), test1, guest
 
 
 class TestImpairRefusesAnIncompleteView:
@@ -74,24 +74,24 @@ class TestImpairRefusesAnIncompleteView:
     async def test_a_lab_that_hides_the_dependent_refuses_instead_of_placing(self) -> None:
         """The side door, shut.
 
-        Under this scope `_hop_dependents(lab, "carrot_seed")` returns `[]` —
+        Under this scope `_hop_dependents(lab, "test1")` returns `[]` —
         the guest is not a loaded host, so the guard cannot see the very
-        dependent it protects — and `--from carrot_seed` narrows placement to
+        dependent it protects — and `--from test1` narrows placement to
         the one endpoint that IS loaded. Before, that combination placed the
         impairment.
         """
-        lab, carrot, _ = _bed(see_the_guest=False)
+        lab, test1, _ = _bed(see_the_guest=False)
 
         with pytest.raises(ValueError, match="does not contain") as excinfo:
             await impair_link(
-                lab, "bb1350-wire", ImpairmentParams(delay_ms=50.0), from_host="carrot_seed"
+                lab, "bb1350-wire", ImpairmentParams(delay_ms=50.0), from_host="test1"
             )
 
         assert "bb1350_qemu" in str(excinfo.value), "the refusal must name the host it cannot see"
         # And it refused before touching anything: a refusal that lands after
         # the qdisc does is not a refusal.
-        assert not any("tc qdisc" in c for c in carrot.commands), carrot.commands
-        assert carrot.sudo_commands == []
+        assert not any("tc qdisc" in c for c in test1.commands), test1.commands
+        assert test1.sudo_commands == []
 
     @pytest.mark.asyncio
     async def test_the_refusal_under_a_full_scope_is_hop_transit_not_lab_scope(self) -> None:
@@ -99,21 +99,21 @@ class TestImpairRefusesAnIncompleteView:
 
         Same wire, same `--from`, only the lab scope differs. Here both
         endpoints are loaded, so the lab-scope rule passes and the verdict
-        comes from the live hop-transit guard reading carrot's address table.
+        comes from the live hop-transit guard reading test1's address table.
         Without this, a rule that refused unconditionally would pass the test
         above for the wrong reason.
         """
-        lab, carrot, _ = _bed(see_the_guest=True)
+        lab, test1, _ = _bed(see_the_guest=True)
 
         with pytest.raises(ValueError, match="hop transit") as excinfo:
             await impair_link(
-                lab, "bb1350-wire", ImpairmentParams(delay_ms=50.0), from_host="carrot_seed"
+                lab, "bb1350-wire", ImpairmentParams(delay_ms=50.0), from_host="test1"
             )
 
         assert "does not contain" not in str(excinfo.value)
         assert "bbeth-1350" in str(excinfo.value)
         # It took a live look to decide that — the lab-scope rule is pure.
-        assert "ip -o addr show" in carrot.commands
+        assert "ip -o addr show" in test1.commands
 
     @pytest.mark.asyncio
     async def test_a_dry_run_previews_the_refusal_rather_than_the_placement(self) -> None:
@@ -125,13 +125,13 @@ class TestImpairRefusesAnIncompleteView:
         """
         from tests.conftest import active_context
 
-        lab, carrot, _ = _bed(see_the_guest=False)
+        lab, test1, _ = _bed(see_the_guest=False)
 
         with active_context(dry_run=True), pytest.raises(ValueError, match="does not contain"):
             await impair_link(
-                lab, "bb1350-wire", ImpairmentParams(delay_ms=50.0), from_host="carrot_seed"
+                lab, "bb1350-wire", ImpairmentParams(delay_ms=50.0), from_host="test1"
             )
-        assert carrot.commands == []
+        assert test1.commands == []
 
     @pytest.mark.asyncio
     async def test_the_local_host_refusal_still_outranks_this_one(self) -> None:
@@ -170,12 +170,12 @@ class TestRepairIsNotGatedByTheLockoutRefusals:
         transit — at which point otto used to refuse to clear its OWN live
         impairment.
         """
-        lab, carrot, _ = _bed(see_the_guest=True)
-        carrot.qdisc_texts = [IMPAIRED, ""]  # impaired, then clean on the verify re-read
+        lab, test1, _ = _bed(see_the_guest=True)
+        test1.qdisc_texts = [IMPAIRED, ""]  # impaired, then clean on the verify re-read
 
         report = await repair_link(lab, "bb1350-wire")
 
-        assert "tc qdisc del dev bbeth-1350 root" in carrot.sudo_commands
+        assert "tc qdisc del dev bbeth-1350 root" in test1.sudo_commands
         assert [p.netdev for p in report.cleared] == ["bbeth-1350"]
         assert report.unreachable == []
 
@@ -183,26 +183,24 @@ class TestRepairIsNotGatedByTheLockoutRefusals:
     async def test_repair_clears_a_placement_on_the_hosts_own_management_interface(self) -> None:
         """The other refusal, same reasoning.
 
-        eth1 carries carrot's management address, so `impair` refuses it as a
+        eth1 carries test1's management address, so `impair` refuses it as a
         self-lockout. Clearing it can only END a lockout, so `repair` must act.
         """
         mgmt_wire = Link(
-            a=LinkEndpoint(host="carrot_seed", interface="eth1", ip="10.10.200.11"),
+            a=LinkEndpoint(host="test1", interface="eth1", ip="10.10.200.11"),
             b=LinkEndpoint(host="bb1350_qemu", interface="eth0", ip="198.51.100.17"),
             name="mgmt-wire",
         )
-        lab, carrot, guest = _bed(see_the_guest=True, link=mgmt_wire)
-        carrot.qdisc_texts = [IMPAIRED, ""]
+        lab, test1, guest = _bed(see_the_guest=True, link=mgmt_wire)
+        test1.qdisc_texts = [IMPAIRED, ""]
         guest.qdisc_texts = [""]
 
         # Positive control: creating it here is still refused.
         with pytest.raises(ValueError, match="management interface"):
-            await impair_link(
-                lab, "mgmt-wire", ImpairmentParams(delay_ms=50.0), from_host="carrot_seed"
-            )
+            await impair_link(lab, "mgmt-wire", ImpairmentParams(delay_ms=50.0), from_host="test1")
 
         report = await repair_link(lab, "mgmt-wire")
-        assert "tc qdisc del dev eth1 root" in carrot.sudo_commands
+        assert "tc qdisc del dev eth1 root" in test1.sudo_commands
         assert [p.netdev for p in report.cleared] == ["eth1"]
 
     @pytest.mark.asyncio
@@ -214,13 +212,13 @@ class TestRepairIsNotGatedByTheLockoutRefusals:
         the latter keeps `repair` needing a reachable host merely to decide
         where to look.
         """
-        lab, carrot, guest = _bed(see_the_guest=True)
-        carrot.qdisc_texts = [IMPAIRED, ""]
+        lab, test1, guest = _bed(see_the_guest=True)
+        test1.qdisc_texts = [IMPAIRED, ""]
         guest.qdisc_texts = [""]
 
         await repair_link(lab, "bb1350-wire")
 
-        assert "ip -o addr show" not in carrot.commands, carrot.commands
+        assert "ip -o addr show" not in test1.commands, test1.commands
         assert "ip -o addr show" not in guest.commands, guest.commands
 
 
@@ -230,15 +228,15 @@ class TestRepairReachesWhatItCan:
     @pytest.mark.asyncio
     async def test_the_visible_end_is_cleared_and_the_other_is_reported(self) -> None:
         """Before, `_host` raised on the guest and the whole call died — so the
-        carrot placement, which otto could see and clear, was stranded by the
+        test1 placement, which otto could see and clear, was stranded by the
         one it could not."""
-        lab, carrot, _ = _bed(see_the_guest=False)
-        carrot.qdisc_texts = [IMPAIRED, ""]
+        lab, test1, _ = _bed(see_the_guest=False)
+        test1.qdisc_texts = [IMPAIRED, ""]
 
         report = await repair_link(lab, "bb1350-wire")
 
         assert [p.netdev for p in report.cleared] == ["bbeth-1350"]
-        assert "tc qdisc del dev bbeth-1350 root" in carrot.sudo_commands
+        assert "tc qdisc del dev bbeth-1350 root" in test1.sudo_commands
         assert len(report.unreachable) == 1
         assert "bb1350_qemu/eth0" in report.unreachable[0]
         assert "not in the loaded lab" in report.unreachable[0]
@@ -247,8 +245,8 @@ class TestRepairReachesWhatItCan:
     async def test_a_partial_clear_is_a_sweep_failure_not_a_skip(self) -> None:
         """`skipped` means otto declined a link it never impaired — reassurance
         this link has not earned. A sweep that could not finish must not exit 0."""
-        lab, carrot, _ = _bed(see_the_guest=False)
-        carrot.qdisc_texts = [IMPAIRED, ""]
+        lab, test1, _ = _bed(see_the_guest=False)
+        test1.qdisc_texts = [IMPAIRED, ""]
 
         sweep = await repair_all(lab)
 
@@ -268,12 +266,12 @@ class TestRepairReachesWhatItCan:
         hold state) used to abort the clear of the end that did.
         """
         half_named = Link(
-            a=LinkEndpoint(host="carrot_seed", interface="bbeth-1350", ip="198.51.100.18"),
+            a=LinkEndpoint(host="test1", interface="bbeth-1350", ip="198.51.100.18"),
             b=LinkEndpoint(host="bb1350_qemu"),
             name="half-named",
         )
-        lab, carrot, _ = _bed(see_the_guest=True, link=half_named)
-        carrot.qdisc_texts = [IMPAIRED, ""]
+        lab, test1, _ = _bed(see_the_guest=True, link=half_named)
+        test1.qdisc_texts = [IMPAIRED, ""]
 
         report = await repair_link(lab, "half-named")
 
@@ -287,10 +285,8 @@ class TestRepairReachesWhatItCan:
         """The preserved half. Nothing could be impaired anywhere on such a
         link, so there is no repair to attempt and `repair --all` still declines
         it BY NAME rather than reporting a vacuous success."""
-        bare = Link(
-            a=LinkEndpoint(host="carrot_seed"), b=LinkEndpoint(host="bb1350_qemu"), name="bare"
-        )
-        lab, carrot, _ = _bed(see_the_guest=True, link=bare)
+        bare = Link(a=LinkEndpoint(host="test1"), b=LinkEndpoint(host="bb1350_qemu"), name="bare")
+        lab, test1, _ = _bed(see_the_guest=True, link=bare)
 
         sweep = await repair_all(lab)
 
@@ -298,4 +294,4 @@ class TestRepairReachesWhatItCan:
         assert sweep.failures == []
         assert len(sweep.skipped) == 1
         assert "no endpoint names an interface" in sweep.skipped[0]
-        assert carrot.sudo_commands == []
+        assert test1.sudo_commands == []

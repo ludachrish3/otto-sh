@@ -305,7 +305,7 @@ async def test_concurrent_clients_to_one_console_contend_and_recover():
 # Concurrent multi-target file transfer (regression guard for the
 # `otto -l embedded run test-instruction` failure: every Zephyr target's
 # put() collapsed with `IncompleteReadError` on the readiness handshake
-# while basil's concurrent SCP transfer ran over the shared `basil_seed`
+# while test4's concurrent SCP transfer ran over the shared `test4`
 # hop. The contract suite only exercises put/get per-backend in isolation,
 # so the multi-target fan-out path that `do_for_all_hosts` takes had no
 # coverage. These tests reproduce the fan-out semantics directly via
@@ -327,7 +327,7 @@ _FANOUT_EXCLUDED: dict[str, str] = {
         "session it tears down on a send failure, and the e1000 driver then "
         "starves permanently — the board goes unreachable at L2 and stays that "
         "way until `make qemu-restart`. Fan-out is the only thing that has ever "
-        "triggered it: on 2026-08-09 this class's connection to sprout27 was "
+        "triggered it: on 2026-08-09 this class's connection to zephyr27_fat was "
         "followed one second later by `shell_telnet: Failed to send -128` "
         "(ENOTCONN, the client vanished), then four opens on the 15s handshake "
         "ceiling, then `eth_e1000: Out of buffers` forever. The trigger itself "
@@ -404,7 +404,7 @@ class TestConcurrentEmbeddedTransfer:
     ``tests/repo1/pylib/repo1_instructions/install.py``: every Zephyr
     host's session handshake collapsed with ``IncompleteReadError(0 bytes)``
     when the puts were launched concurrently, leaving every embedded
-    transfer dead while basil's SCP put succeeded.
+    transfer dead while test4's SCP put succeeded.
 
     The bug is a session-init race, not a payload-size issue, so these
     tests use a small payload to keep the suite fast.
@@ -433,7 +433,7 @@ class TestConcurrentEmbeddedTransfer:
 
         The fs-vs-no-fs distinction is derived from ``_ZEPHYR_DEST`` (mount is
         ``None`` for a no-FS target), so the no-FS backend in the matrix —
-        ``sprout_no_fs`` — is checked the same way without hard-coding ne names.
+        ``zephyr37_nofs`` — is checked the same way without hard-coding ne names.
         """
         assert not isinstance(result, BaseException), (
             f"{host_id}: put raised — concurrent session init regressed. Exception: {result!r}"
@@ -453,8 +453,8 @@ class TestConcurrentEmbeddedTransfer:
         tmp_path: Path,
     ):
         """Every Zephyr target in the matrix receives a put() concurrently.
-        They share ``hop=basil_seed`` — all the telnet-over-SSH legs open into
-        basil at the same instant. This is the reproducer for the
+        They share ``hop=test4`` — all the telnet-over-SSH legs open into
+        test4 at the same instant. This is the reproducer for the
         readiness-handshake collapse, now stressed across the full 2.7/3.7/4.4
         matrix rather than a single LTS.
         """
@@ -482,36 +482,36 @@ class TestConcurrentEmbeddedTransfer:
         tmp_path: Path,
     ):
         """The exact fan-out shape that ``test_instruction`` triggers: a
-        Unix host (``basil``) and every Zephyr target receive a put
-        concurrently. basil's SCP transfer flows over the same VM that
+        Unix host (``test4``) and every Zephyr target receive a put
+        concurrently. test4's SCP transfer flows over the same VM that
         proxies the Zephyr telnet legs, exercising the hop under load while
         the Zephyr sessions are still mid-handshake.
         """
         src = tmp_path / "fanout.bin"
         src.write_bytes(self._PAYLOAD)
 
-        basil = make_host("basil", term="ssh", transfer="scp")
+        test4 = make_host("test4", term="ssh", transfer="scp")
         zephyrs = self._build_zephyr_hosts()
         try:
             results = await asyncio.gather(
-                basil.put([src], Path("/tmp")),
+                test4.put([src], Path("/tmp")),
                 *(h.put([src], Path(_ZEPHYR_DEST[h.element] or "/")) for h in zephyrs),
                 return_exceptions=True,
             )
-            basil_result, *zephyr_results = results
+            test4_result, *zephyr_results = results
 
-            assert not isinstance(basil_result, BaseException), (
-                f"basil: SCP put raised: {basil_result!r}"
+            assert not isinstance(test4_result, BaseException), (
+                f"test4: SCP put raised: {test4_result!r}"
             )
-            assert basil_result.status == Status.Success, (
-                f"basil: SCP put failed: {basil_result.msg!r}"
+            assert test4_result.status == Status.Success, (
+                f"test4: SCP put failed: {test4_result.msg!r}"
             )
 
             for h, result in zip(zephyrs, zephyr_results, strict=True):
                 self._check_put_result(h.element, result)
         finally:
             await asyncio.gather(
-                basil.close(),
+                test4.close(),
                 *(h.close() for h in zephyrs),
                 return_exceptions=True,
             )

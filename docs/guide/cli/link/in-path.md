@@ -10,14 +10,14 @@ impairment instead:
 {
     "name": "dataplane",
     "endpoints": [
-        { "host": "carrot_seed", "interface": "eth1.100" },
-        { "host": "tomato_seed", "interface": "eth1.200" }
+        { "host": "test1", "interface": "eth1.100" },
+        { "host": "test2", "interface": "eth1.200" }
     ],
-    "impair": "pepper_seed"
+    "impair": "test3"
 }
 ```
 
-With `impair` set, both directions place on `pepper_seed` instead of the
+With `impair` set, both directions place on `test3` instead of the
 endpoints, and the facing interface toward each endpoint is auto-resolved — you
 never declare it. See {doc}`../../../architecture/subsystems/network` for how that
 resolution works and why a middlebox that isn't actually in the path fails

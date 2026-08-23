@@ -60,7 +60,7 @@ def _guest_pids(needle: str) -> list:
 
     ``pgrep -af`` verbatim, not a degraded spelling: BusyBox 1.35.0's pgrep
     carries both flags (measured on the guest -- ``pgrep -af 'in[i]t'``
-    answers ``1 init``), so the argv-visible needle discipline the veggies
+    answers ``1 init``), so the argv-visible needle discipline the unix
     twin depends on survives intact here. The bracket trick matters MORE on
     this device, not less: the guest's whole process table is ~60 entries, so
     a self-matching probe would be a large fraction of what the oracle sees.
@@ -188,18 +188,18 @@ def test_nohup_remote_survives_graceful_teardown(chaos_bed, tmp_path):
         )
 
 
-@pytest.mark.no_hygiene_bracket  # the guest is not the veggies pool the autouse bracket leases
+@pytest.mark.no_hygiene_bracket  # the guest is not the unix pool the autouse bracket leases
 def test_seeded_sigint_mid_command_reaps_the_busybox_guest(busybox_chaos_bed, chaos_rng, tmp_path):
     """The guest twin of ``test_seeded_sigint_mid_command_cleans_up``.
 
     THE MECHANISM IS THE SAME ONE, over a different transport and through a
     hop, which is exactly why this arm exists: otto never signals the remote
     -- it drops the session and lets the DEVICE's line discipline reap. On
-    the veggies host that is an ssh channel closing and sshd HUPping its pty.
+    the unix host that is an ssh channel closing and sshd HUPping its pty.
     On the guest it is otto's telnet socket closing (over the TAP link
-    between carrot and the guest) and the guest's ``telnetd`` HUPping ITS
+    between test1 and the guest) and the guest's ``telnetd`` HUPping ITS
     pty, and neither the hop's port forward nor a BusyBox userland is on the
-    veggies path. The
+    unix path. The
     guest genuinely has ptys to HUP: its init runs ``telnetd -F -l
     /bin/login`` and its ``rcS`` mounts ``devpts``, so each login is a real
     session leader on a real pty -- see
@@ -225,7 +225,7 @@ def test_seeded_sigint_mid_command_reaps_the_busybox_guest(busybox_chaos_bed, ch
     )
     try:
         p.wait_for_log(re.escape(f"| {_GUEST_SLEEP}"), timeout=120.0)  # phase: command running
-        # Positive control, same as the veggies twin: an absence assertion is
+        # Positive control, same as the unix twin: an absence assertion is
         # unfalsifiable until the probe has been shown to see the presence.
         assert _guest_pids(_GUEST_SLEEP), (
             f"positive control: {busybox_chaos_bed.element} never showed the remote command"

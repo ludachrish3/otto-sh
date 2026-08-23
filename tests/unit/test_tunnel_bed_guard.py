@@ -22,8 +22,8 @@ from tests._fixtures.tunnel_bed import format_leftover_report, owning_suite
 
 # pid etime args… — the exact shape `ps_scan_command` emits.
 _STABILITY_PS_LINE = (
-    "530366 07:11:31 otto-tunnel:v1:tun-45bf687b4607-15130:udp:15130:49152:fwd:ingress:0::"
-    "carrot_seed%2Ctomato_seed UDP4-LISTEN:15130,bind=10.10.200.11,fork,reuseaddr "
+    "530366 07:11:31 otto-tunnel:v1:tun-4e9f7db3a376-15130:udp:15130:49152:fwd:ingress:0::"
+    "test1%2Ctest2 UDP4-LISTEN:15130,bind=10.10.200.11,fork,reuseaddr "
     "TCP4:10.10.200.12:49152"
 )
 
@@ -31,7 +31,7 @@ _STABILITY_PS_LINE = (
 def _found(ps_line: str = _STABILITY_PS_LINE) -> list[tuple[str, object]]:
     observed = parse_process_discovery(ps_line)
     assert observed, "fixture ps line must parse, or these tests prove nothing"
-    return [("carrot_seed", observed[0])]
+    return [("test1", observed[0])]
 
 
 @pytest.mark.parametrize(
@@ -80,7 +80,7 @@ def test_report_carries_the_facts_needed_to_act() -> None:
     report = format_leftover_report(
         _found(), module="tests/e2e/test_tunnel_e2e.py", preexisting=True
     )
-    for fact in ("carrot_seed", "530366", "tun-45bf687b4607-15130", "15130"):
+    for fact in ("test1", "530366", "tun-4e9f7db3a376-15130", "15130"):
         assert fact in report, f"missing {fact!r} from report:\n{report}"
     assert "remove_tunnel" in report, f"must give the reap recipe:\n{report}"
 

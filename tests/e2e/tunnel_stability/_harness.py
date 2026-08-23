@@ -21,9 +21,9 @@ SOAK_CYCLES = int(ambient("OTTO_TUNNEL_SOAK_CYCLES", "5"))
 
 ARM_SECONDS = 180  # auto-CONT well past the wedged phase's worst case
 
-INGRESS = "carrot_seed"  # test1, 10.10.200.11
-EXIT = "tomato_seed"  # test2, 10.10.200.12
-RELAY = "pepper_seed"  # test3, 10.10.200.13
+INGRESS = "test1"  # test1, 10.10.200.11
+EXIT = "test2"  # test2, 10.10.200.12
+RELAY = "test3"  # test3, 10.10.200.13
 
 # Port map (spec §1): the 15100-15199 block, disjoint from test_tunnel_e2e's
 # 15000-15004. One module per row; never borrow across rows.

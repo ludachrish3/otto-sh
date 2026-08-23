@@ -217,8 +217,8 @@ def _container_placeholder(ps_out: str, exec_ps_text: str = ""):
     from otto.host.docker_host import DockerContainerHost
 
     parent = MagicMock()
-    parent.id = "carrot_seed"
-    parent.name = "carrot_seed"
+    parent.id = "test1"
+    parent.name = "test1"
     parent.term = "ssh"
     parent.resources = set()
     calls: list[tuple[str, object]] = []

@@ -58,8 +58,8 @@ the `labs` field); nothing here replaces lab names with roles.
 | | `sprout_no_fs` → `zephyr37_nofs` | `sprout-no-fs` → `zephyr37-nofs` | 192.0.2.37 |
 | | `sprout27` → `zephyr27_fat` | `sprout27` → `zephyr27-fat` | 192.0.2.13 |
 | | `sprout44_lfs` → `zephyr44_lfs` | `sprout44-lfs` → `zephyr44-lfs` | 192.0.2.29 |
-| | `sprout_cov` → `zephyr37_cov` | `sprout-cov` → `zephyr37-cov` | 192.0.2.33 |
-| | `sprout_cov44` → `zephyr44_cov` | `sprout-cov44` → `zephyr44-cov` | 192.0.2.34 |
+| | `sprout_cov` → `zephyr37_llext` | `sprout-cov` → `zephyr37-llext` | 192.0.2.33 |
+| | `sprout_cov44` → `zephyr44_llext` | `sprout-cov44` → `zephyr44-llext` | 192.0.2.34 |
 | `busybox` (kept) | unchanged (`bb1161`…`bb1350`, board `qemu`) | unchanged | unchanged |
 
 Notes:
@@ -71,9 +71,16 @@ Notes:
   by the busybox lab (`bb1161_qemu` …) and in unit fixtures.
 - **Zephyr guest names encode facts**: `zephyr<version>_<fs>` for the
   behaviour guests (`fat` covers the FAT-on-RAM-disk build; the RAM-disk
-  detail stays a build note). The two coverage bases carry their role
-  (`_cov`) instead of an fs type — coverage is their distinguishing
-  fact and their fs is a build detail.
+  detail stays a build note). The two LLEXT bases carry `_llext` instead
+  of an fs type: they run the stock LLEXT `shell_loader` sample, into
+  which an instrumented `.llext` extension is loaded at runtime, while
+  every other guest runs `shell_module`. The loader base is what they
+  *are*; coverage is what it gets used for, so `_llext` names the
+  distinguishing fact. They stay separate guests because that separation
+  is the measuring instrument — when the bed degraded in July 2026 the
+  real cause (a Zephyr 3.7 `cmd_mount_fat` leak) was only reachable by
+  differential comparison against instances carrying a filesystem but no
+  loader.
 - **`slug()` is untouched** (stability contract in `remote_host.py`):
   `_` in an element still becomes `-` in the id, exactly as today.
 - **`unix_alt` exists solely as the per-project scoping discriminator**:

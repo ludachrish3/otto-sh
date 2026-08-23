@@ -149,8 +149,8 @@ class TestScopedCommands:
         ]
 
 
-# captured live on the veggies bed, iproute2 6.1.0, 2026-07-11
-# (carrot_seed, eth1.240 throwaway VLAN; `tc qdisc show dev eth1.240`
+# captured live on the unix bed, iproute2 6.1.0, 2026-07-11
+# (test1, eth1.240 throwaway VLAN; `tc qdisc show dev eth1.240`
 # after scoped_root_command + two scoped_band_command leaves — byte-exact,
 # matched the hand-modeled fixture with zero drift)
 QDISC_SCOPED = (
@@ -158,8 +158,8 @@ QDISC_SCOPED = (
     "qdisc netem 40: parent 1:4 limit 1000 delay 200ms\n"
     "qdisc netem 50: parent 1:5 limit 1000 loss 5%\n"
 )
-# captured live on the veggies bed, iproute2 6.1.0, 2026-07-11
-# (carrot_seed, eth1.240 throwaway VLAN; `tc filter show dev eth1.240 parent 1:`
+# captured live on the unix bed, iproute2 6.1.0, 2026-07-11
+# (test1, eth1.240 throwaway VLAN; `tc filter show dev eth1.240 parent 1:`
 # after scoped_filter_commands for two selectors). Diverged from the
 # hand-modeled Task 5/8 fixture in two ways real bytes proved:
 #  1. filter lines carry NO "parent 1:" token at all (only qdisc lines do).
@@ -203,7 +203,7 @@ class TestParseScoped:
         for qdisc in (
             "",
             "qdisc noqueue 0: root refcnt 2\n",
-            # captured live on the veggies bed, iproute2 6.1.0, 2026-07-11:
+            # captured live on the unix bed, iproute2 6.1.0, 2026-07-11:
             # `tc qdisc show` on eth1.240 after `tc qdisc del ... root`
             # (real output has a trailing space before the newline)
             "qdisc noqueue 0: root refcnt 2 \n",
@@ -220,7 +220,7 @@ class TestParseScoped:
         assert state.whole == ImpairmentParams(delay_ms=50.0, jitter_ms=5.0, loss_pct=2.0)
 
     def test_scoped_after_live_selector_clear(self) -> None:
-        # captured live on the veggies bed, iproute2 6.1.0, 2026-07-11: ran
+        # captured live on the unix bed, iproute2 6.1.0, 2026-07-11: ran
         # scoped_clear_selector_commands for the udp/53 selector (pref 52/53
         # `tc filter del` + `tc qdisc del parent 1:5 handle 50:`) against the
         # QDISC_SCOPED/FILTER_SCOPED tree above, then re-read both. Both
@@ -284,7 +284,7 @@ class TestParseScoped:
         assert self.imp.parse_scoped(qdisc, "").kind == "clean"
 
     def test_old_userland_double_space_priomap_still_recognized(self) -> None:
-        # captured live on pepper_seed's oldos container, iproute2-ss170501
+        # captured live on test3's oldos container, iproute2-ss170501
         # (centos:7), 2026-07-11: `tc qdisc show` renders TWO spaces after
         # "priomap" (`priomap  1 2 ...`); str.split() collapses the run so
         # this is a non-issue, but it's a genuine byte-level old-format

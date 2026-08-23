@@ -54,7 +54,7 @@ def test_probe_ambient_otto_env_is_stripped():
     # when stripped — the reader just sees its default and the run continues
     # green against the wrong venue/seed/depth. That is how issue #192
     # happened: OTTO_CHAOS_DOCKER was undeclared, so nightly's `loopback` job
-    # silently targeted the bed host pepper instead.
+    # silently targeted the bed host test3 instead.
     stripped = sorted(k for k in AMBIENT_OPT_INS if os.environ.get(k) != _PROBE_VALUES[k])
     assert stripped == [], (
         f"declared ambient opt-ins were stripped from the env: {stripped} — "

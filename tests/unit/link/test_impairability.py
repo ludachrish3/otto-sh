@@ -2,9 +2,9 @@
 
 The gap is not small: EVERY implicit link resolves and none can be impaired.
 That cost one wrong turn already — a completer was changed to "offer whatever
-find_link accepts", which in the three-host veggies fixture takes the
-candidate list from 1 to 4, three of them guaranteed errors (`carrot--local`,
-`local--pepper`, `local--tomato`).
+find_link accepts", which in the three-host unix fixture takes the
+candidate list from 1 to 4, three of them guaranteed errors (`test1--local`,
+`local--test3`, `local--test2`).
 """
 
 import pytest
@@ -29,8 +29,8 @@ def _link(a: LinkEndpoint, b: LinkEndpoint, **kw) -> Link:
 def test_a_declared_link_with_named_interfaces_is_impairable() -> None:
     """Positive control — every refusal below must be on its own merits."""
     link = _link(
-        LinkEndpoint(host="carrot_seed", interface="eth1"),
-        LinkEndpoint(host="tomato_seed", interface="eth1"),
+        LinkEndpoint(host="test1", interface="eth1"),
+        LinkEndpoint(host="test2", interface="eth1"),
     )
     assert impairment_refusal(link) is None
 
@@ -39,7 +39,7 @@ def test_an_endpoint_on_the_local_host_is_refused() -> None:
     """otto's own path to the bed — the shape every hop-less host produces."""
     link = _link(
         LinkEndpoint(host=BUILTIN_LOCAL_HOST_ID),
-        LinkEndpoint(host="carrot_seed", interface="eth1"),
+        LinkEndpoint(host="test1", interface="eth1"),
         provenance=Provenance.IMPLICIT,
     )
     assert "path to the bed" in (impairment_refusal(link) or "")
@@ -48,14 +48,14 @@ def test_an_endpoint_on_the_local_host_is_refused() -> None:
 def test_an_endpoint_without_a_named_interface_is_refused() -> None:
     """The other implicit shape: a hop edge between two real hosts."""
     link = _link(
-        LinkEndpoint(host="basil_seed"),
-        LinkEndpoint(host="sprout"),
+        LinkEndpoint(host="test4"),
+        LinkEndpoint(host="zephyr37-fat"),
         provenance=Provenance.IMPLICIT,
     )
     refusal = impairment_refusal(link) or ""
     assert "no named interface" in refusal
-    assert "basil_seed" in refusal
-    assert "sprout" in refusal
+    assert "test4" in refusal
+    assert "zephyr37-fat" in refusal
 
 
 def test_an_in_path_link_is_not_judged_on_interfaces() -> None:
@@ -82,7 +82,7 @@ def test_the_predicate_agrees_with_the_placement_layer() -> None:
     """
     local_link = Link(
         a=LinkEndpoint(host=BUILTIN_LOCAL_HOST_ID, interface="eth1"),
-        b=LinkEndpoint(host="carrot_seed", interface="eth1"),
+        b=LinkEndpoint(host="test1", interface="eth1"),
         provenance=Provenance.IMPLICIT,
     )
     assert impairment_refusal(local_link) is not None
@@ -92,8 +92,8 @@ def test_the_predicate_agrees_with_the_placement_layer() -> None:
     endpoint_placements(local_link, _BOTH)
 
     hop_link = Link(
-        a=LinkEndpoint(host="basil_seed"),
-        b=LinkEndpoint(host="sprout"),
+        a=LinkEndpoint(host="test4"),
+        b=LinkEndpoint(host="zephyr37-fat"),
         provenance=Provenance.IMPLICIT,
     )
     assert impairment_refusal(hop_link) is not None
@@ -112,16 +112,16 @@ def test_a_half_interfaced_link_is_refused_only_in_the_bare_direction() -> None:
     id from anything that filters on the predicate.
     """
     half = _link(
-        LinkEndpoint(host="carrot_seed", interface="eth1"),
-        LinkEndpoint(host="tomato_seed"),
+        LinkEndpoint(host="test1", interface="eth1"),
+        LinkEndpoint(host="test2"),
     )
     assert impairment_refusal(half, {FlowDirection.A_TO_B}) is None
     endpoint_placements(half, {FlowDirection.A_TO_B})
 
     refusal = impairment_refusal(half, {FlowDirection.B_TO_A})
     assert refusal is not None
-    assert "tomato_seed" in refusal
-    assert "carrot_seed" not in refusal
+    assert "test2" in refusal
+    assert "test1" not in refusal
     with pytest.raises(ValueError, match="not impairable"):
         endpoint_placements(half, {FlowDirection.B_TO_A})
 

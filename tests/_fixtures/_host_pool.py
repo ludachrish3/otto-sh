@@ -2,7 +2,7 @@
 
 A transfer/command test that needs *a* Unix host (not a specific one) leases
 whichever pool member is free, spreading load off the historical favourite
-(carrot). Built on the same fd-flock idiom as ``_console_lock``: a non-blocking
+(test1). Built on the same fd-flock idiom as ``_console_lock``: a non-blocking
 ``LOCK_EX`` on a per-host lock file claims it; closing the fd in ``finally``
 releases it even if a pytest-timeout signal interrupts the holder.
 """
@@ -16,9 +16,9 @@ from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from pathlib import Path
 
-# The veggies-lab Unix peers with identical transfer backends. Pepper is leased
-# directly (no carrot hop — see the Phase-1 lab-data simplification).
-UNIX_POOL: tuple[str, ...] = ("carrot", "tomato", "pepper")
+# The unix-lab Unix peers with identical transfer backends. test3 is leased
+# directly (no test1 hop — see the Phase-1 lab-data simplification).
+UNIX_POOL: tuple[str, ...] = ("test1", "test2", "test3")
 
 _POLL_SECONDS = 0.05
 

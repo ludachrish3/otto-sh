@@ -3,7 +3,7 @@ version = "1.0.0"
 libs = [
     "pylib",
     # Shared, third-party-style module providing the Zephyr 2.7 `zephyr-inline`
-    # frame the `embedded` lab's sprout27 declares (see tests/custom_hosts).
+    # frame the `embedded` lab's zephyr27_fat declares (see tests/custom_hosts).
     "../custom_hosts",
 ]
 tests = [

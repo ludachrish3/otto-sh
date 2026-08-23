@@ -171,15 +171,15 @@ Selection touches no network, so this runs as-is:
 >>> from otto.context import OttoContext, set_context, reset_context
 >>> from otto.config import all_hosts, get_host
 >>> hosts = [create_host_from_dict(spec) for spec in [
-...     {"ip": "10.0.0.11", "element": "carrot", "creds": [{"login": "admin", "password": "x"}], "labs": ["veg"]},
-...     {"ip": "10.0.0.12", "element": "tomato", "creds": [{"login": "admin", "password": "x"}], "labs": ["veg"]},
+...     {"ip": "10.0.0.11", "element": "test1", "creds": [{"login": "admin", "password": "x"}], "labs": ["unix"]},
+...     {"ip": "10.0.0.12", "element": "test2", "creds": [{"login": "admin", "password": "x"}], "labs": ["unix"]},
 ... ]]
->>> lab = Lab(name="veg", hosts={h.id: h for h in hosts})
+>>> lab = Lab(name="unix", hosts={h.id: h for h in hosts})
 >>> token = set_context(OttoContext(lab=lab))
->>> [h.element for h in all_hosts(re.compile("tomato"))]
-['tomato']
->>> get_host("carrot").element
-'carrot'
+>>> [h.element for h in all_hosts(re.compile("test2"))]
+['test2']
+>>> get_host("test1").element
+'test1'
 >>> reset_context(token)
 ```
 

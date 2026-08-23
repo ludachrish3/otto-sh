@@ -8,11 +8,11 @@ tests miss (e.g. a missing build step before compose, or a missing lab
 filter when multiple repos are loaded).
 
 Requirements:
-    vagrant up test1 test2 test3   (carrot=test1, tomato=test2, pepper=test3)
+    vagrant up test1 test2 test3
     All three VMs must have docker installed and running.
 
-Each test leases one docker-capable host from the pool {carrot, tomato,
-pepper} via the same fd-flock mechanism as the transfer-host pool, so
+Each test leases one docker-capable host from the pool {test1, test2,
+test3} via the same fd-flock mechanism as the transfer-host pool, so
 tests distribute across all three daemons and never race on the same one.
 """
 
@@ -29,10 +29,10 @@ from tests._fixtures._host_pool import lease_unix_host
 from tests.e2e._otto_subprocess import PROJECT_ROOT, REPO1, assert_output_dir, run_otto
 
 # Docker container hosts require an SSH-based UnixHost parent (see
-# DockerContainerHost._make_session: term must be 'ssh').  tomato_seed defaults
+# DockerContainerHost._make_session: term must be 'ssh').  test2 defaults
 # to telnet (it's first in its valid_terms list), so it cannot host containers.
 # Restrict the docker lease pool to the SSH-first unix peers only.
-_DOCKER_POOL = ("carrot", "pepper")
+_DOCKER_POOL = ("test1", "test3")
 
 
 REPO2 = PROJECT_ROOT / "tests" / "repo2"
@@ -58,7 +58,7 @@ pytestmark = [pytest.mark.integration, pytest.mark.xdist_group("docker_e2e")]
 def _run_otto(
     *args: str,
     sut_dirs: str = str(REPO1),
-    lab: str = "veggies",
+    lab: str = "unix",
     xdir: Path | None = None,
     compose_suffix: str | None = None,
     timeout: int = 180,
@@ -92,19 +92,19 @@ def _run_otto(
 def docker_host(tmp_path_factory) -> str:  # type: ignore[type-arg]
     """Lease one docker-capable, SSH-based host from the pool for this test's duration.
 
-    Yields the host's seed id, e.g. ``"carrot_seed"``.  The fd-flock on
+    Yields the host's id, e.g. ``"test1"``.  The fd-flock on
     the pool lock file (``unix_pool.<element>``) ensures at most one test
     runs against each docker daemon at a time, while xdist can distribute
     different tests to different workers/daemons concurrently.
 
-    The pool is restricted to ``_DOCKER_POOL`` (carrot + pepper) because
+    The pool is restricted to ``_DOCKER_POOL`` (test1 + test3) because
     ``DockerContainerHost`` requires its parent to have ``term='ssh'``.
-    tomato_seed defaults to telnet (telnet is first in its valid_terms),
+    test2 defaults to telnet (telnet is first in its valid_terms),
     so it cannot serve as a docker container parent.
     """
     lock_dir = tmp_path_factory.getbasetemp().parent
     with lease_unix_host(lock_dir, _DOCKER_POOL) as element:
-        yield f"{element}_seed"
+        yield element
 
 
 @pytest.fixture
@@ -287,9 +287,9 @@ def test_e2e_build_rebuild_forces(docker_host, tmp_path):
 
 
 def test_e2e_multi_repo_only_active_lab_runs(teardown_after, docker_host, tmp_path):
-    """With both repo1 (veggies) and repo2 (fruits) loaded but only the
-    veggies lab active, `otto docker up` must only operate on repo1.
-    Repo2's grape_seed isn't in the active lab, so it must be skipped
+    """With both repo1 (unix) and repo2 (unix_alt) loaded but only the
+    unix lab active, `otto docker up` must only operate on repo1.
+    Repo2's alt3 isn't in the active lab, so it must be skipped
     cleanly — never raise a `host not in lab` error."""
     suffix = teardown_after
     up = _run_otto(
@@ -306,21 +306,21 @@ def test_e2e_multi_repo_only_active_lab_runs(teardown_after, docker_host, tmp_pa
         f"stdout:\n{up.stdout}\nstderr:\n{up.stderr}"
     )
     assert "not in lab" not in (up.stdout + up.stderr), (
-        "repo2 (fruits-lab host) must be filtered, not raise"
+        "repo2 (unix_alt-lab host) must be filtered, not raise"
     )
     # repo1's stack came up on the leased host.
     assert f"{docker_host}.repo1.api" in up.stdout
     # repo2 must be skipped *entirely* — not just deployed to a different
     # host. `_up` prints "<repo> (<project>): N container(s) registered"
     # for every composed repo, so any mention of "repo2" means it was
-    # composed. Asserting against the `grape_seed.…` host id alone would
+    # composed. Asserting against the `alt3.…` host id alone would
     # miss a regression where `--on <host>` wrongly overrode repo2's
     # lab filter and composed it on that host as `<host>.repo2.worker`
     # — the pre-b466020 bug that leaked an otto-repo2 network every run
     # until docker's address pool was exhausted.
     assert "repo2" not in up.stdout, (
-        "repo2 targets the fruits lab and must be skipped under "
-        f"--lab veggies — it was composed instead:\n{up.stdout}"
+        "repo2 targets the unix_alt lab and must be skipped under "
+        f"--lab unix — it was composed instead:\n{up.stdout}"
     )
 
 
@@ -328,9 +328,9 @@ def test_e2e_multi_repo_down_no_traceback(docker_host, tmp_path):
     """With both repos in SUT_DIRS, `otto docker down` must not raise a
     Python traceback for the unrelated lab.
 
-    Repo2 targets the fruits lab (grape_seed) which is not in the active
-    veggies lab. The bug (pre-b466020) raised
-    ``ValueError("Docker host 'grape_seed' is not in lab 'veggies'")``.
+    Repo2 targets the unix_alt lab (alt3) which is not in the active
+    unix lab. The bug (pre-b466020) raised
+    ``ValueError("Docker host 'alt3' is not in lab 'unix'")``.
     The fix filters repo2 out before calling compose_down so only repo1
     is processed. ``--on`` is required because repo1's compose spec has
     no ``default_host``; the host must be in the active lab to pass
@@ -362,13 +362,13 @@ def test_e2e_list_hosts_includes_declared_container(tmp_path):
 
     With no ``default_host`` in repo1's compose spec, all three docker-capable
     hosts are pre-registered, so the output must contain at least one
-    ``<element>_seed.repo1.api`` id.
+    ``<element>.repo1.api`` id.
     """
     result = _run_otto("--list-hosts", "host", xdir=tmp_path)
     # The flag prints the host list and exits non-zero in some paths;
     # accept either rc as long as at least one declared container id appears.
     output = result.stdout + result.stderr
-    declared = [f"{el}_seed.repo1.api" for el in ("carrot", "tomato", "pepper")]
+    declared = [f"{el}.repo1.api" for el in ("test1", "test2", "test3")]
     assert any(h in output for h in declared), (
         f"expected at least one of {declared} in output:\n{output}"
     )

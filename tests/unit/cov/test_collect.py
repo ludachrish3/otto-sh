@@ -86,7 +86,7 @@ class TestNamedExceptions:
         repo.name = "repo"
 
         host = MagicMock(spec=UnixHost)
-        host.id = "carrot"
+        host.id = "test1"
 
         fetcher_instance = MagicMock()
         fetcher_instance.fetch_all = AsyncMock(return_value={})
@@ -103,7 +103,7 @@ class TestNamedExceptions:
         ):
             asyncio.run(collect_coverage(cov_dir, repos=[repo]))
         assert isinstance(excinfo.value, ValueError)
-        assert str(excinfo.value) == "no .gcda counters retrieved from any host (searched: carrot)"
+        assert str(excinfo.value) == "no .gcda counters retrieved from any host (searched: test1)"
 
     def test_errors_importable_from_coverage_package(self):
         from otto.coverage import CoverageConfigError, NoCoverageDataError
@@ -130,7 +130,7 @@ class TestFetchStage:
         repo.name = "repo"
 
         host = MagicMock(spec=UnixHost)
-        host.id = "carrot"
+        host.id = "test1"
 
         fetcher_instance = MagicMock()
         fetcher_instance.fetch_all = AsyncMock(return_value={})
@@ -163,9 +163,9 @@ class TestFetchStage:
         repo.name = "repo"
 
         h1 = MagicMock(spec=UnixHost)
-        h1.id = "carrot"
+        h1.id = "test1"
         h2 = MagicMock(spec=UnixHost)
-        h2.id = "tomato"
+        h2.id = "test2"
 
         fetcher_instance = MagicMock()
         fetcher_instance.fetch_all = AsyncMock(return_value={})
@@ -178,7 +178,7 @@ class TestFetchStage:
             ),
             patch("otto.config.all_hosts", return_value=[h1, h2]),
             patch("otto.coverage.fetcher.remote.GcdaFetcher", return_value=fetcher_instance),
-            pytest.raises(ValueError, match=r"searched: carrot, tomato"),
+            pytest.raises(ValueError, match=r"searched: test1, test2"),
         ):
             asyncio.run(collect_coverage(cov_dir, repos=[repo]))
 
@@ -201,11 +201,11 @@ class TestCleanAfterFetch:
         repo.name = "repo"
 
         host = MagicMock(spec=UnixHost)
-        host.id = "carrot"
-        board = cov_dir / "carrot"
+        host.id = "test1"
+        board = cov_dir / "test1"
 
         fetcher_instance = MagicMock()
-        fetcher_instance.fetch_all = AsyncMock(return_value={"carrot": board})
+        fetcher_instance.fetch_all = AsyncMock(return_value={"test1": board})
         fetcher_instance.clean_remote = AsyncMock(return_value=None)
 
         with (
@@ -233,7 +233,7 @@ class TestCleanAfterFetch:
         cov_dir.mkdir()
         result, fetcher_instance, board = self._run(cov_dir)  # default True
         fetcher_instance.clean_remote.assert_awaited_once_with("/remote")
-        assert result.host_dirs == {"carrot": board}
+        assert result.host_dirs == {"test1": board}
 
     def test_false_skips_internal_clean_remote(self, tmp_path):
         cov_dir = tmp_path / "cov"
@@ -241,7 +241,7 @@ class TestCleanAfterFetch:
         result, fetcher_instance, board = self._run(cov_dir, clean_after_fetch=False)
         fetcher_instance.clean_remote.assert_not_awaited()
         # The fetch still happened and its dirs are reported unchanged.
-        assert result.host_dirs == {"carrot": board}
+        assert result.host_dirs == {"test1": board}
 
 
 # ── Embedded collection + metadata sidecar (moved from TestRunCoverageEmbedded)
@@ -259,7 +259,7 @@ class TestCollectEmbedded:
         cov_dir = tmp_path / "cov"
         cov_dir.mkdir()
 
-        embedded_collect = AsyncMock(return_value={"sprout": cov_dir / "sprout"})
+        embedded_collect = AsyncMock(return_value={"zephyr37-fat": cov_dir / "zephyr37-fat"})
         with (
             patch(
                 "otto.coverage.config.get_cov_config",
@@ -273,20 +273,20 @@ class TestCollectEmbedded:
 
         embedded_collect.assert_awaited_once()
         assert isinstance(result, CollectResult)
-        assert result.host_dirs == {"sprout": cov_dir / "sprout"}
+        assert result.host_dirs == {"zephyr37-fat": cov_dir / "zephyr37-fat"}
         # No [coverage] repo → no captures produced.
         assert result.captures_written == []
 
     def test_unix_hop_host_not_treated_as_coverage_target(self, tmp_path):
         """A Unix SSH hop in the lab must not pollute the embedded meta.
 
-        An embedded coverage lab must include the SSH hop (e.g. ``basil``
-        fronting ``sprout_cov``) so the hop resolves — but the hop is
+        An embedded coverage lab must include the SSH hop (e.g. ``test4``
+        fronting ``zephyr37_llext``) so the hop resolves — but the hop is
         infrastructure, not a coverage target, and emits no ``.gcda``. The meta
         must therefore (a) keep ``sut_dir`` = the embedded build dir (the hop must
         not flip it to the repo dir, which breaks ``.gcno`` discovery and made
         ``geninfo`` skip the file on the real lab) and (b) carry only the embedded
-        host's toolchain, not the hop's. Regression for the basil-hop report bug.
+        host's toolchain, not the hop's. Regression for the test4-hop report bug.
         """
         from otto.host import UnixHost
         from otto.host.embedded_host import ZephyrHost
@@ -302,11 +302,11 @@ class TestCollectEmbedded:
         repo.sut_dir = tmp_path / "repo3"  # NOT what sut_dir should resolve to
 
         hop = MagicMock(spec=UnixHost)
-        hop.id = "basil_seed"  # a Unix hop, produces no coverage
+        hop.id = "test4"  # a Unix hop, produces no coverage
 
-        sprout_cov = ZephyrHost(
+        zephyr37_llext = ZephyrHost(
             ip="192.0.2.33",
-            element="sprout_cov",
+            element="zephyr37_llext",
             transfer="console",
             toolchain=Toolchain(
                 sysroot=Path("/opt/sdk/arm-zephyr-eabi"),
@@ -315,7 +315,7 @@ class TestCollectEmbedded:
             ),
         )
 
-        embedded_collect = AsyncMock(return_value={"sprout-cov": cov_dir / "sprout-cov"})
+        embedded_collect = AsyncMock(return_value={"zephyr37-llext": cov_dir / "zephyr37-llext"})
         cov_config = {
             "embedded": {
                 "extension": "cov_ext",
@@ -324,7 +324,7 @@ class TestCollectEmbedded:
         }
         with (
             patch("otto.coverage.config.get_cov_config", return_value=cov_config),
-            patch("otto.config.all_hosts", return_value=[hop, sprout_cov]),
+            patch("otto.config.all_hosts", return_value=[hop, zephyr37_llext]),
             patch("otto.coverage.fetcher.embedded.collect_embedded_coverage", new=embedded_collect),
             patch("otto.coverage.config.get_cov_repo", return_value=repo),
             patch("otto.coverage.capture.produce.produce_captures", new=AsyncMock(return_value=[])),
@@ -333,9 +333,9 @@ class TestCollectEmbedded:
 
         meta = json.loads((cov_dir / ".otto_cov_meta.json").read_text())
         assert meta["sut_dir"] == str(build_dir.resolve())
-        # element "sprout_cov" slugs to the id "sprout-cov" (underscore -> hyphen).
-        assert set(meta["toolchains"]) == {"sprout-cov"}
-        assert "basil_seed" not in meta["toolchains"]
+        # element "zephyr37_llext" slugs to the id "zephyr37-llext" (underscore -> hyphen).
+        assert set(meta["toolchains"]) == {"zephyr37-llext"}
+        assert "test4" not in meta["toolchains"]
 
     def test_embedded_toolchain_is_per_host(self, tmp_path):
         """Each embedded host's coverage toolchain comes from host.toolchain."""
@@ -344,7 +344,7 @@ class TestCollectEmbedded:
 
         host = ZephyrHost(
             ip="192.0.2.33",
-            element="sprout_cov",
+            element="zephyr37_llext",
             transfer="console",
             toolchain=Toolchain(
                 sysroot=Path("/home/vagrant/zephyr-sdk-0.16.8/arm-zephyr-eabi"),
@@ -361,7 +361,7 @@ class TestCollectEmbedded:
         repo.name = "repo3"
         repo.sut_dir = tmp_path / "repo3"
 
-        embedded_collect = AsyncMock(return_value={"sprout-cov": cov_dir / "sprout-cov"})
+        embedded_collect = AsyncMock(return_value={"zephyr37-llext": cov_dir / "zephyr37-llext"})
         cov_config = {
             "embedded": {
                 "extension": "cov_ext",
@@ -378,8 +378,8 @@ class TestCollectEmbedded:
             asyncio.run(collect_coverage(cov_dir, repos=[repo]))
 
         meta = json.loads((cov_dir / ".otto_cov_meta.json").read_text())
-        # element "sprout_cov" slugs to the id "sprout-cov" (underscore -> hyphen).
-        entry = meta["toolchains"]["sprout-cov"]
+        # element "zephyr37_llext" slugs to the id "zephyr37-llext" (underscore -> hyphen).
+        entry = meta["toolchains"]["zephyr37-llext"]
         assert entry["gcov"] == "bin/arm-zephyr-eabi-gcov"
         assert entry["sysroot"] == "/home/vagrant/zephyr-sdk-0.16.8/arm-zephyr-eabi"
         assert entry["lcov"] == "/usr/bin/lcov"
@@ -389,7 +389,7 @@ class TestCollectEmbedded:
         from otto.host.embedded_host import ZephyrHost
         from otto.host.toolchain import Toolchain
 
-        host = ZephyrHost(ip="192.0.2.33", element="sprout_cov", transfer="console")
+        host = ZephyrHost(ip="192.0.2.33", element="zephyr37_llext", transfer="console")
         # No toolchain configured -> default Toolchain() -> discovery fallback.
         cov_dir = tmp_path / "cov"
         cov_dir.mkdir()
@@ -400,7 +400,7 @@ class TestCollectEmbedded:
         repo.name = "repo3"
         repo.sut_dir = tmp_path / "repo3"
 
-        embedded_collect = AsyncMock(return_value={"sprout-cov": cov_dir / "sprout-cov"})
+        embedded_collect = AsyncMock(return_value={"zephyr37-llext": cov_dir / "zephyr37-llext"})
         cov_config = {
             "embedded": {
                 "extension": "cov_ext",
@@ -428,10 +428,10 @@ class TestCollectEmbedded:
             asyncio.run(collect_coverage(cov_dir, repos=[repo]))
 
         meta = json.loads((cov_dir / ".otto_cov_meta.json").read_text())
-        # element "sprout_cov" slugs to the id "sprout-cov"; the collect result is
+        # element "zephyr37_llext" slugs to the id "zephyr37-llext"; the collect result is
         # keyed by that id, so the host resolves and its toolchain is recorded.
-        assert meta["toolchains"]["sprout-cov"]["gcov"] == "bin/x-gcov"
-        assert meta["toolchains"]["sprout-cov"]["sysroot"] == "/discovered"
+        assert meta["toolchains"]["zephyr37-llext"]["gcov"] == "bin/x-gcov"
+        assert meta["toolchains"]["zephyr37-llext"]["sysroot"] == "/discovered"
 
     def test_coverage_hosts_regex_passed_to_both_selectors(self, tmp_path):
         """``[coverage].hosts`` compiles to a regex handed to the Unix and
@@ -447,7 +447,7 @@ class TestCollectEmbedded:
         with (
             patch(
                 "otto.coverage.config.get_cov_config",
-                return_value={"hosts": "sprout_cov", "embedded": {"extension": "cov_ext"}},
+                return_value={"hosts": "zephyr37_llext", "embedded": {"extension": "cov_ext"}},
             ),
             patch("otto.config.all_hosts", new=all_hosts_mock),
             patch("otto.coverage.fetcher.embedded.collect_embedded_coverage", new=embedded_collect),
@@ -459,12 +459,12 @@ class TestCollectEmbedded:
 
         unix_pat = all_hosts_mock.call_args.kwargs.get("pattern")
         assert unix_pat is not None
-        assert unix_pat.search("sprout_cov")
-        assert not unix_pat.search("basil_seed")
+        assert unix_pat.search("zephyr37_llext")
+        assert not unix_pat.search("test4")
 
         emb_pat = embedded_collect.await_args.kwargs.get("pattern")
         assert emb_pat is not None
-        assert emb_pat.pattern == "sprout_cov"
+        assert emb_pat.pattern == "zephyr37_llext"
 
     def test_unset_coverage_hosts_passes_no_pattern(self, tmp_path):
         """Unset ``[coverage].hosts`` → ``pattern=None`` (collect from all hosts)."""
@@ -507,9 +507,9 @@ class TestCollectEmbedded:
         repo.name = "repo3"
         repo.sut_dir = tmp_path / "repo3"
 
-        sprout = ZephyrHost(
+        zephyr37_fat = ZephyrHost(
             ip="192.0.2.33",
-            element="sprout",
+            element="zephyr37_fat",
             transfer="console",
             os_version="3.7",
             toolchain=Toolchain(
@@ -518,9 +518,9 @@ class TestCollectEmbedded:
                 lcov=Path("/usr/bin/lcov"),
             ),
         )
-        sprout44 = ZephyrHost(
+        zephyr44_fat = ZephyrHost(
             ip="192.0.2.34",
-            element="sprout44",
+            element="zephyr44_fat",
             transfer="console",
             os_version="4.4",
             toolchain=Toolchain(
@@ -532,8 +532,8 @@ class TestCollectEmbedded:
 
         embedded_collect = AsyncMock(
             return_value={
-                "sprout": cov_dir / "sprout",
-                "sprout44": cov_dir / "sprout44",
+                "zephyr37-fat": cov_dir / "zephyr37-fat",
+                "zephyr44-fat": cov_dir / "zephyr44-fat",
             }
         )
         cov_config = {
@@ -547,7 +547,7 @@ class TestCollectEmbedded:
         }
         with (
             patch("otto.coverage.config.get_cov_config", return_value=cov_config),
-            patch("otto.config.all_hosts", return_value=[sprout, sprout44]),
+            patch("otto.config.all_hosts", return_value=[zephyr37_fat, zephyr44_fat]),
             patch("otto.coverage.fetcher.embedded.collect_embedded_coverage", new=embedded_collect),
             patch("otto.coverage.config.get_cov_repo", return_value=repo),
             patch("otto.coverage.capture.produce.produce_captures", new=AsyncMock(return_value=[])),
@@ -555,8 +555,8 @@ class TestCollectEmbedded:
             asyncio.run(collect_coverage(cov_dir, repos=[repo]))
 
         meta = json.loads((cov_dir / ".otto_cov_meta.json").read_text())
-        assert meta["source_roots"]["sprout"] == str(build37.resolve())
-        assert meta["source_roots"]["sprout44"] == str(build44.resolve())
+        assert meta["source_roots"]["zephyr37-fat"] == str(build37.resolve())
+        assert meta["source_roots"]["zephyr44-fat"] == str(build44.resolve())
 
 
 class TestBuildDirPathAnchoring:
@@ -620,7 +620,7 @@ class TestBuildDirPathAnchoring:
         repo.name = "repo3"
         repo.sut_dir = repo_root
 
-        host = self._zephyr_host(element="sprout_cov")
+        host = self._zephyr_host(element="zephyr37_llext")
         cov_config = {"embedded": {"extension": "cov_ext", "build_dir": "build"}}
 
         meta = self._collect(tmp_path, repo, host, cov_config)
@@ -641,7 +641,7 @@ class TestBuildDirPathAnchoring:
         repo.name = "repo3"
         repo.sut_dir = tmp_path / "repo3"
 
-        host = self._zephyr_host(element="sprout_cov")
+        host = self._zephyr_host(element="zephyr37_llext")
         cov_config = {"embedded": {"extension": "cov_ext", "build_dir": "~/covbuild"}}
 
         meta = self._collect(tmp_path, repo, host, cov_config)
@@ -666,7 +666,7 @@ class TestBuildDirPathAnchoring:
         repo.name = "repo3"
         repo.sut_dir = repo_root
 
-        host = self._zephyr_host(element="sprout", os_version="3.7")
+        host = self._zephyr_host(element="zephyr37_fat", os_version="3.7")
         cov_config = {
             "embedded": {
                 "extension": "cov_ext",
@@ -675,7 +675,7 @@ class TestBuildDirPathAnchoring:
         }
 
         meta = self._collect(tmp_path, repo, host, cov_config)
-        assert meta["source_roots"]["sprout"] == str((repo_root / "build" / "v3_7").resolve())
+        assert meta["source_roots"]["zephyr37-fat"] == str((repo_root / "build" / "v3_7").resolve())
 
     def test_per_version_tilde_build_dir_expands_via_home(self, tmp_path, monkeypatch):
         """The per-version ``builds.<ver>.build_dir`` expands a ``~`` prefix
@@ -691,7 +691,7 @@ class TestBuildDirPathAnchoring:
         repo.name = "repo3"
         repo.sut_dir = tmp_path / "repo3"
 
-        host = self._zephyr_host(element="sprout", os_version="3.7")
+        host = self._zephyr_host(element="zephyr37_fat", os_version="3.7")
         cov_config = {
             "embedded": {
                 "extension": "cov_ext",
@@ -700,7 +700,7 @@ class TestBuildDirPathAnchoring:
         }
 
         meta = self._collect(tmp_path, repo, host, cov_config)
-        assert meta["source_roots"]["sprout"] == str(build_dir.resolve())
+        assert meta["source_roots"]["zephyr37-fat"] == str(build_dir.resolve())
 
 
 # ── Capture tail — fail loud (no swallowing inside collect_coverage) ──────────

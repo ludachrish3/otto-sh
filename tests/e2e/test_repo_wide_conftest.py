@@ -10,7 +10,7 @@ from tests.e2e._otto_subprocess import run_otto
 
 pytestmark = pytest.mark.hostless
 
-# Reuse otto's own JSON lab fixture data (defines the "veggies" lab) so this
+# Reuse otto's own JSON lab fixture data (defines the "unix" lab) so this
 # throwaway repo can satisfy the mandatory --lab flag without touching a real
 # host — TestConfcut itself requests no host fixture.
 LAB_DATA_DIR = lab_data_dir() / "tech1"
@@ -58,6 +58,6 @@ def test_suite_in_subdir_sees_repo_root_fixture(tmp_path: Path) -> None:
         ["test", "TestConfcut"],
         xdir=tmp_path / "xdir",
         sut_dirs=repo,
-        lab="veggies",
+        lab="unix",
     )
     assert r.returncode == 0, r.stdout + r.stderr

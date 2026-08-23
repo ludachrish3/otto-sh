@@ -1,14 +1,14 @@
 # otto link list
 
 ```bash
-otto --lab veggies link list
+otto --lab unix link list
 ```
 
 Prints one line per static link:
 
 ```text
-edge  carrot_seed@eth1.100 <-> tomato_seed@eth1.200  via -  a->b: delay 10ms  b->a: -
-dataplane  carrot_seed@eth1.100 <-> tomato_seed@eth1.200  via pepper_seed  a->b: -  b->a: -
+edge  test1@eth1.100 <-> test2@eth1.200  via -  a->b: delay 10ms  b->a: -
+dataplane  test1@eth1.100 <-> test2@eth1.200  via test3  a->b: -  b->a: -
 ```
 
 - **via** is the link's `impair` middlebox host id, or `-` for endpoint mode.
@@ -61,9 +61,9 @@ never-silently-wrong philosophy as `otto tunnel list`.
 link's normal summary row:
 
 ```text
-edge  carrot_seed@eth1.100 <-> tomato_seed@eth1.200  via -  a->b: port-scoped (1)  b->a: -
+edge  test1@eth1.100 <-> test2@eth1.200  via -  a->b: port-scoped (1)  b->a: -
   a->b  5201/tcp  delay 200ms
-dataplane  carrot_seed@eth1.100 <-> tomato_seed@eth1.200  via pepper_seed  a->b: foreign qdisc — not otto's  b->a: -
+dataplane  test1@eth1.100 <-> test2@eth1.200  via test3  a->b: foreign qdisc — not otto's  b->a: -
 ```
 
 A direction's summary column reads `port-scoped (N)` when that placement

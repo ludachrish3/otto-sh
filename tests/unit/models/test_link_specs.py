@@ -9,8 +9,8 @@ from otto.models.link import LinkSpec
 def _entry(**overrides) -> dict:
     base = {
         "endpoints": [
-            {"host": "carrot_seed", "interface": "eth1"},
-            {"host": "tomato_seed", "interface": "eth1"},
+            {"host": "test1", "interface": "eth1"},
+            {"host": "test2", "interface": "eth1"},
         ],
         "protocol": "udp",
     }
@@ -20,7 +20,7 @@ def _entry(**overrides) -> dict:
 class TestLinkSpec:
     def test_full_entry_parses(self):
         spec = LinkSpec.model_validate(_entry(name="data-plane-a"))
-        assert spec.endpoints[0].host == "carrot_seed"
+        assert spec.endpoints[0].host == "test1"
         assert spec.protocol == "udp"
         assert spec.name == "data-plane-a"
 

@@ -19,7 +19,7 @@ pid on EVERY probe, permanently poisoning the before/after diff with a
 spurious "new" line that is never a real orphaned listener.
 
 ``has_tunnel`` caveat (self-review finding, recorded here rather than swept
-under the rug): the leased veggies hosts (carrot/tomato/pepper) are reached
+under the rug): the leased unix hosts (test1/test2/test3) are reached
 directly — no ``--hop`` — so ``NcFileTransfer._connections.has_tunnel`` is
 ``False`` for this bed, and GET dispatches to ``_get_files_nc`` (otto binds a
 local server; the remote runs plain ``nc`` as a *client* pushing bytes back —
@@ -64,7 +64,7 @@ pytestmark = [
 # ~300+ MB/s, an artifact of the fixed per-command overhead dominating such a
 # short transfer), so a SIGINT sent 0-1s after the "NC put"/"NC get" phase
 # marker would already be racing a finished process. Timed directly against
-# carrot_seed: put sustains ~62-75 MB/s (512 MiB -> ~6.5s wall time), get
+# test1: put sustains ~62-75 MB/s (512 MiB -> ~6.5s wall time), get
 # ~75-125 MB/s (512 MiB -> ~2.2-4.5s) — comfortably longer than the 0-1s
 # injection window in both directions without making the test unduly slow.
 _PAYLOAD_SIZE = 512 * 1024 * 1024
@@ -74,7 +74,7 @@ _REMOTE_GET_SRC = "/tmp/otto-chaos-src"
 
 # --- BusyBox guest arm ------------------------------------------------------
 # 512 KiB, calibrated live the same way `_PAYLOAD_SIZE` was, against the guest
-# rather than against a veggies host: a shell PUT to bb1350 through the hop
+# rather than against a unix host: a shell PUT to bb1350 through the hop
 # measured 32 KiB in 1.5s, 128 KiB in 3.1s and 512 KiB in 9.9s wall (2026-08-21,
 # CLI-to-CLI including ~1.3s of connect/probe setup), i.e. ~60 KiB/s of actual
 # streaming. 512 KiB therefore buys ~8.6s of in-flight transfer, which is a wide
@@ -291,7 +291,7 @@ def _guest_names(directory: str) -> list:
     return [ln.strip() for ln in out.splitlines() if ln.strip() and "*" not in ln]
 
 
-@pytest.mark.no_hygiene_bracket  # the guest is not the veggies pool the autouse bracket leases
+@pytest.mark.no_hygiene_bracket  # the guest is not the unix pool the autouse bracket leases
 def test_sigint_mid_shell_put_leaves_nothing_behind_on_the_busybox_guest(
     busybox_chaos_bed, chaos_rng, tmp_path
 ):
@@ -300,7 +300,7 @@ def test_sigint_mid_shell_put_leaves_nothing_behind_on_the_busybox_guest(
     temp beside it -- and the console must still serve a shell afterwards.
 
     WHY ``--transfer shell`` AND NOT ``nc``. The two nc arms above are this
-    module's premise on a veggies host: an interrupted transfer must not
+    module's premise on a unix host: an interrupted transfer must not
     strand a remote ``nc -l``. That premise does not travel to the guest --
     otto REFUSES nc transfers to these guests by the registered
     ``nc_dash_n`` gap, so an nc arm here could only certify the refusal,

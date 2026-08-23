@@ -1,7 +1,7 @@
 """Live-bed e2e tests for ``otto tunnel`` (sub-project #2b, Task 12).
 
 Drives the real ``otto.tunnel`` library API (``add_tunnel`` / ``discover_tunnels``
-/ ``remove_tunnel``) against the three-VM veggies bed, mirroring the retired
+/ ``remove_tunnel``) against the three-VM unix bed, mirroring the retired
 ``tests/e2e/test_link_tunnels_e2e.py`` (see ``git show
 main:tests/e2e/test_link_tunnels_e2e.py``): host construction via
 ``host_data``/``make_host``, fail-loud-on-host-down, reap-by-tracked-id
@@ -10,12 +10,12 @@ runs concurrently with itself.
 
 Topology (see ``tests/_fixtures/lab_data/tech1/lab.json``)
 ------------------------------------------------------------
-- carrot_seed (test1, 10.10.200.11)
-- tomato_seed (test2, 10.10.200.12)
-- pepper_seed (test3, 10.10.200.13)
+- test1 (test1, 10.10.200.11)
+- test2 (test2, 10.10.200.12)
+- test3 (test3, 10.10.200.13)
 
 ``lab.json`` declares an ``eth2``/``192.168.1.x`` data-plane interface for
-carrot/tomato/pepper, and the bed provisions those addresses for real
+test1/test2/test3, and the bed provisions those addresses for real
 (Vagrantfile: a dedicated second NIC on the ``otto-dataplane`` internal
 network — originally stacked onto ``eth1`` 2026-07-16, moved to its own
 ``eth2`` netdev the same day so the data plane is impairable; the mgmt
@@ -106,9 +106,9 @@ pytestmark = [
     pytest.mark.xdist_group("link_tunnels_e2e"),
 ]
 
-_INGRESS = "carrot_seed"  # test1, 10.10.200.11
-_EXIT = "tomato_seed"  # test2, 10.10.200.12
-_RELAY_DEST = "pepper_seed"  # test3, 10.10.200.13
+_INGRESS = "test1"  # test1, 10.10.200.11
+_EXIT = "test2"  # test2, 10.10.200.12
+_RELAY_DEST = "test3"  # test3, 10.10.200.13
 
 _PORT_DIRECT = 15000
 _PORT_MULTIHOP = 15001
@@ -132,18 +132,18 @@ OLDOS_COMPOSE_PROJECT = "otto-tunnel-e2e-oldos"
 
 
 def _build_host(ne: str) -> UnixHost:
-    """Build a real, docker-capable ``UnixHost`` from the veggies lab data."""
+    """Build a real, docker-capable ``UnixHost`` from the unix lab data."""
     return build_bed_host(ne, docker_capable=True)
 
 
 @pytest_asyncio.fixture
 async def tunnel_lab():
-    """Real ``Lab`` over the 3-VM veggies bed (carrot/tomato/pepper = test1/2/3)."""
-    for ne in ("carrot", "tomato", "pepper"):
+    """Real ``Lab`` over the 3-VM unix bed (test1/test2/test3)."""
+    for ne in ("test1", "test2", "test3"):
         await assert_reachable(ne, host_data(ne)["ip"])
 
     lab = Lab(name="tunnel_e2e")
-    for ne in ("carrot", "tomato", "pepper"):
+    for ne in ("test1", "test2", "test3"):
         lab.add_host(_build_host(ne))
     yield lab
     await asyncio.gather(*(h.close() for h in lab.hosts.values()), return_exceptions=True)
@@ -196,10 +196,10 @@ def _foreign_socat_port() -> int:
 
 @pytest.mark.asyncio
 async def test_direct_tunnel_bidirectional(tunnel_lab, reap_tunnels) -> None:
-    """``add_tunnel`` carrot<->tomato (UDP): both directions deliver, ``list``-level
+    """``add_tunnel`` test1<->test2 (UDP): both directions deliver, ``list``-level
     discovery shows ``ok`` with all 4 processes, and ``remove`` reaps cleanly."""
-    carrot = tunnel_lab.hosts[_INGRESS]
-    tomato = tunnel_lab.hosts[_EXIT]
+    test1 = tunnel_lab.hosts[_INGRESS]
+    test2 = tunnel_lab.hosts[_EXIT]
     port = _PORT_DIRECT
     fwd_outfile = random_outfile()
     rev_outfile = random_outfile()
@@ -212,22 +212,22 @@ async def test_direct_tunnel_bidirectional(tunnel_lab, reap_tunnels) -> None:
         )
         reap_tunnels.append(added.tunnel.id)
 
-        # --- FWD: sender near carrot -> listener on tomato loopback ---
-        await spawn_udp_listener(tomato, port, fwd_outfile, timeout=LISTEN_TIMEOUT)
-        send_udp(resolved_ip("carrot"), port, fwd_payload)
-        fwd_received = await wait_for_listener_output(tomato, fwd_outfile)
+        # --- FWD: sender near test1 -> listener on test2 loopback ---
+        await spawn_udp_listener(test2, port, fwd_outfile, timeout=LISTEN_TIMEOUT)
+        send_udp(resolved_ip("test1"), port, fwd_payload)
+        fwd_received = await wait_for_listener_output(test2, fwd_outfile)
         _src_ip, _, fwd_recv_payload = fwd_received.partition(" ")
         assert fwd_recv_payload == fwd_payload.decode(), (
-            f"expected FWD payload {fwd_payload.decode()!r} on tomato, got {fwd_received!r}"
+            f"expected FWD payload {fwd_payload.decode()!r} on test2, got {fwd_received!r}"
         )
 
-        # --- REV: b-side sender on tomato -> listener on carrot loopback ---
-        await spawn_udp_listener(carrot, port, rev_outfile, timeout=LISTEN_TIMEOUT)
-        send_udp(resolved_ip("tomato"), port, rev_payload)
-        rev_received = await wait_for_listener_output(carrot, rev_outfile)
+        # --- REV: b-side sender on test2 -> listener on test1 loopback ---
+        await spawn_udp_listener(test1, port, rev_outfile, timeout=LISTEN_TIMEOUT)
+        send_udp(resolved_ip("test2"), port, rev_payload)
+        rev_received = await wait_for_listener_output(test1, rev_outfile)
         _src_ip, _, rev_recv_payload = rev_received.partition(" ")
         assert rev_recv_payload == rev_payload.decode(), (
-            f"expected REV payload {rev_payload.decode()!r} on carrot, got {rev_received!r}"
+            f"expected REV payload {rev_payload.decode()!r} on test1, got {rev_received!r}"
         )
 
         # --- list-level discovery: ok, 4 processes ---
@@ -248,8 +248,8 @@ async def test_direct_tunnel_bidirectional(tunnel_lab, reap_tunnels) -> None:
             f"{added.tunnel.id!r} still discoverable after remove_tunnel"
         )
     finally:
-        await remove_remote_file(tomato, fwd_outfile)
-        await remove_remote_file(carrot, rev_outfile)
+        await remove_remote_file(test2, fwd_outfile)
+        await remove_remote_file(test1, rev_outfile)
 
 
 # ---------------------------------------------------------------------------
@@ -259,11 +259,11 @@ async def test_direct_tunnel_bidirectional(tunnel_lab, reap_tunnels) -> None:
 
 @pytest.mark.asyncio
 async def test_multihop_relay_and_via(tunnel_lab, reap_tunnels) -> None:
-    """``add_tunnel`` carrot,tomato,pepper (UDP): relay processes on tomato,
-    discovery status ``ok`` with 6 processes, and ``_fmt_via`` names tomato."""
+    """``add_tunnel`` test1,test2,test3 (UDP): relay processes on test2,
+    discovery status ``ok`` with 6 processes, and ``_fmt_via`` names test2."""
     from otto.cli.tunnel import _fmt_via
 
-    pepper = tunnel_lab.hosts[_RELAY_DEST]
+    test3 = tunnel_lab.hosts[_RELAY_DEST]
     port = _PORT_MULTIHOP
     outfile = random_outfile()
     payload = f"otto-tunnel-e2e-multihop-{uuid.uuid4().hex}".encode()
@@ -277,22 +277,22 @@ async def test_multihop_relay_and_via(tunnel_lab, reap_tunnels) -> None:
         )
         reap_tunnels.append(added.tunnel.id)
 
-        await spawn_udp_listener(pepper, port, outfile, timeout=LISTEN_TIMEOUT)
-        send_udp(resolved_ip("carrot"), port, payload)
-        received = await wait_for_listener_output(pepper, outfile)
+        await spawn_udp_listener(test3, port, outfile, timeout=LISTEN_TIMEOUT)
+        send_udp(resolved_ip("test1"), port, payload)
+        received = await wait_for_listener_output(test3, outfile)
         _src_ip, _, recv_payload = received.partition(" ")
         assert recv_payload == payload.decode(), (
-            f"expected payload {payload.decode()!r} relayed to pepper, got {received!r}"
+            f"expected payload {payload.decode()!r} relayed to test3, got {received!r}"
         )
 
-        # --- relay processes present on tomato: 2 tagged (FWD relay + REV relay) ---
+        # --- relay processes present on test2: 2 tagged (FWD relay + REV relay) ---
         discovery = await discover_tunnels(tunnel_lab)
         found = next((d for d in discovery.tunnels if d.tunnel.id == added.tunnel.id), None)
         assert found is not None, f"tunnel {added.tunnel.id!r} not in discover_tunnels"
         assert found.status == "ok", f"expected status 'ok', got {found.status!r}"
         assert len(found.present) == 6, f"expected 6 processes, got {len(found.present)}"
-        tomato_procs = [key for key in found.present if key[0] == _EXIT]
-        assert len(tomato_procs) == 2, f"expected 2 relay processes on tomato, got {tomato_procs!r}"
+        test2_procs = [key for key in found.present if key[0] == _EXIT]
+        assert len(test2_procs) == 2, f"expected 2 relay processes on test2, got {test2_procs!r}"
 
         # --- VIA rendering names the relay host ---
         assert _EXIT in _fmt_via(added.tunnel), (
@@ -303,7 +303,7 @@ async def test_multihop_relay_and_via(tunnel_lab, reap_tunnels) -> None:
         assert report.survivors == [], f"survivors after remove: {report.survivors!r}"
         reap_tunnels.remove(added.tunnel.id)
     finally:
-        await remove_remote_file(pepper, outfile)
+        await remove_remote_file(test3, outfile)
 
 
 # ---------------------------------------------------------------------------
@@ -438,8 +438,8 @@ async def _wait_for_container_file(
 @pytest.mark.asyncio
 @pytest.mark.timeout(900)
 async def test_container_endpoint_oldos(tunnel_lab, reap_tunnels) -> None:
-    """``add_tunnel`` tomato,carrot,<oldos container> (parent carrot): datagram
-    from tomato reaches an in-container socat-only listener; discovery sees
+    """``add_tunnel`` test2,test1,<oldos container> (parent test1): datagram
+    from test2 reaches an in-container socat-only listener; discovery sees
     container-origin processes; remove reaps cleanly.
 
     Doubles as the docker-endpoint proof and the old-OS/setsid proof: the
@@ -467,7 +467,7 @@ async def test_container_endpoint_oldos(tunnel_lab, reap_tunnels) -> None:
         reap_tunnels.append(added.tunnel.id)
 
         await _spawn_container_listener(container, port, outfile)
-        send_udp(resolved_ip("tomato"), port, payload)
+        send_udp(resolved_ip("test2"), port, payload)
         received = await _wait_for_container_file(container, outfile)
         assert received == payload.decode(), (
             f"expected payload {payload.decode()!r} in-container, got {received!r}"
@@ -499,8 +499,8 @@ async def test_container_endpoint_oldos(tunnel_lab, reap_tunnels) -> None:
 async def test_foreign_socat_excluded_and_outofband_kill_degrades(tunnel_lab, reap_tunnels) -> None:
     """A plain untagged socat never surfaces in discovery; killing one hop's
     tagged processes out-of-band flips the tunnel's status to ``degraded (...)``."""
-    carrot = tunnel_lab.hosts[_INGRESS]
-    tomato = tunnel_lab.hosts[_EXIT]
+    test1 = tunnel_lab.hosts[_INGRESS]
+    test2 = tunnel_lab.hosts[_EXIT]
     port = _PORT_DEGRADE
     foreign_port = _foreign_socat_port()
 
@@ -511,7 +511,7 @@ async def test_foreign_socat_excluded_and_outofband_kill_degrades(tunnel_lab, re
     foreign_cmd = (
         f"setsid socat TCP4-LISTEN:{foreign_port},fork,reuseaddr - </dev/null >/dev/null 2>&1 &"
     )
-    await tomato.exec(foreign_cmd, timeout=15, log=LogMode.QUIET)
+    await test2.exec(foreign_cmd, timeout=15, log=LogMode.QUIET)
     try:
         mid = await discover_tunnels(tunnel_lab)
         assert {d.tunnel.id for d in mid.tunnels} == before_ids, (
@@ -534,7 +534,7 @@ async def test_foreign_socat_excluded_and_outofband_kill_degrades(tunnel_lab, re
             if obs.parsed.tunnel.id == added.tunnel.id and origin == _INGRESS
         ]
         assert killed_pids, f"expected tagged processes on {_INGRESS!r} before kill"
-        result = await carrot.exec(kill_command(killed_pids), timeout=15, log=LogMode.QUIET)
+        result = await test1.exec(kill_command(killed_pids), timeout=15, log=LogMode.QUIET)
         assert result.is_ok, f"out-of-band kill on {_INGRESS!r} failed: {result.value!r}"
 
         degraded = await discover_tunnels(tunnel_lab)
@@ -556,7 +556,7 @@ async def test_foreign_socat_excluded_and_outofband_kill_degrades(tunnel_lab, re
         # body also raised, exception chaining (__context__) reports BOTH,
         # which is the evidence path we want. argv_pattern is called INLINE —
         # the G5 tree-wide scan cannot see through a variable binding.
-        result = await tomato.exec(
+        result = await test2.exec(
             f"pkill -f {shlex.quote(argv_pattern(f'TCP4-LISTEN:{foreign_port},'))} || true",
             timeout=15,
             log=LogMode.QUIET,
@@ -570,7 +570,7 @@ async def test_foreign_socat_excluded_and_outofband_kill_degrades(tunnel_lab, re
 
 
 def _run_cycle(argv: list[str], sut: Path) -> "subprocess.CompletedProcess[str]":
-    return run_otto(argv, sut_dirs=sut, lab="veggies", timeout=180)
+    return run_otto(argv, sut_dirs=sut, lab="unix", timeout=180)
 
 
 def _assert_docker_free(proc: "subprocess.CompletedProcess[str]", step: str) -> None:
@@ -592,7 +592,7 @@ def test_cli_cycle_add_list_remove_list_docker_free(tmp_path: Path) -> None:
     even a bare ``otto tunnel list`` auto-started compose stacks on the peers
     and flooded the console with docker I/O.
     """
-    for ne in ("carrot", "tomato"):
+    for ne in ("test1", "test2"):
         asyncio.run(assert_reachable(ne, host_data(ne)["ip"]))
     sut = cli_sut_dir(tmp_path)
     cleanup_id = ""
@@ -602,7 +602,7 @@ def test_cli_cycle_add_list_remove_list_docker_free(tmp_path: Path) -> None:
                 "tunnel",
                 "add",
                 "--hosts",
-                "carrot_seed@eth2,tomato_seed",
+                "test1@eth2,test2",
                 "--port",
                 str(_PORT_CLI_CYCLE),
                 "--protocol",

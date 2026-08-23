@@ -122,7 +122,7 @@ async def test_as_user_restores_previous_user():
 async def test_embedded_run_sudo_raises():
     from otto.host.embedded_host import ZephyrHost
 
-    host = ZephyrHost(ip="192.0.2.1", element="sprout", log=LogMode.QUIET)
+    host = ZephyrHost(ip="192.0.2.1", element="zephyr37_fat", log=LogMode.QUIET)
     with pytest.raises(NotImplementedError, match="sudo"):
         await host.run("ls", sudo=True)
 
@@ -265,7 +265,7 @@ async def test_switch_user_default_is_root_no_user_arg():
 async def test_embedded_switch_user_raises():
     from otto.host.embedded_host import ZephyrHost
 
-    host = ZephyrHost(ip="192.0.2.1", element="sprout", log=LogMode.QUIET)
+    host = ZephyrHost(ip="192.0.2.1", element="zephyr37_fat", log=LogMode.QUIET)
     with pytest.raises(NotImplementedError, match="su"):
         await host.switch_user("root")
 
@@ -294,7 +294,7 @@ async def test_as_user_switches_then_exits():
 async def test_embedded_as_user_raises():
     from otto.host.embedded_host import ZephyrHost
 
-    host = ZephyrHost(ip="192.0.2.1", element="sprout", log=LogMode.QUIET)
+    host = ZephyrHost(ip="192.0.2.1", element="zephyr37_fat", log=LogMode.QUIET)
     with pytest.raises(NotImplementedError, match=r"as_user|su"):
         async with host.as_user("root"):
             pass
@@ -366,7 +366,7 @@ async def test_switch_user_quotes_special_char_username():
 async def test_embedded_current_user_is_empty_loginless():
     from otto.host.embedded_host import ZephyrHost
 
-    host = ZephyrHost(ip="192.0.2.1", element="sprout", log=LogMode.QUIET)
+    host = ZephyrHost(ip="192.0.2.1", element="zephyr37_fat", log=LogMode.QUIET)
     assert host.current_user == ""  # loginless embedded shell
 
 

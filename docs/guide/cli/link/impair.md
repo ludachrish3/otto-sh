@@ -7,10 +7,10 @@ otto link impair <link> [--delay <time>] [--jitter <time>] [--loss <percent>] [-
 ```
 
 ```bash
-otto --lab veggies link impair edge --delay 50
-otto --lab veggies link impair edge --loss 2 --delay 10
-otto --lab veggies link impair edge --rate 10mbit --from carrot_seed
-otto --lab veggies link impair edge --expire 300 --loss 5
+otto --lab unix link impair edge --delay 50
+otto --lab unix link impair edge --loss 2 --delay 10
+otto --lab unix link impair edge --rate 10mbit --from test1
+otto --lab unix link impair edge --expire 300 --loss 5
 ```
 
 `<link>` accepts a link's id or its `name` (the same value when a `name` is
@@ -40,8 +40,8 @@ By default `impair` places the **same** merged parameters independently on
 both directions' placements — A→B and B→A each get their own netem qdisc.
 That means `--delay 50` doesn't add 50 ms to a round trip, it adds 50 ms to
 *each leg*: a client on one end sees 50 ms out and 50 ms back, i.e. **100 ms
-of added RTT**. `--from carrot_seed` restricts to the one direction
-originating at `carrot_seed`, leaving the other leg — and the far end's view
+of added RTT**. `--from test1` restricts to the one direction
+originating at `test1`, leaving the other leg — and the far end's view
 of RTT — untouched.
 
 ## Re-impairing: merge, per-param last-one-wins
@@ -52,10 +52,10 @@ parameters given on *this* call, and replaces the qdisc with the result.
 Worked example:
 
 ```bash
-otto --lab veggies link impair edge --delay 20
+otto --lab unix link impair edge --delay 20
 # placement is now: delay 20ms
 
-otto --lab veggies link impair edge --loss 2 --delay 10
+otto --lab unix link impair edge --loss 2 --delay 10
 # placement is now: delay 10ms loss 2%  — delay overridden, loss added
 ```
 
@@ -66,7 +66,7 @@ Passing a parameter its **zero value** — `--loss 0`, `--delay 0`, `--rate 0`
 zero:
 
 ```bash
-otto --lab veggies link impair edge --loss 0
+otto --lab unix link impair edge --loss 0
 # placement is now: delay 10ms  — loss cleared, delay untouched
 ```
 

@@ -393,7 +393,7 @@ def _make_ft(
     mock_connections = MagicMock(spec=ConnectionManager)
     return ShellFileTransfer(
         connections=mock_connections,
-        name="tomato",
+        name="test2",
         exec_cmd=exec_cmd,
         userland=_declared_userland(base64_flag, stat_size, checksum, applets),
         max_filename_len=max_filename_len,
@@ -693,7 +693,7 @@ class TestShellPutRefusal:
             await ft._run_put([src], dest_dir, None)
 
         assert exec_cmd.calls == [], f"refusal must precede every command, got {exec_cmd.calls}"
-        assert "tomato" in str(exc_info.value)
+        assert "test2" in str(exc_info.value)
         assert "base64" in str(exc_info.value)
         assert "uudecode" in str(exc_info.value)
 
@@ -2040,7 +2040,7 @@ class TestShellPutIntegrityVerification:
             await ft._run_put([src], dest_dir, None)
 
         assert exec_cmd.calls == [], f"refusal must precede every command, got {exec_cmd.calls}"
-        assert "tomato" in str(exc_info.value)
+        assert "test2" in str(exc_info.value)
         assert "checksum" in str(exc_info.value)
 
 
@@ -2086,7 +2086,7 @@ class TestShellGetRefusal:
             await ft._run_get([src], dest_dir, None)
 
         assert exec_cmd.calls == [], f"refusal must precede every command, got {exec_cmd.calls}"
-        assert "tomato" in str(exc_info.value)
+        assert "test2" in str(exc_info.value)
         assert "base64" in str(exc_info.value)
         assert "uuencode" in str(exc_info.value)
 
@@ -2103,7 +2103,7 @@ class TestShellGetRefusal:
             await ft._run_get([src], dest_dir, None)
 
         assert exec_cmd.calls == [], f"refusal must precede every command, got {exec_cmd.calls}"
-        assert "tomato" in str(exc_info.value)
+        assert "test2" in str(exc_info.value)
         assert "stat_size" in str(exc_info.value)
 
 
@@ -3269,7 +3269,7 @@ class TestShellFileTransferCreate:
     def _ctx(self, **overrides: object) -> TransferContext:
         base: dict[str, object] = {
             "transfer": "shell",
-            "host_name": "tomato",
+            "host_name": "test2",
             "connections": MagicMock(spec=ConnectionManager),
             "exec_cmd": AsyncMock(),
             "userland": _declared_userland("-d"),
@@ -3828,7 +3828,7 @@ class TestCodecSelection:
             ft._select_codec("put", "uudecode")
 
         assert exec_cmd.calls == [], f"refusal must precede every command, got {exec_cmd.calls}"
-        assert "tomato" in str(exc_info.value)
+        assert "test2" in str(exc_info.value)
         assert "base64" in str(exc_info.value)
         assert "uudecode" in str(exc_info.value)
 
@@ -3864,7 +3864,7 @@ class TestCodecSelection:
 
         ft = ShellFileTransfer(
             connections=MagicMock(spec=ConnectionManager),
-            name="tomato",
+            name="test2",
             exec_cmd=_RecordingExec(),
             userland=userland,
         )

@@ -51,16 +51,16 @@ def _raise_on(host: object, needle: str, exc: BaseException) -> None:
 class TestRepair:
     @pytest.mark.asyncio
     async def test_repair_clears_impaired_placements_and_timers(self) -> None:
-        lab, carrot, tomato, _ = _bed()
+        lab, test1, test2, _ = _bed()
         token = encode_impair_sentinel(LINK.id, "eth1.100")
-        carrot.ps_text = f"  4242 05:00 {token} -c sleep 600\n"
+        test1.ps_text = f"  4242 05:00 {token} -c sleep 600\n"
         # pre-clear read shows impairment; post-clear re-read shows it gone
-        carrot.qdisc_texts = ["qdisc netem 8001: root refcnt 2 limit 1000 delay 20ms\n", ""]
-        tomato.qdisc_texts = [""]  # b-side has nothing to clear
+        test1.qdisc_texts = ["qdisc netem 8001: root refcnt 2 limit 1000 delay 20ms\n", ""]
+        test2.qdisc_texts = [""]  # b-side has nothing to clear
         report = await repair_link(lab, "edge")
-        assert "tc qdisc del dev eth1.100 root" in carrot.sudo_commands
-        assert "kill 4242" in carrot.sudo_commands
-        assert not any("del" in c for c in tomato.sudo_commands)
+        assert "tc qdisc del dev eth1.100 root" in test1.sudo_commands
+        assert "kill 4242" in test1.sudo_commands
+        assert not any("del" in c for c in test2.sudo_commands)
         assert [p.netdev for p in report.cleared] == ["eth1.100"]
         assert report.timers_cancelled == 1
 
@@ -68,18 +68,18 @@ class TestRepair:
     async def test_clear_that_does_not_take_raises_host_named(self) -> None:
         # `tc qdisc del` "succeeds" transport-wise but the impairment is still
         # present on re-read -> must fail loud, host/netdev named, not report cleared.
-        lab, carrot, tomato, _ = _bed()
+        lab, test1, test2, _ = _bed()
         # single-element queue -> the fake keeps returning netem state after del
-        carrot.qdisc_texts = ["qdisc netem 8001: root refcnt 2 limit 1000 delay 20ms\n"]
-        tomato.qdisc_texts = [""]
-        with pytest.raises(RuntimeError, match=r"repair failed on carrot_seed/eth1\.100"):
+        test1.qdisc_texts = ["qdisc netem 8001: root refcnt 2 limit 1000 delay 20ms\n"]
+        test2.qdisc_texts = [""]
+        with pytest.raises(RuntimeError, match=r"repair failed on test1/eth1\.100"):
             await repair_link(lab, "edge")
 
     @pytest.mark.asyncio
     async def test_repair_all_collects_clear_that_does_not_take(self) -> None:
-        lab, carrot, tomato, _ = _bed()
-        carrot.qdisc_texts = ["qdisc netem 8001: root refcnt 2 limit 1000 delay 20ms\n"]
-        tomato.qdisc_texts = [""]
+        lab, test1, test2, _ = _bed()
+        test1.qdisc_texts = ["qdisc netem 8001: root refcnt 2 limit 1000 delay 20ms\n"]
+        test2.qdisc_texts = [""]
         sweep = await repair_all(lab)
         assert sweep.repaired == []
         assert len(sweep.failures) == 1
@@ -88,12 +88,10 @@ class TestRepair:
 
     @pytest.mark.asyncio
     async def test_repair_all_skips_unimpairable_collects_failures(self) -> None:
-        unnamed = Link(
-            a=LinkEndpoint(host="carrot_seed"), b=LinkEndpoint(host="tomato_seed"), name="bare"
-        )
-        lab, carrot, _, _ = _bed()
+        unnamed = Link(a=LinkEndpoint(host="test1"), b=LinkEndpoint(host="test2"), name="bare")
+        lab, test1, _, _ = _bed()
         lab.links.append(unnamed)
-        carrot.fail_on = "tc qdisc show"  # the impairable link's read fails
+        test1.fail_on = "tc qdisc show"  # the impairable link's read fails
         sweep = await repair_all(lab)
         assert sweep.repaired == []  # the impairable link failed, the bare one skipped
         assert len(sweep.failures) == 1
@@ -114,13 +112,13 @@ class TestRepair:
         convention every other structural refusal in the module uses. The
         single-link `repair <id>` still refuses loudly (TestScopedRepair).
         """
-        lab, carrot, tomato, _ = _bed()
-        carrot.qdisc_texts = ["qdisc htb 8001: root refcnt 2 r2q 10\n"]
-        tomato.qdisc_texts = [""]
+        lab, test1, test2, _ = _bed()
+        test1.qdisc_texts = ["qdisc htb 8001: root refcnt 2 r2q 10\n"]
+        test2.qdisc_texts = [""]
         sweep = await repair_all(lab)
         assert sweep.repaired == []
         assert sweep.failures == []
-        assert not carrot.sudo_commands
+        assert not test1.sudo_commands
         # ...but REPORTED. A silent skip made `repair --all` print
         # "repaired 0 link(s)" and exit 0, saying nothing about the link it
         # had declined to touch.
@@ -140,28 +138,28 @@ class TestCancelTimersHygiene:
 
     @pytest.mark.asyncio
     async def test_unreachable_host_cancels_nothing_and_does_not_raise(self) -> None:
-        _lab, carrot, *_ = _bed()
+        _lab, test1, *_ = _bed()
 
         async def _boom(cmd: str, **_: object) -> CommandResult:
             raise ConnectionError("down")
 
-        carrot.exec = _boom  # type: ignore[method-assign]
-        assert await _cancel_timers(carrot, LINK.id, "eth1.100") == 0
+        test1.exec = _boom  # type: ignore[method-assign]
+        assert await _cancel_timers(test1, LINK.id, "eth1.100") == 0
 
     @pytest.mark.asyncio
     async def test_failed_scan_on_a_reachable_host_propagates(self) -> None:
-        _lab, carrot, *_ = _bed()
-        carrot.fail_on = IMPAIR_PS_COMMAND
-        with pytest.raises(LinkCommandFailedError, match="carrot_seed"):
-            await _cancel_timers(carrot, LINK.id, "eth1.100")
+        _lab, test1, *_ = _bed()
+        test1.fail_on = IMPAIR_PS_COMMAND
+        with pytest.raises(LinkCommandFailedError, match="test1"):
+            await _cancel_timers(test1, LINK.id, "eth1.100")
 
 
 class TestReadStates:
     @pytest.mark.asyncio
     async def test_states_report_per_direction_whole_params(self) -> None:
-        lab, carrot, tomato, _ = _bed()
-        carrot.qdisc_texts = ["qdisc netem 8001: root refcnt 2 limit 1000 delay 50ms\n"]
-        tomato.qdisc_texts = [""]
+        lab, test1, test2, _ = _bed()
+        test1.qdisc_texts = ["qdisc netem 8001: root refcnt 2 limit 1000 delay 50ms\n"]
+        test2.qdisc_texts = [""]
         (state,) = await read_link_states(lab)
         assert state.impairable
         assert not state.unreachable
@@ -183,10 +181,10 @@ class TestReadStates:
 
         from .test_manage_impair import FILTER_SCOPED_ONE, QDISC_SCOPED_ONE
 
-        lab, carrot, tomato, _ = _bed()
-        carrot.qdisc_texts = [QDISC_SCOPED_ONE]
-        carrot.filter_texts = [FILTER_SCOPED_ONE]
-        tomato.qdisc_texts = [""]
+        lab, test1, test2, _ = _bed()
+        test1.qdisc_texts = [QDISC_SCOPED_ONE]
+        test1.filter_texts = [FILTER_SCOPED_ONE]
+        test2.qdisc_texts = [""]
         (state,) = await read_link_states(lab)
         assert state.by_direction[FlowDirection.A_TO_B] == DirectionState(
             whole=None, scoped={Selector(5201, "tcp"): ImpairmentParams(delay_ms=200.0)}
@@ -194,9 +192,9 @@ class TestReadStates:
 
     @pytest.mark.asyncio
     async def test_states_report_foreign_flag(self) -> None:
-        lab, carrot, tomato, _ = _bed()
-        carrot.qdisc_texts = ["qdisc htb 8001: root refcnt 2 r2q 10\n"]
-        tomato.qdisc_texts = [""]
+        lab, test1, test2, _ = _bed()
+        test1.qdisc_texts = ["qdisc htb 8001: root refcnt 2 r2q 10\n"]
+        test2.qdisc_texts = [""]
         (state,) = await read_link_states(lab)
         a = state.by_direction[FlowDirection.A_TO_B]
         assert a is not None
@@ -211,18 +209,16 @@ class TestReadStates:
 
         Asking the predicate rather than catching the placement layer's
         ValueError is what makes the cell useful: that exception stops at the
-        FIRST bad endpoint, so a user fixing `carrot_seed` would rerun and be
-        told about `tomato_seed`. Both are named here."""
-        bare = Link(
-            a=LinkEndpoint(host="carrot_seed"), b=LinkEndpoint(host="tomato_seed"), name="bare"
-        )
+        FIRST bad endpoint, so a user fixing `test1` would rerun and be
+        told about `test2`. Both are named here."""
+        bare = Link(a=LinkEndpoint(host="test1"), b=LinkEndpoint(host="test2"), name="bare")
         lab, *_ = _bed(link=bare)
         (state,) = await read_link_states(lab)
         assert not state.impairable
         assert state.refusal is not None
         assert "no named interface" in state.refusal
-        assert "carrot_seed" in state.refusal
-        assert "tomato_seed" in state.refusal
+        assert "test1" in state.refusal
+        assert "test2" in state.refusal
 
     @pytest.mark.asyncio
     async def test_live_refusal_is_reported_with_its_reason(self) -> None:
@@ -235,14 +231,14 @@ class TestReadStates:
         never entered by any test, and could return `refusal=None` (or raise)
         unnoticed.
         """
-        # eth1 IS carrot's management address (10.10.200.11, per CARROT_ADDR),
+        # eth1 IS test1's management address (10.10.200.11, per TEST1_ADDR),
         # so placing an impairment there would sever otto's path to the host.
         mgmt = Link(
-            a=LinkEndpoint(host="carrot_seed", interface="eth1", ip="10.10.200.11"),
-            b=LinkEndpoint(host="tomato_seed", interface="eth1.200", ip="10.10.202.12"),
+            a=LinkEndpoint(host="test1", interface="eth1", ip="10.10.200.11"),
+            b=LinkEndpoint(host="test2", interface="eth1.200", ip="10.10.202.12"),
             name="mgmt-edge",
         )
-        lab, carrot, *_ = _bed(link=mgmt)
+        lab, test1, *_ = _bed(link=mgmt)
         assert impairment_refusal(mgmt) is None, "positive control: structurally fine"
 
         (state,) = await read_link_states(lab)
@@ -251,16 +247,16 @@ class TestReadStates:
         assert "management interface" in state.refusal
         assert "eth1" in state.refusal
         # ...and it really did take a live look to find that out.
-        assert "ip -o addr show" in carrot.commands
+        assert "ip -o addr show" in test1.commands
 
     @pytest.mark.asyncio
     async def test_unreachable_host_direction_is_none(self) -> None:
-        lab, carrot, _, _ = _bed()
+        lab, test1, _, _ = _bed()
 
         async def _boom(cmd: str, **_: object) -> CommandResult:
             raise ConnectionError("down")
 
-        carrot.exec = _boom  # type: ignore[method-assign]
+        test1.exec = _boom  # type: ignore[method-assign]
         (state,) = await read_link_states(lab)
         assert state.unreachable
         assert state.read_errors == {}
@@ -275,14 +271,14 @@ class TestReadStates:
         thrown away entirely. `read_error` carries it; `unreachable` stays
         False.
         """
-        lab, carrot, tomato, _ = _bed()
-        carrot.fail_on = "tc qdisc show"
-        tomato.qdisc_texts = [""]
+        lab, test1, test2, _ = _bed()
+        test1.fail_on = "tc qdisc show"
+        test2.qdisc_texts = [""]
         (state,) = await read_link_states(lab)
         assert not state.unreachable
         assert state.read_failed
         message = state.read_errors[FlowDirection.A_TO_B]
-        assert "carrot_seed" in message
+        assert "test1" in message
         assert "tc qdisc show" in message
         assert state.by_direction[FlowDirection.A_TO_B] is None
         # ...and the healthy direction is still reported, not lost with it —
@@ -294,17 +290,17 @@ class TestReadStates:
     async def test_one_endpoint_down_and_the_other_broken_keeps_both_stories(self) -> None:
         """The shape a single link-wide read_error string could not express.
 
-        carrot's qdisc read never answers; tomato's answers and fails. One
+        test1's qdisc read never answers; test2's answers and fails. One
         field had to pick a story for both cells; per-direction keeps each
         cell its own.
         """
-        lab, carrot, tomato, _ = _bed()
-        _raise_on(carrot, "tc qdisc show", ConnectionError("down"))
-        tomato.fail_on = "tc qdisc show"
+        lab, test1, test2, _ = _bed()
+        _raise_on(test1, "tc qdisc show", ConnectionError("down"))
+        test2.fail_on = "tc qdisc show"
         (state,) = await read_link_states(lab)
-        assert state.unreachable  # carrot, on a->b
-        assert list(state.read_errors) == [FlowDirection.B_TO_A]  # tomato
-        assert "tomato_seed" in state.read_errors[FlowDirection.B_TO_A]
+        assert state.unreachable  # test1, on a->b
+        assert list(state.read_errors) == [FlowDirection.B_TO_A]  # test2
+        assert "test2" in state.read_errors[FlowDirection.B_TO_A]
 
     @pytest.mark.asyncio
     async def test_a_bare_runtimeerror_from_the_host_stack_does_not_kill_the_scan(self) -> None:
@@ -320,9 +316,9 @@ class TestReadStates:
         other caller has a try. Filed as a read failure, since whether the
         host answered is exactly what such an error does not say.
         """
-        lab, carrot, tomato, _ = _bed()
-        _raise_on(carrot, "tc qdisc show", RuntimeError("carrot_seed: session is not alive"))
-        tomato.qdisc_texts = [""]
+        lab, test1, test2, _ = _bed()
+        _raise_on(test1, "tc qdisc show", RuntimeError("test1: session is not alive"))
+        test2.qdisc_texts = [""]
         (state,) = await read_link_states(lab)  # must not raise
         assert state.read_failed
         assert "session is not alive" in state.read_errors[FlowDirection.A_TO_B]
@@ -338,12 +334,12 @@ class TestReadStates:
         that call too — and a host failing THERE takes the link's whole
         reading with it, which is why the outer arm needs the same width.
         """
-        lab, carrot, _tomato, _ = _bed()
+        lab, test1, _test2, _ = _bed()
 
         async def _dead_session(cmd: str, **_: object) -> CommandResult:
-            raise RuntimeError("carrot_seed: session is not alive")
+            raise RuntimeError("test1: session is not alive")
 
-        carrot.exec = _dead_session  # type: ignore[method-assign]
+        test1.exec = _dead_session  # type: ignore[method-assign]
         (state,) = await read_link_states(lab)  # must not raise
         assert state.read_failed
         assert state.by_direction == {}
@@ -357,24 +353,24 @@ class TestScopedRepair:
     async def test_bare_repair_clears_scoped_tree_and_all_timers(self) -> None:
         v1 = encode_impair_sentinel(LINK.id, "eth1.100")
         v2 = encode_impair_sentinel_v2(LINK.id, "eth1.100", Selector(5201, "tcp"))
-        lab, carrot, tomato, _ = _bed()
-        carrot.ps_text = f"  4242 05:00 {v1} -c sleep 600\n  4243 05:00 {v2} -c sleep 600\n"
-        carrot.qdisc_texts = [QDISC_SCOPED_ONE, ""]
-        carrot.filter_texts = [FILTER_SCOPED_ONE, ""]
-        tomato.qdisc_texts = [""]
+        lab, test1, test2, _ = _bed()
+        test1.ps_text = f"  4242 05:00 {v1} -c sleep 600\n  4243 05:00 {v2} -c sleep 600\n"
+        test1.qdisc_texts = [QDISC_SCOPED_ONE, ""]
+        test1.filter_texts = [FILTER_SCOPED_ONE, ""]
+        test2.qdisc_texts = [""]
         report = await repair_link(lab, "edge")
-        assert "kill 4242 4243" in carrot.sudo_commands
-        assert "tc qdisc del dev eth1.100 root" in carrot.sudo_commands
+        assert "kill 4242 4243" in test1.sudo_commands
+        assert "tc qdisc del dev eth1.100 root" in test1.sudo_commands
         assert report.timers_cancelled == 2
 
     @pytest.mark.asyncio
     async def test_selector_repair_clears_one_of_two(self) -> None:
-        lab, carrot, tomato, _ = _bed()
-        carrot.qdisc_texts = [QDISC_SCOPED_TWO, QDISC_SCOPED_ONE]
-        carrot.filter_texts = [FILTER_SCOPED_TWO, FILTER_SCOPED_ONE]
-        tomato.qdisc_texts = [""]
+        lab, test1, test2, _ = _bed()
+        test1.qdisc_texts = [QDISC_SCOPED_TWO, QDISC_SCOPED_ONE]
+        test1.filter_texts = [FILTER_SCOPED_TWO, FILTER_SCOPED_ONE]
+        test2.qdisc_texts = [""]
         report = await repair_link(lab, "edge", selector=Selector(53, "udp"))
-        assert carrot.sudo_commands == [
+        assert test1.sudo_commands == [
             "tc filter del dev eth1.100 parent 1: pref 52 protocol ip u32",
             "tc filter del dev eth1.100 parent 1: pref 53 protocol ip u32",
             "tc qdisc del dev eth1.100 parent 1:5 handle 50:",
@@ -383,19 +379,19 @@ class TestScopedRepair:
 
     @pytest.mark.asyncio
     async def test_selector_repair_of_last_selector_deletes_root(self) -> None:
-        lab, carrot, tomato, _ = _bed()
-        carrot.qdisc_texts = [QDISC_SCOPED_ONE, ""]
-        carrot.filter_texts = [FILTER_SCOPED_ONE, ""]
-        tomato.qdisc_texts = [""]
+        lab, test1, test2, _ = _bed()
+        test1.qdisc_texts = [QDISC_SCOPED_ONE, ""]
+        test1.filter_texts = [FILTER_SCOPED_ONE, ""]
+        test2.qdisc_texts = [""]
         await repair_link(lab, "edge", selector=Selector(5201, "tcp"))
-        assert carrot.sudo_commands == ["tc qdisc del dev eth1.100 root"]
+        assert test1.sudo_commands == ["tc qdisc del dev eth1.100 root"]
 
     @pytest.mark.asyncio
     async def test_selector_repair_cancels_only_matching_v2_timer(self) -> None:
         mine = encode_impair_sentinel_v2(LINK.id, "eth1.100", Selector(5201, "tcp"))
         other = encode_impair_sentinel_v2(LINK.id, "eth1.100", Selector(53, "udp"))
-        lab, carrot, tomato, _ = _bed()
-        carrot.ps_text = f"  4242 05:00 {mine} -c x\n  4243 05:00 {other} -c x\n"
+        lab, test1, test2, _ = _bed()
+        test1.ps_text = f"  4242 05:00 {mine} -c x\n  4243 05:00 {other} -c x\n"
         # post-clear re-read: only 53/udp (band 5) remains
         qdisc_53_only = (
             "qdisc prio 1: root refcnt 2 bands 11 priomap 1 2 2 2 1 2 0 0 1 1 1 1 1 1 1 1\n"
@@ -409,52 +405,52 @@ class TestScopedRepair:
             "  match 00110000/00ff0000 at 8\n"
             "  match 00350000/ffff0000 at 20\n"
         )
-        carrot.qdisc_texts = [QDISC_SCOPED_TWO, qdisc_53_only]
-        carrot.filter_texts = [FILTER_SCOPED_TWO, filter_53_only]
-        tomato.qdisc_texts = [""]
+        test1.qdisc_texts = [QDISC_SCOPED_TWO, qdisc_53_only]
+        test1.filter_texts = [FILTER_SCOPED_TWO, filter_53_only]
+        test2.qdisc_texts = [""]
         await repair_link(lab, "edge", selector=Selector(5201, "tcp"))
-        assert "kill 4242" in carrot.sudo_commands
-        assert not any("4243" in c for c in carrot.sudo_commands)
+        assert "kill 4242" in test1.sudo_commands
+        assert not any("4243" in c for c in test1.sudo_commands)
 
     @pytest.mark.asyncio
     async def test_selector_repair_against_whole_link_is_loud(self) -> None:
-        lab, carrot, tomato, _ = _bed()
-        carrot.qdisc_texts = ["qdisc netem 8001: root refcnt 2 limit 1000 delay 20ms\n"]
-        tomato.qdisc_texts = [""]
+        lab, test1, test2, _ = _bed()
+        test1.qdisc_texts = ["qdisc netem 8001: root refcnt 2 limit 1000 delay 20ms\n"]
+        test2.qdisc_texts = [""]
         with pytest.raises(ValueError, match="repair it without --port"):
             await repair_link(lab, "edge", selector=Selector(5201, "tcp"))
-        assert not carrot.sudo_commands
+        assert not test1.sudo_commands
 
     @pytest.mark.asyncio
     async def test_selector_repair_absent_selector_clears_nothing(self) -> None:
-        lab, carrot, tomato, _ = _bed()
-        carrot.qdisc_texts = [QDISC_SCOPED_ONE]
-        carrot.filter_texts = [FILTER_SCOPED_ONE]
-        tomato.qdisc_texts = [""]
+        lab, test1, test2, _ = _bed()
+        test1.qdisc_texts = [QDISC_SCOPED_ONE]
+        test1.filter_texts = [FILTER_SCOPED_ONE]
+        test2.qdisc_texts = [""]
         report = await repair_link(lab, "edge", selector=Selector(9999, "tcp"))
         assert report.cleared == []
-        assert not carrot.sudo_commands
+        assert not test1.sudo_commands
 
     @pytest.mark.asyncio
     async def test_selector_clear_that_does_not_take_raises(self) -> None:
-        lab, carrot, tomato, _ = _bed()
+        lab, test1, test2, _ = _bed()
         # single-element queues: state unchanged after the clear commands
-        carrot.qdisc_texts = [QDISC_SCOPED_ONE]
-        carrot.filter_texts = [FILTER_SCOPED_ONE]
-        tomato.qdisc_texts = [""]
-        with pytest.raises(RuntimeError, match=r"repair failed on carrot_seed/eth1\.100"):
+        test1.qdisc_texts = [QDISC_SCOPED_ONE]
+        test1.filter_texts = [FILTER_SCOPED_ONE]
+        test2.qdisc_texts = [""]
+        with pytest.raises(RuntimeError, match=r"repair failed on test1/eth1\.100"):
             await repair_link(lab, "edge", selector=Selector(5201, "tcp"))
 
     @pytest.mark.asyncio
     async def test_bare_repair_against_foreign_root_refuses(self) -> None:
-        lab, carrot, tomato, _ = _bed()
-        carrot.qdisc_texts = ["qdisc htb 8001: root refcnt 2 r2q 10\n"]
-        tomato.qdisc_texts = [""]
+        lab, test1, test2, _ = _bed()
+        test1.qdisc_texts = ["qdisc htb 8001: root refcnt 2 r2q 10\n"]
+        test2.qdisc_texts = [""]
         # ValueError: the structural-refusal convention. `repair --all` skips
         # it (see TestRepairAll) — a foreign qdisc was never otto's to clear.
         with pytest.raises(ValueError, match="foreign qdisc otto did not create"):
             await repair_link(lab, "edge")
-        assert not carrot.sudo_commands
+        assert not test1.sudo_commands
 
 
 # ===========================================================================
@@ -473,25 +469,25 @@ class TestDryRunRepairPlansWithoutContact:
 
     @pytest.mark.asyncio
     async def test_the_clears_are_conditional_and_nothing_is_reported_cleared(self) -> None:
-        lab, carrot, tomato, _ = _bed()
+        lab, test1, test2, _ = _bed()
         with active_context(dry_run=True):
             report = await repair_link(lab, "edge")
 
         assert report.plan is not None
         assert report.cleared == []
         assert report.timers_cancelled == 0
-        assert carrot.commands + tomato.commands == [], "a dry run contacted a host"
+        assert test1.commands + test2.commands == [], "a dry run contacted a host"
         assert report.plan.would == [
             (
-                "carrot_seed/eth1.100: tc qdisc del dev eth1.100 root "
+                "test1/eth1.100: tc qdisc del dev eth1.100 root "
                 "(only if the netdev carries otto impairment)"
             ),
-            "carrot_seed/eth1.100: cancel every live expire timer for this link",
+            "test1/eth1.100: cancel every live expire timer for this link",
             (
-                "tomato_seed/eth1.200: tc qdisc del dev eth1.200 root "
+                "test2/eth1.200: tc qdisc del dev eth1.200 root "
                 "(only if the netdev carries otto impairment)"
             ),
-            "tomato_seed/eth1.200: cancel every live expire timer for this link",
+            "test2/eth1.200: cancel every live expire timer for this link",
         ]
         unchecked = " ".join(report.plan.unchecked)
         assert "timers cancelled 0" in unchecked, (
@@ -503,11 +499,11 @@ class TestDryRunRepairPlansWithoutContact:
     async def test_a_real_repair_on_the_same_bed_still_clears_and_counts(self) -> None:
         """The control: the bed HAS something to clear and a timer to kill, so
         the assertions above are about suppression and not about an empty lab."""
-        lab, carrot, tomato, _ = _bed()
+        lab, test1, test2, _ = _bed()
         token = encode_impair_sentinel(LINK.id, "eth1.100")
-        carrot.ps_text = f"  4242 05:00 {token} -c sleep 600\n"
-        carrot.qdisc_texts = ["qdisc netem 8001: root refcnt 2 limit 1000 delay 20ms\n", ""]
-        tomato.qdisc_texts = [""]
+        test1.ps_text = f"  4242 05:00 {token} -c sleep 600\n"
+        test1.qdisc_texts = ["qdisc netem 8001: root refcnt 2 limit 1000 delay 20ms\n", ""]
+        test2.qdisc_texts = [""]
         report = await repair_link(lab, "edge")
         assert [p.netdev for p in report.cleared] == ["eth1.100"]
         assert report.timers_cancelled == 1
@@ -533,8 +529,8 @@ class TestDryRunRepairPlansWithoutContact:
     async def test_a_structural_refusal_is_still_a_skip_under_a_dry_run(self) -> None:
         """Skips come from lab data, so a dry run is as entitled to them as a real run."""
         bare = Link(
-            a=LinkEndpoint(host="carrot_seed", ip="10.10.201.11"),
-            b=LinkEndpoint(host="tomato_seed", ip="10.10.202.12"),
+            a=LinkEndpoint(host="test1", ip="10.10.201.11"),
+            b=LinkEndpoint(host="test2", ip="10.10.202.12"),
             name="bare-edge",
         )
         lab, *_ = _bed(link=bare)
@@ -553,8 +549,8 @@ class TestDryRunRepairPlansWithoutContact:
     async def test_a_real_sweep_of_the_same_lab_is_not_marked_dry(self) -> None:
         """The control for the flag: `dry_run` is read from the run, not defaulted on."""
         bare = Link(
-            a=LinkEndpoint(host="carrot_seed", ip="10.10.201.11"),
-            b=LinkEndpoint(host="tomato_seed", ip="10.10.202.12"),
+            a=LinkEndpoint(host="test1", ip="10.10.201.11"),
+            b=LinkEndpoint(host="test2", ip="10.10.202.12"),
             name="bare-edge",
         )
         lab, *_ = _bed(link=bare)
@@ -575,7 +571,7 @@ class TestDryRunListReportsNotMeasured:
 
     @pytest.mark.asyncio
     async def test_nothing_is_reported_clean_unreachable_or_read_failed(self) -> None:
-        lab, carrot, tomato, _ = _bed()
+        lab, test1, test2, _ = _bed()
         with active_context(dry_run=True):
             (state,) = await read_link_states(lab)
 
@@ -591,15 +587,15 @@ class TestDryRunListReportsNotMeasured:
             "the STRUCTURAL predicate is pure and did answer; what it does not cover is "
             "the live refusals, which is what not_measured warns about"
         )
-        assert carrot.commands + tomato.commands == []
+        assert test1.commands + test2.commands == []
 
     @pytest.mark.asyncio
     async def test_the_same_bed_read_for_real_reports_the_impairment(self) -> None:
         """The control. Without it, `not_measured` could be reported by a
         `_link_state` that had simply stopped reading anything."""
-        lab, carrot, tomato, _ = _bed()
-        carrot.qdisc_texts = ["qdisc netem 8001: root refcnt 2 limit 1000 delay 20ms\n"]
-        tomato.qdisc_texts = [""]
+        lab, test1, test2, _ = _bed()
+        test1.qdisc_texts = ["qdisc netem 8001: root refcnt 2 limit 1000 delay 20ms\n"]
+        test2.qdisc_texts = [""]
         (state,) = await read_link_states(lab)
 
         assert state.not_measured is False
@@ -610,8 +606,8 @@ class TestDryRunListReportsNotMeasured:
         """`impairment_refusal` needs no lab, no await and no address fetch, so
         it is answered first and completely — there is nothing left unread."""
         bare = Link(
-            a=LinkEndpoint(host="carrot_seed", ip="10.10.201.11"),
-            b=LinkEndpoint(host="tomato_seed", ip="10.10.202.12"),
+            a=LinkEndpoint(host="test1", ip="10.10.201.11"),
+            b=LinkEndpoint(host="test2", ip="10.10.202.12"),
             name="bare-edge",
         )
         lab, *_ = _bed(link=bare)
@@ -667,7 +663,7 @@ class TestDryRunListReportsNotMeasured:
         lab, *_ = _bed()
 
         async def _pure_resolve(_lab: object, _link: object, _directions: object) -> list:
-            return [Placement("carrot_seed", "eth1.100", FlowDirection.A_TO_B)]
+            return [Placement("test1", "eth1.100", FlowDirection.A_TO_B)]
 
         monkeypatch.setattr(manage, "_resolve_placements", _pure_resolve)
         with active_context(dry_run=True):

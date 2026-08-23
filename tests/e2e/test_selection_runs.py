@@ -39,7 +39,7 @@ def test_tests_flag_runs_named_tests_across_suites(tmp_path: Path) -> None:
         ["test", "--tests", "test_alpha_one,test_beta_one"],
         xdir=xdir,
         sut_dirs=repo,
-        lab="veggies",
+        lab="unix",
     )
     assert r.returncode == 0, r.stdout + r.stderr
     [junit] = _junit_files(xdir)
@@ -54,7 +54,7 @@ def test_plain_function_runs_via_tests_flag(tmp_path: Path) -> None:
         ["test", "--tests", "test_plain_function"],
         xdir=xdir,
         sut_dirs=repo,
-        lab="veggies",
+        lab="unix",
     )
     assert r.returncode == 0, r.stdout + r.stderr
     [junit] = _junit_files(xdir)
@@ -69,7 +69,7 @@ def test_qualified_name_selects_one_suite(tmp_path: Path) -> None:
         ["test", "--tests", "TestAlpha::test_alpha_one"],
         xdir=xdir,
         sut_dirs=repo,
-        lab="veggies",
+        lab="unix",
     )
     assert r.returncode == 0, r.stdout + r.stderr
     [junit] = _junit_files(xdir)
@@ -84,7 +84,7 @@ def test_marker_alone_runs_both_suites(tmp_path: Path) -> None:
         ["test", "-m", "shared"],
         xdir=xdir,
         sut_dirs=repo,
-        lab="veggies",
+        lab="unix",
     )
     assert r.returncode == 0, r.stdout + r.stderr
     [junit] = _junit_files(xdir)
@@ -99,7 +99,7 @@ def test_unknown_name_is_loud_with_suggestion(tmp_path: Path) -> None:
         ["test", "--tests", "test_alpha_won"],
         xdir=xdir,
         sut_dirs=repo,
-        lab="veggies",
+        lab="unix",
     )
     # Rich wraps the error panel to terminal width and can insert a
     # box-drawing border character mid-phrase with no surrounding whitespace
@@ -126,7 +126,7 @@ def test_tests_flag_with_suite_subcommand_is_loud(tmp_path: Path) -> None:
         ["test", "--tests", "test_alpha_one", "TestAlpha"],
         xdir=xdir,
         sut_dirs=repo,
-        lab="veggies",
+        lab="unix",
     )
     combined = (r.stdout + r.stderr).lower()
     assert r.returncode == 2, r.stdout + r.stderr
@@ -141,7 +141,7 @@ def test_bare_otto_test_still_shows_help(tmp_path: Path) -> None:
         ["test"],
         xdir=xdir,
         sut_dirs=repo,
-        lab="veggies",
+        lab="unix",
     )
     assert r.returncode == 0, r.stdout + r.stderr
     assert "Usage" in r.stdout
@@ -157,7 +157,7 @@ def test_stability_mode_works_on_selection(tmp_path: Path) -> None:
         ["test", "-i", "2", "--tests", "test_plain_function"],
         xdir=xdir,
         sut_dirs=repo,
-        lab="veggies",
+        lab="unix",
     )
     assert r.returncode == 0, r.stdout + r.stderr
     assert "Stability Results" in r.stdout
@@ -172,7 +172,7 @@ def test_multi_repo_selection_runs_one_session_per_repo(tmp_path: Path) -> None:
     r = run_otto(
         ["test", "--tests", "test_plain_function"],
         xdir=xdir,
-        lab="veggies",
+        lab="unix",
         extra_env={"OTTO_SUT_DIRS": sut_dirs},
     )
     assert r.returncode == 0, r.stdout + r.stderr
@@ -196,7 +196,7 @@ def test_multi_repo_explicit_results_fans_out_per_repo(tmp_path: Path) -> None:
     r = run_otto(
         ["test", "--tests", "test_plain_function", "--results", str(results_path)],
         xdir=xdir,
-        lab="veggies",
+        lab="unix",
         extra_env={"OTTO_SUT_DIRS": sut_dirs},
     )
     assert r.returncode == 0, r.stdout + r.stderr
@@ -219,7 +219,7 @@ def test_marker_alone_skips_repos_without_matches(tmp_path: Path) -> None:
     r = run_otto(
         ["test", "-m", "shared"],
         xdir=xdir,
-        lab="veggies",
+        lab="unix",
         extra_env={"OTTO_SUT_DIRS": sut_dirs},
     )
     assert r.returncode == 0, r.stdout + r.stderr
@@ -241,7 +241,7 @@ def test_multi_repo_worst_exit_code_wins(tmp_path: Path) -> None:
     r = run_otto(
         ["test", "--tests", "test_plain_function"],
         xdir=xdir,
-        lab="veggies",
+        lab="unix",
         extra_env={"OTTO_SUT_DIRS": sut_dirs},
     )
     assert r.returncode != 0

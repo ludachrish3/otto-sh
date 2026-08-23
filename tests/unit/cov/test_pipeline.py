@@ -92,13 +92,13 @@ class TestReadCovSourceRoots:
                 {
                     "sut_dir": "/x",
                     "toolchains": {},
-                    "source_roots": {"sprout": "/b/v3_7", "sprout44": "/b/v4_4"},
+                    "source_roots": {"zephyr37-fat": "/b/v3_7", "zephyr44-fat": "/b/v4_4"},
                 }
             )
         )
         assert read_cov_source_roots([cov]) == {
-            "sprout": Path("/b/v3_7"),
-            "sprout44": Path("/b/v4_4"),
+            "zephyr37-fat": Path("/b/v3_7"),
+            "zephyr44-fat": Path("/b/v4_4"),
         }
 
     def test_read_cov_source_roots_missing_meta_returns_empty(self, tmp_path):
@@ -114,8 +114,8 @@ class TestReadCovSourceRoots:
 class TestCoverageReporterPerHostGcno:
     def test_per_host_gcno_dirs_uses_source_roots_then_fallback(self, tmp_path):
         gcda_dirs = [
-            tmp_path / "cov" / "sprout",
-            tmp_path / "cov" / "sprout44",
+            tmp_path / "cov" / "zephyr37-fat",
+            tmp_path / "cov" / "zephyr44-fat",
             tmp_path / "cov" / "other",
         ]
         root_a = tmp_path / "build_v3_7"
@@ -125,7 +125,7 @@ class TestCoverageReporterPerHostGcno:
             gcda_dirs=gcda_dirs,
             source_root=fallback,
             output_dir=tmp_path / "out",
-            source_roots={"sprout": root_a, "sprout44": root_b},
+            source_roots={"zephyr37-fat": root_a, "zephyr44-fat": root_b},
         )
         assert r._per_host_gcno_dirs() == [root_a, root_b, fallback]  # 3rd falls back
 

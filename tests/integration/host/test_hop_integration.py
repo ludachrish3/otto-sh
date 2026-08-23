@@ -8,9 +8,9 @@ These tests require all three Vagrant VMs to be running::
 Topology
 --------
 - otto (dev VM, 10.10.200.100)
-- test1 / carrot (10.10.200.11) — SSH hop
-- test2 / tomato (10.10.200.12) — intermediate hop or target
-- test3 / pepper (10.10.200.13) — final target for 2-hop chains
+- test1 / test1 (10.10.200.11) — SSH hop
+- test2 / test2 (10.10.200.12) — intermediate hop or target
+- test3 / test3 (10.10.200.13) — final target for 2-hop chains
 
 Run hop tests::
 
@@ -47,7 +47,7 @@ pytestmark = [pytest.mark.timeout(30)]
 # `_find_free_port` serialises port allocation within a UnixHost, but nothing
 # coordinates across xdist workers: two nc transfers racing the same host's
 # port scan in the TOCTOU window before `nc -l` binds can both pick 9000 and
-# cross-wire. The hop tests hard-code `tomato` and take no pool lease, so they
+# cross-wire. The hop tests hard-code `test2` and take no pool lease, so they
 # are the most exposed of all, and the two descriptor tests below make it far
 # likelier by doing eight rapid transfers where the others do one.
 #
@@ -89,7 +89,7 @@ def _load_lab():
     from otto.context import _active
 
     lab = Lab(name="hops_test")
-    for ne in ("carrot", "tomato", "pepper"):
+    for ne in ("test1", "test2", "test3"):
         lab.add_host(_build_host(ne))
     snapshot = _active.get()
     set_context(OttoContext(lab=lab))
@@ -104,8 +104,8 @@ def _load_lab():
 
 @pytest_asyncio.fixture
 async def single_hop_ssh():
-    """Target reached through one SSH hop: otto -> carrot -> tomato (SSH)."""
-    data = host_data("tomato")
+    """Target reached through one SSH hop: otto -> test1 -> test2 (SSH)."""
+    data = host_data("test2")
     h = UnixHost(
         ip=data["ip"],
         element=data["element"],
@@ -114,7 +114,7 @@ async def single_hop_ssh():
         is_virtual=True,
         term="ssh",
         transfer="scp",
-        hop="carrot_seed",
+        hop="test1",
         log=LogMode.QUIET,
     )
     yield h
@@ -123,8 +123,8 @@ async def single_hop_ssh():
 
 @pytest_asyncio.fixture
 async def single_hop_telnet():
-    """Target reached via SSH hop, using telnet to the target: otto -> carrot -> tomato (telnet)."""
-    data = host_data("tomato")
+    """Target reached via SSH hop, using telnet to the target: otto -> test1 -> test2 (telnet)."""
+    data = host_data("test2")
     h = UnixHost(
         ip=data["ip"],
         element=data["element"],
@@ -133,7 +133,7 @@ async def single_hop_telnet():
         is_virtual=True,
         term="telnet",
         transfer="ftp",
-        hop="carrot_seed",
+        hop="test1",
         log=LogMode.QUIET,
     )
     yield h
@@ -142,40 +142,40 @@ async def single_hop_telnet():
 
 @pytest_asyncio.fixture
 async def two_hop_ssh():
-    """Target reached through two SSH hops: otto -> carrot -> tomato -> pepper.
+    """Target reached through two SSH hops: otto -> test1 -> test2 -> test3.
 
-    The intermediate hop (tomato) must itself have a hop configured so that
+    The intermediate hop (test2) must itself have a hop configured so that
     the recursive tunnel factory chains them.
     """
-    # Reconfigure tomato in the lab with a hop through carrot
+    # Reconfigure test2 in the lab with a hop through test1
     lab = Lab(name="hops_test_2hop")
-    lab.add_host(_build_host("carrot"))
-    tomato_data = host_data("tomato")
-    tomato_with_hop = UnixHost(
-        ip=tomato_data["ip"],
-        element=tomato_data["element"],
-        creds=[Cred(**c) for c in tomato_data["creds"]],
-        board=tomato_data.get("board"),
+    lab.add_host(_build_host("test1"))
+    test2_data = host_data("test2")
+    test2_with_hop = UnixHost(
+        ip=test2_data["ip"],
+        element=test2_data["element"],
+        creds=[Cred(**c) for c in test2_data["creds"]],
+        board=test2_data.get("board"),
         is_virtual=True,
         term="ssh",
         transfer="scp",
-        hop="carrot_seed",
+        hop="test1",
         log=LogMode.QUIET,
     )
-    lab.add_host(tomato_with_hop)
-    lab.add_host(_build_host("pepper"))
+    lab.add_host(test2_with_hop)
+    lab.add_host(_build_host("test3"))
     set_context(OttoContext(lab=lab))
 
-    pepper_data = host_data("pepper")
+    test3_data = host_data("test3")
     h = UnixHost(
-        ip=pepper_data["ip"],
-        element=pepper_data["element"],
-        creds=[Cred(**c) for c in pepper_data["creds"]],
-        board=pepper_data.get("board"),
+        ip=test3_data["ip"],
+        element=test3_data["element"],
+        creds=[Cred(**c) for c in test3_data["creds"]],
+        board=test3_data.get("board"),
         is_virtual=True,
         term="ssh",
         transfer="scp",
-        hop="tomato_seed",
+        hop="test2",
         log=LogMode.QUIET,
     )
     yield h
@@ -183,7 +183,7 @@ async def two_hop_ssh():
 
     # Restore the single-hop lab for subsequent tests
     lab = Lab(name="hops_test")
-    for ne in ("carrot", "tomato", "pepper"):
+    for ne in ("test1", "test2", "test3"):
         lab.add_host(_build_host(ne))
     set_context(OttoContext(lab=lab))
 
@@ -293,7 +293,7 @@ class TestFileTransferThroughHop:
     @pytest.mark.hops
     async def test_sftp_get_through_hop(self, tmp_path: Path):
         """Download a file through an SSH hop via SFTP."""
-        data = host_data("tomato")
+        data = host_data("test2")
         h = UnixHost(
             ip=data["ip"],
             element=data["element"],
@@ -302,7 +302,7 @@ class TestFileTransferThroughHop:
             is_virtual=True,
             term="ssh",
             transfer="sftp",
-            hop="carrot_seed",
+            hop="test1",
             log=LogMode.QUIET,
         )
         try:
@@ -319,7 +319,7 @@ class TestFileTransferThroughHop:
     @pytest.mark.hops
     async def test_ftp_put_through_hop(self, tmp_path: Path):
         """Upload a file through an SSH hop via FTP (port-forwarded)."""
-        data = host_data("tomato")
+        data = host_data("test2")
         h = UnixHost(
             ip=data["ip"],
             element=data["element"],
@@ -328,7 +328,7 @@ class TestFileTransferThroughHop:
             is_virtual=True,
             term="ssh",
             transfer="ftp",
-            hop="carrot_seed",
+            hop="test1",
             log=LogMode.QUIET,
         )
         try:
@@ -350,7 +350,7 @@ class TestFileTransferThroughHop:
     @pytest.mark.hops
     async def test_ftp_get_through_hop(self, tmp_path: Path):
         """Download a file through an SSH hop via FTP (port-forwarded)."""
-        data = host_data("tomato")
+        data = host_data("test2")
         h = UnixHost(
             ip=data["ip"],
             element=data["element"],
@@ -359,7 +359,7 @@ class TestFileTransferThroughHop:
             is_virtual=True,
             term="ssh",
             transfer="ftp",
-            hop="carrot_seed",
+            hop="test1",
             log=LogMode.QUIET,
         )
         try:
@@ -377,7 +377,7 @@ class TestFileTransferThroughHop:
     @_NC_SERIAL_GROUP
     async def test_nc_put_through_hop(self, tmp_path: Path):
         """Upload a file through an SSH hop via netcat (port-forwarded)."""
-        data = host_data("tomato")
+        data = host_data("test2")
         h = UnixHost(
             ip=data["ip"],
             element=data["element"],
@@ -386,7 +386,7 @@ class TestFileTransferThroughHop:
             is_virtual=True,
             term="ssh",
             transfer="nc",
-            hop="carrot_seed",
+            hop="test1",
             log=LogMode.QUIET,
         )
         try:
@@ -410,7 +410,7 @@ class TestFileTransferThroughHop:
     @_NC_SERIAL_GROUP
     async def test_nc_get_through_hop(self, tmp_path: Path):
         """Download a file through an SSH hop via netcat (reversed-listener)."""
-        data = host_data("tomato")
+        data = host_data("test2")
         h = UnixHost(
             ip=data["ip"],
             element=data["element"],
@@ -419,7 +419,7 @@ class TestFileTransferThroughHop:
             is_virtual=True,
             term="ssh",
             transfer="nc",
-            hop="carrot_seed",
+            hop="test1",
             log=LogMode.QUIET,
         )
         try:
@@ -434,7 +434,7 @@ class TestFileTransferThroughHop:
 
 
 # ---------------------------------------------------------------------------
-# Two-hop SSH chain: otto -> carrot -> tomato -> pepper
+# Two-hop SSH chain: otto -> test1 -> test2 -> test3
 #
 # NOTE: The two-hop chain multiplies the odds of an asyncssh stall since any
 # of the three SSH daemons can pause mid-protocol. Transfers are wrapped in
@@ -453,7 +453,7 @@ class TestTwoHopChain:
     @pytest.mark.asyncio
     @pytest.mark.hops
     async def test_hostname_through_two_hops(self, two_hop_ssh: UnixHost):
-        """Command should run on test3 (pepper), not the intermediate hops."""
+        """Command should run on test3, not the intermediate hops."""
         result = (await two_hop_ssh.run("hostname")).only
         assert result.status == Status.Success
         assert "test3" in result.value
@@ -487,13 +487,13 @@ class TestTwoHopChain:
 
 
 def _nc_hop_host() -> UnixHost:
-    """A ``tomato``-via-``carrot`` host on the netcat backend.
+    """A ``test2``-via-``test1`` host on the netcat backend.
 
     The two descriptor tests below both need a hop host whose transfers go
     through ``forward_port``; nothing else about them is shared, so this is a
     plain helper rather than a fixture.
     """
-    data = host_data("tomato")
+    data = host_data("test2")
     return UnixHost(
         ip=data["ip"],
         element=data["element"],
@@ -502,7 +502,7 @@ def _nc_hop_host() -> UnixHost:
         is_virtual=True,
         term="ssh",
         transfer="nc",
-        hop="carrot_seed",
+        hop="test1",
         log=LogMode.QUIET,
     )
 

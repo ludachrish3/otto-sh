@@ -45,7 +45,7 @@ paths = ["{lab_data_dir}"]
 
 
 def _make_repo(root: Path) -> Path:
-    """A throwaway SUT repo wired to otto's own ``veggies`` lab fixture."""
+    """A throwaway SUT repo wired to otto's own ``unix`` lab fixture."""
     return make_sut_repo(
         root,
         name="dryrunrepo",
@@ -83,7 +83,7 @@ def test_a_host_verb_under_dry_run_exits_0_and_runs_no_body(tmp_path: Path) -> N
         ["-n", "host", "local", "run", f"touch {marker}"],
         xdir=xdir,
         sut_dirs=repo,
-        lab="veggies",
+        lab="unix",
     )
     combined = dry.stdout + dry.stderr
 
@@ -101,7 +101,7 @@ def test_a_host_verb_under_dry_run_exits_0_and_runs_no_body(tmp_path: Path) -> N
         ["host", "local", "run", f"touch {marker}"],
         xdir=xdir,
         sut_dirs=repo,
-        lab="veggies",
+        lab="unix",
     )
     assert real.returncode == 0, (
         f"the positive control failed, so the dry-run assertions above prove "

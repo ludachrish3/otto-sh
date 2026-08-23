@@ -68,7 +68,7 @@ async def test_direct_churn(tunnel_lab, reap_tunnels) -> None:
         await assert_discovered(tunnel_lab, added.tunnel.id, procs=4, label=f"cycle {cycle}: ")
         if cycle in (0, SOAK_CYCLES - 1):
             await _probe_traffic(
-                tunnel_lab, ingress_ne="carrot", listen_host_id=EXIT, port=PORT_CHURN_DIRECT
+                tunnel_lab, ingress_ne="test1", listen_host_id=EXIT, port=PORT_CHURN_DIRECT
             )
         report = await remove_tunnel(tunnel_lab, added.tunnel.id)
         assert report.survivors == [], f"cycle {cycle}: survivors {report.survivors!r}"
@@ -92,7 +92,7 @@ async def test_multihop_churn(tunnel_lab, reap_tunnels) -> None:
         assert len(relay_procs) == 2, f"cycle {cycle}: relay procs {relay_procs!r}"
         if cycle in (0, SOAK_CYCLES - 1):
             await _probe_traffic(
-                tunnel_lab, ingress_ne="carrot", listen_host_id=RELAY, port=PORT_CHURN_MULTIHOP
+                tunnel_lab, ingress_ne="test1", listen_host_id=RELAY, port=PORT_CHURN_MULTIHOP
             )
         report = await remove_tunnel(tunnel_lab, added.tunnel.id)
         assert report.survivors == [], f"cycle {cycle}: survivors {report.survivors!r}"

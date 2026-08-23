@@ -165,9 +165,9 @@ to prime it, rather than skipping.
 
 Each guest is a tiny x86 initramfs whose **userland is the pinned artifact itself** —
 BusyBox 1.16.1 the device is really running BusyBox 1.16.1, not a modern build asked
-to behave like an old one. They run under QEMU on `test1` (the lab VM otto's lab data
-calls `carrot`) and are reachable only from inside it, so every guest is addressed
-through the hop:
+to behave like an old one. They run under QEMU on `test1` (the Vagrant VM
+of that name, which is also the host's lab id) and are reachable only from inside
+it, so every guest is addressed through the hop:
 
 | Version | Lab `ne` | `host1` backend id | Guest address | TAP on `test1` | systemd unit |
 | --- | --- | --- | --- | --- | --- |
@@ -185,7 +185,7 @@ Facts worth knowing before you read a failure:
 
 - **Telnet only, and that is the device being honest.** These guests run no ssh
   daemon — real BusyBox devices frequently do not either — so their lab entries
-  declare `telnet` and hop through `carrot_seed`. Their transfers are `shell` and
+  declare `telnet` and hop through `test1`. Their transfers are `shell` and
   `nc`; `nc` is *declared and refused*, by a measured gap in the `nc` applet's
   argument parsing, and the refusal itself is pinned by the bed suite.
 - **One account: `root`.** The password is baked into the image by the builder and
@@ -201,9 +201,9 @@ Facts worth knowing before you read a failure:
   would have exercised. Nothing is port-forwarded and no port range is pre-mapped, so
   the `nc` transfer picks its own ports the way it does on any other host.
 - **`bb1350`'s wire is a declared link, and otto will not impair it.** Because the far
-  end of that TAP is a real lab host, `carrot_seed:bbeth-1350 <-> bb1350_qemu:eth0` is
+  end of that TAP is a real lab host, `test1:bbeth-1350 <-> bb1350_qemu:eth0` is
   declared in `lab.json` and `otto link list` shows it. `otto link impair` refuses it
-  from both ends, and both refusals are right: on carrot the TAP carries the guest's
+  from both ends, and both refusals are right: on test1 the TAP carries the guest's
   management transit, and on the guest `eth0` carries the guest's own management
   address. A guest with one NIC has no data plane to degrade separately from its
   management path — the impairment itself works fine on a TAP (measured: netem delay

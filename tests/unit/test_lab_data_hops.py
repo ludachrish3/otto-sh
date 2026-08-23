@@ -5,11 +5,11 @@ them was test scaffolding (hop *functionality* is covered by
 test_hop_integration.py). Hops are legitimate for exactly two populations, and
 both are pinned below by name rather than waved through by category:
 
-* the embedded (Zephyr) instances, which hop through basil;
+* the embedded (Zephyr) instances, which hop through test4;
 * the BusyBox bed guests (``bb*``, spec
   ``docs/superpowers/specs/2026-08-20-busybox-bed-and-tier-migration-design.md``),
-  which are Unix hosts and hop through carrot. Each one sits on its own /30
-  behind a TAP device that exists only on carrot, so a hop is not scaffolding
+  which are Unix hosts and hop through test1. Each one sits on its own /30
+  behind a TAP device that exists only on test1, so a hop is not scaffolding
   there — it is the only route that exists.
 
 Widening the first guard to "Unix hosts may hop" would delete it, so the bed
@@ -40,7 +40,7 @@ _EMBEDDED_TECHS = ("tech1",)
 # stray sixth one fail loudly.
 _BUSYBOX_TECHS = ("tech1",)
 _BUSYBOX_GUESTS = ("bb1161", "bb1211", "bb1281", "bb1310", "bb1350")
-_BUSYBOX_HOP = "carrot_seed"
+_BUSYBOX_HOP = "test1"
 
 
 def _is_bed_guest(host: dict) -> bool:
@@ -60,14 +60,14 @@ def test_no_unix_host_defines_a_hop(tech: str) -> None:
         f"{tech}: Unix VMs must be directly reachable (no hop) — "
         f"hop functionality is covered by test_hop_integration.py, and the one "
         f"legitimate Unix exception (the BusyBox bed guests) is pinned by "
-        f"test_busybox_bed_guests_hop_through_carrot. Offenders: {offenders}"
+        f"test_busybox_bed_guests_hop_through_test1. Offenders: {offenders}"
     )
 
 
 @pytest.mark.parametrize("tech", _TECHS)
-def test_busybox_bed_guests_hop_through_carrot(tech: str) -> None:
+def test_busybox_bed_guests_hop_through_test1(tech: str) -> None:
     """The carve-out above is only as honest as this pin: the Unix hosts that
-    hop must be exactly the five bed guests, each through carrot."""
+    hop must be exactly the five bed guests, each through test1."""
     hosts = json.loads(lab_data_path(tech).read_text())["hosts"]
     guests = [h for h in hosts if _is_bed_guest(h) and "hop" in h]
     expected = _BUSYBOX_GUESTS if tech in _BUSYBOX_TECHS else ()
@@ -91,7 +91,7 @@ def test_embedded_hops_are_preserved(tech: str) -> None:
         f"{tech}: embedded hosts {expectation} (found: {[h['element'] for h in embedded]!r})"
     )
     # EVERY embedded host still declares its hop (regression guard against an
-    # over-eager sweep deleting the real basil hops — a partial sweep is the
+    # over-eager sweep deleting the real test4 hops — a partial sweep is the
     # same accident, so "at least one survived" is not good enough).
     unhopped = [h["element"] for h in embedded if "hop" not in h]
-    assert not unhopped, f"{tech}: embedded hosts lost their (basil) hop: {unhopped}"
+    assert not unhopped, f"{tech}: embedded hosts lost their (test4) hop: {unhopped}"

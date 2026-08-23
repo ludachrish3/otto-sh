@@ -13,7 +13,7 @@ def test_frontload_key_heavy_groups_return_zero():
     """All named heavy groups map to priority 0."""
     from tests.conftest import _frontload_key
 
-    assert _frontload_key("sprout_cov") == 0
+    assert _frontload_key("zephyr37_llext") == 0
     assert _frontload_key("docker_e2e") == 0
     assert _frontload_key("coverage_e2e") == 0
     assert _frontload_key("zephyr_fanout") == 0
@@ -71,7 +71,7 @@ def test_sort_puts_heavy_item_first():
         _FakeItem("unit_thing"),  # plain — should sort to back
         _FakeItem("docker_e2e"),  # heavy — should sort to front
         _FakeItem(None),  # plain (no marker) — should sort to back
-        _FakeItem("sprout_cov"),  # heavy — should sort to front
+        _FakeItem("zephyr37_llext"),  # heavy — should sort to front
         _FakeItem("other_group"),  # plain — should sort to back
         _FakeItem("zephyr_fanout"),  # heavy — should sort to front
     ]
@@ -80,7 +80,7 @@ def test_sort_puts_heavy_item_first():
 
     # All heavy items should come before all plain items.
     groups = [group_of(it) for it in items]
-    heavy_groups = {"sprout_cov", "docker_e2e", "coverage_e2e", "zephyr_fanout"}
+    heavy_groups = {"zephyr37_llext", "docker_e2e", "coverage_e2e", "zephyr_fanout"}
     first_plain_idx = next((i for i, g in enumerate(groups) if g not in heavy_groups), len(groups))
     last_heavy_idx = max((i for i, g in enumerate(groups) if g in heavy_groups), default=-1)
     assert last_heavy_idx < first_plain_idx, (
@@ -93,6 +93,6 @@ def test_frontload_groups_contains_expected_names():
     from tests.conftest import _FRONTLOAD_GROUPS
 
     assert (
-        frozenset({"sprout_cov", "docker_e2e", "coverage_e2e", "zephyr_fanout"})
+        frozenset({"zephyr37_llext", "docker_e2e", "coverage_e2e", "zephyr_fanout"})
         == _FRONTLOAD_GROUPS
     )

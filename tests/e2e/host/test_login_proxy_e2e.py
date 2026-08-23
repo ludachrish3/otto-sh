@@ -1,6 +1,6 @@
 """End-to-end tests for login proxies against the live mysql-provisioned Unix bed.
 
-The three Unix test VMs (carrot/tomato/pepper) each carry a Unix ``mysql``
+The three Unix test VMs (test1/test2/test3) each carry a Unix ``mysql``
 account with a restricted shell (``/bin/false``) and ``DenyUsers mysql`` in
 ``sshd_config`` — direct SSH as ``mysql`` must fail. The only way to *become*
 ``mysql`` is a root-mediated ``sudo su -s /bin/bash mysql``: ``vagrant`` has
@@ -46,7 +46,7 @@ previously untested here and confirmed 100% reliably hanging pre-fix.
 
 Containment
 -----------
-``tests/_fixtures/lab_data/tech1/lab.json`` (the "veggies" lab) is loaded
+``tests/_fixtures/lab_data/tech1/lab.json`` (the "unix" lab) is loaded
 directly by several *unit* tests that do not register any login proxies —
 ``CredSpec`` validates a cred's ``proxy`` name against the ``LOGIN_PROXIES``
 registry at ingest, so adding a proxy-referencing cred to that shared file
@@ -141,7 +141,6 @@ def _mysql_host_dict(ip: str, element: str, **overrides: object) -> dict[str, ob
     data: dict[str, object] = {
         "ip": ip,
         "element": element,
-        "board": "seed",
         "creds": [dict(c) for c in _MYSQL_CREDS],
     }
     data.update(overrides)
@@ -157,7 +156,7 @@ def _mysql_host_dict(ip: str, element: str, **overrides: object) -> dict[str, ob
 def leased_host(tmp_path_factory) -> Iterator[tuple[str, str]]:
     """Lease one Unix host from the pool; yield ``(element, ip)``.
 
-    ``ip`` is read read-only from ``tech1/lab.json`` (the veggies lab's
+    ``ip`` is read read-only from ``tech1/lab.json`` (the unix lab's
     real IP-to-element map) via :func:`tests._fixtures.labdata.host_data` —
     the shared file's ``creds`` are never consulted, so this never depends on
     (or risks) anything mutated there.
@@ -195,7 +194,7 @@ async def _assert_sshd_reachable(element: str, ip: str) -> None:
         _reader, writer = await asyncio.wait_for(asyncio.open_connection(ip, 22), timeout=10)
     except (OSError, asyncio.TimeoutError) as exc:
         raise RuntimeError(
-            f"{element}_seed ({ip}) unreachable on :22 — bed down? "
+            f"{element} ({ip}) unreachable on :22 — bed down? "
             f"(login-proxy e2e must fail loud on host-down, never skip): {exc!r}"
         ) from exc
     writer.close()
@@ -346,14 +345,13 @@ def _scaffold_sut_dir(sut_dir: Path, ip: str, element: str) -> str:
     The child ``otto`` process never imports this test module, so it needs
     its OWN ``sudo-su-shell`` registration — wired via an ``init`` module
     (mirrors how real SUT repos register custom login proxies). Returns the
-    host id (``"<element>_seed"``) the single host in the scaffolded
+    host id (``"<element>"``) the single host in the scaffolded
     ``lab.json`` will resolve to.
     """
     hosts = [
         {
             "ip": ip,
             "element": element,
-            "board": "seed",
             "creds": [dict(c) for c in _MYSQL_CREDS],
             "labs": [_LP_E2E_LAB],
         }
@@ -371,7 +369,7 @@ def _scaffold_sut_dir(sut_dir: Path, ip: str, element: str) -> str:
         },
     )
 
-    return f"{element}_seed"
+    return element
 
 
 def test_login_as_user_over_bridge(leased_host: tuple[str, str], tmp_path: Path) -> None:
@@ -427,7 +425,6 @@ def _builtin_su_host_dict(ip: str, element: str, **overrides: object) -> dict[st
     data: dict[str, object] = {
         "ip": ip,
         "element": element,
-        "board": "seed",
         "creds": [dict(c) for c in _BUILTIN_SU_CREDS],
     }
     data.update(overrides)

@@ -24,26 +24,23 @@ def _repo_with_hosts(tmp_path: Path, hosts: list[dict]) -> SimpleNamespace:
     )
 
 
-_CARROT = {
+_TEST1 = {
     "ip": "1.1.1.1",
-    "element": "carrot",
-    "board": "seed",
+    "element": "test1",
     "creds": [{"login": "u", "password": "p"}],
-    "labs": ["veggies"],
+    "labs": ["unix"],
 }
-_TOMATO = {
+_TEST2 = {
     "ip": "1.1.1.2",
-    "element": "tomato",
-    "board": "seed",
+    "element": "test2",
     "creds": [{"login": "u", "password": "p"}],
-    "labs": ["veggies"],
+    "labs": ["unix"],
 }
-_APPLE = {
+_ALT2 = {
     "ip": "1.1.1.3",
-    "element": "apple",
-    "board": "seed",
+    "element": "alt2",
     "creds": [{"login": "u", "password": "p"}],
-    "labs": ["fruits"],
+    "labs": ["unix_alt"],
 }
 
 
@@ -63,38 +60,38 @@ def test_docker_capable_excludes_builtin_local() -> None:
 
 def test_lab_names_filter_restricts_to_membership(tmp_path: Path) -> None:
     """With lab_names, only hosts tagged with a named lab survive (plus local)."""
-    repo = _repo_with_hosts(tmp_path, [_CARROT, _TOMATO, _APPLE])
+    repo = _repo_with_hosts(tmp_path, [_TEST1, _TEST2, _ALT2])
 
-    assert collect_host_ids([repo], lab_names=["veggies"]) == [
-        "carrot_seed",
+    assert collect_host_ids([repo], lab_names=["unix"]) == [
         "local",
-        "tomato_seed",
+        "test1",
+        "test2",
     ]
 
 
 def test_lab_names_filter_unknown_lab_yields_only_builtin(tmp_path: Path) -> None:
     """A lab no host belongs to still resolves the always-present built-in host."""
-    repo = _repo_with_hosts(tmp_path, [_CARROT, _APPLE])
+    repo = _repo_with_hosts(tmp_path, [_TEST1, _ALT2])
 
     assert collect_host_ids([repo], lab_names=["ghosts"]) == ["local"]
 
 
 def test_lab_names_filter_unions_multiple_labs(tmp_path: Path) -> None:
-    repo = _repo_with_hosts(tmp_path, [_CARROT, _TOMATO, _APPLE])
+    repo = _repo_with_hosts(tmp_path, [_TEST1, _TEST2, _ALT2])
 
-    assert collect_host_ids([repo], lab_names=["veggies", "fruits"]) == [
-        "apple_seed",
-        "carrot_seed",
+    assert collect_host_ids([repo], lab_names=["unix", "unix_alt"]) == [
+        "alt2",
         "local",
-        "tomato_seed",
+        "test1",
+        "test2",
     ]
 
 
 def test_lab_names_none_returns_all_hosts(tmp_path: Path) -> None:
     """Regression: the default (no filter) still enumerates every host."""
-    repo = _repo_with_hosts(tmp_path, [_CARROT, _APPLE])
+    repo = _repo_with_hosts(tmp_path, [_TEST1, _ALT2])
 
-    assert collect_host_ids([repo]) == ["apple_seed", "carrot_seed", "local"]
+    assert collect_host_ids([repo]) == ["alt2", "local", "test1"]
 
 
 # ── collect_host_ids_by_lab ──────────────────────────────────────────────────
@@ -102,13 +99,13 @@ def test_lab_names_none_returns_all_hosts(tmp_path: Path) -> None:
 
 def test_collect_host_ids_by_lab_groups_by_membership(tmp_path: Path) -> None:
     """Each lab maps to its member host IDs — pure membership, no built-ins."""
-    repo = _repo_with_hosts(tmp_path, [_CARROT, _TOMATO, _APPLE])
+    repo = _repo_with_hosts(tmp_path, [_TEST1, _TEST2, _ALT2])
 
     by_lab = collect_host_ids_by_lab([repo])
 
     assert by_lab == {
-        "veggies": ["carrot_seed", "tomato_seed"],
-        "fruits": ["apple_seed"],
+        "unix": ["test1", "test2"],
+        "unix_alt": ["alt2"],
     }
     # The built-in `local` is added by the completer, not stored per-lab.
     for ids in by_lab.values():
@@ -122,15 +119,15 @@ def test_collect_host_ids_by_lab_host_in_two_labs(tmp_path: Path) -> None:
         "element": "shared",
         "board": "seed",
         "creds": [{"login": "u", "password": "p"}],
-        "labs": ["veggies", "fruits"],
+        "labs": ["unix", "unix_alt"],
     }
     repo = _repo_with_hosts(tmp_path, [shared])
 
     by_lab = collect_host_ids_by_lab([repo])
 
     assert by_lab == {
-        "veggies": ["shared_seed"],
-        "fruits": ["shared_seed"],
+        "unix": ["shared_seed"],
+        "unix_alt": ["shared_seed"],
     }
 
 
@@ -148,18 +145,18 @@ def _repo_with_docker(tmp_path: Path, hosts: list[dict], compose) -> SimpleNames
     return repo
 
 
-_CARROT_DOCKER = {**_CARROT, "docker_capable": True}
+_TEST1_DOCKER = {**_TEST1, "docker_capable": True}
 
 
 def test_lab_filter_synthesizes_container_when_default_host_in_lab(tmp_path: Path) -> None:
     """A compose default_host that survives the lab filter yields its container."""
-    compose = SimpleNamespace(default_host="carrot_seed", services=("api",))
-    repo = _repo_with_docker(tmp_path, [_CARROT_DOCKER], compose)
+    compose = SimpleNamespace(default_host="test1", services=("api",))
+    repo = _repo_with_docker(tmp_path, [_TEST1_DOCKER], compose)
 
-    assert collect_host_ids([repo], lab_names=["veggies"]) == [
-        "carrot_seed",
-        "carrot_seed.myrepo.api",
+    assert collect_host_ids([repo], lab_names=["unix"]) == [
         "local",
+        "test1",
+        "test1.myrepo.api",
     ]
 
 
@@ -169,8 +166,8 @@ def test_lab_filter_drops_container_when_default_host_outside_lab(tmp_path: Path
     Guards the leak the old code had: it synthesized default_host containers
     regardless of which lab was selected.
     """
-    compose = SimpleNamespace(default_host="carrot_seed", services=("api",))
-    repo = _repo_with_docker(tmp_path, [_CARROT_DOCKER, _APPLE], compose)
+    compose = SimpleNamespace(default_host="test1", services=("api",))
+    repo = _repo_with_docker(tmp_path, [_TEST1_DOCKER, _ALT2], compose)
 
-    # carrot (and thus its container) belongs to veggies, not fruits.
-    assert collect_host_ids([repo], lab_names=["fruits"]) == ["apple_seed", "local"]
+    # test1 (and thus its container) belongs to unix, not unix_alt.
+    assert collect_host_ids([repo], lab_names=["unix_alt"]) == ["alt2", "local"]

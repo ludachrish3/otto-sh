@@ -21,15 +21,13 @@ sections, `hosts` and `links`:
     "hosts": [
         {
             "ip": "10.10.200.11",
-            "element": "carrot",
-            "board": "seed",
+            "element": "test1",
             "creds": [{ "login": "vagrant", "password": "vagrant" }],
-            "labs": ["veggies"]
+            "labs": ["unix"]
         },
         {
             "ip": "192.0.2.1",
-            "element": "sprout",
-            "board": "seed",
+            "element": "zephyr37_fat",
             "os_type": "zephyr",
             "labs": ["embedded"]
         }
@@ -40,8 +38,8 @@ sections, `hosts` and `links`:
 
 `hosts` schema is unchanged from before the `lab.json` cutover.  Each entry
 carries a `labs` field listing the lab names it belongs to.  Pass `--lab
-veggies` (or set `OTTO_LAB=veggies`) and otto loads every host whose `labs`
-field includes `"veggies"`.  `links` is covered in {ref}`lab-links` below;
+unix` (or set `OTTO_LAB=unix`) and otto loads every host whose `labs`
+field includes `"unix"`.  `links` is covered in {ref}`lab-links` below;
 when a file declares none, `"links": []` (or omitting the key) is fine.
 
 The host **id** used by `get_host()`, `--list-hosts`, and the rest of the CLI
@@ -330,9 +328,8 @@ Two real entries from the test fixture — one Unix host and one Zephyr host:
     "hosts": [
         {
             "ip": "10.10.200.11",
-            "element": "carrot",
+            "element": "test1",
             "os_type": "unix",
-            "board": "seed",
             "term": "ssh",
             "transfer": "scp",
             "is_virtual": true,
@@ -341,22 +338,22 @@ Two real entries from the test fixture — one Unix host and one Zephyr host:
                 {"login": "test", "password": "Password1"}
             ],
             "resources": [
-                "carrot"
+                "test1"
             ],
             "labs": [
-                "veggies"
+                "unix"
             ]
         },
         {
             "ip": "192.0.2.1",
-            "element": "sprout",
+            "element": "zephyr37_fat",
             "os_type": "zephyr",
             "os_version": "3.7",
             "transfer": "console",
             "filesystem": "fat-ram",
             "max_filename_len": 32,
             "is_virtual": true,
-            "hop": "basil_seed",
+            "hop": "test4",
             "snmp": {
                 "address": "10.10.200.14",
                 "port": 16101,
@@ -370,7 +367,7 @@ Two real entries from the test fixture — one Unix host and one Zephyr host:
                 ]
             },
             "resources": [
-                "sprout"
+                "zephyr37_fat"
             ],
             "labs": [
                 "embedded"
@@ -395,8 +392,8 @@ that `otto link impair` (see {doc}`../cli/link/index`) targets to impair it:
 {
     "name": "data-plane-a",
     "endpoints": [
-        { "host": "carrot_seed", "interface": "eth1" },
-        { "host": "tomato_seed", "interface": "eth1" }
+        { "host": "test1", "interface": "eth1" },
+        { "host": "test2", "interface": "eth1" }
     ],
     "protocol": "udp"
 }
@@ -414,7 +411,7 @@ that `otto link impair` (see {doc}`../cli/link/index`) targets to impair it:
 
 **Lab membership is derived, not authored** — a link carries no `labs` field
 of its own. It belongs to the union of both endpoints' `labs`: loading lab
-`veggies` surfaces every link with at least one endpoint in `veggies`, even
+`unix` surfaces every link with at least one endpoint in `unix`, even
 one whose *other* endpoint lives in a different lab (that far endpoint
 renders as a stub/dangling node). A link can legitimately span two labs.
 
@@ -432,8 +429,8 @@ repetitive and error-prone.  Move the shared values into
 > under `[host_preferences."<selector>".<opt>]`.
 
 The `[host_preferences]` block is a map whose keys are **Python regexes**
-matched (`re.fullmatch`) against each host's **id** (e.g. `carrot_seed`,
-`router_seed_2`).  Under each selector, two kinds of values are allowed:
+matched (`re.fullmatch`) against each host's **id** (e.g. `test1`,
+`router_seed2`).  Under each selector, two kinds of values are allowed:
 
 - **Selection lists** (`term`, `transfer`) — an ordered list of preferred
   backends.  Otto picks the first entry that is in the host's lab-defined
@@ -596,9 +593,9 @@ container joins the same universes its parent is in.
 Mark hosts that can host containers:
 
 ```text
-{ "element": "pepper", "board": "seed", "ip": "...", "creds": [...],
+{ "element": "test3", "ip": "...", "creds": [...],
   "docker_capable": true,
-  "labs": ["veggies"] }
+  "labs": ["unix"] }
 ```
 
 See {doc}`../cli/docker/index` for the commands that read this.

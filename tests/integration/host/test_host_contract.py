@@ -16,7 +16,7 @@ Parametrized over all backends:
   VM ({2.7, 3.7, 4.4} x {FAT-on-RAM, LittleFS, no-FS}).
 - the BusyBox matrix in :data:`tests.conftest.BUSYBOX_BACKENDS` —
   :class:`UnixHost` over telnet against the five pinned-userland QEMU guests
-  on the ``test1`` VM (1.16.1 … 1.35.0), reached through the ``carrot`` hop.
+  on the ``test1`` VM (1.16.1 … 1.35.0), reached through the ``test1`` hop.
   Same contract, five userlands' worth of applet and shell divergence.
 
 Unix-specific bash-isms (``cd`` / ``export`` / ``uname``) and the SSH

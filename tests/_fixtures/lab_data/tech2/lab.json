@@ -2,48 +2,45 @@
     "hosts": [
         {
             "ip": "10.10.200.11",
-            "element": "orange",
-            "board": "seed",
+            "element": "alt1",
             "creds": [
                 {"login": "vagrant", "password": "vagrant"},
                 {"login": "test", "password": "Password1"}
             ],
             "resources": [
-                "orange"
+                "alt1"
             ],
             "labs": [
-                "fruits"
+                "unix_alt"
             ]
         },
         {
             "ip": "10.10.200.12",
-            "element": "apple",
-            "board": "seed",
+            "element": "alt2",
             "creds": [
                 {"login": "vagrant", "password": "vagrant"},
                 {"login": "test", "password": "Password1"}
             ],
             "resources": [
-                "apple"
+                "alt2"
             ],
             "labs": [
-                "fruits"
+                "unix_alt"
             ]
         },
         {
             "ip": "10.10.200.13",
-            "element": "grape",
-            "board": "seed",
+            "element": "alt3",
             "docker_capable": true,
             "creds": [
                 {"login": "vagrant", "password": "vagrant"},
                 {"login": "test", "password": "Password1"}
             ],
             "resources": [
-                "grape"
+                "alt3"
             ],
             "labs": [
-                "fruits"
+                "unix_alt"
             ]
         }
     ]

@@ -18,12 +18,12 @@ from otto.link.placement import (
 BOTH = {FlowDirection.A_TO_B, FlowDirection.B_TO_A}
 
 LINK = Link(
-    a=LinkEndpoint(host="carrot_seed", interface="eth1.100", ip="10.10.201.11"),
-    b=LinkEndpoint(host="tomato_seed", interface="eth1.200", ip="10.10.202.12"),
+    a=LinkEndpoint(host="test1", interface="eth1.100", ip="10.10.201.11"),
+    b=LinkEndpoint(host="test2", interface="eth1.200", ip="10.10.202.12"),
 )
 
 # real `ip -o addr show` shape (verified live on the bed)
-PEPPER_ADDRS = parse_ip_addr(
+TEST3_ADDRS = parse_ip_addr(
     "1: lo    inet 127.0.0.1/8 scope host lo\\       valid_lft forever "
     "preferred_lft forever\n"
     "3: eth1    inet 10.10.200.13/24 brd 10.10.200.255 scope global eth1\\ "
@@ -37,8 +37,8 @@ PEPPER_ADDRS = parse_ip_addr(
 
 class TestParseIpAddr:
     def test_netdevs_and_prefixes(self) -> None:
-        assert set(PEPPER_ADDRS) == {"lo", "eth1", "eth1.100", "eth1.200"}
-        (eth1,) = PEPPER_ADDRS["eth1"]
+        assert set(TEST3_ADDRS) == {"lo", "eth1", "eth1.100", "eth1.200"}
+        (eth1,) = TEST3_ADDRS["eth1"]
         assert str(eth1.ip) == "10.10.200.13"
         assert eth1.network.prefixlen == 24
 
@@ -46,13 +46,13 @@ class TestParseIpAddr:
 class TestEndpointPlacements:
     def test_both_directions(self) -> None:
         assert endpoint_placements(LINK, BOTH) == [
-            Placement("carrot_seed", "eth1.100", FlowDirection.A_TO_B),
-            Placement("tomato_seed", "eth1.200", FlowDirection.B_TO_A),
+            Placement("test1", "eth1.100", FlowDirection.A_TO_B),
+            Placement("test2", "eth1.200", FlowDirection.B_TO_A),
         ]
 
     def test_single_direction(self) -> None:
         (p,) = endpoint_placements(LINK, {FlowDirection.B_TO_A})
-        assert p == Placement("tomato_seed", "eth1.200", FlowDirection.B_TO_A)
+        assert p == Placement("test2", "eth1.200", FlowDirection.B_TO_A)
 
     def test_unnamed_interface_not_impairable(self) -> None:
         bare = Link(a=LinkEndpoint(host="a_seed"), b=LINK.b)
@@ -62,10 +62,10 @@ class TestEndpointPlacements:
 
 class TestInpathPlacements:
     def test_facing_resolution_by_subnet(self) -> None:
-        # A→B egresses toward B: pepper's eth1.200 faces tomato; B→A faces carrot
-        assert inpath_placements(LINK, "pepper_seed", PEPPER_ADDRS, BOTH) == [
-            Placement("pepper_seed", "eth1.200", FlowDirection.A_TO_B),
-            Placement("pepper_seed", "eth1.100", FlowDirection.B_TO_A),
+        # A→B egresses toward B: test3's eth1.200 faces test2; B→A faces test1
+        assert inpath_placements(LINK, "test3", TEST3_ADDRS, BOTH) == [
+            Placement("test3", "eth1.200", FlowDirection.A_TO_B),
+            Placement("test3", "eth1.100", FlowDirection.B_TO_A),
         ]
 
     def test_not_in_path_fails_loud(self) -> None:
@@ -73,12 +73,12 @@ class TestInpathPlacements:
             a=LinkEndpoint(host="x_seed", interface="eth9", ip="192.168.99.1"), b=LINK.b
         )
         with pytest.raises(ValueError, match=r"no interface on 'x_seed'.*192.168.99.1"):
-            inpath_placements(off_path, "pepper_seed", PEPPER_ADDRS, BOTH)
+            inpath_placements(off_path, "test3", TEST3_ADDRS, BOTH)
 
     def test_unresolved_endpoint_ip_rejected(self) -> None:
         no_ip = Link(a=LinkEndpoint(host="a_seed", interface="eth1"), b=LINK.b)
         with pytest.raises(ValueError, match="unresolved ip"):
-            inpath_placements(no_ip, "pepper_seed", PEPPER_ADDRS, BOTH)
+            inpath_placements(no_ip, "test3", TEST3_ADDRS, BOTH)
 
 
 class TestRefusals:
@@ -98,40 +98,40 @@ class TestRefusals:
             ensure_not_local_link(local_mid)
 
     def test_mgmt_netdev_refused(self) -> None:
-        p = Placement("pepper_seed", "eth1", FlowDirection.A_TO_B)
+        p = Placement("test3", "eth1", FlowDirection.A_TO_B)
         with pytest.raises(ValueError, match="management interface"):
-            ensure_not_mgmt(p, PEPPER_ADDRS, "10.10.200.13")
+            ensure_not_mgmt(p, TEST3_ADDRS, "10.10.200.13")
 
     def test_vlan_subinterface_passes_mgmt_check(self) -> None:
         # the e2e's whole premise: eth1.100 is NOT the mgmt netdev even though
         # it rides the same wire as eth1
-        p = Placement("pepper_seed", "eth1.100", FlowDirection.A_TO_B)
-        ensure_not_mgmt(p, PEPPER_ADDRS, "10.10.200.13")
+        p = Placement("test3", "eth1.100", FlowDirection.A_TO_B)
+        ensure_not_mgmt(p, TEST3_ADDRS, "10.10.200.13")
 
     def test_unknown_mgmt_ip_does_not_refuse(self) -> None:
         # mgmt address not visible in the table (e.g. NAT-fronted): no positive
         # match on the placement netdev → allow
-        p = Placement("pepper_seed", "eth1.100", FlowDirection.A_TO_B)
-        ensure_not_mgmt(p, PEPPER_ADDRS, "203.0.113.7")
+        p = Placement("test3", "eth1.100", FlowDirection.A_TO_B)
+        ensure_not_mgmt(p, TEST3_ADDRS, "203.0.113.7")
 
 
 class TestHopTransitRefusal:
     def test_dependent_ip_on_placement_netdev_refused(self) -> None:
-        # tomato reaches otto only via pepper; its mgmt ip rides eth1.200's subnet.
-        p = Placement("pepper_seed", "eth1.200", FlowDirection.A_TO_B)
+        # test2 reaches otto only via test3; its mgmt ip rides eth1.200's subnet.
+        p = Placement("test3", "eth1.200", FlowDirection.A_TO_B)
         with pytest.raises(ValueError, match="hop transit"):
-            ensure_not_hop_transit(p, PEPPER_ADDRS, [("tomato_seed", "10.10.202.99")])
+            ensure_not_hop_transit(p, TEST3_ADDRS, [("test2", "10.10.202.99")])
 
     def test_message_names_placement_and_dependent(self) -> None:
-        p = Placement("pepper_seed", "eth1.200", FlowDirection.A_TO_B)
-        with pytest.raises(ValueError, match=r"eth1.200.*tomato_seed"):
-            ensure_not_hop_transit(p, PEPPER_ADDRS, [("tomato_seed", "10.10.202.99")])
+        p = Placement("test3", "eth1.200", FlowDirection.A_TO_B)
+        with pytest.raises(ValueError, match=r"eth1.200.*test2"):
+            ensure_not_hop_transit(p, TEST3_ADDRS, [("test2", "10.10.202.99")])
 
     def test_dependent_ip_on_other_netdev_allowed(self) -> None:
         # dependent's ip is in eth1.100's subnet, but this placement is eth1.200
-        p = Placement("pepper_seed", "eth1.200", FlowDirection.A_TO_B)
-        ensure_not_hop_transit(p, PEPPER_ADDRS, [("carrot_seed", "10.10.201.99")])
+        p = Placement("test3", "eth1.200", FlowDirection.A_TO_B)
+        ensure_not_hop_transit(p, TEST3_ADDRS, [("test1", "10.10.201.99")])
 
     def test_no_dependents_allowed(self) -> None:
-        p = Placement("pepper_seed", "eth1.200", FlowDirection.A_TO_B)
-        ensure_not_hop_transit(p, PEPPER_ADDRS, [])
+        p = Placement("test3", "eth1.200", FlowDirection.A_TO_B)
+        ensure_not_hop_transit(p, TEST3_ADDRS, [])

@@ -5,9 +5,9 @@ otto tunnel add --hosts <h0[@if0],h1[@if1],...,hn-1[@ifn-1]> --port <P> [--proto
 ```
 
 ```bash
-otto --lab veggies tunnel add --hosts carrot_seed@eth2,tomato_seed --port 6001
-otto --lab veggies tunnel add --hosts carrot_seed@eth1,tomato_seed@eth1 --port 6001 --protocol udp
-otto --lab veggies tunnel add --hosts carrot_seed@eth2,compost,tomato_seed --port 6001
+otto --lab unix tunnel add --hosts test1@eth2,test2 --port 6001
+otto --lab unix tunnel add --hosts test1@eth1,test2@eth1 --port 6001 --protocol udp
+otto --lab unix tunnel add --hosts test1@eth2,test3,test2 --port 6001
 ```
 
 | Option | Required | Description |
@@ -60,14 +60,13 @@ receives is sourced from the far endpoint's own interface — an ordinary
 `ssh -L` forward would deliver it:
 
 ```bash
-otto --lab veggies tunnel add --hosts carrot_seed@eth2,tomato_seed --port 6001 --dest sprout
+otto --lab unix tunnel add --hosts test1@eth2,test2 --port 6001 --dest test3
 ```
 
-Here `carrot_seed` and `tomato_seed` are the tunnel's two endpoints and
-`sprout` is where the far side's traffic actually lands — appearing to
-`sprout` as if it came directly from `tomato_seed`. There is currently no
-symmetric override for the near endpoint (`carrot_seed` here) — it always
-delivers to its own loopback.
+Here `test1` and `test2` are the tunnel's two endpoints and `test3` is where
+the far side's traffic actually lands — appearing to `test3` as if it came
+directly from `test2`. There is currently no symmetric override for the near
+endpoint (`test1` here) — it always delivers to its own loopback.
 
 ```{note}
 **Why loopback, not the endpoint's own IP:** that IP is already bound by the

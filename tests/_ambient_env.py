@@ -14,11 +14,11 @@ the run continues, green, doing something other than what was asked:
 
 - issue #192 — nightly's ``chaos-docker`` job exports
   ``OTTO_CHAOS_DOCKER=loopback``, the variable was undeclared and therefore
-  stripped, ``docker_venue()`` returned its ``"pepper"`` default, and the
+  stripped, ``docker_venue()`` returned its ``"test3"`` default, and the
   job spent four minutes trying to SSH to the bed host ``10.10.200.13`` from
-  a GitHub runner. On the dev VM the same bug is invisible: pepper *is*
+  a GitHub runner. On the dev VM the same bug is invisible: test3 *is*
   reachable there, so the "loopback venue certified 9/9" run had in fact
-  certified pepper.
+  certified test3.
 - ``OTTO_CHAOS_SEED`` is printed on every chaos run as the documented way to
   reproduce a failure; while stripped, re-running with the pinned seed drew a
   fresh random one instead.
@@ -57,7 +57,7 @@ AMBIENT_OPT_INS: "dict[str, str]" = {
         "and nightly.yml's dashboard jobs"
     ),
     "OTTO_CHAOS_DOCKER": (
-        "selects the docker chaos venue, `pepper` (bed) or `loopback` "
+        "selects the docker chaos venue, `test3` (bed) or `loopback` "
         "(tests/e2e/chaos/_docker.py); set by nightly.yml's chaos-docker job"
     ),
     "OTTO_CHAOS_SEED": (

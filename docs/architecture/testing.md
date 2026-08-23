@@ -194,7 +194,7 @@ gate exactly like `stability`, via the same double marker stamp
 only via `make chaos` (unix legs) and `make chaos-embedded` (the Zephyr
 console leg, kept separate because a failure there can require a manual
 board restart), against a session-scoped, exclusively-leased bed host from
-the "veggies" lab (`tests/e2e/chaos/conftest.py`'s `chaos_bed` fixture) —
+the "unix" lab (`tests/e2e/chaos/conftest.py`'s `chaos_bed` fixture) —
 never co-run with any other bed-using lane. Two ingredients make its
 destructiveness safe to run at all:
 
@@ -223,7 +223,7 @@ destructiveness safe to run at all:
   it exactly.
 
 The docker slice (`tests/e2e/chaos/test_docker_chaos.py`) has a second life:
-it is venue-selectable via `OTTO_CHAOS_DOCKER` (default/`pepper` = the
+it is venue-selectable via `OTTO_CHAOS_DOCKER` (default/`test3` = the
 docker-capable bed host; `loopback` = a hermetic `sshd` wrapping the
 runner's own docker daemon), so the same module also runs standalone in
 GitHub nightly's `chaos-docker` job with no lab at all — the one tier-3

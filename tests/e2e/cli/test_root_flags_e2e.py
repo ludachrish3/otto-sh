@@ -26,18 +26,18 @@ def test_list_labs(tmp_path: Path) -> None:
     """--list-labs exits 0 and lists the concrete lab names from tech1 fixture data."""
     r = run_otto(["--list-labs"], xdir=tmp_path, sut_dirs=REPO_E2E)
     assert r.returncode == 0, r.stderr
-    # repo_e2e → tech1 fixture → two labs: embedded and veggies
-    assert "veggies" in r.stdout
+    # repo_e2e → tech1 fixture → two labs: embedded and unix
+    assert "unix" in r.stdout
     assert "embedded" in r.stdout
     assert_no_output_dir(tmp_path)  # informational listing — no run dir
 
 
 def test_list_hosts(tmp_path: Path) -> None:
-    """--list-hosts with --lab veggies exits 0 and lists a concrete host id."""
-    r = run_otto(["--lab", "veggies", "--list-hosts"], xdir=tmp_path, sut_dirs=REPO_E2E)
+    """--list-hosts with --lab unix exits 0 and lists a concrete host id."""
+    r = run_otto(["--lab", "unix", "--list-hosts"], xdir=tmp_path, sut_dirs=REPO_E2E)
     assert r.returncode == 0, r.stderr
-    # tech1 lab.json: carrot/tomato/pepper all belong to lab "veggies"
-    assert "carrot_seed" in r.stdout
+    # tech1 lab.json: test1/test2/test3 all belong to lab "unix"
+    assert "test1" in r.stdout
     assert_no_output_dir(tmp_path)  # queries lab state but runs no subcommand — no run dir
 
 
@@ -52,7 +52,7 @@ def test_clear_autocomplete_cache(tmp_path: Path) -> None:
 
 def test_list_hosts_includes_builtin_local(tmp_path: Path) -> None:
     """The built-in `local` host appears in --list-hosts for any lab (no custom repo)."""
-    r = run_otto(["--lab", "veggies", "--list-hosts"], xdir=tmp_path, sut_dirs=REPO_E2E)
+    r = run_otto(["--lab", "unix", "--list-hosts"], xdir=tmp_path, sut_dirs=REPO_E2E)
     assert r.returncode == 0, r.stderr
     assert "local" in r.stdout
     assert_no_output_dir(tmp_path)

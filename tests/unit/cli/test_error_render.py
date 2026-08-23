@@ -21,8 +21,8 @@ _EATEN_WITHOUT_ESCAPING = [
     # Longer than rich's captured-terminal default of 80 columns, so this one
     # also proves the width pin above is doing its job.
     (
-        "--on 'dut9' is not a host in the active lab 'veggies'. Available hosts: "
-        "['carrot_seed', 'local', 'pepper_seed', 'tomato_seed'] list[str]"
+        "--on 'dut9' is not a host in the active lab 'unix'. Available hosts: "
+        "['test1', 'local', 'test3', 'test2'] list[str]"
     ),
 ]
 

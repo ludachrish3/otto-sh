@@ -102,7 +102,6 @@ def _mysql_host_dict(ip: str, element: str, **overrides: object) -> dict[str, ob
     data: dict[str, object] = {
         "ip": ip,
         "element": element,
-        "board": "seed",
         "creds": [dict(c) for c in _MYSQL_CREDS],
     }
     data.update(overrides)
@@ -182,7 +181,7 @@ async def _assert_sshd_reachable(element: str, ip: str) -> None:
         _reader, writer = await asyncio.wait_for(asyncio.open_connection(ip, 22), timeout=10)
     except (OSError, asyncio.TimeoutError) as exc:
         raise RuntimeError(
-            f"{element}_seed ({ip}) unreachable on :22 — bed down? "
+            f"{element} ({ip}) unreachable on :22 — bed down? "
             f"(AppShell mysql stability test must fail loud on host-down, never skip): {exc!r}"
         ) from exc
     writer.close()

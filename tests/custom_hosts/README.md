@@ -14,7 +14,7 @@ It currently provides one custom command frame:
 
 ## Why it's shared (not per-repo)
 
-The 2.7 host `sprout27` lives in the shared `embedded` lab
+The 2.7 host `zephyr27_fat` lives in the shared `embedded` lab
 (`tests/lab_data/tech1/lab.json`), so *any* repo that loads `--lab embedded`
 must be able to construct it — which means the `zephyr-inline` frame must be
 registered. Owning the frame here, and having each consuming repo depend on it,

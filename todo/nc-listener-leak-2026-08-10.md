@@ -22,7 +22,7 @@ OpenBSD netcat's man page (the bed runs `OpenBSD netcat, Debian patchlevel
 > forever for a connection, with or without the -w flag."
 
 So `nc -l -w 30` never self-terminates while waiting to accept. Confirmed three
-ways: the man page; six leaked listener pairs alive 1–3.5 days on tomato, all
+ways: the man page; six leaked listener pairs alive 1–3.5 days on test2, all
 spawned with `-w 30`; and a direct control (`nc -l -w 20`, still running at 28s).
 
 The belief is load-bearing in at least four comments in `nc.py`, and both
@@ -55,7 +55,7 @@ reap the orphan it just named.
 
 ## Bed evidence (reaped 2026-08-10; forensics in the session scratchpad)
 
-Twelve processes, six pairs, **all on tomato**; carrot, pepper and basil clean.
+Twelve processes, six pairs, **all on test2**; test1, test3 and test4 clean.
 
     put  nc -l  -w 30  9000/9003/9004   > /tmp/nc_hop_upload.txt   Aug 6, 7, 9
     get  nc -Nl -w 30  9001/9002/9005   < /etc/hostname            Aug 7, 7, 9
@@ -65,9 +65,9 @@ Two things fall out of that table:
 1. **The ports climb monotonically with each leak** (9000→9005 in strict date
    order). Each leaked listener permanently holds a port, so `_find_free_port`
    is pushed one higher every time. This compounds; it does not plateau.
-2. **Only the hop path leaks.** Both hop nc tests hard-code `tomato`
+2. **Only the hop path leaks.** Both hop nc tests hard-code `test2`
    (`test_hop_integration.py::test_nc_put_through_hop` / `test_nc_get_through_hop`);
-   ordinary nc transfers lease from the pool and left carrot/pepper spotless
+   ordinary nc transfers lease from the pool and left test1/test3 spotless
    across days. The hop path is the one that reaches these error branches often
    enough to matter — plausibly because with a tunnel the local asyncssh
    listener "accepts immediately regardless, hiding the not-yet-listening
@@ -75,11 +75,11 @@ Two things fall out of that table:
 
 ## Why it presented as a 6% flake
 
-`transfer_host` leases a host from `UNIX_POOL` (carrot tried first, then tomato,
-pepper), so it only lands on tomato under concurrency. The leak assertion uses
+`transfer_host` leases a host from `UNIX_POOL` (test1 tried first, then test2,
+test3), so it only lands on test2 under concurrency. The leak assertion uses
 `_NC_LISTENER_PROBE` = `pgrep -af "[n]c -l"`, which is **host-global**: whenever
-the lease landed on tomato it correctly reported the permanent foreign
-leftovers. 20/20 passed in isolation because the lease got carrot every time,
+the lease landed on test2 it correctly reported the permanent foreign
+leftovers. 20/20 passed in isolation because the lease got test1 every time,
 which is also why a serial re-run always "fixes" it.
 
 ## Second defect: the probe has a 50% blind spot
@@ -109,7 +109,7 @@ actually shipped differs from this plan in one important way, recorded under
    transfer would be cut at `listener_timeout`. That is a real behaviour change
    and wants a deliberate decision, not a drive-by.
 5. Consider whether the hop tests should lease from `UNIX_POOL` like everything
-   else instead of hard-coding tomato. Not the cause of the leak, but it is why
+   else instead of hard-coding test2. Not the cause of the leak, but it is why
    the damage concentrated on one box and collided with leaseholders.
 
 ## Test to write first
@@ -159,7 +159,7 @@ silently.
 
 The review's first open item — `forward_port` is not cached — was its own leak,
 local rather than remote, and is now fixed. Measured before the fix on a
-`tomato`-via-`carrot` host: five sequential hop puts took the process from 10 to
+`test2`-via-`test1` host: five sequential hop puts took the process from 10 to
 18 open descriptors, and a single put of six files from 8 to 20 — two per
 *file*, because `forward_local_port("", ...)` bound both address families. All
 of it was reclaimed at `close()`, which is exactly why nobody noticed: the

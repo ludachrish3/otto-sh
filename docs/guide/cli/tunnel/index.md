@@ -62,7 +62,7 @@ otto tunnel remove [<id>] [--all] [-y]
 
 ## Previewing: `--dry-run`
 
-`--dry-run` (`-n`) is a **global** option — `otto -n --lab veggies tunnel add
+`--dry-run` (`-n`) is a **global** option — `otto -n --lab unix tunnel add
 …`. **A dry run contacts no device at all**, not even for the read-only probes
 and not even for docker's container-liveness check. So every answer it gives
 comes from `lab.json` and the options you typed, and it says plainly what it
@@ -73,17 +73,17 @@ stopping at the CLI seam — see {doc}`../dry-run` for the contract every comman
 follows, what the opt-in buys, and `--probe`.
 
 ```console
-$ otto -n --lab veggies tunnel add --hosts carrot_seed@eth2,pepper_seed@eth2,tomato_seed@eth2 --port 8080
-dry run carrot_seed <-> tomato_seed: no device was contacted — nothing was read and nothing was changed
-  would: build tun-80b8500dedcf-8080: carrot_seed@eth2 -> pepper_seed@eth2 -> tomato_seed@eth2,
-    tcp:8080, delivering to 127.0.0.1 on tomato_seed
+$ otto -n --lab unix tunnel add --hosts test1@eth2,test3@eth2,test2@eth2 --port 8080
+dry run test1 <-> test2: no device was contacted — nothing was read and nothing was changed
+  would: build tun-f68934aae535-8080: test1@eth2 -> test3@eth2 -> test2@eth2,
+    tcp:8080, delivering to 127.0.0.1 on test2
   would: carry fwd traffic on port 49152 and rev on 49153 — PROVISIONAL, see the first
     `not checked` line
   would: start each process below detached, with its argv[0] replaced by an `otto-tunnel:v1`
     sentinel …
-  would: tomato_seed fwd/egress: socat TCP4-LISTEN:49152,fork,reuseaddr TCP4:127.0.0.1:8080
-  would: pepper_seed fwd/relay: socat TCP4-LISTEN:49152,fork,reuseaddr TCP4:192.168.1.12:49152
-  would: carrot_seed fwd/ingress: socat TCP4-LISTEN:8080,bind=192.168.1.11,fork,reuseaddr
+  would: test2 fwd/egress: socat TCP4-LISTEN:49152,fork,reuseaddr TCP4:127.0.0.1:8080
+  would: test3 fwd/relay: socat TCP4-LISTEN:49152,fork,reuseaddr TCP4:192.168.1.12:49152
+  would: test1 fwd/ingress: socat TCP4-LISTEN:8080,bind=192.168.1.11,fork,reuseaddr
     TCP4:192.168.1.13:49152
   … (2n lines: one per process, fwd then rev)
   not checked: which ports are already bound anywhere on the chain …
@@ -129,12 +129,12 @@ either side of it connect *to* that address — so a dry run has no argv to show
 for any hop, not just for the container. It says so rather than guessing:
 
 ```console
-$ otto -n --lab veggies tunnel add --hosts carrot_seed.repo1.api,carrot_seed@eth2,tomato_seed@eth2 --port 8080
-dry run carrot_seed.repo1.api <-> tomato_seed: no device was contacted — nothing was read and nothing was changed
-  would: build tun-91e5f6330d1d-8080: carrot_seed.repo1.api -> carrot_seed@eth2 -> tomato_seed@eth2,
-    tcp:8080, delivering to 127.0.0.1 on tomato_seed
+$ otto -n --lab unix tunnel add --hosts test1.repo1.api,test1@eth2,test2@eth2 --port 8080
+dry run test1.repo1.api <-> test2: no device was contacted — nothing was read and nothing was changed
+  would: build tun-6e3f6629afc2-8080: test1.repo1.api -> test1@eth2 -> test2@eth2,
+    tcp:8080, delivering to 127.0.0.1 on test2
   would: carry fwd traffic on port 49152 and rev on 49153 — PROVISIONAL …
-  not checked: every process argv, because 'carrot_seed.repo1.api' is a container endpoint …
+  not checked: every process argv, because 'test1.repo1.api' is a container endpoint …
 ```
 
 Programmatically, a dry run is visible on the return value:

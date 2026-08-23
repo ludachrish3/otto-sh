@@ -290,7 +290,7 @@ three times past the deadline otto just told the operator about, which is a
 worse bug than the leak this cleanup exists to close.
 
 TWO SECONDS IS ~45x THE MEASURED COST, on the slowest transport this backend
-has. On the bed's ``bb1350`` guest -- telnet through the ``carrot`` hop into
+has. On the bed's ``bb1350`` guest -- telnet through the ``test1`` hop into
 a QEMU guest -- a warm-session ``rm -f -- <temp>`` round trip measured
 42-45 ms over seven consecutive samples (2026-08-21), identical whether the
 temp existed (64 KiB) or not; an ``ssh`` exec channel is faster still. The

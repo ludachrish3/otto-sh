@@ -6,8 +6,8 @@ one `impair` call to a single service's traffic, leaving everything else on
 the link clean:
 
 ```bash
-otto --lab veggies link impair edge --port 5201 --delay 200
-otto --lab veggies link impair edge --port 53 --proto udp --loss 5
+otto --lab unix link impair edge --port 5201 --delay 200
+otto --lab unix link impair edge --port 53 --proto udp --loss 5
 ```
 
 ## Selector semantics
@@ -36,16 +36,16 @@ never both. Otto refuses to mix the two on the same placement, and the
 error names the remedy:
 
 ```bash
-otto --lab veggies link impair edge --delay 50
+otto --lab unix link impair edge --delay 50
 # ... placement now has a whole-link impairment ...
-otto --lab veggies link impair edge --port 5201 --delay 200
+otto --lab unix link impair edge --port 5201 --delay 200
 # Error: link edge has a whole-link impairment — repair it first
 ```
 
 ```bash
-otto --lab veggies link impair edge --port 5201 --delay 200
+otto --lab unix link impair edge --port 5201 --delay 200
 # ... placement now has a port-scoped impairment ...
-otto --lab veggies link impair edge --delay 50
+otto --lab unix link impair edge --delay 50
 # Error: link edge has port-scoped impairments — repair them first or impair with --port
 ```
 
@@ -63,10 +63,10 @@ impairment (see [Re-impairing](impair.md#re-impairing-merge-per-param-last-one-w
 and [Zero clears](impair.md#zero-clears)), just scoped narrower:
 
 ```bash
-otto --lab veggies link impair edge --port 5201 --proto tcp --delay 20
+otto --lab unix link impair edge --port 5201 --proto tcp --delay 20
 # 5201/tcp is now: delay 20ms
 
-otto --lab veggies link impair edge --port 5201 --proto tcp --loss 2 --delay 10
+otto --lab unix link impair edge --port 5201 --proto tcp --loss 2 --delay 10
 # 5201/tcp is now: delay 10ms loss 2%  — delay overridden, loss added; other selectors untouched
 ```
 

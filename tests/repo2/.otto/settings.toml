@@ -26,5 +26,5 @@ context = "docker"
 
 [[docker.composes]]
 path = "docker/compose.yml"
-default_host = "grape_seed"
+default_host = "alt3"
 services = ["worker"]

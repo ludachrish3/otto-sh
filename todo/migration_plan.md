@@ -99,7 +99,7 @@ Per valuable library, make it dual-platform:
       Rewrite a suite only once all libraries it depends on are dual-platform.
 - [ ] New projects: otto from day one, no exceptions.
 - [ ] New features land only in otto; old platform gets fixes only (pull-based
-      carrot — avoids a mandate).
+      incentive — avoids a mandate).
 - [ ] Track migration state per library / per suite / per project; quarterly
       review; flag anything stuck mid-state > 6 months.
 - [ ] Once no consumer imports the old CLI: delete the old CLI, the old core

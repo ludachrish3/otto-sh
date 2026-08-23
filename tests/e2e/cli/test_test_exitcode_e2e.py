@@ -8,7 +8,7 @@ Verifies that suite runs propagate the pytest exit code correctly:
 These serve as regression guards for the Task-2.6 fix: exit-code propagation
 from the inner pytest.main() call.
 
-All tests use ``--lab veggies`` (required for suite runs) but ``TestE2EFixture``
+All tests use ``--lab unix`` (required for suite runs) but ``TestE2EFixture``
 requests no host, so the suite itself is hostless; no Vagrant VM is contacted.
 """
 
@@ -29,7 +29,7 @@ pytestmark = pytest.mark.hostless
 def test_suite_pass_exits_zero(tmp_path: Path) -> None:
     """A suite whose tests all pass exits 0."""
     r = run_otto(
-        ["--lab", "veggies", "test", "TestE2EFixture"],
+        ["--lab", "unix", "test", "TestE2EFixture"],
         xdir=tmp_path,
         sut_dirs=REPO_E2E,
     )
@@ -40,7 +40,7 @@ def test_suite_pass_exits_zero(tmp_path: Path) -> None:
 def test_suite_fail_exits_nonzero(tmp_path: Path) -> None:
     """A suite with a failing test exits non-zero (OTTO_E2E_FAIL=1 triggers the failure)."""
     r = run_otto(
-        ["--lab", "veggies", "test", "TestE2EFixture"],
+        ["--lab", "unix", "test", "TestE2EFixture"],
         xdir=tmp_path,
         sut_dirs=REPO_E2E,
         extra_env={"OTTO_E2E_FAIL": "1"},
@@ -52,7 +52,7 @@ def test_suite_fail_exits_nonzero(tmp_path: Path) -> None:
 def test_unknown_suite_clean_error_nonzero(tmp_path: Path) -> None:
     """An unknown suite name exits non-zero and does NOT print a Python traceback."""
     r = run_otto(
-        ["--lab", "veggies", "test", "NoSuchSuite"],
+        ["--lab", "unix", "test", "NoSuchSuite"],
         xdir=tmp_path,
         sut_dirs=REPO_E2E,
     )

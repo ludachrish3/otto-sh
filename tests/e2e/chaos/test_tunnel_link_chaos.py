@@ -3,7 +3,7 @@ during rollback itself; SIGKILL characterization + recovery reconciliation.
 The product cannot survive SIGKILL (spec); the test characterizes what leaks
 and asserts `otto tunnel remove --all --yes` / `otto link repair --all` clean
 the bed. This is inherently multi-host (a tunnel spans a path; a link joins
-two), so every scenario pins carrot/tomato explicitly and reconciles them
+two), so every scenario pins test1/test2 explicitly and reconciles them
 manually (`no_hygiene_bracket`) rather than relying on the single-host
 autouse BedHygiene bracket, which only snapshots whichever host the module's
 session-scoped ``chaos_bed`` lease happens to grab -- never necessarily one
@@ -37,7 +37,7 @@ from tests.e2e.chaos._bed import (
     probe_text,
     run_probe,
     tunnel_target,
-    veggies_link_id,
+    unix_link_id,
 )
 from tests.integration.chaos._driver import BANNER, spawn_otto
 from tests.integration.chaos._target import make_bed_target
@@ -78,9 +78,9 @@ _HOLD_MARKER = "otto-chaos-portblock"
 # TELNET (which is implemented via the same framed-session path) -- but NOT
 # for `host.exec()` on SSH, which rides a separate raw `create_process`
 # channel with no such untagged trace, so its only log line is the (tagged,
-# QUIET-suppressed) `[bold]@host | cmd` echo. That is also why carrot's own
+# QUIET-suppressed) `[bold]@host | cmd` echo. That is also why test1's own
 # SSH-routed tunnel launches never appear in this module's marker waits (see
-# `test_interrupt_during_rollback_still_reaps`'s docstring) while tomato's
+# `test_interrupt_during_rollback_still_reaps`'s docstring) while test2's
 # telnet-routed ones, and every link-impair `sudo ... tc qdisc` line on
 # either host (host.run), do. Because the otto subprocess runs at
 # `--log-level DEBUG`, these untagged traces are visible on the captured
@@ -147,7 +147,7 @@ _HOLD_SCRIPT = (
 
 
 def _leftover_tunnel_processes() -> list:
-    """Owner-agnostic: any otto-tunnel sentinel process on the veggies trio."""
+    """Owner-agnostic: any otto-tunnel sentinel process on the unix trio."""
     import asyncio
 
     return asyncio.run(observe_tunnel_processes())
@@ -165,7 +165,7 @@ def test_sigkill_mid_tunnel_recovers_via_remove_all(tmp_path):
             "tunnel",
             "add",
             "--hosts",
-            "carrot_seed@eth2,tomato_seed",
+            "test1@eth2,test2",
             "--port",
             str(_TUNNEL_SIGKILL_PORT),
         ],
@@ -234,7 +234,7 @@ def test_interrupt_during_rollback_still_reaps(tmp_path):
     concurrent SIGINT.
 
     How the rollback is forced, deterministically (not by luck of timing): a
-    raw, non-otto listener is pre-bound on carrot's eth2 ip at the exact
+    raw, non-otto listener is pre-bound on test1's eth2 ip at the exact
     service port `otto tunnel add` will use. The launch loop itself cannot
     see this (`launch_command` backgrounds every process fire-and-forget --
     the launch's own `host.exec` returns as soon as the shell accepts the
@@ -243,30 +243,30 @@ def test_interrupt_during_rollback_still_reaps(tmp_path):
     the same race characterized on the tunnel_stability suite's UDP
     listeners), so all 4 launches (2-host chain, FWD+REV x 2) dispatch
     successfully from add_tunnel's point of view. The post-add verify scan
-    then finds carrot's FWD ingress (the one whose socat lost the bind race
+    then finds test1's FWD ingress (the one whose socat lost the bind race
     against our held listener) genuinely NOT running, `_raise_verify_failure`
     fires after the one built-in retry sleep, and add_tunnel's
     `except BaseException:` branch (launched=True, since the first launch
     already happened) invokes `compensate(_kill_tunnel_on(...))` for real.
 
-    Where the SIGINT lands: sent as soon as the LAST launch line (tomato's
-    REV ingress, dispatched 4th/last) appears on stdout -- carrot's own two
+    Where the SIGINT lands: sent as soon as the LAST launch line (test2's
+    REV ingress, dispatched 4th/last) appears on stdout -- test1's own two
     launches (2nd/3rd) run for real but never appear in this capture. Per
     the module-level comment near `_WIDE_CONSOLE_ENV`: this is the SSH-vs-
-    telnet `host.exec()` asymmetry, not a QUIET-suppression gap -- carrot's
+    telnet `host.exec()` asymmetry, not a QUIET-suppression gap -- test1's
     launches ride SSH's raw `create_process` channel (only the tagged,
     QUIET-suppressed `[bold]@host | cmd` echo, correctly dropped), while
-    tomato's ride the framed TELNET session path, whose `ShellSession.
+    test2's ride the framed TELNET session path, whose `ShellSession.
     _run_cmd_inner` emits its own unconditional, untagged "framed write"/
     "run_cmd done" debug trace that no suppression filter ever touches
     (untagged records have no `host`/`log_mode` to filter on). Confirmed
     live both ways: a direct (non-CLI) `add_tunnel` call against hosts built
-    with `log=LogMode.QUIET` explicitly still showed every carrot command,
-    via that same tagged `[bold]@carrot seed | ...` echo -- proving the
+    with `log=LogMode.QUIET` explicitly still showed every test1 command,
+    via that same tagged `[bold]@test1 | ...` echo -- proving the
     launch itself is not missing, just its untagged-trace visibility.
-    The one on-bed fact that matters -- carrot's FWD ingress genuinely never
+    The one on-bed fact that matters -- test1's FWD ingress genuinely never
     comes up, confirmed by the post-add verify's own `not running:
-    carrot_seed/fwd/ingress` -- was independently reproduced (see task-8
+    test1/fwd/ingress` -- was independently reproduced (see task-8
     report) via a bare `otto tunnel add` subprocess run with no interrupt at
     all. By construction there is nothing left for add_tunnel to do at that point
     except verify (fails), sleep ~1s, re-verify (fails again), raise, and
@@ -295,19 +295,19 @@ def test_interrupt_during_rollback_still_reaps(tmp_path):
     """
     sut = cli_sut_dir(tmp_path)
     target = tunnel_target(sut)
-    carrot_ip = host_data("carrot")["interfaces"]["eth2"]["ip"]
+    test1_ip = host_data("test1")["interfaces"]["eth2"]["ip"]
     p = None  # bound inside the try; finally must not assume it got there
     try:
         # Inside the try from the start: if the hold-port confirmation itself
         # fails (e.g. the bind-confirmation poll times out), the listener may
-        # still be running on carrot -- the finally's release must still fire.
-        _hold_tcp_port("carrot", carrot_ip, _ROLLBACK_PORT)
+        # still be running on test1 -- the finally's release must still fire.
+        _hold_tcp_port("test1", test1_ip, _ROLLBACK_PORT)
         p = spawn_otto(
             [
                 "tunnel",
                 "add",
                 "--hosts",
-                "carrot_seed@eth2,tomato_seed",
+                "test1@eth2,test2",
                 "--port",
                 str(_ROLLBACK_PORT),
             ],
@@ -315,7 +315,7 @@ def test_interrupt_during_rollback_still_reaps(tmp_path):
             target=target,
             extra_env=_WIDE_CONSOLE_ENV,
         )
-        # phase: the LAST launch (tomato's REV ingress) dispatched -- all 4
+        # phase: the LAST launch (test2's REV ingress) dispatched -- all 4
         # launches attempted; only verify -> retry -> rollback remains.
         _wait_for_stdout(p, r"otto-tunnel:v1:[^:]+:[^:]+:\d+:\d+:rev:ingress:", timeout=60.0)
         if p.proc.poll() is None:
@@ -347,7 +347,7 @@ def test_interrupt_during_rollback_still_reaps(tmp_path):
         # Nested so a raising release probe (post-G5 a dead probe raises)
         # still reports loudly WITHOUT skipping the tunnel reconciliation.
         try:
-            _release_tcp_port("carrot")
+            _release_tcp_port("test1")
         finally:
             rm_xdir = tmp_path / "rollback_rm"
             rm_xdir.mkdir()
@@ -362,8 +362,8 @@ def test_sigkill_mid_impair_recovers_via_repair_all(tmp_path):
     """SIGKILL an `otto link impair`; assert `otto link repair --all` restores
     impairment-free qdiscs on the trio.
     """
-    link_id = veggies_link_id()
-    target = make_bed_target("carrot")
+    link_id = unix_link_id()
+    target = make_bed_target("test1")
     p = spawn_otto(
         ["link", "impair", link_id, "--loss", "50", "--expire", "60"],
         xdir=tmp_path,

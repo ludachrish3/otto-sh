@@ -512,17 +512,15 @@ class TestHostIdCompleter:
             [
                 {
                     "ip": "1.1.1.1",
-                    "element": "carrot",
-                    "board": "seed",
+                    "element": "test1",
                     "creds": [{"login": "u", "password": "p"}],
-                    "labs": ["veggies"],
+                    "labs": ["unix"],
                 },
                 {
                     "ip": "1.1.1.2",
-                    "element": "tomato",
-                    "board": "seed",
+                    "element": "test2",
                     "creds": [{"login": "u", "password": "p"}],
-                    "labs": ["veggies"],
+                    "labs": ["unix"],
                 },
             ],
         )
@@ -530,7 +528,7 @@ class TestHostIdCompleter:
         with patch("otto.config.get_repos", return_value=[_fake_repo(lab)]):
             result = _host_id_completer(ctx=MagicMock(), incomplete="")
         # collect_host_ids also surfaces the built-in `local` host (sorted).
-        assert result == ["carrot_seed", "local", "tomato_seed"]
+        assert result == ["local", "test1", "test2"]
 
     def test_filters_by_incomplete_prefix(self, tmp_path):
         lab = tmp_path / "labA"
@@ -539,23 +537,29 @@ class TestHostIdCompleter:
             [
                 {
                     "ip": "1.1.1.1",
-                    "element": "carrot",
-                    "board": "seed",
+                    "element": "test1",
                     "creds": [{"login": "u", "password": "p"}],
-                    "labs": ["veggies"],
+                    "labs": ["unix"],
                 },
                 {
                     "ip": "1.1.1.2",
-                    "element": "tomato",
-                    "board": "seed",
+                    "element": "test2",
                     "creds": [{"login": "u", "password": "p"}],
-                    "labs": ["veggies"],
+                    "labs": ["unix"],
                 },
             ],
         )
         with patch("otto.config.get_repos", return_value=[_fake_repo(lab)]):
-            result = _host_id_completer(ctx=MagicMock(), incomplete="tom")
-        assert result == ["tomato_seed"]
+            result = _host_id_completer(ctx=MagicMock(), incomplete="test2")
+        assert result == ["test2"]
+        # A STRICT prefix must narrow too. Since the rename, `test1` and `test2`
+        # share every prefix that is not the whole id, so the case above is
+        # satisfied by an `==` filter as well as a `startswith` one. `loc` is a
+        # genuine strict prefix of exactly one offered id, and an `==` filter
+        # returns [] for it.
+        with patch("otto.config.get_repos", return_value=[_fake_repo(lab)]):
+            strict = _host_id_completer(ctx=MagicMock(), incomplete="loc")
+        assert strict == ["local"]
 
     def test_merges_ids_across_multiple_paths(self, tmp_path):
         lab1 = tmp_path / "lab1"
@@ -565,10 +569,9 @@ class TestHostIdCompleter:
             [
                 {
                     "ip": "1.1.1.1",
-                    "element": "carrot",
-                    "board": "seed",
+                    "element": "test1",
                     "creds": [{"login": "u", "password": "p"}],
-                    "labs": ["veggies"],
+                    "labs": ["unix"],
                 },
             ],
         )
@@ -586,7 +589,7 @@ class TestHostIdCompleter:
         )
         with patch("otto.config.get_repos", return_value=[_fake_repo(lab1, lab2)]):
             result = _host_id_completer(ctx=MagicMock(), incomplete="")
-        assert result == ["beet_seed", "carrot_seed", "local"]  # + built-in local
+        assert result == ["beet_seed", "local", "test1"]  # + built-in local
 
     def test_deduplicates_ids(self, tmp_path):
         """Same host id present in two lab.json files must collapse to one."""
@@ -594,16 +597,15 @@ class TestHostIdCompleter:
         lab2 = tmp_path / "lab2"
         dup = {
             "ip": "1.1.1.1",
-            "element": "carrot",
-            "board": "seed",
+            "element": "test1",
             "creds": [{"login": "u", "password": "p"}],
-            "labs": ["veggies"],
+            "labs": ["unix"],
         }
         _write_hosts_json(lab1, [dup])
         _write_hosts_json(lab2, [dup])
         with patch("otto.config.get_repos", return_value=[_fake_repo(lab1, lab2)]):
             result = _host_id_completer(ctx=MagicMock(), incomplete="")
-        assert result == ["carrot_seed", "local"]  # + built-in local
+        assert result == ["local", "test1"]  # + built-in local
 
     def test_skips_missing_path(self, tmp_path):
         """Non-existent search path must not raise; completer is best-effort."""
@@ -628,16 +630,15 @@ class TestHostIdCompleter:
                 {"element": "incomplete"},  # missing ip, creds — validate_host_dict rejects
                 {
                     "ip": "1.1.1.1",
-                    "element": "carrot",
-                    "board": "seed",
+                    "element": "test1",
                     "creds": [{"login": "u", "password": "p"}],
-                    "labs": ["veggies"],
+                    "labs": ["unix"],
                 },
             ],
         )
         with patch("otto.config.get_repos", return_value=[_fake_repo(lab)]):
             result = _host_id_completer(ctx=MagicMock(), incomplete="")
-        assert result == ["carrot_seed", "local"]  # invalid entry skipped; built-in local remains
+        assert result == ["local", "test1"]  # invalid entry skipped; built-in local remains
 
     def test_prefers_cached_host_ids(self, tmp_path):
         """When the completion cache is populated (fast path), the completer
@@ -671,10 +672,9 @@ class TestHostIdCompleter:
             [
                 {
                     "ip": "1.1.1.1",
-                    "element": "carrot",
-                    "board": "seed",
+                    "element": "test1",
                     "creds": [{"login": "u", "password": "p"}],
-                    "labs": ["veggies"],
+                    "labs": ["unix"],
                 },
             ],
         )
@@ -683,7 +683,7 @@ class TestHostIdCompleter:
             patch("otto.config.get_repos", return_value=[_fake_repo(lab)]),
         ):
             result = _host_id_completer(ctx=MagicMock(), incomplete="")
-        assert result == ["carrot_seed", "local"]  # live scan + built-in local
+        assert result == ["local", "test1"]  # live scan + built-in local
 
     def test_argument_advertises_completer(self):
         """Regression guard: the ``host_id`` parameter must carry the
@@ -726,17 +726,15 @@ class TestHostIdCompleterLabFilter:
             [
                 {
                     "ip": "1.1.1.1",
-                    "element": "carrot",
-                    "board": "seed",
+                    "element": "test1",
                     "creds": [{"login": "u", "password": "p"}],
-                    "labs": ["veggies"],
+                    "labs": ["unix"],
                 },
                 {
                     "ip": "1.1.1.2",
-                    "element": "apple",
-                    "board": "seed",
+                    "element": "alt2",
                     "creds": [{"login": "u", "password": "p"}],
-                    "labs": ["fruits"],
+                    "labs": ["unix_alt"],
                 },
             ],
         )
@@ -744,17 +742,17 @@ class TestHostIdCompleterLabFilter:
             patch("otto.config.get_completion_names", return_value=None),
             patch("otto.config.get_repos", return_value=[_fake_repo(lab)]),
         ):
-            result = _host_id_completer(ctx=_ctx_with_labs(["veggies"]), incomplete="")
-        # carrot (veggies) + built-in local; apple (fruits) excluded.
-        assert result == ["carrot_seed", "local"]
+            result = _host_id_completer(ctx=_ctx_with_labs(["unix"]), incomplete="")
+        # test1 (unix) + built-in local; alt2 (unix_alt) excluded.
+        assert result == ["local", "test1"]
 
     def test_cached_hosts_filtered_by_selected_lab(self, tmp_path):
         """Fast path: the completer reads the per-lab cache map, not flat hosts."""
         fake_cache = {
-            "hosts": ["carrot_seed", "apple_seed", "grape_seed"],
+            "hosts": ["test1", "alt2", "alt3"],
             "hosts_by_lab": {
-                "veggies": ["carrot_seed"],
-                "fruits": ["apple_seed", "grape_seed"],
+                "unix": ["test1"],
+                "unix_alt": ["alt2", "alt3"],
             },
         }
         with (
@@ -764,25 +762,25 @@ class TestHostIdCompleterLabFilter:
                 return_value=[_fake_repo(tmp_path / "does-not-exist")],
             ),
         ):
-            result = _host_id_completer(ctx=_ctx_with_labs(["fruits"]), incomplete="")
-        # fruits members + built-in local; carrot (veggies) excluded.
-        assert result == ["apple_seed", "grape_seed", "local"]
+            result = _host_id_completer(ctx=_ctx_with_labs(["unix_alt"]), incomplete="")
+        # unix_alt members + built-in local; test1 (unix) excluded.
+        assert result == ["alt2", "alt3", "local"]
 
     def test_reads_lab_from_parent_context(self, tmp_path):
         """``-l`` sits on the root ctx, not the host child ctx — walk up to it."""
         fake_cache = {
-            "hosts": ["carrot_seed", "apple_seed"],
-            "hosts_by_lab": {"veggies": ["carrot_seed"], "fruits": ["apple_seed"]},
+            "hosts": ["test1", "alt2"],
+            "hosts_by_lab": {"unix": ["test1"], "unix_alt": ["alt2"]},
         }
         with patch("otto.config.get_completion_names", return_value=fake_cache):
-            result = _host_id_completer(ctx=_ctx_with_labs(["veggies"]), incomplete="")
-        assert result == ["carrot_seed", "local"]
+            result = _host_id_completer(ctx=_ctx_with_labs(["unix"]), incomplete="")
+        assert result == ["local", "test1"]
 
     def test_unknown_lab_offers_only_builtin(self, tmp_path):
         """A lab absent from the cache map still resolves the built-in host."""
         fake_cache = {
-            "hosts": ["carrot_seed"],
-            "hosts_by_lab": {"veggies": ["carrot_seed"]},
+            "hosts": ["test1"],
+            "hosts_by_lab": {"unix": ["test1"]},
         }
         with patch("otto.config.get_completion_names", return_value=fake_cache):
             result = _host_id_completer(ctx=_ctx_with_labs(["ghosts"]), incomplete="")
@@ -791,18 +789,18 @@ class TestHostIdCompleterLabFilter:
     def test_no_lab_selected_returns_all_hosts(self, tmp_path):
         """No lab (labs=None on the root ctx) keeps the whole-fleet behaviour."""
         fake_cache = {
-            "hosts": ["carrot_seed", "apple_seed", "grape_seed"],
-            "hosts_by_lab": {"veggies": ["carrot_seed"]},
+            "hosts": ["test1", "alt2", "alt3"],
+            "hosts_by_lab": {"unix": ["test1"]},
         }
         with patch("otto.config.get_completion_names", return_value=fake_cache):
             result = _host_id_completer(ctx=_ctx_with_labs(None), incomplete="")
-        assert result == ["apple_seed", "carrot_seed", "grape_seed"]
+        assert result == ["alt2", "alt3", "test1"]
 
     def test_prefix_filter_still_applies_within_lab(self, tmp_path):
         fake_cache = {
-            "hosts": ["carrot_seed", "cabbage_seed", "apple_seed"],
-            "hosts_by_lab": {"veggies": ["carrot_seed", "cabbage_seed"]},
+            "hosts": ["test1", "cabbage_seed", "alt2"],
+            "hosts_by_lab": {"unix": ["test1", "cabbage_seed"]},
         }
         with patch("otto.config.get_completion_names", return_value=fake_cache):
-            result = _host_id_completer(ctx=_ctx_with_labs(["veggies"]), incomplete="car")
-        assert result == ["carrot_seed"]
+            result = _host_id_completer(ctx=_ctx_with_labs(["unix"]), incomplete="test")
+        assert result == ["test1"]

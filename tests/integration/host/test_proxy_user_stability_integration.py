@@ -114,7 +114,6 @@ def _mysql_host_dict(ip: str, element: str, **overrides: object) -> dict[str, ob
     data: dict[str, object] = {
         "ip": ip,
         "element": element,
-        "board": "seed",
         "creds": [dict(c) for c in _MYSQL_CREDS],
     }
     data.update(overrides)
@@ -136,7 +135,7 @@ _NC_SERIAL_GROUP = pytest.mark.xdist_group("nc-serial")
 def leased_host(tmp_path_factory) -> Iterator[tuple[str, str]]:
     """Lease one Unix host from the pool; yield ``(element, ip)``.
 
-    ``ip`` is read read-only from ``tech1/lab.json`` (the veggies lab's
+    ``ip`` is read read-only from ``tech1/lab.json`` (the unix lab's
     real IP-to-element map) via :func:`tests._fixtures.labdata.host_data` —
     the shared file's ``creds`` are never consulted.
     """

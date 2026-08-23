@@ -1,4 +1,4 @@
-"""Fixtures for the BusyBox bed guests (five QEMU guests behind carrot).
+"""Fixtures for the BusyBox bed guests (five QEMU guests behind test1).
 
 Guests are built via the factory (`create_host_from_dict`) so the
 committed lab entries are exercised exactly as `otto host` users
@@ -80,13 +80,13 @@ def pytest_collection_modifyitems(config, items):
 
 @pytest.fixture(autouse=True, scope="module")
 def _load_lab():
-    """Install carrot so hop resolution finds carrot_seed (snapshot/restore
+    """Install test1 so hop resolution finds test1 (snapshot/restore
     per tests/integration/host/conftest.py's discipline)."""
     from otto.context import _active
 
     snapshot = _active.get()
     lab = Lab(name="busybox_bed")
-    data = host_data("carrot")
+    data = host_data("test1")
     lab.add_host(
         UnixHost(
             ip=data["ip"],
@@ -106,27 +106,27 @@ _bed_state: dict = {}
 
 
 def _probe_guest(ne: str) -> "str | None":
-    """Dial the guest FROM carrot, which is the only place it is routable.
+    """Dial the guest FROM test1, which is the only place it is routable.
 
     The guest's ``ip`` is its own address on a /30 whose other end is a TAP
-    device on carrot, and the guests configure no default route — so this
+    device on test1, and the guests configure no default route — so this
     connect has to originate on the hop. The port comes off the entry the same
     way ``scripts/lab_health.py`` reads it (``telnet_options.port``, defaulting
     to 23): the bed entries declare no override, and hardcoding 23 here would
     stop tracking them if one ever did.
     """
     guest = host_data(ne)
-    carrot = host_data("carrot")
-    user, password = _ssh_user_pass(carrot["creds"])
+    test1 = host_data("test1")
+    user, password = _ssh_user_pass(test1["creds"])
     ip = guest["ip"]
     port = guest.get("telnet_options", {}).get("port", 23)
     probe = "python3 -c " + shlex.quote(
         f"import socket; socket.create_connection(({ip!r}, {port}), timeout=5).close()"
     )
-    rc, _out, err = _run_ssh(carrot["ip"], user, password, probe)
+    rc, _out, err = _run_ssh(test1["ip"], user, password, probe)
     if rc != 0:
         return (
-            f"BusyBox bed guest {ne} ({ip}:{port}, from carrot) is unreachable: "
+            f"BusyBox bed guest {ne} ({ip}:{port}, from test1) is unreachable: "
             f"{err or f'rc={rc}'}. Is the bed provisioned and up? "
             "Recover with `make qemu-restart`; diagnose with "
             f"`journalctl -u busybox-qemu-{guest['sw_version']}` on test1."

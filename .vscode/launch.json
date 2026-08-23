@@ -30,7 +30,7 @@
             "args": "${command:pickArgs}",
             "console": "integratedTerminal",
             "env": {
-                "OTTO_LAB": "veggies",
+                "OTTO_LAB": "unix",
                 "OTTO_LOG_DAYS": "7",
                 "OTTO_SUT_DIRS": "${workspaceFolder}/tests/repo1",
                 "OTTO_XDIR": "${userHome}/xdir",

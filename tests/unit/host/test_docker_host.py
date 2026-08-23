@@ -33,7 +33,7 @@ def _sm(result) -> tuple[Status, str]:
     return result.status, result.msg
 
 
-def _mock_parent(parent_id: str = "pepper_seed", *, term: str = "ssh"):
+def _mock_parent(parent_id: str = "test3", *, term: str = "ssh"):
     parent = MagicMock()
     parent.id = parent_id
     parent.name = parent_id
@@ -92,19 +92,19 @@ def _build_fake_ssh_remote_host():
 
 
 def test_id_format():
-    h = _make_container(_mock_parent("pepper_seed"))
-    assert h.id == "pepper_seed.repo1.api"
+    h = _make_container(_mock_parent("test3"))
+    assert h.id == "test3.repo1.api"
 
 
 def test_id_lowercased():
     h = DockerContainerHost(
-        parent=_mock_parent("Pepper_SEED"),
+        parent=_mock_parent("TEST3"),
         container_id="abc",
         project="Repo1",
         service="API",
         compose_project="proj",
     )
-    assert h.id == "pepper_seed.repo1.api"
+    assert h.id == "test3.repo1.api"
 
 
 def test_is_virtual_default():
@@ -273,8 +273,8 @@ async def test_placeholder_auto_ups_stack(monkeypatch):
     assert compose_up.call_args.kwargs["build"] is False
     assert compose_up.call_args.kwargs["project_name"] == "otto-repo1-vagrant"
     # Auto-up composes on the container's OWN parent host, not a global
-    # default_host: a `carrot_seed.repo1.api` container must auto-start on
-    # carrot, not on whatever host happens to be the compose default. (Latent
+    # default_host: a `test1.repo1.api` container must auto-start on
+    # test1, not on whatever host happens to be the compose default. (Latent
     # bug surfaced by the multi-host docker pool — see docker_host.py::_auto_up.)
     assert compose_up.call_args.kwargs["on"] == parent.id
     assert h.container_id == "freshcid"

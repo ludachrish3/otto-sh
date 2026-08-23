@@ -209,9 +209,7 @@ from otto.tunnel import add_tunnel, discover_tunnels, remove_tunnel
 @instruction()
 async def add_multi_hop_tunnel():
     lab = get_lab()
-    added = await add_tunnel(
-        lab, [("carrot_seed", None), ("compost", None), ("tomato_seed", None)], port=6001
-    )
+    added = await add_tunnel(lab, [("test1", None), ("test3", None), ("test2", None)], port=6001)
     live = await discover_tunnels(lab)  # every tunnel found right now
     report = await remove_tunnel(lab, added.tunnel.id)
 ```

@@ -24,9 +24,8 @@ from otto.utils import Status
 def _parent() -> UnixHost:
     return UnixHost(
         ip="10.10.200.13",
-        element="pepper",
+        element="test3",
         creds=[Cred(login="vagrant", password="vagrant")],
-        board="seed",
         docker_capable=True,
     )
 

@@ -5,9 +5,9 @@ telnet host and verifies every file byte-for-byte. Handy whenever the nc /
 telnet transfer code is touched and you want a quick real-hardware check
 beyond the unit + stability suites.
 
-Run it against the lab (``veggies``)::
+Run it against the lab (``unix``)::
 
-    OTTO_SUT_DIRS=<repo1 dir> otto -l veggies run nc-smoke
+    OTTO_SUT_DIRS=<repo1 dir> otto -l unix run nc-smoke
 
 A pass means the telnet nc control plane (port discovery, listener probes,
 file-size stats) and both data paths still work end to end.
@@ -49,7 +49,7 @@ class _Options(RepoOptions):
         typer.Option(
             help="Lab host id to target. Must be a telnet host with transfer=nc.",
         ),
-    ] = "tomato_seed"
+    ] = "test2"
 
     file_count: Annotated[
         int,
@@ -103,7 +103,7 @@ async def nc_smoke(opts: _Options) -> CommandResult:
         src_files.append(f)
     logger.info(f"Generated {len(src_files)} x {opts.file_mb} MiB source file(s)")
 
-    # `get_host` returns the lab host; tomato is term=telnet, transfer=nc in
+    # `get_host` returns the lab host; test2 is term=telnet, transfer=nc in
     # the tech1 lab. A fresh instruction run gets a cold host.
     host = get_host(opts.host_id)
     logger.info(f"Target {opts.host_id}: term={host.term!r}, transfer={host.transfer!r}")

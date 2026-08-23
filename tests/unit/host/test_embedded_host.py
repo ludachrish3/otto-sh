@@ -26,7 +26,7 @@ from tests.conftest import active_context
 @pytest.fixture
 def host():
     """Bare ZephyrHost, no connections established."""
-    h = ZephyrHost(ip="192.0.2.1", element="sprout", log=LogMode.QUIET)
+    h = ZephyrHost(ip="192.0.2.1", element="zephyr37_fat", log=LogMode.QUIET)
     yield h
     # Several tests swap internals for AsyncMocks. A mocked ``_connections``
     # makes ``__del__``'s ``connected`` check truthy, so at GC it would churn
@@ -42,12 +42,12 @@ def host():
 class TestGenericEmbeddedFailsLoud:
     def test_no_command_frame_raises(self):
         with pytest.raises(ValueError, match="command_frame"):
-            EmbeddedHost(ip="192.0.2.1", element="sprout", log=LogMode.QUIET)
+            EmbeddedHost(ip="192.0.2.1", element="zephyr37_fat", log=LogMode.QUIET)
 
     def test_explicit_frame_builds_generic_embedded(self):
         h = EmbeddedHost(
             ip="192.0.2.1",
-            element="sprout",
+            element="zephyr37_fat",
             log=LogMode.QUIET,
             command_frame=ZephyrFrame(),
         )
@@ -65,7 +65,7 @@ class TestGenericEmbeddedFailsLoud:
 class TestInit:
     def test_default_values(self, host: EmbeddedHost):
         assert host.ip == "192.0.2.1"
-        assert host.element == "sprout"
+        assert host.element == "zephyr37_fat"
         assert host.creds == []
         assert host.hop is None
         assert host.resources == set()
@@ -82,7 +82,7 @@ class TestInit:
     def test_os_schema_overrides(self):
         host = ZephyrHost(
             ip="192.0.2.1",
-            element="sprout",
+            element="zephyr37_fat",
             log=LogMode.QUIET,
             os_name="Zephyr",
             os_version="3.7.0",
@@ -98,7 +98,7 @@ class TestInit:
     def test_custom_telnet_options(self):
         host = ZephyrHost(
             ip="192.0.2.1",
-            element="sprout",
+            element="zephyr37_fat",
             log=LogMode.QUIET,
             telnet_options=TelnetOptions(port=2323),
         )
@@ -112,17 +112,17 @@ class TestInit:
 
 class TestIdAndNameGeneration:
     def test_id_no_board(self):
-        host = ZephyrHost(ip="192.0.2.1", element="Sprout", log=LogMode.QUIET)
-        assert host.id == "sprout"
-        assert host.name == "Sprout"
+        host = ZephyrHost(ip="192.0.2.1", element="Zephyr37_Fat", log=LogMode.QUIET)
+        assert host.id == "zephyr37-fat"
+        assert host.name == "Zephyr37_Fat"
 
     def test_id_with_board(self):
-        host = ZephyrHost(ip="192.0.2.1", element="Sprout", board="Mote", log=LogMode.QUIET)
-        assert host.id == "sprout_mote"
-        assert host.name == "Sprout Mote"
+        host = ZephyrHost(ip="192.0.2.1", element="Zephyr37_Fat", board="Mote", log=LogMode.QUIET)
+        assert host.id == "zephyr37-fat_mote"
+        assert host.name == "Zephyr37_Fat Mote"
 
     def test_custom_name_preserved(self):
-        host = ZephyrHost(ip="192.0.2.1", element="sprout", name="custom", log=LogMode.QUIET)
+        host = ZephyrHost(ip="192.0.2.1", element="zephyr37_fat", name="custom", log=LogMode.QUIET)
         assert host.name == "custom"
 
 
@@ -137,8 +137,8 @@ class TestHop:
 
     def test_hop_builds_transport(self):
         """A configured hop produces an SshHopTransport on the ConnectionManager."""
-        host = ZephyrHost(ip="192.0.2.1", element="sprout", hop="basil_seed", log=LogMode.QUIET)
-        assert host.hop == "basil_seed"
+        host = ZephyrHost(ip="192.0.2.1", element="zephyr37_fat", hop="test4", log=LogMode.QUIET)
+        assert host.hop == "test4"
         assert host._connections._hop is not None
 
 
@@ -197,7 +197,7 @@ class TestFileTransfer:
 
         host = ZephyrHost(
             ip="192.0.2.1",
-            element="sprout",
+            element="zephyr37_fat",
             log=LogMode.QUIET,
             transfer="tftp",
             valid_transfers=["tftp"],
@@ -242,7 +242,7 @@ class TestDefaultDestDir:
         must coerce it so ``_resolve_dest`` can use Path arithmetic."""
         h = ZephyrHost(
             ip="192.0.2.1",
-            element="sprout",
+            element="zephyr37_fat",
             log=LogMode.QUIET,
             default_dest_dir="/RAM:",  # type: ignore[arg-type]
         )
@@ -252,7 +252,7 @@ class TestDefaultDestDir:
     def test_resolve_empty_returns_default(self):
         h = ZephyrHost(
             ip="192.0.2.1",
-            element="sprout",
+            element="zephyr37_fat",
             log=LogMode.QUIET,
             default_dest_dir=Path("/RAM:"),
         )
@@ -262,7 +262,7 @@ class TestDefaultDestDir:
     def test_resolve_absolute_passes_through(self):
         h = ZephyrHost(
             ip="192.0.2.1",
-            element="sprout",
+            element="zephyr37_fat",
             log=LogMode.QUIET,
             default_dest_dir=Path("/RAM:"),
         )
@@ -274,7 +274,7 @@ class TestDefaultDestDir:
     def test_resolve_relative_joins_under_default(self):
         h = ZephyrHost(
             ip="192.0.2.1",
-            element="sprout",
+            element="zephyr37_fat",
             log=LogMode.QUIET,
             default_dest_dir=Path("/RAM:"),
         )
@@ -417,7 +417,7 @@ class TestClose:
         unix fix was hand-mirrored here and once missed)."""
         h = EmbeddedHost(
             ip="192.0.2.1",
-            element="sprout",
+            element="zephyr37_fat",
             log=LogMode.QUIET,
             command_frame=ZephyrFrame(),
         )
@@ -453,15 +453,17 @@ class TestVerifyConnection:
 
 class TestLoaderField:
     def test_loader_string_coerced_to_instance(self):
-        h = ZephyrHost(ip="192.0.2.1", element="sprout", log=LogMode.QUIET, loader="llext-hex")
+        h = ZephyrHost(
+            ip="192.0.2.1", element="zephyr37_fat", log=LogMode.QUIET, loader="llext-hex"
+        )
         assert isinstance(h.loader, LlextHexLoader)
 
     def test_loader_defaults_to_none(self):
-        h = ZephyrHost(ip="192.0.2.1", element="sprout", log=LogMode.QUIET)
+        h = ZephyrHost(ip="192.0.2.1", element="zephyr37_fat", log=LogMode.QUIET)
         assert h.loader is None
 
     def test_require_loader_raises_when_none(self):
-        h = ZephyrHost(ip="192.0.2.1", element="sprout", log=LogMode.QUIET)
+        h = ZephyrHost(ip="192.0.2.1", element="zephyr37_fat", log=LogMode.QUIET)
         with pytest.raises(ValueError, match="no binary loader"):
             h._require_loader()
 

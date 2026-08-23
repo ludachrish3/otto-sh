@@ -36,8 +36,8 @@ from tests.e2e._otto_subprocess import REPO1, run_otto
 # Constants (mirroring tests/e2e/host/test_host_transfer_e2e.py)
 # ---------------------------------------------------------------------------
 
-# Lab that contains carrot/tomato/pepper (tech1 lab data).
-_LAB = "veggies"
+# Lab that contains test1/test2/test3 (tech1 lab data).
+_LAB = "unix"
 
 pytestmark = [pytest.mark.integration, pytest.mark.xdist_group("host_transfer_e2e")]
 
@@ -92,10 +92,10 @@ def _ctx(host_id: str, lab: str = _LAB, as_user: "str | None" = None, term: "str
 
 @pytest.fixture
 def unix_host(tmp_path_factory) -> str:  # type: ignore[type-arg]
-    """Lease one Unix host from the pool; yield its seed id (e.g. ``carrot_seed``)."""
+    """Lease one Unix host from the pool; yield its host id (e.g. ``test1``)."""
     lock_dir = tmp_path_factory.getbasetemp().parent
     with lease_unix_host(lock_dir, _UNIX_POOL) as element:
-        yield f"{element}_seed"
+        yield element
 
 
 # ---------------------------------------------------------------------------
@@ -116,13 +116,13 @@ def test_remote_completion_lists_live_host(monkeypatch, tmp_path: Path, unix_hos
     3. ``kind="dir"`` filters the cached view down to directories only.
 
     Every completion here goes through the ``--term ssh`` override, and must:
-    the pool leases whichever of carrot/tomato/pepper is free, and
-    ``tomato_seed``'s configured default term is ``telnet`` (``valid_terms =
+    the pool leases whichever of test1/test2/test3 is free, and
+    ``test2``'s configured default term is ``telnet`` (``valid_terms =
     ['telnet', 'ssh']``). The completer is SSH-only by design — it lists over
     the host's exec seam — so a telnet-defaulted host completes to ``[]``
     immediately, and this test failed under ``make coverage`` for exactly that
-    reason once the lease drew tomato. The override is what a user typing
-    ``otto host tomato_seed --term ssh get <TAB>`` gets, so the test now takes
+    reason once the lease drew test2. The override is what a user typing
+    ``otto host test2 --term ssh get <TAB>`` gets, so the test now takes
     the same path (and covers the override-copy branch of ``_load_host``,
     which no other e2e touched).
     """
@@ -209,7 +209,7 @@ def test_remote_completion_lists_live_host(monkeypatch, tmp_path: Path, unix_hos
 def _reservation_repo(root: Path, holder: str) -> Path:
     """Write a SUT repo whose lab's resources are booked to *holder* in a JSON file.
 
-    Minimal ``.otto/settings.toml`` + a one-host ``veggies`` lab + a
+    Minimal ``.otto/settings.toml`` + a one-host ``unix`` lab + a
     ``version: 1`` reservation file, mirroring the fixture construction in
     ``tests/unit/reservations/test_wiring.py`` / ``test_json_backend.py``.
     """
@@ -233,14 +233,13 @@ def _reservation_repo(root: Path, holder: str) -> Path:
                     "hosts": [
                         {
                             "ip": "10.10.200.11",
-                            "element": "carrot",
+                            "element": "test1",
                             "os_type": "unix",
-                            "board": "seed",
                             "valid_terms": ["ssh"],
                             "valid_transfers": ["scp"],
                             "is_virtual": True,
                             "creds": [{"login": "vagrant", "password": "vagrant"}],
-                            "resources": ["carrot"],
+                            "resources": ["test1"],
                             "labs": [_LAB],
                         }
                     ],
@@ -254,9 +253,9 @@ def _reservation_repo(root: Path, holder: str) -> Path:
 
 
 def _write_reservations(root: Path, holder: str) -> None:
-    """(Re)write the repo's reservation file, booking ``carrot`` to *holder*."""
+    """(Re)write the repo's reservation file, booking ``test1`` to *holder*."""
     (root / "reservations.json").write_text(
-        json.dumps({"version": 1, "reservations": [{"user": holder, "resources": ["carrot"]}]})
+        json.dumps({"version": 1, "reservations": [{"user": holder, "resources": ["test1"]}]})
     )
 
 
@@ -286,7 +285,7 @@ def test_completion_without_reservation_is_empty(monkeypatch, tmp_path: Path) ->
 
     # --- refused: booked to another user ---
     monkeypatch.setenv("OTTO_XDIR", str(tmp_path / "xdir_refused"))
-    assert rc.remote_path_completer(_ctx("carrot_seed"), "/tmp/") == []
+    assert rc.remote_path_completer(_ctx("test1"), "/tmp/") == []
     assert touched == [], (
         "The reservation gate must refuse before the host is loaded — "
         f"_load_host was called for {touched!r}"
@@ -295,8 +294,8 @@ def test_completion_without_reservation_is_empty(monkeypatch, tmp_path: Path) ->
     # --- control: the same fixture, booked to the effective user, gets past the gate ---
     _write_reservations(repo, resolve_username(None).username)
     monkeypatch.setenv("OTTO_XDIR", str(tmp_path / "xdir_allowed"))  # fresh reservation cache
-    assert rc.remote_path_completer(_ctx("carrot_seed"), "/tmp/") == []  # _load_host raises
-    assert touched == ["carrot_seed"], (
+    assert rc.remote_path_completer(_ctx("test1"), "/tmp/") == []  # _load_host raises
+    assert touched == ["test1"], (
         "With the lab's resources booked to the effective user the gate must allow "
         f"completion to proceed to host load; _load_host calls: {touched!r}"
     )

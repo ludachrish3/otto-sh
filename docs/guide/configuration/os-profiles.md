@@ -45,9 +45,9 @@ With this profile in place, a host entry only needs to name the profile:
 ```json
 {
     "ip": "192.0.2.1",
-    "element": "sprout",
+    "element": "zephyr37_fat",
     "os_type": "zephyr-3.7-fat32",
-    "hop": "basil_seed",
+    "hop": "test4",
     "labs": ["embedded"]
 }
 ```

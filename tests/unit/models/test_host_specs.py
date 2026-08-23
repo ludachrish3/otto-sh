@@ -172,7 +172,7 @@ def test_unix_spec_builds_nested_options_and_snmp():
         ssh_options={"port": 2222, "extra": {"x": 1}},
         snmp={"oids": ["1.3.6.1.2.1.1.3.0"], "port": 16101},
         resources=["r1"],
-        labs=["veggies"],
+        labs=["unix"],
     )
     host = spec.to_host()
     assert host.ssh_options.port == 2222
@@ -301,15 +301,15 @@ def test_hostspec_interfaces_rejects_non_ip_value():
 def test_unix_to_host_matches_factory():
     d = {
         "ip": "10.10.200.11",
-        "element": "carrot",
+        "element": "test1",
         "os_type": "unix",
-        "board": "seed",
+        "board": "qemu",
         "term": "ssh",
         "transfer": "scp",
         "is_virtual": True,
         "creds": [{"login": "vagrant", "password": "vagrant"}],
-        "resources": ["carrot"],
-        "labs": ["veggies"],
+        "resources": ["test1"],
+        "labs": ["unix"],
         "ssh_options": {"port": 2200},
     }
     spec_host = UnixHostSpec.model_validate(d).to_host()

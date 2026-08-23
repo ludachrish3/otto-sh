@@ -23,9 +23,9 @@ def test_load_lab_default_repository_uses_search_paths(tmp_path):
         [
             {
                 "ip": "10.10.200.11",
-                "element": "orange",
+                "element": "alt1",
                 "creds": [{"login": "vagrant", "password": "vagrant"}],
-                "resources": ["orange"],
+                "resources": ["alt1"],
                 "labs": ["testlab"],
             },
         ],
@@ -34,7 +34,7 @@ def test_load_lab_default_repository_uses_search_paths(tmp_path):
     assert isinstance(lab, Lab)
     assert lab.name == "testlab"
     # `local` is the built-in host load_lab injects into every lab.
-    assert set(lab.hosts) == {"orange", "local"}
+    assert set(lab.hosts) == {"alt1", "local"}
 
 
 def test_load_lab_uses_injected_repository(tmp_path):
@@ -44,9 +44,9 @@ def test_load_lab_uses_injected_repository(tmp_path):
         [
             {
                 "ip": "10.10.200.11",
-                "element": "orange",
+                "element": "alt1",
                 "creds": [{"login": "vagrant", "password": "vagrant"}],
-                "resources": ["orange"],
+                "resources": ["alt1"],
                 "labs": ["injected"],
             },
         ],
@@ -54,7 +54,7 @@ def test_load_lab_uses_injected_repository(tmp_path):
     repo = JsonFileLabRepository([tmp_path])
     lab = load_lab("injected", repository=repo)
     assert lab.name == "injected"
-    assert set(lab.hosts) == {"orange", "local"}  # `local` = built-in injection
+    assert set(lab.hosts) == {"alt1", "local"}  # `local` = built-in injection
 
 
 def test_load_lab_merges_multiple_names(tmp_path):
@@ -64,23 +64,23 @@ def test_load_lab_merges_multiple_names(tmp_path):
         [
             {
                 "ip": "10.10.200.11",
-                "element": "orange",
+                "element": "alt1",
                 "creds": [{"login": "vagrant", "password": "vagrant"}],
-                "resources": ["orange"],
+                "resources": ["alt1"],
                 "labs": ["lab_a"],
             },
             {
                 "ip": "10.10.200.12",
-                "element": "tomato",
+                "element": "test2",
                 "creds": [{"login": "vagrant", "password": "vagrant"}],
-                "resources": ["tomato"],
+                "resources": ["test2"],
                 "labs": ["lab_b"],
             },
         ],
     )
     repo = JsonFileLabRepository([tmp_path])
     lab = load_lab("lab_a+lab_b", repository=repo)
-    assert set(lab.hosts) == {"orange", "tomato", "local"}  # `local` = built-in injection
+    assert set(lab.hosts) == {"alt1", "test2", "local"}  # `local` = built-in injection
 
 
 def test_load_lab_comma_is_not_a_separator(tmp_path):
@@ -98,16 +98,16 @@ def test_load_lab_comma_is_not_a_separator(tmp_path):
         [
             {
                 "ip": "10.10.200.11",
-                "element": "orange",
+                "element": "alt1",
                 "creds": [{"login": "vagrant", "password": "vagrant"}],
-                "resources": ["orange"],
+                "resources": ["alt1"],
                 "labs": ["lab_a"],
             },
             {
                 "ip": "10.10.200.12",
-                "element": "tomato",
+                "element": "test2",
                 "creds": [{"login": "vagrant", "password": "vagrant"}],
-                "resources": ["tomato"],
+                "resources": ["test2"],
                 "labs": ["lab_b"],
             },
         ],
@@ -125,16 +125,16 @@ def test_merged_lab_name_uses_the_plus_separator(tmp_path):
         [
             {
                 "ip": "10.10.200.11",
-                "element": "orange",
+                "element": "alt1",
                 "creds": [{"login": "vagrant", "password": "vagrant"}],
-                "resources": ["orange"],
+                "resources": ["alt1"],
                 "labs": ["lab_a"],
             },
             {
                 "ip": "10.10.200.12",
-                "element": "tomato",
+                "element": "test2",
                 "creds": [{"login": "vagrant", "password": "vagrant"}],
-                "resources": ["tomato"],
+                "resources": ["test2"],
                 "labs": ["lab_b"],
             },
         ],
@@ -145,37 +145,37 @@ def test_merged_lab_name_uses_the_plus_separator(tmp_path):
 
 
 def test_load_lab_round_trips_declared_link_from_fixture():
-    """The tech1 fixture's carrot<->tomato udp link survives load_lab end to end."""
-    lab = load_lab("veggies", search_paths=[lab_data_dir() / "tech1"])
+    """The tech1 fixture's test1<->test2 udp link survives load_lab end to end."""
+    lab = load_lab("unix", search_paths=[lab_data_dir() / "tech1"])
 
     by_pair = {frozenset({link.a.host, link.b.host}): link for link in lab.links}
-    link = by_pair[frozenset({"carrot_seed", "tomato_seed"})]
+    link = by_pair[frozenset({"test1", "test2"})]
     assert link.protocol == "udp"
     assert {link.a.ip, link.b.ip} == {"192.168.1.11", "192.168.1.12"}
 
 
 def test_loading_one_lab_also_loads_a_link_reaching_out_of_it():
-    """``veggies`` loads the bb1350 TAP link too, and that is the containment
+    """``unix`` loads the bb1350 TAP link too, and that is the containment
     rule working rather than a leak.
 
     ``resolve_declared_links`` keeps any entry with at least ONE endpoint in
-    the loaded lab, so a link is loaded by BOTH labs it straddles: carrot
-    belongs to ``veggies`` and ``busybox``, so ``veggies`` sees the
-    ``carrot_seed:bbeth-1350 <-> bb1350_qemu:eth0`` link and ``busybox``
-    already saw the ``carrot_seed:eth2 <-> tomato_seed:eth2`` one. Dropping
+    the loaded lab, so a link is loaded by BOTH labs it straddles: test1
+    belongs to ``unix`` and ``busybox``, so ``unix`` sees the
+    ``test1:bbeth-1350 <-> bb1350_qemu:eth0`` link and ``busybox``
+    already saw the ``test1:eth2 <-> test2:eth2`` one. Dropping
     half-outside links instead would silently hide every cross-lab route.
 
     Pinned as its own case because the count is load-bearing and easy to
     "fix" the wrong way: the sibling above used to assert ``len(lab.links)
     == 1`` and went red the moment a second link was declared, and bumping
     that number to 2 would have recorded the arithmetic while losing the
-    reason. It also documents a sharp edge -- ``otto -l veggies`` can NAME a
+    reason. It also documents a sharp edge -- ``otto -l unix`` can NAME a
     link whose far end it never loaded, which ``link list`` reports as not
-    impairable, but which ``link impair --from carrot_seed`` will act on
+    impairable, but which ``link impair --from test1`` will act on
     while ``link repair`` refuses it for exactly that reason.
     """
-    lab = load_lab("veggies", search_paths=[lab_data_dir() / "tech1"])
+    lab = load_lab("unix", search_paths=[lab_data_dir() / "tech1"])
 
     pairs = {frozenset({link.a.host, link.b.host}) for link in lab.links}
-    assert frozenset({"carrot_seed", "bb1350_qemu"}) in pairs, pairs
-    assert "bb1350_qemu" not in lab.hosts, "the guest is not a veggies host, only its link is"
+    assert frozenset({"test1", "bb1350_qemu"}) in pairs, pairs
+    assert "bb1350_qemu" not in lab.hosts, "the guest is not a unix host, only its link is"

@@ -1,7 +1,7 @@
 # The impairment refusals are netdev-level, so a harmless port scope is refused too
 
 Found while declaring the bed's first chaos link
-(`carrot_seed:bbeth-1350 <-> bb1350_qemu:eth0`, on main). The link is declared
+(`test1:bbeth-1350 <-> bb1350_qemu:eth0`, on main). The link is declared
 and its arm asserts otto's **refusal**; this is what an *injecting* guest arm is
 waiting on, and it is a product decision rather than a defect.
 
@@ -17,7 +17,7 @@ about which ones are safe to *create*.
 never look at the selector, so a port-scoped impairment is judged as though it
 degraded the whole wire.
 
-Concretely, on the bed guest: `--port 9000 --loss 100` on `carrot/bbeth-1350`
+Concretely, on the bed guest: `--port 9000 --loss 100` on `test1/bbeth-1350`
 would blackhole the `nc` transfer's data channel and leave telnet/23 — the
 guest's management path — untouched. Nobody is locked out. It is refused
 anyway.
@@ -27,7 +27,7 @@ written:
 
 | measurement | result |
 | --- | --- |
-| `--delay 300` on `carrot/bbeth-1350` | carrot→guest ping RTT **2.65ms → 302.5ms** |
+| `--delay 300` on `test1/bbeth-1350` | test1→guest ping RTT **2.65ms → 302.5ms** |
 | `--port 23 --proto tcp --loss 100` | full prio/netem/u32 tree built on the TAP; ICMP stayed at **0.96ms** (wire and guest both fine, only telnet blackholed) |
 | effect on otto | `otto host bb1350_qemu run` failed rc 1 after **134s**, stalled in `Performing telnet login`, impairment verified still in place at the moment of failure |
 | `--expire` backstop | cleared the whole tree on schedule; guest answered immediately, no restart |
@@ -49,8 +49,8 @@ implementation.
 
 **Why the guest is the hard case at all.** A BusyBox guest has ONE NIC, so its
 data plane *is* its management path — the same property that made the link
-declarable makes every whole-link impairment on it a self-lockout. The veggies
-scenario only works because tomato keeps a management `eth1` while its `eth2` is
+declarable makes every whole-link impairment on it a self-lockout. The unix
+scenario only works because test2 keeps a management `eth1` while its `eth2` is
 blackholed; the guest has no `eth1`.
 
 ## 2. A blackholed telnet session fails with a bare `Aborted.`

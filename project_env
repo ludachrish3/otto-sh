@@ -7,7 +7,7 @@ export OTTO_XDIR=~/xdir
 export OTTO_SUT_DIRS=$(pwd)/tests/repo1,$(pwd)/tests/repo2
 
 # Default lab name (exists in test data)
-export OTTO_LAB=veggies
+export OTTO_LAB=unix
 
 # Default number of days to keep logs
 export OTTO_LOG_DAYS=1

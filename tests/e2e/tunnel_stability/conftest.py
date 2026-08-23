@@ -14,7 +14,7 @@ from tests._fixtures.fd_watermark import (
 )
 from tests._fixtures.labdata import host_data
 from tests._fixtures.tunnel_bed import (
-    VEGGIES,
+    UNIX,
     assert_bed_clean_before_module,
     assert_no_leftover_tunnel_processes,
     assert_reachable,
@@ -24,11 +24,11 @@ from tests._fixtures.tunnel_bed import (
 
 @pytest_asyncio.fixture
 async def tunnel_lab():
-    """Real ``Lab`` over the 3-VM veggies bed; host-down fails LOUD, never skips."""
-    for ne in VEGGIES:
+    """Real ``Lab`` over the 3-VM unix bed; host-down fails LOUD, never skips."""
+    for ne in UNIX:
         await assert_reachable(ne, host_data(ne)["ip"])
     lab = Lab(name="tunnel_stability")
-    for ne in VEGGIES:
+    for ne in UNIX:
         lab.add_host(build_bed_host(ne))
     yield lab
     await asyncio.gather(*(h.close() for h in lab.hosts.values()), return_exceptions=True)

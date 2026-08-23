@@ -2,9 +2,8 @@
     "hosts": [
         {
             "ip": "10.10.200.11",
-            "element": "carrot",
+            "element": "test1",
             "os_type": "unix",
-            "board": "seed",
             "valid_terms": ["ssh", "telnet"],
             "valid_transfers": ["scp", "sftp", "ftp", "nc"],
             "is_virtual": true,
@@ -14,22 +13,21 @@
                 {"login": "test", "password": "Password1"}
             ],
             "resources": [
-                "carrot"
+                "test1"
             ],
             "interfaces": {
                 "eth2": {"ip": "192.168.1.11", "subnet": "192.168.1.0/24"},
                 "bbeth-1350": {"ip": "198.51.100.18", "subnet": "198.51.100.16/30"}
             },
             "labs": [
-                "veggies",
+                "unix",
                 "busybox"
             ]
         },
         {
             "ip": "10.10.200.12",
-            "element": "tomato",
+            "element": "test2",
             "os_type": "unix",
-            "board": "seed",
             "valid_terms": ["telnet", "ssh"],
             "valid_transfers": ["nc", "scp", "sftp", "ftp"],
             "is_virtual": true,
@@ -39,20 +37,19 @@
                 {"login": "test", "password": "Password1"}
             ],
             "resources": [
-                "tomato"
+                "test2"
             ],
             "interfaces": {
                 "eth2": {"ip": "192.168.1.12", "subnet": "192.168.1.0/24"}
             },
             "labs": [
-                "veggies"
+                "unix"
             ]
         },
         {
             "ip": "10.10.200.13",
-            "element": "pepper",
+            "element": "test3",
             "os_type": "unix",
-            "board": "seed",
             "valid_terms": ["ssh", "telnet"],
             "valid_transfers": ["scp", "sftp", "ftp", "nc"],
             "is_virtual": true,
@@ -62,20 +59,19 @@
                 {"login": "test", "password": "Password1"}
             ],
             "resources": [
-                "pepper"
+                "test3"
             ],
             "interfaces": {
                 "eth2": {"ip": "192.168.1.13", "subnet": "192.168.1.0/24"}
             },
             "labs": [
-                "veggies"
+                "unix"
             ]
         },
         {
             "ip": "10.10.200.14",
-            "element": "basil",
+            "element": "test4",
             "os_type": "unix",
-            "board": "seed",
             "valid_terms": ["ssh", "telnet"],
             "valid_transfers": ["scp", "sftp", "ftp", "nc"],
             "is_virtual": true,
@@ -84,7 +80,7 @@
                 {"login": "test", "password": "Password1"}
             ],
             "resources": [
-                "basil"
+                "test4"
             ],
             "interfaces": {
                 "eth2": {"ip": "192.168.1.14", "subnet": "192.168.1.0/24"}
@@ -95,14 +91,14 @@
         },
         {
             "ip": "192.0.2.1",
-            "element": "sprout",
+            "element": "zephyr37_fat",
             "os_type": "zephyr",
             "os_version": "3.7",
             "valid_transfers": ["console"],
             "filesystem": "fat-ram",
             "max_filename_len": 32,
             "is_virtual": true,
-            "hop": "basil_seed",
+            "hop": "test4",
             "snmp": {
                 "address": "10.10.200.14",
                 "port": 16101,
@@ -116,7 +112,7 @@
                 ]
             },
             "resources": [
-                "sprout"
+                "zephyr37_fat"
             ],
             "labs": [
                 "embedded"
@@ -124,14 +120,14 @@
         },
         {
             "ip": "192.0.2.5",
-            "element": "sprout_lfs",
+            "element": "zephyr37_lfs",
             "os_type": "zephyr",
             "os_version": "3.7",
             "valid_transfers": ["console"],
             "filesystem": "littlefs",
             "max_filename_len": 32,
             "is_virtual": true,
-            "hop": "basil_seed",
+            "hop": "test4",
             "snmp": {
                 "address": "10.10.200.14",
                 "port": 16102,
@@ -145,7 +141,7 @@
                 ]
             },
             "resources": [
-                "sprout_lfs"
+                "zephyr37_lfs"
             ],
             "labs": [
                 "embedded"
@@ -153,7 +149,7 @@
         },
         {
             "ip": "192.0.2.37",
-            "element": "sprout_no_fs",
+            "element": "zephyr37_nofs",
             "os_type": "zephyr",
             "os_version": "3.7",
             "command_frame": "zephyr-serial",
@@ -166,9 +162,9 @@
                 "write_chunk_size": 64,
                 "write_chunk_delay": 0.015
             },
-            "hop": "basil_seed",
+            "hop": "test4",
             "resources": [
-                "sprout_no_fs"
+                "zephyr37_nofs"
             ],
             "labs": [
                 "embedded"
@@ -176,7 +172,7 @@
         },
         {
             "ip": "192.0.2.13",
-            "element": "sprout27",
+            "element": "zephyr27_fat",
             "os_type": "zephyr",
             "os_version": "2.7",
             "command_frame": "zephyr-inline",
@@ -184,9 +180,9 @@
             "filesystem": "fat-ram",
             "max_filename_len": 32,
             "is_virtual": true,
-            "hop": "basil_seed",
+            "hop": "test4",
             "resources": [
-                "sprout27"
+                "zephyr27_fat"
             ],
             "labs": [
                 "embedded"
@@ -194,14 +190,14 @@
         },
         {
             "ip": "192.0.2.29",
-            "element": "sprout44_lfs",
+            "element": "zephyr44_lfs",
             "os_type": "zephyr",
             "os_version": "4.4",
             "valid_transfers": ["console"],
             "filesystem": "littlefs",
             "max_filename_len": 32,
             "is_virtual": true,
-            "hop": "basil_seed",
+            "hop": "test4",
             "snmp": {
                 "address": "10.10.200.14",
                 "port": 16108,
@@ -215,7 +211,7 @@
                 ]
             },
             "resources": [
-                "sprout44_lfs"
+                "zephyr44_lfs"
             ],
             "labs": [
                 "embedded"
@@ -223,7 +219,7 @@
         },
         {
             "ip": "192.0.2.33",
-            "element": "sprout_cov",
+            "element": "zephyr37_llext",
             "os_type": "zephyr",
             "os_version": "3.7",
             "command_frame": "zephyr-serial",
@@ -242,9 +238,9 @@
                 "gcov": "bin/arm-zephyr-eabi-gcov",
                 "lcov": "/usr/bin/lcov"
             },
-            "hop": "basil_seed",
+            "hop": "test4",
             "resources": [
-                "sprout_cov"
+                "zephyr37_llext"
             ],
             "labs": [
                 "embedded"
@@ -252,7 +248,7 @@
         },
         {
             "ip": "192.0.2.34",
-            "element": "sprout_cov44",
+            "element": "zephyr44_llext",
             "os_type": "zephyr",
             "os_version": "4.4",
             "command_frame": "zephyr-serial",
@@ -271,9 +267,9 @@
                 "gcov": "bin/arm-zephyr-eabi-gcov",
                 "lcov": "/usr/bin/lcov"
             },
-            "hop": "basil_seed",
+            "hop": "test4",
             "resources": [
-                "sprout_cov44"
+                "zephyr44_llext"
             ],
             "labs": [
                 "embedded"
@@ -288,7 +284,7 @@
             "valid_terms": ["telnet"],
             "valid_transfers": ["shell", "nc"],
             "is_virtual": true,
-            "hop": "carrot_seed",
+            "hop": "test1",
             "creds": [
                 {"login": "root", "password": "otto"}
             ],
@@ -324,7 +320,7 @@
             "valid_terms": ["telnet"],
             "valid_transfers": ["shell", "nc"],
             "is_virtual": true,
-            "hop": "carrot_seed",
+            "hop": "test1",
             "creds": [
                 {"login": "root", "password": "otto"}
             ],
@@ -360,7 +356,7 @@
             "valid_terms": ["telnet"],
             "valid_transfers": ["shell", "nc"],
             "is_virtual": true,
-            "hop": "carrot_seed",
+            "hop": "test1",
             "creds": [
                 {"login": "root", "password": "otto"}
             ],
@@ -396,7 +392,7 @@
             "valid_terms": ["telnet"],
             "valid_transfers": ["shell", "nc"],
             "is_virtual": true,
-            "hop": "carrot_seed",
+            "hop": "test1",
             "creds": [
                 {"login": "root", "password": "otto"}
             ],
@@ -432,7 +428,7 @@
             "valid_terms": ["telnet"],
             "valid_transfers": ["shell", "nc"],
             "is_virtual": true,
-            "hop": "carrot_seed",
+            "hop": "test1",
             "creds": [
                 {"login": "root", "password": "otto"}
             ],
@@ -466,15 +462,15 @@
     "links": [
         {
             "endpoints": [
-                {"host": "carrot_seed", "interface": "eth2"},
-                {"host": "tomato_seed", "interface": "eth2"}
+                {"host": "test1", "interface": "eth2"},
+                {"host": "test2", "interface": "eth2"}
             ],
             "protocol": "udp"
         },
         {
-            "_comment": "The bb1350 guest's /30 to its TAP on carrot -- the ONLY wire the guest has.",
+            "_comment": "The bb1350 guest's /30 to its TAP on test1 -- the ONLY wire the guest has.",
             "endpoints": [
-                {"host": "carrot_seed", "interface": "bbeth-1350"},
+                {"host": "test1", "interface": "bbeth-1350"},
                 {"host": "bb1350_qemu", "interface": "eth0"}
             ],
             "protocol": "tcp"

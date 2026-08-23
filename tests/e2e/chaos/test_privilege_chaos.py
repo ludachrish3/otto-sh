@@ -7,7 +7,7 @@ never mid-undo (mid-undo is unit-tested, see
 for the mocked-shell proof that a SECOND cancel landing during the undo
 chain is held by ``otto.lifecycle.compensate`` until the chain finishes).
 Confirms the shielded compensating undo restores the login user on the SAME
-real ssh session on a live leased veggies bed host, and that the session
+real ssh session on a live leased unix bed host, and that the session
 stays usable afterwards.
 
 NO BUSYBOX GUEST ARM: the scenario needs a user to switch AWAY FROM and

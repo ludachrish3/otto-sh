@@ -91,8 +91,8 @@ class TestLcovMerger:
             mock_exec.return_value = CommandResult(
                 Status.Failed,
                 value=(
-                    "/x/cov/carrot_seed/product-math_ops.gcda:stamp mismatch with notes file\n"
-                    "geninfo: ERROR: GCOV failed for /x/cov/carrot_seed/product-math_ops.gcda!"
+                    "/x/cov/test1/product-math_ops.gcda:stamp mismatch with notes file\n"
+                    "geninfo: ERROR: GCOV failed for /x/cov/test1/product-math_ops.gcda!"
                 ),
                 command="lcov --capture ...",
                 retcode=1,

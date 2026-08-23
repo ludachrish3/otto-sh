@@ -35,7 +35,7 @@ def _host(element: str, ip: str) -> dict:
 
 def _make_repo(root: Path, tmp_path: Path, *, local_hosts: list[dict]) -> Path:
     global_file = tmp_path / "global-hosts.json"
-    global_file.write_text(json.dumps({"hosts": [_host("orange", "10.0.0.1")]}))
+    global_file.write_text(json.dumps({"hosts": [_host("alt1", "10.0.0.1")]}))
     return make_sut_repo(
         root,
         name="multisrc",
@@ -48,7 +48,7 @@ def test_list_hosts_unions_sources_and_surfaces_the_override(tmp_path: Path) -> 
     repo = _make_repo(
         tmp_path / "multisrc",
         tmp_path,
-        local_hosts=[_host("orange", "10.9.9.9"), _host("tomato", "10.0.0.2")],
+        local_hosts=[_host("alt1", "10.9.9.9"), _host("test2", "10.0.0.2")],
     )
     xdir = tmp_path / "xdir"
     xdir.mkdir()
@@ -58,8 +58,8 @@ def test_list_hosts_unions_sources_and_surfaces_the_override(tmp_path: Path) -> 
 
     assert result.returncode == 0, combined
     # Union: the repo-only host appears beside the overridden global one.
-    assert "orange" in combined  # global record, overridden locally
-    assert "tomato" in combined  # repo-local only
+    assert "alt1" in combined  # global record, overridden locally
+    assert "test2" in combined  # repo-local only
     # Transparency (spec §3): the override warning reaches the user, naming
     # both source labels. If this is red because the warning is emitted
     # before logging reaches the console, FIX THE EMISSION PATH — do not
@@ -87,7 +87,7 @@ def test_show_lab_renders_the_winning_record_not_the_shadowed_one(tmp_path: Path
     repo = _make_repo(
         tmp_path / "multisrc",
         tmp_path,
-        local_hosts=[_host("orange", "10.9.9.9"), _host("tomato", "10.0.0.2")],
+        local_hosts=[_host("alt1", "10.9.9.9"), _host("test2", "10.0.0.2")],
     )
     xdir = tmp_path / "xdir"
     xdir.mkdir()
@@ -104,7 +104,7 @@ def test_list_hosts_without_a_collision_says_nothing_about_overrides(tmp_path: P
     """Positive control: same two sources, no colliding host id, no override talk.
 
     Same repo shape, same flags, same banner — only the collision is removed
-    (the local source drops its ``orange`` record). Anything the sibling test
+    (the local source drops its ``alt1`` record). Anything the sibling test
     matches on must therefore come from the override itself and not from
     startup noise that a two-source repo prints regardless.
 
@@ -114,7 +114,7 @@ def test_list_hosts_without_a_collision_says_nothing_about_overrides(tmp_path: P
     override taking effect). Removing the collision is the control that keeps
     the product rule intact.
     """
-    repo = _make_repo(tmp_path / "multisrc", tmp_path, local_hosts=[_host("tomato", "10.0.0.2")])
+    repo = _make_repo(tmp_path / "multisrc", tmp_path, local_hosts=[_host("test2", "10.0.0.2")])
     xdir = tmp_path / "xdir"
     xdir.mkdir()
 
@@ -122,8 +122,8 @@ def test_list_hosts_without_a_collision_says_nothing_about_overrides(tmp_path: P
     combined = result.stdout + result.stderr
 
     assert result.returncode == 0, combined
-    assert "orange" in combined  # global source
-    assert "tomato" in combined  # repo-local source
+    assert "alt1" in combined  # global source
+    assert "test2" in combined  # repo-local source
     assert "overrides" not in combined
 
 
@@ -137,7 +137,7 @@ def test_host_completion_offers_the_union_without_warning_into_the_shell(tmp_pat
     repo = _make_repo(
         tmp_path / "multisrc",
         tmp_path,
-        local_hosts=[_host("orange", "10.9.9.9"), _host("tomato", "10.0.0.2")],
+        local_hosts=[_host("alt1", "10.9.9.9"), _host("test2", "10.0.0.2")],
     )
     xdir = tmp_path / "xdir"
     xdir.mkdir()
@@ -155,5 +155,5 @@ def test_host_completion_offers_the_union_without_warning_into_the_shell(tmp_pat
 
     assert result.returncode == 0, result.stdout + result.stderr
     names = {line.split(",", 1)[-1] for line in result.stdout.splitlines() if line}
-    assert {"orange", "tomato"} <= names, names
+    assert {"alt1", "test2"} <= names, names
     assert "overrides" not in result.stdout + result.stderr

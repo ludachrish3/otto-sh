@@ -33,7 +33,7 @@ from tests.e2e.chaos._bed import (
     busybox_probe_text,
     probe_text,
     run_probe,
-    veggies_link_id,
+    unix_link_id,
 )
 from tests.e2e.chaos.conftest import _hygiene_bracket_impl
 
@@ -134,7 +134,7 @@ def test_probe_text_returns_checked_stripped_output(stub_bed_host):
 # The guest oracle is a second implementation of the same idea (factory ->
 # fresh host -> status check -> unwrap), reached through a different seam --
 # the host factory rather than build_bed_host -- so the G5 contract has to be
-# pinned twice or it is only pinned on the veggies side. The stub is placed
+# pinned twice or it is only pinned on the unix side. The stub is placed
 # on `create_host_from_dict` because that is what `_bed.busybox_probe` calls;
 # `busybox_hop_context` still runs for real, which is deliberate: it is
 # hostless (it builds a Lab from committed lab data) and it is the piece
@@ -185,7 +185,7 @@ def test_busybox_probe_restores_the_context_it_installed(stub_guest_host, failin
     """The hop lab is process-global state, and a probe must not leave it behind.
 
     ``busybox_hop_context`` installs an ``OttoContext`` so the guest's
-    ``hop: carrot_seed`` resolves, and every other module in this lane builds
+    ``hop: test1`` resolves, and every other module in this lane builds
     its own hosts against whatever context it finds. Parametrized over the
     RAISING case too, because that is the one an ordinary green run never
     exercises and the one a missing ``finally`` would leak on.
@@ -355,7 +355,7 @@ def _parsed_or_fail(path: Path) -> ast.AST:
 
 # Every probe helper that takes a coroutine FACTORY and vets its Result, and
 # where that factory sits positionally. ``run_probe(element, factory)`` names
-# the veggies host it dials; ``busybox_probe(factory)`` does not, because the
+# the unix host it dials; ``busybox_probe(factory)`` does not, because the
 # chaos lane's guest is a fixed anchor (``_bed.BUSYBOX_CHAOS_ELEMENT``) rather
 # than a leased choice. Both forfeit the status check the same way if a
 # factory unwraps ``.value`` first, so both are scanned -- a second seam added
@@ -568,7 +568,7 @@ def test_no_unbracketed_pattern_kills_across_the_tests_tree():
 
 
 # ---------------------------------------------------------------------------
-# veggies_link_id's skip-unresolvable loop: ValueError records only.
+# unix_link_id's skip-unresolvable loop: ValueError records only.
 # ---------------------------------------------------------------------------
 
 
@@ -580,22 +580,22 @@ def _poisoned_lab_json(tmp_path, poison):
     return out
 
 
-def test_veggies_link_id_skips_unresolvable_records(tmp_path, monkeypatch):
+def test_unix_link_id_skips_unresolvable_records(tmp_path, monkeypatch):
     """Positive control: a ValueError record (unknown os profile) is skipped —
-    the documented sprout27/zephyr-inline case — and the link still resolves."""
-    expected = veggies_link_id()
+    the documented zephyr27_fat/zephyr-inline case — and the link still resolves."""
+    expected = unix_link_id()
     poisoned = _poisoned_lab_json(
         tmp_path, {"element": "ghost", "ip": "203.0.113.9", "os_type": "no-such-profile"}
     )
     monkeypatch.setattr(_bed, "lab_data_path", lambda: poisoned)
-    assert veggies_link_id() == expected
+    assert unix_link_id() == expected
 
 
-def test_veggies_link_id_propagates_non_validation_errors(tmp_path, monkeypatch):
+def test_unix_link_id_propagates_non_validation_errors(tmp_path, monkeypatch):
     """A record that breaks for a NON-validation reason (here: not a dict at
     all) is a broken fixture file, not an unregistered profile — swallowing it
     hides real corruption behind the skip meant for cross-repo records."""
     poisoned = _poisoned_lab_json(tmp_path, "just-a-string")
     monkeypatch.setattr(_bed, "lab_data_path", lambda: poisoned)
     with pytest.raises(AttributeError):
-        veggies_link_id()
+        unix_link_id()

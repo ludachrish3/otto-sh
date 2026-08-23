@@ -61,7 +61,7 @@ moved back into a package conftest.
 # ---------------------------------------------------------------------------
 
 _FRONTLOAD_GROUPS: frozenset[str] = frozenset(
-    {"sprout_cov", "docker_e2e", "coverage_e2e", "zephyr_fanout"}
+    {"zephyr37_llext", "docker_e2e", "coverage_e2e", "zephyr_fanout"}
 )
 
 
@@ -160,6 +160,7 @@ from otto.context import OttoContext, reset_context, set_context
 from otto.host.factory import create_host_from_dict
 from otto.host.local_host import LocalHost
 from otto.host.login_proxy import Cred
+from otto.host.remote_host import make_host_id
 from otto.host.unix_host import UnixHost
 from otto.registry import Registry
 from otto.suite._retry import report_retries, retry_hookwrapper
@@ -1011,13 +1012,13 @@ from tests._fixtures.labdata import host_data, lab_data_path, make_host  # noqa:
 _ZEPHYR_BACKEND_NE: dict[str, str] = {
     # Zephyr 3.7 LTS — primary version: full {FAT, LittleFS, no-FS}. ids kept
     # unversioned (predate the matrix; referenced by name in the unit tree).
-    "zephyr_fat": "sprout",
-    "zephyr_lfs": "sprout_lfs",
-    "zephyr_no_fs": "sprout_no_fs",
+    "zephyr_fat": "zephyr37_fat",
+    "zephyr_lfs": "zephyr37_lfs",
+    "zephyr_no_fs": "zephyr37_nofs",
     # Zephyr 2.7 LTS — distinct command frame (inline retcode); one fs cell.
-    "zephyr_27_fat": "sprout27",
+    "zephyr_27_fat": "zephyr27_fat",
     # Zephyr 4.4 LTS — newest-LTS firmware-drift sentinel; one fs cell.
-    "zephyr_44_lfs": "sprout44_lfs",
+    "zephyr_44_lfs": "zephyr44_lfs",
 }
 
 # Ordered list of embedded backend ids — imported by the integration contract
@@ -1101,7 +1102,7 @@ def remote_name(worker_id: str, basename: str) -> str:
     """Namespace a remote transfer filename by the running xdist worker.
 
     The host-contract and stability tests transfer to fixed names under a
-    shared remote dir, and ``ssh``+``telnet`` share one host (``carrot:/tmp``)
+    shared remote dir, and ``ssh``+``telnet`` share one host (``test1:/tmp``)
     while ``local`` shares the runner's ``/tmp``. Under ``-n auto`` — and the
     ``COUNT`` soak repeats — different workers would otherwise race the same
     remote path, one worker's delete/overwrite corrupting another's get
@@ -1118,7 +1119,7 @@ async def host1(request):
 
     Accepted values:
 
-    - ``"ssh"`` / ``"telnet"`` -> UnixHost on `carrot`, with the matching term.
+    - ``"ssh"`` / ``"telnet"`` -> UnixHost on `test1`, with the matching term.
     - ``"local"``              -> LocalHost.
     - any id in :data:`EMBEDDED_BACKENDS` -> EmbeddedHost on the matching
       Zephyr QEMU target, built via the host factory from its lab-data
@@ -1127,7 +1128,7 @@ async def host1(request):
       for the id -> `ne` mapping and the trim rationale.
     - any id in :data:`BUSYBOX_BACKENDS` -> UnixHost on the matching BusyBox
       QEMU guest (five pinned userland versions on the ``test1`` VM, reached
-      over telnet through the ``carrot`` hop), built via the host factory from
+      over telnet through the ``test1`` hop), built via the host factory from
       its lab-data entry; see :data:`_BUSYBOX_BACKEND_NE` for the id -> `ne`
       mapping.
     """
@@ -1147,7 +1148,7 @@ async def host1(request):
         return
     if backend in _BUSYBOX_BACKEND_NE:
         # BusyBox bed guests round-trip through the factory: term/transfer
-        # resolve from the entry's menus (telnet/shell), hop from carrot.
+        # resolve from the entry's menus (telnet/shell), hop from test1.
         data = host_data(_BUSYBOX_BACKEND_NE[backend])
         h = create_host_from_dict(data)
         yield h
@@ -1157,7 +1158,7 @@ async def host1(request):
     kwargs: dict[str, str] = {"term": backend}
     if backend == "telnet":
         kwargs["transfer"] = "ftp"
-    h = make_host("carrot", **kwargs)
+    h = make_host("test1", **kwargs)
     yield h
     await h.close()
 
@@ -1169,7 +1170,7 @@ async def host2(request):
     kwargs: dict[str, str] = {"term": term}
     if term == "telnet":
         kwargs["transfer"] = "ftp"
-    h = make_host("tomato", **kwargs)
+    h = make_host("test2", **kwargs)
     yield h
     await h.close()
 
@@ -1181,7 +1182,7 @@ async def host3(request):
     kwargs: dict[str, str] = {"term": term}
     if term == "ssh":
         kwargs["transfer"] = "scp"
-    h = make_host("pepper", **kwargs)
+    h = make_host("test3", **kwargs)
     yield h
     await h.close()
 
@@ -1191,7 +1192,7 @@ async def hop_host(request):
     """Integration host reached through one or two SSH hops.
 
     Parameterized by ``(ne, hop_ne, term, transfer)`` tuples — e.g.
-    ``("tomato", "carrot", "ssh", "scp")`` means "reach tomato through carrot".
+    ``("test2", "test1", "ssh", "scp")`` means "reach test2 through test1".
 
     For two-hop chains, *hop_ne* is the first hop and the intermediate host
     must itself have a hop configured at fixture construction time.
@@ -1199,7 +1200,7 @@ async def hop_host(request):
     ne, hop_ne, term, transfer = request.param
     target_data = host_data(ne)
     hop_data = host_data(hop_ne)
-    hop_id = f"{hop_data['element']}_{hop_data.get('board', 'seed')}"
+    hop_id = make_host_id(hop_data["element"], None, hop_data.get("board"), None)
     h = UnixHost(
         ip=target_data["ip"],
         element=target_data["element"],
@@ -1227,11 +1228,11 @@ async def transfer_host(request, tmp_path_factory):
     - ``(transfer, ne)`` where *ne* names a BusyBox bed guest
       (:data:`BUSYBOX_GUEST_NES`) — THAT guest, built through the host factory
       from its lab entry so term/transfer resolve from the entry's menus and
-      the hop from carrot, exactly as ``host1``'s busybox branch does.
+      the hop from test1, exactly as ``host1``'s busybox branch does.
 
     The first two lease a free host from ``UNIX_POOL`` instead of always using
-    carrot, so the transfer tests spread across the veggies-lab peers
-    (carrot/tomato/pepper) rather than serializing on one VM.
+    test1, so the transfer tests spread across the unix-lab peers
+    (test1/test2/test3) rather than serializing on one VM.
 
     **A guest is never leased, and never joins the pool.** The pool's premise
     is that its members are interchangeable — a test asks for "a unix host" and
@@ -1241,7 +1242,7 @@ async def transfer_host(request, tmp_path_factory):
     ``UNIX_POOL`` would hand an unrelated scp/sftp/ftp test a slow guest with no
     scp applet and a userland it never meant to ask about. So the busybox shape
     returns before ``lease_unix_host`` is ever entered: it takes no lease, and
-    `UNIX_POOL` stays the three veggies it has always been.
+    ``UNIX_POOL`` stays the three interchangeable Unix VMs it has always held.
     """
     param = request.param
     if isinstance(param, tuple) and len(param) == 2 and param[1] in BUSYBOX_GUEST_NES:

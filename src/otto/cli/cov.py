@@ -666,8 +666,8 @@ def _unix_only_pattern(unix_hosts: "list[UnixHost]") -> "re.Pattern[str]":
     the already-computed ``unix_hosts`` list closes that. Matching is
     ``pattern.fullmatch(host.id)`` (see :meth:`OttoContext.all_hosts`); the
     ``^``/``$`` anchors are therefore redundant and kept only because they say
-    out loud that a host id like ``"sprout"`` must not also select a sibling
-    ``"sprout2"``.
+    out loud that a host id like ``"zephyr37-fat"`` must not also select a sibling
+    ``"zephyr37-fat2"``.
     """
     import re
 

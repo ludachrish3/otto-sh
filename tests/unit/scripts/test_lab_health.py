@@ -120,14 +120,13 @@ def test_a_cred_carrying_guest_behind_a_hop_is_probed_via_the_hop(monkeypatch):
         "ip": "198.51.100.1",
         "element": "bb1161",
         "os_type": "unix",
-        "hop": "carrot_seed",
+        "hop": "test1",
         "creds": [{"login": "root", "password": "otto"}],
     }
     assert lab_health._is_ssh_host(guest) is False
     hop = {
         "ip": "10.10.200.11",
-        "element": "carrot",
-        "board": "seed",
+        "element": "test1",
         "creds": [{"login": "vagrant", "password": "vagrant"}],
     }
     assert lab_health._is_ssh_host(hop) is True
@@ -140,7 +139,7 @@ def test_a_cred_carrying_guest_behind_a_hop_is_probed_via_the_hop(monkeypatch):
         return 0, "OK login", ""
 
     monkeypatch.setattr(lab_health, "_run_ssh", fake_run_ssh)
-    res = lab_health._check_embedded(guest, {"carrot_seed": hop})
+    res = lab_health._check_embedded(guest, {"test1": hop})
     assert seen["ip"] == "10.10.200.11"  # probed FROM the hop
     assert " 198.51.100.1 23 " in seen["cmd"]  # the guest's own address, on :23
     assert res == {"ok": True, "status": "up", "info": "login prompt"}
@@ -185,7 +184,7 @@ def test_the_console_probe_reports_a_login_prompt_as_ok():
 
 def test_restart_units_include_the_busybox_bed(monkeypatch):
     """``make qemu-restart`` is the bed's recovery command; a glob naming only
-    the zephyr units would restart nothing at all on carrot."""
+    the zephyr units would restart nothing at all on test1."""
     captured = {}
 
     def fake_run_ssh(ip, user, password, cmd, timeout=25.0):
@@ -196,14 +195,13 @@ def test_restart_units_include_the_busybox_bed(monkeypatch):
     hosts = [
         {
             "ip": "10.10.200.11",
-            "element": "carrot",
-            "board": "seed",
+            "element": "test1",
             "creds": [{"login": "vagrant", "password": "vagrant"}],
         },
         {
             "ip": "127.0.0.1",
             "element": "bb1161",
-            "hop": "carrot_seed",
+            "hop": "test1",
             "creds": [{"login": "root", "password": "otto"}],
         },
     ]
@@ -517,11 +515,10 @@ def test_check_embedded_appends_creds_only_for_a_guest_that_has_its_own(monkeypa
     """
     hop = {
         "ip": "10.10.200.11",
-        "element": "carrot",
-        "board": "seed",
+        "element": "test1",
         "creds": [{"login": "vagrant", "password": "vagrant"}],
     }
-    hops = {"carrot_seed": hop, "basil_seed": hop}
+    hops = {"test1": hop, "test4": hop}
     captured = {}
 
     def fake_run_ssh(ip, user, password, cmd, timeout=25.0):
@@ -535,7 +532,7 @@ def test_check_embedded_appends_creds_only_for_a_guest_that_has_its_own(monkeypa
         {
             "ip": "198.51.100.1",
             "element": "bb1161",
-            "hop": "carrot_seed",
+            "hop": "test1",
             "creds": [{"login": "root", "password": "otto"}],
         },
         hops,
@@ -558,8 +555,8 @@ def test_check_embedded_appends_creds_only_for_a_guest_that_has_its_own(monkeypa
     lab_health._check_embedded(
         {
             "ip": "192.0.2.1",
-            "element": "sprout",
-            "hop": "basil_seed",
+            "element": "zephyr37_fat",
+            "hop": "test4",
             "telnet_options": {"port": 2323},
         },
         hops,
@@ -580,15 +577,14 @@ def _bb_entry(element="bb1161", ip="198.51.100.1"):
     return {
         "ip": ip,
         "element": element,
-        "hop": "carrot_seed",
+        "hop": "test1",
         "creds": [{"login": "root", "password": "otto"}],
     }
 
 
 _HOP = {
     "ip": "10.10.200.11",
-    "element": "carrot",
-    "board": "seed",
+    "element": "test1",
     "creds": [{"login": "vagrant", "password": "vagrant"}],
 }
 
@@ -614,7 +610,7 @@ def test_a_refused_verdict_becomes_a_not_ok_row_and_a_login_verdict_does_not(mon
 
     monkeypatch.setattr(lab_health, "_run_ssh", fake_run_ssh)
 
-    refused = lab_health._check_embedded(_bb_entry(), {"carrot_seed": _HOP})
+    refused = lab_health._check_embedded(_bb_entry(), {"test1": _HOP})
     assert refused["ok"] is False, (
         f"a console that refused the guest's committed creds reported {refused!r} — "
         "vm-health stays green and the broken bake surfaces as the first bed test's "
@@ -625,7 +621,7 @@ def test_a_refused_verdict_becomes_a_not_ok_row_and_a_login_verdict_does_not(mon
         f"the failing row does not name the login that was refused: {refused['info']!r}"
     )
 
-    silent = lab_health._check_embedded(_bb_entry(), {"carrot_seed": _HOP})
+    silent = lab_health._check_embedded(_bb_entry(), {"test1": _HOP})
     assert silent == {"ok": True, "status": "up", "info": "login prompt"}, (
         f"the unauthenticated fallback changed: {silent!r} — an unanswered login is a "
         "sighting, not a verdict about the image"

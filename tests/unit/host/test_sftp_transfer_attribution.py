@@ -211,8 +211,8 @@ class TestTheMessageComesFromTheRecord:
     async def test_the_host_reaches_the_message(self) -> None:
         conns = _FakeConnections(SFTPConnectionLost(_MEASURED_ASYNCSSH_TEXT))
         with pytest.raises(UnsupportedOnUserlandError) as caught:
-            await open_sftp_or_attribute(conns, host="tomato", attempted="PUT 3 file(s)")  # ty: ignore[invalid-argument-type]
-        assert "tomato" in str(caught.value)
+            await open_sftp_or_attribute(conns, host="test2", attempted="PUT 3 file(s)")  # ty: ignore[invalid-argument-type]
+        assert "test2" in str(caught.value)
         assert "PUT 3 file(s)" in str(caught.value)
 
     @pytest.mark.asyncio

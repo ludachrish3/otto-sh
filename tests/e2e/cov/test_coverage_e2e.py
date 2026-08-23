@@ -2,8 +2,8 @@
 
 Emulates the real user workflow::
 
-    otto -l veggies test --cov TestCoverageProduct
-    otto -l veggies cov <log_dir> --dir ./report
+    otto -l unix test --cov TestCoverageProduct
+    otto -l unix cov <log_dir> --dir ./report
 
 Both stages run as real subprocesses so every code path a user exercises
 (argv parsing, Typer wiring, ``--lab`` resolution, config init,
@@ -14,7 +14,7 @@ mechanism ``tests/unit/config/test_completion_cache.py`` uses.
 
 **Prerequisites**:
 
-- Vagrant test VMs ``carrot``, ``tomato``, ``pepper`` must be running.
+- Vagrant test VMs ``test1``, ``test2``, ``test3`` must be running.
 - ``gcc`` and ``lcov`` must be installed on the dev VM.
 
 **Running**::
@@ -45,9 +45,9 @@ from tests.e2e._otto_subprocess import REPO1, output_dirs, run_otto
 
 PRODUCT_DIR = REPO1 / "product"
 
-# Every otto invocation in this module targets the veggies lab (carrot /
-# tomato / pepper) against the repo1 fixture SUT.
-_LAB = "veggies"
+# Every otto invocation in this module targets the unix lab (test1 /
+# test2 / test3) against the repo1 fixture SUT.
+_LAB = "unix"
 
 
 # ---------------------------------------------------------------------------
@@ -61,7 +61,7 @@ def _run_otto(
     xdir: Path,
     timeout: int,
 ) -> subprocess.CompletedProcess[str]:
-    """Run ``otto --lab veggies ARGV`` and fail loudly if it exits non-zero."""
+    """Run ``otto --lab unix ARGV`` and fail loudly if it exits non-zero."""
     result = run_otto(argv, xdir=xdir, sut_dirs=REPO1, lab=_LAB, timeout=timeout)
     if result.returncode != 0:
         raise AssertionError(
@@ -280,10 +280,10 @@ class TestSpaReportStructure:
 class TestLineHitCounts:
     """Verify exact line-level hit counts in the CoverageStore."""
 
-    # 3 hosts: carrot, tomato, pepper
+    # 3 hosts: test1, test2, test3
     # All hosts run: add, sub, mul, div (1 call each)
-    # First host (carrot): extra div 1 0 (divide-by-zero)
-    # Last host (pepper): 3 clamp calls (below, above, in-range)
+    # First host (test1): extra div 1 0 (divide-by-zero)
+    # Last host (test3): 3 clamp calls (below, above, in-range)
     MATH_OPS_EXPECTED: ClassVar = {
         4: 3,  # return a + b (3 hosts x 1 add)
         8: 3,  # return a - b (3 hosts x 1 sub)
@@ -513,10 +513,10 @@ class TestCoverageIntegrity:
 # Test Class 5: .gcda Fetch Structure
 # ---------------------------------------------------------------------------
 
-# Expected host layout from tests/lab_data/tech1/lab.json for lab "veggies".
+# Expected host layout from tests/lab_data/tech1/lab.json for lab "unix".
 # Discovering the list from disk rather than calling all_hosts() keeps this
 # test process free of otto.config singletons.
-EXPECTED_HOST_IDS = {"carrot_seed", "tomato_seed", "pepper_seed"}
+EXPECTED_HOST_IDS = {"test1", "test2", "test3"}
 
 
 @pytest.mark.integration

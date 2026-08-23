@@ -214,7 +214,7 @@ class TestConnectionManagerTunnel:
         the hop. ``open_session`` passed ``connections.ip`` with no
         ``connect_port``, which for a device behind a hop is not a route to the
         device at all. Measured against bb1350 (2026-08-21), when the bed guests
-        still carried ``ip = 127.0.0.1`` because a QEMU hostfwd bound carrot's
+        still carried ``ip = 127.0.0.1`` because a QEMU hostfwd bound test1's
         loopback and the literal address was therefore the machine running otto:
         ``run`` returned ``RUN-OK`` while ``exec`` raised
         ``ConnectionRefusedError [Errno 111] Connect call failed ('127.0.0.1',

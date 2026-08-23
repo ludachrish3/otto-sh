@@ -9,7 +9,7 @@ class TestBuildMonitorCollector:
         host = create_host_from_dict(
             {
                 "ip": "192.0.2.1",
-                "element": "sprout",
+                "element": "zephyr37_fat",
                 "os_type": "embedded",
                 "command_frame": "zephyr",
                 "snmp": {"port": 16101, "oids": ["1.3.6.1.2.1.1.3.0"]},
@@ -28,7 +28,7 @@ class TestBuildMonitorCollector:
         host = create_host_from_dict(
             {
                 "ip": "192.0.2.1",
-                "element": "sprout",
+                "element": "zephyr37_fat",
                 "os_type": "embedded",
                 "command_frame": "zephyr",
                 "snmp": {"address": "10.10.200.14", "port": 16101, "oids": ["1.3.6.1.2.1.1.3.0"]},
@@ -43,7 +43,7 @@ class TestBuildMonitorCollector:
         host = create_host_from_dict(
             {
                 "ip": "192.0.2.1",
-                "element": "sprout",
+                "element": "zephyr37_fat",
                 "os_type": "embedded",
                 "command_frame": "zephyr",
                 "interfaces": {"mgmt": "10.9.9.9", "data": "192.168.5.5"},
@@ -58,7 +58,7 @@ class TestBuildMonitorCollector:
         host = create_host_from_dict(
             {
                 "ip": "192.0.2.1",
-                "element": "sprout",
+                "element": "zephyr37_fat",
                 "os_type": "embedded",
                 "command_frame": "zephyr",
                 "interfaces": {"mgmt": "10.9.9.9"},
@@ -73,7 +73,7 @@ class TestBuildMonitorCollector:
         host = create_host_from_dict(
             {
                 "ip": "192.0.2.1",
-                "element": "sprout",
+                "element": "zephyr37_fat",
                 "os_type": "embedded",
                 "command_frame": "zephyr",
                 "interfaces": {"mgmt": "10.9.9.9"},
@@ -87,7 +87,7 @@ class TestBuildMonitorCollector:
         host = create_host_from_dict(
             {
                 "ip": "10.10.200.11",
-                "element": "orange",
+                "element": "alt1",
                 "creds": [{"login": "v", "password": "v"}],
             }
         )
@@ -103,7 +103,7 @@ class TestBuildMonitorCollector:
         host = create_host_from_dict(
             {
                 "ip": "192.0.2.1",
-                "element": "sprout",
+                "element": "zephyr37_fat",
                 "os_type": "embedded",
                 "command_frame": "zephyr",
                 "snmp": {

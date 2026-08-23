@@ -18,7 +18,7 @@ from tests._fixtures.labdata import lab_data_path
 from tests.conftest import BUSYBOX_GUEST_NES
 
 BUSYBOX_LINK_ELEMENT = "bb1350"
-"""The one guest whose wire to carrot is DECLARED as a link -- the chaos lane's
+"""The one guest whose wire to test1 is DECLARED as a link -- the chaos lane's
 fixed anchor (``tests/e2e/chaos/_bed.BUSYBOX_CHAOS_ELEMENT``). The other four
 TAPs are just as real and are documented in the bed's architecture page;
 nothing names them, and a declaration nothing names is one more hand-written
@@ -53,10 +53,10 @@ def test_every_busybox_guest_entry_builds_a_telnet_shell_unix_host():
         assert isinstance(host, UnixHost)
         assert host.term == "telnet"
         assert host.transfer == "shell"
-        assert host.hop == "carrot_seed"
+        assert host.hop == "test1"
         # The guest's OWN address on its /30, not the hop's and not loopback:
-        # each guest sits behind a TAP that exists only on carrot, so the
-        # address is real but routable from carrot alone. A LAN IP here would
+        # each guest sits behind a TAP that exists only on test1, so the
+        # address is real but routable from test1 alone. A LAN IP here would
         # send otto at some other lab host with every hostless gate still
         # green; loopback (what the QEMU-hostfwd arrangement needed) would send
         # it at the machine running otto.
@@ -81,7 +81,7 @@ def test_guest_entries_override_neither_the_telnet_port_nor_the_nc_window():
 
     Both overrides existed only because QEMU user-mode networking had to
     pre-map every port the bed would ever use: telnet arrived on a per-guest
-    ``23xx`` hostfwd because 23 was already taken on carrot's loopback, and
+    ``23xx`` hostfwd because 23 was already taken on test1's loopback, and
     ``nc_options.port`` pointed at a ten-port identity-mapped window because
     the nc transfer needs the guest-side and hop-side numbers to match and
     hostfwd could only forward a range chosen in advance. On a real NIC the
@@ -91,7 +91,7 @@ def test_guest_entries_override_neither_the_telnet_port_nor_the_nc_window():
     So this asserts the resolved values, not merely the keys' absence. "No
     override" and "the default I expect" are different claims, and only the
     second one is the reason the entries are allowed to stay quiet — an
-    ``NcOptions.port`` default that moved to something carrot already uses
+    ``NcOptions.port`` default that moved to something test1 already uses
     would break the bed while the entries still looked clean.
     """
     for data in _guest_entries():
@@ -106,7 +106,7 @@ def test_guest_entries_override_neither_the_telnet_port_nor_the_nc_window():
         host = create_host_from_dict(data, lab_name="busybox")
         # Both halves spelled with the LITERAL in the chain, not just
         # "resolved == default": `x == Default().x` is true of any default,
-        # including one that moved onto a port carrot already uses, which is
+        # including one that moved onto a port test1 already uses, which is
         # precisely the drift this test claims to catch.
         assert host.telnet_options.port == 23 == TelnetOptions().port
         assert host.nc_options.port == 9000 == NcOptions().port
@@ -124,7 +124,7 @@ def test_the_parity_backend_map_names_exactly_the_bed_roster():
     Nothing tied that map to the roster.
 
     So consider adding a sixth guest. The existing roster pins (the element
-    list above, and ``test_busybox_bed_guests_hop_through_carrot``) do red, and
+    list above, and ``test_busybox_bed_guests_hop_through_test1``) do red, and
     an implementer fixes them mechanically -- neither one mentions the parity
     map, so the mechanical fix leaves it behind. The new guest then joins the
     bed suite, which reads lab.json, and silently misses every host1, transfer
@@ -148,16 +148,16 @@ def test_the_parity_backend_map_names_exactly_the_bed_roster():
 
 
 def test_the_declared_tap_link_names_both_ends_the_builder_provisions():
-    """The declared ``carrot_seed:bbeth-1350 <-> bb1350_qemu:eth0`` link is
+    """The declared ``test1:bbeth-1350 <-> bb1350_qemu:eth0`` link is
     pinned to ``GUEST_TABLE``, the same way the guest entries above are.
 
     A link declaration is a fourth hand-written copy of the identity table --
-    the TAP's NAME and the TAP's ADDRESS on carrot, plus the guest's own
+    the TAP's NAME and the TAP's ADDRESS on test1, plus the guest's own
     address on ``eth0`` -- and it is the copy with the least feedback. A wrong
     digit here breaks no bed test: it produces a link that resolves, lists,
     and is refused with a plausible message naming an interface that carries
     something else. ``tests/e2e/chaos/test_connection_drop.py``'s guest arm
-    reads carrot's LIVE address table and would catch it, but only on a bed
+    reads test1's LIVE address table and would catch it, but only on a bed
     run; this catches it hostless.
 
     Interfaces are compared as a whole MAP, not by lookup, so a stray extra
@@ -171,16 +171,16 @@ def test_the_declared_tap_link_names_both_ends_the_builder_provisions():
     assert hosts[guest.element]["interfaces"] == {
         "eth0": {"ip": guest.ip, "subnet": _BED_SUBNET}
     }, f"{guest.element}'s declared interfaces are not the /30 the builder configures on eth0"
-    assert hosts["carrot"]["interfaces"].get(guest.tap) == {
+    assert hosts["test1"]["interfaces"].get(guest.tap) == {
         "ip": guest.host_ip,
         "subnet": _BED_SUBNET,
-    }, f"carrot's declared {guest.tap} is not the hop-side end of {guest.element}'s /30"
+    }, f"test1's declared {guest.tap} is not the hop-side end of {guest.element}'s /30"
 
     declared = [
         link
         for link in data["links"]
         if {(e["host"], e.get("interface")) for e in link["endpoints"]}
-        == {("carrot_seed", guest.tap), (f"{guest.element}_qemu", "eth0")}
+        == {("test1", guest.tap), (f"{guest.element}_qemu", "eth0")}
     ]
     assert len(declared) == 1, (
         f"expected exactly one declared {guest.tap} <-> {guest.element}:eth0 link, "

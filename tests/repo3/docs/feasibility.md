@@ -8,7 +8,7 @@ proceed from a known-good base. Design lives in
 
 ## Proven
 
-On the lab `zephyr` VM (basil, `10.10.200.14`), Zephyr 3.7:
+On the lab `zephyr` VM (test4, `10.10.200.14`), Zephyr 3.7:
 
 - `llext load_hex <name> <hex>` → `call_fn <name> <fn>` → `unload` works over the
   console on Cortex-M3, using the stock `samples/subsys/llext/shell_loader` base
@@ -16,13 +16,13 @@ On the lab `zephyr` VM (basil, `10.10.200.14`), Zephyr 3.7:
   ztest-free extension's exported `void test_entry(void)` executed and `unload`
   cleaned up.
 
-## Toolchain / infra added to basil (additive, reversible)
+## Toolchain / infra added to test4 (additive, reversible)
 
 - `apt install qemu-system-arm` (QEMU 8.2.2).
 - `arm-zephyr-eabi` toolchain added to the Zephyr SDK 0.16.8 via
   `~/zephyr-sdk-0.16.8/setup.sh -t arm-zephyr-eabi -c` (gcc 12.2.0).
 - `pip install pexpect` in `~/zephyr-venv-v3_7` (console driver).
-- Spike scaffolding under `~/gate/` on basil (not in git).
+- Spike scaffolding under `~/gate/` on test4 (not in git).
 
 ## Target board: `mps2_an385` (not `qemu_cortex_m3`)
 
@@ -125,7 +125,7 @@ Implemented and ran on `mps2_an385` (Approach C: runtime in base, product-only e
   `math_clamp` shows *blocks executed 83%* (the `v > hi` clamp branch never run),
   precisely the gap a second instance would fill (cross-instance merge proof).
 
-> The embedded-gcov patches above live in the basil spike copy only. In repo3 they
+> The embedded-gcov patches above live in the test4 spike copy only. In repo3 they
 > must be applied as a **patch over the submodule** (don't edit the vendored
 > sources), e.g. `tests/repo3/third_party/patches/embedded-gcov-gcc12.patch` applied
 > by the product's CMake, so the submodule stays pristine.
@@ -174,7 +174,7 @@ Host-side framework implemented and unit-tested (`tests/unit/cov/test_embedded_c
 
 The plan's flagged "main risk" (Cortex-M networking) is cleared. `mps2_an385` runs
 in-guest Zephyr networking + the telnet shell, reachable like the existing x86
-instances (`192.0.2.x:23` via the basil hop). Non-obvious config it needs:
+instances (`192.0.2.x:23` via the test4 hop). Non-obvious config it needs:
 
 - **Driver:** the mps2_an385 DTS already has `eth@40200000` (`smsc,lan9220`);
   enable `CONFIG_ETH_SMSC911X` (the LAN9118/9220 driver) — *not* x86's
@@ -191,7 +191,7 @@ instances (`192.0.2.x:23` via the basil hop). Non-obvious config it needs:
 - Verified: `ping` 0% loss; telnet `kernel version` → `Zephyr 3.7.2`; `load_hex`
   transfers and the LLEXT loader parses the ELF over telnet.
 
-Networked image config: `~/gate/an385_cov_net.conf` (basil); instance runs at
+Networked image config: `~/gate/an385_cov_net.conf` (test4); instance runs at
 `192.0.2.33:23`.
 
 ## RESOLVED — in-guest LAN9118 networking can't do bulk `load_hex`; pivot to serial-telnet
@@ -240,8 +240,8 @@ firmware shell-backend Kconfig + the QEMU launch flag are throwaway.
 
 `cov_base` (stock serial shell + LLEXT) launched under
 `qemu-system-arm … -serial telnet:192.0.2.33:2323,server,nowait` (listener on
-basil's `lo`; port 2323 because 23 is privileged + taken). otto's real
-`EmbeddedHost` reaches it via the `basil_seed` hop and runs the full flow:
+test4's `lo`; port 2323 because 23 is privileged + taken). otto's real
+`EmbeddedHost` reaches it via the `test4` hop and runs the full flow:
 `kernel version` → `load_hex` (4 KB ext) → `cov_dump` → `EmbeddedGcdaCollector`
 decodes a real **376-byte `.gcda`** (matches the gate's `expected.gcda`).
 
@@ -255,10 +255,10 @@ each TDD'd, 812 host/cov/factory unit tests green:
   matched otto's read loop before the real output, desyncing every command. Mirrors
   repo1's `ZephyrInlineRetcodeFrame` (2.7).
 - **`TelnetOptions.write_chunk_size` / `write_chunk_delay`** (default 0 = unchunked):
-  `TelnetSession._write` paces large writes (`sprout_cov`: 64 B / 15 ms) so the mps2
+  `TelnetSession._write` paces large writes (`zephyr37_llext`: 64 B / 15 ms) so the mps2
   UART RX FIFO doesn't overrun on the bulk `load_hex` line.
 
-`sprout_cov` lab entry: `command_frame: zephyr-serial`,
+`zephyr37_llext` lab entry: `command_frame: zephyr-serial`,
 `telnet_options: {port: 2323, write_chunk_size: 64, write_chunk_delay: 0.015}`.
 
 ### Approach A (self-contained ext, stock base) — PROVEN, 100 % coverage ✅
@@ -314,19 +314,19 @@ instance would fill (the cross-instance merge proof). Overall % is lower (~44 %)
 because Approach A co-compiles the embedded-gcov runtime (`gcov_*.c`) into the same TU,
 so those host-dumper files appear in the report too.
 
-**Also proven on the real lab (basil, over the `basil_seed` hop).** The same
-`otto test --cov` → `otto cov report` runs green against the live `sprout_cov`
+**Also proven on the real lab (test4, over the `test4` hop).** The same
+`otto test --cov` → `otto cov report` runs green against the live `zephyr37_llext`
 (`zephyr-qemu-cov.service` on the zephyr VM, `qemu-system-arm … -serial
 telnet:192.0.2.33:2323`), reached through the real SSH-tunnel + telnet transport — same
 2132-byte `.gcda`, same `cov_ext.c` 93.8 %. A committed integration test,
 `tests/integration/test_embedded_coverage_e2e.py`, drives this full CLI pipeline as a
-subprocess against `sprout_cov` (skips cleanly when the product isn't built or the bed is
+subprocess against `zephyr37_llext` (skips cleanly when the product isn't built or the bed is
 down). It was the *first localhost-only* proof; running it against the real hop surfaced
-two more bugs (4–5 below). NB the x86 net-telnet bed (`sprout`, …) can be independently
+two more bugs (4–5 below). NB the x86 net-telnet bed (`zephyr37_fat`, …) can be independently
 wedged (the recurring console wedge — `shell never became ready`; diagnosed 2026-06-06 as
 RST-close reconnect churn against the single telnet slot, *not* e1000 net-buffer
 exhaustion as earlier docs said); that is a
-separate instance from the ARM serial-telnet `sprout_cov` and does not affect coverage.
+separate instance from the ARM serial-telnet `zephyr37_llext` and does not affect coverage.
 
 ### Five bugs found + fixed getting the CLI pipeline green (each TDD'd)
 
@@ -353,12 +353,12 @@ separate instance from the ARM serial-telnet `sprout_cov` and does not affect co
 
 *(4–5 surfaced only against the real lab — the localhost bed had no hop.)*
 
-4. **Hop host absent from the coverage lab (`KeyError: 'basil_seed'`).** `sprout_cov`
-   declares `hop="basil_seed"` (= basil's `ne`+`board`), but `basil` was only in the
+4. **Hop host absent from the coverage lab (`KeyError: 'test4'`).** `zephyr37_llext`
+   declares `hop="test4"` (= test4's `ne`+`board`), but `test4` was only in the
    `embedded` lab, so `otto … --lab embedded-cov` filtered it out and the hop couldn't
-   resolve. Fix: add `embedded-cov` to basil's `labs` in `tests/lab_data/tech1/lab.json`.
+   resolve. Fix: add `embedded-cov` to test4's `labs` in `tests/lab_data/tech1/lab.json`.
 5. **Hop host mistaken for a Unix coverage target (`geninfo: skipping .gcda`).** With
-   basil now in the lab, `collect_coverage` (which iterated *every* Unix host) enrolled the
+   test4 now in the lab, `collect_coverage` (which iterated *every* Unix host) enrolled the
    hop as a Unix coverage host: it flipped `if not unix_hosts:` so `sut_dir` became the
    repo dir instead of the embedded build dir (→ `geninfo` couldn't find the `.gcno`) and
    wrote a bogus native toolchain. Fix: key the meta off *collected coverage* (`unix_dirs`)

@@ -7,11 +7,11 @@ round-trips over a settle window), not one accept -- this incident is the
 standing counterexample where accept != shell (todo/chaos-reboot-followups.md
 Section 4).
 
-Target: `sprout` (fat board, 192.0.2.1, zephyr 3.7, FAT-on-RAM), reached via
-the `basil_seed` SSH hop -> telnet 192.0.2.1:23. The repo_e2e SUT's own
-`embedded` lab does NOT load here (its `sprout27` entry declares
+Target: `zephyr37_fat` (fat board, 192.0.2.1, zephyr 3.7, FAT-on-RAM), reached via
+the `test4` SSH hop -> telnet 192.0.2.1:23. The repo_e2e SUT's own
+`embedded` lab does NOT load here (its `zephyr27_fat` entry declares
 `command_frame: 'zephyr-inline'`, not a registered frame in this repo), so
-this module generates its OWN minimal SUT scoped to just `basil` + `sprout`
+this module generates its OWN minimal SUT scoped to just `test4` + `zephyr37_fat`
 from `tests/_fixtures/lab_data/tech1/lab.json` -- mirrors
 `tests.integration.chaos._target.make_loopback_target`'s shape (a private
 `labs/<name>/tech1/lab.json` + a matching `settings.toml`), with each host's
@@ -56,11 +56,11 @@ mid-run SIGINT/SIGTERM scenarios on) fires from
 `SessionManager.run_cmd`/`.exec` only AFTER `_ensure_session()`'s handshake
 has already completed -- so observing it already proves the console session
 is genuinely open, past handshake. A single `kernel version` round-trip
-against sprout was live-measured at ~45ms end-to-end (see task-10-report.md)
+against zephyr37_fat was live-measured at ~45ms end-to-end (see task-10-report.md)
 -- far too close to the driver's own 50ms poll interval to trust a bare
 single-command SIGKILL not to land after otto has already finished and
 started exiting (the exact Task 5 lesson the brief calls out). So the kill
-phase drives `kernel version` chained many times in ONE `otto host sprout
+phase drives `kernel version` chained many times in ONE `otto host zephyr37-fat
 run` invocation (the persistent-session, multi-command form the CLI already
 supports) and gates the SIGKILL on the marker for the FIRST copy: with
 dozens more queued behind it at that measured per-round-trip rate, the
@@ -85,7 +85,7 @@ pytestmark = [
     pytest.mark.chaos,
     pytest.mark.stability,
     pytest.mark.embedded,
-    pytest.mark.no_hygiene_bracket,  # sprout/basil aren't the veggies unix pool the autouse
+    pytest.mark.no_hygiene_bracket,  # zephyr37_fat/test4 aren't the unix pool the autouse
     # bracket's `chaos_bed` leases; this module's own sustained-shell check IS the
     # incident's console-responsiveness probe (spec BedHygiene note, Task 10). The lease
     # still happens (the fixture's own signature requires `chaos_bed`, same as
@@ -94,8 +94,8 @@ pytestmark = [
     pytest.mark.timeout(600),
 ]
 
-_LAB_NAME = "sprout_console"
-_HOST_ID = "sprout"
+_LAB_NAME = "console_chaos"
+_HOST_ID = "zephyr37-fat"
 _BOARD_IP = "192.0.2.1"
 _BOARD_NAME = f"{_HOST_ID}/{_BOARD_IP}"
 
@@ -115,10 +115,10 @@ _SUSTAINED_ROUND_TRIPS = 3
 _SETTLE_INTERVAL = 1.0
 
 
-def _make_sprout_target(root: Path) -> ChaosTarget:
-    """Generate a scoped SUT containing ONLY basil + sprout, each host's
+def _make_console_target(root: Path) -> ChaosTarget:
+    """Generate a scoped SUT containing ONLY test4 + zephyr37_fat, each host's
     `labs` rewritten to a private lab name -- avoids the full `embedded` lab
-    (repo_e2e's copy fails to load here: `sprout27` declares
+    (repo_e2e's copy fails to load here: `zephyr27_fat` declares
     `command_frame: 'zephyr-inline'`, not a registered frame). Mirrors
     ``tests.integration.chaos._target.make_loopback_target``'s shape
     (private ``labs/<name>/tech1/lab.json`` + matching ``settings.toml``).
@@ -127,21 +127,21 @@ def _make_sprout_target(root: Path) -> ChaosTarget:
     tech_dir.mkdir(parents=True)
     all_hosts = json.loads(lab_data_path().read_text())["hosts"]
     hosts = []
-    basil = None
+    test4 = None
     for raw in all_hosts:
-        if raw["element"] not in ("basil", "sprout"):
+        if raw["element"] not in ("test4", "zephyr37_fat"):
             continue
         host = dict(raw)
         host["labs"] = [_LAB_NAME]
         hosts.append(host)
-        if host["element"] == "basil":
-            basil = host
-    assert basil is not None, "tech1/lab.json missing 'basil' -- fixture shape changed"
+        if host["element"] == "test4":
+            test4 = host
+    assert test4 is not None, "tech1/lab.json missing 'test4' -- fixture shape changed"
     (tech_dir / "lab.json").write_text(json.dumps({"hosts": hosts, "links": []}, indent=2))
 
     sut = make_sut_repo(
         root / "sut",
-        name="sprout_console_harness",
+        name="console_chaos_harness",
         version="0.1.0",
         extra=f"""\
 [[lab.sources]]
@@ -151,12 +151,12 @@ paths = [
 ]
 """,
     )
-    cred = basil["creds"][0]
+    cred = test4["creds"][0]
     return ChaosTarget(
         sut_dir=sut,
         lab=_LAB_NAME,
         host_id=_HOST_ID,
-        ssh_host=basil["ip"],  # unused by spawn_otto (sut_dir/lab only); kept for shape parity
+        ssh_host=test4["ip"],  # unused by spawn_otto (sut_dir/lab only); kept for shape parity
         ssh_port=22,
         ssh_username=cred["login"],
         ssh_client_key=None,
@@ -189,12 +189,12 @@ def test_console_client_death_leaves_next_client_a_shell(tmp_path):
     shell from fresh clients: 3 consecutive `run` round-trips over a short
     settle window, not one lucky accept. NEVER reboots or power-cycles the
     board -- only the local otto subprocess is killed. If any round-trip
-    fails, this FAILS naming the board (sprout/192.0.2.1): that is the wedge
+    fails, this FAILS naming the board (zephyr37-fat/192.0.2.1): that is the wedge
     reproduced, and per the brief this is a real finding requiring a human
     (the board needs a manual restart) -- there is no retry/recovery
     attempted here.
     """
-    target = _make_sprout_target(tmp_path / "bed")
+    target = _make_console_target(tmp_path / "bed")
 
     kill_xdir = tmp_path / "kill"
     kill_xdir.mkdir()

@@ -695,8 +695,8 @@ class TestAddDryRunPlansInsteadOfAccusing:
     """A dry run of `add` previews; it does not measure and does not accuse.
 
     What it replaces, measured through the real dispatch seam against the
-    `veggies` lab: `otto -n tunnel add --hosts carrot_seed@eth2,tomato_seed@eth2
-    --port 8080` printed `host 'carrot_seed' is missing socat and/or bash
+    `unix` lab: `otto -n tunnel add --hosts test1@eth2,test2@eth2
+    --port 8080` printed `host 'test1' is missing socat and/or bash
     (required for tunnels)` and exited 1 — `_require_tools` looks for a bare
     `ok` LINE and the synthetic reply has none.
     """
@@ -799,9 +799,9 @@ class TestAddDryRunWithAContainerEndpoint:
     def _lab(self):
         from tests.unit.tunnel.test_manage_resolve import _container
 
-        parent = FakeHost("carrot_seed", ip="10.10.200.11")
-        ctr = _container("carrot_seed.repo2.oldos", parent)
-        other = FakeHost("tomato_soil", ip="10.10.200.12")
+        parent = FakeHost("test1", ip="10.10.200.11")
+        ctr = _container("test1.repo2.oldos", parent)
+        other = FakeHost("test2_soil", ip="10.10.200.12")
         return _lab_from(parent, ctr, other), parent, ctr, other
 
     def test_the_chain_and_id_are_named_but_no_argv_is_shown(self) -> None:

@@ -1,7 +1,7 @@
 """Live-bed e2e tests for ``otto.link`` impairment (Task 11).
 
 Drives the real ``otto.link`` library API (``impair_link`` / ``repair_link`` /
-``repair_all`` / ``read_link_states``) against the three-VM veggies bed,
+``repair_all`` / ``read_link_states``) against the three-VM unix bed,
 mirroring ``tests/e2e/test_tunnel_e2e.py``: host construction via
 ``host_data``/``make_host``, fail-loud-on-host-down, guaranteed teardown, and
 a single ``xdist_group`` so this fixed topology never runs concurrently with
@@ -14,16 +14,16 @@ path, so this module builds a VLAN data plane instead -- verified live: VLAN
 tags pass the VirtualBox network, and ``tc qdisc replace ... netem`` on a VLAN
 sub-interface moves ping RTT without touching the untagged mgmt path.
 
-- VLAN 100 (``10.10.201.0/24``): carrot ``eth1.100`` = .11, pepper
+- VLAN 100 (``10.10.201.0/24``): test1 ``eth1.100`` = .11, test3
   ``eth1.100`` = .13
-- VLAN 200 (``10.10.202.0/24``): tomato ``eth1.200`` = .12, pepper
+- VLAN 200 (``10.10.202.0/24``): test2 ``eth1.200`` = .12, test3
   ``eth1.200`` = .13
-- pepper: ``net.ipv4.ip_forward=1`` (prior value recorded and restored)
-- carrot: route to ``10.10.202.0/24`` via pepper's VLAN-100 address; tomato:
-  route to ``10.10.201.0/24`` via pepper's VLAN-200 address (both routes die
+- test3: ``net.ipv4.ip_forward=1`` (prior value recorded and restored)
+- test1: route to ``10.10.202.0/24`` via test3's VLAN-100 address; test2:
+  route to ``10.10.201.0/24`` via test3's VLAN-200 address (both routes die
   with the VLAN links they ride)
-- pepper: two narrow ``iptables FORWARD`` ACCEPT rules, ``eth1.100<->eth1.200``
-  only -- discovered live (not in the original brief): pepper is
+- test3: two narrow ``iptables FORWARD`` ACCEPT rules, ``eth1.100<->eth1.200``
+  only -- discovered live (not in the original brief): test3 is
   docker-capable, and Docker's own iptables integration installs a default
   ``FORWARD DROP`` policy plus its own accept chains, so the VLAN forwarding
   path is silently dropped without this. Deleted on teardown before the VLAN
@@ -32,17 +32,17 @@ sub-interface moves ping RTT without touching the untagged mgmt path.
 - Links, constructed as runtime ``Link`` objects on ``lab.links`` (no
   ``lab.json`` file involved):
 
-  - ``edge`` -- carrot@eth1.100 <-> pepper@eth1.100 (endpoint-mode target,
+  - ``edge`` -- test1@eth1.100 <-> test3@eth1.100 (endpoint-mode target,
     same subnet, direct)
-  - ``dataplane`` -- carrot@eth1.100 <-> tomato@eth1.200, ``impair="pepper_seed"``
-    (in-path target; traffic genuinely routes through pepper)
+  - ``dataplane`` -- test1@eth1.100 <-> test2@eth1.200, ``impair="test3"``
+    (in-path target; traffic genuinely routes through test3)
 
 Guaranteed teardown
 --------------------
 ``impair_lab`` is a module-scoped fixture (setup pays the VLAN/route/sysctl
 cost once for all 5 tests): its ``finally`` block repairs both links, deletes
 the VLAN sub-interfaces on all three peers (which removes any qdiscs and
-routes still riding them), restores pepper's prior ``ip_forward``, and closes
+routes still riding them), restores test3's prior ``ip_forward``, and closes
 every host -- each step individually suppressed so one failure never skips
 the rest.
 
@@ -99,9 +99,9 @@ pytestmark = [
     pytest.mark.xdist_group("link_impair_e2e"),
 ]
 
-_CARROT = "carrot_seed"  # test1, 10.10.200.11
-_TOMATO = "tomato_seed"  # test2, 10.10.200.12
-_PEPPER = "pepper_seed"  # test3, 10.10.200.13
+_TEST1 = "test1"  # test1, 10.10.200.11
+_TEST2 = "test2"  # test2, 10.10.200.12
+_TEST3 = "test3"  # test3, 10.10.200.13
 
 _SSH_PORT = 22
 _REACHABLE_TIMEOUT = 10
@@ -114,12 +114,12 @@ _VLAN200_ID = 200
 _VLAN100_NET = "10.10.201.0/24"
 _VLAN200_NET = "10.10.202.0/24"
 
-_CARROT_VLAN_IP = "10.10.201.11"
-_PEPPER_VLAN100_IP = "10.10.201.13"
-_TOMATO_VLAN_IP = "10.10.202.12"
-_PEPPER_VLAN200_IP = "10.10.202.13"
+_TEST1_VLAN_IP = "10.10.201.11"
+_TEST3_VLAN100_IP = "10.10.201.13"
+_TEST2_VLAN_IP = "10.10.202.12"
+_TEST3_VLAN200_IP = "10.10.202.13"
 
-# Narrow FORWARD-chain holes for pepper's Docker-installed default DROP
+# Narrow FORWARD-chain holes for test3's Docker-installed default DROP
 # policy (see the module docstring's topology section) -- ONLY between the
 # two VLAN sub-interfaces, nothing broader.
 _FORWARD_RULES = (
@@ -140,11 +140,11 @@ _SCOPED_DELAY_MS = 200.0
 _TCP_DELTA_MIN_MS = 150.0
 
 _VLAN_INTERFACES: dict[str, dict[str, Interface]] = {
-    "carrot": {_VLAN100_DEV: Interface(ip=_CARROT_VLAN_IP)},
-    "tomato": {_VLAN200_DEV: Interface(ip=_TOMATO_VLAN_IP)},
-    "pepper": {
-        _VLAN100_DEV: Interface(ip=_PEPPER_VLAN100_IP),
-        _VLAN200_DEV: Interface(ip=_PEPPER_VLAN200_IP),
+    "test1": {_VLAN100_DEV: Interface(ip=_TEST1_VLAN_IP)},
+    "test2": {_VLAN200_DEV: Interface(ip=_TEST2_VLAN_IP)},
+    "test3": {
+        _VLAN100_DEV: Interface(ip=_TEST3_VLAN100_IP),
+        _VLAN200_DEV: Interface(ip=_TEST3_VLAN200_IP),
     },
 }
 
@@ -155,7 +155,7 @@ _VLAN_INTERFACES: dict[str, dict[str, Interface]] = {
 
 
 def _build_host(ne: str) -> UnixHost:
-    """Build a real ``UnixHost`` from the veggies lab data, wired with its VLAN sub-interface(s)."""
+    """Build a real ``UnixHost`` from the unix lab data, wired with its VLAN sub-interface(s)."""
     return make_host(
         ne, term="ssh", transfer="scp", log=LogMode.QUIET, interfaces=_VLAN_INTERFACES[ne]
     )
@@ -169,7 +169,7 @@ async def _assert_reachable(element: str, ip: str) -> None:
         )
     except (OSError, asyncio.TimeoutError) as exc:
         raise RuntimeError(
-            f"{element}_seed ({ip}) unreachable on :{_SSH_PORT} -- bed down? "
+            f"{element} ({ip}) unreachable on :{_SSH_PORT} -- bed down? "
             f"(link impairment e2e must fail loud on host-down, never skip): {exc!r}"
         ) from exc
     writer.close()
@@ -212,63 +212,63 @@ async def _avg_rtt_ms(host: UnixHost, target_ip: str) -> float:
 
 @pytest_asyncio.fixture(scope="module", loop_scope="module")
 async def impair_lab():
-    """Real ``Lab`` over a VLAN data plane built on the 3-VM veggies bed.
+    """Real ``Lab`` over a VLAN data plane built on the 3-VM unix bed.
 
     ``loop_scope="module"`` matches the fixture scope so pytest-asyncio backs
     it with a persistent event loop the fixture (and its dependent tests)
     outlive their creating test under -- the default ``function`` loop_scope
     would close after the first test and corrupt the cached SSH connections.
     """
-    for ne in ("carrot", "tomato", "pepper"):
+    for ne in ("test1", "test2", "test3"):
         await _assert_reachable(ne, host_data(ne)["ip"])
 
     lab = Lab(name="impair_e2e")
-    carrot = _build_host("carrot")
-    tomato = _build_host("tomato")
-    pepper = _build_host("pepper")
-    for host in (carrot, tomato, pepper):
+    test1 = _build_host("test1")
+    test2 = _build_host("test2")
+    test3 = _build_host("test3")
+    for host in (test1, test2, test3):
         lab.add_host(host)
 
     # Idempotent against a crashed prior run: pre-delete before creating.
-    await _root_best_effort(carrot, f"ip link del {_VLAN100_DEV}")
-    await _root_best_effort(pepper, f"ip link del {_VLAN100_DEV}")
-    await _root_best_effort(pepper, f"ip link del {_VLAN200_DEV}")
-    await _root_best_effort(tomato, f"ip link del {_VLAN200_DEV}")
+    await _root_best_effort(test1, f"ip link del {_VLAN100_DEV}")
+    await _root_best_effort(test3, f"ip link del {_VLAN100_DEV}")
+    await _root_best_effort(test3, f"ip link del {_VLAN200_DEV}")
+    await _root_best_effort(test2, f"ip link del {_VLAN200_DEV}")
     for rule in _FORWARD_RULES:
-        await _root_best_effort(pepper, f"iptables -D FORWARD {rule}")
+        await _root_best_effort(test3, f"iptables -D FORWARD {rule}")
 
-    await _add_vlan(carrot, _VLAN100_DEV, _VLAN100_ID, f"{_CARROT_VLAN_IP}/24")
-    await _add_vlan(pepper, _VLAN100_DEV, _VLAN100_ID, f"{_PEPPER_VLAN100_IP}/24")
-    await _add_vlan(tomato, _VLAN200_DEV, _VLAN200_ID, f"{_TOMATO_VLAN_IP}/24")
-    await _add_vlan(pepper, _VLAN200_DEV, _VLAN200_ID, f"{_PEPPER_VLAN200_IP}/24")
+    await _add_vlan(test1, _VLAN100_DEV, _VLAN100_ID, f"{_TEST1_VLAN_IP}/24")
+    await _add_vlan(test3, _VLAN100_DEV, _VLAN100_ID, f"{_TEST3_VLAN100_IP}/24")
+    await _add_vlan(test2, _VLAN200_DEV, _VLAN200_ID, f"{_TEST2_VLAN_IP}/24")
+    await _add_vlan(test3, _VLAN200_DEV, _VLAN200_ID, f"{_TEST3_VLAN200_IP}/24")
 
     prior_ip_forward = (
-        await pepper.exec(
+        await test3.exec(
             "sysctl -n net.ipv4.ip_forward", timeout=_HOST_CMD_TIMEOUT, log=LogMode.QUIET
         )
     ).value.strip()
-    await _root(pepper, "sysctl -w net.ipv4.ip_forward=1")
+    await _root(test3, "sysctl -w net.ipv4.ip_forward=1")
 
-    await _root(carrot, f"ip route add {_VLAN200_NET} via {_PEPPER_VLAN100_IP}")
-    await _root(tomato, f"ip route add {_VLAN100_NET} via {_PEPPER_VLAN200_IP}")
+    await _root(test1, f"ip route add {_VLAN200_NET} via {_TEST3_VLAN100_IP}")
+    await _root(test2, f"ip route add {_VLAN100_NET} via {_TEST3_VLAN200_IP}")
 
-    # pepper is docker-capable: Docker's own iptables integration installs a
+    # test3 is docker-capable: Docker's own iptables integration installs a
     # default FORWARD DROP policy, which silently drops the routed dataplane
     # traffic above (discovered live -- see the module docstring). Punch two
     # narrow holes, ONLY between the two VLAN sub-interfaces.
     for rule in _FORWARD_RULES:
-        await _root(pepper, f"iptables -I FORWARD 1 {rule}")
+        await _root(test3, f"iptables -I FORWARD 1 {rule}")
 
     edge = Link(
-        a=LinkEndpoint(host=_CARROT, interface=_VLAN100_DEV, ip=_CARROT_VLAN_IP),
-        b=LinkEndpoint(host=_PEPPER, interface=_VLAN100_DEV, ip=_PEPPER_VLAN100_IP),
+        a=LinkEndpoint(host=_TEST1, interface=_VLAN100_DEV, ip=_TEST1_VLAN_IP),
+        b=LinkEndpoint(host=_TEST3, interface=_VLAN100_DEV, ip=_TEST3_VLAN100_IP),
         name="edge",
     )
     dataplane = Link(
-        a=LinkEndpoint(host=_CARROT, interface=_VLAN100_DEV, ip=_CARROT_VLAN_IP),
-        b=LinkEndpoint(host=_TOMATO, interface=_VLAN200_DEV, ip=_TOMATO_VLAN_IP),
+        a=LinkEndpoint(host=_TEST1, interface=_VLAN100_DEV, ip=_TEST1_VLAN_IP),
+        b=LinkEndpoint(host=_TEST2, interface=_VLAN200_DEV, ip=_TEST2_VLAN_IP),
         name="dataplane",
-        impair=_PEPPER,
+        impair=_TEST3,
     )
     lab.links.extend([edge, dataplane])
 
@@ -279,18 +279,18 @@ async def impair_lab():
             await repair_all(lab)
         for rule in _FORWARD_RULES:
             with contextlib.suppress(Exception):
-                await _root_best_effort(pepper, f"iptables -D FORWARD {rule}")
+                await _root_best_effort(test3, f"iptables -D FORWARD {rule}")
         with contextlib.suppress(Exception):
-            await _root_best_effort(carrot, f"ip link del {_VLAN100_DEV}")
+            await _root_best_effort(test1, f"ip link del {_VLAN100_DEV}")
         with contextlib.suppress(Exception):
-            await _root_best_effort(pepper, f"ip link del {_VLAN100_DEV}")
+            await _root_best_effort(test3, f"ip link del {_VLAN100_DEV}")
         with contextlib.suppress(Exception):
-            await _root_best_effort(pepper, f"ip link del {_VLAN200_DEV}")
+            await _root_best_effort(test3, f"ip link del {_VLAN200_DEV}")
         with contextlib.suppress(Exception):
-            await _root_best_effort(tomato, f"ip link del {_VLAN200_DEV}")
+            await _root_best_effort(test2, f"ip link del {_VLAN200_DEV}")
         with contextlib.suppress(Exception):
-            await _root(pepper, f"sysctl -w net.ipv4.ip_forward={prior_ip_forward}")
-        await asyncio.gather(*(h.close() for h in (carrot, tomato, pepper)), return_exceptions=True)
+            await _root(test3, f"sysctl -w net.ipv4.ip_forward={prior_ip_forward}")
+        await asyncio.gather(*(h.close() for h in (test1, test2, test3)), return_exceptions=True)
 
 
 async def _assert_bed_hygiene() -> None:
@@ -300,7 +300,7 @@ async def _assert_bed_hygiene() -> None:
     this is an independent confirmation, not a re-read through a connection
     that already witnessed the cleanup.
     """
-    hosts = [_build_host(ne) for ne in ("carrot", "tomato", "pepper")]
+    hosts = [_build_host(ne) for ne in ("test1", "test2", "test3")]
     try:
         leaks: list[str] = []
         for host in hosts:
@@ -330,7 +330,7 @@ async def _assert_bed_hygiene() -> None:
                 if dev in link_text
             )
 
-            if host.id == _PEPPER:
+            if host.id == _TEST3:
                 forward_result = await host.run("iptables -S FORWARD", sudo=True, log=LogMode.QUIET)
                 forward_text = forward_result.only.value or ""
                 if _VLAN100_DEV in forward_text or _VLAN200_DEV in forward_text:
@@ -365,17 +365,17 @@ def _final_leftover_sweep():
 async def test_endpoint_impair_delay_and_repair(impair_lab: Lab) -> None:
     """``impair_link`` on ``edge`` lands on both endpoints' own netdevs, adds
     real RTT, is visible via ``read_link_states``, and ``repair_link`` heals it."""
-    carrot = impair_lab.hosts[_CARROT]
-    baseline = await _avg_rtt_ms(carrot, _PEPPER_VLAN100_IP)
+    test1 = impair_lab.hosts[_TEST1]
+    baseline = await _avg_rtt_ms(test1, _TEST3_VLAN100_IP)
 
     report = await impair_link(impair_lab, "edge", ImpairmentParams(delay_ms=100.0))
     try:
         placements = {(p.placement.host_id, p.placement.netdev) for p in report.applied}
-        assert placements == {(_CARROT, _VLAN100_DEV), (_PEPPER, _VLAN100_DEV)}, (
-            f"expected placements on carrot/pepper's own eth1.100, got {placements!r}"
+        assert placements == {(_TEST1, _VLAN100_DEV), (_TEST3, _VLAN100_DEV)}, (
+            f"expected placements on test1/test3's own eth1.100, got {placements!r}"
         )
 
-        impaired = await _avg_rtt_ms(carrot, _PEPPER_VLAN100_IP)
+        impaired = await _avg_rtt_ms(test1, _TEST3_VLAN100_IP)
         delta = impaired - baseline
         assert delta >= _RTT_DELTA_MIN_MS, (
             f"expected >={_RTT_DELTA_MIN_MS}ms RTT delta from 100ms delay each way, got "
@@ -397,7 +397,7 @@ async def test_endpoint_impair_delay_and_repair(impair_lab: Lab) -> None:
     finally:
         await repair_link(impair_lab, "edge")
 
-    healed = await _avg_rtt_ms(carrot, _PEPPER_VLAN100_IP)
+    healed = await _avg_rtt_ms(test1, _TEST3_VLAN100_IP)
     assert abs(healed - baseline) <= _RTT_RESTORE_TOLERANCE_MS, (
         f"expected RTT back within {_RTT_RESTORE_TOLERANCE_MS}ms of baseline after repair, got "
         f"{healed:.1f}ms (baseline={baseline:.1f}ms)"
@@ -411,24 +411,24 @@ async def test_endpoint_impair_delay_and_repair(impair_lab: Lab) -> None:
 
 @pytest.mark.asyncio(loop_scope="module")
 async def test_inpath_placements_and_endpoint_purity(impair_lab: Lab) -> None:
-    """``impair_link`` on ``dataplane`` lands both directions on pepper (the
-    in-path middlebox) only -- carrot's own interface stays untouched -- and
+    """``impair_link`` on ``dataplane`` lands both directions on test3 (the
+    in-path middlebox) only -- test1's own interface stays untouched -- and
     still moves real RTT; ``repair_link`` heals it."""
-    carrot = impair_lab.hosts[_CARROT]
-    baseline = await _avg_rtt_ms(carrot, _TOMATO_VLAN_IP)
+    test1 = impair_lab.hosts[_TEST1]
+    baseline = await _avg_rtt_ms(test1, _TEST2_VLAN_IP)
 
     report = await impair_link(impair_lab, "dataplane", ImpairmentParams(delay_ms=100.0))
     try:
-        assert all(p.placement.host_id == _PEPPER for p in report.applied), (
-            f"in-path placements must all land on pepper, got "
+        assert all(p.placement.host_id == _TEST3 for p in report.applied), (
+            f"in-path placements must all land on test3, got "
             f"{[p.placement.host_id for p in report.applied]!r}"
         )
         assert {p.placement.netdev for p in report.applied} == {_VLAN100_DEV, _VLAN200_DEV}, (
-            f"expected pepper's two facing netdevs, got "
+            f"expected test3's two facing netdevs, got "
             f"{[p.placement.netdev for p in report.applied]!r}"
         )
 
-        impaired = await _avg_rtt_ms(carrot, _TOMATO_VLAN_IP)
+        impaired = await _avg_rtt_ms(test1, _TEST2_VLAN_IP)
         delta = impaired - baseline
         assert delta >= _RTT_DELTA_MIN_MS, (
             f"expected >={_RTT_DELTA_MIN_MS}ms RTT delta from 100ms delay each way, got "
@@ -437,16 +437,16 @@ async def test_inpath_placements_and_endpoint_purity(impair_lab: Lab) -> None:
 
         # purity: the in-path target's own facing netdev stays pure -- the whole
         # point of in-path mode is that the impairment lives on the middlebox.
-        purity = await carrot.exec(
+        purity = await test1.exec(
             f"tc qdisc show dev {_VLAN100_DEV}", timeout=_HOST_CMD_TIMEOUT, log=LogMode.QUIET
         )
         assert parse_qdisc_show(purity.value or "") is None, (
-            f"carrot's {_VLAN100_DEV} must stay pure in in-path mode, got: {purity.value!r}"
+            f"test1's {_VLAN100_DEV} must stay pure in in-path mode, got: {purity.value!r}"
         )
     finally:
         await repair_link(impair_lab, "dataplane")
 
-    healed = await _avg_rtt_ms(carrot, _TOMATO_VLAN_IP)
+    healed = await _avg_rtt_ms(test1, _TEST2_VLAN_IP)
     assert abs(healed - baseline) <= _RTT_RESTORE_TOLERANCE_MS, (
         f"expected RTT back within {_RTT_RESTORE_TOLERANCE_MS}ms of baseline after repair, got "
         f"{healed:.1f}ms (baseline={baseline:.1f}ms)"
@@ -462,7 +462,7 @@ async def test_inpath_placements_and_endpoint_purity(impair_lab: Lab) -> None:
 async def test_expire_self_heals(impair_lab: Lab) -> None:
     """An ``expire``d impairment clears itself off the kernel (a->b direction)
     within the timer window, and its tagged timer process is gone with it."""
-    carrot = impair_lab.hosts[_CARROT]
+    test1 = impair_lab.hosts[_TEST1]
     await impair_link(impair_lab, "edge", ImpairmentParams(delay_ms=100.0), expire=_EXPIRE_SECONDS)
     try:
         states = await read_link_states(impair_lab)
@@ -491,11 +491,11 @@ async def test_expire_self_heals(impair_lab: Lab) -> None:
             ),
         )
 
-        ps_result = await carrot.exec(
+        ps_result = await test1.exec(
             IMPAIR_PS_COMMAND, timeout=_HOST_CMD_TIMEOUT, log=LogMode.QUIET
         )
         timers = [t for t in parse_impair_ps(ps_result.value or "") if t.link_id == "edge"]
-        assert not timers, f"expire timer for 'edge' still running on carrot: {timers!r}"
+        assert not timers, f"expire timer for 'edge' still running on test1: {timers!r}"
     finally:
         await repair_link(impair_lab, "edge")
 
@@ -525,16 +525,16 @@ async def test_merge_and_out_of_band_clear(impair_lab: Lab) -> None:
     ``equivalent()``'s time-field tolerance (``max(2us, 0.5%)``) absorbs the
     quantization delta without masking a real mismatch.
     """
-    carrot = impair_lab.hosts[_CARROT]
+    test1 = impair_lab.hosts[_TEST1]
     # Sub-ms delay: establishes a base for the merge to layer onto, AND is
     # the live tolerance proof -- this impair's own post-apply verify reads
     # the tick-quantized value back and must accept it via equivalent().
-    await impair_link(impair_lab, "edge", ImpairmentParams(delay_ms=0.7), from_host=_CARROT)
+    await impair_link(impair_lab, "edge", ImpairmentParams(delay_ms=0.7), from_host=_TEST1)
     # mbps is BYTES/s in tc: 10mbps -> 80Mbit on read-back; plus a plain loss.
     # Without canonicalization the SECOND impair's own verify would false-fail
     # here (merged rate "10mbps" vs observed "80Mbit"), before we ever read state.
     await impair_link(
-        impair_lab, "edge", ImpairmentParams(loss_pct=5.0, rate="10mbps"), from_host=_CARROT
+        impair_lab, "edge", ImpairmentParams(loss_pct=5.0, rate="10mbps"), from_host=_TEST1
     )
     try:
         states = await read_link_states(impair_lab)
@@ -552,9 +552,9 @@ async def test_merge_and_out_of_band_clear(impair_lab: Lab) -> None:
 
         # An operator running tc directly, no otto involved.
         oob = (
-            await carrot.run(f"tc qdisc del dev {_VLAN100_DEV} root", sudo=True, log=LogMode.QUIET)
+            await test1.run(f"tc qdisc del dev {_VLAN100_DEV} root", sudo=True, log=LogMode.QUIET)
         ).only
-        assert oob.is_ok, f"out-of-band tc qdisc del on carrot failed: {oob.value!r}"
+        assert oob.is_ok, f"out-of-band tc qdisc del on test1 failed: {oob.value!r}"
 
         states = await read_link_states(impair_lab)
         edge_state = next(s for s in states if s.link.id == "edge")
@@ -581,11 +581,11 @@ async def test_merge_and_out_of_band_clear(impair_lab: Lab) -> None:
 async def test_mgmt_link_refused(impair_lab: Lab) -> None:
     """A link pinned to the bed's real mgmt netdev (``eth1``) is refused --
     proven against the real bed's own address tables, not a fake one."""
-    carrot = impair_lab.hosts[_CARROT]
-    tomato = impair_lab.hosts[_TOMATO]
+    test1 = impair_lab.hosts[_TEST1]
+    test2 = impair_lab.hosts[_TEST2]
     mgmt_link = Link(
-        a=LinkEndpoint(host=_CARROT, interface="eth1", ip=carrot.ip),
-        b=LinkEndpoint(host=_TOMATO, interface="eth1", ip=tomato.ip),
+        a=LinkEndpoint(host=_TEST1, interface="eth1", ip=test1.ip),
+        b=LinkEndpoint(host=_TEST2, interface="eth1", ip=test2.ip),
         name="mgmt-refused",
     )
     impair_lab.links.append(mgmt_link)
@@ -604,13 +604,13 @@ async def test_scoped_impair_readback_and_pristine_repair(impair_lab: Lab) -> No
     bare repair returns the netdev to pristine (no root qdisc artifacts)."""
     from otto.link import DirectionState, Selector
 
-    carrot = impair_lab.hosts[_CARROT]
+    test1 = impair_lab.hosts[_TEST1]
     sel = Selector(_SCOPED_PORT, "tcp")
     report = await impair_link(
         impair_lab,
         "edge",
         ImpairmentParams(delay_ms=_SCOPED_DELAY_MS),
-        from_host=_CARROT,
+        from_host=_TEST1,
         selector=sel,
     )
     try:
@@ -625,7 +625,7 @@ async def test_scoped_impair_readback_and_pristine_repair(impair_lab: Lab) -> No
         assert not a.foreign
     finally:
         await repair_link(impair_lab, "edge")
-    qdisc = await carrot.exec(
+    qdisc = await test1.exec(
         f"tc qdisc show dev {_VLAN100_DEV}", timeout=_HOST_CMD_TIMEOUT, log=LogMode.QUIET
     )
     line = (qdisc.value or "").splitlines()[0] if (qdisc.value or "").strip() else ""
@@ -664,20 +664,20 @@ async def test_scoped_differential_and_two_selectors(impair_lab: Lab) -> None:
     selector applies independently."""
     from otto.link import DirectionState, Selector
 
-    carrot = impair_lab.hosts[_CARROT]
-    pepper = impair_lab.hosts[_PEPPER]
+    test1 = impair_lab.hosts[_TEST1]
+    test3 = impair_lab.hosts[_TEST3]
     for port in (_SCOPED_PORT, _CLEAN_PORT):
         # Bracket-tricked (Wave 14): the bare spelling matched the pkill's own
         # wrapper shell too — see tests/_fixtures/bed_hygiene.argv_pattern.
-        await _root_best_effort(pepper, f"pkill -f '{argv_pattern(f'TCP4-LISTEN:{port}')}'")
-        await pepper.exec(
+        await _root_best_effort(test3, f"pkill -f '{argv_pattern(f'TCP4-LISTEN:{port}')}'")
+        await test3.exec(
             f"setsid socat TCP4-LISTEN:{port},fork,reuseaddr EXEC:cat </dev/null >/dev/null 2>&1 &",
             timeout=_HOST_CMD_TIMEOUT,
             log=LogMode.QUIET,
         )
     try:
-        base_scoped = await _tcp_rtt_ms(carrot, _PEPPER_VLAN100_IP, _SCOPED_PORT)
-        base_clean = await _tcp_rtt_ms(carrot, _PEPPER_VLAN100_IP, _CLEAN_PORT)
+        base_scoped = await _tcp_rtt_ms(test1, _TEST3_VLAN100_IP, _SCOPED_PORT)
+        base_clean = await _tcp_rtt_ms(test1, _TEST3_VLAN100_IP, _CLEAN_PORT)
 
         await impair_link(
             impair_lab,
@@ -686,8 +686,8 @@ async def test_scoped_differential_and_two_selectors(impair_lab: Lab) -> None:
             selector=Selector(_SCOPED_PORT, "tcp"),
         )
         try:
-            impaired = await _tcp_rtt_ms(carrot, _PEPPER_VLAN100_IP, _SCOPED_PORT)
-            clean = await _tcp_rtt_ms(carrot, _PEPPER_VLAN100_IP, _CLEAN_PORT)
+            impaired = await _tcp_rtt_ms(test1, _TEST3_VLAN100_IP, _SCOPED_PORT)
+            clean = await _tcp_rtt_ms(test1, _TEST3_VLAN100_IP, _CLEAN_PORT)
             delta = impaired - base_scoped
             assert delta >= _TCP_DELTA_MIN_MS, (
                 f"impaired port {_SCOPED_PORT} should be >= {_TCP_DELTA_MIN_MS}ms slower "
@@ -716,7 +716,7 @@ async def test_scoped_differential_and_two_selectors(impair_lab: Lab) -> None:
             await repair_link(impair_lab, "edge")
     finally:
         for port in (_SCOPED_PORT, _CLEAN_PORT):
-            await _root_best_effort(pepper, f"pkill -f '{argv_pattern(f'TCP4-LISTEN:{port}')}'")
+            await _root_best_effort(test3, f"pkill -f '{argv_pattern(f'TCP4-LISTEN:{port}')}'")
 
 
 # ---------------------------------------------------------------------------
@@ -730,17 +730,17 @@ async def test_scoped_expire_clears_only_its_selector(impair_lab: Lab) -> None:
     the scoped root survive until an explicit repair."""
     from otto.link import DirectionState, Selector
 
-    carrot = impair_lab.hosts[_CARROT]
+    test1 = impair_lab.hosts[_TEST1]
     keep, expire_sel = Selector(_SCOPED_PORT, "tcp"), Selector(_CLEAN_PORT, "tcp")
     await impair_link(
-        impair_lab, "edge", ImpairmentParams(delay_ms=50.0), from_host=_CARROT, selector=keep
+        impair_lab, "edge", ImpairmentParams(delay_ms=50.0), from_host=_TEST1, selector=keep
     )
     try:
         await impair_link(
             impair_lab,
             "edge",
             ImpairmentParams(delay_ms=80.0),
-            from_host=_CARROT,
+            from_host=_TEST1,
             selector=expire_sel,
             expire=_EXPIRE_SECONDS,
         )
@@ -766,7 +766,7 @@ async def test_scoped_expire_clears_only_its_selector(impair_lab: Lab) -> None:
                 f"{sorted(s.describe() for s in remaining)!r}"
             ),
         )
-        ps_result = await carrot.exec(
+        ps_result = await test1.exec(
             IMPAIR_PS_COMMAND, timeout=_HOST_CMD_TIMEOUT, log=LogMode.QUIET
         )
         stale = [

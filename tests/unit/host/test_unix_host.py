@@ -88,66 +88,66 @@ class TestIdAndNameGeneration:
     async def test_id_no_board(self):
         h = UnixHost(
             ip="10.0.0.1",
-            element="Orange",
+            element="Alt1",
             creds=[Cred(login="u", password="p")],
             log=LogMode.QUIET,
         )
-        assert h.id == "orange"
+        assert h.id == "alt1"
         await h.close()
 
     @pytest.mark.asyncio
     async def test_id_with_board(self):
         h = UnixHost(
             ip="10.0.0.1",
-            element="Orange",
-            board="Seed",
+            element="Alt1",
+            board="Qemu",
             creds=[Cred(login="u", password="p")],
             log=LogMode.QUIET,
         )
-        assert h.id == "orange_seed"
+        assert h.id == "alt1_qemu"
         await h.close()
 
     @pytest.mark.asyncio
     async def test_id_with_board_and_slot(self):
         h = UnixHost(
             ip="10.0.0.1",
-            element="Orange",
-            board="Seed",
+            element="Alt1",
+            board="Qemu",
             slot=0,
             creds=[Cred(login="u", password="p")],
             log=LogMode.QUIET,
         )
-        assert h.id == "orange_seed0"
+        assert h.id == "alt1_qemu0"
         await h.close()
 
     @pytest.mark.asyncio
     async def test_name_no_board(self):
         h = UnixHost(
             ip="10.0.0.1",
-            element="orange",
+            element="alt1",
             creds=[Cred(login="u", password="p")],
             log=LogMode.QUIET,
         )
-        assert h.name == "orange"
+        assert h.name == "alt1"
         await h.close()
 
     @pytest.mark.asyncio
     async def test_name_with_board(self):
         h = UnixHost(
             ip="10.0.0.1",
-            element="orange",
-            board="seed",
+            element="alt1",
+            board="qemu",
             creds=[Cred(login="u", password="p")],
             log=LogMode.QUIET,
         )
-        assert h.name == "orange seed"
+        assert h.name == "alt1 qemu"
         await h.close()
 
     @pytest.mark.asyncio
     async def test_name_override(self):
         h = UnixHost(
             ip="10.0.0.1",
-            element="orange",
+            element="alt1",
             creds=[Cred(login="u", password="p")],
             name="custom",
             log=LogMode.QUIET,
@@ -731,7 +731,7 @@ class TestExec:
         """
         h = UnixHost(
             ip="10.0.0.1",
-            element="tomato_seed",
+            element="test2",
             creds=[Cred(login="u", password="p")],
             term="telnet",
             log=LogMode.QUIET,

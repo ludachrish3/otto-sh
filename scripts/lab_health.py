@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import shlex
 import shutil
 import subprocess
@@ -278,9 +279,35 @@ def _run_ssh(
         return 124, "", f"ssh timed out after {timeout:.0f}s"
 
 
+def _slug(value: str) -> str:
+    """Lower-case, non-alphanumeric runs to ``-`` — otto's ``slug()``, restated."""
+    return re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
+
+
+def _host_id(host: dict) -> str:
+    """Compose otto's host id from *host*'s element/element_id/board/slot fields.
+
+    Mirrors :func:`otto.host.remote_host.make_host_id`; restated rather than
+    imported because this script deliberately runs with no otto on the path.
+    A host with no ``board`` — every Unix VM and every Zephyr guest since the
+    board was dropped from the lab data — has the bare element (plus any
+    ``element_id``) as its id, so defaulting the board to anything at all
+    invents an id no host answers to.
+    """
+    element_id = host.get("element_id")
+    element_id_str = "" if element_id is None else f"{element_id}"
+    ne = f"{_slug(host['element'])}{element_id_str}"
+    board = host.get("board")
+    if board is None:
+        return ne
+    slot = host.get("slot")
+    slot_str = "" if slot is None else f"{slot}"
+    return f"{ne}_{_slug(board)}{slot_str}"
+
+
 def _hop_index(hosts: list[dict]) -> dict[str, dict]:
-    """Map an otto hop id (``{ne}_{board}``) to its host entry."""
-    return {f"{h['element']}_{h.get('board', 'seed')}": h for h in hosts}
+    """Map an otto host id to its host entry, for hop lookups by ``hop`` value."""
+    return {_host_id(h): h for h in hosts}
 
 
 def _is_ssh_host(host: dict) -> bool:
@@ -403,7 +430,7 @@ def _restart_qemu(hosts: list[dict], hops: dict[str, dict]) -> int:
         # units. sudo -S reads the password from the piped echo. Every hop gets
         # every glob: on a hop with no busybox units the pattern matches
         # nothing and is a no-op, the same reason the zephyr globs are safe on
-        # carrot.
+        # test1.
         units = "'zephyr-qemu-*.service' 'zephyr-snmp-relay-*.service' 'busybox-qemu-*.service'"
         cmd = f"echo {shlex.quote(password)} | sudo -S systemctl restart {units}"
         rc, _out, err = _run_ssh(hop["ip"], user, password, cmd, timeout=60)

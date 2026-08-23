@@ -438,7 +438,7 @@ class TestOsProfilesIntegration:
             host = create_host_from_dict(
                 {
                     "ip": "192.0.2.13",
-                    "element": "sprout27demo",
+                    "element": "zephyr27_demo",
                     "os_type": "zephyr-2.7",
                     "filesystem": "fat-ram",
                 }

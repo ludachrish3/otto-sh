@@ -10,10 +10,10 @@ from otto.labs.json_repository import JsonFileLabRepository
 
 HOST_ENTRY = {
     "ip": "192.0.2.1",
-    "element": "carrot",
+    "element": "test1",
     "creds": [{"login": "vagrant", "password": "vagrant"}],
-    "resources": ["carrot"],
-    "labs": ["veggies"],
+    "resources": ["test1"],
+    "labs": ["unix"],
 }
 
 
@@ -38,10 +38,9 @@ class TestJsonFileLabRepository:
             [
                 {
                     "ip": "10.10.200.11",
-                    "element": "orange",
-                    "board": "seed",
+                    "element": "alt1",
                     "creds": [{"login": "vagrant", "password": "vagrant"}],
-                    "resources": ["orange"],
+                    "resources": ["alt1"],
                     "labs": ["testlab"],
                 },
             ],
@@ -53,7 +52,7 @@ class TestJsonFileLabRepository:
         assert isinstance(lab, Lab)
         assert lab.name == "testlab"
         assert len(lab.hosts) == 1
-        assert "orange" in lab.resources
+        assert "alt1" in lab.resources
 
     def test_load_lab_multiple_hosts(self, tmp_path):
         _hosts_file(
@@ -61,18 +60,16 @@ class TestJsonFileLabRepository:
             [
                 {
                     "ip": "10.10.200.11",
-                    "element": "orange",
-                    "board": "seed",
+                    "element": "alt1",
                     "creds": [{"login": "vagrant", "password": "vagrant"}],
-                    "resources": ["orange"],
+                    "resources": ["alt1"],
                     "labs": ["multilab"],
                 },
                 {
                     "ip": "10.10.200.12",
-                    "element": "tomato",
-                    "board": "seed",
+                    "element": "test2",
                     "creds": [{"login": "vagrant", "password": "vagrant"}],
-                    "resources": ["tomato"],
+                    "resources": ["test2"],
                     "labs": ["multilab"],
                 },
             ],
@@ -84,8 +81,8 @@ class TestJsonFileLabRepository:
         assert isinstance(lab, Lab)
         assert lab.name == "multilab"
         assert len(lab.hosts) == 2
-        assert "orange" in lab.resources
-        assert "tomato" in lab.resources
+        assert "alt1" in lab.resources
+        assert "test2" in lab.resources
 
     def test_load_lab_not_found_no_hosts_file(self, tmp_path):
         """A missing lab.json raises LabNotFoundError, not FileNotFoundError."""
@@ -103,9 +100,9 @@ class TestJsonFileLabRepository:
             [
                 {
                     "ip": "10.10.200.11",
-                    "element": "orange",
+                    "element": "alt1",
                     "creds": [{"login": "vagrant", "password": "vagrant"}],
-                    "resources": ["orange"],
+                    "resources": ["alt1"],
                     "labs": ["other_lab"],
                 },
             ],
@@ -124,16 +121,16 @@ class TestJsonFileLabRepository:
             [
                 {
                     "ip": "10.10.200.11",
-                    "element": "orange",
+                    "element": "alt1",
                     "creds": [{"login": "vagrant", "password": "vagrant"}],
-                    "resources": ["orange"],
+                    "resources": ["alt1"],
                     "labs": ["lab_a"],
                 },
                 {
                     "ip": "10.10.200.12",
-                    "element": "tomato",
+                    "element": "test2",
                     "creds": [{"login": "vagrant", "password": "vagrant"}],
-                    "resources": ["tomato"],
+                    "resources": ["test2"],
                     "labs": ["lab_b"],
                 },
             ],
@@ -143,7 +140,7 @@ class TestJsonFileLabRepository:
         lab = repo.load_lab("lab_a")
 
         assert len(lab.hosts) == 1
-        assert "orange" in lab.hosts
+        assert "alt1" in lab.hosts
 
     def test_load_lab_multiple_search_paths(self, tmp_path):
         path1 = tmp_path / "path1"
@@ -156,9 +153,9 @@ class TestJsonFileLabRepository:
             [
                 {
                     "ip": "10.10.200.11",
-                    "element": "orange",
+                    "element": "alt1",
                     "creds": [{"login": "vagrant", "password": "vagrant"}],
-                    "resources": ["orange"],
+                    "resources": ["alt1"],
                     "labs": ["testlab"],
                 },
             ],
@@ -185,7 +182,7 @@ class TestJsonFileLabRepository:
             tmp_path,
             [
                 {
-                    "element": "orange",
+                    "element": "alt1",
                     "creds": [{"login": "vagrant", "password": "vagrant"}],
                     "labs": ["badlab"],
                 },
@@ -206,16 +203,16 @@ class TestJsonFileLabRepository:
             [
                 {
                     "ip": "10.10.200.11",
-                    "element": "orange",
+                    "element": "alt1",
                     "creds": [{"login": "vagrant", "password": "vagrant"}],
-                    "resources": ["orange", "citrus"],
+                    "resources": ["alt1", "citrus"],
                     "labs": ["resourcelab"],
                 },
                 {
                     "ip": "10.10.200.12",
-                    "element": "tomato",
+                    "element": "test2",
                     "creds": [{"login": "vagrant", "password": "vagrant"}],
-                    "resources": ["tomato", "vegetable"],
+                    "resources": ["test2", "vegetable"],
                     "labs": ["resourcelab"],
                 },
             ],
@@ -224,9 +221,9 @@ class TestJsonFileLabRepository:
         repo = JsonFileLabRepository([tmp_path])
         lab = repo.load_lab("resourcelab")
 
-        assert "orange" in lab.resources
+        assert "alt1" in lab.resources
         assert "citrus" in lab.resources
-        assert "tomato" in lab.resources
+        assert "test2" in lab.resources
         assert "vegetable" in lab.resources
 
     def test_load_lab_host_ids_generated(self, tmp_path):
@@ -235,11 +232,11 @@ class TestJsonFileLabRepository:
             [
                 {
                     "ip": "10.10.200.11",
-                    "element": "orange",
-                    "board": "seed",
+                    "element": "alt1",
+                    "board": "qemu",
                     "slot": 0,
                     "creds": [{"login": "vagrant", "password": "vagrant"}],
-                    "resources": ["orange"],
+                    "resources": ["alt1"],
                     "labs": ["idlab"],
                 },
             ],
@@ -248,7 +245,7 @@ class TestJsonFileLabRepository:
         repo = JsonFileLabRepository([tmp_path])
         lab = repo.load_lab("idlab")
 
-        assert "orange_seed0" in lab.hosts
+        assert "alt1_qemu0" in lab.hosts
 
     def test_list_labs(self, tmp_path):
         _hosts_file(
@@ -256,16 +253,16 @@ class TestJsonFileLabRepository:
             [
                 {
                     "ip": "10.10.200.11",
-                    "element": "orange",
+                    "element": "alt1",
                     "creds": [{"login": "vagrant", "password": "vagrant"}],
-                    "resources": ["orange"],
+                    "resources": ["alt1"],
                     "labs": ["alpha"],
                 },
                 {
                     "ip": "10.10.200.12",
-                    "element": "tomato",
+                    "element": "test2",
                     "creds": [{"login": "vagrant", "password": "vagrant"}],
-                    "resources": ["tomato"],
+                    "resources": ["test2"],
                     "labs": ["beta"],
                 },
             ],
@@ -285,7 +282,7 @@ class TestJsonFileLabRepository:
             [
                 {
                     "ip": "10.10.200.11",
-                    "element": "orange",
+                    "element": "alt1",
                     "creds": [{"login": "vagrant", "password": "vagrant"}],
                     "resources": [],
                     "labs": ["alpha"],
@@ -297,7 +294,7 @@ class TestJsonFileLabRepository:
             [
                 {
                     "ip": "10.10.200.12",
-                    "element": "tomato",
+                    "element": "test2",
                     "creds": [{"login": "vagrant", "password": "vagrant"}],
                     "resources": [],
                     "labs": ["beta"],
@@ -331,13 +328,13 @@ class TestLabFileShape:
         (tmp_path / "lab.json").write_text(json.dumps([{"ip": "192.0.2.1"}]))
         repo = JsonFileLabRepository(search_paths=[tmp_path])
         with pytest.raises(LabRepositoryError, match="JSON object"):
-            repo.load_lab("veggies")
+            repo.load_lab("unix")
 
     def test_unknown_section_rejected(self, tmp_path):
         (tmp_path / "lab.json").write_text(json.dumps({"hosts": [], "routes": []}))
         repo = JsonFileLabRepository(search_paths=[tmp_path])
         with pytest.raises(LabRepositoryError, match="unknown section"):
-            repo.load_lab("veggies")
+            repo.load_lab("unix")
 
     def test_top_level_comment_keys_allowed(self, tmp_path):
         _write_lab(tmp_path, hosts=[HOST_ENTRY])
@@ -345,57 +342,57 @@ class TestLabFileShape:
         payload["_comment"] = "a note"
         (tmp_path / "lab.json").write_text(json.dumps(payload))
         repo = JsonFileLabRepository(search_paths=[tmp_path])
-        assert repo.load_lab("veggies").hosts  # loads fine
+        assert repo.load_lab("unix").hosts  # loads fine
 
     def test_missing_sections_default_empty(self, tmp_path):
         (tmp_path / "lab.json").write_text(json.dumps({}))
         repo = JsonFileLabRepository(search_paths=[tmp_path])
         with pytest.raises(LabNotFoundError):  # no hosts -> lab not found
-            repo.load_lab("veggies")
+            repo.load_lab("unix")
 
     def test_section_not_array_rejected(self, tmp_path):
         (tmp_path / "lab.json").write_text(json.dumps({"hosts": {"not": "a list"}}))
         repo = JsonFileLabRepository(search_paths=[tmp_path])
         with pytest.raises(LabRepositoryError, match="must be a JSON array"):
-            repo.load_lab("veggies")
+            repo.load_lab("unix")
 
     def test_hosts_json_is_not_read(self, tmp_path):
         """Hard cutover: a legacy hosts.json is invisible."""
         (tmp_path / "hosts.json").write_text(json.dumps([HOST_ENTRY]))
         repo = JsonFileLabRepository(search_paths=[tmp_path])
         with pytest.raises(LabNotFoundError, match=r"lab\.json"):
-            repo.load_lab("veggies")
+            repo.load_lab("unix")
 
 
 class TestDeclaredLinks:
     """``links`` section consumption in ``load_lab`` (Task 5: declared-link resolution)."""
 
     def test_declared_link_between_in_lab_hosts_loads_with_resolved_ips(self, tmp_path):
-        host_a = {**HOST_ENTRY, "element": "carrot", "board": "seed"}
-        host_b = {**HOST_ENTRY, "element": "tomato", "board": "seed", "ip": "192.0.2.2"}
+        host_a = {**HOST_ENTRY, "element": "test1"}
+        host_b = {**HOST_ENTRY, "element": "test2", "ip": "192.0.2.2"}
         _write_lab(
             tmp_path,
             hosts=[host_a, host_b],
             links=[
                 {
-                    "endpoints": [{"host": "carrot_seed"}, {"host": "tomato_seed"}],
+                    "endpoints": [{"host": "test1"}, {"host": "test2"}],
                     "protocol": "tcp",
                 }
             ],
         )
         repo = JsonFileLabRepository([tmp_path])
-        lab = repo.load_lab("veggies")
+        lab = repo.load_lab("unix")
 
         assert len(lab.links) == 1
         (link,) = lab.links
-        assert {link.a.host, link.b.host} == {"carrot_seed", "tomato_seed"}
+        assert {link.a.host, link.b.host} == {"test1", "test2"}
         assert {link.a.ip, link.b.ip} == {"192.0.2.1", "192.0.2.2"}
 
     def test_cross_lab_link_resolves_dangling_endpoint(self, tmp_path):
         """One endpoint outside the requested lab still resolves its ip
         from the raw host dict, and the link surfaces (>= 1 endpoint in-lab).
         """
-        host_a = {**HOST_ENTRY, "element": "carrot", "board": "seed", "labs": ["veggies"]}
+        host_a = {**HOST_ENTRY, "element": "test1", "labs": ["unix"]}
         host_other = {
             **HOST_ENTRY,
             "element": "kiwi",
@@ -408,22 +405,22 @@ class TestDeclaredLinks:
             hosts=[host_a, host_other],
             links=[
                 {
-                    "endpoints": [{"host": "carrot_seed"}, {"host": "kiwi_seed"}],
+                    "endpoints": [{"host": "test1"}, {"host": "kiwi_seed"}],
                     "protocol": "tcp",
                 }
             ],
         )
         repo = JsonFileLabRepository([tmp_path])
-        lab = repo.load_lab("veggies")
+        lab = repo.load_lab("unix")
 
         assert "kiwi_seed" not in lab.hosts  # dangling: not part of this lab's hosts
         assert len(lab.links) == 1
         (link,) = lab.links
-        assert {link.a.host, link.b.host} == {"carrot_seed", "kiwi_seed"}
+        assert {link.a.host, link.b.host} == {"test1", "kiwi_seed"}
         assert {link.a.ip, link.b.ip} == {"192.0.2.1", "192.0.2.9"}
 
     def test_link_fully_outside_lab_is_excluded(self, tmp_path):
-        host_a = {**HOST_ENTRY, "element": "carrot", "board": "seed", "labs": ["veggies"]}
+        host_a = {**HOST_ENTRY, "element": "test1", "labs": ["unix"]}
         host_x = {
             **HOST_ENTRY,
             "element": "kiwi",
@@ -449,7 +446,7 @@ class TestDeclaredLinks:
             ],
         )
         repo = JsonFileLabRepository([tmp_path])
-        lab = repo.load_lab("veggies")
+        lab = repo.load_lab("unix")
 
         assert lab.links == []
 
@@ -458,13 +455,12 @@ class TestDeclaredLinks:
         break loading the requested lab — symmetric with the cross-lab host-record
         containment. The requested lab's own valid link still surfaces.
         """
-        carrot = {**HOST_ENTRY, "element": "carrot", "board": "seed", "labs": ["veggies"]}
-        tomato = {
+        test1 = {**HOST_ENTRY, "element": "test1", "labs": ["unix"]}
+        test2 = {
             **HOST_ENTRY,
-            "element": "tomato",
-            "board": "seed",
+            "element": "test2",
             "ip": "192.0.2.2",
-            "labs": ["veggies"],
+            "labs": ["unix"],
         }
         kiwi = {
             **HOST_ENTRY,
@@ -475,11 +471,11 @@ class TestDeclaredLinks:
         }
         _write_lab(
             tmp_path,
-            hosts=[carrot, tomato, kiwi],
+            hosts=[test1, test2, kiwi],
             links=[
                 # (0) the requested lab's OWN valid link — must survive.
                 {
-                    "endpoints": [{"host": "carrot_seed"}, {"host": "tomato_seed"}],
+                    "endpoints": [{"host": "test1"}, {"host": "test2"}],
                     "protocol": "tcp",
                 },
                 # (1) unrelated lab: references an unknown host — must be SKIPPED,
@@ -493,21 +489,21 @@ class TestDeclaredLinks:
             ],
         )
         repo = JsonFileLabRepository([tmp_path])
-        lab = repo.load_lab("veggies")
+        lab = repo.load_lab("unix")
 
-        assert set(lab.hosts) == {"carrot_seed", "tomato_seed"}
+        assert set(lab.hosts) == {"test1", "test2"}
         assert len(lab.links) == 1
         (link,) = lab.links
-        assert {link.a.host, link.b.host} == {"carrot_seed", "tomato_seed"}
+        assert {link.a.host, link.b.host} == {"test1", "test2"}
 
     def test_unknown_host_link_raises_with_index_and_source(self, tmp_path):
-        host_a = {**HOST_ENTRY, "element": "carrot", "board": "seed", "labs": ["veggies"]}
+        host_a = {**HOST_ENTRY, "element": "test1", "labs": ["unix"]}
         _write_lab(
             tmp_path,
             hosts=[host_a],
             links=[
                 {
-                    "endpoints": [{"host": "nope"}, {"host": "carrot_seed"}],
+                    "endpoints": [{"host": "nope"}, {"host": "test1"}],
                     "protocol": "tcp",
                 }
             ],
@@ -515,7 +511,7 @@ class TestDeclaredLinks:
         repo = JsonFileLabRepository([tmp_path])
 
         with pytest.raises(LabRepositoryError, match=r"lab\.json.*index 0"):
-            repo.load_lab("veggies")
+            repo.load_lab("unix")
 
     @pytest.mark.parametrize(
         "malformed_fields",
@@ -531,7 +527,7 @@ class TestDeclaredLinks:
         """A malformed host record belonging to a DIFFERENT lab must be skipped
         by the cross-lab addressing build, not crash the requested lab's load.
         """
-        host_a = {**HOST_ENTRY, "element": "carrot", "board": "seed", "labs": ["veggies"]}
+        host_a = {**HOST_ENTRY, "element": "test1", "labs": ["unix"]}
         malformed_other = {
             **HOST_ENTRY,
             "element": "kiwi",
@@ -542,9 +538,9 @@ class TestDeclaredLinks:
         _write_lab(tmp_path, hosts=[host_a, malformed_other])
 
         repo = JsonFileLabRepository([tmp_path])
-        lab = repo.load_lab("veggies")
+        lab = repo.load_lab("unix")
 
-        assert "carrot_seed" in lab.hosts
+        assert "test1" in lab.hosts
 
     def test_duplicate_cross_lab_addressing_warns_and_keeps_first(self, tmp_path, caplog):
         """Two lab files that each declare a host slugging to the same id, with
@@ -558,7 +554,7 @@ class TestDeclaredLinks:
         path1.mkdir()
         path2.mkdir()
 
-        carrot = {**HOST_ENTRY, "element": "carrot", "board": "seed", "labs": ["veggies"]}
+        test1 = {**HOST_ENTRY, "element": "test1", "labs": ["unix"]}
         dup_first = {
             **HOST_ENTRY,
             "element": "dup",
@@ -575,10 +571,10 @@ class TestDeclaredLinks:
         }
         _write_lab(
             path1,
-            hosts=[carrot, dup_first],
+            hosts=[test1, dup_first],
             links=[
                 {
-                    "endpoints": [{"host": "carrot_seed"}, {"host": "dup_seed"}],
+                    "endpoints": [{"host": "test1"}, {"host": "dup_seed"}],
                     "protocol": "tcp",
                 }
             ],
@@ -588,10 +584,10 @@ class TestDeclaredLinks:
         repo = JsonFileLabRepository([path1, path2])
 
         with caplog.at_level(logging.WARNING):
-            lab = repo.load_lab("veggies")
+            lab = repo.load_lab("unix")
 
         assert any("Duplicate host id" in r.message for r in caplog.records)
-        assert "carrot_seed" in lab.hosts
+        assert "test1" in lab.hosts
         (link,) = lab.links
         dup_ip = link.a.ip if link.a.host == "dup_seed" else link.b.ip
         assert dup_ip == "192.0.2.50"  # first file's addressing kept
@@ -606,7 +602,7 @@ class TestLoadLabWithPreferences:
             [
                 {
                     "ip": "10.10.200.11",
-                    "element": "orange",
+                    "element": "alt1",
                     "creds": [{"login": "vagrant", "password": "vagrant"}],
                     "resources": [],
                     "labs": ["testlab"],

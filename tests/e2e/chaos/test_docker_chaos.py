@@ -1,17 +1,17 @@
 """Docker chaos: venue harness + smoke (chaos hardening spec, Plan 5).
 
 Docker-specific chaos scenarios (Tasks 5-7 append to this module) share this
-harness: a docker-capable SSH parent (``docker_parent`` — pepper by default,
+harness: a docker-capable SSH parent (``docker_parent`` — test3 by default,
 or the hermetic loopback sshd via ``OTTO_CHAOS_DOCKER=loopback``), repo1's
 one-service compose stack staged under a fresh, uniquely-named project per
 scenario (``api_host``), and a module-local hygiene bracket that snapshots
-the DOCKER parent rather than the lane's leased veggies bed host — this
+the DOCKER parent rather than the lane's leased unix bed host — this
 module opts out of the base ``_bed_hygiene_bracket`` (``no_hygiene_bracket``)
 since the loopback venue has no bed route to lease at all.
 
-pepper is serialized against ``tests/integration/test_docker_compose.py``'s
+test3 is serialized against ``tests/integration/test_docker_compose.py``'s
 own docker suite via the same fd-flock lease that module holds
-(``lease_unix_host(..., ["pepper"])``), so this lane's docker chaos never
+(``lease_unix_host(..., ["test3"])``), so this lane's docker chaos never
 races that daemon.
 
 NO BUSYBOX GUEST ARM: every scenario here needs one of the venue's two
@@ -50,7 +50,7 @@ from tests._fixtures.bed_hygiene import (
     snapshot_host,
 )
 from tests._fixtures.paths import TESTS_ROOT
-from tests.e2e.chaos._docker import docker_venue, fresh_project, loopback_parent, pepper_parent
+from tests.e2e.chaos._docker import bed_parent, docker_venue, fresh_project, loopback_parent
 from tests.e2e.chaos._seed import offset_in
 
 logger = logging.getLogger(__name__)
@@ -85,7 +85,7 @@ def _run(coro):
     loop was running when it opened; ``asyncio.run()`` tears that loop down
     when THIS call returns, so the NEXT call would reuse a connection wired
     to an already-closed loop and raise ``RuntimeError: ... attached to a
-    different loop`` (confirmed against pepper — see the task report).
+    different loop`` (confirmed against test3 — see the task report).
 
     There is also no safe way to close the stale connection from a LATER
     call — anything that touches it needs the very loop that is already
@@ -140,7 +140,7 @@ def _close(host: UnixHost) -> None:
 def docker_parent(tmp_path_factory) -> "Iterator[UnixHost]":
     """The docker-capable SSH parent for this venue.
 
-    pepper (default): fd-flock lease so docker chaos never races the docker
+    test3 (default): fd-flock lease so docker chaos never races the docker
     e2e/integration suites on the same daemon. loopback: tier-2's sshd
     harness wrapping the runner's own daemon — no bed route touched.
     """
@@ -154,8 +154,8 @@ def docker_parent(tmp_path_factory) -> "Iterator[UnixHost]":
                 _close(host)
         return
     lock_dir = tmp_path_factory.getbasetemp().parent
-    with lease_unix_host(lock_dir, ["pepper"]) as _element:
-        host = pepper_parent()
+    with lease_unix_host(lock_dir, ["test3"]) as _element:
+        host = bed_parent()
         _active_hosts.append(host)
         try:
             yield host
@@ -222,7 +222,7 @@ async def _snapshot_probe(base: UnixHost):
     with no overrides reconstructs the host from its own current field
     values (ip/creds/term/transfer/ssh_options/...), so this is exactly "a
     fresh host built the same way docker_parent was" for either venue: for
-    pepper those fields are the constant literals ``pepper_parent()`` always
+    test3 those fields are the constant literals ``bed_parent()`` always
     uses; for loopback it keeps the already-running sshd's port/client key
     rather than starting a second daemon per snapshot.
     """
@@ -236,7 +236,7 @@ async def _snapshot_probe(base: UnixHost):
 @pytest.fixture(autouse=True)
 def _docker_hygiene_bracket(docker_parent):
     """Task 2's docker-extended BedHygiene around every scenario, snapshotting
-    the DOCKER parent (pepper or loopback) over fresh probe connections — the
+    the DOCKER parent (test3 or loopback) over fresh probe connections — the
     bed bracket is opted out module-wide (no bed lease on the loopback
     venue)."""
     before = _run(_snapshot_probe(docker_parent))
@@ -342,7 +342,7 @@ def test_docker_restart_mid_exec(api_host, docker_parent, chaos_rng):
         restart = await docker_parent.exec(f"docker restart {cid}", timeout=60)
         assert restart.status == Status.Success, restart.value
         result = await exec_task
-        # Observed on pepper: Status.Failed, retcode=137 (SIGKILL) — the
+        # Observed on test3: Status.Failed, retcode=137 (SIGKILL) — the
         # wrapped `docker exec` process itself is killed when the container
         # it's attached to is torn down mid-restart, so it surfaces as an
         # ordinary nonzero-exit CommandResult (Status.Failed) rather than the

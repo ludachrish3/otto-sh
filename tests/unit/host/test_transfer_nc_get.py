@@ -59,7 +59,7 @@ def _make_ft(
     mock_connections.term = term
     return NcFileTransfer(
         connections=mock_connections,
-        name="tomato",
+        name="test2",
         transfer="nc",
         nc_options=NcOptions(
             exec_name="nc",

@@ -417,7 +417,7 @@ class TestSnmpCollection:
     @pytest.mark.asyncio
     async def test_snmp_target_populates_series_from_oids(self):
         client = _FakeSnmpClient({OID_SYS_UPTIME: 12345})
-        host, target = self._make_snmp_target("sprout", client)
+        host, target = self._make_snmp_target("zephyr37_fat", client)
         collector = MetricCollector(targets=[target])
 
         with _virtual_time() as vt:
@@ -430,8 +430,8 @@ class TestSnmpCollection:
 
         series = collector.get_series()
         # sysUpTime (1/100 s) scaled to seconds by the descriptor: 12345 -> 123.45
-        assert "sprout/Uptime" in series, f"series: {list(series)}"
-        assert series["sprout/Uptime"][0].value == 123.45
+        assert "zephyr37_fat/Uptime" in series, f"series: {list(series)}"
+        assert series["zephyr37_fat/Uptime"][0].value == 123.45
         # Exact: initial + concurrent collects at 0/100/200/300ms. NB each
         # SNMP tick still rides a REAL 100ms asyncio.wait_for inside the
         # collector (wall clock, not virtualized): a >100ms stall there
@@ -442,8 +442,8 @@ class TestSnmpCollection:
     @pytest.mark.asyncio
     async def test_snmp_and_shell_targets_coexist(self):
         client = _FakeSnmpClient({OID_SYS_UPTIME: 100})
-        _, snmp_target = self._make_snmp_target("sprout", client)
-        shell_host = _make_mock_host("carrot")
+        _, snmp_target = self._make_snmp_target("zephyr37_fat", client)
+        shell_host = _make_mock_host("test1")
         shell_target = MonitorTarget(host=shell_host, parsers={StubParser.command: StubParser()})
         collector = MetricCollector(targets=[snmp_target, shell_target])
 
@@ -453,5 +453,5 @@ class TestSnmpCollection:
         )
 
         series = collector.get_series()
-        assert "sprout/Uptime" in series  # SNMP path
-        assert "carrot/value" in series  # shell path, unaffected
+        assert "zephyr37_fat/Uptime" in series  # SNMP path
+        assert "test1/value" in series  # shell path, unaffected

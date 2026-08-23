@@ -32,9 +32,9 @@ all of them, making the other two unreachable):
 
 | Zephyr instance | IP          | /30 subnet     | Filesystem                      | systemd unit                         |
 |-----------------|-------------|----------------|---------------------------------|--------------------------------------|
-| `sprout`        | `192.0.2.1` | `192.0.2.0/30` | FAT on a RAM disk               | `zephyr-qemu-v3_7_fat_ram.service`   |
-| `sprout_lfs`    | `192.0.2.5` | `192.0.2.4/30` | LittleFS on the flash simulator | `zephyr-qemu-v3_7_lfs.service`       |
-| `sprout_no_fs`  | `192.0.2.9` | `192.0.2.8/30` | (none — no `fs` shell)          | `zephyr-qemu-v3_7_no_fs.service`     |
+| `zephyr37_fat`  | `192.0.2.1` | `192.0.2.0/30` | FAT on a RAM disk               | `zephyr-qemu-v3_7_fat_ram.service`   |
+| `zephyr37_lfs`  | `192.0.2.5` | `192.0.2.4/30` | LittleFS on the flash simulator | `zephyr-qemu-v3_7_lfs.service`       |
+| `zephyr37_nofs` | `192.0.2.9` | `192.0.2.8/30` | (none — no `fs` shell)          | `zephyr-qemu-v3_7_no_fs.service`     |
 
 See `tests/firmware/zephyr/README.md` in the repo for the per-config
 overlay layout.
@@ -424,7 +424,7 @@ what you want to exercise:
 | Embedded / Zephyr (resource) | `make coverage-embedded` / `make nox-embedded` | zephyr VM |
 | Multi-hop only | `uv run pytest -m "hops and not stability"` | three VMs |
 | Stability / soak | `make stability` (or `stability-unit` / `stability-unix` / `stability-tunnel` / `stability-embedded`) | lab VMs (`-unit` needs none) |
-| Chaos lane (tier 3, opt-in — interrupt/SIGKILL/reboot scenarios + BedHygiene, incl. docker kill/pause/restart/daemon-restart and privilege `as_user` interrupt) | `make chaos` / `make chaos-embedded` | leased veggies host, incl. pepper for docker (+ zephyr board for the embedded leg) |
+| Chaos lane (tier 3, opt-in — interrupt/SIGKILL/reboot scenarios + BedHygiene, incl. docker kill/pause/restart/daemon-restart and privilege `as_user` interrupt) | `make chaos` / `make chaos-embedded` | leased unix host, incl. test3 for docker (+ zephyr board for the embedded leg) |
 | Chaos lane, docker slice only (GitHub nightly, no lab needed) | automatic — `nightly.yml`'s `chaos-docker` job (`OTTO_CHAOS_DOCKER=loopback`) | none — loopback sshd wrapping the runner's own docker daemon |
 | Everything (the dev-VM contract) | `make all` | lab VMs |
 | Cross-Python matrix | `make nox-unit` (quick, no VMs) / `make nox` (full on 3.10 + 3.14, hostless on the middle versions) / `make nox-full` (full, all Pythons) | `nox`/`nox-full` need VMs |
@@ -465,14 +465,14 @@ and `make stability-tunnel CYCLES=N`.
 
 ### Embedded coverage bed
 
-`sprout_cov` is the embedded coverage instance: an ARM `mps2_an385` Zephyr in the
-`embedded` lab, reached over a QEMU `-serial telnet:` bridge via the `basil` SSH
+`zephyr37_llext` is the embedded coverage instance: an ARM `mps2_an385` Zephyr in the
+`embedded` lab, reached over a QEMU `-serial telnet:` bridge via the `test4` SSH
 hop (`zephyr-qemu-cov.service` on the zephyr VM, provisioned by the Vagrantfile
 like the other Zephyr instances). The **dev VM runs no QEMU** — it only builds
 the instrumented `.llext` extension and runs the cross-gcov report; the coverage
 instance itself runs on the zephyr VM. Which host(s) coverage is collected from
 is repo-declared by the `[coverage].hosts` regex in `.otto/settings.toml`
-(default: every host in the lab), so the `basil` hop and the plain embedded test
+(default: every host in the lab), so the `test4` hop and the plain embedded test
 hosts are excluded by the pattern rather than by inference.
 
 > **Manual-gate convention.** If a test depends on infrastructure that

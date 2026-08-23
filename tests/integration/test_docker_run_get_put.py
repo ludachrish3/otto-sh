@@ -22,24 +22,24 @@ from tests._fixtures.paths import TESTS_ROOT
 
 REPO1_DIR = TESTS_ROOT / "repo1"
 
-# All docker integration tests share /tmp/otto-docker/repo1/ on pepper
+# All docker integration tests share /tmp/otto-docker/repo1/ on test3
 # (compose staging dir). Pin them to one xdist worker so concurrent
 # `rm -rf` calls during compose_up don't race.
 pytestmark = pytest.mark.xdist_group("docker_e2e")
 
 
 @pytest.fixture(scope="module")
-def pepper_lease(tmp_path_factory):
-    """Hold the pepper fd-flock for the entire module so no e2e docker test
+def test3_lease(tmp_path_factory):
+    """Hold the test3 fd-flock for the entire module so no e2e docker test
     can race against the integration docker tests on the same daemon."""
     lock_dir = tmp_path_factory.getbasetemp().parent
-    with lease_unix_host(lock_dir, ["pepper"]) as _element:
+    with lease_unix_host(lock_dir, ["test3"]) as _element:
         yield _element
 
 
 @pytest_asyncio.fixture(scope="module", loop_scope="module")
-async def stack(pepper_lease):
-    """Bring up repo1's compose stack on pepper once per module, yield the api
+async def stack(test3_lease):
+    """Bring up repo1's compose stack on test3 once per module, yield the api
     container host to all tests, then tear down. Module scope avoids paying
     ~10s of compose_up overhead for each of the 10+ tests in this file —
     the tests are written to be order-independent (each one explicitly sets
@@ -51,9 +51,8 @@ async def stack(pepper_lease):
     after the first test and corrupt the cached SSH connection)."""
     parent = UnixHost(
         ip="10.10.200.13",
-        element="pepper",
+        element="test3",
         creds=[Cred(login="vagrant", password="vagrant")],
-        board="seed",
         is_virtual=True,
         term="ssh",
         transfer="scp",

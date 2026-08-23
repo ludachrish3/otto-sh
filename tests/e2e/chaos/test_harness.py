@@ -1,16 +1,16 @@
 """Lane certification: the leased-bed harness works before any chaos does.
 
 Proves the previously-untested bed-target path end to end
-(todo/chaos-realsignal-followups.md §4): otto subprocess -> leased veggies
+(todo/chaos-realsignal-followups.md §4): otto subprocess -> leased unix
 host over real SSH, phase marker in verbose.log, clean exit, probe oracle
 round-trips on an independent connection.
 
 The lane's SECOND target is certified here too: the BusyBox bed's ``bb1350``
-guest, reached over telnet through the ``carrot_seed`` hop. Same shape, one
+guest, reached over telnet through the ``test1`` hop. Same shape, one
 extra thing to prove -- that the subprocess and the oracle, which reach the
 guest by two entirely different routes, land on the same device.
 
-``-R`` (``--skip-reservation-check``) decision: NOT prepended. The veggies
+``-R`` (``--skip-reservation-check``) decision: NOT prepended. The unix
 SUT (``tests/repo_e2e/.otto/settings.toml``) declares no ``[reservations]``
 section at all, so ``ReservationConfigSpec.backend`` defaults to ``"none"``
 and ``check_reservations``/``ReservationGate.evaluate`` resolve to a silent
@@ -55,12 +55,12 @@ def test_probe_oracle_round_trips(chaos_bed):
     assert "CHAOS-PROBE" in probe_text(chaos_bed.element, "echo CHAOS-PROBE")
 
 
-@pytest.mark.no_hygiene_bracket  # the guest is not the veggies pool the autouse bracket leases
+@pytest.mark.no_hygiene_bracket  # the guest is not the unix pool the autouse bracket leases
 def test_clean_run_on_the_busybox_guest(busybox_chaos_bed, tmp_path):
     """The guest twin of ``test_clean_run_on_leased_host``: certify the
     BusyBox target's BOTH halves before any chaos rides them.
 
-    Deliberately not two tests. The veggies pair can split subprocess-path
+    Deliberately not two tests. The unix pair can split subprocess-path
     and oracle-path certification because their oracles are independent
     instruments -- ``leased_bed`` proves reachability with a raw TCP connect,
     so ``test_probe_oracle_round_trips`` is the first thing to exercise a
@@ -75,7 +75,7 @@ def test_clean_run_on_the_busybox_guest(busybox_chaos_bed, tmp_path):
     ``hop``, the oracle through an in-process factory build and a
     ContextVar-installed hop lab. So the subprocess writes a nonce on the
     guest and the oracle, on its own fresh login, reads it back. A harness
-    where those two ever pointed at different guests (or at carrot itself)
+    where those two ever pointed at different guests (or at test1 itself)
     would pass every reachability check and quietly answer chaos questions
     about the wrong host.
     """

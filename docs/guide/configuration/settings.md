@@ -316,7 +316,7 @@ target = "prod"                          # optional multi-stage target
 
 [[docker.composes]]
 path = "docker/compose.yml"
-default_host = "pepper_seed"             # lab host id; CLI --on overrides
+default_host = "test3"                   # lab host id; CLI --on overrides
 services = ["api", "db"]                 # used for tab-completion only
 ```
 

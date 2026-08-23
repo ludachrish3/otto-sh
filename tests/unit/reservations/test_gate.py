@@ -43,13 +43,13 @@ class _FakeBackend:
 
 
 def _lab_with_resources() -> Lab:
-    """Build a lab whose total required resources are {rack1, carrot, tomato}."""
+    """Build a lab whose total required resources are {rack1, test1, test2}."""
     return Lab(
         name="test_lab",
         resources={"rack1"},
         hosts={
-            "carrot_seed": make_host("carrot", resources={"carrot"}),
-            "tomato_seed": make_host("tomato", resources={"tomato"}),
+            "test1": make_host("test1", resources={"test1"}),
+            "test2": make_host("test2", resources={"test2"}),
         },
     )
 
@@ -120,8 +120,8 @@ class TestReservationGateResultMatrix:
         backend = _FakeBackend(
             owners={
                 "rack1": "alice",
-                "carrot": "alice",
-                "tomato": "alice",
+                "test1": "alice",
+                "test2": "alice",
             }
         )
         identity = ResolvedIdentity(username="alice", source="$USER")

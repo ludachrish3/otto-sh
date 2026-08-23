@@ -11,7 +11,7 @@ BusyBox bed, which runs its version edges only (see
   :class:`EmbeddedHost` against the QEMU instances on the ``zephyr`` Vagrant
   VM ({2.7, 3.7, 4.4} x {FAT-on-RAM, LittleFS, no-FS}).
 - the oldest and newest BusyBox bed guests — :class:`UnixHost` over telnet
-  through the ``carrot`` hop, at the trimmed soak sizes their kit declares.
+  through the ``test1`` hop, at the trimmed soak sizes their kit declares.
 
 Iteration counts and payload sizes come from each backend's ``HostKit``
 (see :mod:`tests.conftest`) so the embedded backends — whose console
@@ -89,8 +89,8 @@ _BUSYBOX_STABILITY_BACKENDS = ("busybox_1161", "busybox_1350")
 # Named ids, not ``BUSYBOX_BACKENDS[0]``/``[-1]``, so the two rows this file
 # runs are greppable — but then a rename in :data:`tests.conftest` would leave
 # an id here that ``host1`` no longer recognises, and that id falls through to
-# the fixture's unix-terms tail as ``make_host("carrot", term=<id>)``: a
-# confusing carrot failure against the hop instead of "that backend is gone".
+# the fixture's unix-terms tail as ``make_host("test1", term=<id>)``: a
+# confusing test1 failure against the hop instead of "that backend is gone".
 # Fail at import, where the cause is legible — same shape as
 # ``test_embedded_host_integration``'s holdout guard, and raised rather than
 # asserted for the same reason: a guard that ``python -O`` deletes is not one.
@@ -99,7 +99,7 @@ if _unknown_stability_backends:
     raise RuntimeError(
         f"_BUSYBOX_STABILITY_BACKENDS names backends that no longer exist: "
         f"{sorted(_unknown_stability_backends)}. Known backends: {sorted(BUSYBOX_BACKENDS)}. "
-        "Re-point the entry — leaving it stale sends the soak at the carrot hop."
+        "Re-point the entry — leaving it stale sends the soak at the test1 hop."
     )
 
 _ALL_BACKENDS = pytest.mark.parametrize(

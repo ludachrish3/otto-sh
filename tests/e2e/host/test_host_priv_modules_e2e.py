@@ -39,8 +39,8 @@ from tests.e2e._otto_subprocess import REPO1, assert_output_dir, output_dirs, ru
 # Constants
 # ---------------------------------------------------------------------------
 
-# Lab that contains carrot/tomato/pepper (tech1 lab data).
-_LAB = "veggies"
+# Lab that contains test1/test2/test3 (tech1 lab data).
+_LAB = "unix"
 
 pytestmark = [pytest.mark.integration, pytest.mark.xdist_group("host_priv_e2e")]
 
@@ -82,14 +82,14 @@ def _run_otto(
 
 @pytest.fixture
 def unix_host(tmp_path_factory) -> str:  # type: ignore[type-arg]
-    """Lease one Unix host from the pool; yield its seed id (e.g. ``carrot_seed``).
+    """Lease one Unix host from the pool; yield its host id (e.g. ``test1``).
 
     Uses the same fd-flock lease mechanism as the transfer e2e tests so that
     concurrent workers never race on the same host.
     """
     lock_dir = tmp_path_factory.getbasetemp().parent
     with lease_unix_host(lock_dir, _UNIX_POOL) as element:
-        yield f"{element}_seed"
+        yield element
 
 
 # ---------------------------------------------------------------------------

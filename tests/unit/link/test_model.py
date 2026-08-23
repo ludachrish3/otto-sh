@@ -18,17 +18,15 @@ class TestLinkId:
         ``a--b`` handle, not a ``lnk-<hex>`` route hash (``make_link_id``'s
         hash form is a standalone route-id helper, not wired into ``Link``'s
         own id computation; see ``test_link_id.py``)."""
-        link = Link(a=_ep("carrot"), b=_ep("tomato"))
-        assert link.id == "carrot--tomato"
+        link = Link(a=_ep("test1"), b=_ep("test2"))
+        assert link.id == "test1--test2"
 
     def test_id_endpoint_order_invariant(self):
-        assert (
-            Link(a=_ep("carrot"), b=_ep("tomato")).id == Link(a=_ep("tomato"), b=_ep("carrot")).id
-        )
+        assert Link(a=_ep("test1"), b=_ep("test2")).id == Link(a=_ep("test2"), b=_ep("test1")).id
 
     def test_id_ignores_ip_and_port(self):
-        moved = LinkEndpoint(host="carrot", interface="eth1", ip="10.9.9.9", port=5000)
-        assert Link(a=moved, b=_ep("tomato")).id == Link(a=_ep("carrot"), b=_ep("tomato")).id
+        moved = LinkEndpoint(host="test1", interface="eth1", ip="10.9.9.9", port=5000)
+        assert Link(a=moved, b=_ep("test2")).id == Link(a=_ep("test1"), b=_ep("test2")).id
 
     def test_id_distinguishes_protocol(self):
         """Route-hash property of ``make_link_id`` itself (frozen contract).
@@ -39,13 +37,13 @@ class TestLinkId:
         own id computation, so its protocol-sensitivity is only observable
         by calling it directly.
         """
-        a, b = _ep("carrot"), _ep("tomato")
+        a, b = _ep("test1"), _ep("test2")
         assert make_link_id(a, b, "udp") != make_link_id(a, b, "tcp")
 
     def test_id_protocol_case_insensitive(self):
         """Protocol is lowercased in the id, so a future ``--protocol UDP`` mints
         the same route id as the declared ``"udp"`` (stability contract)."""
-        a, b = _ep("carrot"), _ep("tomato")
+        a, b = _ep("test1"), _ep("test2")
         assert make_link_id(a, b, "UDP") == make_link_id(a, b, "udp")
         assert make_link_id(a, b, "TCP") == make_link_id(a, b, "tcp")
 
@@ -53,8 +51,8 @@ class TestLinkId:
         """Same rationale as ``test_id_distinguishes_protocol`` above: exercise
         ``make_link_id`` directly since the static (default-provenance) ``Link``
         id no longer varies by interface."""
-        assert make_link_id(_ep("carrot", "eth1"), _ep("tomato"), "tcp") != make_link_id(
-            _ep("carrot", "eth2"), _ep("tomato"), "tcp"
+        assert make_link_id(_ep("test1", "eth1"), _ep("test2"), "tcp") != make_link_id(
+            _ep("test1", "eth2"), _ep("test2"), "tcp"
         )
 
     def test_explicit_id_preserved(self):
@@ -65,7 +63,7 @@ class TestLinkId:
         id matches ``make_static_link_id`` directly — ``make_link_id`` (the
         route hash) is no longer involved for static links.
         """
-        a, b = _ep("carrot"), _ep("tomato")
+        a, b = _ep("test1"), _ep("test2")
         assert make_static_link_id(a, b, None) == Link(a=a, b=b).id
 
 

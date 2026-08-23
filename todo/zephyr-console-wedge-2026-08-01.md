@@ -12,13 +12,13 @@ before recovery so the diagnosis survives the restart.
   run since, all zephyr-tagged).
 - NOT self-healing: still wedged ~5 h later with the bed otherwise idle.
 
-## Diagnosis (read-only, from basil — nothing restarted)
+## Diagnosis (read-only, from test4 — nothing restarted)
 
-- `ss -tn '( sport = :23 or dport = :23 )'` on basil: **empty** — no stale
+- `ss -tn '( sport = :23 or dport = :23 )'` on test4: **empty** — no stale
   client connection holds anything.
 - All bed qemu instances alive since Jul 24 (8 days), including the fat
   board's (`v3_7_fat_ram`, tap `zeth-fat`).
-- Differential probe from basil: `192.0.2.2:23` still accepts TCP;
+- Differential probe from test4: `192.0.2.2:23` still accepts TCP;
   **`192.0.2.1:23` (fat board) fails a bare connect/read cycle**.
 - Conclusion: per-board, in-OS wedge — Zephyr's telnet shell service (and
   by now much of its net responsiveness) is dead while qemu itself runs.
@@ -87,7 +87,7 @@ Run 7 occupied 15:24:45-15:27:54 local. From the guest's console:
     15:28:43  <err> eth_e1000: Out of buffers      <- first
     17:58:32  <err> eth_e1000: Out of buffers      <- still going, 432 total
 
-Host side, from basil: qemu alive (`NRestarts=0`, up since 08-02, same as every
+Host side, from test4: qemu alive (`NRestarts=0`, up since 08-02, same as every
 other guest), tap `zeth-27fat` UP with 192.0.2.14/30, `ping 192.0.2.13` 100%
 loss, `ip neigh` = **INCOMPLETE**. The guest is not answering ARP, which is why
 otto reports `CONNFAIL [Errno 113] No route to host` and the handshake fails

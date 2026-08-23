@@ -1,7 +1,7 @@
 # otto tunnel list
 
 ```bash
-otto --lab veggies tunnel list
+otto --lab unix tunnel list
 ```
 
 `otto tunnel list` shows every live tunnel `discover_tunnels` finds right

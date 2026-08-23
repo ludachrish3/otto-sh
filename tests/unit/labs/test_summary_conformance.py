@@ -19,7 +19,6 @@ def _host(element: str, *, ip: str = "10.0.0.1", docker: bool = False) -> UnixHo
     return UnixHost(
         ip=ip,
         element=element,
-        board="seed",
         creds=[Cred(login="u", password="p")],
         docker_capable=docker,
     )
@@ -29,21 +28,21 @@ class _Backend:
     """A conforming backend; each test degrades exactly one thing."""
 
     def __init__(self, summaries: list[HostSummary] | None = None) -> None:
-        self._hosts = {h.id: h for h in (_host("carrot", docker=True), _host("tomato"))}
+        self._hosts = {h.id: h for h in (_host("test1", docker=True), _host("test2"))}
         self._summaries = summaries
 
     def list_labs(self) -> list[str]:
-        return ["veggies", "fruits"]
+        return ["unix", "unix_alt"]
 
     def load_lab(self, name: str, preferences: dict | None = None) -> Lab:
-        if name not in ("veggies", "fruits"):
+        if name not in ("unix", "unix_alt"):
             # The contract's own probe asks for a lab that cannot exist, and
             # requires this exact type — a KeyError reads as a backend bug.
             raise LabNotFoundError(name)
         lab = Lab(name=name)
-        # `fruits` loads but holds none of these hosts: without a second real
+        # `unix_alt` loads but holds none of these hosts: without a second real
         # lab, "claims a lab it is not in" has nothing to claim.
-        if name == "veggies":
+        if name == "unix":
             lab.hosts.update(self._hosts)
         return lab
 
@@ -53,7 +52,7 @@ class _Backend:
         return [
             HostSummary(
                 id=h.id,
-                labs=["veggies"],
+                labs=["unix"],
                 ip=h.ip,
                 element=h.element,
                 element_id=h.element_id,
@@ -65,7 +64,7 @@ class _Backend:
 
 def test_a_faithful_backend_conforms() -> None:
     """Positive control — every rule below must be failing on its own merits."""
-    assert_lab_repository_conforms(_Backend(), expected_labs=["veggies", "fruits"])
+    assert_lab_repository_conforms(_Backend(), expected_labs=["unix", "unix_alt"])
 
 
 def _summaries_of() -> list[HostSummary]:
@@ -76,7 +75,7 @@ def _summaries_of() -> list[HostSummary]:
     ("field", "wrong"),
     [
         ("ip", "192.0.2.99"),
-        ("element", "not-carrot"),
+        ("element", "not-test1"),
         ("element_id", 7),
         ("docker_capable", False),
     ],
@@ -95,7 +94,7 @@ def test_a_field_that_disagrees_with_the_built_host_is_a_violation(field, wrong)
         }
     )
     with pytest.raises(AssertionError, match=field):
-        assert_lab_repository_conforms(_Backend(summaries), expected_labs=["veggies", "fruits"])
+        assert_lab_repository_conforms(_Backend(summaries), expected_labs=["unix", "unix_alt"])
 
 
 def test_omitting_a_constructed_host_is_a_violation() -> None:
@@ -103,7 +102,7 @@ def test_omitting_a_constructed_host_is_a_violation() -> None:
     offering that host, with no error anywhere."""
     summaries = _summaries_of()[:1]
     with pytest.raises(AssertionError, match="omits them"):
-        assert_lab_repository_conforms(_Backend(summaries), expected_labs=["veggies", "fruits"])
+        assert_lab_repository_conforms(_Backend(summaries), expected_labs=["unix", "unix_alt"])
 
 
 def test_a_labless_summary_loses_lab_scoped_completion() -> None:
@@ -119,16 +118,16 @@ def test_a_labless_summary_loses_lab_scoped_completion() -> None:
         docker_capable=summaries[0].docker_capable,
     )
     with pytest.raises(AssertionError, match="--lab-scoped completion would drop it"):
-        assert_lab_repository_conforms(_Backend(summaries), expected_labs=["veggies", "fruits"])
+        assert_lab_repository_conforms(_Backend(summaries), expected_labs=["unix", "unix_alt"])
 
 
 def test_an_id_no_lab_produces_is_still_a_violation() -> None:
     """The original rule, kept: offering an id that cannot dispatch is worse
     than offering none."""
     summaries = _summaries_of()
-    summaries.append(HostSummary(id="ghost_seed", labs=["veggies"], ip="1.1.1.1", element="ghost"))
+    summaries.append(HostSummary(id="ghost_seed", labs=["unix"], ip="1.1.1.1", element="ghost"))
     with pytest.raises(AssertionError, match="cannot dispatch"):
-        assert_lab_repository_conforms(_Backend(summaries), expected_labs=["veggies", "fruits"])
+        assert_lab_repository_conforms(_Backend(summaries), expected_labs=["unix", "unix_alt"])
 
 
 def test_claiming_a_lab_that_does_not_contain_the_host_is_a_violation() -> None:
@@ -143,14 +142,14 @@ def test_claiming_a_lab_that_does_not_contain_the_host_is_a_violation() -> None:
     first = summaries[0]
     summaries[0] = HostSummary(
         id=first.id,
-        labs=["veggies", "fruits"],  # `fruits` loads, and does not hold it
+        labs=["unix", "unix_alt"],  # `unix_alt` loads, and does not hold it
         ip=first.ip,
         element=first.element,
         element_id=first.element_id,
         docker_capable=first.docker_capable,
     )
     with pytest.raises(AssertionError, match="cannot dispatch"):
-        assert_lab_repository_conforms(_Backend(summaries), expected_labs=["veggies", "fruits"])
+        assert_lab_repository_conforms(_Backend(summaries), expected_labs=["unix", "unix_alt"])
 
 
 def test_a_float_element_id_is_a_violation() -> None:
@@ -167,4 +166,4 @@ def test_a_float_element_id_is_a_violation() -> None:
         docker_capable=first.docker_capable,
     )
     with pytest.raises(AssertionError, match="element_id"):
-        assert_lab_repository_conforms(_Backend(summaries), expected_labs=["veggies", "fruits"])
+        assert_lab_repository_conforms(_Backend(summaries), expected_labs=["unix", "unix_alt"])

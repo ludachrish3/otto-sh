@@ -2,7 +2,7 @@
 
 Tier-2 chaos tests point a real ``otto`` subprocess at one SSH-reachable
 host (chaos spec, Tier 2). Default: the hermetic loopback sshd from
-``_sshd``. Set ``OTTO_CHAOS_BED_HOST=carrot|tomato|pepper`` on the lab to
+``_sshd``. Set ``OTTO_CHAOS_BED_HOST=test1|test2|test3`` on the lab to
 aim at a bed host instead — the otto subprocess still runs locally and
 signals are only ever delivered to that local process.
 """
@@ -13,6 +13,7 @@ import getpass
 import json
 from pathlib import Path
 
+from otto.host.remote_host import make_host_id
 from tests._ambient_env import ambient
 from tests._fixtures.labdata import lab_data_path
 from tests._fixtures.paths import TESTS_ROOT
@@ -87,15 +88,15 @@ paths = [
 
 
 def make_bed_target(element: str) -> ChaosTarget:
-    """Aim at a veggies bed host via the existing repo_e2e SUT (lab leg only)."""
+    """Aim at a unix bed host via the existing repo_e2e SUT (lab leg only)."""
     lab_json_path = lab_data_path("tech1")
     lab_json = json.loads(lab_json_path.read_text())
     host = next(h for h in lab_json["hosts"] if h["element"] == element)
     cred = host["creds"][0]
     return ChaosTarget(
         sut_dir=_REPO_E2E,
-        lab="veggies",
-        host_id=f"{element}_{host['board']}",
+        lab="unix",
+        host_id=make_host_id(element, None, host.get("board"), None),
         ssh_host=host["ip"],
         ssh_port=22,
         ssh_username=cred["login"],

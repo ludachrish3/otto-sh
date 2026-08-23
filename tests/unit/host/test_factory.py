@@ -39,50 +39,50 @@ class TestCreateHostFromDict:
         """Test creating UnixHost with all fields."""
         host_data = {
             "ip": "10.10.200.11",
-            "element": "orange",
-            "board": "seed",
+            "element": "alt1",
+            "board": "qemu",
             "creds": [{"login": "vagrant", "password": "vagrant"}],
-            "resources": ["orange"],
+            "resources": ["alt1"],
         }
         host = create_host_from_dict(host_data)
 
         assert isinstance(host, UnixHost)
         assert host.ip == "10.10.200.11"
-        assert host.element == "orange"
-        assert host.board == "seed"
+        assert host.element == "alt1"
+        assert host.board == "qemu"
         assert host.creds == [Cred(login="vagrant", password="vagrant")]
-        assert host.resources == {"orange"}
+        assert host.resources == {"alt1"}
 
     def test_resources_list_converted_to_set(self):
         """Test that resources list is converted to set."""
         host_data = {
             "ip": "10.10.200.11",
-            "element": "orange",
+            "element": "alt1",
             "creds": [{"login": "vagrant", "password": "vagrant"}],
-            "resources": ["orange", "tomato"],
+            "resources": ["alt1", "test2"],
         }
         host = create_host_from_dict(host_data)
 
         assert isinstance(host.resources, set)
-        assert host.resources == {"orange", "tomato"}
+        assert host.resources == {"alt1", "test2"}
 
     def test_resources_set_preserved(self):
         """Test that resources set is preserved."""
         host_data = {
             "ip": "10.10.200.11",
-            "element": "orange",
+            "element": "alt1",
             "creds": [{"login": "vagrant", "password": "vagrant"}],
-            "resources": {"orange", "tomato"},
+            "resources": {"alt1", "test2"},
         }
         host = create_host_from_dict(host_data)
 
         assert isinstance(host.resources, set)
-        assert host.resources == {"orange", "tomato"}
+        assert host.resources == {"alt1", "test2"}
 
     def test_missing_ip_raises_validationerror(self):
         """Missing required ``ip`` field is caught by the spec validator."""
         host_data = {
-            "element": "orange",
+            "element": "alt1",
             "creds": [{"login": "vagrant", "password": "vagrant"}],
         }
         with pytest.raises(ValidationError, match=r"(?m)^ip\n\s+Field required") as exc_info:
@@ -95,7 +95,7 @@ class TestCreateHostFromDict:
         """Missing required ``creds`` field is caught by the spec validator."""
         host_data = {
             "ip": "10.10.200.11",
-            "element": "orange",
+            "element": "alt1",
         }
         with pytest.raises(ValidationError, match=r"(?m)^creds\n\s+Field required") as exc_info:
             create_host_from_dict(host_data)
@@ -119,17 +119,17 @@ class TestCreateHostFromDict:
         """Test that optional fields are handled correctly."""
         host_data = {
             "ip": "10.10.200.11",
-            "element": "orange",
+            "element": "alt1",
             "user": "vagrant",
             "creds": [{"login": "vagrant", "password": "vagrant"}],
-            "board": "seed",
+            "board": "qemu",
             "slot": 0,
             "element_id": 1,
             "name": "CustomName",
         }
         host = create_host_from_dict(host_data)
 
-        assert host.board == "seed"
+        assert host.board == "qemu"
         assert host.slot == 0
         assert host.element_id == 1
         # Note: name will be overridden by __post_init__ if None, but we provide custom name
@@ -142,7 +142,7 @@ class TestValidateHostDict:
         """Test validation of complete host dictionary."""
         host_data = {
             "ip": "10.10.200.11",
-            "element": "orange",
+            "element": "alt1",
             "creds": [{"login": "vagrant", "password": "vagrant"}],
         }
         # Should not raise any exception
@@ -152,7 +152,7 @@ class TestValidateHostDict:
         """Test validation fails for missing required field."""
         host_data = {
             "ip": "10.10.200.11",
-            "element": "orange",
+            "element": "alt1",
         }
         with pytest.raises(ValueError, match="creds") as exc_info:
             validate_host_dict(host_data)
@@ -163,7 +163,7 @@ class TestValidateHostDict:
         """Test validation fails when ip is not a string."""
         host_data = {
             "ip": 123,
-            "element": "orange",
+            "element": "alt1",
             "creds": [{"login": "vagrant", "password": "vagrant"}],
         }
         with pytest.raises(ValueError, match="ip") as exc_info:
@@ -176,7 +176,7 @@ class TestValidateHostDict:
         """Test validation fails when creds is not a list."""
         host_data = {
             "ip": "10.10.200.11",
-            "element": "orange",
+            "element": "alt1",
             "creds": "not_a_list",
         }
         with pytest.raises(ValueError, match="creds") as exc_info:
@@ -205,7 +205,7 @@ class TestToolchainDeserialization:
     def _base_host(self, **extra):
         data = {
             "ip": "10.10.200.11",
-            "element": "orange",
+            "element": "alt1",
             "creds": [{"login": "vagrant", "password": "vagrant"}],
         }
         data.update(extra)
@@ -256,7 +256,7 @@ class TestRepoLevelOptionDefaults:
     def _base_host(self, **extra):
         data = {
             "ip": "10.10.200.11",
-            "element": "orange",
+            "element": "alt1",
             "creds": [{"login": "vagrant", "password": "vagrant"}],
         }
         data.update(extra)
@@ -341,7 +341,7 @@ class TestOsTypeDispatch:
         host = create_host_from_dict(
             {
                 "ip": "10.10.200.11",
-                "element": "orange",
+                "element": "alt1",
                 "creds": [{"login": "v", "password": "v"}],
             }
         )
@@ -352,7 +352,7 @@ class TestOsTypeDispatch:
         host = create_host_from_dict(
             {
                 "ip": "10.10.200.11",
-                "element": "orange",
+                "element": "alt1",
                 "creds": [{"login": "v", "password": "v"}],
                 "os_type": "unix",
             }
@@ -363,7 +363,7 @@ class TestOsTypeDispatch:
         host = create_host_from_dict(
             {
                 "ip": "192.0.2.1",
-                "element": "sprout",
+                "element": "zephyr37_fat",
                 "os_type": "embedded",
                 "command_frame": "zephyr",
             }
@@ -371,7 +371,7 @@ class TestOsTypeDispatch:
         assert isinstance(host, EmbeddedHost)
         assert not isinstance(host, ZephyrHost)  # the generic base, not Zephyr
         assert host.ip == "192.0.2.1"
-        assert host.element == "sprout"
+        assert host.element == "zephyr37_fat"
         assert host.os_type == "embedded"
         assert host.os_name is None  # generic: no implicit OS name
 
@@ -380,7 +380,7 @@ class TestOsTypeDispatch:
             create_host_from_dict(
                 {
                     "ip": "192.0.2.1",
-                    "element": "sprout",
+                    "element": "zephyr37_fat",
                     "os_type": "embedded",
                 }
             )
@@ -390,7 +390,7 @@ class TestOsTypeDispatch:
         host = create_host_from_dict(
             {
                 "ip": "192.0.2.1",
-                "element": "sprout",
+                "element": "zephyr37_fat",
                 "os_type": "embedded",
                 "command_frame": "zephyr",
             }
@@ -401,7 +401,7 @@ class TestOsTypeDispatch:
         host = create_host_from_dict(
             {
                 "ip": "192.0.2.1",
-                "element": "sprout",
+                "element": "zephyr37_fat",
                 "os_type": "zephyr",
                 "os_name": "Zephyr",
                 "os_version": "3.7.0",
@@ -414,31 +414,31 @@ class TestOsTypeDispatch:
         host = create_host_from_dict(
             {
                 "ip": "192.0.2.1",
-                "element": "sprout",
+                "element": "zephyr37_fat",
                 "os_type": "embedded",
                 "command_frame": "zephyr",
-                "resources": ["sprout", "mote"],
+                "resources": ["zephyr37_fat", "mote"],
             }
         )
-        assert host.resources == {"sprout", "mote"}
+        assert host.resources == {"zephyr37_fat", "mote"}
 
     def test_embedded_hop_is_honored(self):
         host = create_host_from_dict(
             {
                 "ip": "192.0.2.1",
-                "element": "sprout",
+                "element": "zephyr37_fat",
                 "os_type": "embedded",
                 "command_frame": "zephyr",
-                "hop": "basil_seed",
+                "hop": "test4",
             }
         )
-        assert host.hop == "basil_seed"
+        assert host.hop == "test4"
 
     def test_embedded_telnet_options_deserialized(self):
         host = create_host_from_dict(
             {
                 "ip": "192.0.2.1",
-                "element": "sprout",
+                "element": "zephyr37_fat",
                 "os_type": "embedded",
                 "command_frame": "zephyr",
                 "telnet_options": {"port": 2323},
@@ -451,7 +451,7 @@ class TestOsTypeDispatch:
         host = create_host_from_dict(
             {
                 "ip": "192.0.2.1",
-                "element": "sprout",
+                "element": "zephyr37_fat",
                 "os_type": "zephyr",
             }
         )
@@ -466,7 +466,7 @@ class TestOsTypeDispatch:
             create_host_from_dict(
                 {
                     "ip": "192.0.2.1",
-                    "element": "sprout",
+                    "element": "zephyr37_fat",
                     "os_type": "windows",
                 }
             )
@@ -479,7 +479,7 @@ class TestOsTypeDispatch:
             create_host_from_dict(
                 {
                     "ip": "192.0.2.1",
-                    "element": "sprout",
+                    "element": "zephyr37_fat",
                     "os_type": "embedded",
                     "docker_capable": True,
                 }
@@ -492,7 +492,7 @@ class TestOsTypeDispatch:
         host = create_host_from_dict(
             {
                 "ip": "192.0.2.1",
-                "element": "sprout",
+                "element": "zephyr37_fat",
                 "os_type": "embedded",
                 "command_frame": "zephyr",
                 "valid_transfers": ["console", "tftp"],
@@ -506,7 +506,7 @@ class TestOsTypeDispatch:
         host = create_host_from_dict(
             {
                 "ip": "192.0.2.1",
-                "element": "sprout",
+                "element": "zephyr37_fat",
                 "os_type": "embedded",
                 "command_frame": "zephyr",
             }
@@ -525,7 +525,7 @@ class TestOsProfileDispatch:
         host = create_host_from_dict(
             {
                 "ip": "10.10.200.11",
-                "element": "orange",
+                "element": "alt1",
                 "creds": [{"login": "v", "password": "v"}],
                 "os_type": "custom-nix",
             }
@@ -539,7 +539,7 @@ class TestOsProfileDispatch:
         host = create_host_from_dict(
             {
                 "ip": "10.10.200.11",
-                "element": "orange",
+                "element": "alt1",
                 "creds": [{"login": "v", "password": "v"}],
                 "os_type": "custom-nix",
                 "os_name": "HostWins",
@@ -552,7 +552,7 @@ class TestOsProfileDispatch:
         host = create_host_from_dict(
             {
                 "ip": "10.10.200.11",
-                "element": "orange",
+                "element": "alt1",
                 "creds": [{"login": "v", "password": "v"}],
                 "os_type": "custom-nix",
             }
@@ -576,7 +576,7 @@ class TestOsProfileDispatch:
         host = create_host_from_dict(
             {
                 "ip": "10.10.200.11",
-                "element": "orange",
+                "element": "alt1",
                 "creds": [{"login": "v", "password": "v"}],
                 "os_type": "nix-ssh",
                 "ssh_options": {"port": 9000},
@@ -605,7 +605,7 @@ class TestOsProfileDispatch:
         host = create_host_from_dict(
             {
                 "ip": "192.0.2.1",
-                "element": "sprout",
+                "element": "zephyr37_fat",
                 "os_type": "zephyr-fat",
             }
         )
@@ -622,7 +622,7 @@ class TestOsProfileDispatch:
             create_host_from_dict(
                 {
                     "ip": "192.0.2.1",
-                    "element": "sprout",
+                    "element": "zephyr37_fat",
                     "os_type": "zephyr-fat",
                     "docker_capable": True,
                 }
@@ -638,7 +638,7 @@ class TestValidateOsType:
         validate_host_dict(
             {
                 "ip": "192.0.2.1",
-                "element": "sprout",
+                "element": "zephyr37_fat",
                 "os_type": "embedded",
             }
         )
@@ -653,7 +653,7 @@ class TestValidateOsType:
             validate_host_dict(
                 {
                     "ip": "10.10.200.11",
-                    "element": "orange",
+                    "element": "alt1",
                     "os_type": "unix",
                 }
             )
@@ -664,7 +664,7 @@ class TestValidateOsType:
             validate_host_dict(
                 {
                     "ip": "192.0.2.1",
-                    "element": "sprout",
+                    "element": "zephyr37_fat",
                     "os_type": "windows",
                 }
             )
@@ -675,7 +675,7 @@ class TestValidateOsType:
             validate_host_dict(
                 {
                     "ip": "192.0.2.1",
-                    "element": "sprout",
+                    "element": "zephyr37_fat",
                     "os_type": "embedded",
                     "docker_capable": True,
                 }
@@ -687,7 +687,7 @@ class TestValidateOsType:
             validate_host_dict(
                 {
                     "ip": "192.0.2.1",
-                    "element": "sprout",
+                    "element": "zephyr37_fat",
                     "os_type": "embedded",
                     "transfer": backend,
                 }
@@ -701,7 +701,7 @@ class TestValidateOsType:
             validate_host_dict(
                 {
                     "ip": "192.0.2.1",
-                    "element": "sprout",
+                    "element": "zephyr37_fat",
                     "os_type": "embedded",
                     "valid_transfers": ["scp"],
                 }
@@ -725,7 +725,7 @@ class TestEmbeddedFilesystem:
         host = create_host_from_dict(
             {
                 "ip": "192.0.2.1",
-                "element": "sprout",
+                "element": "zephyr37_fat",
                 "os_type": "embedded",
                 "command_frame": "zephyr",
             }
@@ -738,7 +738,7 @@ class TestEmbeddedFilesystem:
         host = create_host_from_dict(
             {
                 "ip": "192.0.2.1",
-                "element": "sprout",
+                "element": "zephyr37_fat",
                 "os_type": "embedded",
                 "command_frame": "zephyr",
                 "filesystem": "fat-ram",
@@ -754,7 +754,7 @@ class TestEmbeddedFilesystem:
         host = create_host_from_dict(
             {
                 "ip": "192.0.2.5",
-                "element": "sprout_lfs",
+                "element": "zephyr37_lfs",
                 "os_type": "embedded",
                 "command_frame": "zephyr",
                 "filesystem": "littlefs",
@@ -768,7 +768,7 @@ class TestEmbeddedFilesystem:
             validate_host_dict(
                 {
                     "ip": "192.0.2.1",
-                    "element": "sprout",
+                    "element": "zephyr37_fat",
                     "os_type": "embedded",
                     "filesystem": "btrfs",  # not a registered embedded FS
                 }
@@ -785,7 +785,7 @@ class TestEmbeddedFilesystem:
         host = create_host_from_dict(
             {
                 "ip": "192.0.2.1",
-                "element": "sprout",
+                "element": "zephyr37_fat",
                 "os_type": "embedded",
                 "command_frame": "zephyr",
                 "filesystem": "fat-ram",
@@ -801,7 +801,7 @@ class TestEmbeddedToolchainDeserialization:
     def _embedded_host(self, **extra):
         data = {
             "ip": "192.0.2.99",
-            "element": "sproutx",
+            "element": "zephyr_probe",
             "os_type": "embedded",
             "os_name": "Zephyr",
             "os_version": "3.7",
@@ -849,7 +849,7 @@ class TestSnmpBlock:
         host = create_host_from_dict(
             {
                 "ip": "10.10.200.11",
-                "element": "orange",
+                "element": "alt1",
                 "creds": [{"login": "v", "password": "v"}],
             }
         )
@@ -859,7 +859,7 @@ class TestSnmpBlock:
         host = create_host_from_dict(
             {
                 "ip": "192.0.2.1",
-                "element": "sprout",
+                "element": "zephyr37_fat",
                 "os_type": "embedded",
                 "command_frame": "zephyr",
                 "snmp": {
@@ -882,7 +882,7 @@ class TestSnmpBlock:
         host = create_host_from_dict(
             {
                 "ip": "10.10.200.11",
-                "element": "orange",
+                "element": "alt1",
                 "creds": [{"login": "v", "password": "v"}],
                 "snmp": {"oids": ["1.3.6.1.2.1.1.3.0"]},
             }
@@ -904,7 +904,7 @@ class TestMergeAndValidation:
         host = create_host_from_dict(
             {
                 "ip": "10.0.0.1",
-                "element": "carrot",
+                "element": "test1",
                 "creds": [{"login": "u", "password": "p"}],
                 "ssh_options": {"port": 2222, "connect_timeout": 1.0},
             },
@@ -1004,7 +1004,7 @@ def test_create_host_from_dict_applies_preference_to_embedded_host():
     host = create_host_from_dict(
         {
             "ip": "192.0.2.1",
-            "element": "sprout",
+            "element": "zephyr37_fat",
             "os_type": "embedded",
             "command_frame": "zephyr",
             "valid_transfers": ["console", "tftp"],
@@ -1039,7 +1039,7 @@ class TestProductProviders:
         host = create_host_from_dict(
             {
                 "ip": "10.10.200.11",
-                "element": "orange",
+                "element": "alt1",
                 "creds": [{"login": "vagrant", "password": "vagrant"}],
             }
         )
@@ -1109,7 +1109,7 @@ def test_value_default_applied_from_preferences():
     h = create_host_from_dict(
         {
             "os_type": "unix",
-            "element": "carrot",
+            "element": "test1",
             "ip": "1.1.1.1",
             "creds": [{"login": "u", "password": "p"}],
             "valid_terms": ["ssh"],
@@ -1125,7 +1125,7 @@ def test_product_value_overrides_host_value_per_key():
     h = create_host_from_dict(
         {
             "os_type": "unix",
-            "element": "carrot",
+            "element": "test1",
             "ip": "1.1.1.1",
             "creds": [{"login": "u", "password": "p"}],
             "valid_terms": ["ssh"],
@@ -1152,7 +1152,7 @@ def test_userland_options_merge_per_key_like_every_other_option_table():
     h = create_host_from_dict(
         {
             "os_type": "unix",
-            "element": "carrot",
+            "element": "test1",
             "ip": "1.1.1.1",
             "creds": [{"login": "u", "password": "p"}],
             "valid_terms": ["ssh"],
@@ -1170,7 +1170,7 @@ def test_selection_preference_overrides_lab_pin():
     h = create_host_from_dict(
         {
             "os_type": "unix",
-            "element": "carrot",
+            "element": "test1",
             "ip": "1.1.1.1",
             "creds": [{"login": "u", "password": "p"}],
             "term": "ssh",

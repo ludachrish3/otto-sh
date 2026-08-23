@@ -47,11 +47,11 @@ def test_single_json_source_returns_bare_backend(tmp_path: Path) -> None:
         tmp_path / "r1",
         "r1",
         '[[lab.sources]]\nbackend = "json"\npaths = ["lab"]\n',
-        {"lab/lab.json": [_host("orange", "10.0.0.1")]},
+        {"lab/lab.json": [_host("alt1", "10.0.0.1")]},
     )
     repository = build_lab_sources([repo])
     assert isinstance(repository, JsonFileLabRepository)
-    assert set(load_lab("merged", repository=repository).hosts) == {"orange", "local"}
+    assert set(load_lab("merged", repository=repository).hosts) == {"alt1", "local"}
 
 
 def test_two_repos_all_sources_live(tmp_path: Path) -> None:
@@ -59,17 +59,17 @@ def test_two_repos_all_sources_live(tmp_path: Path) -> None:
         tmp_path / "r1",
         "r1",
         '[[lab.sources]]\nbackend = "json"\npaths = ["lab"]\n',
-        {"lab/lab.json": [_host("orange", "10.0.0.1")]},
+        {"lab/lab.json": [_host("alt1", "10.0.0.1")]},
     )
     r2 = _repo(
         tmp_path / "r2",
         "r2",
         '[[lab.sources]]\nbackend = "json"\npaths = ["lab"]\n',
-        {"lab/lab.json": [_host("tomato", "10.0.0.2")]},
+        {"lab/lab.json": [_host("test2", "10.0.0.2")]},
     )
     repository = build_lab_sources([r1, r2])
     assert isinstance(repository, CompositeLabRepository)
-    assert set(load_lab("merged", repository=repository).hosts) == {"orange", "tomato", "local"}
+    assert set(load_lab("merged", repository=repository).hosts) == {"alt1", "test2", "local"}
 
 
 def test_later_repo_overrides_earlier_with_warning(tmp_path: Path, caplog) -> None:
@@ -77,17 +77,17 @@ def test_later_repo_overrides_earlier_with_warning(tmp_path: Path, caplog) -> No
         tmp_path / "r1",
         "r1",
         '[[lab.sources]]\nname = "global"\nbackend = "json"\npaths = ["lab"]\n',
-        {"lab/lab.json": [_host("orange", "10.0.0.1")]},
+        {"lab/lab.json": [_host("alt1", "10.0.0.1")]},
     )
     r2 = _repo(
         tmp_path / "r2",
         "r2",
         '[[lab.sources]]\nname = "override"\nbackend = "json"\npaths = ["lab"]\n',
-        {"lab/lab.json": [_host("orange", "10.9.9.9")]},
+        {"lab/lab.json": [_host("alt1", "10.9.9.9")]},
     )
     with caplog.at_level(logging.WARNING, logger="otto.labs.composite"):
         lab = build_lab_sources([r1, r2]).load_lab("merged")
-    assert lab.hosts["orange"].ip == "10.9.9.9"
+    assert lab.hosts["alt1"].ip == "10.9.9.9"
     assert any(
         "r2/override" in r.getMessage() and "r1/global" in r.getMessage() for r in caplog.records
     )

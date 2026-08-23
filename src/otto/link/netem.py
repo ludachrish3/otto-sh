@@ -192,7 +192,7 @@ def _parse_filter_blocks(filter_output: str) -> list[_FilterBlock] | None:
     bare and ``ht divisor`` headers carry no matches). Any non-empty line
     that fits neither shape is foreign.
 
-    Captured live on the veggies bed, iproute2 6.1.0, 2026-07-11: modern
+    Captured live on the unix bed, iproute2 6.1.0, 2026-07-11: modern
     ``tc filter show`` prints NO ``parent 1:`` token on filter lines at all
     (only ``tc qdisc show`` echoes the parent), and prefixes the flowid with
     a bare ``*`` (``*flowid 1:4``) whenever the classid resolves into a
@@ -202,7 +202,7 @@ def _parse_filter_blocks(filter_output: str) -> list[_FilterBlock] | None:
     ``*`` is normalized away here rather than treated as a foreign marker.
 
     Old-userland posture (spec §6 dual-format requirement) is also
-    live-verified, not just modeled: pepper_seed's oldos image (centos:7,
+    live-verified, not just modeled: test3's oldos image (centos:7,
     iproute2-ss170501, 2026-07-11) produces the SAME ``filter ...`` shape
     with NO ``parent 1:`` token and, notably, NO ``*`` before ``flowid`` —
     the asterisk-for-unverified-prio-class marker is a modern-iproute2-only
@@ -399,7 +399,7 @@ class NetEmImpairer(LinkImpairer):
         """Qdisc + filter reads for :meth:`parse_scoped`.
 
         The filter read is guarded (``2>/dev/null || true``) belt-and-braces:
-        captured live on the veggies bed, iproute2 6.1.0, 2026-07-11,
+        captured live on the unix bed, iproute2 6.1.0, 2026-07-11,
         ``tc filter show ... parent 1:`` on a netdev with no ``1:`` parent
         (every clean or whole-link netdev) does NOT error — it exits 0 with
         empty stdout. The guard is kept anyway for older/other iproute2

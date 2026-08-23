@@ -26,7 +26,7 @@ from otto.tunnel.discovery import discover_observations
 from tests._fixtures.labdata import host_data
 from tests._fixtures.tunnel_bed import (
     LISTEN_TIMEOUT,
-    VEGGIES,
+    UNIX,
     assert_reachable,
     build_bed_host,
     cli_sut_dir,
@@ -55,8 +55,8 @@ pytestmark = [
 
 _DP_DEV = "eth2"
 _DP_SUBNET = "192.168.1.0/24"
-_CARROT_DP_IP = "192.168.1.11"
-_TOMATO_DP_IP = "192.168.1.12"
+_TEST1_DP_IP = "192.168.1.11"
+_TEST2_DP_IP = "192.168.1.12"
 _HOST_CMD_TIMEOUT = 30
 _PROBE_COUNT = 30  # ≥1 of 30 must arrive; at 10% loss/direction P(all lost) ≈ 1e-30
 
@@ -77,25 +77,25 @@ async def _assert_dataplane_provisioned(host, ip: str) -> None:
 
 @pytest_asyncio.fixture
 async def dataplane_lab():
-    """2-host lab whose carrot/tomato carry the declared eth2 data plane."""
-    for ne in VEGGIES:
+    """2-host lab whose test1/test2 carry the declared eth2 data plane."""
+    for ne in UNIX:
         await assert_reachable(ne, host_data(ne)["ip"])
     lab = Lab(name="tunnel_adversity")
-    carrot = build_bed_host(
-        "carrot", interfaces={_DP_DEV: Interface(ip=_CARROT_DP_IP, subnet=_DP_SUBNET)}
+    test1 = build_bed_host(
+        "test1", interfaces={_DP_DEV: Interface(ip=_TEST1_DP_IP, subnet=_DP_SUBNET)}
     )
-    tomato = build_bed_host(
-        "tomato", interfaces={_DP_DEV: Interface(ip=_TOMATO_DP_IP, subnet=_DP_SUBNET)}
+    test2 = build_bed_host(
+        "test2", interfaces={_DP_DEV: Interface(ip=_TEST2_DP_IP, subnet=_DP_SUBNET)}
     )
-    lab.add_host(carrot)
-    lab.add_host(tomato)
-    await _assert_dataplane_provisioned(carrot, _CARROT_DP_IP)
-    await _assert_dataplane_provisioned(tomato, _TOMATO_DP_IP)
+    lab.add_host(test1)
+    lab.add_host(test2)
+    await _assert_dataplane_provisioned(test1, _TEST1_DP_IP)
+    await _assert_dataplane_provisioned(test2, _TEST2_DP_IP)
 
     lab.links.append(
         Link(
-            a=LinkEndpoint(host=INGRESS, interface=_DP_DEV, ip=_CARROT_DP_IP),
-            b=LinkEndpoint(host=EXIT, interface=_DP_DEV, ip=_TOMATO_DP_IP),
+            a=LinkEndpoint(host=INGRESS, interface=_DP_DEV, ip=_TEST1_DP_IP),
+            b=LinkEndpoint(host=EXIT, interface=_DP_DEV, ip=_TEST2_DP_IP),
             name="soak-seg",
         )
     )
@@ -109,14 +109,14 @@ async def dataplane_lab():
         # connections: collect first, close, then judge.
         leftovers: list[str] = []
         try:
-            for host in (carrot, tomato):
+            for host in (test1, test2):
                 qdisc = await host.exec(
                     f"tc qdisc show dev {_DP_DEV}", timeout=_HOST_CMD_TIMEOUT, log=LogMode.QUIET
                 )
                 if "netem" in (qdisc.value or ""):
                     leftovers.append(f"{host.id}: {qdisc.value!r}")
         finally:
-            await asyncio.gather(*(h.close() for h in (carrot, tomato)), return_exceptions=True)
+            await asyncio.gather(*(h.close() for h in (test1, test2)), return_exceptions=True)
         assert not leftovers, f"lingering netem on {_DP_DEV} after repair: {leftovers}"
 
 
@@ -146,7 +146,7 @@ async def test_churn_under_port_scoped_impairment(dataplane_lab) -> None:
     # connections for nothing. Track and reap against dataplane_lab manually,
     # with the same guarantees (finally below + module-final sweep).
     created: list[str] = []
-    tomato = dataplane_lab.hosts[EXIT]
+    test2 = dataplane_lab.hosts[EXIT]
     chain = [(INGRESS, _DP_DEV), (EXIT, _DP_DEV)]
     sel = Selector(PORT_IMPAIRED, "udp")
     await impair_link(
@@ -169,18 +169,18 @@ async def test_churn_under_port_scoped_impairment(dataplane_lab) -> None:
                 tag = uuid.uuid4().hex[:8]
                 payloads = [f"{tag}-{i}" for i in range(_PROBE_COUNT)]
                 try:
-                    await spawn_udp_listener(tomato, PORT_IMPAIRED, outfile, timeout=LISTEN_TIMEOUT)
-                    # Sender runs ON tomato (the dev VM has no data-plane
-                    # address): datagrams enter carrot's eth2 ingress, ride
-                    # the tunnel back, and land on tomato's loopback listener.
-                    await _send_udp_from(tomato, _CARROT_DP_IP, PORT_IMPAIRED, payloads)
-                    received = await wait_for_listener_output(tomato, outfile)
+                    await spawn_udp_listener(test2, PORT_IMPAIRED, outfile, timeout=LISTEN_TIMEOUT)
+                    # Sender runs ON test2 (the dev VM has no data-plane
+                    # address): datagrams enter test1's eth2 ingress, ride
+                    # the tunnel back, and land on test2's loopback listener.
+                    await _send_udp_from(test2, _TEST1_DP_IP, PORT_IMPAIRED, payloads)
+                    received = await wait_for_listener_output(test2, outfile)
                     assert received.split(" ", 1)[-1].startswith(tag), (
                         f"cycle {cycle}: no probe datagram delivered under 10% loss "
                         f"({_PROBE_COUNT} sent): {received!r}"
                     )
                 finally:
-                    await remove_remote_file(tomato, outfile)
+                    await remove_remote_file(test2, outfile)
             report = await remove_tunnel(dataplane_lab, added.tunnel.id)
             assert report.survivors == [], f"cycle {cycle}: survivors {report.survivors!r}"
             created.remove(added.tunnel.id)
@@ -205,7 +205,7 @@ async def test_repeated_degrade_recover(tunnel_lab, reap_tunnels, tmp_path: Path
     library-added tunnel is visible to it, and that cross-layer agreement is
     exactly what this asserts.
     """
-    carrot = tunnel_lab.hosts[INGRESS]
+    test1 = tunnel_lab.hosts[INGRESS]
     chain = [(INGRESS, None), (EXIT, None)]
     cli_sut = cli_sut_dir(tmp_path)
     for cycle in range(SOAK_CYCLES):
@@ -219,7 +219,7 @@ async def test_repeated_degrade_recover(tunnel_lab, reap_tunnels, tmp_path: Path
             if obs.parsed.tunnel.id == added.tunnel.id and origin == INGRESS
         ]
         assert pids, f"cycle {cycle}: no tagged pids on {INGRESS!r} before kill"
-        result = await carrot.exec(kill_command(pids), timeout=15, log=LogMode.QUIET)
+        result = await test1.exec(kill_command(pids), timeout=15, log=LogMode.QUIET)
         assert result.is_ok, f"cycle {cycle}: out-of-band kill failed: {result.value!r}"
 
         degraded = await discover_tunnels(tunnel_lab)

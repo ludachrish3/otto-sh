@@ -133,7 +133,7 @@ jobs:
   #
   # WHAT THIS LANE IS, NOW THAT IT IS THE NARROW ONE. What otto DOES to a
   # BusyBox userland is measured on the live bed — five QEMU guests behind
-  # carrot, driven over telnet through a hop (tests/integration/busybox_bed/,
+  # test1, driven over telnet through a hop (tests/integration/busybox_bed/,
   # plus the busybox rows the generic host/transfer/stability/chaos suites
   # carry). That needs the lab and cannot run on a GitHub runner. What stays
   # here is the question a runner CAN answer, about the artifacts themselves:

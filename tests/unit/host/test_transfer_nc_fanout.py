@@ -7,7 +7,7 @@ REFUSES the rest — it does not queue them — so an unbounded ``asyncio.gather
 over the files silently converts "many files" into
 ``ChannelOpenError('open failed')`` for whichever transfers lose.
 
-Measured on the bed (tomato via carrot, one connection), concurrent
+Measured on the bed (test2 via test1, one connection), concurrent
 ``host.exec`` calls against a default sshd:
 
     N=8   refused=0      N=20  refused=10

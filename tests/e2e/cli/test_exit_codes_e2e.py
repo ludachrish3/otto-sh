@@ -32,7 +32,7 @@ def test_run_passes_through_command_retcode(tmp_path: Path) -> None:
         ["host", "local", "run", "sh -c 'exit 42'"],
         xdir=tmp_path,
         sut_dirs=REPO_E2E,
-        lab="veggies",
+        lab="unix",
     )
     assert r.returncode == 42, r.stderr
     assert_output_dir(tmp_path, "host")
@@ -50,7 +50,7 @@ def test_bare_exit_kills_session_and_exits_255(tmp_path: Path) -> None:
         ["host", "local", "run", "exit 42"],
         xdir=tmp_path,
         sut_dirs=REPO_E2E,
-        lab="veggies",
+        lab="unix",
     )
     assert r.returncode == 255, r.stderr
 
@@ -61,7 +61,7 @@ def test_run_success_exits_zero(tmp_path: Path) -> None:
         ["host", "local", "run", "true"],
         xdir=tmp_path,
         sut_dirs=REPO_E2E,
-        lab="veggies",
+        lab="unix",
     )
     assert r.returncode == 0, r.stderr
     assert_output_dir(tmp_path, "host")
@@ -75,7 +75,7 @@ def test_failing_get_maps_status(tmp_path: Path) -> None:
         ["host", "local", "get", "/no/such/file", str(dest_dir)],
         xdir=tmp_path,
         sut_dirs=REPO_E2E,
-        lab="veggies",
+        lab="unix",
     )
     assert r.returncode == 2, r.stderr  # Status.Error
     assert "no/such/file" in r.stdout + r.stderr

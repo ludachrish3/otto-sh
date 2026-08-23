@@ -24,11 +24,11 @@ manager, the launch always falls back to the `setsid`-detached path (see
 *Old-OS portability* below) rather than `systemd-run --user`.
 
 ```bash
-otto --lab veggies tunnel add --hosts sprout,carrot_seed@eth2,carrot_seed.compose.web --port 8080
+otto --lab unix tunnel add --hosts test2,test1@eth2,test1.compose.web --port 8080
 ```
 
-Here `carrot_seed.compose.web` is a container whose parent is `carrot_seed`
-— a valid chain because the container neighbors its own parent.
+Here `test1.compose.web` is a container whose parent is `test1` — a valid
+chain because the container neighbors its own parent.
 
 ## Host requirements
 

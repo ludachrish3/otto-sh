@@ -1013,7 +1013,7 @@ class TestCovGetValidation:
         """The zero-counter message names the hosts it searched, not just "no data"."""
         repo = self._repo({"hosts": ".*"}, sut_dir=git_sut)
         host1 = MagicMock()
-        host1.id = "sprout"
+        host1.id = "zephyr37-fat"
 
         async def fake_collect(cov_config, staging_root, pattern=None):
             return {}
@@ -1031,7 +1031,7 @@ class TestCovGetValidation:
         assert result.exit_code == 1
         message = mock_err.call_args[0][0]
         assert "no .gcda" in message
-        assert "sprout" in message
+        assert "zephyr37-fat" in message
 
     def test_zero_counters_after_produce_captures_exits_1(self, tmp_path, git_sut):
         """When produce_captures returns empty list despite non-empty host_dirs → error."""
@@ -1432,8 +1432,8 @@ class TestCovGetSuccess:
         from otto.host.embedded_host import EmbeddedHost
 
         unix_host = MagicMock()
-        unix_host.id = "sprout_cov"
-        unix_host.name = "sprout_cov"
+        unix_host.id = "zephyr37-llext"
+        unix_host.name = "zephyr37-llext"
         unix_host.__class__ = UnixHost
         embedded_host = MagicMock()
         embedded_host.id = "zeph1"
@@ -1441,12 +1441,12 @@ class TestCovGetSuccess:
         embedded_host.__class__ = EmbeddedHost
 
         out_dir = tmp_path / "get_out_clean"
-        board = out_dir / "cov" / "sprout_cov"
+        board = out_dir / "cov" / "zephyr37-llext"
         board.mkdir(parents=True)
         (board / "x.gcda").write_bytes(b"")
 
         fetcher_instance = MagicMock()
-        fetcher_instance.fetch_all = AsyncMock(return_value={"sprout_cov": board})
+        fetcher_instance.fetch_all = AsyncMock(return_value={"zephyr37-llext": board})
         fetcher_instance.clean_remote = AsyncMock(return_value=None)
 
         async def fake_embedded(cov_config, staging_root, pattern=None):
@@ -1467,7 +1467,7 @@ class TestCovGetSuccess:
         fetcher_instance.clean_remote.assert_awaited_once_with("/remote")
         # The clean fetcher (second construction) is scoped to unix ids only.
         clean_pattern = mock_fetcher_cls.call_args_list[-1].kwargs["pattern"]
-        assert clean_pattern.search("sprout_cov")
+        assert clean_pattern.search("zephyr37-llext")
         assert not clean_pattern.search("zeph1")
 
 
@@ -1639,7 +1639,7 @@ class TestCovCleanSuccess:
         EmbeddedHost guard) must only match the unix host, never the
         embedded one — even though both matched [coverage].hosts."""
         repo = self._repo({"hosts": ".*", "gcda_remote_dir": "/remote"})
-        unix_host = self._unix_host("sprout_cov")
+        unix_host = self._unix_host("zephyr37-llext")
         embedded_host = self._embedded_host("zeph1")
 
         fetcher_instance = MagicMock()
@@ -1659,7 +1659,7 @@ class TestCovCleanSuccess:
         fetcher_instance.clean_remote.assert_awaited_once_with("/remote")
 
         used_pattern = mock_fetcher_cls.call_args.kwargs["pattern"]
-        assert used_pattern.search("sprout_cov")
+        assert used_pattern.search("zephyr37-llext")
         assert not used_pattern.search("zeph1")
         assert any(
             "embedded boards not cleaned" in str(c.args[0]) for c in mock_info.call_args_list
@@ -1667,11 +1667,11 @@ class TestCovCleanSuccess:
 
     def test_clean_pattern_does_not_let_prefix_id_collide(self):
         """A unix host id that is a prefix of another host's id (e.g.
-        "sprout" vs. "sprout2") must not accidentally match the longer id
+        "zephyr37-fat" vs. "zephyr37-fat2") must not accidentally match the longer id
         through an unanchored regex search."""
         repo = self._repo({"hosts": ".*", "gcda_remote_dir": "/remote"})
-        unix_host = self._unix_host("sprout")
-        other_host = self._embedded_host("sprout2")
+        unix_host = self._unix_host("zephyr37-fat")
+        other_host = self._embedded_host("zephyr37-fat2")
 
         fetcher_instance = MagicMock()
         fetcher_instance.clean_remote = AsyncMock(return_value=None)
@@ -1687,8 +1687,8 @@ class TestCovCleanSuccess:
 
         assert result.exit_code == 0, result.output
         used_pattern = mock_fetcher_cls.call_args.kwargs["pattern"]
-        assert used_pattern.search("sprout")
-        assert not used_pattern.search("sprout2")
+        assert used_pattern.search("zephyr37-fat")
+        assert not used_pattern.search("zephyr37-fat2")
 
 
 # ── _capture_annotations — tier-aware annotation resolution ────────────────────

@@ -14,7 +14,7 @@ in ``init`` can construct lab hosts that reference those frames by name.
 
 It exists so a frame needed by a *shared* lab host is owned in one shared place
 rather than duplicated per repo or absorbed into otto core: the ``embedded``
-lab's Zephyr 2.7 host (``sprout27``, ``command_frame: "zephyr-inline"``) is used
+lab's Zephyr 2.7 host (``zephyr27_fat``, ``command_frame: "zephyr-inline"``) is used
 by more than one repo, so every consumer registers the dialect from here.
 """
 

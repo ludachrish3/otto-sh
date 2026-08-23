@@ -22,7 +22,7 @@ from otto.host.login_proxy import Cred
 from otto.host.unix_host import UnixHost
 
 
-def _mock_parent(parent_id: str = "pepper_seed"):
+def _mock_parent(parent_id: str = "test3"):
     parent = MagicMock()
     parent.id = parent_id
     parent.name = parent_id
@@ -37,7 +37,7 @@ class TestHasBashPerClassDefault:
         assert host.has_bash is True
 
     def test_embedded_host_default_false(self):
-        host = EmbeddedHost(ip="192.0.2.1", element="sprout", command_frame=ZephyrFrame())
+        host = EmbeddedHost(ip="192.0.2.1", element="zephyr37_fat", command_frame=ZephyrFrame())
         assert host.has_bash is False
 
     def test_local_host_default_true(self):
@@ -61,7 +61,7 @@ class TestHasBashFromLabData:
         host = create_host_from_dict(
             {
                 "ip": "10.10.200.11",
-                "element": "orange",
+                "element": "alt1",
                 "creds": [{"login": "v", "password": "v"}],
             }
         )
@@ -71,7 +71,7 @@ class TestHasBashFromLabData:
         host = create_host_from_dict(
             {
                 "ip": "192.0.2.1",
-                "element": "sprout",
+                "element": "zephyr37_fat",
                 "os_type": "embedded",
                 "command_frame": "zephyr",
             }
@@ -82,7 +82,7 @@ class TestHasBashFromLabData:
         host = create_host_from_dict(
             {
                 "ip": "10.10.200.11",
-                "element": "orange",
+                "element": "alt1",
                 "creds": [{"login": "v", "password": "v"}],
                 "has_bash": False,
             }
@@ -93,7 +93,7 @@ class TestHasBashFromLabData:
         host = create_host_from_dict(
             {
                 "ip": "192.0.2.1",
-                "element": "sprout",
+                "element": "zephyr37_fat",
                 "os_type": "embedded",
                 "command_frame": "zephyr",
                 "has_bash": True,

@@ -38,7 +38,7 @@ async def _drive(request: MagicMock) -> None:
 
 @pytest.mark.asyncio
 async def test_release_connections_closes_hosts_under_cov():
-    host = MagicMock(id="sprout_cov")
+    host = MagicMock(id="zephyr37-llext")
     host.close = AsyncMock()
     with patch("otto.config.all_hosts", return_value=[host]):
         await _drive(_request(cov=True))
@@ -47,7 +47,7 @@ async def test_release_connections_closes_hosts_under_cov():
 
 @pytest.mark.asyncio
 async def test_release_connections_noop_without_cov():
-    host = MagicMock(id="sprout_cov")
+    host = MagicMock(id="zephyr37-llext")
     host.close = AsyncMock()
     with patch("otto.config.all_hosts", return_value=[host]):
         await _drive(_request(cov=False))

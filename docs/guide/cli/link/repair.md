@@ -1,8 +1,8 @@
 # otto link repair
 
 ```bash
-otto --lab veggies link repair edge
-otto --lab veggies link repair --all
+otto --lab unix link repair edge
+otto --lab unix link repair --all
 ```
 
 `repair <link>` clears **every** currently-impaired placement of that link
@@ -34,7 +34,7 @@ placements it *can* resolve and names the ones it cannot, rather than
 aborting — the end otto can reach must not be stranded by the end it cannot:
 
 ```text
-partially repaired bb1350-wire: cleared carrot_seed/bbeth-1350, timers cancelled 0
+partially repaired bb1350-wire: cleared test1/bbeth-1350, timers cancelled 0
   could not reach bb1350_qemu/eth0: link references host 'bb1350_qemu' not in the loaded lab
 ```
 
@@ -47,9 +47,9 @@ reassurance this link has not earned.
 ## Repairing one selector
 
 ```bash
-otto --lab veggies link repair edge --port 5201 --proto tcp
-otto --lab veggies link repair edge --port 5201
-otto --lab veggies link repair edge
+otto --lab unix link repair edge --port 5201 --proto tcp
+otto --lab unix link repair edge --port 5201
+otto --lab unix link repair edge
 ```
 
 `repair <link> --port N [--proto P]` clears just that one selector —

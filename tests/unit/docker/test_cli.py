@@ -63,11 +63,11 @@ def test_select_repos_filters_by_lab_applicability(tmp_path):
     Reproduces the bug from `otto docker down` against a multi-repo workspace
     where one repo targets a host that lives in a different lab.
     """
-    repo_in_lab = _make_repo(tmp_path, name="repo1", default_host="pepper_seed")
-    repo_out_of_lab = _make_repo(tmp_path, name="repo2", default_host="grape_seed")
+    repo_in_lab = _make_repo(tmp_path, name="repo1", default_host="test3")
+    repo_out_of_lab = _make_repo(tmp_path, name="repo2", default_host="alt3")
 
-    lab = Lab(name="veggies")
-    lab.hosts["pepper_seed"] = MagicMock()  # only pepper_seed is in the lab
+    lab = Lab(name="unix")
+    lab.hosts["test3"] = MagicMock()  # only test3 is in the lab
 
     fake_cfg = MagicMock()
     fake_cfg.lab = lab
@@ -79,7 +79,7 @@ def test_select_repos_filters_by_lab_applicability(tmp_path):
         selected = docker_cli._select_repos(repo_name=None)
 
     names = [r.name for r in selected]
-    assert names == ["repo1"], f"repo2 (grape_seed) must be skipped, got {names}"
+    assert names == ["repo1"], f"repo2 (alt3) must be skipped, got {names}"
 
 
 def test_select_repos_on_does_not_override_lab_filter(tmp_path):
@@ -90,10 +90,10 @@ def test_select_repos_on_does_not_override_lab_filter(tmp_path):
     workspaces would bring up stacks for unrelated labs (see
     test_e2e_multi_repo_only_active_lab_runs).
     """
-    repo = _make_repo(tmp_path, name="repo2", default_host="grape_seed")
+    repo = _make_repo(tmp_path, name="repo2", default_host="alt3")
 
-    lab = Lab(name="veggies")
-    lab.hosts["pepper_seed"] = MagicMock()
+    lab = Lab(name="unix")
+    lab.hosts["test3"] = MagicMock()
 
     fake_cfg = MagicMock()
     fake_cfg.lab = lab
@@ -102,7 +102,7 @@ def test_select_repos_on_does_not_override_lab_filter(tmp_path):
         patch.object(docker_cli, "get_repos", return_value=[repo]),
         patch.object(docker_cli, "get_lab", return_value=fake_cfg.lab),
     ):
-        selected = docker_cli._select_repos(repo_name=None, on="pepper_seed")
+        selected = docker_cli._select_repos(repo_name=None, on="test3")
 
     assert [r.name for r in selected] == []
 
@@ -114,11 +114,11 @@ def test_select_repos_on_does_not_override_lab_filter(tmp_path):
 
 def test_select_repos_filters_by_repo_name(tmp_path):
     """_select_repos(repo_name=…) keeps only the repo whose name matches."""
-    repo1 = _make_repo(tmp_path / "r1", name="repo1", default_host="pepper_seed")
-    repo2 = _make_repo(tmp_path / "r2", name="repo2", default_host="pepper_seed")
+    repo1 = _make_repo(tmp_path / "r1", name="repo1", default_host="test3")
+    repo2 = _make_repo(tmp_path / "r2", name="repo2", default_host="test3")
 
-    lab = Lab(name="veggies")
-    lab.hosts["pepper_seed"] = MagicMock()
+    lab = Lab(name="unix")
+    lab.hosts["test3"] = MagicMock()
 
     with (
         patch.object(docker_cli, "get_repos", return_value=[repo1, repo2]),
@@ -131,10 +131,10 @@ def test_select_repos_filters_by_repo_name(tmp_path):
 
 def test_select_repos_no_match_exits(tmp_path):
     """_select_repos raises Exit(1) when repo_name matches nothing."""
-    repo1 = _make_repo(tmp_path / "r1", name="repo1", default_host="pepper_seed")
+    repo1 = _make_repo(tmp_path / "r1", name="repo1", default_host="test3")
 
-    lab = Lab(name="veggies")
-    lab.hosts["pepper_seed"] = MagicMock()
+    lab = Lab(name="unix")
+    lab.hosts["test3"] = MagicMock()
 
     with (
         patch.object(docker_cli, "get_repos", return_value=[repo1]),
@@ -149,10 +149,10 @@ def test_select_repos_no_match_exits(tmp_path):
 
 def test_select_repos_bad_on_exits(tmp_path):
     """_select_repos raises Exit(1) when --on names a host not in the lab."""
-    repo1 = _make_repo(tmp_path / "r1", name="repo1", default_host="pepper_seed")
+    repo1 = _make_repo(tmp_path / "r1", name="repo1", default_host="test3")
 
-    lab = Lab(name="veggies")
-    lab.hosts["pepper_seed"] = MagicMock()
+    lab = Lab(name="unix")
+    lab.hosts["test3"] = MagicMock()
 
     with (
         patch.object(docker_cli, "get_repos", return_value=[repo1]),
@@ -173,7 +173,7 @@ def test_select_repos_bad_on_exits(tmp_path):
 @pytest.mark.asyncio
 async def test_build_success(tmp_path):
     """_build prints a green 'built' line when build_images returns Success."""
-    repo = _make_repo_with_image(tmp_path / "r1", name="myrepo", default_host="pepper_seed")
+    repo = _make_repo_with_image(tmp_path / "r1", name="myrepo", default_host="test3")
 
     mock_rprint = MagicMock()
     mock_build = AsyncMock(
@@ -205,7 +205,7 @@ async def test_build_success(tmp_path):
 @pytest.mark.asyncio
 async def test_build_skipped(tmp_path):
     """_build prints a dim 'cached' line when build_images returns Skipped."""
-    repo = _make_repo_with_image(tmp_path / "r1", name="myrepo", default_host="pepper_seed")
+    repo = _make_repo_with_image(tmp_path / "r1", name="myrepo", default_host="test3")
 
     mock_rprint = MagicMock()
     mock_build = AsyncMock(
@@ -233,7 +233,7 @@ async def test_build_skipped(tmp_path):
 @pytest.mark.asyncio
 async def test_build_failed_exits(tmp_path):
     """_build raises Exit(1) when build_images returns Failed for an image."""
-    repo = _make_repo_with_image(tmp_path / "r1", name="myrepo", default_host="pepper_seed")
+    repo = _make_repo_with_image(tmp_path / "r1", name="myrepo", default_host="test3")
 
     mock_build = AsyncMock(
         return_value={
@@ -260,7 +260,7 @@ async def test_build_failed_exits(tmp_path):
 async def test_build_skips_repo_with_no_images(tmp_path):
     """_build silently skips a repo that has no docker.images declared."""
     # _make_repo produces a repo with composes but no images
-    repo = _make_repo(tmp_path / "r1", name="myrepo", default_host="pepper_seed")
+    repo = _make_repo(tmp_path / "r1", name="myrepo", default_host="test3")
     mock_build = AsyncMock()
 
     with (
@@ -283,7 +283,7 @@ async def test_build_skips_repo_with_no_images(tmp_path):
 @pytest.mark.asyncio
 async def test_up_registers_containers(tmp_path):
     """_up prints a green 'N container(s) registered' line on success."""
-    repo = _make_repo(tmp_path / "r1", name="myrepo", default_host="pepper_seed")
+    repo = _make_repo(tmp_path / "r1", name="myrepo", default_host="test3")
 
     mock_container = MagicMock()
     mock_container.id = "ctr1"
@@ -343,9 +343,9 @@ async def test_up_accepts_positional_handle_for_on(tmp_path):
     downstream lookup is canonical-id-only, so ``_up`` must resolve the
     handle to "dut47" before calling compose_up — not forward "dut1" raw.
     """
-    repo = _make_repo(tmp_path / "r1", name="myrepo", default_host="pepper_seed")
+    repo = _make_repo(tmp_path / "r1", name="myrepo", default_host="test3")
 
-    lab = Lab(name="veggies")
+    lab = Lab(name="unix")
     dut_a = UnixHost(ip="10.0.0.1", creds=[], element="dut", element_id=47)
     dut_b = UnixHost(ip="10.0.0.2", creds=[], element="dut", element_id=200)
     lab.add_host(dut_a)
@@ -377,7 +377,7 @@ async def test_up_accepts_positional_handle_for_on(tmp_path):
 @pytest.mark.asyncio
 async def test_down_skipped(tmp_path):
     """_down prints a dim 'nothing to tear down' line on a Skipped result."""
-    repo = _make_repo(tmp_path / "r1", name="myrepo", default_host="pepper_seed")
+    repo = _make_repo(tmp_path / "r1", name="myrepo", default_host="test3")
 
     mock_compose_down = AsyncMock(
         return_value=CommandResult(Status.Skipped, value="", command="", retcode=-1)
@@ -419,7 +419,7 @@ class TestGenuineSkipsStayedSkipped:
     async def test_a_cache_hit_is_a_genuine_skip_and_still_prints_cached(self, tmp_path):
         from otto.docker.build import _build_one
 
-        repo = _make_repo_with_image(tmp_path / "r1", name="myrepo", default_host="pepper_seed")
+        repo = _make_repo_with_image(tmp_path / "r1", name="myrepo", default_host="test3")
         settings = repo.docker_settings
 
         class _CachedParent:
@@ -480,9 +480,7 @@ class TestGenuineSkipsStayedSkipped:
             patch.object(
                 docker_cli,
                 "_select_repos",
-                return_value=[
-                    _make_repo(tmp_path / "r2", name="other", default_host="pepper_seed")
-                ],
+                return_value=[_make_repo(tmp_path / "r2", name="other", default_host="test3")],
             ),
             patch.object(docker_cli, "get_lab", return_value=MagicMock()),
             patch.object(docker_cli, "compose_down", AsyncMock(return_value=skipped)),
@@ -499,7 +497,7 @@ class TestGenuineSkipsStayedSkipped:
 @pytest.mark.asyncio
 async def test_down_success(tmp_path):
     """_down prints a green 'stack down' line on a Success result."""
-    repo = _make_repo(tmp_path / "r1", name="myrepo", default_host="pepper_seed")
+    repo = _make_repo(tmp_path / "r1", name="myrepo", default_host="test3")
 
     mock_compose_down = AsyncMock(
         return_value=CommandResult(
@@ -524,7 +522,7 @@ async def test_down_success(tmp_path):
 @pytest.mark.asyncio
 async def test_down_failed_exits(tmp_path):
     """_down raises Exit(1) when compose_down returns a Failed result."""
-    repo = _make_repo(tmp_path / "r1", name="myrepo", default_host="pepper_seed")
+    repo = _make_repo(tmp_path / "r1", name="myrepo", default_host="test3")
 
     mock_compose_down = AsyncMock(
         return_value=CommandResult(
@@ -571,11 +569,11 @@ async def test_down_skips_repo_with_no_composes(tmp_path):
 async def test_ps_all_hosts_table(tmp_path):
     """_ps queries compose_ps for a docker-capable host and passes row data to Table."""
     host = MagicMock(spec=UnixHost)
-    host.id = "pepper_seed"
+    host.id = "test3"
     host.docker_capable = True
 
-    lab = Lab(name="veggies")
-    lab.hosts["pepper_seed"] = host
+    lab = Lab(name="unix")
+    lab.hosts["test3"] = host
 
     rows = [
         {
@@ -605,7 +603,7 @@ async def test_ps_all_hosts_table(tmp_path):
     # add_row should have been called with parsed values
     mock_table_instance.add_row.assert_called_once()
     call_args = mock_table_instance.add_row.call_args[0]
-    assert call_args[0] == "pepper_seed"  # host id
+    assert call_args[0] == "test3"  # host id
     assert call_args[1] == "abc123def456"  # first 12 chars of ID
     assert call_args[2] == "myimg"  # Image
     assert call_args[3] == "Up 2 hours"  # Status
@@ -619,7 +617,7 @@ async def test_ps_bad_host_exits():
     host = MagicMock(spec=UnixHost)
     host.docker_capable = False
 
-    lab = Lab(name="veggies")
+    lab = Lab(name="unix")
     lab.hosts["meh_host"] = host
 
     with (
@@ -642,7 +640,7 @@ async def test_ps_all_docker_capable_hosts():
     not_capable = MagicMock(spec=UnixHost)
     not_capable.docker_capable = False
 
-    lab = Lab(name="veggies")
+    lab = Lab(name="unix")
     lab.hosts["cap_host"] = capable
     lab.hosts["nocap_host"] = not_capable
 
@@ -667,7 +665,7 @@ async def test_ps_specific_capable_host():
     capable.id = "cap_host"
     capable.docker_capable = True
 
-    lab = Lab(name="veggies")
+    lab = Lab(name="unix")
     lab.hosts["cap_host"] = capable
 
     mock_compose_ps = AsyncMock(return_value=[])
@@ -691,7 +689,7 @@ async def test_ps_accepts_positional_handle_for_on(tmp_path):
     dut_a = UnixHost(ip="10.0.0.1", creds=[], element="dut", element_id=47, docker_capable=True)
     dut_b = UnixHost(ip="10.0.0.2", creds=[], element="dut", element_id=200, docker_capable=True)
 
-    lab = Lab(name="veggies")
+    lab = Lab(name="unix")
     lab.add_host(dut_a)
     lab.add_host(dut_b)
     lab._assign_logical_indices()
@@ -766,13 +764,13 @@ def _ctx_with_labs(lab_names) -> SimpleNamespace:
 def test_completer_cache_hit_filters_by_selected_lab():
     """Lab selected: docker-capable suggestions restricted to that lab's hosts."""
     fake_cache = {
-        "docker_hosts": ["carrot_seed", "apple_seed"],
-        "hosts_by_lab": {"veggies": ["carrot_seed"], "fruits": ["apple_seed"]},
+        "docker_hosts": ["test1", "alt2"],
+        "hosts_by_lab": {"unix": ["test1"], "unix_alt": ["alt2"]},
     }
     with patch("otto.config.get_completion_names", return_value=fake_cache):
-        result = docker_cli._docker_host_completer(_ctx_with_labs(["veggies"]), "")
+        result = docker_cli._docker_host_completer(_ctx_with_labs(["unix"]), "")
 
-    assert result == ["carrot_seed"]
+    assert result == ["test1"]
 
 
 def test_completer_cache_miss_filters_by_selected_lab(tmp_path):
@@ -788,17 +786,17 @@ def test_completer_cache_miss_filters_by_selected_lab(tmp_path):
                 "hosts": [
                     {
                         "ip": "1.1.1.1",
-                        "element": "carrot",
+                        "element": "test1",
                         "creds": creds,
                         "docker_capable": True,
-                        "labs": ["veggies"],
+                        "labs": ["unix"],
                     },
                     {
                         "ip": "1.1.1.2",
-                        "element": "apple",
+                        "element": "alt2",
                         "creds": creds,
                         "docker_capable": True,
-                        "labs": ["fruits"],
+                        "labs": ["unix_alt"],
                     },
                 ]
             }
@@ -813,17 +811,17 @@ def test_completer_cache_miss_filters_by_selected_lab(tmp_path):
         patch("otto.config.get_completion_names", return_value=None),
         patch("otto.config.get_repos", return_value=[repo]),
     ):
-        result = docker_cli._docker_host_completer(_ctx_with_labs(["veggies"]), "")
+        result = docker_cli._docker_host_completer(_ctx_with_labs(["unix"]), "")
 
-    assert result == ["carrot"]
+    assert result == ["test1"]
 
 
 def test_completer_no_lab_selected_keeps_all_docker_hosts():
     fake_cache = {
-        "docker_hosts": ["carrot_seed", "apple_seed"],
-        "hosts_by_lab": {"veggies": ["carrot_seed"], "fruits": ["apple_seed"]},
+        "docker_hosts": ["test1", "alt2"],
+        "hosts_by_lab": {"unix": ["test1"], "unix_alt": ["alt2"]},
     }
     with patch("otto.config.get_completion_names", return_value=fake_cache):
         result = docker_cli._docker_host_completer(_ctx_with_labs(None), "")
 
-    assert result == ["apple_seed", "carrot_seed"]
+    assert result == ["alt2", "test1"]

@@ -8,7 +8,7 @@ from otto.tunnel.sentinel import encode_sentinel, parse_sentinel
 TUNNEL = Tunnel(
     protocol="udp",
     service_port=5000,
-    path=(TunnelHop("carrot_seed", "eth1"), TunnelHop("tomato_soil"), TunnelHop("pepper_pot")),
+    path=(TunnelHop("test1", "eth1"), TunnelHop("test2_soil"), TunnelHop("test3_pot")),
     dest="beet_row",
 )
 

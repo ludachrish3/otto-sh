@@ -331,7 +331,10 @@ def _zephyr_with_fs():
     from otto.host.embedded_host import ZephyrHost
 
     return ZephyrHost(
-        ip="192.0.2.1", element="sprout", log=LogMode.QUIET, filesystem=build_filesystem("fat-ram")
+        ip="192.0.2.1",
+        element="zephyr37_fat",
+        log=LogMode.QUIET,
+        filesystem=build_filesystem("fat-ram"),
     )
 
 

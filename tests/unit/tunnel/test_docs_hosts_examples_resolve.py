@@ -3,7 +3,7 @@
 A ``--hosts`` entry written without ``@iface`` asks otto to pick the host's
 interface, which only works while the host has at most one. That made the
 docs quietly dependent on a fact nothing was watching: when the BusyBox bed
-gave ``carrot`` a second interface (``bbeth-1350``, needed because a link
+gave ``test1`` a second interface (``bbeth-1350``, needed because a link
 endpoint's ip is resolved from the host's ``interfaces`` map and nowhere
 else), three published tunnel examples and three e2e tests started failing
 with ``ambiguous interface`` — and no gate noticed, because tunnel resolution
@@ -23,6 +23,7 @@ from pathlib import Path
 
 import pytest
 
+from otto.host.remote_host import make_host_id
 from tests._fixtures.labdata import lab_data_path
 from tests._fixtures.paths import PROJECT_ROOT
 
@@ -41,10 +42,10 @@ def _interface_counts() -> dict[str, int]:
     hosts = json.loads(lab_data_path("tech1").read_text())["hosts"]
     counts = {}
     for h in hosts:
-        # Host ids are built from element/board; the docs spell them the same
-        # way the lab entry composes them, so derive rather than hardcode.
-        element, board = h.get("element", ""), h.get("board", "")
-        host_id = f"{element}_{board}" if board else element
+        # Host ids are built from element/board by otto's own composer, so
+        # derive through it rather than re-spelling the rule here (an element
+        # carrying an underscore slugs it to a hyphen: zephyr37_lfs -> zephyr37-lfs).
+        host_id = make_host_id(h.get("element", ""), None, h.get("board"), None)
         counts[host_id] = len(h.get("interfaces") or {})
     return counts
 
@@ -90,18 +91,18 @@ def test_a_multi_homed_host_is_never_named_without_its_interface() -> None:
     )
 
 
-@pytest.mark.parametrize("entry", ["carrot_seed", "carrot_seed@eth2"])
+@pytest.mark.parametrize("entry", ["test1", "test1@eth2"])
 def test_the_guard_can_tell_the_two_apart(entry: str) -> None:
-    """Discriminator: carrot really is the multi-homed host this pins, and the
+    """Discriminator: test1 really is the multi-homed host this pins, and the
     ``@iface`` form really is what clears it.
 
-    Pinned here rather than assumed, because if carrot ever drops back to one
+    Pinned here rather than assumed, because if test1 ever drops back to one
     interface the guard above keeps passing while watching nothing — and this
     fails loudly instead."""
     counts = _interface_counts()
-    assert counts.get("carrot_seed", 0) > 1, (
-        "carrot_seed is no longer multi-homed — the guard above is now vacuous "
+    assert counts.get("test1", 0) > 1, (
+        "test1 is no longer multi-homed — the guard above is now vacuous "
         "and this parametrization should be repointed at whatever host is"
     )
     ambiguous = "@" not in entry and counts.get(entry.split("@", maxsplit=1)[0], 0) > 1
-    assert ambiguous == (entry == "carrot_seed")
+    assert ambiguous == (entry == "test1")

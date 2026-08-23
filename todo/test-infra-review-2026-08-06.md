@@ -54,7 +54,7 @@ The residual damage is *concentrated*, not diffuse, in five shapes:
    26 times across product and tests in three mutually incompatible shapes.
 
 One additional finding arrived by an irregular route (§10): the interact-e2e tests drive
-`carrot` without a pool lease while `test_shell_history_e2e` digests carrot's
+`test1` without a pool lease while `test_shell_history_e2e` digests test1's
 `~/.bash_history` — a real cross-suite race under `-n auto --dist loadgroup`.
 
 ---
@@ -216,7 +216,7 @@ family flaky at once; one shared `_feed_after_ready()` Event helper fixes all 65
 - **`tests/e2e/monitor/test_monitor_e2e.py:188`** — medium. Only silent-expiry poll in
   the monitor e2e tree; `rows_found` never asserted.
 - **`tests/_fixtures/_host_pool.py:35-52`** — low. Pool lease polls forever; a stale
-  flock surfaces as a generic "Timeout >Ns" 5–15 minutes later instead of "no veggies
+  flock surfaces as a generic "Timeout >Ns" 5–15 minutes later instead of "no unix
   host free".
 - **`tests/_fixtures/_dashboard_harness.py:159`** — low. Transport-reap loop exits
   silently after 10 passes and `loop.close()` runs anyway — producing exactly the
@@ -301,7 +301,7 @@ non-empty, semantics asserted by name but not by code, and un-upgraded tails.
   credless hosts), but nothing pins that — one fixture edit makes it a silent no-op.
   Fix: `assert any("creds" not in h for h in hosts)`.
 - **`tests/unit/test_lab_data_hops.py:36`**: guard against "an over-eager sweep deleting
-  the real basil hops" *skips* when there are no embedded hosts — i.e. on the strictly
+  the real test4 hops" *skips* when there are no embedded hosts — i.e. on the strictly
   worse version of the same accident. **Already firing**: `tech2/lab.json` has zero
   embedded hosts, so one of two parametrizations is permanently green-by-skipping.
 
@@ -346,7 +346,7 @@ Fix: one leading `assert items` each.
   `dataclasses.FrozenInstanceError` is the contract. (The other 3 broad-raises sites carry
   sound written justifications — leave them.)
 - `tests/e2e/cov/test_embedded_coverage_e2e.py:64` stale docstring says "Skip unless
-  sprout_cov answers" while the body correctly hard-fails — invites a house-rule
+  zephyr37_llext answers" while the body correctly hard-fails — invites a house-rule
   regression by a consistency-restoring editor.
 
 ### 4.5 Environment-dependent skips that retire a lane — medium
@@ -354,7 +354,7 @@ Fix: one leading `assert items` each.
 `tests/e2e/cov/test_embedded_coverage_e2e.py:58,:168` and
 `tests/repo3/tests/test_embedded_coverage.py:182`: build-artifact / build-config absence
 ⇒ the embedded-coverage e2e lane vanishes into a green run. Internally inconsistent: the
-same file's `clean_sprout_cov` (`:113`) hard-fails with "a dead bed can't hide behind a
+same file's `clean_zephyr37_llext` (`:113`) hard-fails with "a dead bed can't hide behind a
 green run" — the same argument applies to a missing build artifact. Also
 `tests/unit/test_tier_marker_invariants.py:175`: skip reason "tests/e2e/chaos not created
 yet" is stale (the dir exists) — a rename would silently retire the chaos marker guard.
@@ -672,7 +672,7 @@ in the triplicated `_repo(...)` at `test_dependencies_{resolution,ordering}.py` 
   different surfaces), 17 thin `@field_validator` shells that `Annotated[...,
   AfterValidator]` erases, `_ok()`/`_fail()` CommandResult factories ×13 defs,
   byte-identical `FakeLab` ×3, `_PATH_LIST_SEP` regex ×3 cross-referencing each other,
-  lab.json writer helpers ×7 (+43 copy-pasted `"element": "orange"` host dicts).
+  lab.json writer helpers ×7 (+43 copy-pasted `"element": "alt1"` host dicts).
 
 ---
 
@@ -765,7 +765,7 @@ SIGWINCH sleep in the same file remain open):
 **The race**: `otto host <id> login` is the human-facing bridge and deliberately does not
 neutralize `HISTFILE` (a person's own login must keep recording history — see the
 shell-history-suppression design). So every interact-e2e session appends what it types
-(`echo otto_login_marker`, `stty size`) to carrot's `~/.bash_history` at bash exit.
+(`echo otto_login_marker`, `stty size`) to test1's `~/.bash_history` at bash exit.
 `test_shell_history_e2e` digests that exact file before and after its measurement window
 to prove otto stays out of it, and the bed caps the file at `HISTFILESIZE` — one
 concurrent append rotates lines and moves the sha256. The history test leases its host;
@@ -773,8 +773,8 @@ the interact tests do not, and living in their own `xdist_group` under
 `-n auto --dist loadgroup` is precisely what lets the two run at once.
 
 **Fix shape** (from the reverted patch, to be redone as its own reviewed change): a
-class-scoped fixture holding `lease_unix_host(lock_dir, ["carrot"])` for the interact
-module (named-host lease, per the `test_docker_chaos.py` pepper idiom, since
+class-scoped fixture holding `lease_unix_host(lock_dir, ["test1"])` for the interact
+module (named-host lease, per the `test_docker_chaos.py` test3 idiom, since
 `HOST_ID`/`HOST_NAME` are baked into banner assertions), plus deriving
 `HOST_ID`/`HOST_NAME` from a single `ELEMENT` constant. Effort: S.
 

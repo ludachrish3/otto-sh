@@ -52,7 +52,7 @@ def build_phantom_host() -> UnixHost:
     """A REAL UnixHost at a black-hole ip: real transport, real connect
     timeout (bounded locally at 5s so a phantom scan costs seconds, not the
     full discovery budget)."""
-    creds = [Cred(**c) for c in host_data("carrot")["creds"]]
+    creds = [Cred(**c) for c in host_data("test1")["creds"]]
     return UnixHost(
         ip=PHANTOM_IP,
         element="phantom",
@@ -140,7 +140,7 @@ def _fresh_two_host_lab() -> Lab:
     """New host objects => new connections => the wedge actually bites (a
     pooled pre-wedge connection would falsely show the host healthy)."""
     lab = Lab(name="tunnel_sigstop_probe")
-    for ne in ("carrot", "tomato"):
+    for ne in ("test1", "test2"):
         lab.add_host(build_bed_host(ne, ssh_options=SshOptions(connect_timeout=5)))
     return lab
 
@@ -148,10 +148,10 @@ def _fresh_two_host_lab() -> Lab:
 def _cli_sut_pinned_to_ssh(tmp_path: Path) -> Path:
     """``cli_sut_dir`` verbatim, then pin every host's active term to ``ssh``.
 
-    tomato's raw lab data lists ``valid_terms: ["telnet", "ssh"]`` (telnet
+    test2's raw lab data lists ``valid_terms: ["telnet", "ssh"]`` (telnet
     first — it's documented as a telnet/netcat test host). With no pin,
     otto's capability resolver picks ``valid_terms[0]`` — so a CLI process
-    loading the UNPATCHED lab.json would run tunnel discovery against tomato
+    loading the UNPATCHED lab.json would run tunnel discovery against test2
     over TELNET (a separate daemon our SIGSTOP never touches), making the
     "CLI sees the wedge" assertion pass for the wrong reason regardless of
     whether sshd is actually stopped. Pinning ``term`` in the host dict
@@ -171,7 +171,7 @@ def _cli_sut_pinned_to_ssh(tmp_path: Path) -> Path:
 async def test_sigstop_wedge_uncertain_then_recovers(
     tunnel_lab, reap_tunnels, tmp_path: Path
 ) -> None:
-    tomato_ip = host_data("tomato")["ip"]
+    test2_ip = host_data("test2")["ip"]
     control = tunnel_lab.hosts[EXIT]  # established connection; survives the STOP
     added = await add_tunnel(
         tunnel_lab, [(INGRESS, None), (EXIT, None)], port=PORT_SIGSTOP, protocol="udp"
@@ -189,7 +189,7 @@ async def test_sigstop_wedge_uncertain_then_recovers(
         assert stop_result.is_ok, f"kill -STOP failed: {stop_result.value!r}"
         stopped = True
 
-        # Fresh lab: tomato unreachable, tunnel 'uncertain', scan bounded.
+        # Fresh lab: test2 unreachable, tunnel 'uncertain', scan bounded.
         wedged_lab = _fresh_two_host_lab()
         try:
             started = time.monotonic()
@@ -238,10 +238,10 @@ async def test_sigstop_wedge_uncertain_then_recovers(
         cont_result = await control.exec(f"sudo -n kill -CONT {pid}", timeout=15, log=LogMode.QUIET)
         assert cont_result.is_ok, f"kill -CONT failed: {cont_result.value!r}"
         stopped = False
-        await assert_sshd_responsive(tomato_ip)
+        await assert_sshd_responsive(test2_ip)
 
         # The id is STILL discoverable — only the exit host's processes
-        # survived the partial reap above (tomato was unreachable when we
+        # survived the partial reap above (test2 was unreachable when we
         # tried to kill through it), which is what makes the completing
         # remove below meaningful rather than a no-op.
         recovered_lab = _fresh_two_host_lab()
@@ -278,10 +278,10 @@ async def test_sigstop_wedge_uncertain_then_recovers(
             with contextlib.suppress(Exception):
                 await control.exec(f"sudo -n kill -CONT {pid}", timeout=15, log=LogMode.QUIET)
         try:
-            await assert_sshd_responsive(tomato_ip)
+            await assert_sshd_responsive(test2_ip)
         except Exception as exc:
             raise AssertionError(
-                f"tomato sshd is NOT responsive after the SIGSTOP test — the armed "
+                f"test2 sshd is NOT responsive after the SIGSTOP test — the armed "
                 f"auto-CONT fires within {ARM_SECONDS}s; if it doesn't, run "
                 f"'sudo kill -CONT {pid}' on test2 or 'make vm-health': {exc!r}"
             ) from exc

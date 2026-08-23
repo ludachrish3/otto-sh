@@ -297,7 +297,7 @@ def chaos(session: nox.Session) -> None:
     """Tier-3 chaos lane, unix legs (opt-in; run via `make chaos`).
 
     Bed-hostile by design: scenarios interrupt/SIGKILL real otto subprocesses
-    mid-flight on a leased veggies host, blackhole SSH over the data-plane
+    mid-flight on a leased unix host, blackhole SSH over the data-plane
     link, and soft-reboot the leased host. Requires the lab VMs and EXCLUSIVE
     bed use — never co-run with any other bed lane. No coverage: these runs
     exist to hunt teardown leaks, not to measure lines.
@@ -346,8 +346,8 @@ def tests_all(session: nox.Session) -> None:
     path filter is passed here. `browser` is excluded (see module-level
     comment above) — run it via `nox -s dashboard` / `make dashboard`
     instead. `stability` is excluded because those tests are bed-hostile
-    (the SIGSTOP-wedge test stops tomato's sshd; any other worker's fresh
-    ssh to tomato then times out) — they own the bed only in the dedicated
+    (the SIGSTOP-wedge test stops test2's sshd; any other worker's fresh
+    ssh to test2 then times out) — they own the bed only in the dedicated
     `make stability-tunnel` lane. Coverage threshold is 92% — below
     ``make coverage``'s 95% because this browser-excluded session omits the
     dashboard --cov-append fold-in (see the module-level coverage-floor

@@ -75,11 +75,11 @@ def test_slow_path_seeds_cache(tmp_path: Path) -> None:
     assert {"TestDevice", "TestCoverageProduct"} <= suite_names
     # Host IDs from tests/_fixtures/lab_data/tech1/lab.json — co-cached
     # alongside instructions/suites so `otto host <TAB>` hits the fast path.
-    assert {"carrot_seed", "tomato_seed", "pepper_seed"} <= set(entry["hosts"])
+    assert {"test1", "test2", "test3"} <= set(entry["hosts"])
     # docker-capable parents are cached separately so `otto docker --on <TAB>`
-    # only suggests hosts that can actually run containers. All three veggies
-    # VMs are docker-capable (carrot/tomato gained docker for the e2e pool).
-    assert entry["docker_hosts"] == ["carrot_seed", "pepper_seed", "tomato_seed"]
+    # only suggests hosts that can actually run containers. All three unix
+    # VMs are docker-capable (test1/test2 gained docker for the e2e pool).
+    assert entry["docker_hosts"] == ["test1", "test2", "test3"]
     # `otto --help` is informational (it seeds the completion cache under
     # xdir/.otto/, not an output dir) — no per-invocation run dir is created.
     assert_no_output_dir(tmp_path)
@@ -160,32 +160,33 @@ def _host_completions(result: subprocess.CompletedProcess[str]) -> set[str]:
     return {line.split(",", 1)[-1] for line in result.stdout.splitlines() if line}
 
 
-# tech1/lab.json splits into two labs: `veggies` (carrot/tomato/pepper) and
-# `embedded` (basil/sprout*). Lab-scoped `otto host <TAB>` must show one, not both.
-_VEGGIES = {"carrot_seed", "tomato_seed", "pepper_seed"}
-# `sprout_lfs` (an element with an underscore) now slugs to `sprout-lfs` under the
-# host-id rules: an underscore *inside* an element folds to a hyphen; only the `_`
-# between element and board survives. `basil_seed` (element `basil` + board `seed`)
-# and the `_seed` veggies are board-separated ids and stay unchanged.
-_EMBEDDED = {"basil_seed", "sprout", "sprout27", "sprout-lfs"}
+# tech1/lab.json splits into two labs: `unix` (test1/test2/test3) and
+# `embedded` (test4/zephyr*). Lab-scoped `otto host <TAB>` must show one, not both.
+_UNIX = {"test1", "test2", "test3"}
+# Every Zephyr element carries an underscore (`zephyr37_lfs`) and slugs to a
+# hyphen (`zephyr37-lfs`) under the host-id rules: an underscore *inside* an
+# element folds to a hyphen; only the `_` between element and board survives.
+# None of these hosts declares a board, so every id here is the slug of the
+# element alone.
+_EMBEDDED = {"test4", "zephyr37-fat", "zephyr27-fat", "zephyr37-lfs"}
 
 
 def test_host_completion_scoped_by_lab_flag(tmp_path: Path) -> None:
-    """`otto -l veggies host <TAB>` offers only the veggies lab's hosts."""
+    """`otto -l unix host <TAB>` offers only the unix lab's hosts."""
     seed = _run_otto(["--help"], xdir=tmp_path)
     assert seed.returncode == 0, seed.stderr
 
     result = _run_otto(
         [],
         xdir=tmp_path,
-        comp_words="otto -l veggies host ",
+        comp_words="otto -l unix host ",
         comp_cword="4",
     )
     assert result.returncode == 0, result.stderr
     names = _host_completions(result)
-    # veggies members + the always-present built-in `local` are offered;
+    # unix members + the always-present built-in `local` are offered;
     # embedded-lab hosts are filtered out.
-    assert names >= _VEGGIES
+    assert names >= _UNIX
     assert "local" in names
     assert names.isdisjoint(_EMBEDDED), f"embedded hosts leaked: {names & _EMBEDDED}"
 
@@ -206,7 +207,7 @@ def test_host_completion_scoped_by_lab_envvar(tmp_path: Path) -> None:
     names = _host_completions(result)
     assert names >= _EMBEDDED
     assert "local" in names
-    assert names.isdisjoint(_VEGGIES), f"veggies hosts leaked: {names & _VEGGIES}"
+    assert names.isdisjoint(_UNIX), f"unix hosts leaked: {names & _UNIX}"
 
 
 def test_host_completion_unscoped_shows_all_hosts(tmp_path: Path) -> None:
@@ -217,7 +218,7 @@ def test_host_completion_unscoped_shows_all_hosts(tmp_path: Path) -> None:
     result = _run_otto([], xdir=tmp_path, comp_words="otto host ", comp_cword="2")
     assert result.returncode == 0, result.stderr
     names = _host_completions(result)
-    assert names >= (_VEGGIES | _EMBEDDED | {"local"})
+    assert names >= (_UNIX | _EMBEDDED | {"local"})
 
 
 def test_touching_test_file_invalidates_cache(tmp_path: Path) -> None:
@@ -373,9 +374,9 @@ def test_fast_path_returns_host_ids_for_host_subcommand(tmp_path: Path) -> None:
         comp_cword="2",
     )
     assert result.returncode == 0, result.stderr
-    # tech1/lab.json in repo1 defines carrot_seed, tomato_seed, pepper_seed.
+    # tech1/lab.json in repo1 defines test1, test2, test3.
     blob = result.stdout
-    for host_id in ("carrot_seed", "tomato_seed", "pepper_seed"):
+    for host_id in ("test1", "test2", "test3"):
         assert host_id in blob, f"{host_id!r} missing from: {blob!r}"
 
 

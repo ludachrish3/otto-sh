@@ -93,8 +93,8 @@ def test_history_digest_empty_before_side_reported_as_probe_failure_not_change()
 
 
 def test_report_names_host_and_lists_leftovers():
-    report = format_hygiene_report("tomato", ["eth2: qdisc changed", "new nc listener"])
-    assert "tomato" in report
+    report = format_hygiene_report("test2", ["eth2: qdisc changed", "new nc listener"])
+    assert "test2" in report
     assert "eth2: qdisc changed" in report
     assert "new nc listener" in report
 

@@ -27,7 +27,7 @@ Built-in variants
 - :class:`NoFileSystem` (``"none"``) — the host has no on-device FS. Console
   transfer fails fast with a clear error; the disk parser yields nothing.
 - :class:`FatRamFileSystem` (``"fat-ram"``) — FAT on a RAM disk, mounted at
-  ``/RAM:``. Used by the ``sprout`` test target. Requires an explicit
+  ``/RAM:``. Used by the ``zephyr37_fat`` test target. Requires an explicit
   ``fs mount fat /RAM:`` because Zephyr 3.7's ``zephyr,fstab`` does not bind
   to FAT.
 - :class:`LittleFsFileSystem` (``"littlefs"``) — LittleFS on simulated
@@ -152,7 +152,7 @@ class NoFileSystem(EmbeddedFileSystem):
 class FatRamFileSystem(EmbeddedFileSystem):
     """FAT on a RAM disk, mounted at ``/RAM:``.
 
-    Used by the ``sprout`` test target on Zephyr 3.7. The ``mount_cmd`` is
+    Used by the ``zephyr37_fat`` test target on Zephyr 3.7. The ``mount_cmd`` is
     required because the ``zephyr,fstab`` binding in 3.7 LTS does not
     handle FAT — otto issues ``fs mount fat /RAM:`` once on first transfer.
     """
@@ -165,7 +165,7 @@ class FatRamFileSystem(EmbeddedFileSystem):
 class LittleFsFileSystem(EmbeddedFileSystem):
     """LittleFS on simulated flash, mounted at ``/lfs``.
 
-    Used by the ``sprout_lfs`` test target. Auto-mounted via
+    Used by the ``zephyr37_lfs`` test target. Auto-mounted via
     ``zephyr,fstab`` at boot, so no ``mount_cmd`` is needed.
     """
 

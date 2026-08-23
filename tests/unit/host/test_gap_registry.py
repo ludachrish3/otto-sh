@@ -196,10 +196,10 @@ class TestMeasuredBrokenRefuses:
         """
         gap = _BROKEN[0]
         with pytest.raises(UnsupportedOnUserlandError) as exc_info:
-            refuse_if_gapped(gap.surface, host="tomato", attempted="shutdown -h now")
+            refuse_if_gapped(gap.surface, host="test2", attempted="shutdown -h now")
         message = str(exc_info.value)
 
-        assert "tomato" in message, message
+        assert "test2" in message, message
         assert "shutdown -h now" in message, message
 
     @pytest.mark.parametrize("gap", _BROKEN_ROWS)
@@ -233,7 +233,7 @@ class TestUnmeasuredRuns:
 
     @pytest.mark.parametrize("gap", _UNTESTED_ROWS)
     def test_an_untested_surface_is_not_blocked(self, gap: Gap) -> None:
-        assert refuse_if_gapped(gap.surface, host="tomato") is None, (
+        assert refuse_if_gapped(gap.surface, host="test2") is None, (
             f"{gap.surface!r} is declared untested and was blocked anyway"
         )
 

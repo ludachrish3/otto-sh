@@ -180,7 +180,7 @@ async def collect_coverage(
     # The set of hosts to collect coverage from is repo-declared: an optional
     # ``[coverage].hosts`` regex (matched against each host id) selects targets,
     # defaulting to every host in the lab. This is how a lab's SSH **hop** (e.g.
-    # `basil` fronting `sprout_cov`) is kept out of the coverage set — it is
+    # `test4` fronting `zephyr37_llext`) is kept out of the coverage set — it is
     # excluded by the pattern, not inferred from the fact that it emits no .gcda.
     hosts_pattern: str | None = cov_config.get("hosts")
     cov_pattern = re.compile(hosts_pattern) if hosts_pattern else None

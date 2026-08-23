@@ -33,7 +33,7 @@ class TestImpairCommand:
             link_id="lnk-abc",
             applied=[
                 AppliedPlacement(
-                    Placement("carrot_seed", "eth1.100", FlowDirection.A_TO_B),
+                    Placement("test1", "eth1.100", FlowDirection.A_TO_B),
                     ImpairmentParams(delay_ms=50.0),
                 ),
             ],
@@ -45,7 +45,7 @@ class TestImpairCommand:
             result = runner.invoke(link_app, ["impair", "edge", "--delay", "50"])
         assert result.exit_code == 0, result.output
         assert "impaired lnk-abc" in result.output
-        assert "carrot_seed/eth1.100" in result.output
+        assert "test1/eth1.100" in result.output
 
     def test_no_param_options_is_usage_error(self) -> None:
         result = runner.invoke(link_app, ["impair", "edge"])
@@ -98,7 +98,7 @@ class TestRepairCommand:
         from otto.link import RepairAllReport
 
         sweep = RepairAllReport(
-            skipped=["lnk-abc: carrot_seed/eth1.100 has a foreign qdisc otto did not create"]
+            skipped=["lnk-abc: test1/eth1.100 has a foreign qdisc otto did not create"]
         )
         with (
             patch("otto.cli.link.get_lab", return_value=object()),
@@ -120,7 +120,7 @@ class TestRepairCommand:
 
         report = RepairReport(
             link_id="lnk-abc",
-            cleared=[Placement("carrot_seed", "bbeth-1350", FlowDirection.A_TO_B)],
+            cleared=[Placement("test1", "bbeth-1350", FlowDirection.A_TO_B)],
             unreachable=[
                 "bb1350_qemu/eth0: link references host 'bb1350_qemu' not in the loaded lab"
             ],
@@ -132,7 +132,7 @@ class TestRepairCommand:
             result = runner.invoke(link_app, ["repair", "edge"])
         assert result.exit_code == 1, result.output
         assert "partially repaired" in result.output
-        assert "carrot_seed/bbeth-1350" in result.output
+        assert "test1/bbeth-1350" in result.output
         assert "could not reach" in result.output
         assert "bb1350_qemu/eth0" in result.output
 
@@ -143,7 +143,7 @@ class TestRepairCommand:
 
         report = RepairReport(
             link_id="lnk-abc",
-            cleared=[Placement("carrot_seed", "bbeth-1350", FlowDirection.A_TO_B)],
+            cleared=[Placement("test1", "bbeth-1350", FlowDirection.A_TO_B)],
         )
         with (
             patch("otto.cli.link.get_lab", return_value=object()),
@@ -201,7 +201,7 @@ class TestListCommand:
         sentences ("...it is the management interface otto reaches the host
         through (self-lockout)") and printing them twice on one soft-wrapped
         line is unreadable."""
-        reason = "'sprout' has no named interface"
+        reason = "'zephyr37-fat' has no named interface"
         output = self._list_output(
             LinkState(
                 link=LINK,
@@ -301,7 +301,7 @@ class TestScopedCli:
             link_id="lnk-abc",
             applied=[
                 AppliedPlacement(
-                    Placement("carrot_seed", "eth1.100", FlowDirection.A_TO_B),
+                    Placement("test1", "eth1.100", FlowDirection.A_TO_B),
                     ImpairmentParams(delay_ms=200.0),
                     Selector(5201, "tcp"),
                 ),
@@ -312,7 +312,7 @@ class TestScopedCli:
             patch("otto.cli.link.impair_link", AsyncMock(return_value=report)),
         ):
             result = runner.invoke(link_app, ["impair", "edge", "--delay", "200", "--port", "5201"])
-        assert "carrot_seed/eth1.100: 5201/tcp delay 200ms" in result.output
+        assert "test1/eth1.100: 5201/tcp delay 200ms" in result.output
 
     def test_proto_without_port_is_usage_error(self) -> None:
         result = runner.invoke(link_app, ["impair", "edge", "--delay", "1", "--proto", "tcp"])
@@ -382,9 +382,7 @@ class TestScopedCli:
             unreachable=False,
             by_direction={FlowDirection.A_TO_B: None},
             read_errors={
-                FlowDirection.A_TO_B: (
-                    "'tc qdisc show dev eth1.100' failed on 'carrot_seed': not found"
-                )
+                FlowDirection.A_TO_B: ("'tc qdisc show dev eth1.100' failed on 'test1': not found")
             },
         )
         with (
@@ -394,10 +392,7 @@ class TestScopedCli:
             result = runner.invoke(link_app, ["list"])
         assert result.exit_code == 0, result.output
         assert "a->b: !" in result.output
-        assert (
-            "read failed (a->b): 'tc qdisc show dev eth1.100' failed on 'carrot_seed'"
-            in result.output
-        )
+        assert "read failed (a->b): 'tc qdisc show dev eth1.100' failed on 'test1'" in result.output
         assert "host reachable, read command failed" in result.output
         assert "partial scan" not in result.output
 
@@ -410,7 +405,7 @@ class TestScopedCli:
             impairable=True,
             unreachable=True,
             by_direction={FlowDirection.A_TO_B: None, FlowDirection.B_TO_A: None},
-            read_errors={FlowDirection.B_TO_A: "'tc qdisc show' failed on 'tomato_seed': nope"},
+            read_errors={FlowDirection.B_TO_A: "'tc qdisc show' failed on 'test2': nope"},
         )
         with (
             patch("otto.cli.link.get_lab", return_value=object()),
@@ -419,7 +414,7 @@ class TestScopedCli:
             result = runner.invoke(link_app, ["list"])
         assert result.exit_code == 0, result.output
         assert "a->b: ?  b->a: !" in result.output
-        assert "read failed (b->a): 'tc qdisc show' failed on 'tomato_seed'" in result.output
+        assert "read failed (b->a): 'tc qdisc show' failed on 'test2'" in result.output
         # Both summary lines fire — the link really is both things at once.
         assert "partial scan" in result.output
         assert "host reachable, read command failed" in result.output
@@ -431,8 +426,8 @@ class TestScopedCli:
             link=LINK,
             impairable=True,
             read_errors={
-                FlowDirection.A_TO_B: "'ip -o addr show' failed on 'carrot_seed': nope",
-                FlowDirection.B_TO_A: "'ip -o addr show' failed on 'carrot_seed': nope",
+                FlowDirection.A_TO_B: "'ip -o addr show' failed on 'test1': nope",
+                FlowDirection.B_TO_A: "'ip -o addr show' failed on 'test1': nope",
             },
         )
         with (
@@ -440,7 +435,7 @@ class TestScopedCli:
             patch("otto.cli.link.read_link_states", AsyncMock(return_value=[both])),
         ):
             result = runner.invoke(link_app, ["list"])
-        assert result.output.count("ip -o addr show' failed on 'carrot_seed'") == 1
+        assert result.output.count("ip -o addr show' failed on 'test1'") == 1
         assert "read failed (a->b, b->a):" in result.output
 
     def test_list_still_marks_an_unreachable_host_with_a_question_mark(self) -> None:
@@ -498,7 +493,7 @@ class TestDryRunRendering:
         result = self._dry_invoke(lab, ["impair", "edge", "--delay", "50"])
         assert result.exit_code == 0, result.output
         assert "dry run" in result.output
-        assert "would: a->b on carrot_seed/eth1.100: tc qdisc replace" in result.output
+        assert "would: a->b on test1/eth1.100: tc qdisc replace" in result.output
         assert "not checked: " in result.output
         assert "impaired " not in result.output, (
             f"a dry run reported an impairment as applied: {result.output}"
@@ -516,7 +511,7 @@ class TestDryRunRendering:
         lab, *_ = _bed()
         result = self._dry_invoke(lab, ["repair", "edge"])
         assert result.exit_code == 0, result.output
-        assert "would: carrot_seed/eth1.100: tc qdisc del" in result.output
+        assert "would: test1/eth1.100: tc qdisc del" in result.output
         assert "repaired " not in result.output
         assert "nothing to clear" not in result.output
         assert "timers cancelled 0" not in result.output.replace(
@@ -541,8 +536,8 @@ class TestDryRunRendering:
         remove.
         """
         bare = Link(
-            a=LinkEndpoint(host="carrot_seed", ip="10.10.201.11"),
-            b=LinkEndpoint(host="tomato_seed", ip="10.10.202.12"),
+            a=LinkEndpoint(host="test1", ip="10.10.201.11"),
+            b=LinkEndpoint(host="test2", ip="10.10.202.12"),
             name="bare-edge",
         )
         dry = self._dry_invoke(_bed(link=bare)[0], ["repair", "--all"])
@@ -596,9 +591,9 @@ class TestDryRunRendering:
         link as unimpaired. Both spellings have to be observed on the same bed
         for either to mean anything.
         """
-        lab, carrot, tomato, _ = _bed()
-        carrot.qdisc_texts = [""]
-        tomato.qdisc_texts = [""]
+        lab, test1, test2, _ = _bed()
+        test1.qdisc_texts = [""]
+        test2.qdisc_texts = [""]
         with patch("otto.cli.link.get_lab", return_value=lab):
             result = runner.invoke(link_app, ["list"])
         assert result.exit_code == 0, result.output

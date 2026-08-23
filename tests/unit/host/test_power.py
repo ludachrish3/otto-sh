@@ -127,7 +127,8 @@ def test_hosts_default_power_control_none():
     from otto.host.local_host import LocalHost
 
     assert LocalHost().power_control is None
-    assert ZephyrHost(ip="192.0.2.1", element="sprout", log=LogMode.QUIET).power_control is None
+    zephyr = ZephyrHost(ip="192.0.2.1", element="zephyr37_fat", log=LogMode.QUIET)
+    assert zephyr.power_control is None
 
 
 class _FakeController(PowerController):
@@ -220,7 +221,7 @@ async def test_unix_soft_reboot_issues_reboot_sudo():
 async def test_zephyr_soft_reboot_issues_kernel_reboot():
     from otto.host.embedded_host import ZephyrHost
 
-    host = ZephyrHost(ip="192.0.2.1", element="sprout", log=LogMode.QUIET)
+    host = ZephyrHost(ip="192.0.2.1", element="zephyr37_fat", log=LogMode.QUIET)
     with patch.object(ZephyrHost, "run", new_callable=AsyncMock) as mock_run:
         mock_run.return_value = Results.collect([])
         result = await host.reboot()

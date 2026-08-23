@@ -41,7 +41,7 @@ class InteractiveOttoSession:
     Example::
 
         with InteractiveOttoSession(
-            ["-l", "veggies", "host", "carrot_seed", "login"],
+            ["-l", "unix", "host", "test1", "login"],
             xdir=tmp_path / "xdir",
         ) as sess:
             sess.expect(b"Press Ctrl+] to disconnect", timeout=10)

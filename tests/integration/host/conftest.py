@@ -4,7 +4,7 @@ Fixtures local to tests/integration/host/.
 The parametrized ``host1`` / ``host1_kit`` fixtures live in
 :mod:`tests.conftest` (shared with the unit tree). This conftest exists
 only to populate the lab into an OttoContext so the embedded hosts'
-hop resolution (``config.get_host('basil_seed')`` inside
+hop resolution (``config.get_host('test4')`` inside
 ``RemoteHost._build_hop_transport``) can find the SSH hop.
 
 The same wiring is done in :mod:`tests.unit.host.test_hop_integration` for
@@ -68,13 +68,13 @@ if ZephyrInlineRetcodeFrame.type_name not in FRAME_CLASSES:
 def _install_integration_lab() -> None:
     """Populate the active context so embedded hosts can resolve their SSH hop.
 
-    The Zephyr backends carry ``hop="basil_seed"``, and
+    The Zephyr backends carry ``hop="test4"``, and
     :meth:`RemoteHost._build_hop_transport` calls ``get_host(hop_id)`` to
     resolve the hop's connection details. That lookup needs the active
-    :class:`~otto.context.OttoContext` populated with at least the ``basil``
+    :class:`~otto.context.OttoContext` populated with at least the ``test4``
     Unix host.
 
-    Adding ``carrot`` / ``tomato`` / ``pepper`` too keeps the lab usable by
+    Adding ``test1`` / ``test2`` / ``test3`` too keeps the lab usable by
     any cross-OS / mixed-hop test that ends up in this directory.
 
     Factored out of :func:`_load_lab` so the session-start bed probe
@@ -84,7 +84,7 @@ def _install_integration_lab() -> None:
     ``_load_lab`` call simply re-installs the context.
     """
     lab = Lab(name="integration_host")
-    for ne in ("carrot", "tomato", "pepper", "basil"):
+    for ne in ("test1", "test2", "test3", "test4"):
         data = host_data(ne)
         lab.add_host(
             UnixHost(
@@ -260,8 +260,8 @@ def _fd_watermark(request: pytest.FixtureRequest) -> Iterator[None]:
 def _hop_ssh_target(backend: str) -> tuple[str, str, str] | None:
     """Resolve ``backend`` to its hop's ``(ip, login, password)``, or None.
 
-    The embedded entries carry ``hop`` as a host *id* (``basil_seed``) while
-    :func:`host_data` keys on ``element`` (``basil``). ``scripts.lab_health``
+    The embedded entries carry ``hop`` as a host *id* (``test4``) while
+    :func:`host_data` keys on ``element`` (``test4``). ``scripts.lab_health``
     already owns that mapping for the lab tooling and is already imported by
     ``tests/unit/scripts/test_lab_health.py``, so this borrows it rather than
     adding a second one — a private import across that boundary is the lesser

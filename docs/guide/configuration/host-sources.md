@@ -121,7 +121,7 @@ source's record replaces the earlier one *wholesale* — there is no field-level
 merge — and otto logs a warning naming both labels:
 
 ```text
-host 'orange' in lab 'site': my_project/virtual overrides my_project/global
+host 'alt1' in lab 'site': my_project/virtual overrides my_project/global
 ```
 
 That warning is the whole transparency story: an override is a deliberate act,

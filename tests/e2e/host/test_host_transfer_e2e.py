@@ -7,10 +7,10 @@ On bed-unreachable they FAIL with a clear host-named error — they never skip.
 
 Topology
 --------
-- carrot_seed (test1, 10.10.200.11) — used as SSH hop
-- tomato_seed (test2, 10.10.200.12) — used as transfer target AND hop target
+- test1 (test1, 10.10.200.11) — used as SSH hop
+- test2 (test2, 10.10.200.12) — used as transfer target AND hop target
 
-The single-hop topology (carrot → tomato) needs only 2 VMs, so the hop test
+The single-hop topology (test1 → test2) needs only 2 VMs, so the hop test
 carries only ``integration`` (not ``hops``, which would imply 3 VMs).
 
 xdist group
@@ -34,14 +34,14 @@ from tests.e2e._otto_subprocess import REPO1, assert_output_dir, run_otto
 # Constants
 # ---------------------------------------------------------------------------
 
-# Lab that contains carrot/tomato/pepper (tech1 lab data).
-_LAB = "veggies"
+# Lab that contains test1/test2/test3 (tech1 lab data).
+_LAB = "unix"
 
 # Fixed hop topology (mirrors tests/integration/host/test_hop_integration.py):
-#   otto → carrot_seed (hop) → tomato_seed (target)
+#   otto → test1 (hop) → test2 (target)
 # Only 2 VMs needed — NO "hops" marker.
-_HOP_HOST = "carrot_seed"
-_HOP_TARGET = "tomato_seed"
+_HOP_HOST = "test1"
+_HOP_TARGET = "test2"
 
 pytestmark = [pytest.mark.integration, pytest.mark.xdist_group("host_transfer_e2e")]
 
@@ -83,14 +83,14 @@ def _run_otto(
 
 @pytest.fixture
 def unix_host(tmp_path_factory) -> str:  # type: ignore[type-arg]
-    """Lease one Unix host from the pool; yield its seed id (e.g. ``carrot_seed``).
+    """Lease one Unix host from the pool; yield its host id (e.g. ``test1``).
 
     Uses the same fd-flock lease mechanism as the docker e2e tests so that
     concurrent workers never race on the same host.
     """
     lock_dir = tmp_path_factory.getbasetemp().parent
     with lease_unix_host(lock_dir, _UNIX_POOL) as element:
-        yield f"{element}_seed"
+        yield element
 
 
 # ---------------------------------------------------------------------------
@@ -157,16 +157,16 @@ def test_host_put_get_roundtrip(unix_host: str, tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Test: --hop run (single-hop SSH: otto → carrot → tomato)
+# Test: --hop run (single-hop SSH: otto → test1 → test2)
 # ---------------------------------------------------------------------------
 
 
 def test_host_hop_run(tmp_path: Path) -> None:
     """``otto host <target> --hop <hop> run "echo <token>"`` must execute the
-    command on the TARGET (tomato) via the SSH hop (carrot) and include the
+    command on the TARGET (test2) via the SSH hop (test1) and include the
     echo token in the output.
 
-    Topology: otto dev VM → carrot_seed (hop) → tomato_seed (target).
+    Topology: otto dev VM → test1 (hop) → test2 (target).
     This path requires only 2 VMs — the hops marker (3-VM requirement) is NOT
     applied.  The topology is the same single-hop SSH chain proven by
     ``tests/integration/host/test_hop_integration.py::TestSingleHopSsh``.

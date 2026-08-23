@@ -103,7 +103,7 @@ def test_present_home_directory_keeps_tilde():
 ####################
 
 
-def _ctx(host_id="dut1", labs=("veggies",), as_user=None):
+def _ctx(host_id="dut1", labs=("unix",), as_user=None):
     """A mock Click context chain: leaf command -> `otto host` group -> root."""
     root = SimpleNamespace(params={"labs": list(labs), "as_user": as_user}, parent=None)
     group = SimpleNamespace(params={"host_id": host_id, "hop": "", "term": None}, parent=root)
@@ -125,9 +125,9 @@ def _patch_happy(monkeypatch, listing):
 
 
 def test_chain_walk_takes_each_key_from_the_innermost_context_that_has_it():
-    chain = rc._collect_chain_params(_ctx(host_id="dut2", labs=("veggies",), as_user="carol"))
+    chain = rc._collect_chain_params(_ctx(host_id="dut2", labs=("unix",), as_user="carol"))
     assert chain.host_id == "dut2"
-    assert chain.labs == ["veggies"]
+    assert chain.labs == ["unix"]
     assert chain.as_user == "carol"
 
 
@@ -249,7 +249,7 @@ def test_any_exception_yields_empty(monkeypatch):
 ####################
 
 
-def _chain(as_user="carol", labs=("veggies",)):
+def _chain(as_user="carol", labs=("unix",)):
     return rc._ChainParams(host_id="dut1", hop="", term=None, labs=list(labs), as_user=as_user)
 
 
@@ -768,7 +768,7 @@ rc._store_listing_for = lambda host_id, directory, entries: None
 rc._release_context = lambda token: None
 rc._live_listing = _warn_then_list
 
-root = SimpleNamespace(params={"labs": ["veggies"], "as_user": None}, parent=None)
+root = SimpleNamespace(params={"labs": ["unix"], "as_user": None}, parent=None)
 group = SimpleNamespace(params={"host_id": "dut1"}, parent=root)
 got = rc.remote_path_completer(SimpleNamespace(params={}, parent=group), "/var/")
 assert got == ["/var/logs/"], got

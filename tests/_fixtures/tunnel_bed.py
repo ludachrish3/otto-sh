@@ -2,12 +2,12 @@
 
 Extracted verbatim from tests/e2e/test_tunnel_e2e.py (2026-07-16) so the
 single-pass e2e module and tests/e2e/tunnel_stability/ share ONE source of
-truth for bed hygiene. See that module's docstring for the veggies topology
+truth for bed hygiene. See that module's docstring for the unix topology
 and the management-ip resolution story.
 
 The CLI-cycle harness (``cli_sut_dir``, ``run_tunnel_cli``) was added
 2026-07-17 so stability tests can drive the real ``otto tunnel`` CLI against
-the same veggies bed, not just the library API.
+the same unix bed, not just the library API.
 """
 
 import asyncio
@@ -26,7 +26,7 @@ from tests._fixtures.labdata import host_data, make_host
 from tests._fixtures.sutrepo import make_sut_repo
 from tests.e2e._otto_subprocess import REPO1, run_otto
 
-VEGGIES = ("carrot", "tomato", "pepper")
+UNIX = ("test1", "test2", "test3")
 
 SSH_PORT = 22
 REACHABLE_TIMEOUT = 10
@@ -36,7 +36,7 @@ BIND_CONFIRM_TIMEOUT = 5.0
 
 
 def build_bed_host(ne: str, **overrides) -> UnixHost:
-    """Build a real ``UnixHost`` from the veggies lab data (mgmt-ip resolution)."""
+    """Build a real ``UnixHost`` from the unix lab data (mgmt-ip resolution)."""
     kwargs = {"term": "ssh", "transfer": "scp", "log": LogMode.QUIET}
     kwargs.update(overrides)
     return make_host(ne, **kwargs)
@@ -60,7 +60,7 @@ async def assert_reachable(element: str, ip: str) -> None:
         )
     except (OSError, asyncio.TimeoutError) as exc:
         raise RuntimeError(
-            f"{element}_seed ({ip}) unreachable on :{SSH_PORT} -- bed down? "
+            f"{element} ({ip}) unreachable on :{SSH_PORT} -- bed down? "
             f"(otto tunnel e2e must fail loud on host-down, never skip): {exc!r}"
         ) from exc
     writer.close()
@@ -109,8 +109,8 @@ def _reap_recipe(tunnel_ids: list[str]) -> str:
     return (
         '    uv run python -c "import asyncio; from otto.config.lab import Lab; '
         "from otto.tunnel import remove_tunnel; "
-        "from tests._fixtures.tunnel_bed import VEGGIES, build_bed_host; "
-        "lab=Lab(name='reap'); [lab.add_host(build_bed_host(n)) for n in VEGGIES]; "
+        "from tests._fixtures.tunnel_bed import UNIX, build_bed_host; "
+        "lab=Lab(name='reap'); [lab.add_host(build_bed_host(n)) for n in UNIX]; "
         f'[print(asyncio.run(remove_tunnel(lab, t))) for t in [{ids}]]"'
     )
 
@@ -166,7 +166,7 @@ async def observe_tunnel_processes() -> list:
     self-match, not a real tagged tunnel process. ``parse_process_discovery``
     requires the full 11-segment sentinel and correctly ignores that noise.
     """
-    hosts = [build_bed_host(ne) for ne in VEGGIES]
+    hosts = [build_bed_host(ne) for ne in UNIX]
     found: list = []
     try:
         for host in hosts:
@@ -307,7 +307,7 @@ def random_outfile() -> str:
 
 
 def cli_sut_dir(tmp_path: Path) -> Path:
-    """Scaffold a sut dir for CLI-driven tunnel tests: real veggies lab + declared containers.
+    """Scaffold a sut dir for CLI-driven tunnel tests: real unix lab + declared containers.
 
     Extracted verbatim (2026-07-17) from
     ``tests/e2e/test_tunnel_e2e.py::_cli_cycle_sut_dir`` so
@@ -329,7 +329,7 @@ def cli_sut_dir(tmp_path: Path) -> Path:
     """
     sut = tmp_path / "cli_cycle_sut"
     lab_dir = sut / "lab_data"
-    hosts = [host_data(ne) for ne in ("carrot", "tomato")]
+    hosts = [host_data(ne) for ne in ("test1", "test2")]
     return make_sut_repo(
         sut,
         name="repo1",
@@ -341,7 +341,7 @@ def cli_sut_dir(tmp_path: Path) -> Path:
             f"[[docker.composes]]\n"
             f'path = "{REPO1 / "docker" / "compose.yml"}"\n'
             f'services = ["api"]\n'
-            f'default_host = "tomato_seed"\n'
+            f'default_host = "test2"\n'
         ),
         files={"lab_data/lab.json": json.dumps({"hosts": hosts, "links": []})},
     )
@@ -352,13 +352,13 @@ def run_tunnel_cli(sut_dir: Path, *args: str) -> str:
 
     Same invocation mechanism as
     ``tests/e2e/test_tunnel_e2e.py::test_cli_cycle_add_list_remove_list_docker_free``
-    (``run_otto`` with ``lab="veggies"`` and a 180s timeout): *args* are the
+    (``run_otto`` with ``lab="unix"`` and a 180s timeout): *args* are the
     tokens after ``tunnel`` (e.g. ``run_tunnel_cli(sut, "list")`` runs
-    ``otto --lab veggies tunnel list``). Asserts a zero exit so a broken CLI
+    ``otto --lab unix tunnel list``). Asserts a zero exit so a broken CLI
     invocation fails loud with the real stdout/stderr rather than silently
     mismatching whatever a caller asserts against the returned string.
     """
-    proc = run_otto(["tunnel", *args], sut_dirs=sut_dir, lab="veggies", timeout=180)
+    proc = run_otto(["tunnel", *args], sut_dirs=sut_dir, lab="unix", timeout=180)
     assert proc.returncode == 0, (
         f"otto tunnel {' '.join(args)} failed:\n{proc.stdout}\n{proc.stderr}"
     )

@@ -112,7 +112,7 @@ def _lab_with(*ne_names: str) -> Lab:
 def test_get_host_unknown_id_raises_helpful_keyerror():
     import pytest
 
-    ctx = OttoContext(lab=_lab_with("carrot"))
+    ctx = OttoContext(lab=_lab_with("test1"))
     with pytest.raises(KeyError, match="Available"):
         ctx.get_host("does-not-exist")
 
@@ -123,11 +123,11 @@ def test_get_host_unknown_id_normal_lab_message_has_no_breadcrumb():
     leaking into ordinary CLI/lab-backed errors."""
     import pytest
 
-    ctx = OttoContext(lab=_lab_with("carrot"))
+    ctx = OttoContext(lab=_lab_with("test1"))
     with pytest.raises(KeyError) as excinfo:
         ctx.get_host("does-not-exist")
     message = str(excinfo.value)
-    assert message == ("\"No host 'does-not-exist' in lab 't'. Available: ['carrot_seed']\"")
+    assert message == ("\"No host 'does-not-exist' in lab 't'. Available: ['test1']\"")
     assert "open_context" not in message
     assert "no lab is loaded" not in message
 
@@ -155,23 +155,23 @@ def test_get_host_unknown_id_sentinel_lab_appends_open_context_breadcrumb():
 
 def test_context_get_host_and_all_hosts_resolve_from_lab():
     # Use NEs that exist in tests/lab_data/tech1/lab.json with creds (Unix hosts):
-    # carrot, tomato, pepper, basil
-    lab = _lab_with("carrot", "tomato", "pepper")
+    # test1, test2, test3, test4
+    lab = _lab_with("test1", "test2", "test3")
     ctx = OttoContext(lab=lab)
     first_id = next(iter(lab.hosts))
     assert ctx.get_host(first_id) is lab.hosts[first_id]
-    # Filter to only carrot and tomato — not pepper. The trailing `.*` is
+    # Filter to only test1 and test2 — not test3. The trailing `.*` is
     # load-bearing: ids are FULLMATCHED (D6), so a bare alternation of the
     # element names selects nothing (and now raises).
-    ids = {h.id for h in ctx.all_hosts(re.compile("(carrot|tomato).*"))}
+    ids = {h.id for h in ctx.all_hosts(re.compile("(test1|test2).*"))}
     assert ids
-    assert all("carrot" in i or "tomato" in i for i in ids)
-    # "pepper" should not appear in the filtered result
-    assert not any("pepper" in i for i in ids)
+    assert all("test1" in i or "test2" in i for i in ids)
+    # "test3" should not appear in the filtered result
+    assert not any("test3" in i for i in ids)
 
 
 def test_context_all_hosts_registers_into_scope():
-    lab = _lab_with("carrot")
+    lab = _lab_with("test1")
     ctx = OttoContext(lab=lab)
     hosts = list(ctx.all_hosts())
     assert hosts
@@ -180,7 +180,7 @@ def test_context_all_hosts_registers_into_scope():
 
 def test_set_and_reset_context_round_trips():
     assert try_get_context() is None
-    ctx = OttoContext(lab=_lab_with("carrot"))
+    ctx = OttoContext(lab=_lab_with("test1"))
     token = set_context(ctx)
     try:
         assert get_context() is ctx
@@ -201,7 +201,7 @@ class _FakeRunHost(_FakeHost):
 
 @pytest.mark.asyncio
 async def test_do_for_all_hosts_concurrent_captures_exceptions_per_host():
-    lab = _lab_with("carrot", "tomato")
+    lab = _lab_with("test1", "test2")
     ctx = OttoContext(lab=lab)
     ids = list(lab.hosts)
 
@@ -217,7 +217,7 @@ async def test_do_for_all_hosts_concurrent_captures_exceptions_per_host():
 
 @pytest.mark.asyncio
 async def test_do_for_all_hosts_serial_captures_exceptions():
-    lab = _lab_with("carrot", "tomato")
+    lab = _lab_with("test1", "test2")
     ctx = OttoContext(lab=lab)
     ids = list(lab.hosts)
 
@@ -254,7 +254,7 @@ def test_for_repo_is_a_facade_over_the_same_context_not_a_copy(tmp_path):
     context after the view was built (``output_dir``, which the CLI stamps
     per-run) would never reach the repo acting under it.
     """
-    lab = _lab_with("carrot")
+    lab = _lab_with("test1")
     ctx = OttoContext(lab=lab, dry_run=True)
     view = ctx.for_repo("acme")
 
@@ -269,7 +269,7 @@ def test_for_repo_is_a_facade_over_the_same_context_not_a_copy(tmp_path):
 
 
 def test_context_runtime_flags_default_and_override():
-    lab = _lab_with("carrot")
+    lab = _lab_with("test1")
     assert OttoContext(lab=lab).dry_run is False
     assert OttoContext(lab=lab).log_command_output is True
     assert OttoContext(lab=lab, dry_run=True).dry_run is True
@@ -280,7 +280,7 @@ def test_bare_accessors_delegate_to_active_context():
     import otto.config as cm
     from otto.context import OttoContext, reset_context, set_context
 
-    lab = _lab_with("carrot", "tomato")
+    lab = _lab_with("test1", "test2")
     ctx = OttoContext(lab=lab)
     token = set_context(ctx)
     try:
@@ -295,7 +295,7 @@ def test_bare_accessors_delegate_to_active_context():
 def test_addhost_wires_lab_backref_and_survives_override_copy():
     import dataclasses
 
-    lab = _lab_with("carrot")
+    lab = _lab_with("test1")
     host = next(iter(lab.hosts.values()))
     assert host._lab is lab
     copy = dataclasses.replace(host)  # *_options overrides use replace
@@ -304,7 +304,7 @@ def test_addhost_wires_lab_backref_and_survives_override_copy():
 
 @pytest.mark.asyncio
 async def test_host_async_context_manager_closes_and_close_is_idempotent():
-    lab = _lab_with("carrot")
+    lab = _lab_with("test1")
     host = next(iter(lab.hosts.values()))
     async with host as h:
         assert h is host
@@ -339,7 +339,7 @@ async def test_open_context_sets_and_tears_down():
     import otto
     from otto.context import try_get_context
 
-    lab = _lab_with("carrot")
+    lab = _lab_with("test1")
     assert try_get_context() is None
     async with otto.open_context(lab=lab) as ctx:
         assert try_get_context() is ctx

@@ -1,13 +1,13 @@
-"""Docker chaos venue construction: pepper (bed) or loopback (hermetic).
+"""Docker chaos venue construction: test3 (bed) or loopback (hermetic).
 
 Plan 5's docker-chaos scenarios need ONE docker-capable SSH parent host per
-venue, selected by ``OTTO_CHAOS_DOCKER`` (unset/``"pepper"`` = bed, or
+venue, selected by ``OTTO_CHAOS_DOCKER`` (unset/``"test3"`` = bed, or
 ``"loopback"``):
 
-- ``pepper``: the shared bed daemon on ``10.10.200.13``, same constructor
+- ``test3``: the shared bed daemon on ``10.10.200.13``, same constructor
   ``tests/integration/test_docker_compose.py``'s ``parent`` fixture uses —
   reused rather than duplicated so the two suites can never drift apart on
-  what "the pepper docker parent" means.
+  what "the test3 docker parent" means.
 - ``loopback``: this runner's OWN docker daemon, wrapped by tier-2's
   throwaway sshd (``tests/integration/chaos/_sshd.py``) so CI (no bed route)
   can still certify the harness construction end to end. Never touches the
@@ -38,22 +38,21 @@ from tests.integration.chaos._sshd import (
 
 
 def docker_venue() -> str:
-    """Which docker chaos venue to target: ``"pepper"`` (default) or ``"loopback"``."""
-    return ambient("OTTO_CHAOS_DOCKER", "pepper")
+    """Which docker chaos venue to target: ``"test3"`` (default) or ``"loopback"``."""
+    return ambient("OTTO_CHAOS_DOCKER", "test3")
 
 
-def pepper_parent() -> UnixHost:
-    """The bed docker parent: pepper (10.10.200.13).
+def bed_parent() -> UnixHost:
+    """The bed docker parent: test3 (10.10.200.13).
 
     Exact shape of ``tests/integration/test_docker_compose.py``'s ``parent``
-    fixture — same ip/creds/board/term/transfer/docker_capable — so pepper
+    fixture — same ip/creds/board/term/transfer/docker_capable — so test3
     means the same thing to both suites.
     """
     return UnixHost(
         ip="10.10.200.13",
-        element="pepper",
+        element="test3",
         creds=[Cred(login="vagrant", password="vagrant")],
-        board="seed",
         is_virtual=True,
         term="ssh",
         transfer="scp",

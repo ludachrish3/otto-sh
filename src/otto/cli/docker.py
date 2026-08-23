@@ -97,7 +97,7 @@ def _select_repos(repo_name: str | None, on: str | None = None) -> list[Repo]:
         the active lab.
 
     A multi-repo workspace can declare docker stacks on hosts that belong to
-    different labs (e.g. repo1 → veggies/pepper_seed, repo2 → fruits/grape_seed).
+    different labs (e.g. repo1 → unix/test3, repo2 → unix_alt/alt3).
     Only one lab is active per `otto` invocation, so iterating over a repo
     whose target host isn't loaded yields a confusing "not in lab" error.
     Filter those out and let the user know via a DEBUG log.

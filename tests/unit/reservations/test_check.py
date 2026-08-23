@@ -36,13 +36,13 @@ class _FakeBackend:
 
 
 def _lab_with_resources() -> Lab:
-    """Build a lab whose total required resources are {rack1, carrot, tomato}."""
+    """Build a lab whose total required resources are {rack1, test1, test2}."""
     return Lab(
         name="test_lab",
         resources={"rack1"},
         hosts={
-            "carrot_seed": make_host("carrot", resources={"carrot"}),
-            "tomato_seed": make_host("tomato", resources={"tomato"}),
+            "test1": make_host("test1", resources={"test1"}),
+            "test2": make_host("test2", resources={"test2"}),
         },
     )
 
@@ -50,7 +50,7 @@ def _lab_with_resources() -> Lab:
 class TestRequiredResources:
     def test_union_of_lab_and_hosts(self):
         lab = _lab_with_resources()
-        assert required_resources(lab) == {"rack1", "carrot", "tomato"}
+        assert required_resources(lab) == {"rack1", "test1", "test2"}
 
     def test_empty_lab(self):
         lab = Lab(name="empty")
@@ -63,8 +63,8 @@ class TestCheckReservations:
         backend = _FakeBackend(
             owners={
                 "rack1": "alice",
-                "carrot": "alice",
-                "tomato": "alice",
+                "test1": "alice",
+                "test2": "alice",
             }
         )
         check_reservations(lab, "alice", backend)  # must not raise
@@ -74,19 +74,19 @@ class TestCheckReservations:
         backend = _FakeBackend(
             owners={
                 "rack1": "alice",
-                "carrot": "bob",  # held by someone else
-                "tomato": None,  # unreserved (not in dict, but model None explicitly)
+                "test1": "bob",  # held by someone else
+                "test2": None,  # unreserved (not in dict, but model None explicitly)
             }
         )
-        # Remove tomato so it reads as unreserved
-        del backend.owners["tomato"]
+        # Remove test2 so it reads as unreserved
+        del backend.owners["test2"]
         with pytest.raises(MissingReservationError) as exc_info:
             check_reservations(lab, "alice", backend)
         msg = str(exc_info.value)
         assert "alice" in msg
         assert "test_lab" in msg
-        assert "carrot" in msg
-        assert "tomato" in msg
+        assert "test1" in msg
+        assert "test2" in msg
         assert "held by bob" in msg
         assert "unreserved" in msg
 

@@ -50,7 +50,7 @@ hopped and direct parents identically.
 Container host id = `<parent_id>.<project>.<service>`, lowercased.
 
 - **Parent id** is whatever `UnixHost._generateId()` produces (e.g.
-  `pepper_seed`, `pepper_seed_1` if the lab encodes board+slot).
+  `test3`, or `test3_rack1` if the lab encodes `board`/`slot`).
 - **Project** is `Repo.name` (the per-repo `name` in
   `.otto/settings.toml`).
 - **Service** is the compose service name.
@@ -58,7 +58,7 @@ Container host id = `<parent_id>.<project>.<service>`, lowercased.
 The verbose form prevents collisions when multiple projects on the
 same parent declare a service of the same name (e.g. both repos have
 an `api`). Tab-completion already does prefix matching, so typing
-`pepper_seed.` narrows naturally to the containers on a given parent.
+`test3.` narrows naturally to the containers on a given parent.
 
 ## Lifecycle and the lab
 
@@ -101,7 +101,7 @@ later.
 ## Reservation tags
 
 A new `DockerContainerHost` copies its parent's `resources` set so
-concurrent test runs that both want `pepper_seed.repo1.api` serialize
+concurrent test runs that both want `test3.repo1.api` serialize
 through the existing reservation backend. There's no separate
 container-reservation concept — the parent's reservation transitively
 covers its containers. That's also why the `otto docker` command itself

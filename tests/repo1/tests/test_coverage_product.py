@@ -39,7 +39,7 @@ PRODUCT_DIR = Path(__file__).resolve().parent.parent / "product"
 REMOTE_INSTALL_DIR = "/opt/coverage_product"
 GCDA_REMOTE_DIR = "/var/coverage/product"
 
-# Match bare UnixHost ids (e.g. ``pepper_seed``) and exclude the
+# Match bare UnixHost ids (e.g. ``test3``) and exclude the
 # dotted ``<parent>.<project>.<service>`` ids of DockerContainerHost
 # placeholders that ``register_declared_container_hosts`` synthesizes
 # at lab-load time. Coverage runs target compile-and-run hosts only —

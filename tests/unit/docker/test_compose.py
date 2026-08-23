@@ -62,7 +62,7 @@ _TRANSIENT_NETWORK_RACE_OUTPUT = (
 
 
 def _make_repo(
-    tmp: Path, *, name: str = "repo1", services: tuple = ("api",), default_host: str = "pepper_seed"
+    tmp: Path, *, name: str = "repo1", services: tuple = ("api",), default_host: str = "test3"
 ) -> Repo:
     services_toml = "[" + ", ".join(f'"{s}"' for s in services) + "]"
     sut = make_sut_repo(
@@ -89,12 +89,11 @@ def _make_repo(
     return Repo(sut_dir=sut)
 
 
-def _capable_host(host_id: str = "pepper_seed", ne: str = "pepper") -> UnixHost:
+def _capable_host(host_id: str = "test3", ne: str = "test3") -> UnixHost:
     return UnixHost(
         ip="10.10.200.13",
         element=ne,
         creds=[Cred(login="vagrant", password="vagrant")],
-        board="seed",
         docker_capable=True,
     )
 
@@ -138,17 +137,15 @@ def test_compose_project_honors_env_override(monkeypatch):
 def test_resolve_parent_prefers_explicit_on(tmp_path):
     repo = _make_repo(tmp_path)
     lab = _make_lab()
-    parent = _resolve_parent(
-        repo, lab, on="pepper_seed", composes=list(repo.docker_settings.composes)
-    )
-    assert parent.id == "pepper_seed"
+    parent = _resolve_parent(repo, lab, on="test3", composes=list(repo.docker_settings.composes))
+    assert parent.id == "test3"
 
 
 def test_resolve_parent_falls_back_to_default_host(tmp_path):
-    repo = _make_repo(tmp_path, default_host="pepper_seed")
+    repo = _make_repo(tmp_path, default_host="test3")
     lab = _make_lab()
     parent = _resolve_parent(repo, lab, on=None, composes=list(repo.docker_settings.composes))
-    assert parent.id == "pepper_seed"
+    assert parent.id == "test3"
 
 
 def test_resolve_parent_rejects_non_capable(tmp_path):
@@ -170,7 +167,7 @@ def test_resolve_parent_rejects_non_capable(tmp_path):
 
 
 def test_resolve_parent_errors_when_no_host(tmp_path):
-    repo = _make_repo(tmp_path, default_host="pepper_seed")
+    repo = _make_repo(tmp_path, default_host="test3")
     lab = _make_lab()
     # Use a wholly unknown host.
     with pytest.raises(ValueError, match="not in lab"):
@@ -186,7 +183,7 @@ def test_resolve_parent_errors_when_no_host(tmp_path):
 async def test_compose_up_constructs_expected_command(tmp_path):
     repo = _make_repo(tmp_path)
     lab = _make_lab()
-    parent = lab.hosts["pepper_seed"]
+    parent = lab.hosts["test3"]
 
     # Sequence the parent's exec responses:
     # 1) staging mkdir/rm calls — return ok
@@ -228,7 +225,7 @@ async def test_compose_up_builds_images_first_by_default(tmp_path):
     """compose_up's default is build=True so locally-built images exist before compose runs."""
     repo = _make_repo(tmp_path)
     lab = _make_lab()
-    parent = lab.hosts["pepper_seed"]
+    parent = lab.hosts["test3"]
     call_log: list[str] = []
 
     async def exec_side_effect(cmd, *_, **__):
@@ -257,7 +254,7 @@ async def test_compose_up_builds_images_first_by_default(tmp_path):
 async def test_compose_up_skips_build_when_build_false(tmp_path):
     repo = _make_repo(tmp_path)
     lab = _make_lab()
-    parent = lab.hosts["pepper_seed"]
+    parent = lab.hosts["test3"]
     call_log: list[str] = []
 
     async def exec_side_effect(cmd, *_, **__):
@@ -285,7 +282,7 @@ async def test_compose_up_idempotent_when_already_running(tmp_path):
     """If the stack is already up, compose_up reuses it (no second `up -d`)."""
     repo = _make_repo(tmp_path)
     lab = _make_lab()
-    parent = lab.hosts["pepper_seed"]
+    parent = lab.hosts["test3"]
     call_log: list[str] = []
 
     async def exec_side_effect(cmd, *_, **__):
@@ -319,7 +316,7 @@ async def test_compose_up_second_call_reregisters_without_raising(tmp_path):
     """
     repo = _make_repo(tmp_path)
     lab = _make_lab()
-    parent = lab.hosts["pepper_seed"]
+    parent = lab.hosts["test3"]
     container_ids = iter(["abc111", "def222"])
 
     async def exec_side_effect(cmd, *_, **__):
@@ -350,7 +347,7 @@ async def test_compose_up_retries_once_on_transient_network_race(tmp_path, monke
     monkeypatch.setattr("otto.docker.compose._NETWORK_RACE_RETRY_BACKOFF_S", 0.0, raising=False)
     repo = _make_repo(tmp_path)
     lab = _make_lab()
-    parent = lab.hosts["pepper_seed"]
+    parent = lab.hosts["test3"]
     up_attempts = 0
     call_log: list[str] = []
 
@@ -386,7 +383,7 @@ async def test_compose_up_does_not_retry_real_compose_failure(tmp_path, monkeypa
     monkeypatch.setattr("otto.docker.compose._NETWORK_RACE_RETRY_BACKOFF_S", 0.0, raising=False)
     repo = _make_repo(tmp_path)
     lab = _make_lab()
-    parent = lab.hosts["pepper_seed"]
+    parent = lab.hosts["test3"]
     call_log: list[str] = []
 
     async def exec_side_effect(cmd, *_, **__):
@@ -413,7 +410,7 @@ async def test_compose_up_polls_for_container_id_after_start(tmp_path, monkeypat
     monkeypatch.setattr("otto.docker.compose._CONTAINER_ID_RESOLVE_BACKOFF_S", 0.0, raising=False)
     repo = _make_repo(tmp_path)
     lab = _make_lab()
-    parent = lab.hosts["pepper_seed"]
+    parent = lab.hosts["test3"]
     resolve_calls = 0
 
     async def exec_side_effect(cmd, *_, **__):
@@ -451,7 +448,7 @@ async def test_compose_up_resolve_gives_up_after_bounded_polls(tmp_path, monkeyp
     monkeypatch.setattr("otto.docker.compose._CONTAINER_ID_RESOLVE_ATTEMPTS", 3, raising=False)
     repo = _make_repo(tmp_path)
     lab = _make_lab()
-    parent = lab.hosts["pepper_seed"]
+    parent = lab.hosts["test3"]
     resolve_calls = 0
 
     async def exec_side_effect(cmd, *_, **__):
@@ -487,7 +484,7 @@ async def test_compose_up_still_skips_one_unresolvable_service_among_several(tmp
     monkeypatch.setattr("otto.docker.compose._CONTAINER_ID_RESOLVE_ATTEMPTS", 2, raising=False)
     repo = _make_repo(tmp_path, services=("api", "sidecar"))
     lab = _make_lab()
-    parent = lab.hosts["pepper_seed"]
+    parent = lab.hosts["test3"]
 
     async def exec_side_effect(cmd, *_, **__):
         if "label=com.docker.compose.project=" in cmd and "service=" not in cmd:
@@ -512,7 +509,7 @@ async def test_compose_up_still_skips_one_unresolvable_service_among_several(tmp
 async def test_compose_down_removes_registered_hosts(tmp_path):
     repo = _make_repo(tmp_path)
     lab = _make_lab()
-    parent = lab.hosts["pepper_seed"]
+    parent = lab.hosts["test3"]
     parent.exec.return_value = _ok()  # type: ignore[union-attr]
 
     # Pre-populate with a fake registered container host.
@@ -535,7 +532,7 @@ async def test_composed_does_not_teardown_when_already_running(tmp_path):
     """The default own=False contract — nested users don't yank the stack."""
     repo = _make_repo(tmp_path)
     lab = _make_lab()
-    parent = lab.hosts["pepper_seed"]
+    parent = lab.hosts["test3"]
 
     async def exec_side_effect(cmd, *_, **__):
         if "label=com.docker.compose.project=" in cmd and "service=" not in cmd:
@@ -562,7 +559,7 @@ async def test_composed_does_not_teardown_when_already_running(tmp_path):
 async def test_composed_tears_down_when_own_true(tmp_path):
     repo = _make_repo(tmp_path)
     lab = _make_lab()
-    parent = lab.hosts["pepper_seed"]
+    parent = lab.hosts["test3"]
 
     async def exec_side_effect(cmd, *_, **__):
         if "label=com.docker.compose.project=" in cmd and "service=" not in cmd:
@@ -591,7 +588,7 @@ async def test_composed_teardown_survives_cancellation(tmp_path):
     (spec: shielded compensating actions)."""
     repo = _make_repo(tmp_path)
     lab = _make_lab()
-    parent = lab.hosts["pepper_seed"]
+    parent = lab.hosts["test3"]
 
     down_started = asyncio.Event()
     release_down = asyncio.Event()
@@ -643,7 +640,7 @@ def test_register_declared_creates_placeholders(tmp_path):
 
     n = register_declared_container_hosts(lab, [repo])
     assert n == 1
-    placeholder = lab.hosts.get("pepper_seed.repo1.api")
+    placeholder = lab.hosts.get("test3.repo1.api")
     assert isinstance(placeholder, DockerContainerHost)
     assert placeholder.container_id == ""  # placeholder marker
 
@@ -678,7 +675,7 @@ def test_placeholder_id_collision_with_different_host_is_rejected(tmp_path):
     """
     repo = _make_repo(tmp_path)
     lab = _make_lab()
-    parent = lab.hosts["pepper_seed"]
+    parent = lab.hosts["test3"]
 
     placeholder = DockerContainerHost(
         parent=parent,
@@ -736,7 +733,7 @@ async def test_compose_up_container_inherits_its_parents_lab_not_the_composite(t
     """Same rule on the live registration path: parent's lab wins over the composite."""
     repo = _make_repo(tmp_path)
     lab = _merged_lab_with_stamped_parent()
-    parent = lab.hosts["pepper_seed"]
+    parent = lab.hosts["test3"]
 
     async def exec_side_effect(cmd, *_, **__):
         if "label=com.docker.compose.project=" in cmd and "service=" not in cmd:
@@ -923,7 +920,7 @@ async def test_compose_down_failure_logs_error(tmp_path, caplog):
     """Logs an ERROR containing 'compose down failed' when the down command fails."""
     repo = _make_repo(tmp_path)
     lab = _make_lab()
-    parent = lab.hosts["pepper_seed"]
+    parent = lab.hosts["test3"]
 
     async def exec_side_effect(cmd, *_, **__):
         # stage_compose_files uses mkdir/rm calls that should succeed
@@ -947,7 +944,7 @@ async def test_compose_down_swallows_host_close_error(tmp_path):
     """Does NOT propagate when a registered container host's close() raises."""
     repo = _make_repo(tmp_path)
     lab = _make_lab()
-    parent = lab.hosts["pepper_seed"]
+    parent = lab.hosts["test3"]
 
     # Wire down command to succeed so we reach the host-close loop
     parent.exec.return_value = _ok()  # type: ignore[union-attr]
@@ -997,7 +994,7 @@ async def test_compose_up_fails_when_services_cannot_be_listed_and_none_declared
     """
     repo = _make_repo(tmp_path, services=())
     lab = _make_lab()
-    parent = lab.hosts["pepper_seed"]
+    parent = lab.hosts["test3"]
 
     async def exec_side_effect(cmd, *_, **__):
         if "config" in cmd and "--services" in cmd:
@@ -1021,7 +1018,7 @@ async def test_compose_up_only_warns_when_the_cross_check_fails(tmp_path, caplog
     """
     repo = _make_repo(tmp_path, services=("api",))
     lab = _make_lab()
-    parent = lab.hosts["pepper_seed"]
+    parent = lab.hosts["test3"]
 
     async def exec_side_effect(cmd, *_, **__):
         if "config" in cmd and "--services" in cmd:
@@ -1076,7 +1073,7 @@ async def test_composed_refuses_to_guess_whose_stack_it_is(tmp_path):
     """
     repo = _make_repo(tmp_path)
     lab = _make_lab()
-    parent = lab.hosts["pepper_seed"]
+    parent = lab.hosts["test3"]
 
     async def exec_side_effect(cmd, *_, **__):
         if "label=com.docker.compose.project=" in cmd and "service=" not in cmd:
@@ -1100,7 +1097,7 @@ async def test_composed_does_not_even_probe_when_it_owns_the_stack(tmp_path):
     """
     repo = _make_repo(tmp_path)
     lab = _make_lab()
-    parent = lab.hosts["pepper_seed"]
+    parent = lab.hosts["test3"]
     project_probes = 0
 
     async def exec_side_effect(cmd, *_, **__):
@@ -1229,7 +1226,7 @@ async def test_compose_up_rolls_back_a_stack_it_started_before_raising(tmp_path)
     """
     repo = _make_repo(tmp_path)
     lab = _make_lab()
-    parent = lab.hosts["pepper_seed"]
+    parent = lab.hosts["test3"]
     downs = 0
 
     async def exec_side_effect(cmd, *_, **__):
@@ -1256,7 +1253,7 @@ async def test_compose_up_does_not_roll_back_someone_elses_stack(tmp_path):
     """The other half of the rollback rule: only tear down what WE started."""
     repo = _make_repo(tmp_path)
     lab = _make_lab()
-    parent = lab.hosts["pepper_seed"]
+    parent = lab.hosts["test3"]
     downs = 0
 
     async def exec_side_effect(cmd, *_, **__):
@@ -1283,7 +1280,7 @@ async def test_compose_up_fails_when_the_stack_names_no_services_at_all(tmp_path
     """`services: {}` with nothing declared: up, and nothing to register."""
     repo = _make_repo(tmp_path, services=())
     lab = _make_lab()
-    parent = lab.hosts["pepper_seed"]
+    parent = lab.hosts["test3"]
 
     async def exec_side_effect(cmd, *_, **__):
         if "label=com.docker.compose.project=" in cmd and "service=" not in cmd:
@@ -1311,7 +1308,7 @@ async def test_compose_down_returns_a_failure_when_staging_cannot_be_prepared(tm
     """
     repo = _make_repo(tmp_path)
     lab = _make_lab()
-    parent = lab.hosts["pepper_seed"]
+    parent = lab.hosts["test3"]
 
     async def exec_side_effect(cmd, *_, **__):
         if cmd.startswith("rm -rf "):

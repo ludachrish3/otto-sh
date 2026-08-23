@@ -188,7 +188,7 @@ def all_hosts(  # noqa: PLR0913 — wide host-dispatch API (mirrors do_for_all_h
 
             import re
 
-            seeds = list(all_hosts(re.compile(r"tomato.*")))
+            matched = list(all_hosts(re.compile(r"test2.*")))
     """
     from ..context import get_context
 

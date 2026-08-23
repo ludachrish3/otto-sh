@@ -1,8 +1,8 @@
 """End-to-end CLI integration test for embedded (Zephyr LLEXT) coverage.
 
 Invokes the real ``otto test --cov`` + report pipeline as a **subprocess**
-against the live ``sprout_cov`` ``mps2_an385`` instance (in the ``embedded``
-lab, selected by the ``[coverage].hosts`` regex, reached over the ``basil_seed``
+against the live ``zephyr37_llext`` ``mps2_an385`` instance (in the ``embedded``
+lab, selected by the ``[coverage].hosts`` regex, reached over the ``test4``
 SSH hop). Mocked unit tests can't cover this
 path; only the real CLI does, and only over the real multi-hop transport:
 
@@ -12,13 +12,13 @@ path; only the real CLI does, and only over the real multi-hop transport:
   reused across that boundary hangs, and the single-client QEMU socket blocks
   the collector's reconnect);
 * the cross-gcov report: a host ``lcov`` driving the SDK ``arm-zephyr-eabi-gcov``;
-* the hop host (``basil``) being in the ``embedded`` lab for hop resolution
+* the hop host (``test4``) being in the ``embedded`` lab for hop resolution
   *without* being mistaken for a Unix coverage target in the meta (it is
   excluded from coverage by the ``[coverage].hosts`` regex, not inference).
 
 Requirements (else the test FAILS LOUD, naming what is missing — G12: a
 bed-certifying lane never skips):
-    - the zephyr VM up with ``sprout_cov`` running (``zephyr-qemu-cov.service``);
+    - the zephyr VM up with ``zephyr37_llext`` running (``zephyr-qemu-cov.service``);
     - the repo3 coverage product built into ``[coverage.embedded].build_dir``
       (see ``tests/repo3/product/README.md``).
 """
@@ -36,7 +36,7 @@ from tests.e2e._otto_subprocess import PROJECT_ROOT, assert_output_dir, run_otto
 
 REPO3 = PROJECT_ROOT / "tests" / "repo3"
 
-pytestmark = [pytest.mark.integration, pytest.mark.xdist_group("sprout_cov")]
+pytestmark = [pytest.mark.integration, pytest.mark.xdist_group("zephyr37_llext")]
 
 
 def _embedded_cov_settings() -> dict:
@@ -60,12 +60,12 @@ def _extension_artifact() -> Path:
 
 
 @pytest.fixture
-def clean_sprout_cov():
-    """Fail loud unless ``sprout_cov`` answers, and clear any loaded extension.
+def clean_zephyr37_llext():
+    """Fail loud unless ``zephyr37_llext`` answers, and clear any loaded extension.
 
     Populates the active :class:`~otto.context.OttoContext` with the
-    ``basil`` hop (as the integration host conftest does) so the embedded
-    host's ``basil_seed`` hop resolves, probes the console, and best-effort
+    ``test4`` hop (as the integration host conftest does) so the embedded
+    host's ``test4`` hop resolves, probes the console, and best-effort
     unloads ``cov_ext`` so the suite's ``load_hex`` starts from a clean slate
     (``--cov`` runs leave it resident).
     """
@@ -80,13 +80,13 @@ def clean_sprout_cov():
     from tests.conftest import host_data
 
     lab = Lab(name="embedded_cov_e2e")
-    basil = host_data("basil")
+    test4 = host_data("test4")
     lab.add_host(
         UnixHost(
-            ip=basil["ip"],
-            element=basil["element"],
-            creds=[Cred(**c) for c in basil["creds"]],
-            board=basil.get("board"),
+            ip=test4["ip"],
+            element=test4["element"],
+            creds=[Cred(**c) for c in test4["creds"]],
+            board=test4.get("board"),
             is_virtual=True,
             term="ssh",
             transfer="scp",
@@ -95,7 +95,7 @@ def clean_sprout_cov():
     )
     set_context(OttoContext(lab=lab))
 
-    host = create_host_from_dict(host_data("sprout_cov"))
+    host = create_host_from_dict(host_data("zephyr37_llext"))
 
     async def _prep() -> bool:
         try:
@@ -111,7 +111,7 @@ def clean_sprout_cov():
 
     if not asyncio.run(_prep()):
         pytest.fail(
-            "sprout_cov console not reachable/healthy — the embedded bed is down. "
+            "zephyr37_llext console not reachable/healthy — the embedded bed is down. "
             "Bring the zephyr VM/QEMU back up (e.g. `make qemu-restart`) and retry. "
             "This is a hard failure by design (not a skip) so a dead bed can't hide "
             "behind a green run."
@@ -151,8 +151,8 @@ def _product_line_coverage(info_file: Path) -> tuple[int, int]:
     return 0, 0
 
 
-def test_embedded_coverage_cli_e2e(clean_sprout_cov, tmp_path):
-    """`otto test --cov` + report against the live sprout_cov yields product coverage."""
+def test_embedded_coverage_cli_e2e(clean_zephyr37_llext, tmp_path):
+    """`otto test --cov` + report against the live zephyr37_llext yields product coverage."""
     artifact = _extension_artifact()
     if not artifact.exists():
         pytest.fail(
@@ -207,26 +207,27 @@ def test_embedded_coverage_cli_e2e(clean_sprout_cov, tmp_path):
 
     # The collector decoded a .gcda for the embedded host (cross-loop fix +
     # real hop transport), and the report rendered (cross-gcov lcov fix).
-    # Staged under the host id, which is the slug of element "sprout_cov" -> "sprout-cov".
-    gcda = cov_dir / "sprout-cov" / "cov_ext.c.gcda"
-    assert gcda.exists(), f"no decoded .gcda staged for sprout-cov\n{result.stdout[-2000:]}"
+    # Staged under the host id, which is the slug of element "zephyr37_llext" -> "zephyr37-llext".
+    gcda = cov_dir / "zephyr37-llext" / "cov_ext.c.gcda"
+    assert gcda.exists(), f"no decoded .gcda staged for zephyr37-llext\n{result.stdout[-2000:]}"
     assert (report_dir / "index.html").exists(), "no HTML report rendered"
 
     # BOTH beds, not just the first. repo3's `[coverage] hosts` selector is
-    # "sprout-cov.*" and its trailing wildcard is the whole point: the intent is
-    # coverage across two Zephyr versions (3.7 and 4.4). Under fullmatch a bare
-    # "sprout-cov" selects only the 3.7 bed — which would NOT fail anything
-    # above, because every assertion so far names sprout-cov alone. It would
-    # quietly halve the collection and stay green, so the selector's intent is
-    # pinned here rather than left to the settings comment.
+    # "zephyr(37|44)-llext" and its alternation is the whole point: the intent is
+    # coverage across two Zephyr versions (3.7 and 4.4), whose ids share no
+    # distinguishing prefix. Under fullmatch a bare "zephyr37-llext" selects only
+    # the 3.7 bed — which would NOT fail anything above, because every assertion
+    # so far names zephyr37-llext alone. It would quietly halve the collection
+    # and stay green, so the selector's intent is pinned here rather than left to
+    # the settings comment.
     staged = sorted(d.name for d in cov_dir.iterdir() if d.is_dir())
-    assert staged == ["sprout-cov", "sprout-cov44"], (
+    assert staged == ["zephyr37-llext", "zephyr44-llext"], (
         f"expected both Zephyr coverage beds to be collected, got {staged} — "
         f"check `[coverage] hosts` in tests/repo3/.otto/settings.toml\n"
         f"{result.stdout[-2000:]}"
     )
-    assert (cov_dir / "sprout-cov44" / "cov_ext.c.gcda").exists(), (
-        "no decoded .gcda staged for the 4.4 bed sprout-cov44"
+    assert (cov_dir / "zephyr44-llext" / "cov_ext.c.gcda").exists(), (
+        "no decoded .gcda staged for the 4.4 bed zephyr44-llext"
     )
 
     # The product file is covered (the cross-gcov processed the .gcda + .gcno).
@@ -234,10 +235,10 @@ def test_embedded_coverage_cli_e2e(clean_sprout_cov, tmp_path):
     # .gcda at collect time (board.info, plus a path-resolved variant); the
     # report's _work/ dir only holds cross-host lcov merge products, which a
     # store-loaded run like this one never writes.
-    info = cov_dir / "sprout-cov" / "board.resolved.info"
+    info = cov_dir / "zephyr37-llext" / "board.resolved.info"
     if not info.exists():
-        info = cov_dir / "sprout-cov" / "board.info"
-    assert info.exists(), f"no lcov .info staged for sprout-cov\n{result.stdout[-2000:]}"
+        info = cov_dir / "zephyr37-llext" / "board.info"
+    assert info.exists(), f"no lcov .info staged for zephyr37-llext\n{result.stdout[-2000:]}"
     lh, lf = _product_line_coverage(info)
     assert lf > 0, f"cov_ext.c shows no covered lines ({lh}/{lf})"
     assert lh > 0, f"cov_ext.c shows no covered lines ({lh}/{lf})"

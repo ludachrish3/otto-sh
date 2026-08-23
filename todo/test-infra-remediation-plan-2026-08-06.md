@@ -246,7 +246,7 @@ unwritable at the helper.
 **Red today: 0 — Wave 3 landed the contract.** t0 evidence: 4 defect demos passed
 against pre-fix code (run_probe handed back Error results; snapshot_host parsed the
 error text into empty/phantom fields; the hygiene bracket read dead probes on BOTH
-sides as a clean bed; `veggies_link_id` swallowed arbitrary corruption), and the pin
+sides as a clean bed; `unix_link_id` swallowed arbitrary corruption), and the pin
 file was collection-red. 9 targeted mutations each killed — including reintroducing
 the wave's own motivating defect at a consumer, which the first cut of the
 consumer-drift scan MISSED (named-factory shape) and which its mutation run then
@@ -647,7 +647,7 @@ timeout; memory rule: confirm root cause before fixing).
 - [x] Reproduce the hang per the todo file's recipe (live bed; state expected duration
       up front). *(Reproduced DETERMINISTICALLY rather than by load-looping: a remote
       listener holding LISTEN without ever calling accept() — the race window, held
-      open. Probe on tomato-via-carrot_seed: connect through the forward succeeded in
+      open. Probe on test2-via-test1: connect through the forward succeeded in
       0.01s though the remote never reached accept(). GET's read() sat >20s — the
       CONFIRMED shape of the natural GET hang. Honest split (interim review, finding
       2): the 15-byte PUT payload never reaches a drain wait (all under the
@@ -696,7 +696,7 @@ probe), `tests/e2e/chaos/_bed.py`, all seven tier-3 consumer modules
       `is_ok`; update consumers (they get *simpler* — happy-path reads only); pin green.
       *Done: one `check_probe_result` spelling backs both; `probe_text` replaces every
       value-unwrapping factory (session pids, transfer nc-listeners, qdisc reads,
-      harness round-trip); `veggies_link_id`'s except narrowed to ValueError. 9
+      harness round-trip); `unix_link_id`'s except narrowed to ValueError. 9
       mutations killed (incl. both consumer-drift scans against the exact
       reintroductions the opus review used to demonstrate blindness — the factory
       scan's first cut MISSED the named-factory shape and was fixed by its own
@@ -733,7 +733,7 @@ probe), `tests/e2e/chaos/_bed.py`, all seven tier-3 consumer modules
       probe_text conversions ride the same helpers those legs certify; its
       soft-reboot scenarios were NOT hand-run this wave (powering lab VMs stays a
       Chris-coordinated act) — at the next coordinated bed session run `make chaos`
-      and watch two NEW red paths that are correct G5 outcomes: a post-reboot tomato
+      and watch two NEW red paths that are correct G5 outcomes: a post-reboot test2
       with eth2 not yet up now RAISES from `_eth2_qdisc` (pre-wave it read "netem
       absent" off "Cannot find device eth2" and PASSED the expected=False assert),
       and `test_docker_chaos`'s bracket now raises on a dead docker-parent probe.*
@@ -921,7 +921,7 @@ task)` helper the API absorbed), rule file.
 
 ### Wave 9 — Interact-e2e residuals (item 9) — DONE
 **Files:** `tests/e2e/host/test_interact_e2e.py`, `tests/e2e/host/_pty_driver.py`.
-The host-lease fix (class-scoped `leased_carrot` via `lease_unix_host`, `ELEMENT`
+The host-lease fix (class-scoped `leased_test1` via `lease_unix_host`, `ELEMENT`
 single-sourcing) was independently root-caused from the `make release` 3.14 failure by a
 concurrent session and landed earlier in `bef943aa` — see review §10 correction and the
 `project_release_314_shell_history_race` memory topic. The three residuals (review

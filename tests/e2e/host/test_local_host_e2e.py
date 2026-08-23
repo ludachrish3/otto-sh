@@ -41,7 +41,7 @@ def test_local_run_echo(tmp_path: Path) -> None:
         ["host", "local", "run", "echo hello-e2e"],
         xdir=tmp_path,
         sut_dirs=REPO_E2E,
-        lab="veggies",
+        lab="unix",
     )
     assert r.returncode == 0, r.stderr
     assert "hello-e2e" in r.stdout
@@ -66,7 +66,7 @@ def test_local_put_get_roundtrip(tmp_path: Path) -> None:
         ["host", "local", "put", str(src), str(dest_dir)],
         xdir=tmp_path,
         sut_dirs=REPO_E2E,
-        lab="veggies",
+        lab="unix",
     )
     assert put.returncode == 0, put.stderr
     dest_file = dest_dir / "payload.txt"
@@ -80,7 +80,7 @@ def test_local_put_get_roundtrip(tmp_path: Path) -> None:
         ["host", "local", "get", str(dest_file), str(back_dir)],
         xdir=tmp_path,
         sut_dirs=REPO_E2E,
-        lab="veggies",
+        lab="unix",
     )
     assert get.returncode == 0, get.stderr
     back_file = back_dir / "payload.txt"
@@ -105,7 +105,7 @@ def test_local_login_exits_cleanly(tmp_path: Path) -> None:
         ["host", "local", "login"],
         xdir=tmp_path,
         sut_dirs=REPO_E2E,
-        lab="veggies",
+        lab="unix",
     )
     combined = r.stdout + r.stderr
     assert r.returncode != 0
@@ -128,7 +128,7 @@ def test_local_exists_creates_no_output_dir(tmp_path: Path) -> None:
         ["host", "local", "exists", str(tmp_path)],
         xdir=tmp_path,
         sut_dirs=REPO_E2E,
-        lab="veggies",
+        lab="unix",
     )
     assert r.returncode == 0, r.stderr
     assert_no_output_dir(tmp_path)

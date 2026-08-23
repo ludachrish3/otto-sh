@@ -12,7 +12,7 @@ from pathlib import Path
 from tests._fixtures.labdata import lab_data_dir
 from tests._fixtures.sutrepo import make_sut_repo
 
-# Reuse otto's own JSON lab fixture data (defines the "veggies" lab) so a
+# Reuse otto's own JSON lab fixture data (defines the "unix" lab) so a
 # throwaway repo can satisfy the mandatory --lab flag without touching a real
 # host — none of these fixture suites request a host fixture.
 LAB_DATA_DIR = lab_data_dir() / "tech1"

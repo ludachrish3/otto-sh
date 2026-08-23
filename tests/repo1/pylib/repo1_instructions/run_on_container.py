@@ -5,10 +5,10 @@ Intended for e2e tests that verify ``otto run`` drives a real
 minimal: it cats a fixture marker file and returns the output, letting the
 test assert specific text in the subprocess stdout.
 
-Run it against the veggies lab::
+Run it against the unix lab::
 
-    OTTO_SUT_DIRS=<repo1 dir> otto -l veggies run run-on-container \\
-        --on <element>_seed.repo1.api
+    OTTO_SUT_DIRS=<repo1 dir> otto -l unix run run-on-container \\
+        --on <element>.repo1.api
 
 The container must already be running (or auto-start-capable) when this
 instruction executes.
@@ -33,9 +33,9 @@ class _Options:
         str,
         typer.Option(
             "--on",
-            help="Container host id to target (e.g. carrot_seed.repo1.api).",
+            help="Container host id to target (e.g. test1.repo1.api).",
         ),
-    ] = "carrot_seed.repo1.api"
+    ] = "test1.repo1.api"
 
 
 @instruction(options=_Options)

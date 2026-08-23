@@ -553,8 +553,8 @@ class RemoteHost(BaseHost):
         :class:`SshHopTransport`, so ``close()`` cascades down the entire
         chain — every intermediate SSH connection (and its underlying
         asyncio transport) gets closed explicitly. Without that linkage,
-        the outermost SSH connection (e.g. carrot in an
-        otto→carrot→tomato→pepper chain) is owned only by asyncssh's
+        the outermost SSH connection (e.g. test1 in an
+        otto→test1→test2→test3 chain) is owned only by asyncssh's
         tunnel mechanism, never has ``close()`` called on its asyncio
         transport, and leaves a zombie ``_SelectorSocketTransport`` that
         fires ``ResourceWarning`` from ``__del__`` after the test's loop

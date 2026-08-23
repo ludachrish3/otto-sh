@@ -23,17 +23,17 @@ def test_two_leases_pick_distinct_hosts(tmp_path: Path) -> None:
 
 @pytest.mark.serial_timing
 def test_lease_releases_on_exit(tmp_path: Path) -> None:
-    with lease_unix_host(tmp_path, candidates=["carrot"]) as a:
-        assert a == "carrot"
-    # carrot is free again — re-leasing the single-host pool succeeds immediately
+    with lease_unix_host(tmp_path, candidates=["test1"]) as a:
+        assert a == "test1"
+    # test1 is free again — re-leasing the single-host pool succeeds immediately
     start = time.monotonic()
-    with lease_unix_host(tmp_path, candidates=["carrot"]) as b:
-        assert b == "carrot"
+    with lease_unix_host(tmp_path, candidates=["test1"]) as b:
+        assert b == "test1"
     assert time.monotonic() - start < 1.0
 
 
 def _hold(lock_dir: str, secs: float, q) -> None:
-    with lease_unix_host(Path(lock_dir), candidates=["carrot"]):
+    with lease_unix_host(Path(lock_dir), candidates=["test1"]):
         q.put("held")
         time.sleep(secs)
 
@@ -45,7 +45,7 @@ def test_lease_is_cross_process(tmp_path: Path) -> None:
     p.start()
     assert q.get(timeout=5) == "held"
     start = time.monotonic()
-    with lease_unix_host(tmp_path, candidates=["carrot"]):
+    with lease_unix_host(tmp_path, candidates=["test1"]):
         waited = time.monotonic() - start
     p.join()
     assert waited >= 0.3  # had to wait for the other process to release

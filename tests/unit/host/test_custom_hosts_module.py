@@ -5,7 +5,7 @@
 extra shell dialects, pulled in via each repo's ``settings.toml`` ``libs`` +
 ``init``. Importing it must register ``ZephyrInlineRetcodeFrame`` so *any* repo
 (not just repo1) can construct the shared ``embedded`` lab's Zephyr 2.7 host
-(``sprout27``, ``command_frame: "zephyr-inline"``) — the regression that the
+(``zephyr27_fat``, ``command_frame: "zephyr-inline"``) — the regression that the
 embedded-lab fold surfaced for repo3.
 """
 

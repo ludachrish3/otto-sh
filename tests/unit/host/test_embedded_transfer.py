@@ -150,7 +150,7 @@ def _console_transfer(
     filesystem: EmbeddedFileSystem | None = None,
 ) -> ConsoleFileTransfer:
     return ConsoleFileTransfer(
-        name="sprout",
+        name="zephyr37_fat",
         exec_cmd=fake.exec_cmd,
         filesystem=filesystem or FatRamFileSystem(),
     )
@@ -239,7 +239,7 @@ class TestMountBehavior:
     ``fs mount`` (fixed upstream in 4.4 with an early -EBUSY guard + k_free).
     The old always-mount-and-ignore-errors approach bled the 16 KB system
     heap dry one host object at a time on long-lived FAT beds (live-diagnosed
-    on `sprout`: 12,228 bytes consumed while the fstab-auto-mounted LittleFS
+    on `zephyr37_fat`: 12,228 bytes consumed while the fstab-auto-mounted LittleFS
     twins sat at zero). The probe order pinned here: read-only ``fs statvfs``
     first; ``fs mount`` only when the probe says unmounted.
     """
@@ -492,7 +492,7 @@ class TestGet:
             return _cs(cmd, dump, Status.Success, 0)
 
         xfer = ConsoleFileTransfer(
-            name="sprout",
+            name="zephyr37_fat",
             exec_cmd=gappy_exec,
             filesystem=FatRamFileSystem(),
         )
@@ -762,7 +762,7 @@ class TestMaxFilenameLen:
     ):
         fake = FakeZephyrFs()
         xfer = ConsoleFileTransfer(
-            name="sprout",
+            name="zephyr37_fat",
             exec_cmd=fake.exec_cmd,
             filesystem=FatRamFileSystem(),
             max_filename_len=12,
@@ -774,7 +774,7 @@ class TestMaxFilenameLen:
         assert status == Status.Error
         assert "concurrent.bin" in err
         assert "12-character" in err
-        assert "sprout" in err
+        assert "zephyr37_fat" in err
         # The fake's store stays empty — the check fires before fs_write.
         assert fake.store == {}
 
@@ -782,7 +782,7 @@ class TestMaxFilenameLen:
     async def test_get_rejects_over_limit_basename(self, tmp_path):
         fake = FakeZephyrFs()
         xfer = ConsoleFileTransfer(
-            name="sprout",
+            name="zephyr37_fat",
             exec_cmd=fake.exec_cmd,
             filesystem=FatRamFileSystem(),
             max_filename_len=12,
@@ -797,7 +797,7 @@ class TestMaxFilenameLen:
         because the existing contract test uses ``contract.bin`` (12 chars)."""
         fake = FakeZephyrFs()
         xfer = ConsoleFileTransfer(
-            name="sprout",
+            name="zephyr37_fat",
             exec_cmd=fake.exec_cmd,
             filesystem=FatRamFileSystem(),
             max_filename_len=12,
@@ -843,13 +843,13 @@ class TestMaxFilenameLen:
 class TestTftp:
     @pytest.mark.asyncio
     async def test_get_raises_not_implemented(self, tmp_path):
-        xfer = TftpFileTransfer(name="sprout")
+        xfer = TftpFileTransfer(name="zephyr37_fat")
         with pytest.raises(NotImplementedError):
             await xfer.get_files([RAM / "f"], tmp_path)
 
     @pytest.mark.asyncio
     async def test_put_raises_not_implemented(self, tmp_path):
-        xfer = TftpFileTransfer(name="sprout")
+        xfer = TftpFileTransfer(name="zephyr37_fat")
         src = tmp_path / "f"
         src.write_bytes(b"data")
         with pytest.raises(NotImplementedError):

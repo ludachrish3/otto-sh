@@ -6,10 +6,10 @@ dispatch path — repo discovery, lab loading, docker-stack bring-up, the
 runs exactly as the user runs it.
 
 Requirements:
-    vagrant up test1 test3   (carrot=test1, pepper=test3)
+    vagrant up test1 test3
     Both VMs must have docker installed and running.
 
-Each test leases one docker-capable host from {carrot, pepper} via the
+Each test leases one docker-capable host from {test1, test3} via the
 same fd-flock mechanism as the docker e2e tests.  The ``xdist_group``
 keeps all subprocess-coverage tests in one worker so the SQLite coverage
 context table is only finalised once (avoids the "no such table: context"
@@ -26,9 +26,9 @@ from tests._fixtures._host_pool import lease_unix_host
 from tests.e2e._otto_subprocess import REPO1, assert_output_dir, run_otto
 
 # Docker container hosts require an SSH-based parent (DockerContainerHost
-# uses docker exec via the parent's SSH session).  tomato_seed defaults to
+# uses docker exec via the parent's SSH session).  test2 defaults to
 # telnet, so restrict the pool to SSH-first peers.
-_DOCKER_POOL = ("carrot", "pepper")
+_DOCKER_POOL = ("test1", "test3")
 
 pytestmark = [pytest.mark.integration, pytest.mark.xdist_group("run_exec_e2e")]
 
@@ -41,7 +41,7 @@ pytestmark = [pytest.mark.integration, pytest.mark.xdist_group("run_exec_e2e")]
 def _run_otto(
     *args: str,
     sut_dirs: Path = REPO1,
-    lab: str = "veggies",
+    lab: str = "unix",
     xdir: Path | None = None,
     compose_suffix: str | None = None,
     timeout: int = 180,
@@ -70,10 +70,10 @@ def _run_otto(
 
 @pytest.fixture
 def docker_host(tmp_path_factory) -> str:  # type: ignore[type-arg]
-    """Lease one SSH-capable docker host from the pool; yield its seed id."""
+    """Lease one SSH-capable docker host from the pool; yield its host id."""
     lock_dir = tmp_path_factory.getbasetemp().parent
     with lease_unix_host(lock_dir, _DOCKER_POOL) as element:
-        yield f"{element}_seed"
+        yield element
 
 
 @pytest.fixture

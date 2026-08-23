@@ -14,13 +14,13 @@ _LAB_FILES = sorted(_LAB_DATA.glob("*/lab.json"))
 
 _VALID_HOST = {
     "ip": "10.10.200.11",
-    "element": "carrot",
+    "element": "test1",
     "os_type": "unix",
     "creds": [{"login": "vagrant", "password": "vagrant"}],
 }
 
 _VALID_LINK = {
-    "endpoints": [{"host": "carrot"}, {"host": "tomato"}],
+    "endpoints": [{"host": "test1"}, {"host": "test2"}],
     "protocol": "udp",
 }
 

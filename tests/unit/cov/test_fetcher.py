@@ -147,8 +147,8 @@ class TestGcdaFetcher:
     @pytest.mark.asyncio
     async def test_pattern_filters_hosts(self, tmp_path, fake_config_module):
         """A regex pattern scopes the fetcher to matching hosts only."""
-        host1 = _make_mock_host("carrot_seed")
-        host2 = _make_mock_host("tomato_seed")
+        host1 = _make_mock_host("test1")
+        host2 = _make_mock_host("test2")
         for h in [host1, host2]:
             h.exec.return_value = CommandResult(
                 Status.Success, value="/var/cov/file.gcda\n", command="find ...", retcode=0
@@ -156,9 +156,9 @@ class TestGcdaFetcher:
             h.get.return_value = Result(Status.Success, value={})
         fake_config_module(host1, host2)
 
-        # `carrot` alone selects nothing now — host ids are FULLMATCHED (D6).
-        fetcher = GcdaFetcher(tmp_path / "staging", pattern=re.compile(r"carrot.*"))
+        # `test1` alone selects nothing now — host ids are FULLMATCHED (D6).
+        fetcher = GcdaFetcher(tmp_path / "staging", pattern=re.compile(r"test1.*"))
         result = await fetcher.fetch_all("/var/cov")
 
-        assert set(result.keys()) == {"carrot_seed"}
+        assert set(result.keys()) == {"test1"}
         host2.exec.assert_not_called()

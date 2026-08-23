@@ -1,15 +1,15 @@
 """Connection-drop chaos: blackhole the SSH port mid-command with otto's own
-port-scoped netem, on the carrot->tomato eth2 data-plane hop (mgmt path is
+port-scoped netem, on the test1->test2 eth2 data-plane hop (mgmt path is
 guard-protected and must stay up). Asserts otto surfaces the drop, tears down
-with no local orphan, and leaves no qdisc/timer behind on EITHER carrot or
-tomato after ``otto link repair``. Self-healing ``--expire`` backstop on
+with no local orphan, and leaves no qdisc/timer behind on EITHER test1 or
+test2 after ``otto link repair``. Self-healing ``--expire`` backstop on
 every impairment; teardown repairs unconditionally, in a ``finally``, even on
 assertion failure.
 
 THE BUSYBOX GUEST ARM BELOW DOES NOT INJECT A DROP -- it pins otto's refusal
 to inject one. The 2026-08-22 TAP move removed the old blocker exactly as
 that day's open item predicted: a guest's ``eth0`` now has a far end that
-lives on a lab host, ``carrot_seed:bbeth-1350 <-> bb1350_qemu:eth0`` IS
+lives on a lab host, ``test1:bbeth-1350 <-> bb1350_qemu:eth0`` IS
 declared in ``tech1/lab.json``, and there is finally something for ``otto
 link impair`` (whose only argument is a DECLARED LINK id -- there is no
 host-and-netdev verb, by design) to name. Measurement then found the next
@@ -18,7 +18,7 @@ blocker, which is not about naming at all.
 MEASURED ON THE LIVE BED, 2026-08-22, in this order:
 
 1. The qdisc takes on the TAP, and it BITES the guest. ``--delay 300`` on
-   ``carrot_seed/bbeth-1350`` moved carrot->guest ping RTT from 2.65ms to
+   ``test1/bbeth-1350`` moved test1->guest ping RTT from 2.65ms to
    302.5ms. A port-scoped ``--port 23 --proto tcp --loss 100`` built the
    full prio/netem/u32 tree on the TAP, left ICMP at 0.96ms (so the wire and
    the guest were both fine, and only telnet was blackholed), and made
@@ -31,16 +31,16 @@ MEASURED ON THE LIVE BED, 2026-08-22, in this order:
 
 2. And otto REFUSES to place any of it through the declared link, from
    either end, in the lab the guest lives in. Both refusals are correct, and
-   they are DIFFERENT refusals: carrot's ``bbeth-1350`` carries bb1350's
+   they are DIFFERENT refusals: test1's ``bbeth-1350`` carries bb1350's
    management transit (``ensure_not_hop_transit``), and the guest's ``eth0``
    carries the guest's own management ip (``ensure_not_mgmt``). The property
    that made the link declarable is the same one that makes every impairment
    on it a self-lockout -- a guest with ONE NIC has no data plane distinct
-   from its management path. The veggies scenario below only works because
-   tomato still has a management eth1 to be reached on while its eth2 is
+   from its management path. The unix scenario below only works because
+   test2 still has a management eth1 to be reached on while its eth2 is
    blackholed; the guest has no eth1.
 
-The numbers in (1) were obtained by naming the link from ``-l veggies``, where
+The numbers in (1) were obtained by naming the link from ``-l unix``, where
 the guest was not a loaded host and the hop-transit guard therefore could not
 see the dependent it protects. THAT ROUTE NO LONGER EXISTS, and closing it was
 this arm's most useful product finding: ``impair`` now refuses a link whose
@@ -58,19 +58,19 @@ today: an override, or a guard that reasons about the SELECTOR rather than
 the netdev (a ``--port 9000`` blackhole leaves telnet/23 untouched and locks
 nobody out, yet is refused today, because the refusal is netdev-level). That
 one is untouched by the above -- it is about which impairments are safe to
-CREATE, not about undoing them. Until then this module injects on veggies
+CREATE, not about undoing them. Until then this module injects on unix
 only. The remaining way to sever a guest
 is to stop or reconfigure its QEMU process, which is a bed power operation,
 not a chaos injection. (``tc`` itself IS present on the guests -- measured.)
 
 Path A used (spec's "blackhole the SSH port"), not the SIGSTOP fallback.
-Feasibility was checked live BEFORE writing the impairing test: carrot and
-tomato share the ``192.168.1.0/24`` eth2 subnet directly (no VLAN/pepper
+Feasibility was checked live BEFORE writing the impairing test: test1 and
+test2 share the ``192.168.1.0/24`` eth2 subnet directly (no VLAN/test3
 routing needed, unlike ``tests/e2e/test_link_impair_e2e.py``'s mgmt-only
-bed), and a hop-routed ``otto host <target> run true`` (target = tomato
-reached via ``hop=carrot_seed``, with its PRIMARY address resolved to its
-eth2 ip) connected clean end to end. The declared ``carrot_seed:eth2 <->
-tomato_seed:eth2`` link is exactly the netdev that session rides, so
+bed), and a hop-routed ``otto host <target> run true`` (target = test2
+reached via ``hop=test1``, with its PRIMARY address resolved to its
+eth2 ip) connected clean end to end. The declared ``test1:eth2 <->
+test2:eth2`` link is exactly the netdev that session rides, so
 ``otto link impair <link> --port 22 --proto tcp --loss 100`` genuinely
 blackholes it.
 
@@ -108,7 +108,7 @@ from tests.e2e.chaos._bed import (
     busybox_probe_text,
     probe_text,
     run_probe,
-    veggies_link_id,
+    unix_link_id,
 )
 from tests.e2e.chaos._seed import offset_in
 from tests.integration.chaos._driver import spawn_otto
@@ -128,32 +128,32 @@ _RUN_TIMEOUT = 120.0
 _KEEPALIVE_INTERVAL = 2.0
 _KEEPALIVE_COUNT_MAX = 3
 _TAP_ADDR = "198.51.100.18"
-"""Carrot's end of bb1350's /30. Read back off the live host below rather than
+"""test1's end of bb1350's /30. Read back off the live host below rather than
 trusted: this address existing ON ``bbeth-1350`` is what makes the declared
 link a description of a real wire instead of a plausible sentence."""
 _IMPAIR_EXPIRE = 60
 
 
 def _make_hop_target(tmp_path) -> ChaosTarget:
-    """Build a tiny SUT whose ``tomato`` host is reached over eth2 via carrot.
+    """Build a tiny SUT whose ``test2`` host is reached over eth2 via test1.
 
     Mirrors ``tests/integration/chaos/_target.py::make_bed_target`` /
     ``tests/_fixtures/tunnel_bed.py::cli_sut_dir``'s shape, but this lab's
-    ``tomato`` entry resolves to its DATA-PLANE address instead of its
+    ``test2`` entry resolves to its DATA-PLANE address instead of its
     management ip: the real ``tech1`` lab (what ``make_bed_target``/
-    ``chaos_bed`` use) gives tomato ``ip=10.10.200.12`` (mgmt, directly
+    ``chaos_bed`` use) gives test2 ``ip=10.10.200.12`` (mgmt, directly
     reachable, never impaired) with ``eth2`` only as a secondary
     ``interfaces`` entry -- a hop through that record would still ride mgmt.
-    Here tomato's PRIMARY ``ip`` IS its eth2 address (192.168.1.12) and
-    ``hop: carrot_seed`` sends the session there via
-    ``RemoteHost._build_hop_transport``, which tunnels through carrot's own
+    Here test2's PRIMARY ``ip`` IS its eth2 address (192.168.1.12) and
+    ``hop: test1`` sends the session there via
+    ``RemoteHost._build_hop_transport``, which tunnels through test1's own
     (mgmt-reachable, never-impaired) SSH connection and opens a
-    ``direct-tcpip`` channel from carrot to 192.168.1.12:22 -- carrot's own
+    ``direct-tcpip`` channel from test1 to 192.168.1.12:22 -- test1's own
     kernel routes that over ITS eth2 interface (same ``192.168.1.0/24``
-    subnet as tomato's, confirmed reachable live), which is exactly the
+    subnet as test2's, confirmed reachable live), which is exactly the
     netdev ``otto link impair --port 22`` scopes on both ends.
 
-    ``keepalive_interval``/``keepalive_count_max`` are set on tomato's
+    ``keepalive_interval``/``keepalive_count_max`` are set on test2's
     ``ssh_options`` deliberately: a bare blackholed TCP connection can sit
     silent for the OS's own multi-minute retransmission ceiling before
     either kernel gives up, but asyncssh's SSH-level keepalive is a LOCAL
@@ -164,8 +164,8 @@ def _make_hop_target(tmp_path) -> ChaosTarget:
     backstop below, and the actual bound this test's "surfaces the drop"
     assertion relies on.
     """
-    carrot = host_data("carrot")
-    tomato = host_data("tomato")
+    test1 = host_data("test1")
+    test2 = host_data("test2")
     tech_dir = tmp_path / "hop_labdata" / "chaosdrop"
     tech_dir.mkdir(parents=True)
     (tech_dir / "lab.json").write_text(
@@ -173,28 +173,26 @@ def _make_hop_target(tmp_path) -> ChaosTarget:
             {
                 "hosts": [
                     {
-                        "ip": carrot["ip"],
-                        "element": "carrot",
+                        "ip": test1["ip"],
+                        "element": "test1",
                         "os_type": "unix",
-                        "board": "seed",
                         "valid_terms": ["ssh"],
                         "valid_transfers": ["scp", "sftp"],
                         "is_virtual": True,
-                        "creds": carrot["creds"],
-                        "resources": ["carrot"],
+                        "creds": test1["creds"],
+                        "resources": ["test1"],
                         "labs": ["chaosdrop"],
                     },
                     {
-                        "ip": tomato["interfaces"]["eth2"]["ip"],
-                        "element": "tomato",
+                        "ip": test2["interfaces"]["eth2"]["ip"],
+                        "element": "test2",
                         "os_type": "unix",
-                        "board": "seed",
                         "valid_terms": ["ssh"],
                         "valid_transfers": ["scp", "sftp"],
                         "is_virtual": True,
-                        "creds": tomato["creds"],
-                        "resources": ["tomato"],
-                        "hop": "carrot_seed",
+                        "creds": test2["creds"],
+                        "resources": ["test2"],
+                        "hop": "test1",
                         "ssh_options": {
                             "keepalive_interval": _KEEPALIVE_INTERVAL,
                             "keepalive_count_max": _KEEPALIVE_COUNT_MAX,
@@ -216,27 +214,27 @@ backend = "json"
 paths = ["{tech_dir}"]
 """,
     )
-    tomato_cred = tomato["creds"][0]
+    test2_cred = test2["creds"][0]
     return ChaosTarget(
         sut_dir=sut,
         lab="chaosdrop",
-        host_id="tomato_seed",
-        ssh_host=tomato["interfaces"]["eth2"]["ip"],
+        host_id="test2",
+        ssh_host=test2["interfaces"]["eth2"]["ip"],
         ssh_port=22,
-        ssh_username=tomato_cred["login"],
+        ssh_username=test2_cred["login"],
         ssh_client_key=None,
-        ssh_password=tomato_cred["password"],
+        ssh_password=test2_cred["password"],
     )
 
 
 @pytest.mark.no_hygiene_bracket  # eth2 is deliberately dirtied then repaired; brackets manually
 def test_ssh_blackhole_mid_command_is_survivable_and_repairs_clean(chaos_rng, tmp_path):
-    """otto blackholes tomato's SSH (port 22/tcp) on eth2 mid-command via a
+    """otto blackholes test2's SSH (port 22/tcp) on eth2 mid-command via a
     hop-routed session; asserts the run fails and ``otto link repair``
     restores an impairment-free eth2 on both endpoints.
 
-    This scenario is inherently two-host and hop-routed, so it pins carrot
-    (hop) + tomato (target) explicitly rather than using the leased
+    This scenario is inherently two-host and hop-routed, so it pins test1
+    (hop) + test2 (target) explicitly rather than using the leased
     ``chaos_bed`` element (which is arbitrary and not part of this pair),
     and brackets BedHygiene manually across both hosts instead of relying
     on the (single-host) autouse bracket.
@@ -246,17 +244,17 @@ def test_ssh_blackhole_mid_command_is_survivable_and_repairs_clean(chaos_rng, tm
     from tests._fixtures.bed_hygiene import diff_snapshots, format_hygiene_report, snapshot_host
     from tests.e2e.chaos._bed import probe_host
 
-    link_id = veggies_link_id()
-    veggies_target = make_bed_target("carrot")
+    link_id = unix_link_id()
+    unix_target = make_bed_target("test1")
 
     async def _snap(elem: str):
         async with probe_host(elem) as h:
             return await snapshot_host(h)
 
-    before = {e: asyncio.run(_snap(e)) for e in ("carrot", "tomato")}
+    before = {e: asyncio.run(_snap(e)) for e in ("test1", "test2")}
     p = None  # bound inside the try; finally must not assume it got there
     try:
-        # 1) Start a long command against tomato over the carrot hop on eth2.
+        # 1) Start a long command against test2 over the test1 hop on eth2.
         run_xdir = tmp_path / "run"
         run_xdir.mkdir()
         target = _make_hop_target(tmp_path)
@@ -289,7 +287,7 @@ def test_ssh_blackhole_mid_command_is_survivable_and_repairs_clean(chaos_rng, tm
                 str(_IMPAIR_EXPIRE),
             ],
             xdir=impair_xdir,
-            target=veggies_target,
+            target=unix_target,
         )
         assert drop.wait(timeout=60.0) == 0, drop.stderr_text()
 
@@ -309,10 +307,10 @@ def test_ssh_blackhole_mid_command_is_survivable_and_repairs_clean(chaos_rng, tm
         #    even on assertion failure above.
         repair_xdir = tmp_path / "repair"
         repair_xdir.mkdir()
-        rep = spawn_otto(["link", "repair", link_id], xdir=repair_xdir, target=veggies_target)
+        rep = spawn_otto(["link", "repair", link_id], xdir=repair_xdir, target=unix_target)
         assert rep.wait(timeout=60.0) == 0, rep.stderr_text()
 
-        # Best-effort: the abandoned foreground `sleep 120` on tomato is not
+        # Best-effort: the abandoned foreground `sleep 120` on test2 is not
         # otto-tagged (BedHygiene's diff below can't see it) and would
         # otherwise only die on its own 120s ceiling or the connection's
         # eventual TCP-level recovery. Clear it explicitly; this probe rides
@@ -324,17 +322,17 @@ def test_ssh_blackhole_mid_command_is_survivable_and_repairs_clean(chaos_rng, tm
         # remote argv is exactly "sleep 120", never "otto-chaos-drop"; target
         # that instead of the (invisible) trailing comment.
         run_probe(
-            "tomato",
+            "test2",
             lambda h: h.exec(
                 f"pkill -f '{argv_pattern('sleep 120')}' || true", timeout=15, log=LogMode.QUIET
             ),
         )
 
-        after = {e: asyncio.run(_snap(e)) for e in ("carrot", "tomato")}
+        after = {e: asyncio.run(_snap(e)) for e in ("test1", "test2")}
         leftovers = []
-        for e in ("carrot", "tomato"):
+        for e in ("test1", "test2"):
             leftovers += [f"{e}: {x}" for x in diff_snapshots(before[e], after[e])]
-        assert not leftovers, format_hygiene_report("carrot+tomato", leftovers)
+        assert not leftovers, format_hygiene_report("test1+test2", leftovers)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -373,7 +371,7 @@ def _link_attempt(xdir, target, argv: list) -> _LinkAttempt:
 
 
 def _assert_tap_unimpaired(qdisc: str, why: str) -> None:
-    """Assert carrot's TAP carries no otto-placed qdisc.
+    """Assert test1's TAP carries no otto-placed qdisc.
 
     Both spellings are checked, because otto places two different trees: a
     whole-link impairment is a root ``netem``, and a port-scoped one is a root
@@ -382,11 +380,11 @@ def _assert_tap_unimpaired(qdisc: str, why: str) -> None:
     miss the whole-link shape entirely — and a clean TAP is ``fq_codel``, so
     neither word is background noise.
     """
-    assert "netem" not in qdisc, f"{why}: netem on carrot/{BUSYBOX_TAP_NETDEV}: {qdisc!r}"
-    assert "prio" not in qdisc, f"{why}: prio root on carrot/{BUSYBOX_TAP_NETDEV}: {qdisc!r}"
+    assert "netem" not in qdisc, f"{why}: netem on test1/{BUSYBOX_TAP_NETDEV}: {qdisc!r}"
+    assert "prio" not in qdisc, f"{why}: prio root on test1/{BUSYBOX_TAP_NETDEV}: {qdisc!r}"
 
 
-@pytest.mark.no_hygiene_bracket  # the guest is not the veggies host the autouse bracket leases
+@pytest.mark.no_hygiene_bracket  # the guest is not the unix host the autouse bracket leases
 def test_otto_refuses_to_blackhole_the_busybox_guests_only_wire(busybox_chaos_bed, tmp_path):
     """The guest arm: ``otto link impair`` refuses the guest's declared link
     from BOTH ends, with the two different self-lockout refusals, and places
@@ -408,8 +406,8 @@ def test_otto_refuses_to_blackhole_the_busybox_guests_only_wire(busybox_chaos_be
     attempts isolate one placement each, where ``rc != 0`` has exactly one
     possible author:
 
-    * ``--from carrot_seed`` can only land on ``bbeth-1350``, which is NOT
-      carrot's management interface (asserted below off carrot's live address
+    * ``--from test1`` can only land on ``bbeth-1350``, which is NOT
+      test1's management interface (asserted below off test1's live address
       table, so the claim is measured rather than remembered). Nothing but
       ``ensure_not_hop_transit`` can stop it -- it is the TAP's /30 carrying
       the guest's management transit -- and with that guard neutered this
@@ -435,29 +433,29 @@ def test_otto_refuses_to_blackhole_the_busybox_guests_only_wire(busybox_chaos_be
     """
     link_id = busybox_link_id()  # resolved by otto's own loader, not spelled here
     target = busybox_chaos_bed.target
-    carrot_mgmt = host_data("carrot")["ip"]
+    test1_mgmt = host_data("test1")["ip"]
     scope = ["--port", "23", "--proto", "tcp", "--loss", "100", "--expire", "60"]
 
     def tap_qdisc() -> str:
-        return probe_text("carrot", f"tc qdisc show dev {BUSYBOX_TAP_NETDEV}")
+        return probe_text("test1", f"tc qdisc show dev {BUSYBOX_TAP_NETDEV}")
 
-    # 0) The wire is real, and the TAP is not carrot's management interface.
+    # 0) The wire is real, and the TAP is not test1's management interface.
     #    Both are read off the live host: they are the premises that decide
     #    which refusal each end owes, and a stale premise would let a wrong
     #    refusal read as the right one.
-    addrs = parse_ip_addr(probe_text("carrot", "ip -o addr show"))
+    addrs = parse_ip_addr(probe_text("test1", "ip -o addr show"))
     assert _TAP_ADDR in {str(a.ip) for a in addrs.get(BUSYBOX_TAP_NETDEV, [])}, (
-        f"carrot has no {_TAP_ADDR} on {BUSYBOX_TAP_NETDEV} -- the declared link "
+        f"test1 has no {_TAP_ADDR} on {BUSYBOX_TAP_NETDEV} -- the declared link "
         f"describes a wire the bed does not have: {sorted(addrs)}"
     )
-    mgmt_netdevs = {n for n, ifs in addrs.items() if any(str(a.ip) == carrot_mgmt for a in ifs)}
+    mgmt_netdevs = {n for n, ifs in addrs.items() if any(str(a.ip) == test1_mgmt for a in ifs)}
     assert mgmt_netdevs, (
-        f"carrot's management ip {carrot_mgmt} is on none of its netdevs {sorted(addrs)} -- "
+        f"test1's management ip {test1_mgmt} is on none of its netdevs {sorted(addrs)} -- "
         f"the management guard cannot match anywhere, so 'it did not fire here' below "
         f"would be vacuous"
     )
     assert BUSYBOX_TAP_NETDEV not in mgmt_netdevs, (
-        f"carrot's management ip {carrot_mgmt} sits on {sorted(mgmt_netdevs)} -- the "
+        f"test1's management ip {test1_mgmt} sits on {sorted(mgmt_netdevs)} -- the "
         f"self-lockout guard this arm attributes to hop transit would be the "
         f"MANAGEMENT guard instead, and the assertions below would be lying"
     )
@@ -467,7 +465,7 @@ def test_otto_refuses_to_blackhole_the_busybox_guests_only_wire(busybox_chaos_be
     )
 
     try:
-        # 1) THE ISOLATING ATTEMPT, and it goes first for that reason: carrot's
+        # 1) THE ISOLATING ATTEMPT, and it goes first for that reason: test1's
         #    TAP alone. One placement, on a netdev the management guard
         #    provably cannot match, so a non-zero exit here has exactly one
         #    author -- and a guard regression really does blackhole the guest
@@ -476,14 +474,14 @@ def test_otto_refuses_to_blackhole_the_busybox_guests_only_wire(busybox_chaos_be
         tap = _link_attempt(
             tmp_path / "tap",
             target,
-            ["link", "impair", link_id, "--from", "carrot_seed", *scope],
+            ["link", "impair", link_id, "--from", "test1", *scope],
         )
         assert tap.rc != 0, (
             f"otto BLACKHOLED the bed's only path to {BUSYBOX_CHAOS_HOST_ID} -- the "
             f"hop-transit guard is the only thing standing between this command and "
-            f"a live impairment on carrot/{BUSYBOX_TAP_NETDEV}:\n{tap.diag}"
+            f"a live impairment on test1/{BUSYBOX_TAP_NETDEV}:\n{tap.diag}"
         )
-        assert f"refusing to impair '{BUSYBOX_TAP_NETDEV}' on 'carrot_seed'" in tap.out, tap.diag
+        assert f"refusing to impair '{BUSYBOX_TAP_NETDEV}' on 'test1'" in tap.out, tap.diag
         assert "hop transit; self-lockout" in tap.out, tap.diag
 
         # 2) Both directions -- what a user actually types. Refused twice over
@@ -492,7 +490,7 @@ def test_otto_refuses_to_blackhole_the_busybox_guests_only_wire(busybox_chaos_be
         assert both.rc != 0, (
             f"otto IMPAIRED the guest's only wire instead of refusing:\n{both.diag}"
         )
-        assert f"refusing to impair '{BUSYBOX_TAP_NETDEV}' on 'carrot_seed'" in both.out, both.diag
+        assert f"refusing to impair '{BUSYBOX_TAP_NETDEV}' on 'test1'" in both.out, both.diag
         assert f"it carries the management path to '{BUSYBOX_CHAOS_HOST_ID}'" in both.out, both.diag
         assert "hop transit; self-lockout" in both.out, both.diag
 

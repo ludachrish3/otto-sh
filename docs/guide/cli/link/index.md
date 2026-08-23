@@ -64,7 +64,7 @@ otto link list
 
 ## Previewing: `--dry-run`
 
-`--dry-run` (`-n`) is a **global** option — `otto -n --lab veggies link impair
+`--dry-run` (`-n`) is a **global** option — `otto -n --lab unix link impair
 edge --delay 50ms`. **A dry run contacts no device at all**, not even for the
 read-only commands. So every answer it gives comes from lab data and the
 options you typed, and it says plainly what it could not check.
@@ -74,10 +74,10 @@ stopping at the CLI seam — see {doc}`../dry-run` for the contract every comman
 follows, what the opt-in buys, and `--probe`.
 
 ```console
-$ otto -n --lab veggies link impair edge --delay 50ms
+$ otto -n --lab unix link impair edge --delay 50ms
 dry run edge: no device was contacted — nothing was read and nothing was changed
-  would: a->b on carrot_seed/eth1.100: tc qdisc replace dev eth1.100 root netem delay 50ms
-  would: b->a on tomato_seed/eth1.200: tc qdisc replace dev eth1.200 root netem delay 50ms
+  would: a->b on test1/eth1.100: tc qdisc replace dev eth1.100 root netem delay 50ms
+  would: b->a on test2/eth1.200: tc qdisc replace dev eth1.200 root netem delay 50ms
   not checked: what is CURRENTLY applied to the netdev. A real run merges the given
     parameters over it per-param, so any command line above is the one a CLEAN netdev
     would get and nothing else …
@@ -122,9 +122,9 @@ a single placement — and therefore has no command line, no current state and n
 refusal to show for the link. It says so rather than guessing:
 
 ```console
-$ otto -n --lab veggies link impair dataplane --delay 50ms
+$ otto -n --lab unix link impair dataplane --delay 50ms
 dry run dataplane: no device was contacted — nothing was read and nothing was changed
-  not checked: every placement. 'pepper_seed' is this link's in-path middlebox, and which
+  not checked: every placement. 'test3' is this link's in-path middlebox, and which
     of its interfaces faces each endpoint is resolved by subnet-matching the middlebox's
     live `ip -o addr show`, which was not run …
 ```

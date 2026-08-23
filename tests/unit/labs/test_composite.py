@@ -33,34 +33,34 @@ def _composite(*labeled: tuple[str, dict]) -> CompositeLabRepository:
 
 def test_union_of_disjoint_sources() -> None:
     comp = _composite(
-        ("r/global", {"site": [_host("orange", "10.0.0.1")]}),
-        ("r/virtual", {"site": [_host("tomato", "10.0.0.2")]}),
+        ("r/global", {"site": [_host("alt1", "10.0.0.1")]}),
+        ("r/virtual", {"site": [_host("test2", "10.0.0.2")]}),
     )
     lab = comp.load_lab("site")
-    assert set(lab.hosts) == {"orange", "tomato"}
+    assert set(lab.hosts) == {"alt1", "test2"}
     assert lab.name == "site"
     assert lab.component_names == ["site"]
 
 
 def test_later_source_overrides_wholesale_and_warns(caplog) -> None:
     comp = _composite(
-        ("r/global", {"site": [_host("orange", "10.0.0.1", resources=["r-old"])]}),
-        ("r/virtual", {"site": [_host("orange", "10.9.9.9", resources=["r-new"])]}),
+        ("r/global", {"site": [_host("alt1", "10.0.0.1", resources=["r-old"])]}),
+        ("r/virtual", {"site": [_host("alt1", "10.9.9.9", resources=["r-new"])]}),
     )
     with caplog.at_level(logging.WARNING, logger="otto.labs.composite"):
         lab = comp.load_lab("site")
-    assert lab.hosts["orange"].ip == "10.9.9.9"
+    assert lab.hosts["alt1"].ip == "10.9.9.9"
     msgs = [r.getMessage() for r in caplog.records]
     assert any(
-        "'orange'" in m and "'site'" in m and "r/virtual" in m and "r/global" in m for m in msgs
+        "'alt1'" in m and "'site'" in m and "r/virtual" in m and "r/global" in m for m in msgs
     )
     assert any("overrides" in m for m in msgs)
 
 
 def test_no_warning_without_collision(caplog) -> None:
     comp = _composite(
-        ("r/global", {"site": [_host("orange", "10.0.0.1")]}),
-        ("r/virtual", {"site": [_host("tomato", "10.0.0.2")]}),
+        ("r/global", {"site": [_host("alt1", "10.0.0.1")]}),
+        ("r/virtual", {"site": [_host("test2", "10.0.0.2")]}),
     )
     with caplog.at_level(logging.WARNING, logger="otto.labs.composite"):
         comp.load_lab("site")
@@ -73,12 +73,12 @@ def test_resources_recomputed_not_unioned() -> None:
             "r/global",
             {
                 "site": [
-                    _host("orange", "10.0.0.1", resources=["r-old"]),
-                    _host("basil", "10.0.0.3", resources=["shared"]),
+                    _host("alt1", "10.0.0.1", resources=["r-old"]),
+                    _host("test4", "10.0.0.3", resources=["shared"]),
                 ]
             },
         ),
-        ("r/virtual", {"site": [_host("orange", "10.9.9.9", resources=["r-new"])]}),
+        ("r/virtual", {"site": [_host("alt1", "10.9.9.9", resources=["r-new"])]}),
     )
     lab = comp.load_lab("site")
     assert lab.resources == {"r-new", "shared"}  # r-old dropped with its record
@@ -99,20 +99,20 @@ def test_backend_level_extra_resources_survive() -> None:
             LabSource(label="r/db", repository=ExtraResourceSource()),
             LabSource(
                 label="r/virtual",
-                repository=ExampleLabRepository(labs={"site": [_host("orange", "10.0.0.1")]}),
+                repository=ExampleLabRepository(labs={"site": [_host("alt1", "10.0.0.1")]}),
             ),
         ]
     )
-    assert comp.load_lab("site").resources == {"site-license", "orange"}
+    assert comp.load_lab("site").resources == {"site-license", "alt1"}
 
 
 def test_lab_backlink_repaired_on_override() -> None:
     comp = _composite(
-        ("r/global", {"site": [_host("orange", "10.0.0.1")]}),
-        ("r/virtual", {"site": [_host("orange", "10.9.9.9")]}),
+        ("r/global", {"site": [_host("alt1", "10.0.0.1")]}),
+        ("r/virtual", {"site": [_host("alt1", "10.9.9.9")]}),
     )
     lab = comp.load_lab("site")
-    assert lab.hosts["orange"]._lab is lab
+    assert lab.hosts["alt1"]._lab is lab
 
 
 def test_links_merge_keyed_by_id_later_wins() -> None:
@@ -165,16 +165,16 @@ def test_preferences_forwarded_verbatim_to_every_source() -> None:
 
 def test_not_found_absorbed_when_any_source_knows() -> None:
     comp = _composite(
-        ("r/global", {"other": [_host("basil", "10.0.0.3")]}),
-        ("r/virtual", {"site": [_host("orange", "10.0.0.1")]}),
+        ("r/global", {"other": [_host("test4", "10.0.0.3")]}),
+        ("r/virtual", {"site": [_host("alt1", "10.0.0.1")]}),
     )
-    assert set(comp.load_lab("site").hosts) == {"orange"}
+    assert set(comp.load_lab("site").hosts) == {"alt1"}
 
 
 def test_all_miss_raises_naming_every_label() -> None:
     comp = _composite(
-        ("r/global", {"other": [_host("basil", "10.0.0.3")]}),
-        ("r/virtual", {"more": [_host("orange", "10.0.0.1")]}),
+        ("r/global", {"other": [_host("test4", "10.0.0.3")]}),
+        ("r/virtual", {"more": [_host("alt1", "10.0.0.1")]}),
     )
     with pytest.raises(LabNotFoundError, match=r"r/global.*r/virtual"):
         comp.load_lab("site")
@@ -192,7 +192,7 @@ def test_backend_error_propagates_not_absorbed() -> None:
 
     comp = CompositeLabRepository(
         [
-            LabSource("r/ok", ExampleLabRepository(labs={"site": [_host("orange", "10.0.0.1")]})),
+            LabSource("r/ok", ExampleLabRepository(labs={"site": [_host("alt1", "10.0.0.1")]})),
             LabSource("r/db", Broken()),
         ]
     )
@@ -211,8 +211,8 @@ def test_empty_composite() -> None:
 
 
 def test_summaries_union_later_wins_labs_unioned() -> None:
-    a = ExampleLabRepository(labs={"east": [_host("orange", "10.0.0.1")]})
-    b = ExampleLabRepository(labs={"west": [_host("orange", "10.9.9.9")]})
+    a = ExampleLabRepository(labs={"east": [_host("alt1", "10.0.0.1")]})
+    b = ExampleLabRepository(labs={"west": [_host("alt1", "10.9.9.9")]})
     comp = CompositeLabRepository([LabSource("r/a", a), LabSource("r/b", b)])
     (s,) = comp.list_host_summaries()
     assert s.ip == "10.9.9.9"  # later source wins the fields
@@ -235,8 +235,8 @@ def test_summaries_stay_silent_on_a_colliding_host_id(caplog) -> None:
     could not leave this passing vacuously.
     """
     comp = _composite(
-        ("r/global", {"site": [_host("orange", "10.0.0.1")]}),
-        ("r/virtual", {"site": [_host("orange", "10.9.9.9")]}),
+        ("r/global", {"site": [_host("alt1", "10.0.0.1")]}),
+        ("r/virtual", {"site": [_host("alt1", "10.9.9.9")]}),
     )
     with caplog.at_level(logging.WARNING, logger="otto.labs.composite"):
         summaries = comp.list_host_summaries()
@@ -255,26 +255,26 @@ def test_summaries_skip_broken_source() -> None:
     comp = CompositeLabRepository(
         [
             LabSource("r/db", Broken()),
-            LabSource("r/ok", ExampleLabRepository(labs={"site": [_host("orange", "10.0.0.1")]})),
+            LabSource("r/ok", ExampleLabRepository(labs={"site": [_host("alt1", "10.0.0.1")]})),
         ]
     )
-    assert [s.id for s in comp.list_host_summaries()] == ["orange"]
+    assert [s.id for s in comp.list_host_summaries()] == ["alt1"]
 
 
 def test_list_labs_sorted_union() -> None:
     comp = _composite(
-        ("r/a", {"zeta": [_host("orange", "10.0.0.1")], "alpha": [_host("basil", "10.0.0.3")]}),
-        ("r/b", {"alpha": [_host("tomato", "10.0.0.2")]}),
+        ("r/a", {"zeta": [_host("alt1", "10.0.0.1")], "alpha": [_host("test4", "10.0.0.3")]}),
+        ("r/b", {"alpha": [_host("test2", "10.0.0.2")]}),
     )
     assert comp.list_labs() == ["alpha", "zeta"]
 
 
 def test_composite_satisfies_full_conformance_contract() -> None:
     comp = _composite(
-        ("r/a", {"east": [_host("orange", "10.0.0.1")]}),
+        ("r/a", {"east": [_host("alt1", "10.0.0.1")]}),
         (
             "r/b",
-            {"west": [_host("tomato", "10.0.0.2")], "east": [_host("orange", "10.9.9.9")]},
+            {"west": [_host("test2", "10.0.0.2")], "east": [_host("alt1", "10.9.9.9")]},
         ),
     )
     assert_lab_repository_conforms(comp, expected_labs=["east", "west"])

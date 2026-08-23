@@ -10,7 +10,7 @@ this file covers the glue the unit tests cannot reach without a real
 terminal and a real shell.
 
 Prerequisites:
-    - Vagrant test VM ``carrot`` must be running (lab ``veggies``).
+    - Vagrant test VM ``test1`` must be running (lab ``unix``).
     - The same subprocess-coverage bootstrap used by ``test_coverage_e2e.py``.
 
 Running::
@@ -21,7 +21,7 @@ Running::
 Tests are split into two xdist groups — ``interact_e2e_ssh`` and
 ``interact_e2e_telnet`` — so pytest-xdist keeps the ssh and telnet
 parametrizations on separate workers. Both drive the *same* VM, so the
-pool lease (see :func:`leased_carrot`) is what actually keeps them from
+pool lease (see :func:`leased_test1`) is what actually keeps them from
 racing each other and the rest of the suite on it.
 """
 
@@ -41,11 +41,12 @@ from tests.e2e.host._pty_driver import InteractiveOttoSession
 REPO1_DIR = PROJECT_ROOT / "tests" / "repo1"
 
 # One source of truth: the element leased and the host driven can never drift.
-ELEMENT = "carrot"
-HOST_ID = f"{ELEMENT}_seed"
-# UnixHost._generate_name returns "{ne} {board}" — the banner and every
-# log preamble written by _SessionLogFile use this, NOT the host id.
-HOST_NAME = f"{ELEMENT} seed"
+ELEMENT = "test1"
+HOST_ID = ELEMENT
+# UnixHost._generate_name returns "{ne} [board]" — the banner and every
+# log preamble written by _SessionLogFile use this, NOT the host id. The
+# bed's Unix hosts carry no board, so the name is the bare element.
+HOST_NAME = ELEMENT
 ROUND_TRIP_TOKEN = "otto_login_marker"
 
 _LOG_LINE_RE = re.compile(
@@ -69,18 +70,18 @@ def _find_login_log_dir(xdir: Path) -> Path:
 def _login_argv(term: str) -> list[str]:
     # ``--term`` is an option on the ``otto host`` callback, so it must
     # appear before the positional ``host_id``.
-    return ["-l", "veggies", "host", "--term", term, HOST_ID, "login"]
+    return ["-l", "unix", "host", "--term", term, HOST_ID, "login"]
 
 
 @pytest.fixture(scope="class")
-def leased_carrot(tmp_path_factory) -> Iterator[str]:
-    """Hold the Unix-pool lease on carrot for the whole class.
+def leased_test1(tmp_path_factory) -> Iterator[str]:
+    """Hold the Unix-pool lease on test1 for the whole class.
 
     ``otto host <id> login`` is the *human-facing* bridge: it hands over a
     real interactive shell and deliberately does NOT neutralize ``HISTFILE``
     (a person's own login must keep recording their history). So every
     session this module opens appends what it types — ``echo
-    otto_login_marker``, up to three ``stty size`` probes — to carrot's
+    otto_login_marker``, up to three ``stty size`` probes — to test1's
     ``~/.bash_history``
     when bash flushes at exit.
 
@@ -94,8 +95,8 @@ def leased_carrot(tmp_path_factory) -> Iterator[str]:
 
     Leasing a *named* host rather than whichever is free — the
     single-candidate idiom ``tests/e2e/chaos/test_docker_chaos.py`` uses for
-    pepper — because ``HOST_ID`` and ``HOST_NAME`` are baked into the banner
-    and log-preamble assertions here. Blocks until carrot is free.
+    test3 — because ``HOST_ID`` and ``HOST_NAME`` are baked into the banner
+    and log-preamble assertions here. Blocks until test1 is free.
     """
     lock_dir = tmp_path_factory.getbasetemp().parent
     with lease_unix_host(lock_dir, [ELEMENT]) as element:
@@ -103,7 +104,7 @@ def leased_carrot(tmp_path_factory) -> Iterator[str]:
 
 
 @pytest.fixture(scope="class")
-def login_session(request, tmp_path_factory, leased_carrot):
+def login_session(request, tmp_path_factory, leased_test1):
     """Run one full ``otto host login`` round-trip and return the resulting log.
 
     Parametrized indirectly by the caller's ``term`` parameter. Returns a
@@ -204,7 +205,7 @@ def login_session(request, tmp_path_factory, leased_carrot):
     indirect=True,
 )
 class TestHostLoginSession:
-    """Drive ``otto host carrot_seed --term {term} login`` end-to-end.
+    """Drive ``otto host test1 --term {term} login`` end-to-end.
 
     Exercises the full :func:`otto.host.interact.run_ssh_login` and
     :func:`otto.host.interact.run_telnet_login` paths against a real
@@ -281,9 +282,9 @@ class TestHostLoginSigwinch:
     first probe can race the push landing.
     """
 
-    def test_resize_triggers_remote_side_update(self, tmp_path: Path, term: str, leased_carrot):
+    def test_resize_triggers_remote_side_update(self, tmp_path: Path, term: str, leased_test1):
         # Opens its own session rather than reusing `login_session`, so it has
-        # to take the same lease itself — see `leased_carrot` for why.
+        # to take the same lease itself — see `leased_test1` for why.
         xdir = tmp_path / "xdir"
         with InteractiveOttoSession(
             _login_argv(term),

@@ -37,7 +37,7 @@ class TestHasCovConfig:
         assert has_cov_config({"tiers": {"unit": {"kind": "unit"}}}) is True
 
     def test_hosts_is_true(self) -> None:
-        assert has_cov_config({"hosts": "sprout_cov"}) is True
+        assert has_cov_config({"hosts": "zephyr37-llext"}) is True
 
     def test_falsy_values_are_false(self) -> None:
         """An empty/falsy value under a known key still counts as unconfigured."""
@@ -67,7 +67,7 @@ class TestGetCovRepo:
         unconfigured = MagicMock()
         unconfigured.settings = {}
         configured = MagicMock()
-        configured.settings = {"coverage": {"hosts": "sprout_cov"}}
+        configured.settings = {"coverage": {"hosts": "zephyr37-llext"}}
         also_configured = MagicMock()
         also_configured.settings = {"coverage": {"hosts": "other"}}
         assert get_cov_repo([unconfigured, configured, also_configured]) is configured
@@ -92,7 +92,7 @@ class TestGetCovConfig:
         assert get_cov_config([repo]) == {}
 
     def test_returns_matching_repo_coverage_dict(self) -> None:
-        cov = {"gcda_remote_dir": "/remote", "hosts": "sprout_cov"}
+        cov = {"gcda_remote_dir": "/remote", "hosts": "zephyr37-llext"}
         repo = MagicMock()
         repo.settings = {"coverage": cov}
         assert get_cov_config([repo]) is cov

@@ -481,14 +481,15 @@ Vagrant.configure("2") do |config|
         provision_docker(dev, "dev")
     end
 
-    # Three interchangeable Unix test VMs — carrot / tomato / pepper. Identical
-    # provisioning (SSH + telnet + FTP via provision_test_vm, plus docker via
-    # provision_docker), so the test suite can lease whichever is free; only the
-    # name and private-network IP differ. Add a peer = one row here.
+    # Three interchangeable Unix test VMs — test1 / test2 / test3, named for the
+    # `unix` lab host ids they serve. Identical provisioning (SSH + telnet + FTP
+    # via provision_test_vm, plus docker via provision_docker), so the test suite
+    # can lease whichever is free; only the name and private-network IP differ.
+    # Add a peer = one row here.
     {
-        "test1" => "10.10.200.11",  # carrot
-        "test2" => "10.10.200.12",  # tomato
-        "test3" => "10.10.200.13",  # pepper
+        "test1" => "10.10.200.11",
+        "test2" => "10.10.200.12",
+        "test3" => "10.10.200.13",
     }.each do |name, ip|
         config.vm.define name, autostart: false do |node|
             node.vm.network "private_network", ip: ip
@@ -531,8 +532,8 @@ Vagrant.configure("2") do |config|
         zephyr.vm.network "private_network", ip: "10.10.200.14"
 
         # Data-plane NIC (eth2, 192.168.1.14), same wire as the test peers:
-        # basil is the embedded lab's member on the shared data plane, so
-        # inter-lab tunnels (e.g. veggies+embedded) can bind a basil endpoint
+        # test4 is the embedded lab's member on the shared data plane, so
+        # inter-lab tunnels (e.g. unix+embedded) can bind a test4 endpoint
         # there. Internal network — see the test-VM block's comment.
         zephyr.vm.network "private_network",
             ip: "192.168.1.14",
@@ -1141,12 +1142,12 @@ EOF
         # serial-telnet"). Two kinds share this provisioning because they share the
         # serial-telnet transport:
         #   * coverage bases — stock LLEXT shell_loader, one per LLEXT-capable
-        #     Zephyr version: `cov` (3.7) + `cov44` (4.4) = the `sprout_cov` /
-        #     `sprout_cov44` hosts in the `embedded` lab;
+        #     Zephyr version: `cov` (3.7) + `cov44` (4.4) = the `zephyr37_llext` /
+        #     `zephyr44_llext` hosts in the `embedded` lab;
         #   * `no_fs_arm` — stock shell_module, the one Cortex-M *contract* bed
         #     (see the 2026-06-06 scope decision in
         #     docs/superpowers/plans/2026-06-05-embedded-arm-bed-migration.md).
-        # otto reaches each via the basil SSH hop, then telnets its port. Unlike
+        # otto reaches each via the test4 SSH hop, then telnets its port. Unlike
         # the x86 net beds they need no TAP / /30 / SNMP relay — the serial bridge
         # carries the whole console. Adding an instance = one row in the
         # ARM_INSTANCES table (shared by the build + unit steps below); the row's
@@ -1236,7 +1237,7 @@ ARM_INSTANCES
             fi
 
             # QEMU bridges each guest's UART0 to a telnet listener. otto reaches
-            # it via the basil hop, then telnets <addr>:<port> (ports use 23xx
+            # it via the test4 hop, then telnets <addr>:<port> (ports use 23xx
             # because 23 is privileged + already taken). Each listen address lives
             # on this VM's loopback (added by ExecStartPre) so the hop's in-VM
             # telnet resolves it; nothing outside this VM needs the address.
@@ -1593,11 +1594,11 @@ EOF
     end
 
     # Install Docker engine + compose v2 so otto's docker container hosts can
-    # use this VM as their parent. All three Unix test VMs (carrot/tomato/pepper)
+    # use this VM as their parent. All three Unix test VMs (test1/test2/test3)
     # get docker, so the docker e2e suite can lease whichever is free and run
     # against its own daemon — spreading the docker chain off a single host.
     # A host advertises itself as a docker parent via `docker_capable: true` in
-    # tests/_fixtures/lab_data/tech1/lab.json (flipped on for carrot+tomato
+    # tests/_fixtures/lab_data/tech1/lab.json (flipped on for test1+test2
     # alongside the docker-e2e pooling test work).
     def provision_docker(vm, name)
         vm.vm.provision "shell", name: "#{name} docker", keep_color: true, inline: <<-SHELL

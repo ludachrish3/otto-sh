@@ -53,7 +53,7 @@ _MIN_SENT = max(100, 50 * SOAK_CYCLES)
 
 @pytest.mark.asyncio
 async def test_survivor_traffic_during_neighbor_churn(tunnel_lab, reap_tunnels) -> None:
-    tomato = tunnel_lab.hosts[EXIT]
+    test2 = tunnel_lab.hosts[EXIT]
     outfile = random_outfile()
     run_tag = uuid.uuid4().hex[:8]
 
@@ -65,8 +65,8 @@ async def test_survivor_traffic_during_neighbor_churn(tunnel_lab, reap_tunnels) 
     listen_budget = soak_timeout(per_cycle=90.0, base=120.0)
     script = stream_listener_script(PORT_SURVIVOR, outfile, timeout=listen_budget)
     cmd = f"setsid python3 -c {shlex.quote(script)} </dev/null >/dev/null 2>&1 &"
-    await tomato.exec(cmd, timeout=15, log=LogMode.QUIET)
-    await wait_for_udp_bound(tomato, "127.0.0.1", PORT_SURVIVOR)
+    await test2.exec(cmd, timeout=15, log=LogMode.QUIET)
+    await wait_for_udp_bound(test2, "127.0.0.1", PORT_SURVIVOR)
 
     sent: list[str] = []
     stop = asyncio.Event()
@@ -85,7 +85,7 @@ async def test_survivor_traffic_during_neighbor_churn(tunnel_lab, reap_tunnels) 
         # survivor's own removal, self-heals only on a second reap attempt).
         # A single reused socket keeps this a genuine one-peer session, as
         # the module's own "one long-lived tunnel" traffic model intends.
-        ip = resolved_ip("carrot")
+        ip = resolved_ip("test1")
         n = 0
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
             while not stop.is_set():
@@ -141,9 +141,9 @@ async def test_survivor_traffic_during_neighbor_churn(tunnel_lab, reap_tunnels) 
         final_probe = f"{run_tag}-final"
         received_text = ""
         for _attempt in range(5):
-            send_udp(resolved_ip("carrot"), PORT_SURVIVOR, final_probe.encode())
+            send_udp(resolved_ip("test1"), PORT_SURVIVOR, final_probe.encode())
             await asyncio.sleep(1.0)
-            result = await tomato.exec(
+            result = await test2.exec(
                 f"cat {shlex.quote(outfile)} 2>/dev/null || true", timeout=15, log=LogMode.QUIET
             )
             received_text = result.value or ""
@@ -152,7 +152,7 @@ async def test_survivor_traffic_during_neighbor_churn(tunnel_lab, reap_tunnels) 
         assert final_probe in received_text, "survivor tunnel dead after churn ended"
 
         for _ in range(5):  # STOP is UDP too; send it redundantly
-            send_udp(resolved_ip("carrot"), PORT_SURVIVOR, b"STOP")
+            send_udp(resolved_ip("test1"), PORT_SURVIVOR, b"STOP")
             await asyncio.sleep(0.2)
 
         received = {
@@ -168,7 +168,7 @@ async def test_survivor_traffic_during_neighbor_churn(tunnel_lab, reap_tunnels) 
             f"delivery ratio {ratio:.3f} < {_DELIVERY_FLOOR} ({len(received)}/{len(sent)})"
         )
     finally:
-        await remove_remote_file(tomato, outfile)
+        await remove_remote_file(test2, outfile)
 
     report = await remove_tunnel(tunnel_lab, survivor.tunnel.id)
     assert report.survivors == []

@@ -74,7 +74,7 @@ async def test_collect_one_host_lays_out_decoded_gcda_under_per_host_dir(tmp_pat
     """
     console = (FIXTURES / "cov_dump_console.txt").read_text()
     expected = (FIXTURES / "cov_ext.c.gcda").read_bytes()
-    host = _mock_embedded_host("sprout_cov", console)
+    host = _mock_embedded_host("zephyr37-llext", console)
 
     dest = await _collect_one_embedded_host(
         host,
@@ -82,7 +82,7 @@ async def test_collect_one_host_lays_out_decoded_gcda_under_per_host_dir(tmp_pat
         tmp_path,
     )
 
-    assert dest == tmp_path / "sprout_cov"
+    assert dest == tmp_path / "zephyr37-llext"
     assert (dest / "cov_ext.c.gcda").read_bytes() == expected
     host.exec.assert_awaited_once()
 
@@ -91,7 +91,7 @@ async def test_collect_one_host_lays_out_decoded_gcda_under_per_host_dir(tmp_pat
 async def test_collect_one_host_skips_non_embedded_hosts(tmp_path):
     """Unix/Docker hosts carry no console dumper — skip without touching them."""
     unix_host = MagicMock()  # not an EmbeddedHost
-    unix_host.id = "carrot"
+    unix_host.id = "test1"
     unix_host.exec = AsyncMock()
 
     dest = await _collect_one_embedded_host(
@@ -114,11 +114,11 @@ async def test_collect_all_stages_embedded_hosts_and_skips_others(
     GcdaFetcher.fetch_all.
     """
     embedded = _mock_embedded_host(
-        "sprout_cov",
+        "zephyr37-llext",
         (FIXTURES / "cov_dump_console.txt").read_text(),
     )
     unix = MagicMock()  # not an EmbeddedHost
-    unix.id = "carrot"
+    unix.id = "test1"
     unix.exec = AsyncMock()
     fake_config_module(embedded, unix)
 
@@ -128,9 +128,9 @@ async def test_collect_all_stages_embedded_hosts_and_skips_others(
     )
     result = await collector.collect_all()
 
-    assert set(result) == {"sprout_cov"}
+    assert set(result) == {"zephyr37-llext"}
     expected = (FIXTURES / "cov_ext.c.gcda").read_bytes()
-    assert (result["sprout_cov"] / "cov_ext.c.gcda").read_bytes() == expected
+    assert (result["zephyr37-llext"] / "cov_ext.c.gcda").read_bytes() == expected
     unix.exec.assert_not_awaited()
 
 
@@ -141,7 +141,7 @@ async def test_collect_embedded_coverage_drives_configured_extension(
 ):
     """The [coverage.embedded].extension config drives `llext call_fn <ext> cov_dump`."""
     embedded = _mock_embedded_host(
-        "sprout_cov",
+        "zephyr37-llext",
         (FIXTURES / "cov_dump_console.txt").read_text(),
     )
     fake_config_module(embedded)
@@ -149,7 +149,7 @@ async def test_collect_embedded_coverage_drives_configured_extension(
 
     result = await collect_embedded_coverage(cov_config, tmp_path / "cov")
 
-    assert set(result) == {"sprout_cov"}
+    assert set(result) == {"zephyr37-llext"}
     assert embedded.exec.await_args[0][0] == "llext call_fn cov_ext cov_dump"
 
 
@@ -173,11 +173,11 @@ async def test_collect_embedded_coverage_scopes_hosts_by_pattern(
     import re
 
     target = _mock_embedded_host(
-        "sprout_cov",
+        "zephyr37-llext",
         (FIXTURES / "cov_dump_console.txt").read_text(),
     )
     other = _mock_embedded_host(
-        "sprout_other",
+        "zephyr37-fat",
         (FIXTURES / "cov_dump_console.txt").read_text(),
     )
     fake_config_module(target, other)
@@ -186,8 +186,8 @@ async def test_collect_embedded_coverage_scopes_hosts_by_pattern(
     result = await collect_embedded_coverage(
         cov_config,
         tmp_path / "cov",
-        pattern=re.compile("sprout_cov"),
+        pattern=re.compile("zephyr37-llext"),
     )
 
-    assert set(result) == {"sprout_cov"}
+    assert set(result) == {"zephyr37-llext"}
     other.exec.assert_not_awaited()

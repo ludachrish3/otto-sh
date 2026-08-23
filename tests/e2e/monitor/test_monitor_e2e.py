@@ -6,7 +6,7 @@ live Vagrant Unix host, sends SIGINT, waits for a clean exit, then reads the
 SQLite DB to assert that metrics rows were persisted.
 
 Requirements:
-    vagrant up carrot (or tomato or pepper) — any one veggies-lab Unix host.
+    vagrant up test1 (or test2 or test3) — any one unix-lab Unix host.
 
 The test leases one host from the UNIX_POOL via the same fd-flock mechanism as
 the docker e2e and transfer e2e tests, so it distributes across the lab without
@@ -47,7 +47,7 @@ from tests.e2e._otto_subprocess import (
 
 pytestmark = [pytest.mark.integration, pytest.mark.xdist_group("monitor_e2e")]
 
-# The monitor polls shell metrics from Unix hosts (carrot/tomato/pepper all work).
+# The monitor polls shell metrics from Unix hosts (test1/test2/test3 all work).
 # We reuse the full UNIX_POOL since monitor doesn't need docker capability.
 _MONITOR_POOL = UNIX_POOL
 
@@ -60,7 +60,7 @@ _MONITOR_POOL = UNIX_POOL
 def _start_monitor(
     argv: list[str],
     *,
-    lab: str = "veggies",
+    lab: str = "unix",
     xdir: Path,
     sut_dirs: Path = REPO1,
     extra_env: dict[str, str] | None = None,
@@ -156,11 +156,11 @@ def _run_monitor_briefly(
     no wall-clock: SIGINT is sent as soon as the first tick's rows land, not
     after the interval elapses.
     """
-    # `--hosts` FULLY matches the host id, and callers lease an *element*
-    # ("carrot") whose id is "<element>_seed" — so the wildcard is what makes
-    # this select anything at all. A bare element now selects nothing and
-    # `otto monitor` refuses loudly, which reads as "the bed is down" when it
-    # is really "the selector is a full match".
+    # `--hosts` FULLY matches the host id. The bed's Unix hosts carry no
+    # board, so the id IS the leased element ("test1") — but the wildcard
+    # stays, because a full match is what the selector does and a bare
+    # substring would select nothing while `otto monitor` refused loudly,
+    # which reads as "the bed is down" when it is really the selector.
     proc = _start_monitor(
         [
             "--live",
@@ -258,8 +258,8 @@ def _run_monitor_briefly(
 def monitor_host(tmp_path_factory) -> str:  # type: ignore[type-arg]
     """Lease one Unix host from the pool for the monitor test's duration.
 
-    Yields the host's *element* name (e.g. ``"carrot"``).  ``otto monitor``
-    FULLY matches its ``--hosts`` regex against the host id (``carrot_seed``),
+    Yields the host's *element* name (e.g. ``"test1"``).  ``otto monitor``
+    FULLY matches its ``--hosts`` regex against the host id (``test1``),
     so the element alone selects nothing — :func:`_run_monitor_briefly` appends
     the ``.*`` that turns it back into the prefix this fixture means.
     """
@@ -284,7 +284,7 @@ def test_monitor_collects_and_persists(monitor_host: str, tmp_path: Path) -> Non
     5. Assert the ``metrics`` table has ≥1 row where the host matches the leased element.
     """
     db_path = tmp_path / "monitor.db"
-    element = monitor_host  # e.g. "carrot" — "carrot.*" fullmatches "carrot_seed"
+    element = monitor_host  # e.g. "test1" — "test1.*" fullmatches "test1"
 
     result = _run_monitor_briefly(element, db_path, extra_env=None)
 
@@ -321,7 +321,7 @@ def test_monitor_collects_and_persists(monitor_host: str, tmp_path: Path) -> Non
     )
 
     # Assert at least one row's host column contains the element name
-    # (e.g. "carrot_seed" contains "carrot").
+    # (e.g. "test1" contains "test1").
     matching = [r for r in all_rows if element in r[0]]
     assert matching, (
         f"No metrics row has host containing {element!r}.\n"
@@ -338,11 +338,13 @@ def _uptime_rows(db_path: Path, host: str) -> int:
 
     Matches ``host`` by substring rather than equality, mirroring
     ``test_monitor_collects_and_persists``'s own ``element in r[0]`` check:
-    the ``metrics.host`` column holds ``RemoteHost.name`` — the
-    auto-generated, space-joined *name* (e.g. ``"carrot seed"``), which is
-    neither the leased pool element (``"carrot"``) nor the underscore-joined
-    ``.id`` (``"carrot_seed"``) used to key parser registration — but all
-    three share the element as a substring.
+    the ``metrics.host`` column holds ``RemoteHost.name``. The bed's Unix
+    hosts declare no board, so that name, the leased pool element and the
+    ``.id`` that keys parser registration are all one string (``"test1"``).
+    The substring match is kept rather than tightened to equality because
+    ``name`` is a display label that composes in a board and a logical index
+    for any host that has them — a bed host that grows either must not
+    silently stop matching.
     """
     with contextlib.closing(sqlite3.connect(db_path)) as conn:
         return conn.execute(
@@ -359,13 +361,13 @@ def test_per_host_parser_scoping_via_init_module(monitor_host: str, tmp_path: Pa
     """
     # repo1_monitor_uptime.py's register_host_parsers() call keys on the exact
     # host *id* (otto/monitor/factory.py: get_host_parsers(host.id)), not the
-    # short pool element --hosts fullmatches (with a trailing wildcard). The tech1 lab fixture (see
-    # tests/_fixtures/lab_data/tech1/lab.json) gives every veggies-pool host
-    # board="seed", so RemoteHost._generate_id() composes "<element>_seed" —
-    # e.g. "carrot_seed" for the leased element "carrot" (verified against
-    # UnixHost directly; also assumed elsewhere, e.g.
+    # short pool element --hosts fullmatches (with a trailing wildcard). The
+    # tech1 lab fixture (see tests/_fixtures/lab_data/tech1/lab.json) gives
+    # every unix-pool host NO board, so RemoteHost._generate_id() composes
+    # the bare element — "test1" for the leased element "test1" (verified
+    # against UnixHost directly; also assumed elsewhere, e.g.
     # tests/e2e/config/test_completion_cache.py's host-id tuple).
-    host_id = f"{monitor_host}_seed"
+    host_id = monitor_host
 
     # Run 1: registration targets the leased host -> Uptime present.
     # Same Popen->ticks->SIGINT choreography as the existing test, but with the

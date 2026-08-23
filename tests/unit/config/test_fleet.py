@@ -24,11 +24,11 @@ from tests.conftest import host_data, make_host
 
 @pytest.fixture
 def three_hosts():
-    """Set up an OttoContext with three hosts: carrot_seed, tomato_seed, pepper_seed."""
+    """Set up an OttoContext with three hosts: test1, test2, test3."""
     hosts = {
-        "carrot_seed": make_host("carrot"),
-        "tomato_seed": make_host("tomato"),
-        "pepper_seed": make_host("pepper"),
+        "test1": make_host("test1"),
+        "test2": make_host("test2"),
+        "test3": make_host("test3"),
     }
     lab = Lab(name="test_lab")
     lab.hosts = hosts
@@ -62,7 +62,7 @@ class TestFleetExcludesBuiltinLocal:
 
     def test_all_hosts_excludes_local_by_default(self, three_hosts_plus_local):
         ids = {h.id for h in all_hosts()}
-        assert ids == {"carrot_seed", "tomato_seed", "pepper_seed"}
+        assert ids == {"test1", "test2", "test3"}
 
     def test_all_hosts_include_local_opt_in(self, three_hosts_plus_local):
         ids = {h.id for h in all_hosts(include_local=True)}
@@ -80,7 +80,7 @@ class TestFleetExcludesBuiltinLocal:
             return host.id
 
         results = await do_for_all_hosts(_id)
-        assert set(results) == {"carrot_seed", "tomato_seed", "pepper_seed"}
+        assert set(results) == {"test1", "test2", "test3"}
 
     def test_get_host_still_resolves_local(self, three_hosts_plus_local):
         assert get_host("local").id == "local"
@@ -94,17 +94,17 @@ class TestAllHosts:
 
     def test_pattern_matches_subset(self, three_hosts):
         """A pattern that fullmatches some host IDs filters correctly."""
-        pat = re.compile(r"tomato.*")
+        pat = re.compile(r"test2.*")
         result = list(all_hosts(pattern=pat))
         assert len(result) == 1
-        assert result[0].id == "tomato_seed"
+        assert result[0].id == "test2"
 
     def test_pattern_matches_multiple(self, three_hosts):
         """A pattern fullmatching multiple hosts returns all matches."""
-        pat = re.compile(r"(carrot|pepper).*")
+        pat = re.compile(r"(test1|test3).*")
         result = list(all_hosts(pattern=pat))
         ids = {h.id for h in result}
-        assert ids == {"carrot_seed", "pepper_seed"}
+        assert ids == {"test1", "test3"}
 
     def test_pattern_matching_no_host_raises_rather_than_yielding_nothing(self, three_hosts):
         """D6: a selection that would be empty fails loud, naming what to type instead."""
@@ -115,13 +115,13 @@ class TestAllHosts:
     def test_pattern_uses_fullmatch_not_search(self, three_hosts):
         """``pattern.fullmatch`` is used, so a partial match selects nothing (D6).
 
-        ``seed$`` matched all three under the old ``search`` semantics — that
-        is exactly the widening D6 removes — and ``.*seed`` is how the same
+        ``test`` matched all three under the old ``search`` semantics — that
+        is exactly the widening D6 removes — and ``test.*`` is how the same
         intent is written now.
         """
         with pytest.raises(EmptySelectionError):
-            list(all_hosts(pattern=re.compile(r"seed$")))
-        assert len(list(all_hosts(pattern=re.compile(r".*seed")))) == 3
+            list(all_hosts(pattern=re.compile(r"test")))
+        assert len(list(all_hosts(pattern=re.compile(r"test.*")))) == 3
 
 
 class TestSelectionHiddenByMembershipFlags:
@@ -165,8 +165,8 @@ class TestSelectionHiddenByMembershipFlags:
 
     def test_one_surviving_match_is_not_a_raise(self, three_hosts_plus_local):
         """A pattern that also matches a fleet host walks it — the flag hid only ``local``."""
-        ids = {h.id for h in all_hosts(pattern=re.compile(r"local|carrot_seed"))}
-        assert ids == {"carrot_seed"}
+        ids = {h.id for h in all_hosts(pattern=re.compile(r"local|test1"))}
+        assert ids == {"test1"}
 
     def test_pattern_matching_only_containers_raises_naming_include_containers(self, three_hosts):
         from otto.context import get_context
@@ -175,7 +175,7 @@ class TestSelectionHiddenByMembershipFlags:
         lab = get_context().lab
         lab.add_host(
             DockerContainerHost(
-                parent=lab.hosts["carrot_seed"],
+                parent=lab.hosts["test1"],
                 container_id="cid-api",
                 project="r1",
                 service="api",
@@ -187,16 +187,14 @@ class TestSelectionHiddenByMembershipFlags:
             list(all_hosts(pattern=pat))
         assert excinfo.value.excluded_by == ["include_containers"]
         assert "include_containers=True" in str(excinfo.value)
-        assert {h.id for h in all_hosts(pattern=pat, include_containers=True)} == {
-            "carrot_seed.r1.api"
-        }
+        assert {h.id for h in all_hosts(pattern=pat, include_containers=True)} == {"test1.r1.api"}
 
 
 @pytest.fixture
 def mixed_lab():
-    """OttoContext containing one UnixHost (carrot_seed) and one EmbeddedHost (sprout)."""
-    unix = make_host("carrot")
-    embedded = create_host_from_dict(host_data("sprout"))
+    """OttoContext containing one UnixHost (test1) and one EmbeddedHost (zephyr37_fat)."""
+    unix = make_host("test1")
+    embedded = create_host_from_dict(host_data("zephyr37_fat"))
     hosts = {unix.id: unix, embedded.id: embedded}
     lab = Lab(name="mixed_lab")
     lab.hosts = hosts
@@ -225,9 +223,9 @@ class TestAllHostsMixed:
         override = SshOptions(port=2222)
         result = list(all_hosts(ssh_options=override))
         by_id = {h.id: h for h in result}
-        assert isinstance(by_id["carrot_seed"], UnixHost)
-        assert by_id["carrot_seed"].ssh_options is override
-        assert isinstance(by_id["sprout"], EmbeddedHost)
+        assert isinstance(by_id["test1"], UnixHost)
+        assert by_id["test1"].ssh_options is override
+        assert isinstance(by_id["zephyr37-fat"], EmbeddedHost)
         # No mutation, no crash — embedded host is yielded as-is.
 
     def test_telnet_options_override_applied_to_both(self, mixed_lab):
@@ -248,10 +246,10 @@ async def _echo_id(host) -> str:
     return host.id
 
 
-async def _raise_for_tomato(host) -> str:
-    """Raises for the tomato host, returns ID otherwise."""
-    if "tomato" in host.id:
-        raise RuntimeError("tomato error")
+async def _raise_for_test2(host) -> str:
+    """Raises for the test2 host, returns ID otherwise."""
+    if "test2" in host.id:
+        raise RuntimeError("test2 error")
     return host.id
 
 
@@ -260,7 +258,7 @@ class TestDoForAllHosts:
     async def test_serial_calls_all(self, three_hosts):
         """Serial mode calls method on every host and returns a dict keyed by ID."""
         result = await do_for_all_hosts(_echo_id, concurrent=False)
-        assert set(result.keys()) == {"carrot_seed", "tomato_seed", "pepper_seed"}
+        assert set(result.keys()) == {"test1", "test2", "test3"}
         for host_id, value in result.items():
             assert value == host_id
 
@@ -268,32 +266,32 @@ class TestDoForAllHosts:
     async def test_concurrent_calls_all(self, three_hosts):
         """Concurrent mode returns the same results as serial."""
         result = await do_for_all_hosts(_echo_id, concurrent=True)
-        assert set(result.keys()) == {"carrot_seed", "tomato_seed", "pepper_seed"}
+        assert set(result.keys()) == {"test1", "test2", "test3"}
         for host_id, value in result.items():
             assert value == host_id
 
     @pytest.mark.asyncio
     async def test_pattern_filters_hosts(self, three_hosts):
         """Only fullmatching hosts are included in the result."""
-        pat = re.compile(r"carrot.*")
+        pat = re.compile(r"test1.*")
         result = await do_for_all_hosts(_echo_id, pattern=pat)
-        assert set(result.keys()) == {"carrot_seed"}
+        assert set(result.keys()) == {"test1"}
 
     @pytest.mark.asyncio
     async def test_serial_exception_captured(self, three_hosts):
         """In serial mode, a per-host exception is stored in the result."""
-        result = await do_for_all_hosts(_raise_for_tomato, concurrent=False)
-        assert isinstance(result["tomato_seed"], RuntimeError)
-        assert result["carrot_seed"] == "carrot_seed"
-        assert result["pepper_seed"] == "pepper_seed"
+        result = await do_for_all_hosts(_raise_for_test2, concurrent=False)
+        assert isinstance(result["test2"], RuntimeError)
+        assert result["test1"] == "test1"
+        assert result["test3"] == "test3"
 
     @pytest.mark.asyncio
     async def test_concurrent_exception_captured(self, three_hosts):
         """In concurrent mode, a per-host exception is stored in the result."""
-        result = await do_for_all_hosts(_raise_for_tomato, concurrent=True)
-        assert isinstance(result["tomato_seed"], RuntimeError)
-        assert result["carrot_seed"] == "carrot_seed"
-        assert result["pepper_seed"] == "pepper_seed"
+        result = await do_for_all_hosts(_raise_for_test2, concurrent=True)
+        assert isinstance(result["test2"], RuntimeError)
+        assert result["test1"] == "test1"
+        assert result["test3"] == "test3"
 
     @pytest.mark.asyncio
     async def test_args_and_kwargs_forwarded(self, three_hosts):
@@ -326,7 +324,7 @@ class TestRunOnAllHosts:
         ):
             result = await run_on_all_hosts("ls", concurrent=False)
 
-        assert set(result.keys()) == {"carrot_seed", "tomato_seed", "pepper_seed"}
+        assert set(result.keys()) == {"test1", "test2", "test3"}
         for value in result.values():
             assert value == expected
 
@@ -343,7 +341,7 @@ class TestRunOnAllHosts:
         ):
             result = await run_on_all_hosts("ls", concurrent=True)
 
-        assert set(result.keys()) == {"carrot_seed", "tomato_seed", "pepper_seed"}
+        assert set(result.keys()) == {"test1", "test2", "test3"}
         for value in result.values():
             assert value == expected
 
@@ -360,11 +358,11 @@ class TestRunOnAllHosts:
         ):
             result = await run_on_all_hosts(
                 "ls",
-                pattern=re.compile(r"pepper.*"),
+                pattern=re.compile(r"test3.*"),
                 concurrent=False,
             )
 
-        assert set(result.keys()) == {"pepper_seed"}
+        assert set(result.keys()) == {"test3"}
 
 
 class TestPerCallOptionOverrides:
@@ -379,16 +377,16 @@ class TestPerCallOptionOverrides:
 
     def test_get_host_no_overrides_preserves_identity(self, three_hosts):
         """Without overrides, get_host returns the stored instance."""
-        a = get_host("carrot_seed")
-        b = get_host("carrot_seed")
+        a = get_host("test1")
+        b = get_host("test1")
         assert a is b
-        assert a is three_hosts["carrot_seed"]
+        assert a is three_hosts["test1"]
 
     def test_get_host_with_override_returns_copy(self, three_hosts):
         """With an override, get_host returns a fresh UnixHost copy."""
-        original = three_hosts["carrot_seed"]
+        original = three_hosts["test1"]
         override = SshOptions(port=9999, connect_timeout=5.0)
-        host = get_host("carrot_seed", ssh_options=override)
+        host = get_host("test1", ssh_options=override)
 
         assert host is not original
         assert host.ssh_options is override
@@ -408,9 +406,9 @@ class TestPerCallOptionOverrides:
         table. A copy that carried the stored host's resolver across would
         show the new field and still elevate by the old answer.
         """
-        original = three_hosts["carrot_seed"]
+        original = three_hosts["test1"]
         override = UserlandOptions(elevation="su")
-        host = get_host("carrot_seed", userland_options=override)
+        host = get_host("test1", userland_options=override)
 
         assert host is not original
         assert host.userland_options is override
@@ -419,11 +417,11 @@ class TestPerCallOptionOverrides:
 
     def test_override_does_not_mutate_stored_host(self, three_hosts):
         """Stored host's options remain untouched after an override call."""
-        original = three_hosts["carrot_seed"]
+        original = three_hosts["test1"]
         original_options = original.ssh_options
-        get_host("carrot_seed", ssh_options=SshOptions(port=12345))
+        get_host("test1", ssh_options=SshOptions(port=12345))
 
-        re_fetched = get_host("carrot_seed")
+        re_fetched = get_host("test1")
         assert re_fetched is original
         assert re_fetched.ssh_options is original_options
 
@@ -432,19 +430,19 @@ class TestPerCallOptionOverrides:
         ConnectionManager — proving options are wired in via construction
         rather than post-hoc field assignment.
         """
-        original = three_hosts["carrot_seed"]
+        original = three_hosts["test1"]
         override = SshOptions(port=9999)
-        host = get_host("carrot_seed", ssh_options=override)
+        host = get_host("test1", ssh_options=override)
 
         assert host._connections is not original._connections
 
     def test_multiple_protocol_overrides_in_one_call(self, three_hosts):
         """Each provided ``*_options=`` kwarg replaces only its own field."""
-        original = three_hosts["carrot_seed"]
+        original = three_hosts["test1"]
         ssh_override = SshOptions(port=7777)
         telnet_override = TelnetOptions(cols=300)
         host = get_host(
-            "carrot_seed",
+            "test1",
             ssh_options=ssh_override,
             telnet_options=telnet_override,
         )
@@ -477,27 +475,27 @@ class TestPerCallOptionOverrides:
 
     def test_get_host_term_override_returns_validated_copy(self, three_hosts):
         # telnet is in the default unix menu [ssh, telnet]
-        host = get_host("carrot_seed", term="telnet")
+        host = get_host("test1", term="telnet")
         assert host.term == "telnet"
         # the stored instance is untouched (insulation)
         from otto.config import get_lab
 
-        assert get_lab().hosts["carrot_seed"].term == "ssh"
+        assert get_lab().hosts["test1"].term == "ssh"
 
     def test_get_host_transfer_override_returns_validated_copy(self, three_hosts):
         # sftp is in the default unix menu [scp, sftp, ftp, nc]
-        host = get_host("carrot_seed", transfer="sftp")
+        host = get_host("test1", transfer="sftp")
         assert host.transfer == "sftp"
         from otto.config import get_lab
 
-        assert get_lab().hosts["carrot_seed"].transfer == "scp"
+        assert get_lab().hosts["test1"].transfer == "scp"
 
     def test_term_override_out_of_menu_raises(self, three_hosts):
         # 'bogus' is not in valid_terms -> __post_init__ validate_choice fails loud
         with pytest.raises(ValueError, match="term menu"):
-            get_host("carrot_seed", term="bogus")
+            get_host("test1", term="bogus")
 
     def test_term_override_rebuilds_connection_for_new_protocol(self, three_hosts):
-        host = get_host("carrot_seed", term="telnet")
+        host = get_host("test1", term="telnet")
         # the connection was rebuilt for the new active term
         assert host._connections.term == "telnet"

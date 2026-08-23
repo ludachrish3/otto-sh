@@ -80,7 +80,7 @@ def test_docker_compose_spec_builds_runtime():
             "composes": [
                 {
                     "path": "/repo/compose.yml",
-                    "default_host": "pepper_seed",
+                    "default_host": "test3",
                     "services": ["api", "worker"],
                 }
             ],
@@ -89,7 +89,7 @@ def test_docker_compose_spec_builds_runtime():
     rt = spec.to_runtime()
     assert isinstance(rt.composes[0], DockerCompose)
     assert rt.composes[0].path == Path("/repo/compose.yml")
-    assert rt.composes[0].default_host == "pepper_seed"
+    assert rt.composes[0].default_host == "test3"
     assert rt.composes[0].services == ("api", "worker")
 
 

@@ -151,34 +151,34 @@ def test_hosts_completer_live_scan_filters_by_selected_lab(tmp_path):
     """Cache miss + lab selected: only that lab's hosts (plus builtins) offered."""
     repo = _repo_with_hosts(
         tmp_path,
-        [dict(_A, labs=["veggies"]), dict(_B, labs=["fruits"]), dict(_C, labs=["fruits"])],
+        [dict(_A, labs=["unix"]), dict(_B, labs=["unix_alt"]), dict(_C, labs=["unix_alt"])],
     )
     with (
         patch("otto.config.get_completion_names", return_value=None),
         patch("otto.config.get_repos", return_value=[repo]),
         patch("otto.cli.tunnel.get_repos", return_value=[repo]),
     ):
-        result = _hosts_completer(_ctx_with_labs(["veggies"]), "")
-    assert result == ["a", "local"]  # b/c (fruits) excluded; builtin local kept
+        result = _hosts_completer(_ctx_with_labs(["unix"]), "")
+    assert result == ["a", "local"]  # b/c (unix_alt) excluded; builtin local kept
 
 
 def test_hosts_completer_cached_hosts_filtered_by_selected_lab():
     """Fast path: the completer reads the per-lab cache map, not flat hosts."""
     fake_cache = {
         "hosts": ["a", "b", "c"],
-        "hosts_by_lab": {"veggies": ["a"], "fruits": ["b", "c"]},
+        "hosts_by_lab": {"unix": ["a"], "unix_alt": ["b", "c"]},
     }
     with (
         patch("otto.config.get_completion_names", return_value=fake_cache),
         patch("otto.config.get_repos", return_value=[]),
         patch("otto.cli.tunnel.get_repos", return_value=[]),
     ):
-        result = _hosts_completer(_ctx_with_labs(["fruits"]), "")
+        result = _hosts_completer(_ctx_with_labs(["unix_alt"]), "")
     assert result == ["b", "c", "local"]
 
 
 def test_hosts_completer_no_lab_selected_keeps_full_fleet(tmp_path):
-    repo = _repo_with_hosts(tmp_path, [dict(_A, labs=["veggies"]), dict(_B, labs=["fruits"])])
+    repo = _repo_with_hosts(tmp_path, [dict(_A, labs=["unix"]), dict(_B, labs=["unix_alt"])])
     with (
         patch("otto.config.get_completion_names", return_value=None),
         patch("otto.config.get_repos", return_value=[repo]),
@@ -192,14 +192,14 @@ def test_hosts_completer_l2_narrowing_respects_lab_scope(tmp_path):
     """A /24 neighbor outside the selected lab must not be offered after a comma."""
     repo = _repo_with_hosts(
         tmp_path,
-        [dict(_A, labs=["veggies"]), dict(_B, labs=["fruits"])],  # a+b share 10.0.0.0/24
+        [dict(_A, labs=["unix"]), dict(_B, labs=["unix_alt"])],  # a+b share 10.0.0.0/24
     )
     with (
         patch("otto.config.get_completion_names", return_value=None),
         patch("otto.config.get_repos", return_value=[repo]),
         patch("otto.cli.tunnel.get_repos", return_value=[repo]),
     ):
-        result = _hosts_completer(_ctx_with_labs(["veggies"]), "a,")
+        result = _hosts_completer(_ctx_with_labs(["unix"]), "a,")
     assert result == ["a,local"]  # b is L2-reachable but in another lab
 
 
