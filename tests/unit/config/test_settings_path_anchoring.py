@@ -135,22 +135,22 @@ def test_docker_paths_anchor_to_repo_root(tmp_path, monkeypatch):
 def test_monitor_tls_home_convention_survives(tmp_path, monkeypatch):
     """``~`` is the opt-out: it must NOT be swallowed by repo anchoring."""
     home = tmp_path / "home"
-    (home / ".config" / "otto" / "tls").mkdir(parents=True)
+    (home / ".otto" / "tls").mkdir(parents=True)
     monkeypatch.setenv("HOME", str(home))
 
     sut = _write_repo(
         tmp_path / "repo",
         """
         [monitor]
-        tls_cert = "~/.config/otto/tls/cert.pem"
-        tls_key = "~/.config/otto/tls/key.pem"
+        tls_cert = "~/.otto/tls/cert.pem"
+        tls_key = "~/.otto/tls/key.pem"
         """,
     )
 
     repo = Repo(sut_dir=sut)
 
-    assert repo.monitor_settings.tls_cert == home / ".config" / "otto" / "tls" / "cert.pem"
-    assert repo.monitor_settings.tls_key == home / ".config" / "otto" / "tls" / "key.pem"
+    assert repo.monitor_settings.tls_cert == home / ".otto" / "tls" / "cert.pem"
+    assert repo.monitor_settings.tls_key == home / ".otto" / "tls" / "key.pem"
 
 
 def test_monitor_tls_relative_anchors_to_repo_root(tmp_path, monkeypatch):

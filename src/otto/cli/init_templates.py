@@ -131,8 +131,8 @@ paths = ["lab_data"]
 # --- [monitor] — dashboard TLS (optional); see the monitor guide -------------
 # tls_key without tls_cert is rejected; tls_cert alone is fine (bundled PEM).
 #[monitor]
-#tls_cert = "~/.config/otto/tls/monitor-cert.pem"
-#tls_key = "~/.config/otto/tls/monitor-key.pem"
+#tls_cert = "~/.otto/tls/monitor-cert.pem"
+#tls_key = "~/.otto/tls/monitor-key.pem"
 """
 
 EXAMPLE_HOST_ENTRY = {

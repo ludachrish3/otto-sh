@@ -49,7 +49,7 @@ def test_names_from_items_collapses_parametrizations():
 
 
 def test_collected_round_trip(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OTTO_XDIR", str(tmp_path))
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path))
     repos = [_fake_repo(tmp_path)]
 
     assert cc.read_collected_tests(repos) is None  # cold
@@ -59,7 +59,7 @@ def test_collected_round_trip(tmp_path: Path, monkeypatch):
 
 def test_collected_empty_list_is_a_valid_fresh_result(tmp_path: Path, monkeypatch):
     """An empty collection is a hit (``[]``), distinct from a miss (``None``)."""
-    monkeypatch.setenv("OTTO_XDIR", str(tmp_path))
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path))
     repos = [_fake_repo(tmp_path)]
     cc._record_collected_tests(repos, [])
     assert cc.read_collected_tests(repos) == []
@@ -67,14 +67,14 @@ def test_collected_empty_list_is_a_valid_fresh_result(tmp_path: Path, monkeypatc
 
 def test_failed_attempt_reads_as_miss(tmp_path: Path, monkeypatch):
     """A recorded failure (``names=None``) is a miss for the reader."""
-    monkeypatch.setenv("OTTO_XDIR", str(tmp_path))
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path))
     repos = [_fake_repo(tmp_path)]
     cc._record_collected_tests(repos, None)
     assert cc.read_collected_tests(repos) is None
 
 
 def test_collected_ttl_expiry(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OTTO_XDIR", str(tmp_path))
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path))
     repos = [_fake_repo(tmp_path)]
     cc._record_collected_tests(repos, ["test_a"])
 
@@ -87,7 +87,7 @@ def test_collected_ttl_expiry(tmp_path: Path, monkeypatch):
 
 
 def test_collected_schema_mismatch(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OTTO_XDIR", str(tmp_path))
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path))
     repos = [_fake_repo(tmp_path)]
     cc._record_collected_tests(repos, ["test_a"])
 
@@ -108,7 +108,7 @@ def test_collected_disabled_without_xdir(tmp_path: Path, monkeypatch):
 
 def test_warming_does_not_clobber_main_cache(tmp_path: Path, monkeypatch):
     """Recording collected names must leave the main fingerprint entry intact."""
-    monkeypatch.setenv("OTTO_XDIR", str(tmp_path))
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path))
     repos = [_fake_repo(tmp_path)]
 
     cc.write_cache(
@@ -144,7 +144,7 @@ def test_parse_dumped_names_rejects_missing_or_reversed_markers():
 
 
 def test_maybe_warm_records_and_returns(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OTTO_XDIR", str(tmp_path))
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path))
     repos = [_fake_repo(tmp_path)]
     monkeypatch.setattr(cc, "_run_collect_subprocess", lambda: ["test_dynamic"])
 
@@ -155,7 +155,7 @@ def test_maybe_warm_records_and_returns(tmp_path: Path, monkeypatch):
 
 
 def test_maybe_warm_respects_cooldown_after_failure(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OTTO_XDIR", str(tmp_path))
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path))
     repos = [_fake_repo(tmp_path)]
     cc._record_collected_tests(repos, None)  # a recent failed attempt
 
@@ -167,7 +167,7 @@ def test_maybe_warm_respects_cooldown_after_failure(tmp_path: Path, monkeypatch)
 
 
 def test_maybe_warm_stamps_cooldown_on_failure(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OTTO_XDIR", str(tmp_path))
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path))
     repos = [_fake_repo(tmp_path)]
     monkeypatch.setattr(cc, "_run_collect_subprocess", lambda: None)  # collection failed
 
@@ -179,7 +179,7 @@ def test_maybe_warm_stamps_cooldown_on_failure(tmp_path: Path, monkeypatch):
 
 
 def test_record_from_items_round_trip(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OTTO_XDIR", str(tmp_path))
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path))
     repos = [_fake_repo(tmp_path)]
     items = [
         SimpleNamespace(name="test_a[x]", cls_name=None),

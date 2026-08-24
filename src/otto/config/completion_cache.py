@@ -18,8 +18,11 @@ when the cache is valid, lets the caller skip the user code entirely.
 Cache location
 --------------
 
-``$OTTO_XDIR/.otto/completion_cache.json``. If ``OTTO_XDIR`` is not set,
-caching is disabled and completion always falls through to the slow path.
+``<workspace home>/completion_cache.json`` -- see :mod:`otto.config.home`.
+The workspace home is keyed by the normalized ``OTTO_SUT_DIRS`` set under
+``~/.otto`` (relocatable with ``OTTO_HOME``), so caching needs no ``OTTO_XDIR``
+and one workspace has exactly one cache however many directories otto is
+invoked from.
 
 Cache schema (version 9)
 ------------------------
@@ -288,21 +291,32 @@ def is_completion_mode() -> bool:
 
 
 def _cache_path() -> Path | None:
-    """Return the cache file path, or ``None`` when caching is disabled.
+    """Return the cache file path.
 
-    Caching requires ``OTTO_XDIR`` to be set. Without it we can't pick a
-    stable per-user location, so we skip caching entirely and fall back to
-    the slow path every time.
+    The workspace home (:mod:`otto.config.home`) is a stable per-user location
+    derived from the SUT-dir set alone, so this no longer depends on
+    ``OTTO_XDIR`` and no longer has a "caching disabled" case. That is a
+    behaviour change, not just a move: an operator who never set an xdir used
+    to get the slow path on every invocation, silently.
+
+    It also DEDUPLICATES. The cache's content was always a pure function of the
+    workspace -- :func:`compute_fingerprint` hashes each repo's settings and
+    init modules and nothing else -- so the xdir was a storage location, never
+    a semantic key, and invoking otto from N directories against the same repos
+    used to maintain N byte-identical caches.
+
+    The return type stays ``Path | None`` because callers and the remote cache
+    already branch on None; nothing produces None today.
+
+    The directory is NOT created here -- writers create it, so a read that
+    misses leaves nothing behind.
     """
     # Function-local import: this module is loaded early during config
-    # bootstrap, so defer the models import to call time. A fresh
-    # OttoEnvSettings() re-reads OTTO_XDIR each call (tests monkeypatch it).
-    from ..models.settings import OttoEnvSettings
+    # bootstrap, so defer the home import to call time (it reads a fresh
+    # OttoEnvSettings, which tests monkeypatch).
+    from .home import workspace_home
 
-    xdir = OttoEnvSettings().xdir  # Path | None ("" normalized to None)
-    if xdir is None:
-        return None
-    return xdir / ".otto" / CACHE_FILENAME
+    return workspace_home() / CACHE_FILENAME
 
 
 def clear_cache() -> bool:
@@ -795,6 +809,11 @@ def _atomic_write_json(cache_path: Path, obj: dict[str, Any]) -> None:
 
     A concurrent reader always sees either the old file or the complete new
     one, never a half-written mix.
+
+    The parent is created by the CALLERS (four sites in this module already do
+    it, and did before the cache moved to the workspace home), so this function
+    does not repeat it -- the tempfile below is opened with ``dir=`` set to
+    that parent and would fail loudly if it were missing.
     """
     with tempfile.NamedTemporaryFile(
         mode="w",

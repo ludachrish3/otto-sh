@@ -25,8 +25,8 @@ table to `.otto/settings.toml`:
 
 ```toml
 [monitor]
-tls_cert = "~/.config/otto/tls/monitor-cert.pem"
-tls_key  = "~/.config/otto/tls/monitor-key.pem"   # omit if the cert PEM bundles the key
+tls_cert = "~/.otto/tls/monitor-cert.pem"
+tls_key  = "~/.otto/tls/monitor-key.pem"   # omit if the cert PEM bundles the key
 ```
 
 `settings.toml` is committed and shared by the whole team, so `tls_cert` /
@@ -49,8 +49,8 @@ TLS needs three artifacts, and each one has a different owner and scope:
 | Artifact | Scope | Lives where | Committed? |
 | --- | --- | --- | --- |
 | **CA certificate + CA key** | Team-wide, created once by a team owner | CA key: restricted (owner's machine or secrets store). CA cert: distributed freely | CA cert may be committed (it's public); CA key **never** |
-| **Server (leaf) cert + key** | Per-machine — one per machine that runs `otto monitor`, because the SANs bind it to that machine's addresses | `~/.config/otto/tls/` on the server machine, key `chmod 600` | **Never** |
-| **`[monitor]` settings entry** | Per-repo, committed, shared by the team | `.otto/settings.toml` | Yes — which is why it points at the conventional `~/.config/otto/tls/` path, identical for every user |
+| **Server (leaf) cert + key** | Per-machine — one per machine that runs `otto monitor`, because the SANs bind it to that machine's addresses | `~/.otto/tls/` on the server machine, key `chmod 600` | **Never** |
+| **`[monitor]` settings entry** | Per-repo, committed, shared by the team | `.otto/settings.toml` | Yes — which is why it points at the conventional `~/.otto/tls/` path, identical for every user |
 
 Why not the other scopes:
 
@@ -104,9 +104,16 @@ rejects the cert outright.)
 **Step 4 — install where settings.toml points.**
 
 ```sh
-mkdir -p ~/.config/otto/tls
-mv monitor-cert.pem monitor-key.pem ~/.config/otto/tls/
-chmod 600 ~/.config/otto/tls/monitor-key.pem
+mkdir -p ~/.otto/tls
+mv monitor-cert.pem monitor-key.pem ~/.otto/tls/
+chmod 600 ~/.otto/tls/monitor-key.pem
+```
+
+```{warning}
+`~/.otto/tls/` is the one thing under `~/.otto` that otto cannot rebuild.  The
+workspace directories beside it hold derived state and are safe to delete (see
+[The workspace home](../index.md#the-workspace-home)); your leaf key is not.
+Deleting it means regenerating the cert, not a slower next run.
 ```
 
 A machine whose interface IPs change (DHCP without reservation) needs its

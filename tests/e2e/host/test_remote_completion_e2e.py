@@ -27,6 +27,7 @@ from pathlib import Path
 
 import pytest
 
+from otto.config.home import workspace_key
 from tests._fixtures._host_pool import UNIX_POOL as _UNIX_POOL
 from tests._fixtures._host_pool import lease_unix_host
 from tests._fixtures.sutrepo import make_sut_repo
@@ -129,8 +130,11 @@ def test_remote_completion_lists_live_host(monkeypatch, tmp_path: Path, unix_hos
     from otto.cli.remote_completion import remote_path_completer
 
     monkeypatch.setenv("OTTO_SUT_DIRS", str(REPO1))
-    monkeypatch.setenv("OTTO_XDIR", str(tmp_path))  # keep the sidecar out of the repo
-    cache_file = tmp_path / ".otto" / "remote_completion_cache.json"
+    # The sidecar cache lives in the WORKSPACE HOME now, keyed by OTTO_SUT_DIRS
+    # -- pinning OTTO_XDIR no longer relocates it, and without OTTO_HOME this
+    # test would read and write the developer's real ~/.otto.
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path / "otto-home"))
+    cache_file = tmp_path / "otto-home" / workspace_key([REPO1]) / "remote_completion_cache.json"
 
     nonce = f"otto-completion-{uuid.uuid4().hex[:8]}"
     remote_dir = f"/tmp/{nonce}"
@@ -284,7 +288,7 @@ def test_completion_without_reservation_is_empty(monkeypatch, tmp_path: Path) ->
     monkeypatch.setattr(rc, "_load_host", _forbidden)
 
     # --- refused: booked to another user ---
-    monkeypatch.setenv("OTTO_XDIR", str(tmp_path / "xdir_refused"))
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home_refused"))
     assert rc.remote_path_completer(_ctx("test1"), "/tmp/") == []
     assert touched == [], (
         "The reservation gate must refuse before the host is loaded — "
@@ -293,7 +297,7 @@ def test_completion_without_reservation_is_empty(monkeypatch, tmp_path: Path) ->
 
     # --- control: the same fixture, booked to the effective user, gets past the gate ---
     _write_reservations(repo, resolve_username(None).username)
-    monkeypatch.setenv("OTTO_XDIR", str(tmp_path / "xdir_allowed"))  # fresh reservation cache
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home_allowed"))  # fresh cache
     assert rc.remote_path_completer(_ctx("test1"), "/tmp/") == []  # _load_host raises
     assert touched == ["test1"], (
         "With the lab's resources booked to the effective user the gate must allow "

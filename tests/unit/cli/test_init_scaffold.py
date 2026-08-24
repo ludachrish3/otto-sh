@@ -44,8 +44,8 @@ def test_settings_scaffold_has_commented_monitor_tls_block(tmp_path: Path) -> No
     BY_NAME["settings"].scaffold(tmp_path, CFG)
     text = (tmp_path / ".otto" / "settings.toml").read_text()
     assert "#[monitor]" in text
-    assert '#tls_cert = "~/.config/otto/tls/monitor-cert.pem"' in text
-    assert '#tls_key = "~/.config/otto/tls/monitor-key.pem"' in text
+    assert '#tls_cert = "~/.otto/tls/monitor-cert.pem"' in text
+    assert '#tls_key = "~/.otto/tls/monitor-key.pem"' in text
 
 
 def test_settings_scaffold_has_commented_dependencies_block(tmp_path: Path) -> None:

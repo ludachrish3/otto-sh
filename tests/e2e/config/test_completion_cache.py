@@ -18,6 +18,7 @@ from pathlib import Path
 import pytest
 
 from otto.config.completion_cache import SCHEMA_VERSION
+from otto.config.home import workspace_key
 from tests.e2e._otto_subprocess import REPO1, REPO_E2E, assert_no_output_dir, run_otto
 
 pytestmark = [pytest.mark.hostless, pytest.mark.xdist_group("completion_cache")]
@@ -45,11 +46,27 @@ def _run_otto(
     if extra_env:
         env.update(extra_env)
 
+    # Pin the user-level home under the test's own tmp dir. The completion
+    # cache lives in the WORKSPACE HOME now, not the xdir, so without this
+    # every test here would read and write the developer's real ~/.otto.
+    if xdir is not None:
+        env.setdefault("OTTO_HOME", str(_home(xdir)))
     return run_otto(argv, xdir=xdir, sut_dirs=REPO1, extra_env=env)
 
 
+def _home(xdir: Path) -> Path:
+    """This test's private OTTO_HOME, kept beside its xdir."""
+    return xdir / "otto-home"
+
+
 def _cache_file(xdir: Path) -> Path:
-    return xdir / ".otto" / "completion_cache.json"
+    """Where the cache lands: the workspace home, keyed by the SUT-dir set.
+
+    Derived through ``workspace_key`` rather than spelled out, so this helper
+    cannot drift from the product's own keying -- which is the whole reason the
+    cache moved out of the xdir.
+    """
+    return _home(xdir) / workspace_key([REPO1]) / "completion_cache.json"
 
 
 def _read_cache(xdir: Path) -> dict:
@@ -81,7 +98,7 @@ def test_slow_path_seeds_cache(tmp_path: Path) -> None:
     # VMs are docker-capable (test1/test2 gained docker for the e2e pool).
     assert entry["docker_hosts"] == ["test1", "test2", "test3"]
     # `otto --help` is informational (it seeds the completion cache under
-    # xdir/.otto/, not an output dir) — no per-invocation run dir is created.
+    # the workspace home, not an output dir) — no per-invocation run dir is created.
     assert_no_output_dir(tmp_path)
 
 
@@ -242,11 +259,23 @@ def test_touching_test_file_invalidates_cache(tmp_path: Path) -> None:
         os.utime(tracked, ns=(st.st_atime_ns, st.st_mtime_ns))
 
 
-def test_no_xdir_disables_caching(tmp_path: Path) -> None:
-    """Without OTTO_XDIR, no cache file is written and the CLI still works."""
-    result = _run_otto(["--help"], xdir=None)
+def test_no_xdir_still_caches(tmp_path: Path) -> None:
+    """Without OTTO_XDIR the cache still works -- it lives in the workspace home.
+
+    THIS TEST PREVIOUSLY ASSERTED THE OPPOSITE, and the inversion is the point.
+    The cache used to be stored under the xdir, so ``_cache_path`` returned
+    None when no xdir was set and an operator who never set one had completion
+    caching silently disabled on every invocation -- paying the slow path
+    forever without being told. The workspace home is a stable per-user
+    location derived from ``OTTO_SUT_DIRS`` alone, so that case no longer
+    exists.
+    """
+    home = tmp_path / "otto-home"
+    result = _run_otto(["--help"], xdir=None, extra_env={"OTTO_HOME": str(home)})
     assert result.returncode == 0, result.stderr
-    assert not _cache_file(tmp_path).exists()
+    assert list(home.rglob("completion_cache.json")), (
+        f"no cache written under {home}; no-xdir must no longer disable caching"
+    )
 
 
 def test_fast_path_without_matching_cache_falls_through(tmp_path: Path) -> None:

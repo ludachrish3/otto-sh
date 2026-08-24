@@ -4,6 +4,14 @@ Otto discovers your project through a `.otto/settings.toml` file at the
 repository root.  This page explains every setting and what happens during
 project initialization.
 
+```{note}
+The `.otto` name is shared by three directories holding three different
+kinds of thing.  This page is about the **repo's** `.otto/` — source
+config, committed with the code.  The xdir holds run outputs, and
+`~/.otto` — otto's user-level home — holds derived state otto can rebuild.
+See [The workspace home](../cli/index.md#the-workspace-home).
+```
+
 ## The settings file
 
 Create `.otto/settings.toml` in your repo root:
@@ -39,9 +47,9 @@ remote `[coverage] gcda_remote_dir` are opaque to otto — they are handled
 by whatever consumes them, not by otto's settings layer.)
 
 ```toml
-tests    = ["tests"]                     # <repo>/tests
-libs     = ["../shared/pylib"]           # <repo>/../shared/pylib
-tls_cert = "~/.config/otto/tls/cert.pem" # [monitor] table: $HOME/.config/otto/tls/cert.pem
+tests    = ["tests"]                # <repo>/tests
+libs     = ["../shared/pylib"]      # <repo>/../shared/pylib
+tls_cert = "~/.otto/tls/cert.pem"   # [monitor] table: $HOME/.otto/tls/cert.pem
 ```
 
 This file is committed and shared by everyone working on the repo, so a

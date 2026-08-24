@@ -111,7 +111,7 @@ class MonitorSettings:
     """Per-repo monitor configuration parsed from `[monitor]` in `settings.toml`.
 
     ``tls_cert``/``tls_key`` point at a PEM certificate/key on the machine that
-    runs ``otto monitor`` (conventionally under ``~/.config/otto/tls/`` — the
+    runs ``otto monitor`` (conventionally under ``~/.otto/tls/`` — the
     committed settings value is shared team-wide, so it must not name a
     machine-local absolute path). ``tls_key`` may stay ``None`` when the cert
     PEM bundles the private key.

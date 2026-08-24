@@ -77,7 +77,7 @@ actually belongs to rather than collapsing them into one:
 | --- | --- | --- |
 | CA certificate + key | Team-wide, created once | A viewer trusts the CA once; every future leaf cert issued under it is covered with no re-distribution. |
 | Server (leaf) cert + key | Per-machine | SANs bind a leaf cert to one machine's addresses; a repo is cloned onto many machines with different IPs, so no single leaf cert could cover them all. |
-| `[monitor]` settings entry | Per-repo, committed | Shared team-wide, so it points at a conventional per-user path (`~/.config/otto/tls/…`) rather than a machine-specific one — identical text resolves differently per user, and the key itself never enters the repo. |
+| `[monitor]` settings entry | Per-repo, committed | Shared team-wide, so it points at a conventional per-user path (`~/.otto/tls/…`) rather than a machine-specific one — identical text resolves differently per user, and the key itself never enters the repo. |
 
 The alternative of per-user self-signed certificates (no CA) was rejected:
 every viewer would hit a browser trust interstitial on every origin, the

@@ -160,7 +160,7 @@ class MonitorSettingsSpec(OttoModel):
     TLS for the dashboard server. Paths follow the settings-wide convention
     (``RepoPath``): ``~``-expanded, then anchored to the repo root if still
     relative. The committed value is shared by the whole team, so it
-    conventionally points under ``~/.config/otto/tls/`` — identical text,
+    conventionally points under ``~/.otto/tls/`` — identical text,
     per-user resolution. ``tls_key`` without ``tls_cert`` is rejected;
     ``tls_cert`` alone is fine (bundled PEM).
     """
@@ -760,6 +760,7 @@ class OttoEnvSettings(BaseSettings):
     sut_dirs: Annotated[list[Path], NoDecode] = []
     lab: str | None = None
     xdir: Path | None = None
+    home: Path | None = None
     log_days: int = 30
     log_level: str = "INFO"
     log_rich: bool = False

@@ -240,7 +240,15 @@ def test_clear_removes_file(cache_file):
 
 
 def test_caching_disabled_is_inert(tmp_path, monkeypatch):
-    """With OTTO_XDIR unset (``_cache_path`` -> None) every entry point no-ops."""
+    """With ``_cache_path`` -> None every entry point no-ops.
+
+    DEFENSIVE, not reachable: the cache moved to the workspace home, which
+    is derived from ``OTTO_SUT_DIRS`` alone, so ``_cache_path`` no longer
+    has a "caching disabled" case and nothing in production returns None.
+    The None is forced here because the branch still exists and the callers
+    below still guard on it -- if that guard is ever removed, this is the
+    test that should be deleted with it rather than quietly left passing.
+    """
     monkeypatch.setattr("otto.config.completion_cache._cache_path", lambda: None)
     from otto.config import remote_completion_cache as rcc
 

@@ -31,7 +31,7 @@ from tests._fixtures.sutrepo import touch_settings
 
 def test_read_cache_returns_none_for_empty_repos(tmp_path: Path, monkeypatch) -> None:
     """Empty-repo fingerprints poison the cache if allowed; read must skip them."""
-    monkeypatch.setenv("OTTO_XDIR", str(tmp_path))
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path))
     # Write a plausible-looking cache entry keyed on the empty fingerprint.
     cache_file = cc._cache_path()
     assert cache_file is not None
@@ -117,7 +117,7 @@ def test_a_repo_double_without_lab_sources_reads_as_json(tmp_path: Path) -> None
 
 def test_read_cache_applies_the_short_ttl_to_a_custom_backend(tmp_path: Path, monkeypatch) -> None:
     """An entry inside the long TTL but past the short one is served or not, by backend."""
-    monkeypatch.setenv("OTTO_XDIR", str(tmp_path))
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path))
     json_repo = _ttl_repo(tmp_path)
     cache_file = cc._cache_path()
     assert cache_file is not None
@@ -340,7 +340,7 @@ def test_fingerprint_ignores_a_custom_source_with_no_files(tmp_path: Path) -> No
 
 def test_write_cache_skips_empty_repos(tmp_path: Path, monkeypatch) -> None:
     """Writing for empty repos must be a no-op — no file, no poisoned entry."""
-    monkeypatch.setenv("OTTO_XDIR", str(tmp_path))
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path))
     cc.write_cache([], instructions=[{"name": "x", "options": []}], suites=[], hosts=[])
     assert not cc._cache_path().exists()  # type: ignore[union-attr]
 
@@ -357,7 +357,7 @@ def test_read_cache_rejects_schema_mismatch(tmp_path: Path, monkeypatch) -> None
     fake_repo.libs = []
     fake_repo.tests = []
 
-    monkeypatch.setenv("OTTO_XDIR", str(tmp_path))
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path))
     cache_file = cc._cache_path()
     cache_file.parent.mkdir(parents=True, exist_ok=True)  # type: ignore[union-attr]
     cache_file.write_text(
@@ -408,7 +408,7 @@ def test_serialize_options_returns_none_on_unsupported() -> None:
 
 def test_clear_cache_returns_false_when_missing(tmp_path: Path, monkeypatch) -> None:
     """clear_cache reports False when there's nothing to remove."""
-    monkeypatch.setenv("OTTO_XDIR", str(tmp_path))
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path))
     assert cc.clear_cache() is False
 
 
@@ -557,7 +557,7 @@ class TestCollectCurrentCommands:
 
 def test_clear_cache_removes_existing(tmp_path: Path, monkeypatch) -> None:
     """clear_cache unlinks a present cache file and reports True."""
-    monkeypatch.setenv("OTTO_XDIR", str(tmp_path))
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path))
     path = cc._cache_path()
     assert path is not None
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -582,7 +582,7 @@ def test_write_read_cache_round_trips_backend_names(tmp_path: Path, monkeypatch)
 
     from otto.config import completion_cache as cc
 
-    monkeypatch.setenv("OTTO_XDIR", str(tmp_path))
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path))
     fake_repo = MagicMock()
     fake_repo.sut_dir = tmp_path / "sut"
     fake_repo.sut_dir.mkdir()
@@ -652,7 +652,7 @@ def test_serialize_options_annotated_without_option_returns_none() -> None:
 
 def test_cache_round_trips_third_party_commands(tmp_path: Path, monkeypatch) -> None:
     """collect_cli_commands surfaces third-party specs in the cache shape."""
-    monkeypatch.setenv("OTTO_XDIR", str(tmp_path))
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path))
     from otto.cli.registry import CLI_COMMANDS, register_cli_command
 
     register_cli_command("e2etool", typer.Typer(name="e2etool"), help="Tool.")
@@ -792,7 +792,7 @@ class TestCollectCliCommandChildren:
 
 def test_write_read_cache_round_trips_commands(tmp_path: Path, monkeypatch) -> None:
     """write_cache/read_cache carry the 'commands' key through a round trip."""
-    monkeypatch.setenv("OTTO_XDIR", str(tmp_path))
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path))
     fake_repo = MagicMock()
     fake_repo.sut_dir = tmp_path / "sut"
     fake_repo.sut_dir.mkdir()
@@ -815,7 +815,7 @@ def test_write_read_cache_round_trips_commands(tmp_path: Path, monkeypatch) -> N
 
 def test_read_cache_defaults_commands_to_empty_list(tmp_path: Path, monkeypatch) -> None:
     """A cache entry written without 'commands' reads back as an empty list."""
-    monkeypatch.setenv("OTTO_XDIR", str(tmp_path))
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path))
     fake_repo = MagicMock()
     fake_repo.sut_dir = tmp_path / "sut"
     fake_repo.sut_dir.mkdir()
@@ -832,7 +832,7 @@ def test_read_cache_defaults_commands_to_empty_list(tmp_path: Path, monkeypatch)
 
 def test_write_read_cache_round_trips_hosts_by_lab(tmp_path: Path, monkeypatch) -> None:
     """write_cache/read_cache carry the 'hosts_by_lab' map through a round trip."""
-    monkeypatch.setenv("OTTO_XDIR", str(tmp_path))
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path))
     fake_repo = MagicMock()
     fake_repo.sut_dir = tmp_path / "sut"
     fake_repo.sut_dir.mkdir()
@@ -855,7 +855,7 @@ def test_write_read_cache_round_trips_hosts_by_lab(tmp_path: Path, monkeypatch) 
 
 def test_read_cache_defaults_hosts_by_lab_to_empty_dict(tmp_path: Path, monkeypatch) -> None:
     """A cache entry written without 'hosts_by_lab' reads back as an empty dict."""
-    monkeypatch.setenv("OTTO_XDIR", str(tmp_path))
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path))
     fake_repo = MagicMock()
     fake_repo.sut_dir = tmp_path / "sut"
     fake_repo.sut_dir.mkdir()

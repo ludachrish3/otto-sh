@@ -635,14 +635,14 @@ class TestMonitorSettings:
                 "name": "r",
                 "version": "1.0.0",
                 "monitor": {
-                    "tls_cert": "~/.config/otto/tls/monitor-cert.pem",
-                    "tls_key": "~/.config/otto/tls/monitor-key.pem",
+                    "tls_cert": "~/.otto/tls/monitor-cert.pem",
+                    "tls_key": "~/.otto/tls/monitor-key.pem",
                 },
             }
         )
         runtime = model.monitor.to_runtime()
-        assert runtime.tls_cert == Path.home() / ".config/otto/tls/monitor-cert.pem"
-        assert runtime.tls_key == Path.home() / ".config/otto/tls/monitor-key.pem"
+        assert runtime.tls_cert == Path.home() / ".otto/tls/monitor-cert.pem"
+        assert runtime.tls_key == Path.home() / ".otto/tls/monitor-key.pem"
 
     def test_cert_without_key_is_allowed(self):
         """A single PEM may bundle cert+key — tls_key stays optional."""

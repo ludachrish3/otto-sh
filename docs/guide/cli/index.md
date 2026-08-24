@@ -85,8 +85,9 @@ otto --lab my_lab --show-lab       # full lab details (use -v for expanded outpu
 
 ## Environment variables
 
-Every environment variable below backs a global option; the flag always wins
-when both are present.
+Most environment variables below back a global option; where one does, the
+flag always wins when both are present.  `OTTO_SUT_DIRS` and `OTTO_HOME`
+have no flag.
 
 | Variable | Backs | Notes |
 | --- | --- | --- |
@@ -97,6 +98,7 @@ when both are present.
 | `OTTO_LOG_LEVEL` | `--log-level` | |
 | `OTTO_LOG_RICH` | `--rich-log-file` | |
 | `OTTO_SUT_DIRS` | *(no flag)* | Paths to the repo roots under test, separated by `,` or the OS path separator (`:` on Linux/macOS, `;` on Windows). Required when a development repo is under test |
+| `OTTO_HOME` | *(no flag)* | otto's user-level home; defaults to `~/.otto`.  Holds one workspace home per `OTTO_SUT_DIRS` set — see [The workspace home](#the-workspace-home) |
 
 ## Shell completion
 
@@ -105,8 +107,8 @@ otto-specific values a static shell script couldn't know: suite and
 instruction names, host ids and their per-class verbs, transfer/term
 backends, reservation usernames, and — multi-value lists included — `--lab`
 names (`+`-combined) and `--tests` names (comma-separated).  It is served
-from a per-repo cache so the process answering the keystroke never runs your
-init modules or test code.
+from a cache in [the workspace home](#the-workspace-home) so the process
+answering the keystroke never runs your init modules or test code.
 `--tests` completes by base name and layers a static source scan (the instant
 floor) with a pytest-collected set that also includes dynamically-generated
 tests; that set warms itself from any real `otto test --list-tests` run, or
@@ -156,8 +158,9 @@ for 45 seconds per host and directory, and the reservation answer for up to
 two minutes — less when a booking of yours starts or ends sooner, since
 crossing a window edge invalidates it immediately (see
 [Reservation windows](reservation/windows.md)).
-Both live in `.otto/remote_completion_cache.json`, beside the main completion
-cache, and `--clear-autocomplete-cache` deletes both files.
+Both live in `remote_completion_cache.json` in [the workspace
+home](#the-workspace-home), beside the main completion cache, and
+`--clear-autocomplete-cache` deletes both files.
 
 The cached reservation answer is read by tab completion and by nothing else —
 see {doc}`reservation/windows` for why, and for what a window-aware backend
@@ -188,6 +191,52 @@ Read-only commands create no directory: `otto cov`, `otto reservation`,
 such as `ls`, `exists`, `read-file`, `is-installed`, and `is-uninstalled`.
 Third-party commands control this with the `output_dir=` flag at
 registration — see {doc}`../../library/extending-cli`.
+
+## The workspace home
+
+Three directories carry the `.otto` name, and each holds exactly one kind of
+thing:
+
+- a repo's `.otto/` holds **source config** — `settings.toml`, coverage
+  overrides, the schemas `otto init` scaffolds.  Committed, shared by the team.
+- the xdir holds **run outputs** — the per-invocation directories above.
+- the **workspace home** holds everything otto derived and can rebuild.
+
+The third is otto's user-level home (`~/.otto`, relocatable wholesale with
+`OTTO_HOME`), sharded by *workspace* — the normalized `OTTO_SUT_DIRS` set — so
+one directory serves every invocation against the same repos, from wherever
+you run them:
+
+```text
+~/.otto/
+  <hash8>-<slug>/                   # the workspace home
+    completion_cache.json
+    remote_completion_cache.json
+  tls/                              # a convention, not derived state — see below
+```
+
+The `<hash8>` half of the key makes the name correct: two different workspaces
+cannot collide, even when their directories share basenames.  The `<slug>`
+half, built from those basenames, makes `ls ~/.otto` readable.
+
+Everything under a workspace home is derived, so the whole directory is
+disposable — delete it and otto rebuilds what it needs on the next run.
+`OTTO_HOME` moves all of it at once.
+
+`tls/` is the exception on both counts.  otto never creates it and never
+rebuilds it: it is the conventional per-user location a committed
+`[monitor]` table points its `tls_cert` / `tls_key` at (see
+{doc}`monitor/serving`).  Those settings spell the path `~/.otto/tls/`
+literally, so they follow `$HOME` — setting `OTTO_HOME` relocates otto's
+derived state and leaves them where they were.
+
+```{note}
+The completion caches used to live under `$OTTO_XDIR/.otto/`, one copy per
+directory you invoked otto from.  There is no migration, because a cache is
+rebuilt on demand: stale `$OTTO_XDIR/.otto/completion_cache.json` and
+`remote_completion_cache.json` files have no remaining reader and may be
+deleted by hand.
+```
 
 ## Exit codes
 
