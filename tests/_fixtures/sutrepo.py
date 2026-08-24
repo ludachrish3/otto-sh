@@ -16,6 +16,7 @@ module deliberately imports nothing from otto, so fixture import order can
 never entangle with product import-time behavior.
 """
 
+import shutil
 from pathlib import Path
 
 
@@ -74,3 +75,33 @@ def touch_settings(sut_dir: Path) -> Path:
     settings = otto_dir / "settings.toml"
     settings.write_text("")
     return settings
+
+
+_INSTALL_ARTIFACTS = ("*.egg-info", "*.dist-info", "__pycache__", "*.pyc")
+"""What an editable install and a run of the interpreter leave behind."""
+
+
+def copy_sample_repo(src: Path, dst: Path) -> Path:
+    """Copy the checked-in sample repo at *src* to *dst* and return *dst*.
+
+    FOR ANY TEST THAT INSTALLS A SAMPLE REPO.  ``pip install -e`` /
+    ``uv pip install -e`` writes an ``.egg-info`` into the directory it
+    installs, so pointing one at ``tests/repo4`` mutates the suite's own
+    corpus — and since otto puts each repo's declared ``libs`` on ``sys.path``,
+    that directory then reads as an INSTALLED DISTRIBUTION to
+    ``importlib.metadata``.  Anything asking metadata a question about the repo
+    (the dependency preflight does) then answers differently on a machine that
+    has run the install suite than on a clean clone, and ``.egg-info`` is
+    gitignored so ``git status`` shows nothing.
+    ``tests/unit/test_sample_repo_hygiene.py`` fails when it happens.
+
+    Artifacts are stripped on the way through: a copy that carried the previous
+    run's ``.egg-info`` would reproduce the bug inside ``tmp_path``, which is
+    harder to see, not easier.
+
+    ``copytree`` copies via ``copy2``, so MTIMES ARE PRESERVED — the env
+    staleness comparison reads the copy's ``pyproject.toml`` mtime and gets the
+    same answer it would from the original.
+    """
+    shutil.copytree(src, dst, ignore=shutil.ignore_patterns(*_INSTALL_ARTIFACTS))
+    return dst

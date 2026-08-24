@@ -9,26 +9,25 @@ say the refusal tracks the ENVIRONMENT rather than a hard-wired verdict:
 2. after ``otto env sync -- --find-links tests/_fixtures/wheels`` -> the SAME
    instruction, run from the environment that sync built, succeeds.
 
-repo4 is COPIED into tmp_path rather than used in place, for two reasons that
-both bit during development. Installing it editable writes an ``.egg-info``
-into ``tests/repo4/pylib/`` -- a test mutating the source tree -- and that
-directory then sits on ``sys.path`` (repo4 declares ``libs = ["pylib"]``),
-where ``importlib.metadata`` finds it and the preflight reads its
-``Requires-Dist`` instead of the pyproject. The requirement then renders
-normalized (``otto-fixture-beetroot>=0.1``) on a developer's machine and
-spaced (``otto-fixture-beetroot >= 0.1``) on a clean clone, so an assertion on
-the string would pass here and fail in CI, or the reverse.
+repo4 is COPIED into tmp_path rather than used in place -- see
+``tests._fixtures.sutrepo.copy_sample_repo`` for why, and
+``tests/unit/test_sample_repo_hygiene.py`` for the gate that catches a
+regression. The consequence HERE is that the requirement string is
+deterministic: read from the pyproject (spaced, ``otto-fixture-beetroot >=
+0.1``) rather than from a leftover ``.egg-info``'s ``Requires-Dist``
+(normalized, ``otto-fixture-beetroot>=0.1``), so the assertions below mean the
+same thing on a developer's machine and on a clean clone.
 
 ``OTTO_HOME`` is pinned at tmp_path throughout: without it these build into
 the developer's real ``~/.otto``.
 """
 
-import shutil
 import subprocess
 
 import pytest
 
 from tests._fixtures.paths import PROJECT_ROOT, WHEELS_DIR
+from tests._fixtures.sutrepo import copy_sample_repo
 from tests.e2e._otto_subprocess import OTTO_BIN, REPO1, otto_subprocess_env
 
 pytestmark = pytest.mark.hostless
@@ -54,8 +53,7 @@ def _repo4(tmp_path, *, eager: bool = False):
     *eager* moves ``repo4_lib`` -- the module that imports the dependency at
     module scope -- into ``init``, which is the shape bootstrap loads.
     """
-    dst = tmp_path / "repo4"
-    shutil.copytree(REPO4, dst, ignore=shutil.ignore_patterns("*.egg-info", "__pycache__"))
+    dst = copy_sample_repo(REPO4, tmp_path / "repo4")
     if eager:
         settings = dst / ".otto" / "settings.toml"
         eager_init = settings.read_text().replace("init = [", "init = [\n    'repo4_lib',")

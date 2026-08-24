@@ -20,6 +20,7 @@ import pytest
 
 from otto.config.home import workspace_key
 from tests._fixtures.paths import PROJECT_ROOT, WHEELS_DIR
+from tests._fixtures.sutrepo import copy_sample_repo
 from tests.e2e._otto_subprocess import REPO1, run_otto
 
 pytestmark = pytest.mark.hostless
@@ -71,9 +72,23 @@ def _the_env(home):
     return found[0] if found else None
 
 
+@pytest.fixture
+def repo4(tmp_path):
+    """A PRIVATE copy of repo4, because these tests install it editable.
+
+    Installing the checked-in tree would write an ``.egg-info`` into
+    ``tests/repo4/pylib/`` — which repo4 puts on ``sys.path`` via its ``libs``,
+    where ``importlib.metadata`` reads it as an installed distribution and the
+    dependency preflight answers differently than it would on a clean clone.
+    ``tests/unit/test_sample_repo_hygiene.py`` is the gate that catches a
+    regression here.
+    """
+    return copy_sample_repo(REPO4, tmp_path / "repo4")
+
+
 class TestCreate:
     @pytest.mark.parametrize("backend", BACKENDS)
-    def test_it_builds_an_env_holding_otto_and_the_installable_repo(self, tmp_path, backend):
+    def test_it_builds_an_env_holding_otto_and_the_installable_repo(self, tmp_path, backend, repo4):
         """repo4's dependency lives on no index, so the find-links is required.
 
         That is the fixture working as intended, not a workaround: repo4 exists
@@ -83,7 +98,7 @@ class TestCreate:
         result = _run(
             ["env", "create", "--backend", backend, "--", "--find-links", str(WHEELS_DIR)],
             home=home,
-            sut_dirs=f"{REPO1},{REPO4}",
+            sut_dirs=f"{REPO1},{repo4}",
             timeout=BUILD_TIMEOUT,
         )
         assert result.returncode == 0, result.stdout + result.stderr
@@ -157,7 +172,7 @@ class TestSync:
         assert (env / ".otto-env.json").is_file()
 
     @pytest.mark.parametrize("backend", BACKENDS)
-    def test_passthrough_after_a_double_dash_reaches_the_installer(self, tmp_path, backend):
+    def test_passthrough_after_a_double_dash_reaches_the_installer(self, tmp_path, backend, repo4):
         """The contrast IS the assertion: same command, only the passthrough differs.
 
         repo4 requires ``otto-fixture-beetroot``, which exists on no index (that
@@ -170,7 +185,7 @@ class TestSync:
         without = _run(
             ["env", "create", "--backend", backend],
             home=home,
-            sut_dirs=f"{REPO1},{REPO4}",
+            sut_dirs=f"{REPO1},{repo4}",
             timeout=BUILD_TIMEOUT,
         )
         assert without.returncode != 0, (
@@ -190,7 +205,7 @@ class TestSync:
                 str(WHEELS_DIR),
             ],
             home=home,
-            sut_dirs=f"{REPO1},{REPO4}",
+            sut_dirs=f"{REPO1},{repo4}",
             timeout=BUILD_TIMEOUT,
         )
         assert with_links.returncode == 0, with_links.stdout + with_links.stderr
@@ -243,7 +258,7 @@ class TestShow:
         assert "no environment for this workspace" in result.stdout
         assert "otto env create" in result.stdout
 
-    def test_it_reports_the_backend_the_version_and_each_repo(self, tmp_path):
+    def test_it_reports_the_backend_the_version_and_each_repo(self, tmp_path, repo4):
         """Both arms of the installed column, because one arm cannot fail.
 
         Asserting only that an installed repo reads "yes" passes just as well
@@ -255,12 +270,12 @@ class TestShow:
         built = _run(
             ["env", "create", "--backend", "uv", "--", "--find-links", str(WHEELS_DIR)],
             home=home,
-            sut_dirs=f"{REPO1},{REPO4}",
+            sut_dirs=f"{REPO1},{repo4}",
             timeout=BUILD_TIMEOUT,
         )
         assert built.returncode == 0, built.stdout + built.stderr
 
-        shown = _run(["env", "show"], home=home, sut_dirs=f"{REPO1},{REPO4}", timeout=BUILD_TIMEOUT)
+        shown = _run(["env", "show"], home=home, sut_dirs=f"{REPO1},{repo4}", timeout=BUILD_TIMEOUT)
         assert shown.returncode == 0, shown.stderr
         assert "backend:     uv" in shown.stdout, shown.stdout
         # repo1 has no pyproject at all, so it is not installable and says so.
@@ -283,11 +298,11 @@ class TestShow:
         )
         assert removed.returncode == 0, removed.stderr
 
-        after = _run(["env", "show"], home=home, sut_dirs=f"{REPO1},{REPO4}", timeout=BUILD_TIMEOUT)
+        after = _run(["env", "show"], home=home, sut_dirs=f"{REPO1},{repo4}", timeout=BUILD_TIMEOUT)
         assert after.returncode == 0, after.stderr
         assert _cell(after.stdout, "otto-sample-repo4", 2) == "no", after.stdout
 
-    def test_a_repo_touched_after_the_build_reads_as_stale(self, tmp_path):
+    def test_a_repo_touched_after_the_build_reads_as_stale(self, tmp_path, repo4):
         """Staleness is an mtime comparison, so it needs no import and no installer.
 
         The hostile condition is INJECTED -- the pyproject is touched after the
@@ -298,12 +313,12 @@ class TestShow:
         built = _run(
             ["env", "create", "--backend", "uv", "--", "--find-links", str(WHEELS_DIR)],
             home=home,
-            sut_dirs=f"{REPO1},{REPO4}",
+            sut_dirs=f"{REPO1},{repo4}",
             timeout=BUILD_TIMEOUT,
         )
         assert built.returncode == 0, built.stdout + built.stderr
 
-        fresh = _run(["env", "show"], home=home, sut_dirs=f"{REPO1},{REPO4}")
+        fresh = _run(["env", "show"], home=home, sut_dirs=f"{REPO1},{repo4}")
         assert "stale" not in fresh.stdout, fresh.stdout
 
         # Backdate the env stamp to just BEFORE repo4's pyproject rather than by
@@ -312,9 +327,9 @@ class TestShow:
         # of the checkout, not of the code under test.
         env = _the_env(home)
         stamp = env / ".otto-env.json"
-        older = (REPO4 / "pyproject.toml").stat().st_mtime - 1
+        older = (repo4 / "pyproject.toml").stat().st_mtime - 1
         os.utime(stamp, (older, older))
 
-        stale = _run(["env", "show"], home=home, sut_dirs=f"{REPO1},{REPO4}")
+        stale = _run(["env", "show"], home=home, sut_dirs=f"{REPO1},{repo4}")
         assert "stale" in stale.stdout, stale.stdout
         assert "otto env sync" in stale.stdout, stale.stdout
