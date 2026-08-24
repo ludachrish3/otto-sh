@@ -232,11 +232,13 @@ jobs:
   # subprocesses (tests/conformance/_cells.py). No lab, no Vagrant VMs, and
   # that is the point of the venue: these contracts are written to hold on
   # any cell otto can reach, and the hermetic venue is the subset a
-  # disposable runner can stand up for itself. The BED venue
-  # (OTTO_CONFORMANCE_BED=1) is what would reach the real lab hosts; it is a
-  # later item of the same workstream and `resolve_space()` raises on it
-  # today, so nothing here selects it and nothing today asserts these
-  # contracts against a bed host.
+  # disposable runner can stand up for itself. The BED venue reaches the real
+  # lab hosts instead, and it exists now -- `make conformance-bed` is its
+  # lane. It is deliberately absent from CI and must stay absent: there is no
+  # test1, no BusyBox guest and no Zephyr console on a GitHub runner, so every
+  # cell would fail to open for the one reason that says nothing about otto.
+  # tests/unit/test_tier_marker_invariants.py's G11j/G11k are what keep that
+  # true, rather than this comment.
   #
   # NIGHTLY RATHER THAN PER-PUSH, and that is a property of the lane rather
   # than an omission: the cells are drawn per run off pytest-randomly's

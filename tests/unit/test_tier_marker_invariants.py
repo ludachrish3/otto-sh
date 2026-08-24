@@ -14,6 +14,12 @@ catch-all's `not stability` protects — exclude BOTH bed-hostile tiers, not
 just one. The G8/G9 families carry the same rules for the BusyBox artifact
 tier and the G10/G11 families for the host-contract conformance tier; each of
 those states its own reasoning on the test itself.
+
+G11i-G11l are the same family's answer to a hazard the marker cannot see at
+all: the conformance tree runs HERMETIC or against the REAL BED depending on
+one environment variable, so `-m` reasoning decides which tests a lane
+collects and says nothing about what they then reach. Those four are about
+the venue knob rather than the marker.
 """
 
 import ast
@@ -898,16 +904,43 @@ def test_a_lane_that_selects_by_path_cannot_reach_the_busybox_tier():
     )
 
 
+def _makefile_recipes() -> "dict[str, str]":
+    """Target name -> its recipe text, for every Makefile target with a recipe."""
+    makefile = (PROJECT_ROOT / "Makefile").read_text()
+    blocks = re.finditer(r"^([a-zA-Z0-9_.-]+):[^\n]*\n((?:\t[^\n]*\n)+)", makefile, re.MULTILINE)
+    return {block.group(1): block.group(2) for block in blocks}
+
+
 def _makefile_targets_selecting(marker: str) -> "list[str]":
     """Names of the Makefile targets whose recipe positively selects *marker*.
 
     Derived from the recipe text rather than hardcoded, so renaming the lane
     moves the guard with it instead of quietly leaving it pinned to a target
     that no longer exists.
+
+    Positive membership is decided TERM BY TERM -- the same reading G8b and
+    G11b already use on the same expressions -- and not by matching the whole
+    `-m "..."` string. The whole-string form was here first and was wrong in
+    the direction that hides a lane: it recognised `-m "conformance"` and
+    stopped recognising the SAME lane the moment it was refined to
+    `-m "conformance and not conformance_bed"`, which made G11c report that no
+    Makefile target selected the tier at all while the target sat unchanged
+    two lines above its own recipe. Measured -- that is exactly how this
+    widening was found.
+
+    Deliberately does NOT expand `$(M_*)` references the way
+    `_makefile_marker_expressions` does. A lane that selects a tier through a
+    shared variable is a catch-all reaching it by accident, which is G8/G11's
+    subject; this helper answers "which lane IS the tier's own", and an
+    expanded `M_UNIX` would start answering that with `coverage-unix`.
     """
-    makefile = (PROJECT_ROOT / "Makefile").read_text()
-    blocks = re.finditer(r"^([a-zA-Z0-9_.-]+):[^\n]*\n((?:\t[^\n]*\n)+)", makefile, re.MULTILINE)
-    return [b.group(1) for b in blocks if re.search(rf'-m\s+"{re.escape(marker)}"', b.group(2))]
+    selecting = []
+    for target, recipe in _makefile_recipes().items():
+        for expr in re.findall(r'-m\s+"([^"]*)"', recipe):
+            if marker in {term.strip() for term in expr.split(" and ")}:
+                selecting.append(target)
+                break
+    return selecting
 
 
 def _workflows() -> "dict[str, dict]":
@@ -1474,4 +1507,454 @@ def test_the_hostless_catchall_collects_the_conformance_tree_and_deselects_it():
         f"collection, expected exactly 1 — with none, the tree was never "
         f"collected at all and the assertion above passed by the tier being "
         f"MISSING rather than excluded (see G11e):\n{output[-2000:]}"
+    )
+
+
+def test_no_labless_lane_can_select_the_bed_marked_conformance_tests():
+    """G11h: the `conformance` marker keeps the tree out of DEFAULT gates only.
+
+    It cannot keep anything out of `make conformance`, which selects that
+    marker on purpose — and that lane runs nightly in CI with no lab attached.
+    Almost everything under tests/conformance/ is safe there because the tree
+    is HERMETIC unless `OTTO_CONFORMANCE_BED=1` is set, so the venue knob is
+    what decides whether a contract reaches hardware.
+
+    The bed openers' witness is the exception the knob does not govern: it
+    opens a real lab VM on every run, whichever venue is selected, because an
+    opener verified only by a probe someone deleted is the defect it exists to
+    prevent. So it carries `conformance_bed` and the hermetic lane subtracts
+    it, and this is the guard on that subtraction — stated over what each lane
+    can SELECT, the G8d/G11d reading, rather than over the shape of any one
+    expression.
+
+    THE EXEMPTION IS THE VENUE KNOB, NOT A TARGET NAME. A lane whose recipe
+    sets `OTTO_CONFORMANCE_BED` is asking for the bed by definition and may
+    select these tests; item 5 of this workstream adds exactly such a target.
+    Keying on the knob rather than on `conformance-bed` means that target is
+    covered the day it lands and cannot be spelled into an exemption by
+    accident.
+
+    NOT PAIRED with a "the bed-marked tests still have a lane" mirror, and the
+    omission is deliberate rather than forgotten: no lane runs them yet (item
+    5 is where `make conformance-bed` lands), so that guard would be red on
+    arrival — the same reason G11c was left out until the nightly job existed.
+    It belongs with the target, not ahead of it.
+    """
+    bed_sets = _marker_sets_of_modules_carrying("conformance_bed")
+    assert bed_sets, "no module carries `conformance_bed` (guard misparse?)"
+
+    recipes = _makefile_recipes()
+    lanes = _makefile_targets_selecting("conformance")
+    assert lanes, "no Makefile target positively selects `-m conformance` (G11b covers this)"
+
+    offenders = []
+    for lane in lanes:
+        recipe = recipes[lane]
+        if "OTTO_CONFORMANCE_BED" in recipe:
+            continue
+        offenders += [
+            f"{lane}: {expr!r}"
+            for expr in re.findall(r'-m\s+"([^"]*)"', recipe)
+            if any(_can_select(expr, markers) for markers in bed_sets)
+        ]
+    assert not offenders, (
+        f"these lanes select the conformance tier without asking for the bed, yet can "
+        f"reach the `conformance_bed` tests, which open a real lab VM on every run: "
+        f"{offenders}. That lane runs in CI with no lab. Add `and not conformance_bed`, "
+        f"or set OTTO_CONFORMANCE_BED in the recipe if the lane really does want the bed."
+    )
+
+
+# --- The bed VENUE of the conformance tier (OTTO_CONFORMANCE_BED) -------------
+#
+# Everything above reasons about the `conformance` MARKER, which decides which
+# tests a lane collects. The guards below reason about the venue KNOB, which
+# decides what those tests reach when they run, and the two are independent:
+# the whole tree is hermetic under `make conformance` and drives real lab
+# hardware — Linux VMs, five BusyBox guests over telnet, and Zephyr guests
+# whose consoles serve exactly ONE client — under `make conformance-bed`. The
+# same test id means both things depending on one environment variable.
+#
+# So the marker guards cannot see this hazard at all. A default lane that set
+# the knob would still deselect every conformance item (G11 holds), and would
+# still resolve the BED space at collection: `tests/conformance/conftest.py`
+# calls `resolve_space()` at import, which under the knob reads the bed's lab
+# data and builds a host per element through otto's factory. That is on the collection
+# path of every path-less run in the repo, so a stray knob makes `make
+# coverage` depend on lab data it has no business reading, and a CI job that
+# set it would fail collection for a reason that says nothing about otto.
+
+
+def _makefile_simple_variables(text: str) -> "dict[str, str]":
+    """Every ``NAME := value`` / ``NAME ?= value`` definition in the Makefile.
+
+    Wider than :func:`_makefile_marker_variables`, which sees only the shared
+    ``M_*`` marker expressions, because a lane's ENVIRONMENT is spelled with
+    ordinary variables (``CONFORMANCE_CELLS``, ``LEAK_DETECT``) and a scanner
+    that could not expand them would read a recipe's env as the literal text
+    ``$(CONFORMANCE_CELLS)``.
+
+    Recursive ``=`` assignments are deliberately out: nothing in this file's
+    lanes uses one, and expanding a recursive definition correctly means
+    implementing make's deferred evaluation. A missed variable surfaces as an
+    unexpanded ``$(...)`` that :func:`_makefile_recipe_env` refuses rather than
+    passes on.
+    """
+    return dict(re.findall(r"^([A-Z][A-Z0-9_]*)\s*[:?]=\s*(.*?)\s*$", text, re.MULTILINE))
+
+
+def _expand_makefile_refs(value: str, variables: "dict[str, str]") -> str:
+    """*value* with every ``$(NAME)`` reference to a known variable substituted.
+
+    Iterated, because these definitions nest (``TIMEOUT_CMD`` names
+    ``PYTEST_TIMEOUT``), and bounded so a variable that referenced itself
+    cannot spin. Unknown references — ``$(call ...)``, ``$(1)``, a function
+    call — are left in place ON PURPOSE: this returns text for a caller to
+    judge, and a silent drop is how a scanner starts reading a recipe that is
+    not there.
+    """
+    for _ in range(10):
+        expanded = re.sub(
+            r"\$\(([A-Z][A-Z0-9_]*)\)", lambda m: variables.get(m.group(1), m.group(0)), value
+        )
+        if expanded == value:
+            return expanded
+        value = expanded
+    return value
+
+
+def _makefile_recipe_env(recipe: str, variables: "dict[str, str]") -> "dict[str, str]":
+    """The ``NAME=value`` environment a recipe prefixes its command with.
+
+    Upper-case names only, which is what separates an environment assignment
+    from the option spellings that share its shape: ``--kill-after=10s``,
+    ``--junitxml=...`` and ``--randomly-seed=N`` are all lower-case, and a
+    pattern that matched them would hand a caller flags to put in ``env``.
+
+    The WHOLE recipe is expanded before the scan, not just the values, so a
+    lane that exports through a shared variable is seen exporting it -- the
+    way ``LEAK_DETECT`` arms the asyncio leak detector across a dozen lanes
+    without any of them naming ``OTTO_DETECT_ASYNCIO_LEAKS``. A reference this file's
+    definitions cannot resolve survives into the value it landed in, so a
+    caller that needs a real value can see that it did not get one instead of
+    exporting ``$(SOMETHING)`` to a child process.
+    """
+    joined = _expand_makefile_refs(recipe.replace("\\\n", " "), variables)
+    return dict(re.findall(r"(?<![-\w.])([A-Z][A-Z0-9_]*)=(\S+)", joined))
+
+
+def _makefile_targets_setting(variable: str) -> "dict[str, str]":
+    """Target name -> recipe, for every Makefile target whose recipe exports *variable*.
+
+    Derived rather than named, for :func:`_makefile_targets_selecting`'s
+    reason: the lane may be renamed and the guards should follow it. Reads the
+    EXPANDED recipe, so a lane that set the knob through a shared variable —
+    the way ``LEAK_DETECT`` arms the leak detector — is seen as setting it.
+    """
+    variables = _makefile_simple_variables((PROJECT_ROOT / "Makefile").read_text())
+    return {
+        target: recipe
+        for target, recipe in _makefile_recipes().items()
+        if variable in _makefile_recipe_env(recipe, variables)
+    }
+
+
+def test_the_bed_venue_of_the_conformance_tier_has_a_lane():
+    """G11i: G11h's missing mirror — the one it says belongs with the target.
+
+    G11h forbids a lab-less lane from selecting the `conformance_bed` tests
+    and records, in its own docstring, that it ships without the paired "and
+    they still have a lane" guard because at the time nothing ran them: that
+    guard would have been red on arrival, the same reason G11c waited for
+    nightly's job to exist. `make conformance-bed` is the lane, so the mirror
+    lands with it.
+
+    TWO HALVES, because the marker and the venue knob are different claims and
+    a lane can satisfy either alone. A lane that selects the bed-marked tests
+    but never sets `OTTO_CONFORMANCE_BED` runs the openers' witness against
+    real hardware while every OTHER contract in the tree stays hermetic — so
+    `tests/conformance/_bed.py`, `_lab_context.py` and the whole bed resolver
+    would be code no lane exercises. A lane that sets the knob but cannot
+    reach the bed-marked tests is the deletion G11b forbids one level up.
+
+    Stated over what the lane can SELECT (the G8d/G11d/G11h reading) rather
+    than over the shape of its expression, and over what its recipe EXPORTS
+    rather than over its name.
+    """
+    bed_sets = _marker_sets_of_modules_carrying("conformance_bed")
+    assert bed_sets, "no module carries `conformance_bed` (guard misparse?)"
+
+    lanes = _makefile_targets_setting("OTTO_CONFORMANCE_BED")
+    assert lanes, (
+        "no Makefile lane sets OTTO_CONFORMANCE_BED, so the conformance suite's "
+        "BED venue — tests/conformance/_bed.py and everything it resolves from "
+        "the bed's own lab data — is code no lane runs. `resolve_space()` "
+        "dispatches to it and nothing asks"
+    )
+
+    reaching = [
+        target
+        for target, recipe in lanes.items()
+        for expr in re.findall(r'-m\s+"([^"]*)"', recipe)
+        if any(_can_select(expr, markers) for markers in bed_sets)
+    ]
+    assert reaching, (
+        f"{sorted(lanes)} set OTTO_CONFORMANCE_BED but none of them can select the "
+        f"`conformance_bed` tests {bed_sets} — the bed venue's own lane subtracts "
+        f"the tests written to prove its openers work"
+    )
+
+
+def _lines_mentioning(text: str, name: str) -> "list[str]":
+    """Non-comment lines of *text* naming *name*, whatever shape they set it in.
+
+    COMMENT LINES ARE DROPPED, for :func:`_makefile_marker_expressions`'
+    reason: the venue policy is documented in prose that quotes the real
+    spelling, and a scanner reading documentation as configuration fails on
+    the wrong thing. Measured -- this caught ``nightly.yml``'s own paragraph
+    explaining why the bed venue is absent from CI, which is the opposite of
+    a workflow setting it.
+
+    A BARE MENTION AND NOT AN ASSIGNMENT SHAPE, and that is a correction a
+    mutation forced. The first version of this matched ``name=`` or ``name:``,
+    which reads every shell prefix and every YAML ``env:`` key -- and was
+    BLIND to the ordinary Python spelling. Injecting
+    ``session.env["OTTO_CONFORMANCE_BED"] = "1"`` into ``noxfile.py``'s
+    hostless session left the guard GREEN, because the ``"]`` sits between the
+    name and the ``=``. Widening to a mention covers ``environ[...] = ...``,
+    ``monkeypatch.setenv(...)``, ``env={...: ...}`` and any spelling nobody
+    has thought of yet.
+
+    STATED BOUND, and it is the conservative direction on purpose: a
+    non-comment DOCSTRING naming the knob on one of these surfaces is
+    reported too. For a variable whose failure mode is a default gate driving
+    real lab hardware, a guard that over-reports and is argued with beats one
+    that under-reports and is trusted.
+    """
+    return [line for line in text.splitlines() if not line.strip().startswith("#") and name in line]
+
+
+def test_only_a_conformance_lane_may_set_the_bed_venue_knob():
+    """G11j: the exclusion half — no default gate may start driving the bed.
+
+    The marker guards above cannot make this statement. `not conformance`
+    deselects every item in the tree, so a catch-all that ALSO set
+    `OTTO_CONFORMANCE_BED` would run nothing from it and stay green — while
+    every path-less run in the repo paid for a bed-venue `resolve_space()` at
+    collection, because `tests/conformance/conftest.py` resolves the space at
+    IMPORT and `testpaths` puts that import on the collection path of `make
+    coverage`. Measured under the knob: the bed space reads the bed's lab data
+    and builds a host through otto's factory for every element it names.
+
+    THE RULE IS ASYMMETRIC ACROSS SURFACES, and deliberately so. A Makefile
+    lane MAY set the knob if it positively selects `-m conformance` — that is
+    what `make conformance-bed` is, and G11k is what then keeps CI away from
+    it. The other three surfaces may not set it at all: `noxfile.py`'s
+    sessions are the five-Python CI matrix, `scripts/stability_campaign.py`
+    drives soaks, and a GitHub workflow has no lab to reach in the first
+    place. None of them has a reason to want the bed, so `mention it and you
+    are wrong` is the honest rule there rather than a shape check.
+
+    All four surfaces, and the ones beyond the build files are here for the
+    reason G8d gives for reading `scripts/stability_campaign.py`: a lane this
+    guard cannot see is protected only by nobody having written the wrong line
+    there yet. Every workflow is read, not the one this test would have named:
+    the knob could be set in a step's `env:`, in a job's, in the workflow's,
+    or inside a `run:` line.
+    """
+    knob = "OTTO_CONFORMANCE_BED"
+
+    makefile = (PROJECT_ROOT / "Makefile").read_text()
+    variables = _makefile_simple_variables(makefile)
+    offenders = [
+        f"Makefile: {target}"
+        for target, recipe in _makefile_recipes().items()
+        if knob in _makefile_recipe_env(recipe, variables)
+        and not any(
+            "conformance" in {term.strip() for term in expr.split(" and ")}
+            for expr in re.findall(r'-m\s+"([^"]*)"', recipe)
+        )
+    ]
+
+    workflows = sorted((PROJECT_ROOT / ".github" / "workflows").glob("*.yml"))
+    assert workflows, "no workflows found under .github/workflows (guard misparse?)"
+    for label, path in (
+        ("noxfile.py", _NOXFILE),
+        ("scripts/stability_campaign.py", _STABILITY_CAMPAIGN),
+        *((f".github/workflows/{path.name}", path) for path in workflows),
+    ):
+        offenders += [
+            f"{label}: {line.strip()}" for line in _lines_mentioning(path.read_text(), knob)
+        ]
+
+    assert not offenders, (
+        f"{knob} reaches a lane that did not ask for the bed: {offenders}. It drives "
+        f"real lab hardware over a hop — Linux VMs, five BusyBox guests over telnet, "
+        f"and Zephyr consoles that serve exactly one client — and none of these has a "
+        f"lab; in CI there is none to have. A Makefile lane may set it only if it "
+        f"positively selects `-m conformance` (`make conformance-bed` is that lane); "
+        f"noxfile.py, scripts/stability_campaign.py and the workflows may not name it "
+        f"outside a comment at all."
+    )
+
+
+def test_no_ci_workflow_invokes_the_bed_venues_lane():
+    """G11k: the bed lane is the one lane CI must NOT run, and G11c is why.
+
+    G11c asserts that some workflow job runs "the conformance lane", derived
+    from `_makefile_targets_selecting("conformance")` — which since this item
+    returns TWO targets, the hermetic one and the bed one. That guard is a
+    union over them, so it is satisfied by either, and nightly's
+    `conformance-hermetic` job satisfies it today. Nothing in it would object
+    if the bed lane were the one CI ran, and CI has no lab: the run would fail
+    at the first host it could not reach, or wedge a Zephyr console it could.
+
+    This is the missing half, and it is stated the same derived way — the lane
+    is whichever target exports the venue knob, and the search is across every
+    workflow rather than inside one this test names, so the guard follows a
+    renamed lane or a moved job instead of going red on it.
+    """
+    lanes = sorted(_makefile_targets_setting("OTTO_CONFORMANCE_BED"))
+    assert lanes, "no Makefile lane sets OTTO_CONFORMANCE_BED (G11i covers this)"
+
+    running = sorted({(lane, *pair) for lane in lanes for pair in _workflow_jobs_invoking(lane)})
+    assert not running, (
+        f"a workflow job runs the conformance suite's BED lane: {running}. CI has no "
+        f"lab — no test1, no BusyBox guests, no Zephyr consoles — so every cell would "
+        f"fail to open for the one reason that says nothing about otto. The bed venue "
+        f"is a dev-VM lane; nightly's hermetic `make conformance` is what CI runs."
+    )
+
+
+def test_the_bed_lane_collects_the_bed_venue():
+    """G11l: G11g's reading, taken on the other lane — a real collection.
+
+    Every guard above this one reads build files as TEXT, and text cannot
+    answer the question that matters here: whether the lane, run as written,
+    reaches the venue it exists for. G11g takes that reading for the hostless
+    catch-all and asserts BOTH halves of its property — nothing from the tree
+    selected, and the tree nevertheless collected — because "excluded" and
+    "invisible" are the same green from one side. The bed lane's halves are
+    the mirror image: something from the tree IS selected, and what it
+    resolved is the BED space rather than the hermetic one.
+
+    Both are needed. A lane that collected nothing would exit 5 and abort the
+    make recipe (G11e records that failure for this tier, measured: `no tests
+    collected (7901 deselected)`), so the count half is not decoration. And a
+    bed lane that quietly resolved the HERMETIC space would pass every other
+    assertion in this file while running `make conformance` under a second
+    name — the venue knob is one environment variable, and the failure of
+    setting it wrongly is a green run that certified a loopback `sshd`.
+
+    THE LANE IS READ OUT OF THE MAKEFILE, not retyped: the target is whichever
+    one exports the venue knob, the child's environment is that recipe's own
+    `NAME=value` prefix expanded through the Makefile's variables, and the
+    marker expression is the recipe's own. A retyped copy is a test of the
+    copy. An unexpandable `$(...)` fails loudly rather than being exported to
+    a child as literal text.
+
+    NO COUNT IS PINNED. The bed collection is seed-dependent whenever the lane
+    samples (Task 4c measured 51 at `--randomly-seed=1` and 49 at 7 for the
+    default budget of 8), and the exhaustive figure moves with the lab's own
+    data. What is asserted instead survives both: that every host KIND the
+    resolver reports is present in what the lane collected. That is the
+    crossing this venue exists for — a contract asserted over a Linux VM, a
+    BusyBox guest over telnet and a Zephyr console — and it is the property a
+    narrowed budget would silently take away.
+
+    A subprocess and not an in-process `Config`, for G11g's reason: this
+    suite's own `addopts` would be inherited. `-n0` and an emptied
+    `PYTEST_ADDOPTS` keep the draw line on the process whose output this
+    reads.
+    """
+    lanes = _makefile_targets_setting("OTTO_CONFORMANCE_BED")
+    assert lanes, "no Makefile lane sets OTTO_CONFORMANCE_BED (G11i covers this)"
+    variables = _makefile_simple_variables((PROJECT_ROOT / "Makefile").read_text())
+    for target, recipe in sorted(lanes.items()):
+        _assert_lane_collects_the_bed_venue(target, recipe, variables)
+
+
+def _assert_lane_collects_the_bed_venue(
+    target: str, recipe: str, variables: "dict[str, str]"
+) -> None:
+    """One knob-setting lane's collection, asserted. See G11l for the reasoning.
+
+    Split out of the test so the guard covers EVERY lane that sets the venue
+    knob rather than a first-sorted one -- there is one today, and a second
+    would otherwise be the lane nobody checked.
+    """
+    from tests.conformance._bed import bed_space
+
+    lane_env = _makefile_recipe_env(recipe, variables)
+    unresolved = {name: value for name, value in lane_env.items() if "$(" in value}
+    assert not unresolved, (
+        f"`make {target}` sets {unresolved} and this guard could not expand it, so it "
+        f"cannot run the lane the Makefile describes — teach "
+        f"`_makefile_simple_variables` the definition rather than dropping the value"
+    )
+
+    expressions = re.findall(r'-m\s+"([^"]*)"', recipe)
+    assert len(expressions) == 1, (
+        f"`make {target}` has {len(expressions)} `-m` expressions {expressions}; this "
+        f"guard runs the lane's selector and does not know which one to take"
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-m",
+            expressions[0],
+            "--collect-only",
+            "-q",
+            "-n0",
+            "--no-cov",
+            "-p",
+            "no:cacheprovider",
+        ],
+        cwd=str(PROJECT_ROOT),
+        env={**os.environ, "PYTEST_ADDOPTS": "", **lane_env},
+        capture_output=True,
+        text=True,
+        timeout=300,
+        check=False,
+    )
+    output = result.stdout + result.stderr
+    assert result.returncode == 0, (
+        f"`make {target}`'s selector failed to collect (rc={result.returncode}). "
+        f"An empty selection exits 5, which aborts the make recipe:\n{output[-3000:]}"
+    )
+
+    selected = [line for line in output.splitlines() if line.startswith("tests/conformance/")]
+    assert selected, (
+        f"`make {target}` collected nothing from tests/conformance/, so the bed venue "
+        f"has no lane: either the selector reaches other trees only, or the tree left "
+        f"`testpaths` and this path-less invocation never saw it (G11e). Where it "
+        f"reaches nothing at all pytest exits 5 and the recipe aborts, which the "
+        f"return-code assertion above catches first:\n{output[-2000:]}"
+    )
+
+    drew = [line for line in output.splitlines() if "conformance: venue=" in line]
+    assert len(drew) == 1, (
+        f"the conformance tree logged {len(drew)} draw lines under `make {target}`, "
+        f"expected exactly 1 — with none, the tree was never collected at all and the "
+        f"assertion above passed on something else (see G11e):\n{output[-2000:]}"
+    )
+    assert "venue=bed" in drew[0], (
+        f"`make {target}` resolved its cells in the wrong venue: {drew[0].strip()!r}. "
+        f"The knob it exports ({lane_env}) did not reach "
+        f"`tests/conformance/_venue.py`, so this lane is `make conformance` under a "
+        f"second name — a green run certifying a loopback sshd"
+    )
+
+    kinds = sorted({resolved.kind for resolved in bed_space()})
+    assert kinds, "bed_space() reports no kinds (guard misparse?)"
+    missing = [kind for kind in kinds if not any(f"[{kind}[" in line for line in selected)]
+    assert not missing, (
+        f"`make {target}` collected no cell of kind {missing} out of {kinds}, so the "
+        f"lane does not cross every host family the bed resolver knows about — which "
+        f"is the whole claim this venue makes over `tests/integration/host/`. A "
+        f"narrowed cell budget is the usual cause; the lane is exhaustive by default "
+        f"for exactly this reason."
     )

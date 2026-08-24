@@ -10,6 +10,7 @@ test that resolved the real space would stand up a loopback ``sshd``, would
 need the BusyBox cache, and would have stopped being a test of the sampler.
 """
 
+import ast
 import logging
 import os
 import random
@@ -17,14 +18,16 @@ import subprocess
 import sys
 from collections import Counter
 from contextlib import AbstractAsyncContextManager
+from pathlib import Path
 
 import pytest
 
 from otto.host.host import BaseHost
 from tests._fixtures.paths import PROJECT_ROOT
 from tests._fixtures.profiles import Cell
-from tests.conformance._cells import ResolvedCell
+from tests.conformance._resolved import ResolvedCell
 from tests.conformance._sample import cell_label, draw, log_draw, root_seed
+from tests.conformance._vocabulary import POSIX
 
 
 def _never_opened() -> "AbstractAsyncContextManager[BaseHost]":
@@ -38,8 +41,22 @@ def _never_opened() -> "AbstractAsyncContextManager[BaseHost]":
 
 
 def _fake(i: int) -> ResolvedCell:
-    """A cell with a distinguishable identity and nothing behind it."""
-    return ResolvedCell(cell=Cell(f"host{i}", "ssh", "scp"), kind="fake", open_host=_never_opened)
+    """A cell with a distinguishable identity and nothing behind it.
+
+    ``remote_scratch=None`` for the same reason ``open_host`` refuses to run:
+    sampling CHOOSES between cells and never stands one up, so a fabrication
+    that answered a landing directory would be claiming a property nothing
+    here reads. ``vocabulary`` is the one required field that cannot be
+    fabricated away -- there is no "no dialect" -- so it takes the POSIX one
+    and nothing here reads it either.
+    """
+    return ResolvedCell(
+        cell=Cell(f"host{i}", "ssh", "scp"),
+        kind="fake",
+        open_host=_never_opened,
+        remote_scratch=None,
+        vocabulary=POSIX,
+    )
 
 
 def test_the_same_seed_draws_the_same_cells() -> None:
@@ -246,6 +263,24 @@ def test_a_config_without_pytest_randomly_reports_no_root_seed() -> None:
     assert root_seed(_NoRandomlyConfig()) is None
 
 
+def _requests_resolved_cell(module: "Path") -> bool:
+    """Whether any test in *module* actually takes the ``resolved_cell`` fixture.
+
+    Parsed, not grepped, and the difference is not academic: the first
+    version of this scanned the file TEXT for the fixture name and matched
+    the bed witness, whose docstring says "Takes no ``resolved_cell``". A
+    prose mention of a fixture is the opposite of a request for it, so the
+    text scan classified the one module it existed to exclude as the thing it
+    was excluding it from.
+    """
+    tree = ast.parse(module.read_text())
+    return any(
+        "resolved_cell" in {arg.arg for arg in (node.args.args + node.args.kwonlyargs)}
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
+    )
+
+
 def test_a_real_run_collects_the_cells_its_log_says_it_drew() -> None:
     """The wiring, end to end, in the only shape that can prove it: a subprocess.
 
@@ -296,7 +331,27 @@ def test_a_real_run_collects_the_cells_its_log_says_it_drew() -> None:
     assert len(drew) == 1, f"the run did not report its draw exactly once:\n{output}"
     logged = set(drew[0].split("conformance: drew ", 1)[1].split(", "))
 
-    node_ids = [line for line in output.splitlines() if line.startswith("tests/conformance/")]
+    # Only the items parametrized over CELLS, and the set is derived rather
+    # than listed: `tests/conformance/` also holds the bed openers' witness,
+    # which is a `conformance_bed` test of the openers themselves and takes no
+    # `resolved_cell`, so it is not part of any draw. Counting its rows here
+    # made this assertion report `['scp', 'sftp']` as cells the run collected
+    # and the log had not named -- measured, the day that file landed. Reading
+    # the fixture name out of the modules keeps the rule stated as what it
+    # means (an item drawn from the space) instead of as a filename this test
+    # would have to be told about again next time.
+    cell_modules = sorted(
+        str(module.relative_to(PROJECT_ROOT))
+        for module in (PROJECT_ROOT / "tests" / "conformance").glob("test_*.py")
+        if _requests_resolved_cell(module)
+    )
+    assert cell_modules, "no conformance module takes `resolved_cell` (guard misparse?)"
+    node_ids = [
+        line
+        for line in output.splitlines()
+        if any(line.startswith(f"{module}::") for module in cell_modules)
+    ]
+    assert node_ids, f"the run collected no cell-parametrized item at all:\n{output}"
     per_cell = Counter(line[line.index("[") + 1 : line.rindex("]")] for line in node_ids)
 
     assert len(logged) == 2, f"the budget of 2 did not reach the draw:\n{output}"

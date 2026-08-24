@@ -60,7 +60,7 @@ import logging
 
 import pytest
 
-from tests.conformance._cells import ResolvedCell
+from tests.conformance._resolved import ResolvedCell
 
 _LOG = logging.getLogger(__name__)
 

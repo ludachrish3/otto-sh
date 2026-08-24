@@ -1,17 +1,59 @@
 """What the hermetic conformance venue can build, and what it refuses to pretend it can.
 
+Also where :func:`~tests.conformance._cells.resolve_space` is asserted, in
+both venues: it is the one function that picks between them, so a test that
+pinned only the hermetic half would leave the switch itself uncovered.
+
 Not to be confused with :mod:`otto.testing.conformance`, which asserts that
 pluggable *backend interfaces* conform. This covers the *host contract*
 conformance suite's cell resolution under ``tests/conformance/``.
 """
 
 import dataclasses
+import importlib.util
 from types import SimpleNamespace
 
 import pytest
 
+from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.profiles import Cell
 from tests.conformance import _cells
-from tests.conformance._cells import ResolvedCell, hermetic_space, resolve_space
+from tests.conformance._bed import BED_BUSYBOX, BED_UNIX, BED_ZEPHYR, bed_space
+from tests.conformance._cells import hermetic_space, resolve_space
+from tests.conformance._resolved import ResolvedCell
+from tests.conformance._sample import cell_label
+from tests.conformance._vocabulary import POSIX
+
+_CONFORMANCE_CONFTEST = PROJECT_ROOT / "tests" / "conformance" / "conftest.py"
+
+
+def _never_opened():
+    """An opener no test in this file calls. Resolution never opens anything."""
+    raise AssertionError("a cell resolved in a unit test must not be opened")
+
+
+def _load_conformance_conftest():
+    """Execute ``tests/conformance/conftest.py`` fresh, under a name of its own.
+
+    The conftest resolves the venue's space at IMPORT (``_SPACE =
+    resolve_space()``) and refuses an empty one there, so the only way to
+    exercise that refusal is to run the module body again. Loaded under a
+    private name and never inserted into ``sys.modules``, so the copy pytest
+    is already running this session with is untouched.
+
+    What this does NOT prove: that pytest surfaces the failure as a run-ending
+    error. That is pytest's own handling of an exception raised while
+    importing a conftest, and reproducing it here would cost a subprocess run
+    for a behaviour no edit in this repo can change.
+    """
+    spec = importlib.util.spec_from_file_location(
+        "otto_conformance_conftest_probe", _CONFORMANCE_CONFTEST
+    )
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def test_the_hermetic_space_is_not_empty() -> None:
@@ -125,16 +167,103 @@ def test_resolve_space_defaults_to_the_hermetic_venue(monkeypatch) -> None:
     assert [r.cell for r in resolve_space()] == [r.cell for r in hermetic_space()]
 
 
-def test_the_bed_venue_raises_rather_than_resolving_an_empty_space(monkeypatch) -> None:
-    """``current_venue()`` can already answer ``bed`` with nothing behind it.
+def test_the_bed_venue_resolves_the_whole_bed_space(monkeypatch) -> None:
+    """F5: the ``NotImplementedError`` is gone, and must not leave a vacuum behind.
 
-    Returning ``[]`` there would make every sampled contract vacuously green --
-    the defect class this whole workstream exists to eliminate -- so the
-    unbuilt venue names the item that will build it instead.
+    ``assert resolve_space()`` alone is not that guarantee. It reads the same
+    for a space of 49 and for a space of 1, and a truncated space is the shape
+    that certifies everything it dropped: the run would log ``drew 1 of 1``
+    and go green having asserted one cell. So the dispatch is pinned against
+    the whole space the bed venue offers -- whose own size and order are
+    pinned against a recorded expectation in
+    ``tests/unit/test_conformance_bed.py`` -- and against the kinds it must
+    contain, so a space truncated to one family reddens here too.
     """
     monkeypatch.setenv("OTTO_CONFORMANCE_BED", "1")
-    with pytest.raises(NotImplementedError, match="item 4"):
-        resolve_space()
+    resolved = resolve_space()
+    assert resolved, "the bed venue resolved zero cells -- every contract would be vacuous"
+    assert [cell_label(r) for r in resolved] == [cell_label(r) for r in bed_space()]
+    assert {r.kind for r in resolved} == {BED_UNIX, BED_BUSYBOX, BED_ZEPHYR}
+
+
+def test_the_bed_venue_does_not_hand_back_the_hermetic_space(monkeypatch) -> None:
+    """The mis-dispatch that a truthiness check cannot see.
+
+    A ``resolve_space`` that fell through to ``hermetic_space()`` under the bed
+    knob returns eight real cells: non-empty, every contract runs, every
+    assertion passes -- against a loopback ``sshd`` while the run's own header
+    says ``venue=bed``. The two spaces share no cell label (the kind is part of
+    it), so this reads as a discriminator rather than as a size comparison.
+    """
+    monkeypatch.setenv("OTTO_CONFORMANCE_BED", "1")
+    bed = {cell_label(r) for r in resolve_space()}
+    monkeypatch.delenv("OTTO_CONFORMANCE_BED")
+    hermetic = {cell_label(r) for r in resolve_space()}
+    assert bed, "the bed venue resolved nothing, so the comparison below proves nothing"
+    assert hermetic, "the hermetic venue resolved nothing, so the comparison below proves nothing"
+    assert not bed & hermetic, f"both venues resolved {sorted(bed & hermetic)}"
+
+
+def test_the_bed_venue_reads_the_bed_resolver_rather_than_agreeing_with_it(monkeypatch) -> None:
+    """INJECTED: the dispatch must CALL ``bed_space``, not merely match it today.
+
+    Both tests above compare the dispatch with real lab data, so a copy of the
+    bed space -- a snapshot taken at import, a second concatenation written
+    out here -- would satisfy them for as long as the copy happened to agree.
+    A sentinel no real lab data can produce cannot be agreed with by accident.
+    """
+    sentinel = [
+        ResolvedCell(
+            cell=Cell("sentinel", "ssh", "scp"),
+            kind="sentinel",
+            open_host=_never_opened,
+            # A fabrication has to answer this too, and answering `None` here
+            # is deliberate: nothing in this test transfers, and a sentinel
+            # that claimed a real landing directory would be inventing a
+            # property the dispatch is not being asked about.
+            remote_scratch=None,
+            vocabulary=POSIX,
+        )
+    ]
+    monkeypatch.setenv("OTTO_CONFORMANCE_BED", "1")
+    monkeypatch.setattr(_cells, "bed_space", lambda: sentinel)
+    assert resolve_space() == sentinel
+
+
+def test_an_empty_bed_space_fails_the_run_rather_than_going_green(monkeypatch) -> None:
+    """F5's replacement guarantee, exercised instead of asserted.
+
+    The raise this venue removed existed so that a space of nothing could not
+    pass vacuously. What replaces it is the check
+    ``tests/conformance/conftest.py`` already makes on ``_SPACE`` at import --
+    written in item 3 for "the venue that can shrink", and until now unable to
+    fire at all, since ``hermetic_space()`` always contains the local cell.
+    The bed venue is that venue, so this is where that guard stops being
+    unreachable code.
+
+    The hostile condition is INJECTED. Real lab data cannot produce an empty
+    bed space -- ``axis_space`` raises ``KeyError`` on a lab no host declares,
+    so even a renamed lab fails loudly rather than resolving nothing -- and a
+    guard that waited for real data to go empty would never run.
+    """
+    monkeypatch.setenv("OTTO_CONFORMANCE_BED", "1")
+    monkeypatch.setattr(_cells, "bed_space", list)  # `list()` IS the empty space
+    with pytest.raises(RuntimeError, match="resolved ZERO cells"):
+        _load_conformance_conftest()
+
+
+def test_the_conftest_loads_when_the_bed_space_is_not_empty(monkeypatch) -> None:
+    """The positive control for the test above, and it pins the wiring too.
+
+    Without this, an unrelated ``RuntimeError`` -- a bad path, an import error
+    in the probe -- would satisfy that ``pytest.raises`` and the empty-space
+    guard would look proven while never having been reached. This also pins
+    what the conftest resolves under the knob: the real bed space, which is
+    the wiring Task 4 is for.
+    """
+    monkeypatch.setenv("OTTO_CONFORMANCE_BED", "1")
+    module = _load_conformance_conftest()
+    assert [cell_label(r) for r in module._SPACE] == [cell_label(r) for r in bed_space()]
 
 
 def test_resolved_cells_are_frozen() -> None:

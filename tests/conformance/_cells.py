@@ -6,6 +6,15 @@ this venue cannot build is EXCLUDED from the space rather than skipped, so a
 shrinking space is visible in the run's own log rather than showing up as a
 green run that asserted nothing.
 
+ALSO HOLDS :func:`resolve_space`, which is the switch between this venue and
+the bed one -- so this module imports ``tests.conformance._bed``, and the
+traffic runs one way only. The bed resolver takes the shared
+:class:`~tests.conformance._resolved.ResolvedCell` from its own leaf module
+precisely so that it does not import this one back: the cycle that would
+create is measured in ``_resolved.py``'s docstring, and the machinery this
+module pulls in (a loopback ``sshd``, the BusyBox artifact matrix) has no
+business being imported to reach real hardware.
+
 Not to be confused with :mod:`otto.testing.conformance`, which asserts that
 pluggable BACKEND INTERFACES conform. This tree is about HOST CONTRACTS.
 
@@ -36,6 +45,16 @@ exists to catch:
     would be a change to otto. So APPLET behaviour is genuinely measured
     against the artifact; SHELL-DIALECT behaviour is not, and belongs to the
     bed venue's real BusyBox guests.
+
+ALL THREE KINDS SPEAK POSIX, which is why every cell here carries
+:data:`~tests.conformance._vocabulary.POSIX` outright while the bed venue
+derives each cell's vocabulary from its host's userland axis. That is not a
+shortcut: all three stand up a shell this repo controls -- the runner's own
+``bash`` in two of them and a real ``sshd`` login in the third -- and none of
+them has a lab entry to derive a userland from. It is also the reason the
+contracts' bash spellings were universally true of this venue and broke the
+moment the bed venue reached a Zephyr shell: a contract's portability is only
+tested by the venue it runs in.
 """
 
 import asyncio
@@ -46,7 +65,6 @@ import subprocess
 import tempfile
 from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager
-from dataclasses import dataclass
 from pathlib import Path
 
 from otto.host.factory import create_host_from_dict
@@ -54,7 +72,10 @@ from otto.host.host import BaseHost
 from otto.host.local_host import LocalHost
 from tests._fixtures.busybox import BUSYBOX_MATRIX, BusyBoxRelease, busybox_binary, can_run
 from tests._fixtures.profiles import Cell
+from tests.conformance._bed import bed_space
+from tests.conformance._resolved import ResolvedCell
 from tests.conformance._venue import BED, current_venue
+from tests.conformance._vocabulary import POSIX
 from tests.integration.chaos._sshd import (
     LoopbackSshd,
     free_port,
@@ -92,21 +113,6 @@ _NEEDS_A_LAB_TRANSFERS = frozenset({"console"})
 _INSTALL_TIMEOUT_S = 60
 
 
-@dataclass(frozen=True)
-class ResolvedCell:
-    """A cell this venue can actually stand up, and how.
-
-    Frozen because of what spec s4 asks the sampler (a later item) to do with
-    these: log the cell it drew, then hand it to the contract assertions. A
-    cell that could be rewritten in between would let the log name one cell
-    while another was measured.
-    """
-
-    cell: Cell
-    kind: str
-    open_host: Callable[[], AbstractAsyncContextManager[BaseHost]]
-
-
 def _servable(term: str, transfer: str) -> bool:
     """Whether the hermetic venue can actually stand this pair up."""
     return term not in _NEEDS_A_LAB_TERMS and transfer not in _NEEDS_A_LAB_TRANSFERS
@@ -135,6 +141,27 @@ def _loopback_entry(root: Path) -> dict:
     return hosts[0]
 
 
+def _runner_scratch(tmp_path: Path) -> Path:
+    """This venue's remote directory: a runner path, because the far side IS the runner.
+
+    Every cell here shares one filesystem with the process asserting on it --
+    a ``LocalHost``, a loopback ``sshd`` running as the same user, a
+    ``LocalHost`` with BusyBox applets on ``PATH`` -- so a directory under the
+    test's own ``tmp_path`` is reachable from both sides. That is a property
+    of THIS VENUE and not of the contracts, which is why the answer travels
+    on the cell (:class:`~tests.conformance._resolved.ResolvedCell`) rather
+    than being written into the contract: the bed venue's far side is a
+    device, and its cells answer with a device path.
+
+    Created here rather than by the contract, so that a venue whose remote
+    directory needs no creation (the bed's device paths already exist) is not
+    forced to pretend it does.
+    """
+    remote = tmp_path / "remote"
+    remote.mkdir(parents=True, exist_ok=True)
+    return remote
+
+
 def _local_cells() -> "list[ResolvedCell]":
     """The runner's own userland. Always resolvable -- otto is running on it."""
 
@@ -143,7 +170,15 @@ def _local_cells() -> "list[ResolvedCell]":
         async with LocalHost() as host:
             yield host
 
-    return [ResolvedCell(cell=Cell(LOCAL, LOCAL, LOCAL), kind=LOCAL, open_host=opener)]
+    return [
+        ResolvedCell(
+            cell=Cell(LOCAL, LOCAL, LOCAL),
+            kind=LOCAL,
+            open_host=opener,
+            remote_scratch=_runner_scratch,
+            vocabulary=POSIX,
+        )
+    ]
 
 
 def _loopback_ssh_cells() -> "list[ResolvedCell]":
@@ -187,6 +222,8 @@ def _loopback_ssh_cells() -> "list[ResolvedCell]":
             cell=Cell(element, term, transfer),
             kind=LOOPBACK_SSH,
             open_host=_loopback_opener(term, transfer),
+            remote_scratch=_runner_scratch,
+            vocabulary=POSIX,
         )
         for term, transfer in pairs
     ]
@@ -259,6 +296,18 @@ def _busybox_cells() -> "list[ResolvedCell]":
             cell=Cell(f"busybox-{release.version}", LOCAL, LOCAL),
             kind=BUSYBOX_ARTIFACT,
             open_host=_busybox_opener(release),
+            remote_scratch=_runner_scratch,
+            # EVERY hermetic cell is POSIX, and the BusyBox one is the cell
+            # that could look otherwise. Its applets are the pinned artifact's,
+            # but the SHELL those commands are issued to is the runner's bash:
+            # `LocalSession` spawns `bash --norc --noprofile` by name
+            # (`src/otto/host/session.py`), which this module's own docstring
+            # records as the half the artifact does NOT cover. So the shell
+            # dialect here is bash whatever the applets are, and the vocabulary
+            # is not derived from a userland axis the way the bed's is
+            # (`tests/conformance/_bed.py`'s `bed_vocabulary`) -- there is no
+            # lab entry to derive one from.
+            vocabulary=POSIX,
         )
         for release in BUSYBOX_MATRIX
         if can_run(release.arch)
@@ -316,27 +365,52 @@ def hermetic_space() -> "list[ResolvedCell]":
     """Every cell the hermetic venue can build here, in a stable build order.
 
     Order is local, then loopback-ssh, then the BusyBox matrix's own order.
-    Not sorted and not shuffled, because spec s4 has the sampler (a later
-    item) draw from a seeded ``Random`` and publish that seed as the
-    reproduce handle: a space whose order moved between two runs of the same
-    seed would draw a different sample, and the handle would be a lie.
+    Not sorted and not shuffled -- though not for the reason first written
+    here, which said the sampler draws from a seeded ``Random`` so a moved
+    order would change the draw. That described an implementation this same
+    item REJECTED: :func:`tests.conformance._sample.draw` ranks by
+    ``blake2b(seed:label)``, keyed on the cell's LABEL and not its index, so
+    the SAMPLED draw is independent of this order.
+
+    The order is still load-bearing, for two narrower reasons. ``draw``
+    returns ``list(space)`` VERBATIM whenever ``budget is None``, ``seed is
+    None``, or ``budget >= len(space)`` -- and the hermetic default is a
+    budget of 8 against a space of 8, so today every default run takes that
+    path and this order IS the run order. Separately, every xdist worker must
+    collect the same parametrization in the same order or the ids do not agree
+    across workers.
     """
     return _local_cells() + _loopback_ssh_cells() + _busybox_cells()
 
 
 def resolve_space() -> "list[ResolvedCell]":
-    """The selected venue's resolvable cells.
+    """The selected venue's resolvable cells: the bed's under the knob, else this one's.
 
-    The bed venue is a LATER item, and :func:`current_venue` can already
-    answer ``bed`` with nothing behind it. That raises here instead of
-    returning ``[]``: an empty space satisfies every sampling assertion
-    vacuously, so a run that resolved nothing would be indistinguishable from
-    a run that certified everything.
+    This used to raise ``NotImplementedError`` for ``bed``, and the reason it
+    raised rather than returning ``[]`` outlives the raise: an empty space
+    satisfies every sampling assertion vacuously, so a run that resolved
+    nothing is indistinguishable from a run that certified everything. What
+    replaces it is not a check here -- it is three layers that each catch a
+    different shape of that vacuum, and none of them is this function:
+
+    - a lab no host declares raises ``KeyError`` inside
+      :func:`tests._fixtures.profiles.axis_space`, so the bed space cannot
+      quietly shrink when the lab data is renamed under it;
+    - ``tests/conformance/conftest.py`` refuses an empty ``_SPACE`` at import,
+      which is the run-ending failure spec s4 asks for. Item 3 wrote that
+      check "for the venue that can shrink" and it could not fire while the
+      hermetic venue -- which always has the local cell -- was the only one.
+      This is the venue it was written for;
+    - ``tests/unit/test_conformance_cells.py`` injects an empty bed space and
+      observes that refusal, so the guard above is exercised rather than
+      merely present, and pins that a NON-empty bed venue resolves the whole
+      bed space rather than a truncation of it or the hermetic space by
+      mistake. A truthy space is not the guarantee: one cell is truthy, and
+      it certifies the 48 it dropped.
+
+    Reads the venue at call time, not at import, for the reason
+    :func:`tests.conformance._venue.current_venue` gives.
     """
-    venue = current_venue()
-    if venue == BED:
-        raise NotImplementedError(
-            "the bed venue resolves no cells yet -- it is item 4 of the test-strategy "
-            "workstream. Unset OTTO_CONFORMANCE_BED to run the hermetic venue."
-        )
+    if current_venue() == BED:
+        return bed_space()
     return hermetic_space()

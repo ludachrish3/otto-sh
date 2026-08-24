@@ -59,7 +59,8 @@ full list, from `pyproject.toml`:
 | `chaos` | Tier-3 chaos-lane scenario; bed-hostile like `stability`, excluded from every default gate |
 | `soak` | The heavy browser-driven replay stress test; chromium-only, excluded even from `make dashboard`'s default selection |
 | `busybox` | Needs a real BusyBox artifact (fetched, SHA-256-verified and cached; qemu-user-static on non-x86_64); excluded from every default lane, opt-in via `make busybox` |
-| `conformance` | A host-contract conformance cell (stands up a throwaway loopback `sshd` and runs real BusyBox artifacts as subprocesses); excluded from every default lane, opt-in via `make conformance` — see below |
+| `conformance` | A host-contract conformance cell. In the default hermetic venue it stands up a throwaway loopback `sshd` and runs real BusyBox artifacts as subprocesses; under `OTTO_CONFORMANCE_BED=1` the same tests resolve against real bed hosts instead. Excluded from every default lane; opt-in via `make conformance` (hermetic) or `make conformance-bed` (real bed, dev VM only) — see below |
+| `conformance_bed` | Carried *in addition* to `conformance` by the few tests in that tree which reach the real lab bed on **every** run, whichever venue is selected — today, the bed openers' witness. `make conformance` subtracts it, because that lane is hermetic and runs nightly in CI with no lab |
 | `no_bundle_page` / `no_hygiene_bracket` | Narrow opt-outs for two specific autouse guards (a browser test that renders no bundle; a chaos test that manages its own hygiene bracket) |
 
 Reading any test, then, is two lookups: which directory is it under (its
@@ -79,6 +80,7 @@ Given a change, here is how to place the test that proves it:
 | Zephyr/embedded target behavior | wherever the level fits | `embedded` | `make coverage-embedded` / `nox -s tests_embedded` |
 | Full CLI/API behavior, but exercised against fakes/harnesses — no real bed | `tests/e2e/` | `hostless` | rides `make coverage-hostless`, the no-testbed CI gate |
 | Drives the real dashboard or covapp SPA in a browser | `tests/e2e/monitor/dashboard` or `tests/e2e/cov/report_browser` | `browser` | `make dashboard` (chromium; feeds `make coverage`) |
+| A promise that must hold for EVERY host, across every terminal and transfer backend that reaches it | `tests/conformance/` | `conformance` | opt-in only — `make conformance` (hermetic, also the nightly CI job) / `make conformance-bed` (real bed, dev VM only) |
 | A teardown/cancellation invariant, provable against fakes with no I/O | `tests/unit/` | none — use `sweep_cancellation()` | rides the default gate automatically (chaos tier 1) |
 | A real SIGINT/SIGTERM reaching a real otto subprocess at an exact phase | `tests/integration/chaos/` | (auto-stamped `integration`) | rides `make coverage` / `nox -s tests_integration`; also runs standalone in GitHub nightly (chaos tier 2) |
 | A destructive or randomized scenario against a live, leased bed (docker kill, reboot, SIGKILL, link blackhole) | `tests/e2e/chaos/` | `chaos` + `stability` | opt-in only — `make chaos` / `make chaos-embedded` (chaos tier 3) |
@@ -355,7 +357,9 @@ with `timed_out=True`, not an exception) while its session stays usable.
 Each contract runs against a **resolved cell** — a `(host, term, transfer)`
 triple the suite can actually stand up, the same cell vocabulary
 `tests/_fixtures/profiles.py` uses above. Six contracts times the cells a
-run draws is the lane's size; at today's default that is 48 tests.
+run draws is the lane's size, less whatever a contract's own applicable
+domain excludes: 48 tests in the hermetic venue at its default, and 284 on
+the bed with every cell selected.
 
 **Not to be confused with `otto.testing.conformance`.** otto ships a second
 thing called conformance and it is unrelated: `src/otto/testing/conformance.py`
@@ -368,12 +372,14 @@ runs against their own code. This lane is about HOSTS, and it runs real
 commands over real transports. Same word, different subjects; a reader who
 hits one and assumes the other will be wrong about what is being proven.
 
-### Venues, and the one that is not built yet
+### The two venues
 
-The suite is designed for two venues, on the `chaos_target`/`OTTO_CHAOS_DOCKER`
-precedent — and only one of them exists today:
+The suite runs in either of two venues, on the
+`chaos_target`/`OTTO_CHAOS_DOCKER` precedent. `OTTO_CONFORMANCE_BED` picks
+one, `current_venue()` reads it once, and `resolve_space()` builds that
+venue's cells:
 
-- **Hermetic (default, built).** No lab. Cells resolve to the runner's own
+- **Hermetic (default).** No lab. Cells resolve to the runner's own
   userland via `LocalHost`, to a throwaway non-root `sshd` on 127.0.0.1 with
   a real `UnixHost` over it (the tier-2 chaos lane's own fixtures), and to
   the five pinned BusyBox artifacts run as local subprocesses with an applet
@@ -382,15 +388,31 @@ precedent — and only one of them exists today:
   session's shell stays the runner's `bash` (otto's `LocalSession` spawns
   `bash --norc --noprofile` by name), so shell-*dialect* behaviour on a
   BusyBox userland is not measured here — that belongs to the bed venue's
-  real guests. This is what `make conformance` runs and what the nightly CI
-  job runs.
-- **Bed (`OTTO_CONFORMANCE_BED=1`, not built).** Intended for real bed hosts
-  — the Unix VMs, the BusyBox guests over hopped telnet, the Zephyr guests —
-  and it is a later item of the same workstream. `current_venue()` already
-  answers `bed`, and `resolve_space()` deliberately **raises** when it does,
-  naming the item. An empty space would have been the quiet alternative and
-  a much worse one: every contract would parametrize over nothing, collect
-  zero items, and the lane would report green having asserted nothing.
+  real guests. Its space is 8 cells and the default budget is 8, so the lane
+  is exhaustive by arithmetic: 48 tests. This is what `make conformance`
+  runs and what the nightly CI job runs.
+- **Bed (`OTTO_CONFORMANCE_BED=1`).** Real hardware, built from the bed's own
+  lab data by `tests/conformance/_bed.py`: the Unix VMs across
+  `{ssh, telnet} × {scp, sftp, ftp, nc}`, the five BusyBox guests over hopped
+  telnet, and the seven Zephyr guests over their single-client consoles.
+  49 cells over 16 elements — 32 `bed-unix`, 10 `bed-busybox`, 7
+  `bed-zephyr`. `make conformance-bed` is its only lane; it is **dev VM
+  only** (nothing in CI runs it, and `tests/unit/test_tier_marker_invariants.py`
+  asserts that no other lane can set the knob), and it is **exhaustive by
+  default** rather than sampled, because a budget of 8 against a space of 49
+  measures one cell in six and the crossing is this venue's whole claim.
+  `make conformance-bed CONFORMANCE_CELLS=N` samples off the session seed
+  instead.
+
+**Why the bed venue is not `tests/integration/host/test_host_contract.py`
+again.** That suite asserts host contracts against these same hosts
+parametrized by *backend id* — one transport per backend, in depth. This
+lane's distinct claim is the **crossing**: the same contract over every
+`(term, transfer)` pair a host's own menus permit. A defect that holds over
+`shell` and breaks over `nc` on the same host is invisible to a per-backend
+suite, and the venue's first runs against real hardware surfaced exactly such
+a difference (below). The two are complements, and neither is a superset:
+depth there, breadth here.
 
 A cell the selected venue cannot build is **dropped from the space, not
 skipped**. The hermetic venue has no console server and no embedded
@@ -398,6 +420,158 @@ filesystem, so `telnet` terms and `console` transfers are not in its space at
 all. A skip inside a drawn cell would report success for a contract nobody
 ran, which is the failure this suite exists to make impossible — so the
 space itself shrinks instead, and the run says so out loud.
+
+### What the bed venue does not cover
+
+A venue's gaps are worth more written down than rediscovered. Every item
+below is a real limitation of `make conformance-bed` as it ships, not a
+to-do list.
+
+**The console lock is cross-worker, not cross-session.** Zephyr's
+`shell_telnet` backend serves exactly ONE client per guest, and
+`tests/conformance/_console_safety.py` holds the repo's writer-fair console
+lock EXCLUSIVELY around every item whose drawn cell opens one. That lock is
+taken in `tmp_path_factory.getbasetemp().parent`, which resolves to
+`/tmp/pytest-of-<user>` under `-n0` but to `/tmp/pytest-of-<user>/pytest-<N>`
+under xdist, because a worker's basetemp is a child of the controller's. The
+suite's addopts turn xdist on, so **the lock serializes the workers of one
+session and nothing else**. Two pytest sessions on this dev VM — a
+`make conformance-bed` beside a `make coverage-embedded`, or two agent
+sessions — are not serialized against each other. Neither is a person on
+`telnet`, a `scripts/` tool, or a stale forward. Nor is an item that carries
+no `resolved_cell` param at all: the autouse fixture reads the cell off the
+item's callspec, so a test parametrized some other way gets no hold (the bed
+openers' witness is deliberately the only such test, and it deliberately
+opens no Zephyr guest). The same gap is true of `tests/integration/host/`
+today; closing it needs one lock directory adopted by both trees, and doing
+it in one only would be worse than doing it in neither. **The consequence of
+losing that race is not a failed test**: two clients on one console can make
+the guest re-initialise its telnet backend, after which it refuses every
+connection until `make qemu-restart` (issue #260). The re-init is terminal
+and does not self-clear.
+
+**The timeout contract does not apply to Zephyr cells, and is covered
+nowhere else.** `test_timeout_contract.applicable_cell` narrows the domain to
+cells whose vocabulary has a long-running command, which excludes exactly the
+seven `bed-zephyr` cells and narrows the hermetic venue by nothing. The
+reason is not a missing stimulus that someone could add: the Zephyr shell is
+**synchronous on the shell thread**, so a command that blocked for the
+budget's duration would block the shell whose survival the second half of
+this very contract asserts — a stimulus that made the first assertion pass
+would make the second unmeasurable. (Driving a single-client console to a
+timeout and then asserting recovery is also the #260 wedge sequence.) What an
+embedded backend does with a command that outlives its budget is therefore
+**not asserted anywhere in this repo** — `tests/integration/host/` contains
+no `timed_out` assertion at all, and the only bed-side one is
+`tests/integration/busybox_bed/test_session_frame.py`, which is a BusyBox
+guest. This is a stated hole, not a delegation.
+
+That predicate is also the one place this suite's applicable-domain model
+deliberately differs from `test_transfer_contract.py`'s, which is otherwise
+its model. The transfer domain reads OTTO'S OWN ANSWER (`remote_scratch is
+None` ⟺ the host's filesystem reports `supports_transfer` False). There is no
+otto property meaning "this userland can be made to block", so the timeout
+domain reads **this suite's** vocabulary instead. It is still lab-derived
+rather than an element-name sniff — the vocabulary is chosen by the userland
+axis `axes_for` resolves off the host otto built — but a reader should not
+mistake it for otto's answer.
+
+**Where the tester cannot choose the output, the framing assertion is
+strictly weaker.** On a POSIX cell the contract runs a `printf` whose exact
+bytes it chose, and asserts exact equality — which also catches truncation,
+reordering, interleaving, and a leaked shell prompt (the `vagrant@otto:~$`
+measured on a loopback-ssh cell is caught by nothing weaker). On a Zephyr
+cell there is no such command, so the stimulus is `kernel uptime` and the
+assertion becomes the *contract itself*: no `__OTTO_` frame sentinel, no
+`retval` read-back line, no ANSI, no echoed command line, plus a shape (an
+integer somewhere in the reply). The shape is not decoration — it is what keeps
+an empty answer, a bare prompt, or the previous command's output failing. But a
+prompt *appended to* a correct answer survives both halves: the framing check
+cannot see a prompt unless it arrives as an echoed command line or carries ANSI
+(a prompt is not distinguishable from output in the general case, and otto
+exposes no prompt string to compare against), and the shape check is already
+satisfied by the real answer in front of it. The run's own parametrization ids
+say which cells are in which tier.
+
+**On Zephyr the sequence contract has only one distinct failure code.** The
+exec contracts deliberately use two *different* non-zero codes so a
+cross-wired constant cannot make one contract pass on the other's evidence.
+On a Zephyr shell no second stable code exists: the obvious candidate,
+`kernel uptime extra arg`, answers `-22` on 3.7 and 4.4 but **`0` on 2.7**
+(2.7 ignores the extra words), so using it would make the contract's result
+depend on firmware version; and `kernel bogus_subcommand` answers `1`, which
+is the exact value the "collapses every failure to 1" defect produces. So
+both failing stimuli use code `-8` with two different unknown *commands*.
+What survives as the discriminator is `Results.first_failure.command`; what
+is lost is the aggregate `exit_code`'s ability to tell one contract's
+constant from the other's.
+
+**Ten items are strict xfails against a registered, deliberately-open gap
+path.** The five `bed-busybox` cells crossed with `nc` fail both transfer
+contracts, and `tests/conformance/test_transfer_contract.py`'s
+`expected_failure` declares them `xfail(strict=True)` — not a suppression, but
+an *assertion* of the failure, so the lane's green keeps meaning something.
+
+Be precise about what this is, because the tree's own prose got it wrong first
+and the correction is the more useful half: it is **not an undiscovered otto
+bug**. `src/otto/host/userland.py`'s `nc-transfer` gap already records
+`NcFileTransfer._put_files_nc` as a
+`GapPath` with `state=PATH_OPEN`, says in so many words that the listener is
+spelled `nc -l -w <secs> <port>` while the BusyBox applet wants `-l -p PORT`,
+predicts the exact failure ("a timeout rather than the refusal this record
+describes"), and explains why it stays open: settling it would need a probe
+that asks a device to *bind*, which has a side effect on the host being
+questioned. The queued fix is a whole BusyBox `nc` variant in
+`todo/busybox-parity-sweep-2026-08-11.md`.
+
+What this lane contributes is narrower and still worth having: it is the first
+thing in the repo to drive that open path against real BusyBox hardware, and
+it exposes an **asymmetry inside one gap**. Measured on `bb1161:telnet:nc`,
+both directions from one host build — `get` raises
+`UnsupportedOnUserlandError` before touching the wire, naming the gap (that
+path is wired, and `tests/integration/busybox_bed/test_nc_refusal.py` pins it
+across all five guests); `put` returns `Status.Error` after five seconds with
+`Remote nc listener on port 9000 not ready within 5.0s`. So otto knows the
+backend cannot drive this applet and announces it loudly in one direction
+while the other falls into precisely the timeout the announcement exists to
+replace.
+
+**Only five of the ten can ever `XPASS`**, which matters to anyone treating
+the strict marker as the reminder. The `test_put_lands_the_documented_mode_on_the_host`
+items are a `put` alone, so wiring that path turns them green and the strict
+marker then reddens the lane until the declaration is deleted. The
+`test_put_get_roundtrip_preserves_content` items also do a `get`, and the
+`get` is refused *by design* on these guests — so they keep failing after any
+`put` fix, for a declared incapability rather than a defect, and will need
+their own disposition then. The natural one is an applicable-domain narrowing
+keyed on otto's own answer, the model `applicable_cell` already uses for
+`remote_scratch`.
+
+### What the crossing found that nothing else could
+
+Two findings came out of the first bed runs, and neither was reachable from a
+per-backend suite:
+
+- **The `nc` × BusyBox asymmetry above.** The contract holds over `shell` and
+  breaks over `nc` on the *same host*, so a suite that asks each host one
+  transport cannot see the difference. What the crossing added was not the
+  discovery — otto's gap registry had measured the spelling on 2026-08-13,
+  ten days before this venue first drove it — but the observation that one
+  registered gap refuses loudly in one direction and times out in the other.
+- **A coverage hole in the embedded matrix.** `tests/conftest.py`'s
+  `_ZEPHYR_BACKEND_NE` maps five backend ids to five guests —
+  `zephyr37_fat`, `zephyr37_lfs`, `zephyr37_nofs`, `zephyr27_fat`,
+  `zephyr44_lfs` — and `EMBEDDED_BACKENDS` is `list(...)` of its keys, so
+  every parametrized embedded suite in `tests/integration/host/` derives
+  from those five. **`zephyr37_llext` and `zephyr44_llext` appear in
+  neither**, and had therefore never been asked a contract question by the
+  integration suite at all. The conformance space
+  derives from `lab.json`, which has all seven — which is how the divergence
+  became visible. Neither side can see it alone: one list is hand-maintained,
+  the other is derived. It bit immediately, too — `version` is not registered
+  on those two guests (`command not found`, retcode -8) while it works on the
+  other five, so a stimulus "proven across the matrix" was proven only across
+  the five the matrix names.
 
 ### How a cell is drawn, and how to reproduce a draw
 
@@ -420,16 +594,18 @@ conformance: drew local[local:local:local], loopback-ssh[loopback:ssh:sftp], ...
 had collapsed to 8, so `space=` is what makes a venue that quietly stopped
 resolving its loopback `sshd` visible rather than silent. Measured on the
 dev VM today, the hermetic space holds 8 cells and the default budget is 8 —
-so at the default the draw *is* the whole space. Sampling only starts to
-bite at a smaller budget, or once the space grows — which the bed venue will
-do.
+so at the hermetic default the draw *is* the whole space, and sampling only
+starts to bite at a smaller budget. The bed venue is where the space is
+genuinely bigger than a budget (49 against 8), which is why its lane sets
+`OTTO_CONFORMANCE_CELLS=all` and draws every one.
 
 ### Why it is nightly, not per-push
 
-The lane is excluded from every default gate by its own `conformance` marker
-— `make conformance` is the only lane that positively selects it, and
-nightly's `conformance-hermetic` job is the only place CI runs it. That is
-not a cost decision. Selection here is *random per run*, so a per-push gate
+The lane is excluded from every default gate by its own `conformance`
+marker. Exactly two lanes positively select it — `make conformance`
+(hermetic) and `make conformance-bed` (the real bed, dev VM only) — and
+nightly's `conformance-hermetic` job is the only place CI runs either. That
+is not a cost decision. Selection here is *random per run*, so a per-push gate
 could fail an unrelated PR on pre-existing breakage in a cell nothing had
 ever drawn before — the same reason the kernel keeps randconfig in `-next`
 and 0-day rather than in per-patch CI. Nightly is where a sampled lane
@@ -449,6 +625,23 @@ it), and a real path-less collection under `M_HOSTLESS` both deselects every
 conformance test and proves the tree was collected at all. G11c closes the
 other end: a tier excluded everywhere and invoked nowhere is a deletion, so
 it asserts that some workflow job actually runs the lane.
+
+The bed venue needed its own four, because the `conformance` marker cannot
+see the difference between the two venues — the venue is an environment
+variable, not a marker, so nothing in the marker family constrains it.
+G11i is G11c's shape for the knob (a Makefile lane must both export
+`OTTO_CONFORMANCE_BED` and be able to select the `conformance_bed` tests,
+or `tests/conformance/_bed.py` and its lab context are code no lane runs);
+G11j is the exclusion half, scanning every Makefile recipe, `noxfile.py`,
+`scripts/stability_campaign.py` and every workflow for a lane that sets the
+knob without positively selecting `-m conformance`; G11k asserts that no CI
+workflow invokes the bed lane, which G11c's union over "the lanes selecting
+`conformance`" would otherwise be satisfied by; and G11l runs the bed lane's
+own recipe — target, env and marker expression read out of the Makefile
+rather than retyped — path-less under `--collect-only`, and asserts it really
+resolved `venue=bed` and collected at least one cell of every kind
+`bed_space()` reports. It pins no count, so the property survives resampling
+and lab growth.
 
 ## Coverage: a floor, not a scorecard
 

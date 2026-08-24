@@ -9,7 +9,7 @@
 # on -j.
 .NOTPARALLEL:
 
-.PHONY: help all ci nox nox-full nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-python coverage-unit coverage-integration coverage-unix coverage-embedded coverage-hostless coverage-ts coverage-ts-unit docs docs-lint docs-html docs-inventories docs-media doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts lint-arch check check-python gate-fresh check-ts format format-python format-ts schema monitor-fixtures clean changelog release stability stability-unit stability-unix stability-tunnel stability-embedded chaos chaos-embedded repeat vm-health qemu-restart import-snapshot hyperfine profile browsers dashboard dashboard-all dashboard-soak busybox busybox-cache conformance web-install web web-dev test-ts web-clean wheel-check
+.PHONY: help all ci nox nox-full nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-python coverage-unit coverage-integration coverage-unix coverage-embedded coverage-hostless coverage-ts coverage-ts-unit docs docs-lint docs-html docs-inventories docs-media doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts lint-arch check check-python gate-fresh check-ts format format-python format-ts schema monitor-fixtures clean changelog release stability stability-unit stability-unix stability-tunnel stability-embedded chaos chaos-embedded repeat vm-health qemu-restart import-snapshot hyperfine profile browsers dashboard dashboard-all dashboard-soak busybox busybox-cache conformance conformance-bed web-install web web-dev test-ts web-clean wheel-check
 
 # Bump component for `make release`. Override on the command line:
 #   make release BUMP=minor
@@ -768,18 +768,29 @@ busybox-cache: ## Fetch + verify the BusyBox test artifacts into the local cache
 	@$(SAY) "priming the BusyBox artifact cache from busybox.net"
 	@uv run python -c "from tests._fixtures.busybox import BUSYBOX_MATRIX, busybox_binary; [print(busybox_binary(r)) for r in BUSYBOX_MATRIX]"
 
-# The host-contract conformance suite's opt-in lane, and the only place
-# `-m conformance` is selected — every catch-all excludes it (see the note
-# above M_HOSTLESS). Excluding a tier everywhere and running it nowhere is not
-# an exclusion, it is a deletion, so this target is the other half of that
-# change. Path-less on purpose: `-m conformance` reaches the tree through
-# `testpaths`, which is the invocation shape the pyproject entry exists for.
+# The host-contract conformance suite's opt-in lane, and the only one CI runs
+# — every catch-all excludes `-m conformance` (see the note above M_HOSTLESS),
+# and the only other lane that selects it positively is `conformance-bed`
+# below. Excluding a tier everywhere and running it nowhere is not an
+# exclusion, it is a deletion, so this target is the other half of that change.
+# Path-less on purpose: `-m conformance` reaches the tree through `testpaths`,
+# which is the invocation shape the pyproject entry exists for.
 #
 # HERMETIC VENUE by default, and this target sets nothing to choose it — no
 # lab, no VMs. The cells it builds are the runner's own userland, a throwaway
 # non-root sshd on 127.0.0.1, and the five pinned BusyBox artifacts run as
 # local subprocesses (`tests/conformance/_cells.py`). `OTTO_CONFORMANCE_BED=1`
-# selects the bed venue instead, which is a later item and currently raises.
+# selects the bed venue instead — `make conformance-bed` below, which is the
+# only lane that sets it.
+#
+# `and not conformance_bed` is what keeps that promise TRUE for the one kind of
+# test in that tree the venue knob does not govern: the bed openers' witness
+# (`tests/conformance/test_bed_opener_witness.py`) opens a real lab VM over ssh
+# on every run, because an opener whose only check was a probe someone deleted
+# is the defect it exists to prevent. This job runs nightly in CI with no lab
+# attached, so selecting that test here would make it red for the one reason
+# that says nothing about otto. The `conformance` marker keeps that test out of
+# every DEFAULT gate; this clause keeps it out of the HERMETIC one.
 #
 # SAMPLED, not exhaustive: each run draws OTTO_CONFORMANCE_CELLS cells
 # (default 8, `all` for the whole space) off pytest-randomly's session seed and
@@ -788,7 +799,50 @@ busybox-cache: ## Fetch + verify the BusyBox test artifacts into the local cache
 # function of that number (`tests/conformance/_sample.py`).
 conformance: ## Run the host-contract conformance suite (`conformance`-marked; excluded from every default lane): otto's shared exec/transfer/timeout contracts, asserted against a seeded sample of the (host, term, transfer) cells the HERMETIC venue can build here (OTTO_CONFORMANCE_CELLS=N|all, default 8) — no lab needed. JUnit XML lands in reports/junit/conformance/.
 	@$(SAY) "pytest: host-contract conformance, hermetic venue"
-	@$(TIMEOUT_CMD) uv run pytest -m "conformance" --no-cov $(call junitxml,conformance)
+	@$(TIMEOUT_CMD) uv run pytest -m "conformance and not conformance_bed" --no-cov $(call junitxml,conformance)
+
+# The SAME suite against the REAL bed, and the venue knob is the whole
+# difference: `OTTO_CONFORMANCE_BED=1` makes `resolve_space()` build its cells
+# from the bed's own lab data instead of a loopback sshd and five local
+# BusyBox artifacts (`tests/conformance/_bed.py`). Same contracts, same
+# assertions, different far side.
+#
+# A SEPARATE TARGET AND NOT A FLAG ON `conformance`, because that name already
+# means something in two places that have no lab: nightly's
+# `conformance-hermetic` job, and `--help`'s promise of "no lab needed".
+# Overloading it would make one name mean "hermetic" in CI and "needs this dev
+# VM's bed" locally, and the failure mode of getting that wrong is a CI job
+# that reaches for hardware it cannot see.
+#
+# DEV VM ONLY. This drives real hosts over a hop: Linux VMs, five BusyBox
+# guests over telnet, and Zephyr guests whose consoles serve exactly ONE
+# client. Nothing in CI runs it and nothing should — G11c's assertion that CI
+# runs "the conformance lane" is satisfied by the hermetic one above, which is
+# why this target's absence from every workflow is not a gap.
+#
+# EXHAUSTIVE BY DEFAULT, which is the opposite of the hermetic lane and is a
+# deliberate difference rather than an oversight. The hermetic space is 8
+# cells and the default budget is 8, so `make conformance` is exhaustive by
+# arithmetic; the bed space is 49, so the same budget would measure one cell
+# in six and this lane's whole claim is the CROSSING — the same contract over
+# every (term, transfer) a host's menus permit, which is the one thing
+# `tests/integration/host/` does not cover. Narrow it deliberately when
+# iterating: `make conformance-bed CONFORMANCE_CELLS=8` samples off the
+# session seed exactly as the hermetic lane does.
+#
+# ITS OWN WALL-CLOCK CAP, larger than PYTEST_TIMEOUT and stated rather than
+# inherited: 284 items reach real hardware here, the seven single-client
+# console cells serialize against each other through
+# `tests/conformance/_console_safety.py`'s exclusive lock, and the integration
+# tree measured full one-group bed serialization at >450s. 360s is the cap for
+# lanes whose slowest leg is a local VM; this one is not that lane.
+CONFORMANCE_CELLS ?= all
+CONFORMANCE_BED_TIMEOUT := 1200s
+conformance-bed: ## Run the host-contract conformance suite against the REAL BED (dev VM only; needs the lab VMs and the Zephyr guests): the same exec/transfer/timeout contracts as `make conformance`, crossed over every (term, transfer) each bed host's menus permit. Exhaustive by default; CONFORMANCE_CELLS=N samples N cells off the session seed instead. JUnit XML lands in reports/junit/conformance-bed/.
+	@$(SAY) "pytest: host-contract conformance, BED venue (real lab hosts, cells=$(CONFORMANCE_CELLS))"
+	@OTTO_CONFORMANCE_BED=1 OTTO_CONFORMANCE_CELLS=$(CONFORMANCE_CELLS) \
+	    timeout --foreground --kill-after=10s $(CONFORMANCE_BED_TIMEOUT) \
+	    uv run pytest -m "conformance" --no-cov $(call junitxml,conformance-bed)
 
 # Soak/stability + repeat targets disable coverage (--no-cov, overriding the
 # --cov in pytest addopts). Per-test `--cov-context=test` tracing adds overhead

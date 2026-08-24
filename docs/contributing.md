@@ -451,6 +451,8 @@ what you want to exercise:
 | Stability / soak | `make stability` (or `stability-unit` / `stability-unix` / `stability-tunnel` / `stability-embedded`) | lab VMs (`-unit` needs none) |
 | Chaos lane (tier 3, opt-in — interrupt/SIGKILL/reboot scenarios + BedHygiene, incl. docker kill/pause/restart/daemon-restart and privilege `as_user` interrupt) | `make chaos` / `make chaos-embedded` | leased unix host, incl. test3 for docker (+ zephyr board for the embedded leg) |
 | Chaos lane, docker slice only (GitHub nightly, no lab needed) | automatic — `nightly.yml`'s `chaos-docker` job (`OTTO_CHAOS_DOCKER=loopback`) | none — loopback sshd wrapping the runner's own docker daemon |
+| Host-contract conformance, hermetic venue (opt-in; also the GitHub nightly job) | `make conformance` (`OTTO_CONFORMANCE_CELLS=N\|all`) | none — loopback sshd + pinned BusyBox artifacts as subprocesses |
+| Host-contract conformance, real bed venue (opt-in, dev VM only) | `make conformance-bed` (`CONFORMANCE_CELLS=N` to sample) | full lab: test1–test4, the five BusyBox guests, the seven Zephyr guests |
 | Everything (the dev-VM contract) | `make all` | lab VMs |
 | Cross-Python matrix | `make nox-unit` (quick, no VMs) / `make nox` (full on 3.10 + 3.14, hostless on the middle versions) / `make nox-full` (full, all Pythons) | `nox`/`nox-full` need VMs |
 

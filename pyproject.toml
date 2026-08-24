@@ -291,6 +291,7 @@ markers = [
     "no_hygiene_bracket: chaos-lane test that manages its own BedHygiene bracket (reboot races the autouse after-probe)",
     "busybox: needs a real BusyBox artifact (fetched + cached; qemu-user-static on non-x86_64) — deselect with -m 'not busybox'",
     "conformance: host-contract conformance cell (tests/conformance) — stands up a throwaway loopback sshd and runs real BusyBox artifacts as subprocesses, one cell at a time; auto-stamped by tests/conformance/conftest.py AND declared per module, excluded from every default lane (`not conformance` rides every catch-all in Makefile/noxfile.py), opt-in via `make conformance`",
+    "conformance_bed: a tests/conformance test that reaches the REAL lab bed on EVERY run, whichever venue is selected — unlike the rest of that tree, which is hermetic unless OTTO_CONFORMANCE_BED=1. Carried IN ADDITION to `conformance` (so every catch-all still excludes it) and subtracted from the hermetic `make conformance` lane, which CI runs nightly with no lab attached",
 ]
 
 # NB: coverage.py config lives in .coveragerc, not here — that file is shared
