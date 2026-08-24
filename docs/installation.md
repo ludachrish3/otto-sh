@@ -121,6 +121,58 @@ server required. See
 [uv's Python install docs](https://docs.astral.sh/uv/concepts/python-versions/) for
 the current mechanics.
 
+## Multi-project workspaces
+
+Everything above sets up **one** repo. When several repos are under test at
+once (`OTTO_SUT_DIRS` naming more than one), a second question appears: which
+environment do they all run in?
+
+Otto is a single process on a single interpreter. Every active repo's
+instruction modules and test code import into *that* interpreter, so a per-repo
+virtualenv never participates at runtime — there is no arrangement in which
+each repo brings its own. Three environments exist, and it is worth naming all
+three because only the middle one is otto's business:
+
+1. **A repo's own venv.** For single-repo development. Each repo manages it
+   with its own tools from its own `pyproject.toml`. otto does not touch it.
+2. **The orchestration venv.** Where multi-project runs happen: one per user
+   per workspace, and necessarily a **superset** — it has to satisfy the
+   imports of every active repo at once.
+3. **Anything else otto happens to run from.** Legal for single-repo work,
+   discouraged once several repos are active, because nothing guarantees it
+   holds all of their requirements.
+
+{doc}`guide/cli/env/index` builds and maintains the second:
+
+```console
+$ export OTTO_SUT_DIRS=~/work/repo-a,~/work/repo-b
+$ otto env create
+created ~/.otto/134b91c0-repo-a-repo-b/env
+  installed (editable): repo-b
+  skipped, no pyproject.toml: repo-a
+  backend: uv
+
+Activate it with:
+  source ~/.otto/134b91c0-repo-a-repo-b/env/bin/activate
+```
+
+Each repo that has a `pyproject.toml` is installed **editable**, so your
+checkouts stay live; repos without one are skipped and said so, since their
+`libs` reach `sys.path` at bootstrap anyway. otto installs itself too, matching
+how your otto is installed — an editable checkout stays that checkout.
+
+### The uv-workspace alternative
+
+If your repos are already members of a
+[uv workspace](https://docs.astral.sh/uv/concepts/projects/workspaces/), you
+have the same property by another route: one lockfile across the members, one
+environment, resolved together. That needs no otto involvement at all, and it
+is the better answer when you control all the repos and can make them share a
+lockfile.
+
+`otto env` exists for the common case where they are independent checkouts —
+different teams, different release cadences — that were never designed to.
+
 ## Installing from a GitHub release
 
 Each tagged release on

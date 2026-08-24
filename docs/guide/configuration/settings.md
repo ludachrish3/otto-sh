@@ -256,6 +256,38 @@ version.
 
 
 (team-setup-checklist)=
+### `[env]` — which installer builds the orchestration venv
+
+```toml
+[env]
+backend = "uv"   # or "pip"; omit to auto-detect
+```
+
+This repo's standing choice of installer for the environment
+{doc}`../cli/env/index` builds. It is a **preference, not a requirement**:
+`--backend` on the command line outranks it, because the operator at the
+terminal knows things the file does not — that uv is not installed on this
+particular host, say. Omit it to auto-detect: uv when it is on `PATH`,
+otherwise the standard library's `venv` plus pip.
+
+Because a workspace is several repos, two of them can declare different values.
+That is a hard error naming both rather than a silent pick — an installer you
+did not choose is not a thing to bind quietly.
+
+### `[dependencies]` names repos; `pyproject.toml` names packages
+
+The two are easy to confuse and never overlap:
+
+| Where | What it declares |
+| ----- | ---------------- |
+| `[dependencies]` in `.otto/settings.toml` | Other **repos** in `OTTO_SUT_DIRS` this one needs |
+| `[project.dependencies]` in `pyproject.toml` | **Python packages** this repo imports |
+
+`otto env` reads the second: it installs each repo from its `pyproject.toml`,
+so that is where a Python requirement belongs. A repo with no `pyproject.toml`
+declares no Python dependencies to otto at all — it is skipped by `otto env`,
+and its `libs` reach `sys.path` at bootstrap exactly as before.
+
 ## Team setup checklist
 
 Most of otto's configuration is a **one-time, team-level** decision. New

@@ -1,7 +1,7 @@
 """First-party top-level command registrations — otto's own composition list.
 
 The direct analog of the backend registries' ``_register_builtin_*``
-functions: otto's eleven subcommand groups travel the same public
+functions: otto's twelve subcommand groups travel the same public
 :func:`~otto.cli.registry.register_cli_command` path a third-party plugin
 uses, with lazy ``"module:attr"`` loaders so nothing imports until dispatch.
 """

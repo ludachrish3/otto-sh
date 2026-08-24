@@ -46,6 +46,7 @@ _STAMP_INPUTS = [Path(__file__).resolve(), REPO_ROOT / "src" / "otto"]
 # each command page embeds its own --help.
 COMMANDS = [
     "init",
+    "env",
     "host",
     "run",
     "test",

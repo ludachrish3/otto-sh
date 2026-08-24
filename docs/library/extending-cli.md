@@ -7,7 +7,7 @@ next to the built-ins (`run`, `test`, `monitor`, `host`, ...). First-party and
 third-party commands travel the exact same path:
 {func}`~otto.cli.registry.register_cli_command` and the
 {func}`~otto.cli.registry.cli_command` decorator built on top of it. otto's own
-eleven subcommand groups register through this same function — see
+twelve subcommand groups register through this same function — see
 `otto/cli/builtin_commands.py` for the reference call sites this page mirrors.
 
 ## Registering a top-level command

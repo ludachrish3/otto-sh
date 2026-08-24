@@ -1,6 +1,6 @@
 # The otto CLI
 
-`otto` is one command with eleven subcommand groups. This page covers what is
+`otto` is one command with twelve subcommand groups. This page covers what is
 true of all of them — how an invocation is shaped, the options the top-level
 command owns, the environment variables that back them, and where each run
 writes its output. Each group then has its own page, and every subcommand of
@@ -259,6 +259,7 @@ connection failed.
 | Command | What it does |
 | --- | --- |
 | [`otto init`](init.md) | Scaffold a new otto repo, or validate an existing one |
+| [`otto env`](env/index.md) | Build and maintain this workspace's orchestration environment |
 | [`otto host`](host/index.md) | Run commands and transfer files on lab hosts |
 | [`otto run`](run/index.md) | Run a registered instruction on the lab |
 | [`otto test`](test/index.md) | Run a registered `OttoSuite` test suite |
@@ -286,6 +287,7 @@ projects
 :hidden:
 
 init
+env/index
 host/index
 run/index
 test/index
