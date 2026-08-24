@@ -10,7 +10,7 @@ the same ``try`` — the first lexical match wins.
 DEFINES, not raises, and the difference is not small: otto also raises plain
 stdlib exceptions at 301 sites — an argument otto validates and rejects is
 usually a bare ``ValueError``, not a named class. ``except OttoError``
-therefore means "one of otto's 42 NAMED failures", not "anything otto
+therefore means "one of otto's 43 NAMED failures", not "anything otto
 raised".
 
 There is no one clause that catches everything, and it is worth being exact
@@ -24,11 +24,12 @@ rather than offering a comforting near-miss:
   :class:`~otto.lifecycle.SyncPhaseInterrupt`, a ``KeyboardInterrupt`` on
   purpose (see below).
 * ``except (ValueError, RuntimeError)`` covers 254 of the 301 raise sites,
-  and 30 of the 42 named classes. Of the other 12, eight are rooted at plain
-  ``Exception`` (the bootstrap, lab-context, lab-repository and reservation
-  errors) and four sit under ``OSError`` (``AppShellTimeoutError``,
-  ``LoginProxyError``, ``RetryAttemptTimeoutError``, ``WaitTimeoutError``) —
-  30 + 8 + 4 = 42, so the split accounts for every named class.
+  and 30 of the 43 named classes. Of the other 13, nine are rooted at plain
+  ``Exception`` (the bootstrap, project-activation, lab-context,
+  lab-repository and reservation errors) and four sit under ``OSError``
+  (``AppShellTimeoutError``, ``LoginProxyError``, ``RetryAttemptTimeoutError``,
+  ``WaitTimeoutError``) — 30 + 9 + 4 = 43, so the split accounts for every
+  named class.
 
 Those counts are measured, not maintained by arithmetic: a *raise site* is a
 ``raise`` of a name that is a BUILTIN exception type (so ``typer.Exit`` and
@@ -45,7 +46,7 @@ stale.
 So: catch by NAME what you intend to handle, use ``except OttoError`` when
 "was this otto's own failure?" is the question, and treat ``except
 Exception`` as the broad guard while knowing what passes through it. Which
-stdlib root each named class carries — and which eight deliberately have
+stdlib root each named class carries — and which nine deliberately have
 none — is declared, and gated, in ``tests/unit/test_error_base.py``.
 
 The one deliberate exception is

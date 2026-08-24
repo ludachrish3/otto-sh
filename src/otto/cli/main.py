@@ -211,6 +211,84 @@ def parse_lab_selection(value: list[str] | None) -> list[str] | None:
     return names
 
 
+def parse_project_list(value: "list[str] | None") -> "list[str] | None":
+    """Typer callback for ``-I``/``-E``: split each value on commas, strip, normalize.
+
+    The switch repeats and each occurrence also splits on a comma, so
+    ``-I a -I b`` and ``-I a,b`` are the same selection. Only the comma
+    separates — unlike ``OTTO_SUT_DIRS``, which also splits on ``os.pathsep``,
+    because these are names rather than paths. Each segment is stripped, so
+    ``"a, b"`` and ``"a,b"`` are equivalent (the convention
+    :func:`otto.config.lab.split_lab_names` sets for ``--lab``); unlike that
+    one, an empty segment is dropped rather than refused, which is what makes a
+    trailing comma or a shell-built ``-I "$NAMES"`` harmless.
+
+    Stripping happens BEFORE normalization, not merely as the emptiness test:
+    ``normalize_name`` collapses ``[-_.]+`` runs and lowercases but leaves
+    whitespace intact, so an unstripped segment would store a name that matches
+    no repo — failing OPEN for ``-E`` (the project you meant to switch off stays
+    active) and slipping past the conflict rule, since ``"repo-a"`` and
+    ``" repo-a"`` do not overlap.
+
+    Normalization happens HERE so every downstream comparison — the conflict
+    rule, :func:`otto.config.scope.active`, the unknown-name check — sees one
+    spelling.
+    """
+    if value is None:
+        return None
+    from ..models.dependencies import normalize_name
+
+    return [
+        normalize_name(stripped)
+        for item in value
+        for part in item.split(",")
+        if (stripped := part.strip())
+    ]
+
+
+def _refuse_contradictory_switches(
+    include: "list[str] | None", exclude: "list[str] | None"
+) -> None:
+    """Exit 2 when a name appears in both -I and -E — a contradictory line is a typo."""
+    overlap = sorted(set(include or ()) & set(exclude or ()))
+    if overlap:
+        raise typer.BadParameter(
+            f"project(s) {', '.join(overlap)} appear in both --include-projects "
+            "and --exclude-projects — pick one",
+            param_hint="--include-projects / --exclude-projects",
+        )
+
+
+def _project_completer(ctx: "typer.Context", incomplete: str) -> list[str]:  # noqa: ARG001 — required by Typer autocompletion callback signature
+    """Completion source for -I/-E: the DISCOVERED repo names.
+
+    Phase 1 (:func:`otto.bootstrap.discover`), never ``get_repos()``. The
+    difference is the whole point: ``get_repos`` runs ``bootstrap()``, which is
+    phase 2 — the dependency pass plus every sibling repo's init module, i.e.
+    third-party user code. ``entry()`` deliberately keeps that off the
+    completion path ("zero user code"), and a repo whose init is slow or opens
+    a socket would otherwise hang every ``otto -I <TAB>`` with the bare
+    ``except`` below swallowing the reason. Discovery parses settings only, and
+    in completion mode it is already computed and cached, so this is free.
+
+    The unknown-name validation in
+    :func:`~otto.cli.invoke.validate_project_switches` is a different question
+    and correctly uses the full ``bootstrap().repos``: it runs at USE, where
+    user code has to run anyway.
+    """
+    try:
+        # Imported inside the function, not at module scope: the tests patch the
+        # `otto.bootstrap.discover` attribute, which a module-scope `from ...
+        # import discover` would bind past. Keep it local — hoisting it silently
+        # takes the tests' seam with it.
+        from ..bootstrap import discover
+
+        names = [repo.name for repo in discover().repos]
+    except Exception:  # noqa: BLE001 — completion must never crash the shell
+        return []
+    return [name for name in names if name.startswith(incomplete)]
+
+
 class _OttoGroup(TyperGroup):
     """Root group: registry-backed lazy dispatch + pending-token snapshot.
 
@@ -420,6 +498,28 @@ def main(  # noqa: PLR0913 — CLI command params
             help="Name of lab(s) to reserve and use; combine labs with '+'.",
         ),
     ] = None,
+    include_projects: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--include-projects",
+            "-I",
+            callback=parse_project_list,
+            autocompletion=_project_completer,
+            metavar="NAME[,NAME...]",
+            help="Force these projects ACTIVE for this invocation (overrides lab inference).",
+        ),
+    ] = None,
+    exclude_projects: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--exclude-projects",
+            "-E",
+            callback=parse_project_list,
+            autocompletion=_project_completer,
+            metavar="NAME[,NAME...]",
+            help="Switch these projects OFF for this invocation (overrides lab inference).",
+        ),
+    ] = None,
     xdir: Annotated[
         Path,
         typer.Option(
@@ -574,6 +674,7 @@ def main(  # noqa: PLR0913 — CLI command params
         ensure_lab_context,
         fail_loud_on_bootstrap_errors,
         report_lab_context_error,
+        validate_project_switches,
     )
 
     if probe and not dry_run:
@@ -589,6 +690,8 @@ def main(  # noqa: PLR0913 — CLI command params
             param_hint="--probe",
         )
 
+    _refuse_contradictory_switches(include_projects, exclude_projects)
+
     global _root_log_level  # noqa: PLW0603 — one per-invocation value, read by entry()'s frame
     _root_log_level = log_level
 
@@ -603,13 +706,18 @@ def main(  # noqa: PLR0913 — CLI command params
         probe=probe,
         as_user=as_user,
         skip_reservation_check=skip_reservation_check,
+        include_projects=tuple(include_projects or ()),
+        exclude_projects=tuple(exclude_projects or ()),
     )
 
     if show_lab or list_hosts:
         # These root flags inspect live lab state, which depends on the
         # registered world — fail the same way dispatch does rather than
         # surfacing a confusing secondary error from a half-registered world.
-        fail_loud_on_bootstrap_errors()
+        # Same two calls in the same order as `command_preamble`: a typo'd
+        # -I/-E name is a typo here too, not an input to the demotion decision.
+        validate_project_switches(ctx)
+        fail_loud_on_bootstrap_errors(ctx)
         # Open the CLI session BEFORE loading the lab. `init_cli_logging` is
         # what puts a console handler on the "otto" logger; until it runs the
         # tree still carries only the library NullHandler, which counts as a

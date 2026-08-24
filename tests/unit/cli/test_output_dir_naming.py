@@ -12,6 +12,7 @@ import pytest
 
 from otto.cli import invoke
 from otto.cli.registry import CommandSpec
+from tests._fixtures.clickctx import chain
 
 
 class _FakeCtx:
@@ -21,9 +22,18 @@ class _FakeCtx:
         # `callback` carries the per-verb output-dir opt-out marker (default on).
         callback = SimpleNamespace(__cli_output_dir__=True)
         self.command = SimpleNamespace(name=command_name, callback=callback)
+        self.info_name = command_name
+        # A real leaf context has a parent chain, and the preamble's activation
+        # gate walks it. A flattened group (`monitor`) hangs straight off the
+        # root; a real sub-group (`run smoke`) has its group in between.
+        self.parent = chain("otto") if command_name == spec.name else chain("otto", spec.name)
         self.meta: dict[str, Any] = {
             "_otto_command_spec": spec,
-            "_otto_root_options": object(),
+            # RootOptions-shaped, not a bare sentinel: the preamble reads the
+            # -I/-E tuples off this object before it reaches the output dir.
+            "_otto_root_options": SimpleNamespace(
+                labs=None, include_projects=(), exclude_projects=()
+            ),
         }
 
 

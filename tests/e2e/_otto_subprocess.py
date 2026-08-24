@@ -22,6 +22,7 @@ from otto.logger.management import _LOG_DIR_NAME_RE
 from tests._fixtures.paths import PROJECT_ROOT
 
 REPO1 = PROJECT_ROOT / "tests" / "repo1"
+REPO2 = PROJECT_ROOT / "tests" / "repo2"
 REPO_E2E = PROJECT_ROOT / "tests" / "repo_e2e"
 COVERAGERC = PROJECT_ROOT / ".coveragerc"
 COVERAGE_BOOTSTRAP = PROJECT_ROOT / "tests" / "_coverage_bootstrap"

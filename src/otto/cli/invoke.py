@@ -178,7 +178,7 @@ class LabContextError(OttoError):
         self.rich = rich
 
 
-def print_error(message: object) -> None:
+def print_error(message: object, *, soft_wrap: bool = False) -> None:
     """Print *message* as a user-facing error, with rich markup ESCAPED.
 
     The one place a CLI command renders a failure, so the escaping happens
@@ -198,21 +198,52 @@ def print_error(message: object) -> None:
 
     Lives here rather than in ``otto.console`` because every render site is a
     CLI one, and ``otto.cli`` deliberately does not depend on that module.
+
+    *soft_wrap* turns the hard word-wrap off for messages that carry a token
+    the reader is meant to COPY. Rich folds at the console width, and it folds
+    between words -- so a hint ending ``or: -I firmware-integration`` breaks
+    after the ``-I`` at 80 columns and hands the reader a switch they cannot
+    paste. Same reasoning, and the same call shape, as ``otto.cli.link._row``
+    and its twin ``otto.cli.tunnel._row``: a long line beats a broken argv.
+
+    PASS IT when any part of the message is meant to be copied and re-run --
+    a CLI switch, a shell command, a path, a host id. LEAVE IT OFF for prose,
+    which is most errors: folding is what a reader wants there, and turning it
+    off would leave one long line to scroll. The test is not "is this message
+    long?" but "would a line break inside it destroy something the reader has
+    to retype?".
+
+    Note it also turns CROPPING off, which is the part that surprises people:
+    with ``no_wrap`` alone rich TRUNCATES an over-wide line at the width
+    instead of folding it, so the message quietly loses its tail while still
+    looking complete.
+
+    Off, this is the byte-identical call ``rich.print`` itself makes:
+    ``rich.print`` forwards only ``sep`` and ``end`` to ``Console.print``, and
+    that method's own ``soft_wrap`` default is ``None`` (meaning "defer to
+    ``Console.soft_wrap``"). Passing ``None`` here is therefore that same call,
+    not an approximation of it -- checked against a corpus of otto's real error
+    messages at three widths, byte for byte.
     """
-    from rich import print as rprint
+    from rich import get_console
 
-    rprint(f"[red]{escape(str(message))}[/red]")
+    get_console().print(f"[red]{escape(str(message))}[/red]", soft_wrap=soft_wrap or None)
 
 
-def fail(message: object, code: int = 1) -> "NoReturn":
+def fail(message: object, code: int = 1, *, soft_wrap: bool = False) -> "NoReturn":
     """Render *message* as a user-facing error and exit with *code*.
 
     The exiting half of :func:`print_error`: one place that decides what a
     failing command looks like, so a new command cannot accidentally ship an
     unescaped one (``.ast-grep/rules/error-render-through-helper.yml`` keeps
     that true).
+
+    *soft_wrap* is threaded straight through -- see :func:`print_error` for
+    when to ask for it. Keyword-only, and defaulted off, so every existing
+    ``fail(msg)`` and ``fail(msg, 2)`` call is unchanged in both spelling and
+    behavior.
     """
-    print_error(message)
+    print_error(message, soft_wrap=soft_wrap)
     # `from None`: typer.Exit is a control-flow signal, not a consequence of
     # whatever was caught. Chaining it would attach a __cause__ that click's
     # standalone mode discards anyway, and one converted site (expose.py) had
@@ -259,6 +290,10 @@ class RootOptions:
     """``--probe``: under a dry run, open a connection to each host the command
     names (spec §3). Defaults so a caller that predates the flag still builds;
     the root callback always passes it, and rejects it without ``--dry-run``."""
+    include_projects: tuple[str, ...] = ()
+    """``-I``: PEP-503-normalized names forced active (spec §2)."""
+    exclude_projects: tuple[str, ...] = ()
+    """``-E``: PEP-503-normalized names switched off (spec §2)."""
 
 
 def ensure_cli_session(ctx: typer.Context) -> None:
@@ -480,11 +515,20 @@ def ensure_lab_context(ctx: typer.Context) -> "OttoContext":
 
     meta["otto_reservation"] = reservation_gate
 
-    # Install the runtime context: lab + dry_run flag. Token kept module-side
-    # in otto.context; entry()'s finally calls reset_cli_context().
+    # Install the runtime context: lab + dry_run flag + the per-invocation
+    # project switches (-I/-E), which every activation question reads back
+    # through otto.config.scope.active. Token kept module-side in otto.context;
+    # entry()'s finally calls reset_cli_context().
     from ..context import OttoContext, set_cli_context
 
-    set_cli_context(OttoContext(lab=lab, dry_run=opts.dry_run))
+    set_cli_context(
+        OttoContext(
+            lab=lab,
+            dry_run=opts.dry_run,
+            include_projects=opts.include_projects,
+            exclude_projects=opts.exclude_projects,
+        )
+    )
     meta["_otto_lab_ready"] = True
     return get_context()
 
@@ -502,18 +546,127 @@ def try_ensure_lab(ctx: typer.Context) -> "OttoContext | None":
         return None
 
 
-def fail_loud_on_bootstrap_errors() -> None:
-    """Exit(1) when bootstrap contained any repo error — shared loud gate.
+def validate_project_switches(ctx: typer.Context) -> None:
+    """Exit 2 when ``-I``/``-E`` names a repo discovery never found (spec §2).
+
+    Runs at first use (the preamble / the ``--show-lab`` branch) rather than in
+    the root callback, because the check needs the discovered repo set and the
+    root callback also runs for ``--help``, where there is no invocation to
+    validate. It claims no saving on user code: ``entry()`` has already called
+    ``bootstrap()`` before argv parsing on every non-completion invocation, and
+    the gate on the very next line calls it again. The early return below is
+    just "nothing was asked for, so look nothing up".
+
+    The name is normalized on BOTH sides — the switch values arrive
+    PEP-503-normalized from the root callback, so comparing them against a raw
+    ``repo.name`` would reject the only spelling the CLI can produce.
+
+    Printed manually + ``typer.Exit(2)`` rather than raised as a
+    ``click.UsageError``: a real one raised after parse escapes Typer 0.26's
+    vendored click fork uncaught, which is why ``ensure_lab_context``
+    hand-writes its missing-``--lab`` usage text too.
+    """
+    opts: "RootOptions | None" = ctx.meta.get("_otto_root_options")
+    if opts is None or not (opts.include_projects or opts.exclude_projects):
+        return
+    import difflib
+
+    from ..bootstrap import bootstrap
+    from ..models.dependencies import normalize_name
+
+    known = {normalize_name(repo.name) for repo in bootstrap().repos}
+    for value in (*opts.include_projects, *opts.exclude_projects):
+        if value in known:
+            continue
+        close = difflib.get_close_matches(value, sorted(known), n=1)
+        hint = f" — did you mean {close[0]!r}?" if close else ""
+        fail(f"no project {value!r}{hint}", 2)
+
+
+def fail_loud_on_bootstrap_errors(ctx: "typer.Context | None" = None) -> None:
+    """Exit(1) when bootstrap contained an ACTIVE repo's error — shared loud gate.
 
     The per-error ``warning:`` lines were already printed by ``entry()`` at
     startup; print ONLY the framed summary here (don't re-print each error
     in red) — the summary points back at those warnings. Used by the leaf
     preamble AND the root ``--show-lab``/``--list-hosts`` branch, so anything
     that inspects the registered world fails the same way.
+
+    With *ctx*, an error attributable to a repo that is inactive for this
+    invocation demotes to one warning line (spec §3): a broken sibling must not
+    fail a run it is not part of. Inactivity here is the PRE-LAB projection —
+    the explicit switches plus lab-name inference
+    (:func:`otto.config.scope.inactive_before_lab`) — because this gate is what
+    protects lab construction from a half-registered world and so has to run
+    before it; a repo that is inactive only because it is host-starved
+    therefore keeps its errors fatal. Attribution is by ``sut_dir``: an error
+    belonging to no discovered repo (a ``settings.toml`` that failed to PARSE,
+    so no :class:`~otto.config.repo.Repo` object exists) can never be judged
+    inactive and stays fatal. Without *ctx* — library callers, tests — every
+    error is fatal, unchanged.
     """
     from ..bootstrap import bootstrap
 
-    if bootstrap().errors:
+    result = bootstrap()
+    if not result.errors:
+        return
+
+    fatal = list(result.errors)
+    opts: "RootOptions | None" = ctx.meta.get("_otto_root_options") if ctx is not None else None
+    if opts is not None:
+        from ..config.scope import inactive_before_lab
+        from ..models.dependencies import normalize_name
+
+        by_dir = {str(repo.sut_dir): repo for repo in result.repos}
+        fatal = []
+        for err in result.errors:
+            repo = by_dir.get(str(err.sut_dir))
+            if repo is None:
+                fatal.append(err)  # discovery-phase error: nothing to attribute
+                continue
+            name = normalize_name(repo.name)
+            # Include is tested FIRST, where :func:`otto.config.scope.active`
+            # tests exclude first. The two agree only because the tuples are
+            # disjoint, which the root callback guarantees:
+            # ``_refuse_contradictory_switches`` exits 2 on any overlap before
+            # RootOptions is built. A library caller hand-building RootOptions
+            # with a name in both would get "fatal" here and "inactive" there;
+            # the CLI cannot produce that input.
+            if name in opts.include_projects:
+                # -I beats every inference: the operator said this repo is part
+                # of the run, so its failure is the run's failure.
+                fatal.append(err)
+                continue
+            if name in opts.exclude_projects:
+                reason = f"--exclude-projects {name}"
+            elif inactive_before_lab(repo.project_scope, opts.labs):
+                reason = f"not applicable to lab(s) [{', '.join(opts.labs or ())}]"
+            else:
+                fatal.append(err)
+                continue
+            # PRINTED, not logged. This gate runs before `ensure_cli_session`
+            # at BOTH call sites, so `init_cli_logging` has not yet put a
+            # console handler on the `otto` logger — and the library-citizen
+            # NullHandler otto attaches at import counts to
+            # `logging.callHandlers`, which defeats `logging.lastResort`. A
+            # `getLogger().warning` here emitted NOTHING, leaving the operator
+            # with entry()'s scary "failed to load" line and no sign of the
+            # decision taken on their behalf.
+            #
+            # stderr via typer.echo, matching `_emit_bootstrap_findings` — the
+            # site that printed the startup `warning:` line this one explains,
+            # so a redirect cannot separate them. Deliberately NOT rich.print:
+            # the run CONTINUES past here, so a diagnostic on stdout would land
+            # inside a successful command's output, and rich would eat the
+            # reason's `[unix]` as a style tag (leaving `lab(s) )`) — the exact
+            # damage `print_error` exists to prevent.
+            typer.echo(
+                f"warning: repo {repo.name!r} failed to load, but is inactive "
+                f"for this run ({reason}) — continuing without it",
+                err=True,
+            )
+
+    if fatal:
         from rich import print as rprint
 
         rprint("[red]Cannot run commands while a repo fails to load (see warnings above).[/red]")
@@ -585,6 +738,103 @@ def ensure_lab_session(ctx: typer.Context, spec: "CommandSpec") -> None:
         get_context().output_dir = management.create_output_dir(spec.name, sub)
 
 
+def refuse_inactive_instruction(inner_ctx: typer.Context) -> None:
+    """Refuse dispatching a repo-owned instruction whose repo is inactive (spec §5).
+
+    Runs in the leaf preamble AFTER the lab session exists, so the verdict can
+    come from :func:`otto.config.scope.active` — the one authority — rather than
+    from a pre-lab projection of it. Ordering is load-bearing, not cosmetic:
+    before the session there are no ``ctx.scopes`` verdicts at all, and a
+    missing verdict resolves ACTIVE, so a gate hoisted above it would refuse
+    nothing except an explicit ``-E``.
+
+    Help and completion never reach here (click exits during parse), so every
+    registered instruction stays listed. That is deliberate: activation is
+    per-invocation, and hiding entries would make ``-I`` undiscoverable —
+    the reader would have no way to learn the name the hint tells them to pass.
+
+    Exit 1, not 2: the command line is well-formed; the configuration excludes
+    it. A usage error would tell the reader to fix their typing, which is the
+    wrong place to look.
+    """
+    # Climb to the node whose PARENT is the ``run`` group -- for an ordinary
+    # instruction that is the leaf itself, and for one registered as a
+    # sub-group (``add_typer``) it is the group, whose name is the registry
+    # key. Anything else -- ``otto host <id> get``, ``otto link impair`` --
+    # exits at the root with ``parent is None`` and is left alone; this gate
+    # is about instruction dispatch, not about every command in the CLI.
+    node = inner_ctx
+    while node.parent is not None and getattr(node.parent.command, "name", None) != "run":
+        node = node.parent
+    if node.parent is None:
+        return  # not dispatched through `otto run`
+
+    from ..instructions import INSTRUCTIONS
+
+    # `or ""`: click types `info_name` as `str | None`, and an unnamed node owns
+    # nothing -- "" is never a registered instruction, so the one lookup below
+    # covers both "no name" and "not an instruction" without a second branch.
+    name = node.info_name or ""
+    if name not in INSTRUCTIONS:
+        return  # a statically-declared `run` child; nobody owns it
+    owner = INSTRUCTIONS.get(name).registered_by
+    if owner is None:
+        return  # first-party (or hand-registered) -- never refused
+
+    from ..config.scope import active, switched_off
+    from ..context import get_context
+
+    ctx = get_context()
+    if active(owner, ctx):
+        return
+
+    from ..models.dependencies import normalize_name
+
+    switch_name = normalize_name(owner)
+    if switched_off(owner, ctx):
+        detail = f"which was switched off for this run (--exclude-projects {switch_name})"
+        hint = f"  activate it: remove --exclude-projects {switch_name}    or: -I {switch_name}"
+    else:
+        # Not switched off, yet not active: `active()` reaches that verdict ONLY
+        # by finding an unusable ProjectScope under the repo's declared name, so
+        # the lookup cannot miss. Subscripting rather than `.get(...) or <blank>`
+        # keeps it that way -- a blanked-out sentence would be a plausible,
+        # content-free error, which is worse than the KeyError it replaced.
+        scope = ctx.scopes[owner]
+        loaded = ", ".join(scope.loaded_labs)
+        if scope.excluded:
+            # No loaded lab applies. The fix is a different `-l`, so the hint
+            # names the patterns the repo actually declared.
+            patterns = ", ".join(scope.lab_patterns) or "(none)"
+            detail = (
+                f"which is inactive for the loaded lab(s) [{loaded}] (lab_patterns: {patterns})"
+            )
+            wanted = " / -l ".join(sorted(scope.lab_patterns)) or "<a matching lab>"
+            hint = f"  activate it: -l {wanted}    or: -I {switch_name}"
+        else:
+            # Labs match, hosts do not. Different cause, different fix -- the
+            # same distinction `otto.config.scope._unusable_scope_message`
+            # draws for the walks, so the two surfaces stay readable together.
+            patterns = ", ".join(scope.host_patterns) or "(none)"
+            detail = (
+                f"which is inactive: its [project] host_patterns ({patterns}) "
+                f"match no host in the loaded lab(s) [{loaded}]"
+            )
+            hint = f"  activate it: widen host_patterns, or: -I {switch_name}"
+    # Through `fail`, never a hand-rolled `[red]` f-string: the message
+    # interpolates a lab list and the literal table name `[project]`, and rich
+    # DELETES `[word]` as markup unless it is escaped -- the demotion warning
+    # a few functions up was observed rendering "lab(s) [unix]" as "lab(s) )"
+    # for exactly this reason. `print_error` escapes; the
+    # `error-render-through-helper` ast-grep rule keeps this route the only one.
+    # soft_wrap: the hint's whole job is to hand over a runnable switch. Rich
+    # folds between WORDS at the console width, so at 80 columns an ordinary
+    # repo name splits `or: -I firmware-integration` across the fold and the
+    # token cannot be pasted. The detail line above is prose and would be fine
+    # folded; the hint is not, and they share one render.
+    fail(f"{name!r} belongs to repo {owner!r}, {detail}\n{hint}", soft_wrap=True)
+
+
 def ensure_help_banner(ctx: typer.Context) -> None:
     """Print the banner before rendered help text, once per invocation (idempotent).
 
@@ -607,10 +857,12 @@ def ensure_help_banner(ctx: typer.Context) -> None:
 def command_preamble(ctx: typer.Context) -> None:
     """Run once when a real (non-help) command invocation starts.
 
-    Order: bootstrap errors fail loud → lab-free commands skip the lab slice →
-    CLI session (logging) → lab context → per-command output dir → reservation
-    gate → the dry-run seam. ``--help`` paths never reach this function:
-    click's help option exits during leaf parse, before ``Command.invoke``.
+    Order: ``-I``/``-E`` names are validated → an active repo's bootstrap
+    errors fail loud → lab-free commands skip the lab slice → CLI session
+    (logging) → lab context → per-command output dir → an inactive repo's
+    instruction is refused → reservation gate → the dry-run seam. ``--help``
+    paths never reach this function: click's help option exits during leaf
+    parse, before ``Command.invoke``.
 
     The seam is LAST on purpose. Everything above it is the validating half of
     the dry-run contract (spec §1: arguments coerce, the lab loads, references
@@ -626,11 +878,18 @@ def command_preamble(ctx: typer.Context) -> None:
         return
     meta["_otto_preamble_done"] = True
 
-    fail_loud_on_bootstrap_errors()
+    # Order matters: a typo'd -I/-E name is reported as a typo, rather than
+    # being silently absorbed into a demotion decision the gate makes next.
+    validate_project_switches(ctx)
+    fail_loud_on_bootstrap_errors(ctx)
 
     spec: CommandSpec = meta["_otto_command_spec"]
     if not spec.lab_free:
         ensure_lab_session(ctx, spec)
+        # After the session (the lab verdicts it installs ARE the input) and
+        # before the gate: a run that is being refused must not first be
+        # warned about the reservations it would have needed.
+        refuse_inactive_instruction(ctx)
         if spec.gate:
             present_reservation_gate(ctx)
 

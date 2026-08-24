@@ -12,6 +12,7 @@ Tests cover:
 import logging
 import os
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import ANY, MagicMock, patch
 
 import pytest
@@ -628,3 +629,208 @@ class TestClearAutocompleteCache:
         monkeypatch.setattr("otto.config.completion_cache._cache_path", lambda: None)
         out = self._run(capsys)
         assert "OTTO_XDIR" in out
+
+
+# ── Project activation switches: the WIRING (-I / -E) ────────────────────────
+
+
+class TestProjectSwitchWiring:
+    """That -I/-E are CONNECTED, not merely that the parse helpers are correct.
+
+    ``test_project_switches.py`` covers the three pure functions. Nothing there
+    can tell whether the option is spelled ``-I``, whether Typer was actually
+    given ``callback=parse_project_list``, whether the conflict check is still
+    called, or whether the tuples reach the runtime context — every one of those
+    can be deleted with that file still fully green. These drive the REAL root
+    callback and the REAL ``ensure_lab_context`` through the ``_main_probe``
+    leaf, so each of those seams has a witness.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _world_knows_these_names(self, monkeypatch):
+        """Let discovery find every repo name these tests type.
+
+        The preamble validates ``-I``/``-E`` against the discovered repo set
+        and exits 2 on a name nothing declares
+        (``otto.cli.invoke.validate_project_switches``). ``main_mocks`` leaves
+        that set empty, so without this every test below would stop at the
+        validator with exit 2 and witness none of the wiring it exists for.
+        Names are the NORMALIZED spellings the validator compares against.
+        """
+        repos = [SimpleNamespace(name=n) for n in ("repo-a", "other-repo", "a", "b", "c")]
+        monkeypatch.setattr(
+            "otto.bootstrap.bootstrap", lambda: SimpleNamespace(repos=repos, errors=[])
+        )
+
+    def _capture_root_options(self, monkeypatch):
+        """Spy RootOptions, returning a dict that fills in with the built instance."""
+        import otto.cli.invoke as invoke_mod
+
+        captured: dict = {}
+        real = invoke_mod.RootOptions
+
+        def _spy(**kwargs):
+            opts = real(**kwargs)
+            captured["opts"] = opts
+            return opts
+
+        # main() imports RootOptions from .invoke inside its body, so the
+        # attribute is resolved at call time and patching the source works.
+        monkeypatch.setattr("otto.cli.invoke.RootOptions", _spy)
+        return captured
+
+    def _capture_context(self, monkeypatch):
+        """Spy set_cli_context, still installing the real context so get_context works."""
+        import otto.context as context_mod
+
+        captured: dict = {}
+        real_set = context_mod.set_cli_context
+
+        def _spy(ctx):
+            captured["ctx"] = ctx
+            return real_set(ctx)
+
+        monkeypatch.setattr("otto.context.set_cli_context", _spy)
+        return captured
+
+    def test_switches_reach_root_options_normalized(self, main_mocks, monkeypatch):
+        """`-I`/`-E` are parsed by the callback and stored PEP-503-normalized.
+
+        A user spelling is used on purpose: raw passthrough (a missing
+        ``callback=``) and a renamed short option both fail here, and both are
+        otherwise invisible.
+        """
+        captured = self._capture_root_options(monkeypatch)
+
+        result = _invoke(["-I", "Repo.A", "-E", "other_repo"])
+
+        assert result.exit_code == 0, result.output
+        opts = captured["opts"]
+        assert opts.include_projects == ("repo-a",)
+        assert opts.exclude_projects == ("other-repo",)
+
+    def test_long_spellings_reach_root_options_too(self, main_mocks, monkeypatch):
+        captured = self._capture_root_options(monkeypatch)
+
+        result = _invoke(["--include-projects", "a,b", "--exclude-projects", "c"])
+
+        assert result.exit_code == 0, result.output
+        assert captured["opts"].include_projects == ("a", "b")
+        assert captured["opts"].exclude_projects == ("c",)
+
+    def test_absent_switches_store_empty_tuples(self, main_mocks, monkeypatch):
+        """The default is (), not None — Task 3 compares these tuples directly."""
+        captured = self._capture_root_options(monkeypatch)
+
+        result = _invoke([])
+
+        assert result.exit_code == 0, result.output
+        assert captured["opts"].include_projects == ()
+        assert captured["opts"].exclude_projects == ()
+
+    def test_switches_reach_the_runtime_context(self, main_mocks, monkeypatch):
+        """ensure_lab_context must thread both tuples onto the installed OttoContext.
+
+        This is the seam where everything the parse layer produced actually
+        meets ``otto.config.scope.active``. Dropping the two kwargs leaves every
+        other test in the suite green.
+        """
+        captured = self._capture_context(monkeypatch)
+
+        result = _invoke(["-I", "Repo.A", "-E", "other_repo"])
+
+        assert result.exit_code == 0, result.output
+        ctx = captured["ctx"]
+        assert ctx.include_projects == ("repo-a",)
+        assert ctx.exclude_projects == ("other-repo",)
+
+    def test_the_context_sees_the_switches_through_the_predicate(self, main_mocks, monkeypatch):
+        """End to end: a name typed at -E makes scope.active() say False.
+
+        Asserts the CONSEQUENCE rather than the field, so the wiring is pinned
+        to the thing it exists for.
+        """
+        from otto.config import scope
+
+        captured = self._capture_context(monkeypatch)
+
+        result = _invoke(["-E", "other_repo"])
+
+        assert result.exit_code == 0, result.output
+        ctx = captured["ctx"]
+        assert scope.active("other-repo", ctx) is False
+        assert scope.switched_off("other-repo", ctx) is True
+        assert scope.active("some-other-repo", ctx) is True
+
+    def test_an_unknown_name_stops_the_real_cli_at_two(self, main_mocks):
+        """The preamble really calls the validator — not just a fake ctx in a unit test.
+
+        Every other test in this class only needs the validator to PASS, so
+        deleting ``validate_project_switches(ctx)`` from ``command_preamble``
+        leaves them all green. This one needs it to have RUN.
+        """
+        result = _invoke(["-E", "ghost"])
+
+        assert result.exit_code == 2
+        assert "no project 'ghost'" in result.output
+
+    def test_show_lab_validates_the_names_too(self, main_mocks):
+        """``--show-lab`` short-circuits in the root callback and gets the same check.
+
+        It never reaches ``command_preamble``, so the branch carries its own
+        call; without it a typo'd name would surface as a confusing lab dump.
+        """
+        result = runner.invoke(app, ["--lab", "test_lab", "-E", "ghost", "--show-lab"])
+
+        assert result.exit_code == 2
+        assert "no project 'ghost'" in result.output
+
+    def _world_with_one_broken_repo(self, monkeypatch):
+        """Install a discovered world where ``repo-a`` failed to load."""
+        from otto.bootstrap import BootstrapError
+
+        broken = SimpleNamespace(name="repo-a", sut_dir=Path("/repos/repo-a"), project_scope=None)
+        monkeypatch.setattr(
+            "otto.bootstrap.bootstrap",
+            lambda: SimpleNamespace(
+                repos=[broken],
+                errors=[BootstrapError(broken.sut_dir, "repo_a_init", ImportError("paramiko"))],
+            ),
+        )
+
+    def test_an_excluded_repos_bootstrap_error_does_not_fail_the_run(self, main_mocks, monkeypatch):
+        """The preamble hands *ctx* to the gate — otherwise this run would exit 1.
+
+        Dropping the argument at that call site leaves every direct unit test
+        of the gate green, because they pass their own ctx.
+        """
+        self._world_with_one_broken_repo(monkeypatch)
+
+        result = _invoke(["-E", "repo-a"])
+
+        assert result.exit_code == 0, result.output
+
+    def test_show_lab_demotes_an_excluded_repos_error_as_well(self, main_mocks, monkeypatch):
+        """The ``--show-lab`` branch passes *ctx* to the gate too, not just to the validator."""
+        self._world_with_one_broken_repo(monkeypatch)
+
+        result = runner.invoke(app, ["--lab", "test_lab", "-E", "repo-a", "--show-lab"])
+
+        assert result.exit_code == 0, result.output
+
+    def test_contradictory_switches_exit_two(self, main_mocks):
+        """The conflict check still runs in the root callback (usage error = 2)."""
+        result = _invoke(["-I", "repo-a", "-E", "repo-a"])
+
+        assert result.exit_code == 2
+        assert "repo-a" in result.output + result.stderr
+
+    def test_whitespace_contradiction_exits_two_through_the_real_cli(self, main_mocks):
+        """`-I "repo-a" -E " repo-a"` is one name twice — the CLI must refuse it.
+
+        Only true while the parse callback strips before the check compares.
+        """
+        result = _invoke(["-I", "repo-a", "-E", " repo-a"])
+
+        assert result.exit_code == 2
+        assert "repo-a" in result.output + result.stderr

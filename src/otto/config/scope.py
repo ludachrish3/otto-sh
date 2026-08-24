@@ -36,6 +36,7 @@ from typing import TYPE_CHECKING
 from ..errors import OttoError
 
 if TYPE_CHECKING:
+    from ..context import OttoContext
     from ..host.host import Host
     from ..models.settings import ProjectScopeSpec
     from .repo import Repo
@@ -500,6 +501,106 @@ def unusable_scope(scope: "ProjectScope") -> bool:
         or because its ``host_patterns`` match nothing in the labs that do.
     """
     return scope.declared and (scope.excluded or not scope.universe)
+
+
+def _switched(names: "tuple[str, ...]") -> "frozenset[str]":
+    """Project a switch tuple onto its PEP-503 normalized form, for comparison.
+
+    THE read-side half of the ``include_projects``/``exclude_projects``
+    contract, and the reason those fields need no ``__post_init__``.
+    ``OttoContext`` is a plain dataclass that anyone may construct, so
+    "the values are normalized" cannot be a WRITE-time promise — a library
+    caller passing ``("My_Repo",)`` would otherwise have its explicit switch
+    silently ignored, which is the failure mode this module exists to refuse.
+    Normalizing HERE makes the invariant hold at the only place that reads it.
+
+    Shared by :func:`active` and :func:`switched_off` rather than spelled at
+    each, because the two must agree about what "the same repo" means: a
+    ``switched_off`` that said False where ``active`` said False-because-excluded
+    would attribute the verdict to the wrong cause.
+
+    The tuples hold one entry per ``-I``/``-E`` the user typed, so rebuilding
+    the set per call is free and keeps the function pure.
+    """
+    from ..models.dependencies import normalize_name
+
+    return frozenset(normalize_name(n) for n in names)
+
+
+def active(repo_name: str, ctx: "OttoContext") -> bool:
+    """Report whether *repo_name* participates in this invocation — THE authority.
+
+    Every enforcement point (bootstrap-error demotion via
+    :func:`inactive_before_lab`'s projection, the orchestrator walks,
+    instruction dispatch) consults this one predicate, so the resolution
+    order is stated once: explicit switch > lab inference > default-on.
+    Pure over ``(ctx.include_projects, ctx.exclude_projects, ctx.scopes)``;
+    no I/O.
+
+    A missing verdict is active on purpose: it covers the no-labs-loaded
+    invocation (``ctx.scopes`` is empty), the undeclared repo (whole-lab
+    fallback, scoping spec §6), and the library context alike — in every
+    case there is no signal that would justify leaving the repo out.
+
+    Args:
+        repo_name: The repo's declared ``Repo.name``, spelled exactly as the
+            repo declares it. ``ctx.scopes`` is keyed by that raw name, so a
+            user-typed variant (different case, ``_`` for ``-``) finds no
+            verdict and therefore fails OPEN — resolving ACTIVE. Callers
+            holding a user-supplied spelling must map it back to a declared
+            name before asking.
+        ctx: The runtime context supplying the switches and the lab verdicts.
+    """
+    from ..models.dependencies import normalize_name
+
+    name = normalize_name(repo_name)
+    if name in _switched(ctx.exclude_projects):
+        return False
+    if name in _switched(ctx.include_projects):
+        return True
+    # RAW name, deliberately: ``ctx.scopes`` is keyed by ``Repo.name`` exactly as
+    # written, so normalizing this key would miss the verdict of every repo whose
+    # name holds an ``_``, a ``.`` or a capital — and a missing verdict resolves
+    # ACTIVE, i.e. it would fail OPEN into the silent widening D6 refuses. The
+    # switches above normalize because they carry USER-typed names; this does not
+    # because it carries a declared one.
+    verdict = ctx.scopes.get(repo_name)
+    if verdict is None:
+        return True
+    return not unusable_scope(verdict)
+
+
+def switched_off(repo_name: str, ctx: "OttoContext") -> bool:
+    """Report whether *repo_name* was explicitly ``--exclude-projects``'d.
+
+    Attribution only — every message that names the SWITCH as the reason
+    reads this, while the combined verdict stays :func:`active`'s alone.
+    Normalizes both sides through ``_switched``, the same way
+    :func:`active` does, so the two cannot disagree about identity. Unlike
+    :func:`active` this one reads no lab verdict, so *repo_name* may be any
+    spelling — normalization is the whole comparison.
+    """
+    from ..models.dependencies import normalize_name
+
+    return normalize_name(repo_name) in _switched(ctx.exclude_projects)
+
+
+def inactive_before_lab(
+    scope: "ProjectScopeConfig | None", lab_selection: "list[str] | None"
+) -> bool:
+    """Report whether *scope* is inactive on the LAB AXIS alone, for seams that run pre-lab.
+
+    The lab-axis projection of :func:`active`.
+    Bootstrap-error demotion fires before the lab is built, so it cannot ask
+    for a :class:`ProjectScope` verdict; what it CAN know is the ``-l``
+    selection (already split into component names) and the repo's declared
+    ``lab_patterns``. This is deliberately the narrower test: a repo that is
+    inactive only because it is host-starved is NOT detected here, and its
+    bootstrap errors stay fatal (plan deviation 1).
+    """
+    if not lab_selection or scope is None:
+        return False
+    return not any(_lab_applies(scope, name) for name in lab_selection)
 
 
 def _unusable_scope_message(scope: "ProjectScope") -> str:

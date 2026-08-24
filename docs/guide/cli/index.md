@@ -24,6 +24,8 @@ These options are available on every `otto` command:
 | ------ | ------- | ------- | ----------- |
 | `--lab, -l` | `OTTO_LAB` | *(required)* | Lab name(s); combine several with `+` (e.g. `tech1+overlay`) |
 | `--xdir, -x` | `OTTO_XDIR` | current dir | Output directory for logs and artifacts |
+| `--include-projects, -I` | | | Force these projects active for this invocation, overriding lab inference — see {doc}`projects` |
+| `--exclude-projects, -E` | | | Switch these projects off for this invocation, overriding lab inference — see {doc}`projects` |
 | `--field / --debug` | `OTTO_FIELD_PRODUCTS` | `--debug` | Use field or debug products |
 | `--log-days` | `OTTO_LOG_DAYS` | `30` | Number of days to retain logs |
 | `--log-level` | `OTTO_LOG_LEVEL` | `INFO` | Logging level |
@@ -227,6 +229,7 @@ when you need one that does not.
 :hidden:
 
 dry-run
+projects
 ```
 
 ```{toctree}

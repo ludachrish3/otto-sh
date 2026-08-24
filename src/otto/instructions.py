@@ -20,11 +20,28 @@ if TYPE_CHECKING:
 
 @dataclasses.dataclass(frozen=True)
 class InstructionEntry:
-    """One registered instruction: its Typer sub-app + defining module."""
+    """One registered instruction: its Typer sub-app, defining module, owning repo."""
 
     name: str
     sub_app: "typer.Typer"
     module: str
+
+    registered_by: str | None = None
+    """``get_registering_repo()`` at registration -- ``None`` means first-party.
+
+    The dispatch gate (``otto.cli.invoke.refuse_inactive_instruction``, project
+    -activation spec §5) refuses an instruction whose owning repo is inactive
+    for this invocation; ``None`` is never refused. The repo NAME rather than
+    the :attr:`module` because activation is keyed on ``Repo.name`` — the same
+    spelling ``otto.config.scope.active`` requires — while ``module`` is an
+    import path that a repo may share with a library it vendors.
+
+    Only the ``@instruction()`` decorator records this. A repo that builds an
+    :class:`InstructionEntry` and calls ``INSTRUCTIONS.register()`` itself gets
+    ``None``, and so first-party treatment. That is the conservative failure
+    direction and is intended: an omission can never REFUSE something that
+    used to run, it can only decline to refuse.
+    """
 
 
 # Populated by @instruction() as init modules are imported during startup;

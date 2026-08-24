@@ -290,6 +290,29 @@ path = "otto.project"
 # sixteen (re-measured, see the header). What DID move is the header's
 # both-cuts figure: project->tunnel is now tunnel's only cli-free way back
 # into the component.
+#
+# otto.errors is the exception hierarchy's root and a zero-import leaf, so it
+# cannot invert layering or create a cycle (otto.config, otto.monitor and
+# otto.reservations declare it on the same standing). Module-scope in
+# orchestrator.py, deliberately: InactiveRequiredDependencyError is a
+# module-level class statement and its base has to be resolved at import time.
+# The cost is nil -- otto.errors imports nothing -- so `import otto.project`
+# stays as cheap as the note above requires.
+#
+# otto.models is `normalize_name`, the ONE PEP-503 normalizer, reached at
+# function scope from orchestrator's activation code. The alternative was
+# importing it from otto.config.dependencies, which merely re-exports it: that
+# would have satisfied tach with an already-declared edge while hiding the real
+# dependency, and the honest edge is the one that survives someone moving the
+# re-export. It points DOWN (nothing under otto.models imports otto.project)
+# and every module otto.models itself depends on is already reachable here.
+#
+# BOTH RE-MEASURED with forbid_circular_dependencies (2026-08-23), because the
+# header says never to quote those numbers by guess: SIXTEEN with these two
+# edges and sixteen without them; FIFTEEN with both cli edges cut, either way.
+# Neither figure in the header moves. project already reached the component
+# without cli (project -> config -> suite -> project), so a second cli-free
+# loop through models adds no member and strands nobody new.
 depends_on = [
     "otto.registry",
     "otto.result",
@@ -300,6 +323,8 @@ depends_on = [
     "otto.cli",
     "otto.link",
     "otto.tunnel",
+    "otto.errors",
+    "otto.models",
 ]
 
 [[modules]]

@@ -28,6 +28,10 @@ otto --lab my_lab run deploy --debug        # pass a flag
 otto run --list-instructions                # see all available instructions
 ```
 
+An instruction belongs to the repo that registered it, and otto refuses to
+dispatch one whose repo is not active for this invocation — the loaded labs
+decide that by default, and `-I`/`-E` override it. See {doc}`../projects`.
+
 Because instructions are registered by name, tab completion of their names
 comes for free — these candidates are the demo repo's registered
 instructions, resolved by the real completion machinery:

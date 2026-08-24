@@ -20,15 +20,28 @@ through ``register_project_actions`` — the attribution seam is
 ``overwrite=``.
 """
 
+import io
 import logging
+import re
 from types import SimpleNamespace
 
 import pytest
+from rich.console import Console
+from rich.highlighter import NullHighlighter
+from rich.logging import RichHandler
+from rich.markup import escape
 
 from otto import project
 from otto.bootstrap import ProjectScopeError
-from otto.config.scope import ProjectScope
+from otto.config.dependencies import ResolvedDependency
+from otto.config.scope import (
+    ProjectScope,
+    ProjectScopeConfig,
+    require_nonempty_fleet,
+    scoped_ids,
+)
 from otto.context import OttoContext
+from otto.errors import OttoError
 from otto.link import (
     DirectionState,
     FlowDirection,
@@ -40,13 +53,17 @@ from otto.link import (
     RepairReport,
     Selector,
 )
+from otto.logger.formatters import RichFormatter
+from otto.models.dependencies import normalize_name
 from otto.project import (
     PROJECT_ACTIONS,
     Cleanliness,
     CleanlinessKind,
     InstallState,
     ProjectActions,
+    orchestrator,
 )
+from otto.project.orchestrator import InactiveRequiredDependencyError
 from otto.result import CommandNotRunError, Result
 from otto.tunnel import (
     DiscoveredTunnel,
@@ -146,13 +163,20 @@ class _FakeCtx:
     # copy of that wiring here would be a copy that can drift.
     for_repo = OttoContext.for_repo
 
-    def __init__(self, hosts, lab=None, scopes=None):
+    def __init__(self, hosts, lab=None, scopes=None, include_projects=(), exclude_projects=()):
         self.hosts = list(hosts)
         self.lab = _fake_lab() if lab is None else lab
         # The resolver's verdicts, as ``OttoContext.scopes`` hands them over.
         # An empty mapping is the whole-lab fallback (§6) and the shape every
         # test above this one runs under: nothing declared, nothing narrowed.
         self.scopes = dict(scopes or {})
+        # The ``-I`` / ``-E`` switch axis, TUPLES exactly as ``OttoContext``
+        # stores them (one entry per switch the user typed, un-normalized —
+        # ``otto.config.scope._switched`` is what normalizes, on the read side).
+        # Empty defaults are what keep every test above this one on the
+        # no-switch path, where ``active()`` is the lab verdict alone.
+        self.include_projects = tuple(include_projects)
+        self.exclude_projects = tuple(exclude_projects)
 
     def all_hosts(self, _scope_owner=None):
         return iter(self.hosts)
@@ -230,7 +254,7 @@ def _recording_actions(events, flags, questions=None, failing=None, state=None, 
     return _Recording
 
 
-def _wire_lab(monkeypatch, repo_names, ctx, current=None):
+def _wire_lab(monkeypatch, repo_names, ctx, current=None, dependencies=None):
     """Point the orchestrator's three lookups at *repo_names*, the driving repo, and *ctx*.
 
     TWO REPO LISTS, DELIBERATELY DIFFERENT. ``get_ordered_repos`` hands back
@@ -240,8 +264,18 @@ def _wire_lab(monkeypatch, repo_names, ctx, current=None):
     defaults to the LAST name in walk order, which is where a dependent sits,
     so a gate that read the walk order's first element would be asking about a
     dependency and these fixtures would catch it.
+
+    EVERY fake repo carries ``dependencies``, empty by default, because the
+    real :class:`~otto.config.repo.Repo` always does (a ``field`` with
+    ``default_factory=list``, populated by bootstrap's resolution pass). A
+    double that omitted it would make ``for dep in repo.dependencies`` look
+    like it needed a ``getattr`` guard the production type never wants.
+    *dependencies* maps a repo name to the resolved entries it declares.
     """
-    ordered = [SimpleNamespace(name=name) for name in repo_names]
+    deps = dependencies or {}
+    ordered = [
+        SimpleNamespace(name=name, dependencies=list(deps.get(name, []))) for name in repo_names
+    ]
     driving = current if current is not None else (repo_names[-1] if repo_names else None)
     configured = [repo for repo in ordered if repo.name == driving]
     configured += [repo for repo in ordered if repo.name != driving]
@@ -292,7 +326,7 @@ def _wire_infra(monkeypatch, events, *, repair=None, reap=None, states=(), disco
     return calls
 
 
-def _wire(
+def _wire(  # noqa: PLR0913 — one independently-optional knob per axis of the lab being wired
     monkeypatch,
     repos,
     hosts=0,
@@ -304,6 +338,9 @@ def _wire(
     links=(),
     scopes=None,
     current=None,
+    include_projects=(),
+    exclude_projects=(),
+    dependencies=None,
     **actions_kwargs,
 ):
     """A lab of *repos* (topological order) with recording actions and *hosts* fleet hosts."""
@@ -312,8 +349,14 @@ def _wire(
     for name in repos:
         PROJECT_ACTIONS.register(name, cls, overwrite=True, origin="test")
     fleet = [_FakeHost(f"h{i}", events) for i in range(hosts)]
-    ctx = _FakeCtx(fleet, lab=_fake_lab(links), scopes=scopes)
-    ordered = _wire_lab(monkeypatch, repos, ctx, current=current)
+    ctx = _FakeCtx(
+        fleet,
+        lab=_fake_lab(links),
+        scopes=scopes,
+        include_projects=include_projects,
+        exclude_projects=exclude_projects,
+    )
+    ordered = _wire_lab(monkeypatch, repos, ctx, current=current, dependencies=dependencies)
     calls = _wire_infra(
         monkeypatch, events, repair=repair, reap=reap, states=states, discovery=discovery
     )
@@ -341,6 +384,7 @@ def _scope(
     loaded=("bench", "floor"),
     universe=("h0",),
     host_patterns=(".*",),
+    config=None,
 ):
     """One resolver verdict for *name* — the REAL frozen dataclass, never a stub.
 
@@ -352,11 +396,19 @@ def _scope(
     ``excluded``: a repo whose labs DO apply while its ``host_patterns`` match
     no host there keeps its ``applicable_labs``, which is what makes the two
     conditions — and the two messages — tellable apart.
+
+    ``config`` is the COMPILED declaration, and it stays ``None`` for every
+    verdict the orchestrator merely reads: nothing in this module consults it,
+    and a stored ``universe`` is what the skip decisions are made from. Pass a
+    real :class:`~otto.config.scope.ProjectScopeConfig` only where a test drives
+    a fleet surface for real — ``scoped_ids`` re-derives membership from it
+    live, so a ``None`` there admits every host and would make an
+    "empty fleet" assertion pass for the wrong reason.
     """
     return ProjectScope(
         repo_name=name,
         declared=declared,
-        config=None,
+        config=config,
         applicable_labs=frozenset() if excluded else frozenset(loaded[:1]),
         universe=frozenset() if excluded else frozenset(universe),
         excluded=excluded,
@@ -370,6 +422,36 @@ def _scope(
 def _one_line(text):
     """*text* with every run of whitespace collapsed — line wrapping must not hide a word."""
     return " ".join(text.split())
+
+
+def _said(caplog):
+    """Every captured WARNING as an OPERATOR receives it: markup RENDERED, then collapsed.
+
+    NOT ``caplog.text``, and the difference is the whole point. Every sink otto
+    logs through renders rich markup — the console handler is built
+    ``markup=True`` and both log files go through
+    :class:`~otto.logger.formatters.RichFormatter`, which hard-codes it — so a
+    message's ``record.msg`` is markup, and the orchestrator escapes the
+    brackets it wants taken literally. ``caplog`` hands back that PRE-RENDER
+    string, complete with the escapes, which is neither what the code means nor
+    what anybody sees.
+
+    Rendering here buys two things at once. Assertions read as the delivered
+    sentence rather than as ``\\[unix_alt]``; and every message assertion in
+    this module becomes a rendering guard for free, because dropping the escape
+    at the source makes the lab list vanish from what this returns. The
+    dedicated sink tests below still earn their place — they cover all THREE
+    sinks, where this covers one render — but nothing here can now assert a
+    message the operator would not actually get.
+
+    Width is pinned absurdly wide so a fold cannot hide a word; the module's
+    own :func:`_one_line` then collapses what rich left.
+    """
+    buf = io.StringIO()
+    console = Console(file=buf, width=10_000, no_color=True)
+    for record in caplog.records:
+        console.print(record.getMessage(), markup=True)
+    return _one_line(buf.getvalue())
 
 
 # ── install ──────────────────────────────────────────────────────────────
@@ -2085,6 +2167,869 @@ async def test_a_starved_driving_repo_still_aborts_the_whole_run(monkeypatch):
     assert "sensor-.*" in message
     assert lab.events == []
     assert lab.questions == []
+
+
+# ── the switch axis: -I / -E over the lab verdict (spec §4) ──────────────────
+#
+# THE ORCHESTRATOR ASKS ``otto.config.scope.active`` AND NOTHING ELSE. The
+# resolution order — exclude switch, include switch, lab verdict, default-on —
+# lives in that one predicate, so every test here drives a WALK and asserts on
+# what the walk did. Re-spelling the order at this layer would create a second
+# authority, which is the drift a shared predicate exists to prevent.
+#
+# ``current=`` MATTERS IN THIS SECTION. ``_lab()`` runs D3's current-repo gate
+# (``otto.config.scope.require_current_scope``) before ``_applicable`` sees
+# anything, and that gate reads the lab verdict ALONE — no switch overrides it,
+# by D3's asymmetry. A case that hung an unusable scope on the default driving
+# repo would abort there and never reach the code under test: green for a
+# reason that has nothing to do with switches. So every scoped case below names
+# a driving repo that is not the scoped one.
+#
+# NAMES ARE DELIBERATELY NOT NORMALIZATION-INVARIANT where the spelling is what
+# is under test. `repo1`/`repo2` normalize to themselves, so a bed built only
+# from them cannot tell `active(repo.name, ctx)` from
+# `active(normalize_name(repo.name), ctx)` -- and the spec names that exact
+# confusion as a FAIL-OPEN hazard, because `ctx.scopes` is keyed by the raw
+# declared name and a missed verdict resolves ACTIVE. `_UNDERSCORED` is a repo
+# whose declared name and normalized name differ, so every cell routed through
+# it discriminates the two spellings. Its switch is typed in the NORMALIZED
+# form, which is what a user types and what `_switched` compares on.
+_UNDERSCORED = "Repo_Two"
+"""A declared repo name that is NOT its own normalization (-> ``repo-two``)."""
+
+_UNDERSCORED_NORM = "repo-two"
+"""What :func:`~otto.models.dependencies.normalize_name` makes of it -- spelled
+out rather than computed, so a broken normalizer cannot agree with itself."""
+
+_PROVIDER = "Repo_One"
+"""The dropped PROVIDER's declared name (-> ``repo-one``). A dependent declares
+its dependency in the normalized form, which is the shape `dropped` is keyed and
+looked up in."""
+
+_PROVIDER_NORM = "repo-one"
+
+
+def _dep(name, *, required, status="satisfied"):
+    """One resolved dependency — the REAL frozen dataclass, never a stub.
+
+    ``normalized`` is computed by the same
+    :func:`~otto.models.dependencies.normalize_name` ``_applicable`` matches
+    with, rather than written out by hand: a hand-spelled normalization is a
+    fixture that can agree with a wrong implementation.
+    """
+    return ResolvedDependency(
+        name=name,
+        normalized=normalize_name(name),
+        constraint="",
+        required=required,
+        status=status,
+        provider_version=None,
+    )
+
+
+class TestSwitchAxis:
+    """``-E`` drops a repo the labs admitted; ``-I`` keeps one they did not."""
+
+    @pytest.mark.asyncio
+    async def test_excluded_repo_is_skipped_with_the_switch_message(self, monkeypatch, caplog):
+        """The line names the SWITCH, not the labs — because nothing else will.
+
+        A lab-inferred skip is explained twice over (this warning, and the
+        ``scoping`` rows ``status`` prints), but no row anywhere records that a
+        switch was typed. An operator handed the D3 wording here goes looking
+        for a settings file that is perfectly correct.
+        """
+        bed = _wire(
+            monkeypatch,
+            repos=["repo1", _UNDERSCORED],
+            exclude_projects=(_UNDERSCORED_NORM,),
+        )
+
+        with caplog.at_level(logging.WARNING, logger="otto.project.orchestrator"):
+            assert (await project.install()).is_ok
+
+        assert [e[0] for e in bed.events if e[1] == "install"] == ["repo1"]
+        # The repo is named as DECLARED and the switch is echoed NORMALIZED --
+        # the two differ here, so a message built from the wrong one is visible.
+        assert (
+            f"repo '{_UNDERSCORED}' switched off for this run "
+            f"(--exclude-projects {_UNDERSCORED_NORM}) — skipping it for install"
+        ) in _said(caplog)
+
+    @pytest.mark.asyncio
+    async def test_without_the_switch_the_walk_is_unchanged(self, monkeypatch, caplog):
+        """The discriminator for the cell above, and for the whole section.
+
+        Without it, an ``_applicable`` that dropped ``repo2`` for any reason at
+        all — or one that dropped the last repo of every walk — would satisfy
+        the switch test and this bed would never notice.
+        """
+        bed = _wire(monkeypatch, repos=["repo1", "repo2"])
+
+        with caplog.at_level(logging.WARNING, logger="otto.project.orchestrator"):
+            assert (await project.install()).is_ok
+
+        assert [e[0] for e in bed.events if e[1] == "install"] == ["repo1", "repo2"]
+        assert "switched off" not in _said(caplog)
+
+    @pytest.mark.parametrize(
+        ("include", "walked"),
+        [((), ["repo1"]), ((_UNDERSCORED_NORM,), ["repo1", _UNDERSCORED])],
+        ids=["without -I", "with -I"],
+    )
+    @pytest.mark.asyncio
+    async def test_include_overrides_an_excluded_scope(self, monkeypatch, include, walked):
+        """``-I`` beats the lab verdict — and the no-switch row proves it had to.
+
+        The repo's verdict is UNUSABLE (declared, and no loaded lab applies),
+        which is precisely the shape D3 skips on. The parametrization is what
+        makes this an override rather than a coincidence: same scope, same
+        walk, and the only thing that changed is the switch.
+
+        BOTH ROWS ALSO DISCRIMINATE THE NAME SPELLING, on opposite sides. The
+        no-switch row reaches ``ctx.scopes.get(repo.name)``, keyed by the
+        DECLARED name, so a lookup that normalized first would miss the verdict
+        and walk an inactive repo (the spec's fail-open hazard). The ``-I`` row
+        types the NORMALIZED name, which is what a user types, so a switch
+        comparison that skipped normalization would not match it.
+        """
+        bed = _wire(
+            monkeypatch,
+            repos=["repo1", _UNDERSCORED],
+            current="repo1",  # the D3 current-repo gate is switch-blind — see the section note
+            scopes={_UNDERSCORED: _scope(_UNDERSCORED, excluded=True)},
+            include_projects=include,
+        )
+
+        assert (await project.install()).is_ok
+
+        assert [e[0] for e in bed.events if e[1] == "install"] == walked
+
+
+class TestDependencyInteraction:
+    """What a KEPT repo's dependencies mean once a provider has been dropped.
+
+    Two independent bits decide the outcome: whether the dependency is
+    REQUIRED, and whether the provider went away by an explicit ``-E`` or by
+    the labs' own verdict. The switch is an operator signing off on exactly
+    this ("I installed that one by hand"), so it warns and the walk proceeds.
+    The lab verdict is a contradiction nobody signed off on — the labs say the
+    provider cannot be here while the dependent says it must be — so on a
+    BUILD-UP it raises, before any device is contacted. Which verbs build, and
+    what the other ones do with the same contradiction, is
+    ``TestTheRefusalIsBuildUpOnly``'s subject.
+    """
+
+    @pytest.mark.asyncio
+    async def test_required_provider_switched_off_warns_and_proceeds(self, monkeypatch, caplog):
+        """The provider is named as DECLARED; the switch is echoed NORMALIZED.
+
+        Those are two different strings here, which is what makes the
+        assertion able to fail: the dependent declares its dependency in the
+        normalized spelling (as a ``[dependencies]`` entry always is) while the
+        provider repo is named ``Repo_One``, so a ``dropped`` map keyed by the
+        raw name never matches the lookup and the whole warning disappears.
+        """
+        bed = _wire(
+            monkeypatch,
+            repos=[_PROVIDER, "repo4"],
+            exclude_projects=(_PROVIDER_NORM,),
+            dependencies={"repo4": [_dep(_PROVIDER_NORM, required=True)]},
+        )
+
+        with caplog.at_level(logging.WARNING, logger="otto.project.orchestrator"):
+            assert (await project.install()).is_ok
+
+        assert (
+            f"repo 'repo4' requires '{_PROVIDER}', which was switched off "
+            f"(--exclude-projects {_PROVIDER_NORM}) — proceeding as though "
+            f"{_PROVIDER} is handled externally"
+        ) in _said(caplog)
+        assert [e[0] for e in bed.events if e[1] == "install"] == ["repo4"]
+
+    @pytest.mark.asyncio
+    async def test_required_provider_lab_inactive_errors_naming_both_fixes(self, monkeypatch):
+        """A refusal, and it offers BOTH ways out rather than picking one.
+
+        "Load a lab it applies to" and "declare it handled externally" are
+        genuinely different intents and otto cannot tell which one the operator
+        has. Naming only the first would send someone who really did install
+        the dependency by hand off to reconfigure their labs.
+
+        ``bed.events`` empty is the load-bearing half: a refusal raised after
+        the walk would still raise, having already installed a dependent on top
+        of a dependency the labs say is not here.
+        """
+        bed = _wire(
+            monkeypatch,
+            repos=[_PROVIDER, "repo4"],
+            scopes={_PROVIDER: _scope(_PROVIDER, excluded=True, loaded=("unix_alt",))},
+            dependencies={"repo4": [_dep(_PROVIDER_NORM, required=True)]},
+        )
+
+        with pytest.raises(InactiveRequiredDependencyError) as excinfo:
+            await project.install()
+
+        text = _one_line(str(excinfo.value))
+        assert f"repo 'repo4' requires '{_PROVIDER}'" in text
+        assert "not applicable to the loaded lab(s) [unix_alt]" in text
+        # `=`, not a space: the hint is meant to be PASTED, and rich folds
+        # between words -- see `test_the_refusals_switch_hint_never_folds`.
+        assert f"--exclude-projects={_PROVIDER_NORM}" in text
+        assert not [e for e in bed.events if e[1] == "install"]
+
+    @pytest.mark.asyncio
+    async def test_an_optional_dependency_never_raises_on_either_reason(self, monkeypatch, caplog):
+        """The bit that decides raise-vs-warn is ``required``, not the reason.
+
+        Same lab-inactive provider as the cell above, same walk — only the
+        dependency's ``required`` flag differs, and that alone is the
+        difference between a refusal and a note.
+        """
+        bed = _wire(
+            monkeypatch,
+            repos=[_PROVIDER, "repo4"],
+            scopes={_PROVIDER: _scope(_PROVIDER, excluded=True, loaded=("unix_alt",))},
+            dependencies={"repo4": [_dep(_PROVIDER_NORM, required=False)]},
+        )
+
+        with caplog.at_level(logging.WARNING, logger="otto.project.orchestrator"):
+            assert (await project.install()).is_ok
+
+        assert [e[0] for e in bed.events if e[1] == "install"] == ["repo4"]
+        assert (
+            f"repo 'repo4': optional dependency '{_PROVIDER}' not satisfied for this run "
+            f"— {_PROVIDER} is inactive (not applicable to the loaded lab(s) [unix_alt])"
+        ) in _said(caplog)
+
+    @pytest.mark.asyncio
+    async def test_optional_provider_switched_off_appends_the_switch_reason(
+        self, monkeypatch, caplog
+    ):
+        """The other reason arm, and it must not borrow the lab wording.
+
+        The pair with the cell above is the assertion: "you typed ``-E``" and
+        "no loaded lab applies" have different fixes, and one text covering
+        both sends half its readers to edit the wrong thing.
+        """
+        bed = _wire(
+            monkeypatch,
+            repos=[_PROVIDER, "repo4"],
+            exclude_projects=(_PROVIDER_NORM,),
+            dependencies={"repo4": [_dep(_PROVIDER_NORM, required=False)]},
+        )
+
+        with caplog.at_level(logging.WARNING, logger="otto.project.orchestrator"):
+            assert (await project.install()).is_ok
+
+        assert [e[0] for e in bed.events if e[1] == "install"] == ["repo4"]
+        assert (
+            f"repo 'repo4': optional dependency '{_PROVIDER}' not satisfied for this run "
+            f"— {_PROVIDER} is inactive (switched off via --exclude-projects {_PROVIDER_NORM})"
+        ) in _said(caplog)
+
+    @pytest.mark.asyncio
+    async def test_a_dependency_on_a_kept_repo_says_nothing(self, monkeypatch, caplog):
+        """The anti-vacuity control for the whole class.
+
+        Every cell above asserts a message about a DROPPED provider. Without
+        this one, a dependency pass that warned about every declared dependency
+        would satisfy all four of them.
+        """
+        bed = _wire(
+            monkeypatch,
+            repos=[_PROVIDER, "repo4"],
+            dependencies={"repo4": [_dep(_PROVIDER_NORM, required=True)]},
+        )
+
+        with caplog.at_level(logging.WARNING, logger="otto.project.orchestrator"):
+            assert (await project.install()).is_ok
+
+        assert [e[0] for e in bed.events if e[1] == "install"] == [_PROVIDER, "repo4"]
+        assert caplog.records == []
+
+
+class TestTheRefusalIsBuildUpOnly:
+    """Which verbs may refuse over a contradictory required dependency: only the two
+    that BUILD.
+
+    THE SHAPE IS ONE LAB, DRIVEN SIX WAYS. ``Repo_One`` is dropped by the labs;
+    ``repo4`` is undeclared (whole-lab fallback, so it stays active) and
+    requires it. That is a contradiction on every verb, but it is only
+    ACTIONABLE on the two that build ``repo4`` on top of it. Everything else
+    either takes ``repo4`` down or reads it, and for those the refusal is worse
+    than the contradiction:
+
+    * ``uninstall``/``cleanup`` are best-effort teardowns whose whole contract
+      is that every step runs. ``_applicable`` is the first line of the first
+      walk, so a raise there tears nothing down at all — no debug sweep, no
+      toolchain removal, no impairment reset, no tunnel reap: exactly the
+      remnants ``cleanup`` exists to remove.
+    * ``get_logs``/``cleanliness``/``is_clean`` only read, and a report that
+      dies whole is strictly worse than one carrying a row.
+
+    The operator still learns about it — the survivable arm logs the same two
+    facts and says which verb WOULD refuse — so nothing is swallowed.
+    """
+
+    @staticmethod
+    def _contradiction(monkeypatch, **kwargs):
+        """``repo4`` (active, undeclared) requiring ``Repo_One`` (dropped by the labs)."""
+        return _wire(
+            monkeypatch,
+            repos=[_PROVIDER, "repo4"],
+            scopes={_PROVIDER: _scope(_PROVIDER, excluded=True, loaded=("unix_alt",))},
+            dependencies={"repo4": [_dep(_PROVIDER_NORM, required=True)]},
+            **kwargs,
+        )
+
+    @pytest.mark.parametrize("verb", ["install", "install_tools"])
+    @pytest.mark.asyncio
+    async def test_a_build_up_verb_refuses(self, monkeypatch, verb):
+        """Both builders, not just ``install`` — ``install_tools`` places dev tools too."""
+        bed = self._contradiction(monkeypatch)
+
+        with pytest.raises(InactiveRequiredDependencyError):
+            await getattr(project, verb)()
+
+        assert bed.events == []
+
+    @pytest.mark.parametrize("verb", ["uninstall", "cleanup", "get_logs"])
+    @pytest.mark.asyncio
+    async def test_a_teardown_or_reading_verb_completes(self, monkeypatch, verb, caplog):
+        """It runs, it succeeds, and it still SAYS what it found.
+
+        The message is asserted here rather than in a class of its own because
+        "did not raise" alone would be satisfied by a build that silently
+        dropped the whole dependency pass on these verbs.
+        """
+        bed = self._contradiction(monkeypatch)
+
+        with caplog.at_level(logging.WARNING, logger="otto.project.orchestrator"):
+            result = await getattr(project, verb)()
+
+        assert result.is_ok
+        assert [e[0] for e in bed.events if e[1] == verb] == ["repo4"]
+        said = _said(caplog)
+        assert f"repo 'repo4' requires '{_PROVIDER}'" in said
+        assert "not applicable to the loaded lab(s) [unix_alt]" in said
+        assert f"continuing, because {verb} does not build repo4 on top of it" in said
+        assert f"--exclude-projects={_PROVIDER_NORM}" in said
+
+    @pytest.mark.asyncio
+    async def test_cleanup_still_runs_every_host_global_step(self, monkeypatch):
+        """The regression this arm exists to prevent, asserted as the WHOLE step list.
+
+        A raise out of ``_applicable`` strands all four host-global steps, and
+        the tunnel reap — ``cleanup``'s own docstring calls it "the one that
+        matters" — leaves processes running on a lab an operator believes is
+        torn down. Asserted with ``==`` so a step quietly dropped later fails
+        here too.
+        """
+        bed = self._contradiction(monkeypatch, hosts=2)
+
+        assert (await project.cleanup()).is_ok
+
+        assert _verbs(bed.events) == [
+            "cleanup",
+            "get_debug_logs",
+            "get_debug_logs",
+            "remove_toolchain_tools",
+            "remove_toolchain_tools",
+            "repair_all",
+            "remove_all_tunnels",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_the_cleanliness_report_still_renders_a_row(self, monkeypatch):
+        """``_repo_items`` frames a failing PROBE as an unreadable row; it must not
+        die before it has one to frame."""
+        _wire(
+            monkeypatch,
+            repos=[_PROVIDER, "repo4"],
+            scopes={_PROVIDER: _scope(_PROVIDER, excluded=True, loaded=("unix_alt",))},
+            dependencies={"repo4": [_dep(_PROVIDER_NORM, required=True)]},
+        )
+
+        report = await project.cleanliness()
+
+        assert [i.name for i in report.items if i.kind is CleanlinessKind.REPO] == ["repo4"]
+
+    @pytest.mark.asyncio
+    async def test_is_clean_still_answers(self, monkeypatch):
+        """The cheap converge path. ``ensure_clean`` asks this BEFORE deciding whether
+        to clean, so a refusal here pre-empts the decision it exists to inform."""
+        self._contradiction(monkeypatch, dirty=("repo4",))
+
+        assert await project.is_clean() is False
+
+    @pytest.mark.asyncio
+    async def test_the_switched_off_provider_warns_on_a_builder_too(self, monkeypatch, caplog):
+        """The discriminator against "build-up simply stopped refusing".
+
+        ``build_up`` gates the LAB arm only. An explicitly ``-E``'d provider is
+        the operator signing off, and that stays a warning on ``install`` —
+        where the refusal does fire for the other reason.
+        """
+        bed = _wire(
+            monkeypatch,
+            repos=[_PROVIDER, "repo4"],
+            exclude_projects=(_PROVIDER_NORM,),
+            dependencies={"repo4": [_dep(_PROVIDER_NORM, required=True)]},
+        )
+
+        with caplog.at_level(logging.WARNING, logger="otto.project.orchestrator"):
+            assert (await project.install()).is_ok
+
+        assert [e[0] for e in bed.events if e[1] == "install"] == ["repo4"]
+        assert "handled externally" in _said(caplog)
+
+
+class TestStatusHonorsSwitches:
+    """``status`` reads the same predicate, and is loud on exactly one axis."""
+
+    @pytest.mark.asyncio
+    async def test_switched_off_repo_is_not_asked_for_state(self, monkeypatch, caplog):
+        """Not merely absent from the report — never ASKED.
+
+        ``status`` reaches the fleet, and a switched-off repo's is none of this
+        run's business. ``bed.questions`` is what proves it was not contacted;
+        a repo dropped from the mapping after being asked would pass an
+        absence-only assertion having already talked to hosts.
+        """
+        bed = _wire(
+            monkeypatch,
+            repos=["repo1", "repo2"],
+            hosts=1,
+            exclude_projects=("repo2",),
+            # Both repos declare a usable scope, so the LAB axis leaves both in
+            # and the switch is the only thing that can drop one.
+            scopes={"repo1": _scope("repo1"), "repo2": _scope("repo2")},
+            state=InstallState.INSTALLED,
+        )
+
+        with caplog.at_level(logging.WARNING, logger="otto.project.orchestrator"):
+            result = await project.status()
+
+        assert result.repos == {"repo1": InstallState.INSTALLED}
+        assert bed.questions == [("repo1", "status")]
+        assert (
+            "repo 'repo2' switched off for this run (--exclude-projects repo2) "
+            "— skipping it for status"
+        ) in _said(caplog)
+        # The row survives the skip: `scoping` is the display's account of the
+        # whole lab, and a repo that vanished from it entirely would be the
+        # silent disappearance the warning above exists to prevent.
+        assert set(result.scoping) == {"repo1", "repo2"}
+
+    @pytest.mark.asyncio
+    async def test_a_lab_inactive_repo_is_left_out_silently(self, monkeypatch, caplog):
+        """And the OTHER axis stays quiet, deliberately — the answer is the display.
+
+        The scoping row already carries "not applicable" beside the repo, and a
+        warning as well would put a line in front of every operator whose lab
+        simply does not include a project. Switches get one because no row
+        mentions them; verdicts do not, because every row is one.
+
+        The pair with the cell above is the whole assertion. A ``status`` that
+        logged nothing at all fails there; one that logged on both axes fails
+        here.
+        """
+        bed = _wire(
+            monkeypatch,
+            repos=["repo1", _UNDERSCORED],
+            hosts=1,
+            current="repo1",  # the D3 current-repo gate again — see the section note
+            scopes={_UNDERSCORED: _scope(_UNDERSCORED, excluded=True)},
+            state=InstallState.INSTALLED,
+        )
+
+        with caplog.at_level(logging.WARNING, logger="otto.project.orchestrator"):
+            result = await project.status()
+
+        assert result.repos == {"repo1": InstallState.INSTALLED}
+        assert bed.questions == [("repo1", "status")]
+        assert result.scoping[_UNDERSCORED].applicable is False
+        assert caplog.records == []
+
+
+class TestForcedInclusionOfAnEmptyFleet:
+    """``-I`` on a HOST-STARVED repo: forced in, then loud from its own walk.
+
+    Plan deviation 3. ``_applicable`` does not second-guess the switch — the
+    operator said this repo participates — so the repo is walked and the
+    refusal comes out of its own fleet surface, where the message can name the
+    ``host_patterns`` that are the actual cause. An ``-I`` that honoured one
+    unusable shape and quietly declined the other would be a switch meaning
+    different things depending on which half of a declaration went wrong.
+    """
+
+    @pytest.mark.parametrize(
+        ("include", "walked"),
+        [((), ["repo1"]), (("repo2",), ["repo1", "repo2"])],
+        ids=["without -I", "with -I"],
+    )
+    @pytest.mark.asyncio
+    async def test_include_forces_a_host_starved_repo_into_the_walk(
+        self, monkeypatch, include, walked
+    ):
+        bed = _wire(
+            monkeypatch,
+            repos=["repo1", "repo2"],
+            current="repo1",  # the D3 current-repo gate again — see the section note
+            scopes={"repo2": _scope("repo2", universe=(), host_patterns=("nope",))},
+            include_projects=include,
+        )
+
+        assert (await project.install()).is_ok
+
+        assert [e[0] for e in bed.events if e[1] == "install"] == walked
+
+    def test_the_forced_repos_own_fleet_walk_is_still_refused(self):
+        """The consequence, through PRODUCTION code rather than this bed's doubles.
+
+        ``_FakeCtx.all_hosts`` ignores ``_scope_owner``, so no walk in this
+        module can show what a real owner-bound one does — asserting the raise
+        through this bed would be asserting a double. So the two functions a
+        real fleet walk calls are driven directly, against a verdict carrying a
+        REAL compiled declaration and a NON-EMPTY host mapping: the fleet is
+        empty because the declaration says so, not because the fixture handed
+        over nothing. The widening row is what pins that distinction.
+        """
+        hosts = {
+            "h0": SimpleNamespace(source_lab="bench"),
+            "h1": SimpleNamespace(source_lab="bench"),
+        }
+        starved = _scope(
+            "repo2",
+            universe=(),
+            host_patterns=("nope",),
+            config=ProjectScopeConfig([re.compile("bench")], [re.compile("nope")]),
+        )
+        widened = _scope(
+            "repo2",
+            config=ProjectScopeConfig([re.compile("bench")], [re.compile("h.*")]),
+        )
+
+        assert scoped_ids(hosts, {"repo2": starved}, "repo2") == set()
+        assert scoped_ids(hosts, {"repo2": widened}, "repo2") == {"h0", "h1"}
+
+        with pytest.raises(ProjectScopeError) as excinfo:
+            require_nonempty_fleet({"repo2": starved}, set(), "repo2")
+
+        assert "nope" in _one_line(str(excinfo.value))
+
+
+# ── how these messages RENDER, which is not what they say ────────────────────
+#
+# Both of otto's user-facing surfaces parse rich markup: the console log
+# handler is built ``markup=True`` (``otto.logger.management.init_cli_logging``)
+# and the CLI error boundary prints through ``rich``. Rich reads ``[unix_alt]``
+# as a style tag and DELETES it, so a message that is perfect as a string
+# reaches the operator with the one fact they needed missing — measured, not
+# assumed: an unmarked ``loaded lab(s) [bench, floor]`` renders as ``loaded
+# lab(s)``. Every assertion above reads ``caplog`` or ``str(exc)``, both of
+# which see the message BEFORE any renderer, so none of them can catch this
+# class of bug. These do.
+
+
+class _Sinks:
+    """Everywhere one otto log record is rendered, captured together.
+
+    THREE SINKS, NOT ONE, and that is the whole reason this class exists rather
+    than a lone ``RichHandler``. An earlier version of these tests captured the
+    console alone and certified a fix (``extra={"markup": False}``) that repairs
+    ONLY the console: ``RichFormatter._stylize`` prints ``record.msg`` through a
+    rich console with ``markup=True`` HARD-CODED and never consults
+    ``record.markup``, so both log files stayed broken and the guard could not
+    see it. A rendering test that samples one of three sinks is a rendering test
+    that passes for two thirds of the wrong reasons.
+
+    ``console`` mirrors ``init_cli_logging``'s ``RichHandler`` kwargs;
+    ``plain`` is ``console.log``'s handler (``RichFormatter``, ANSI stripped)
+    and ``ansi`` is ``verbose.log``'s (``RichFormatter``, ANSI kept) — both
+    built exactly as ``otto.logger.management._make_file_handler`` builds them.
+    """
+
+    def __init__(self, tmp_path):
+        self.buf = io.StringIO()
+        self.console_handler = RichHandler(
+            console=Console(file=self.buf, width=300, force_terminal=False),
+            markup=True,
+            highlighter=NullHighlighter(),
+            show_time=False,
+            show_path=False,
+        )
+        self.paths = {}
+        self.handlers = [self.console_handler]
+        for name, rich in (("plain", False), ("ansi", True)):
+            path = tmp_path / f"{name}.log"
+            handler = logging.FileHandler(path, mode="x")
+            formatter = RichFormatter()
+            formatter.rich = rich
+            handler.setFormatter(formatter)
+            self.paths[name] = path
+            self.handlers.append(handler)
+
+    def rendered(self):
+        """``{sink: one-line text}`` for every sink, flushed."""
+        for handler in self.handlers:
+            handler.flush()
+        out = {"console": _one_line(self.buf.getvalue())}
+        for name, path in self.paths.items():
+            out[name] = _one_line(path.read_text())
+        return out
+
+
+@pytest.fixture
+def rendered_warnings(monkeypatch, tmp_path):
+    """The orchestrator's warnings through every sink otto renders them in.
+
+    The width is pinned wide so a FOLD cannot masquerade as an eaten word.
+    """
+    sinks = _Sinks(tmp_path)
+    monkeypatch.setattr(orchestrator.logger, "handlers", sinks.handlers)
+    monkeypatch.setattr(orchestrator.logger, "propagate", False)
+    monkeypatch.setattr(orchestrator.logger, "level", logging.WARNING)
+    yield sinks
+    for handler in sinks.handlers:
+        handler.close()
+
+
+def test_rich_really_does_eat_an_unmarked_lab_list(rendered_warnings):
+    """The negative control, so the cells below are not tautologies — on EVERY sink.
+
+    Per-sink rather than "somewhere in the output", because the two file sinks
+    are exactly the ones a console-only guard was blind to. If rich ever stops
+    doing this, this test reddens and the escaping can be reconsidered rather
+    than cargo-culted.
+    """
+    orchestrator.logger.warning("not applicable to the loaded lab(s) [unix_alt]")
+
+    for sink, text in rendered_warnings.rendered().items():
+        assert "[unix_alt]" not in text, sink
+
+
+def test_a_per_record_markup_override_would_not_have_reached_the_files(rendered_warnings):
+    """Why the fix is ``escape`` at the source and not ``extra={"markup": False}``.
+
+    Measured rather than asserted in a comment. ``RichHandler`` honours the
+    per-record flag; ``RichFormatter`` never reads it. Keeping this cell means
+    a future reader who reaches for the per-record knob — the obvious move, and
+    the one that was made first here — finds out why it was rejected instead of
+    rediscovering it in production.
+    """
+    orchestrator.logger.warning(
+        "not applicable to the loaded lab(s) [unix_alt]", extra={"markup": False}
+    )
+
+    rendered = rendered_warnings.rendered()
+    assert "[unix_alt]" in rendered["console"]  # the knob works, as far as it goes
+    assert "[unix_alt]" not in rendered["plain"]  # and no further
+    assert "[unix_alt]" not in rendered["ansi"]
+
+
+@pytest.mark.asyncio
+async def test_the_skip_line_keeps_its_lab_list_in_every_sink(monkeypatch, rendered_warnings):
+    """D3's own skip message, rendered. It names two lists and rich eats both.
+
+    Pre-existing production code, not this task's: the same defect was live on
+    the branch, in every sink, before the escaping landed.
+    """
+    _wire(
+        monkeypatch,
+        repos=["repo1", "repo2"],
+        current="repo1",
+        scopes={"repo2": _scope("repo2", excluded=True, loaded=("unix_alt", "bench"))},
+    )
+
+    assert (await project.install()).is_ok
+
+    for sink, text in rendered_warnings.rendered().items():
+        assert "not applicable to the loaded lab(s) [unix_alt, bench]" in text, sink
+        assert "(lab_patterns: repo2-lab)" in text, sink
+        assert "\\[" not in text, sink  # escaped at the source, rendered back to a bare [
+
+
+@pytest.mark.asyncio
+async def test_the_optional_dependency_note_keeps_its_lab_list(monkeypatch, rendered_warnings):
+    """The new message with the same shape — its reason parenthetical is a lab list."""
+    _wire(
+        monkeypatch,
+        repos=[_PROVIDER, "repo4"],
+        scopes={_PROVIDER: _scope(_PROVIDER, excluded=True, loaded=("unix_alt",))},
+        dependencies={"repo4": [_dep(_PROVIDER_NORM, required=False)]},
+    )
+
+    assert (await project.install()).is_ok
+
+    for sink, text in rendered_warnings.rendered().items():
+        assert (
+            f"{_PROVIDER} is inactive (not applicable to the loaded lab(s) [unix_alt])"
+        ) in text, sink
+        assert "\\[" not in text, sink
+
+
+@pytest.mark.asyncio
+async def test_the_refusal_survives_the_cli_error_boundary_and_lands_on_stdout(monkeypatch, capsys):
+    """``otto.cli.main``'s boundary frame is what a user meets this error through.
+
+    Three facts, none of them visible to a ``str(exc)`` assertion:
+
+    * the class is an :class:`~otto.errors.OttoError`, which is the ONLY reason
+      the boundary's ``except OttoError`` reaches it rather than letting a
+      traceback out;
+    * ``print_error`` escapes markup, so the lab list arrives — the boundary
+      renders ``f"error: {e}"`` and that is the exact call made here;
+    * it lands on STDOUT. Worth pinning because "errors go to stderr" is the
+      reasonable assumption and it is wrong here: ``print_error`` prints
+      through rich's global console.
+
+    Imported inside the test: ``otto.cli`` is a layer above this one, and this
+    module's imports are deliberately the project layer's.
+    """
+    from otto.cli.invoke import print_error
+
+    _wire(
+        monkeypatch,
+        repos=[_PROVIDER, "repo4"],
+        scopes={_PROVIDER: _scope(_PROVIDER, excluded=True, loaded=("unix_alt",))},
+        dependencies={"repo4": [_dep(_PROVIDER_NORM, required=True)]},
+    )
+    with pytest.raises(InactiveRequiredDependencyError) as excinfo:
+        await project.install()
+
+    assert isinstance(excinfo.value, OttoError)
+    monkeypatch.setenv("COLUMNS", "300")  # a fold must not masquerade as an eaten word
+    print_error(f"error: {excinfo.value}")
+
+    captured = capsys.readouterr()
+    assert "not applicable to the loaded lab(s) [unix_alt]" in _one_line(captured.out)
+    assert f"--exclude-projects={_PROVIDER_NORM}" in _one_line(captured.out)
+    assert captured.err == ""
+
+
+_NARROW = 80
+"""The width rich falls back to when it cannot detect a terminal, and so the
+narrowest a real invocation ever renders at."""
+
+
+def _switch_survives(message, token, width=_NARROW):
+    """Whether *token* — the switch AND its value — lands on ONE rendered line.
+
+    *token* is handed in rather than parsed back out of *message*: recovering
+    it by splitting on the switch name yields an empty string for the
+    space-separated form, so the helper would look for the bare
+    ``--exclude-projects``, find it, and report every case as surviving. That
+    is a control that cannot fail, and it is what this signature exists to
+    prevent.
+
+    Rendered through a real console at *width*, escaped exactly as
+    ``print_error`` escapes, because markup tags occupy no width and a
+    character count done in the head measures the wrong string.
+    """
+    buf = io.StringIO()
+    Console(file=buf, width=width, no_color=True).print(escape(message))
+    return any(token in line for line in buf.getvalue().splitlines())
+
+
+#: ``(dependent name length, provider name length)`` pairs measured to fold the
+#: SPACE-separated form of this message at 80 columns. NOT guessed, and not
+#: one-dimensional: swept over dependent 3-20 x provider 3-59, 138 of those
+#: 1026 combinations split the switch from its value, across provider lengths
+#: 15-22 and 34-41. One pair per exposed provider length is pinned below.
+#:
+#: The two dimensions are the point. Whether a given provider name folds
+#: depends on where the DEPENDENT name left the preceding line, so a sweep that
+#: fixes the dependent reports a different, narrower band and reads as "only
+#: pathological names are affected". They are not: 15 and 16 are in the band,
+#: and `otto-fleet-tools` is 16 characters.
+_FOLDING_NAME_LENGTHS = [
+    (3, 21),
+    (3, 22),
+    (3, 37),
+    (3, 38),
+    (3, 39),
+    (3, 40),
+    (3, 41),
+    (6, 20),
+    (8, 19),
+    (13, 18),
+    (15, 17),
+    (17, 16),
+    (18, 36),
+    (19, 15),
+    (19, 35),
+    (20, 34),
+]
+
+
+@pytest.mark.parametrize(("dependent_len", "length"), _FOLDING_NAME_LENGTHS)
+def test_the_refusals_switch_hint_never_folds(dependent_len, length):
+    """``--exclude-projects=<name>`` is ONE token, so rich cannot break it.
+
+    Rich folds between words. A hint reading ``--exclude-projects <name>``
+    therefore hands the reader, at exactly these name lengths, a switch on one
+    line and its value on the next — a thing that cannot be pasted, which is
+    the whole point of printing it. ``print_error``'s own docstring states the
+    rule ("would a line break inside it destroy something the reader has to
+    retype?"); the boundary frame that renders this message does not pass
+    ``soft_wrap``, and changing that would alter every otto error at once, so
+    the fix is local: remove the break opportunity.
+
+    EVERY CASE IS PROVEN TO FOLD FIRST. Without the control assertion this
+    table would go quietly inert the day the surrounding prose changed length,
+    and a passing width test that cannot fail is worse than none.
+    """
+    dependent = _name(dependent_len)
+    provider = _name(length)
+
+    assert not _switch_survives(
+        _refusal(dependent, provider, " "), f"--exclude-projects {provider}"
+    ), f"control: ({dependent_len}, {length}) no longer folds — re-sweep and retune the table"
+    assert _switch_survives(_refusal(dependent, provider, "="), f"--exclude-projects={provider}")
+
+
+def _name(length):
+    """A repo name of exactly *length* characters, with no break opportunity inside it."""
+    return ("p" * (length - 1)) + "z"
+
+
+def _refusal(dependent, provider, separator):
+    """The production refusal, with the CLI boundary's own ``error: `` prefix.
+
+    ``otto.cli.main`` renders ``f"error: {e}"``, and those seven characters are
+    part of what has to fit — measuring the bare message would understate the
+    fold by a word.
+    """
+    return (
+        f"error: repo {dependent!r} requires {provider!r}, but "
+        f"{provider} is not applicable to the loaded lab(s) "
+        f"[unix] (lab_patterns: unix-lab). "
+        f"Load a lab {provider} applies to, or pass "
+        f"--exclude-projects{separator}{provider} to declare it handled externally."
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_real_refusal_uses_the_unbreakable_form(monkeypatch):
+    """The table above renders a reconstruction; this pins the REAL message's shape.
+
+    Two cells, because either alone is weak: the table proves the joined form
+    survives a fold, and this proves the code actually emits the joined form.
+    """
+    _wire(
+        monkeypatch,
+        repos=[_PROVIDER, "repo4"],
+        scopes={_PROVIDER: _scope(_PROVIDER, excluded=True, loaded=("unix_alt",))},
+        dependencies={"repo4": [_dep(_PROVIDER_NORM, required=True)]},
+    )
+
+    with pytest.raises(InactiveRequiredDependencyError) as excinfo:
+        await project.install()
+
+    assert f"--exclude-projects={_PROVIDER_NORM}" in str(excinfo.value)
+    assert f"--exclude-projects {_PROVIDER_NORM}" not in str(excinfo.value)
 
 
 # ── re-exports ───────────────────────────────────────────────────────────

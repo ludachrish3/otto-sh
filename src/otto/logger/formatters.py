@@ -103,8 +103,26 @@ class RichFormatter(MultilineFormatter):
 
     @override
     def format(self, record: LogRecord) -> str:
-        """Render Rich markup in the record, then delegate to ``MultilineFormatter``."""
-        msg = super().format(record=self._stylize(record))
+        """Render Rich markup in the record, then delegate to ``MultilineFormatter``.
+
+        THE RECORD IS RESTORED BEFORE RETURNING, and that is not tidiness.
+        ``_stylize`` replaces ``record.msg`` with its RENDERED form, and a
+        ``logging`` record is one object handed to every handler in turn --
+        ``otto.logger.management.setup_output_dir`` puts the console handler,
+        ``console.log`` and ``verbose.log`` behind a single ``QueueListener``,
+        all three formatting the same instance. Without the restore, the second
+        file handler renders text the first one already rendered: markup that
+        was correctly ESCAPED at the source comes back as a bare ``[bench]``
+        the first pass produced, and the second pass eats it as a style tag. The
+        symptom is one log file carrying a fact and the other silently missing
+        it. ``MultilineFormatter`` above saves and restores for the same reason;
+        this method simply did not.
+        """
+        original_msg = record.msg
+        try:
+            msg = super().format(record=self._stylize(record))
+        finally:
+            record.msg = original_msg
 
         # Remove all ANSI characters if rich logging is disabled
         if not self.rich:

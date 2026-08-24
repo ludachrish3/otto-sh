@@ -196,6 +196,13 @@ def _wire_lab(monkeypatch, tmp_path, repo_names, hosts, *, declarations=None):
             name=name,
             project_scope=(declarations or {}).get(name),
             sut_dir=tmp_path / name,
+            # The real :class:`~otto.config.repo.Repo` always carries this (a
+            # field with ``default_factory=list``, filled by bootstrap's
+            # resolution pass), and the orchestrator's dependency pass reads it
+            # off every repo it keeps. Empty here because nothing in this module
+            # declares a dependency IN THE [dependencies] sense -- the walk
+            # order it asserts on is handed over ready-made.
+            dependencies=[],
         )
         for name in repo_names
     ]

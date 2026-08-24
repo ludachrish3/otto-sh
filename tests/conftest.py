@@ -1708,6 +1708,41 @@ def _isolate_sys_path():
 
 
 @pytest.fixture(autouse=True)
+def _drop_richs_cached_console():
+    """Discard ``rich``'s global ``Console`` around each test — it CACHES the width.
+
+    ``rich.print`` renders through one lazily-built module singleton
+    (``rich._console``), and ``Console.__init__`` resolves ``COLUMNS`` ONCE, into
+    ``self._width``. Only a console built with no ``COLUMNS`` set leaves
+    ``_width`` unset and re-reads the environment per render. So the FIRST test
+    in a process to render through ``rich.print`` while ``COLUMNS`` is pinned
+    freezes that width for every later test, and every later
+    ``monkeypatch.setenv("COLUMNS", …)`` becomes a silent no-op.
+
+    Several modules pin the width deliberately — ``test_error_render.py`` and
+    ``test_main.py`` widen it so a WRAP cannot masquerade as an eaten message,
+    and ``test_instruction_ownership.py`` narrows one case to prove a copyable
+    hint survives an 80-column terminal. Without this fixture those pins hold or
+    not depending on execution ORDER, which pytest-randomly varies per seed: the
+    narrow case was observed passing on seed 1 and failing on seed 3, purely
+    because a different test built the console first.
+
+    Dropping the reference is the whole fix; ``get_console()`` rebuilds on next
+    use. Done on BOTH sides so a test is neither poisoned by its predecessors
+    nor able to poison its successors.
+
+    Lives in the ROOT conftest per the #132/#133 rule (see ``_isolate_registries``
+    below): the singleton is process-global, and the tests that pin ``COLUMNS``
+    span ``tests/unit`` and ``tests/e2e``.
+    """
+    import rich
+
+    rich._console = None
+    yield
+    rich._console = None
+
+
+@pytest.fixture(autouse=True)
 def _isolate_registries():
     """Snapshot every global otto ``Registry`` before each test; restore after.
 

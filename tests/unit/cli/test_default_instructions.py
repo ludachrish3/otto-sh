@@ -827,7 +827,14 @@ async def test_status_full_renders_a_row_per_repo_on_an_undeclared_lab(
         "h0": types.SimpleNamespace(source_lab="bench"),
         "h1": types.SimpleNamespace(source_lab="floor"),
     }
-    ctx = types.SimpleNamespace(scopes=resolve_scopes(repos, ["bench", "floor"], hosts))
+    ctx = types.SimpleNamespace(
+        scopes=resolve_scopes(repos, ["bench", "floor"], hosts),
+        # ``status`` asks ``otto.config.scope.active``, which reads the switch
+        # tuples as well as the verdicts. Empty, as the real ``OttoContext``
+        # defaults them: this lab is decided by declarations alone.
+        include_projects=(),
+        exclude_projects=(),
+    )
     ctx.for_repo = lambda name: types.SimpleNamespace(_repo=name)
 
     monkeypatch.setattr(orchestrator, "_lab", lambda: (ctx, repos))
@@ -887,7 +894,14 @@ async def test_status_full_renders_both_rows_for_a_host_starved_repo(
         "h0": types.SimpleNamespace(source_lab="bench"),
         "h1": types.SimpleNamespace(source_lab="floor"),
     }
-    ctx = types.SimpleNamespace(scopes=resolve_scopes(repos, ["bench", "floor"], hosts))
+    ctx = types.SimpleNamespace(
+        scopes=resolve_scopes(repos, ["bench", "floor"], hosts),
+        # ``status`` asks ``otto.config.scope.active``, which reads the switch
+        # tuples as well as the verdicts. Empty, as the real ``OttoContext``
+        # defaults them: this lab is decided by declarations alone.
+        include_projects=(),
+        exclude_projects=(),
+    )
     ctx.for_repo = lambda name: types.SimpleNamespace(_repo=name)
 
     monkeypatch.setattr(orchestrator, "_lab", lambda: (ctx, repos))

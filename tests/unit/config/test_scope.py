@@ -2,12 +2,20 @@
 
 import re
 import textwrap
+from types import SimpleNamespace
 
 import pytest
 from pydantic import ValidationError
 
 from otto.config.repo import Repo
-from otto.config.scope import ProjectScopeConfig, repo_targets
+from otto.config.scope import (
+    ProjectScopeConfig,
+    active,
+    inactive_before_lab,
+    repo_targets,
+    switched_off,
+)
+from tests._fixtures.scoping import verdict
 from tests._fixtures.sutrepo import make_sut_repo
 
 
@@ -532,3 +540,197 @@ def test_scope_for_repo_admits_when_config_answers_with_no_repos(monkeypatch):
 
     monkeypatch.setattr(config_mod, "get_repos", list)
     assert scope_for_repo("sensors") is None
+
+
+def _ctx(include=(), exclude=(), scopes=None):
+    return SimpleNamespace(
+        include_projects=tuple(include),
+        exclude_projects=tuple(exclude),
+        scopes=dict(scopes or {}),
+    )
+
+
+class TestActive:
+    """Every cell of (switch state x labs-loaded x scope verdict) — spec section 1."""
+
+    def test_exclude_switch_wins_over_everything(self):
+        ctx = _ctx(exclude=("repo-a",), scopes={"repo_a": verdict("repo_a")})
+        assert active("repo_a", ctx) is False
+
+    def test_exclude_matches_pep503_normalized(self):
+        # The stored tuple is normalized; the queried name is raw.
+        assert active("Repo.A", _ctx(exclude=("repo-a",))) is False
+
+    def test_include_switch_overrides_an_excluded_verdict(self):
+        ctx = _ctx(include=("repo-a",), scopes={"repo_a": verdict("repo_a", excluded=True)})
+        assert active("repo_a", ctx) is True
+
+    def test_exclude_beats_include_when_both_name_the_repo(self):
+        # Branch ORDER, pinned. Task 2's CLI rejects the combination as a usage
+        # error, but that is a different layer's rule; nothing should be able to
+        # swap these two branches here and stay green.
+        ctx = _ctx(include=("repo-a",), exclude=("repo-a",))
+        assert active("repo-a", ctx) is False
+
+    def test_the_verdict_lookup_uses_the_raw_repo_name(self):
+        # `ctx.scopes` is keyed by `Repo.name` as written, so the lookup must NOT
+        # normalize — and the name here is deliberately not normalization-invariant
+        # (`repo_a` -> `repo-a`) with no switch set, so the verdict branch is the
+        # one under test. A normalized lookup misses the verdict entirely and
+        # resolves ACTIVE: the silent widening, with the suite otherwise green.
+        ctx = _ctx(scopes={"repo_a": verdict("repo_a", excluded=True)})
+        assert active("repo_a", ctx) is False
+
+    def test_a_non_normalized_stored_exclude_still_matches(self):
+        # Nothing normalizes on WRITE, so `active` must normalize what it READS.
+        # An explicit switch that silently does nothing is the fail-open case.
+        ctx = _ctx(exclude=("My_Repo",))
+        assert active("my_repo", ctx) is False
+        assert active("My_Repo", ctx) is False
+
+    def test_a_non_normalized_stored_include_still_matches(self):
+        # The include tuple gets the same read-side treatment; without it the
+        # switch is ignored and the excluded verdict below wins.
+        ctx = _ctx(include=("My_Repo",), scopes={"my_repo": verdict("my_repo", excluded=True)})
+        assert active("my_repo", ctx) is True
+
+    def test_no_labs_loaded_means_everything_active(self):
+        assert active("anything", _ctx()) is True
+
+    def test_usable_verdict_is_active(self):
+        assert active("r", _ctx(scopes={"r": verdict("r")})) is True
+
+    def test_excluded_verdict_is_inactive(self):
+        assert active("r", _ctx(scopes={"r": verdict("r", excluded=True)})) is False
+
+    def test_host_starved_verdict_is_inactive(self):
+        assert active("r", _ctx(scopes={"r": verdict("r", universe=())})) is False
+
+    def test_undeclared_repo_keeps_the_whole_lab_fallback(self):
+        assert active("r", _ctx(scopes={"r": verdict("r", declared=False, universe=())})) is True
+
+    def test_missing_verdict_is_active(self):
+        assert active("stranger", _ctx(scopes={"r": verdict("r")})) is True
+
+
+class TestSwitchedOff:
+    def test_true_only_for_excluded_names(self):
+        ctx = _ctx(exclude=("repo-a",))
+        assert switched_off("Repo.A", ctx) is True
+        assert switched_off("repo_b", ctx) is False
+
+    def test_a_non_normalized_stored_exclude_still_attributes(self):
+        # Same read-side normalization as `active`, and it has to be the same or
+        # a message would name the switch for one repo while the verdict named
+        # the lab for it.
+        ctx = _ctx(exclude=("My_Repo",))
+        assert switched_off("my_repo", ctx) is True
+        assert switched_off("My_Repo", ctx) is True
+
+
+#: One repo name per spelling class the two predicates must agree about: one
+#: already normalized, and one whose raw form differs. ``active`` keys its
+#: ``ctx.scopes`` lookup RAW while both switch tests normalize — that asymmetry
+#: is the seam where a disagreement between them would hide.
+_INVARIANT_NAMES = ["repo-a", "Repo_A"]
+
+
+class TestInactiveImpliesAttributable:
+    """Whenever ``active`` says False, the CALLER can always say WHY.
+
+    ``otto.cli.invoke.refuse_inactive_instruction`` reads
+    ``ctx.scopes[owner]`` — subscript, not ``.get`` — on the arm where
+    :func:`active` returned False and :func:`switched_off` returned False. That
+    is sound only because of an invariant spanning the two functions: ``active``
+    reaches False either through the ``_switched(exclude)`` test (which IS
+    ``switched_off``'s body) or through ``unusable_scope(verdict)``, which it
+    can only reach after ``ctx.scopes.get(repo_name)`` returned a verdict. So
+    "inactive and not switched off" implies "a verdict is present under that
+    exact key".
+
+    Nothing enforced that. A third False path added ahead of the ``.get`` — a
+    "declares no hosts at all" short-circuit, say — would keep both functions
+    individually correct and turn the gate's subscript into a ``KeyError``
+    escaping the leaf preamble as a traceback. This class is the enforcement:
+    it asserts the IMPLICATION over the whole table rather than the two
+    functions separately, so the invariant fails here, in a scope unit test,
+    rather than in a CLI refusal a user is looking at.
+
+    The fix if it ever fires is a new message arm in the gate, NOT a blank
+    fallback: a refusal that names no cause is a plausible, content-free error,
+    which is worse than the loud failure it replaced.
+    """
+
+    def _verdicts(self, name):
+        """Every verdict shape ``resolve_scopes`` can produce, plus 'no verdict'."""
+        return {
+            "absent": None,
+            "healthy": verdict(name),
+            "excluded": verdict(name, excluded=True),
+            "host-starved": verdict(name, universe=()),
+            "undeclared": verdict(name, declared=False, universe=()),
+        }
+
+    def test_inactive_is_always_either_switched_off_or_carries_a_verdict(self):
+        import itertools
+
+        checked = 0
+        inactive_seen = 0
+        for name in _INVARIANT_NAMES:
+            for verdict_kind, scope in self._verdicts(name).items():
+                # Both the declared key and a foreign one, so a table that only
+                # ever stored the repo under test cannot hide a missing key.
+                scope_sets = {"own-key": {} if scope is None else {name: scope}}
+                scope_sets["foreign-key-only"] = {"someone-else": verdict("someone-else")}
+                for switches, (scope_label, scopes) in itertools.product(
+                    [
+                        ((), ()),
+                        ((name,), ()),
+                        ((), (name,)),
+                        ((name,), (name,)),
+                        (("repo-a",), ()),
+                        ((), ("repo-a",)),
+                    ],
+                    scope_sets.items(),
+                ):
+                    include, exclude = switches
+                    ctx = _ctx(include=include, exclude=exclude, scopes=scopes)
+                    checked += 1
+                    if active(name, ctx):
+                        continue
+                    inactive_seen += 1
+                    where = (
+                        f"name={name!r} verdict={verdict_kind} scopes={scope_label} "
+                        f"include={include} exclude={exclude}"
+                    )
+                    assert switched_off(name, ctx) or name in ctx.scopes, (
+                        f"active() returned False with no attributable cause ({where}). "
+                        "refuse_inactive_instruction subscripts ctx.scopes[owner] on "
+                        "exactly this arm and would raise KeyError at the user."
+                    )
+        # The loop above is an IMPLICATION, so it passes vacuously if nothing in
+        # the table is ever inactive — the exact way this guard could rot into
+        # one that cannot fail. Both counts are asserted: the table is the size
+        # it should be, and it really does exercise the arm under test.
+        assert checked == 120, checked
+        assert inactive_seen > 0, "no cell was inactive — the implication held vacuously"
+
+
+class TestInactiveBeforeLab:
+    """The pre-lab projection used by bootstrap-error demotion (plan deviation 1)."""
+
+    def _cfg(self, *labs):
+        return ProjectScopeConfig(lab_patterns=[re.compile(p) for p in labs], host_patterns=[])
+
+    def test_no_selection_never_demotes(self):
+        assert inactive_before_lab(self._cfg("unix"), None) is False
+        assert inactive_before_lab(self._cfg("unix"), []) is False
+
+    def test_undeclared_repo_never_demotes(self):
+        assert inactive_before_lab(None, ["unix"]) is False
+
+    def test_non_matching_selection_is_inactive(self):
+        assert inactive_before_lab(self._cfg("unix_alt"), ["unix"]) is True
+
+    def test_any_matching_component_keeps_it_active(self):
+        assert inactive_before_lab(self._cfg("unix_alt"), ["unix", "unix_alt"]) is False

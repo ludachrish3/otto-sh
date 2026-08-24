@@ -240,6 +240,31 @@ class OttoContext:
     output_dir: "Path | None" = None
     scope: HostScope = field(default_factory=HostScope)
 
+    include_projects: tuple[str, ...] = ()
+    """Repo names forced ACTIVE this invocation (``-I``), PEP-503-normalized ON READ.
+
+    Populated from the root CLI callback via ``RootOptions``; empty for
+    library contexts. Read only through :func:`otto.config.scope.active` —
+    nothing else may re-derive activation from these tuples.
+
+    Nothing normalizes on WRITE. This dataclass stays plain (no
+    ``__post_init__``), so any caller may store whatever spelling it holds and
+    the stored tuple is NOT guaranteed normalized;
+    :func:`otto.config.scope.active` normalizes both the stored values and the
+    queried name before comparing. The invariant is therefore enforced where it
+    is read rather than merely asked for here — a docstring-only version would
+    let ``exclude_projects=("My_Repo",)`` be silently ignored, which is an
+    explicit switch failing OPEN.
+    """
+
+    exclude_projects: tuple[str, ...] = ()
+    """Repo names forced INACTIVE this invocation (``-E``), PEP-503-normalized ON READ.
+
+    Same write/read contract as :attr:`include_projects`. Read by
+    :func:`otto.config.scope.active` for the verdict and by
+    :func:`otto.config.scope.switched_off` for attribution.
+    """
+
     def get_host(self, host_id: str, **overrides: Any) -> "UnixHost":
         """Look up *host_id* in the active lab, apply any keyword overrides, and register it."""
         from .config.fleet import _apply_option_overrides

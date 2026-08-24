@@ -69,6 +69,7 @@ from otto.link.manage import (
 from otto.monitor.archive_edit import ArchiveLockedError
 from otto.monitor.db import UnsupportedDBError
 from otto.monitor.event_ops import EventValidationError
+from otto.project.orchestrator import InactiveRequiredDependencyError
 from otto.reservations.check import MissingReservationError, ReservationBackendError
 from otto.result import CommandNotRunError
 from otto.suite._retry import RetryAttemptTimeoutError
@@ -84,6 +85,7 @@ CASES: list[tuple[type[BaseException], type[BaseException]]] = [
     (BootstrapError, Exception),
     (DependencyError, Exception),
     (ProjectScopeError, Exception),
+    (InactiveRequiredDependencyError, Exception),
     (EmptySelectionError, ValueError),
     (LabContextError, Exception),
     (GitUnavailableError, RuntimeError),
@@ -137,6 +139,12 @@ DELIBERATELY_ROOTLESS: frozenset[type[BaseException]] = frozenset(
         BootstrapError,
         DependencyError,
         ProjectScopeError,
+        # A contradictory ACTIVATION configuration: the labs drop a provider
+        # while a kept repo requires it. Sits beside ProjectScopeError above
+        # for the same reason it has no stdlib root — the project layer's
+        # "these declarations cannot work together" failures are otto's own
+        # concept, never a ValueError a caller was already catching.
+        InactiveRequiredDependencyError,
         LabContextError,
         LabRepositoryError,
         LabNotFoundError,

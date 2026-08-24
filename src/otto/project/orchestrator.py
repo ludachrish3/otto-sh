@@ -39,6 +39,7 @@ customizes by registering its own :class:`~otto.project.actions.ProjectActions`.
 import logging
 from typing import TYPE_CHECKING
 
+from ..errors import OttoError
 from ..result import Result
 from ..utils import Status
 from .actions import (
@@ -61,6 +62,7 @@ from .state import (
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Iterable
 
+    from ..config.dependencies import ResolvedDependency
     from ..config.lab import Lab
     from ..config.repo import Repo
     from ..config.scope import ProjectScope
@@ -68,6 +70,69 @@ if TYPE_CHECKING:
     from ..host.host import Host
 
 logger = logging.getLogger(__name__)
+
+
+def _literal(message: str) -> str:
+    r"""Return *message* with rich markup escaped, so its brackets reach EVERY sink.
+
+    MEASURED, not defensive, and measured across all three sinks rather than
+    the one that is easy to reach from a test. Otto renders a log record three
+    times: the console handler is a ``rich.logging.RichHandler`` built
+    ``markup=True``, and both log files go through
+    :class:`otto.logger.formatters.RichFormatter`, whose ``_stylize`` prints
+    ``record.msg`` through a rich console with ``markup=True`` hard-coded. So
+    ``[bench, floor]`` is parsed as a style tag and DELETED in all three:
+    "not applicable to the loaded lab(s) [bench, floor]" arrives as "not
+    applicable to the loaded lab(s)", with the one fact the reader needed gone
+    and nothing to suggest anything is missing. Every message this module logs
+    interpolates a lab list, a pattern list or a repo name, so none of them can
+    be assumed bracket-free.
+
+    ESCAPING AT THE SOURCE IS THE ONLY FIX THAT REACHES THE FILES.
+    ``extra={"markup": False}`` was tried first and is wrong: ``RichHandler``
+    honours it, ``RichFormatter`` never looks at ``record.markup``, so the
+    console is repaired while ``console.log`` and ``verbose.log`` stay broken --
+    and those are the sinks an operator greps after the run. Escaping leaves no
+    backslashes anywhere, precisely because all three sinks DO render markup:
+    ``\[bench`` arrives as ``[bench``. Doing both would be the one visibly
+    broken combination -- the console would print the backslash.
+
+    The same call :func:`otto.cli.invoke.print_error` makes at its own render
+    seam, for the same reason.
+
+    Args:
+        message: The fully interpolated log line.
+
+    Returns:
+        *message* with every markup-significant bracket escaped.
+    """
+    from rich.markup import escape  # function-scope: `import otto.project` stays cheap
+
+    return escape(message)
+
+
+class InactiveRequiredDependencyError(OttoError):
+    """A kept repo requires a provider the LABS switched off (activation spec section 4).
+
+    Raised BEFORE any walk: the labs say the provider cannot be here while the
+    dependent says it must be handled, which is a contradictory configuration
+    rather than a skippable one. Installing the dependent anyway would build a
+    lab nobody can reason about -- the same reasoning that makes ``install``
+    fail-fast -- and doing it quietly would hide the contradiction behind a
+    green exit.
+
+    An EXPLICIT ``--exclude-projects`` of the provider is the operator signing
+    off on exactly this ("I installed that one by hand"), so that shape warns
+    and proceeds instead. The two are told apart by
+    :func:`otto.config.scope.switched_off`, which is attribution and nothing
+    else: the combined verdict stays :func:`otto.config.scope.active`'s alone.
+
+    Rooted at :class:`~otto.errors.OttoError` with no stdlib type beneath it,
+    like the ``ProjectScopeError`` family it sits beside: this failure never
+    existed as a ``ValueError`` a caller could already be catching, and the
+    CLI boundary frame (``otto.cli.main``) catches ``OttoError`` and renders
+    it as a sentence rather than a traceback.
+    """
 
 
 def _lab() -> "tuple[OttoContext, list[Repo]]":
@@ -161,7 +226,9 @@ def _skip_message(scope: "ProjectScope", verb: str) -> str:
     )
 
 
-def _applicable(ctx: "OttoContext", repos: "Iterable[Repo]", verb: str) -> "list[Repo]":
+def _applicable(
+    ctx: "OttoContext", repos: "Iterable[Repo]", verb: str, *, build_up: bool
+) -> "list[Repo]":
     """Return the repos this run applies to, announcing every one it drops (D3's skip).
 
     THE DEPENDENCY HALF OF D3. A repo whose declaration admits no host in this
@@ -188,25 +255,185 @@ def _applicable(ctx: "OttoContext", repos: "Iterable[Repo]", verb: str) -> "list
     fallback (§6), not an exclusion, and confusing the two would silently
     remove every product-less repo from the walks it has always been in.
 
+    THE SWITCH AXIS RIDES ON TOP OF ALL OF THAT, and it does not get its own
+    condition here. :func:`~otto.config.scope.active` is the whole verdict --
+    exclude switch, then include switch, then the lab inference above, then
+    default-on -- because every enforcement point in otto (bootstrap-error
+    demotion, instruction dispatch, these walks) has to agree about which
+    repos this invocation deals with, and a second copy of the order spelled
+    at one of them is a copy that drifts. What is decided HERE is only what to
+    SAY: :func:`~otto.config.scope.switched_off` attributes the drop to the
+    operator's own flag, because the D3 wording would send someone who typed
+    ``-E`` off to fix a settings file that is perfectly correct. The reverse
+    matters too -- a lab-inferred skip must NOT claim a switch nobody typed.
+
+    THE DEPENDENCY PASS RUNS OVER THE KEPT REPOS, not the dropped ones, and
+    that is the point of it: a dropped repo's own dependencies are nobody's
+    problem this run, while a KEPT repo whose provider just went away is about
+    to be built on top of something that is not there. Three bits decide what
+    happens -- whether the dependency is ``required``, whether the provider
+    left by switch or by lab verdict, and whether this walk BUILDS:
+
+    * required + switched off -> WARN and proceed, on every verb. The operator
+      excluded it on purpose; "handled externally" is the ordinary reason to
+      type ``-E``.
+    * required + lab-inactive + *build_up* -> :class:`InactiveRequiredDependencyError`.
+      The labs say the provider cannot be here while the dependent says it must
+      be, and nobody signed off on that. Raised before the walk starts, so no
+      dependent is built over a missing dependency.
+    * required + lab-inactive + NOT *build_up* -> the same contradiction, but a
+      WARNING. See ``build_up`` below.
+    * optional, any of the above -> one note naming which reason, so the reader
+      knows whether to load a lab or to remove a switch.
+
+    ``build_up`` IS WHY THE REFUSAL DOES NOT REACH TEARDOWN, and it is a
+    parameter rather than a test on *verb* because a string comparison here is
+    a list one more verb can be forgotten from. The refusal is install-shaped
+    by construction -- its whole rationale is that building a dependent on a
+    dependency known to be absent produces a lab nobody can reason about, which
+    is the same reasoning that makes ``install`` fail-fast. Nothing of the kind
+    is true of the other direction: ``uninstall`` and ``cleanup`` take the
+    dependent DOWN, and raising there would abort a best-effort teardown from
+    its first line, stranding the debug sweep, the toolchain removal, the
+    impairment reset and the tunnel reap -- exactly the remnants ``cleanup``
+    exists to remove. ``get_logs``, ``cleanliness`` and ``is_clean`` only READ,
+    and a report that dies whole is worse than one with a row in it. Those
+    callers pass ``build_up=False`` and get the WARNING, so the operator still
+    learns about the contradictory configuration on the run where they meet it.
+
+    NO DEFAULT, deliberately: a verb added later cannot inherit the wrong arm
+    by saying nothing.
+
     Args:
-        ctx: The live context, for its resolved verdicts.
+        ctx: The live context, for its resolved verdicts and its switches.
         repos: The repos about to be walked, in walk order.
         verb: What is being skipped, named in the log line so the reader knows
             which operation left the repo out.
+        build_up: Whether this walk BUILDS onto the lab. True only for
+            ``install`` and ``install_tools``; see above for why a teardown or
+            a read-only walk must not refuse.
 
     Returns:
         The repos to walk, in the order they arrived.
+
+    Raises:
+        InactiveRequiredDependencyError: *build_up* and a kept repo requires a
+            provider this run dropped on the LAB axis. See that class for why
+            the switch shape warns instead.
     """
-    from ..config.scope import unusable_scope
+    from ..config.scope import active, switched_off
+    from ..models.dependencies import normalize_name
 
     keep: "list[Repo]" = []
+    dropped: "dict[str, Repo]" = {}
     for repo in repos:
-        scope = ctx.scopes.get(repo.name)
-        if scope is not None and unusable_scope(scope):
-            logger.warning(_skip_message(scope, verb))
+        if active(repo.name, ctx):
+            keep.append(repo)
             continue
-        keep.append(repo)
+        # Keyed by the NORMALIZED name because that is what a dependency
+        # declaration is matched on; ``active`` above was asked with the raw
+        # ``Repo.name``, which is how ``ctx.scopes`` is keyed. Two spellings,
+        # two lookups, each with the one its own mapping uses.
+        dropped[normalize_name(repo.name)] = repo
+        if switched_off(repo.name, ctx):
+            logger.warning(
+                _literal(
+                    f"repo {repo.name!r} switched off for this run "
+                    f"(--exclude-projects {normalize_name(repo.name)}) — skipping it for {verb}"
+                )
+            )
+        else:
+            # Not switched off and not active leaves exactly one cause, so the
+            # verdict is present: ``active`` resolves True for a missing one.
+            logger.warning(_literal(_skip_message(ctx.scopes[repo.name], verb)))
+
+    for repo in keep:
+        for dep in repo.dependencies:
+            provider = dropped.get(dep.normalized)
+            if provider is None:
+                continue
+            _announce_dropped_provider(ctx, repo, provider, dep, verb, build_up=build_up)
     return keep
+
+
+def _announce_dropped_provider(
+    ctx: "OttoContext",
+    repo: "Repo",
+    provider: "Repo",
+    dep: "ResolvedDependency",
+    verb: str,
+    *,
+    build_up: bool,
+) -> None:
+    """Say what a kept *repo* losing *provider* means -- or refuse the run over it.
+
+    Split out of :func:`_applicable` so the arms read as arms of one decision
+    rather than as nesting inside two loops; which arm applies, and why
+    *build_up* gates the only one that raises, is in that function's docstring.
+    Why the switch shape is survivable at all is on
+    :class:`InactiveRequiredDependencyError`.
+
+    Args:
+        ctx: The live context, for its switches and verdicts.
+        repo: The kept repo whose declaration names *provider*.
+        provider: The dropped repo, as this run resolved it.
+        dep: *repo*'s resolved entry for it -- ``required`` is the bit that
+            decides refuse-versus-note.
+        verb: The walk being performed, named in the survivable arm so the
+            reader knows which operation decided to carry on.
+        build_up: Whether this walk builds onto the lab; only a build-up
+            refuses.
+
+    Raises:
+        InactiveRequiredDependencyError: *build_up*, and *dep* is required, and
+            *provider* was dropped on the lab axis.
+    """
+    from ..config.scope import switched_off
+
+    by_switch = switched_off(provider.name, ctx)
+    if dep.required and by_switch:
+        logger.warning(
+            _literal(
+                f"repo {repo.name!r} requires {provider.name!r}, which was "
+                f"switched off (--exclude-projects {dep.normalized}) — "
+                f"proceeding as though {provider.name} is handled externally"
+            )
+        )
+        return
+    if dep.required:
+        scope = ctx.scopes[provider.name]
+        labs = ", ".join(scope.loaded_labs) or "(none)"
+        if not build_up:
+            logger.warning(
+                _literal(
+                    f"repo {repo.name!r} requires {provider.name!r}, which is not "
+                    f"applicable to the loaded lab(s) [{labs}] — continuing, because "
+                    f"{verb} does not build {repo.name} on top of it. A build-up verb "
+                    f"will refuse until a lab {provider.name} applies to is loaded, or "
+                    f"--exclude-projects={dep.normalized} declares it handled externally."
+                )
+            )
+            return
+        raise InactiveRequiredDependencyError(
+            f"repo {repo.name!r} requires {provider.name!r}, but "
+            f"{provider.name} is not applicable to the loaded lab(s) "
+            f"[{labs}] "
+            f"(lab_patterns: {', '.join(scope.lab_patterns) or '(none)'}). "
+            f"Load a lab {provider.name} applies to, or pass "
+            f"--exclude-projects={dep.normalized} to declare it handled externally."
+        )
+    reason = (
+        f"switched off via --exclude-projects {dep.normalized}"
+        if by_switch
+        else f"not applicable to the loaded lab(s) "
+        f"[{', '.join(ctx.scopes[provider.name].loaded_labs) or '(none)'}]"
+    )
+    logger.warning(
+        _literal(
+            f"repo {repo.name!r}: optional dependency {provider.name!r} "
+            f"not satisfied for this run — {provider.name} is inactive ({reason})"
+        )
+    )
 
 
 def _scope_row(scope: "ProjectScope") -> RepoScope:
@@ -281,6 +508,7 @@ async def _walk(
     repos: "Iterable[Repo]",
     *,
     best_effort: bool,
+    build_up: bool,
 ) -> Result:
     """Run *call* against each repo's actions, naming the repo in any failure.
 
@@ -294,9 +522,17 @@ async def _walk(
     :func:`_applicable`), and its absence is a log line rather than a result:
     it is not a failure, and reporting it as one would make every mixed lab
     exit non-zero on a correct run.
+
+    *build_up* is threaded straight to :func:`_applicable` and is the ONE thing
+    that can make this function raise rather than return: a build-up walk
+    refuses a kept repo whose required provider the labs dropped. It is passed
+    per verb rather than derived from *best_effort* even though the two agree
+    on today's five callers, because they are different facts -- "how do I
+    report a failure DURING the walk" and "may this walk start at all" -- and a
+    verb that ever wanted best-effort building would silently lose the refusal.
     """
     first_failure: "Result | None" = None
-    for repo in _applicable(ctx, repos, verb):
+    for repo in _applicable(ctx, repos, verb, build_up=build_up):
         result = await call(actions_for(repo, ctx))
         if result.is_ok:
             continue
@@ -519,7 +755,9 @@ async def install(ensure: bool = False, recover_partial: bool = True) -> Result:
     if ensure:
         return await ensure_installed(recover_partial=recover_partial)
     ctx, repos = _lab()
-    return await _walk("install", lambda a: a.install(), ctx, repos, best_effort=False)
+    return await _walk(
+        "install", lambda a: a.install(), ctx, repos, best_effort=False, build_up=True
+    )
 
 
 async def uninstall(get_product_logs: bool = True, get_debug_logs: bool = True) -> Result:
@@ -538,6 +776,7 @@ async def uninstall(get_product_logs: bool = True, get_debug_logs: bool = True) 
         ctx,
         reversed(repos),
         best_effort=True,
+        build_up=False,
     )
     if not get_debug_logs:
         return torn
@@ -587,6 +826,7 @@ async def cleanup(
         ctx,
         reversed(repos),
         best_effort=True,
+        build_up=False,
     )
     swept = await _sweep_debug_logs(ctx) if get_debug_logs else Result(Status.Success)
     removed = _reduce_results(await ctx.do_for_all_hosts(_dispatch_remove_toolchain_tools))
@@ -624,6 +864,7 @@ async def get_logs(
         ctx,
         repos,
         best_effort=True,
+        build_up=False,
     )
     if not debug:
         return hauled
@@ -655,6 +896,7 @@ async def install_tools(dev: bool = True, toolchain: bool = False) -> Result:
         ctx,
         repos,
         best_effort=False,
+        build_up=True,
     )
     if not installed.is_ok or not toolchain:
         return installed
@@ -712,9 +954,19 @@ async def status() -> ProjectStatus:
     vanished from the report meant to explain the lab, so
     :attr:`~otto.project.state.ProjectStatus.scoping` carries every repo's
     verdict and the renderer prints "not applicable" beside it. No warning is
-    logged here, unlike the acting walks: the answer IS the display.
+    logged for that case, unlike the acting walks: the answer IS the display.
+
+    A SWITCHED-OFF repo is left out by the same predicate and DOES get a line,
+    and the asymmetry is deliberate rather than an oversight. Every reason a
+    lab verdict can leave a repo out is already printed in the scoping rows
+    beside it; nothing anywhere in this report records that ``-I``/``-E`` was
+    typed at all, so without the line the repo is simply gone from a display
+    whose whole job is to account for the lab. Warning on both axes instead
+    would put a line in front of every operator whose lab merely does not
+    include some project, which is the ordinary case and not news.
     """
-    from ..config.scope import unusable_scope
+    from ..config.scope import active, switched_off
+    from ..models.dependencies import normalize_name
 
     ctx, repos = _lab()
     states: "dict[str, InstallState]" = {}
@@ -723,11 +975,18 @@ async def status() -> ProjectStatus:
         scope = ctx.scopes.get(repo.name)
         if scope is not None:
             scoping[repo.name] = _scope_row(scope)
-            # The walks' own predicate: a repo they leave out has no state to
-            # fold, and asking it for one reaches a fleet that is empty by
-            # declaration -- which raises, out of a READING verb.
-            if unusable_scope(scope):
-                continue
+        # The walks' own predicate, not a copy of its condition: a repo they
+        # leave out has no state to fold, and asking it for one reaches a fleet
+        # that is empty by declaration -- which raises, out of a READING verb.
+        if not active(repo.name, ctx):
+            if switched_off(repo.name, ctx):
+                logger.warning(
+                    _literal(
+                        f"repo {repo.name!r} switched off for this run "
+                        f"(--exclude-projects {normalize_name(repo.name)}) — skipping it for status"
+                    )
+                )
+            continue
         actions = actions_for(repo, ctx)
         if _counts(actions):
             states[repo.name] = await actions.status()
@@ -849,7 +1108,9 @@ async def _repo_items(ctx: "OttoContext", repos: "Iterable[Repo]") -> "list[Clea
     to ask.
     """
     items: "list[CleanlinessItem]" = []
-    for repo in _applicable(ctx, repos, "cleanliness"):
+    # A REPORT NEVER REFUSES: `build_up=False` keeps a contradictory required
+    # dependency a WARNING, so the row survives to be printed.
+    for repo in _applicable(ctx, repos, "cleanliness", build_up=False):
         try:
             clean = await actions_for(repo, ctx).is_clean()
         except Exception as exc:  # noqa: BLE001,PERF203 — a display marks what it could not learn; is_clean is the surface that refuses to answer
@@ -1111,7 +1372,9 @@ async def is_clean() -> bool:
     unavailable, and this is the cheap path a converge takes before every test.
     """
     ctx, repos = _lab()
-    for repo in _applicable(ctx, repos, "is_clean"):
+    # Read-only: `build_up=False`. A converge asks this BEFORE deciding to
+    # install, and a refusal here would pre-empt the decision it informs.
+    for repo in _applicable(ctx, repos, "is_clean", build_up=False):
         if not await actions_for(repo, ctx).is_clean():
             return False
     return (

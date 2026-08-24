@@ -23,6 +23,7 @@ import pytest
 from otto.cli import invoke
 from otto.cli.registry import CommandSpec
 from otto.reservations import MissingReservationError, ReservationGateResult
+from tests._fixtures.clickctx import chain
 
 
 class _FakeCtx:
@@ -31,9 +32,17 @@ class _FakeCtx:
     def __init__(self, spec: CommandSpec, reservation: object | None = None) -> None:
         callback = SimpleNamespace(__cli_output_dir__=True)
         self.command = SimpleNamespace(name=spec.name, callback=callback)
+        self.info_name = spec.name
+        # A real leaf context has a parent chain, and the preamble's activation
+        # gate walks it before reaching the reservation gate tested here.
+        self.parent = chain("otto")
         self.meta: dict[str, Any] = {
             "_otto_command_spec": spec,
-            "_otto_root_options": object(),
+            # RootOptions-shaped, not a bare sentinel: the preamble reads the
+            # -I/-E tuples off this object before it reaches the gate.
+            "_otto_root_options": SimpleNamespace(
+                labs=None, include_projects=(), exclude_projects=()
+            ),
         }
         if reservation is not None:
             self.meta["otto_reservation"] = reservation

@@ -254,7 +254,16 @@ def instruction(
         func_module = getattr(func, "__module__", "<unknown>")
         INSTRUCTIONS.register(
             cmd_name,
-            InstructionEntry(name=cmd_name, sub_app=app, module=func_module),
+            InstructionEntry(
+                name=cmd_name,
+                sub_app=app,
+                module=func_module,
+                # The SAME marker the first-party-name guard above reads, and
+                # the only place `registered_by` is ever filled in: one read of
+                # the contextvar, so the name that refuses a collision and the
+                # name that owns the entry cannot disagree.
+                registered_by=repo_name,
+            ),
             origin=func_module,
         )
         return new_instruction
