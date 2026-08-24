@@ -22,6 +22,18 @@ def register_builtin_commands() -> None:
         gate=False,
     )
     register_cli_command(
+        "env",
+        "otto.cli.env:env_app",
+        help="Create and maintain this workspace's orchestration environment.",
+        lab_free=True,
+        output_dir=False,
+        gate=False,
+        # F5: deliberately NO dry_run_preview. The lab-free dry-run seam stops
+        # `otto env create -n` before the body and exits 0 -- creating nothing,
+        # exactly as `otto init -n` scaffolds nothing. Opting out of that seam
+        # would let -n build a venv.
+    )
+    register_cli_command(
         "host", "otto.cli.host:host_app", help="Run commands and transfer files on lab hosts."
     )
     register_cli_command(

@@ -1,0 +1,12 @@
+[project]
+name = "otto-sample-repo4"
+version = "0.1.0"
+dependencies = ["otto-fixture-beetroot >= 0.1"]
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["repo4_instructions"]
+package-dir = {"" = "pylib"}

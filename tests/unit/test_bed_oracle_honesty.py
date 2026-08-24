@@ -319,7 +319,7 @@ _LANE_FIXTURE = TESTS_ROOT / "_fixtures" / "bed_hygiene.py"
 
 # Fixture SUT repos + firmware: user-example input data, not otto's tests —
 # the same carve-out every tests-scoped structural rule makes.
-_EXCLUDED_TREES = ("repo1", "repo2", "repo3", "repo_broken", "repo_e2e", "firmware")
+_EXCLUDED_TREES = ("repo1", "repo2", "repo3", "repo4", "repo_broken", "repo_e2e", "firmware")
 
 
 def _lane_sources():

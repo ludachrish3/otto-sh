@@ -42,7 +42,7 @@ every offence on its physical line — all landed exempt sites are
 single-offence multi-line calls, where only the call's first line works
 (anywhere else goes loud as offence + dead marker).
 
-Corpus: the house six-tree denylist over ``tests/`` (parsed-or-fail), same
+Corpus: the house seven-tree denylist over ``tests/`` (parsed-or-fail), same
 as test_gitenv_hermeticity.
 """
 
@@ -54,7 +54,7 @@ import pytest
 from tests._fixtures.paths import TESTS_ROOT
 
 _FIXTURE_MODULE = TESTS_ROOT / "_fixtures" / "sutrepo.py"
-_EXCLUDED_TREES = ("repo1", "repo2", "repo3", "repo_broken", "repo_e2e", "firmware")
+_EXCLUDED_TREES = ("repo1", "repo2", "repo3", "repo4", "repo_broken", "repo_e2e", "firmware")
 _EXEMPT_MARKER = "# sutrepo-exempt:"
 _WRITE_ATTRS = ("write_text", "write_bytes", "touch")
 

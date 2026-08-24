@@ -10,7 +10,7 @@ the same ``try`` — the first lexical match wins.
 DEFINES, not raises, and the difference is not small: otto also raises plain
 stdlib exceptions at 301 sites — an argument otto validates and rejects is
 usually a bare ``ValueError``, not a named class. ``except OttoError``
-therefore means "one of otto's 43 NAMED failures", not "anything otto
+therefore means "one of otto's 46 NAMED failures", not "anything otto
 raised".
 
 There is no one clause that catches everything, and it is worth being exact
@@ -24,11 +24,11 @@ rather than offering a comforting near-miss:
   :class:`~otto.lifecycle.SyncPhaseInterrupt`, a ``KeyboardInterrupt`` on
   purpose (see below).
 * ``except (ValueError, RuntimeError)`` covers 254 of the 301 raise sites,
-  and 30 of the 43 named classes. Of the other 13, nine are rooted at plain
+  and 33 of the 46 named classes. Of the other 13, nine are rooted at plain
   ``Exception`` (the bootstrap, project-activation, lab-context,
   lab-repository and reservation errors) and four sit under ``OSError``
   (``AppShellTimeoutError``, ``LoginProxyError``, ``RetryAttemptTimeoutError``,
-  ``WaitTimeoutError``) — 30 + 9 + 4 = 43, so the split accounts for every
+  ``WaitTimeoutError``) — 33 + 9 + 4 = 46, so the split accounts for every
   named class.
 
 Those counts are measured, not maintained by arithmetic: a *raise site* is a

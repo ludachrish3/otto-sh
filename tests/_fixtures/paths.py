@@ -24,6 +24,12 @@ PROJECT_ROOT = TESTS_ROOT.parent
 _TESTS_ROOT = TESTS_ROOT
 _CUSTOM_HOSTS = _TESTS_ROOT / "custom_hosts"
 _REPO1 = _TESTS_ROOT / "repo1"
+WHEELS_DIR = TESTS_ROOT / "_fixtures" / "wheels"
+"""Committed fixture wheels (see that directory's README).
+
+Holds ``beetroot``, the requirement that CANNOT be satisfied from an index --
+so a test that installs it without pointing here has reached the network.
+"""
 
 
 def ensure_custom_hosts_on_path() -> None:

@@ -39,7 +39,7 @@ from tests._fixtures.paths import TESTS_ROOT
 
 # Fixture SUT repos and firmware are user-example INPUT DATA, not harness
 # code — same exclusion set as the ast-grep tests/ scope (G0).
-_DATA_DIRS = {"repo1", "repo2", "repo3", "repo_broken", "repo_e2e", "firmware"}
+_DATA_DIRS = {"repo1", "repo2", "repo3", "repo4", "repo_broken", "repo_e2e", "firmware"}
 
 # The one sanctioned module-scope block (see module docstring).
 _SANCTIONED = {TESTS_ROOT / "conftest.py"}

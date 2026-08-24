@@ -1,0 +1,17 @@
+name = "repo4"
+version = "0.1.0"
+libs = [
+    "pylib",
+]
+init = [
+    'repo4_instructions',
+]
+
+# repo4 is the INSTALLABLE sample: unlike repo1-repo3 it carries a
+# pyproject.toml, so `otto env` has something to install editable and the
+# preflight has a declared Python requirement (beetroot) to check. It is
+# OPT-IN — no default fixture names it — so repo-count assertions and the
+# import-budget snapshots stay where they are.
+[dependencies]
+required = ["repo1"]
+optional = ["repo3"]

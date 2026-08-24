@@ -4,6 +4,11 @@ __pycache__/
 build/
 dist/
 wheels/
+# ...except this one, which is FIXTURE INPUT rather than build output: a
+# committed wheel a test installs offline. Without this negation the whole
+# directory is invisible to git and the suite passes locally while CI has
+# no wheel to install.
+!tests/_fixtures/wheels/
 *.egg-info
 
 # Virtual environments

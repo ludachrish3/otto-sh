@@ -397,6 +397,12 @@ class Repo:
     )
     """Parsed `[monitor]` table — optional TLS cert/key for the dashboard server."""
 
+    env_backend: "str | None" = field(default=None, init=False)
+    """Parsed `[env] backend` — this repo's standing choice of installer for the
+    orchestration venv, or None to auto-detect. Read through the validated model
+    rather than the raw settings dict, so ``EnvSettingsSpec`` stays the one place
+    the key is spelled."""
+
     def __post_init__(self) -> None:
         # ``anchor_path`` needs an absolute root to anchor relative settings
         # paths against, so ``sut_dir`` is made absolute here, before
@@ -797,6 +803,7 @@ class Repo:
         self.os_profiles = self._register_os_profiles(model.os_profiles)
         self.docker_settings = model.docker.to_runtime()
         self.monitor_settings = model.monitor.to_runtime()
+        self.env_backend = model.env.backend
 
     def product_log_prefixes(self) -> set[str]:
         """Top-level package names whose ``getLogger(__name__)`` records otto captures.

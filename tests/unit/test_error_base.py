@@ -50,6 +50,8 @@ from otto.coverage.errors import (
 )
 from otto.coverage.overrides import OverrideConfigError
 from otto.coverage.tickets import TicketConfigError
+from otto.env import EnvBuildError, EnvExistsError
+from otto.env.backends import BackendUnavailableError
 from otto.errors import EnsureStateError, OttoError
 from otto.host.app_shell import AppShellActiveError, AppShellTimeoutError, ParseMismatch
 from otto.host.errors import (
@@ -87,6 +89,9 @@ CASES: list[tuple[type[BaseException], type[BaseException]]] = [
     (ProjectScopeError, Exception),
     (InactiveRequiredDependencyError, Exception),
     (EmptySelectionError, ValueError),
+    (BackendUnavailableError, RuntimeError),
+    (EnvExistsError, RuntimeError),
+    (EnvBuildError, RuntimeError),
     (LabContextError, Exception),
     (GitUnavailableError, RuntimeError),
     (GitMissingError, RuntimeError),

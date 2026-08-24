@@ -9,6 +9,7 @@ from otto.models.settings import (
     CoverageSettingsSpec,
     DependenciesSpec,
     DockerSettingsSpec,
+    EnvSettingsSpec,
     LabConfigSpec,
     LoggingConfigSpec,
     MonitorSettingsSpec,
@@ -34,6 +35,7 @@ _SECTION_SPECS = {
     "docker": (DockerSettingsSpec, set()),
     "dependencies": (DependenciesSpec, set()),
     "project": (ProjectScopeSpec, set()),
+    "env": (EnvSettingsSpec, set()),
 }
 
 
