@@ -226,6 +226,15 @@ testpaths = [
     # existed. Adding a tier directory without adding it here deletes the tier
     # from CI while every gate stays green.
     "tests/busybox",
+    # The host-contract conformance suite, a top-level tree for the same reason
+    # and with the same trap: `make conformance` is `pytest -m conformance` with
+    # no path, and MEASURED with this line absent (the other four roots pinned
+    # via `-o testpaths=...`) it reports
+    # `no tests collected (7913 deselected)` and exits 5 — which aborts make,
+    # so the lane fails loudly rather than under-reporting. Listing the tree here is
+    # what makes the marker do its job, and it is also what puts the tree in
+    # front of every catch-all lane: see the `conformance` marker below.
+    "tests/conformance",
 ]
 pythonpath = ["src", "."]
 log_cli = true
@@ -281,6 +290,7 @@ markers = [
     "no_bundle_page: browser test whose page deliberately renders none of our bundles (e.g. an access-key-refusal HTML hint page) — opts out of tests/_fixtures/_ts_coverage.py's zero-match guard without disabling collection",
     "no_hygiene_bracket: chaos-lane test that manages its own BedHygiene bracket (reboot races the autouse after-probe)",
     "busybox: needs a real BusyBox artifact (fetched + cached; qemu-user-static on non-x86_64) — deselect with -m 'not busybox'",
+    "conformance: host-contract conformance cell (tests/conformance) — stands up a throwaway loopback sshd and runs real BusyBox artifacts as subprocesses, one cell at a time; auto-stamped by tests/conformance/conftest.py AND declared per module, excluded from every default lane (`not conformance` rides every catch-all in Makefile/noxfile.py), opt-in via `make conformance`",
 ]
 
 # NB: coverage.py config lives in .coveragerc, not here — that file is shared

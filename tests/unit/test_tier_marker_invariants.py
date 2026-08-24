@@ -11,13 +11,18 @@ either) can't co-select the chaos lane. G7 proves the resource-slice legs
 which share a resource marker (`integration`/`embedded`) with the chaos lane
 and, like the stability legs G6 covers, are bare positive selectors no
 catch-all's `not stability` protects — exclude BOTH bed-hostile tiers, not
-just one.
+just one. The G8/G9 families carry the same rules for the BusyBox artifact
+tier and the G10/G11 families for the host-contract conformance tier; each of
+those states its own reasoning on the test itself.
 """
 
 import ast
 import contextlib
+import os
 import re
 import shlex
+import subprocess
+import sys
 from itertools import pairwise
 from pathlib import Path
 
@@ -783,7 +788,9 @@ def _modules_carrying(marker: str) -> "set[Path]":
     directory sits inside ``testpaths`` and ``tests/unit`` does — and not
     harmless here, where the same false positive would condemn every
     path-selected lane that touches ``tests/unit`` for a docstring. The text
-    scan in G8d/G8e is recorded debt; it is not inherited.
+    scan in G8d/G8e — and in their G11d/G11e analogues, which since this file
+    grew conformance prose count ``tests/unit`` as a conformance-carrying
+    directory for exactly that reason — is recorded debt; it is not inherited.
     """
     stamped = _autostamped_markers().get(marker, [])
     needle = f"pytest.mark.{marker}"
@@ -829,9 +836,13 @@ def test_a_lane_that_selects_by_path_cannot_reach_the_busybox_tier():
     the next offender gets in. This parses ``Makefile``, ``noxfile.py`` and
     ``scripts/stability_campaign.py``. It does NOT see a raw ``pytest``
     written directly into a GitHub workflow step, and two such invocations
-    are live right now — ``.github/workflows/nightly.yml:183`` and ``:217``.
-    Neither reaches this tier today, which is why the tree is compliant, but
-    they are the shape this guard cannot judge, not a hypothetical one. It
+    are live right now — the ``chaos-tier2`` and ``chaos-docker`` jobs in
+    ``.github/workflows/nightly.yml``, which run ``pytest`` on a path
+    directly rather than through a make target. Named by job rather than by
+    line, because the line moved the first time anything was inserted above
+    them. Neither reaches this tier today, which is why the tree is
+    compliant, but they are the shape this guard cannot judge, not a
+    hypothetical one. It
     also misses a ``pytest`` buried inside ``bash -c "..."``, which shlex
     hands over as a single token; a ``$(VAR)``-supplied pytest IS caught.
     Widening the surface to the workflows is the obvious next step if a
@@ -899,20 +910,75 @@ def _makefile_targets_selecting(marker: str) -> "list[str]":
     return [b.group(1) for b in blocks if re.search(rf'-m\s+"{re.escape(marker)}"', b.group(2))]
 
 
-def _ci_jobs_invoking(target: str) -> "list[str]":
-    """CI job names with a `run` step invoking `make <target>`.
+def _workflows() -> "dict[str, dict]":
+    """Every workflow under `.github/workflows/`, by filename."""
+    root = PROJECT_ROOT / ".github" / "workflows"
+    return {path.name: yaml.safe_load(path.read_text()) for path in sorted(root.glob("*.yml"))}
+
+
+def _workflow_jobs_invoking(target: str) -> "list[tuple[str, str]]":
+    """`(workflow filename, job name)` for each job whose `run` step calls `make <target>`.
+
+    Searched across every workflow rather than inside one this function names,
+    because WHICH workflow a lane runs in is a scheduling decision and not part
+    of the property being guarded: the BusyBox tier runs per-push in `ci.yml`,
+    the conformance tier runs nightly because its cell draw is random per run,
+    and either could move without the tier's coverage changing at all. A guard
+    pinned to a filename would go red on that move instead of following it.
 
     Word-boundary on both sides, with `(?![-\\w])` closing the right-hand
     side: `make busybox-cache` primes the cache and runs no tests, so a plain
     substring match would report the tier covered by the one target that most
-    looks like the lane and least is it.
+    looks like the lane and least is it. That is a live case rather than a
+    hypothetical one — nightly's `conformance-hermetic` job runs
+    `make busybox-cache` and then `make conformance`, so a loose match there
+    would credit the BusyBox lane to a job that never runs it.
     """
-    ci = yaml.safe_load((PROJECT_ROOT / ".github" / "workflows" / "ci.yml").read_text())
     pattern = rf"\bmake\b[^\n&|;]*\b{re.escape(target)}\b(?![-\w])"
     return [
-        name
-        for name, job in ci["jobs"].items()
+        (filename, job_name)
+        for filename, workflow in _workflows().items()
+        for job_name, job in workflow.get("jobs", {}).items()
         if any(re.search(pattern, step["run"]) for step in job.get("steps", []) if "run" in step)
+    ]
+
+
+def _jobs_outside_failure_reporting(running: "list[tuple[str, str]]") -> "list[str]":
+    """`workflow:job` for each invoking job whose own workflow would not report its failure.
+
+    Both workflows that run an opt-in tier today carry a `report-failure` job
+    wired to a `needs` list — that list is how a broken `main` opens an issue
+    instead of waiting for someone to watch the Actions tab. Two ways a job
+    falls outside it, and a guard that checked only the second would pass
+    vacuously on a workflow that has no reporter at all, so both are named.
+    """
+    workflows = _workflows()
+    offenders: "list[str]" = []
+    for filename, job_name in running:
+        reporter = workflows[filename]["jobs"].get("report-failure")
+        if reporter is None:
+            offenders.append(f"{filename}:{job_name} (that workflow has no report-failure job)")
+            continue
+        needs = reporter.get("needs") or []
+        if isinstance(needs, str):
+            needs = [needs]
+        if job_name not in needs:
+            offenders.append(f"{filename}:{job_name} (absent from report-failure's `needs`)")
+    return offenders
+
+
+def _advisory_jobs(running: "list[tuple[str, str]]") -> "list[str]":
+    """`workflow:job` for each invoking job that reports success whatever it finds.
+
+    A job can be present, wired into `needs`, and still not matter:
+    `continue-on-error: true` is the cheapest possible way to neutralise a tier
+    while every other assertion about it stays green.
+    """
+    workflows = _workflows()
+    return [
+        f"{filename}:{job_name}"
+        for filename, job_name in running
+        if workflows[filename]["jobs"][job_name].get("continue-on-error") is True
     ]
 
 
@@ -923,38 +989,33 @@ def test_ci_runs_the_busybox_lane():
     anything ever runs it, and for a while nothing did. The tier needs no qemu
     on an x86_64 runner — `ubuntu-latest` executes the artifacts natively — so
     there was never a technical reason for the gap, only the order the work
-    landed in. Asserted against the workflow rather than against a job name of
+    landed in. Asserted against the workflows rather than against a job name of
     this test's choosing: the lane is derived from the Makefile and the
-    invocation is looked for across every job, so renaming either end moves
-    the guard instead of breaking it.
+    invocation is looked for across every job of every workflow, so renaming
+    either end — or moving the job between workflows — moves the guard instead
+    of breaking it.
 
-    Also pins the job into `report-failure`'s `needs`. That list is how a
-    broken `main` opens an issue instead of waiting for someone to watch the
-    Actions tab; a job absent from it fails silently in exactly the case the
-    reporting exists for.
+    Also pins the job into its workflow's `report-failure` `needs`. That list
+    is how a broken `main` opens an issue instead of waiting for someone to
+    watch the Actions tab; a job absent from it fails silently in exactly the
+    case the reporting exists for.
     """
     lanes = _makefile_targets_selecting("busybox")
     assert lanes, "no Makefile target positively selects `-m busybox` (G8b covers this)"
 
-    running_jobs = sorted({job for lane in lanes for job in _ci_jobs_invoking(lane)})
-    assert running_jobs, (
+    running = sorted({pair for lane in lanes for pair in _workflow_jobs_invoking(lane)})
+    assert running, (
         f"no CI job invokes any of {lanes} — every default lane excludes "
         f"`-m busybox` (G8), so the whole tier runs nowhere in CI"
     )
 
-    ci = yaml.safe_load((PROJECT_ROOT / ".github" / "workflows" / "ci.yml").read_text())
-    reported = ci["jobs"]["report-failure"]["needs"]
-    missing = [name for name in running_jobs if name not in reported]
-    assert not missing, (
-        f"{missing} run the BusyBox lane but are absent from report-failure's "
-        f"`needs`, so a failure on main opens no tracking issue"
+    unreported = _jobs_outside_failure_reporting(running)
+    assert not unreported, (
+        f"{unreported} run the BusyBox lane but their failure opens no tracking "
+        f"issue, so a broken main waits for someone to watch the Actions tab"
     )
 
-    # A job can be present, wired into `needs`, and still not matter:
-    # `continue-on-error: true` makes it report success whatever it finds. That
-    # is the cheapest possible way to neutralise the tier while every other
-    # assertion here stays green, so the guard has to name it.
-    advisory = [n for n in running_jobs if ci["jobs"][n].get("continue-on-error") is True]
+    advisory = _advisory_jobs(running)
     assert not advisory, (
         f"{advisory} run the BusyBox lane with `continue-on-error: true`, so the "
         f"tier can fail without failing anything — decorative, not blocking"
@@ -983,3 +1044,434 @@ def test_e2e_conftest_autostamps_e2e():
     with contextlib.suppress(StopIteration):
         gen.send(None)
     assert "e2e" in item.added
+
+
+# --- The host-contract conformance tier (tests/conformance/) ------------------
+#
+# The BusyBox guards above are the template, and the resource is different:
+# this tier stands up a throwaway non-root sshd on 127.0.0.1 and runs the five
+# pinned BusyBox artifacts as local subprocesses, one cell at a time. What makes
+# it need the same family of guards is the shape of its exclusion, not its cost:
+# a conformance test carries none of the markers M_HOSTLESS negates, so it
+# satisfies every clause of every catch-all and is SELECTED by the ordinary
+# gates unless `not conformance` is spelled out. That became live the moment
+# `tests/conformance` joined `testpaths`, which it had to — see G11e.
+#
+# G11c carries the BusyBox tier's "CI actually runs the lane" rule here, and it
+# is younger than the rest of this family: it was left out on purpose while no
+# workflow under .github/workflows mentioned `conformance` at all, since a
+# guard asserting CI ran the tier would then have been red on arrival. The
+# nightly `conformance-hermetic` job closed that, so the rule is now a test
+# rather than a note explaining its own absence.
+#
+# One difference from G8c's tier, and it is a property of the lane rather than
+# an accident of where the work landed: this one is NIGHTLY, not per-push,
+# because each run draws its cells at random off the session seed, so a
+# per-push gate could fail an unrelated PR on pre-existing breakage in a cell
+# nothing had drawn before. G11c therefore asserts that SOME workflow job runs
+# the lane, never that a particular workflow does.
+
+
+def test_conformance_conftest_autostamps_conformance():
+    """G10: the tests/conformance/ conftest stamps `conformance` by directory.
+
+    Same mechanism as G1/G3/G9 and the same invisible failure: an unmarked new
+    file here rides every catch-all lane, and the first thing it does is bind a
+    listening sshd and exec real BusyBox binaries inside `make coverage`.
+
+    Importing that conftest is cheap and offline, which is why this guard can
+    live in the no-VM unit gate at all: it resolves the cell space at import
+    (measured 0.22s here) and `tests/conformance/_cells.py` deliberately defers
+    every busybox.net fetch to the opener, so nothing is downloaded by the
+    import alone.
+
+    Read the name narrowly: this calls the hook, so it proves what the hook
+    does and NOT that the stamp lands before pytest deselects on the marker.
+    That ordering was measured separately, by dropping an unmarked throwaway
+    module into this tree — it was deselected by `-m "not conformance"` under a
+    path-named run, under a path-less run, and under a path-less run with
+    `testpaths` narrowed to this tree — and it cannot be pinned by a committed
+    guard, because the hostile condition it needs is an unmarked module here,
+    which G10b forbids. G10b is what makes the ordering moot; G11g is what
+    watches a real collection.
+    """
+    from tests.conformance import conftest as conf
+
+    conf_root = Path(conf.__file__).parent
+
+    class _FakeItem:
+        def __init__(self, path: Path) -> None:
+            self.path = path
+            self.added: list[str] = []
+
+        def add_marker(self, marker) -> None:
+            self.added.append(getattr(marker, "name", str(marker)))
+
+    item = _FakeItem(conf_root / "test_example.py")
+    conf.pytest_collection_modifyitems(config=None, items=[item])
+    assert "conformance" in item.added
+
+    outsider = _FakeItem(TESTS_ROOT / "unit" / "test_example.py")
+    conf.pytest_collection_modifyitems(config=None, items=[outsider])
+    assert "conformance" not in outsider.added, (
+        "the stamp must be scoped to its own tree — a hook that marks every "
+        "item it is handed would deselect the whole suite from the default lanes"
+    )
+
+
+def test_every_conformance_test_declares_the_marker_it_is_also_stamped_with():
+    """G10b: `tests/conformance/conftest.py` calls those `pytestmark`s LOAD-BEARING.
+
+    That conftest asks a reader not to simplify them away as redundant with the
+    stamp, and its reasons survive only while they are there: the stamp cannot
+    outlive its own file, so deleting or renaming that conftest silently returns
+    every contract here to the catch-all lanes; and the stamp's effect depends
+    on collection-hook ORDER, which in this repo varies with the invocation
+    shape, while a `pytestmark` is attached at item construction and does not.
+    G9b exists because the same request went unenforced for the BusyBox tier and
+    deleting the decorators left it green.
+
+    Stated over test FUNCTIONS but satisfied by a module-level `pytestmark`,
+    which is how all three contract modules declare it today: the count is what
+    keeps the guard honest when a module stops declaring it and its functions
+    have to answer one at a time. Written to count every test function it walks
+    rather than skipping a module that declares the marker for them, so the
+    premise assertion below measures the tier and not the leftovers.
+    """
+    tier = TESTS_ROOT / "conformance"
+    assert tier.is_dir(), (
+        "tests/conformance vanished — the G10b declaration guard is scanning nothing"
+    )
+
+    seen = 0
+    offenders: list[str] = []
+    for module in sorted(tier.rglob("test_*.py")):
+        tree = ast.parse(module.read_text())
+        declared_for_the_module = "conformance" in _module_pytestmark_names(tree)
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            if not node.name.startswith("test_"):
+                continue
+            seen += 1
+            if not declared_for_the_module and "conformance" not in _decorator_marker_names(node):
+                offenders.append(f"{module.relative_to(TESTS_ROOT)}::{node.name}")
+    assert seen, "no test function found under tests/conformance (guard misparse?)"
+    assert not offenders, (
+        f"these tests are stamped `conformance` by tests/conformance/conftest.py "
+        f"but do not say so themselves: {offenders}. The stamp depends on "
+        f"collection-hook order and cannot survive its own file being renamed; "
+        f"the declaration is what still holds in those cases. Add a module-level "
+        f"`pytestmark`, or `@pytest.mark.conformance` per test."
+    )
+
+
+def test_catchall_lanes_exclude_conformance():
+    """G11: no default lane may stand up an sshd and run BusyBox subprocesses.
+
+    The mirror of G8, with the clause that makes it necessary rather than
+    merely tidy: the `conformance` marker is the ONLY thing that keeps this tree
+    out of a negation-only selector. A conformance test carries no
+    integration/embedded/stability/browser/busybox marker, so every `not X` in
+    an existing catch-all is already satisfied and the tree is selected by
+    default — unlike the BusyBox tier, which at least shares no directory with
+    the lanes that could reach it.
+
+    Both surfaces, because both are hand-edited and they are not checked
+    against each other anywhere else: `nox -s tests_hostless` runs on five
+    Pythons in CI, so a clause present in the Makefile and missing from
+    noxfile.py is an escape that only CI would find.
+    """
+    makefile = _makefile_marker_expressions((PROJECT_ROOT / "Makefile").read_text())
+    nox = _nox_marker_expressions()
+    for label, exprs in (("Makefile", makefile), ("noxfile.py", nox)):
+        catchall = _catchall(exprs)
+        assert catchall, f"no catch-all -m expressions found in {label} (guard misparse?)"
+        offenders = [e for e in catchall if "not conformance" not in e]
+        assert not offenders, (
+            f"{label} catch-all lanes missing 'not conformance' — each would bind "
+            f"a throwaway sshd on 127.0.0.1 and exec real BusyBox artifacts as "
+            f"subprocesses, once per drawn cell: {offenders}"
+        )
+
+
+def test_the_conformance_tier_still_has_a_lane():
+    """G11b: excluding a tier everywhere and running it nowhere is not a fix.
+
+    G11's mirror of G8b, and it stops at existence on purpose: whether anything
+    ever RUNS that lane is a separate question with a separate failure mode,
+    and G11c is what asks it.
+    """
+    makefile = (PROJECT_ROOT / "Makefile").read_text()
+    positive = [
+        e for e in _makefile_marker_expressions(makefile) if "conformance" in e.split(" and ")
+    ]
+    assert positive, (
+        "no Makefile lane positively selects `-m conformance`, so the tier G11 "
+        "excludes from every default lane now runs nowhere"
+    )
+
+
+def test_ci_runs_the_conformance_lane():
+    """G11c: a lane nothing invokes is the same evaporated coverage as no lane.
+
+    G8c's rule for this tier, and the same asymmetry with its sibling: G11b
+    pins that an opt-in Makefile lane exists, which is a claim about the
+    Makefile alone and stays green while nothing anywhere runs it. That was
+    literally the state of this tier for three commits — every catch-all in
+    both build files excluded it (G11) and no workflow mentioned it — which is
+    a tier excluded everywhere and run nowhere, the deletion G11b exists to
+    forbid, one level up.
+
+    Derived at both ends rather than asserted against names of this test's
+    choosing: the lane comes out of the Makefile and the invocation is looked
+    for across every job of every workflow. So the job may be renamed, and the
+    lane may be renamed, and it may move between workflows, and the guard
+    follows it — which matters more here than for the BusyBox tier, because
+    WHERE this lane runs is not settled the way that one's is. It is nightly
+    today for a stated reason (the draw is random per run, so a per-push gate
+    could fail an unrelated PR on pre-existing breakage in a never-drawn
+    cell), and item 5 of the same workstream adds a second failure condition
+    to that job.
+
+    The `report-failure` half is not decoration on a nightly job — it is the
+    half that matters MORE at night. Nobody watches a 06:00 UTC run; the
+    tracking issue is the only thing that turns a red nightly into something
+    anyone sees. And `continue-on-error: true` is named for G8c's reason: a
+    job can be present, wired into `needs`, and still report success whatever
+    it finds.
+    """
+    lanes = _makefile_targets_selecting("conformance")
+    assert lanes, "no Makefile target positively selects `-m conformance` (G11b covers this)"
+
+    running = sorted({pair for lane in lanes for pair in _workflow_jobs_invoking(lane)})
+    assert running, (
+        f"no workflow job invokes any of {lanes} — every default lane excludes "
+        f"`-m conformance` (G11), so the host-contract conformance tier is "
+        f"excluded everywhere and runs nowhere in CI"
+    )
+
+    unreported = _jobs_outside_failure_reporting(running)
+    assert not unreported, (
+        f"{unreported} run the conformance lane but their failure opens no "
+        f"tracking issue — and this lane runs at night, where the issue is the "
+        f"only thing anyone sees"
+    )
+
+    advisory = _advisory_jobs(running)
+    assert not advisory, (
+        f"{advisory} run the conformance lane with `continue-on-error: true`, so "
+        f"a contract violation fails nothing — decorative, not blocking"
+    )
+
+
+def test_no_lane_but_the_conformance_lane_can_select_the_conformance_tier():
+    """G11d: stated over what a lane can SELECT, not over the shape of its expression.
+
+    G8d's rule applied to this tier, and the reason it is not redundant with
+    G11 is the reason it was not redundant with G8: G11 only inspects the
+    negation-only expressions, so a POSITIVE selector that happens to share a
+    marker with this tree is outside its domain. That is not hypothetical for
+    the family — Tier 1 of the BusyBox suite was auto-stamped `integration` for
+    one commit and `M_UNIX` began selecting it — and the fix there was a FILE
+    MOVE, which nothing in a marker expression records. Measured today: the
+    modules here end up carrying `conformance` and nothing else, so no lane
+    outside the opt-in one can reach them; that premise is re-derived on every
+    run rather than remembered.
+
+    Covers `scripts/stability_campaign.py` alongside the two build files for
+    G8d's stated reason: a lane this guard cannot see is protected only by
+    nobody having written the wrong selector there yet.
+    """
+    tier = _marker_sets_of_modules_carrying("conformance")
+    surfaces = (
+        ("Makefile", _makefile_marker_expressions((PROJECT_ROOT / "Makefile").read_text())),
+        ("noxfile.py", _nox_marker_expressions()),
+        ("scripts/stability_campaign.py", _python_marker_expressions(_STABILITY_CAMPAIGN)),
+    )
+    offenders = []
+    for label, exprs in surfaces:
+        assert exprs, f"no -m expressions found in {label} (guard misparse?)"
+        for expr in exprs:
+            # The opt-in lane is the one place selecting the tier is the point.
+            if "conformance" in {term.strip() for term in expr.split(" and ")}:
+                continue
+            if any(_can_select(expr, markers) for markers in tier):
+                offenders.append(f"{label}: {expr!r}")
+    assert not offenders, (
+        f"these lanes reach the conformance tier without asking for it, so each "
+        f"stands up a throwaway sshd and runs the pinned BusyBox artifacts as "
+        f"subprocesses: {offenders}. Add `not conformance`, or move the tier out "
+        f"of a directory whose conftest stamps a marker they select."
+    )
+
+
+def test_the_conformance_tier_is_visible_to_a_pathless_run():
+    """G11e: a tier absent from `testpaths` is not excluded, it is missing.
+
+    `make conformance` is `pytest -m conformance` with NO path argument, and a
+    path-less invocation collects `testpaths` and nothing else. G8e records the
+    BusyBox version of this failure as a silent one — the lane reported a
+    smaller number and stayed green. This tier's version is LOUD and that is
+    worth writing down, because it changes what to look for: with
+    `tests/conformance` absent, the lane selects nothing at all, and pytest
+    exits 5 on an empty selection, which aborts the make recipe. Measured
+    during Task 1 of this workstream: `no tests collected (7901 deselected)`,
+    exit 5.
+
+    Both failures have the same fix and the same guard, so this asserts
+    membership rather than either symptom. Derived from where the marked
+    modules actually live, so a new directory carrying them is covered the day
+    it lands.
+    """
+    ini = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text())
+    roots = [PROJECT_ROOT / p for p in ini["tool"]["pytest"]["ini_options"]["testpaths"]]
+    assert roots, "no testpaths in pyproject.toml (guard misparse?)"
+
+    directories = _directories_carrying("conformance")
+    assert directories, "no directory holds a conformance-marked module (guard misparse?)"
+    invisible = sorted(
+        str(d.relative_to(PROJECT_ROOT))
+        for d in directories
+        if not any(root == d or root in d.parents for root in roots)
+    )
+    assert not invisible, (
+        f"{invisible} hold conformance-marked tests but lie outside `testpaths`, "
+        f"so a path-less `pytest -m conformance` never collects them — the lane "
+        f"selects nothing, pytest exits 5, and `make conformance` aborts"
+    )
+
+
+def test_a_lane_that_selects_by_path_cannot_reach_the_conformance_tier():
+    """G11f: every guard above reasons over `-m`. A lane need not have one.
+
+    G8f's rule, and this tier is more exposed to it than the BusyBox one: a
+    path-LESS invocation with no marker expression collects all of `testpaths`,
+    which since Task 3 includes `tests/conformance`. So the widest possible lane
+    is the one none of G11/G11d/G11e can judge.
+
+    Inherits G8f's surface bound verbatim: this parses `Makefile`,
+    `noxfile.py` and `scripts/stability_campaign.py`, and does NOT see a raw
+    `pytest` written into a GitHub workflow step or one buried inside
+    `bash -c "..."`.
+    """
+    ini = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text())
+    testpaths = [PROJECT_ROOT / p for p in ini["tool"]["pytest"]["ini_options"]["testpaths"]]
+    assert testpaths, "no testpaths in pyproject.toml (guard misparse?)"
+
+    carrying = _modules_carrying("conformance")
+    assert carrying, "no module carries the conformance marker (tier deleted? guard misparse?)"
+
+    surfaces = (
+        ("Makefile", _makefile_pytest_invocations((PROJECT_ROOT / "Makefile").read_text())),
+        ("noxfile.py", _python_pytest_invocations(_NOXFILE)),
+        ("scripts/stability_campaign.py", _python_pytest_invocations(_STABILITY_CAMPAIGN)),
+    )
+    markerless: "list[tuple[str, list[str]]]" = []
+    for label, invocations in surfaces:
+        assert invocations, f"no pytest invocation found in {label} (guard misparse?)"
+        markerless += [(label, tokens) for tokens in invocations if "-m" not in tokens]
+    assert markerless, (
+        "no `-m`-less pytest invocation found in any surface (guard misparse?) — "
+        "this rule is about the lanes marker reasoning cannot see, so with none "
+        "of them in view it proves nothing"
+    )
+
+    offenders: "list[str]" = []
+    for label, tokens in markerless:
+        roots = _selected_roots(tokens) or testpaths
+        reached = sorted(
+            {
+                str(module.relative_to(PROJECT_ROOT))
+                for module in carrying
+                for root in roots
+                if root == module or root in module.parents
+            }
+        )
+        if reached:
+            argv = " ".join(tokens[tokens.index("pytest") :])
+            offenders.append(f"{label}: `{argv}` reaches {reached}")
+    assert not offenders, (
+        f"these lanes pick their tests by PATH with no `-m` expression, so "
+        f"nothing deselects the conformance tier: each stands up a throwaway "
+        f"sshd and runs the pinned BusyBox artifacts as subprocesses. "
+        f'{offenders}. Add `-m "not conformance"`, or move the marked modules '
+        f"out of the paths the lane names."
+    )
+
+
+def test_the_hostless_catchall_collects_the_conformance_tree_and_deselects_it():
+    """G11g: the one reading no static scan can take — a real pathless collection.
+
+    Every guard above reads build files and conftests as TEXT. None of them can
+    see whether the marker is actually attached by the time pytest deselects on
+    it, and that ordering is not obvious: `tests/conformance/conftest.py` is an
+    *initial* conftest under any path-less run (it is reached through
+    `testpaths`), initial conftests register early and therefore run LATE among
+    same-hook plugins, and the mark plugin's deselection is one of those hooks.
+    The conftest's own note records that this repo's collection-hook order
+    varies with the invocation shape, which is why it refuses to stamp
+    `xdist_group`.
+
+    So this runs `make coverage`'s own selector — `M_HOSTLESS`, read out of the
+    Makefile rather than retyped — in a subprocess, path-less, exactly as the
+    gate does, and asserts BOTH halves of the property that matters:
+
+    - no `tests/conformance/` node id survives the selection, and
+    - the tree was nevertheless COLLECTED, evidenced by the draw line the
+      conformance conftest logs at session start.
+
+    Both, because "excluded" and "invisible" are the same green from one side.
+    Dropping `tests/conformance` from `testpaths` would satisfy the first
+    assertion alone while deleting the tier from the repo; G11e catches that
+    statically and this catches it in the shape the lane actually runs.
+
+    A subprocess and not an in-process `Config`: this suite's own `addopts`
+    would be inherited, and the property is about a whole collection, not about
+    an ini value. `PYTEST_ADDOPTS` is cleared for the child for the same reason
+    Task 4's end-to-end sampler test clears it — an ambient `-n auto` would put
+    the draw line on a worker whose log never reaches this pipe. `-n0` for the
+    same reason.
+    """
+    variables = _makefile_marker_variables((PROJECT_ROOT / "Makefile").read_text())
+    hostless = variables.get("M_HOSTLESS")
+    assert hostless, "M_HOSTLESS not found in the Makefile (renamed? update G11g)"
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-m",
+            hostless,
+            "--collect-only",
+            "-q",
+            "-n0",
+            "--no-cov",
+            "-p",
+            "no:cacheprovider",
+        ],
+        cwd=str(PROJECT_ROOT),
+        env={**os.environ, "PYTEST_ADDOPTS": ""},
+        capture_output=True,
+        text=True,
+        timeout=180,
+        check=False,
+    )
+    output = result.stdout + result.stderr
+    assert result.returncode == 0, f"collection failed (rc={result.returncode}):\n{output}"
+
+    selected = [line for line in output.splitlines() if line.startswith("tests/conformance/")]
+    assert not selected, (
+        f"M_HOSTLESS ({hostless!r}) selected {len(selected)} conformance tests, so "
+        f"`make coverage` would stand up a throwaway sshd and run the pinned "
+        f"BusyBox artifacts as subprocesses. First few: {selected[:3]}"
+    )
+
+    drew = [line for line in output.splitlines() if "conformance: drew " in line]
+    assert len(drew) == 1, (
+        f"the conformance tree logged {len(drew)} draws under a path-less "
+        f"collection, expected exactly 1 — with none, the tree was never "
+        f"collected at all and the assertion above passed by the tier being "
+        f"MISSING rather than excluded (see G11e):\n{output[-2000:]}"
+    )

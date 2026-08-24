@@ -9,7 +9,7 @@
 # on -j.
 .NOTPARALLEL:
 
-.PHONY: help all ci nox nox-full nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-python coverage-unit coverage-integration coverage-unix coverage-embedded coverage-hostless coverage-ts coverage-ts-unit docs docs-lint docs-html docs-inventories docs-media doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts lint-arch check check-python gate-fresh check-ts format format-python format-ts schema monitor-fixtures clean changelog release stability stability-unit stability-unix stability-tunnel stability-embedded chaos chaos-embedded repeat vm-health qemu-restart import-snapshot hyperfine profile browsers dashboard dashboard-all dashboard-soak busybox busybox-cache web-install web web-dev test-ts web-clean wheel-check
+.PHONY: help all ci nox nox-full nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-python coverage-unit coverage-integration coverage-unix coverage-embedded coverage-hostless coverage-ts coverage-ts-unit docs docs-lint docs-html docs-inventories docs-media doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts lint-arch check check-python gate-fresh check-ts format format-python format-ts schema monitor-fixtures clean changelog release stability stability-unit stability-unix stability-tunnel stability-embedded chaos chaos-embedded repeat vm-health qemu-restart import-snapshot hyperfine profile browsers dashboard dashboard-all dashboard-soak busybox busybox-cache conformance web-install web web-dev test-ts web-clean wheel-check
 
 # Bump component for `make release`. Override on the command line:
 #   make release BUMP=minor
@@ -98,7 +98,7 @@ STABILITY_TUNNEL_CYCLES := $(if $(filter command line,$(origin CYCLES)),$(CYCLES
 # tests/unit/test_tier_marker_invariants.py's G7.
 M_UNIX := integration and not embedded and not stability and not chaos
 M_EMBEDDED := embedded and not stability and not chaos
-M_HOSTLESS := not integration and not embedded and not stability and not browser and not busybox
+M_HOSTLESS := not integration and not embedded and not stability and not browser and not busybox and not conformance
 
 # `not busybox` rides every CATCH-ALL selector below (and this one), for a
 # reason unrelated to the bed: that tier downloads real artifacts from
@@ -119,6 +119,24 @@ M_HOSTLESS := not integration and not embedded and not stability and not browser
 # what each lane can actually select, and G8e pins that the tier is reachable
 # by the path-less invocation `make busybox` uses. Pinned by
 # tests/unit/test_tier_marker_invariants.py's G8/G8b/G8d/G8e.
+
+# `not conformance` rides the same catch-alls, for the same SHAPE of reason and
+# a different resource. The host-contract conformance suite
+# (tests/conformance/) stands up a throwaway non-root sshd on 127.0.0.1 and
+# runs the five pinned BusyBox artifacts as local subprocesses, one cell at a
+# time. None of that belongs in `make coverage`, and none of it is deselected
+# by the clauses above: a conformance test carries no integration/embedded/
+# stability/browser/busybox marker, so it satisfies every `not X` in
+# M_HOSTLESS and every catch-all below, and would be SELECTED by the ordinary
+# gates. That became live the moment `tests/conformance` joined `testpaths`,
+# which it had to: `make conformance` is `pytest -m conformance` with no path,
+# and a tree outside `testpaths` is never collected at all (the same trap G8e
+# records for the BusyBox tier, and the reason a lane that selects nothing
+# exits 5 and aborts make).
+#
+# Positive selectors need no exclusion TODAY for the same contingent reason
+# G8d re-derives for busybox: nothing under tests/conformance/ is stamped by
+# another tree's conftest. Do not re-derive that claim from this comment.
 
 # `browser` (Playwright) tests always run as their own pytest process — sync
 # Playwright keeps an event loop running in the worker main thread for the
@@ -579,7 +597,7 @@ build: ## (Build & Release) Build the project with uv
 # Exclusion↔leg pairing is pinned by tests/unit/test_lane_invariants.py.
 coverage-python: dashboard ## Run the full Python suite (all tiers, pinned Python) and enforce the 95 gate; the browser (Playwright) suite runs first as its own process via the `dashboard` prerequisite — its coverage data is folded in via --cov-append. Requires lab VMs (+ `make browsers` once). JUnit XML lands in reports/junit/coverage-python/.
 	@$(SAY) "pytest: all tiers, pinned Python (browser lane folded in)"
-	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest -m "not stability and not browser and not busybox and not serial_timing" --cov-append --cov-fail-under=0 $(call junitxml,coverage-python)
+	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest -m "not stability and not browser and not busybox and not conformance and not serial_timing" --cov-append --cov-fail-under=0 $(call junitxml,coverage-python)
 	@$(SAY) "pytest: serial_timing discriminators, -n0 (gate: $(COVERAGE_THRESHOLD)% on the full fold)"
 	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest -m "serial_timing and not stability and not browser" -n0 --cov-append --cov-fail-under=$(COVERAGE_THRESHOLD) $(call junitxml,coverage-python-serial)
 
@@ -587,12 +605,12 @@ coverage: coverage-python coverage-ts ## Run BOTH language coverage gates: cover
 
 coverage-unit: ## Run the unit level tier (tests/unit only; no testbed) with a coverage report (no gate — one tier can't meet the whole-repo floor). JUnit XML lands in reports/junit/coverage-unit/.
 	@$(SAY) "pytest: tests/unit (no gate)"
-	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest tests/unit -m "not stability and not busybox and not serial_timing" $(call junitxml,coverage-unit)
+	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest tests/unit -m "not stability and not busybox and not conformance and not serial_timing" $(call junitxml,coverage-unit)
 	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest tests/unit -m "serial_timing and not stability" -n0 --cov-append $(call junitxml,coverage-unit-serial)
 
 coverage-integration: ## Run the unit + integration level tiers (tests/unit + tests/integration) with a coverage report (no gate). Requires the full lab. JUnit XML in reports/junit/coverage-integration/.
 	@$(SAY) "pytest: tests/unit + tests/integration (no gate)"
-	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest tests/unit tests/integration -m "not stability and not busybox and not serial_timing" $(call junitxml,coverage-integration)
+	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest tests/unit tests/integration -m "not stability and not busybox and not conformance and not serial_timing" $(call junitxml,coverage-integration)
 	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest tests/unit tests/integration -m "serial_timing and not stability" -n0 --cov-append $(call junitxml,coverage-integration-serial)
 
 coverage-hostless: ## Run the no-testbed CI gate suite (tests/unit + no-VM e2e) and enforce the CI coverage gate. No VMs. JUnit XML lands in reports/junit/coverage-hostless/.
@@ -750,6 +768,28 @@ busybox-cache: ## Fetch + verify the BusyBox test artifacts into the local cache
 	@$(SAY) "priming the BusyBox artifact cache from busybox.net"
 	@uv run python -c "from tests._fixtures.busybox import BUSYBOX_MATRIX, busybox_binary; [print(busybox_binary(r)) for r in BUSYBOX_MATRIX]"
 
+# The host-contract conformance suite's opt-in lane, and the only place
+# `-m conformance` is selected — every catch-all excludes it (see the note
+# above M_HOSTLESS). Excluding a tier everywhere and running it nowhere is not
+# an exclusion, it is a deletion, so this target is the other half of that
+# change. Path-less on purpose: `-m conformance` reaches the tree through
+# `testpaths`, which is the invocation shape the pyproject entry exists for.
+#
+# HERMETIC VENUE by default, and this target sets nothing to choose it — no
+# lab, no VMs. The cells it builds are the runner's own userland, a throwaway
+# non-root sshd on 127.0.0.1, and the five pinned BusyBox artifacts run as
+# local subprocesses (`tests/conformance/_cells.py`). `OTTO_CONFORMANCE_BED=1`
+# selects the bed venue instead, which is a later item and currently raises.
+#
+# SAMPLED, not exhaustive: each run draws OTTO_CONFORMANCE_CELLS cells
+# (default 8, `all` for the whole space) off pytest-randomly's session seed and
+# logs both the draw and the space it came from. Reproduce a failing run with
+# the `--randomly-seed=N` printed in its own header — the draw is a pure
+# function of that number (`tests/conformance/_sample.py`).
+conformance: ## Run the host-contract conformance suite (`conformance`-marked; excluded from every default lane): otto's shared exec/transfer/timeout contracts, asserted against a seeded sample of the (host, term, transfer) cells the HERMETIC venue can build here (OTTO_CONFORMANCE_CELLS=N|all, default 8) — no lab needed. JUnit XML lands in reports/junit/conformance/.
+	@$(SAY) "pytest: host-contract conformance, hermetic venue"
+	@$(TIMEOUT_CMD) uv run pytest -m "conformance" --no-cov $(call junitxml,conformance)
+
 # Soak/stability + repeat targets disable coverage (--no-cov, overriding the
 # --cov in pytest addopts). Per-test `--cov-context=test` tracing adds overhead
 # to every one of the COUNT-multiplied iterations and, on slow CI runners under
@@ -847,7 +887,7 @@ stability: ## Run the full stability/soak suite: no-VM concurrency, then real te
 repeat: ## Run the full local suite (unit + integration + e2e) under pytest-repeat (excludes `browser` — see note above M_HOSTLESS; run its soak separately). Local only; requires VMs. JUnit XML in reports/junit/repeat/. Override COUNT=N (default 10).
 	@$(SAY) "pytest soak: full local suite, no browser (x$(COUNT), leak detector on)"
 	@$(LEAK_DETECT) uv run pytest \
-	    -m "not browser and not chaos and not busybox and not serial_timing" \
+	    -m "not browser and not chaos and not busybox and not conformance and not serial_timing" \
 	    --count=$(COUNT) \
 	    -p no:cacheprovider \
 	    --no-cov \

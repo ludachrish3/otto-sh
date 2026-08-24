@@ -69,6 +69,17 @@ AMBIENT_OPT_INS: "dict[str, str]" = {
         "opts tier-2 chaos onto a leased bed host instead of the loopback "
         "sshd (tests/integration/chaos/_target.py); set by hand on the lab"
     ),
+    "OTTO_CONFORMANCE_BED": (
+        "selects the bed venue for the host-contract conformance suite "
+        "instead of the default hermetic one (tests/conformance/_venue.py); "
+        "set by hand on the dev VM until the bed venue lands (spec item 4) -- "
+        "`make conformance` runs the HERMETIC venue and does not set this"
+    ),
+    "OTTO_CONFORMANCE_CELLS": (
+        "how many cells the conformance suite samples, an integer or `all` "
+        "(tests/conformance/_venue.py); set by hand -- nightly deliberately "
+        "runs at the default sample size (spec s4), so nothing in CI sets it"
+    ),
     "OTTO_BUSYBOX_CACHE": (
         "redirects the BusyBox artifact cache off ~/.cache/otto/busybox "
         "(tests/_fixtures/busybox.py); set by `make busybox-cache` and by an "

@@ -58,6 +58,8 @@ full list, from `pyproject.toml`:
 | `stability` | Heavy soak/churn test; bed-hostile, excluded from `make coverage` |
 | `chaos` | Tier-3 chaos-lane scenario; bed-hostile like `stability`, excluded from every default gate |
 | `soak` | The heavy browser-driven replay stress test; chromium-only, excluded even from `make dashboard`'s default selection |
+| `busybox` | Needs a real BusyBox artifact (fetched, SHA-256-verified and cached; qemu-user-static on non-x86_64); excluded from every default lane, opt-in via `make busybox` |
+| `conformance` | A host-contract conformance cell (stands up a throwaway loopback `sshd` and runs real BusyBox artifacts as subprocesses); excluded from every default lane, opt-in via `make conformance` — see below |
 | `no_bundle_page` / `no_hygiene_bracket` | Narrow opt-outs for two specific autouse guards (a browser test that renders no bundle; a chaos test that manages its own hygiene bracket) |
 
 Reading any test, then, is two lookups: which directory is it under (its
@@ -234,10 +236,13 @@ scenario) is lab-only, run from the dev VM, never from GitHub.
 
 ## The guards that keep the taxonomy honest
 
-`tests/unit/test_tier_marker_invariants.py` is a set of seven drift guards
-(G1–G7), and they run in the ordinary no-VM unit gate — so a change that
-breaks the taxonomy fails on every PR, not months later at 2 a.m. in the
-nightly run:
+`tests/unit/test_tier_marker_invariants.py` is a set of drift guards, and
+they run in the ordinary no-VM unit gate — so a change that breaks the
+taxonomy fails on every PR, not months later at 2 a.m. in the nightly run.
+The seven below (G1–G7) cover the level/resource taxonomy this page opened
+with; the G8/G9 families carry the same rules for the BusyBox artifact tier
+and the G10/G11 families for the host-contract conformance lane described
+further down, each stating its own reasoning on the test itself:
 
 - **G1 / G3** prove the `tests/integration/` and `tests/e2e/` auto-stamp
   hooks actually fire, by calling `pytest_collection_modifyitems` against a
@@ -335,6 +340,115 @@ Sampling only the second half would certify nothing, because those hosts
 stay green under a raw read. A companion test pins the premise itself, so
 lab data that started declaring `valid_terms` everywhere would report that
 the guard has stopped discriminating instead of passing quietly.
+
+## The host-contract conformance lane
+
+`tests/conformance/` asserts otto's *host contracts* — the promises that
+hold for every host, whatever userland it runs and whatever terminal and
+transfer backend reaches it. Six contracts today, across exec, transfer and
+timeout: an exit code reaches the caller unchanged, output carries nothing
+the shell added, a failing command in a sequence is not reported as success,
+put/get round-trips bytes, `put` lands the documented mode on the host, and
+a command over its budget comes back the documented way (a `CommandResult`
+with `timed_out=True`, not an exception) while its session stays usable.
+
+Each contract runs against a **resolved cell** — a `(host, term, transfer)`
+triple the suite can actually stand up, the same cell vocabulary
+`tests/_fixtures/profiles.py` uses above. Six contracts times the cells a
+run draws is the lane's size; at today's default that is 48 tests.
+
+**Not to be confused with `otto.testing.conformance`.** otto ships a second
+thing called conformance and it is unrelated: `src/otto/testing/conformance.py`
+(re-exported as `otto.testing.assert_lab_repository_conforms` and
+`otto.testing.assert_reservation_backend_conforms`, and documented in
+{doc}`../library/lab-source-backends`) checks that a *pluggable backend
+interface* conforms — that someone's custom lab source or reservation store
+answers otto's protocol correctly. That is an API-shape check a third party
+runs against their own code. This lane is about HOSTS, and it runs real
+commands over real transports. Same word, different subjects; a reader who
+hits one and assumes the other will be wrong about what is being proven.
+
+### Venues, and the one that is not built yet
+
+The suite is designed for two venues, on the `chaos_target`/`OTTO_CHAOS_DOCKER`
+precedent — and only one of them exists today:
+
+- **Hermetic (default, built).** No lab. Cells resolve to the runner's own
+  userland via `LocalHost`, to a throwaway non-root `sshd` on 127.0.0.1 with
+  a real `UnixHost` over it (the tier-2 chaos lane's own fixtures), and to
+  the five pinned BusyBox artifacts run as local subprocesses with an applet
+  directory prepended to the session's `PATH`. Be exact about that last one:
+  the *applets* otto invokes are genuinely the pinned artifact's, but the
+  session's shell stays the runner's `bash` (otto's `LocalSession` spawns
+  `bash --norc --noprofile` by name), so shell-*dialect* behaviour on a
+  BusyBox userland is not measured here — that belongs to the bed venue's
+  real guests. This is what `make conformance` runs and what the nightly CI
+  job runs.
+- **Bed (`OTTO_CONFORMANCE_BED=1`, not built).** Intended for real bed hosts
+  — the Unix VMs, the BusyBox guests over hopped telnet, the Zephyr guests —
+  and it is a later item of the same workstream. `current_venue()` already
+  answers `bed`, and `resolve_space()` deliberately **raises** when it does,
+  naming the item. An empty space would have been the quiet alternative and
+  a much worse one: every contract would parametrize over nothing, collect
+  zero items, and the lane would report green having asserted nothing.
+
+A cell the selected venue cannot build is **dropped from the space, not
+skipped**. The hermetic venue has no console server and no embedded
+filesystem, so `telnet` terms and `console` transfers are not in its space at
+all. A skip inside a drawn cell would report success for a contract nobody
+ran, which is the failure this suite exists to make impossible — so the
+space itself shrinks instead, and the run says so out loud.
+
+### How a cell is drawn, and how to reproduce a draw
+
+Each run draws `OTTO_CONFORMANCE_CELLS` cells (default 8; `all` for the
+whole space) and parametrizes every contract over the draw. The draw is a
+pure function of pytest-randomly's session seed: cells rank by
+`blake2b(seed:label)` and the budget's worth of lowest ranks is taken. It
+never creates a seed of its own, because the reproduce handle is the
+`--randomly-seed=N` printed in the run's own pytest header, and that handle
+is only true if the draw derives from that number.
+
+Every run logs both numbers at session start:
+
+```text
+conformance: venue=hermetic space=8 cells drawn=8 seed=809258197
+conformance: drew local[local:local:local], loopback-ssh[loopback:ssh:sftp], ...
+```
+
+`drawn=` alone would read identically whether the venue offered 17 cells or
+had collapsed to 8, so `space=` is what makes a venue that quietly stopped
+resolving its loopback `sshd` visible rather than silent. Measured on the
+dev VM today, the hermetic space holds 8 cells and the default budget is 8 —
+so at the default the draw *is* the whole space. Sampling only starts to
+bite at a smaller budget, or once the space grows — which the bed venue will
+do.
+
+### Why it is nightly, not per-push
+
+The lane is excluded from every default gate by its own `conformance` marker
+— `make conformance` is the only lane that positively selects it, and
+nightly's `conformance-hermetic` job is the only place CI runs it. That is
+not a cost decision. Selection here is *random per run*, so a per-push gate
+could fail an unrelated PR on pre-existing breakage in a cell nothing had
+ever drawn before — the same reason the kernel keeps randconfig in `-next`
+and 0-day rather than in per-patch CI. Nightly is where a sampled lane
+belongs: it accumulates coverage over runs, and a red one names the cell it
+drew in the test id.
+
+The exclusion needs guarding more than the BusyBox tier's does, because
+`M_HOSTLESS` is a pure negation: a conformance test carries no
+`integration`, `embedded`, `stability`, `browser` or `busybox` marker, so it
+satisfies every clause already there and is *selected* by the ordinary gates
+unless `not conformance` is spelled out. The G10/G11 families in
+`tests/unit/test_tier_marker_invariants.py` hold that line — the stamp
+fires, every module declares the marker itself, both build-file surfaces
+carry the clause, no other lane can select the tier, the tree is inside
+`testpaths` (a path-less `pytest -m conformance` collects nothing without
+it), and a real path-less collection under `M_HOSTLESS` both deselects every
+conformance test and proves the tree was collected at all. G11c closes the
+other end: a tier excluded everywhere and invoked nowhere is a deletion, so
+it asserts that some workflow job actually runs the lane.
 
 ## Coverage: a floor, not a scorecard
 

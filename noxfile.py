@@ -54,6 +54,17 @@ nox.options.sessions = ["lint", "tests_hostless", "typecheck", "docs"]
 # Keep tests_hostless in step with CI_COVERAGE_THRESHOLD; revisit tests_all if
 # COVERAGE_THRESHOLD or that fold-in changes.
 
+# `not busybox and not conformance` rides every catch-all selector below, for
+# reasons unrelated to the bed and spelled out in full above the Makefile's
+# M_HOSTLESS: the BusyBox artifact tier fetches ~5 MB from busybox.net and
+# raises rather than skipping when it cannot, and the host-contract conformance
+# suite stands up a throwaway loopback sshd and runs those artifacts as
+# subprocesses. Both trees are in `testpaths` (they have to be — their lanes
+# are path-less `-m` invocations) and neither carries a marker any `not X`
+# clause here would otherwise catch, so without these clauses every default nox
+# session selects them. `make busybox` and `make conformance` are their opt-in
+# lanes.
+
 # browser (Playwright) tests always run as their own pytest process — sync
 # Playwright keeps an event loop running in the worker main thread for the
 # whole session, which breaks pytest-asyncio tests that share the process.
@@ -75,7 +86,7 @@ HOSTLESS_TEST_ARGS = (
     "-m",
     (
         "not integration and not embedded and not stability and not browser "
-        "and not busybox and not serial_timing"
+        "and not busybox and not conformance and not serial_timing"
     ),
     "--cov-fail-under=0",
 )
@@ -111,7 +122,7 @@ def tests_unit(session: nox.Session) -> None:
         "pytest",
         "tests/unit",
         "-m",
-        "not stability and not busybox and not serial_timing",
+        "not stability and not busybox and not conformance and not serial_timing",
         _junitxml(session, "nox-unit"),
         *session.posargs,
     )
@@ -140,7 +151,7 @@ def tests_integration(session: nox.Session) -> None:
         "tests/unit",
         "tests/integration",
         "-m",
-        "not stability and not busybox and not serial_timing",
+        "not stability and not busybox and not conformance and not serial_timing",
         _junitxml(session, "nox-integration"),
         *session.posargs,
     )
@@ -225,8 +236,15 @@ def tests_unit_repeat(session: nox.Session) -> None:
         # deliberately NOT excluded, unlike the sibling lanes: those exclude it
         # because they run under `-n auto` and re-append it in a paired `-n0`
         # leg, and this session is single-process already.
+        #
+        # `not conformance` rides along for the same reason `not stability`
+        # does: this is an all-negation expression and so a catch-all by G4's
+        # rule whatever path scopes it. It deselects nothing today — the lane
+        # names `tests/unit`, and every conformance test lives under
+        # `tests/conformance` — which makes it the clause that stays correct if
+        # a conformance-marked module ever lands under `tests/unit`.
         "-m",
-        "not stability and not busybox",
+        "not stability and not busybox and not conformance",
         # Clearing addopts must still re-state `-p no:tach`: the override drops
         # pyproject's entry whole, and that flag is the only thing protecting
         # plugin LOAD from issue #193 (the conftest stub seeds too late).
@@ -356,7 +374,7 @@ def tests_all(session: nox.Session) -> None:
     session.run(
         "pytest",
         "-m",
-        "not browser and not stability and not busybox and not serial_timing",
+        "not browser and not stability and not busybox and not conformance and not serial_timing",
         "--cov-fail-under=0",
         _junitxml(session, "nox"),
         *session.posargs,

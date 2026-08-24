@@ -15,10 +15,18 @@ name: Nightly
 # The manager interleaving above still runs via FakeSession (mocked
 # transports); the VM-dependent Python tiers are still out.
 #
+# Also runs the host-contract conformance suite (tests/conformance) once per
+# night in its hermetic venue — no lab, no VMs — for a different reason from
+# the lanes above: it does not flake, it SAMPLES. Each run draws its
+# (host, term, transfer) cells off the session seed, so what a run covers is
+# decided per run and a per-push gate could fail an unrelated PR on
+# pre-existing breakage in a cell nothing had drawn before.
+#
 # Deterministic gates (lint-python, typecheck-python, check-ts, docs) are
 # deliberately NOT duplicated here — they run on every push in ci.yml and
-# produce the same result each time, so a nightly rerun adds no signal. Only
-# lanes that can actually flake belong in this workflow.
+# produce the same result each time, so a nightly rerun adds no signal. What
+# belongs in this workflow is a lane whose result can differ between two runs
+# of the same commit: the flaky ones above, and the sampled one below.
 on:
   schedule:
     # Nightly at 06:00 UTC. cron is in UTC regardless of repo timezone.
@@ -216,11 +224,110 @@ jobs:
       - name: Tier-3 docker chaos (loopback sshd, runner daemon)
         run: OTTO_CHAOS_DOCKER=loopback uv run pytest tests/e2e/chaos/test_docker_chaos.py -p no:cacheprovider --no-cov
 
+  # Host-contract conformance (tests/conformance), HERMETIC venue: otto's
+  # exec, transfer and timeout contracts asserted against a seeded sample of
+  # the (host, term, transfer) cells this runner can build for itself — the
+  # runner's own userland via LocalHost, a throwaway non-root sshd on
+  # 127.0.0.1, and the five pinned BusyBox artifacts run as local
+  # subprocesses (tests/conformance/_cells.py). No lab, no Vagrant VMs, and
+  # that is the point of the venue: these contracts are written to hold on
+  # any cell otto can reach, and the hermetic venue is the subset a
+  # disposable runner can stand up for itself. The BED venue
+  # (OTTO_CONFORMANCE_BED=1) is what would reach the real lab hosts; it is a
+  # later item of the same workstream and `resolve_space()` raises on it
+  # today, so nothing here selects it and nothing today asserts these
+  # contracts against a bed host.
+  #
+  # NIGHTLY RATHER THAN PER-PUSH, and that is a property of the lane rather
+  # than an omission: the cells are drawn per run off pytest-randomly's
+  # session seed, so a per-PR gate could fail an unrelated PR on pre-existing
+  # breakage in a cell nothing had drawn before. Same reason the kernel keeps
+  # randconfig in -next rather than per-patch CI
+  # (docs/superpowers/specs/2026-08-22-test-strategy-and-unix-lab-rename-design.md §4).
+  # A failure here is reproduced with the `--randomly-seed=N` this run prints
+  # in its own pytest header — the draw is a pure function of that number.
+  #
+  # DEFAULT SAMPLE SIZE, so this job sets neither conformance knob. The
+  # budget defaults to 8 (tests/conformance/_venue.py) and the hermetic space
+  # is one local cell plus the loopback host's (term, transfer) menu plus one
+  # cell per pinned BusyBox release the runner can execute — measured at 8 on
+  # this project's dev VM, where the draw is therefore the whole space. The
+  # run logs `venue=… space=N cells drawn=M seed=S` at session start, so a
+  # runner that resolves fewer cells than expected is visible in this job's
+  # own log rather than hidden behind a full-sized `drawn=`.
+  #
+  # Fails today on contract violations only. The matrix-drift condition
+  # (spec §4) needs schemas/support_matrix.json, which item 5 (§5) builds;
+  # it joins THIS job then. Deliberately not stubbed -- an empty matrix
+  # nothing writes would be a check that cannot fail.
+  conformance-hermetic:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10.0.1
+        with:
+          enable-cache: true
+
+      - name: Set up Python 3.10
+        run: uv python install 3.10
+
+      - name: Install dependencies
+        run: uv sync --all-extras --dev
+
+      # The loopback cells start a real sshd as the current user and connect
+      # otto's real ssh transport to it. ubuntu-latest normally ships one
+      # already; this is the same fallback the chaos jobs above carry, not the
+      # common path.
+      - name: Ensure sshd is available
+        run: command -v sshd || { sudo apt-get update && sudo apt-get install -y openssh-server; }
+
+      # Priming, in its own step, for the reason the Makefile splits the two
+      # targets: the fetch needs the network and the lane does not. Without
+      # this the first drawn BusyBox cell pulls from busybox.net inside the
+      # run, so an upstream outage or a slow mirror surfaces as a contract
+      # test failing rather than as a named priming step failing. It also
+      # verifies each artifact against its committed SHA-256 before any
+      # contract executes one.
+      #
+      # No qemu-user-static here, unlike ci.yml's busybox-artifacts job: this
+      # runner is x86_64 and the artifacts are i686/x86_64, so they execute
+      # natively (tests/_fixtures/busybox.py's `can_run`). A cell whose arch
+      # this machine cannot run is dropped from the SPACE rather than skipped,
+      # so an arm64 runner would report a smaller `space=` instead of a green
+      # run that asserted nothing.
+      - name: Prime the BusyBox artifact cache (fetch + SHA-256 verify)
+        run: make busybox-cache
+
+      - name: Host-contract conformance, hermetic venue
+        run: make conformance
+
+      # What the run leaves behind, uploaded so a failing nightly can be read
+      # without re-running it: the JUnit XML `make conformance` writes, which
+      # carries every drawn cell's node id (the cell is the parametrize id) and
+      # the failure text for any contract that broke.
+      #
+      # Spec §5 has a conformance run also emit a per-cell observation record
+      # in JSON, which `make conformance`'s collate step folds into
+      # schemas/support_matrix.json. Neither exists yet — both are item 5 — so
+      # this step uploads the record the lane does produce today rather than an
+      # empty directory named after one it does not. When the records land,
+      # they join this artifact.
+      - name: Upload the conformance run's records
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: conformance-hermetic-records
+          path: reports/junit/conformance/
+          retention-days: 30
+
   # If any matrix cell fails, open (or update) a tracking issue so a flaky
   # nightly surfaces without anyone having to watch the Actions tab.
   report-failure:
     name: Open issue on failure
-    needs: [stability-matrix, unit-matrix, dashboard, chaos-tier2, chaos-docker]
+    needs: [stability-matrix, unit-matrix, dashboard, chaos-tier2, chaos-docker, conformance-hermetic]
     if: failure()
     runs-on: ubuntu-latest
     permissions:
@@ -229,15 +336,18 @@ jobs:
       - name: Write issue body
         run: |
           {
-            echo "The nightly run failed (stability, unit matrix, dashboard browser e2e, and/or the tier-2/tier-3 chaos suites)."
+            echo "The nightly run failed (stability, unit matrix, dashboard browser e2e, the tier-2/tier-3 chaos suites, and/or host-contract conformance)."
             echo
             echo "- Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
             echo "- Commit: ${{ github.sha }}"
             echo
             echo "Check the matrix logs for the failing job (stability /"
-            echo "unit-matrix / dashboard / chaos-tier2 / chaos-docker), the"
-            echo "Python version or browser, and the pytest-repeat iteration"
-            echo "that tripped the failure."
+            echo "unit-matrix / dashboard / chaos-tier2 / chaos-docker /"
+            echo "conformance-hermetic), the Python version or browser, and the"
+            echo "pytest-repeat iteration that tripped the failure. A"
+            echo "conformance-hermetic failure names the cell it drew in the"
+            echo "test id; reproduce it with the --randomly-seed=N printed in"
+            echo "that job's own pytest header."
           } > issue-body.md
 
       - name: Create issue from file
