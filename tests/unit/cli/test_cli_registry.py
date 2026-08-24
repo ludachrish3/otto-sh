@@ -15,6 +15,7 @@ from otto.cli.registry import (
     register_cli_command,
     resolve_spec_command,
 )
+from tests._fixtures.bootstrapstub import bootstrap_stub
 
 
 @pytest.fixture(autouse=True)
@@ -212,15 +213,11 @@ def test_cli_command_decorator_registers_and_runs(monkeypatch):
     # async leaf is deliberately inert outside the wrapper since the wave-2
     # lifecycle bridge (resolve_spec_command no longer self-wraps loaders) —
     # tests/unit/cli/test_lifecycle_bridge.py pins that loud-failure contract.
-    import types
 
     from otto import bootstrap as bootstrap_mod
     from otto.cli.invoke import wrap_leaf_callbacks
 
-    def _clean_bootstrap():
-        return types.SimpleNamespace(errors=[])
-
-    monkeypatch.setattr(bootstrap_mod, "bootstrap", _clean_bootstrap)
+    monkeypatch.setattr(bootstrap_mod, "bootstrap", bootstrap_stub)
     cmd = wrap_leaf_callbacks(resolve_spec_command(spec), spec)
 
     buf = io.StringIO()

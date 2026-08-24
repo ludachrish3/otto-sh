@@ -40,6 +40,10 @@ dependencies = [
     "aiosqlite>=0.21.0",
     "asyncssh>=2.22.0",
     "fastapi>=0.135.1",
+    # Requirement/marker/specifier evaluation for the dependency preflight
+    # (`otto.env.preflight`). Already resolved transitively (pytest);
+    # declared directly because we now import it directly.
+    "packaging>=24.0",
     "pydantic>=2.6,<3",
     "pydantic-settings>=2.2,<3",
     # SNMP manager for embedded / separate-channel performance monitoring.

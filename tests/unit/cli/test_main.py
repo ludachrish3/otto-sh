@@ -23,6 +23,7 @@ from otto.cli.registry import register_cli_command
 from otto.logger import management
 from otto.result import CommandResult
 from otto.utils import Status
+from tests._fixtures.bootstrapstub import bootstrap_stub
 
 runner = CliRunner()
 
@@ -658,9 +659,7 @@ class TestProjectSwitchWiring:
         Names are the NORMALIZED spellings the validator compares against.
         """
         repos = [SimpleNamespace(name=n) for n in ("repo-a", "other-repo", "a", "b", "c")]
-        monkeypatch.setattr(
-            "otto.bootstrap.bootstrap", lambda: SimpleNamespace(repos=repos, errors=[])
-        )
+        monkeypatch.setattr("otto.bootstrap.bootstrap", lambda: bootstrap_stub(repos))
 
     def _capture_root_options(self, monkeypatch):
         """Spy RootOptions, returning a dict that fills in with the built instance."""
@@ -792,8 +791,8 @@ class TestProjectSwitchWiring:
         broken = SimpleNamespace(name="repo-a", sut_dir=Path("/repos/repo-a"), project_scope=None)
         monkeypatch.setattr(
             "otto.bootstrap.bootstrap",
-            lambda: SimpleNamespace(
-                repos=[broken],
+            lambda: bootstrap_stub(
+                [broken],
                 errors=[BootstrapError(broken.sut_dir, "repo_a_init", ImportError("paramiko"))],
             ),
         )

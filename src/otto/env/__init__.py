@@ -332,17 +332,19 @@ class EnvStatus:
 
 
 def _dist_name(repo: "Repo") -> "str | None":
-    """Return the repo's distribution name from its pyproject, if it has one."""
-    import tomli
+    """Return the repo's distribution name from its pyproject, if it has one.
 
-    pyproject = repo.sut_dir / "pyproject.toml"
-    if not pyproject.is_file():
-        return None
-    try:
-        data = tomli.loads(pyproject.read_text())
-    except (OSError, tomli.TOMLDecodeError):
-        return None
-    name = data.get("project", {}).get("name")
+    Reads through :func:`otto.env.preflight.read_project_table` rather than
+    re-opening the file, so this package has ONE answer to "what does this
+    repo's pyproject say" -- including what it does with an unreadable one.
+    Two readers with independently maintained error handling is exactly the
+    drift that ends with ``env show`` and the preflight disagreeing about
+    whether a repo is installable.
+    """
+    from .preflight import read_project_table
+
+    project = read_project_table(repo) or {}
+    name = project.get("name")
     return str(name) if name else None
 
 

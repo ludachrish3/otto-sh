@@ -38,6 +38,7 @@ from otto.cli.invoke import refuse_inactive_instruction
 from otto.cli.registry import CommandSpec
 from otto.instructions import INSTRUCTIONS, InstructionEntry
 from otto.registry import registering_repo
+from tests._fixtures.bootstrapstub import bootstrap_stub
 from tests._fixtures.clickctx import chain
 from tests._fixtures.scoping import verdict
 
@@ -496,9 +497,7 @@ class TestPreambleWiring:
     @pytest.fixture(autouse=True)
     def _quiet_preamble(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Everything the preamble does EXCEPT the gate, stubbed to nothing."""
-        monkeypatch.setattr(
-            "otto.bootstrap.bootstrap", lambda: SimpleNamespace(errors=[], repos=[])
-        )
+        monkeypatch.setattr("otto.bootstrap.bootstrap", bootstrap_stub)
         monkeypatch.setattr(invoke, "stop_at_dry_run_seam", lambda ctx, spec: None)
 
     def _excluded_context(self, monkeypatch: pytest.MonkeyPatch) -> None:

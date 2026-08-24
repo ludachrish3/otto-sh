@@ -440,6 +440,7 @@ Otto's direct runtime dependencies (declared in `pyproject.toml` under
 | `aiosqlite` | 0.21.0 | Async SQLite for persisting monitor metrics |
 | `asyncssh` | 2.22.0 | SSH connections to remote hosts |
 | `fastapi` | 0.135.1 | Monitor dashboard web server |
+| `packaging` | 24.0 | Requirement/marker/specifier evaluation for the dependency preflight |
 | `pydantic` | 2.6 | Boundary validation models for lab JSON, host records, and settings |
 | `pydantic-settings` | 2.2 | Environment-variable settings (`OTTO_*`) |
 | `pysnmp` | 7.1.0 | Async SNMP manager for separate-channel host monitoring |

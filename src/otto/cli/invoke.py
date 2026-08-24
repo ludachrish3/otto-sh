@@ -835,6 +835,92 @@ def refuse_inactive_instruction(inner_ctx: typer.Context) -> None:
     fail(f"{name!r} belongs to repo {owner!r}, {detail}\n{hint}", soft_wrap=True)
 
 
+def refuse_unsatisfied_dependencies() -> None:
+    """Refuse when an ACTIVE repo declares a Python requirement this env lacks (spec §3).
+
+    Runs in the leaf preamble AFTER the lab session exists, for the same reason
+    :func:`refuse_inactive_instruction` does and no other: severity here is an
+    ACTIVATION question, and :func:`otto.config.scope.active` -- the one
+    authority -- needs the lab verdicts the session installs. The spec asked for
+    this check inside ``bootstrap()``, which runs before any of that exists;
+    those two requirements cannot both hold, and the authority is the half worth
+    keeping. The pre-lab projection :func:`otto.config.scope.inactive_before_lab`
+    would have refused a HOST-STARVED repo -- one whose labs match but whose
+    ``host_patterns`` select nothing -- because that shape is undetectable
+    before the lab is built. Here it is simply inactive, and warns.
+
+    Two consequences of the position, both deliberate:
+
+    * **Library callers are not checked.** ``open_context`` and anything else
+      calling ``bootstrap()`` directly never reach this gate. It is a CLI
+      refusal, not a composition-root one.
+    * **An EAGER import failure never gets here.** ``bootstrap()``'s per-repo
+      init loop runs first, so a repo whose init module imports a missing
+      package at module scope is already a ``BootstrapError`` and
+      :func:`fail_loud_on_bootstrap_errors` reports it generically. Only the
+      LAZY shape -- the import inside an instruction body, the one that would
+      otherwise fail mid-run with hosts already touched -- is what this gate
+      exists to pre-empt.
+
+    Called only from ``command_preamble``'s non-``lab_free`` branch, which is
+    also what keeps ``otto env sync`` -- the verb the refusal names -- outside
+    the gate that would otherwise refuse to let you run the fix.
+    """
+    from ..bootstrap import bootstrap
+    from ..config.scope import active
+    from ..context import get_context
+    from ..env.preflight import preflight
+
+    result = preflight(bootstrap().ordered_repos)
+    # PRINTED to stderr, not logged and not through rich -- the same call and
+    # the same three reasons as the demotion warning in
+    # `fail_loud_on_bootstrap_errors`: the run CONTINUES past here so stdout
+    # belongs to the command, rich would eat a bracketed token, and the
+    # library-citizen NullHandler defeats `logging.lastResort` for a logger
+    # with no console handler yet.
+    for warning in result.warnings:
+        typer.echo(f"warning: {warning}", err=True)
+    if not result.unsatisfied:
+        return
+
+    ctx = get_context()
+    blocking = []
+    for bad in result.unsatisfied:
+        if active(bad.repo, ctx):
+            blocking.append(bad)
+            continue
+        typer.echo(
+            f"warning: repo {bad.repo!r} requires {bad.requirement!r} — not satisfied "
+            f"in this environment (found: {bad.found}), but {bad.repo} is inactive for "
+            f"this run — continuing without it",
+            err=True,
+        )
+    if not blocking:
+        return
+
+    lines = [
+        f"error: repo {bad.repo!r} requires {bad.requirement!r} — not satisfied in "
+        f"this environment (found: {bad.found})"
+        for bad in blocking
+    ]
+    # `env sync` ALWAYS, and always second: it is the verb that fixes this
+    # whatever the cause, and it is the one an operator who has never built an
+    # orchestration venv needs to be told about. The direct install is third
+    # because it is for the operator who manages the environment by hand --
+    # correct, but it leaves otto's record of the env untouched.
+    lines.append("  fix: otto env sync")
+    installs = " ".join(f"{bad.requirement!r}" for bad in blocking)
+    lines.append(f"  or:  uv pip install {installs}")
+    # Through `fail`, never a hand-rolled `[red]` f-string. A requirement
+    # carries brackets whenever it names an extra (`otto-sh[monitor] >= 1`) and
+    # rich DELETES `[word]` as markup -- printing a runnable command for the
+    # wrong package. `print_error` escapes; the `error-render-through-helper`
+    # ast-grep rule keeps this route the only one. soft_wrap because both fix
+    # lines are meant to be PASTED, and rich folds between words at the console
+    # width.
+    fail("\n".join(lines), 1, soft_wrap=True)
+
+
 def ensure_help_banner(ctx: typer.Context) -> None:
     """Print the banner before rendered help text, once per invocation (idempotent).
 
@@ -860,9 +946,10 @@ def command_preamble(ctx: typer.Context) -> None:
     Order: ``-I``/``-E`` names are validated → an active repo's bootstrap
     errors fail loud → lab-free commands skip the lab slice → CLI session
     (logging) → lab context → per-command output dir → an inactive repo's
-    instruction is refused → reservation gate → the dry-run seam. ``--help``
-    paths never reach this function: click's help option exits during leaf
-    parse, before ``Command.invoke``.
+    instruction is refused → an active repo's unsatisfied Python dependencies
+    are refused → reservation gate → the dry-run seam. ``--help`` paths never
+    reach this function: click's help option exits during leaf parse, before
+    ``Command.invoke``.
 
     The seam is LAST on purpose. Everything above it is the validating half of
     the dry-run contract (spec §1: arguments coerce, the lab loads, references
@@ -890,6 +977,10 @@ def command_preamble(ctx: typer.Context) -> None:
         # before the gate: a run that is being refused must not first be
         # warned about the reservations it would have needed.
         refuse_inactive_instruction(ctx)
+        # After the ownership gate, which refuses the thing the operator TYPED
+        # and so owns the more specific sentence; before the reservation gate,
+        # for the reason stated one line up.
+        refuse_unsatisfied_dependencies()
         if spec.gate:
             present_reservation_gate(ctx)
 

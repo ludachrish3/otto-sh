@@ -23,6 +23,7 @@ import typer
 
 from otto.cli.invoke import wrap_leaf_callbacks
 from otto.cli.registry import CommandSpec, resolve_spec_command
+from tests._fixtures.bootstrapstub import bootstrap_stub
 
 
 @pytest.fixture
@@ -52,14 +53,10 @@ def _quiet_preamble(monkeypatch):
     ``command_preamble`` on a ``lab_free`` spec runs only the bootstrap
     error gate; stub it so these tests need no discovery environment.
     """
-    import types
 
     import otto.bootstrap as bootstrap_mod
 
-    def _clean_bootstrap():
-        return types.SimpleNamespace(errors=[])
-
-    monkeypatch.setattr(bootstrap_mod, "bootstrap", _clean_bootstrap)
+    monkeypatch.setattr(bootstrap_mod, "bootstrap", bootstrap_stub)
 
 
 def _wrapped(spec: CommandSpec):

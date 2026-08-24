@@ -12,6 +12,7 @@ import pytest
 
 from otto.cli import invoke
 from otto.cli.registry import CommandSpec
+from tests._fixtures.bootstrapstub import bootstrap_stub
 from tests._fixtures.clickctx import chain
 
 
@@ -55,7 +56,7 @@ def preamble_naming(monkeypatch):
 
     monkeypatch.setattr(invoke, "ensure_cli_session", _noop)
     monkeypatch.setattr(invoke, "ensure_lab_context", _noop)
-    monkeypatch.setattr("otto.bootstrap.bootstrap", lambda: SimpleNamespace(errors=[], repos=[]))
+    monkeypatch.setattr("otto.bootstrap.bootstrap", bootstrap_stub)
     monkeypatch.setattr("otto.logger.management.create_output_dir", _create_output_dir)
     monkeypatch.setattr("otto.context.get_context", lambda: SimpleNamespace(output_dir=None))
     return calls

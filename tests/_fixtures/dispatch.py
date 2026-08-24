@@ -27,10 +27,12 @@ import typer
 import typer.testing
 from typer.testing import CliRunner, Result
 
+from tests._fixtures.bootstrapstub import bootstrap_stub
+
 
 def _clean_bootstrap() -> SimpleNamespace:
     """A bootstrap result with no repo errors — pass the preamble's loud gate."""
-    return SimpleNamespace(errors=[])
+    return bootstrap_stub()
 
 
 def shipped_dry_run_preview(name: str) -> bool:
