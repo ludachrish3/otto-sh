@@ -299,6 +299,43 @@ Three more axes sit alongside level/resource, each narrower in scope:
   slice on the versions between. `make nox-full` is the complete matrix,
   all tiers on all five Pythons, at roughly 5× `make nox`'s wall clock.
 
+## The host axis space: what a bed host *is*
+
+Some tests need to say more than "this needs a VM" — they need to know
+*which* host, reached over *which* terminal protocol, moving files over
+*which* transfer backend. `tests/_fixtures/profiles.py` is the single
+resolver for that: `axes_for(element, tech)` returns a `HostAxes`
+(`os_type`, `userland`, `terms`, `transfers`, `hop_depth`,
+`docker_capable`), and `axis_space(lab)` crosses each host's two menus into
+the full list of `(host, term, transfer)` cells that lab permits.
+
+The rule that gives the module its reason to exist: **the axes are read off
+a host otto's own factory built, never re-derived from `lab.json`.**
+Measured against the current bed, 10 of the 19 hosts do not declare
+`valid_terms` at all — the seven Zephyr guests (which do declare
+`valid_transfers: ["console"]`) and `alt1`/`alt2`/`alt3` (which declare no
+`os_type` and neither menu). The factory supplies what they omit: `alt1`
+constructs as `unix` with `['ssh', 'telnet']` and
+`['scp', 'sftp', 'ftp', 'nc']`, `zephyr37_fat` resolves to `['telnet']`. A
+resolver that read the raw JSON would therefore produce *wrong* axes for
+more than half the bed while looking perfectly correct on the nine hosts
+that do declare theirs. Two fields are deliberate exceptions, read from the
+raw entry because the host cannot answer them: `hop`, since chain depth is a
+property of the lab rather than of any one host, and `userland_options`,
+which the host normalizes into an all-`None` defaults object that is still
+truthy.
+
+`tests/unit/test_profiles.py` guards that rule across the whole population
+rather than a sample, for a specific reason: the bed splits into two halves
+that fail in opposite directions. The ten that declare no term menu catch a
+resolver that stopped asking the factory; the nine that declare one — and
+whose declared list the factory returns unchanged — catch the opposite
+mistake, a resolver that overrode a menu the lab data had already stated.
+Sampling only the second half would certify nothing, because those hosts
+stay green under a raw read. A companion test pins the premise itself, so
+lab data that started declaring `valid_terms` everywhere would report that
+the guard has stopped discriminating instead of passing quietly.
+
 ## Coverage: a floor, not a scorecard
 
 `make coverage` enforces `--cov-fail-under=95` over the whole default run
