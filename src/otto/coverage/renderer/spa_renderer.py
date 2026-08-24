@@ -35,10 +35,6 @@ class SpaRenderer:
     Args:
         output_dir: Directory to write the report into (created if needed).
         project_name: Title shown in the report (``IndexPayload.project_name``).
-        extra_markers: Extra source exclusion-marker strings (spec §8),
-            forwarded from ``[coverage.exclusions].markers`` via the
-            reporter. Scanned alongside the built-in ``LCOV_EXCL_*`` markers
-            when annotating each file's source (see ``spa_data.emit_chunks``).
         prefix: Strip this leading directory from file paths *shown* in the
             report (display only, like ``genhtml --prefix``). Files outside
             the prefix display unchanged; chunk names always use the full
@@ -50,12 +46,10 @@ class SpaRenderer:
         output_dir: Path,
         project_name: str = "Coverage Report",
         *,
-        extra_markers: list[str] | None = None,
         prefix: Path | None = None,
     ) -> None:
         self.output_dir = output_dir
         self.project_name = project_name
-        self.extra_markers: list[str] = list(extra_markers or [])
         self.prefix = prefix
 
     def render(self, store: CoverageStore) -> None:
@@ -67,7 +61,6 @@ class SpaRenderer:
             self.output_dir,
             project_name=self.project_name,
             prefix=self.prefix,
-            extra_markers=self.extra_markers,
             stamp=make_stamp(),
         )
         logger.info("Report written to %s", self.output_dir / "index.html")

@@ -112,7 +112,6 @@ def _emit_ticket_chunk(tmp_path: Path) -> dict:
         out,
         project_name="P",
         prefix=tmp_path,
-        extra_markers=None,
         stamp="S",
     )
     text = min((out / "cov_data" / "tickets").iterdir()).read_text()
@@ -141,7 +140,6 @@ def test_emitted_scripts_invoke_the_contract_callback_names(tmp_path):
         out,
         project_name="P",
         prefix=tmp_path,
-        extra_markers=None,
         stamp="S",
     )
     cov_data = out / "cov_data"
@@ -207,7 +205,6 @@ def _rich_file_chunk(tmp_path: Path) -> dict:
         out,
         project_name="P",
         prefix=tmp_path,
-        extra_markers=None,
         stamp="S",
     )
     text = min((out / "cov_data" / "files").iterdir()).read_text()
@@ -289,7 +286,6 @@ def test_emitted_cov_data_layout_matches_the_contract(tmp_path):
         out,
         project_name="P",
         prefix=tmp_path,
-        extra_markers=None,
         stamp="S",
     )
     layout = CONTRACT["cov_data_layout"]

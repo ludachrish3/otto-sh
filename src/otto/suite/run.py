@@ -28,6 +28,7 @@ from ..errors import OttoError
 
 if TYPE_CHECKING:
     from ..config.repo import Repo
+    from ..coverage.exclusions.rules import ExclusionRule
     from .plugin import StabilityCollector
 
 import logging
@@ -302,6 +303,7 @@ async def _post_run_coverage(repos: "list[Repo]", log_dir: Path, opts: RunOption
         from rich.markup import escape as escape_markup
 
         from ..coverage.config import get_cov_config, get_cov_repo, prepare_empty_dir
+        from ..coverage.exclusions.rules import load_exclusion_rules
         from ..coverage.overrides import load_override_config
         from ..coverage.report_config import load_report_thresholds
         from ..coverage.reporter import run_coverage_report
@@ -313,7 +315,7 @@ async def _post_run_coverage(repos: "list[Repo]", log_dir: Path, opts: RunOption
             opts.cov_report_dir if opts.cov_report_dir is not None else log_dir / "cov_report"
         )
         # Resolve the same collection-model inputs `otto cov report` uses
-        # (declared tiers/colors, exclusion markers, report thresholds, the
+        # (declared tiers/colors, exclusion rules, report thresholds, the
         # committed manual store, the [coverage.tickets] pattern), from the
         # repos already in hand — mirroring cov._resolve_cov_settings but
         # without re-fetching. A tree with no [coverage] section falls back
@@ -323,7 +325,7 @@ async def _post_run_coverage(repos: "list[Repo]", log_dir: Path, opts: RunOption
         repo_root = cov_repo.sut_dir if cov_repo is not None else None
         cov_config = get_cov_config(repos)
         tier_configs = load_tiers(cov_config) if cov_repo is not None else None
-        extra_markers = list(cov_config.get("exclusions", {}).get("markers") or [])
+        exclusion_rules: "list[ExclusionRule]" = []
         thresholds = load_report_thresholds(cov_config) if cov_repo is not None else None
         ticket_spec = load_ticket_spec(cov_config) if cov_repo is not None else None
         overrides = None
@@ -341,6 +343,9 @@ async def _post_run_coverage(repos: "list[Repo]", log_dir: Path, opts: RunOption
         # above) so a bad override file can't fail an otherwise-successful
         # test run — it raises OverrideConfigError (a ValueError), caught
         # below same as every other report-generation failure.
+        # load_exclusion_rules is inside the try for exactly the same reason:
+        # a bad regex or an unknown rule kind raises CoverageConfigError (also
+        # a ValueError), and a config typo must cost the report, not the run.
         try:
             prepare_empty_dir(
                 report_dir,
@@ -348,6 +353,7 @@ async def _post_run_coverage(repos: "list[Repo]", log_dir: Path, opts: RunOption
                 flag_name="--cov-report-dir",
             )
             if cov_repo is not None:
+                exclusion_rules = load_exclusion_rules(cov_config)
                 overrides = load_override_config(cov_config, cov_repo.sut_dir, tier_configs or [])
             store = await run_coverage_report(
                 [cov_dir],
@@ -355,7 +361,7 @@ async def _post_run_coverage(repos: "list[Repo]", log_dir: Path, opts: RunOption
                 project_name=opts.project_name,
                 repo_root=repo_root,
                 tier_configs=tier_configs,
-                extra_markers=extra_markers,
+                exclusion_rules=exclusion_rules,
                 thresholds=thresholds,
                 ticket_spec=ticket_spec,
                 overrides=overrides,

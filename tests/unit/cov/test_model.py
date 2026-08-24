@@ -230,10 +230,10 @@ class TestCoverageStore:
         assert merged.lines[1].hits.for_tier("unit") == 2
 
     def test_load_defaults_state_runs_tier_colors_when_absent(self, tmp_path):
-        # A well-formed v5 file may still omit the optional "runs"/"tier_colors"
+        # A well-formed current-version file may still omit the optional "runs"/"tier_colors"
         # keys (e.g. a minimal hand-written fixture); load() must default them.
         minimal = {
-            "format": 6,
+            "format": 7,
             "tier_order": ["system"],
             "files": [
                 {
@@ -275,12 +275,12 @@ class TestCoverageStore:
         assert line_dict["state"] is None
 
     def test_load_tolerates_absent_excluded_lines_key(self, tmp_path):
-        """A v5 store.json with no excluded_lines key loads to an empty set."""
+        """A store.json with no exclusion keys at all loads both sets empty."""
         store_json = tmp_path / "store.json"
         store_json.write_text(
             json.dumps(
                 {
-                    "format": 6,
+                    "format": 7,
                     "tier_order": ["system"],
                     "files": [{"path": "/x/f.c", "lines": {}}],
                 }
@@ -289,6 +289,7 @@ class TestCoverageStore:
         reloaded = CoverageStore.load(store_json)
         (frec,) = list(reloaded.files())
         assert frec.excluded_lines == set()
+        assert frec.branch_excluded_lines == set()
 
 
 class TestRuns:
@@ -345,7 +346,7 @@ class TestRuns:
         path = tmp_path / "store.json"
         store.save(path)
         raw = json.loads(path.read_text())
-        assert raw["format"] == 6
+        assert raw["format"] == 7
         assert raw["runs"][0]["base_commit"] == "deadbeef"
         line5 = raw["files"][0]["lines"]["5"]
         assert line5["run"] == {"0": 4}
@@ -364,7 +365,7 @@ class TestRuns:
 
     def test_load_defaults_runs_when_absent(self, tmp_path):
         minimal = {
-            "format": 6,
+            "format": 7,
             "tier_order": ["system"],
             "files": [{"path": "/a.c", "lines": {"1": {"hits": {"system": 1}, "branches": []}}}],
         }
@@ -393,7 +394,7 @@ class TestStoreConfig:
         p = tmp_path / "store.json"
         store.save(p)
         raw = json.loads(p.read_text())
-        assert raw["format"] == 6
+        assert raw["format"] == 7
         assert raw["thresholds"] == {"high": 80.0, "medium": 70.0}
         assert raw["stat_types"] == ["line", "branch", "decision"]
 
@@ -407,7 +408,7 @@ class TestStoreConfig:
 
     def test_load_defaults_thresholds_when_absent(self, tmp_path) -> None:
         p = tmp_path / "store.json"
-        p.write_text('{"format": 6, "tier_order": ["system"], "files": []}')
+        p.write_text('{"format": 7, "tier_order": ["system"], "files": []}')
         loaded = CoverageStore.load(p)
         assert loaded.thresholds == Thresholds()
 
@@ -492,9 +493,9 @@ class TestLineTicketSlot:
         assert c.ticket == ["PROJ-2"]
 
 
-def test_format_is_six():
-    """v6 adds the manual-override surface: override records and per-line asserted ids."""
-    assert STORE_FORMAT_VERSION == 6
+def test_format_is_seven():
+    """v7 deletes excluded lines from the data and adds per-file branch_excluded_lines."""
+    assert STORE_FORMAT_VERSION == 7
 
 
 def test_line_ticket_defaults_to_empty_list():
@@ -540,7 +541,7 @@ def test_v4_store_is_rejected_loud(tmp_path):
     """A v4 store.json (pre-list ticket, no tickets table) fails loud, no migration."""
     path = tmp_path / "store.json"
     path.write_text(json.dumps({"format": 4, "files": [], "runs": []}))
-    with pytest.raises(ValueError, match="v6"):
+    with pytest.raises(ValueError, match="v7"):
         CoverageStore.load(path)
 
 
@@ -616,5 +617,25 @@ def test_line_merge_unions_asserted_ids_per_tier():
 
 def test_v5_store_fails_loud(tmp_path):
     (tmp_path / "store.json").write_text('{"format": 5}')
-    with pytest.raises(ValueError, match="v6 required"):
+    with pytest.raises(ValueError, match="v7 required"):
         CoverageStore.load(tmp_path / "store.json")
+
+
+def test_v6_store_fails_loud(tmp_path):
+    """The v7 bump is real for on-disk data: a v6 store is refused, not read."""
+    (tmp_path / "store.json").write_text('{"format": 6}')
+    with pytest.raises(ValueError, match="v7 required"):
+        CoverageStore.load(tmp_path / "store.json")
+
+
+def test_branch_excluded_lines_round_trip(tmp_path):
+    """v7's per-file ``branch_excluded_lines`` is written sorted and read back."""
+    store = CoverageStore(tier_order=["unit"])
+    rec = store.get_or_create_file(Path("/a.c"))
+    rec.get_or_create_line(1)
+    rec.branch_excluded_lines = {7, 2}
+    path = tmp_path / "store.json"
+    store.save(path)
+    assert json.loads(path.read_text())["files"][0]["branch_excluded_lines"] == [2, 7]
+    (reloaded,) = list(CoverageStore.load(path).files())
+    assert reloaded.branch_excluded_lines == {2, 7}

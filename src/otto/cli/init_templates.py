@@ -94,8 +94,15 @@ paths = ["lab_data"]
 #color = "#22c55e"
 #harvest_dirs = ["cov/nightly"]
 #max_age = "180d"
-#[coverage.exclusions]
-#markers = ["GCOV_EXCL"]
+#[[coverage.exclusions.rules]]
+#kind = "marker"
+#name = "GCOV_EXCL"          # family: _LINE / _START / _STOP
+#[[coverage.exclusions.rules]]
+#kind = "preprocessor"
+#macros = ["DEBUG_LOG"]
+#[[coverage.exclusions.rules]]
+#kind = "path"
+#patterns = ["vendor/**"]
 #[coverage.report]
 #high = 80
 #medium = 70

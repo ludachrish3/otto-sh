@@ -48,12 +48,18 @@ Chunk ids come from `mangle_path` over the file's **canonical** path, never
 its display path, so `--prefix` changes what a report shows without changing
 what any of its files are called.
 
-Exclusion display stays render-time, not store-time, for the same reason it
-always has: a single-valued `LineRecord.state` can't express "excluded
-always wins" over covered/stale/aging, so the reporter never bakes
-`state == "excluded"` into the store — it only forwards the configured
-extra marker strings. `emit_chunks` re-scans each file's source for
-exclusion markers and annotates `FileRecord.excluded_lines` on the store as
-a side effect of building that file's chunk. This is why `otto cov report`
-calls `store.save(...)` for `store.json` **after** `renderer.render(store)`
-returns — saving first would miss every file's excluded-line list.
+Exclusion is resolved before the renderer ever runs. `CoverageReporter.run()`
+applies the configured rules to the merged store — deleting the excluded
+line records and annotating `FileRecord.excluded_lines` — between the last
+data fold and ticket attribution, so `emit_chunks` only *reads* that
+annotation. It no longer scans source, and it no longer mutates the store.
+
+`otto cov report` still calls `store.save(...)` for `store.json` after
+`renderer.render(store)` returns, but that ordering is now incidental
+rather than load-bearing: rendering has no side effect left for the save to
+capture. Exclusion used to be the one that made the order matter.
+
+`LineRecord.state` still has no `"excluded"` value, and still shouldn't:
+a single-valued field can't express "excluded always wins" over
+covered/stale/aging. Deleting the record sidesteps that entirely — there is
+no precedence to encode when there is nothing left to rank.

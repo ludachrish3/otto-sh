@@ -73,9 +73,55 @@ def test_bad_kind_rejected() -> None:
         _settings({"tiers": {"x": {"kind": "smoke", "precedence": 1}}})
 
 
-def test_exclusion_markers() -> None:
-    s = _settings({"exclusions": {"markers": ["MYPROJ_NO_COV"]}})
-    assert s.coverage.exclusions.markers == ["MYPROJ_NO_COV"]
+def test_exclusion_rules_parse_per_kind() -> None:
+    s = _settings(
+        {
+            "exclusions": {
+                "rules": [
+                    {"kind": "marker", "name": "MYPROJ_NO_COV"},
+                    {"kind": "preprocessor", "macros": ["DEBUG_LOG"]},
+                    {"kind": "path", "patterns": ["vendor/**"]},
+                    {"kind": "regex", "pattern": "assert[(]", "stat": "branch"},
+                ]
+            }
+        }
+    )
+    assert [r.kind for r in s.coverage.exclusions.rules] == [
+        "marker",
+        "preprocessor",
+        "path",
+        "regex",
+    ]
+    assert s.coverage.exclusions.rules[3].stat == "branch"
+
+
+def test_old_markers_key_is_rejected() -> None:
+    """extra='forbid' IS the migration: the removed key fails loud, named."""
+    with pytest.raises(ValidationError, match="markers") as excinfo:
+        _settings({"exclusions": {"markers": ["MYPROJ_NO_COV"]}})
+    assert "markers" in str(excinfo.value)
+
+
+def test_preprocessor_rule_rejects_both_matchers() -> None:
+    with pytest.raises(ValidationError, match="exactly one"):
+        _settings(
+            {
+                "exclusions": {
+                    "rules": [{"kind": "preprocessor", "pattern": "#if 0", "macros": ["X"]}]
+                }
+            }
+        )
+
+
+def test_regex_rule_pattern_must_compile_at_parse() -> None:
+    """Spec 2: a bad regex is a settings error, not a coverage-run error."""
+    with pytest.raises(ValidationError, match="invalid regex"):
+        _settings({"exclusions": {"rules": [{"kind": "regex", "pattern": "unbalanced("}]}})
+
+
+def test_preprocessor_rule_pattern_must_compile_at_parse() -> None:
+    with pytest.raises(ValidationError, match="invalid regex"):
+        _settings({"exclusions": {"rules": [{"kind": "preprocessor", "pattern": "unbalanced("}]}})
 
 
 def test_report_defaults() -> None:

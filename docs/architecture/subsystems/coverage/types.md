@@ -114,18 +114,26 @@ three different places, and the split matters:
 | covered by a tier | at render, per tier | `LineHits.counts[tier]` (counts, not a state) |
 | `stale` | at report, by the manual validity pass | `LineRecord.state` |
 | `aging` | at report, by the manual validity pass | `LineRecord.state` |
-| excluded | at render, by a source scan | `FileRecord.excluded_lines` (a set) |
+| excluded | at report, by the exclusion filter | `FileRecord.excluded_lines` (a set) |
 | uncovered | at render | nothing — a `LineRecord` with no tier hit |
 | uncoverable | at render | nothing — no `LineRecord` at all |
 
+An excluded line is `uncoverable` by the third column's test — the filter
+deleted its `LineRecord` — so the two are told apart by `excluded_lines`
+alone, and excluded is checked first.
+
 `LineRecord.state` is single-valued, which is exactly why exclusion is not
 one of its values: "excluded always wins" cannot coexist with
-covered/stale/aging in one slot. So the reporter never bakes
-`state == "excluded"` into the store; `otto.coverage.exclusions.scan_excluded_lines`
-re-scans each file's source for the `LCOV_EXCL_*` markers (plus any extra
-markers from `[coverage.exclusions]`) as the renderer builds that file's
-chunk, and annotates `FileRecord.excluded_lines` — see {doc}`renderer` for
-why that side effect dictates the save order.
+covered/stale/aging in one slot. Exclusion sidesteps the problem instead of
+encoding it — `otto.coverage.exclusions.apply.apply_exclusions` **deletes**
+the excluded `LineRecord`s from the merged store, in the reporter, before
+attribution and before rendering. There is no state to rank once the record
+is gone, and every stats path is correct without knowing exclusion exists.
+
+What survives on the record is `FileRecord.excluded_lines` (and
+`branch_excluded_lines`), the rules' verdict on the source. Those hold line
+numbers with no `LineRecord` behind them, which is what the grey rows and
+the per-file excluded count are rendered from — see {doc}`renderer`.
 
 The precedence walk itself lives in the frontend (`rowClassFor`,
 `web/src/covapp/pages/FilePage.tsx`) and reads: **excluded** beats the
@@ -161,14 +169,14 @@ generated with — including a report opened years later from a bundle built
 against different settings. Persisting the cutoffs in the store is what
 makes that possible.
 
-## The store (v6)
+## The store (v7)
 
 `store.json` is the canonical, versioned artifact `otto cov report`
 writes for downstream consumers — external tooling, a foreign report
 viewer — to read back; the in-process renderer consumes the same store
 directly, in memory, before it is ever serialized. `CoverageStore.save`/
 `.load` (`otto.coverage.store.model`) stamp every file with a top-level
-`"format"` key equal to `STORE_FORMAT_VERSION` (`6`). The loader is
+`"format"` key equal to `STORE_FORMAT_VERSION` (`7`). The loader is
 **exact-match**: a file whose `"format"` is missing, the wrong type, or
 any version other than the one the running otto expects fails loud with
 a `ValueError` naming both versions and telling the caller to
@@ -204,8 +212,10 @@ deliberately does **not** share this version counter; see
 - **`tickets`** — ticket id → `TicketRecord`: `id`, `url` (`None` when
   `[coverage.tickets]` configures no template, or the id doesn't match
   one), and `commits`, the shas that named it.
-- **`files`** — one `FileRecord` each: `path`, `lines`, and
-  `excluded_lines` (the render-time marker scan, {doc}`renderer`).
+- **`files`** — one `FileRecord` each: `path`, `lines`,
+  `excluded_lines` (the line numbers the exclusion rules deleted out of
+  `lines`), and `branch_excluded_lines` (lines whose branch records were
+  removed while the line itself still counts).
 - **`overrides`** — the asserted-entry table, one `OverrideRecord` per
   entry loaded from the override file ({doc}`../../../guide/cli/cov/index`):
   `id` (what per-line `asserted` refs point at, so a `reason` is stored

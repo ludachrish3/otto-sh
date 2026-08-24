@@ -11,6 +11,7 @@ from otto.coverage.capture.model import Capture, CaptureFileCov
 from otto.coverage.capture.store_dir import write_manual_capture
 from otto.coverage.overrides import DEFAULT_OVERRIDES_RELPATH, load_override_config
 from otto.coverage.reporter import run_coverage_report
+from otto.coverage.store.model import STORE_FORMAT_VERSION
 from otto.coverage.ticket_export import build_ticket_export
 from otto.coverage.tickets import build_ticket_spec
 from otto.coverage.tiers import load_tiers
@@ -86,7 +87,7 @@ async def test_asserted_lines_count_in_their_tier_and_carry_provenance(tmp_path)
         assert rec.lines[n].asserted == {"bench": [0]}
     (ov,) = store.overrides
     assert (ov.key, ov.tier, ov.as_of) == ("ticket:#1", "bench", sha)
-    assert json.loads((tmp_path / "r" / "store.json").read_text())["format"] == 6
+    assert json.loads((tmp_path / "r" / "store.json").read_text())["format"] == STORE_FORMAT_VERSION
 
 
 @pytest.mark.asyncio

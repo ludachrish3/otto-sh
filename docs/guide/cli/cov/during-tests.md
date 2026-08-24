@@ -72,9 +72,9 @@ Omitting both `--cov` and `--cov-dir` disables coverage collection.
 
 `--cov-report` renders the HTML report immediately after the run,
 without a separate `otto cov report` invocation.  It goes through the
-same collection model: the configured tiers (colors, precedence,
-custom exclusion markers), the unit-tier harvest, and the committed
-manual store all apply, exactly as they would in a standalone report.
+same collection model: the configured tiers (colors, precedence),
+the exclusion rules, the unit-tier harvest, and the committed manual
+store all apply, exactly as they would in a standalone report.
 Like the capture tail, inline report generation is best-effort — a
 report-side problem is logged and never fails an otherwise-successful
 test run.

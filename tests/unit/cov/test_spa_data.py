@@ -191,7 +191,6 @@ class TestOutOfRangeLines:
             out_dir,
             project_name="P",
             prefix=None,
-            extra_markers=None,
             stamp="S",
         )
 
@@ -215,7 +214,6 @@ class TestEmitChunks:
             out_dir,
             project_name="P",
             prefix=None,
-            extra_markers=None,
             stamp="S",
         )
         text = (out_dir / "cov_data" / "index.js").read_text()
@@ -247,7 +245,6 @@ class TestEmitChunks:
             out_dir,
             project_name="P",
             prefix=None,
-            extra_markers=None,
             stamp="S",
         )
 
@@ -268,11 +265,20 @@ class TestEmitChunks:
         assert "stale_run" not in chunk["lines"]["1"]
         assert "stale_run" not in chunk["lines"]["3"]
 
-    def test_excluded_lines_annotated_on_store(self, tmp_path):
+    def test_excluded_chunk_field_reads_the_annotation_not_the_source(self, tmp_path):
+        """The renderer no longer scans; the filter stage's annotation is the input.
+
+        The source here carries an LCOV_EXCL_LINE the annotation deliberately
+        does NOT name, and names a line the source does not mark. A renderer
+        that still scanned would emit ``[2]``; one that reads the record emits
+        ``[3]``. Only the disagreement can tell the two apart, which is why the
+        fixture is built to disagree.
+        """
         src = _write(tmp_path, "f.c", "int a;\nint b; // LCOV_EXCL_LINE\nint c;\n")
         store = CoverageStore(tier_order=["system"])
         fr = store.get_or_create_file(src)
         fr.get_or_create_line(1).hits.add("system", 1)
+        fr.excluded_lines = {3}
 
         out_dir = tmp_path / "report"
         emit_chunks(
@@ -280,11 +286,14 @@ class TestEmitChunks:
             out_dir,
             project_name="P",
             prefix=None,
-            extra_markers=None,
             stamp="S",
         )
 
-        assert fr.excluded_lines == {2}
+        chunk_path = out_dir / "cov_data" / "files" / f"{mangle_path(src)}.js"
+        text = chunk_path.read_text()
+        chunk = json.loads(text[len("window.__OTTO_COV_FILE__(") : -len(");\n")])
+        assert chunk["excluded"] == [3]
+        assert fr.excluded_lines == {3}, "emit_chunks must not mutate the annotation"
 
     def test_empty_store_still_writes_index_js(self, tmp_path):
         store = CoverageStore(tier_order=["system"])
@@ -294,7 +303,6 @@ class TestEmitChunks:
             out_dir,
             project_name="P",
             prefix=None,
-            extra_markers=None,
             stamp="S",
         )
         assert (out_dir / "cov_data" / "index.js").exists()
@@ -340,7 +348,6 @@ def test_ticket_chunks_are_emitted_per_ticket(tmp_path):
         out,
         project_name="P",
         prefix=tmp_path,
-        extra_markers=None,
         stamp="S",
     )
     chunks = sorted((out / "cov_data" / "tickets").iterdir())
@@ -354,7 +361,7 @@ def test_no_tickets_emits_empty_list_and_no_chunk_dir(tmp_path):
     out = tmp_path / "report"
     out.mkdir()
     payload = build_index_payload(store, project_name="P", prefix=tmp_path, stamp="S")
-    emit_chunks(store, out, project_name="P", prefix=tmp_path, extra_markers=None, stamp="S")
+    emit_chunks(store, out, project_name="P", prefix=tmp_path, stamp="S")
     assert payload["tickets"] == []
     assert not (out / "cov_data" / "tickets").exists()
 
@@ -367,7 +374,6 @@ def test_line_json_carries_ticket_ids_and_omits_empty(tmp_path):
         out,
         project_name="P",
         prefix=tmp_path,
-        extra_markers=None,
         stamp="S",
     )
     text = next((out / "cov_data" / "files").iterdir()).read_text()
@@ -377,7 +383,7 @@ def test_line_json_carries_ticket_ids_and_omits_empty(tmp_path):
     plain.get_or_create_file(tmp_path / "b.c").get_or_create_line(1)
     out2 = tmp_path / "report2"
     out2.mkdir()
-    emit_chunks(plain, out2, project_name="P", prefix=tmp_path, extra_markers=None, stamp="S")
+    emit_chunks(plain, out2, project_name="P", prefix=tmp_path, stamp="S")
     assert '"ticket"' not in next((out2 / "cov_data" / "files").iterdir()).read_text()
 
 
@@ -451,7 +457,7 @@ def test_sentinel_ticket_ids_flow_through_summaries_and_get_their_own_chunk(tmp_
 
     out = tmp_path / "report"
     out.mkdir()
-    emit_chunks(store, out, project_name="P", prefix=tmp_path, extra_markers=None, stamp="S")
+    emit_chunks(store, out, project_name="P", prefix=tmp_path, stamp="S")
     chunk_files = sorted((out / "cov_data" / "tickets").iterdir())
     assert len(chunk_files) == 2
 
@@ -490,7 +496,6 @@ def test_ticket_chunk_carries_the_report_stamp(tmp_path):
         out,
         project_name="P",
         prefix=tmp_path,
-        extra_markers=None,
         stamp="the-stamp",
     )
     chunk_path = next((out / "cov_data" / "tickets").iterdir())
@@ -532,7 +537,6 @@ def test_ticket_chunk_files_carry_per_tier_covered_counts(tmp_path):
         out,
         project_name="P",
         prefix=tmp_path,
-        extra_markers=None,
         stamp="S",
     )
     text = min((out / "cov_data" / "tickets").iterdir()).read_text()
@@ -564,7 +568,7 @@ class TestOverrideProvenance:
         asserted_line.asserted = {"bench": [0]}
         fr.get_or_create_line(2)  # plain line
 
-        emit_chunks(store, out, project_name="P", prefix=tmp_path, extra_markers=None, stamp="S")
+        emit_chunks(store, out, project_name="P", prefix=tmp_path, stamp="S")
         chunk_path = out / "cov_data" / "files" / f"{mangle_path(tmp_path / 'a.c')}.js"
         text = chunk_path.read_text()
         body = text[len("window.__OTTO_COV_FILE__(") : -len(");\n")]

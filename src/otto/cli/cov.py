@@ -119,6 +119,7 @@ if TYPE_CHECKING:
     from typing import Any
 
     from ..config.repo import Repo
+    from ..coverage.exclusions.rules import ExclusionRule
     from ..coverage.overrides import OverrideConfig
     from ..coverage.store.model import Thresholds
     from ..coverage.tickets import TicketSpec
@@ -133,7 +134,7 @@ if TYPE_CHECKING:
     _CovSettings = tuple[
         Path | None,
         list[TierConfig] | None,
-        list[str],
+        list[ExclusionRule],
         Thresholds | None,
         TicketSpec | None,
         OverrideConfig | None,
@@ -205,7 +206,7 @@ def _parse_tier_specs(raw_tiers: list[str]) -> list[TierSpec]:
 def _resolve_cov_settings() -> "_CovSettings":
     """Resolve settings for ``report``.
 
-    Returns ``(repo_root, tier_configs, extra_markers, thresholds,
+    Returns ``(repo_root, tier_configs, exclusion_rules, thresholds,
     ticket_spec, overrides)``.
 
     Uses the same first-repo-with-``[coverage]`` selection as ``get`` and
@@ -214,9 +215,15 @@ def _resolve_cov_settings() -> "_CovSettings":
     configured — the git-less fallback that keeps ``otto cov report``
     working exactly as before on a tree with no ``[coverage]`` settings.
 
-    ``extra_markers`` comes from ``[coverage.exclusions].markers`` — extra
-    exclusion-marker strings (spec §8) forwarded to the renderer's per-file
-    source scan alongside the built-in ``LCOV_EXCL_*`` markers.
+    ``exclusion_rules`` comes from ``[coverage.exclusions].rules`` — the
+    compiled rules (:func:`otto.coverage.exclusions.rules.load_exclusion_rules`)
+    applied by the reporter's filter stage, which DELETES the lines and
+    branches they name from the merged store. An empty list is not
+    feature-absent: the built-in ``LCOV_EXCL_*`` families always apply on top
+    of whatever is configured here. Raises
+    :class:`~otto.coverage.errors.CoverageConfigError` (a :class:`ValueError`)
+    on a malformed rule — caught by ``report``'s existing ``except ValueError``
+    handler, same as ``overrides`` below.
 
     ``thresholds`` comes from ``[coverage.report]`` — render thresholds
     forwarded to the reporter/renderer (:func:`otto.coverage.report_config.load_report_thresholds`).
@@ -237,6 +244,7 @@ def _resolve_cov_settings() -> "_CovSettings":
     """
     from ..config import get_repos
     from ..coverage.config import get_cov_config, get_cov_repo
+    from ..coverage.exclusions.rules import load_exclusion_rules
     from ..coverage.overrides import load_override_config
     from ..coverage.report_config import load_report_thresholds
     from ..coverage.tickets import load_ticket_spec
@@ -247,12 +255,12 @@ def _resolve_cov_settings() -> "_CovSettings":
     if cov_repo is None:
         return None, None, [], None, None, None
     cov_config = get_cov_config(repos)
-    extra_markers = list(cov_config.get("exclusions", {}).get("markers") or [])
+    exclusion_rules = load_exclusion_rules(cov_config)
     tier_cfgs = load_tiers(cov_config)
     return (
         cov_repo.sut_dir,
         tier_cfgs,
-        extra_markers,
+        exclusion_rules,
         load_report_thresholds(cov_config),
         load_ticket_spec(cov_config),
         load_override_config(cov_config, cov_repo.sut_dir, tier_cfgs),
@@ -339,7 +347,7 @@ def report(
     # i.e. the legacy behavior.
     repo_root: Path | None = None
     tier_configs: "list[TierConfig] | None" = None
-    extra_markers: list[str] = []
+    exclusion_rules: "list[ExclusionRule]" = []
     thresholds: "Thresholds | None" = None
     ticket_spec: "TicketSpec | None" = None
     overrides: "OverrideConfig | None" = None
@@ -372,7 +380,7 @@ def report(
             # ValueError) from load_override_config, and must hit the same
             # clean-message `except ValueError` handler below as every
             # other settings/data ValueError, not propagate as a traceback.
-            repo_root, tier_configs, extra_markers, thresholds, ticket_spec, overrides = (
+            repo_root, tier_configs, exclusion_rules, thresholds, ticket_spec, overrides = (
                 _resolve_cov_settings()
             )
         store = run_command(
@@ -383,7 +391,7 @@ def report(
                 tier_specs=tier_specs,
                 repo_root=repo_root,
                 tier_configs=tier_configs,
-                extra_markers=extra_markers,
+                exclusion_rules=exclusion_rules,
                 thresholds=thresholds,
                 ticket_spec=ticket_spec,
                 overrides=overrides,

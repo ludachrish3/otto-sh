@@ -54,9 +54,11 @@ MAIN_C_HIT_LINES = 9
 # bench-tier lines 1/2 carry no run_hits for this context.
 MAIN_C_NIGHTLY_FULL_LINES = 6
 # index.total_lines = main.c's 11 + utils.c's 2 (utils.c has LineRecords for
-# lines 2 and 6 only).
+# lines 2 and 10 only). Line 6 is LCOV_EXCL_LINE-marked, so the exclusion
+# filter deleted its record before rendering — it is not in this total, which
+# is the whole point of the feature: an excluded line leaves the denominator.
 TOTAL_LINES = 13
-TOTAL_HIT_LINES = 10  # main.c's 9 + utils.c's 1 (line 2; line 6 is s-excl)
+TOTAL_HIT_LINES = 10  # main.c's 9 + utils.c's 1 (line 2; line 10 is uncovered)
 
 
 def _fmt_pct(hit: int, total: int) -> str:

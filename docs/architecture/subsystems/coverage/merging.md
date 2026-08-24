@@ -50,9 +50,16 @@ The order is not incidental; the last step depends on it.
    under `.otto/coverage/manual/`, supersede-filtered, each with the
    report-time validity states {doc}`manual` describes. **Last, always.**
 
-Then tier colors are seeded (`_fill_tier_colors`), the renderer runs, and
-only then is `store.json` written — a save order the renderer's exclusion
-scan forces ({doc}`renderer`).
+Then tier colors are seeded (`_fill_tier_colors`), the **exclusion filter**
+runs, ticket attribution and overrides fold in, the renderer runs, and only
+then is `store.json` written.
+
+The filter's position in that sequence is load-bearing: it sits after every
+fold above, so one pass covers all five sources, and before attribution, so
+an excluded line never reaches per-ticket coverage
+({doc}`../../../guide/cli/cov/exclusions`). The
+save coming last no longer is — rendering has no store side effect left for
+it to capture ({doc}`renderer`).
 
 ## Why manual folds last
 

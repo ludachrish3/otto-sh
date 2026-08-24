@@ -211,6 +211,16 @@ _SHORT_TYPE_ALIASES = {
     "SettingsConfigDict": "pydantic_settings.SettingsConfigDict",
     "PydanticBaseSettingsSource": "pydantic_settings.PydanticBaseSettingsSource",
     "CliSettingsSource": "pydantic_settings.CliSettingsSource",
+    # A discriminated union declared the only way pydantic allows for a list
+    # of variants -- ``list[Annotated[A | B, Field(discriminator=...)]]``,
+    # since the discriminator must sit on the union and not on the list
+    # (CoverageExclusionsSpec.rules). Autodoc renders the ``Annotated``
+    # metadata verbatim, so the FieldInfo repr's own type names surface as
+    # bare xref targets. Both are real, published symbols, so they resolve
+    # rather than being silenced -- there is no way to restate the annotation
+    # that both keeps the discriminator and hides the repr.
+    "FieldInfo": "pydantic.fields.FieldInfo",
+    "NoneType": "types.NoneType",
     # telnetlib3
     "telnetlib3.open_connection": "telnetlib3.client.open_connection",
 }

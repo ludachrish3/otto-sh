@@ -39,8 +39,9 @@ precedence = 3
 max_age = "180d"             # optional; flag-only aging
 color = "orange"
 
-[coverage.exclusions]
-markers = ["MYPROJ_NO_COV"]  # optional additions to the LCOV_EXCL_* set
+[[coverage.exclusions.rules]]  # optional
+kind = "marker"
+name = "MYPROJ_NO_COV"         # adds _LINE / _START / _STOP to the LCOV_EXCL_* set
 ```
 
 Each `[coverage.tiers.<name>]` block:

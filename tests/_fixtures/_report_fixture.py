@@ -8,7 +8,12 @@ produced by the exact report the browser tests pin.
 Four tiers (system, unit, manual, bench), two files, every pill state the
 renderer knows: branch-taken, branch-not-taken, branch-unreachable — plus a
 fully covered file and a partially covered one so sorting has something to
-reorder. Rendered with ``prefix=base_dir`` so displayed paths are the
+reorder. The store is passed through ``apply_exclusions`` before rendering,
+the same stage and the same position ``CoverageReporter.run()`` uses, so the
+fixture is a report the pipeline could actually have produced: utils.c line 6
+has no ``LineRecord`` at all, only an ``excluded_lines`` entry.
+
+Rendered with ``prefix=base_dir`` so displayed paths are the
 deterministic ``product/main.c`` / ``product/utils.c`` regardless of the tmp
 dir. Registers a run table (spec §10): two ``system`` runs sharing the
 label "nightly-full" (multi-host: router-a/router-b) crediting main.c's
@@ -45,6 +50,7 @@ the same id), reason "legacy bench regression pass".
 
 from pathlib import Path
 
+from otto.coverage.exclusions.apply import apply_exclusions
 from otto.coverage.renderer.spa_renderer import SpaRenderer
 from otto.coverage.store.model import (
     BranchHits,
@@ -78,6 +84,10 @@ int double_it(int x) {
 
 int never_called(int x) {
     return x - 1;  // LCOV_EXCL_LINE
+}
+
+int untested(int x) {
+    return x + 7;
 }
 """
 
@@ -237,7 +247,17 @@ def build_fixture_report(base_dir: Path) -> Path:
     # -- utils.c -----------------------------------------------------------
     utils_rec = FileRecord(path=src_dir / "utils.c")
     utils_rec.lines[2] = _line(2, {"unit": 6}, {run_unit: 6})
-    utils_rec.lines[6] = _line(6, {})  # LCOV_EXCL_LINE-marked in source -> s-excl at render
+    # Line 6 is LCOV_EXCL_LINE-marked in the source: the filter stage below
+    # DELETES this record and records 6 in `excluded_lines` instead, which is
+    # what the s-excl row renders from. It is written here rather than simply
+    # omitted so the deletion is the fixture's own observation of the filter
+    # doing its job, not an assumption about it.
+    utils_rec.lines[6] = _line(6, {})
+    # An ordinary uncovered line, which line 6 used to double as. Exclusion now
+    # moves the numbers, so the two states can no longer be the same record:
+    # without this, utils.c would be 1/1 = 100%, inverting the ascending
+    # file-sort order the browser suite pins.
+    utils_rec.lines[10] = _line(10, {})
     # PROJ-9: owns only this one, fully-covered line — never touches
     # main.c, and carries no tracker `url` (PROJ-204 does), exercising
     # TicketIdCell's plain-text render variant.
@@ -260,6 +280,12 @@ def build_fixture_report(base_dir: Path) -> Path:
             as_of=None,
         )
     ]
+
+    # The exclusion filter, exactly where CoverageReporter.run() puts it:
+    # after every fold, before rendering. No configured rules — the built-in
+    # LCOV_EXCL_* families are always on, and they are what utils.c line 6
+    # trips.
+    apply_exclusions(store, [], base_dir)
 
     report_dir = base_dir / "report"
     SpaRenderer(report_dir, project_name="otto example product", prefix=base_dir).render(store)

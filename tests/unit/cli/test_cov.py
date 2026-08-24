@@ -552,8 +552,9 @@ class TestCovReportCollectionModel:
         assert result.exit_code == 0
         assert mock_run_report.call_args.kwargs["ticket_spec"] is None
 
-    def test_extra_markers_threaded_from_settings(self, tmp_path, mock_run_report):
-        """[coverage.exclusions].markers (via _resolve_cov_settings) reach run_coverage_report."""
+    def test_exclusion_rules_threaded_from_settings(self, tmp_path, mock_run_report):
+        """[coverage.exclusions].rules reach run_coverage_report as compiled rules."""
+        from otto.coverage.exclusions.rules import MarkerRule
         from otto.coverage.tiers import TierConfig
 
         host_dir = tmp_path / "cov" / "host1"
@@ -562,15 +563,17 @@ class TestCovReportCollectionModel:
 
         repo_root = tmp_path / "sut"
         tiers = [TierConfig(name="system", kind="e2e", precedence=1, color="green")]
+        rules = [MarkerRule(stat="line", name="MYPROJ_NO_COV")]
         with patch.object(
             cov_module,
             "_resolve_cov_settings",
-            return_value=(repo_root, tiers, ["MYPROJ_NO_COV"], None, None, None),
+            return_value=(repo_root, tiers, rules, None, None, None),
         ):
             result = runner.invoke(cov_app, ["report", str(tmp_path)])
 
         assert result.exit_code == 0
-        assert mock_run_report.call_args.kwargs["extra_markers"] == ["MYPROJ_NO_COV"]
+        threaded = mock_run_report.call_args.kwargs["exclusion_rules"]
+        assert [r.name for r in threaded] == ["MYPROJ_NO_COV"]
 
     def test_explicit_tier_flags_bypass_settings(self, tmp_path, mock_run_report):
         """--tier escape hatch: no settings resolution, repo_root/tier_configs None."""
@@ -714,10 +717,10 @@ class TestCovReportCollectionModelErrors:
         assert "not valid TOML" in mock_err.call_args[0][0]
 
 
-# ── _resolve_cov_settings — [coverage.exclusions].markers wiring ────────────
+# ── _resolve_cov_settings — [coverage.exclusions].rules wiring ─────────────
 
 
-class TestResolveCovSettingsExtraMarkers:
+class TestResolveCovSettingsExclusionRules:
     @staticmethod
     def _repo(coverage_cfg, sut_dir=None):
         repo = MagicMock()
@@ -725,39 +728,39 @@ class TestResolveCovSettingsExtraMarkers:
         repo.sut_dir = sut_dir or Path("/sut")
         return repo
 
-    def test_reads_exclusion_markers_from_settings(self):
+    def test_reads_exclusion_rules_from_settings(self):
         repo = self._repo(
             {
                 "tiers": {"system": {"kind": "e2e", "precedence": 1}},
-                "exclusions": {"markers": ["MYPROJ_NO_COV"]},
+                "exclusions": {"rules": [{"kind": "marker", "name": "MYPROJ_NO_COV"}]},
             }
         )
         with patch("otto.config.get_repos", return_value=[repo]):
-            repo_root, tier_configs, extra_markers, thresholds, ticket_spec, _overrides = (
+            repo_root, tier_configs, exclusion_rules, thresholds, ticket_spec, _overrides = (
                 cov_module._resolve_cov_settings()
             )
         assert repo_root == repo.sut_dir
         assert tier_configs is not None
-        assert extra_markers == ["MYPROJ_NO_COV"]
+        assert [r.name for r in exclusion_rules] == ["MYPROJ_NO_COV"]
         assert thresholds == Thresholds()
         assert ticket_spec is None
 
-    def test_no_exclusions_table_yields_empty_markers(self):
+    def test_no_exclusions_table_yields_no_rules(self):
         repo = self._repo({"tiers": {"system": {"kind": "e2e", "precedence": 1}}})
         with patch("otto.config.get_repos", return_value=[repo]):
-            _repo_root, _tier_configs, extra_markers, _, _ticket_spec, _overrides = (
+            _repo_root, _tier_configs, exclusion_rules, _, _ticket_spec, _overrides = (
                 cov_module._resolve_cov_settings()
             )
-        assert extra_markers == []
+        assert exclusion_rules == []
 
-    def test_no_cov_repo_yields_empty_markers(self):
+    def test_no_cov_repo_yields_no_rules(self):
         with patch("otto.config.get_repos", return_value=[]):
-            repo_root, tier_configs, extra_markers, thresholds, ticket_spec, _overrides = (
+            repo_root, tier_configs, exclusion_rules, thresholds, ticket_spec, _overrides = (
                 cov_module._resolve_cov_settings()
             )
         assert repo_root is None
         assert tier_configs is None
-        assert extra_markers == []
+        assert exclusion_rules == []
         assert thresholds is None
         assert ticket_spec is None
 
@@ -771,7 +774,7 @@ class TestResolveCovSettingsExtraMarkers:
             }
         )
         with patch("otto.config.get_repos", return_value=[repo]):
-            _repo_root, _tier_configs, _extra_markers, _thresholds, ticket_spec, _overrides = (
+            _repo_root, _tier_configs, _exclusion_rules, _thresholds, ticket_spec, _overrides = (
                 cov_module._resolve_cov_settings()
             )
         assert ticket_spec is not None
@@ -805,7 +808,7 @@ class TestResolveCovSettingsExtraMarkers:
             sut_dir=sut_dir,
         )
         with patch("otto.config.get_repos", return_value=[repo]):
-            _repo_root, _tier_configs, _extra_markers, _thresholds, _ticket_spec, overrides = (
+            _repo_root, _tier_configs, _exclusion_rules, _thresholds, _ticket_spec, overrides = (
                 cov_module._resolve_cov_settings()
             )
         assert overrides is not None

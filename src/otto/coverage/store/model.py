@@ -26,7 +26,7 @@ Any string is a valid tier name; this constant spares callers a string
 literal when they mean the canonical system-coverage tier.
 """
 
-STORE_FORMAT_VERSION = 6
+STORE_FORMAT_VERSION = 7
 """``store.json`` schema version, bumped on breaking on-disk changes.
 
 Version 2 is the first version to carry an explicit ``"format"`` key —
@@ -49,6 +49,12 @@ is configured and loaded, independent of whether it carries any asserted
 entries — added before v6 shipped, so no further bump), and a per-line
 ``asserted`` map (tier -> override-entry ids) marking lines whose only
 hits in that tier are override-sourced.
+Version 7 adds the exclusion-filter surface: a per-file
+``branch_excluded_lines`` list (lines whose branch records were removed
+while the line itself still counts), and — more importantly — changes what
+the file means: excluded lines are now DELETED from ``lines`` rather than
+merely annotated, so every percentage in the file already has them out of
+the denominator.
 There is no migration shim: a file that does not declare this exact
 version fails loud in :meth:`CoverageStore.load` with a message telling
 the caller to regenerate it, rather than silently mis-reading
@@ -343,12 +349,34 @@ class FileRecord:
     path: Path
     lines: dict[int, LineRecord] = field(default_factory=dict)
 
-    # Source-scanned exclusion markers (spec §8/§9 frontend contract). This
-    # is render-time state, not measured coverage: the renderer scans the
-    # file's source for ``LCOV_EXCL_*`` (and any extra markers) once and
-    # annotates the store here before it is serialised, so ``store.json``
-    # consumers can distinguish excluded lines from plain misses.
     excluded_lines: set[int] = field(default_factory=set)
+    """Lines the exclusion rules excluded (v7).
+
+    A record of what was REMOVED, not an annotation on data that is still
+    here: ``otto.coverage.exclusions.apply`` pops every one of these line
+    numbers out of :attr:`lines` before any percentage is computed, so an
+    excluded line is already out of the denominator. The set is the rules'
+    verdict on the source, so it also names excluded lines the compiler
+    never emitted a record for — which is what lets the renderer mark them
+    excluded rather than blank.
+    """
+
+    branch_excluded_lines: set[int] = field(default_factory=set)
+    """Lines whose BRANCHES were excluded while the line itself still counts.
+
+    Serialized into ``store.json`` for debuggability but deliberately not
+    emitted into the SPA chunk — nothing renders it.
+
+    Not a uniform set, and nothing should compute over it as though it were:
+    its two contributors answer different questions. A source-scanned branch
+    rule records every line it matches that no ``stat = "line"`` rule also
+    deleted — the exclusion of the whole line subsumes the exclusion of its
+    branches — so a line that had no branch records, or no
+    :class:`LineRecord` at all, still lands here, on the same "verdict on the
+    source" contract :attr:`excluded_lines` carries. A ``stat = "branch"``
+    path rule instead records only the lines that actually HAD branch
+    records, that being the only thing knowable before it clears them.
+    """
 
     def get_or_create_line(self, line_number: int) -> LineRecord:
         """Return the :class:`LineRecord` for *line_number*, creating it if absent."""
@@ -428,6 +456,7 @@ class FileRecord:
             "path": str(self.path),
             "lines": {str(lineno): self._line_to_dict(rec) for lineno, rec in self.lines.items()},
             "excluded_lines": sorted(self.excluded_lines),
+            "branch_excluded_lines": sorted(self.branch_excluded_lines),
         }
 
 
@@ -531,6 +560,10 @@ class CoverageStore:
             self._files[record.path].merge(record)
         else:
             self._files[record.path] = record
+
+    def remove_file(self, path: Path) -> None:
+        """Drop a file record entirely (exclusion spec: ``kind = "path"``)."""
+        self._files.pop(path, None)
 
     def files(self) -> Iterator[FileRecord]:
         """Yield all :class:`FileRecord` objects in sorted path order."""
@@ -668,6 +701,7 @@ class CoverageStore:
         for fd in files_data:
             record = FileRecord(path=Path(fd["path"]))
             record.excluded_lines = set(fd.get("excluded_lines") or [])
+            record.branch_excluded_lines = set(fd.get("branch_excluded_lines") or [])
             for lineno_str, ld in fd["lines"].items():
                 hits = LineHits(counts=dict(ld["hits"]))
                 branches = []

@@ -142,53 +142,53 @@ class TestCoverageReporter:
         assert store.file_count() == 0
 
 
-class TestExclusionDisplayIsRenderTime:
-    """Routed from Task 10's review: exclusion display is render-time, not baked
-    into the store by the reporter (single-valued LineRecord.state can't express
-    "excluded always wins"). ``extra_markers`` still flows reporter -> renderer.
+class TestExclusionIsAFilterStage:
+    """Reverses the former "exclusion is render-time" guard, deliberately.
+
+    That guard existed because a single-valued LineRecord.state cannot
+    express "excluded always wins" over covered/stale/aging, so exclusion was
+    kept out of the store. This design deletes the records instead of
+    assigning a state, so there is no precedence to express and the original
+    objection does not apply. Exclusion must now happen in the reporter,
+    before attribution, and the renderer must NOT scan source.
     """
 
-    def test_apply_exclusions_removed_from_reporter(self):
-        assert not hasattr(CoverageReporter, "_apply_exclusions")
+    def test_renderer_no_longer_scans_source(self):
+        from otto.coverage.renderer import spa_data
+
+        assert not hasattr(spa_data, "scan_excluded_lines")
 
     @pytest.mark.asyncio
-    async def test_run_passes_extra_markers_to_renderer(self, tmp_path, monkeypatch):
-        # reporter.py defers `from .renderer.spa_renderer import SpaRenderer`
-        # to the construction site inside run() (import-budget guard: keeps
-        # SpaRenderer's transitive imports off the `otto cov --help` path) —
-        # so the name to patch is the renderer module's own attribute, not a
-        # module-level binding on `reporter` (there isn't one anymore).
+    async def test_run_applies_exclusions_before_rendering(self, tmp_path, monkeypatch):
+        # reporter.py defers both imports to their use sites inside run()
+        # (import-budget guard: keeps their transitive imports off the
+        # `otto cov --help` path), so each name is patched on its own module
+        # rather than as a module-level binding on `reporter`.
+        from otto.coverage.exclusions import apply as apply_module
         from otto.coverage.renderer import spa_renderer as spa_renderer_module
 
-        captured: dict[str, object] = {}
+        order: list[str] = []
+
+        def fake_apply(store, rules, root):
+            order.append("apply")
 
         class FakeRenderer:
-            def __init__(
-                self,
-                output_dir,
-                *,
-                project_name="Coverage Report",
-                extra_markers=None,
-                prefix=None,
-            ):
-                captured["output_dir"] = output_dir
-                captured["extra_markers"] = extra_markers
-                captured["prefix"] = prefix
+            def __init__(self, output_dir, *, project_name="Coverage Report", prefix=None):
+                pass
 
             def render(self, store):
-                captured["rendered"] = store
+                order.append("render")
 
+        monkeypatch.setattr(apply_module, "apply_exclusions", fake_apply)
         monkeypatch.setattr(spa_renderer_module, "SpaRenderer", FakeRenderer)
 
         reporter = CoverageReporter(
             gcda_dirs=[],
             source_root=tmp_path,
             output_dir=tmp_path / "out",
-            collection=CollectionInputs(extra_markers=["MYPROJ_NO_COV"]),
         )
         await reporter.run()
-        assert captured["extra_markers"] == ["MYPROJ_NO_COV"]
-        assert "rendered" in captured
+        assert order == ["apply", "render"]
 
 
 def _git(repo: Path, tmp_path: Path, *args: str) -> None:

@@ -372,10 +372,99 @@ class CoverageTierSpec(OttoModel):
         return v
 
 
-class CoverageExclusionsSpec(OttoModel):
-    """``[coverage.exclusions]`` — extra exclusion-marker strings."""
+def _compilable_pattern(v: str) -> str:
+    """Compile *v* here, at parse, so an unusable regex is a settings error.
 
-    markers: list[str] = Field(default_factory=list)
+    Same reason ``config.repo`` compiles lab-source regexes at parse: the
+    alternative is a coverage run that dies (or silently matches nothing)
+    long after the config was accepted. ``load_exclusion_rules`` compiles
+    again for its own use — the duplication is inherent to this repo's
+    validate-then-re-read-raw split, which already duplicates the
+    exactly-one-matcher rule.
+    """
+    try:
+        re.compile(v)
+    except re.error as e:
+        raise ValueError(f"invalid regex {v!r} ({e})") from e
+    return v
+
+
+class MarkerRuleSpec(OttoModel):
+    """``kind = "marker"`` — a marker family named by its base."""
+
+    kind: Literal["marker"]
+    name: str
+    stat: Literal["line", "branch"] = "line"
+
+    @field_validator("name")
+    @classmethod
+    def _base_is_a_token(cls, v: str) -> str:
+        """Refuse a base that is empty or holds whitespace.
+
+        The derived members (``{base}_LINE`` and friends) are searched as
+        bare substrings, so an empty base yields ``_LINE`` and matches
+        inside ordinary identifiers like ``MAX_LINE_LEN``. Exclusion has no
+        per-rule accounting by design, so the damage would be silent.
+        Duplicated in ``coverage.exclusions.rules`` for the same reason
+        every other rule check is: the coverage package re-reads the raw
+        dict rather than this model.
+        """
+        if not v or any(c.isspace() for c in v):
+            raise ValueError(f"marker name must be a non-empty token with no whitespace, got {v!r}")
+        return v
+
+
+class PreprocessorRuleSpec(OttoModel):
+    """``kind = "preprocessor"`` — exactly one of ``pattern`` or ``macros``."""
+
+    kind: Literal["preprocessor"]
+    pattern: str | None = None
+    macros: list[str] = Field(default_factory=list)
+    stat: Literal["line", "branch"] = "line"
+
+    @field_validator("pattern")
+    @classmethod
+    def _pattern_compiles(cls, v: str | None) -> str | None:
+        return v if v is None else _compilable_pattern(v)
+
+    @model_validator(mode="after")
+    def _exactly_one_matcher(self) -> "PreprocessorRuleSpec":
+        if bool(self.pattern) == bool(self.macros):
+            raise ValueError("a preprocessor rule must set exactly one of 'pattern' or 'macros'")
+        return self
+
+
+class PathRuleSpec(OttoModel):
+    """``kind = "path"`` — whole-file exclusion by glob."""
+
+    kind: Literal["path"]
+    patterns: list[str]
+    stat: Literal["line", "branch"] = "line"
+
+
+class RegexRuleSpec(OttoModel):
+    """``kind = "regex"`` — exclude any source line matching the pattern."""
+
+    kind: Literal["regex"]
+    pattern: str
+    stat: Literal["line", "branch"] = "line"
+
+    @field_validator("pattern")
+    @classmethod
+    def _pattern_compiles(cls, v: str) -> str:
+        return _compilable_pattern(v)
+
+
+ExclusionRuleSpec = Annotated[
+    MarkerRuleSpec | PreprocessorRuleSpec | PathRuleSpec | RegexRuleSpec,
+    Field(discriminator="kind"),
+]
+
+
+class CoverageExclusionsSpec(OttoModel):
+    """``[coverage.exclusions]`` — rules that remove lines from the data."""
+
+    rules: list[ExclusionRuleSpec] = Field(default_factory=list)
 
 
 class CoverageReportSpec(OttoModel):

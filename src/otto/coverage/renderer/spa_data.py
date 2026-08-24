@@ -30,7 +30,6 @@ from uuid import uuid4
 
 from ...version import get_version
 from ..colors import DEFAULT_TIER_COLORS, STATE_COLORS
-from ..exclusions import scan_excluded_lines
 from ..store.model import STAT_TYPES, CoverageStore, FileRecord, LineRecord, RunRecord
 from ..ticket_export import group_ranges as _group_ranges
 
@@ -500,12 +499,13 @@ def build_index_payload(
 def _build_file_chunk(
     fr: FileRecord,
     prefix: Path | None,
-    extra_markers: list[str] | None,
     stamp: str,
 ) -> dict[str, Any]:
-    """Build one ``FileChunk`` dict, annotating ``fr.excluded_lines`` as a side effect.
+    """Build one ``FileChunk`` dict, reading ``fr.excluded_lines`` off the record.
 
-    Mirrors the retired Jinja renderer's source read + exclusion scan.
+    The annotation is produced upstream by the reporter's exclusion filter
+    stage, which deleted the excluded line records before rendering began.
+    This function only reads it; the renderer no longer scans source.
     """
     try:
         source_text = fr.path.read_text(errors="replace")
@@ -517,12 +517,6 @@ def _build_file_chunk(
         )
         source_text = ""
 
-    excluded_linenos = scan_excluded_lines(source_text, extra_markers or None)
-    # Annotate the store (spec §9 frontend contract): the reporter renders
-    # before it saves store.json, so this flows through to the serialised
-    # store for frontend consumers, exactly like the retired Jinja renderer did.
-    fr.excluded_lines = excluded_linenos
-
     lines_json = {str(lineno): _line_to_json(lr) for lineno, lr in fr.lines.items()}
 
     return {
@@ -531,7 +525,7 @@ def _build_file_chunk(
         "path": _display_path(fr, prefix),
         "source": source_text,
         "lines": lines_json,
-        "excluded": sorted(excluded_linenos),
+        "excluded": sorted(fr.excluded_lines),
     }
 
 
@@ -541,16 +535,15 @@ def emit_chunks(
     *,
     project_name: str,
     prefix: Path | None,
-    extra_markers: list[str] | None,
     stamp: str,
 ) -> None:
     """Write ``cov_data/index.js`` and one ``cov_data/files/<mangled>.js`` per file.
 
-    Every file's source-exclusion scan runs first (annotating
-    ``FileRecord.excluded_lines`` on the store), so the index payload's
-    per-node ``flags.excluded`` counts reflect it — the reporter's later
-    ``store.save()`` then persists the same annotation, exactly like the
-    retired Jinja renderer did.
+    Exclusion is already resolved by the time this runs: the reporter's
+    filter stage deleted the excluded line records and annotated
+    ``FileRecord.excluded_lines``, so the index payload's per-node
+    ``flags.excluded`` counts and each chunk's ``excluded`` list both read
+    that annotation rather than re-deriving it from source.
 
     Also writes one ``cov_data/tickets/<mangled>.js`` per ticket carrying its
     missing-line detail (deferred off ``index.js`` — see
@@ -562,7 +555,7 @@ def emit_chunks(
     files_dir.mkdir(parents=True, exist_ok=True)
 
     for fr in store.files():
-        chunk = _build_file_chunk(fr, prefix, extra_markers, stamp)
+        chunk = _build_file_chunk(fr, prefix, stamp)
         out = files_dir / f"{chunk['chunk']}.js"
         out.write_text(f"window.__OTTO_COV_FILE__({json.dumps(chunk)});\n")
 

@@ -47,6 +47,7 @@ if TYPE_CHECKING:
     from ..host.local_host import LocalHost
     from ..host.toolchain import Toolchain
     from .capture.model import Capture
+    from .exclusions.rules import ExclusionRule
     from .overrides import OverrideConfig
     from .tickets import TicketSpec
     from .tiers import TierConfig
@@ -76,13 +77,14 @@ class CollectionInputs:
       ``tier_order`` / ``tier_colors`` and drives unit-harvest.
     - ``capture_paths``: ``capture.json`` files (one per board) to fold in
       under their own tier, subject to the HEAD base_commit guard.
-    - ``extra_markers``: Extra source exclusion markers (spec §8).
+    - ``exclusion_rules``: Compiled ``[coverage.exclusions]`` rules. The
+      built-in ``LCOV_EXCL_*`` families always apply and are not listed here.
     """
 
     repo_root: Path | None = None
     tier_configs: "list[TierConfig]" = field(default_factory=list)
     capture_paths: list[Path] = field(default_factory=list)
-    extra_markers: list[str] = field(default_factory=list)
+    exclusion_rules: "list[ExclusionRule]" = field(default_factory=list)
 
 
 def _read_cov_meta(cov_dirs: list[Path]) -> dict[str, Any]:
@@ -264,7 +266,7 @@ class CoverageReporter:
         self.repo_root: Path | None = coll.repo_root
         self.tier_configs: "list[TierConfig]" = list(coll.tier_configs)
         self.capture_paths: list[Path] = list(coll.capture_paths)
-        self.extra_markers: list[str] = list(coll.extra_markers)
+        self.exclusion_rules: "list[ExclusionRule]" = list(coll.exclusion_rules)
         self.prefix = prefix
         self.thresholds: Thresholds = thresholds or Thresholds()
         self.ticket_spec: "TicketSpec | None" = ticket_spec
@@ -464,6 +466,23 @@ class CoverageReporter:
             self._load_manual_store(store, manual_captures)
             self._fill_tier_colors(store)
 
+            # 3b-half. Exclusion filter. Position is load-bearing three ways:
+            # after every fold (one pass covers .gcda captures, harvested
+            # tiers, capture.json and the manual store); after the dirty-tree
+            # remap in _load_captures (so the line numbers deleted here share
+            # the working-tree coordinate space of the source being scanned);
+            # and before attribution (so an excluded line never reaches
+            # per-ticket coverage or override resolution).
+            #
+            # Runs unconditionally: the built-in LCOV_EXCL_* families apply
+            # even with no configured rules, which is how otto now enforces
+            # the standard markers on harvested tracefiles that geninfo never
+            # touched. Deferred import keeps the package off the `otto cov
+            # --help` path (import-budget guard), same as SpaRenderer below.
+            from .exclusions.apply import apply_exclusions
+
+            apply_exclusions(store, self.exclusion_rules, self.repo_root or self.source_root)
+
             # 3c. Per-ticket attribution (design §6): a no-op unless both
             # ticket_spec is configured and repo_root is known (only the
             # collection-model path resolves one — the git-less --tier
@@ -479,15 +498,14 @@ class CoverageReporter:
                 if self.overrides is not None and attribution is not None:
                     self._apply_overrides(store, self.repo_root, *attribution)
 
-            # 4. Render the SPA report. Exclusion display is render-time (spec
-            # §8/§9): a single-valued LineRecord.state can't express "excluded
-            # always wins" over covered/stale/aging, so the reporter never
-            # bakes state="excluded" into the store — it just forwards the
-            # extra marker strings for the renderer's own per-file source scan.
+            # 4. Render the SPA report. Exclusion is no longer a render-time
+            # concern: the filter stage above already deleted the excluded
+            # records and annotated FileRecord.excluded_lines, so the renderer
+            # reads that annotation instead of scanning source itself.
             logger.info("=== Rendering coverage report ===")
             # Deferred so importing this module (pulled onto the CLI startup
             # path via cli.cov) does not drag in SpaRenderer's transitive
-            # imports (spa_data, and through it colors/exclusions) —
+            # imports (spa_data, and through it colors) —
             # enforced by the import-budget guard
             # (tests/unit/import_budget/test_import_budget.py).
             from .renderer.spa_renderer import SpaRenderer
@@ -495,7 +513,6 @@ class CoverageReporter:
             renderer = SpaRenderer(
                 self.output_dir,
                 project_name=self.project_name,
-                extra_markers=self.extra_markers,
                 prefix=self.prefix,
             )
             renderer.render(store)
@@ -900,7 +917,7 @@ async def run_coverage_report(  # noqa: PLR0913 — wide entry point: each kwarg
     *,
     repo_root: Path | None = None,
     tier_configs: "list[TierConfig] | None" = None,
-    extra_markers: list[str] | None = None,
+    exclusion_rules: "list[ExclusionRule] | None" = None,
     prefix: Path | None = None,
     thresholds: "Thresholds | None" = None,
     ticket_spec: "TicketSpec | None" = None,
@@ -935,6 +952,13 @@ async def run_coverage_report(  # noqa: PLR0913 — wide entry point: each kwarg
     conventional ``system`` tier via *tier_specs* (default ``[("system",
     None)]``); explicit ``--tier`` specs, being a git-less escape hatch,
     never reach this mode (the CLI routes them through the legacy path).
+
+    *exclusion_rules* are the compiled ``[coverage.exclusions]`` rules. They
+    reach :class:`CoverageReporter` on the collection-model path only, but the
+    filter stage itself runs on **both** paths, because the built-in
+    ``LCOV_EXCL_*`` families always apply — so the standard markers are now
+    honored on harvested tracefiles that ``geninfo`` never saw, not just on
+    captures otto ran ``geninfo`` for.
 
     *thresholds* is the render thresholds from ``[coverage.report]``;
     ``None`` (the default) selects :class:`~otto.coverage.store.model.Thresholds`'s
@@ -973,7 +997,7 @@ async def run_coverage_report(  # noqa: PLR0913 — wide entry point: each kwarg
         tier_specs=tier_specs,
         repo_root=repo_root,
         tier_configs=tier_configs,
-        extra_markers=extra_markers,
+        exclusion_rules=exclusion_rules,
         prefix=prefix,
         thresholds=thresholds,
         ticket_spec=ticket_spec,
@@ -1030,7 +1054,7 @@ async def _run_collection_report(  # noqa: PLR0913 — wide internal helper: mir
     tier_specs: list[TierSpec] | None,
     repo_root: Path | None,
     tier_configs: "list[TierConfig] | None",
-    extra_markers: list[str] | None,
+    exclusion_rules: "list[ExclusionRule] | None",
     prefix: Path | None = None,
     thresholds: "Thresholds | None" = None,
     ticket_spec: "TicketSpec | None" = None,
@@ -1069,7 +1093,7 @@ async def _run_collection_report(  # noqa: PLR0913 — wide internal helper: mir
             repo_root=repo_root,
             tier_configs=list(tier_configs) if tier_configs else [],
             capture_paths=capture_paths,
-            extra_markers=list(extra_markers) if extra_markers else [],
+            exclusion_rules=list(exclusion_rules) if exclusion_rules else [],
         ),
         prefix=prefix,
         thresholds=thresholds,
