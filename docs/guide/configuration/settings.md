@@ -288,6 +288,19 @@ so that is where a Python requirement belongs. A repo with no `pyproject.toml`
 declares no Python dependencies to otto at all — it is skipped by `otto env`,
 and its `libs` reach `sys.path` at bootstrap exactly as before.
 
+The two are also read at different moments, which is the clearest way to keep
+them apart:
+
+| Where | Read by | To decide |
+| ----- | ------- | --------- |
+| `[dependencies]` | the dependency pass at bootstrap | the ORDER repos load in, and which are skipped |
+| `[project.dependencies]` | the preflight, before every ordinary command | whether this environment can satisfy the repo at all |
+
+So a missing *repo* is a load-order problem and a missing *package* is an
+environment problem, and each is reported by the thing that owns it — see
+{doc}`../cli/env/index`, which also documents what the preflight does not
+cover.
+
 ## Team setup checklist
 
 Most of otto's configuration is a **one-time, team-level** decision. New

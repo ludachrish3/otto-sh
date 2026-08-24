@@ -81,6 +81,65 @@ Activate it with:
   version. A pipx-global otto would otherwise import against the wrong
   site-packages and the environment would be decoration.
 
+## The dependency preflight
+
+You do not have to remember to run `sync`. Before any ordinary command does its
+work, otto checks each repo's declared Python requirements against the
+interpreter it is running on, and stops if an active repo's are unsatisfied:
+
+```console
+$ otto --lab unix run use-beetroot
+error: repo 'repo4' requires 'otto-fixture-beetroot >= 0.1' — not satisfied in this environment (found: none)
+  fix: otto env sync
+  or:  uv pip install 'otto-fixture-beetroot >= 0.1'
+```
+
+`found: none` distinguishes *absent* from *too old* (`found: 2.12`), which are
+different problems with different fixes. The second line always names
+`env sync`; the third is for operators who manage the environment by hand.
+
+A repo that is **not part of this run** warns instead, and the run continues:
+
+```console
+$ otto -E repo4 --lab unix run test-instruction
+warning: repo 'repo4' requires 'otto-fixture-beetroot >= 0.1' — not satisfied in this environment (found: none), but repo4 is inactive for this run — continuing without it
+```
+
+The check is metadata only — `importlib.metadata` lookups and requirement
+evaluation, no network and no imports — which is what makes it affordable on
+every invocation. It reads the **installed** distribution's metadata when the
+repo is installed here (exact, and the only thing that can answer for
+`dynamic = ["dependencies"]`) and the repo's `pyproject.toml` otherwise. Base
+dependencies only, direct dependencies only: an extra's requirements are not
+yours, and transitive consistency is the installer's promise.
+
+### Where it runs, and what that excludes
+
+It runs **after the lab loads and before anything is contacted**. That position
+is what lets it ask the real activation question — whether *this* repo is part
+of *this* run — rather than a pre-lab approximation of it. A repo whose
+`host_patterns` match no host in the loaded lab is genuinely inactive, and
+warns; approximating that before the lab exists would refuse the run instead.
+
+Four consequences worth knowing:
+
+- **`otto env` itself is never gated.** It is lab-free, so it never reaches the
+  check. The verb the message names always runs.
+- **`--help` and completion never pay for it.** Neither reaches the point where
+  the check happens.
+- **Library callers are not checked.** Code driving otto through
+  `open_context` gets no preflight; the check is a CLI gate.
+- **An eager import still fails at bootstrap.** If a repo's `init` module
+  imports a missing package at module scope, it fails while otto is registering
+  the repo — before the check can speak — and you get the generic "failed to
+  load" report with the `ImportError`. Importing inside the function that needs
+  it is what lets the preflight give you the better message.
+
+Repos with no `pyproject.toml` declare no Python requirements to otto and are
+always satisfied. A repo whose dependencies are dynamic and which is not
+installed here cannot be checked at all; otto says so in one line and checks
+nothing rather than guessing.
+
 ## Backends
 
 uv when it is on `PATH`, otherwise the standard library's `venv` plus the
