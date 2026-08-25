@@ -5,6 +5,45 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.7] - 2026-08-25
+
+### Added
+
+- **matrix**: publish what otto can do where, and what proved it
+- **env**: the bootstrap dependency preflight — refuse before the run, not during it
+- **env**: the otto env command group — create, sync and show the orchestration venv
+- **config**: ~/.otto, the workspace home, and the caches that move into it
+- **BREAKING** **cov**: exclusion rules that remove lines and branches from the data
+- **project**: per-invocation project activation — the labs decide, -I/-E override
+
+
+### Changed
+
+- **bed**: the labs are named for what they are, not for produce
+
+
+### Documentation
+
+- **install**: download wheels per interpreter, and gate the claim
+- **env**: the dependency preflight, and what it does not cover
+- **cli**: the otto env verb tree and the multi-project model
+- **spec**: coverage exclusion rules that move the numbers
+- **todo**: the integration conftest reaps docker for every test under it
+- **spec**: the project switches say what they switch
+- **spec**: the workspace home — ~/.otto keyed by workspace at the top
+- **spec**: envs live under ~/.otto, otto's user-level home
+- **spec**: multi-project activation and environments — two approved designs
+- **spec**: the axis dataclass is HostAxes, derived from the built host
+- **spec**: a support-matrix cell must name the observable it measured
+- **zephyr**: the bed documentation describes the bed that exists
+
+
+### Fixed
+
+- **hooks**: non-interactive commits get no Assisted-by trailer
+- **tests**: sample the history file only after its writer has exited
+
+
 ## [0.8.6] - 2026-08-22
 
 ### Added
@@ -1385,7 +1424,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - added GitHub templates
 - set up release management
 
-[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.8.6...HEAD
+[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.8.7...HEAD
+[0.8.7]: https://github.com/ludachrish3/otto-sh/compare/v0.8.6...v0.8.7
 [0.8.6]: https://github.com/ludachrish3/otto-sh/compare/v0.8.5...v0.8.6
 [0.8.5]: https://github.com/ludachrish3/otto-sh/compare/v0.8.4...v0.8.5
 [0.8.4]: https://github.com/ludachrish3/otto-sh/compare/v0.8.3...v0.8.4
