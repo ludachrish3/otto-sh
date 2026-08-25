@@ -192,7 +192,9 @@ offline install, use the downloaded wheel as the starting point for the air-gapp
 flow below. In Step 1, point `pip download` at that local file instead of the package
 name — `pip download ./otto_sh-%OTTO_VERSION%-py3-none-any.whl --dest ./wheels` with the
 same `--python-version`, `--platform`, and `--only-binary` flags — and its dependencies
-land in `./wheels` alongside it.
+land in `./wheels` alongside it. The otto wheel itself is pure Python
+(`py3-none-any`), but its dependencies are not: run one pass per target Python, under
+a matching interpreter, exactly as {ref}`Step 1 <air-gap-download>` describes.
 
 ## From source (development)
 
@@ -224,33 +226,74 @@ Pin whatever version you transfer — `uv self update` cannot work offline. The 
 artifact list lives in
 [uv's installation docs](https://docs.astral.sh/uv/getting-started/installation/).
 
+(air-gap-download)=
+
 ### Step 1: Download all wheels (internet-connected machine)
 
 Fetch otto and every runtime dependency straight from PyPI as wheel files. No clone
 of the otto repository and no Node toolchain is needed — the published wheel already
-embeds the web frontends. Target the Python version and platform of the *air-gapped*
-host:
+embeds the web frontends.
 
-```bash
-pip download otto-sh \
-    --dest ./wheels \
-    --python-version 3.10 \
-    --platform manylinux2014_x86_64 \
-    --only-binary :all:
-pip download uv --dest ./wheels    # optional: uv itself — same flags; its wheels are native
+Two things vary per Python version, and both have to be right or the bundle is
+incomplete: the **binary wheels**, which several dependencies ship one-per-interpreter,
+and the **dependency set itself**, which environment markers change from version to
+version.
+
+```{warning}
+**Run each download under an interpreter whose minor version matches the target.**
+`--python-version` chooses which *wheel files* are compatible and enforces
+`Requires-Python` — but it does **not** change how environment markers are evaluated.
+Pip resolves `; python_version < "3.11"` against the interpreter that is *running*, so
+downloading for 3.10 while standing on 3.13 silently omits every marker-conditional
+dependency (`exceptiongroup`, `backports-asyncio-runner`, and the older
+`markdown-it-py` fork). Nothing warns you: the download succeeds, the archive
+transfers, and the failure surfaces at `pip install` time *inside the gap*, where it
+is most expensive to fix.
 ```
 
-To pin an exact otto version, use `pip download otto-sh==%OTTO_VERSION%`.
+Loop over every Python version your air-gapped hosts run, collecting all of it into a
+single directory:
+
+```bash
+# `--no-project` matters: without it, `uv run --python` rebuilds the current
+# directory's .venv at each version. `--with pip` supplies pip to the ephemeral env.
+for PYVER in 3.10 3.11 3.12 3.13 3.14; do
+    uv run --no-project --python "$PYVER" --with pip -- python -m pip download otto-sh \
+        --dest ./wheels \
+        --python-version "$PYVER" \
+        --platform manylinux2014_x86_64 \
+        --only-binary :all:
+done
+```
+
+Trim the list to the versions you actually deploy — every extra version costs only the
+handful of wheels unique to it. One shared `./wheels` directory is correct and
+intended: wheel filenames encode their own compatibility, identical files collapse, and
+`--find-links` serves the whole set to every interpreter. For the five versions above
+otto resolves to roughly 55 wheels, of which `pydantic-core`, `cffi`, and `tomli`
+contribute five each.
+
+Without uv on the staging machine, run the same `pip download` under each interpreter
+directly (`python3.12 -m pip download …`); the rule is the interpreter, not the tool.
+
+To pin an exact otto version, use `pip download otto-sh==%OTTO_VERSION%`. To bring uv
+itself across, add `pip download uv --dest ./wheels` with the same flags — its wheels
+are platform-native.
 
 ```{note}
-Three of otto's transitive dependencies ship **platform-specific binary wheels**:
-`cryptography`, `cffi`, and `pydantic-core`.  The `--platform` and
-`--python-version` flags must match the target host.  Common platform tags:
+**Platform-specific** and **Python-version-specific** are separate axes, and otto's
+dependencies sit on both. `--platform` must match the target host's architecture;
+`--python-version` (plus the matching interpreter, above) must match its Python. The
+{ref}`wheel-matrix table <native-extension-dependencies>` lists which dependency is
+which. Common platform tags:
 
 - `manylinux2014_x86_64` — most Linux x86-64 systems
 - `manylinux2014_aarch64` — Linux ARM64
 - `macosx_11_0_arm64` — macOS Apple Silicon
 - `win_amd64` — Windows 64-bit
+
+Hosts on more than one architecture need one pass per `--platform` as well, into the
+same directory.
 ```
 
 **uv-flavored variant.** uv has no `pip download` equivalent, so the lockfile-faithful
@@ -259,11 +302,16 @@ route goes through an export. From a project repo with the recommended
 
 ```bash
 uv export --no-dev --no-hashes > requirements.txt
-pip download -r requirements.txt --dest ./wheels \
-    --python-version 3.10 --platform manylinux2014_x86_64 --only-binary :all:
+for PYVER in 3.10 3.11 3.12 3.13 3.14; do
+    uv run --no-project --python "$PYVER" --with pip -- python -m pip download \
+        -r requirements.txt --dest ./wheels \
+        --python-version "$PYVER" --platform manylinux2014_x86_64 --only-binary :all:
+done
 ```
 
-This downloads the *exact* locked versions of otto and your extra packages.
+This downloads the *exact* locked versions of otto and your extra packages. The export
+is written once and is version-agnostic — it keeps each dependency's markers — so the
+per-interpreter rule applies to the `pip download` half exactly as it does above.
 
 ### Step 2: Transfer across the gap
 
@@ -456,17 +504,50 @@ Otto's direct runtime dependencies (declared in `pyproject.toml` under
 | `typing-extensions` | 4.12.0 | Backport of `typing.override` (PEP 698) for Python < 3.12 |
 | `uvicorn` | 0.42.0 | ASGI server for the monitor dashboard |
 
-### Native-extension transitive dependencies
+(native-extension-dependencies)=
 
-These pull in additional transitive dependencies (approximately 25 packages total at
-runtime).  Notable transitive dependencies with **native (C/Rust) extensions** that
-require platform-specific wheels:
+### Native-extension dependencies
 
-| Package | Pulled in by | Notes |
-| ------- | ------------ | ----- |
-| `cryptography` | asyncssh | SSH encryption; links against OpenSSL |
-| `cffi` | cryptography | C FFI bindings |
-| `pydantic-core` | pydantic | Rust-based data validation |
+The direct dependencies above pull in further packages of their own — about 42 in a
+complete Linux runtime install. Most are pure Python and ship a single
+`py3-none-any` wheel that works everywhere. These four do not: they carry **native
+(C/Rust) extensions**, so their wheels are platform-specific, and the "Wheel matrix"
+column says whether they are *also* Python-version-specific.
+
+| Package | Pulled in by | Wheel matrix | Notes |
+| ------- | ------------ | ------------ | ----- |
+| `cffi` | cryptography | per-version | C FFI bindings |
+| `cryptography` | asyncssh | abi3 | SSH encryption; links against OpenSSL |
+| `pydantic-core` | pydantic | per-version | Rust-based data validation |
+| `tomli` | otto (direct) | per-version + pure fallback | TOML parsing |
+
+Reading the matrix column:
+
+`abi3`
+: Built against CPython's stable ABI, so **one wheel covers a range** of versions —
+  `cryptography`'s `cp39-abi3` wheel installs on 3.9 and every later interpreter.
+
+`per-version`
+: **One wheel per CPython minor.** `pydantic-core` publishes `cp310`, `cp311`,
+  `cp312`, `cp313`, and `cp314` builds; the 3.12 wheel will not install on 3.13.
+  Note that `pydantic` itself is pure Python — it is this compiled core that has to
+  match the interpreter.
+
+`per-version + pure fallback`
+: Per-version binaries for speed, plus a `py3-none-any` wheel that any interpreter can
+  fall back to. Missing the binary costs performance, not correctness.
+
+This is why {ref}`Step 1 <air-gap-download>` loops over interpreters instead of
+downloading once: a bundle built only for 3.12 carries exactly one of
+`pydantic-core`'s five wheels.
+
+```{note}
+This table is gated, not hand-maintained on trust:
+`scripts/check_docs_wheel_matrix.py` re-derives the package set, each matrix label,
+and the per-version wheel coverage from the committed `uv.lock` on every docs build,
+and fails the build on drift. A dependency that starts or stops shipping binary
+wheels breaks the docs build rather than the next air-gapped install.
+```
 
 Dev dependencies (pytest plugins for otto's own tests, sphinx, ruff, etc.) are
 declared in the `[dependency-groups] dev` section of `pyproject.toml` and are **not**

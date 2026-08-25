@@ -484,6 +484,7 @@ def docs(session: nox.Session) -> None:
     session.run("python", "scripts/lint_markdown_doctests.py", "docs/")
     session.run("python", "scripts/lint_docs_versions.py", "docs/")
     session.run("python", "scripts/check_docs_dependency_table.py")
+    session.run("python", "scripts/check_docs_wheel_matrix.py")
     # -E (fresh env) + -a (write all) so the build matches a clean checkout.
     session.run("sphinx-build", "-E", "-a", "-W", "-b", "html", "docs/", "docs/_build/html")
     session.run("sphinx-build", "-E", "-b", "doctest", "docs/", "docs/_build/doctest")
