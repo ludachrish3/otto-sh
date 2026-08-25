@@ -59,7 +59,7 @@ from pathlib import Path
 
 import pytest
 
-from tests._fixtures.busybox import require_interpreter
+from tests._fixtures.busybox import preflight, require_interpreter
 
 _BUSYBOX_ROOT = Path(__file__).parent
 
@@ -114,3 +114,19 @@ def pytest_collection_modifyitems(config, items):
     for item in items:
         if _BUSYBOX_ROOT in item.path.parents:
             item.add_marker("busybox")
+
+
+def pytest_collection_finish(session):
+    """Prove the source is reachable ONCE, before the tier's first fetch.
+
+    Without this the tier pays the full per-artifact retry budget for EVERY
+    entry it is missing -- five sequential 60s stalls against a dead mirror,
+    each reported as its own failure, when one probe answers for all five. The
+    condition is a property of the SOURCE, not of any one artifact.
+
+    Guarded on ``session.items`` so a fully-deselected run (``-k`` that matches
+    nothing, ``--collect-only`` on a sibling tree) reaches no network, and
+    placed after collection for the same reason the conformance tree's copy is.
+    """
+    if session.items:
+        preflight()

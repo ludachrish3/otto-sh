@@ -108,6 +108,14 @@ _PINS = Path(__file__).with_name("busybox_pins.json")
 # protect. The session bound is deliberately computed for the WORST case, five
 # artifacts stalling one after another in a single worker; `-n auto` only ever
 # makes it better.
+#
+# THE TWO BOUNDS ARE MEASURED AGAINST DIFFERENT CEILINGS and so do not
+# compose. The per-artifact one is checked against a TEST's budget, the
+# session one against a LANE's, and a caller that needs the whole matrix
+# INSIDE ONE TEST falls between them at 300s vs 180s — which is what
+# `_run_conformance` does, and what CI run 32888520702 died of. `preflight`
+# closes that gap by making the source's reachability a lane precondition
+# proven ONCE, so no caller ever pays this budget more than a single time.
 _FETCH_TIMEOUT_S = 15
 # Long enough for an emulated start-up on a loaded VM, short enough that a
 # wedged binary fails the run instead of hanging it. Not a discriminator: no
@@ -323,6 +331,88 @@ def probe_banner(path: Path) -> str:
         ) from e
     out = (proc.stdout or proc.stderr).strip().splitlines()
     return out[0] if out else ""
+
+
+@dataclass
+class _PreflightVerdict:
+    """What this process has already learned about reaching the artifact source.
+
+    One mutable object rather than two module-level flags, so recording a
+    verdict needs no ``global`` statement — and so a test can hand the module a
+    FRESH verdict in one assignment instead of resetting fields it has to know
+    the names of.
+    """
+
+    #: Set once the process has proven it can obtain what it is missing, so the
+    #: probe is paid at most once per worker rather than once per artifact.
+    done: bool = False
+    #: What a completed probe recorded when it could not reach the source.
+    #: Every later call re-raises it rather than spending a second budget
+    #: proving the same outage.
+    unreachable: "BusyBoxUnavailableError | None" = None
+
+
+_PREFLIGHT = _PreflightVerdict()
+
+
+def preflight(releases: "list[BusyBoxRelease] | None" = None) -> None:
+    """Prove ONCE that this process can obtain the artifacts it is missing.
+
+    A precondition, not a timeout. `_fetch` already passes `_FETCH_TIMEOUT_S`
+    to `urlopen`, and the arithmetic above bounds ONE artifact at 60s against
+    pytest's 180s SIGALRM and FIVE at 300s against `make busybox`'s 360s
+    session cap. Both bounds are right and they DO NOT COMPOSE, because they
+    are measured against different ceilings: the per-artifact one against a
+    TEST's budget, the session one against a LANE's. A caller that needs the
+    whole matrix inside a SINGLE test falls between them —
+    `tests/unit/test_support_matrix.py`'s `_run_conformance` builds the entire
+    hermetic space in one subprocess, so a dead source costs it 5 x 60 = 300s
+    against a 180s SIGALRM. It is killed as a bare timeout and reports
+    "Timeout (>180.0s)" instead of the `make busybox-cache` instructions this
+    path exists to deliver. CI run 32888520702 is exactly that, five times
+    over, plus the tier's own two legs.
+
+    One probe is enough because the condition being diagnosed is a property of
+    the SOURCE, not of any one artifact: if busybox.net is unreachable for
+    `missing[0]`, the remaining four will not disagree. So the worst case
+    collapses from `len(missing) x 60` to a single 60 — inside every ceiling
+    above with room left — and the caller gets the real error.
+
+    A WARM CACHE COSTS NO NETWORK AT ALL. `missing` is computed from
+    `Path.exists`, and an empty one returns before any socket is opened, which
+    is what keeps this safe to call from a lane that may well have everything
+    it needs already.
+
+    Call it AFTER COLLECTION, never at session start. `tests/conformance/` is
+    in `testpaths`, so every path-less run in the repo collects that tree and
+    `make coverage`'s two legs then deselect all of it; a session-start probe
+    would put busybox.net in the default gate's critical path, which is the
+    structural dependency issue #261 was filed for. The lane conftests call
+    this from `pytest_collection_finish`, where the deselect has already
+    happened.
+
+    `_verify` is deliberately OUTSIDE the memo: a hash mismatch says the pin
+    is stale, not that the source is unreachable, and poisoning the session
+    with it would report artifact A's mismatch to a test asking for B.
+    """
+    if _PREFLIGHT.unreachable is not None:
+        raise _PREFLIGHT.unreachable
+    if _PREFLIGHT.done:
+        return
+    matrix = BUSYBOX_MATRIX if releases is None else releases
+    missing = [r for r in matrix if can_run(r.arch) and not (cache_dir() / r.filename).exists()]
+    if not missing:
+        _PREFLIGHT.done = True
+        return
+    probe = missing[0]
+    target = cache_dir() / probe.filename
+    try:
+        _fetch(probe, target)
+    except BusyBoxUnavailableError as e:
+        _PREFLIGHT.unreachable = e
+        raise
+    _verify(probe, target)
+    _PREFLIGHT.done = True
 
 
 def busybox_binary(release: BusyBoxRelease) -> Path:

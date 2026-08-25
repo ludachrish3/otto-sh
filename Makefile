@@ -9,7 +9,7 @@
 # on -j.
 .NOTPARALLEL:
 
-.PHONY: help all ci nox nox-full nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-python coverage-unit coverage-integration coverage-unix coverage-embedded coverage-hostless coverage-ts coverage-ts-unit docs docs-lint docs-html docs-inventories docs-media doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts lint-arch check check-python gate-fresh check-ts format format-python format-ts schema monitor-fixtures clean changelog release stability stability-unit stability-unix stability-tunnel stability-embedded chaos chaos-embedded repeat vm-health qemu-restart import-snapshot hyperfine profile browsers dashboard dashboard-all dashboard-soak busybox busybox-cache conformance conformance-bed support-matrix web-install web web-dev test-ts web-clean wheel-check
+.PHONY: help all ci nox nox-full nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-python coverage-unit coverage-integration coverage-unix coverage-embedded coverage-hostless coverage-ts coverage-ts-unit docs docs-lint docs-html docs-inventories docs-media doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts lint-arch check check-python gate-fresh check-ts format format-python format-ts schema monitor-fixtures clean changelog release stability stability-unit stability-unix stability-tunnel stability-embedded chaos chaos-embedded repeat vm-health qemu-restart import-snapshot hyperfine profile browsers dashboard dashboard-all dashboard-soak busybox busybox-preflight busybox-cache conformance conformance-bed support-matrix web-install web web-dev test-ts web-clean wheel-check
 
 # Bump component for `make release`. Override on the command line:
 #   make release BUMP=minor
@@ -753,9 +753,25 @@ dashboard-soak: $(DASHBOARD_DIST) ## Run the dashboard replay soak (Tier-3, `soa
 # `nc`) measured per build. Same bytes the bed's guest images are built from
 # (`scripts/build_busybox_guest_images.py`), which is why this lane still
 # guards the bed even though it never touches it.
-busybox: ## Run the BusyBox artifact tier (`busybox`-marked; excluded from every default lane): SHA-256 pin + version-banner integrity and argv-level applet contracts, against the five pinned binaries the bed's guests are built from. Behaviour on a BusyBox userland is the live bed's, not this lane's. Fetches from busybox.net into ~/.cache/otto/busybox on a cold cache (override with OTTO_BUSYBOX_CACHE); needs qemu-user-static registered on non-x86_64. JUnit XML lands in reports/junit/busybox/.
+busybox: busybox-preflight ## Run the BusyBox artifact tier (`busybox`-marked; excluded from every default lane): SHA-256 pin + version-banner integrity and argv-level applet contracts, against the five pinned binaries the bed's guests are built from. Behaviour on a BusyBox userland is the live bed's, not this lane's. Fetches from busybox.net into ~/.cache/otto/busybox on a cold cache (override with OTTO_BUSYBOX_CACHE); needs qemu-user-static registered on non-x86_64. JUnit XML lands in reports/junit/busybox/.
 	@$(SAY) "pytest: BusyBox artifact tier (fetches + verifies real binaries)"
 	@$(TIMEOUT_CMD) uv run pytest -m "busybox" --no-cov $(call junitxml,busybox)
+
+# One probe, before the lane commits to anything. On a warm cache this opens
+# no socket at all (it is five `stat` calls); on a cold one it fetches exactly
+# ONE artifact to prove the source answers. That asymmetry is the point: the
+# condition worth failing on is whether busybox.net is REACHABLE, which is a
+# property of the source and not of any one of the five entries, so paying the
+# per-artifact retry budget five times to learn it once is pure latency. It
+# also puts the failure BEFORE pytest starts, so the reader gets the priming
+# instructions instead of them arriving under a collection banner.
+#
+# A prerequisite of `busybox` and of NOTHING ELSE. The pytest-side probe in
+# tests/conformance/conftest.py covers the hermetic conformance cells from
+# inside the run; wiring this target into a default lane would put a public
+# mirror on the gate's critical path, which is issue #261.
+busybox-preflight: ## Prove the BusyBox artifact source is reachable, or that the cache is already warm, before a lane commits to it. No-op (and no network) on a warm cache.
+	@uv run python -c "from tests._fixtures.busybox import preflight; preflight()"
 
 # Priming, split out from the lane above because the two need different
 # things: this needs the NETWORK and no interpreter, `make busybox` needs an

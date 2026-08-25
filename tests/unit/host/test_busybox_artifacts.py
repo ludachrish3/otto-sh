@@ -31,6 +31,8 @@ try:
     import tomllib  # Python 3.11+
 except ModuleNotFoundError:  # pragma: no cover - 3.10 only, otto's floor
     import tomli as tomllib
+from types import SimpleNamespace
+
 from typing_extensions import Self  # `typing.Self` is 3.11+; otto's floor is 3.10
 
 from tests._ambient_env import AMBIENT_OPT_INS
@@ -46,6 +48,12 @@ from tests._fixtures.busybox import (
     require_interpreter,
 )
 from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.profiles import Cell
+from tests.busybox import conftest as busybox_conftest
+from tests.conformance import conftest as conformance_conftest
+from tests.conformance._cells import BUSYBOX_ARTIFACT
+from tests.conformance._resolved import ResolvedCell
+from tests.conformance._vocabulary import POSIX
 
 # The repo root. Sourced from tests/_fixtures/paths.py rather than derived
 # with Path(__file__).parents[N] here, so a move of this file cannot
@@ -1102,4 +1110,285 @@ def test_the_busybox_lane_never_caches_the_artifacts_it_verifies():
     assert _cache_steps("busybox") == [], (
         "the busybox job caches its artifacts; it must re-fetch cold every run, because "
         "detection of an upstream in-place rebuild lives there and nowhere else"
+    )
+
+
+@pytest.fixture
+def _fresh_preflight(monkeypatch):
+    """`preflight` memoizes in MODULE state, so every guard here needs a clean slate.
+
+    `monkeypatch.setattr` rather than mutating the live verdict: it records
+    whatever the running session already had and restores it at teardown, so
+    these guards cannot leave a poisoned verdict — or a spuriously satisfied
+    one — behind for the rest of the process.
+    """
+    monkeypatch.setattr(busybox, "_PREFLIGHT", busybox._PreflightVerdict())
+
+
+@pytest.mark.usefixtures("_fresh_preflight")
+def test_preflight_on_a_warm_cache_opens_no_socket(tmp_path, monkeypatch):
+    """The precondition must be free when there is nothing to fetch.
+
+    This is what makes it safe to hang off a lane's collection at all. The
+    transport is replaced with something that RAISES rather than merely
+    counted: a probe that slipped through would fail here by name instead of
+    quietly succeeding against a stub. Read together with the cold-cache guard
+    below, which proves the same call does reach the network when it should —
+    neither claim is worth much alone, since a `preflight` that did nothing at
+    all would satisfy this one.
+    """
+    monkeypatch.setenv("OTTO_BUSYBOX_CACHE", str(tmp_path))
+    for release in BUSYBOX_MATRIX:
+        (tmp_path / release.filename).write_bytes(b"already here")
+
+    def explode(*_a, **_kw):
+        raise AssertionError("a warm cache must not reach busybox.net")
+
+    monkeypatch.setattr(busybox.urllib.request, "urlopen", explode)
+
+    busybox.preflight()
+
+
+@pytest.mark.usefixtures("_fresh_preflight")
+def test_preflight_probes_exactly_one_artifact_not_the_whole_matrix(tmp_path, monkeypatch):
+    """ONE probe is the entire point: five would reproduce the bug this closes.
+
+    A dead source costs the full per-artifact retry budget EACH TIME it is
+    asked, so a precondition that walked the matrix would spend
+    `len(BUSYBOX_MATRIX) x 60 = 300s` learning something one 60s answer
+    settles — and 300s is past the 180s per-test SIGALRM that turned CI run
+    32888520702's real error into a bare timeout.
+
+    The assertion is on the URL LIST, not on a count, so a probe that asked for
+    the wrong entry is reported as the wrong entry rather than as a passing 1.
+    """
+    monkeypatch.setenv("OTTO_BUSYBOX_CACHE", str(tmp_path))
+    asked: "list[str]" = []
+
+    def urlopen(url, *_a, **_kw):
+        asked.append(url)
+        return _FakeResponse(b"#!/bin/false\n")
+
+    monkeypatch.setattr(busybox.urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(busybox, "_verify", lambda *_a, **_kw: None)
+
+    busybox.preflight()
+
+    assert asked == [BUSYBOX_MATRIX[0].url], (
+        f"preflight must prove the SOURCE answers with a single probe; it asked for "
+        f"{len(asked)} artifact(s): {asked}"
+    )
+
+
+@pytest.mark.usefixtures("_fresh_preflight")
+def test_preflight_reraises_its_verdict_without_a_second_probe(tmp_path, monkeypatch):
+    """A whole-repo `pytest` collects BOTH lanes, so both hooks call this.
+
+    Without the memo that is two independent 60s stalls against a dead mirror
+    in one process, and the second one proves nothing the first did not. The
+    attempt script is asserted before AND after the second call, which is what
+    makes "remembered" distinguishable from "measured again and agreed".
+    """
+    monkeypatch.setenv("OTTO_BUSYBOX_CACHE", str(tmp_path))
+    _record_sleeps(monkeypatch)
+
+    with _closing_http_errors(503, 503, 503) as errors:
+        attempts = _stub_attempts(monkeypatch, errors)
+
+        with pytest.raises(BusyBoxUnavailableError, match="make busybox-cache") as first:
+            busybox.preflight()
+        assert attempts == [1, 2, 3], f"the first probe spends the retry budget, saw {attempts}"
+
+        with pytest.raises(BusyBoxUnavailableError) as second:
+            busybox.preflight()
+
+        assert attempts == [1, 2, 3], (
+            f"the verdict must be REMEMBERED, not re-measured; the second call spent "
+            f"another budget and the attempt log grew to {attempts}"
+        )
+        assert second.value is first.value, "and it must re-raise the verdict it recorded"
+
+
+@pytest.mark.usefixtures("_fresh_preflight")
+def test_a_hash_mismatch_does_not_poison_the_preflight_verdict(tmp_path, monkeypatch):
+    """A stale pin is not an unreachable source, and must not be reported as one.
+
+    `_verify` sits OUTSIDE the memo deliberately. If a mismatch were recorded,
+    every later caller in the process would be told artifact 0's pin is stale
+    no matter which artifact it asked about — a wrong diagnosis for a
+    security-relevant check. The proof is that the SECOND call probes a
+    DIFFERENT url: the memo did not fire, and the first artifact is now cached
+    so `missing` has advanced.
+    """
+    monkeypatch.setenv("OTTO_BUSYBOX_CACHE", str(tmp_path))
+    asked: "list[str]" = []
+
+    def urlopen(url, *_a, **_kw):
+        asked.append(url)
+        return _FakeResponse(b"not the pinned bytes\n")
+
+    monkeypatch.setattr(busybox.urllib.request, "urlopen", urlopen)
+
+    with pytest.raises(BusyBoxUnavailableError, match="hash mismatch"):
+        busybox.preflight()
+    with pytest.raises(BusyBoxUnavailableError, match="hash mismatch"):
+        busybox.preflight()
+
+    assert asked == [BUSYBOX_MATRIX[0].url, BUSYBOX_MATRIX[1].url], (
+        f"a mismatch must leave the verdict unrecorded, so the next call advances to "
+        f"the next missing artifact; saw {asked}"
+    )
+
+
+def _conformance_item(cell):
+    """A stand-in for a collected item parametrized over *cell*.
+
+    Shaped to what `_cell_under_test` actually reads — the CALLSPEC, not the
+    fixture — so this fake exercises the real predicate rather than a
+    paraphrase of it.
+    """
+    return SimpleNamespace(callspec=SimpleNamespace(params={"resolved_cell": cell}))
+
+
+def _busybox_resolved_cell(kind):
+    """A `ResolvedCell` of *kind*, built without asking what this machine can run.
+
+    `hermetic_space()` would be the natural source and is the wrong one here:
+    it filters on `can_run`, so on a host with no i686 handler the busybox
+    cells vanish and the guard below would pass vacuously — testing nothing on
+    exactly the machines where the arch story is interesting.
+    """
+    return ResolvedCell(
+        cell=Cell("busybox-1.16.1", "local", "local"),
+        kind=kind,
+        open_host=lambda: None,
+        remote_scratch=None,
+        vocabulary=POSIX,
+    )
+
+
+def test_the_conformance_lane_probes_only_when_a_busybox_cell_survived_collection(monkeypatch):
+    """Issue #261's regression guard: the DEFAULT gate must reach no mirror.
+
+    `tests/conformance/` is in `testpaths`, so `make coverage`'s two path-less
+    legs collect this tree and then deselect every item in it. A probe keyed on
+    the tree — or hung off `pytest_sessionstart` next door — would fire in both
+    of those legs and put busybox.net on the critical path of a lane that runs
+    no conformance test at all.
+
+    All three rows are asserted from ONE stubbed `preflight`, because the
+    claim is a discrimination and not a property: an empty selection and a
+    non-BusyBox cell must both leave the counter at zero while a BusyBox cell
+    moves it. A guard that only asserted the last row would pass against a
+    hook that probed unconditionally.
+    """
+    calls: "list[int]" = []
+    monkeypatch.setattr(conformance_conftest, "preflight", lambda *_a, **_kw: calls.append(1))
+
+    conformance_conftest.pytest_collection_finish(SimpleNamespace(items=[]))
+    assert calls == [], "a fully-deselected tree must not reach the network"
+
+    local_cell = _busybox_resolved_cell(kind="local")
+    conformance_conftest.pytest_collection_finish(
+        SimpleNamespace(items=[_conformance_item(local_cell)])
+    )
+    assert calls == [], "a venue that resolved no BusyBox cell must not wait on a mirror"
+
+    artifact_cell = _busybox_resolved_cell(kind=BUSYBOX_ARTIFACT)
+    conformance_conftest.pytest_collection_finish(
+        SimpleNamespace(items=[_conformance_item(local_cell), _conformance_item(artifact_cell)])
+    )
+    assert calls == [1], "but one surviving BusyBox cell must be preceded by the probe"
+
+
+def test_the_busybox_lane_probes_only_when_something_survived_collection(monkeypatch):
+    """The tier's own half of the same rule, with the same discrimination.
+
+    The empty row is not hypothetical: `--collect-only`, or a `-k` that matches
+    nothing, reaches this hook with an empty item list, and issue #196 is the
+    precedent for a run precondition firing when nothing runs.
+    """
+    calls: "list[int]" = []
+    monkeypatch.setattr(busybox_conftest, "preflight", lambda *_a, **_kw: calls.append(1))
+
+    busybox_conftest.pytest_collection_finish(SimpleNamespace(items=[]))
+    assert calls == [], "a run that selected nothing must not reach the network"
+
+    busybox_conftest.pytest_collection_finish(SimpleNamespace(items=[object()]))
+    assert calls == [1], "a run with work to do must prove the source answers first"
+
+
+def test_the_whole_matrix_in_one_test_is_why_the_precondition_exists():
+    """The arithmetic that `preflight` exists to fix, asserted as arithmetic.
+
+    Two claims, and the FIRST is the one that makes this guard mean anything:
+    the unprotected whole-matrix bound genuinely EXCEEDS the per-test timeout,
+    so the gap being closed is real rather than defensive. `_run_conformance`
+    in tests/unit/test_support_matrix.py builds the entire hermetic space
+    inside one subprocess, which is one test's budget, not a lane's.
+
+    The second says the precondition collapses that to a single artifact's
+    bound with the same 2x headroom the per-artifact guard above demands.
+    Every number is READ from where it is configured, so raising the retry
+    budget without revisiting this reddens it.
+    """
+    attempts = len(busybox._RETRY_BACKOFF_S) + 1
+    per_artifact = attempts * busybox._FETCH_TIMEOUT_S + sum(busybox._RETRY_BACKOFF_S)
+    pyproject = tomllib.loads((_REPO_ROOT / "pyproject.toml").read_text())
+    per_test = pyproject["tool"]["pytest"]["ini_options"]["timeout"]
+
+    unprotected = per_artifact * len(BUSYBOX_MATRIX)
+    assert unprotected > per_test, (
+        f"this guard is vacuous unless the gap is real: {len(BUSYBOX_MATRIX)} artifacts at "
+        f"{per_artifact}s is {unprotected}s against a {per_test}s per-test timeout. If that "
+        f"stopped being true, `preflight`'s justification changed and its docstring is stale"
+    )
+    assert per_artifact * 2 <= per_test, (
+        f"preflight bounds a dead source at ONE artifact ({per_artifact}s), which must keep "
+        f"the same 2x headroom under the {per_test}s per-test timeout that a single fetch has"
+    )
+
+
+def _makefile_prerequisites(makefile: str) -> "dict[str, list[str]]":
+    """Every explicit rule's target -> its prerequisite list.
+
+    `(?!=)` after the colon is what keeps `MATRIX_BASELINE := ...` and friends
+    out: a recursive-assignment line is not a rule, and counting one as a
+    target with prerequisites would make the guard below answer about a
+    variable's value.
+    """
+    rules: "dict[str, list[str]]" = {}
+    for line in makefile.splitlines():
+        match = re.match(r"^(?P<name>[A-Za-z0-9_.-]+)\s*:(?!=)\s*(?P<prereqs>[^#]*)", line)
+        if match is None or match["name"] == ".PHONY":
+            continue
+        rules.setdefault(match["name"], []).extend(match["prereqs"].split())
+    return rules
+
+
+def test_only_the_busybox_tier_depends_on_the_preflight_target():
+    """The whole #261 rule in one assertion, stated in both directions.
+
+    `busybox-preflight` reaches a public mirror on a cold cache. That is
+    correct for the tier that exists to verify those artifacts and WRONG for
+    every default lane: `make coverage` collecting `tests/conformance/` and
+    then deselecting all of it must not be able to fail because busybox.net is
+    having a bad afternoon. Equality against the full dependent list rather
+    than two membership checks, so a lane that acquires this prerequisite
+    later is reported by name instead of slipping past an `in`.
+
+    The conformance tree's own need is met from INSIDE the run, by
+    `pytest_collection_finish` in tests/conformance/conftest.py, which fires
+    only when a BusyBox cell actually survived collection.
+    """
+    makefile = (_REPO_ROOT / "Makefile").read_text()
+    dependents = sorted(
+        target
+        for target, prereqs in _makefile_prerequisites(makefile).items()
+        if "busybox-preflight" in prereqs
+    )
+    assert dependents == ["busybox"], (
+        f"exactly one target may require the preflight, and it is the BusyBox tier; "
+        f"found {dependents}. A default lane depending on it puts a public mirror on "
+        f"the gate's critical path, which is issue #261"
     )

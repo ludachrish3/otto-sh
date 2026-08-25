@@ -48,7 +48,8 @@ from pathlib import Path
 
 import pytest
 
-from tests.conformance._cells import resolve_space
+from tests._fixtures.busybox import preflight
+from tests.conformance._cells import BUSYBOX_ARTIFACT, resolve_space
 from tests.conformance._console_safety import (
     console_lock_dir,
     opens_a_single_client_console,
@@ -314,6 +315,32 @@ def _cell_under_test(node) -> "ResolvedCell | None":
         return None
     resolved = callspec.params.get("resolved_cell")
     return resolved if isinstance(resolved, ResolvedCell) else None
+
+
+def pytest_collection_finish(session):
+    """Prove busybox.net is reachable BEFORE the first drawn cell opens a host.
+
+    Here rather than in ``pytest_sessionstart`` next door, and the difference
+    is not stylistic. This tree is in ``testpaths``, so every path-less run in
+    the repo COLLECTS it -- and ``make coverage``'s two legs then deselect all
+    of it. A probe at session start would therefore run in lanes that go on to
+    execute no conformance item at all, putting busybox.net on the default
+    gate's critical path: the exact structural dependency issue #261 was filed
+    for. ``pytest_collection_finish`` runs after every
+    ``pytest_collection_modifyitems``, so ``session.items`` here is what will
+    actually RUN, and a fully-deselected tree probes nothing.
+
+    Conditioned on the CELL KIND rather than on this tree's path, because the
+    bed venue resolves no BusyBox cell and must not be made to wait on a
+    public mirror to run against the lab. :func:`preflight` is a no-op on a
+    warm cache, so the cost of being wrong in the permissive direction is five
+    ``stat`` calls.
+    """
+    if any(
+        (cell := _cell_under_test(item)) is not None and cell.kind == BUSYBOX_ARTIFACT
+        for item in session.items
+    ):
+        preflight()
 
 
 @pytest.fixture(autouse=True)
