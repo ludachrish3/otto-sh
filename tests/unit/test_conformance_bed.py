@@ -44,6 +44,7 @@ from tests._fixtures.profiles import (
     axes_for,
     axis_space,
 )
+from tests._fixtures.support_matrix import discover_contracts
 from tests.conformance import _bed, _console_safety, _lab_context
 from tests.conformance import _vocabulary as _vocabulary_module
 from tests.conformance import conftest as _conformance_conftest
@@ -68,10 +69,13 @@ from tests.conformance._console_safety import (
     serialized_console,
     unhonored_console_lock,
 )
+from tests.conformance._controls import discover_controls
 from tests.conformance._lab_context import BED_LAB_NAME, bed_lab, hop_targets
+from tests.conformance._observation import domain_exclusions
 from tests.conformance._resolved import ResolvedCell
 from tests.conformance._sample import cell_label
 from tests.conformance._vocabulary import (
+    OTTO_SENTINEL_PREFIX,
     POSIX,
     ZEPHYR_SHELL,
     Vocabulary,
@@ -1032,10 +1036,20 @@ _PROJECT_ROOT = PROJECT_ROOT
 _HERMETIC_LOCAL_CELL = "local:local:local"
 
 # Every contract in `tests/conformance/` is parametrized over every drawn
-# cell, so one cell is this many items. Measured: `make conformance` collects
-# 48 over the hermetic venue's 8 cells. Asserted rather than assumed by the
-# subprocess runs below, which would otherwise pass on zero selected items.
-_ITEMS_PER_CELL = 6
+# cell, and since the support matrix landed so is every POSITIVE CONTROL, so
+# one cell is this many items. Asserted rather than assumed by the subprocess
+# runs below, which would otherwise pass on zero selected items.
+#
+# DERIVED, and it used to be the literal `6`. That literal was correct when
+# there were six contracts and nothing else took the cell, and it went stale
+# the moment six controls joined them -- four guards below turned red on a
+# COUNT rather than on the protection they are about, which is the least
+# useful place for a suite to fail. The two discovery functions are the same
+# ones `tests/_fixtures/support_matrix.py` builds the matrix's rows from, so
+# this cannot disagree with the tree about what a cell's items are. (12 today:
+# 6 contracts + 6 controls, and `make conformance` collects 96 over the
+# hermetic venue's 8 cells.)
+_ITEMS_PER_CELL = len(discover_contracts()) + len(discover_controls())
 
 # The plugin the subprocess runs load with `-p`. It INJECTS the hostile
 # condition rather than waiting to inherit it: the hermetic venue has no
@@ -1713,11 +1727,19 @@ class _RecordingMetafunc:
     assertions are about. Recording only the ``ParameterSet``s would make
     every domain assertion read through ``.values[0]``; recording only the
     cells would make the marks unobservable.
+
+    ``config.stash`` and ``definition`` are REAL pytest objects and not
+    stand-ins. The hook now also hands the COMPLEMENT of the domain to
+    ``tests/conformance/_observation.py``'s ``note_domain_exclusions``, which
+    stashes it against the config under the contract's own nodeid; a double
+    that answered a bare ``SimpleNamespace`` there would be a double that
+    disagrees with pytest about the shape of the seam.
     """
 
-    def __init__(self, module):
+    def __init__(self, module, nodeid="tests/conformance/test_fabricated.py::test_contract"):
         self.fixturenames = ["resolved_cell"]
-        self.config = SimpleNamespace()
+        self.config = SimpleNamespace(stash=pytest.Stash())
+        self.definition = SimpleNamespace(nodeid=nodeid)
         self.module = module
         self.parametrized = None
         self.marks = None
@@ -1754,6 +1776,11 @@ def test_a_declared_domain_narrows_the_parametrization_to_its_cells(monkeypatch)
 
     _conformance_conftest.pytest_generate_tests(metafunc)
     assert metafunc.parametrized == [drawn[0]]
+    # The dropped cell is REMEMBERED, not merely dropped: it generates no
+    # item, so nothing downstream could otherwise learn it was ever drawn --
+    # and that is the only source the support matrix's `not_observable` list
+    # has (tests/conformance/_observation.py).
+    assert domain_exclusions(metafunc.config) == {metafunc.definition.nodeid: [drawn[1]]}
 
 
 def test_a_domain_that_narrows_the_draw_to_nothing_raises_rather_than_skipping(monkeypatch):
@@ -1988,11 +2015,26 @@ MEASURED_ANSWERS: dict[str, str] = {
 #: The contracts this guard drives, by the short name the case table uses.
 #: Named rather than walked for the same reason `VOCABULARIES` is: a contract
 #: that stopped being driven here would be a silent hole.
+#:
+#: Each is called with a NOTES LIST as its second argument, standing in for the
+#: `note_observable` fixture `tests/conformance/conftest.py` supplies to a real
+#: run. A no-op stub would do to make the call work, and a list is used instead
+#: because it lets the honest-host guard below assert the one thing a stub would
+#: hide: that the framing contract's observable really does DIFFER between the
+#: two vocabularies. A contract that takes no note ignores its argument.
 CONTRACTS = {
-    "exit code": _exec_contract.test_exec_reports_the_documented_exit_code,
-    "framing": _exec_contract.test_exec_frames_output_without_prompt_noise,
-    "sequence": _exec_contract.test_a_failing_command_is_not_reported_as_success,
-    "timeout": _timeout_contract.test_a_command_exceeding_its_budget_fails_the_documented_way,
+    "exit code": lambda cell, _notes: _exec_contract.test_exec_reports_the_documented_exit_code(
+        cell
+    ),
+    "framing": lambda cell, notes: _exec_contract.test_exec_frames_output_without_prompt_noise(
+        cell, notes.append
+    ),
+    "sequence": lambda cell, _notes: (
+        _exec_contract.test_a_failing_command_is_not_reported_as_success(cell)
+    ),
+    "timeout": lambda cell, _notes: (
+        _timeout_contract.test_a_command_exceeding_its_budget_fails_the_documented_way(cell)
+    ),
 }
 
 #: Each way a host can lie, and every contract that must catch it. A lie whose
@@ -2166,10 +2208,52 @@ async def test_an_honest_host_satisfies_every_contract_in_every_vocabulary(vocab
     Without this half, the lie matrix below would be satisfied by a contract
     that failed on EVERYTHING -- a body of `assert False` catches every lie in
     every vocabulary. So the honest host has to get through first.
+
+    ALSO CAPTURES WHAT EACH CONTRACT SAYS IT WATCHED, which is what
+    :func:`test_the_framing_observable_differs_between_the_two_vocabularies`
+    below compares across dialects.
     """
     words = VOCABULARIES[vocab_name]
     for name in _contracts_for(words):
-        await CONTRACTS[name](_scripted_cell(words, lie=None))
+        await CONTRACTS[name](_scripted_cell(words, lie=None), [])
+
+
+async def _noted_observable(vocab_name: str) -> str:
+    """What the framing contract says it watched, under *vocab_name*."""
+    notes: "list[str]" = []
+    await CONTRACTS["framing"](_scripted_cell(VOCABULARIES[vocab_name], lie=None), notes)
+    assert len(notes) == 1, f"the framing contract noted {len(notes)} observables, not 1"
+    return notes[0]
+
+
+@pytest.mark.asyncio
+async def test_the_framing_observable_differs_between_the_two_vocabularies() -> None:
+    """★ THE CLAIM THE `observable` FIELD EXISTS FOR, measured rather than asserted.
+
+    Spec §5 asks a `measured-ok` cell to name its observable BECAUSE a surface's
+    observable differs by environment -- shell-history suppression is provable
+    on bash and not provable at all on the five BusyBox guests. A field derived
+    from the surface id could not express that, which is why
+    `tests/conformance/_observable.py` renders a per-cell template and lets a
+    contract narrow it further from its own body.
+
+    The framing surface is where this tree's own version of that difference
+    lives: a POSIX cell's stimulus is a `printf` whose text the tester CHOSE, so
+    exact equality is available; a Zephyr cell's is a stock builtin whose text
+    belongs to the firmware, so it is not. Both directions are asserted -- the
+    two must differ, AND each must name the comparison it really made -- because
+    "they differ" alone is satisfied by two strings that differ for no reason.
+    """
+    posix = await _noted_observable("posix")
+    zephyr = await _noted_observable("zephyr")
+    assert posix != zephyr, (
+        "the framing observable renders identically on a POSIX and a Zephyr cell, so "
+        "the matrix's `observable` field could not disagree with the surface's own name"
+    )
+    assert "exact equality against the 2 lines the tester chose" in posix, posix
+    assert "NO exact comparison" in zephyr, zephyr
+    assert "belongs" in zephyr, zephyr
+    assert "firmware" in zephyr, zephyr
 
 
 @pytest.mark.asyncio
@@ -2197,7 +2281,7 @@ async def test_every_lie_is_caught_in_every_vocabulary_that_can_be_asked(
     words = VOCABULARIES[vocab_name]
     for name in caught_by:
         with pytest.raises(AssertionError) as caught:
-            await CONTRACTS[name](_scripted_cell(words, lie=lie))
+            await CONTRACTS[name](_scripted_cell(words, lie=lie), [])
         assert "scripted" in str(caught.value), (
             f"the {name!r} contract caught {lie!r} under {vocab_name} but its message "
             f"does not name the cell: {caught.value}"
@@ -2319,6 +2403,50 @@ def test_the_two_failing_commands_are_never_the_same_command() -> None:
         assert words.sequence_failing_command != words.failing_command, (
             f"{vocab_name} uses one command for both failing contracts, so a "
             f"cross-wired constant could make one pass on the other's evidence"
+        )
+
+
+def test_every_vocabulary_can_plant_ottos_sentinel_prefix_in_its_own_output() -> None:
+    """The framing surface's positive control needs a stimulus that CARRIES the prefix.
+
+    Without it the control could only assert that a clean reply is clean,
+    which is the vacuous form of exactly the check it exists to make
+    meaningful. Pinned per vocabulary because the two spellings work by
+    completely different means -- ``printf`` on a POSIX shell, and on a Zephyr
+    shell an UNKNOWN COMMAND whose name is the token, since that shell has no
+    way to print an arbitrary string and answers ``<name>: command not
+    found``.
+
+    NOT MEASURED HERE, and it cannot be: that the host really echoes it back.
+    That is what the control itself asserts, on every cell, which is why its
+    first assertion is that the plant landed at all.
+    """
+    for vocab_name, words in VOCABULARIES.items():
+        assert OTTO_SENTINEL_PREFIX in words.sentinel_plant_command, (
+            f"{vocab_name}.sentinel_plant_command is {words.sentinel_plant_command!r}, which "
+            f"cannot put {OTTO_SENTINEL_PREFIX!r} into any output"
+        )
+
+
+def test_every_vocabulary_can_delete_a_file_and_report_whether_it_did() -> None:
+    """The controls' cleanup must be a MEASUREMENT, not a best-effort gesture.
+
+    Two properties, and the second is the one measured on the bed. The
+    template must take a path; and it must not be a spelling that succeeds
+    whether or not the file was there -- ``rm -f`` answers 0 either way, so an
+    assertion on it could never fail, while plain ``rm`` and ``fs rm`` both
+    answer non-zero for an absent file. That makes the removal its own
+    verification: success means there WAS a file and there is not one now.
+    """
+    for vocab_name, words in VOCABULARIES.items():
+        assert "{path}" in words.remove_file_template, (
+            f"{vocab_name}.remove_file_template is {words.remove_file_template!r} and "
+            f"names no path to delete"
+        )
+        assert " -f" not in words.remove_file_template, (
+            f"{vocab_name}.remove_file_template forces the removal, so it answers success "
+            f"for a file that was never there and the controls' cleanup check becomes a "
+            f"guard that cannot fail"
         )
 
 

@@ -1,0 +1,3199 @@
+{
+  "$schema": "./support-matrix.schema.json",
+  "format": 1,
+  "surfaces": [
+    {
+      "id": "exec-exit-code",
+      "title": "exec: reports the documented exit code",
+      "contract": "tests/conformance/test_exec_contract.py::test_exec_reports_the_documented_exit_code"
+    },
+    {
+      "id": "exec-framing",
+      "title": "exec: frames output without prompt noise",
+      "contract": "tests/conformance/test_exec_contract.py::test_exec_frames_output_without_prompt_noise"
+    },
+    {
+      "id": "exec-failure-in-sequence",
+      "title": "exec: a failing command is not reported as success",
+      "contract": "tests/conformance/test_exec_contract.py::test_a_failing_command_is_not_reported_as_success"
+    },
+    {
+      "id": "transfer-roundtrip",
+      "title": "transfer: put/get roundtrip preserves content",
+      "contract": "tests/conformance/test_transfer_contract.py::test_put_get_roundtrip_preserves_content"
+    },
+    {
+      "id": "transfer-mode",
+      "title": "transfer: put lands the documented mode on the host",
+      "contract": "tests/conformance/test_transfer_contract.py::test_put_lands_the_documented_mode_on_the_host"
+    },
+    {
+      "id": "timeout",
+      "title": "timeout: a command over budget fails the documented way",
+      "contract": "tests/conformance/test_timeout_contract.py::test_a_command_exceeding_its_budget_fails_the_documented_way"
+    }
+  ],
+  "profiles": [
+    {
+      "id": "busybox-1.16.1",
+      "elements": [
+        "bb1161"
+      ]
+    },
+    {
+      "id": "busybox-1.21.1",
+      "elements": [
+        "bb1211"
+      ]
+    },
+    {
+      "id": "busybox-1.28.1",
+      "elements": [
+        "bb1281"
+      ]
+    },
+    {
+      "id": "busybox-1.31.0",
+      "elements": [
+        "bb1310"
+      ]
+    },
+    {
+      "id": "busybox-1.35.0",
+      "elements": [
+        "bb1350"
+      ]
+    },
+    {
+      "id": "gnu",
+      "elements": [
+        "test1",
+        "test2",
+        "test3",
+        "test4"
+      ]
+    },
+    {
+      "id": "zephyr-2.7",
+      "elements": [
+        "zephyr27_fat"
+      ]
+    },
+    {
+      "id": "zephyr-3.7",
+      "elements": [
+        "zephyr37_fat",
+        "zephyr37_lfs",
+        "zephyr37_nofs",
+        "zephyr37_llext"
+      ]
+    },
+    {
+      "id": "zephyr-4.4",
+      "elements": [
+        "zephyr44_lfs",
+        "zephyr44_llext"
+      ]
+    }
+  ],
+  "cells": {
+    "exec-exit-code": {
+      "busybox-1.16.1": {
+        "status": "measured-ok",
+        "nodeid": "tests/conformance/test_exec_contract.py::test_exec_reports_the_documented_exit_code",
+        "venue": "bed",
+        "as_of": "2026-08-25",
+        "observed_on": [
+          "bb1161"
+        ],
+        "observed_cells": [
+          {
+            "cell_label": "bed-busybox[bb1161:telnet:nc]",
+            "element": "bb1161",
+            "term": "telnet",
+            "transfer": "nc",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_exit_code_channel_reports_more_than_one_code[bed-busybox[bb1161:telnet:nc]]"
+          },
+          {
+            "cell_label": "bed-busybox[bb1161:telnet:shell]",
+            "element": "bb1161",
+            "term": "telnet",
+            "transfer": "shell",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_exit_code_channel_reports_more_than_one_code[bed-busybox[bb1161:telnet:shell]]"
+          }
+        ],
+        "not_observable": [],
+        "observable": "otto's CommandResult.retcode, .exit_code and .status for `(exit 42)` (must report 42) and `(exit 0)` (must report 0)",
+        "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_exit_code_channel_reports_more_than_one_code[bed-busybox[bb1161:telnet:nc]]"
+      },
+      "busybox-1.21.1": {
+        "status": "measured-ok",
+        "nodeid": "tests/conformance/test_exec_contract.py::test_exec_reports_the_documented_exit_code",
+        "venue": "bed",
+        "as_of": "2026-08-25",
+        "observed_on": [
+          "bb1211"
+        ],
+        "observed_cells": [
+          {
+            "cell_label": "bed-busybox[bb1211:telnet:nc]",
+            "element": "bb1211",
+            "term": "telnet",
+            "transfer": "nc",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_exit_code_channel_reports_more_than_one_code[bed-busybox[bb1211:telnet:nc]]"
+          },
+          {
+            "cell_label": "bed-busybox[bb1211:telnet:shell]",
+            "element": "bb1211",
+            "term": "telnet",
+            "transfer": "shell",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_exit_code_channel_reports_more_than_one_code[bed-busybox[bb1211:telnet:shell]]"
+          }
+        ],
+        "not_observable": [],
+        "observable": "otto's CommandResult.retcode, .exit_code and .status for `(exit 42)` (must report 42) and `(exit 0)` (must report 0)",
+        "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_exit_code_channel_reports_more_than_one_code[bed-busybox[bb1211:telnet:nc]]"
+      },
+      "busybox-1.28.1": {
+        "status": "measured-ok",
+        "nodeid": "tests/conformance/test_exec_contract.py::test_exec_reports_the_documented_exit_code",
+        "venue": "bed",
+        "as_of": "2026-08-25",
+        "observed_on": [
+          "bb1281"
+        ],
+        "observed_cells": [
+          {
+            "cell_label": "bed-busybox[bb1281:telnet:nc]",
+            "element": "bb1281",
+            "term": "telnet",
+            "transfer": "nc",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_exit_code_channel_reports_more_than_one_code[bed-busybox[bb1281:telnet:nc]]"
+          },
+          {
+            "cell_label": "bed-busybox[bb1281:telnet:shell]",
+            "element": "bb1281",
+            "term": "telnet",
+            "transfer": "shell",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_exit_code_channel_reports_more_than_one_code[bed-busybox[bb1281:telnet:shell]]"
+          }
+        ],
+        "not_observable": [],
+        "observable": "otto's CommandResult.retcode, .exit_code and .status for `(exit 42)` (must report 42) and `(exit 0)` (must report 0)",
+        "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_exit_code_channel_reports_more_than_one_code[bed-busybox[bb1281:telnet:nc]]"
+      },
+      "busybox-1.31.0": {
+        "status": "measured-ok",
+        "nodeid": "tests/conformance/test_exec_contract.py::test_exec_reports_the_documented_exit_code",
+        "venue": "bed",
+        "as_of": "2026-08-25",
+        "observed_on": [
+          "bb1310"
+        ],
+        "observed_cells": [
+          {
+            "cell_label": "bed-busybox[bb1310:telnet:nc]",
+            "element": "bb1310",
+            "term": "telnet",
+            "transfer": "nc",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_exit_code_channel_reports_more_than_one_code[bed-busybox[bb1310:telnet:nc]]"
+          },
+          {
+            "cell_label": "bed-busybox[bb1310:telnet:shell]",
+            "element": "bb1310",
+            "term": "telnet",
+            "transfer": "shell",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_exit_code_channel_reports_more_than_one_code[bed-busybox[bb1310:telnet:shell]]"
+          }
+        ],
+        "not_observable": [],
+        "observable": "otto's CommandResult.retcode, .exit_code and .status for `(exit 42)` (must report 42) and `(exit 0)` (must report 0)",
+        "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_exit_code_channel_reports_more_than_one_code[bed-busybox[bb1310:telnet:nc]]"
+      },
+      "busybox-1.35.0": {
+        "status": "measured-ok",
+        "nodeid": "tests/conformance/test_exec_contract.py::test_exec_reports_the_documented_exit_code",
+        "venue": "bed",
+        "as_of": "2026-08-25",
+        "observed_on": [
+          "bb1350"
+        ],
+        "observed_cells": [
+          {
+            "cell_label": "bed-busybox[bb1350:telnet:nc]",
+            "element": "bb1350",
+            "term": "telnet",
+            "transfer": "nc",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_exit_code_channel_reports_more_than_one_code[bed-busybox[bb1350:telnet:nc]]"
+          },
+          {
+            "cell_label": "bed-busybox[bb1350:telnet:shell]",
+            "element": "bb1350",
+            "term": "telnet",
+            "transfer": "shell",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_exit_code_channel_reports_more_than_one_code[bed-busybox[bb1350:telnet:shell]]"
+          }
+        ],
+        "not_observable": [],
+        "observable": "otto's CommandResult.retcode, .exit_code and .status for `(exit 42)` (must report 42) and `(exit 0)` (must report 0)",
+        "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_exit_code_channel_reports_more_than_one_code[bed-busybox[bb1350:telnet:nc]]"
+      },
+      "gnu": {
+        "status": "measured-ok",
+        "nodeid": "tests/conformance/test_exec_contract.py::test_exec_reports_the_documented_exit_code",
+        "venue": "bed",
+        "as_of": "2026-08-25",
+        "observed_on": [
+          "test1",
+          "test2",
+          "test3",
+          "test4"
+        ],
+        "observed_cells": [
+          {
+            "cell_label": "bed-unix[test1:ssh:ftp]",
+            "element": "test1",
+            "term": "ssh",
+            "transfer": "ftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_exit_code_channel_reports_more_than_one_code[bed-unix[test1:ssh:ftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test1:ssh:nc]",
+            "element": "test1",
+            "term": "ssh",
+            "transfer": "nc",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_exit_code_channel_reports_more_than_one_code[bed-unix[test1:ssh:nc]]"
+          },
+          {
+            "cell_label": "bed-unix[test1:ssh:scp]",
+            "element": "test1",
+            "term": "ssh",
+            "transfer": "scp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_exit_code_channel_reports_more_than_one_code[bed-unix[test1:ssh:scp]]"
+          },
+          {
+            "cell_label": "bed-unix[test1:ssh:sftp]",
+            "element": "test1",
+            "term": "ssh",
+            "transfer": "sftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_exit_code_channel_reports_more_than_one_code[bed-unix[test1:ssh:sftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test1:telnet:ftp]",
+            "element": "test1",
+            "term": "telnet",
+            "transfer": "ftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_exit_code_channel_reports_more_than_one_code[bed-unix[test1:telnet:ftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test1:telnet:nc]",
+            "element": "test1",
+            "term": "telnet",
+            "transfer": "nc",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_exit_code_channel_reports_more_than_one_code[bed-unix[test1:telnet:nc]]"
+          },
+          {
+            "cell_label": "bed-unix[test1:telnet:scp]",
+            "element": "test1",
+            "term": "telnet",
+            "transfer": "scp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_exit_code_channel_reports_more_than_one_code[bed-unix[test1:telnet:scp]]"
+          },
+          {
+            "cell_label": "bed-unix[test1:telnet:sftp]",
+            "element": "test1",
+            "term": "telnet",
+            "transfer": "sftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_exit_code_channel_reports_more_than_one_code[bed-unix[test1:telnet:sftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test2:ssh:ftp]",
+            "element": "test2",
+            "term": "ssh",
+            "transfer": "ftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_exit_code_channel_reports_more_than_one_code[bed-unix[test2:ssh:ftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test2:ssh:nc]",
+            "element": "test2",
+            "term": "ssh",
+            "transfer": "nc",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_exit_code_channel_reports_more_than_one_code[bed-unix[test2:ssh:nc]]"
+          },
+          {
+            "cell_label": "bed-unix[test2:ssh:scp]",
+            "element": "test2",
+            "term": "ssh",
+            "transfer": "scp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_exit_code_channel_reports_more_than_one_code[bed-unix[test2:ssh:scp]]"
+          },
+          {
+            "cell_label": "bed-unix[test2:ssh:sftp]",
+            "element": "test2",
+            "term": "ssh",
+            "transfer": "sftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_exit_code_channel_reports_more_than_one_code[bed-unix[test2:ssh:sftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test2:telnet:ftp]",
+            "element": "test2",
+            "term": "telnet",
+            "transfer": "ftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_exit_code_channel_reports_more_than_one_code[bed-unix[test2:telnet:ftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test2:telnet:nc]",
+            "element": "test2",
+            "term": "telnet",
+            "transfer": "nc",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_exit_code_channel_reports_more_than_one_code[bed-unix[test2:telnet:nc]]"
+          },
+          {
+            "cell_label": "bed-unix[test2:telnet:scp]",
+            "element": "test2",
+            "term": "telnet",
+            "transfer": "scp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_exit_code_channel_reports_more_than_one_code[bed-unix[test2:telnet:scp]]"
+          },
+          {
+            "cell_label": "bed-unix[test2:telnet:sftp]",
+            "element": "test2",
+            "term": "telnet",
+            "transfer": "sftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_exit_code_channel_reports_more_than_one_code[bed-unix[test2:telnet:sftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test3:ssh:ftp]",
+            "element": "test3",
+            "term": "ssh",
+            "transfer": "ftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_exit_code_channel_reports_more_than_one_code[bed-unix[test3:ssh:ftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test3:ssh:nc]",
+            "element": "test3",
+            "term": "ssh",
+            "transfer": "nc",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_exit_code_channel_reports_more_than_one_code[bed-unix[test3:ssh:nc]]"
+          },
+          {
+            "cell_label": "bed-unix[test3:ssh:scp]",
+            "element": "test3",
+            "term": "ssh",
+            "transfer": "scp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_exit_code_channel_reports_more_than_one_code[bed-unix[test3:ssh:scp]]"
+          },
+          {
+            "cell_label": "bed-unix[test3:ssh:sftp]",
+            "element": "test3",
+            "term": "ssh",
+            "transfer": "sftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_exit_code_channel_reports_more_than_one_code[bed-unix[test3:ssh:sftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test3:telnet:ftp]",
+            "element": "test3",
+            "term": "telnet",
+            "transfer": "ftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_exit_code_channel_reports_more_than_one_code[bed-unix[test3:telnet:ftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test3:telnet:nc]",
+            "element": "test3",
+            "term": "telnet",
+            "transfer": "nc",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_exit_code_channel_reports_more_than_one_code[bed-unix[test3:telnet:nc]]"
+          },
+          {
+            "cell_label": "bed-unix[test3:telnet:scp]",
+            "element": "test3",
+            "term": "telnet",
+            "transfer": "scp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_exit_code_channel_reports_more_than_one_code[bed-unix[test3:telnet:scp]]"
+          },
+          {
+            "cell_label": "bed-unix[test3:telnet:sftp]",
+            "element": "test3",
+            "term": "telnet",
+            "transfer": "sftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_exit_code_channel_reports_more_than_one_code[bed-unix[test3:telnet:sftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test4:ssh:ftp]",
+            "element": "test4",
+            "term": "ssh",
+            "transfer": "ftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_exit_code_channel_reports_more_than_one_code[bed-unix[test4:ssh:ftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test4:ssh:nc]",
+            "element": "test4",
+            "term": "ssh",
+            "transfer": "nc",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_exit_code_channel_reports_more_than_one_code[bed-unix[test4:ssh:nc]]"
+          },
+          {
+            "cell_label": "bed-unix[test4:ssh:scp]",
+            "element": "test4",
+            "term": "ssh",
+            "transfer": "scp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_exit_code_channel_reports_more_than_one_code[bed-unix[test4:ssh:scp]]"
+          },
+          {
+            "cell_label": "bed-unix[test4:ssh:sftp]",
+            "element": "test4",
+            "term": "ssh",
+            "transfer": "sftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_exit_code_channel_reports_more_than_one_code[bed-unix[test4:ssh:sftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test4:telnet:ftp]",
+            "element": "test4",
+            "term": "telnet",
+            "transfer": "ftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_exit_code_channel_reports_more_than_one_code[bed-unix[test4:telnet:ftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test4:telnet:nc]",
+            "element": "test4",
+            "term": "telnet",
+            "transfer": "nc",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_exit_code_channel_reports_more_than_one_code[bed-unix[test4:telnet:nc]]"
+          },
+          {
+            "cell_label": "bed-unix[test4:telnet:scp]",
+            "element": "test4",
+            "term": "telnet",
+            "transfer": "scp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_exit_code_channel_reports_more_than_one_code[bed-unix[test4:telnet:scp]]"
+          },
+          {
+            "cell_label": "bed-unix[test4:telnet:sftp]",
+            "element": "test4",
+            "term": "telnet",
+            "transfer": "sftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_exit_code_channel_reports_more_than_one_code[bed-unix[test4:telnet:sftp]]"
+          }
+        ],
+        "not_observable": [],
+        "observable": "otto's CommandResult.retcode, .exit_code and .status for `(exit 42)` (must report 42) and `(exit 0)` (must report 0)",
+        "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_exit_code_channel_reports_more_than_one_code[bed-unix[test1:ssh:ftp]]"
+      },
+      "zephyr-2.7": {
+        "status": "measured-ok",
+        "nodeid": "tests/conformance/test_exec_contract.py::test_exec_reports_the_documented_exit_code",
+        "venue": "bed",
+        "as_of": "2026-08-25",
+        "observed_on": [
+          "zephyr27_fat"
+        ],
+        "observed_cells": [
+          {
+            "cell_label": "bed-zephyr[zephyr27_fat:telnet:console]",
+            "element": "zephyr27_fat",
+            "term": "telnet",
+            "transfer": "console",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_exit_code_channel_reports_more_than_one_code[bed-zephyr[zephyr27_fat:telnet:console]]"
+          }
+        ],
+        "not_observable": [],
+        "observable": "otto's CommandResult.retcode, .exit_code and .status for `definitely_not_a_zephyr_command` (must report -8) and `kernel version` (must report 0)",
+        "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_exit_code_channel_reports_more_than_one_code[bed-zephyr[zephyr27_fat:telnet:console]]"
+      },
+      "zephyr-3.7": {
+        "status": "measured-ok",
+        "nodeid": "tests/conformance/test_exec_contract.py::test_exec_reports_the_documented_exit_code",
+        "venue": "bed",
+        "as_of": "2026-08-25",
+        "observed_on": [
+          "zephyr37_fat",
+          "zephyr37_lfs",
+          "zephyr37_nofs",
+          "zephyr37_llext"
+        ],
+        "observed_cells": [
+          {
+            "cell_label": "bed-zephyr[zephyr37_fat:telnet:console]",
+            "element": "zephyr37_fat",
+            "term": "telnet",
+            "transfer": "console",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_exit_code_channel_reports_more_than_one_code[bed-zephyr[zephyr37_fat:telnet:console]]"
+          },
+          {
+            "cell_label": "bed-zephyr[zephyr37_lfs:telnet:console]",
+            "element": "zephyr37_lfs",
+            "term": "telnet",
+            "transfer": "console",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_exit_code_channel_reports_more_than_one_code[bed-zephyr[zephyr37_lfs:telnet:console]]"
+          },
+          {
+            "cell_label": "bed-zephyr[zephyr37_nofs:telnet:console]",
+            "element": "zephyr37_nofs",
+            "term": "telnet",
+            "transfer": "console",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_exit_code_channel_reports_more_than_one_code[bed-zephyr[zephyr37_nofs:telnet:console]]"
+          },
+          {
+            "cell_label": "bed-zephyr[zephyr37_llext:telnet:console]",
+            "element": "zephyr37_llext",
+            "term": "telnet",
+            "transfer": "console",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_exit_code_channel_reports_more_than_one_code[bed-zephyr[zephyr37_llext:telnet:console]]"
+          }
+        ],
+        "not_observable": [],
+        "observable": "otto's CommandResult.retcode, .exit_code and .status for `definitely_not_a_zephyr_command` (must report -8) and `kernel version` (must report 0)",
+        "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_exit_code_channel_reports_more_than_one_code[bed-zephyr[zephyr37_fat:telnet:console]]"
+      },
+      "zephyr-4.4": {
+        "status": "measured-ok",
+        "nodeid": "tests/conformance/test_exec_contract.py::test_exec_reports_the_documented_exit_code",
+        "venue": "bed",
+        "as_of": "2026-08-25",
+        "observed_on": [
+          "zephyr44_lfs",
+          "zephyr44_llext"
+        ],
+        "observed_cells": [
+          {
+            "cell_label": "bed-zephyr[zephyr44_lfs:telnet:console]",
+            "element": "zephyr44_lfs",
+            "term": "telnet",
+            "transfer": "console",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_exit_code_channel_reports_more_than_one_code[bed-zephyr[zephyr44_lfs:telnet:console]]"
+          },
+          {
+            "cell_label": "bed-zephyr[zephyr44_llext:telnet:console]",
+            "element": "zephyr44_llext",
+            "term": "telnet",
+            "transfer": "console",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_exit_code_channel_reports_more_than_one_code[bed-zephyr[zephyr44_llext:telnet:console]]"
+          }
+        ],
+        "not_observable": [],
+        "observable": "otto's CommandResult.retcode, .exit_code and .status for `definitely_not_a_zephyr_command` (must report -8) and `kernel version` (must report 0)",
+        "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_exit_code_channel_reports_more_than_one_code[bed-zephyr[zephyr44_lfs:telnet:console]]"
+      }
+    },
+    "exec-framing": {
+      "busybox-1.16.1": {
+        "status": "measured-ok",
+        "nodeid": "tests/conformance/test_exec_contract.py::test_exec_frames_output_without_prompt_noise",
+        "venue": "bed",
+        "as_of": "2026-08-25",
+        "observed_on": [
+          "bb1161"
+        ],
+        "observed_cells": [
+          {
+            "cell_label": "bed-busybox[bb1161:telnet:nc]",
+            "element": "bb1161",
+            "term": "telnet",
+            "transfer": "nc",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_framing_check_sees_planted_pollution[bed-busybox[bb1161:telnet:nc]]"
+          },
+          {
+            "cell_label": "bed-busybox[bb1161:telnet:shell]",
+            "element": "bb1161",
+            "term": "telnet",
+            "transfer": "shell",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_framing_check_sees_planted_pollution[bed-busybox[bb1161:telnet:shell]]"
+          }
+        ],
+        "not_observable": [],
+        "observable": "the framed stdout of `printf '%s\\n%s\\n' otto-conformance-frame-1 otto-conformance-frame-2`: more than one line, no otto `__OTTO_` scaffolding, `retval` line, ANSI escape or echoed command line, and exact equality against the 2 lines the tester chose",
+        "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_framing_check_sees_planted_pollution[bed-busybox[bb1161:telnet:nc]]"
+      },
+      "busybox-1.21.1": {
+        "status": "measured-ok",
+        "nodeid": "tests/conformance/test_exec_contract.py::test_exec_frames_output_without_prompt_noise",
+        "venue": "bed",
+        "as_of": "2026-08-25",
+        "observed_on": [
+          "bb1211"
+        ],
+        "observed_cells": [
+          {
+            "cell_label": "bed-busybox[bb1211:telnet:nc]",
+            "element": "bb1211",
+            "term": "telnet",
+            "transfer": "nc",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_framing_check_sees_planted_pollution[bed-busybox[bb1211:telnet:nc]]"
+          },
+          {
+            "cell_label": "bed-busybox[bb1211:telnet:shell]",
+            "element": "bb1211",
+            "term": "telnet",
+            "transfer": "shell",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_framing_check_sees_planted_pollution[bed-busybox[bb1211:telnet:shell]]"
+          }
+        ],
+        "not_observable": [],
+        "observable": "the framed stdout of `printf '%s\\n%s\\n' otto-conformance-frame-1 otto-conformance-frame-2`: more than one line, no otto `__OTTO_` scaffolding, `retval` line, ANSI escape or echoed command line, and exact equality against the 2 lines the tester chose",
+        "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_framing_check_sees_planted_pollution[bed-busybox[bb1211:telnet:nc]]"
+      },
+      "busybox-1.28.1": {
+        "status": "measured-ok",
+        "nodeid": "tests/conformance/test_exec_contract.py::test_exec_frames_output_without_prompt_noise",
+        "venue": "bed",
+        "as_of": "2026-08-25",
+        "observed_on": [
+          "bb1281"
+        ],
+        "observed_cells": [
+          {
+            "cell_label": "bed-busybox[bb1281:telnet:nc]",
+            "element": "bb1281",
+            "term": "telnet",
+            "transfer": "nc",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_framing_check_sees_planted_pollution[bed-busybox[bb1281:telnet:nc]]"
+          },
+          {
+            "cell_label": "bed-busybox[bb1281:telnet:shell]",
+            "element": "bb1281",
+            "term": "telnet",
+            "transfer": "shell",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_framing_check_sees_planted_pollution[bed-busybox[bb1281:telnet:shell]]"
+          }
+        ],
+        "not_observable": [],
+        "observable": "the framed stdout of `printf '%s\\n%s\\n' otto-conformance-frame-1 otto-conformance-frame-2`: more than one line, no otto `__OTTO_` scaffolding, `retval` line, ANSI escape or echoed command line, and exact equality against the 2 lines the tester chose",
+        "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_framing_check_sees_planted_pollution[bed-busybox[bb1281:telnet:nc]]"
+      },
+      "busybox-1.31.0": {
+        "status": "measured-ok",
+        "nodeid": "tests/conformance/test_exec_contract.py::test_exec_frames_output_without_prompt_noise",
+        "venue": "bed",
+        "as_of": "2026-08-25",
+        "observed_on": [
+          "bb1310"
+        ],
+        "observed_cells": [
+          {
+            "cell_label": "bed-busybox[bb1310:telnet:nc]",
+            "element": "bb1310",
+            "term": "telnet",
+            "transfer": "nc",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_framing_check_sees_planted_pollution[bed-busybox[bb1310:telnet:nc]]"
+          },
+          {
+            "cell_label": "bed-busybox[bb1310:telnet:shell]",
+            "element": "bb1310",
+            "term": "telnet",
+            "transfer": "shell",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_framing_check_sees_planted_pollution[bed-busybox[bb1310:telnet:shell]]"
+          }
+        ],
+        "not_observable": [],
+        "observable": "the framed stdout of `printf '%s\\n%s\\n' otto-conformance-frame-1 otto-conformance-frame-2`: more than one line, no otto `__OTTO_` scaffolding, `retval` line, ANSI escape or echoed command line, and exact equality against the 2 lines the tester chose",
+        "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_framing_check_sees_planted_pollution[bed-busybox[bb1310:telnet:nc]]"
+      },
+      "busybox-1.35.0": {
+        "status": "measured-ok",
+        "nodeid": "tests/conformance/test_exec_contract.py::test_exec_frames_output_without_prompt_noise",
+        "venue": "bed",
+        "as_of": "2026-08-25",
+        "observed_on": [
+          "bb1350"
+        ],
+        "observed_cells": [
+          {
+            "cell_label": "bed-busybox[bb1350:telnet:nc]",
+            "element": "bb1350",
+            "term": "telnet",
+            "transfer": "nc",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_framing_check_sees_planted_pollution[bed-busybox[bb1350:telnet:nc]]"
+          },
+          {
+            "cell_label": "bed-busybox[bb1350:telnet:shell]",
+            "element": "bb1350",
+            "term": "telnet",
+            "transfer": "shell",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_framing_check_sees_planted_pollution[bed-busybox[bb1350:telnet:shell]]"
+          }
+        ],
+        "not_observable": [],
+        "observable": "the framed stdout of `printf '%s\\n%s\\n' otto-conformance-frame-1 otto-conformance-frame-2`: more than one line, no otto `__OTTO_` scaffolding, `retval` line, ANSI escape or echoed command line, and exact equality against the 2 lines the tester chose",
+        "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_framing_check_sees_planted_pollution[bed-busybox[bb1350:telnet:nc]]"
+      },
+      "gnu": {
+        "status": "measured-ok",
+        "nodeid": "tests/conformance/test_exec_contract.py::test_exec_frames_output_without_prompt_noise",
+        "venue": "bed",
+        "as_of": "2026-08-25",
+        "observed_on": [
+          "test1",
+          "test2",
+          "test3",
+          "test4"
+        ],
+        "observed_cells": [
+          {
+            "cell_label": "bed-unix[test1:ssh:ftp]",
+            "element": "test1",
+            "term": "ssh",
+            "transfer": "ftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_framing_check_sees_planted_pollution[bed-unix[test1:ssh:ftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test1:ssh:nc]",
+            "element": "test1",
+            "term": "ssh",
+            "transfer": "nc",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_framing_check_sees_planted_pollution[bed-unix[test1:ssh:nc]]"
+          },
+          {
+            "cell_label": "bed-unix[test1:ssh:scp]",
+            "element": "test1",
+            "term": "ssh",
+            "transfer": "scp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_framing_check_sees_planted_pollution[bed-unix[test1:ssh:scp]]"
+          },
+          {
+            "cell_label": "bed-unix[test1:ssh:sftp]",
+            "element": "test1",
+            "term": "ssh",
+            "transfer": "sftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_framing_check_sees_planted_pollution[bed-unix[test1:ssh:sftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test1:telnet:ftp]",
+            "element": "test1",
+            "term": "telnet",
+            "transfer": "ftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_framing_check_sees_planted_pollution[bed-unix[test1:telnet:ftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test1:telnet:nc]",
+            "element": "test1",
+            "term": "telnet",
+            "transfer": "nc",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_framing_check_sees_planted_pollution[bed-unix[test1:telnet:nc]]"
+          },
+          {
+            "cell_label": "bed-unix[test1:telnet:scp]",
+            "element": "test1",
+            "term": "telnet",
+            "transfer": "scp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_framing_check_sees_planted_pollution[bed-unix[test1:telnet:scp]]"
+          },
+          {
+            "cell_label": "bed-unix[test1:telnet:sftp]",
+            "element": "test1",
+            "term": "telnet",
+            "transfer": "sftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_framing_check_sees_planted_pollution[bed-unix[test1:telnet:sftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test2:ssh:ftp]",
+            "element": "test2",
+            "term": "ssh",
+            "transfer": "ftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_framing_check_sees_planted_pollution[bed-unix[test2:ssh:ftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test2:ssh:nc]",
+            "element": "test2",
+            "term": "ssh",
+            "transfer": "nc",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_framing_check_sees_planted_pollution[bed-unix[test2:ssh:nc]]"
+          },
+          {
+            "cell_label": "bed-unix[test2:ssh:scp]",
+            "element": "test2",
+            "term": "ssh",
+            "transfer": "scp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_framing_check_sees_planted_pollution[bed-unix[test2:ssh:scp]]"
+          },
+          {
+            "cell_label": "bed-unix[test2:ssh:sftp]",
+            "element": "test2",
+            "term": "ssh",
+            "transfer": "sftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_framing_check_sees_planted_pollution[bed-unix[test2:ssh:sftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test2:telnet:ftp]",
+            "element": "test2",
+            "term": "telnet",
+            "transfer": "ftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_framing_check_sees_planted_pollution[bed-unix[test2:telnet:ftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test2:telnet:nc]",
+            "element": "test2",
+            "term": "telnet",
+            "transfer": "nc",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_framing_check_sees_planted_pollution[bed-unix[test2:telnet:nc]]"
+          },
+          {
+            "cell_label": "bed-unix[test2:telnet:scp]",
+            "element": "test2",
+            "term": "telnet",
+            "transfer": "scp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_framing_check_sees_planted_pollution[bed-unix[test2:telnet:scp]]"
+          },
+          {
+            "cell_label": "bed-unix[test2:telnet:sftp]",
+            "element": "test2",
+            "term": "telnet",
+            "transfer": "sftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_framing_check_sees_planted_pollution[bed-unix[test2:telnet:sftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test3:ssh:ftp]",
+            "element": "test3",
+            "term": "ssh",
+            "transfer": "ftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_framing_check_sees_planted_pollution[bed-unix[test3:ssh:ftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test3:ssh:nc]",
+            "element": "test3",
+            "term": "ssh",
+            "transfer": "nc",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_framing_check_sees_planted_pollution[bed-unix[test3:ssh:nc]]"
+          },
+          {
+            "cell_label": "bed-unix[test3:ssh:scp]",
+            "element": "test3",
+            "term": "ssh",
+            "transfer": "scp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_framing_check_sees_planted_pollution[bed-unix[test3:ssh:scp]]"
+          },
+          {
+            "cell_label": "bed-unix[test3:ssh:sftp]",
+            "element": "test3",
+            "term": "ssh",
+            "transfer": "sftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_framing_check_sees_planted_pollution[bed-unix[test3:ssh:sftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test3:telnet:ftp]",
+            "element": "test3",
+            "term": "telnet",
+            "transfer": "ftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_framing_check_sees_planted_pollution[bed-unix[test3:telnet:ftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test3:telnet:nc]",
+            "element": "test3",
+            "term": "telnet",
+            "transfer": "nc",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_framing_check_sees_planted_pollution[bed-unix[test3:telnet:nc]]"
+          },
+          {
+            "cell_label": "bed-unix[test3:telnet:scp]",
+            "element": "test3",
+            "term": "telnet",
+            "transfer": "scp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_framing_check_sees_planted_pollution[bed-unix[test3:telnet:scp]]"
+          },
+          {
+            "cell_label": "bed-unix[test3:telnet:sftp]",
+            "element": "test3",
+            "term": "telnet",
+            "transfer": "sftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_framing_check_sees_planted_pollution[bed-unix[test3:telnet:sftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test4:ssh:ftp]",
+            "element": "test4",
+            "term": "ssh",
+            "transfer": "ftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_framing_check_sees_planted_pollution[bed-unix[test4:ssh:ftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test4:ssh:nc]",
+            "element": "test4",
+            "term": "ssh",
+            "transfer": "nc",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_framing_check_sees_planted_pollution[bed-unix[test4:ssh:nc]]"
+          },
+          {
+            "cell_label": "bed-unix[test4:ssh:scp]",
+            "element": "test4",
+            "term": "ssh",
+            "transfer": "scp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_framing_check_sees_planted_pollution[bed-unix[test4:ssh:scp]]"
+          },
+          {
+            "cell_label": "bed-unix[test4:ssh:sftp]",
+            "element": "test4",
+            "term": "ssh",
+            "transfer": "sftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_framing_check_sees_planted_pollution[bed-unix[test4:ssh:sftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test4:telnet:ftp]",
+            "element": "test4",
+            "term": "telnet",
+            "transfer": "ftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_framing_check_sees_planted_pollution[bed-unix[test4:telnet:ftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test4:telnet:nc]",
+            "element": "test4",
+            "term": "telnet",
+            "transfer": "nc",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_framing_check_sees_planted_pollution[bed-unix[test4:telnet:nc]]"
+          },
+          {
+            "cell_label": "bed-unix[test4:telnet:scp]",
+            "element": "test4",
+            "term": "telnet",
+            "transfer": "scp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_framing_check_sees_planted_pollution[bed-unix[test4:telnet:scp]]"
+          },
+          {
+            "cell_label": "bed-unix[test4:telnet:sftp]",
+            "element": "test4",
+            "term": "telnet",
+            "transfer": "sftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_framing_check_sees_planted_pollution[bed-unix[test4:telnet:sftp]]"
+          }
+        ],
+        "not_observable": [],
+        "observable": "the framed stdout of `printf '%s\\n%s\\n' otto-conformance-frame-1 otto-conformance-frame-2`: more than one line, no otto `__OTTO_` scaffolding, `retval` line, ANSI escape or echoed command line, and exact equality against the 2 lines the tester chose",
+        "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_framing_check_sees_planted_pollution[bed-unix[test1:ssh:ftp]]"
+      },
+      "zephyr-2.7": {
+        "status": "measured-ok",
+        "nodeid": "tests/conformance/test_exec_contract.py::test_exec_frames_output_without_prompt_noise",
+        "venue": "bed",
+        "as_of": "2026-08-25",
+        "observed_on": [
+          "zephyr27_fat"
+        ],
+        "observed_cells": [
+          {
+            "cell_label": "bed-zephyr[zephyr27_fat:telnet:console]",
+            "element": "zephyr27_fat",
+            "term": "telnet",
+            "transfer": "console",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_framing_check_sees_planted_pollution[bed-zephyr[zephyr27_fat:telnet:console]]"
+          }
+        ],
+        "not_observable": [],
+        "observable": "the framed stdout of `help`: more than one line, no otto `__OTTO_` scaffolding, `retval` line, ANSI escape or echoed command line, and NO exact comparison -- the stimulus is a stock builtin whose text belongs to the firmware, so there is nothing to compare against",
+        "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_framing_check_sees_planted_pollution[bed-zephyr[zephyr27_fat:telnet:console]]"
+      },
+      "zephyr-3.7": {
+        "status": "measured-ok",
+        "nodeid": "tests/conformance/test_exec_contract.py::test_exec_frames_output_without_prompt_noise",
+        "venue": "bed",
+        "as_of": "2026-08-25",
+        "observed_on": [
+          "zephyr37_fat",
+          "zephyr37_lfs",
+          "zephyr37_nofs",
+          "zephyr37_llext"
+        ],
+        "observed_cells": [
+          {
+            "cell_label": "bed-zephyr[zephyr37_fat:telnet:console]",
+            "element": "zephyr37_fat",
+            "term": "telnet",
+            "transfer": "console",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_framing_check_sees_planted_pollution[bed-zephyr[zephyr37_fat:telnet:console]]"
+          },
+          {
+            "cell_label": "bed-zephyr[zephyr37_lfs:telnet:console]",
+            "element": "zephyr37_lfs",
+            "term": "telnet",
+            "transfer": "console",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_framing_check_sees_planted_pollution[bed-zephyr[zephyr37_lfs:telnet:console]]"
+          },
+          {
+            "cell_label": "bed-zephyr[zephyr37_nofs:telnet:console]",
+            "element": "zephyr37_nofs",
+            "term": "telnet",
+            "transfer": "console",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_framing_check_sees_planted_pollution[bed-zephyr[zephyr37_nofs:telnet:console]]"
+          },
+          {
+            "cell_label": "bed-zephyr[zephyr37_llext:telnet:console]",
+            "element": "zephyr37_llext",
+            "term": "telnet",
+            "transfer": "console",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_framing_check_sees_planted_pollution[bed-zephyr[zephyr37_llext:telnet:console]]"
+          }
+        ],
+        "not_observable": [],
+        "observable": "the framed stdout of `help`: more than one line, no otto `__OTTO_` scaffolding, `retval` line, ANSI escape or echoed command line, and NO exact comparison -- the stimulus is a stock builtin whose text belongs to the firmware, so there is nothing to compare against",
+        "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_framing_check_sees_planted_pollution[bed-zephyr[zephyr37_fat:telnet:console]]"
+      },
+      "zephyr-4.4": {
+        "status": "measured-ok",
+        "nodeid": "tests/conformance/test_exec_contract.py::test_exec_frames_output_without_prompt_noise",
+        "venue": "bed",
+        "as_of": "2026-08-25",
+        "observed_on": [
+          "zephyr44_lfs",
+          "zephyr44_llext"
+        ],
+        "observed_cells": [
+          {
+            "cell_label": "bed-zephyr[zephyr44_lfs:telnet:console]",
+            "element": "zephyr44_lfs",
+            "term": "telnet",
+            "transfer": "console",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_framing_check_sees_planted_pollution[bed-zephyr[zephyr44_lfs:telnet:console]]"
+          },
+          {
+            "cell_label": "bed-zephyr[zephyr44_llext:telnet:console]",
+            "element": "zephyr44_llext",
+            "term": "telnet",
+            "transfer": "console",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_framing_check_sees_planted_pollution[bed-zephyr[zephyr44_llext:telnet:console]]"
+          }
+        ],
+        "not_observable": [],
+        "observable": "the framed stdout of `help`: more than one line, no otto `__OTTO_` scaffolding, `retval` line, ANSI escape or echoed command line, and NO exact comparison -- the stimulus is a stock builtin whose text belongs to the firmware, so there is nothing to compare against",
+        "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_framing_check_sees_planted_pollution[bed-zephyr[zephyr44_lfs:telnet:console]]"
+      }
+    },
+    "exec-failure-in-sequence": {
+      "busybox-1.16.1": {
+        "status": "measured-ok",
+        "nodeid": "tests/conformance/test_exec_contract.py::test_a_failing_command_is_not_reported_as_success",
+        "venue": "bed",
+        "as_of": "2026-08-25",
+        "observed_on": [
+          "bb1161"
+        ],
+        "observed_cells": [
+          {
+            "cell_label": "bed-busybox[bb1161:telnet:nc]",
+            "element": "bb1161",
+            "term": "telnet",
+            "transfer": "nc",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_a_succeeding_sequence_is_not_reported_as_failed[bed-busybox[bb1161:telnet:nc]]"
+          },
+          {
+            "cell_label": "bed-busybox[bb1161:telnet:shell]",
+            "element": "bb1161",
+            "term": "telnet",
+            "transfer": "shell",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_a_succeeding_sequence_is_not_reported_as_failed[bed-busybox[bb1161:telnet:shell]]"
+          }
+        ],
+        "not_observable": [],
+        "observable": "the aggregate Results of a sequence whose middle command `(exit 5)` exits 5: its is_ok, its status, and which command first_failure names",
+        "positive_control": "tests/conformance/test_exec_contract.py::test_control_a_succeeding_sequence_is_not_reported_as_failed[bed-busybox[bb1161:telnet:nc]]"
+      },
+      "busybox-1.21.1": {
+        "status": "measured-ok",
+        "nodeid": "tests/conformance/test_exec_contract.py::test_a_failing_command_is_not_reported_as_success",
+        "venue": "bed",
+        "as_of": "2026-08-25",
+        "observed_on": [
+          "bb1211"
+        ],
+        "observed_cells": [
+          {
+            "cell_label": "bed-busybox[bb1211:telnet:nc]",
+            "element": "bb1211",
+            "term": "telnet",
+            "transfer": "nc",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_a_succeeding_sequence_is_not_reported_as_failed[bed-busybox[bb1211:telnet:nc]]"
+          },
+          {
+            "cell_label": "bed-busybox[bb1211:telnet:shell]",
+            "element": "bb1211",
+            "term": "telnet",
+            "transfer": "shell",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_a_succeeding_sequence_is_not_reported_as_failed[bed-busybox[bb1211:telnet:shell]]"
+          }
+        ],
+        "not_observable": [],
+        "observable": "the aggregate Results of a sequence whose middle command `(exit 5)` exits 5: its is_ok, its status, and which command first_failure names",
+        "positive_control": "tests/conformance/test_exec_contract.py::test_control_a_succeeding_sequence_is_not_reported_as_failed[bed-busybox[bb1211:telnet:nc]]"
+      },
+      "busybox-1.28.1": {
+        "status": "measured-ok",
+        "nodeid": "tests/conformance/test_exec_contract.py::test_a_failing_command_is_not_reported_as_success",
+        "venue": "bed",
+        "as_of": "2026-08-25",
+        "observed_on": [
+          "bb1281"
+        ],
+        "observed_cells": [
+          {
+            "cell_label": "bed-busybox[bb1281:telnet:nc]",
+            "element": "bb1281",
+            "term": "telnet",
+            "transfer": "nc",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_a_succeeding_sequence_is_not_reported_as_failed[bed-busybox[bb1281:telnet:nc]]"
+          },
+          {
+            "cell_label": "bed-busybox[bb1281:telnet:shell]",
+            "element": "bb1281",
+            "term": "telnet",
+            "transfer": "shell",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_a_succeeding_sequence_is_not_reported_as_failed[bed-busybox[bb1281:telnet:shell]]"
+          }
+        ],
+        "not_observable": [],
+        "observable": "the aggregate Results of a sequence whose middle command `(exit 5)` exits 5: its is_ok, its status, and which command first_failure names",
+        "positive_control": "tests/conformance/test_exec_contract.py::test_control_a_succeeding_sequence_is_not_reported_as_failed[bed-busybox[bb1281:telnet:nc]]"
+      },
+      "busybox-1.31.0": {
+        "status": "measured-ok",
+        "nodeid": "tests/conformance/test_exec_contract.py::test_a_failing_command_is_not_reported_as_success",
+        "venue": "bed",
+        "as_of": "2026-08-25",
+        "observed_on": [
+          "bb1310"
+        ],
+        "observed_cells": [
+          {
+            "cell_label": "bed-busybox[bb1310:telnet:nc]",
+            "element": "bb1310",
+            "term": "telnet",
+            "transfer": "nc",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_a_succeeding_sequence_is_not_reported_as_failed[bed-busybox[bb1310:telnet:nc]]"
+          },
+          {
+            "cell_label": "bed-busybox[bb1310:telnet:shell]",
+            "element": "bb1310",
+            "term": "telnet",
+            "transfer": "shell",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_a_succeeding_sequence_is_not_reported_as_failed[bed-busybox[bb1310:telnet:shell]]"
+          }
+        ],
+        "not_observable": [],
+        "observable": "the aggregate Results of a sequence whose middle command `(exit 5)` exits 5: its is_ok, its status, and which command first_failure names",
+        "positive_control": "tests/conformance/test_exec_contract.py::test_control_a_succeeding_sequence_is_not_reported_as_failed[bed-busybox[bb1310:telnet:nc]]"
+      },
+      "busybox-1.35.0": {
+        "status": "measured-ok",
+        "nodeid": "tests/conformance/test_exec_contract.py::test_a_failing_command_is_not_reported_as_success",
+        "venue": "bed",
+        "as_of": "2026-08-25",
+        "observed_on": [
+          "bb1350"
+        ],
+        "observed_cells": [
+          {
+            "cell_label": "bed-busybox[bb1350:telnet:nc]",
+            "element": "bb1350",
+            "term": "telnet",
+            "transfer": "nc",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_a_succeeding_sequence_is_not_reported_as_failed[bed-busybox[bb1350:telnet:nc]]"
+          },
+          {
+            "cell_label": "bed-busybox[bb1350:telnet:shell]",
+            "element": "bb1350",
+            "term": "telnet",
+            "transfer": "shell",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_a_succeeding_sequence_is_not_reported_as_failed[bed-busybox[bb1350:telnet:shell]]"
+          }
+        ],
+        "not_observable": [],
+        "observable": "the aggregate Results of a sequence whose middle command `(exit 5)` exits 5: its is_ok, its status, and which command first_failure names",
+        "positive_control": "tests/conformance/test_exec_contract.py::test_control_a_succeeding_sequence_is_not_reported_as_failed[bed-busybox[bb1350:telnet:nc]]"
+      },
+      "gnu": {
+        "status": "measured-ok",
+        "nodeid": "tests/conformance/test_exec_contract.py::test_a_failing_command_is_not_reported_as_success",
+        "venue": "bed",
+        "as_of": "2026-08-25",
+        "observed_on": [
+          "test1",
+          "test2",
+          "test3",
+          "test4"
+        ],
+        "observed_cells": [
+          {
+            "cell_label": "bed-unix[test1:ssh:ftp]",
+            "element": "test1",
+            "term": "ssh",
+            "transfer": "ftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_a_succeeding_sequence_is_not_reported_as_failed[bed-unix[test1:ssh:ftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test1:ssh:nc]",
+            "element": "test1",
+            "term": "ssh",
+            "transfer": "nc",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_a_succeeding_sequence_is_not_reported_as_failed[bed-unix[test1:ssh:nc]]"
+          },
+          {
+            "cell_label": "bed-unix[test1:ssh:scp]",
+            "element": "test1",
+            "term": "ssh",
+            "transfer": "scp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_a_succeeding_sequence_is_not_reported_as_failed[bed-unix[test1:ssh:scp]]"
+          },
+          {
+            "cell_label": "bed-unix[test1:ssh:sftp]",
+            "element": "test1",
+            "term": "ssh",
+            "transfer": "sftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_a_succeeding_sequence_is_not_reported_as_failed[bed-unix[test1:ssh:sftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test1:telnet:ftp]",
+            "element": "test1",
+            "term": "telnet",
+            "transfer": "ftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_a_succeeding_sequence_is_not_reported_as_failed[bed-unix[test1:telnet:ftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test1:telnet:nc]",
+            "element": "test1",
+            "term": "telnet",
+            "transfer": "nc",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_a_succeeding_sequence_is_not_reported_as_failed[bed-unix[test1:telnet:nc]]"
+          },
+          {
+            "cell_label": "bed-unix[test1:telnet:scp]",
+            "element": "test1",
+            "term": "telnet",
+            "transfer": "scp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_a_succeeding_sequence_is_not_reported_as_failed[bed-unix[test1:telnet:scp]]"
+          },
+          {
+            "cell_label": "bed-unix[test1:telnet:sftp]",
+            "element": "test1",
+            "term": "telnet",
+            "transfer": "sftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_a_succeeding_sequence_is_not_reported_as_failed[bed-unix[test1:telnet:sftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test2:ssh:ftp]",
+            "element": "test2",
+            "term": "ssh",
+            "transfer": "ftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_a_succeeding_sequence_is_not_reported_as_failed[bed-unix[test2:ssh:ftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test2:ssh:nc]",
+            "element": "test2",
+            "term": "ssh",
+            "transfer": "nc",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_a_succeeding_sequence_is_not_reported_as_failed[bed-unix[test2:ssh:nc]]"
+          },
+          {
+            "cell_label": "bed-unix[test2:ssh:scp]",
+            "element": "test2",
+            "term": "ssh",
+            "transfer": "scp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_a_succeeding_sequence_is_not_reported_as_failed[bed-unix[test2:ssh:scp]]"
+          },
+          {
+            "cell_label": "bed-unix[test2:ssh:sftp]",
+            "element": "test2",
+            "term": "ssh",
+            "transfer": "sftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_a_succeeding_sequence_is_not_reported_as_failed[bed-unix[test2:ssh:sftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test2:telnet:ftp]",
+            "element": "test2",
+            "term": "telnet",
+            "transfer": "ftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_a_succeeding_sequence_is_not_reported_as_failed[bed-unix[test2:telnet:ftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test2:telnet:nc]",
+            "element": "test2",
+            "term": "telnet",
+            "transfer": "nc",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_a_succeeding_sequence_is_not_reported_as_failed[bed-unix[test2:telnet:nc]]"
+          },
+          {
+            "cell_label": "bed-unix[test2:telnet:scp]",
+            "element": "test2",
+            "term": "telnet",
+            "transfer": "scp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_a_succeeding_sequence_is_not_reported_as_failed[bed-unix[test2:telnet:scp]]"
+          },
+          {
+            "cell_label": "bed-unix[test2:telnet:sftp]",
+            "element": "test2",
+            "term": "telnet",
+            "transfer": "sftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_a_succeeding_sequence_is_not_reported_as_failed[bed-unix[test2:telnet:sftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test3:ssh:ftp]",
+            "element": "test3",
+            "term": "ssh",
+            "transfer": "ftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_a_succeeding_sequence_is_not_reported_as_failed[bed-unix[test3:ssh:ftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test3:ssh:nc]",
+            "element": "test3",
+            "term": "ssh",
+            "transfer": "nc",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_a_succeeding_sequence_is_not_reported_as_failed[bed-unix[test3:ssh:nc]]"
+          },
+          {
+            "cell_label": "bed-unix[test3:ssh:scp]",
+            "element": "test3",
+            "term": "ssh",
+            "transfer": "scp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_a_succeeding_sequence_is_not_reported_as_failed[bed-unix[test3:ssh:scp]]"
+          },
+          {
+            "cell_label": "bed-unix[test3:ssh:sftp]",
+            "element": "test3",
+            "term": "ssh",
+            "transfer": "sftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_a_succeeding_sequence_is_not_reported_as_failed[bed-unix[test3:ssh:sftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test3:telnet:ftp]",
+            "element": "test3",
+            "term": "telnet",
+            "transfer": "ftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_a_succeeding_sequence_is_not_reported_as_failed[bed-unix[test3:telnet:ftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test3:telnet:nc]",
+            "element": "test3",
+            "term": "telnet",
+            "transfer": "nc",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_a_succeeding_sequence_is_not_reported_as_failed[bed-unix[test3:telnet:nc]]"
+          },
+          {
+            "cell_label": "bed-unix[test3:telnet:scp]",
+            "element": "test3",
+            "term": "telnet",
+            "transfer": "scp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_a_succeeding_sequence_is_not_reported_as_failed[bed-unix[test3:telnet:scp]]"
+          },
+          {
+            "cell_label": "bed-unix[test3:telnet:sftp]",
+            "element": "test3",
+            "term": "telnet",
+            "transfer": "sftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_a_succeeding_sequence_is_not_reported_as_failed[bed-unix[test3:telnet:sftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test4:ssh:ftp]",
+            "element": "test4",
+            "term": "ssh",
+            "transfer": "ftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_a_succeeding_sequence_is_not_reported_as_failed[bed-unix[test4:ssh:ftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test4:ssh:nc]",
+            "element": "test4",
+            "term": "ssh",
+            "transfer": "nc",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_a_succeeding_sequence_is_not_reported_as_failed[bed-unix[test4:ssh:nc]]"
+          },
+          {
+            "cell_label": "bed-unix[test4:ssh:scp]",
+            "element": "test4",
+            "term": "ssh",
+            "transfer": "scp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_a_succeeding_sequence_is_not_reported_as_failed[bed-unix[test4:ssh:scp]]"
+          },
+          {
+            "cell_label": "bed-unix[test4:ssh:sftp]",
+            "element": "test4",
+            "term": "ssh",
+            "transfer": "sftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_a_succeeding_sequence_is_not_reported_as_failed[bed-unix[test4:ssh:sftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test4:telnet:ftp]",
+            "element": "test4",
+            "term": "telnet",
+            "transfer": "ftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_a_succeeding_sequence_is_not_reported_as_failed[bed-unix[test4:telnet:ftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test4:telnet:nc]",
+            "element": "test4",
+            "term": "telnet",
+            "transfer": "nc",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_a_succeeding_sequence_is_not_reported_as_failed[bed-unix[test4:telnet:nc]]"
+          },
+          {
+            "cell_label": "bed-unix[test4:telnet:scp]",
+            "element": "test4",
+            "term": "telnet",
+            "transfer": "scp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_a_succeeding_sequence_is_not_reported_as_failed[bed-unix[test4:telnet:scp]]"
+          },
+          {
+            "cell_label": "bed-unix[test4:telnet:sftp]",
+            "element": "test4",
+            "term": "telnet",
+            "transfer": "sftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_a_succeeding_sequence_is_not_reported_as_failed[bed-unix[test4:telnet:sftp]]"
+          }
+        ],
+        "not_observable": [],
+        "observable": "the aggregate Results of a sequence whose middle command `(exit 5)` exits 5: its is_ok, its status, and which command first_failure names",
+        "positive_control": "tests/conformance/test_exec_contract.py::test_control_a_succeeding_sequence_is_not_reported_as_failed[bed-unix[test1:ssh:ftp]]"
+      },
+      "zephyr-2.7": {
+        "status": "measured-ok",
+        "nodeid": "tests/conformance/test_exec_contract.py::test_a_failing_command_is_not_reported_as_success",
+        "venue": "bed",
+        "as_of": "2026-08-25",
+        "observed_on": [
+          "zephyr27_fat"
+        ],
+        "observed_cells": [
+          {
+            "cell_label": "bed-zephyr[zephyr27_fat:telnet:console]",
+            "element": "zephyr27_fat",
+            "term": "telnet",
+            "transfer": "console",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_a_succeeding_sequence_is_not_reported_as_failed[bed-zephyr[zephyr27_fat:telnet:console]]"
+          }
+        ],
+        "not_observable": [],
+        "observable": "the aggregate Results of a sequence whose middle command `otto_conformance_not_a_command` exits -8: its is_ok, its status, and which command first_failure names",
+        "positive_control": "tests/conformance/test_exec_contract.py::test_control_a_succeeding_sequence_is_not_reported_as_failed[bed-zephyr[zephyr27_fat:telnet:console]]"
+      },
+      "zephyr-3.7": {
+        "status": "measured-ok",
+        "nodeid": "tests/conformance/test_exec_contract.py::test_a_failing_command_is_not_reported_as_success",
+        "venue": "bed",
+        "as_of": "2026-08-25",
+        "observed_on": [
+          "zephyr37_fat",
+          "zephyr37_lfs",
+          "zephyr37_nofs",
+          "zephyr37_llext"
+        ],
+        "observed_cells": [
+          {
+            "cell_label": "bed-zephyr[zephyr37_fat:telnet:console]",
+            "element": "zephyr37_fat",
+            "term": "telnet",
+            "transfer": "console",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_a_succeeding_sequence_is_not_reported_as_failed[bed-zephyr[zephyr37_fat:telnet:console]]"
+          },
+          {
+            "cell_label": "bed-zephyr[zephyr37_lfs:telnet:console]",
+            "element": "zephyr37_lfs",
+            "term": "telnet",
+            "transfer": "console",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_a_succeeding_sequence_is_not_reported_as_failed[bed-zephyr[zephyr37_lfs:telnet:console]]"
+          },
+          {
+            "cell_label": "bed-zephyr[zephyr37_nofs:telnet:console]",
+            "element": "zephyr37_nofs",
+            "term": "telnet",
+            "transfer": "console",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_a_succeeding_sequence_is_not_reported_as_failed[bed-zephyr[zephyr37_nofs:telnet:console]]"
+          },
+          {
+            "cell_label": "bed-zephyr[zephyr37_llext:telnet:console]",
+            "element": "zephyr37_llext",
+            "term": "telnet",
+            "transfer": "console",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_a_succeeding_sequence_is_not_reported_as_failed[bed-zephyr[zephyr37_llext:telnet:console]]"
+          }
+        ],
+        "not_observable": [],
+        "observable": "the aggregate Results of a sequence whose middle command `otto_conformance_not_a_command` exits -8: its is_ok, its status, and which command first_failure names",
+        "positive_control": "tests/conformance/test_exec_contract.py::test_control_a_succeeding_sequence_is_not_reported_as_failed[bed-zephyr[zephyr37_fat:telnet:console]]"
+      },
+      "zephyr-4.4": {
+        "status": "measured-ok",
+        "nodeid": "tests/conformance/test_exec_contract.py::test_a_failing_command_is_not_reported_as_success",
+        "venue": "bed",
+        "as_of": "2026-08-25",
+        "observed_on": [
+          "zephyr44_lfs",
+          "zephyr44_llext"
+        ],
+        "observed_cells": [
+          {
+            "cell_label": "bed-zephyr[zephyr44_lfs:telnet:console]",
+            "element": "zephyr44_lfs",
+            "term": "telnet",
+            "transfer": "console",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_a_succeeding_sequence_is_not_reported_as_failed[bed-zephyr[zephyr44_lfs:telnet:console]]"
+          },
+          {
+            "cell_label": "bed-zephyr[zephyr44_llext:telnet:console]",
+            "element": "zephyr44_llext",
+            "term": "telnet",
+            "transfer": "console",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_a_succeeding_sequence_is_not_reported_as_failed[bed-zephyr[zephyr44_llext:telnet:console]]"
+          }
+        ],
+        "not_observable": [],
+        "observable": "the aggregate Results of a sequence whose middle command `otto_conformance_not_a_command` exits -8: its is_ok, its status, and which command first_failure names",
+        "positive_control": "tests/conformance/test_exec_contract.py::test_control_a_succeeding_sequence_is_not_reported_as_failed[bed-zephyr[zephyr44_lfs:telnet:console]]"
+      }
+    },
+    "transfer-roundtrip": {
+      "busybox-1.16.1": {
+        "status": "measured-broken",
+        "nodeid": "tests/conformance/test_transfer_contract.py::test_put_get_roundtrip_preserves_content",
+        "venue": "bed",
+        "as_of": "2026-08-25",
+        "observed_on": [
+          "bb1161"
+        ],
+        "observed_cells": [
+          {
+            "cell_label": "bed-busybox[bb1161:telnet:nc]",
+            "element": "bb1161",
+            "term": "telnet",
+            "transfer": "nc",
+            "outcome": "xfailed"
+          },
+          {
+            "cell_label": "bed-busybox[bb1161:telnet:shell]",
+            "element": "bb1161",
+            "term": "telnet",
+            "transfer": "shell",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_roundtrip_comparison_rejects_a_corrupted_byte[bed-busybox[bb1161:telnet:shell]]"
+          }
+        ],
+        "not_observable": [],
+        "observable": "the bytes get() reads back over `nc` after put() of a known payload to this host's own scratch directory | the bytes get() reads back over `shell` after put() of a known payload to this host's own scratch directory",
+        "failure_summary": "bed-busybox[bb1161:telnet:nc]: call: expected failure -- otto's `nc-transfer` gap, PUT direction: `NcFileTransfer._put_files_nc` is a GapPath with state PATH_OPEN in `src/otto/host/userland.py` -- it spells the device-side listener `nc -l -w <secs> <port>`, which the BusyBox applet does not accept (it wants `-l -p PORT`), and reads nothing from that record, so the put fails into `Remote nc listener on port <port> not ready` instead of the refusal the GET direction raises. A registered open path, not a test or lab-data problem: `shell` transfer passes on these same five guests, and `nc` passes on every `bed-unix` cell that uses it (test1-test4 over both ssh and telnet, 8 cells, 16/16 items, measured on the first full `make conformance-bed` run). See this module's banner."
+      },
+      "busybox-1.21.1": {
+        "status": "measured-broken",
+        "nodeid": "tests/conformance/test_transfer_contract.py::test_put_get_roundtrip_preserves_content",
+        "venue": "bed",
+        "as_of": "2026-08-25",
+        "observed_on": [
+          "bb1211"
+        ],
+        "observed_cells": [
+          {
+            "cell_label": "bed-busybox[bb1211:telnet:nc]",
+            "element": "bb1211",
+            "term": "telnet",
+            "transfer": "nc",
+            "outcome": "xfailed"
+          },
+          {
+            "cell_label": "bed-busybox[bb1211:telnet:shell]",
+            "element": "bb1211",
+            "term": "telnet",
+            "transfer": "shell",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_roundtrip_comparison_rejects_a_corrupted_byte[bed-busybox[bb1211:telnet:shell]]"
+          }
+        ],
+        "not_observable": [],
+        "observable": "the bytes get() reads back over `nc` after put() of a known payload to this host's own scratch directory | the bytes get() reads back over `shell` after put() of a known payload to this host's own scratch directory",
+        "failure_summary": "bed-busybox[bb1211:telnet:nc]: call: expected failure -- otto's `nc-transfer` gap, PUT direction: `NcFileTransfer._put_files_nc` is a GapPath with state PATH_OPEN in `src/otto/host/userland.py` -- it spells the device-side listener `nc -l -w <secs> <port>`, which the BusyBox applet does not accept (it wants `-l -p PORT`), and reads nothing from that record, so the put fails into `Remote nc listener on port <port> not ready` instead of the refusal the GET direction raises. A registered open path, not a test or lab-data problem: `shell` transfer passes on these same five guests, and `nc` passes on every `bed-unix` cell that uses it (test1-test4 over both ssh and telnet, 8 cells, 16/16 items, measured on the first full `make conformance-bed` run). See this module's banner."
+      },
+      "busybox-1.28.1": {
+        "status": "measured-broken",
+        "nodeid": "tests/conformance/test_transfer_contract.py::test_put_get_roundtrip_preserves_content",
+        "venue": "bed",
+        "as_of": "2026-08-25",
+        "observed_on": [
+          "bb1281"
+        ],
+        "observed_cells": [
+          {
+            "cell_label": "bed-busybox[bb1281:telnet:nc]",
+            "element": "bb1281",
+            "term": "telnet",
+            "transfer": "nc",
+            "outcome": "xfailed"
+          },
+          {
+            "cell_label": "bed-busybox[bb1281:telnet:shell]",
+            "element": "bb1281",
+            "term": "telnet",
+            "transfer": "shell",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_roundtrip_comparison_rejects_a_corrupted_byte[bed-busybox[bb1281:telnet:shell]]"
+          }
+        ],
+        "not_observable": [],
+        "observable": "the bytes get() reads back over `nc` after put() of a known payload to this host's own scratch directory | the bytes get() reads back over `shell` after put() of a known payload to this host's own scratch directory",
+        "failure_summary": "bed-busybox[bb1281:telnet:nc]: call: expected failure -- otto's `nc-transfer` gap, PUT direction: `NcFileTransfer._put_files_nc` is a GapPath with state PATH_OPEN in `src/otto/host/userland.py` -- it spells the device-side listener `nc -l -w <secs> <port>`, which the BusyBox applet does not accept (it wants `-l -p PORT`), and reads nothing from that record, so the put fails into `Remote nc listener on port <port> not ready` instead of the refusal the GET direction raises. A registered open path, not a test or lab-data problem: `shell` transfer passes on these same five guests, and `nc` passes on every `bed-unix` cell that uses it (test1-test4 over both ssh and telnet, 8 cells, 16/16 items, measured on the first full `make conformance-bed` run). See this module's banner."
+      },
+      "busybox-1.31.0": {
+        "status": "measured-broken",
+        "nodeid": "tests/conformance/test_transfer_contract.py::test_put_get_roundtrip_preserves_content",
+        "venue": "bed",
+        "as_of": "2026-08-25",
+        "observed_on": [
+          "bb1310"
+        ],
+        "observed_cells": [
+          {
+            "cell_label": "bed-busybox[bb1310:telnet:nc]",
+            "element": "bb1310",
+            "term": "telnet",
+            "transfer": "nc",
+            "outcome": "xfailed"
+          },
+          {
+            "cell_label": "bed-busybox[bb1310:telnet:shell]",
+            "element": "bb1310",
+            "term": "telnet",
+            "transfer": "shell",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_roundtrip_comparison_rejects_a_corrupted_byte[bed-busybox[bb1310:telnet:shell]]"
+          }
+        ],
+        "not_observable": [],
+        "observable": "the bytes get() reads back over `nc` after put() of a known payload to this host's own scratch directory | the bytes get() reads back over `shell` after put() of a known payload to this host's own scratch directory",
+        "failure_summary": "bed-busybox[bb1310:telnet:nc]: call: expected failure -- otto's `nc-transfer` gap, PUT direction: `NcFileTransfer._put_files_nc` is a GapPath with state PATH_OPEN in `src/otto/host/userland.py` -- it spells the device-side listener `nc -l -w <secs> <port>`, which the BusyBox applet does not accept (it wants `-l -p PORT`), and reads nothing from that record, so the put fails into `Remote nc listener on port <port> not ready` instead of the refusal the GET direction raises. A registered open path, not a test or lab-data problem: `shell` transfer passes on these same five guests, and `nc` passes on every `bed-unix` cell that uses it (test1-test4 over both ssh and telnet, 8 cells, 16/16 items, measured on the first full `make conformance-bed` run). See this module's banner."
+      },
+      "busybox-1.35.0": {
+        "status": "measured-broken",
+        "nodeid": "tests/conformance/test_transfer_contract.py::test_put_get_roundtrip_preserves_content",
+        "venue": "bed",
+        "as_of": "2026-08-25",
+        "observed_on": [
+          "bb1350"
+        ],
+        "observed_cells": [
+          {
+            "cell_label": "bed-busybox[bb1350:telnet:nc]",
+            "element": "bb1350",
+            "term": "telnet",
+            "transfer": "nc",
+            "outcome": "xfailed"
+          },
+          {
+            "cell_label": "bed-busybox[bb1350:telnet:shell]",
+            "element": "bb1350",
+            "term": "telnet",
+            "transfer": "shell",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_roundtrip_comparison_rejects_a_corrupted_byte[bed-busybox[bb1350:telnet:shell]]"
+          }
+        ],
+        "not_observable": [],
+        "observable": "the bytes get() reads back over `nc` after put() of a known payload to this host's own scratch directory | the bytes get() reads back over `shell` after put() of a known payload to this host's own scratch directory",
+        "failure_summary": "bed-busybox[bb1350:telnet:nc]: call: expected failure -- otto's `nc-transfer` gap, PUT direction: `NcFileTransfer._put_files_nc` is a GapPath with state PATH_OPEN in `src/otto/host/userland.py` -- it spells the device-side listener `nc -l -w <secs> <port>`, which the BusyBox applet does not accept (it wants `-l -p PORT`), and reads nothing from that record, so the put fails into `Remote nc listener on port <port> not ready` instead of the refusal the GET direction raises. A registered open path, not a test or lab-data problem: `shell` transfer passes on these same five guests, and `nc` passes on every `bed-unix` cell that uses it (test1-test4 over both ssh and telnet, 8 cells, 16/16 items, measured on the first full `make conformance-bed` run). See this module's banner."
+      },
+      "gnu": {
+        "status": "measured-ok",
+        "nodeid": "tests/conformance/test_transfer_contract.py::test_put_get_roundtrip_preserves_content",
+        "venue": "bed",
+        "as_of": "2026-08-25",
+        "observed_on": [
+          "test1",
+          "test2",
+          "test3",
+          "test4"
+        ],
+        "observed_cells": [
+          {
+            "cell_label": "bed-unix[test1:ssh:ftp]",
+            "element": "test1",
+            "term": "ssh",
+            "transfer": "ftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_roundtrip_comparison_rejects_a_corrupted_byte[bed-unix[test1:ssh:ftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test1:ssh:nc]",
+            "element": "test1",
+            "term": "ssh",
+            "transfer": "nc",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_roundtrip_comparison_rejects_a_corrupted_byte[bed-unix[test1:ssh:nc]]"
+          },
+          {
+            "cell_label": "bed-unix[test1:ssh:scp]",
+            "element": "test1",
+            "term": "ssh",
+            "transfer": "scp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_roundtrip_comparison_rejects_a_corrupted_byte[bed-unix[test1:ssh:scp]]"
+          },
+          {
+            "cell_label": "bed-unix[test1:ssh:sftp]",
+            "element": "test1",
+            "term": "ssh",
+            "transfer": "sftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_roundtrip_comparison_rejects_a_corrupted_byte[bed-unix[test1:ssh:sftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test1:telnet:ftp]",
+            "element": "test1",
+            "term": "telnet",
+            "transfer": "ftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_roundtrip_comparison_rejects_a_corrupted_byte[bed-unix[test1:telnet:ftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test1:telnet:nc]",
+            "element": "test1",
+            "term": "telnet",
+            "transfer": "nc",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_roundtrip_comparison_rejects_a_corrupted_byte[bed-unix[test1:telnet:nc]]"
+          },
+          {
+            "cell_label": "bed-unix[test1:telnet:scp]",
+            "element": "test1",
+            "term": "telnet",
+            "transfer": "scp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_roundtrip_comparison_rejects_a_corrupted_byte[bed-unix[test1:telnet:scp]]"
+          },
+          {
+            "cell_label": "bed-unix[test1:telnet:sftp]",
+            "element": "test1",
+            "term": "telnet",
+            "transfer": "sftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_roundtrip_comparison_rejects_a_corrupted_byte[bed-unix[test1:telnet:sftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test2:ssh:ftp]",
+            "element": "test2",
+            "term": "ssh",
+            "transfer": "ftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_roundtrip_comparison_rejects_a_corrupted_byte[bed-unix[test2:ssh:ftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test2:ssh:nc]",
+            "element": "test2",
+            "term": "ssh",
+            "transfer": "nc",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_roundtrip_comparison_rejects_a_corrupted_byte[bed-unix[test2:ssh:nc]]"
+          },
+          {
+            "cell_label": "bed-unix[test2:ssh:scp]",
+            "element": "test2",
+            "term": "ssh",
+            "transfer": "scp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_roundtrip_comparison_rejects_a_corrupted_byte[bed-unix[test2:ssh:scp]]"
+          },
+          {
+            "cell_label": "bed-unix[test2:ssh:sftp]",
+            "element": "test2",
+            "term": "ssh",
+            "transfer": "sftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_roundtrip_comparison_rejects_a_corrupted_byte[bed-unix[test2:ssh:sftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test2:telnet:ftp]",
+            "element": "test2",
+            "term": "telnet",
+            "transfer": "ftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_roundtrip_comparison_rejects_a_corrupted_byte[bed-unix[test2:telnet:ftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test2:telnet:nc]",
+            "element": "test2",
+            "term": "telnet",
+            "transfer": "nc",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_roundtrip_comparison_rejects_a_corrupted_byte[bed-unix[test2:telnet:nc]]"
+          },
+          {
+            "cell_label": "bed-unix[test2:telnet:scp]",
+            "element": "test2",
+            "term": "telnet",
+            "transfer": "scp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_roundtrip_comparison_rejects_a_corrupted_byte[bed-unix[test2:telnet:scp]]"
+          },
+          {
+            "cell_label": "bed-unix[test2:telnet:sftp]",
+            "element": "test2",
+            "term": "telnet",
+            "transfer": "sftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_roundtrip_comparison_rejects_a_corrupted_byte[bed-unix[test2:telnet:sftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test3:ssh:ftp]",
+            "element": "test3",
+            "term": "ssh",
+            "transfer": "ftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_roundtrip_comparison_rejects_a_corrupted_byte[bed-unix[test3:ssh:ftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test3:ssh:nc]",
+            "element": "test3",
+            "term": "ssh",
+            "transfer": "nc",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_roundtrip_comparison_rejects_a_corrupted_byte[bed-unix[test3:ssh:nc]]"
+          },
+          {
+            "cell_label": "bed-unix[test3:ssh:scp]",
+            "element": "test3",
+            "term": "ssh",
+            "transfer": "scp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_roundtrip_comparison_rejects_a_corrupted_byte[bed-unix[test3:ssh:scp]]"
+          },
+          {
+            "cell_label": "bed-unix[test3:ssh:sftp]",
+            "element": "test3",
+            "term": "ssh",
+            "transfer": "sftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_roundtrip_comparison_rejects_a_corrupted_byte[bed-unix[test3:ssh:sftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test3:telnet:ftp]",
+            "element": "test3",
+            "term": "telnet",
+            "transfer": "ftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_roundtrip_comparison_rejects_a_corrupted_byte[bed-unix[test3:telnet:ftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test3:telnet:nc]",
+            "element": "test3",
+            "term": "telnet",
+            "transfer": "nc",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_roundtrip_comparison_rejects_a_corrupted_byte[bed-unix[test3:telnet:nc]]"
+          },
+          {
+            "cell_label": "bed-unix[test3:telnet:scp]",
+            "element": "test3",
+            "term": "telnet",
+            "transfer": "scp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_roundtrip_comparison_rejects_a_corrupted_byte[bed-unix[test3:telnet:scp]]"
+          },
+          {
+            "cell_label": "bed-unix[test3:telnet:sftp]",
+            "element": "test3",
+            "term": "telnet",
+            "transfer": "sftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_roundtrip_comparison_rejects_a_corrupted_byte[bed-unix[test3:telnet:sftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test4:ssh:ftp]",
+            "element": "test4",
+            "term": "ssh",
+            "transfer": "ftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_roundtrip_comparison_rejects_a_corrupted_byte[bed-unix[test4:ssh:ftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test4:ssh:nc]",
+            "element": "test4",
+            "term": "ssh",
+            "transfer": "nc",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_roundtrip_comparison_rejects_a_corrupted_byte[bed-unix[test4:ssh:nc]]"
+          },
+          {
+            "cell_label": "bed-unix[test4:ssh:scp]",
+            "element": "test4",
+            "term": "ssh",
+            "transfer": "scp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_roundtrip_comparison_rejects_a_corrupted_byte[bed-unix[test4:ssh:scp]]"
+          },
+          {
+            "cell_label": "bed-unix[test4:ssh:sftp]",
+            "element": "test4",
+            "term": "ssh",
+            "transfer": "sftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_roundtrip_comparison_rejects_a_corrupted_byte[bed-unix[test4:ssh:sftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test4:telnet:ftp]",
+            "element": "test4",
+            "term": "telnet",
+            "transfer": "ftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_roundtrip_comparison_rejects_a_corrupted_byte[bed-unix[test4:telnet:ftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test4:telnet:nc]",
+            "element": "test4",
+            "term": "telnet",
+            "transfer": "nc",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_roundtrip_comparison_rejects_a_corrupted_byte[bed-unix[test4:telnet:nc]]"
+          },
+          {
+            "cell_label": "bed-unix[test4:telnet:scp]",
+            "element": "test4",
+            "term": "telnet",
+            "transfer": "scp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_roundtrip_comparison_rejects_a_corrupted_byte[bed-unix[test4:telnet:scp]]"
+          },
+          {
+            "cell_label": "bed-unix[test4:telnet:sftp]",
+            "element": "test4",
+            "term": "telnet",
+            "transfer": "sftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_roundtrip_comparison_rejects_a_corrupted_byte[bed-unix[test4:telnet:sftp]]"
+          }
+        ],
+        "not_observable": [],
+        "observable": "the bytes get() reads back over `ftp` after put() of a known payload to this host's own scratch directory | the bytes get() reads back over `nc` after put() of a known payload to this host's own scratch directory | the bytes get() reads back over `scp` after put() of a known payload to this host's own scratch directory | the bytes get() reads back over `sftp` after put() of a known payload to this host's own scratch directory",
+        "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_roundtrip_comparison_rejects_a_corrupted_byte[bed-unix[test1:ssh:ftp]]"
+      },
+      "zephyr-2.7": {
+        "status": "measured-ok",
+        "nodeid": "tests/conformance/test_transfer_contract.py::test_put_get_roundtrip_preserves_content",
+        "venue": "bed",
+        "as_of": "2026-08-25",
+        "observed_on": [
+          "zephyr27_fat"
+        ],
+        "observed_cells": [
+          {
+            "cell_label": "bed-zephyr[zephyr27_fat:telnet:console]",
+            "element": "zephyr27_fat",
+            "term": "telnet",
+            "transfer": "console",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_roundtrip_comparison_rejects_a_corrupted_byte[bed-zephyr[zephyr27_fat:telnet:console]]"
+          }
+        ],
+        "not_observable": [],
+        "observable": "the bytes get() reads back over `console` after put() of a known payload to this host's own scratch directory",
+        "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_roundtrip_comparison_rejects_a_corrupted_byte[bed-zephyr[zephyr27_fat:telnet:console]]"
+      },
+      "zephyr-3.7": {
+        "status": "measured-ok",
+        "nodeid": "tests/conformance/test_transfer_contract.py::test_put_get_roundtrip_preserves_content",
+        "venue": "bed",
+        "as_of": "2026-08-25",
+        "observed_on": [
+          "zephyr37_fat",
+          "zephyr37_lfs"
+        ],
+        "observed_cells": [
+          {
+            "cell_label": "bed-zephyr[zephyr37_fat:telnet:console]",
+            "element": "zephyr37_fat",
+            "term": "telnet",
+            "transfer": "console",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_roundtrip_comparison_rejects_a_corrupted_byte[bed-zephyr[zephyr37_fat:telnet:console]]"
+          },
+          {
+            "cell_label": "bed-zephyr[zephyr37_lfs:telnet:console]",
+            "element": "zephyr37_lfs",
+            "term": "telnet",
+            "transfer": "console",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_roundtrip_comparison_rejects_a_corrupted_byte[bed-zephyr[zephyr37_lfs:telnet:console]]"
+          }
+        ],
+        "not_observable": [
+          {
+            "element": "zephyr37_nofs",
+            "probed": "tests/conformance/test_transfer_contract.py::applicable_cell(bed-zephyr[zephyr37_nofs:telnet:console])",
+            "probe_result": "False -- the contract declares this drawn cell outside its applicable domain"
+          },
+          {
+            "element": "zephyr37_llext",
+            "probed": "tests/conformance/test_transfer_contract.py::applicable_cell(bed-zephyr[zephyr37_llext:telnet:console])",
+            "probe_result": "False -- the contract declares this drawn cell outside its applicable domain"
+          }
+        ],
+        "observable": "the bytes get() reads back over `console` after put() of a known payload to this host's own scratch directory",
+        "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_roundtrip_comparison_rejects_a_corrupted_byte[bed-zephyr[zephyr37_fat:telnet:console]]"
+      },
+      "zephyr-4.4": {
+        "status": "measured-ok",
+        "nodeid": "tests/conformance/test_transfer_contract.py::test_put_get_roundtrip_preserves_content",
+        "venue": "bed",
+        "as_of": "2026-08-25",
+        "observed_on": [
+          "zephyr44_lfs"
+        ],
+        "observed_cells": [
+          {
+            "cell_label": "bed-zephyr[zephyr44_lfs:telnet:console]",
+            "element": "zephyr44_lfs",
+            "term": "telnet",
+            "transfer": "console",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_roundtrip_comparison_rejects_a_corrupted_byte[bed-zephyr[zephyr44_lfs:telnet:console]]"
+          }
+        ],
+        "not_observable": [
+          {
+            "element": "zephyr44_llext",
+            "probed": "tests/conformance/test_transfer_contract.py::applicable_cell(bed-zephyr[zephyr44_llext:telnet:console])",
+            "probe_result": "False -- the contract declares this drawn cell outside its applicable domain"
+          }
+        ],
+        "observable": "the bytes get() reads back over `console` after put() of a known payload to this host's own scratch directory",
+        "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_roundtrip_comparison_rejects_a_corrupted_byte[bed-zephyr[zephyr44_lfs:telnet:console]]"
+      }
+    },
+    "transfer-mode": {
+      "busybox-1.16.1": {
+        "status": "measured-broken",
+        "nodeid": "tests/conformance/test_transfer_contract.py::test_put_lands_the_documented_mode_on_the_host",
+        "venue": "bed",
+        "as_of": "2026-08-25",
+        "observed_on": [
+          "bb1161"
+        ],
+        "observed_cells": [
+          {
+            "cell_label": "bed-busybox[bb1161:telnet:nc]",
+            "element": "bb1161",
+            "term": "telnet",
+            "transfer": "nc",
+            "outcome": "xfailed"
+          },
+          {
+            "cell_label": "bed-busybox[bb1161:telnet:shell]",
+            "element": "bb1161",
+            "term": "telnet",
+            "transfer": "shell",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_landed_mode_follows_the_mode_that_was_asked_for[bed-busybox[bb1161:telnet:shell]]"
+          }
+        ],
+        "not_observable": [],
+        "observable": "the mode `stat -c %a` reads back on the host after put(mode=0o615) over `nc` | the mode `stat -c %a` reads back on the host after put(mode=0o615) over `shell`",
+        "failure_summary": "bed-busybox[bb1161:telnet:nc]: call: expected failure -- otto's `nc-transfer` gap, PUT direction: `NcFileTransfer._put_files_nc` is a GapPath with state PATH_OPEN in `src/otto/host/userland.py` -- it spells the device-side listener `nc -l -w <secs> <port>`, which the BusyBox applet does not accept (it wants `-l -p PORT`), and reads nothing from that record, so the put fails into `Remote nc listener on port <port> not ready` instead of the refusal the GET direction raises. A registered open path, not a test or lab-data problem: `shell` transfer passes on these same five guests, and `nc` passes on every `bed-unix` cell that uses it (test1-test4 over both ssh and telnet, 8 cells, 16/16 items, measured on the first full `make conformance-bed` run). See this module's banner."
+      },
+      "busybox-1.21.1": {
+        "status": "measured-broken",
+        "nodeid": "tests/conformance/test_transfer_contract.py::test_put_lands_the_documented_mode_on_the_host",
+        "venue": "bed",
+        "as_of": "2026-08-25",
+        "observed_on": [
+          "bb1211"
+        ],
+        "observed_cells": [
+          {
+            "cell_label": "bed-busybox[bb1211:telnet:nc]",
+            "element": "bb1211",
+            "term": "telnet",
+            "transfer": "nc",
+            "outcome": "xfailed"
+          },
+          {
+            "cell_label": "bed-busybox[bb1211:telnet:shell]",
+            "element": "bb1211",
+            "term": "telnet",
+            "transfer": "shell",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_landed_mode_follows_the_mode_that_was_asked_for[bed-busybox[bb1211:telnet:shell]]"
+          }
+        ],
+        "not_observable": [],
+        "observable": "the mode `stat -c %a` reads back on the host after put(mode=0o615) over `nc` | the mode `stat -c %a` reads back on the host after put(mode=0o615) over `shell`",
+        "failure_summary": "bed-busybox[bb1211:telnet:nc]: call: expected failure -- otto's `nc-transfer` gap, PUT direction: `NcFileTransfer._put_files_nc` is a GapPath with state PATH_OPEN in `src/otto/host/userland.py` -- it spells the device-side listener `nc -l -w <secs> <port>`, which the BusyBox applet does not accept (it wants `-l -p PORT`), and reads nothing from that record, so the put fails into `Remote nc listener on port <port> not ready` instead of the refusal the GET direction raises. A registered open path, not a test or lab-data problem: `shell` transfer passes on these same five guests, and `nc` passes on every `bed-unix` cell that uses it (test1-test4 over both ssh and telnet, 8 cells, 16/16 items, measured on the first full `make conformance-bed` run). See this module's banner."
+      },
+      "busybox-1.28.1": {
+        "status": "measured-broken",
+        "nodeid": "tests/conformance/test_transfer_contract.py::test_put_lands_the_documented_mode_on_the_host",
+        "venue": "bed",
+        "as_of": "2026-08-25",
+        "observed_on": [
+          "bb1281"
+        ],
+        "observed_cells": [
+          {
+            "cell_label": "bed-busybox[bb1281:telnet:nc]",
+            "element": "bb1281",
+            "term": "telnet",
+            "transfer": "nc",
+            "outcome": "xfailed"
+          },
+          {
+            "cell_label": "bed-busybox[bb1281:telnet:shell]",
+            "element": "bb1281",
+            "term": "telnet",
+            "transfer": "shell",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_landed_mode_follows_the_mode_that_was_asked_for[bed-busybox[bb1281:telnet:shell]]"
+          }
+        ],
+        "not_observable": [],
+        "observable": "the mode `stat -c %a` reads back on the host after put(mode=0o615) over `nc` | the mode `stat -c %a` reads back on the host after put(mode=0o615) over `shell`",
+        "failure_summary": "bed-busybox[bb1281:telnet:nc]: call: expected failure -- otto's `nc-transfer` gap, PUT direction: `NcFileTransfer._put_files_nc` is a GapPath with state PATH_OPEN in `src/otto/host/userland.py` -- it spells the device-side listener `nc -l -w <secs> <port>`, which the BusyBox applet does not accept (it wants `-l -p PORT`), and reads nothing from that record, so the put fails into `Remote nc listener on port <port> not ready` instead of the refusal the GET direction raises. A registered open path, not a test or lab-data problem: `shell` transfer passes on these same five guests, and `nc` passes on every `bed-unix` cell that uses it (test1-test4 over both ssh and telnet, 8 cells, 16/16 items, measured on the first full `make conformance-bed` run). See this module's banner."
+      },
+      "busybox-1.31.0": {
+        "status": "measured-broken",
+        "nodeid": "tests/conformance/test_transfer_contract.py::test_put_lands_the_documented_mode_on_the_host",
+        "venue": "bed",
+        "as_of": "2026-08-25",
+        "observed_on": [
+          "bb1310"
+        ],
+        "observed_cells": [
+          {
+            "cell_label": "bed-busybox[bb1310:telnet:nc]",
+            "element": "bb1310",
+            "term": "telnet",
+            "transfer": "nc",
+            "outcome": "xfailed"
+          },
+          {
+            "cell_label": "bed-busybox[bb1310:telnet:shell]",
+            "element": "bb1310",
+            "term": "telnet",
+            "transfer": "shell",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_landed_mode_follows_the_mode_that_was_asked_for[bed-busybox[bb1310:telnet:shell]]"
+          }
+        ],
+        "not_observable": [],
+        "observable": "the mode `stat -c %a` reads back on the host after put(mode=0o615) over `nc` | the mode `stat -c %a` reads back on the host after put(mode=0o615) over `shell`",
+        "failure_summary": "bed-busybox[bb1310:telnet:nc]: call: expected failure -- otto's `nc-transfer` gap, PUT direction: `NcFileTransfer._put_files_nc` is a GapPath with state PATH_OPEN in `src/otto/host/userland.py` -- it spells the device-side listener `nc -l -w <secs> <port>`, which the BusyBox applet does not accept (it wants `-l -p PORT`), and reads nothing from that record, so the put fails into `Remote nc listener on port <port> not ready` instead of the refusal the GET direction raises. A registered open path, not a test or lab-data problem: `shell` transfer passes on these same five guests, and `nc` passes on every `bed-unix` cell that uses it (test1-test4 over both ssh and telnet, 8 cells, 16/16 items, measured on the first full `make conformance-bed` run). See this module's banner."
+      },
+      "busybox-1.35.0": {
+        "status": "measured-broken",
+        "nodeid": "tests/conformance/test_transfer_contract.py::test_put_lands_the_documented_mode_on_the_host",
+        "venue": "bed",
+        "as_of": "2026-08-25",
+        "observed_on": [
+          "bb1350"
+        ],
+        "observed_cells": [
+          {
+            "cell_label": "bed-busybox[bb1350:telnet:nc]",
+            "element": "bb1350",
+            "term": "telnet",
+            "transfer": "nc",
+            "outcome": "xfailed"
+          },
+          {
+            "cell_label": "bed-busybox[bb1350:telnet:shell]",
+            "element": "bb1350",
+            "term": "telnet",
+            "transfer": "shell",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_landed_mode_follows_the_mode_that_was_asked_for[bed-busybox[bb1350:telnet:shell]]"
+          }
+        ],
+        "not_observable": [],
+        "observable": "the mode `stat -c %a` reads back on the host after put(mode=0o615) over `nc` | the mode `stat -c %a` reads back on the host after put(mode=0o615) over `shell`",
+        "failure_summary": "bed-busybox[bb1350:telnet:nc]: call: expected failure -- otto's `nc-transfer` gap, PUT direction: `NcFileTransfer._put_files_nc` is a GapPath with state PATH_OPEN in `src/otto/host/userland.py` -- it spells the device-side listener `nc -l -w <secs> <port>`, which the BusyBox applet does not accept (it wants `-l -p PORT`), and reads nothing from that record, so the put fails into `Remote nc listener on port <port> not ready` instead of the refusal the GET direction raises. A registered open path, not a test or lab-data problem: `shell` transfer passes on these same five guests, and `nc` passes on every `bed-unix` cell that uses it (test1-test4 over both ssh and telnet, 8 cells, 16/16 items, measured on the first full `make conformance-bed` run). See this module's banner."
+      },
+      "gnu": {
+        "status": "measured-ok",
+        "nodeid": "tests/conformance/test_transfer_contract.py::test_put_lands_the_documented_mode_on_the_host",
+        "venue": "bed",
+        "as_of": "2026-08-25",
+        "observed_on": [
+          "test1",
+          "test2",
+          "test3",
+          "test4"
+        ],
+        "observed_cells": [
+          {
+            "cell_label": "bed-unix[test1:ssh:ftp]",
+            "element": "test1",
+            "term": "ssh",
+            "transfer": "ftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_landed_mode_follows_the_mode_that_was_asked_for[bed-unix[test1:ssh:ftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test1:ssh:nc]",
+            "element": "test1",
+            "term": "ssh",
+            "transfer": "nc",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_landed_mode_follows_the_mode_that_was_asked_for[bed-unix[test1:ssh:nc]]"
+          },
+          {
+            "cell_label": "bed-unix[test1:ssh:scp]",
+            "element": "test1",
+            "term": "ssh",
+            "transfer": "scp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_landed_mode_follows_the_mode_that_was_asked_for[bed-unix[test1:ssh:scp]]"
+          },
+          {
+            "cell_label": "bed-unix[test1:ssh:sftp]",
+            "element": "test1",
+            "term": "ssh",
+            "transfer": "sftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_landed_mode_follows_the_mode_that_was_asked_for[bed-unix[test1:ssh:sftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test1:telnet:ftp]",
+            "element": "test1",
+            "term": "telnet",
+            "transfer": "ftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_landed_mode_follows_the_mode_that_was_asked_for[bed-unix[test1:telnet:ftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test1:telnet:nc]",
+            "element": "test1",
+            "term": "telnet",
+            "transfer": "nc",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_landed_mode_follows_the_mode_that_was_asked_for[bed-unix[test1:telnet:nc]]"
+          },
+          {
+            "cell_label": "bed-unix[test1:telnet:scp]",
+            "element": "test1",
+            "term": "telnet",
+            "transfer": "scp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_landed_mode_follows_the_mode_that_was_asked_for[bed-unix[test1:telnet:scp]]"
+          },
+          {
+            "cell_label": "bed-unix[test1:telnet:sftp]",
+            "element": "test1",
+            "term": "telnet",
+            "transfer": "sftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_landed_mode_follows_the_mode_that_was_asked_for[bed-unix[test1:telnet:sftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test2:ssh:ftp]",
+            "element": "test2",
+            "term": "ssh",
+            "transfer": "ftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_landed_mode_follows_the_mode_that_was_asked_for[bed-unix[test2:ssh:ftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test2:ssh:nc]",
+            "element": "test2",
+            "term": "ssh",
+            "transfer": "nc",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_landed_mode_follows_the_mode_that_was_asked_for[bed-unix[test2:ssh:nc]]"
+          },
+          {
+            "cell_label": "bed-unix[test2:ssh:scp]",
+            "element": "test2",
+            "term": "ssh",
+            "transfer": "scp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_landed_mode_follows_the_mode_that_was_asked_for[bed-unix[test2:ssh:scp]]"
+          },
+          {
+            "cell_label": "bed-unix[test2:ssh:sftp]",
+            "element": "test2",
+            "term": "ssh",
+            "transfer": "sftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_landed_mode_follows_the_mode_that_was_asked_for[bed-unix[test2:ssh:sftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test2:telnet:ftp]",
+            "element": "test2",
+            "term": "telnet",
+            "transfer": "ftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_landed_mode_follows_the_mode_that_was_asked_for[bed-unix[test2:telnet:ftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test2:telnet:nc]",
+            "element": "test2",
+            "term": "telnet",
+            "transfer": "nc",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_landed_mode_follows_the_mode_that_was_asked_for[bed-unix[test2:telnet:nc]]"
+          },
+          {
+            "cell_label": "bed-unix[test2:telnet:scp]",
+            "element": "test2",
+            "term": "telnet",
+            "transfer": "scp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_landed_mode_follows_the_mode_that_was_asked_for[bed-unix[test2:telnet:scp]]"
+          },
+          {
+            "cell_label": "bed-unix[test2:telnet:sftp]",
+            "element": "test2",
+            "term": "telnet",
+            "transfer": "sftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_landed_mode_follows_the_mode_that_was_asked_for[bed-unix[test2:telnet:sftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test3:ssh:ftp]",
+            "element": "test3",
+            "term": "ssh",
+            "transfer": "ftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_landed_mode_follows_the_mode_that_was_asked_for[bed-unix[test3:ssh:ftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test3:ssh:nc]",
+            "element": "test3",
+            "term": "ssh",
+            "transfer": "nc",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_landed_mode_follows_the_mode_that_was_asked_for[bed-unix[test3:ssh:nc]]"
+          },
+          {
+            "cell_label": "bed-unix[test3:ssh:scp]",
+            "element": "test3",
+            "term": "ssh",
+            "transfer": "scp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_landed_mode_follows_the_mode_that_was_asked_for[bed-unix[test3:ssh:scp]]"
+          },
+          {
+            "cell_label": "bed-unix[test3:ssh:sftp]",
+            "element": "test3",
+            "term": "ssh",
+            "transfer": "sftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_landed_mode_follows_the_mode_that_was_asked_for[bed-unix[test3:ssh:sftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test3:telnet:ftp]",
+            "element": "test3",
+            "term": "telnet",
+            "transfer": "ftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_landed_mode_follows_the_mode_that_was_asked_for[bed-unix[test3:telnet:ftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test3:telnet:nc]",
+            "element": "test3",
+            "term": "telnet",
+            "transfer": "nc",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_landed_mode_follows_the_mode_that_was_asked_for[bed-unix[test3:telnet:nc]]"
+          },
+          {
+            "cell_label": "bed-unix[test3:telnet:scp]",
+            "element": "test3",
+            "term": "telnet",
+            "transfer": "scp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_landed_mode_follows_the_mode_that_was_asked_for[bed-unix[test3:telnet:scp]]"
+          },
+          {
+            "cell_label": "bed-unix[test3:telnet:sftp]",
+            "element": "test3",
+            "term": "telnet",
+            "transfer": "sftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_landed_mode_follows_the_mode_that_was_asked_for[bed-unix[test3:telnet:sftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test4:ssh:ftp]",
+            "element": "test4",
+            "term": "ssh",
+            "transfer": "ftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_landed_mode_follows_the_mode_that_was_asked_for[bed-unix[test4:ssh:ftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test4:ssh:nc]",
+            "element": "test4",
+            "term": "ssh",
+            "transfer": "nc",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_landed_mode_follows_the_mode_that_was_asked_for[bed-unix[test4:ssh:nc]]"
+          },
+          {
+            "cell_label": "bed-unix[test4:ssh:scp]",
+            "element": "test4",
+            "term": "ssh",
+            "transfer": "scp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_landed_mode_follows_the_mode_that_was_asked_for[bed-unix[test4:ssh:scp]]"
+          },
+          {
+            "cell_label": "bed-unix[test4:ssh:sftp]",
+            "element": "test4",
+            "term": "ssh",
+            "transfer": "sftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_landed_mode_follows_the_mode_that_was_asked_for[bed-unix[test4:ssh:sftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test4:telnet:ftp]",
+            "element": "test4",
+            "term": "telnet",
+            "transfer": "ftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_landed_mode_follows_the_mode_that_was_asked_for[bed-unix[test4:telnet:ftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test4:telnet:nc]",
+            "element": "test4",
+            "term": "telnet",
+            "transfer": "nc",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_landed_mode_follows_the_mode_that_was_asked_for[bed-unix[test4:telnet:nc]]"
+          },
+          {
+            "cell_label": "bed-unix[test4:telnet:scp]",
+            "element": "test4",
+            "term": "telnet",
+            "transfer": "scp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_landed_mode_follows_the_mode_that_was_asked_for[bed-unix[test4:telnet:scp]]"
+          },
+          {
+            "cell_label": "bed-unix[test4:telnet:sftp]",
+            "element": "test4",
+            "term": "telnet",
+            "transfer": "sftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_landed_mode_follows_the_mode_that_was_asked_for[bed-unix[test4:telnet:sftp]]"
+          }
+        ],
+        "not_observable": [],
+        "observable": "the mode `stat -c %a` reads back on the host after put(mode=0o615) over `ftp` | the mode `stat -c %a` reads back on the host after put(mode=0o615) over `nc` | the mode `stat -c %a` reads back on the host after put(mode=0o615) over `scp` | the mode `stat -c %a` reads back on the host after put(mode=0o615) over `sftp`",
+        "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_landed_mode_follows_the_mode_that_was_asked_for[bed-unix[test1:ssh:ftp]]"
+      },
+      "zephyr-2.7": {
+        "status": "measured-ok",
+        "nodeid": "tests/conformance/test_transfer_contract.py::test_put_lands_the_documented_mode_on_the_host",
+        "venue": "bed",
+        "as_of": "2026-08-25",
+        "observed_on": [
+          "zephyr27_fat"
+        ],
+        "observed_cells": [
+          {
+            "cell_label": "bed-zephyr[zephyr27_fat:telnet:console]",
+            "element": "zephyr27_fat",
+            "term": "telnet",
+            "transfer": "console",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_landed_mode_follows_the_mode_that_was_asked_for[bed-zephyr[zephyr27_fat:telnet:console]]"
+          }
+        ],
+        "not_observable": [],
+        "observable": "the pre-flight refusal ConsoleFileTransfer returns for a non-None mode -- aggregate and per file -- because it declares no permission model",
+        "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_landed_mode_follows_the_mode_that_was_asked_for[bed-zephyr[zephyr27_fat:telnet:console]]"
+      },
+      "zephyr-3.7": {
+        "status": "measured-ok",
+        "nodeid": "tests/conformance/test_transfer_contract.py::test_put_lands_the_documented_mode_on_the_host",
+        "venue": "bed",
+        "as_of": "2026-08-25",
+        "observed_on": [
+          "zephyr37_fat",
+          "zephyr37_lfs"
+        ],
+        "observed_cells": [
+          {
+            "cell_label": "bed-zephyr[zephyr37_fat:telnet:console]",
+            "element": "zephyr37_fat",
+            "term": "telnet",
+            "transfer": "console",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_landed_mode_follows_the_mode_that_was_asked_for[bed-zephyr[zephyr37_fat:telnet:console]]"
+          },
+          {
+            "cell_label": "bed-zephyr[zephyr37_lfs:telnet:console]",
+            "element": "zephyr37_lfs",
+            "term": "telnet",
+            "transfer": "console",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_landed_mode_follows_the_mode_that_was_asked_for[bed-zephyr[zephyr37_lfs:telnet:console]]"
+          }
+        ],
+        "not_observable": [
+          {
+            "element": "zephyr37_nofs",
+            "probed": "tests/conformance/test_transfer_contract.py::applicable_cell(bed-zephyr[zephyr37_nofs:telnet:console])",
+            "probe_result": "False -- the contract declares this drawn cell outside its applicable domain"
+          },
+          {
+            "element": "zephyr37_llext",
+            "probed": "tests/conformance/test_transfer_contract.py::applicable_cell(bed-zephyr[zephyr37_llext:telnet:console])",
+            "probe_result": "False -- the contract declares this drawn cell outside its applicable domain"
+          }
+        ],
+        "observable": "the pre-flight refusal ConsoleFileTransfer returns for a non-None mode -- aggregate and per file -- because it declares no permission model",
+        "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_landed_mode_follows_the_mode_that_was_asked_for[bed-zephyr[zephyr37_fat:telnet:console]]"
+      },
+      "zephyr-4.4": {
+        "status": "measured-ok",
+        "nodeid": "tests/conformance/test_transfer_contract.py::test_put_lands_the_documented_mode_on_the_host",
+        "venue": "bed",
+        "as_of": "2026-08-25",
+        "observed_on": [
+          "zephyr44_lfs"
+        ],
+        "observed_cells": [
+          {
+            "cell_label": "bed-zephyr[zephyr44_lfs:telnet:console]",
+            "element": "zephyr44_lfs",
+            "term": "telnet",
+            "transfer": "console",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_landed_mode_follows_the_mode_that_was_asked_for[bed-zephyr[zephyr44_lfs:telnet:console]]"
+          }
+        ],
+        "not_observable": [
+          {
+            "element": "zephyr44_llext",
+            "probed": "tests/conformance/test_transfer_contract.py::applicable_cell(bed-zephyr[zephyr44_llext:telnet:console])",
+            "probe_result": "False -- the contract declares this drawn cell outside its applicable domain"
+          }
+        ],
+        "observable": "the pre-flight refusal ConsoleFileTransfer returns for a non-None mode -- aggregate and per file -- because it declares no permission model",
+        "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_landed_mode_follows_the_mode_that_was_asked_for[bed-zephyr[zephyr44_lfs:telnet:console]]"
+      }
+    },
+    "timeout": {
+      "busybox-1.16.1": {
+        "status": "measured-ok",
+        "nodeid": "tests/conformance/test_timeout_contract.py::test_a_command_exceeding_its_budget_fails_the_documented_way",
+        "venue": "bed",
+        "as_of": "2026-08-25",
+        "observed_on": [
+          "bb1161"
+        ],
+        "observed_cells": [
+          {
+            "cell_label": "bed-busybox[bb1161:telnet:nc]",
+            "element": "bb1161",
+            "term": "telnet",
+            "transfer": "nc",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_timeout_contract.py::test_control_a_command_inside_its_budget_is_not_reported_as_timed_out[bed-busybox[bb1161:telnet:nc]]"
+          },
+          {
+            "cell_label": "bed-busybox[bb1161:telnet:shell]",
+            "element": "bb1161",
+            "term": "telnet",
+            "transfer": "shell",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_timeout_contract.py::test_control_a_command_inside_its_budget_is_not_reported_as_timed_out[bed-busybox[bb1161:telnet:shell]]"
+          }
+        ],
+        "not_observable": [],
+        "observable": "CommandResult.timed_out, .status, .retcode and .exit_code for `sleep 10` (10.0s) run under a shorter budget, and whether the SAME session still answers `printf '%s\\n' otto-conformance-tail` afterwards",
+        "positive_control": "tests/conformance/test_timeout_contract.py::test_control_a_command_inside_its_budget_is_not_reported_as_timed_out[bed-busybox[bb1161:telnet:nc]]"
+      },
+      "busybox-1.21.1": {
+        "status": "measured-ok",
+        "nodeid": "tests/conformance/test_timeout_contract.py::test_a_command_exceeding_its_budget_fails_the_documented_way",
+        "venue": "bed",
+        "as_of": "2026-08-25",
+        "observed_on": [
+          "bb1211"
+        ],
+        "observed_cells": [
+          {
+            "cell_label": "bed-busybox[bb1211:telnet:nc]",
+            "element": "bb1211",
+            "term": "telnet",
+            "transfer": "nc",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_timeout_contract.py::test_control_a_command_inside_its_budget_is_not_reported_as_timed_out[bed-busybox[bb1211:telnet:nc]]"
+          },
+          {
+            "cell_label": "bed-busybox[bb1211:telnet:shell]",
+            "element": "bb1211",
+            "term": "telnet",
+            "transfer": "shell",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_timeout_contract.py::test_control_a_command_inside_its_budget_is_not_reported_as_timed_out[bed-busybox[bb1211:telnet:shell]]"
+          }
+        ],
+        "not_observable": [],
+        "observable": "CommandResult.timed_out, .status, .retcode and .exit_code for `sleep 10` (10.0s) run under a shorter budget, and whether the SAME session still answers `printf '%s\\n' otto-conformance-tail` afterwards",
+        "positive_control": "tests/conformance/test_timeout_contract.py::test_control_a_command_inside_its_budget_is_not_reported_as_timed_out[bed-busybox[bb1211:telnet:nc]]"
+      },
+      "busybox-1.28.1": {
+        "status": "measured-ok",
+        "nodeid": "tests/conformance/test_timeout_contract.py::test_a_command_exceeding_its_budget_fails_the_documented_way",
+        "venue": "bed",
+        "as_of": "2026-08-25",
+        "observed_on": [
+          "bb1281"
+        ],
+        "observed_cells": [
+          {
+            "cell_label": "bed-busybox[bb1281:telnet:nc]",
+            "element": "bb1281",
+            "term": "telnet",
+            "transfer": "nc",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_timeout_contract.py::test_control_a_command_inside_its_budget_is_not_reported_as_timed_out[bed-busybox[bb1281:telnet:nc]]"
+          },
+          {
+            "cell_label": "bed-busybox[bb1281:telnet:shell]",
+            "element": "bb1281",
+            "term": "telnet",
+            "transfer": "shell",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_timeout_contract.py::test_control_a_command_inside_its_budget_is_not_reported_as_timed_out[bed-busybox[bb1281:telnet:shell]]"
+          }
+        ],
+        "not_observable": [],
+        "observable": "CommandResult.timed_out, .status, .retcode and .exit_code for `sleep 10` (10.0s) run under a shorter budget, and whether the SAME session still answers `printf '%s\\n' otto-conformance-tail` afterwards",
+        "positive_control": "tests/conformance/test_timeout_contract.py::test_control_a_command_inside_its_budget_is_not_reported_as_timed_out[bed-busybox[bb1281:telnet:nc]]"
+      },
+      "busybox-1.31.0": {
+        "status": "measured-ok",
+        "nodeid": "tests/conformance/test_timeout_contract.py::test_a_command_exceeding_its_budget_fails_the_documented_way",
+        "venue": "bed",
+        "as_of": "2026-08-25",
+        "observed_on": [
+          "bb1310"
+        ],
+        "observed_cells": [
+          {
+            "cell_label": "bed-busybox[bb1310:telnet:nc]",
+            "element": "bb1310",
+            "term": "telnet",
+            "transfer": "nc",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_timeout_contract.py::test_control_a_command_inside_its_budget_is_not_reported_as_timed_out[bed-busybox[bb1310:telnet:nc]]"
+          },
+          {
+            "cell_label": "bed-busybox[bb1310:telnet:shell]",
+            "element": "bb1310",
+            "term": "telnet",
+            "transfer": "shell",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_timeout_contract.py::test_control_a_command_inside_its_budget_is_not_reported_as_timed_out[bed-busybox[bb1310:telnet:shell]]"
+          }
+        ],
+        "not_observable": [],
+        "observable": "CommandResult.timed_out, .status, .retcode and .exit_code for `sleep 10` (10.0s) run under a shorter budget, and whether the SAME session still answers `printf '%s\\n' otto-conformance-tail` afterwards",
+        "positive_control": "tests/conformance/test_timeout_contract.py::test_control_a_command_inside_its_budget_is_not_reported_as_timed_out[bed-busybox[bb1310:telnet:nc]]"
+      },
+      "busybox-1.35.0": {
+        "status": "measured-ok",
+        "nodeid": "tests/conformance/test_timeout_contract.py::test_a_command_exceeding_its_budget_fails_the_documented_way",
+        "venue": "bed",
+        "as_of": "2026-08-25",
+        "observed_on": [
+          "bb1350"
+        ],
+        "observed_cells": [
+          {
+            "cell_label": "bed-busybox[bb1350:telnet:nc]",
+            "element": "bb1350",
+            "term": "telnet",
+            "transfer": "nc",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_timeout_contract.py::test_control_a_command_inside_its_budget_is_not_reported_as_timed_out[bed-busybox[bb1350:telnet:nc]]"
+          },
+          {
+            "cell_label": "bed-busybox[bb1350:telnet:shell]",
+            "element": "bb1350",
+            "term": "telnet",
+            "transfer": "shell",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_timeout_contract.py::test_control_a_command_inside_its_budget_is_not_reported_as_timed_out[bed-busybox[bb1350:telnet:shell]]"
+          }
+        ],
+        "not_observable": [],
+        "observable": "CommandResult.timed_out, .status, .retcode and .exit_code for `sleep 10` (10.0s) run under a shorter budget, and whether the SAME session still answers `printf '%s\\n' otto-conformance-tail` afterwards",
+        "positive_control": "tests/conformance/test_timeout_contract.py::test_control_a_command_inside_its_budget_is_not_reported_as_timed_out[bed-busybox[bb1350:telnet:nc]]"
+      },
+      "gnu": {
+        "status": "measured-ok",
+        "nodeid": "tests/conformance/test_timeout_contract.py::test_a_command_exceeding_its_budget_fails_the_documented_way",
+        "venue": "bed",
+        "as_of": "2026-08-25",
+        "observed_on": [
+          "test1",
+          "test2",
+          "test3",
+          "test4"
+        ],
+        "observed_cells": [
+          {
+            "cell_label": "bed-unix[test1:ssh:ftp]",
+            "element": "test1",
+            "term": "ssh",
+            "transfer": "ftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_timeout_contract.py::test_control_a_command_inside_its_budget_is_not_reported_as_timed_out[bed-unix[test1:ssh:ftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test1:ssh:nc]",
+            "element": "test1",
+            "term": "ssh",
+            "transfer": "nc",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_timeout_contract.py::test_control_a_command_inside_its_budget_is_not_reported_as_timed_out[bed-unix[test1:ssh:nc]]"
+          },
+          {
+            "cell_label": "bed-unix[test1:ssh:scp]",
+            "element": "test1",
+            "term": "ssh",
+            "transfer": "scp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_timeout_contract.py::test_control_a_command_inside_its_budget_is_not_reported_as_timed_out[bed-unix[test1:ssh:scp]]"
+          },
+          {
+            "cell_label": "bed-unix[test1:ssh:sftp]",
+            "element": "test1",
+            "term": "ssh",
+            "transfer": "sftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_timeout_contract.py::test_control_a_command_inside_its_budget_is_not_reported_as_timed_out[bed-unix[test1:ssh:sftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test1:telnet:ftp]",
+            "element": "test1",
+            "term": "telnet",
+            "transfer": "ftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_timeout_contract.py::test_control_a_command_inside_its_budget_is_not_reported_as_timed_out[bed-unix[test1:telnet:ftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test1:telnet:nc]",
+            "element": "test1",
+            "term": "telnet",
+            "transfer": "nc",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_timeout_contract.py::test_control_a_command_inside_its_budget_is_not_reported_as_timed_out[bed-unix[test1:telnet:nc]]"
+          },
+          {
+            "cell_label": "bed-unix[test1:telnet:scp]",
+            "element": "test1",
+            "term": "telnet",
+            "transfer": "scp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_timeout_contract.py::test_control_a_command_inside_its_budget_is_not_reported_as_timed_out[bed-unix[test1:telnet:scp]]"
+          },
+          {
+            "cell_label": "bed-unix[test1:telnet:sftp]",
+            "element": "test1",
+            "term": "telnet",
+            "transfer": "sftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_timeout_contract.py::test_control_a_command_inside_its_budget_is_not_reported_as_timed_out[bed-unix[test1:telnet:sftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test2:ssh:ftp]",
+            "element": "test2",
+            "term": "ssh",
+            "transfer": "ftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_timeout_contract.py::test_control_a_command_inside_its_budget_is_not_reported_as_timed_out[bed-unix[test2:ssh:ftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test2:ssh:nc]",
+            "element": "test2",
+            "term": "ssh",
+            "transfer": "nc",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_timeout_contract.py::test_control_a_command_inside_its_budget_is_not_reported_as_timed_out[bed-unix[test2:ssh:nc]]"
+          },
+          {
+            "cell_label": "bed-unix[test2:ssh:scp]",
+            "element": "test2",
+            "term": "ssh",
+            "transfer": "scp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_timeout_contract.py::test_control_a_command_inside_its_budget_is_not_reported_as_timed_out[bed-unix[test2:ssh:scp]]"
+          },
+          {
+            "cell_label": "bed-unix[test2:ssh:sftp]",
+            "element": "test2",
+            "term": "ssh",
+            "transfer": "sftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_timeout_contract.py::test_control_a_command_inside_its_budget_is_not_reported_as_timed_out[bed-unix[test2:ssh:sftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test2:telnet:ftp]",
+            "element": "test2",
+            "term": "telnet",
+            "transfer": "ftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_timeout_contract.py::test_control_a_command_inside_its_budget_is_not_reported_as_timed_out[bed-unix[test2:telnet:ftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test2:telnet:nc]",
+            "element": "test2",
+            "term": "telnet",
+            "transfer": "nc",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_timeout_contract.py::test_control_a_command_inside_its_budget_is_not_reported_as_timed_out[bed-unix[test2:telnet:nc]]"
+          },
+          {
+            "cell_label": "bed-unix[test2:telnet:scp]",
+            "element": "test2",
+            "term": "telnet",
+            "transfer": "scp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_timeout_contract.py::test_control_a_command_inside_its_budget_is_not_reported_as_timed_out[bed-unix[test2:telnet:scp]]"
+          },
+          {
+            "cell_label": "bed-unix[test2:telnet:sftp]",
+            "element": "test2",
+            "term": "telnet",
+            "transfer": "sftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_timeout_contract.py::test_control_a_command_inside_its_budget_is_not_reported_as_timed_out[bed-unix[test2:telnet:sftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test3:ssh:ftp]",
+            "element": "test3",
+            "term": "ssh",
+            "transfer": "ftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_timeout_contract.py::test_control_a_command_inside_its_budget_is_not_reported_as_timed_out[bed-unix[test3:ssh:ftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test3:ssh:nc]",
+            "element": "test3",
+            "term": "ssh",
+            "transfer": "nc",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_timeout_contract.py::test_control_a_command_inside_its_budget_is_not_reported_as_timed_out[bed-unix[test3:ssh:nc]]"
+          },
+          {
+            "cell_label": "bed-unix[test3:ssh:scp]",
+            "element": "test3",
+            "term": "ssh",
+            "transfer": "scp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_timeout_contract.py::test_control_a_command_inside_its_budget_is_not_reported_as_timed_out[bed-unix[test3:ssh:scp]]"
+          },
+          {
+            "cell_label": "bed-unix[test3:ssh:sftp]",
+            "element": "test3",
+            "term": "ssh",
+            "transfer": "sftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_timeout_contract.py::test_control_a_command_inside_its_budget_is_not_reported_as_timed_out[bed-unix[test3:ssh:sftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test3:telnet:ftp]",
+            "element": "test3",
+            "term": "telnet",
+            "transfer": "ftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_timeout_contract.py::test_control_a_command_inside_its_budget_is_not_reported_as_timed_out[bed-unix[test3:telnet:ftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test3:telnet:nc]",
+            "element": "test3",
+            "term": "telnet",
+            "transfer": "nc",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_timeout_contract.py::test_control_a_command_inside_its_budget_is_not_reported_as_timed_out[bed-unix[test3:telnet:nc]]"
+          },
+          {
+            "cell_label": "bed-unix[test3:telnet:scp]",
+            "element": "test3",
+            "term": "telnet",
+            "transfer": "scp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_timeout_contract.py::test_control_a_command_inside_its_budget_is_not_reported_as_timed_out[bed-unix[test3:telnet:scp]]"
+          },
+          {
+            "cell_label": "bed-unix[test3:telnet:sftp]",
+            "element": "test3",
+            "term": "telnet",
+            "transfer": "sftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_timeout_contract.py::test_control_a_command_inside_its_budget_is_not_reported_as_timed_out[bed-unix[test3:telnet:sftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test4:ssh:ftp]",
+            "element": "test4",
+            "term": "ssh",
+            "transfer": "ftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_timeout_contract.py::test_control_a_command_inside_its_budget_is_not_reported_as_timed_out[bed-unix[test4:ssh:ftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test4:ssh:nc]",
+            "element": "test4",
+            "term": "ssh",
+            "transfer": "nc",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_timeout_contract.py::test_control_a_command_inside_its_budget_is_not_reported_as_timed_out[bed-unix[test4:ssh:nc]]"
+          },
+          {
+            "cell_label": "bed-unix[test4:ssh:scp]",
+            "element": "test4",
+            "term": "ssh",
+            "transfer": "scp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_timeout_contract.py::test_control_a_command_inside_its_budget_is_not_reported_as_timed_out[bed-unix[test4:ssh:scp]]"
+          },
+          {
+            "cell_label": "bed-unix[test4:ssh:sftp]",
+            "element": "test4",
+            "term": "ssh",
+            "transfer": "sftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_timeout_contract.py::test_control_a_command_inside_its_budget_is_not_reported_as_timed_out[bed-unix[test4:ssh:sftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test4:telnet:ftp]",
+            "element": "test4",
+            "term": "telnet",
+            "transfer": "ftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_timeout_contract.py::test_control_a_command_inside_its_budget_is_not_reported_as_timed_out[bed-unix[test4:telnet:ftp]]"
+          },
+          {
+            "cell_label": "bed-unix[test4:telnet:nc]",
+            "element": "test4",
+            "term": "telnet",
+            "transfer": "nc",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_timeout_contract.py::test_control_a_command_inside_its_budget_is_not_reported_as_timed_out[bed-unix[test4:telnet:nc]]"
+          },
+          {
+            "cell_label": "bed-unix[test4:telnet:scp]",
+            "element": "test4",
+            "term": "telnet",
+            "transfer": "scp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_timeout_contract.py::test_control_a_command_inside_its_budget_is_not_reported_as_timed_out[bed-unix[test4:telnet:scp]]"
+          },
+          {
+            "cell_label": "bed-unix[test4:telnet:sftp]",
+            "element": "test4",
+            "term": "telnet",
+            "transfer": "sftp",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_timeout_contract.py::test_control_a_command_inside_its_budget_is_not_reported_as_timed_out[bed-unix[test4:telnet:sftp]]"
+          }
+        ],
+        "not_observable": [],
+        "observable": "CommandResult.timed_out, .status, .retcode and .exit_code for `sleep 10` (10.0s) run under a shorter budget, and whether the SAME session still answers `printf '%s\\n' otto-conformance-tail` afterwards",
+        "positive_control": "tests/conformance/test_timeout_contract.py::test_control_a_command_inside_its_budget_is_not_reported_as_timed_out[bed-unix[test1:ssh:ftp]]"
+      },
+      "zephyr-2.7": {
+        "status": "not-observable",
+        "venue": "bed",
+        "as_of": "2026-08-25",
+        "probed": "tests/conformance/test_timeout_contract.py::applicable_cell(bed-zephyr[zephyr27_fat:telnet:console])",
+        "probe_result": "False -- the contract declares this drawn cell outside its applicable domain",
+        "observed_on": [],
+        "observed_cells": [],
+        "not_observable": [
+          {
+            "element": "zephyr27_fat",
+            "probed": "tests/conformance/test_timeout_contract.py::applicable_cell(bed-zephyr[zephyr27_fat:telnet:console])",
+            "probe_result": "False -- the contract declares this drawn cell outside its applicable domain"
+          }
+        ]
+      },
+      "zephyr-3.7": {
+        "status": "not-observable",
+        "venue": "bed",
+        "as_of": "2026-08-25",
+        "probed": "tests/conformance/test_timeout_contract.py::applicable_cell(bed-zephyr[zephyr37_fat:telnet:console]); tests/conformance/test_timeout_contract.py::applicable_cell(bed-zephyr[zephyr37_lfs:telnet:console]); tests/conformance/test_timeout_contract.py::applicable_cell(bed-zephyr[zephyr37_llext:telnet:console]); tests/conformance/test_timeout_contract.py::applicable_cell(bed-zephyr[zephyr37_nofs:telnet:console])",
+        "probe_result": "False -- the contract declares this drawn cell outside its applicable domain",
+        "observed_on": [],
+        "observed_cells": [],
+        "not_observable": [
+          {
+            "element": "zephyr37_fat",
+            "probed": "tests/conformance/test_timeout_contract.py::applicable_cell(bed-zephyr[zephyr37_fat:telnet:console])",
+            "probe_result": "False -- the contract declares this drawn cell outside its applicable domain"
+          },
+          {
+            "element": "zephyr37_lfs",
+            "probed": "tests/conformance/test_timeout_contract.py::applicable_cell(bed-zephyr[zephyr37_lfs:telnet:console])",
+            "probe_result": "False -- the contract declares this drawn cell outside its applicable domain"
+          },
+          {
+            "element": "zephyr37_nofs",
+            "probed": "tests/conformance/test_timeout_contract.py::applicable_cell(bed-zephyr[zephyr37_nofs:telnet:console])",
+            "probe_result": "False -- the contract declares this drawn cell outside its applicable domain"
+          },
+          {
+            "element": "zephyr37_llext",
+            "probed": "tests/conformance/test_timeout_contract.py::applicable_cell(bed-zephyr[zephyr37_llext:telnet:console])",
+            "probe_result": "False -- the contract declares this drawn cell outside its applicable domain"
+          }
+        ]
+      },
+      "zephyr-4.4": {
+        "status": "not-observable",
+        "venue": "bed",
+        "as_of": "2026-08-25",
+        "probed": "tests/conformance/test_timeout_contract.py::applicable_cell(bed-zephyr[zephyr44_lfs:telnet:console]); tests/conformance/test_timeout_contract.py::applicable_cell(bed-zephyr[zephyr44_llext:telnet:console])",
+        "probe_result": "False -- the contract declares this drawn cell outside its applicable domain",
+        "observed_on": [],
+        "observed_cells": [],
+        "not_observable": [
+          {
+            "element": "zephyr44_lfs",
+            "probed": "tests/conformance/test_timeout_contract.py::applicable_cell(bed-zephyr[zephyr44_lfs:telnet:console])",
+            "probe_result": "False -- the contract declares this drawn cell outside its applicable domain"
+          },
+          {
+            "element": "zephyr44_llext",
+            "probed": "tests/conformance/test_timeout_contract.py::applicable_cell(bed-zephyr[zephyr44_llext:telnet:console])",
+            "probe_result": "False -- the contract declares this drawn cell outside its applicable domain"
+          }
+        ]
+      }
+    }
+  }
+}

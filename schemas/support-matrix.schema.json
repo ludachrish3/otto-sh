@@ -1,0 +1,513 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://otto-sh.readthedocs.io/schemas/support-matrix.schema.json",
+  "title": "otto support_matrix.json",
+  "description": "The machine-checked {surface} x {profile} support matrix (design 2026-08-22 \u00a75).\n\nSurfaces are the conformance contracts of \u00a74; profiles are the `userland`\naxis of \u00a73. Each cell holds ONE of four states, and the per-state evidence\nrequirements are enforced HERE rather than only in a Python guard, so a\nhand-edited artifact fails validation. \u00a75, on the central case: \"A\n`measured-ok` cell whose positive control is missing is a defect in the same\nclass the matrix exists to expose, so the guard rejects it rather than\nrendering it.\"\n\nHAND-WRITTEN, unlike every other file in `schemas/`. The rest are emitted by\n`otto schema export` from pydantic models (`src/otto/models/jsonschema.py`);\nthis one describes a TEST artifact, and `src/otto/` carries no model for it.\nThe dialect, the `$id` host, the `additionalProperties: false` stance and the\nper-property `title`s follow those generated files so that an editor pointed\nat `schemas/` sees one house style.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "format",
+    "surfaces",
+    "profiles",
+    "cells"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "title": "$schema",
+      "description": "Editor hint; the guard validates against this file by path regardless."
+    },
+    "format": {
+      "const": 1,
+      "type": "integer",
+      "title": "Format",
+      "description": "Document version. Required with no default, the way `monitor-export`'s own `format` is: an unversioned file (the field's absence is its marker) must fail loud here, never validate as an empty modern one."
+    },
+    "surfaces": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/Surface"
+      },
+      "title": "Surfaces",
+      "description": "The matrix rows, in render order. `tests/unit/test_support_matrix.py` asserts this set equals the contracts the tree declares, in both directions."
+    },
+    "profiles": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/Profile"
+      },
+      "title": "Profiles",
+      "description": "The matrix columns, in render order. Asserted equal to `axes_for(element).userland` over the bed labs' elements."
+    },
+    "cells": {
+      "type": "object",
+      "title": "Cells",
+      "description": "The grid, keyed surface id -> profile id -> cell.\n\nAn OBJECT rather than a list of `{surface, profile, ...}` records on purpose: JSON Schema can require a list's items to be unique but cannot require them unique BY KEY, so a list would admit two records for one (surface, profile) pair -- one `untested` and one `measured-ok` -- and a renderer would publish whichever it reached first. Object keys cannot collide.",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": {
+          "$ref": "#/$defs/Cell"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "Surface": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "title",
+        "contract"
+      ],
+      "title": "Surface",
+      "description": "One conformance contract, as a matrix row.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+          "title": "Id"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "title": "Title"
+        },
+        "contract": {
+          "$ref": "#/$defs/NodeId",
+          "title": "Contract",
+          "description": "The contract's nodeid, without its `[cell]` parametrization."
+        }
+      }
+    },
+    "Profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "elements"
+      ],
+      "title": "Profile",
+      "description": "One `userland` value, as a matrix column, with the elements it stands for.\n\nThe `id` pattern is deliberately loose. The real grammar (`gnu` | `busybox-<ver>` | `zephyr-<ver>`) is decided by `tests/_fixtures/profiles.py::_userland`, and encoding it here would be a second copy of that rule -- free to drift, and wrong in a way that reads as a schema failure rather than as the drift it is.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9.-]*$",
+          "title": "Id"
+        },
+        "elements": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "title": "Elements",
+          "description": "The lab elements that resolve to this userland. THE MATRIX TURNS ON THIS BEING PLURAL: profiles are not capability-uniform, so a cell's verdict may rest on a subset -- see `Cell.not_observable`."
+        }
+      }
+    },
+    "Cell": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status"
+      ],
+      "title": "Cell",
+      "description": "One (surface, profile) verdict, WITH the evidence that earned it.\n\nFOUR STATES, and `not-observable` is never collapsed into `untested` (\u00a75: it \"is a measurement, not the absence of one\"). What separates them structurally is that `untested` may carry NOTHING at all, while `not-observable` must carry what was probed, what it showed, when, and where.\n\nPER-STATE FIELDS ARE ENFORCED BY `allOf` + `if`/`then` BELOW, and each branch whitelists via `propertyNames` as well as requiring via `required`. Both halves matter: `required` stops a verdict from omitting its evidence, and `propertyNames` stops it from carrying evidence that belongs to a different state -- a `measured-ok` cell holding a `failure_summary`, or a `not-observable` cell naming an `observable` it just said the environment cannot express.\n\nPROFILES ARE NOT CAPABILITY-UNIFORM, so a cell is an aggregate over its profile's elements, and `observed_on` + `not_observable` are what keep the aggregate honest. MEASURED 2026-08-24 against the contracts' own `applicable_cell` predicates: `zephyr-3.7` x transfer is observable on `zephyr37_fat`/`zephyr37_lfs` and NOT on `zephyr37_nofs`/`zephyr37_llext`; `zephyr-4.4` x transfer is observable on `zephyr44_lfs` and not on `zephyr44_llext`; and all three zephyr profiles are entirely outside the TIMEOUT contract's domain, so those cells have an EMPTY `observed_on`. Every `measured-*` state therefore REQUIRES both keys -- `not_observable: []` is a statement, its absence is not -- so a cell can never publish `measured-ok` while silently hiding elements it could not measure.\n\nAND THE PROFILE IS NOT THE MEASUREMENT UNIT EITHER. The bed measures an (element, term, transfer) CELL, so an element with two transports can answer two different things -- `bb1161` moves files fine over `shell` and not at all over `nc`. `observed_cells` records that split structurally, and the per-state rules below tie it to the status in both directions, so the scalar verdict can never read as uniform over a space that is not.\n\nTWO THINGS THIS SCHEMA CANNOT CHECK, both enforced by `tests/unit/test_support_matrix.py` instead, because each is a cross-reference a JSON Schema cannot follow. First, that the elements named here belong to the profile this cell sits under -- a cell citing `test1` under `zephyr-3.7` would make a rendered sentence FALSE. Second, that a nodeid resolves to a test that is actually collected. And note what is deliberately NOT required: `observed_on` plus `not_observable` need not exhaust the profile. A run measures the cells it DREW, so the remainder is \"not looked at yet\", which is a third thing -- filing it under `not_observable` would claim the environment cannot express the observable, which is a claim nobody made. The rendered page derives that remainder rather than storing it (`cell_coverage().unaccounted`).",
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "measured-ok",
+            "measured-broken",
+            "not-observable",
+            "untested"
+          ],
+          "title": "Status"
+        },
+        "observed_on": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "title": "Observed On",
+          "description": "The profile's elements that actually produced this verdict."
+        },
+        "not_observable": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ElementProbe"
+          },
+          "title": "Not Observable",
+          "description": "The remainder: elements of this profile whose environment cannot express this surface's observable, each with its own probe."
+        },
+        "observed_cells": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/CellOutcome"
+          },
+          "title": "Observed Cells",
+          "description": "THE PER-TRANSPORT BREAKDOWN. What `observed_on` does for elements, this does for the bed's TRUE measurement unit -- the (element, term, transfer) cell -- because a scalar status over a multi-transport space hides exactly the split a reader is deciding on.\n\nMEASURED 2026-08-24, and it is why this field exists: `busybox-1.16.1` x transfer-roundtrip is `measured-broken`, and a reader scanning that row concludes otto cannot move files to a BusyBox 1.16.1 device. It can -- over `shell` the roundtrip passes; only `nc` fails, against otto's already registered `nc-transfer` gap. Both facts were already IN the cell, but only as prose: a pipe-joined `observable` and an English `failure_summary`. A renderer that recovers structure by parsing English is a renderer that will silently stop recovering it, and this artifact is published documentation.\n\nThe entries are the run's own records, one per cell the contract was evaluated on, each carrying the outcome pytest reported. THE STATUS AND THESE OUTCOMES CANNOT DISAGREE: the `allOf` below requires every entry of a `measured-ok` cell to have passed, and requires a `measured-broken` cell to hold at least one that did not. So a hand-edit that flips a verdict without touching the breakdown fails validation, and one that flips the breakdown without the verdict fails too.\n\nTWO CROSS-REFERENCES A SCHEMA CANNOT FOLLOW are enforced by `tests/_fixtures/support_matrix.py::cell_outcome_errors` instead: that every entry's element is one this cell says it `observed_on` (and that every such element has at least one entry, so the breakdown can never hide a device), and that each `cell_label` is a cell the bed venue really draws."
+        },
+        "nodeid": {
+          "$ref": "#/$defs/NodeId",
+          "title": "Nodeid",
+          "description": "The contract test that measured this cell."
+        },
+        "positive_control": {
+          "$ref": "#/$defs/NodeId",
+          "title": "Positive Control",
+          "description": "THE FIELD THIS ARTIFACT EXISTS FOR. The nodeid of the test that proved this cell's observable CAN GO RED here.\n\nWithout it, \u00a75: \"the matrix publishes `measured-ok` for cells that proved nothing -- the guards-that-cannot-fail defect promoted to a *published* artifact, which is worse than the silent version because the matrix is what people read instead of the tests.\" The shape check here is necessary and nowhere near sufficient: a nodeid that merely LOOKS well-formed is exactly the failure this item exists to prevent, so a unit guard additionally resolves it against real collection."
+        },
+        "venue": {
+          "$ref": "#/$defs/Venue",
+          "title": "Venue"
+        },
+        "as_of": {
+          "$ref": "#/$defs/AsOf",
+          "title": "As Of"
+        },
+        "observable": {
+          "type": "string",
+          "minLength": 1,
+          "title": "Observable",
+          "description": "WHAT was watched to reach this verdict, in this environment. A surface's observable is not the same everywhere and the strong one is not always available (\u00a75's worked example: shell-history suppression is provable on bash and unprovable on all five BusyBox guests), so the cell names its own."
+        },
+        "failure_summary": {
+          "type": "string",
+          "minLength": 1,
+          "title": "Failure Summary",
+          "description": "How a `measured-broken` cell broke."
+        },
+        "probed": {
+          "type": "string",
+          "minLength": 1,
+          "title": "Probed",
+          "description": "For a `not-observable` cell: what was asked. The aggregate of the per-element `not_observable` entries."
+        },
+        "probe_result": {
+          "type": "string",
+          "minLength": 1,
+          "title": "Probe Result",
+          "description": "For a `not-observable` cell: what the probe showed."
+        }
+      },
+      "allOf": [
+        {
+          "$comment": "measured-ok: nodeid, venue, as_of, observable, positive_control -- plus the per-element breakdown, the per-CELL breakdown, and at least one element it was actually observed on. EVERY entry must have PASSED: a `measured-ok` cell holding a failing cell is the misleading-uniform reading in its other direction, and it is refused here rather than left to a renderer to notice.",
+          "if": {
+            "required": [
+              "status"
+            ],
+            "properties": {
+              "status": {
+                "const": "measured-ok"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "status",
+              "nodeid",
+              "venue",
+              "as_of",
+              "observable",
+              "positive_control",
+              "observed_on",
+              "not_observable",
+              "observed_cells"
+            ],
+            "propertyNames": {
+              "enum": [
+                "status",
+                "nodeid",
+                "venue",
+                "as_of",
+                "observable",
+                "positive_control",
+                "observed_on",
+                "not_observable",
+                "observed_cells"
+              ]
+            },
+            "properties": {
+              "observed_on": {
+                "minItems": 1
+              },
+              "observed_cells": {
+                "minItems": 1,
+                "items": {
+                  "properties": {
+                    "outcome": {
+                      "const": "passed"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "$comment": "measured-broken: the same evidence, with a failure summary in place of the required positive control (which stays permitted -- a broken cell may still name the control that showed its observable can move). AND IT MUST SAY WHICH CELLS BROKE: `contains` requires at least one non-passing entry, so a cell can never publish `broken` while its own breakdown says everything passed. That pair is what stops the scalar status reading as uniform -- MEASURED, `busybox-1.16.1` x transfer-roundtrip is broken over `nc` and fine over `shell`, and both entries are here to be rendered.",
+          "if": {
+            "required": [
+              "status"
+            ],
+            "properties": {
+              "status": {
+                "const": "measured-broken"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "status",
+              "nodeid",
+              "venue",
+              "as_of",
+              "observable",
+              "failure_summary",
+              "observed_on",
+              "not_observable",
+              "observed_cells"
+            ],
+            "propertyNames": {
+              "enum": [
+                "status",
+                "nodeid",
+                "venue",
+                "as_of",
+                "observable",
+                "failure_summary",
+                "positive_control",
+                "observed_on",
+                "not_observable",
+                "observed_cells"
+              ]
+            },
+            "properties": {
+              "observed_on": {
+                "minItems": 1
+              },
+              "observed_cells": {
+                "minItems": 1,
+                "contains": {
+                  "type": "object",
+                  "required": [
+                    "outcome"
+                  ],
+                  "properties": {
+                    "outcome": {
+                      "not": {
+                        "const": "passed"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "$comment": "not-observable: a MEASUREMENT of absence. It carries what was probed and what that showed, dated and located like any other measurement so the rendered page can show its staleness -- an undated `not-observable` cell would render exactly like `untested`, which is the collapse \u00a75 forbids. `observed_on` and `observed_cells` must both be present and EMPTY: a cell claiming an observation is not a cell whose environment cannot express one, and the empty list is a STATEMENT where the key's absence would be silence.",
+          "if": {
+            "required": [
+              "status"
+            ],
+            "properties": {
+              "status": {
+                "const": "not-observable"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "status",
+              "venue",
+              "as_of",
+              "probed",
+              "probe_result",
+              "observed_on",
+              "not_observable",
+              "observed_cells"
+            ],
+            "propertyNames": {
+              "enum": [
+                "status",
+                "venue",
+                "as_of",
+                "probed",
+                "probe_result",
+                "observed_on",
+                "not_observable",
+                "observed_cells"
+              ]
+            },
+            "properties": {
+              "observed_on": {
+                "maxItems": 0
+              },
+              "not_observable": {
+                "minItems": 1
+              },
+              "observed_cells": {
+                "maxItems": 0
+              }
+            }
+          }
+        },
+        {
+          "$comment": "untested: the default, and it carries NOTHING. Stripping a verdict back to `untested` while leaving its old nodeid or as_of behind would leave the artifact asserting a measurement it no longer claims.",
+          "if": {
+            "required": [
+              "status"
+            ],
+            "properties": {
+              "status": {
+                "const": "untested"
+              }
+            }
+          },
+          "then": {
+            "propertyNames": {
+              "enum": [
+                "status"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "ElementProbe": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "element",
+        "probed",
+        "probe_result"
+      ],
+      "title": "ElementProbe",
+      "description": "One element of a profile that could not express this surface's observable, and the probe that established it.",
+      "properties": {
+        "element": {
+          "type": "string",
+          "minLength": 1,
+          "title": "Element"
+        },
+        "probed": {
+          "type": "string",
+          "minLength": 1,
+          "title": "Probed"
+        },
+        "probe_result": {
+          "type": "string",
+          "minLength": 1,
+          "title": "Probe Result"
+        }
+      }
+    },
+    "CellOutcome": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "cell_label",
+        "element",
+        "term",
+        "transfer",
+        "outcome"
+      ],
+      "title": "CellOutcome",
+      "description": "One (element, term, transfer) cell the contract was evaluated on, and what it answered.\n\n`element`, `term` and `transfer` are carried BESIDE `cell_label` rather than left to be parsed out of it. A renderer that has to split `bed-busybox[bb1161:telnet:nc]` on brackets and colons to learn the transport is doing string surgery on an id whose spelling belongs to `tests/conformance/_sample.py::cell_label`, and it would keep parsing successfully -- against the wrong fields -- the day that spelling changes. The label stays because it is the identity a reader reproduces the measurement with; the axes are what the page renders.",
+      "properties": {
+        "cell_label": {
+          "type": "string",
+          "minLength": 1,
+          "title": "Cell Label",
+          "description": "The parametrization id of the item that measured this cell -- `kind[element:term:transfer]`, exactly as `cell_label` spells it."
+        },
+        "element": {
+          "type": "string",
+          "minLength": 1,
+          "title": "Element"
+        },
+        "term": {
+          "type": "string",
+          "minLength": 1,
+          "title": "Term",
+          "description": "The terminal this cell reached the element over."
+        },
+        "transfer": {
+          "type": "string",
+          "minLength": 1,
+          "title": "Transfer",
+          "description": "The transfer backend this cell used. THE AXIS THE SCALAR STATUS HID: `shell` and `nc` are different answers on the same device."
+        },
+        "outcome": {
+          "type": "string",
+          "enum": [
+            "passed",
+            "failed",
+            "xfailed"
+          ],
+          "title": "Outcome",
+          "description": "What pytest reported for this cell. ONLY THE THREE EVIDENTIAL OUTCOMES (`tests/conformance/_observation.py`): a skip, a setup error and an unexpected pass are statements about the RUN rather than about the contract, the collate step discards them with a reason, and enumerating them here means one that reached the artifact anyway fails validation instead of rendering as evidence. `xfailed` IS evidence -- a strict xfail is an assertion about a known product defect, and the ten `nc` cells are exactly that."
+        },
+        "positive_control": {
+          "$ref": "#/$defs/NodeId",
+          "title": "Positive Control",
+          "description": "THE CELL-LEVEL `positive_control`, ONE LEVEL DOWN -- and required for exactly the entries the page makes a positive claim about.\n\nMEASURED 2026-08-25 and this is why it exists: all ten mixed `measured-broken` cells rendered *\"**Only over `shell`.** You can put a file on the device and get the same bytes back over `shell`\"* while the CELL cited no control at all. The cell-level field can only be written when EVERY contributing cell is controlled, and a mixed cell's failing route is not -- so the passing route's control record, which had run and PASSED, was collected and then discarded at citation time. A `measured-ok` cell may not exist without naming the control that proved its observable can go red; that sentence is an equally positive claim about a ROUTE, and it named nothing.\n\nREQUIRED WHEN `outcome` IS `passed`, PERMITTED OTHERWISE -- see the `allOf` below. A route that failed makes no positive claim, and its control has usually failed beside it (a strict xfail xfails both), so there is no passing record to name; requiring one there would make an honest broken cell unwritable. A route that passed and cites nothing is the defect this field closes, so the schema refuses it rather than leaving a renderer to notice.\n\nWHAT THE SCHEMA CANNOT CHECK, and `tests/_fixtures/support_matrix.py::positive_control_errors` does: that the nodeid is THIS surface's control parametrized on THIS VERY cell_label -- not merely on some cell of the same element -- and that it resolves against a real collection. `test1` alone draws eight cells over four transfer backends, so \"the control passed somewhere on this device\" is the same weakening the cell-level field already refuses, one level down."
+        }
+      },
+      "allOf": [
+        {
+          "$comment": "A ROUTE THAT PASSED MUST NAME ITS CONTROL. This is the cell-level `measured-ok` rule applied to the unit the page actually makes claims about: `observed_cells` exists so a mixed cell can say `works over shell, broken over nc`, and the first half of that sentence is a `measured-ok`-strength claim. A field that can be omitted is one a future collator will omit, so the requirement is here rather than in the collator alone. Nothing is required of a `failed` or `xfailed` entry: it claims nothing positive, and on a strict xfail the control xfails with the contract so no passing record exists to cite.",
+          "if": {
+            "required": [
+              "outcome"
+            ],
+            "properties": {
+              "outcome": {
+                "const": "passed"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "positive_control"
+            ]
+          }
+        }
+      ]
+    },
+    "NodeId": {
+      "type": "string",
+      "pattern": "^tests/[A-Za-z0-9_./-]+\\.py(::[A-Za-z_][A-Za-z0-9_]*)+(\\[(?:[^\\[\\]]|\\[[^\\[\\]]*\\])*\\])?$",
+      "title": "NodeId",
+      "description": "A pytest nodeid rooted at `tests/`, e.g. `tests/conformance/test_exec_contract.py::test_exec_reports_the_documented_exit_code`, optionally with its `[cell]` parametrization.\n\nTHE PARAMETRIZATION MAY NEST ONE LEVEL OF BRACKETS, and it must: this suite's parametrization ids are `cell_label`'s output (`tests/conformance/_sample.py`), which is itself `kind[element:term:transfer]` -- so a real nodeid ends `...[bed-busybox[bb1161:telnet:nc]]`. The first version of this pattern ended `(\\[[^\\]]*\\])?$` and MEASURED could not match a single parametrized nodeid this tree produces, because the inner `]` closes the character class early. That blocked every `positive_control`, which is a parametrized nodeid by construction: a control is only evidence about the cell it ran on.\n\nShape only -- that a nodeid RESOLVES to a collected test is a separate guard (`tests/unit/test_support_matrix.py` resolves it against a real `--collect-only`), because a plausible-looking string is precisely what this artifact must not accept on trust."
+    },
+    "Venue": {
+      "type": "string",
+      "enum": [
+        "bed",
+        "hermetic",
+        "ci-hermetic"
+      ],
+      "title": "Venue",
+      "description": "Where the measurement happened. `bed` is the dev VM's real lab, `hermetic` a local no-lab run, `ci-hermetic` the nightly job's uploaded observations (\u00a75). Bed-only cells can only ever be measured locally, so their `as_of` is what keeps that staleness visible."
+    },
+    "AsOf": {
+      "type": "string",
+      "format": "date",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+      "title": "AsOf",
+      "description": "ISO date of the measurement. The `pattern` is what actually bites: JSON Schema's `format` is an annotation, and validators do not assert it unless asked."
+    }
+  }
+}

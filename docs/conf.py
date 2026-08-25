@@ -469,9 +469,48 @@ def _generate_docs_media(app):
         _run_capture_script("capture_docs_media.py")
 
 
+def _generate_support_matrix(app):  # noqa: ARG001 — Sphinx event signature
+    """Render docs/architecture/support-matrix.md from the committed artifact.
+
+    EVERY BUILDER, not html-only: the page is a real source file that the toctree
+    names, so the doctest builder has to find it on disk too — the same reason the
+    termynal capture above runs unconditionally.
+
+    A `-m` invocation rather than a path, because the renderer imports `tests.*` to
+    ask the tree which surfaces and profiles it still declares; run as a path,
+    `sys.path[0]` would be `scripts/`. A non-zero exit RAISES, so a matrix whose axes
+    the tree no longer backs is a build FAILURE and not a warning (spec §5).
+    """
+    import subprocess
+
+    from sphinx.util import logging as sphinx_logging
+
+    logger = sphinx_logging.getLogger(__name__)
+    root = pathlib.Path(__file__).parent.parent
+    # No S603 suppression here, unlike `_run_capture_script` above: ruff reports one
+    # as UNUSED on this call, and a suppression that suppresses nothing is a claim
+    # about a risk that was never raised. (Spelled without the directive word on
+    # purpose -- ruff parses that token even inside a comment and warns.)
+    proc = subprocess.run(
+        [sys.executable, "-m", "scripts.render_support_matrix"],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=str(root),
+    )
+    if proc.stdout.strip():
+        logger.info(proc.stdout.strip())
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"scripts/render_support_matrix.py failed with exit code "
+            f"{proc.returncode}:\n{proc.stderr}"
+        )
+
+
 def setup(app):
     app.connect("source-read", _substitute_version_token)
     app.connect("builder-inited", _generate_docs_media)
+    app.connect("builder-inited", _generate_support_matrix)
     app.connect("missing-reference", _resolve_short_types)
     app.connect("missing-reference", _resolve_internal_aliases)
     app.connect("missing-reference", _resolve_external_doc_links)

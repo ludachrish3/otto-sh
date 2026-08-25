@@ -113,6 +113,12 @@ def applicable_cell(resolved: ResolvedCell) -> bool:
     return resolved.vocabulary.long_running_command is not None
 
 
+@pytest.mark.observable(
+    "CommandResult.timed_out, .status, .retcode and .exit_code for "
+    "`{words.long_running_command}` ({words.long_running_seconds}s) run under a shorter "
+    "budget, and whether the SAME session still answers `{words.single_line_command}` "
+    "afterwards"
+)
 async def test_a_command_exceeding_its_budget_fails_the_documented_way(
     resolved_cell: ResolvedCell,
 ) -> None:
@@ -171,3 +177,74 @@ async def test_a_command_exceeding_its_budget_fails_the_documented_way(
         f"wedges the session is a different bug wearing the same failure"
     )
     assert_single_line_answer(afterwards.value, words, cell, "the command after the timeout")
+
+
+# ==========================================================================
+# POSITIVE CONTROL -- proof that this observable CAN GO RED on this cell
+# ==========================================================================
+# See `tests/conformance/_controls.py`. This inherits `applicable_cell`
+# above, so it runs on exactly the cells the contract runs on -- which today
+# means every bed cell except the seven Zephyr ones, whose shell has no
+# stimulus that can outlive a budget in the first place.
+
+
+@pytest.mark.positive_control("timeout")
+async def test_control_a_command_inside_its_budget_is_not_reported_as_timed_out(
+    resolved_cell: ResolvedCell,
+) -> None:
+    """A command well UNDER the budget must come back clean, on this very cell.
+
+    Every assertion the contract makes about a timeout is satisfied by a
+    backend that reports one unconditionally: ``timed_out is True``,
+    ``is_ok False``, ``Status.Error``, ``retcode -1``, ``exit_code 255``, and
+    a diagnostic naming the budget. This runs the vocabulary's single-line
+    command under the SAME budget and requires the opposite of each, so a
+    host that answers "timed out" to everything fails here while passing
+    there.
+
+    THE SESSION IS WARMED FIRST, and that is a discriminator rather than
+    politeness. The contract's own budget note measures the bed's round-trip
+    floor at 0.001-0.043s warm against a 0.75s budget -- a 17x margin -- but
+    0.25s on the FIRST command of an ssh session, which carries the connect
+    and leaves only 3x. A control that timed out on connect latency would
+    report the instrument as inert when what was slow was the network, so the
+    budgeted command here is never the session's first.
+
+    Nothing is written on the far side; nothing to restore.
+    """
+    words = resolved_cell.vocabulary
+    assert words.long_running_command is not None, (
+        f"{resolved_cell.cell}: this cell has no command that outlives a budget, so "
+        f"`applicable_cell` should have kept it out of this contract's domain"
+    )
+
+    async with resolved_cell.open_host() as host:
+        await host.run(words.succeeding_command)
+        inside = (await host.run(words.single_line_command, timeout=_BUDGET_S)).only
+
+    cell = resolved_cell.cell
+    assert inside.timed_out is False, (
+        f"{cell}: `{words.single_line_command}` under a {_BUDGET_S}s budget reported "
+        f"timed_out=True, so the contract's `timed_out is True` is satisfied by every "
+        f"command this cell can run and its green says nothing"
+    )
+    assert inside.is_ok, (
+        f"{cell}: a command inside its budget is ok, got {inside.status!r} {inside.value!r}"
+    )
+    assert inside.status is Status.Success, (
+        f"{cell}: a command inside its budget is Status.Success, not {inside.status!r} -- "
+        f"the contract's `is Status.Error` cannot discriminate otherwise"
+    )
+    assert inside.retcode == 0, (
+        f"{cell}: retcode was {inside.retcode}, not 0 -- the contract's `retcode == -1` "
+        f"is then true of a command that ran to completion"
+    )
+    assert inside.exit_code == 0, (
+        f"{cell}: exit_code was {inside.exit_code}, not 0 -- the contract's "
+        f"`exit_code == 255` would hold for a command that never timed out"
+    )
+    assert not inside.value.startswith("Command timed out"), (
+        f"{cell}: a command inside its budget came back with the timeout diagnostic -- "
+        f"{inside.value!r}"
+    )
+    assert_single_line_answer(inside.value, words, cell, "a command inside its budget")

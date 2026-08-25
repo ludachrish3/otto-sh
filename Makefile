@@ -9,7 +9,7 @@
 # on -j.
 .NOTPARALLEL:
 
-.PHONY: help all ci nox nox-full nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-python coverage-unit coverage-integration coverage-unix coverage-embedded coverage-hostless coverage-ts coverage-ts-unit docs docs-lint docs-html docs-inventories docs-media doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts lint-arch check check-python gate-fresh check-ts format format-python format-ts schema monitor-fixtures clean changelog release stability stability-unit stability-unix stability-tunnel stability-embedded chaos chaos-embedded repeat vm-health qemu-restart import-snapshot hyperfine profile browsers dashboard dashboard-all dashboard-soak busybox busybox-cache conformance conformance-bed web-install web web-dev test-ts web-clean wheel-check
+.PHONY: help all ci nox nox-full nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-python coverage-unit coverage-integration coverage-unix coverage-embedded coverage-hostless coverage-ts coverage-ts-unit docs docs-lint docs-html docs-inventories docs-media doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts lint-arch check check-python gate-fresh check-ts format format-python format-ts schema monitor-fixtures clean changelog release stability stability-unit stability-unix stability-tunnel stability-embedded chaos chaos-embedded repeat vm-health qemu-restart import-snapshot hyperfine profile browsers dashboard dashboard-all dashboard-soak busybox busybox-cache conformance conformance-bed support-matrix web-install web web-dev test-ts web-clean wheel-check
 
 # Bump component for `make release`. Override on the command line:
 #   make release BUMP=minor
@@ -831,18 +831,56 @@ conformance: ## Run the host-contract conformance suite (`conformance`-marked; e
 # session seed exactly as the hermetic lane does.
 #
 # ITS OWN WALL-CLOCK CAP, larger than PYTEST_TIMEOUT and stated rather than
-# inherited: 284 items reach real hardware here, the seven single-client
+# inherited: 565 items reach real hardware here, the seven single-client
 # console cells serialize against each other through
 # `tests/conformance/_console_safety.py`'s exclusive lock, and the integration
 # tree measured full one-group bed serialization at >450s. 360s is the cap for
 # lanes whose slowest leg is a local VM; this one is not that lane.
+#
+# The item count was 284 until the support matrix's POSITIVE CONTROLS landed
+# beside the contracts (one per surface, parametrized over the same cells), and
+# the cap did NOT need raising with it: measured 2026-08-24 at start load 0.81,
+# the whole 565-item lane is 91.65s -- the added items are mostly one or two
+# extra commands on a session that was being opened anyway.
 CONFORMANCE_CELLS ?= all
 CONFORMANCE_BED_TIMEOUT := 1200s
-conformance-bed: ## Run the host-contract conformance suite against the REAL BED (dev VM only; needs the lab VMs and the Zephyr guests): the same exec/transfer/timeout contracts as `make conformance`, crossed over every (term, transfer) each bed host's menus permit. Exhaustive by default; CONFORMANCE_CELLS=N samples N cells off the session seed instead. JUnit XML lands in reports/junit/conformance-bed/.
+conformance-bed: ## Run the host-contract conformance suite against the REAL BED (dev VM only; needs the lab VMs and the Zephyr guests): the same exec/transfer/timeout contracts as `make conformance`, crossed over every (term, transfer) each bed host's menus permit. Exhaustive by default; CONFORMANCE_CELLS=N samples N cells off the session seed instead. Ends by folding what it measured into schemas/support_matrix.json (`make support-matrix`) — review the diff and commit it. JUnit XML lands in reports/junit/conformance-bed/.
 	@$(SAY) "pytest: host-contract conformance, BED venue (real lab hosts, cells=$(CONFORMANCE_CELLS))"
 	@OTTO_CONFORMANCE_BED=1 OTTO_CONFORMANCE_CELLS=$(CONFORMANCE_CELLS) \
 	    timeout --foreground --kill-after=10s $(CONFORMANCE_BED_TIMEOUT) \
-	    uv run pytest -m "conformance" --no-cov $(call junitxml,conformance-bed)
+	    uv run pytest -m "conformance" --no-cov $(call junitxml,conformance-bed); \
+	  lane=$$?; $(MAKE) --no-print-directory support-matrix; collate=$$?; \
+	  if [ $$lane -ne 0 ]; then exit $$lane; fi; exit $$collate
+
+# The collate step -- spec §5's fold of a run's observation records into the
+# committed matrix. THE ONLY WRITER OF A `measured-*` VERDICT.
+#
+# HUNG OFF `conformance-bed` AND NOT `conformance`, which is a deliberate
+# departure from this item's plan ("wire it to the end of `make conformance`")
+# and from the wording nightly.yml still carries. The reason is the BED-ONLY
+# ruling of 2026-08-24: the matrix's profile axis is built from the bed labs'
+# 16 elements, and the hermetic venue's cells (`local`, `loopback`, the five
+# BusyBox artifacts) have no lab entry at all -- `axes_for('local')` raises --
+# so a hermetic record names an element no column holds and the collator
+# DISCARDS it. Wired to `make conformance`, this step would print a 48-record
+# discard on every run, change nothing, and do it inside CI's nightly
+# `conformance-hermetic` job -- implying to anyone reading the workflow that CI
+# collates the matrix. It does not, and it cannot: CI has no lab.
+#
+# STILL RUNS WHEN THE LANE IS RED, and that is the point of having a
+# `measured-broken` state at all: a contract that failed on a real guest is
+# exactly the thing the matrix should publish, and a collate step that only ran
+# after a green lane could never record one. The lane's own exit status still
+# wins, so a red lane is still a red `make`.
+#
+# NEVER COMMITS, here or anywhere. `--write` edits the file and stops; Chris
+# reviews the diff and commits it, and no workflow invokes this target
+# (`tests/unit/test_support_matrix.py` checks every workflow for it). Run it
+# bare to see what a run WOULD change without touching the artifact:
+#     uv run python -m scripts.collate_support_matrix
+support-matrix: ## Fold the conformance run's observation records into schemas/support_matrix.json (the ONLY writer of a `measured-*` verdict). Reads reports/conformance-observations/, discards every non-bed record loudly, never downgrades a cell no run drew, and never commits — review the diff yourself.
+	@$(SAY) "collate: folding the bed run's observations into schemas/support_matrix.json"
+	@uv run python -m scripts.collate_support_matrix --write
 
 # Soak/stability + repeat targets disable coverage (--no-cov, overriding the
 # --cov in pytest addopts). Per-test `--cov-context=test` tracing adds overhead
@@ -1141,10 +1179,15 @@ import-snapshot: ## (Dev) Regenerate import-budget golden snapshots + print per-
 
 # ═══ Docs ═══════════════════════════════════════════════════════════════════
 
+# schemas/support_matrix.json and its renderer are docs inputs like any page:
+# docs/architecture/support-matrix.md is rendered from them at builder-inited, so a
+# re-collated matrix has to re-trigger the build the same way editing a page does.
 SPHINX_SRCS :=  docs/conf.py                        \
                 $(shell find docs -name '*.rst')    \
                 $(shell find docs -name '*.md')    \
                 $(shell find src/otto -name '*.py') \
+                schemas/support_matrix.json         \
+                scripts/render_support_matrix.py    \
 
 docs: docs-lint docs-html doctest doctest-src ## (Docs) Build HTML docs + Sphinx & src doctests (sub-targets: docs-lint, docs-html, doctest, doctest-src, docs-inventories)
 

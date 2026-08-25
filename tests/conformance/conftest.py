@@ -43,6 +43,7 @@ NOT one about a stamp in this tree.
 """
 
 from collections.abc import Callable
+from functools import partial
 from pathlib import Path
 
 import pytest
@@ -53,6 +54,12 @@ from tests.conformance._console_safety import (
     opens_a_single_client_console,
     serialized_console,
     unhonored_console_lock,
+)
+from tests.conformance._observable import note_observable as _note_observable
+from tests.conformance._observation import (
+    note_domain_exclusions,
+    record_phase,
+    write_domain_exclusions,
 )
 from tests.conformance._resolved import ResolvedCell
 from tests.conformance._sample import cell_label, draw, log_draw, root_seed
@@ -225,6 +232,15 @@ def pytest_generate_tests(metafunc):
     expected = getattr(metafunc.module, _XFAIL_HOOK, None)
     if applies is not None:
         within = [resolved for resolved in drawn if applies(resolved)]
+        # The complement, remembered before it disappears. An excluded cell
+        # generates no item, so `pytest_runtest_makereport` can never see it --
+        # and the matrix's `not_observable` list has no other source. See
+        # `tests/conformance/_observation.py`.
+        note_domain_exclusions(
+            metafunc.config,
+            metafunc.definition.nodeid,
+            [resolved for resolved in drawn if resolved not in within],
+        )
         if not within:
             raise RuntimeError(
                 f"{metafunc.module.__name__} declares an applicable domain that none of "
@@ -367,6 +383,42 @@ def pytest_runtest_call(item):
         )
 
 
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_makereport(item, call):
+    """Emit this item's observation record, from the phase reports themselves.
+
+    A WRAPPER over the report hook and not a line in the contract bodies, and
+    the difference is the whole point: a record written inside a test, before
+    its assertions run, reports success for a test that then fails -- a green
+    record vouching for a red test, which is the fabrication
+    ``schemas/support_matrix.json`` exists to prevent. Here the outcome is
+    already decided and is read off pytest's own report.
+
+    The cell is read off the CALLSPEC (:func:`_cell_under_test`) rather than
+    off the fixture, for the reason that function gives: a report hook has no
+    fixture values to ask.
+
+    Not guarded by ``suppress``. An emitter that failed quietly would leave a
+    run looking measured while it recorded nothing, which is worse than the
+    loud INTERNALERROR a raise here produces.
+    """
+    report = yield
+    record_phase(item, report, _cell_under_test(item), current_venue())
+    return report
+
+
+def pytest_sessionfinish(session, exitstatus):
+    """Write the domain-exclusion records this process earned.
+
+    At session finish because the gate is "a contract this process actually
+    ran": an exclusion record says *this run exercised contract C and cell X
+    was outside its domain*, and only the completed run knows the first half.
+    See ``tests/conformance/_observation.py`` for why the excluded cells
+    cannot be recovered from any report hook.
+    """
+    write_domain_exclusions(session.config, current_venue())
+
+
 @pytest.fixture
 def resolved_cell(request: pytest.FixtureRequest) -> ResolvedCell:
     """One drawn cell of the selected venue's space, per test.
@@ -382,6 +434,32 @@ def resolved_cell(request: pytest.FixtureRequest) -> ResolvedCell:
     keep the session in scope for exactly as long as it needs.
     """
     return request.param
+
+
+@pytest.fixture
+def note_observable(request: pytest.FixtureRequest) -> "Callable[[str], None]":
+    """Let a CONTRACT say which observable this cell actually gave it.
+
+    A thin adapter over ``tests/conformance/_observable.py``'s function of the
+    same name, so a contract body reads ``note_observable("...")`` rather than
+    threading ``request`` through itself.
+
+    WHY A CONTRACT WOULD NEED THIS AT ALL, when it already declares an
+    observable on its ``@pytest.mark.observable`` marker: the marker is a
+    template rendered against the cell's vocabulary, and a template cannot
+    express a branch the CELL decides at run time. ``put(mode=...)`` is read
+    back with ``stat -c %a`` where the backend carries a permission model and
+    is a pre-flight REFUSAL where it does not; the framing contract can assert
+    exact equality only where the tester chose the output. Those are different
+    observables, not two spellings of one, and only the running test knows
+    which it got.
+
+    THIS DOES NOT MAKE A RECORD FABRICABLE. The OUTCOME still comes from
+    pytest's own report at teardown -- nothing written through here can turn a
+    failure into a pass. What a body supplies is the DESCRIPTION of what it
+    watched, which is the one thing only the body knows.
+    """
+    return partial(_note_observable, request)
 
 
 @pytest.fixture

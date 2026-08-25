@@ -21,6 +21,7 @@ cross-cutting spines; the principles are the recurring design rules.
    lifecycle
    testing
    quality-gates
+   support-matrix
 
 .. toctree::
    :caption: Design by area

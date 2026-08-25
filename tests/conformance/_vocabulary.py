@@ -177,6 +177,49 @@ class Vocabulary:
     contract's first assertion pass would make its second unmeasurable.
     """
 
+    sentinel_plant_command: str
+    """A command whose OWN OUTPUT contains :data:`OTTO_SENTINEL_PREFIX`.
+
+    THE STIMULUS THE FRAMING SURFACE'S POSITIVE CONTROL NEEDS, and it is here
+    rather than in the control because it is a spelling and spellings are what
+    this module holds. The framing contract asserts that no otto scaffolding
+    reaches a caller; a framing check that cannot SEE planted pollution proves
+    nothing about real pollution, so its control plants a sentinel lookalike
+    in the command's own output and requires
+    ``tests/conformance/_framing.py``'s ``framing_leak`` to report it.
+
+    NOT otto's real per-session marker, and it could not be: those are built
+    from a session id unique per connection
+    (``otto.host.command_frame.SessionMarkers.for_session`` ->
+    ``__OTTO_<id>_BEGIN__``), and both frames parse for the escaped id, so a
+    literal carrying the PREFIX alone can never be mistaken for a real frame
+    by otto while still being exactly what ``framing_leak`` looks for.
+
+    THE ZEPHYR SPELLING IS AN UNKNOWN COMMAND, and that is the measurement
+    that made this field possible at all: a Zephyr shell has no ``echo`` and
+    no ``printf``, so nothing there can be asked to print an arbitrary
+    string -- except by NAMING it, since the shell answers an unrecognised
+    command by quoting it back (``<name>: command not found``). MEASURED
+    2026-08-24 on all seven bed guests (2.7.6, 3.7.2 x4, 4.4.1 x2): identical
+    output, retcode -8.
+    """
+
+    remove_file_template: str
+    """How this userland is asked to delete a file; ``{path}`` is substituted.
+
+    The "leave the bed as found" half of the two transfer controls, which put
+    a file of their own and must not leave it behind.
+
+    ITS RESULT IS ALSO THE VERIFICATION, which is why the POSIX spelling is
+    ``rm`` and NOT ``rm -f``. MEASURED on the bed 2026-08-24: ``rm -f``
+    answers 0 whether or not the file was there, so an assertion on it could
+    never fail -- the guards-that-cannot-fail defect, in the cleanup. Plain
+    ``rm`` and Zephyr's ``fs rm`` both answer non-zero for an absent file
+    (``fs rm`` gives retcode -8 and ``Failed to remove <path> (-2)``) and 0
+    for one that is there, so a success means both *there was a file* and
+    *there is not one now*.
+    """
+
     long_running_seconds: float | None
     """How long :attr:`long_running_command` runs. ``None`` exactly when it is.
 
@@ -215,6 +258,8 @@ POSIX = Vocabulary(
     single_line_expected=_TAIL_TOKEN,
     # Exact equality already subsumes any shape assertion here.
     single_line_pattern=None,
+    sentinel_plant_command=f"printf '%s\\n' {OTTO_SENTINEL_PREFIX}conformance_control__",
+    remove_file_template="rm {path}",
     long_running_command="sleep 10",
     long_running_seconds=10.0,
 )
@@ -261,6 +306,11 @@ ZEPHYR_SHELL = Vocabulary(
     single_line_command="kernel uptime",
     single_line_expected=None,
     single_line_pattern=r"\d+",
+    # The shell quotes an unrecognised command back at the caller, which is
+    # the only way to make a Zephyr shell emit a chosen string: it has no
+    # `echo` and no `printf`. Measured on all seven bed guests.
+    sentinel_plant_command=f"{OTTO_SENTINEL_PREFIX}conformance_control__",
+    remove_file_template="fs rm {path}",
     long_running_command=None,
     long_running_seconds=None,
 )

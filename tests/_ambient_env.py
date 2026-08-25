@@ -81,6 +81,14 @@ AMBIENT_OPT_INS: "dict[str, str]" = {
         "(tests/conformance/_venue.py); set by hand -- nightly deliberately "
         "runs at the default sample size (spec s4), so nothing in CI sets it"
     ),
+    "OTTO_CONFORMANCE_OBSERVATIONS": (
+        "redirects where the conformance suite writes its per-cell observation "
+        "records (tests/conformance/_observation.py); default "
+        "reports/conformance-observations/. Set by a CI job that uploads them "
+        "as an artifact, and by the unit guards that read them back. Stripped, "
+        "a redirected run writes into the repo's real directory instead and the "
+        "collate step folds records nobody asked it to"
+    ),
     "OTTO_BUSYBOX_CACHE": (
         "redirects the BusyBox artifact cache off ~/.cache/otto/busybox "
         "(tests/_fixtures/busybox.py); set by `make busybox-cache` and by an "

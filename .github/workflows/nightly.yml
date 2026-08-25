@@ -311,12 +311,26 @@ jobs:
       # carries every drawn cell's node id (the cell is the parametrize id) and
       # the failure text for any contract that broke.
       #
-      # Spec §5 has a conformance run also emit a per-cell observation record
-      # in JSON, which `make conformance`'s collate step folds into
-      # schemas/support_matrix.json. Neither exists yet — both are item 5 — so
-      # this step uploads the record the lane does produce today rather than an
-      # empty directory named after one it does not. When the records land,
-      # they join this artifact.
+      # Spec §5 has a conformance run also emit a per-cell observation record in
+      # JSON, and it now does: this lane writes 96 of them into
+      # reports/conformance-observations/ (48 contract observations + 48
+      # positive-control records). They are NOT uploaded, and that is a
+      # decision rather than an oversight.
+      #
+      # THE MATRIX IS BED-ONLY (ruling 2026-08-24). Its profile axis is built
+      # from the bed labs' 16 elements; this job's cells are `local`,
+      # `loopback` and five BusyBox artifacts, none of which has a lab entry --
+      # `axes_for('local')` raises KeyError -- so every record this lane
+      # produces names an element no matrix column holds, and
+      # scripts/collate_support_matrix.py discards it by design, loudly.
+      # Uploading them would advertise evidence that can populate nothing.
+      #
+      # So §5's "the collate step also accepts observation artifacts downloaded
+      # from the nightly conformance-hermetic job, recording venue:
+      # ci-hermetic" is a spec requirement this repo consciously does not meet.
+      # `ci-hermetic` stays a legal venue in the schema and no code path
+      # produces it. The matrix is refreshed by `make conformance-bed` on the
+      # dev VM, which is also where the collate step lives.
       - name: Upload the conformance run's records
         if: always()
         uses: actions/upload-artifact@v7

@@ -24,15 +24,23 @@ a single command, and this rule is written down because it has already cost
 this workstream one bug.
 """
 
+from collections.abc import Callable
+
 import pytest
 
 from otto.utils import Status
 from tests.conformance._framing import assert_single_line_answer, framing_leak
 from tests.conformance._resolved import ResolvedCell
+from tests.conformance._vocabulary import OTTO_SENTINEL_PREFIX
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.conformance]
 
 
+@pytest.mark.observable(
+    "otto's CommandResult.retcode, .exit_code and .status for "
+    "`{words.failing_command}` (must report {words.failing_code}) and "
+    "`{words.succeeding_command}` (must report 0)"
+)
 async def test_exec_reports_the_documented_exit_code(resolved_cell: ResolvedCell) -> None:
     """A command's exit code reaches the caller unchanged.
 
@@ -87,7 +95,14 @@ async def test_exec_reports_the_documented_exit_code(resolved_cell: ResolvedCell
     )
 
 
-async def test_exec_frames_output_without_prompt_noise(resolved_cell: ResolvedCell) -> None:
+@pytest.mark.observable(
+    "the framed stdout of `{words.multiline_command}`: more than one line, and none of "
+    "otto's `__OTTO_` scaffolding, `retval` line, ANSI escape or echoed command line "
+    "surviving into it"
+)
+async def test_exec_frames_output_without_prompt_noise(
+    resolved_cell: ResolvedCell, note_observable: "Callable[[str], None]"
+) -> None:
     """Stdout carries the command's output and nothing the shell added.
 
     Three assertions, and the first two are the ones every cell gets: the
@@ -111,8 +126,27 @@ async def test_exec_frames_output_without_prompt_noise(resolved_cell: ResolvedCe
     IS the contract is that nothing the shell added survives, and stripping
     whitespace cannot hide a prompt, an echo or a sentinel: none of them are
     whitespace.
+
+    THE THIRD ASSERTION'S PRESENCE IS ALSO WHAT THIS CELL'S SUPPORT-MATRIX
+    OBSERVABLE IS, which is why :func:`~tests.conformance._observable.note_observable`
+    is called from the body rather than left to the marker's template. The
+    marker declares the floor every cell gets; only the running test knows
+    whether this userland could afford exact equality, and a matrix cell that
+    published the strong observable for a cell that only got the weak one would
+    overstate its own evidence -- §5's shell-history example, in this tree.
     """
     words = resolved_cell.vocabulary
+    note_observable(
+        f"the framed stdout of `{words.multiline_command}`: more than one line, no otto "
+        f"`__OTTO_` scaffolding, `retval` line, ANSI escape or echoed command line, and "
+        + (
+            f"exact equality against the {len(words.multiline_expected.splitlines())} lines "
+            f"the tester chose"
+            if words.multiline_expected is not None
+            else "NO exact comparison -- the stimulus is a stock builtin whose text belongs "
+            "to the firmware, so there is nothing to compare against"
+        ),
+    )
     async with resolved_cell.open_host() as host:
         framed = (await host.run(words.multiline_command)).only
 
@@ -135,6 +169,11 @@ async def test_exec_frames_output_without_prompt_noise(resolved_cell: ResolvedCe
         )
 
 
+@pytest.mark.observable(
+    "the aggregate Results of a sequence whose middle command "
+    "`{words.sequence_failing_command}` exits {words.sequence_failing_code}: its is_ok, "
+    "its status, and which command first_failure names"
+)
 async def test_a_failing_command_is_not_reported_as_success(resolved_cell: ResolvedCell) -> None:
     """The discriminating half, stated over a SEQUENCE.
 
@@ -198,3 +237,195 @@ async def test_a_failing_command_is_not_reported_as_success(resolved_cell: Resol
         f"command after the failure is documented to still run"
     )
     assert_single_line_answer(results[2].value, words, cell, "the command after the failure")
+
+
+# ==========================================================================
+# POSITIVE CONTROLS -- proof that each observable above CAN GO RED on this cell
+# ==========================================================================
+# Spec 2026-08-22 s5 refuses a `measured-ok` matrix cell that does not name
+# one of these. Each asserts THE INSTRUMENT rather than the product: the
+# contract says the host answered correctly, and its control says this cell's
+# answer would have been REJECTED had it been wrong. They are parametrized
+# over the same drawn cells as the contracts they vouch for -- this module
+# declares no `applicable_cell`, so that is every drawn cell -- because a
+# control that passed on `gnu` says nothing about `busybox-1.16.1`.
+#
+# The whole rationale, and why the marker rather than the signature separates
+# a control from a contract, is in `tests/conformance/_controls.py`.
+
+
+@pytest.mark.positive_control("exec-exit-code")
+async def test_control_the_exit_code_channel_reports_more_than_one_code(
+    resolved_cell: ResolvedCell,
+) -> None:
+    """The exit-code assertions above are falsifiable HERE: the channel MOVES.
+
+    The contract pins two equalities -- ``failed.retcode == failing_code`` and
+    ``succeeded.retcode == 0`` -- and each of them is satisfied by a backend
+    that answers its own constant to everything. This runs both stimuli and
+    asserts the CROSS pairs, which is the half a constant cannot satisfy: the
+    succeeding command's code is not ``failing_code``, and the failing
+    command's is not 0. So a backend collapsing every reply to one value
+    fails at least one of the contract's equalities, which is what "the
+    contract can go red on this cell" means.
+
+    **THE PLAN'S SKETCH FOR THIS SURFACE IS FALSE ON A ZEPHYR CELL, AND IT
+    WAS MEASURED RATHER THAN ASSUMED.** It asked for "the cell's vocabulary
+    yields two distinct known FAILURE codes". A POSIX vocabulary has two (42
+    and 5); a Zephyr one has ONE -- ``failing_code`` and
+    ``sequence_failing_code`` are both ``-8``, which
+    ``tests/conformance/_vocabulary.py`` records and
+    ``tests/unit/test_conformance_bed.py`` pins. Nor is there a stable third:
+    MEASURED 2026-08-24 across all seven bed guests, ``fs`` (a subcommand
+    group invoked bare) answers ``1`` on the four guests that HAVE a
+    filesystem and ``-8`` -- indistinguishable from ``failing_command`` -- on
+    ``zephyr37_nofs``, ``zephyr37_llext`` and ``zephyr44_llext``, which do
+    not. A control keyed on it would have been strong on four cells, VACUOUS
+    on three, and identical-looking on all seven. The two codes every
+    vocabulary really does have are 0 and ``failing_code``, so those are the
+    two this uses.
+
+    Nothing here is written back to the host, so there is nothing to restore.
+    """
+    words = resolved_cell.vocabulary
+    async with resolved_cell.open_host() as host:
+        failed = (await host.run(words.failing_command)).only
+        succeeded = (await host.run(words.succeeding_command)).only
+
+    cell = resolved_cell.cell
+    assert failed.retcode != succeeded.retcode, (
+        f"{cell}: `{words.failing_command}` and `{words.succeeding_command}` both "
+        f"reported retcode {failed.retcode}, so the exit-code channel carries ONE "
+        f"value here and the contract's equalities cannot go red on this cell"
+    )
+    assert succeeded.retcode != words.failing_code, (
+        f"{cell}: `{words.succeeding_command}` reported {words.failing_code}, the very "
+        f"code the contract asserts of a FAILING command -- the assertion is satisfied "
+        f"by a backend that answers that constant to everything"
+    )
+    assert failed.retcode != 0, (
+        f"{cell}: `{words.failing_command}` reported 0, so the contract's "
+        f"`succeeded.retcode == 0` is satisfied by every reply this cell can make"
+    )
+    assert succeeded.status is not failed.status, (
+        f"{cell}: both stimuli reported {succeeded.status!r}, so the contract's "
+        f"Status.Success / Status.Failed split cannot go red here either"
+    )
+
+
+@pytest.mark.positive_control("exec-framing")
+async def test_control_the_framing_check_sees_planted_pollution(
+    resolved_cell: ResolvedCell,
+) -> None:
+    """Plant otto's own sentinel prefix in the OUTPUT, and require the leak detector to fire.
+
+    The exemplar's shape (``tests/e2e/host/test_shell_history_e2e.py``'s
+    ``test_opting_in_still_records``): create the condition the real assertion
+    looks for, prove the instrument DETECTS it. A framing check that cannot
+    see planted pollution proves nothing about real pollution -- and this
+    contract's universal half is exactly such a check, ``framing_leak``, whose
+    ``None`` on a clean reply is otherwise indistinguishable from a ``None``
+    it would return for anything.
+
+    THE PLANT IS A LOOKALIKE, NEVER A REAL FRAME. otto's markers carry a
+    per-session id (``SessionMarkers.for_session`` -> ``__OTTO_<id>_BEGIN__``)
+    and both frames parse for the escaped id, so a literal carrying the prefix
+    alone cannot be mistaken for a frame by otto while being exactly what
+    ``framing_leak`` scans for. Verified on the bed before this was written:
+    the reply came back whole, on every guest.
+
+    THE SECOND HALF CONTROLS THE OTHER UNIVERSAL ASSERTION. The contract also
+    requires more than one line back, and that too is satisfied by any
+    talkative backend; so the vocabulary's SINGLE-line command is run and
+    required to produce exactly one line -- the reply the contract's
+    ``len(...) > 1`` must refuse.
+
+    Read-only on the far side: one unknown command on a Zephyr shell, one
+    ``printf`` on a POSIX one. Nothing to restore.
+    """
+    words = resolved_cell.vocabulary
+    async with resolved_cell.open_host() as host:
+        planted = (await host.run(words.sentinel_plant_command)).only
+        single = (await host.run(words.single_line_command)).only
+
+    cell = resolved_cell.cell
+    body = planted.value.strip()
+    assert OTTO_SENTINEL_PREFIX in body, (
+        f"{cell}: `{words.sentinel_plant_command}` was supposed to put "
+        f"{OTTO_SENTINEL_PREFIX!r} into its own output and the reply was {planted.value!r} "
+        f"-- the plant did not land, so nothing about the leak detector is proved here"
+    )
+    leak = framing_leak(body, words.sentinel_plant_command)
+    assert leak is not None, (
+        f"{cell}: framing_leak() reported NOTHING for output that carries "
+        f"{OTTO_SENTINEL_PREFIX!r} -- the contract's `leak is None` assertion cannot "
+        f"go red on this cell, so its green says nothing"
+    )
+    assert OTTO_SENTINEL_PREFIX in leak, (
+        f"{cell}: framing_leak() fired, but for {leak!r} rather than the planted "
+        f"sentinel -- a detector that answers for the wrong reason is not evidence "
+        f"that it would answer for the right one"
+    )
+
+    assert single.is_ok, (
+        f"{cell}: `{words.single_line_command}` failed outright -- "
+        f"{single.status!r} {single.value!r}"
+    )
+    assert len(single.value.strip().splitlines()) == 1, (
+        f"{cell}: `{words.single_line_command}` came back as "
+        f"{len(single.value.strip().splitlines())} lines, so the contract's "
+        f"`more than one line` assertion has nothing on this cell that it refuses"
+    )
+
+
+@pytest.mark.positive_control("exec-failure-in-sequence")
+async def test_control_a_succeeding_sequence_is_not_reported_as_failed(
+    resolved_cell: ResolvedCell,
+) -> None:
+    """A sequence that genuinely succeeds must NOT arrive as a failure.
+
+    The contract asserts a sequence containing a failing command is reported
+    failed; every one of its assertions is satisfied by an aggregate that
+    reports failure unconditionally -- ``is_ok False``, falsy, ``Status.Failed``,
+    a ``first_failure`` that is not None. So this runs the same shape with NO
+    failing command in it and requires the opposite of each, which is the
+    reply that aggregate could never produce.
+
+    The middle entry is the vocabulary's single-line command rather than a
+    third copy of the succeeding one, so the sequence still exercises three
+    DISTINCT commands the way the contract's does.
+
+    Nothing is written on the far side; nothing to restore.
+    """
+    words = resolved_cell.vocabulary
+    async with resolved_cell.open_host() as host:
+        results = await host.run(
+            [words.succeeding_command, words.single_line_command, words.succeeding_command]
+        )
+
+    cell = resolved_cell.cell
+    assert results.is_ok is True, (
+        f"{cell}: a sequence of three commands that all exit 0 reported is_ok=False "
+        f"-- {[(e.command, e.retcode) for e in results]}. The contract's "
+        f"`is_ok is False` assertion is then true of every sequence this cell can run"
+    )
+    assert bool(results) is True, f"{cell}: Results truthiness follows is_ok, so this is truthy"
+    assert results.status is Status.Success, (
+        f"{cell}: the aggregate of three succeeding commands is Status.Success, "
+        f"not {results.status!r}"
+    )
+    assert results.exit_code == 0, (
+        f"{cell}: the aggregate exit_code of a succeeding sequence is 0, got "
+        f"{results.exit_code} -- the contract's `== sequence_failing_code` cannot "
+        f"discriminate on a cell that answers it either way"
+    )
+    assert results.first_failure is None, (
+        f"{cell}: first_failure named {results.first_failure!r} in a sequence with no "
+        f"failing command, so the contract's `is not None` proves nothing here"
+    )
+    assert [entry.retcode for entry in results] == [0, 0, 0], (
+        f"{cell}: per-command retcodes were {[e.retcode for e in results]}"
+    )
+    assert_single_line_answer(
+        results[1].value, words, cell, "the middle command of a clean sequence"
+    )
