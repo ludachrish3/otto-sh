@@ -41,6 +41,39 @@ jobs:
       - name: Set up Python ${{ matrix.python }}
         run: uv python install ${{ matrix.python }}
 
+      # THE ARTIFACT CACHE IS DELIBERATE HERE AND FORBIDDEN IN `busybox`, and the
+      # asymmetry is the point: the two jobs ask different questions of the same
+      # bytes.
+      #
+      # `busybox` VERIFIES them. Its whole value is re-fetching cold so that an
+      # upstream in-place rebuild reddens on the push, which is why that job must
+      # never cache (see its comment above). Detection lives there and stays there.
+      #
+      # This job merely CONSUMES them. Ten tests in
+      # `tests/unit/test_support_matrix.py` drive a real hermetic conformance run,
+      # and the hermetic venue builds its BusyBox cells from these artifacts — so
+      # an unreachable busybox.net reds a DEFAULT-gate job, on five Pythons, for a
+      # reason with nothing to do with the change under test. That is issue #261:
+      # an SSL handshake timeout fetching 1.16.1, on a release bump that touched
+      # only the version. Caching here removes that exposure without touching the
+      # detection the pin exists for.
+      #
+      # NO `restore-keys`, deliberately. A prefix restore would bring back the OLD
+      # bytes under the SAME filename in exactly the case that matters — a pin
+      # changed because upstream rebuilt an artifact in place — and
+      # `busybox_binary` fetches only when the target is ABSENT, so the stale file
+      # would be kept, fail `_verify`, and keep failing until the cache expired.
+      # An exact key misses on any pin change, which is precisely when this job
+      # should go to the network.
+      #
+      # A HIT DOES NOT SKIP VALIDATION: `_verify` runs on every artifact whether it
+      # was fetched or restored, so a corrupted cache still fails loudly here.
+      - name: Cache the BusyBox artifacts this lane consumes (detection stays in `busybox`)
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/otto/busybox
+          key: busybox-artifacts-${{ hashFiles('tests/_fixtures/busybox_pins.json') }}
+
       - name: Run tests under Python ${{ matrix.python }}
         run: uv run nox -s tests_hostless-${{ matrix.python }}
 
@@ -166,6 +199,14 @@ jobs:
   # here would keep the pin file and delete the event it exists to check. The
   # cost accepted in exchange is real and worth naming: ~5 MB over five
   # requests per run, and a busybox.net outage reds this job.
+  #
+  # THAT COST IS ACCEPTED FOR THIS JOB ONLY. The `tests` job consumes the same
+  # artifacts without verifying anything about them, and it DOES cache them —
+  # it is a default gate on five Pythons, so an outage there reds a push for a
+  # reason unrelated to it (issue #261). The reasoning above is about the job
+  # that checks the bytes, not every job that reads them, and
+  # `tests/unit/host/test_busybox_artifacts.py` pins the split in both
+  # directions so neither half can drift into the other.
   #
   # Invokes the Makefile lane rather than re-listing its pytest invocation,
   # for the same reason check-ts does (see that job): a CI job that copies a

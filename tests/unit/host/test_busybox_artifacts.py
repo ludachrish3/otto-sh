@@ -25,6 +25,7 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+import yaml
 
 try:
     import tomllib  # Python 3.11+
@@ -1040,4 +1041,65 @@ def test_the_busybox_doc_is_reachable_from_the_architecture_toctree():
         "docs/architecture/subsystems/busybox-bed.md is not listed in the "
         "architecture toctree — sphinx-build -W fails on a document included "
         "in no toctree"
+    )
+
+
+# ---------------------------------------------------------------------------
+# The supply-chain split: which CI job may cache these artifacts, and which
+# must not. Both halves are pinned, because the safety of the caching half
+# rests entirely on the other half still going to the network.
+# ---------------------------------------------------------------------------
+
+_CI = PROJECT_ROOT / ".github" / "workflows" / "ci.yml"
+_ARTIFACT_CACHE_PATH = "~/.cache/otto/busybox"
+
+
+def _steps(job: str) -> "list[dict]":
+    ci = yaml.safe_load(_CI.read_text(encoding="utf-8"))
+    return ci["jobs"][job]["steps"]
+
+
+def _cache_steps(job: str) -> "list[dict]":
+    return [s for s in _steps(job) if "cache" in str(s.get("uses", ""))]
+
+
+def test_the_tests_lane_caches_the_busybox_artifacts_it_only_consumes():
+    """A default gate must not depend on busybox.net being reachable.
+
+    Ten tests in `tests/unit/test_support_matrix.py` drive a real hermetic
+    conformance run whose cells are built from these artifacts, and that lane
+    runs on five Pythons. Issue #261 is what it costs when the fetch fails: an
+    SSL handshake timeout reddened a release-bump push that touched only the
+    version.
+    """
+    caches = _cache_steps("tests")
+    assert len(caches) == 1, f"expected exactly one cache step in `tests`, found {len(caches)}"
+    with_ = caches[0]["with"]
+    assert with_["path"] == _ARTIFACT_CACHE_PATH, (
+        f"the cache must cover the artifact dir `cache_dir()` resolves to; got {with_['path']!r}"
+    )
+    assert "busybox_pins.json" in with_["key"], (
+        f"the key must follow the pins, so a pin change misses; got {with_['key']!r}"
+    )
+    assert "restore-keys" not in with_, (
+        "a prefix restore would bring back the OLD bytes under the SAME filename when a "
+        "pin changes because upstream rebuilt in place -- and busybox_binary only fetches "
+        "when the target is ABSENT, so the stale file would be kept and fail _verify "
+        "until the cache expired"
+    )
+
+
+def test_the_busybox_lane_never_caches_the_artifacts_it_verifies():
+    """The load-bearing half. Caching HERE would delete the event the pin exists to catch.
+
+    That job re-fetches cold so an upstream in-place rebuild reddens on the
+    push. A cache keyed on the pins would only ever miss when the pins change,
+    i.e. it would skip the fetch in exactly the runs that could detect the
+    rebuild -- keeping the pin file and deleting its purpose. The `tests` lane
+    may cache precisely because this one does not, so this assertion is what
+    makes that one safe.
+    """
+    assert _cache_steps("busybox") == [], (
+        "the busybox job caches its artifacts; it must re-fetch cold every run, because "
+        "detection of an upstream in-place rebuild lives there and nowhere else"
     )
