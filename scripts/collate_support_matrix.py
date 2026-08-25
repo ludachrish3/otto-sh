@@ -22,12 +22,19 @@ because python put it there. Run as a path, ``sys.path[0]`` is ``scripts/`` and
 the imports below need a bootstrap that has to sit ABOVE them, which is three
 ``# noqa: E402`` suppressions for a problem the invocation shape does not have.
 
-CHRIS COMMITS EVERY UPDATE; CI NEVER COMMITS. Nothing here runs ``git``, and
+THIS SCRIPT NEVER COMMITS, AND CI NEVER COMMITS. Nothing here runs ``git``, and
 nothing here runs in CI's committing path -- the collate step hangs off
 ``make conformance-bed``, which no workflow invokes and which only this dev VM
 can run. The default is a REPORT: writing takes ``--write``, so a run that was
-only meant to look cannot quietly move a verdict. A person stands in front of
-every cell that changes, and the diff is what they stand in front of.
+only meant to look cannot quietly move a verdict.
+
+WHAT COMMITS IS ``make release-matrix``, the release's re-measure stage, and it
+commits only what nobody needs to see: an improvement, a new working cell, or
+evidence that moved under an unchanged verdict. A new ``measured-broken``, or a
+lost ``measured-ok``, is refused by ``scripts/check_matrix_downgrades.py`` and
+stops the release. So a person still stands in front of every cell whose verdict
+gets WORSE, and the diff is still what they stand in front of -- they are simply
+no longer called for the cells where the answer could not matter.
 
 ═══════════════════════════════════════════════════════════════════════════
 THE FOUR RULES, and why each is structural rather than a convention
@@ -714,8 +721,9 @@ def main(argv: "list[str]") -> int:
     parser.add_argument(
         "--write",
         action="store_true",
-        help="fold the records in; without it this only reports. Never commits: "
-        "spec 5 puts a person in front of every verdict, and CI never commits the matrix.",
+        help="fold the records in; without it this only reports. Never commits, and "
+        "neither does CI. The release stage (make release-matrix) commits an "
+        "auto-acceptable refresh and refuses a downgrade, which stays a person's call.",
     )
     args = parser.parse_args(argv)
 

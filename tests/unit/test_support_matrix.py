@@ -38,6 +38,7 @@ from jsonschema import Draft202012Validator
 
 from otto.result import CommandResult, Result, Results
 from otto.utils import Status
+from scripts.check_matrix_downgrades import main as gate_main
 from scripts.collate_support_matrix import BED, FAILURE_SUMMARY_LIMIT, collate, report
 from scripts.collate_support_matrix import main as collate_main
 from scripts.render_support_matrix import (
@@ -134,6 +135,7 @@ def _fabricated_cell(element: str, term: str, transfer: str, *, kind: str) -> Re
 
 
 COLLATOR_PATH = PROJECT_ROOT / "scripts" / "collate_support_matrix.py"
+DOWNGRADE_GATE_PATH = PROJECT_ROOT / "scripts" / "check_matrix_downgrades.py"
 RENDERER_PATH = PROJECT_ROOT / "scripts" / "render_support_matrix.py"
 """The collate step: the ONLY writer of a ``measured-*`` verdict (spec §5)."""
 
@@ -3662,9 +3664,64 @@ def test_no_ci_workflow_runs_the_collate_step():
             for line in path.read_text(encoding="utf-8").splitlines()
             if not line.lstrip().startswith("#")
         ]
-        for forbidden in ("collate_support_matrix", "support-matrix", "conformance-bed"):
+        for forbidden in (
+            "collate_support_matrix",
+            "support-matrix",
+            "conformance-bed",
+            "release-matrix",
+        ):
             offending = [line.strip() for line in commands if forbidden in line]
             assert offending == [], f"{path.name} runs the collate step: {offending}"
+
+
+def test_the_downgrade_gate_reads_the_artifact_and_never_writes_it():
+    """What stops the gate's allow-listing above from being a hole.
+
+    It is exempted from the `measured-*` literal scan because classifying a
+    transition means naming the states -- so the exemption has to be paid for
+    behaviourally. Both halves are checked: the source reaches for no way to
+    write, and a real run over the committed artifact leaves it byte-identical.
+    A gate that could write would be a second minter with an exemption already
+    granted, which is the worst of both.
+    """
+    source = DOWNGRADE_GATE_PATH.read_text(encoding="utf-8")
+    body = "\n".join(
+        line for line in source.splitlines() if not line.lstrip().startswith(("#", '"', "*"))
+    )
+    for forbidden in ("write_text", "write_bytes", "json.dump", "open(", "shutil"):
+        assert forbidden not in body, (
+            f"{DOWNGRADE_GATE_PATH.name} reaches for {forbidden!r}; the gate classifies "
+            f"and prints -- only the collate step may write a verdict"
+        )
+
+    before = MATRIX_PATH.read_bytes()
+    assert gate_main(["--baseline", str(MATRIX_PATH), "--candidate", str(MATRIX_PATH)]) == 0
+    assert MATRIX_PATH.read_bytes() == before, "running the gate rewrote the committed matrix"
+
+
+def test_the_release_refreshes_the_matrix_before_it_builds_the_docs():
+    """Ordering is load-bearing, not taste.
+
+    `SPHINX_SRCS` lists `schemas/support_matrix.json`, so `make docs` renders the
+    support-matrix page FROM that file. A release that re-measured AFTER building
+    its docs would publish a page disagreeing with the artifact it commits in the
+    same release, and nothing else would notice: both halves would be internally
+    consistent and the page would simply be one release stale.
+    """
+    body = (
+        (PROJECT_ROOT / "Makefile")
+        .read_text(encoding="utf-8")
+        .split("\nrelease:", 1)[1]
+        .split("\n\n", 1)[0]
+    )
+    stages = re.findall(r"\$\(MAKE\) ([a-z-]+)", body)
+    assert "release-matrix" in stages, (
+        f"the release no longer refreshes the support matrix; stages: {stages}"
+    )
+    assert stages.index("release-matrix") < stages.index("docs"), (
+        f"the release must refresh the matrix BEFORE building the docs that render it; "
+        f"stages: {stages}"
+    )
 
 
 def test_only_the_collator_ever_writes_a_measured_verdict():
@@ -3685,9 +3742,15 @@ def test_only_the_collator_ever_writes_a_measured_verdict():
     Allow-listing by name rather than narrowing the scan keeps the collision visible;
     what stops the exemption from being a hole is the guard directly below, which
     proves behaviourally that rendering leaves the artifact byte-identical.
+
+    ★ THE DOWNGRADE GATE IS ALLOW-LISTED FOR THE SAME REASON. It decides which
+    transitions the release may auto-commit, so it must name the states it
+    classifies. Its exemption is backed the same way, by the guard below it:
+    the gate reads two files and prints, and running it leaves the artifact
+    byte-identical.
     """
     roots = (PROJECT_ROOT / "src", PROJECT_ROOT / "scripts", PROJECT_ROOT / "tests" / "_fixtures")
-    exempt = (COLLATOR_PATH, GAP_REGISTRY_PATH, RENDERER_PATH)
+    exempt = (COLLATOR_PATH, GAP_REGISTRY_PATH, RENDERER_PATH, DOWNGRADE_GATE_PATH)
     offenders = [
         path.relative_to(PROJECT_ROOT).as_posix()
         for root in roots

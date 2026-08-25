@@ -265,6 +265,7 @@ release: ## (Build & Release) npm ci web/, Python static checks (check-python), 
 	@$(MAKE) clean-dist \
 		&& $(MAKE) web-install \
 		&& $(MAKE) check-python \
+		&& $(MAKE) release-matrix \
 		&& $(MAKE) docs \
 		&& $(LEAK_DETECT) $(MAKE) nox \
 		&& $(MAKE) web \
@@ -844,7 +845,7 @@ conformance: ## Run the host-contract conformance suite (`conformance`-marked; e
 # extra commands on a session that was being opened anyway.
 CONFORMANCE_CELLS ?= all
 CONFORMANCE_BED_TIMEOUT := 1200s
-conformance-bed: ## Run the host-contract conformance suite against the REAL BED (dev VM only; needs the lab VMs and the Zephyr guests): the same exec/transfer/timeout contracts as `make conformance`, crossed over every (term, transfer) each bed host's menus permit. Exhaustive by default; CONFORMANCE_CELLS=N samples N cells off the session seed instead. Ends by folding what it measured into schemas/support_matrix.json (`make support-matrix`) — review the diff and commit it. JUnit XML lands in reports/junit/conformance-bed/.
+conformance-bed: ## Run the host-contract conformance suite against the REAL BED (dev VM only; needs the lab VMs and the Zephyr guests): the same exec/transfer/timeout contracts as `make conformance`, crossed over every (term, transfer) each bed host's menus permit. Exhaustive by default; CONFORMANCE_CELLS=N samples N cells off the session seed instead. Ends by folding what it measured into schemas/support_matrix.json (`make support-matrix`) — review the diff and commit it, or let `make release-matrix` do both when the change is not a downgrade. JUnit XML lands in reports/junit/conformance-bed/.
 	@$(SAY) "pytest: host-contract conformance, BED venue (real lab hosts, cells=$(CONFORMANCE_CELLS))"
 	@OTTO_CONFORMANCE_BED=1 OTTO_CONFORMANCE_CELLS=$(CONFORMANCE_CELLS) \
 	    timeout --foreground --kill-after=10s $(CONFORMANCE_BED_TIMEOUT) \
@@ -873,14 +874,62 @@ conformance-bed: ## Run the host-contract conformance suite against the REAL BED
 # after a green lane could never record one. The lane's own exit status still
 # wins, so a red lane is still a red `make`.
 #
-# NEVER COMMITS, here or anywhere. `--write` edits the file and stops; Chris
-# reviews the diff and commits it, and no workflow invokes this target
-# (`tests/unit/test_support_matrix.py` checks every workflow for it). Run it
-# bare to see what a run WOULD change without touching the artifact:
+# NEVER COMMITS, and neither does CI. `--write` edits the file and stops, and no
+# workflow invokes this target (`tests/unit/test_support_matrix.py` checks every
+# workflow for it). What commits is `make release-matrix` below, and only for a
+# change nobody needs to see -- a downgrade is refused there and stays a person's
+# call. Run this bare to see what a run WOULD change without touching the artifact:
 #     uv run python -m scripts.collate_support_matrix
-support-matrix: ## Fold the conformance run's observation records into schemas/support_matrix.json (the ONLY writer of a `measured-*` verdict). Reads reports/conformance-observations/, discards every non-bed record loudly, never downgrades a cell no run drew, and never commits — review the diff yourself.
+support-matrix: ## Fold the conformance run's observation records into schemas/support_matrix.json (the ONLY writer of a `measured-*` verdict). Reads reports/conformance-observations/, discards every non-bed record loudly, never downgrades a cell no run drew, and never commits — `make release-matrix` commits an auto-acceptable refresh, and a downgrade stays yours to review.
 	@$(SAY) "collate: folding the bed run's observations into schemas/support_matrix.json"
 	@uv run python -m scripts.collate_support_matrix --write
+
+MATRIX_BASELINE := reports/.matrix-baseline.json
+
+# The release's re-measure stage (Chris, 2026-08-25). `make release` is the only
+# place the matrix CAN be refreshed: the collate step needs the bed, and the bed
+# is reachable only from this dev VM. Every one of CI's jobs is `ubuntu-latest`
+# and none is self-hosted, so a nightly refresh is not an option -- the release
+# is not merely a convenient cadence, it is the only one available.
+#
+# THIS COMMITS, and it is the only thing in this file that does.
+# `scripts/collate_support_matrix.py` still cannot: it holds no version-control
+# vocabulary at all and a guard keeps it that way. What commits is this target,
+# and only after `scripts/check_matrix_downgrades.py` has said the change is one
+# nobody needs to see -- an improvement, a new working cell, or evidence that
+# moved under an unchanged verdict. A new `measured-broken`, or a lost
+# `measured-ok`, refuses instead and stops the release: that is either a
+# regression that must not ship or a gap worth recording on purpose, and neither
+# should ride into a release unread. The person spec §5 puts in front of every
+# verdict is still there; they are now called only when the answer matters.
+#
+# ITS OWN COMMIT rather than riding the version bump, so the measurement diff is
+# reviewable on its own terms and revertable without touching the version.
+#
+# RUNS BEFORE `docs` in the release, and that ordering is load-bearing:
+# `SPHINX_SRCS` lists `schemas/support_matrix.json`, so `make docs` renders the
+# support-matrix page from it. Re-measuring afterwards would publish a page that
+# disagrees with the artifact committed in the same release
+# (`tests/unit/test_support_matrix.py` pins the order).
+#
+# HOOKS ARE OFF for this one commit. `.githooks/prepare-commit-msg` prompts on a
+# terminal for an `Assisted-by:` trailer, and a release runs on one -- so the
+# hook would stop the release to ask who assisted a measurement that `make`
+# produced. Its own branch (B) already says a provenance tag nobody can know
+# should be absent rather than guessed; this reaches that outcome deterministically
+# instead of stamping a trailer that would be false.
+#
+# IDEMPOTENT: run it by hand, review, commit, and the release's stage finds
+# nothing to do. If the release aborts later, this commit stays -- it is a true
+# statement about the bed either way.
+release-matrix: ## (Build & Release) Re-measure the bed and commit schemas/support_matrix.json, REFUSING a downgrade (a new measured-broken, or a lost measured-ok). The release's matrix stage; needs the lab VMs (dev VM only). Run it by hand before a release to deal with a downgrade on your own terms.
+	@$(SAY) "release: re-measuring the bed support matrix"
+	@mkdir -p $(dir $(MATRIX_BASELINE))
+	@git show HEAD:schemas/support_matrix.json > $(MATRIX_BASELINE)
+	@$(MAKE) --no-print-directory conformance-bed
+	@uv run python scripts/check_matrix_downgrades.py --baseline $(MATRIX_BASELINE)
+	@rm -f $(MATRIX_BASELINE)
+	@if git diff --quiet -- schemas/support_matrix.json; then 	    $(SAY) "release: the support matrix was already current"; 	  else 	    git add schemas/support_matrix.json 	    && git -c core.hooksPath=/dev/null commit -q -m "chore(matrix): re-measure the bed support matrix" 	    && $(SAY) "release: committed a refreshed support matrix"; 	  fi
 
 # Soak/stability + repeat targets disable coverage (--no-cov, overriding the
 # --cov in pytest addopts). Per-test `--cov-context=test` tracing adds overhead
