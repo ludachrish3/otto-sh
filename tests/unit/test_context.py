@@ -14,7 +14,7 @@ from otto.context import (
     try_get_context,
 )
 from otto.host.host import DEFAULT_COMMAND_TIMEOUT
-from tests._fixtures.chaos import ChaosPoints, sweep_cancellation
+from tests._fixtures.chaos import ChaosPoints, Surface, sweep_cancellation
 
 
 class _FakeHost:
@@ -505,7 +505,7 @@ async def test_hostscope_sweep_chain():
             self._points = points
 
         async def close(self) -> None:
-            await self._points.point(self.id)
+            await self._points.point(self.id, surface=Surface.NETWORK)
 
     async def scenario(points: ChaosPoints) -> None:
         scope = HostScope()
@@ -522,7 +522,14 @@ async def test_hostscope_sweep_chain():
         assert outcome is None, f"{exc_type.__name__} at host {k} escaped the sweep"
         assert points.executed == [n for i, n in enumerate(names) if i != k - 1]
 
-    await sweep_cancellation(scenario, oracle)
+    report = await sweep_cancellation(scenario, oracle)
+    assert report.points == len(names)
+    # Each host's close is a transport teardown: a command-failure cannot arise
+    # at any of them, and this pins that the sweep skipped it on purpose.
+    assert report.injected["command-failure"] == 0
+    assert report.skipped["command-failure"] == len(names)
+    for name in ("cancellation", "connection-dropped", "connection-reset", "timeout"):
+        assert report.injected[name] == len(names), name
 
 
 def test_hostscope_rebuild_connections_hits_every_host_with_the_hook():

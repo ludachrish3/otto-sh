@@ -11,7 +11,7 @@ import asyncio
 import pytest
 
 from otto.host.connections import ConnectionManager, teardown_step
-from tests._fixtures.chaos import ChaosPoints, ConnectionDropped, sweep_cancellation
+from tests._fixtures.chaos import ChaosPoints, ConnectionDropped, Surface, sweep_cancellation
 
 _STEPS = ["sftp", "ssh", "ftp", "telnet", "hop"]
 
@@ -30,7 +30,7 @@ class _FakeSsh:
         pass
 
     async def wait_closed(self) -> None:
-        await self._points.point("ssh")
+        await self._points.point("ssh", surface=Surface.NETWORK)
 
 
 class _FakeSftp:
@@ -38,7 +38,7 @@ class _FakeSftp:
         self._points = points
 
     def exit(self) -> None:  # asyncssh SFTPClient.exit is synchronous
-        self._points.sync_point("sftp")
+        self._points.sync_point("sftp", surface=Surface.NETWORK)
 
 
 class _FakeFtp:
@@ -46,7 +46,7 @@ class _FakeFtp:
         self._points = points
 
     async def quit(self) -> None:
-        await self._points.point("ftp")
+        await self._points.point("ftp", surface=Surface.NETWORK)
 
 
 class _FakeTelnet:
@@ -54,7 +54,7 @@ class _FakeTelnet:
         self._points = points
 
     async def close(self) -> None:
-        await self._points.point("telnet")
+        await self._points.point("telnet", surface=Surface.NETWORK)
 
 
 class _FakeHop:
@@ -62,7 +62,7 @@ class _FakeHop:
         self._points = points
 
     async def close(self) -> None:
-        await self._points.point("hop")
+        await self._points.point("hop", surface=Surface.NETWORK)
 
 
 def _manager(points: ChaosPoints) -> ConnectionManager:
@@ -81,21 +81,34 @@ async def _scenario(points: ChaosPoints) -> None:
 
 
 def _oracle(points: ChaosPoints, outcome: "BaseException | None", exc_type: type, k: int) -> None:
-    if exc_type is ConnectionDropped:
-        # Guarded chain: the drop is logged, every later step still runs.
-        assert outcome is None, f"drop at step {_STEPS[k - 1]!r} escaped ConnectionManager.close"
+    """Mirror ``teardown_step``'s own catch: Exception is guarded, BaseException is not."""
+    if issubclass(exc_type, Exception):
+        # Guarded chain: the fault is logged, every later step still runs.
+        assert outcome is None, (
+            f"{exc_type.__name__} at step {_STEPS[k - 1]!r} escaped ConnectionManager.close"
+        )
         assert points.executed == [s for i, s in enumerate(_STEPS) if i != k - 1], (
             f"steps after {_STEPS[k - 1]!r} were skipped"
         )
     else:
         # CancelledError: the chain stops loudly (force-abandon semantics).
-        assert isinstance(outcome, asyncio.CancelledError)
+        assert isinstance(outcome, exc_type), (
+            f"cancellation at step {_STEPS[k - 1]!r} was swallowed"
+        )
         assert points.executed == _STEPS[: k - 1]
 
 
 @pytest.mark.asyncio
 async def test_close_chain_sweep():
-    await sweep_cancellation(_scenario, _oracle)
+    report = await sweep_cancellation(_scenario, _oracle)
+    assert report.points == len(_STEPS)
+    # Every step here is a transport teardown, so a command-failure cannot
+    # arise at any of them. Stated rather than silently skipped: this sweep
+    # asserts four faults over five steps, not five.
+    assert report.injected["command-failure"] == 0
+    assert report.skipped["command-failure"] == len(_STEPS)
+    for name in ("cancellation", "connection-dropped", "connection-reset", "timeout"):
+        assert report.injected[name] == len(_STEPS), name
 
 
 @pytest.mark.asyncio

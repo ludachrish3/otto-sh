@@ -27,7 +27,7 @@ from otto.host.userland import Userland
 from otto.logger.mode import LogMode
 from otto.result import CommandResult, Result
 from otto.utils import Status
-from tests._fixtures.chaos import ChaosPoints, sweep_cancellation
+from tests._fixtures.chaos import ChaosPoints, Surface, sweep_cancellation
 
 
 def _cs(
@@ -451,10 +451,10 @@ class TestClose:
             )
 
             async def close_all() -> None:
-                await points.point("sessions")
+                await points.point("sessions", surface=Surface.NETWORK)
 
             async def conn_close() -> None:
-                await points.point("connections")
+                await points.point("connections", surface=Surface.NETWORK)
 
             h._session_mgr.close_all = close_all
             h._connections.close = conn_close
@@ -465,7 +465,14 @@ class TestClose:
             assert points.executed == expected, f"step behind {steps[k - 1]!r} was skipped"
             assert isinstance(outcome, exc_type), "the failure must stay loud"
 
-        await sweep_cancellation(scenario, oracle)
+        report = await sweep_cancellation(scenario, oracle)
+        assert report.points == len(steps)
+        # Both steps are transport teardowns: a command-failure cannot arise at
+        # either, and saying so keeps the narrowing visible.
+        assert report.injected["command-failure"] == 0
+        assert report.skipped["command-failure"] == len(steps)
+        for name in ("cancellation", "connection-dropped", "connection-reset", "timeout"):
+            assert report.injected[name] == len(steps), name
 
 
 # ---------------------------------------------------------------------------

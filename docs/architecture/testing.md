@@ -154,8 +154,18 @@ digraph chaos_tiers {
 **Tier 1 — cancellation sweeps (unit, default gate).** `tests/_fixtures/chaos.py`
 provides `sweep_cancellation()`: it runs a scenario once against instrumented
 fakes to count its await points (`ChaosPoints.point()` / `.sync_point()`),
-then re-runs it once per point, injecting either `CancelledError` or a
-`ConnectionDropped` stand-in at exactly one point each time. After every run,
+then re-runs it once per applicable point/fault pair, arming exactly one
+point each time. The table holds five exception-shaped faults: cancellation,
+the transport dying in two shapes that are deliberately not interchangeable
+(`ConnectionDropped`, a bare `Exception`, and `ConnectionResetError`, an
+`OSError`), otto's own `WaitTimeoutError`, and `HostCommandError` for a
+command that ran and failed. Not every fault is meaningful at every await, so
+each entry declares the surfaces where it applies and each checkpoint
+declares its surface (`Surface.NETWORK` for a transport teardown, and so on);
+a socket close is never asked to survive a command failure. `sweep_cancellation()`
+returns a `SweepReport` of what it injected and what it skipped, so a call
+site that narrows its own sweep pins the narrowing rather than leaving a
+reader to assume it asserted everything. After every run,
 the caller's oracle asserts the chain's invariants held — every step that
 must run after the injection point still ran, or the chain failed loudly
 rather than silently skipping a step. There is no wall-clock wait and no
@@ -164,7 +174,10 @@ the same sweep is exactly reproducible every time it runs.
 `tests/unit/test_context.py`, `tests/unit/host/test_connections_close.py`,
 and `tests/unit/host/test_unix_host.py` are worked examples. Because these
 are ordinary `tests/unit` tests, they need no opt-in at all — they ride
-every `make coverage` and `make coverage-hostless` run for free.
+every `make coverage` and `make coverage-hostless` run for free. Data-shaped faults —
+truncated reads, interleaved output, partial writes — are deferred: they
+mutate returned bytes instead of raising, so they need oracle-aware handling
+rather than another table entry.
 
 **Tier 2 — real-signal integration tests (`tests/integration/chaos/`).** Each
 test spawns a real `otto` subprocess (through the existing PTY driver where
