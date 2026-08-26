@@ -35,7 +35,13 @@ from tests.conftest import (
 # Only SNMP-wired backends carry the heap OIDs this canary reads.
 SNMP_BACKENDS = [b for b in EMBEDDED_BACKENDS if "snmp" in host_data(_BACKEND_NE[b])]
 
-pytestmark = pytest.mark.timeout(120)
+# ``embedded`` is not a label here, it is the subscription to every single-client
+# console protection in tests/integration/host/conftest.py: the per-device
+# xdist_group, the cross-worker console lock, the wedged-backend fast-fail, and
+# the guest-journal capture on failure. This module drives real Zephyr consoles,
+# so it needs all four. It shipped without the marker and lost a console on
+# 2026-08-26; `_unmarked_device_item` in that conftest now refuses the omission.
+pytestmark = [pytest.mark.embedded, pytest.mark.timeout(120)]
 
 
 async def _heap_used(ne_name: str) -> float:

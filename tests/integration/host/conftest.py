@@ -571,6 +571,36 @@ def _unhonored_group(item: pytest.Item) -> str | None:
     return None if item.nodeid.endswith(f"@{group}") else group
 
 
+def _unmarked_device_item(item: pytest.Item) -> list[str]:
+    """Zephyr backends this item drives WITHOUT the ``embedded`` marker, if any.
+
+    Every single-console protection in this file is keyed on that one keyword:
+    the per-device ``xdist_group`` (:func:`pytest_collection_modifyitems`), the
+    cross-worker console lock (:func:`_console_access_lock`), the wedged-backend
+    fast-fail below, and the wedge attribution that captures the guest's journal
+    (:func:`pytest_runtest_makereport`). A module that parametrizes over the
+    devices but forgets the marker therefore opts out of ALL FOUR silently: its
+    items scatter across workers, take no lock, and drive a single-client
+    console concurrently with the device's own group — and when that goes wrong,
+    the failure carries none of the diagnosis, because the capture is gated on
+    the same keyword.
+
+    That is not hypothetical. ``test_heap_watermark.py`` shipped without the
+    marker; on 2026-08-26 its ``embedded-3.7-lfs`` item ran on a worker that did
+    not own ``@zephyr_lfs``, lost the console, and failed with a bare
+    ``ConnectionError`` and no journal tail. The guest was healthy — its only
+    line was ``Telnet client already connected``.
+
+    Read from the item's PARAMETRIZATION, never from the marker, so the guard
+    cannot inherit the very condition it exists to detect. :func:`_referenced_backends`
+    matches param *values* against the known backend ids, so it sees a device
+    the item drives whether or not anyone remembered to declare it.
+    """
+    if "embedded" in item.keywords:
+        return []
+    return _referenced_backends(item)
+
+
 def pytest_runtest_setup(item: pytest.Item) -> None:
     """Fail fast when a target backend was already found wedged this run.
 
@@ -578,7 +608,32 @@ def pytest_runtest_setup(item: pytest.Item) -> None:
     inspected, and reports the reason inline; a session-end banner
     (:func:`pytest_terminal_summary`) lists every wedge so it can't slip by as
     a silent slowdown.
+
+    Runs the missing-marker check (:func:`_unmarked_device_item`) FIRST, and
+    deliberately above the ``embedded`` early-return: an item that forgot the
+    marker is exactly the item the rest of this hook cannot see.
     """
+    unmarked = _unmarked_device_item(item)
+    if unmarked:
+        names = ", ".join(embedded_param_id(b) for b in unmarked)
+        pytest.fail(
+            f"this item drives the Zephyr console(s) {names} but carries no "
+            "`embedded` marker, so it is invisible to EVERY single-client "
+            "protection in tests/integration/host/conftest.py:\n"
+            "  - no per-device xdist_group -> it runs on whatever worker xdist "
+            "picks, alongside that device's own group on another worker\n"
+            "  - no console access lock -> it can open a console while the "
+            "fan-out tests hold every console\n"
+            "  - no wedged-backend fast-fail, and no guest journal captured on "
+            "failure -> when it does lose the console, the report says nothing\n"
+            "Two clients on one Zephyr console is not a flake: the loser's "
+            "handshake gets no shell ('shell never became ready'), and a board "
+            "has been taken down this way.\n"
+            "Fix: add `pytestmark = pytest.mark.embedded` (or mark the class) to "
+            "this module. Do not silence this check — the marker is what buys "
+            "the protection, so suppressing the guard keeps the exposure.",
+            pytrace=False,
+        )
     if "embedded" not in item.keywords:
         return
     unhonored = _unhonored_group(item)
