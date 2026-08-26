@@ -95,6 +95,14 @@ AMBIENT_OPT_INS: "dict[str, str]" = {
         "air-gapped lab priming the cache by hand. Stripped, every run "
         "silently writes and reads the real cache instead"
     ),
+    "OTTO_BUSYBOX_SOURCE": (
+        "which host each BusyBox artifact fetch attempt asks, `mirror-first` "
+        "(default: the ci-assets-busybox-1 release assets, then busybox.net) or "
+        "`upstream` (tests/_fixtures/busybox.py); set ONLY by ci.yml's `busybox` "
+        "job, which exists to notice upstream rebuilding an artifact in place "
+        "and would read yesterday's bytes off the mirror. Stripped, that job "
+        "silently fetches mirror-first and verifies nothing about upstream"
+    ),
     "OTTO_TUNNEL_SOAK_CYCLES": (
         "internal soak depth per tunnel stability test "
         "(tests/e2e/tunnel_stability/_harness.py); set by `make "

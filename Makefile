@@ -775,15 +775,16 @@ dashboard-soak: $(DASHBOARD_DIST) ## Run the dashboard replay soak (Tier-3, `soa
 # `nc`) measured per build. Same bytes the bed's guest images are built from
 # (`scripts/build_busybox_guest_images.py`), which is why this lane still
 # guards the bed even though it never touches it.
-busybox: busybox-preflight ## Run the BusyBox artifact tier (`busybox`-marked; excluded from every default lane): SHA-256 pin + version-banner integrity and argv-level applet contracts, against the five pinned binaries the bed's guests are built from. Behaviour on a BusyBox userland is the live bed's, not this lane's. Fetches from busybox.net into ~/.cache/otto/busybox on a cold cache (override with OTTO_BUSYBOX_CACHE); needs qemu-user-static registered on non-x86_64. JUnit XML lands in reports/junit/busybox/.
+busybox: busybox-preflight ## Run the BusyBox artifact tier (`busybox`-marked; excluded from every default lane): SHA-256 pin + version-banner integrity and argv-level applet contracts, against the five pinned binaries the bed's guests are built from. Behaviour on a BusyBox userland is the live bed's, not this lane's. Fetches into ~/.cache/otto/busybox on a cold cache (override with OTTO_BUSYBOX_CACHE) from the ci-assets-busybox-1 release mirror, busybox.net behind it — or from busybox.net alone under OTTO_BUSYBOX_SOURCE=upstream, which is how CI's `busybox` job notices upstream rebuilding an artifact; needs qemu-user-static registered on non-x86_64. JUnit XML lands in reports/junit/busybox/.
 	@$(SAY) "pytest: BusyBox artifact tier (fetches + verifies real binaries)"
 	@$(TIMEOUT_CMD) uv run pytest -m "busybox" --no-cov $(call junitxml,busybox)
 
 # One probe, before the lane commits to anything. On a warm cache this opens
 # no socket at all (it is five `stat` calls); on a cold one it fetches exactly
 # ONE artifact to prove the source answers. That asymmetry is the point: the
-# condition worth failing on is whether busybox.net is REACHABLE, which is a
-# property of the source and not of any one of the five entries, so paying the
+# condition worth failing on is whether ANY host in the source order answers
+# (the release mirror, busybox.net behind it), which is a property of the
+# source and not of any one of the five entries, so paying the
 # per-artifact retry budget five times to learn it once is pure latency. It
 # also puts the failure BEFORE pytest starts, so the reader gets the priming
 # instructions instead of them arriving under a collection banner.
@@ -806,7 +807,7 @@ busybox-preflight: ## Prove the BusyBox artifact source is reachable, or that th
 # fixture's own fetch-failure message tells the reader to run, which
 # tests/unit/host/test_busybox_artifacts.py pins against this line.
 busybox-cache: ## Fetch + verify the BusyBox test artifacts into the local cache (~/.cache/otto/busybox, or OTTO_BUSYBOX_CACHE). Network required; no interpreter needed, so it works on any arch.
-	@$(SAY) "priming the BusyBox artifact cache from busybox.net"
+	@$(SAY) "priming the BusyBox artifact cache (release mirror first, busybox.net behind it)"
 	@uv run python -c "from tests._fixtures.busybox import BUSYBOX_MATRIX, busybox_binary; [print(busybox_binary(r)) for r in BUSYBOX_MATRIX]"
 
 # The host-contract conformance suite's opt-in lane, and the only one CI runs

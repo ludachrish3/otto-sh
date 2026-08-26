@@ -44,10 +44,17 @@ longer the version its lab entry claims.
 
 ## The artifacts
 
-The matrix is fetched from the BusyBox project's own prebuilds at
-`https://busybox.net/downloads/binaries/`, over HTTPS from the canonical site, and
-cached locally. Versions are chosen at known behaviour transitions rather than evenly
-spaced:
+The matrix is the BusyBox project's own prebuilds from
+`https://busybox.net/downloads/binaries/`, cached locally. A fetch asks a mirror of the
+same five files first — assets of the GitHub release `ci-assets-busybox-1`, uploaded
+from an upstream fetch that passed the same pins — and busybox.net behind it, so the
+canonical site alone being down does not red a default gate on a cold cache (issue
+#261). The mirror is a second host, not a second trust root: every fetch is verified
+against the committed pin whichever host answered. The one lane that reads
+upstream alone is CI's `busybox` job, under `OTTO_BUSYBOX_SOURCE=upstream`, because
+its job is to notice upstream rebuilding an artifact in place and a mirror would
+answer for yesterday's bytes. Versions are chosen at known behaviour transitions
+rather than evenly spaced:
 
 | Version | Arch | Why this one |
 | --- | --- | --- |
@@ -291,10 +298,12 @@ Verification is therefore two layers, and they do different jobs:
   version it is filed under. A failure there is a real finding about interface drift,
   which is the thing this matrix exists to detect. A byte-level check is not.
 - **A committed SHA-256 is secondary**, in `tests/_fixtures/busybox_pins.json`. It is
-  trust-on-first-use, and its narrow but real value is that CI re-fetches on every cold
-  cache: the pin converts per-run trust in busybox.net into one-time trust taken at a
-  reviewed moment. A mismatch is **investigated, not rubber-stamped** — if upstream
-  legitimately rebuilt, the pin is updated in a reviewed commit that says so.
+  trust-on-first-use, and its narrow but real value is that CI's `busybox` job
+  re-fetches from upstream on every cold cache: the pin converts per-run trust in
+  busybox.net into one-time trust taken at a reviewed moment. A mismatch is
+  **investigated, not rubber-stamped** — if upstream legitimately rebuilt, the pin is
+  updated in a reviewed commit that says so, and the mirror's asset is re-uploaded
+  from the fetch that passed the new pin.
 
 The remaining mitigation is blast radius. Be precise about what that does and does not
 mean, because a comforting summary here would be worse than none: the artifact is

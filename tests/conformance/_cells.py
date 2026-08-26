@@ -287,7 +287,8 @@ def _busybox_cells() -> "list[ResolvedCell]":
     reporting green while testing nothing.
 
     Deliberately does NOT call :func:`~tests._fixtures.busybox.busybox_binary`
-    here. That fetches from busybox.net on a cold cache, and resolving the
+    here. That fetches (release mirror first, busybox.net behind it) on a cold
+    cache, and resolving the
     space must not depend on the network; the fetch happens inside the opener,
     for the releases actually drawn.
     """

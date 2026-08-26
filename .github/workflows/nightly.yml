@@ -308,8 +308,9 @@ jobs:
 
       # Priming, in its own step, for the reason the Makefile splits the two
       # targets: the fetch needs the network and the lane does not. Without
-      # this the first drawn BusyBox cell pulls from busybox.net inside the
-      # run, so an upstream outage or a slow mirror surfaces as a contract
+      # this the first drawn BusyBox cell fetches inside the run (the release
+      # mirror first, busybox.net behind it), so an outage at both, or a slow
+      # host, surfaces as a contract
       # test failing rather than as a named priming step failing. It also
       # verifies each artifact against its committed SHA-256 before any
       # contract executes one.

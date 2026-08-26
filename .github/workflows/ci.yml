@@ -52,8 +52,10 @@ jobs:
       # This job merely CONSUMES them. Ten tests in
       # `tests/unit/test_support_matrix.py` drive a real hermetic conformance run,
       # and the hermetic venue builds its BusyBox cells from these artifacts — so
-      # an unreachable busybox.net reds a DEFAULT-gate job, on five Pythons, for a
-      # reason with nothing to do with the change under test. That is issue #261:
+      # an unreachable artifact source reds a DEFAULT-gate job, on five Pythons,
+      # for a reason with nothing to do with the change under test. That is issue
+      # #261, when busybox.net alone was that source (the release mirror now
+      # answers first — see tests/_fixtures/busybox.py):
       # an SSL handshake timeout fetching 1.16.1, on a release bump that touched
       # only the version. Caching here removes that exposure without touching the
       # detection the pin exists for.
@@ -208,7 +210,9 @@ jobs:
   # that could detect upstream having rebuilt an artifact in place. Caching
   # here would keep the pin file and delete the event it exists to check. The
   # cost accepted in exchange is real and worth naming: ~5 MB over five
-  # requests per run, and a busybox.net outage reds this job.
+  # requests per run, and a busybox.net outage reds this job — and ONLY this
+  # job, since it is the one lane that forces `OTTO_BUSYBOX_SOURCE=upstream`
+  # (see the job's `env` below) while every consumer fetches mirror-first.
   #
   # THAT COST IS ACCEPTED FOR THIS JOB ONLY. The lanes that merely CONSUME the
   # artifacts — `tests` and `unit-repeat` here, `unit-matrix` in nightly.yml —
@@ -265,6 +269,16 @@ jobs:
     # attribution this lane exists to deliver on a busybox.net stall.
     # tests/unit/test_declared_harness_bounds.py pins the relation.
     timeout-minutes: 25
+    # THIS JOB READS UPSTREAM. Every consuming lane fetches mirror-first — the
+    # `ci-assets-busybox-1` release assets, bytes taken from upstream and
+    # verified against the same pins — so busybox.net being down no longer
+    # reds a default gate on a cold cache (issue #261). Here the mirror would
+    # defeat the job: a copy of yesterday's bytes says "still matches" about a
+    # build upstream has since replaced, which is the one event this job
+    # exists to notice. `tests/unit/host/test_busybox_artifacts.py` pins the
+    # variable here and its absence from every consuming lane.
+    env:
+      OTTO_BUSYBOX_SOURCE: upstream
     strategy:
       fail-fast: false
       matrix:

@@ -1,7 +1,10 @@
 """Real BusyBox binaries for the matrix tiers, cached and verified.
 
 Artifacts come from https://busybox.net/downloads/binaries/ — the project's
-own prebuilds. Upstream publishes NO checksums and NO signatures for them
+own prebuilds — by way of a mirror of the same five files published as GitHub
+release assets (`_MIRROR_BASE`), which a consuming lane asks first so that
+busybox.net alone being down does not red a default gate (issue #261).
+Upstream publishes NO checksums and NO signatures for them
 (source tarballs ship `.sha256`; the prebuilts do not), so verification is
 two-layer and the layers do different jobs:
 
@@ -13,9 +16,10 @@ two-layer and the layers do different jobs:
   hash change can and should; the automated gate cannot, and this file will
   not claim otherwise. Applet-level assertions belong to the tiers that drive
   individual applets, not to the artifact fixture.
-- The committed SHA-256 is secondary and narrow: CI re-fetches on every cold
-  cache, so a pin converts per-run trust in busybox.net into one-time trust
-  taken at a reviewed moment. A mismatch is INVESTIGATED, not rubber-stamped.
+- The committed SHA-256 is secondary and narrow: CI's `busybox` job re-fetches
+  from upstream on every cold cache (`OTTO_BUSYBOX_SOURCE=upstream`), so a pin
+  converts per-run trust in busybox.net into one-time trust taken at a
+  reviewed moment. A mismatch is INVESTIGATED, not rubber-stamped.
 
 Be exact about what "secondary" does and does not mean, because the two layers
 do NOT run in that order. The hash runs FIRST — inside :func:`busybox_binary`,
@@ -58,6 +62,36 @@ from pathlib import Path
 from tests._ambient_env import ambient
 
 _BASE_URL = "https://busybox.net/downloads/binaries"
+# The same five files, re-published as assets of one GitHub release so a lane
+# that merely CONSUMES them has a source on the runner's own host. Issue #261
+# was busybox.net alone being down while every default gate needed it on a cold
+# cache; the actions/cache step keeps a WARM lane off the network, and this is
+# what keeps a COLD one (new runner image, pin change, fresh clone) off
+# busybox.net's critical path. The asset name is the cache filename, so one
+# string names the byte in the cache, on the mirror, and in the pin file.
+#
+# The mirror is a second HOST, not a second TRUST ROOT. `_verify` runs on every
+# fetch whatever answered, so a mirror serving a different byte is refused
+# exactly as upstream would be — the pin is what is trusted, not the site. The
+# bytes were uploaded from an upstream fetch that passed the same pins.
+_MIRROR_BASE = "https://github.com/ludachrish3/otto-sh/releases/download/ci-assets-busybox-1"
+# Which host each ATTEMPT asks, by policy. One entry per attempt, so the
+# fallback rides the retry budget below instead of adding a second budget on
+# top of it: the arithmetic in `test_the_fetch_budget_fits_inside_both_timeouts`
+# is unchanged, and `test_every_source_order_spends_exactly_the_retry_budget`
+# pins the two lengths together. Mirror-first alternates hosts so a single
+# dead host costs one timeout and one sleep before the other is asked, and the
+# third slot returns to the mirror because it is the preferred source.
+#
+# `upstream` exists for exactly one caller: the `busybox` CI job, whose reason
+# to exist is noticing upstream rebuilding an artifact in place. A mirror in
+# front of THAT job would report "still matches" about bytes upstream no
+# longer serves, so it forces this policy and `test_busybox_artifacts.py`
+# pins that it does — and that no consuming lane does.
+_SOURCE_ORDERS: "dict[str, tuple[str, ...]]" = {
+    "mirror-first": ("mirror", "upstream", "mirror"),
+    "upstream": ("upstream", "upstream", "upstream"),
+}
 # Sleep before each RETRY, so the tuple's length is the number of retries and
 # `len + 1` is the attempt budget. 3 attempts at 5s then 10s, mirroring the
 # `web-install` npm-ci loop in the Makefile — same policy, same numbers, so
@@ -153,7 +187,17 @@ class BusyBoxRelease:
 
     @property
     def url(self) -> str:
+        """Upstream's address for this entry — the bytes the pin was taken from."""
         return f"{_BASE_URL}/{self.subdir}/{self.remote_name or f'busybox-{self.arch}'}"
+
+    @property
+    def mirror_url(self) -> str:
+        """The release asset holding the same bytes, named as the cache names them."""
+        return f"{_MIRROR_BASE}/{self.filename}"
+
+    def url_for(self, source: str) -> str:
+        """The address a *source* from `_SOURCE_ORDERS` resolves to for this entry."""
+        return self.mirror_url if source == "mirror" else self.url
 
     @property
     def filename(self) -> str:
@@ -309,6 +353,26 @@ def _is_transient(error: BaseException) -> bool:
     )
 
 
+def _source_order() -> "tuple[str, ...]":
+    """The per-attempt host sequence the `OTTO_BUSYBOX_SOURCE` policy names.
+
+    Read through :func:`tests._ambient_env.ambient` for the reason
+    :func:`cache_dir` gives: the root conftest strips undeclared ``OTTO_*``
+    names, and an unread policy would put the `busybox` job on the mirror
+    without a word. An unknown policy is refused by name rather than mapped
+    to a default, because a misspelt "upstream" on that job is the same
+    silent defeat.
+    """
+    policy = ambient("OTTO_BUSYBOX_SOURCE") or "mirror-first"
+    try:
+        return _SOURCE_ORDERS[policy]
+    except KeyError:
+        raise BusyBoxUnavailableError(
+            f"OTTO_BUSYBOX_SOURCE={policy!r} names no artifact-source policy; "
+            f"expected one of: {', '.join(_SOURCE_ORDERS)}"
+        ) from None
+
+
 def _load_pins() -> dict:
     return json.loads(_PINS.read_text()) if _PINS.exists() else {}
 
@@ -389,8 +453,8 @@ def preflight(
     over, plus the tier's own two legs.
 
     One probe is enough because the condition being diagnosed is a property of
-    the SOURCE, not of any one artifact: if busybox.net is unreachable for
-    `missing[0]`, the remaining four will not disagree. So the worst case
+    the SOURCE, not of any one artifact: if no host in the source order
+    answers for `missing[0]`, the remaining four will not disagree. So the worst case
     collapses from `len(missing) x 60` to a single 60 — inside every ceiling
     above with room left — and the caller gets the real error.
 
@@ -505,10 +569,22 @@ def _fetch(release: BusyBoxRelease, target: Path) -> None:
     # what was published afterwards, so a wrong publish is caught rather than
     # trusted. A lock would serialise a cost that does not need serialising.
     tmp = target.with_name(f"{target.name}.{os.getpid()}.{uuid.uuid4().hex}.part")
+    order = _source_order()
+    asked: "list[str]" = []
+    # Sources that answered DETERMINISTICALLY (a 404, a 403): that host has
+    # said no, and asking it again is the "three attempts at a typo" the
+    # fail-fast rule in `_is_transient` exists to refuse. What changed with the
+    # mirror is only the scope of "fail fast": per SOURCE, not per fetch. A
+    # host that says no hands the attempt to the next host at once, with no
+    # backoff — the refusal was not the network's — and the fetch ends when
+    # every remaining slot names a host that has already answered.
+    refused: "set[str]" = set()
     try:
-        for attempt in range(1, len(_RETRY_BACKOFF_S) + 2):
+        for attempt, source in enumerate(order, start=1):
+            url = release.url_for(source)
+            asked.append(url)
             try:
-                with urllib.request.urlopen(release.url, timeout=_FETCH_TIMEOUT_S) as resp:
+                with urllib.request.urlopen(url, timeout=_FETCH_TIMEOUT_S) as resp:
                     tmp.write_bytes(resp.read())
                 break
             except (urllib.error.URLError, http.client.HTTPException, TimeoutError, OSError) as e:
@@ -517,14 +593,29 @@ def _fetch(release: BusyBoxRelease, target: Path) -> None:
                 # http.client.IncompleteRead, which without this clause escapes
                 # as itself and denies the caller the priming instructions
                 # below — the one failure that most needs them.
-                if _is_transient(e) and attempt <= len(_RETRY_BACKOFF_S):
+                # Only a deterministic HTTP status is a SOURCE's answer. A
+                # transient one (503) is the network's and the host may
+                # recover; a local OSError (ENOSPC, EACCES) is this machine's,
+                # and no second host can free the disk — it fails here, on
+                # attempt one, as before.
+                if isinstance(e, urllib.error.HTTPError) and not _is_transient(e):
+                    refused.add(source)
+                # The slots still worth spending: hosts that have not said no.
+                # Filtered on BOTH paths, so a transient on one host never
+                # sends the next attempt back to a host that already refused
+                # (found in review: that cost a sleep, a request, and reported
+                # the refusal as the cause of a fetch the flake had ended).
+                remaining = [s for s in order[attempt:] if s not in refused]
+                if remaining and _is_transient(e):
                     time.sleep(_RETRY_BACKOFF_S[attempt - 1])
+                    continue
+                if remaining and isinstance(e, urllib.error.HTTPError):
                     continue
                 raise BusyBoxUnavailableError(
                     f"could not fetch BusyBox {release.version} ({release.arch}) from "
-                    f"{release.url} after {attempt} attempt(s): {e}. Prime the cache on a "
-                    f"networked machine with `make busybox-cache`, or set "
-                    f"OTTO_BUSYBOX_CACHE to a populated dir."
+                    f"{' then '.join(dict.fromkeys(asked))} after {attempt} attempt(s): {e}. "
+                    f"Prime the cache on a networked machine with `make busybox-cache`, "
+                    f"or set OTTO_BUSYBOX_CACHE to a populated dir."
                 ) from e
         # Mode before publish, then rename. Rename only after a complete
         # download, so an interrupted fetch cannot leave a truncated binary

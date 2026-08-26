@@ -816,6 +816,7 @@ def test_a_deterministic_failure_is_not_retried(tmp_path, monkeypatch):
     (`docs/superpowers/specs/2026-08-11-busybox-host-support-design.md`) — and
     retrying only delays the report.
     """
+    monkeypatch.setenv("OTTO_BUSYBOX_SOURCE", "upstream")
     release = BUSYBOX_MATRIX[0]
     slept = _record_sleeps(monkeypatch)
 
@@ -909,6 +910,241 @@ def test_the_fetch_budget_fits_inside_both_timeouts():
         f"`make busybox`'s {session_cap}s cap, which kills the run outright — no "
         f"per-test error, no JUnit report. Shrink the fetch budget or raise the cap"
     )
+
+
+# ─── two sources, one pin: the release mirror first, busybox.net behind it ──
+#
+# Issue #261's remaining half. The cache keeps a WARM lane off the network, but
+# a cold cache — a new runner image, a pin change, a fresh clone — still went
+# to busybox.net alone, and busybox.net alone is what was down. The five
+# artifacts are re-published as assets of the GitHub release
+# `ci-assets-busybox-1` (bytes fetched from upstream and verified against the
+# same pins), so a consuming lane has a source on the same host as the runner.
+# `_verify` is unchanged and runs on every fetch whatever the source, so the
+# mirror can serve a different byte and it is refused exactly as upstream's
+# would be — the pin, not the host, is what is trusted.
+#
+# The `busybox` job is the exception, by policy: it exists to notice upstream
+# rebuilding an artifact in place, and a mirror in front of it would report
+# "still matches" about bytes upstream no longer serves. It forces
+# `OTTO_BUSYBOX_SOURCE=upstream`, and that is pinned below in both directions.
+
+_SOURCE_ENV = "OTTO_BUSYBOX_SOURCE"
+
+
+def test_the_mirror_is_the_release_asset_for_the_cached_filename():
+    """The asset name IS the cache filename, so one string names the byte in both places."""
+    release = BUSYBOX_MATRIX[0]
+    assert busybox._MIRROR_BASE == (
+        "https://github.com/ludachrish3/otto-sh/releases/download/ci-assets-busybox-1"
+    ), "the mirror base names the release the assets were uploaded to"
+    assert release.mirror_url == f"{busybox._MIRROR_BASE}/{release.filename}"
+    assert release.url.startswith("https://busybox.net/"), "upstream is still upstream"
+    assert release.url_for("mirror") == release.mirror_url
+    assert release.url_for("upstream") == release.url
+
+
+def test_every_source_order_spends_exactly_the_retry_budget():
+    """One host per attempt: the fallback rides the existing budget, it does not add one.
+
+    `test_the_fetch_budget_fits_inside_both_timeouts` reasons from
+    `len(_RETRY_BACKOFF_S) + 1` attempts; an order longer than that would
+    fetch past the arithmetic, and a shorter one would leave a retry unspent.
+    """
+    attempts = len(busybox._RETRY_BACKOFF_S) + 1
+    for policy, order in busybox._SOURCE_ORDERS.items():
+        assert len(order) == attempts, (
+            f"{policy!r} names {len(order)} hosts for {attempts} attempts"
+        )
+        assert set(order) <= {"mirror", "upstream"}, order
+
+
+def test_the_default_order_is_mirror_then_upstream_then_mirror(tmp_path, monkeypatch):
+    """Three attempts, three sources: the mirror twice, upstream between them.
+
+    One retry budget (`test_the_fetch_budget_fits_inside_both_timeouts`), so
+    the fallback rides the attempts that already exist rather than adding a
+    second budget on top. A transient failure sleeps and moves to the next
+    source; the URL sequence is the claim, not the count.
+    """
+    monkeypatch.delenv(_SOURCE_ENV, raising=False)
+    release = BUSYBOX_MATRIX[0]
+    _record_sleeps(monkeypatch)
+    asked: "list[str]" = []
+
+    def urlopen(url, *_a, **_kw):
+        asked.append(url)
+        raise http.client.IncompleteRead(b"half")
+
+    monkeypatch.setattr(busybox.urllib.request, "urlopen", urlopen)
+
+    with pytest.raises(BusyBoxUnavailableError, match="after 3 attempt") as excinfo:
+        busybox._fetch(release, tmp_path / release.filename)
+
+    assert asked == [release.mirror_url, release.url, release.mirror_url], asked
+    assert release.mirror_url in str(excinfo.value)
+    assert release.url in str(excinfo.value), "every source tried is named in the error"
+
+
+def test_a_404_from_one_source_moves_to_the_next_without_sleeping(tmp_path, monkeypatch):
+    """A missing asset is that SOURCE saying no, not the network — fall through at once.
+
+    The old rule "a 404 is a typo, fail fast" still holds per source: it is
+    not retried against the same host, and it costs no backoff. What it no
+    longer does is end the fetch while another source remains untried.
+    """
+    monkeypatch.delenv(_SOURCE_ENV, raising=False)
+    release = BUSYBOX_MATRIX[0]
+    target = tmp_path / release.filename
+    slept = _record_sleeps(monkeypatch)
+    asked: "list[str]" = []
+
+    with _closing_http_errors(404) as errors:
+
+        def urlopen(url, *_a, **_kw):
+            asked.append(url)
+            if url == release.mirror_url:
+                raise errors[0]
+            return _FakeResponse(b"#!/bin/false\n")
+
+        monkeypatch.setattr(busybox.urllib.request, "urlopen", urlopen)
+        busybox._fetch(release, target)
+
+    assert asked == [release.mirror_url, release.url], asked
+    assert slept == [], "a deterministic refusal by one source must not sleep"
+    assert target.exists(), "upstream's answer is published"
+
+
+def test_a_source_that_said_no_is_not_asked_again(tmp_path, monkeypatch):
+    """404 from the mirror, then 404 from upstream: the third slot is the mirror again — skip it.
+
+    Two sources have both answered deterministically; a third attempt at
+    either is the "three attempts at a typo" the fail-fast rule exists to
+    refuse. The error reports both answers and stops at two.
+    """
+    monkeypatch.delenv(_SOURCE_ENV, raising=False)
+    release = BUSYBOX_MATRIX[0]
+    slept = _record_sleeps(monkeypatch)
+
+    with _closing_http_errors(404, 404) as errors:
+        attempts = _stub_attempts(monkeypatch, errors)
+        with pytest.raises(BusyBoxUnavailableError, match="after 2 attempt") as excinfo:
+            busybox._fetch(release, tmp_path / release.filename)
+
+    assert attempts == [1, 2], attempts
+    assert slept == []
+    assert release.mirror_url in str(excinfo.value)
+    assert release.url in str(excinfo.value)
+
+
+def test_a_local_failure_does_not_move_to_another_source(tmp_path, monkeypatch):
+    """ENOSPC is not a source's answer; asking a second host cannot free the disk."""
+    monkeypatch.delenv(_SOURCE_ENV, raising=False)
+    release = BUSYBOX_MATRIX[0]
+    slept = _record_sleeps(monkeypatch)
+    asked: "list[str]" = []
+
+    def urlopen(url, *_a, **_kw):
+        asked.append(url)
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(busybox.urllib.request, "urlopen", urlopen)
+
+    with pytest.raises(BusyBoxUnavailableError, match="after 1 attempt"):
+        busybox._fetch(release, tmp_path / release.filename)
+
+    assert asked == [release.mirror_url], "the mirror once, upstream never"
+    assert slept == []
+
+
+def test_a_transient_on_the_other_host_never_returns_to_a_host_that_refused(tmp_path, monkeypatch):
+    """Mirror 404, upstream truncated: the third slot is the refused mirror — stop at two.
+
+    Found in review: filtering only the deterministic path let a transient on
+    upstream send attempt three back to the mirror that had already said no,
+    costing a 10 s sleep and a request, and reporting the mirror's 404 as the
+    cause of a fetch that upstream's flake had actually ended.
+    """
+    monkeypatch.delenv(_SOURCE_ENV, raising=False)
+    release = BUSYBOX_MATRIX[0]
+    slept = _record_sleeps(monkeypatch)
+    asked: "list[str]" = []
+
+    with _closing_http_errors(404) as errors:
+
+        def urlopen(url, *_a, **_kw):
+            asked.append(url)
+            if url == release.mirror_url:
+                raise errors[0]
+            raise http.client.IncompleteRead(b"half")
+
+        monkeypatch.setattr(busybox.urllib.request, "urlopen", urlopen)
+        with pytest.raises(BusyBoxUnavailableError, match="after 2 attempt") as excinfo:
+            busybox._fetch(release, tmp_path / release.filename)
+
+    assert asked == [release.mirror_url, release.url], asked
+    assert slept == [], "no host worth waiting for remained"
+    assert "IncompleteRead" in str(excinfo.value), (
+        "the cause named must be the last host asked (upstream's flake), not the mirror's 404"
+    )
+
+
+def test_upstream_only_never_asks_the_mirror(tmp_path, monkeypatch):
+    """`OTTO_BUSYBOX_SOURCE=upstream` is the `busybox` job's policy.
+
+    The detector must read upstream's bytes: a mirror in front of it would
+    report "still matches" about a build upstream has since replaced.
+    """
+    monkeypatch.setenv(_SOURCE_ENV, "upstream")
+    release = BUSYBOX_MATRIX[0]
+    _record_sleeps(monkeypatch)
+    asked: "list[str]" = []
+
+    def urlopen(url, *_a, **_kw):
+        asked.append(url)
+        raise http.client.IncompleteRead(b"half")
+
+    monkeypatch.setattr(busybox.urllib.request, "urlopen", urlopen)
+
+    with pytest.raises(BusyBoxUnavailableError, match="after 3 attempt"):
+        busybox._fetch(release, tmp_path / release.filename)
+
+    assert asked == [release.url] * 3, asked
+
+
+def test_an_unknown_source_policy_is_refused_by_name(tmp_path, monkeypatch):
+    monkeypatch.setenv(_SOURCE_ENV, "fastest")
+    release = BUSYBOX_MATRIX[0]
+    _stub_transport(monkeypatch, body=b"#!/bin/false\n")
+
+    with pytest.raises(BusyBoxUnavailableError, match="mirror-first") as excinfo:
+        busybox._fetch(release, tmp_path / release.filename)
+    assert "fastest" in str(excinfo.value)
+    assert "upstream" in str(excinfo.value)
+
+
+def test_the_source_policy_is_a_declared_harness_opt_in():
+    """Undeclared, the root conftest strips it: the `busybox` job silently fetches mirror-first."""
+    assert _SOURCE_ENV in AMBIENT_OPT_INS
+
+
+def test_the_busybox_lane_forces_upstream_and_the_consuming_lanes_do_not():
+    """The detector reads upstream; everything else may read the mirror. Pinned both ways."""
+    ci = yaml.safe_load((_WORKFLOWS / "ci.yml").read_text(encoding="utf-8"))
+    busybox_env = ci["jobs"]["busybox"].get("env", {})
+    assert busybox_env.get(_SOURCE_ENV) == "upstream", (
+        f"ci.yml `busybox` must set {_SOURCE_ENV}=upstream at job level: it exists to notice "
+        f"upstream rebuilding an artifact in place, and a mirror in front of it would report "
+        f"'still matches' about bytes upstream no longer serves; got {busybox_env!r}"
+    )
+    for key in _unit_tree_jobs():
+        workflow = yaml.safe_load((_WORKFLOWS / key[0]).read_text(encoding="utf-8"))
+        job_env = workflow["jobs"][key[1]].get("env", {}) or {}
+        assert _SOURCE_ENV not in job_env, (
+            f"{key[0]} `{key[1]}` only consumes the artifacts; forcing {_SOURCE_ENV} there "
+            f"puts busybox.net back on a default lane's critical path"
+        )
+    assert _unit_tree_jobs(), "premise: the allowlist no longer names a live consuming lane"
 
 
 # ─── shipped error text must cite things that exist ────────────────────────
@@ -1249,7 +1485,7 @@ def test_preflight_probes_exactly_one_artifact_not_the_whole_matrix(tmp_path, mo
 
     busybox.preflight()
 
-    assert asked == [BUSYBOX_MATRIX[0].url], (
+    assert asked == [BUSYBOX_MATRIX[0].mirror_url], (
         f"preflight must prove the SOURCE answers with a single probe; it asked for "
         f"{len(asked)} artifact(s): {asked}"
     )
@@ -1309,7 +1545,7 @@ def test_a_hash_mismatch_does_not_poison_the_preflight_verdict(tmp_path, monkeyp
     with pytest.raises(BusyBoxUnavailableError, match="hash mismatch"):
         busybox.preflight()
 
-    assert asked == [BUSYBOX_MATRIX[0].url, BUSYBOX_MATRIX[1].url], (
+    assert asked == [BUSYBOX_MATRIX[0].mirror_url, BUSYBOX_MATRIX[1].mirror_url], (
         f"a mismatch must leave the verdict unrecorded, so the next call advances to "
         f"the next missing artifact; saw {asked}"
     )
