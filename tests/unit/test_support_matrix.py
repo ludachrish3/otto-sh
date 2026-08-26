@@ -3811,6 +3811,70 @@ def test_the_gap_registry_uses_the_same_two_status_words_for_a_different_artifac
     )
 
 
+def _contradiction_report(
+    committed: dict, reproduced: dict, contradicted: "list[tuple[str, str]]"
+) -> str:
+    """Say which of the TWO causes this is, and what to do about it.
+
+    The disagreement has two readings and they call for opposite responses, so
+    a message that names only one sends the reader the wrong way. The
+    discriminator is the DATE: a cell whose local evidence is OLDER than the
+    verdict it contradicts is superseded evidence -- someone re-measured the
+    bed in another checkout and committed the result, which is the ordinary
+    case and needs no defence of the matrix. A cell whose evidence is as new as
+    the verdict, or newer, is the serious one: what this machine measured
+    disagrees with what the repo claims, and the matrix is what must answer.
+
+    The remedy is NOT symmetrical either, so both are spelled out at the site
+    rather than left to be rediscovered. Note what is deliberately absent:
+    editing the committed verdict to match old records. That is a downgrade
+    fabricated from stale evidence, and `check_matrix_downgrades.py` refuses it
+    anyway.
+    """
+    superseded, current = [], []
+    for surface, profile in contradicted:
+        mine, theirs = reproduced[surface][profile], committed[surface][profile]
+        where = superseded if str(mine.get("as_of")) < str(theirs.get("as_of")) else current
+        where.append(
+            f"{surface} x {profile}: committed {theirs.get('status')} (as_of "
+            f"{theirs.get('as_of')}) vs this machine's {mine.get('status')} (as_of "
+            f"{mine.get('as_of')})"
+        )
+    lines = [
+        (
+            f"{len(contradicted)} committed verdict(s) are NOT what collating this "
+            f"machine's records produces."
+        )
+    ]
+    if superseded:
+        lines += [
+            "",
+            f"  {len(superseded)} of them rest on evidence OLDER than the verdict -- the",
+            "  ordinary case: the bed was re-measured in another checkout and the result",
+            "  committed, while this checkout's records still describe the older code.",
+            "  Refresh the evidence, do not touch the matrix:",
+            "      make conformance-bed      # re-measure here; the only writer of a verdict",
+            "  or retire the stale evidence -- `reports/conformance-observations/` is",
+            "  git-ignored run output, `make clean` empties it, and with no records for a",
+            "  cell this guard is vacuous BY DESIGN (see this test's docstring).",
+            *(f"      {line}" for line in superseded[:5]),
+            *([f"      ... and {len(superseded) - 5} more"] if len(superseded) > 5 else []),
+        ]
+    if current:
+        lines += [
+            "",
+            f"  {len(current)} of them are contradicted by evidence AS NEW AS the verdict or",
+            "  newer. This is the case this guard exists for: a verdict typed by hand passes",
+            "  every other check in this file, and only the records can tell it from a",
+            "  collated one. Do NOT re-measure to make it agree -- read the records first,",
+            "  then either fix what regressed or correct the matrix in a reviewed commit",
+            "  that says which run measured it.",
+            *(f"      {line}" for line in current[:5]),
+            *([f"      ... and {len(current) - 5} more"] if len(current) > 5 else []),
+        ]
+    return "\n".join(lines)
+
+
 def test_no_committed_verdict_contradicts_this_machine_s_records():
     """★ THE ONLY GUARD THAT CAN CATCH A FABRICATED HAND-EDIT -- and it is CONDITIONAL.
 
@@ -3839,16 +3903,64 @@ def test_no_committed_verdict_contradicts_this_machine_s_records():
     reproduced = collate(matrix, records).matrix["cells"]
     spoken_for = {(record["surface"], record["profile"]) for record in records}
     contradicted = [
-        f"{surface} x {profile}"
+        (surface, profile)
         for surface, profile in sorted(spoken_for)
         if surface in matrix["cells"]
         and profile in matrix["cells"][surface]
         and reproduced[surface][profile] != matrix["cells"][surface][profile]
     ]
-    assert contradicted == [], (
-        f"these committed verdicts are NOT what collating this machine's records "
-        f"produces: {contradicted}. A hand-edited verdict is what this catches"
+    assert contradicted == [], _contradiction_report(matrix["cells"], reproduced, contradicted)
+
+
+def test_the_contradiction_report_tells_the_two_causes_apart():
+    """Positive control: stale evidence and a suspect verdict must not read alike.
+
+    The message is the whole value of a guard that fires rarely, so its two
+    branches are exercised here rather than trusted. A reader who is sent to
+    `make conformance-bed` when their own fresh measurement disagrees with the
+    repo has been told to overwrite the finding.
+    """
+    committed = {
+        "transfer-roundtrip": {
+            "busybox-1.16.1": {"status": "measured-ok", "as_of": "2026-08-26"},
+            "busybox-1.21.1": {"status": "measured-ok", "as_of": "2026-08-20"},
+        }
+    }
+    reproduced = {
+        "transfer-roundtrip": {
+            # Older than the verdict: superseded evidence.
+            "busybox-1.16.1": {"status": "measured-broken", "as_of": "2026-08-25"},
+            # Newer than the verdict: this machine's measurement disagrees.
+            "busybox-1.21.1": {"status": "measured-broken", "as_of": "2026-08-26"},
+        }
+    }
+    stale_only = _contradiction_report(
+        committed, reproduced, [("transfer-roundtrip", "busybox-1.16.1")]
     )
+    assert "OLDER than the verdict" in stale_only
+    assert "make conformance-bed" in stale_only, "the stale branch must name the refresh"
+    assert "AS NEW AS the verdict" not in stale_only, "it must not raise the serious cause"
+
+    suspect_only = _contradiction_report(
+        committed, reproduced, [("transfer-roundtrip", "busybox-1.21.1")]
+    )
+    assert "AS NEW AS the verdict" in suspect_only
+    assert "Do NOT re-measure to make it agree" in suspect_only, (
+        "the serious branch must NOT send the reader to overwrite their own finding"
+    )
+    assert "OLDER than the verdict" not in suspect_only
+
+    both = _contradiction_report(
+        committed,
+        reproduced,
+        [("transfer-roundtrip", "busybox-1.16.1"), ("transfer-roundtrip", "busybox-1.21.1")],
+    )
+    assert "OLDER than the verdict" in both
+    assert "AS NEW AS the verdict" in both
+    assert both.startswith("2 committed verdict(s)")
+    # Every branch names the cell, both statuses and both dates -- a count alone
+    # cannot be acted on.
+    assert "committed measured-ok (as_of 2026-08-26) vs this machine's" in both
 
 
 # --------------------------------------------------------------------------
