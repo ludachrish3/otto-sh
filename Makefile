@@ -160,16 +160,27 @@ M_HOSTLESS := not integration and not embedded and not stability and not browser
 
 # Hard ceiling on the pytest invocation so a hung test (e.g. an integration
 # test waiting on an unreachable VM) can't stall the pipeline indefinitely.
+# It is a RUNAWAY GUARD, not a discriminator: nothing passes or fails because
+# of where it sits, so it belongs far above the leg's runtime, never near it.
+# It sat at 360s over a coverage-python leg measured at 273-296s on a quiet
+# box — inside the leg's own spread — and on 2026-08-25 a second session's
+# suite on the same VM halved the leg's speed and `timeout` killed it at 65%:
+# exit 124, zero FAILED lines, a red build with no defect behind it. 900s is
+# 3x the quiet-box leg, still catches a genuine hang inside fifteen minutes,
+# and is floored at 600s by tests/unit/test_declared_harness_bounds.py.
+# The same test pins that every CI job invoking a wrapped lane sets its
+# `timeout-minutes` above this cap plus its setup: a job limit at or under
+# the wrap cancels the job before `timeout` can report exit 124, which is the
+# attribution the wrap exists for.
 # Two things dominate wall time: Docker integration tests are pinned to one
 # xdist worker (xdist_group) because they share /tmp/otto-docker/repo1/ on the
 # parent and can't safely parallelize compose_up's `rm -rf` of the staging
 # dir; and the embedded Zephyr tests are serialized per-device (one telnet
 # client per console — see tests/integration/host/conftest.py). The heavy
 # stability/soak tests are excluded from `coverage` (the `stability` marker)
-# and run only via `make stability` / `stability-embedded`, so 6 min
-# leaves comfortable headroom for slower runners.
+# and run only via `make stability` / `stability-embedded`.
 # --kill-after escalates SIGTERM → SIGKILL if xdist workers don't drain.
-PYTEST_TIMEOUT := 360s
+PYTEST_TIMEOUT := 900s
 TIMEOUT_CMD := timeout --foreground --kill-after=10s $(PYTEST_TIMEOUT)
 
 # Arms the asyncio transport-leak detector (tests/conftest.py +
@@ -864,8 +875,8 @@ conformance: ## Run the host-contract conformance suite (`conformance`-marked; e
 # inherited: 565 items reach real hardware here, the seven single-client
 # console cells serialize against each other through
 # `tests/conformance/_console_safety.py`'s exclusive lock, and the integration
-# tree measured full one-group bed serialization at >450s. 360s is the cap for
-# lanes whose slowest leg is a local VM; this one is not that lane.
+# tree measured full one-group bed serialization at >450s. PYTEST_TIMEOUT is
+# the cap for lanes whose slowest leg is a local VM; this one is not that lane.
 #
 # The item count was 284 until the support matrix's POSITIVE CONTROLS landed
 # beside the contracts (one per surface, parametrized over the same cells), and

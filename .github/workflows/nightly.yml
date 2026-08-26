@@ -280,7 +280,11 @@ jobs:
   # nothing writes would be a check that cannot fail.
   conformance-hermetic:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # ABOVE the Makefile's PYTEST_TIMEOUT wrap (900s) around `make
+    # conformance`, plus the sync / sshd / `make busybox-cache` setup ahead of
+    # it, so a stall reports through `timeout`'s exit 124 rather than a
+    # GitHub cancel. Pinned by tests/unit/test_declared_harness_bounds.py.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7.0.1
 

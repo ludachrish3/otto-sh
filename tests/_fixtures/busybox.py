@@ -86,7 +86,7 @@ _PINS = Path(__file__).with_name("busybox_pins.json")
 #       = 3 x 15 + 15 = 60s          vs pyproject `timeout = 180`
 #   DEAD-FROM-THE-START bound per session
 #       = len(BUSYBOX_MATRIX) x 60 = 300s
-#                                    vs `make busybox`'s 360s cap
+#                                    vs `make busybox`'s 900s cap (PYTEST_TIMEOUT)
 #
 # Those hold for a peer that is silent FROM THE FIRST BYTE — not for any failure,
 # and not as a hard ceiling, because the inactivity semantics above cut both
@@ -375,10 +375,11 @@ def preflight(
 
     A precondition, not a timeout. `_fetch` already passes `_FETCH_TIMEOUT_S`
     to `urlopen`, and the arithmetic above bounds ONE artifact at 60s against
-    pytest's 180s SIGALRM and FIVE at 300s against `make busybox`'s 360s
-    session cap. Both bounds are right and they DO NOT COMPOSE, because they
-    are measured against different ceilings: the per-artifact one against a
-    TEST's budget, the session one against a LANE's. A caller that needs the
+    pytest's 180s SIGALRM and FIVE at 300s against `make busybox`'s 900s
+    session cap (the Makefile's PYTEST_TIMEOUT). Both bounds are right and
+    they DO NOT COMPOSE, because they are measured against different
+    ceilings: the per-artifact one against a TEST's budget, the session one
+    against a LANE's. A caller that needs the
     whole matrix inside a SINGLE test falls between them —
     `tests/unit/test_support_matrix.py`'s `_run_conformance` builds the entire
     hermetic space in one subprocess, so a dead source costs it 5 x 60 = 300s

@@ -1,9 +1,10 @@
 """Every test lane declares its own runaway guard; none inherits a default.
 
 ONE rule, stated in full: the vitest configs, the browser lane's ``expect()``
-ceiling, and pytest's per-test ``timeout`` must each be written down in this
-repo, at or above a floor. Nothing here inspects test bodies or reasons about
-assertions — "What this does NOT cover" below is exhaustive.
+ceiling, pytest's per-test ``timeout``, and the Makefile's session-wide
+``PYTEST_TIMEOUT`` wrap must each be written down in this repo, at or above a
+floor. Nothing here inspects test bodies or reasons about assertions — "What
+this does NOT cover" below is exhaustive.
 
 A *runaway guard* is a per-test timeout, a hook timeout, an ``expect()``
 ceiling: a bound that discriminates nothing. No test passes or fails
@@ -42,6 +43,8 @@ import ast
 import re
 from pathlib import Path
 
+import pytest
+
 from tests._fixtures.paths import PROJECT_ROOT, TESTS_ROOT
 
 # ── Part A: every lane declares its own runaway guard ───────────────────────
@@ -66,13 +69,18 @@ from tests._fixtures.paths import PROJECT_ROOT, TESTS_ROOT
 # is the one bound that was always a decision; its floor sits well below it so
 # this pin cannot be read as ratifying a number pyproject calls provisional.
 #
-# None of the three reaches a per-test `@pytest.mark.timeout(N)`, of which the
+# None of the four reaches a per-test `@pytest.mark.timeout(N)`, of which the
 # suite holds ~54, nine below this module's own Python floor. Extending Part A
 # to those is real work with real dispositions, and is deliberately not done
 # here (review R2).
 _TS_TIMEOUT_FLOOR_MS = 30_000
 _BROWSER_TIMEOUT_FLOOR_MS = 30_000
 _PYTEST_TIMEOUT_FLOOR_S = 60
+# The fourth: the Makefile's session-wide wrap. Derived below, next to its test.
+_MAKE_SESSION_CAP_FLOOR_S = 600
+# A CI job that invokes a wrapped lane must outlast the wrap AND the setup
+# steps ahead of it, or GitHub cancels the job before `timeout` reports.
+_CI_SETUP_MARGIN_S = 300
 
 _TS_BOUNDS = ("testTimeout", "hookTimeout")
 
@@ -327,6 +335,121 @@ def test_python_lane_declares_its_per_test_timeout() -> None:
     )
 
 
+# The Makefile wraps every coverage leg in `timeout $(PYTEST_TIMEOUT)`: a
+# session-wide runaway guard on top of the per-test one. Same rule, one level
+# up — nothing passes or fails because of where it sits, so it belongs far
+# above the leg's runtime. It sat at 360s over a coverage-python leg measured at
+# 273-296s on a quiet box (2026-08-25/26, after a 30s network-dial test was
+# removed), and a second session's suite on the same VM halved the leg's speed
+# and killed it at 65% — exit 124, zero FAILED lines, a red build with no
+# defect behind it. The floor (`_MAKE_SESSION_CAP_FLOOR_S`, above) is 2x the
+# measured leg: a cap under it is inside the leg's own spread and converts
+# machine load into red builds.
+
+
+def makefile_session_cap(text: str) -> int:
+    """The declared ``PYTEST_TIMEOUT`` in seconds; loud on absence or duplication.
+
+    Refuses a second declaration rather than reading the first or the last:
+    Make's ``:=`` lets a later line win at runtime (the same trap
+    :func:`ts_bound_gaps` reads the LAST vitest bound for), and a reader that
+    picked either silently would green the gate on the wrong number.
+    """
+    matches = re.findall(r"^PYTEST_TIMEOUT\s*:?=\s*(\d+)s\s*$", text, re.MULTILINE)
+    assert matches, (
+        "the Makefile no longer declares PYTEST_TIMEOUT — the coverage legs would run "
+        "unbounded and a hung integration test would stall the pipeline until the CI "
+        "job limit killed it with no per-leg attribution"
+    )
+    assert len(matches) == 1, (
+        f"the Makefile declares PYTEST_TIMEOUT {len(matches)} times: {matches}"
+    )
+    return int(matches[0])
+
+
+def test_make_declares_a_session_cap_far_above_the_leg() -> None:
+    cap = makefile_session_cap((PROJECT_ROOT / "Makefile").read_text())
+    assert cap >= _MAKE_SESSION_CAP_FLOOR_S, (
+        f"PYTEST_TIMEOUT is {cap}s, below the {_MAKE_SESSION_CAP_FLOOR_S}s floor. "
+        f"The coverage-python leg runs ~275-300s on a quiet box; a cap inside that band is "
+        f"a runaway guard turned discriminator, and it reddens builds on machine load alone"
+    )
+
+
+def makefile_wrapped_targets(text: str) -> "set[str]":
+    """Every Makefile target that reaches a ``$(TIMEOUT_CMD)`` recipe line.
+
+    Directly, through a prerequisite, or through a ``$(MAKE) other`` recursion
+    — closed over all three, because `make coverage` reaches its wrapped legs
+    only through prerequisites and the CI jobs name the outer target.
+    """
+    recipes: "dict[str, list[str]]" = {}
+    prereqs: "dict[str, list[str]]" = {}
+    current: "str | None" = None
+    for line in text.splitlines():
+        header = re.match(r"^([A-Za-z0-9_.-]+)\s*:(?!=)\s*([^#]*)", line)
+        if header and not line.startswith(("\t", " ")):
+            current = header.group(1)
+            prereqs[current] = [p for p in header.group(2).split() if not p.startswith("$")]
+            recipes.setdefault(current, [])
+        elif line.startswith("\t") and current is not None:
+            recipes[current].append(line)
+    wrapped = {t for t, lines in recipes.items() if any("$(TIMEOUT_CMD)" in x for x in lines)}
+    while True:
+        grown = set(wrapped)
+        for target, lines in recipes.items():
+            reached = set(prereqs.get(target, ()))
+            reached |= {m for x in lines for m in re.findall(r"\$\(MAKE\)\s+([A-Za-z0-9_.-]+)", x)}
+            if reached & wrapped:
+                grown.add(target)
+        if grown == wrapped:
+            return wrapped
+        wrapped = grown
+
+
+def workflow_jobs_invoking(targets: "set[str]") -> "list[tuple[str, str, int, str]]":
+    """(workflow, job, timeout-minutes, target) for every job whose `run:` reaches a target.
+
+    A job with no ``timeout-minutes`` gets GitHub's 360-minute default, which
+    is far above any wrap and so never an offender.
+    """
+    import yaml
+
+    hits: "list[tuple[str, str, int, str]]" = []
+    for path in sorted((PROJECT_ROOT / ".github" / "workflows").glob("*.yml")):
+        jobs = (yaml.safe_load(path.read_text(encoding="utf-8")) or {}).get("jobs", {})
+        for name, job in jobs.items():
+            runs = "\n".join(str(step.get("run", "")) for step in job.get("steps", []) or [])
+            for target in re.findall(r"(?<![\w/.-])make\s+([A-Za-z0-9_.-]+)", runs):
+                if target in targets:
+                    hits.append((path.name, name, int(job.get("timeout-minutes", 360)), target))
+    return hits
+
+
+def test_ci_jobs_that_invoke_a_wrapped_lane_outlast_the_cap() -> None:
+    """A job limit at or under the wrap cancels the job before `timeout` can report.
+
+    Found at review: raising the wrap to 900s made it EQUAL the `busybox`
+    job's 15-minute limit, and that job spends minutes on setup before `make`
+    starts — GitHub's cancel would always fire first, and the exit 124 plus
+    the fixture's priming diagnostic that the wrap exists to deliver on a
+    busybox.net stall would never be seen. The relation is what matters, not
+    either number, so it is pinned as a relation.
+    """
+    cap = makefile_session_cap((PROJECT_ROOT / "Makefile").read_text())
+    wrapped = makefile_wrapped_targets((PROJECT_ROOT / "Makefile").read_text())
+    assert wrapped, "premise: no Makefile target reaches $(TIMEOUT_CMD) — the parser is broken"
+    hits = workflow_jobs_invoking(wrapped)
+    assert hits, "premise: no CI job invokes a wrapped lane — the workflow parser is broken"
+    offenders = [
+        f"{workflow} `{job}`: timeout-minutes {minutes} ({minutes * 60}s) reaches `make {target}` "
+        f"wrapped at {cap}s; needs at least {(cap + _CI_SETUP_MARGIN_S + 59) // 60} minutes"
+        for workflow, job, minutes, target in hits
+        if minutes * 60 < cap + _CI_SETUP_MARGIN_S
+    ]
+    assert not offenders, "\n  ".join(["", *offenders])
+
+
 def test_declared_bound_scanners_observe_red() -> None:
     """Positive controls: each Part A scanner seen failing on its own shape."""
     good = "export default { test: {\n  testTimeout: 60_000,\n  hookTimeout: 60_000,\n} }\n"
@@ -359,6 +482,21 @@ def test_declared_bound_scanners_observe_red() -> None:
         re.search(r"^timeout\s*=\s*(\d+)", pytest_ini_section(decoy), re.MULTILINE).group(1) == "5"
     )
     assert pytest_ini_section("[tool.other]\ntimeout = 600\n") == ""
+
+    # The Makefile session-cap reader: absent and duplicated are both loud.
+    assert makefile_session_cap("PYTEST_TIMEOUT := 900s\n") == 900
+    with pytest.raises(AssertionError, match="no longer declares"):
+        makefile_session_cap("TIMEOUT := 900s\n")
+    with pytest.raises(AssertionError, match="2 times"):
+        makefile_session_cap("PYTEST_TIMEOUT := 900s\nPYTEST_TIMEOUT := 120s\n")
+    # The wrapped-target closure follows prerequisites and $(MAKE) recursion.
+    toy = (
+        "outer: inner\n\t@echo\n"
+        "inner:\n\t@$(TIMEOUT_CMD) uv run pytest\n"
+        "driver:\n\t@$(MAKE) outer\n"
+        "plain:\n\t@uv run pytest\n"
+    )
+    assert makefile_wrapped_targets(toy) == {"inner", "outer", "driver"}
 
     assert browser_expect_ceiling("expect.set_options(timeout=60_000)\n") == 60_000
     # Review: any object's .set_options must not satisfy the browser pin — only
