@@ -122,16 +122,26 @@ write by hand.
 
 **Bounded live buffers.** Both live-side buffers have ceilings, because a
 multi-day run previously grew without one. Each SSE subscriber queue is
-bounded (`SUBSCRIBER_QUEUE_MAX`, 1024 payloads) and overflow **drops the
-oldest**, so a tab that stops draining — frozen renderer, half-dead
-connection — can no longer grow memory at the live bed's ~90 fragments per
-tick; each {class}`~otto.monitor.store.MetricStore` series is a `deque`
-capped at `_SERIES_POINTS_MAX` (50,000 points, roughly 27 hours at two-second
-ticks). Dropping is safe because of the SSE reconnect resync: the dashboard
-re-hydrates from `GET /api/monitor_sessions` on every reconnect, so a gap in
-the stream is *recovered* rather than replayed. Only the live view and live
-exports age out — the DB keeps everything, so a review opened from a `.db`
-archive is always complete.
+bounded (`SUBSCRIBER_QUEUE_MAX`, 1024 payloads), so a tab that stops draining
+— frozen renderer, half-dead connection — can no longer grow memory at the
+live bed's ~90 fragments per tick; each
+{class}`~otto.monitor.store.MetricStore` series is a `deque` capped at
+`_SERIES_POINTS_MAX` (50,000 points, roughly 27 hours at two-second ticks).
+What happens at the queue's bound is a **lapse, not a drop**: the queue is
+emptied and handed a single {data}`~otto.monitor.broadcast.LAPSED` sentinel,
+the `/api/stream` route ends that subscriber's response when it reads it,
+and the browser's `EventSource` reports the close as `onerror` — which runs
+the client's existing resync-then-reopen path (`web/src/data/stream.ts`),
+re-hydrating from `GET /api/monitor_sessions`. The first cut dropped the
+oldest frame instead, on the argument that the reconnect resync would
+recover the gap; an eviction never causes a reconnect, so nothing ever
+resynced, and a tab that lost the once-emitted `chart_map` frame drew
+ungrouped charts until reload. A gap is now announced, then recovered by
+resync, never replayed. The cost is deliberate: a tab that is alive but
+sustainedly slower than the stream lapses, resyncs and lapses again rather
+than silently showing stale data. Only the live view and live exports age
+out — the DB keeps everything, so a review opened from a `.db` archive is
+always complete.
 
 ## Where the code lives
 

@@ -46,6 +46,7 @@ from ..models import LabSnapshot, MonitorExport
 from ..models.monitor import EventCreateBody, EventRecord, EventUpdateBody, SessionRecord
 from ..utils import wait_for_async
 from . import archive_edit
+from .broadcast import LAPSED
 from .collector import MetricCollector
 from .event_ops import EventValidationError, merge_update, resolve_create
 from .events import MonitorEvent
@@ -377,10 +378,20 @@ def _build_app(  # noqa: C901 — FastAPI route-factory; complexity is route cou
                         break
                     try:
                         payload = await asyncio.wait_for(q.get(), timeout=15.0)
-                        yield {"data": json.dumps(payload)}
                     except asyncio.TimeoutError:
                         # Send a keepalive comment so the browser doesn't close the connection
                         yield {"comment": "keepalive"}
+                        continue
+                    if payload is LAPSED:
+                        # This subscriber overflowed and its queued frames are
+                        # gone (see otto.monitor.broadcast). Ending the
+                        # response is the signal: EventSource reports the
+                        # close as an error and the client resyncs from the
+                        # snapshot before reopening — the only path that
+                        # restores a lost one-shot frame such as chart_map.
+                        yield {"comment": "lapsed: resync"}
+                        break
+                    yield {"data": json.dumps(payload)}
             finally:
                 collector.unsubscribe(q)
 

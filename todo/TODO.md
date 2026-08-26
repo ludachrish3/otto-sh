@@ -75,7 +75,7 @@
 > (`docs/superpowers/specs/2026-07-02-monitor-revamp-roadmap-design.md`);
 > frontend/UX items belong to the React rewrite phase, backend items to Phase 1.
 
-- Bound the SSE subscriber queues (`asyncio.Queue(maxsize=N)` + drop-oldest) so a slow dashboard client can't grow memory unbounded. Natural home: `broadcast.py` in the Phase 1 backend decomposition. (Carried from the retired expert-feedback reassessment.)
+- ✅ Bound the SSE subscriber queues so a slow dashboard client can't grow memory unbounded — `broadcast.py` bounds them (`SUBSCRIBER_QUEUE_MAX`), and overflow now LAPSES the subscriber (queue emptied, sentinel, response ended, client resyncs) rather than dropping the oldest frame, which silently lost once-emitted frames such as `chart_map`.
 - Batch metric DB writes per collection tick instead of per-point `INSERT`+`commit`. Natural home: `db.py` in the Phase 1 backend decomposition. (Carried from the retired expert-feedback reassessment.)
 - Add an import button and a clear data button so that users can launch a server once and keep viewing different data sets.
 - Default database should be `otto.db` in the xdir/`monitor` directory.

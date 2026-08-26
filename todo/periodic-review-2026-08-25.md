@@ -111,7 +111,16 @@ the lane is red (`Makefile:869-870`), so a transient wedge folds a
 `measured-broken` verdict into the working copy, `check_matrix_downgrades.py`
 refuses, and make aborts leaving `schemas/support_matrix.json` dirty *(sweep)*.
 
-### 1.2 MUST FIX — dashboard SSE `chart_map` eviction (product bug, OPEN, unledgered)
+### 1.2 ✅ FIXED — dashboard SSE `chart_map` eviction (product bug)
+
+Fixed on the busybox-gate-fixes branch exactly along the fork below: on
+overflow the subscriber's queue is emptied and handed a `LAPSED` sentinel,
+`/api/stream` ends that response, and the client's `onerror → resync →
+reopen` path recovers (`web/src/data/` unchanged — verified it replaces
+`sessions`, and so `chartMap`, wholesale on resync). `test_broadcast.py`'s
+drop-oldest pin is replaced by lapse pins and a raw-ASGI stream test;
+`docs/architecture/subsystems/monitoring.md` and `todo/TODO.md` no longer
+describe drop-oldest. The original analysis follows for the record.
 
 `src/otto/monitor/broadcast.py:41-44` still drops the oldest frame on overflow
 (`SUBSCRIBER_QUEUE_MAX = 1024`, `:19`); the last commit touching the file is
