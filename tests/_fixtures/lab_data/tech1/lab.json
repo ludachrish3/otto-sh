@@ -299,7 +299,6 @@
                 "base64_flag": "absent",
                 "checksum": "md5sum",
                 "elevation": "su",
-                "nc_dash_n": "rejected",
                 "shell_dialect": "ash",
                 "stat_size": "stat",
                 "timeout_style": "dash-t"
@@ -335,7 +334,6 @@
                 "base64_flag": "-d",
                 "checksum": "md5sum",
                 "elevation": "su",
-                "nc_dash_n": "rejected",
                 "shell_dialect": "ash",
                 "stat_size": "stat",
                 "timeout_style": "dash-t"
@@ -371,7 +369,6 @@
                 "base64_flag": "-d",
                 "checksum": "md5sum",
                 "elevation": "su",
-                "nc_dash_n": "rejected",
                 "shell_dialect": "ash",
                 "stat_size": "stat",
                 "timeout_style": "dash-t"
@@ -407,7 +404,6 @@
                 "base64_flag": "-d",
                 "checksum": "md5sum",
                 "elevation": "su",
-                "nc_dash_n": "rejected",
                 "shell_dialect": "ash",
                 "stat_size": "stat",
                 "timeout_style": "coreutils"
@@ -443,7 +439,6 @@
                 "base64_flag": "-d",
                 "checksum": "md5sum",
                 "elevation": "su",
-                "nc_dash_n": "rejected",
                 "shell_dialect": "ash",
                 "stat_size": "stat",
                 "timeout_style": "coreutils"

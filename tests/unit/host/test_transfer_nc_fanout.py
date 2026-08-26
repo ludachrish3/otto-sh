@@ -106,13 +106,20 @@ def _install_recorder(ft: NcFileTransfer, method: str) -> _FanoutRecorder:
     pass by measuring nothing.
     """
     recorder = _FanoutRecorder()
-    if method == "_get_files_nc":
-        # Leave the control plane working: this path pre-fetches every file's
-        # size through `_control_run` BEFORE it fans out, so a recorder that
-        # answered those too would fail the call before reaching the gather.
+    if method != "_put_files_nc":
+        # Leave the control plane working: BOTH get directions pre-fetch every
+        # file's size through `_control_run` BEFORE they fan out, and each
+        # REFUSES a file whose size it could not measure — the size terminates
+        # the read, so there is nothing to degrade to. A recorder answering
+        # those too would refuse all twenty before the gather and measure a
+        # fan-out of zero.
         ft._control_run = AsyncMock(  # type: ignore[method-assign]
-            return_value=CommandResult(Status.Success, value="1", retcode=0)
+            # The prefetch's `stat -L -c '%s %F'` shape: a size AND a type it
+            # will transfer. A bare size parses as unstatable and refuses all
+            # twenty, which is the same measurement of zero.
+            return_value=CommandResult(Status.Success, value="1 regular file", retcode=0)
         )
+    if method == "_get_files_nc":
         ft._exec_cmd = recorder  # type: ignore[assignment]
     else:
         ft._find_free_port = recorder  # type: ignore[method-assign]

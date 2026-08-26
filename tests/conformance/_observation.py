@@ -150,12 +150,16 @@ Because a single segment carries its label and separator on top of this text,
 any record clipped here necessarily overflows the smaller join cap, and the
 page announces it. ``tests/unit/test_support_matrix.py`` pins the ordering.
 
-MEASURED 2026-08-25, which is why 500 was wrong: the longest reason this tree
-declares is the transfer module's ``nc``-on-BusyBox ``expected_failure``, and a
-record of it is 749 characters. At 500 every one of the ten ``measured-broken``
-cells stopped mid-sentence, discarding the half a reader most needs -- that
-``shell`` transfer passes on those same five guests and ``nc`` passes on every
-GNU cell, i.e. exactly how narrow the gap is.
+MEASURED 2026-08-25, which is why 500 was wrong. The longest reason the tree
+declared at the time was the transfer module's ``nc``-on-BusyBox
+``expected_failure`` (deleted the same day, once the universal ``nc -l -p PORT``
+listener spelling made those cells pass -- see that module's note under
+``applicable_cell``), and a record of it was 749 characters. At 500 every one
+of the ten ``measured-broken`` cells stopped mid-sentence, discarding the half
+a reader most needs -- that ``shell`` transfer passed on those same five guests
+and ``nc`` on every GNU cell, i.e. exactly how narrow the gap was. The cap
+stays sized for a reason of that length: the tree declares none today, but a
+real failure's ``longrepr`` line is under no smaller bound.
 """
 
 

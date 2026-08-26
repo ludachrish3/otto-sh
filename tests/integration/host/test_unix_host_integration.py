@@ -47,16 +47,27 @@ _ALL_TRANSFERS = pytest.mark.parametrize(
         # test1 hop. This is where transfer parity across userland versions
         # is asserted: the same two round trips every other transfer takes.
         #
-        # NO `nc` ROWS, and that is a ruling rather than an omission (Chris,
-        # 2026-08-21). otto's nc backend cannot round-trip with ANY BusyBox
-        # userland by measured design: GET is refused up front (all five
-        # guests settle `nc_dash_n: rejected`, and the `nc-transfer` gap
-        # record is `measured-broken`), and PUT spawns an OpenBSD-spelling
-        # listener the applet does not parse. What this phase certifies about
-        # nc is the LOUD refusal, in
-        # `tests/integration/busybox_bed/test_nc_refusal.py`; making nc work
-        # is a follow-up spec, and a row here that enshrined today's PUT
-        # outcome would have to be torn up by it.
+        # NO `nc` ROWS, and that is still a ruling rather than an omission
+        # (Chris, 2026-08-21) — but NOT FOR THE ORIGINAL REASON, which expired
+        # on 2026-08-25. It used to be incapability: otto's nc backend could
+        # not round-trip with any BusyBox userland, GET refused up front and
+        # PUT spawning an OpenBSD-spelling listener the applet does not parse.
+        # The universal `nc -l -p PORT` spelling closed that gap, the refusal
+        # and its test are deleted, and otto's nc now round-trips to these
+        # guests like any other host.
+        #
+        # WHAT KEEPS THE ROWS OUT IS DIVISION OF LABOUR. This phase asks each
+        # backend for DEPTH over ONE transport apiece — the two round trips
+        # below, on the transfer each host's lab entry resolves to, which for
+        # every BusyBox guest is `shell`. Crossing a guest's transports
+        # against its transfers is the conformance bed venue's job, and it
+        # already draws all five `bed-busybox[*:telnet:nc]` cells and puts a
+        # byte-tripwire payload and a mode through each
+        # (`tests/conformance/test_transfer_contract.py`). Each guest's entry
+        # lists both — `valid_transfers: ["shell", "nc"]` — and `shell` is the
+        # one it resolves to; an `nc` row here would force the other and take a
+        # second copy of a measurement the crossing already owns, which is the
+        # split that module's `applicable_cell` note describes from its side.
         *(pytest.param(("shell", ne), id=f"shell-{ne}") for ne in BUSYBOX_GUEST_NES),
     ],
     indirect=True,

@@ -146,16 +146,16 @@ Counts, derived from the records themselves rather than maintained by hand
 | Path state | Paths |
 | --- | --- |
 | `ADAPTED` | 1 |
-| `WIRED` | 7 |
+| `WIRED` | 6 |
 | `PROBE_REFUSED` | 2 |
-| `PROTECTED` | 2 |
+| `PROTECTED` | 1 |
 | `ATTRIBUTED` | 2 |
-| `OPEN` | 5 |
+| `OPEN` | 4 |
 
 The `WIRED`, `ADAPTED` and `ATTRIBUTED` paths — the ones whose message is this
 table's — reach {func}`~otto.host.userland.refuse_if_gapped`
-through **7** guard functions ({func}`~otto.host.userland.table_guards`), which
-is fewer than the ten such paths above — `read_file`/`write_file` share one
+through **6** guard functions ({func}`~otto.host.userland.table_guards`), which
+is fewer than the nine such paths above — `read_file`/`write_file` share one
 guard, and the scp and sftp backends each share one across both directions — so
 the two numbers are different on purpose and both are derived.
 
@@ -171,7 +171,6 @@ error prints it verbatim; the sections below are its readable form.
 | [`file-ops-base64`](#file-ops-base64) | `measured-broken` | `read_file` and `write_file` are refused on those same devices, rather than blaming the file for the missing applet — and, for a write, emptying it. |
 | [`sftp-transfer`](#sftp-transfer) | `measured-broken` | No sftp subsystem on a stock BusyBox device. Use the `shell` backend. |
 | [`scp-transfer`](#scp-transfer) | `measured-broken` | No `scp` binary on a stock BusyBox device, so otto refuses the transfer up front rather than failing one file at a time. A device with a real `scp` installed is unaffected. Use the `shell` backend. |
-| [`nc-transfer`](#nc-transfer) | `measured-broken` | The `nc` backend cannot drive BusyBox's own `nc` applet: a GET is refused up front on a device whose `nc` rejects `-N`, a PUT is not yet. A real netcat installed alongside is fine, and is not refused. |
 | [`daemon-launch`](#daemon-launch) | `measured-broken` | Launching a tagged daemon needs bash, which a stock BusyBox userland does not have, so `link impair --expire` is refused rather than left with a timer that never runs. Impair without `--expire` and it works. |
 | [`shutdown-command`](#shutdown-command) | `measured-broken` | Nothing, on any measured device: `Host.shutdown()` asks which spelling your device has and emits `poweroff` where there is no `shutdown`. Only a device with neither is refused. `Host.reboot()` is unaffected. |
 | [`run-command-line-length`](#run-command-line-length) | `measured-broken` | `Host.run()` refuses a command whose typed line would exceed 1022 characters, rather than let ash truncate it. `Host.exec()` is safe and is not refused. |
@@ -411,9 +410,9 @@ probe` prints the payload) removes it entirely.
 
 Unlike [`shutdown-command`](#shutdown-command), there is nothing here to adapt
 to: `ScpOptions` carries no binary-name override, and the name the far side runs
-is the protocol's rather than otto's — which is also what separates this from
-[`nc-transfer`](#nc-transfer), where `NcOptions.exec_name` means the presence of
-*an* `nc` is not the question.
+is the protocol's rather than otto's — which is also what separated this from
+the since-closed `nc-transfer` record, where `NcOptions.exec_name` means the
+presence of *an* `nc` is not the question.
 
 **Measured:** two measurements, and the second is what the refusal keys on.
 The dropbear rig, 2026-08-13: `scp -O` into the pinned BusyBox root fails with
@@ -428,67 +427,6 @@ applet probe, 2026-08-14: `scp` is absent from the applet list on all five
 refusal has landed. The record stays `measured-broken` because the surface still
 is: otto now declines the transfer instead of attempting one the device cannot
 serve.
-
-### nc-transfer
-
-**Status:** `measured-broken` — and the GET direction now refuses *from this
-table*, on a device whose own `nc` was measured to reject the option otto sends
-with. The PUT direction still does not, deliberately: read on.
-
-**Paths otto touches this from:**
-
-- `otto.host.transfer.nc.NcFileTransfer._get_files_nc` — **WIRED** by
-  `otto.host.transfer.nc.refuse_if_nc_rejects_dash_n`: asks the device to
-  send with `nc -N`, the option every matrix row rejects outright, and now
-  declines before it binds a local server or spawns anything.
-- `otto.host.transfer.nc.NcFileTransfer._get_files_nc_tunneled` — **PROTECTED**
-  by that same guard: the hop-tunnelled GET spawns `nc -Nl <port>` — both
-  rejected spellings in one option string — but `_get_files_nc` is its only
-  caller and refuses *above* the tunnel dispatch, so on a refused device this is
-  never entered. Not a hole: a guard here could never fire.
-- `otto.host.transfer.nc.NcFileTransfer._put_files_nc` — **OPEN**: spawns the
-  device-side listener as `nc -l -w <secs> <port>`, which the applet does not
-  accept, so nothing binds and otto waits for a peer that cannot arrive — a
-  timeout rather than the refusal this record describes.
-
-**Why the PUT is still open now the GET is not.** That command carries no `-N`
-at all; it is broken on BusyBox for a *different* reason — the applet spells a
-listener `-l -p PORT`. The two facts coincide on every matrix row and are still
-two facts, and refusing the PUT on the `-N` answer would decline a transfer this
-measurement says nothing about. Settling the right fact would mean asking your
-device to *bind a port*, which is a probe with a side effect on the host it is
-asking about.
-
-The `nc` transfer backend cannot drive BusyBox's own `nc` **applet**: it sends
-with `nc -N <ip> <port>` and listens OpenBSD-style with `nc -l <port>`, and the
-applet supports neither spelling. A BusyBox device with a real OpenBSD netcat
-installed alongside is fine — point `NcOptions.exec_name` at it — so this is a
-gap in the applet, not in every BusyBox host. **The refusal respects that**: it
-keys on the binary otto would actually exec, so a host whose `exec_name` is
-anything but `nc` is never refused from this record, whatever the device
-answered about its own `nc`.
-
-**Measured:** two measurements of the same option, and the second is what the
-refusal keys on. The five matrix artifacts, 2026-08-13: `nc -N 127.0.0.1 1` is
-rejected on every row (`nc: invalid option -- N` on the two oldest,
-`nc: unrecognized option: N` on the rest), and every row's own usage line spells
-the listener `nc [OPTIONS] -l -p PORT`. That one *connects*, so no call site can
-issue it. Then, 2026-08-14, the same five rows through the probe a call site
-*can* issue — {attr}`~otto.host.userland.Userland.nc_dash_n`, which compares a
-destination-less `nc` against `nc -N` and touches no socket: all five answer
-`rejected`, while a real OpenBSD netcat (1.226) answers `supported`, and answers
-`rejected` for a `-Q` control it genuinely lacks. That last row is what makes
-this an option test rather than a "does this look like BusyBox" test.
-
-**Pin it and skip the probe:** `otto host <id> probe` prints `nc_dash_n` with
-everything else, and a value pinned into `userland_options` is never re-probed.
-Re-take it if you change `NcOptions.exec_name`, since the answer is about the
-name `nc`.
-
-**Queued for:** the full-parity workstream, `todo/busybox-parity-sweep-2026-08-11.md`,
-which queues a BusyBox `nc` variant (`-l -p PORT`, size-terminated reads to
-replace the missing `-N`). The refusal has landed for the GET direction; a fix
-for either direction has not.
 
 ### daemon-launch
 
@@ -791,7 +729,12 @@ when a record changes:
 
 - adding a gap means adding a table row **and** a section, or the sync test
   reddens;
-- closing one means deleting both;
+- closing one means deleting both — the registry has no `fixed` state, so what
+  records a closure is the commit that removed the record and the spec that
+  argued for it. `nc-transfer` closed 2026-08-25: every listener otto spawns is
+  spelled `-l -p PORT` and every GET reads exactly the size its `stat` prefetch
+  measured, so there is no option left for a device to reject
+  (`docs/superpowers/specs/2026-08-25-nc-universal-spelling-design.md`);
 - changing a status means changing it in the row and in the section's
   **Status:** line;
 - adding or re-stating a path means changing the record's `paths` **and** the

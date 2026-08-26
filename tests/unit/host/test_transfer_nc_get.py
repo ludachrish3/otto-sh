@@ -11,7 +11,7 @@ These tests cover:
   ``ConnectionError``, and listen-task timeout.
 
 - ``TestNcGetTunneledCancellation`` (chaos hardening Plan 4, Task 7): external
-  cancellation mid-GET must cancel+reap the remote ``nc -Nl`` listener, not
+  cancellation mid-GET must cancel+reap the remote ``nc -l -p`` listener, not
   leak it for ``listener_timeout`` seconds (30s by default — longer than the
   10s teardown deadline; ``todo/chaos-teardown-followups.md`` §1). Mirrors
   ``test_transfer_nc_put.py::TestNcPutCancellation`` for the reversed-listener
@@ -20,14 +20,16 @@ These tests cover:
 
 import asyncio
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 import otto.host.transfer.nc as transfer_mod
 from otto.host.connections import ConnectionManager
-from otto.host.options import NcOptions
+from otto.host.options import NcOptions, UserlandOptions
 from otto.host.transfer import NcFileTransfer
+from otto.host.userland import Userland
 from otto.result import CommandResult, Result
 from otto.utils import Status
 
@@ -52,6 +54,7 @@ def _make_ft(
     has_tunnel: bool = False,
     term: str = "ssh",
     listener_timeout: float = 30.0,
+    userland: "Userland | None" = None,
 ) -> NcFileTransfer:
     mock_connections = MagicMock(spec=ConnectionManager)
     mock_connections.has_tunnel = has_tunnel
@@ -72,7 +75,7 @@ def _make_ft(
         ),
         get_local_ip=lambda: "127.0.0.1",
         exec_cmd=exec_cmd,
-        userland=None,
+        userland=userland,
     )
 
 
@@ -120,7 +123,7 @@ class TestGetFilesNcNonTunnel:
 
         async def exec_side(cmd: str, timeout=None, **kw):
             if "stat" in cmd:
-                return _ok("5\n")
+                return _ok("5 regular file\n")
             # nc sender command — return quickly so await send_task doesn't block.
             return _ok()
 
@@ -155,12 +158,17 @@ class TestGetFilesNcNonTunnel:
 
     @pytest.mark.asyncio
     async def test_happy_path_multiple_chunks(self, tmp_path: Path) -> None:
-        """Multiple chunks are concatenated in the destination file."""
+        """Multiple chunks are concatenated in the destination file.
+
+        The stat answers the payload's real length because the read loop
+        terminates on it — a size is the transfer's bound now, not a progress
+        decoration (see :class:`TestThePlainGetIsSizeTerminated`).
+        """
         src_remote = Path("/remote/multi.bin")
         dst_dir = tmp_path / "dst"
         dst_dir.mkdir()
 
-        ft = _make_ft(AsyncMock(return_value=_ok("0\n")), has_tunnel=False)
+        ft = _make_ft(AsyncMock(return_value=_ok("9\n")), has_tunnel=False)
 
         fake_server = MagicMock()
         fake_server.sockets = [MagicMock()]
@@ -176,7 +184,7 @@ class TestGetFilesNcNonTunnel:
 
         async def exec_side(cmd: str, timeout=None, **kw):
             if "stat" in cmd:
-                return _ok("0\n")
+                return _ok("9 regular file\n")
             return _ok()
 
         ft._exec_cmd = AsyncMock(side_effect=exec_side)  # type: ignore[method-assign]
@@ -233,7 +241,9 @@ class TestGetFilesNcNonTunnel:
 
         async def exec_side(cmd: str, timeout=None, **kw):
             if "stat" in cmd:
-                return _ok("0\n")
+                # Non-zero, or the loop owes no bytes and never reads at all —
+                # the raise this test is about would not happen.
+                return _ok("5 regular file\n")
             return _ok()
 
         ft = _make_ft(AsyncMock(side_effect=exec_side), has_tunnel=False)
@@ -284,9 +294,10 @@ class TestGetFilesNcNonTunnel:
 
         async def exec_side(cmd: str, timeout=None, **kw):
             if "stat" in cmd:
-                return _ok("0\n")
-            # nc sender command ("-N"): raise to simulate a transport failure.
-            if "-N " in cmd:
+                return _ok("0 regular empty file\n")
+            # The nc sender: keyed on its redirection, because the spelling no
+            # longer carries a `-N` to recognise it by.
+            if " < " in cmd:
                 raise OSError("send transport failed")
             return _ok()
 
@@ -328,7 +339,7 @@ class TestGetFilesNcNonTunnel:
 
         async def exec_side(cmd: str, timeout=None, **kw):
             if "stat" in cmd:
-                return _ok("10\n")
+                return _ok("10 regular file\n")
             return _ok()
 
         ft = _make_ft(AsyncMock(side_effect=exec_side), has_tunnel=False)
@@ -384,6 +395,587 @@ class TestGetFilesNcNonTunnel:
         mock_tunneled.assert_awaited_once()
 
 
+class _SilenceAfterPayload:
+    """*payload* in ``read``-sized bites, then SILENCE — never EOF.
+
+    The shape of an ``-N``-less sender that has reached EOF on its input and
+    is waiting for the RECEIVER to close (measured 2026-08-25 on all six
+    userlands). ``FakeReader`` cannot stand in for it: its trailing ``b""``
+    hands the loop the EOF this sender never sends.
+    """
+
+    def __init__(self, payload: bytes) -> None:
+        self._payload = payload
+
+    async def read(self, n: int) -> bytes:
+        if self._payload:
+            block, self._payload = self._payload[:n], self._payload[n:]
+            return block
+        await asyncio.Event().wait()  # still connected, saying nothing
+        raise AssertionError("unreachable")  # pragma: no cover
+
+
+def _fake_server(port: int) -> MagicMock:
+    """An ``asyncio.start_server`` stand-in reporting a local bind on *port*."""
+    server = MagicMock()
+    server.sockets = [MagicMock()]
+    server.sockets[0].getsockname.return_value = ("0.0.0.0", port)
+    server.close = MagicMock()
+    server.wait_closed = AsyncMock(return_value=None)
+    return server
+
+
+def _fake_writer() -> MagicMock:
+    """A ``StreamWriter`` stand-in whose ``close`` is observable."""
+    writer = MagicMock()
+    writer.close = MagicMock()
+    writer.wait_closed = AsyncMock(return_value=None)
+    return writer
+
+
+async def _captured_callback(captured: "list[Any]") -> Any:
+    """The ``_on_connect`` the patched ``start_server`` registered, once it has.
+
+    The same spin the older non-tunnel tests inline: yield to the loop until
+    ``_get_one`` has reached its ``start_server`` call.
+    """
+    for _ in range(20):
+        await asyncio.sleep(0)
+        if captured:
+            return captured[0]
+    raise AssertionError("start_server was never called")
+
+
+async def _abandon(*tasks: "asyncio.Task[Any]") -> None:
+    """Cancel and join *tasks* — a red run must not strand a pending task."""
+    for task in tasks:
+        task.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
+
+
+class TestThePlainGetIsSizeTerminated:
+    """The plain GET reads exactly the stat-reported size, then closes.
+
+    Nothing in the stream says "done" any more. The sender carries no ``-N``
+    — BusyBox's applet rejects the option outright — so it holds the socket
+    open after its last byte and waits for the receiver's close (measured
+    2026-08-25 on all six userlands). The stat prefetch, which used to
+    decorate a progress bar, is therefore the read loop's terminator, and
+    each of its failure modes becomes a verdict rather than a cosmetic
+    degrade: EOF before N is a short read, and a stat that could not answer
+    is a refusal for that file rather than a 0 that reads nothing and calls
+    it success.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_short_read_is_an_error_not_a_truncated_success(self, tmp_path: Path) -> None:
+        """EOF before the stat-reported size must FAIL, naming got/expected.
+
+        Read-to-EOF made a clean FIN mid-transfer (a killed sender, or the
+        ``-w`` idle-kill measured 2026-08-25) indistinguishable from
+        completion: the silent-truncation shape. Against a known N, short is
+        an error. Mutation check: revert the loop to read-to-EOF and this
+        test reports a truncated file as Success — it must be RED then.
+        """
+        src_remote = Path("/remote/data.bin")
+        dst_dir = tmp_path / "dst"
+        dst_dir.mkdir()
+
+        async def exec_side(cmd: str, timeout=None, **kw):
+            if "stat" in cmd:
+                return _ok("64 regular file\n")
+            return _ok()
+
+        ft = _make_ft(AsyncMock(side_effect=exec_side))
+        captured: list = []
+
+        async def fake_start_server(callback, host, port):
+            captured.append(callback)
+            return _fake_server(54330)
+
+        with patch.object(transfer_mod.asyncio, "start_server", new=fake_start_server):
+            get_task = asyncio.create_task(ft._get_files_nc([src_remote], dst_dir))
+            on_connect = await _captured_callback(captured)
+            # Half the file, then FIN: a killed sender, a dropped link, the
+            # `-w` idle-kill. Whatever caused it, 32 of 64 bytes arrived.
+            await on_connect(FakeReader([b"x" * 32]), _fake_writer())
+            status, msg = _only(await asyncio.wait_for(get_task, timeout=5.0), src_remote)
+
+        assert status is Status.Error, msg
+        assert "short read" in msg, msg
+        assert "64" in msg, f"the error must name what was expected: {msg}"
+        assert "32" in msg, f"the error must name what arrived: {msg}"
+
+    @pytest.mark.asyncio
+    async def test_a_failed_stat_refuses_the_file_before_any_listener_exists(
+        self, tmp_path: Path
+    ) -> None:
+        """stat rc!=0 must produce a per-file Error and never open a server.
+
+        It used to degrade to ``total=0`` — cosmetic, progress only. Under
+        size-termination a 0 reads zero bytes and "succeeds", so the degrade
+        arm becomes a refusal, and it fires before ``asyncio.start_server``:
+        the stat was issued and NO local server was created.
+        """
+        src_remote = Path("/remote/data.bin")
+        dst_dir = tmp_path / "dst"
+        dst_dir.mkdir()
+
+        async def exec_side(cmd: str, timeout=None, **kw):
+            if "stat" in cmd:
+                return CommandResult(command=cmd, value="", status=Status.Error, retcode=1)
+            return _ok()
+
+        exec_cmd = AsyncMock(side_effect=exec_side)
+        ft = _make_ft(exec_cmd)
+        started: list = []
+
+        async def fake_start_server(callback, host, port):
+            started.append(callback)
+
+            # Where the degraded 0 became a ghost success: a connection
+            # delivering nothing reads to EOF at once and resolves Success
+            # over an empty file. Nothing may reach here now — `started` is
+            # the assertion, this is what makes reaching it observable.
+            async def _connect() -> None:
+                await callback(FakeReader([]), _fake_writer())
+
+            asyncio.get_running_loop().call_soon(lambda: asyncio.create_task(_connect()))
+            return _fake_server(54331)
+
+        with patch.object(transfer_mod.asyncio, "start_server", new=fake_start_server):
+            per_file = await asyncio.wait_for(ft._get_files_nc([src_remote], dst_dir), timeout=5.0)
+        status, msg = _only(per_file, src_remote)
+
+        assert status is Status.Error, msg
+        assert "could not stat" in msg, msg
+        assert "rc=1" in msg, msg
+        assert not started, "a local server was bound for a file with no size to bound it"
+        assert any("stat -L -c '%s %F'" in c.args[0] for c in exec_cmd.await_args_list), (
+            "the stat never ran, so this test's premise never held"
+        )
+        assert not (dst_dir / "data.bin").exists(), (
+            "a destination file was created for a transfer that was refused"
+        )
+
+    @pytest.mark.asyncio
+    async def test_exactly_n_bytes_is_success_and_the_connection_is_closed(
+        self, tmp_path: Path
+    ) -> None:
+        """N bytes then silence (NO EOF) must complete: the close is otto's.
+
+        Measured 2026-08-25: on every userland the receiver's close is what
+        terminates the ``-N``-less sender, so a loop still waiting for EOF
+        waits for something nobody sends. The outer ``wait_for`` is this
+        test's red — a hang, not an assertion, is how that regression shows.
+        """
+        src_remote = Path("/remote/data.bin")
+        dst_dir = tmp_path / "dst"
+        dst_dir.mkdir()
+
+        async def exec_side(cmd: str, timeout=None, **kw):
+            if "stat" in cmd:
+                return _ok("5 regular file\n")
+            return _ok()
+
+        ft = _make_ft(AsyncMock(side_effect=exec_side))
+        captured: list = []
+
+        async def fake_start_server(callback, host, port):
+            captured.append(callback)
+            return _fake_server(54332)
+
+        writer = _fake_writer()
+
+        with patch.object(transfer_mod.asyncio, "start_server", new=fake_start_server):
+            get_task = asyncio.create_task(ft._get_files_nc([src_remote], dst_dir))
+            on_connect = await _captured_callback(captured)
+            connect_task = asyncio.create_task(on_connect(_SilenceAfterPayload(b"hello"), writer))
+            try:
+                per_file = await asyncio.wait_for(get_task, timeout=2.0)
+            finally:
+                await _abandon(connect_task, get_task)
+        status, msg = _only(per_file, src_remote)
+
+        assert status is Status.Success, msg
+        assert (dst_dir / "data.bin").read_bytes() == b"hello"
+        writer.close.assert_called_once()  # the close IS the sender's terminator
+
+    @pytest.mark.asyncio
+    async def test_a_stalled_sender_fails_at_the_bound_instead_of_hanging(
+        self, tmp_path: Path
+    ) -> None:
+        """Fewer than N bytes and then SILENCE must fail, not park forever.
+
+        The plain twin of the tunnelled arm's zero-progress bound, and it only
+        became necessary with size-termination: "when do we stop" moved from
+        the sender's FIN to otto's close, so a sender that delivers fewer than
+        `total` bytes and then waits for that close -- what every netcat
+        measured 2026-08-25 does at stdin EOF -- parks `reader.read` with no
+        deadline of its own. The close is then never reached, the remote
+        sender is stranded, and `await send_task` is unbounded by design. The
+        outer `wait_for` is this test's red: the regression is a HANG, not an
+        assertion.
+        """
+        src_remote = Path("/remote/data.bin")
+        dst_dir = tmp_path / "dst"
+        dst_dir.mkdir()
+
+        closed = asyncio.Event()
+        writer = _fake_writer()
+        writer.close = MagicMock(side_effect=closed.set)
+
+        async def exec_side(cmd: str, timeout=None, **kw):
+            if "stat" in cmd:
+                return _ok("5 regular file\n")
+            if " < " in cmd:
+                await closed.wait()  # the `-N`-less sender exits on our close
+                return _ok()
+            return _ok()
+
+        ft = _make_ft(AsyncMock(side_effect=exec_side))
+        captured: list = []
+
+        async def fake_start_server(callback, host, port):
+            captured.append(callback)
+            return _fake_server(54335)
+
+        with (
+            patch.object(transfer_mod, "_NC_STALL_TIMEOUT", 0.2),
+            patch.object(transfer_mod.asyncio, "start_server", new=fake_start_server),
+        ):
+            get_task = asyncio.create_task(ft._get_files_nc([src_remote], dst_dir))
+            on_connect = await _captured_callback(captured)
+            # 3 of the 5 bytes the stat promised, then a sender that says
+            # nothing and never closes: a file truncated between the stat and
+            # the read (log rotation is the ordinary case).
+            connect_task = asyncio.create_task(on_connect(_SilenceAfterPayload(b"abc"), writer))
+            try:
+                per_file = await asyncio.wait_for(get_task, timeout=3.0)
+            finally:
+                await _abandon(connect_task, get_task)
+        status, msg = _only(per_file, src_remote)
+
+        assert status is Status.Error, msg
+        assert "no data for" in msg, msg
+        assert "3 bytes received" in msg, f"the error must name what arrived: {msg}"
+        writer.close.assert_called_once()
+        assert closed.is_set(), "the sender was left connected to a receiver that never closed"
+
+    @pytest.mark.asyncio
+    async def test_a_file_that_grew_after_the_stat_delivers_the_measured_bytes(
+        self, tmp_path: Path
+    ) -> None:
+        """The plain twin of the tunnelled clamp: 100 measured, 150 offered.
+
+        UP is the direction a pre-transfer stat can be wrong in without
+        failing -- a live log grows between the measurement and the read -- and
+        the `min()` in the read's length is what stops the loop AT the
+        measurement, the close discarding the rest. Without it the loop would
+        take the whole 8 KiB block on offer and write 150 bytes for a file
+        vouched at 100, so the destination's contents are what makes the clamp
+        observable; the sender here honours the requested length, which is what
+        lets it be.
+        """
+        src_remote = Path("/remote/growing.log")
+        dst_dir = tmp_path / "dst"
+        dst_dir.mkdir()
+
+        async def exec_side(cmd: str, timeout=None, **kw):
+            if "stat" in cmd:
+                return _ok("100 regular file\n")
+            return _ok()
+
+        ft = _make_ft(AsyncMock(side_effect=exec_side))
+        captured: list = []
+
+        async def fake_start_server(callback, host, port):
+            captured.append(callback)
+            return _fake_server(54336)
+
+        writer = _fake_writer()
+
+        with patch.object(transfer_mod.asyncio, "start_server", new=fake_start_server):
+            get_task = asyncio.create_task(ft._get_files_nc([src_remote], dst_dir))
+            on_connect = await _captured_callback(captured)
+            connect_task = asyncio.create_task(on_connect(_SilenceAfterPayload(b"a" * 150), writer))
+            try:
+                per_file = await asyncio.wait_for(get_task, timeout=3.0)
+            finally:
+                await _abandon(connect_task, get_task)
+        status, msg = _only(per_file, src_remote)
+
+        assert status is Status.Success, msg
+        assert (dst_dir / "growing.log").read_bytes() == b"a" * 100, (
+            "the read did not stop at the measured size"
+        )
+        writer.close.assert_called_once()  # the close is what discards the excess
+
+    @pytest.mark.asyncio
+    async def test_a_read_that_raises_still_closes_on_the_sender(self, tmp_path: Path) -> None:
+        """The error arm must close too, or the failure arrives as a hang.
+
+        The close is the sender's only terminator now, and the spawn is
+        deliberately unbounded (``timeout=float("inf")``) because its duration
+        is the transfer. So a close that happens only where the read loop
+        finished normally turns a mid-stream read error into a parked
+        ``await send_task``. The scripted sender here does what every userland
+        measured 2026-08-25 does: having written its bytes, it waits for the
+        receiver — and the outer ``wait_for`` is the red.
+        """
+        src_remote = Path("/remote/data.bin")
+        dst_dir = tmp_path / "dst"
+        dst_dir.mkdir()
+
+        class BrokenReader:
+            """A reader whose ``read()`` raises to simulate an I/O error."""
+
+            async def read(self, _n: int) -> bytes:
+                raise OSError("simulated read failure")
+
+        closed = asyncio.Event()
+        writer = _fake_writer()
+        writer.close = MagicMock(side_effect=closed.set)
+
+        async def exec_side(cmd: str, timeout=None, **kw):
+            if "stat" in cmd:
+                return _ok("5 regular file\n")
+            if " < " in cmd:
+                await closed.wait()  # the `-N`-less sender exits on our close
+                return _ok()
+            return _ok()
+
+        ft = _make_ft(AsyncMock(side_effect=exec_side))
+        captured: list = []
+
+        async def fake_start_server(callback, host, port):
+            captured.append(callback)
+            return _fake_server(54334)
+
+        with patch.object(transfer_mod.asyncio, "start_server", new=fake_start_server):
+            get_task = asyncio.create_task(ft._get_files_nc([src_remote], dst_dir))
+            on_connect = await _captured_callback(captured)
+            connect_task = asyncio.create_task(on_connect(BrokenReader(), writer))
+            try:
+                per_file = await asyncio.wait_for(get_task, timeout=2.0)
+            finally:
+                await _abandon(connect_task, get_task)
+        status, msg = _only(per_file, src_remote)
+
+        assert status is Status.Error, msg
+        assert "simulated read failure" in msg, msg
+        assert closed.is_set(), "the sender was left connected to a receiver that never closed"
+
+    @pytest.mark.asyncio
+    async def test_the_sender_command_is_the_universal_spelling(self, tmp_path: Path) -> None:
+        """``nc IP PORT < FILE`` — no ``-N``, asserted as the whole command.
+
+        The full string including the redirections, so a reintroduced ``-N``
+        (BusyBox: ``unrecognized option``, and the spawn sends the stderr
+        saying so to /dev/null) or a ``-w`` (the measured mid-transfer
+        idle-kill) each redden this by name. The transfer's terminator is
+        otto's close, never an option.
+        """
+        src_remote = Path("/remote/data.bin")
+        dst_dir = tmp_path / "dst"
+        dst_dir.mkdir()
+
+        async def exec_side(cmd: str, timeout=None, **kw):
+            if "stat" in cmd:
+                return _ok("5 regular file\n")
+            return _ok()
+
+        exec_cmd = AsyncMock(side_effect=exec_side)
+        ft = _make_ft(exec_cmd)
+        captured: list = []
+
+        async def fake_start_server(callback, host, port):
+            captured.append(callback)
+            return _fake_server(54333)
+
+        with patch.object(transfer_mod.asyncio, "start_server", new=fake_start_server):
+            get_task = asyncio.create_task(ft._get_files_nc([src_remote], dst_dir))
+            on_connect = await _captured_callback(captured)
+            await on_connect(FakeReader([b"hello"]), _fake_writer())
+            status, msg = _only(await asyncio.wait_for(get_task, timeout=5.0), src_remote)
+
+        assert status is Status.Success, msg
+        sends = [c.args[0] for c in exec_cmd.await_args_list if " < " in c.args[0]]
+        assert sends == ["nc 127.0.0.1 54333 < /remote/data.bin 2>/dev/null"], sends
+        assert " -N" not in sends[0], f"-N is rejected by every BusyBox row: {sends[0]}"
+        assert " -w " not in sends[0], f"-w is the measured mid-transfer idle-kill: {sends[0]}"
+
+    @pytest.mark.asyncio
+    async def test_the_prefetch_stat_follows_symlinks_and_asks_the_file_type(
+        self, tmp_path: Path
+    ) -> None:
+        """``stat -L -c '%s %F' SRC`` — the whole command, both halves earned.
+
+        Measured 2026-08-25 on every pinned BusyBox applet (1.16.1, 1.21.1,
+        1.28.1, 1.31.0, 1.35.0) and the system coreutils ``stat``: a symlink
+        to a 12-byte file answers 23 to ``stat -c %s`` — the LINK's own length
+        — and 12 to ``stat -L -c %s``. The sender's ``< SRC`` follows the
+        link, so the unadorned spelling vouched 23 bytes against a stream
+        carrying 12, and on THIS arm that is the stall bound above, not an
+        error anybody could read. ``%F`` rides in the same call because the
+        size is the read's terminator and only a regular file delivers
+        ``st_size`` bytes down the pipe.
+        """
+        src_remote = Path("/remote/data.bin")
+        dst_dir = tmp_path / "dst"
+        dst_dir.mkdir()
+
+        async def exec_side(cmd: str, timeout=None, **kw):
+            if cmd.startswith("stat"):
+                return _ok("5 regular file\n")
+            return _ok()
+
+        exec_cmd = AsyncMock(side_effect=exec_side)
+        ft = _make_ft(exec_cmd)
+        captured: list = []
+
+        async def fake_start_server(callback, host, port):
+            captured.append(callback)
+            return _fake_server(54337)
+
+        with patch.object(transfer_mod.asyncio, "start_server", new=fake_start_server):
+            get_task = asyncio.create_task(ft._get_files_nc([src_remote], dst_dir))
+            on_connect = await _captured_callback(captured)
+            await on_connect(FakeReader([b"hello"]), _fake_writer())
+            status, msg = _only(await asyncio.wait_for(get_task, timeout=5.0), src_remote)
+
+        assert status is Status.Success, msg
+        stats = [c.args[0] for c in exec_cmd.await_args_list if c.args[0].startswith("stat")]
+        assert stats == ["stat -L -c '%s %F' /remote/data.bin"], stats
+
+    @pytest.mark.asyncio
+    async def test_a_non_regular_file_is_refused_before_anything_is_bound(
+        self, tmp_path: Path
+    ) -> None:
+        """A directory's ``st_size`` is not what ``< SRC`` delivers: refuse it.
+
+        4096 bytes vouched, a shell's error down the pipe or nothing at all,
+        and a read loop terminating on a number the stream will never reach —
+        the stall bound's shape rather than a legible verdict. The type came
+        back in the same call as the size, so the refusal is free, and it
+        lands where the failed-stat refusal already does: before
+        ``start_server`` binds anything and before a sender is spawned.
+        """
+        src_remote = Path("/remote/logs")
+        dst_dir = tmp_path / "dst"
+        dst_dir.mkdir()
+
+        async def exec_side(cmd: str, timeout=None, **kw):
+            if cmd.startswith("stat"):
+                return _ok("4096 directory\n")
+            return _ok()
+
+        exec_cmd = AsyncMock(side_effect=exec_side)
+        ft = _make_ft(exec_cmd)
+        started: list = []
+
+        async def fake_start_server(callback, host, port):
+            started.append(callback)
+            return _fake_server(54338)
+
+        with patch.object(transfer_mod.asyncio, "start_server", new=fake_start_server):
+            per_file = await asyncio.wait_for(ft._get_files_nc([src_remote], dst_dir), timeout=5.0)
+        status, msg = _only(per_file, src_remote)
+
+        assert status is Status.Error, msg
+        assert "not a regular file (directory)" in msg, msg
+        assert "shell backend" in msg, f"the refusal must name the way through: {msg}"
+        assert not started, "a local server was bound for a file the nc backend cannot transfer"
+        sends = [c.args[0] for c in exec_cmd.await_args_list if " < " in c.args[0]]
+        assert not sends, f"a sender was spawned for a directory: {sends}"
+        assert not (dst_dir / "logs").exists(), (
+            "a destination file was created for a transfer that was refused"
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_stat_answer_without_a_type_is_refused_as_unreadable(
+        self, tmp_path: Path
+    ) -> None:
+        """``12`` alone -- a ``stat`` that ignored ``%F`` -- is a refusal, not a 12-byte GET.
+
+        The parse wants "SIZE TYPE"; a ``stat`` that printed only the size
+        (a format string half-honoured) or something that is not a size at
+        all lands on the unparsable arm. That arm is the one an unmeasured
+        userland reaches, so it must be a named refusal quoting what came
+        back, and it must land where the other refusals do: before anything
+        is bound or spawned. Injected: the fake answers ``"12\n"``.
+        """
+        src_remote = Path("/remote/data.bin")
+        dst_dir = tmp_path / "dst"
+        dst_dir.mkdir()
+
+        async def exec_side(cmd: str, timeout=None, **kw):
+            if cmd.startswith("stat"):
+                return _ok("12\n")
+            return _ok()
+
+        exec_cmd = AsyncMock(side_effect=exec_side)
+        ft = _make_ft(exec_cmd)
+        started: list = []
+
+        async def fake_start_server(callback, host, port):
+            started.append(callback)
+            return _fake_server(54339)
+
+        with patch.object(transfer_mod.asyncio, "start_server", new=fake_start_server):
+            per_file = await asyncio.wait_for(ft._get_files_nc([src_remote], dst_dir), timeout=5.0)
+        status, msg = _only(per_file, src_remote)
+
+        assert status is Status.Error, msg
+        assert "could not stat the remote file" in msg, msg
+        assert "'12'" in msg, f"the refusal must quote the answer it could not read: {msg}"
+        assert not started, "a local server was bound on an answer that named no size"
+        sends = [c.args[0] for c in exec_cmd.await_args_list if " < " in c.args[0]]
+        assert not sends, f"a sender was spawned on an unreadable stat answer: {sends}"
+
+    @pytest.mark.asyncio
+    async def test_an_empty_regular_file_is_still_a_success(self, tmp_path: Path) -> None:
+        """``0 regular empty file`` transfers; only the TYPE arm may refuse.
+
+        The size arm cannot be the one that refuses a zero: an empty regular
+        file is a legitimate GET, and ``%F`` names it as one. It is also the
+        answer a procfs pseudo-file gives (``/proc/version`` → ``0 regular
+        empty file``, measured), which is exactly why those are documented
+        rather than refused — nothing in the stat separates them.
+        """
+        src_remote = Path("/remote/empty.log")
+        dst_dir = tmp_path / "dst"
+        dst_dir.mkdir()
+
+        async def exec_side(cmd: str, timeout=None, **kw):
+            if cmd.startswith("stat"):
+                return _ok("0 regular empty file\n")
+            return _ok()
+
+        ft = _make_ft(AsyncMock(side_effect=exec_side))
+        captured: list = []
+
+        async def fake_start_server(callback, host, port):
+            captured.append(callback)
+            return _fake_server(54339)
+
+        writer = _fake_writer()
+
+        with patch.object(transfer_mod.asyncio, "start_server", new=fake_start_server):
+            get_task = asyncio.create_task(ft._get_files_nc([src_remote], dst_dir))
+            on_connect = await _captured_callback(captured)
+            connect_task = asyncio.create_task(on_connect(_SilenceAfterPayload(b""), writer))
+            try:
+                per_file = await asyncio.wait_for(get_task, timeout=3.0)
+            finally:
+                await _abandon(connect_task, get_task)
+        status, msg = _only(per_file, src_remote)
+
+        assert status is Status.Success, msg
+        assert (dst_dir / "empty.log").read_bytes() == b""
+        writer.close.assert_called_once()  # a `total` of 0 closes at once
+
+
 # ---------------------------------------------------------------------------
 # _get_files_nc_tunneled — happy path + error branches
 # ---------------------------------------------------------------------------
@@ -405,11 +997,11 @@ class TestGetFilesNcTunneled:
         fake_writer.wait_closed = AsyncMock(return_value=None)
 
         async def exec_side(cmd: str, timeout=None, **kw):
-            if "stat -c" in cmd:
+            if cmd.startswith("stat"):
                 # Remote file-size stat: return size.
-                return _ok("5\n")
-            if "-Nl" in cmd:
-                # nc -Nl listener: complete immediately — data transferred via FakeReader.
+                return _ok("5 regular file\n")
+            if " -l -p " in cmd:
+                # The listener: complete immediately — data transferred via FakeReader.
                 return _ok()
             # ss port-finding, warmup "true", etc.
             return _ok("9000\n")
@@ -444,10 +1036,10 @@ class TestGetFilesNcTunneled:
         dst_dir.mkdir()
 
         async def exec_side(cmd: str, timeout=None, **kw):
-            if "stat -c" in cmd:
-                return _ok("0\n")
-            if "-Nl" in cmd:
-                # nc -Nl listener: block until cancelled (orphaned because wait raises first).
+            if cmd.startswith("stat"):
+                return _ok("0 regular empty file\n")
+            if " -l -p " in cmd:
+                # The listener: block until cancelled (orphaned — the wait raises first).
                 await asyncio.Event().wait()
             # ss port-finding, warmup, etc. → return a valid port number.
             return _ok("9000\n")
@@ -482,10 +1074,10 @@ class TestGetFilesNcTunneled:
         dst_dir.mkdir()
 
         async def exec_side(cmd: str, timeout=None, **kw):
-            if "stat -c" in cmd:
-                return _ok("0\n")
-            if "-Nl" in cmd:
-                # nc -Nl listener: block until cancelled (connect error fires first).
+            if cmd.startswith("stat"):
+                return _ok("0 regular empty file\n")
+            if " -l -p " in cmd:
+                # The listener: block until cancelled (the connect error fires first).
                 await asyncio.Event().wait()
             # ss port-finding, warmup, etc.
             return _ok("9000\n")
@@ -521,8 +1113,8 @@ class TestGetFilesNcTunneled:
     async def test_listen_task_timeout_returns_status_error(self, tmp_path: Path) -> None:
         """listen_task exceeds listener_timeout → Status.Error with 'orphaned'.
 
-        The listen_task is the asyncio.Task wrapping the ``nc -Nl`` exec.
-        We make the nc -Nl exec block forever (orphaned listener) so that the
+        The listen_task is the asyncio.Task wrapping the ``nc -l -p`` exec.
+        We make that exec block forever (orphaned listener) so that the
         ``asyncio.wait_for(listen_task, timeout=...)`` fires. ``_get_one``
         retries the attempt once on a fresh port (the listener-readiness-race
         recovery), so the streams are built fresh per attempt and the final
@@ -535,9 +1127,9 @@ class TestGetFilesNcTunneled:
         listener_blocked = asyncio.Event()
 
         async def exec_side(cmd: str, timeout=None, **kw):
-            if "stat -c" in cmd:
-                return _ok("0\n")
-            if "-Nl" in cmd:
+            if cmd.startswith("stat"):
+                return _ok("0 regular empty file\n")
+            if " -l -p " in cmd:
                 # Orphaned listener: nc never exits, simulating a port-collision scenario.
                 await listener_blocked.wait()
                 return _ok()  # pragma: no cover
@@ -597,9 +1189,9 @@ class TestGetFilesNcTunneled:
         fake_writer.wait_closed = AsyncMock(return_value=None)
 
         async def exec_side(cmd: str, timeout=None, **kw):
-            if "stat -c" in cmd:
-                return _ok("10\n")
-            if "-Nl" in cmd:
+            if cmd.startswith("stat"):
+                return _ok("10 regular file\n")
+            if " -l -p " in cmd:
                 return _ok()
             return _ok("9000\n")
 
@@ -627,25 +1219,404 @@ class TestGetFilesNcTunneled:
         assert progress_calls[1] == (10, 10)
 
 
+class TestTheTunneledGetIsSizeTerminated:
+    """The hop-forwarded GET reads exactly the stat-reported size, then closes.
+
+    The plain arm's argument (``TestThePlainGetIsSizeTerminated``) carried
+    through a port forward: the remote listener carries no ``-N`` — BusyBox's
+    applet has no such option — so it holds the connection open after its last
+    byte and ends on the RECEIVER's close, measured 2026-08-25 on all six
+    userlands. The size the prefetch measured is the read loop's terminator
+    here too.
+
+    What that replaces is a documented leniency, not an oversight: this path
+    used to fail an EOF at ZERO bytes against a known size and accept every
+    other short read, because a pre-transfer stat cannot tell a file that grew
+    from a transfer that was severed. Against a known N the two separate — N
+    bytes arrive and the rest is discarded by the close; fewer than N is a
+    short read — so the truncations that leniency waved through (a reaped
+    listener, a hop that dropped, the ``-w`` idle-kill this wave removes) stop
+    arriving as Success over a partial file.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_short_read_is_an_error_not_a_truncated_success(self, tmp_path: Path) -> None:
+        """EOF at 32 of 64 bytes must FAIL, naming got and expected.
+
+        The case the old check was deliberately narrowed AWAY from: non-zero,
+        so ``bytes_done == 0`` never fired, and the caller was handed Success
+        over half a file. Both attempts see the same truncation, so the retry
+        cannot mask it.
+        """
+        src_remote = Path("/remote/data.bin")
+        dst_dir = tmp_path / "dst"
+        dst_dir.mkdir()
+
+        async def exec_side(cmd: str, timeout=None, **kw):
+            if cmd.startswith("stat"):
+                return _ok("64 regular file\n")
+            return _ok("9000\n")
+
+        ft = _make_ft(AsyncMock(side_effect=exec_side), has_tunnel=True, listener_timeout=5.0)
+        ft._connections.forward_port = AsyncMock(return_value=15000)
+
+        with (
+            patch.object(
+                NcFileTransfer, "_wait_for_remote_listener", new=AsyncMock(return_value=None)
+            ),
+            patch.object(
+                transfer_mod,
+                "_connect_with_retry",
+                AsyncMock(side_effect=lambda *a, **k: (FakeReader([b"x" * 32]), _fake_writer())),
+            ),
+        ):
+            status, msg = _only(
+                await asyncio.wait_for(
+                    ft._get_files_nc_tunneled([src_remote], dst_dir), timeout=5.0
+                ),
+                src_remote,
+            )
+
+        assert status is Status.Error, msg
+        assert "short read" in msg, msg
+        assert "64" in msg, f"the error must name what was expected: {msg}"
+        assert "32" in msg, f"the error must name what arrived: {msg}"
+
+    @pytest.mark.asyncio
+    async def test_a_failed_stat_refuses_the_file_before_any_listener_exists(
+        self, tmp_path: Path
+    ) -> None:
+        """stat rc!=0 must fail the file with NOTHING spawned and NOTHING bound.
+
+        The stronger half of the plain arm's twin: this path spawns a REMOTE
+        process and opens a port forward, so a size that cannot bound the
+        transfer has to be a verdict before either exists. The old encoding
+        made the same failure invisible — ``None`` skipped the empty check, so
+        a stat failure plus a dropped connection returned Success over a
+        zero-byte file.
+        """
+        src_remote = Path("/remote/data.bin")
+        dst_dir = tmp_path / "dst"
+        dst_dir.mkdir()
+
+        async def exec_side(cmd: str, timeout=None, **kw):
+            if cmd.startswith("stat"):
+                return CommandResult(command=cmd, value="", status=Status.Error, retcode=1)
+            return _ok("9000\n")
+
+        exec_cmd = AsyncMock(side_effect=exec_side)
+        ft = _make_ft(exec_cmd, has_tunnel=True, listener_timeout=5.0)
+        ft._connections.forward_port = AsyncMock(return_value=15000)
+
+        with (
+            patch.object(
+                NcFileTransfer, "_wait_for_remote_listener", new=AsyncMock(return_value=None)
+            ),
+            patch.object(
+                transfer_mod,
+                "_connect_with_retry",
+                AsyncMock(side_effect=lambda *a, **k: (FakeReader([]), _fake_writer())),
+            ),
+        ):
+            status, msg = _only(
+                await asyncio.wait_for(
+                    ft._get_files_nc_tunneled([src_remote], dst_dir), timeout=5.0
+                ),
+                src_remote,
+            )
+
+        assert status is Status.Error, msg
+        assert "could not stat" in msg, msg
+        assert "rc=1" in msg, msg
+        spawns = [c.args[0] for c in exec_cmd.await_args_list if " < " in c.args[0]]
+        assert not spawns, f"a remote listener was spawned for a file with no size: {spawns}"
+        ft._connections.forward_port.assert_not_awaited()
+        assert any("stat -L -c '%s %F'" in c.args[0] for c in exec_cmd.await_args_list), (
+            "the stat never ran, so this test's premise never held"
+        )
+        assert not (dst_dir / "data.bin").exists(), (
+            "a destination file was created for a transfer that was refused"
+        )
+
+    @pytest.mark.asyncio
+    async def test_exactly_n_bytes_is_success_and_ottos_close_ends_the_listener(
+        self, tmp_path: Path
+    ) -> None:
+        """N bytes then SILENCE (no EOF) must complete, and complete by closing.
+
+        The scripted listener here is the measured one: having written its
+        bytes it returns only once the receiver closes. A loop still waiting
+        for EOF therefore reaches the stall bound instead of finishing —
+        patched short so the regression is an assertion rather than a wait.
+        """
+        src_remote = Path("/remote/data.bin")
+        dst_dir = tmp_path / "dst"
+        dst_dir.mkdir()
+
+        closed = asyncio.Event()
+        writer = _fake_writer()
+        writer.close = MagicMock(side_effect=closed.set)
+
+        async def exec_side(cmd: str, timeout=None, **kw):
+            if cmd.startswith("stat"):
+                return _ok("5 regular file\n")
+            if " < " in cmd:  # the remote listener, serving the file
+                await closed.wait()  # ends on OUR close and on nothing else
+                return _ok()
+            return _ok("9000\n")
+
+        ft = _make_ft(AsyncMock(side_effect=exec_side), has_tunnel=True, listener_timeout=5.0)
+        ft._connections.forward_port = AsyncMock(return_value=15000)
+
+        with (
+            patch.object(transfer_mod, "_NC_STALL_TIMEOUT", 0.3),
+            patch.object(
+                NcFileTransfer, "_wait_for_remote_listener", new=AsyncMock(return_value=None)
+            ),
+            patch.object(
+                transfer_mod,
+                "_connect_with_retry",
+                AsyncMock(side_effect=lambda *a, **k: (_SilenceAfterPayload(b"hello"), writer)),
+            ),
+        ):
+            status, msg = _only(
+                await asyncio.wait_for(
+                    ft._get_files_nc_tunneled([src_remote], dst_dir), timeout=5.0
+                ),
+                src_remote,
+            )
+
+        assert status is Status.Success, msg
+        assert (dst_dir / "data.bin").read_bytes() == b"hello"
+        assert closed.is_set(), "the listener was left waiting on a receiver that never closed"
+
+    @pytest.mark.asyncio
+    async def test_the_listener_spawn_is_the_universal_spelling(self, tmp_path: Path) -> None:
+        """``nc -l -p PORT < FILE`` — asserted whole, so a re-added option reds.
+
+        ``-l -p`` is the one listener spelling every measured netcat accepts;
+        ``-N`` is the option BusyBox's applet rejects outright (and this spawn
+        sends the ``unrecognized option`` saying so to /dev/null, which is how
+        the rejection used to arrive as a hang); ``-w`` is the mid-transfer
+        idle-kill measured on five of six userlands, rc 0 and a partial file.
+        """
+        src_remote = Path("/remote/data.bin")
+        dst_dir = tmp_path / "dst"
+        dst_dir.mkdir()
+
+        async def exec_side(cmd: str, timeout=None, **kw):
+            if cmd.startswith("stat"):
+                return _ok("5 regular file\n")
+            return _ok("9000\n")
+
+        exec_cmd = AsyncMock(side_effect=exec_side)
+        ft = _make_ft(exec_cmd, has_tunnel=True, listener_timeout=5.0)
+        ft._connections.forward_port = AsyncMock(return_value=15000)
+
+        with (
+            patch.object(
+                NcFileTransfer, "_wait_for_remote_listener", new=AsyncMock(return_value=None)
+            ),
+            patch.object(
+                transfer_mod,
+                "_connect_with_retry",
+                AsyncMock(side_effect=lambda *a, **k: (FakeReader([b"hello"]), _fake_writer())),
+            ),
+        ):
+            status, msg = _only(
+                await asyncio.wait_for(
+                    ft._get_files_nc_tunneled([src_remote], dst_dir), timeout=5.0
+                ),
+                src_remote,
+            )
+
+        assert status is Status.Success, msg
+        spawns = [c.args[0] for c in exec_cmd.await_args_list if " < " in c.args[0]]
+        assert spawns == ["nc -l -p 9000 < /remote/data.bin 2>/dev/null"], spawns
+        assert " -N" not in spawns[0], f"-N is rejected by every BusyBox row: {spawns[0]}"
+        assert " -w " not in spawns[0], f"-w is the measured mid-transfer idle-kill: {spawns[0]}"
+
+    @pytest.mark.asyncio
+    async def test_get_on_a_busybox_userland_is_no_longer_refused(self, tmp_path: Path) -> None:
+        """A GET against a BusyBox-class userland must transfer, not refuse.
+
+        The refusal that used to sit at the top of ``_get_files_nc`` — ABOVE
+        the tunnel dispatch, so it refused both arms — was predicated on a
+        ``nc_dash_n`` probe of ``rejected``, which is what every BusyBox row
+        measured. Both the guard and the capability it read are gone: no spawn
+        asks for ``-N`` any more, so there is no option left for a device to
+        reject. What is pinned here is the OUTCOME, which is why the guard
+        survives its own predicate: an ``ash`` userland carrying the applet set
+        the matrix measured reaches the transfer and succeeds. Entered through
+        ``_get_files_nc`` rather than the tunnelled emitter directly, because
+        the removed call was on that side of the dispatch.
+        """
+        src_remote = Path("/remote/data.bin")
+        dst_dir = tmp_path / "dst"
+        dst_dir.mkdir()
+
+        async def _unreachable(cmd: str, **_kw: object) -> CommandResult:
+            raise OSError(f"no device in this test: {cmd!r}")
+
+        # Declared, not probed: the values are the ones every matrix row
+        # measures, and a scripted device is not needed to hold them. The
+        # runner raises, so a declaration that failed to take would leave the
+        # capability unsettled rather than quietly probing something else.
+        userland = Userland(UserlandOptions(shell_dialect="ash", applet_nc="present"), _unreachable)
+        await userland.resolve()
+        assert userland.shell_dialect == "ash", "the premise never held"
+        assert userland.has_applet("nc") == "present", "the premise never held"
+
+        async def exec_side(cmd: str, timeout=None, **kw):
+            if cmd.startswith("stat"):
+                return _ok("5 regular file\n")
+            return _ok("9000\n")
+
+        ft = _make_ft(
+            AsyncMock(side_effect=exec_side),
+            has_tunnel=True,
+            listener_timeout=5.0,
+            userland=userland,
+        )
+        ft._connections.forward_port = AsyncMock(return_value=15000)
+
+        with (
+            patch.object(
+                NcFileTransfer, "_wait_for_remote_listener", new=AsyncMock(return_value=None)
+            ),
+            patch.object(
+                transfer_mod,
+                "_connect_with_retry",
+                AsyncMock(side_effect=lambda *a, **k: (FakeReader([b"hello"]), _fake_writer())),
+            ),
+        ):
+            status, msg = _only(
+                await asyncio.wait_for(ft._get_files_nc([src_remote], dst_dir), timeout=5.0),
+                src_remote,
+            )
+
+        assert status is Status.Success, msg
+        assert (dst_dir / "data.bin").read_bytes() == b"hello"
+
+    @pytest.mark.asyncio
+    async def test_the_prefetch_stat_follows_symlinks_and_asks_the_file_type(
+        self, tmp_path: Path
+    ) -> None:
+        """``stat -L -c '%s %F' SRC`` here too, asserted as the whole command.
+
+        Same measurement as the plain arm's twin (2026-08-25, five pinned
+        BusyBox applets plus the system coreutils ``stat``): a symlink to a
+        12-byte file answers 23 to ``stat -c %s`` and 12 to ``stat -L -c %s``,
+        while the remote listener's ``< SRC`` follows the link. Pinned on BOTH
+        arms because both prefetches are their own call site — a fix applied
+        to one and not the other is exactly the drift this file exists to
+        catch.
+        """
+        src_remote = Path("/remote/data.bin")
+        dst_dir = tmp_path / "dst"
+        dst_dir.mkdir()
+
+        async def exec_side(cmd: str, timeout=None, **kw):
+            if cmd.startswith("stat"):
+                return _ok("5 regular file\n")
+            return _ok("9000\n")
+
+        exec_cmd = AsyncMock(side_effect=exec_side)
+        ft = _make_ft(exec_cmd, has_tunnel=True, listener_timeout=5.0)
+        ft._connections.forward_port = AsyncMock(return_value=15000)
+
+        with (
+            patch.object(
+                NcFileTransfer, "_wait_for_remote_listener", new=AsyncMock(return_value=None)
+            ),
+            patch.object(
+                transfer_mod,
+                "_connect_with_retry",
+                AsyncMock(side_effect=lambda *a, **k: (FakeReader([b"hello"]), _fake_writer())),
+            ),
+        ):
+            status, msg = _only(
+                await asyncio.wait_for(
+                    ft._get_files_nc_tunneled([src_remote], dst_dir), timeout=5.0
+                ),
+                src_remote,
+            )
+
+        assert status is Status.Success, msg
+        stats = [c.args[0] for c in exec_cmd.await_args_list if c.args[0].startswith("stat")]
+        assert stats == ["stat -L -c '%s %F' /remote/data.bin"], stats
+
+    @pytest.mark.asyncio
+    async def test_a_non_regular_file_is_refused_before_anything_is_spawned(
+        self, tmp_path: Path
+    ) -> None:
+        """The stronger half: a directory must cost no listener and no forward.
+
+        This arm spawns a REMOTE process and opens a port forward, so a file
+        whose ``st_size`` is not what ``< SRC`` will deliver has to be a
+        verdict before either exists — the same place, and for the same
+        reason, as the failed-stat refusal beside it.
+        """
+        src_remote = Path("/remote/logs")
+        dst_dir = tmp_path / "dst"
+        dst_dir.mkdir()
+
+        async def exec_side(cmd: str, timeout=None, **kw):
+            if cmd.startswith("stat"):
+                return _ok("4096 directory\n")
+            return _ok("9000\n")
+
+        exec_cmd = AsyncMock(side_effect=exec_side)
+        ft = _make_ft(exec_cmd, has_tunnel=True, listener_timeout=5.0)
+        ft._connections.forward_port = AsyncMock(return_value=15000)
+
+        with (
+            patch.object(
+                NcFileTransfer, "_wait_for_remote_listener", new=AsyncMock(return_value=None)
+            ),
+            patch.object(
+                transfer_mod,
+                "_connect_with_retry",
+                AsyncMock(side_effect=lambda *a, **k: (FakeReader([]), _fake_writer())),
+            ),
+        ):
+            status, msg = _only(
+                await asyncio.wait_for(
+                    ft._get_files_nc_tunneled([src_remote], dst_dir), timeout=5.0
+                ),
+                src_remote,
+            )
+
+        assert status is Status.Error, msg
+        assert "not a regular file (directory)" in msg, msg
+        assert "shell backend" in msg, f"the refusal must name the way through: {msg}"
+        spawns = [c.args[0] for c in exec_cmd.await_args_list if " < " in c.args[0]]
+        assert not spawns, f"a remote listener was spawned for a directory: {spawns}"
+        ft._connections.forward_port.assert_not_awaited()
+        assert not (dst_dir / "logs").exists(), (
+            "a destination file was created for a transfer that was refused"
+        )
+
+
 # ============================================================================
 # TestNcGetTunneledCancellation — chaos hardening Plan 4, Task 7
 # ============================================================================
 
 
 class TestNcGetTunneledCancellation:
-    """External cancellation mid-GET must reap the remote ``nc -Nl`` listener.
+    """External cancellation mid-GET must reap the remote ``nc -l -p`` listener.
 
     ``_get_files_nc_tunneled``'s inner ``_get_one`` spawns the remote listener
-    (``nc -Nl -w <listener_timeout> <port> < <src>``) as an ``asyncio.Task``
-    and only joins it on its normal success / ``ConnectionError`` / timeout
-    branches. A caller-side cancellation skips all of those, so — mirroring
+    (``nc -l -p <port> < <src>``) as an ``asyncio.Task`` and only joins it on
+    its normal success / ``ConnectionError`` / timeout branches. A caller-side
+    cancellation skips all of those, so — mirroring
     ``test_transfer_nc_put.py::TestNcPutCancellation`` for the put path's
     ``_attempt`` — ``_get_one`` must cancel the listener task and reap the
     remote ``nc -l`` itself. Pre-fix there is no ``except
     asyncio.CancelledError`` handler at all in ``_get_one``, so the listener
-    is left running until its own ``-w`` timeout (30s default), which
-    outlives the 10s teardown deadline (``todo/chaos-teardown-followups.md``
-    §1; chaos spec success-criterion #1).
+    is left running until something else ends it — the remote ``timeout``
+    prefix, an hour later — which outlives the 10s teardown deadline
+    (``todo/chaos-teardown-followups.md`` §1; chaos spec success-criterion #1).
     """
 
     @pytest.mark.asyncio
@@ -657,10 +1628,12 @@ class TestNcGetTunneledCancellation:
         listener_started = asyncio.Event()
 
         async def exec_side_effect(cmd: str, timeout: "float | None" = None, **kw: object):
-            if "-Nl" in cmd:
+            if " -l -p " in cmd:
                 # The remote listener "runs" until its task is cancelled.
                 listener_started.set()
                 await asyncio.Event().wait()
+            if cmd.startswith("stat"):
+                return _ok("9000 regular file\n")
             return _ok("9000\n")
 
         exec_cmd = AsyncMock(side_effect=exec_side_effect)
@@ -723,9 +1696,11 @@ class TestNcGetTunneledCancellation:
         reap_cancelled: "list[bool]" = []
 
         async def exec_side_effect(cmd: str, timeout: "float | None" = None, **kw: object):
-            if "-Nl" in cmd:
+            if " -l -p " in cmd:
                 listener_started.set()
                 await asyncio.Event().wait()  # the remote listener runs until reaped
+            if cmd.startswith("stat"):
+                return _ok("9000 regular file\n")
             return _ok("9000\n")
 
         async def parked_reap(port: int) -> None:
@@ -788,8 +1763,8 @@ class TestNcGetStallBoundAndRetry:
 
     @staticmethod
     async def _exec_ok(cmd: str, timeout=None, **kw):
-        if "stat -c" in cmd:
-            return _ok("3\n")
+        if cmd.startswith("stat"):
+            return _ok("3 regular file\n")
         return _ok("9000\n")
 
     @pytest.mark.asyncio
@@ -833,7 +1808,10 @@ class TestNcGetStallBoundAndRetry:
     @pytest.mark.asyncio
     async def test_a_short_read_is_an_error_not_a_ghost_success(self, tmp_path: Path):
         """EOF at 0 of 3 expected bytes = the connection was dropped in the
-        accept window. Pre-fix this returned Success with an empty file."""
+        accept window. Pre-fix this returned Success with an empty file — and
+        it is now the zero end of the size-terminated read's short-read arm
+        rather than a check of its own, which is why the message it asserts is
+        the same one a partial delivery gets."""
         src_remote = Path("/remote/data.bin")
         dst_dir = tmp_path / "dst"
         dst_dir.mkdir()
@@ -861,8 +1839,9 @@ class TestNcGetStallBoundAndRetry:
             )
 
         assert status is Status.Error
-        assert "empty transfer" in msg, msg
+        assert "short read" in msg, msg
         assert "3 bytes" in msg, msg
+        assert "after 0" in msg, msg
 
     @pytest.mark.asyncio
     async def test_the_fresh_port_retry_recovers_the_race(self, tmp_path: Path):
@@ -918,8 +1897,9 @@ class TestNcGetStallSemantics:
     """GET twins of the stall-semantics pins (interim review finding 5): the
     forward-setup bound and the wedged-close abort existed on GET but were
     unpinned — the PUT twin alone leaves the GET copy free to regress — and
-    the size-check semantics (finding 4) are pinned in BOTH directions:
-    empty-vs-known-size fails, changed-size and unknown-size do not."""
+    the size semantics (finding 4) are pinned in BOTH directions: a file that
+    grew delivers the measured bytes and succeeds, while short of the measured
+    size is an error (``TestTheTunneledGetIsSizeTerminated``)."""
 
     def _ft(self, exec_side) -> NcFileTransfer:
         ft = _make_ft(AsyncMock(side_effect=exec_side), has_tunnel=True)
@@ -935,14 +1915,8 @@ class TestNcGetStallSemantics:
 
     @staticmethod
     async def _exec_sized(cmd: str, timeout=None, **kw):
-        if "stat -c" in cmd:
-            return _ok("100\n")
-        return _ok("9000\n")
-
-    @staticmethod
-    async def _exec_stat_fails(cmd: str, timeout=None, **kw):
-        if "stat -c" in cmd:
-            return CommandResult(command=cmd, value="", status=Status.Error, retcode=1)
+        if cmd.startswith("stat"):
+            return _ok("100 regular file\n")
         return _ok("9000\n")
 
     @pytest.mark.asyncio
@@ -990,8 +1964,8 @@ class TestNcGetStallSemantics:
         fake_writer.transport = MagicMock()
 
         async def exec_three(cmd: str, timeout=None, **kw):
-            if "stat -c" in cmd:
-                return _ok("3\n")
+            if cmd.startswith("stat"):
+                return _ok("3 regular file\n")
             return _ok("9000\n")
 
         with (
@@ -1017,11 +1991,18 @@ class TestNcGetStallSemantics:
         fake_writer.transport.abort.assert_called()
 
     @pytest.mark.asyncio
-    async def test_a_changed_remote_file_is_not_failed_by_the_stale_stat(self, tmp_path: Path):
-        """The pre-transfer stat is a snapshot; a growing/changed remote file
-        legitimately delivers a different byte count (review finding 4: the
-        first cut hard-failed any mismatch — a live log through a hop would
-        have errored where pre-fix it succeeded)."""
+    async def test_a_file_that_grew_after_the_stat_delivers_the_measured_bytes(
+        self, tmp_path: Path
+    ):
+        """The pre-transfer stat is a snapshot, and UP is the direction it can
+        be wrong in without failing: a growing remote file — a live log through
+        a hop — offers more than was measured, and the read stops at the
+        measurement with the excess discarded by the close. Review finding 4
+        had to accept every mismatch because nothing could tell a grown file
+        from a severed transfer; terminating ON the size is what separates
+        them, so this direction stays a Success while short is now an error.
+        The reader here honours the requested length, which is what makes
+        "never read the excess" observable as the file's contents."""
         src_remote = Path("/remote/growing.log")
         dst_dir = tmp_path / "dst"
         dst_dir.mkdir()
@@ -1033,7 +2014,12 @@ class TestNcGetStallSemantics:
             patch.object(
                 transfer_mod,
                 "_connect_with_retry",
-                AsyncMock(side_effect=lambda *a, **k: (FakeReader([b"abc"]), self._writer())),
+                AsyncMock(
+                    side_effect=lambda *a, **k: (
+                        _SilenceAfterPayload(b"a" * 150),
+                        self._writer(),
+                    )
+                ),
             ),
         ):
             status, msg = _only(
@@ -1045,35 +2031,6 @@ class TestNcGetStallSemantics:
             )
 
         assert status is Status.Success, msg
-        assert (dst_dir / "growing.log").read_bytes() == b"abc"
-
-    @pytest.mark.asyncio
-    async def test_an_unknown_size_cannot_vouch_so_the_empty_check_skips(self, tmp_path: Path):
-        """stat failure means no size is known — the empty-transfer check
-        deliberately skips rather than guesses. This residual ghost window
-        (empty file delivered when the stat failed) is a DOCUMENTED
-        acceptance; this pin keeps it deliberate, so closing it is a design
-        change, not a drive-by."""
-        src_remote = Path("/remote/unknown.bin")
-        dst_dir = tmp_path / "dst"
-        dst_dir.mkdir()
-
-        with (
-            patch.object(
-                NcFileTransfer, "_wait_for_remote_listener", new=AsyncMock(return_value=None)
-            ),
-            patch.object(
-                transfer_mod,
-                "_connect_with_retry",
-                AsyncMock(side_effect=lambda *a, **k: (FakeReader([]), self._writer())),
-            ),
-        ):
-            status, msg = _only(
-                await asyncio.wait_for(
-                    self._ft(self._exec_stat_fails)._get_files_nc_tunneled([src_remote], dst_dir),
-                    timeout=5.0,
-                ),
-                src_remote,
-            )
-
-        assert status is Status.Success, msg
+        assert (dst_dir / "growing.log").read_bytes() == b"a" * 100, (
+            "the read did not stop at the measured size"
+        )

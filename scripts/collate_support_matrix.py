@@ -359,12 +359,14 @@ def _observed_cells(
 
     THE PROFILE IS NOT THE MEASUREMENT UNIT AND NEITHER IS THE ELEMENT. The bed
     measures an (element, term, transfer) cell, and MEASURED 2026-08-24
-    ``bb1161`` answers two different things: the roundtrip passes over ``shell``
-    and fails over ``nc``, against otto's registered ``nc-transfer`` gap. The
-    aggregate has to be ``measured-broken`` -- rule 3, one level down -- but a
-    reader scanning that row concludes otto cannot move files to a BusyBox
-    1.16.1 device at all, which is FALSE. Both halves were already in the cell
-    before this field existed, and only as prose: a pipe-joined ``observable``
+    ``bb1161`` answered two different things: the roundtrip passed over
+    ``shell`` and failed over ``nc``, against otto's then-open ``nc-transfer``
+    gap -- closed 2026-08-25, and the 2026-08-26 re-measure made that cell
+    uniformly ``measured-ok``, so the example is history and the field is not.
+    The aggregate had to be ``measured-broken`` -- rule 3, one level down --
+    but a reader scanning that row concludes otto cannot move files to a
+    BusyBox 1.16.1 device at all, which was FALSE. Both halves were already in
+    the cell before this field existed, and only as prose: a pipe-joined ``observable``
     and an English ``failure_summary``. A renderer that recovers structure by
     parsing English is a renderer that will silently stop recovering it, and
     this artifact is published documentation.
@@ -527,10 +529,12 @@ def _verdict(
 
     Element by element first, then aggregated, because the aggregate is only
     honest if the breakdown is: an element with two cells is ``ok`` ONLY if
-    every evidential record for it passed. Otto's registered ``nc-transfer``
-    gap is exactly this shape -- ``bb1161`` transfers fine over ``shell`` and
-    fails over ``nc`` -- and a cell that took the passing half would publish
-    ``measured-ok`` for a profile whose transfer is measurably broken.
+    every evidential record for it passed. Otto's ``nc-transfer`` gap was
+    exactly this shape until it closed on 2026-08-25 -- ``bb1161`` transferred
+    fine over ``shell`` and failed over ``nc`` -- and a cell that took the
+    passing half would have published ``measured-ok`` for a profile whose
+    transfer was measurably broken. The rule outlives the example: it is what
+    any element with disagreeing cells will be aggregated by.
     """
     if not evidence.observations and not evidence.exclusions:
         return None, (

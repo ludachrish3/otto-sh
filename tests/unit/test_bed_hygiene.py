@@ -214,13 +214,26 @@ def test_bracketed_test_requests_the_lease_lazily():
     assert request.fixture_requests == ["chaos_bed"]
 
 
-# ── nc listener probe: the GET direction spelling ────────────────────────────
+# ── nc listener probe: every spelling otto has ever spawned ──────────────────
 #
 # Regression guard for a blind spot the probe carried from the day it was
 # written: it matched `nc -l` only, so every `nc -Nl` listener — the whole GET
-# direction of the nc transfer backend — was invisible to the authority whose
-# job is finding leaked listeners. Found 2026-08-10 when a wider sweep turned
-# three leaked pairs on a lab host into six.
+# direction of the nc transfer backend at the time — was invisible to the
+# authority whose job is finding leaked listeners. Found 2026-08-10 when a
+# wider sweep turned three leaked pairs on a lab host into six.
+#
+# THE ARGV TABLE BELOW IS IN THREE GROUPS, and the split is load-bearing
+# rather than tidy. otto's listener spelling CHANGED on 2026-08-25 (every
+# listener is `nc -l -p PORT` now, in both directions, and no `-N` is emitted
+# anywhere), so the table has to carry both what otto spawns today and what it
+# used to spawn: an orphan outlives the code that made it, and a listener a
+# July build leaked onto the bed is exactly the leftover this probe exists to
+# find. The third group is spellings otto never emits at all — a human's, or
+# another tool's — which the probe must still catch on a shared lab host.
+# Matching the flag CLUSTER rather than a list of spellings is what makes all
+# three groups fall out of one pattern; `test_the_probe_is_falsifiable_on_the_
+# current_spelling` is the check that the newest group is not passing by
+# accident of the widest row.
 
 
 def _probe_regex() -> re.Pattern[str]:
@@ -242,32 +255,93 @@ def _probe_regex() -> re.Pattern[str]:
     return re.compile(pattern)
 
 
+# What otto spawns TODAY. Both directions emit the same universal listener
+# (`src/otto/host/transfer/nc.py`: `-l -p PORT` is the one form every measured
+# netcat accepts), so unlike every earlier era there is no second otto
+# spelling to miss.
+_CURRENT_SPELLINGS = [
+    "nc -l -p 9000",  # PUT's receiver, `< /dev/null > dst`
+    "nc -l -p 9001",  # the tunnelled GET's sender, `< src` — same argv
+    "bash -c nc -l -p 9002 < /etc/hostname",  # the wrapper shell
+    # The hard-cap wrapper (`_nc_listener_prefix`), which since 2026-08-10 is
+    # the NORMAL argv on every host that has a `timeout`. On GNU the wrapper
+    # stays resident as the listener's parent and wears this argv; the `nc`
+    # child wears the bare form above.
+    "timeout 3600 nc -l -p 9000",  # GNU coreutils, and BusyBox from 1.31.0
+    "timeout -t 3600 nc -l -p 9001",  # BusyBox up to 1.28.1
+    # BusyBox >= 1.30 execs the program IN PLACE (measured: the pid ends up
+    # with argv `nc …`, no wrapper) and forks a detached watchdog that setsids
+    # and reparents to init wearing the full command. So on a BusyBox host the
+    # listener itself matches the bare rows above, and this row is the
+    # watchdog — a second hit per listener, which is the right way round for a
+    # probe whose job is finding leftovers.
+    "/usr/bin/busybox timeout 3600 nc -l -p 9001",
+]
+
+# RETIRED on 2026-08-25 with the universal spelling, and STILL REQUIRED TO
+# MATCH: a leaked listener outlives the otto build that spawned it. These are
+# what the bed's own orphans wear — including the three leaked pairs the
+# 2026-08-10 sweep found, which were all `-Nl`.
+_RETIRED_SPELLINGS = [
+    "nc -l -w 30 9000",  # PUT's receiver until 2026-08-25
+    "nc -Nl -w 30 9001",  # the tunnelled GET's — the spelling that was invisible
+    "bash -c nc -Nl -w 30 9002 < /etc/hostname",  # the wrapper shell
+    "timeout 3600 nc -l -w 30 9000",  # GNU coreutils
+    "timeout -t 3600 nc -Nl -w 30 9001",  # BusyBox up to 1.28.1
+    "/usr/bin/busybox timeout 3600 nc -Nl -w 30 9001",  # the BusyBox >= 1.30 watchdog
+]
+
+# Never otto's, and never allowed to be invisible either: this probe reads a
+# SHARED lab host, so a listener a person or another tool left behind is a
+# leftover the bed's before/after diff has to see.
+_FOREIGN_SPELLINGS = [
+    "nc -l 9000",  # no -w and no -p at all
+    "nc -lp 9000",  # GNU netcat spelling: `l` is not the last flag letter
+    "nc -klv 9000",  # multiple flags around the `l`
+]
+
+
 @pytest.mark.parametrize(
     "argv",
     [
-        "nc -l -w 30 9000",  # PUT direction
-        "nc -Nl -w 30 9001",  # GET direction — the spelling that was invisible
-        "nc -l 9000",  # no -w at all
-        "nc -lp 9000",  # GNU netcat spelling: `l` is not the last flag letter
-        "nc -klv 9000",  # multiple flags around the `l`
-        "bash -c nc -Nl -w 30 9002 < /etc/hostname",  # the wrapper shell
-        # The hard-cap wrapper, which since 2026-08-10 is the NORMAL argv on
-        # every host that has a `timeout`. On GNU the wrapper stays resident
-        # as the listener's parent and wears this argv; the `nc` child wears
-        # the bare form above.
-        "timeout 3600 nc -l -w 30 9000",  # GNU coreutils
-        "timeout -t 3600 nc -Nl -w 30 9001",  # BusyBox < 1.30
-        # BusyBox >= 1.30 execs the program IN PLACE (measured: the pid ends
-        # up with argv `nc …`, no wrapper) and forks a detached watchdog that
-        # setsids and reparents to init wearing the full command. So on a
-        # BusyBox host the listener itself matches the bare rows above, and
-        # this row is the watchdog — a second hit per listener, which is the
-        # right way round for a probe whose job is finding leftovers.
-        "/usr/bin/busybox timeout 3600 nc -Nl -w 30 9001",
+        *(pytest.param(a, id=f"current-{i}") for i, a in enumerate(_CURRENT_SPELLINGS)),
+        *(pytest.param(a, id=f"retired-{i}") for i, a in enumerate(_RETIRED_SPELLINGS)),
+        *(pytest.param(a, id=f"foreign-{i}") for i, a in enumerate(_FOREIGN_SPELLINGS)),
     ],
 )
 def test_probe_matches_every_listener_spelling(argv):
     assert _probe_regex().search(argv), f"probe would not find a leaked {argv!r}"
+
+
+def test_the_probe_is_falsifiable_on_the_current_spelling():
+    """The current group is not carried by the retired one, proved by mutation.
+
+    Every row above passes against today's pattern, which is the state a table
+    can reach by being written after the fact — so the rows that were ADDED
+    when the spelling changed have to be shown to be load-bearing, not decor.
+    A pattern that admits ` -w` or a bare port after the flag cluster matches
+    every retired and foreign row and NO current one, because `-l -p 9000` puts
+    an option where those expect a number.
+
+    TWO ASSERTIONS PER CURRENT ROW, and the second is why this test reddens on
+    a narrowing rather than only describing one. The mutation half is a
+    statement about a regex this test wrote, which cannot fail when
+    `_NC_LISTENER_PROBE` changes; the real-probe half reads the CONSTANT, so a
+    future narrowing that reopens the hole for `-l -p` fails here as well as
+    in `test_probe_matches_every_listener_spelling` above.
+    """
+    narrowed = re.compile(r"[n]c -[A-Za-z]*l[A-Za-z]*( -w| [0-9]|$)")
+    for argv in _RETIRED_SPELLINGS + _FOREIGN_SPELLINGS:
+        assert narrowed.search(argv), f"the mutation was meant to keep {argv!r}"
+    for argv in _CURRENT_SPELLINGS:
+        assert _probe_regex().search(argv), (
+            f"the real probe does not match {argv!r}, so the isolation below is "
+            f"about a spelling this probe would leak rather than find"
+        )
+        assert not narrowed.search(argv), (
+            f"the mutation still matches {argv!r}, so it does not isolate the "
+            f"current spelling and proves nothing about the rows that carry it"
+        )
 
 
 @pytest.mark.parametrize(

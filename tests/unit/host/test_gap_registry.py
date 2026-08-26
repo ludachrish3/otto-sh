@@ -549,8 +549,8 @@ class TestProductLifecycleIsUntestedBecauseOttoShipsNoImplementation:
 
         That single call is the whole reason ``product-lifecycle`` adds no new
         device contact: whatever BusyBox does to it is already answered by
-        ``shell-transfer-base64``, ``sftp-transfer``, ``scp-transfer`` and
-        ``nc-transfer``, each measured on a real device of its own.
+        ``shell-transfer-base64``, ``sftp-transfer`` and ``scp-transfer``, each
+        measured on a real device of its own.
         """
         reached = _host_attributes_reached_for_by(inspect.getsource(FileProduct.stage))
         assert reached == {"put"}, (

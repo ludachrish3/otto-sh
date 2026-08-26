@@ -429,9 +429,16 @@ class TestNcPutOrphanedListener:
         assert "orphaned listener" in msg
 
     @pytest.mark.asyncio
-    async def test_listener_command_carries_idle_timeout(self, tmp_path: Path):
-        """The remote ``nc -l`` invocation must include ``-w`` so the listener
-        self-terminates rather than leaking when no client connects."""
+    async def test_listener_command_is_the_universal_spelling(self, tmp_path: Path):
+        """The one listener spelling every measured netcat accepts: `-l -p PORT`.
+
+        Asserted as the FULL command tail, not option-by-option: a reintroduced
+        `-w` (the mid-transfer idle-kill, rc 0 with a partial file — measured
+        2026-08-25 on five of six userlands) or a dropped `-p` (BusyBox parses
+        the bare port as HOST: `bad address`) must each redden this by name.
+        The orphan bound is the `timeout` prefix plus `_cancel_and_reap`, not
+        a netcat option.
+        """
         src = tmp_path / "payload.bin"
         src.write_bytes(b"x" * 16)
 
@@ -454,7 +461,10 @@ class TestNcPutOrphanedListener:
             c.args[0] for c in exec_cmd.await_args_list if c.args and "nc -l" in c.args[0]
         ]
         assert listen_cmds, "expected an `nc -l` listener invocation"
-        assert all("-w 30" in cmd for cmd in listen_cmds), listen_cmds
+        for cmd in listen_cmds:
+            assert " -l -p " in cmd, f"not the universal listener spelling: {cmd}"
+            assert " -w " not in cmd, f"-w is the measured mid-transfer idle-kill: {cmd}"
+            assert " -N" not in cmd, f"-N is rejected by every BusyBox row: {cmd}"
 
 
 class TestNcPutCancellation:
@@ -463,7 +473,10 @@ class TestNcPutCancellation:
     ``_attempt`` spawns the listener as an ``asyncio.Task`` and only joins it
     on its normal success / error branches. A caller-side cancellation skips
     those, so ``_attempt`` must cancel the task and reap the remote listener
-    itself — otherwise the ``nc -l`` lingers until its ``-w`` timeout.
+    itself — otherwise the ``nc -l`` lingers until the remote ``timeout``
+    prefix's hard cap an hour later. Nothing shorter ends it: the listener
+    spelling carries no ``-w``, which never bounded an unconnected listener
+    anyway and kills a stalled TRANSFER (measured 2026-08-25).
     """
 
     @pytest.mark.asyncio

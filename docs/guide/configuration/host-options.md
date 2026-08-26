@@ -331,13 +331,29 @@ The `nc_options` object accepts all eight fields of {class}`~otto.host.options.N
 | ``port_cmd``                 | ``null``   | Shell command printing a free port; used when ``port_strategy="custom"``. |
 | ``listener_check``           | ``"auto"`` | Strategy for verifying the remote listener is ready (see {doc}`../cli/host/netcat`).    |
 | ``listener_cmd``             | ``null``   | Shell command (``{port}``); exits 0 when ``listener_check="custom"``.     |
-| ``listener_timeout``         | ``30.0``   | Seconds the remote listener waits for a client before self-terminating.   |
+| ``listener_timeout``         | ``30.0``   | Seconds otto waits for the remote listener to exit after a transfer ends. |
 | ``max_concurrent_transfers`` | ``null``   | Files in flight at once; ``null`` fits a default sshd (see below).        |
 
-``listener_timeout`` is passed as ``nc -w`` on the remote side and also caps the
-post-transfer wait for the listener process to exit.  It prevents an
-orphaned-listener hang when a port-collision race causes the listener to never
-receive a client — without it the listener would block indefinitely.
+``listener_timeout`` is otto's own bound and is not passed to the remote
+netcat.  It caps the wait for the listener process to exit once a transfer has
+ended, so a port-collision race that leaves a listener servicing someone else
+surfaces as a named error instead of a hang.  What ends the remote listener
+itself is otto reaping it on every error path, plus the ``timeout`` prefix the
+spawn carries — never ``nc -w``, which is not emitted: measured 2026-08-25, it
+bounds the idle time of an *accepted* connection and so kills a stalled
+transfer with a success code and a partial file.
+
+### What a GET can fetch
+
+The nc backend transfers **regular files**, and transfers exactly the number
+of bytes the remote ``stat`` reports — that size is what ends otto's read,
+because the spawn carries no netcat option that ends itself.  A symlink is
+followed and delivers its target.  A directory or a device file is refused by
+name: what ``stat`` reports for those is not what reading them delivers.
+procfs and sysfs pseudo-files report a size that is not their content either
+(``/proc/version`` reports 0), and nothing in the remote ``stat`` tells them
+apart from a genuinely empty file — so they are not refused, they simply
+arrive empty.  Use the ``shell`` backend for those.
 
 ### Concurrency and the remote channel budget
 

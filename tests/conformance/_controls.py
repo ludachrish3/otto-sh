@@ -273,12 +273,15 @@ async def remove_landed(host: BaseHost, words: Vocabulary, path: Path) -> "Comma
     verification is :func:`assert_bed_left_clean`, which the caller runs only
     on the path where nothing else went wrong.
 
-    MEASURED, and this split exists because of it: on the five ``bed-busybox``
-    ``nc`` cells otto's registered ``nc-transfer`` gap makes the put FAIL --
-    and it still leaves a ZERO-BYTE file behind on the guest. So "the put
-    failed" and "there is nothing to clean up" are different statements, and a
-    control that skipped its cleanup whenever the put failed left litter on
-    exactly the cells that fail every run.
+    MEASURED WHILE THE ``nc-transfer`` GAP WAS OPEN, and this split exists
+    because of it: on the five ``bed-busybox`` ``nc`` cells the put FAILED --
+    and it still left a ZERO-BYTE file behind on the guest. That gap closed
+    2026-08-25 (spec ``2026-08-25-nc-universal-spelling``), so the cells it
+    made fail are no longer expected to; the behaviour this measurement
+    justifies is unchanged, because "the put failed" and "there is nothing to
+    clean up" are different statements for ANY failing put, and a control that
+    skipped its cleanup whenever the put failed would leave litter behind the
+    next failure as surely as it did behind that one.
     """
     return (await host.run(words.remove_file_template.format(path=path))).only
 

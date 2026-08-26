@@ -34,13 +34,10 @@ pytest SESSION on this box, which is the same gap the console lock carries
 WHAT THIS CONTRACT IS ABOUT, declared rather than assumed: cells whose host
 has somewhere to put a file. See :func:`applicable_cell`.
 
-AND WHERE OTTO ALREADY KNOWS IT CANNOT HOLD: the five ``bed-busybox`` ``nc``
-cells, declared by :func:`expected_failure` and asserted as strict xfails
-rather than skipped, excluded or edited out of lab data. otto's own
-``nc-transfer`` gap registry carries the PUT path as ``PATH_OPEN`` and
-predicts this exact timeout; the whole decision, the measurement of the
-gap's GET/PUT asymmetry, and why only five of the ten items can ever XPASS
-are under this module's banner.
+AND NOWHERE THAT IT IS DECLARED NOT TO HOLD -- which is new, and is the
+whole point of the note where the declaration used to be, below
+:func:`applicable_cell`. Every drawn cell this module is about now asserts
+the contract outright.
 """
 
 from collections.abc import Callable
@@ -51,7 +48,6 @@ import pytest
 from otto.host.host import BaseHost
 from otto.host.transfer import BaseFileTransfer
 from tests._fixtures.profiles import Cell
-from tests.conformance._bed import BED_BUSYBOX
 from tests.conformance._controls import assert_bed_left_clean, remove_landed
 from tests.conformance._resolved import ResolvedCell
 from tests.conftest import remote_name
@@ -154,145 +150,31 @@ def applicable_cell(resolved: ResolvedCell) -> bool:
 
 
 # ==========================================================================
-# A REGISTERED, DELIBERATELY-OPEN GAP PATH -- otto's `nc` PUT on a BusyBox guest
+# NO CELL IS DECLARED A KNOWN FAILURE HERE, and one was
 # ==========================================================================
-# Everything between this banner and the next rule is ONE decision, kept in
-# one place so that reversing it is a single-file change: delete
-# `expected_failure` below and the ten items go back to being plain failures.
-# It is a recommendation the controller flagged to the maintainer and may yet
-# be overridden.
+# From 2026-08-21 to 2026-08-25 this module declared an `expected_failure`
+# hook that marked the five `bed-busybox[*:telnet:nc]` cells `xfail(strict=True)`
+# -- twenty items once the positive controls landed beside the contracts --
+# against otto's registered `nc-transfer` gap: the PUT listener was spelled
+# `nc -l -w <secs> <port>`, an OpenBSD-ism the applet does not parse -- it
+# reads the lone port as a HOST and dies with `bad address` (1.16.1) or binds
+# an ephemeral port in silence (1.35.0), and otto saw both as
+# `Remote nc listener on port <port> not ready`. The universal `nc -l -p PORT`
+# spelling closed that gap and the declaration was repaid in the same change,
+# so those cells assert this contract outright now, like every other drawn
+# cell. See
+# `docs/superpowers/specs/2026-08-25-nc-universal-spelling-design.md`.
 #
-# CORRECTED 2026-08-24, AFTER READING OTTO'S OWN GAP REGISTRY. An earlier
-# version of this banner called it a "KNOWN PRODUCT DEFECT" the cell crossing
-# had FOUND. That framing was wrong and the correction matters more than the
-# xfail does: otto has this measured, recorded and reasoned about already.
-# `src/otto/host/userland.py`'s `nc-transfer` Gap carries a `GapPath` for
-# `otto.host.transfer.nc.NcFileTransfer._put_files_nc` with `state=PATH_OPEN`,
-# whose detail says, verbatim:
+# The conftest MECHANISM that read the hook is untouched and still waiting for
+# the next declaration (`tests/conformance/conftest.py`'s `_XFAIL_HOOK`, pinned
+# by `tests/unit/test_conformance_bed.py`), so re-declaring is one function
+# here and nothing else.
 #
-#     spawns the device-side listener as `nc -l -w <secs> <port>`, the OpenBSD
-#     spelling the applet does not accept (it wants `-l -p PORT`), and reads
-#     nothing from this record. So the listener never binds, otto waits for a
-#     peer that cannot arrive, and `_cancel_and_reap` ends it -- a timeout
-#     rather than the refusal this record describes. STILL OPEN DELIBERATELY
-#
-# and gives the reason it stays open: the question that would decide the path
-# -- whether the device's `nc` accepts a listener spelled `-l PORT` -- "cannot
-# be settled without asking a device to BIND, which is a probe with a side
-# effect on the host it is asking about". The queued fix is a whole BusyBox
-# `nc` variant in `todo/busybox-parity-sweep-2026-08-11.md`, not a spelling
-# tweak.
-#
-# WHAT THIS LANE ACTUALLY CONTRIBUTES, which is narrower and still worth
-# having: it is the first thing in this repo to drive that OPEN path against
-# real BusyBox hardware and show the user-visible consequence, and it shows
-# the ASYMMETRY inside one gap. Measured 2026-08-24 on `bb1161:telnet:nc`,
-# both directions, one host build:
-#
-#     get   RAISES UnsupportedOnUserlandError before the wire, naming the
-#           `nc-transfer` gap (path WIRED, guard
-#           `otto.host.transfer.nc.refuse_if_nc_rejects_dash_n`)
-#     put   RETURNS Status.Error after 5.0s:
-#           `Remote nc listener on port 9000 not ready within 5.0s`
-#
-# So otto knows the backend cannot drive this applet and says so loudly in one
-# direction, while the other fails into exactly the timeout the refusal exists
-# to prevent. That asymmetry is the reportable observation -- not a
-# rediscovery of the spelling, which the registry measured on 2026-08-13.
-#
-# ONE MEASUREMENT WORTH KEEPING that the registry does NOT record, taken on the
-# bed by Task 4c of the item that built this venue: the two BusyBox generations
-# fail the listener DIFFERENTLY, and the modern one fails silently.
-#
-#     bb1161 (1.16.1)  `nc: bad address '9000'`  -- a loud usage error
-#     bb1350 (1.35.0)  process ALIVE, binds an EPHEMERAL port -- no error at all
-#
-# Both surface to otto as the same `Remote nc listener on port 9000 not ready
-# within 5.0s`, so a `nc: timeout` reply is NOT evidence that a listener bound
-# the requested port; `ps` plus `netstat` at check time is the discriminator.
-#
-# WHY IT IS NOT FIXED HERE: `src/otto/` is frozen for the item that built this
-# venue, and the registry says the fix is a queued workstream rather than a
-# one-line change.
-#
-# WHY xfail(strict=True) AND NOT A SKIP, AN EXCLUSION OR A LAB-DATA EDIT.
-# These guests have a `nc` APPLET (the gap is about its option set, not its
-# presence); deleting `nc` from their `valid_transfers` would encode a
-# capability lie in lab data to buy a green, and the crossing that exercises
-# this path is exactly what that edit would blind. A skip reports success for
-# a contract nobody ran. A strict xfail is neither: it ASSERTS the failure, so
-# the items are still exercised on every bed run and the lane's green still
-# means something.
-#
-# BUT ONLY HALF OF THEM CAN EVER XPASS, and a reader relying on the strict
-# marker as the reminder should know which. `test_put_lands_the_documented_
-# mode_on_the_host` is a `put` alone, so wiring the PUT path turns those five
-# green and the strict marker then reddens the lane until this declaration is
-# deleted. `test_put_get_roundtrip_preserves_content` also does a `get`, and
-# the GET is REFUSED BY DESIGN on these guests -- so those five keep failing
-# after any PUT fix, for a declared incapability rather than a defect, and
-# they will then need their own disposition.
-#
-# TEN ITEMS WHEN THIS BANNER WAS WRITTEN; TWENTY SINCE the support matrix put
-# a positive control beside each contract here. The split above applies to the
-# controls in exactly the same way -- the mode control is a `put` alone, the
-# roundtrip control also does a `get`. The natural one is an
-# applicable-domain narrowing keyed on otto's own answer, which is the model
-# `applicable_cell` above already uses for `remote_scratch`.
-#
-# WHAT THE CROSSING IS STILL FOR: a contract that holds over `shell` and
-# breaks over `nc` ON THE SAME HOST is invisible to any per-host suite, and
-# `tests/integration/host/` parametrizes one transport per backend. The
-# (term, transfer) crossing is the only place that difference can be seen.
-_NC_ON_BUSYBOX = (
-    "otto's `nc-transfer` gap, PUT direction: `NcFileTransfer._put_files_nc` is a "
-    "GapPath with state PATH_OPEN in `src/otto/host/userland.py` -- it spells the "
-    "device-side listener `nc -l -w <secs> <port>`, which the BusyBox applet does not "
-    "accept (it wants `-l -p PORT`), and reads nothing from that record, so the put "
-    "fails into `Remote nc listener on port <port> not ready` instead of the refusal "
-    "the GET direction raises. A registered open path, not a test or lab-data problem: "
-    "`shell` transfer passes on these same five guests, and `nc` passes on every "
-    "`bed-unix` cell that uses it (test1-test4 over both ssh and telnet, 8 cells, "
-    "16/16 items, measured on the first full `make conformance-bed` run). "
-    "See this module's banner."
-)
-
-
-def expected_failure(resolved: ResolvedCell) -> "str | None":
-    """The reason this cell's transfer contract is KNOWN to fail, or None.
-
-    Read by ``tests/conformance/conftest.py``'s ``pytest_generate_tests``,
-    which turns a reason into ``xfail(strict=True)`` on that cell's items.
-    TWENTY items today: every test in this module -- the two contracts AND
-    the two positive controls that arrived with the support matrix -- over
-    the five ``bed-busybox`` cells whose transfer is ``nc``. It was ten
-    before the controls landed. The controls are covered for the same reason
-    the contracts are and not by oversight: each of them has to PUT a file to
-    say anything, so on a cell where otto's ``nc`` listener never binds there
-    is nothing for a control to demonstrate, and asserting the failure is the
-    honest record of that.
-
-    KEYED ON THE RESOLVER'S ANSWER, not on a guest's name. ``kind`` is what
-    ``tests/conformance/_bed.py``'s ``bed_kind`` derived from the host's
-    declared userland, so a new BusyBox guest is covered the day it joins the
-    lab and a guest RENAMED to look like one is not. Task 1 of this item
-    measured how easily the other reading passes: every real bed element
-    happens to be named after its kind, so name-sniffing satisfies every
-    assertion made against real data.
-
-    Deliberately narrow in the other direction too. The bug is in the LISTENER
-    otto asks a BusyBox userland to start, so this says nothing about ``nc``
-    on a GNU userland (all eight ``bed-unix[test2:*]`` cells pass, ``nc``
-    included) and nothing about ``shell`` transfer on these same guests (all
-    five pass). A wider declaration would xfail cells that work, and a strict
-    xfail on a passing cell is a red lane -- which is the right failure, but
-    for the wrong reason.
-    """
-    if resolved.kind == BED_BUSYBOX and resolved.cell.transfer == "nc":
-        return _NC_ON_BUSYBOX
-    return None
-
-
+# WHAT THE CROSSING IS STILL FOR, which outlived the declaration: a contract
+# that holds over `shell` and breaks over `nc` ON THE SAME HOST is invisible to
+# any per-host suite, and `tests/integration/host/` parametrizes one transport
+# per backend. The (term, transfer) crossing is the only place that difference
+# can be seen -- and it is the place the fix above is measured.
 # ==========================================================================
 
 
@@ -452,15 +334,18 @@ async def test_put_lands_the_documented_mode_on_the_host(
 # See `tests/conformance/_controls.py` for why these exist and why the marker
 # rather than the signature is what tells a control from a contract.
 #
-# THEY INHERIT THIS MODULE'S TWO DECLARATIONS, and both are load-bearing.
+# THEY INHERIT THIS MODULE'S ONE DECLARATION, and it is load-bearing.
 # `applicable_cell` keeps them off the three bed guests with no filesystem,
 # which is right: a cell where the contract is not asserted needs no evidence
-# that it could go red. `expected_failure` marks them xfail(strict=True) on
-# the five `bed-busybox` `nc` cells, which is also right and is worth stating
-# plainly -- otto's `nc-transfer` gap breaks the PUT on those guests, so a
-# control that has to put a file there cannot demonstrate anything, and
-# asserting that it fails is the honest record of that. It takes the bed
-# lane's expected xfail count for this module from 10 items to 20.
+# that it could go red.
+#
+# THERE WAS A SECOND until 2026-08-25 (see the note under `applicable_cell`),
+# and what it did to the controls is worth recording because the next
+# declaration will do the same: `expected_failure` marked the five
+# `bed-busybox` `nc` cells xfail(strict=True), and because each control has to
+# PUT a file before it can demonstrate anything, it took this module's
+# expected-xfail count from the contracts' 10 items to 20. A control is only
+# as applicable as the contract it is about -- `tests/conformance/_controls.py`.
 
 
 @pytest.mark.positive_control("transfer-roundtrip")

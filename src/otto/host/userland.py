@@ -29,8 +29,9 @@ what today:
     ``otto.host.transfer.nc.NcFileTransfer._nc_listener_prefix``
 ``stat_size``
     ``otto.host.transfer.shell.ShellFileTransfer._run_get`` (via
-    ``_remote_size``) — ``transfer/nc.py`` still writes its own
-    ``stat -c %s`` at three sites, unrelated to this probe
+    ``_remote_size``) — ``transfer/nc.py`` still writes its own remote stat
+    at three sites (``stat -c %s`` for PUT's size-back verify, and
+    ``stat -L -c '%s %F'`` at both GET prefetches), unrelated to this probe
 ``base64_flag``
     ``otto.host.transfer.shell.ShellFileTransfer`` (both ``_run_put`` and
     ``_run_get``), and ``otto.host.file_ops.refuse_if_base64_is_absent``
@@ -47,12 +48,6 @@ what today:
 ``shell_dialect``
     nothing yet — an ``ash`` frame is registered, but nothing routes this
     probe's result to it; see the hole below
-``nc_dash_n``
-    ``otto.host.transfer.nc.refuse_if_nc_rejects_dash_n``, which declines a
-    netcat GET on a device whose ``nc`` was measured to reject the ``-N``
-    otto's sender and its tunnelled listener both emit. The second
-    OPTION-SUPPORT capability after ``timeout_style``, and the second one
-    whose only consumer is the ``nc`` backend
 ``applet_<name>``, one per entry in :data:`PROBED_APPLETS`
     three consumers, and NOT the same one for all seven names -- which is the
     point of a per-name capability. ``applet_uudecode``/``applet_uuencode``
@@ -65,13 +60,12 @@ what today:
     (``otto.host.transfer.scp.refuse_if_scp_is_absent``). ``applet_base64``
     and ``applet_nc`` still have none, for different reasons: the codec
     question is answered by ``base64_flag`` above (a spelling, not a
-    presence), and ``nc``'s presence is necessary but not sufficient -- see
-    :data:`PROBED_APPLETS`, and see ``nc_dash_n`` above for the SUFFICIENT
-    half, which is a different question and therefore a different capability
-    rather than a reading of this one. Read them all through
+    presence), and ``nc``'s presence is an answer about the NAME ``nc`` while
+    the backend execs whatever ``NcOptions.exec_name`` says -- see
+    :data:`PROBED_APPLETS`. Read them all through
     :meth:`Userland.has_applet`.
 
-So the first ``run(sudo=True)`` against a host issues up to fourteen probes to
+So the first ``run(sudo=True)`` against a host issues up to twelve probes to
 read one answer that probes 1-2 settled. The whole round is deliberate — splitting
 it means a second set of exec channels against a server that refuses rather
 than queues them (see ``_RETRY_COOLDOWN_S``), a second chance to strand a
@@ -95,9 +89,9 @@ and passes it to ``build_command_frame`` — every existing
 this probe's result. So the resolved value is still a MEASUREMENT to record
 and pin, not a frame name any caller looks up through this probe. Until
 something does that routing, do not feed :attr:`Userland.shell_dialect` to
-the frame registry; the other six are safe to consume today, and now all
-six of them have a consumer — see the table above — leaving ``shell_dialect``
-the only one of the FIXED SEVEN still without one. Two of the seven applet
+the frame registry; the other five are safe to consume today, and all
+five of them have a consumer — see the table above — leaving ``shell_dialect``
+the only one of the FIXED SIX still without one. Two of the seven applet
 capabilities are likewise unconsumed (``applet_base64``, ``applet_nc``), each
 for a different reason — see the table above.
 
@@ -112,9 +106,7 @@ drifting by that test — so each of the three names the other two instead.
 That third, Tier 1 copy exists only for spellings with a real ARGUMENT-PARSING
 question a BusyBox version could answer differently -- ``timeout``'s
 ``-t SECS PROG`` vs ``SECS PROG``, ``base64``'s ``-d`` vs ``--decode``,
-``stat``'s ``-c %s`` vs ``--format=%s``, ``wc``'s ``-c <`` vs ``-c FILE``, and
-``nc``'s ``-N``, which is the purest instance of the class: the probe asks
-NOTHING BUT whether the option parses (see ``Userland._probe_nc_dash_n``).
+``stat``'s ``-c %s`` vs ``--format=%s``, and ``wc``'s ``-c <`` vs ``-c FILE``.
 ``elevation`` (a bare ``command -v`` presence check), ``shell_dialect`` (a
 shell-builtin variable read), and ``checksum`` (``Userland._probe_checksum``'s
 own docstring: one spelling, not a contested pair) have no such question, so
@@ -200,21 +192,21 @@ _monotonic = time.monotonic
 _PROBE_TIMEOUT_S = 10.0
 
 # Ceiling on one whole resolution, and the reason both numbers have to be read
-# together. THE ARITHMETIC: resolution issues at most fourteen probes (2 elevation +
-# 3 timeout + 2 base64 + 2 stat + 1 checksum + 1 dialect + 1 applet batch + 2 nc_dash_n),
-# so a host that swallows every one of them costs 14 x _PROBE_TIMEOUT_S = 140s
+# together. THE ARITHMETIC: resolution issues at most twelve probes (2 elevation +
+# 3 timeout + 2 base64 + 2 stat + 1 checksum + 1 dialect + 1 applet batch),
+# so a host that swallows every one of them costs 12 x _PROBE_TIMEOUT_S = 120s
 # unbounded. The
 # applet batch is ONE probe however many names :data:`PROBED_APPLETS` carries --
 # that is the whole point of ``_applet_probe_command``, and it is why adding an
-# applet does not move this number; adding a CAPABILITY does, and ``nc_dash_n``
-# is what moved it from twelve. resolve() holds its
+# applet does not move this number; adding or removing a CAPABILITY does, and
+# retiring ``nc_dash_n`` is what moved it back from fourteen. resolve() holds its
 # lock for that whole span, so on a concurrent consumer — nc's bulk put fans
 # its files out and each one awaits resolution — every queued caller waits the
 # full span out BEFORE its own timeout starts counting. This budget converts
 # that into a stated bound: the deadline is set once per resolution, each probe
 # is granted min(_PROBE_TIMEOUT_S, whatever is left), and a probe with nothing
 # left is never sent. So a wedged host costs at most ceil(30/10) = 3 probe
-# timeouts, not fourteen.
+# timeouts, not twelve.
 #
 # What the unreached capabilities get is a NO-INFORMATION DEFAULT, not a "no"
 # (see _UNASKABLE_DEFAULTS), and they are asked again on a later resolve()
@@ -238,19 +230,21 @@ _PROBE_TIMEOUT_S = 10.0
 # this comment. An earlier version of this note did exactly that (first 90s,
 # then "corrected" to 100s) and BOTH were wrong -- measured directly by
 # editing just this constant and running tests/unit/host/test_userland.py:
-# 40.0 keeps all 102 tests green; 41.0 already reds
+# 40.0 keeps all 99 tests green; 41.0 already reds
 # test_resolution_stops_once_the_whole_budget_is_spent[as-shipped] on one
 # assertion; 90.0 reds the SAME row on a DIFFERENT assertion (see 1. below --
-# one test, two distinct ways to fail it, not two tests); 111.0 adds a second
-# test failing; 121.0 adds a third. Neither prior number was ever guarded by
+# one test, two distinct ways to fail it, not two tests); 101.0 adds a second
+# test failing; 111.0 adds a third. Neither prior number was ever guarded by
 # an assertion that reads it, which is exactly how both survived being wrong
 # until someone happened to measure them.
 #
-# RE-MEASURED 2026-08-14, when `nc_dash_n` added a probe: the last two moved
-# (they were 100.0 and 101.0) and the first two did not. That is the whole
-# lesson of this comment in one change -- the boundaries are properties of the
-# probe TREE, so a capability added anywhere in it shifts the ones that count
-# commands and leaves the ones that count budget alone.
+# RE-MEASURED 2026-08-25, when `nc_dash_n` was retired: the last two moved
+# (they were 111.0 and 121.0 while it existed) and the first two did not, and
+# the test count fell from 102 to 99 with the three field-parametrized rows
+# that capability supplied. That is the whole lesson of this comment in one
+# change -- the boundaries are properties of the probe TREE, so a capability
+# added or removed anywhere in it shifts the ones that count commands and
+# leaves the ones that count budget alone.
 #
 # There is no clean replacement formula, because the real ceiling is the
 # INTERACTION of three unrelated mechanisms in three different tests, not one
@@ -272,32 +266,32 @@ _PROBE_TIMEOUT_S = 10.0
 #    where EVERY probe is unreachable. Against that script,
 #    `_probe_timeout` short-circuits (`if present is None: return None`)
 #    the moment `command -v timeout` itself cannot be asked, so the whole
-#    resolution can only ever ISSUE 11 commands (2 elevation + 1 timeout +
-#    2 base64 + 2 stat + 1 checksum + 1 dialect + 1 nc presence + 1 applet
-#    batch -- confirmed directly from the failing assertion's own captured call
-#    list), never 14, no matter
-#    how much budget the caller affords. `nc_dash_n` short-circuits the same way
-#    `timeout` does, so it contributes one command here and two to the full
-#    count. Once the budget affords 12 or
-#    more, the test's own `affordable = ceil(budget / probe)` prediction
+#    resolution can only ever ISSUE 10 commands (2 elevation + 1 timeout +
+#    2 base64 + 2 stat + 1 checksum + 1 dialect + 1 applet batch -- confirmed
+#    directly from the failing assertion's own captured call list), never 12,
+#    no matter how much budget the caller affords. Once the budget affords 11
+#    or more, the test's own `affordable = ceil(budget / probe)` prediction
 #    exceeds what the algorithm can structurally send, and
 #    `len(runner.calls) == affordable` reds on a probe-tree ceiling that
-#    has nothing to do with the time budget (111.0).
+#    has nothing to do with the time budget (101.0).
 # 3. test_every_logger_call_site_is_exercised_at_debug is the third red, at
-#    121.0, and it breaks for a reason that has nothing to do with either
+#    111.0, and it breaks for a reason that has nothing to do with either
 #    mechanism above. The "resolution budget spent" line (`_probe`, guarding
 #    `if remaining <= 0`) is only emitted when a probe is skipped for lack of
-#    budget. Once the budget affords every probe -- which is exactly what (2)
-#    measures becoming structurally true once affordable reaches 11 -- nothing
-#    is ever skipped, that line is never emitted, and the log-site coverage
-#    guard reds reporting a call site "never exercised". BEWARE when chasing
-#    this one: the failure message is about logging and reads like a logging
-#    defect; the actual cause is this constant. Check the budget row of
+#    budget. Its third scenario scripts a device that ANSWERS
+#    `command -v timeout` and swallows everything after it, so unlike (2)
+#    nothing short-circuits and all TWELVE commands are reachable -- which is
+#    why this boundary sits one `affordable` step past (2)'s rather than on
+#    it. Once the budget affords twelve, nothing is ever skipped, that line is
+#    never emitted, and the log-site coverage guard reds reporting a call site
+#    "never exercised". BEWARE when chasing this one: the failure message is
+#    about logging and reads like a logging defect; the actual cause is this
+#    constant. Check the budget row of
 #    test_resolution_stops_once_the_whole_budget_is_spent (and mechanism 2
 #    above) before believing the message.
 #
-# All three are properties of their SCRIPTS (and, for 3., of what (2) does
-# structurally), not of this constant in general -- a differently-scripted
+# All three are properties of their SCRIPTS, not of this constant in general
+# -- a differently-scripted
 # device would move any of the three boundaries. So widening this safely
 # means changing the constant, then running tests/unit/host/test_userland.py
 # and reading what reds; that run IS the guard, and no number typed into this
@@ -323,9 +317,11 @@ from :class:`~otto.models.options.UserlandOptionsSpec`, or a ``ValueError``
 from :func:`applet_capability` -- never a guard that silently never fires.
 An OPEN "ask the device about any name" probe would have none of those three.
 
-TAKEN FROM THE :data:`GAPS` RECORDS' OWN ``measured_on`` FIELDS, never invented.
-Which of the five blocked pieces of work reads which name, and how far presence
-actually gets each one:
+TAKEN FROM THE :data:`GAPS` RECORDS' OWN ``measured_on`` FIELDS, never invented
+-- ``nc`` from the ``nc-transfer`` record, which has since been closed and
+whose name stays here because the list is what :meth:`Userland.has_applet`
+answers for, not a mirror of the registry. Which piece of work reads which
+name, and how far presence actually gets each one:
 
 ``base64``, ``uuencode``, ``uudecode``
     codec selection for the ``shell`` transfer backend
@@ -352,20 +348,20 @@ actually gets each one:
     ``present``, or one that could not be asked, transfers exactly as it did
     before that guard existed.
 ``nc``
-    the ``nc-transfer`` surface, and the one entry where presence is NECESSARY
-    BUT NOT SUFFICIENT -- do not read this probe as having solved it. That
-    record's gap is that BusyBox's ``nc`` APPLET rejects ``-N`` and spells its
-    listener ``-l -p PORT``; a device with a real OpenBSD netcat installed
-    alongside works fine via ``NcOptions.exec_name``. So ``present`` says
-    nothing about WHICH netcat answered, and ``exec_name`` may name a binary
-    (``ncat``, ``netcat``) that is not in this closed list at all. Only the
-    ``absent`` direction is a conclusion there: nothing to run is nothing to
-    run. The SUFFICIENT half is :attr:`Userland.nc_dash_n`, a separate
-    capability that asks whether the option parses rather than whether the name
-    resolves -- and it is what ``otto.host.transfer.nc`` reads. This entry is
-    still the one that has no consumer.
+    the ``nc`` transfer backend, and the one entry whose answer is not about
+    the binary otto will actually exec.
+    :attr:`~otto.host.options.NcOptions.exec_name` chooses that, and it may
+    name a binary (``ncat``, ``netcat``) this closed list does not carry at
+    all, so ``present`` says nothing about WHICH netcat answered. Only the
+    ``absent`` direction is a conclusion, and only about the name ``nc``
+    itself: nothing to run is nothing to run. There is no second,
+    option-shaped question beside this one any more -- the backend emits one
+    spelling every measured netcat accepts, which is what closed the
+    ``nc-transfer`` record
+    (``docs/superpowers/specs/2026-08-25-nc-universal-spelling-design.md``).
+    This entry has no consumer.
 
-WHAT IS DELIBERATELY NOT HERE. ``sftp-transfer`` is the fifth blocked surface
+WHAT IS DELIBERATELY NOT HERE. ``sftp-transfer`` is a blocked surface too
 and it gets NO entry, because its question is not a PATH-applet question and a
 capability that answered it wrongly would be worse than none. That record's own
 ``measured_on`` names an ABSOLUTE path -- ``/bin/sh: /usr/lib/sftp-server: not
@@ -396,54 +392,9 @@ APPLET_ABSENT = "absent"
 _APPLET_PREFIX = "applet_"
 # The capability key and the `UserlandOptions` field share this prefix, and the
 # sharing is load-bearing rather than tidy: `_resolve_once` reads a declaration
-# with `getattr(self._options, name)` for the fixed seven, and the applet block
+# with `getattr(self._options, name)` for the fixed six, and the applet block
 # reads its declarations exactly the same way. A prefix written twice would let
 # the two drift into a declaration nothing consults.
-
-NC_APPLET = "nc"
-"""The ONE name :attr:`Userland.nc_dash_n` is an answer about. Not a default.
-
-``nc_dash_n`` is the only capability here whose subject otto also lets an
-operator RENAME: :attr:`~otto.host.options.NcOptions.exec_name` chooses which
-netcat the transfer backend execs, and ``nc`` is merely its default. This
-module probes this name and no other, because a capability is resolved once per
-host and cached under a fixed key -- and because a probe that read
-``exec_name`` would exec an operator-supplied binary on EVERY host, including
-the ones that never transfer over netcat.
-
-WHAT THAT COSTS, and it is the consumer's problem rather than this module's:
-``otto.host.transfer.nc.refuse_if_nc_rejects_dash_n`` refuses only when the
-backend's ``exec_name`` IS this name, so a host pointed at ``ncat`` is never
-refused from this measurement. That is the cheap direction (the transfer is
-attempted exactly as it was before this capability existed) and it is the
-direction the ``nc-transfer`` record demands: a BusyBox device with a real
-OpenBSD netcat installed alongside works fine, and refusing it would be a
-refusal of a host that works.
-
-WHAT IT BUYS is that the probe and the emitted command resolve THE SAME NAME
-THROUGH THE SAME SHELL: both go out over ``Host.exec``, so whichever ``nc``
-that host's ``PATH`` finds for the transfer is the one measured here. The
-answer is not about a path this module guessed at.
-"""
-
-NC_DASH_N_SUPPORTED = "supported"
-"""The device's ``nc`` PARSES ``-N``. What otto assumed before it asked."""
-
-NC_DASH_N_REJECTED = "rejected"
-"""The device has an ``nc`` and it rejects ``-N``. The refusing answer."""
-
-NC_DASH_N_ABSENT = "absent"
-"""There is no ``nc`` to ask. A MEASUREMENT, and NOT the refusing answer.
-
-Distinguished from :data:`NC_DASH_N_REJECTED` rather than folded into it,
-because the two are different facts and only one of them is what the
-``nc-transfer`` record measured. That record is about an applet's OPTION SET;
-a device with no netcat at all is :data:`APPLET_ABSENT` on ``applet_nc``, which
-is a different (already recorded, still unwired) fact. Folding them would make
-:meth:`UserlandHost.probe` report ``rejected`` for a host that has nothing to
-reject with, and would have a refusal render a message about a spelling to an
-operator whose device has no binary.
-"""
 
 
 def applet_capability(applet: str) -> str:
@@ -610,9 +561,10 @@ def _parse_applet_answers(output: str) -> "dict[str, bool]":
 #     refused on one would convert a refused probe round into "this device has
 #     no base64", which is the expensive direction.
 # ``stat_size``
-#     ``stat``. ``transfer/nc.py`` has always sized remote files with
-#     ``stat -c %s`` (three call sites), so this is the status quo; ``absent``
-#     would be a capability regression rather than a neutral guess.
+#     ``stat``. ``transfer/nc.py`` has always sized remote files with `stat`
+#     (three call sites -- `-c %s` for PUT's verify, `-L -c '%s %F'` at both
+#     GET prefetches), so this is the status quo; ``absent`` would be a
+#     capability regression rather than a neutral guess.
 # ``checksum``
 #     ``absent`` — and the reasoning here is the OPPOSITE of ``stat_size``'s.
 #     ``stat_size``'s default encodes the status quo (nc already assumed
@@ -631,22 +583,10 @@ def _parse_applet_answers(output: str) -> "dict[str, bool]":
 # ``shell_dialect``
 #     ``bash``. otto's unix path has always assumed it, and no ``CommandFrame``
 #     is registered under ``ash`` at all — see the module docstring's hole.
-# ``nc_dash_n``
-#     ``supported``, and it is the same standard as ``stat_size``'s ``stat``:
-#     ``transfer/nc.py`` has emitted ``nc -N`` unconditionally since it was
-#     written, so this value is what otto did before it asked anything. The
-#     other two candidates are both worse in the expensive direction.
-#     ``rejected`` would let a refused probe round REFUSE a transfer, which is
-#     the whole failure ``is_settled`` exists to prevent -- and unlike the
-#     applet defaults, where the same reasoning ends at "a consumer that
-#     refuses checks ``is_settled`` anyway", here the consumer's ONLY arm is a
-#     refusal, so the default is the last line rather than a redundant one.
-#     ``absent`` would be a claim that a device has no netcat, made by a probe
-#     that never arrived.
 # ``applet_<name>``
-#     ``present``, for every name, DERIVED rather than typed -- and the seven
+#     ``present``, for every name, DERIVED rather than typed -- and the six
 #     above are the reason it can be one uniform rule instead of seven
-#     arguments. Each of those seven had to be reasoned about separately because
+#     arguments. Each of those six had to be reasoned about separately because
 #     each names a SPELLING otto would emit; an applet capability names only
 #     whether otto may reach for a binary at all, and what otto did before it
 #     asked anything was reach for it. Before any of these capabilities existed
@@ -669,7 +609,6 @@ _UNASKABLE_DEFAULTS = {
     "stat_size": "stat",
     "checksum": "absent",
     "shell_dialect": "bash",
-    "nc_dash_n": NC_DASH_N_SUPPORTED,
     **{applet_capability(a): APPLET_PRESENT for a in PROBED_APPLETS},
 }
 
@@ -760,7 +699,7 @@ class Userland:
         SETTLED is precisely what :meth:`as_lab_json` offers as a pasteable
         ``userland_options``, and inside a JSON payload a guess is
         indistinguishable from a measurement. Refusing here rather than at each
-        reader is what makes it ONE authority: the applet batch and the seven
+        reader is what makes it ONE authority: the applet batch and the six
         single-capability probes share this method, and both need the same answer.
 
         The consequence is that nothing settles under a dry run, so every
@@ -864,11 +803,11 @@ class Userland:
 
         **WHAT A CALLER PAYS.** Every capability, not the one it came
         for: there is no scoped form of this call, so ``run(sudo=True)``
-        issues up to fourteen probes to read ``elevation``, which probes 1-2
-        settled. Fourteen rather than one per capability because several
+        issues up to twelve probes to read ``elevation``, which probes 1-2
+        settled. Twelve rather than one per capability because several
         capabilities need two or three, and because the applet
         names ride a single batched command whatever their number — see
-        ``_applet_probe_command``. On a healthy host that is fourteen fast round trips; on a
+        ``_applet_probe_command``. On a healthy host that is twelve fast round trips; on a
         refusing one it is up to ``_RESOLVE_BUDGET_S`` (30s), and up to that
         again on the next call outside ``_RETRY_COOLDOWN_S`` (60s). None of it
         is charged to the caller's ``timeout=`` — ``BaseHost.run`` awaits this
@@ -902,7 +841,6 @@ class Userland:
             ("stat_size", self._probe_stat),
             ("checksum", self._probe_checksum),
             ("shell_dialect", self._probe_dialect),
-            ("nc_dash_n", self._probe_nc_dash_n),
         )
         sources: dict[str, str] = {}
         for name, probe in probes:
@@ -928,14 +866,12 @@ class Userland:
         # because that is what makes the override, the debug line and the
         # pasteable pin apply to these without a second mechanism.
         #
-        # LAST, deliberately. The seven above keep their exact order, their
+        # LAST, deliberately. The six above keep their exact order, their
         # exact spellings and their exact count, so a host that never reads an
         # applet capability sees the resolution it saw before; and when the
         # budget cuts the round short it is this batch that goes, not an
-        # incumbent. `nc_dash_n` was appended to that list rather than inserted
-        # into it for the same reason -- the newest capability is the one a
-        # short budget should lose, and it costs the batch nothing at the
-        # shipped budget, which affords 3 probes and never reaches either.
+        # incumbent. A capability added later belongs after them for the same
+        # reason -- the newest one is what a short budget should lose.
         #
         # ONLY THE UNSETTLED, UNDECLARED NAMES ARE ASKED ABOUT. A maintainer who
         # has pinned every applet costs zero round trips here, which is the
@@ -1072,70 +1008,6 @@ class Userland:
             return None
         return "bash" if bash else "ash"
 
-    async def _probe_nc_dash_n(self) -> str | None:
-        """Report whether this device's ``nc`` accepts ``-N``. A DIFFERENTIAL, not a text match.
-
-        The same two-step shape as :meth:`_probe_timeout` -- presence first,
-        then WHICH SPELLING the thing that is there actually speaks -- because
-        the question is the same question: ``nc`` existing says nothing about
-        whether otto's ``nc -N <ip> <port>`` can run on it, exactly as
-        ``timeout`` existing says nothing about which calling convention it
-        wants. :data:`NC_APPLET` is the one name asked about, and
-        :data:`NC_DASH_N_ABSENT` keeps "there is nothing to ask" apart from
-        "it answered no".
-
-        **THE OPTION IS COMPARED, NEVER THE ERROR TEXT.** Both arms run ``nc``
-        with no destination, which every netcat answers by printing its usage
-        and exiting non-zero, and the probe asks whether ``-N`` CHANGED that
-        answer. Equal output means the option parsed; different output means it
-        did not. Three properties follow, and they are why this beats the two
-        obvious alternatives:
-
-        * it needs no diagnostic string. The BusyBox rejection is spelled
-          ``nc: invalid option -- N`` on 1.16.1 and 1.21.1 and ``nc:
-          unrecognized option: N`` on 1.28.1, 1.31.0 and 1.35.0 -- two spellings
-          across five artifacts, and a grep for either is a guard that goes
-          quietly blind on the sixth;
-        * it needs no exit code to differ, and none does. Measured: a usage
-          error exits 1 on OpenBSD netcat and on every BusyBox row, so a probe
-          reading only the status cannot tell an accepted option from a
-          rejected one;
-        * it is not an identity test. ``nc -Q`` against the real OpenBSD netcat
-          -- an option it genuinely lacks -- answers REJECTED here, so the probe
-          measures the option and not "does this look like BusyBox". That
-          distinction is the ``nc-transfer`` record's central caveat.
-
-        NOTHING IS CONNECTED AND NOTHING IS BOUND. A destination-less ``nc``
-        touches no socket, which is what makes this safe to issue against every
-        host at resolution time; the record's own ``nc -N 127.0.0.1 1``
-        measurement opens a connection, and a listener probe would bind a port.
-        ``</dev/null`` is belt and braces: no netcat reads stdin before it has a
-        destination, and a hang is bounded by ``_send``'s grant anyway.
-
-        MEASURED, 2026-08-14, before it was written into this module. All five
-        matrix artifacts (1.16.1, 1.21.1, 1.28.1, 1.31.0, 1.35.0) answer
-        REJECTED; OpenBSD netcat 1.226 answers SUPPORTED, and answers REJECTED
-        for the ``-Q`` control. ``tests/busybox/test_applet_contracts.py``
-        carries the Tier 1 copy of the spelling, per row.
-
-        WHAT IT DOES NOT ANSWER: the LISTENER spelling. otto's put path spawns
-        ``nc -l -w SECS PORT``, which carries no ``-N``, and no probe can settle
-        that one without binding a port on the device. See
-        :func:`otto.host.transfer.nc.refuse_if_nc_rejects_dash_n` for why that
-        path stays unguarded rather than being refused on this answer.
-        """
-        present = await self._probe(f"command -v {NC_APPLET}")
-        if present is None:
-            return None
-        if not present:
-            return NC_DASH_N_ABSENT
-        parses = await self._probe(
-            f'[ "$({NC_APPLET} 2>&1 </dev/null)" = "$({NC_APPLET} -N 2>&1 </dev/null)" ]'
-        )
-        if parses is None:
-            return None
-        return NC_DASH_N_SUPPORTED if parses else NC_DASH_N_REJECTED
-
     async def _probe_applets(self, applets: "list[str]") -> "dict[str, str] | None":
         """Answer presence for EVERY name in *applets* in ONE round trip, or ``None``.
 
@@ -1236,28 +1108,10 @@ class Userland:
         """
         return self._get("shell_dialect")
 
-    @property
-    def nc_dash_n(self) -> str:
-        """:data:`NC_DASH_N_SUPPORTED` | :data:`NC_DASH_N_REJECTED` | :data:`NC_DASH_N_ABSENT`.
-
-        Whether the ``nc`` on this device parses the ``-N`` that
-        ``otto.host.transfer.nc`` emits when it asks the device to SEND. About
-        the name :data:`NC_APPLET` and no other -- read that constant before
-        consuming this, because an operator may have pointed
-        :attr:`~otto.host.options.NcOptions.exec_name` somewhere else entirely.
-
-        **A VALUE, NOT A VERDICT.** Its one consumer REFUSES, so it asks
-        :meth:`is_settled` first: the cannot-ask default is
-        :data:`NC_DASH_N_SUPPORTED`, which is what otto emitted before this
-        capability existed, and a probe round that never arrived must not become
-        a verdict that a device cannot send its files.
-        """
-        return self._get("nc_dash_n")
-
     def has_applet(self, applet: str) -> str:
         """:data:`APPLET_PRESENT` or :data:`APPLET_ABSENT` for one *applet*.
 
-        The parameterized reader the fixed seven do not need. Seven properties
+        The parameterized reader the fixed six do not need. Seven properties
         would say the same thing seven times and would have to grow with
         :data:`PROBED_APPLETS`; this cannot fall behind that list, because the
         list is what it validates against.
@@ -1284,7 +1138,7 @@ class Userland:
         Raises:
             ValueError: *applet* is not in :data:`PROBED_APPLETS`.
             RuntimeError: read before :meth:`resolve` was awaited, exactly as
-                the seven properties do.
+                the six properties do.
         """
         return self._get(applet_capability(applet))
 
@@ -1303,7 +1157,7 @@ class Userland:
         ``False`` before :meth:`resolve` has been awaited, which is honest
         rather than a special case: nothing is settled yet.
 
-        Takes an applet capability as readily as one of the fixed seven -- pass
+        Takes an applet capability as readily as one of the fixed six -- pass
         ``applet_capability("scp")``, never ``"applet_" + name``, so the closed
         list gets to reject a typo before this method does. The whole applet
         batch settles or none of it does (see ``_probe_applets``), so
@@ -1378,8 +1232,8 @@ def _capability_rows(userland: "Userland") -> "list[tuple[str, str, str]]":
     """
     values = {applet_capability(a): userland.has_applet(a) for a in PROBED_APPLETS}
     # Whatever `_UNASKABLE_DEFAULTS` carries beyond the applets is the fixed
-    # seven, and each of those names is spelled exactly like the property that
-    # reads it. Derived rather than listed, so an eighth capability with no
+    # six, and each of those names is spelled exactly like the property that
+    # reads it. Derived rather than listed, so a seventh capability with no
     # reader raises AttributeError here instead of going quietly missing from
     # the report.
     values |= {n: getattr(userland, n) for n in _UNASKABLE_DEFAULTS if n not in values}
@@ -1495,7 +1349,7 @@ def _dry_run_report() -> "list[str]":
     paste-safety property is enforced there, once, for every command that
     triggers a resolution rather than for this verb alone. What is left for
     this function is which of two true answers a user gets, and the table is
-    the worse one: fourteen rows of ``assumed`` says what the host WOULD do,
+    the worse one: thirteen rows of ``assumed`` says what the host WOULD do,
     which is a real reading, but ``_probe_report``'s empty-pin paragraph then
     invites the reader to "run this again outside that window", and there is no
     window. A dry run will not settle anything however long they wait.
@@ -1714,14 +1568,10 @@ class UserlandHost:
 # own copy of the message. MOST of the guards key on a PROBE rather than a
 # declaration and therefore await a :meth:`Userland.resolve`; that trade is
 # argued at :func:`otto.host.file_ops.refuse_if_base64_is_absent`, at
-# :func:`otto.host.unix_host.shutdown_command`, at
-# :func:`otto.host.transfer.scp.refuse_if_scp_is_absent` and at
-# :func:`otto.host.transfer.nc.refuse_if_nc_rejects_dash_n`, not here -- and they
+# :func:`otto.host.unix_host.shutdown_command` and at
+# :func:`otto.host.transfer.scp.refuse_if_scp_is_absent`, not here -- and they
 # do not pay the same price, which is why each argues its own. Only the scp one
-# ADDS a resolution to a path that awaited none before; the nc one rides the
-# resolution ``NcFileTransfer.prepare`` already awaits on every transfer, and
-# what it adds instead is two probes to the round, on every host, for a
-# capability most hosts never read.
+# ADDS a resolution to a path that awaited none before.
 #
 # NOT EVERY TABLE-BACKED PATH IS A REFUSAL, and :data:`PATH_ADAPTED` is where
 # that stops being true. ``shutdown-command``'s guard has the same two halves --
@@ -2147,10 +1997,10 @@ class Gap:
     one claim here that nothing resolves: ``file-ops-base64`` carried two, both
     two lines stale by the time anyone re-read them, and dropping them cost
     nothing because :attr:`paths` already carries the same call sites as dotted
-    names a test resolves. NO RECORD BELOW CITES ONE ANY MORE: ``nc-transfer``
-    carried the last of them until its own rewrite took it out, which is what
-    ``shutdown-command``'s rewrite had already done with the second. Keep it
-    that way -- the sites are in ``paths``, where something resolves them.
+    names a test resolves. NO RECORD BELOW CITES ONE ANY MORE: the last two
+    went out with ``shutdown-command``'s rewrite and with the since-closed
+    ``nc-transfer`` record's. Keep it that way -- the sites are in ``paths``,
+    where something resolves them.
     """
 
     queued_for: str
@@ -2716,100 +2566,6 @@ GAPS: list[Gap] = [
                 pinned_by=(
                     "tests/unit/host/test_scp_transfer_refusal.py::TestPutArrivesAtTheGuard"
                     "::test_a_device_with_no_scp_is_refused_before_the_connection_is_opened"
-                ),
-            ),
-        ],
-    ),
-    Gap(
-        surface="nc-transfer",
-        status=MEASURED_BROKEN,
-        reason=(
-            "the `nc` transfer backend cannot drive BusyBox's own `nc` APPLET: it sends "
-            "with `nc -N <ip> <port>` and listens OpenBSD-style with `nc -l <port>`, and "
-            "the applet supports neither spelling. A BusyBox device with a real OpenBSD "
-            "netcat installed alongside is fine -- point `NcOptions.exec_name` at it -- "
-            "so this is a gap in the applet, not in every BusyBox host"
-        ),
-        measured_on=(
-            "TWO measurements of the same option, and the second is what the refusal keys "
-            "on. The five matrix artifacts, 2026-08-13: `nc -N 127.0.0.1 1` is rejected on "
-            "every row (`nc: invalid option -- N` on 1.16.1 and 1.21.1, `nc: "
-            "unrecognized option: N` on 1.28.1, 1.31.0 and 1.35.0), and every row's own "
-            "usage line spells the listener `nc [OPTIONS] -l -p PORT`. That one CONNECTS, "
-            "so no call site can issue it. Then, 2026-08-14, the same five rows through "
-            "the probe a call site CAN issue -- `Userland._probe_nc_dash_n`, which compares "
-            "a destination-less `nc` against `nc -N` and touches no socket: all five answer "
-            "`rejected`, while OpenBSD netcat 1.226 answers `supported` and answers "
-            "`rejected` for a `-Q` control it genuinely lacks. NO LINE NUMBER for the "
-            "emitter: `paths` below carries each site as a dotted name a test RESOLVES, "
-            "which is what this field used to cite instead"
-        ),
-        queued_for=(
-            "the REFUSAL has landed for the GET direction, in "
-            "`otto.host.transfer.nc.refuse_if_nc_rejects_dash_n` -- this registry's sixth "
-            "product call site, and the first whose predicate is an OPTION rather than a "
-            "presence. A FIX is still the full-parity workstream's, "
-            "`todo/busybox-parity-sweep-2026-08-11.md`: the spec queues a BusyBox `nc` "
-            "variant (`-l -p PORT`, size-terminated reads to replace the missing `-N`) and "
-            "explicitly keeps it out of the phases that built the `shell` backend. The PUT "
-            "direction is queued with it and stays open in the meantime -- see its path "
-            "below for why the `-N` answer does not decide it. The record stays "
-            "`measured-broken` because the surface still is"
-        ),
-        paths=[
-            GapPath(
-                site="otto.host.transfer.nc.NcFileTransfer._get_files_nc",
-                state=PATH_WIRED,
-                checked_by="otto.host.transfer.nc.refuse_if_nc_rejects_dash_n",
-                detail=(
-                    "asks the device to send with `nc -N <ip> <port>`, and `-N` is the option "
-                    "every matrix row rejects outright. Reads this record through the guard "
-                    "and declines before it binds its own local server or spawns anything. "
-                    "The guard's PREDICATE is a probe -- a SETTLED `nc_dash_n` of `rejected` "
-                    "-- and its VERDICT and MESSAGE are this record's. It keys on the OPTION "
-                    "and on the BINARY otto would exec: `NcOptions.exec_name` pointed at a "
-                    "real netcat is the workaround this record exists to preserve, so a host "
-                    "configured that way is not refused at all"
-                ),
-                pinned_by=(
-                    "tests/unit/host/test_nc_transfer_refusal.py::TestGetArrivesAtTheGuard"
-                    "::test_a_device_whose_nc_rejects_dash_n_is_refused_before_anything_is_spawned"
-                ),
-            ),
-            GapPath(
-                site="otto.host.transfer.nc.NcFileTransfer._get_files_nc_tunneled",
-                state=PATH_PROTECTED,
-                checked_by="otto.host.transfer.nc.refuse_if_nc_rejects_dash_n",
-                detail=(
-                    "the hop-tunnelled GET, which spawns `nc -Nl <port>` -- both spellings "
-                    "the applet rejects in one option string -- and is a SEPARATE emitter "
-                    "rather than a restatement of the plain GET. It is not a hole and it "
-                    "correctly has no guard of its own: `_get_files_nc` is its only caller, "
-                    "and the refusal there sits ABOVE the `has_tunnel` dispatch, so on "
-                    "exactly the devices this record covers this function is never entered. "
-                    "A second call to the guard inside it could never be the one to fire"
-                ),
-                pinned_by=(
-                    "tests/unit/host/test_nc_transfer_refusal.py"
-                    "::TestTheTunnelledGetIsProtectedByItsOnlyCaller"
-                    "::test_the_tunnelled_path_is_never_entered_on_a_refused_device"
-                ),
-            ),
-            GapPath(
-                site="otto.host.transfer.nc.NcFileTransfer._put_files_nc",
-                state=PATH_OPEN,
-                detail=(
-                    "spawns the device-side listener as `nc -l -w <secs> <port>`, the "
-                    "OpenBSD spelling the applet does not accept (it wants `-l -p PORT`), "
-                    "and reads nothing from this record. So the listener never binds, otto "
-                    "waits for a peer that cannot arrive, and `_cancel_and_reap` ends it -- "
-                    "a timeout rather than the refusal this record describes. STILL OPEN "
-                    "DELIBERATELY, now that the GET direction is wired: this command carries "
-                    "no `-N`, so the `nc_dash_n` measurement is not about it. The two facts "
-                    "coincide on every matrix row and remain two facts, and the one that "
-                    "would decide this path -- whether the device's `nc` accepts a listener "
-                    "spelled `-l PORT` -- cannot be settled without asking a device to BIND, "
-                    "which is a probe with a side effect on the host it is asking about"
                 ),
             ),
         ],

@@ -423,11 +423,22 @@ class NcOptions:
     Bundles all nc-specific knobs that previously lived on ``UnixHost``
     into a single object so that ``NcOptions()`` (with defaults) produces
     the same behavior as the old individual fields.
+
+    **What a GET can fetch:** regular files, and exactly the number of bytes
+    the remote ``stat`` reports -- that size is what ends otto's read, since
+    the spawn carries no option that ends itself. Symlinks are followed and
+    deliver their target. A directory or a device file is refused by name: its
+    reported size is not what reading it delivers. procfs and sysfs
+    pseudo-files report a size that is not their content either
+    (``/proc/version`` reports 0) and nothing in the remote ``stat`` separates
+    them from a genuinely empty file, so they are not refused -- they simply
+    arrive empty. Use the ``shell`` backend for those.
     """
 
     exec_name: str = "nc"
     """Netcat executable on both sides (e.g. ``nc``, ``ncat``, ``netcat``).
-    Listener syntax is assumed to be OpenBSD-style (``nc -l PORT``)."""
+    Listener syntax is the universal ``-l -p PORT`` (accepted by OpenBSD,
+    BusyBox, traditional netcat and ncat)."""
 
     port: int = 9000
     """Base port for netcat transfers. Used as the scan-start for the
@@ -451,7 +462,7 @@ class NcOptions:
 
     listener_timeout: float = 30.0
     """Ceiling on otto's wait for a remote ``nc -l`` listener to exit after a
-    transfer ends. Also passed as ``nc -w``, but do NOT read that as a bound.
+    transfer ends. Do NOT read it as a bound on the remote listener itself.
 
     An earlier version of this docstring claimed ``-w`` made the listener
     "self-terminate" and thereby bounded the orphaned-listener hang. That is
@@ -462,12 +473,12 @@ class NcOptions:
     holding its port so the next transfer's port scan started one higher.
 
     So a listener whose client never arrives is ended by otto reaping it
-    (``_cancel_and_reap`` on every error path in ``transfer/nc.py``), not by
-    netcat giving up. ``-w`` is still passed because some variants do bound a
-    listener with it — but do not assume yours is one: Nmap's ``ncat``, which
-    ``exec_name`` explicitly offers, documents ``-w`` as a *connect* timeout and
-    spells the listen-side bound ``-i``/``--idle-timeout``. Treat ``-w`` as a
-    possible bonus, never as the mechanism.
+    (``_cancel_and_reap`` on every error path in ``transfer/nc.py``) and by the
+    remote ``timeout`` prefix, not by netcat giving up. ``-w`` is banished from
+    the listener spellings rather than kept as a free bonus: measured
+    2026-08-25, what it actually bounds is the idle time of an ACCEPTED
+    connection, killing a stalled transfer with rc 0 and a partial file on five
+    of six userlands — a truncation that reports success.
 
     What this value genuinely caps is otto's own post-transfer wait; a transfer
     whose connection is established is unaffected."""
@@ -621,30 +632,6 @@ class UserlandOptions:
     coreutils spelling) works from 1.31.0. The two spellings are mutually
     exclusive on every build tested."""
 
-    nc_dash_n: str | None = None
-    """``"supported"``, ``"rejected"``, ``"absent"``, or ``None`` to probe.
-
-    Whether this device's ``nc`` parses the ``-N`` that the ``nc`` transfer
-    backend emits when it asks the device to SEND a file. The second
-    option-support capability after :attr:`timeout_style`, and read the same
-    way: what exists is not what a spelling does.
-
-    Measured 2026-08-14 -- ``rejected`` on all five matrix artifacts (1.16.1,
-    1.21.1, 1.28.1, 1.31.0, 1.35.0, in a BusyBox-only chroot), ``supported`` on
-    OpenBSD
-    netcat 1.226. That split is the whole point: BusyBox is not the question,
-    the netcat in front of otto is.
-
-    **DECLARING THIS IS A CLAIM ABOUT ONE NAME, ``nc``, AND NOT ABOUT
-    :attr:`NcOptions.exec_name`.** The probe asks about ``nc`` because a
-    capability is cached under a fixed key, and
-    ``otto.host.transfer.nc.refuse_if_nc_rejects_dash_n`` acts on the
-    answer only while ``exec_name`` IS ``nc``. A host pointed at ``ncat`` is
-    never refused from this value, however it was set -- so pinning
-    ``rejected`` on such a host records a measurement and changes nothing, and
-    pinning it after changing ``exec_name`` back to ``nc`` puts a stale answer
-    in force. Re-run ``otto host <id> probe`` when the netcat changes."""
-
     applet_base64: str | None = None
     """``"present"``, ``"absent"``, or ``None`` to probe. Read via
     :meth:`~otto.host.userland.Userland.has_applet`.
@@ -669,11 +656,10 @@ class UserlandOptions:
     """``"present"``, ``"absent"``, or ``None`` to probe.
 
     Present on all five matrix artifacts (2026-08-14). Presence is NOT the
-    ``nc`` transfer question — BusyBox's applet rejects the ``-N`` and ``-l
-    PORT`` spellings otto emits, and a real netcat installed alongside works
-    via :attr:`NcOptions.exec_name`, which may name a binary this list does not
-    carry. :attr:`nc_dash_n` is the field that asks about the option; this one
-    stays a presence answer with no consumer. See
+    ``nc`` transfer question — a real netcat installed alongside is reached via
+    :attr:`NcOptions.exec_name`, which may name a binary this list does not
+    carry, so what is measured here is the name ``nc`` and not the binary the
+    backend execs. This field stays a presence answer with no consumer. See
     :data:`~otto.host.userland.PROBED_APPLETS`."""
 
     applet_poweroff: str | None = None

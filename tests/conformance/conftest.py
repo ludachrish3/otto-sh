@@ -159,19 +159,23 @@ def pytest_sessionstart(session):
 
 #: The name a contract module gives a one-argument predicate to DECLARE ITS
 #: APPLICABLE DOMAIN -- the drawn cells it is a contract about. Absent means
-#: "every drawn cell", which is what four of the six contracts here say (the
+#: "every drawn cell", which is what three of the six contracts here say -- the
+#: three in the exec file. The other three are covered by two declarations (the
 #: transfer file declares one for both of its, and the timeout file for its
-#: one).
+#: one), which is why the module count and the contract count differ.
 _DOMAIN_HOOK = "applicable_cell"
 
 #: The name a contract module gives a one-argument function to declare that a
 #: drawn cell is EXPECTED TO FAIL, returning the reason or None. Applied as
 #: ``xfail(strict=True)``, which is an ASSERTION and not a suppression: the
 #: item must fail, an unexpected pass (``XPASS``) is a hard error, and the
-#: marker's own removal is what a fixed product forces. One module uses it
-#: today (``test_transfer_contract.py``, for a root-caused defect in otto's
-#: ``nc`` listener spelling on BusyBox), and the whole decision lives in that
-#: module under its own banner so that reversing it is a single-file change.
+#: marker's own removal is what a fixed product forces. NO MODULE DECLARES ONE
+#: TODAY: ``test_transfer_contract.py`` did until 2026-08-25, for a root-caused
+#: defect in otto's ``nc`` listener spelling on BusyBox, and the universal
+#: ``nc -l -p PORT`` spelling repaid it -- which is the removal this strictness
+#: exists to force. The mechanism stays for the next declaration, and the
+#: convention with it: the whole decision lives in the declaring module under
+#: its own banner, so that reversing it is a single-file change.
 _XFAIL_HOOK = "expected_failure"
 
 
@@ -183,8 +187,9 @@ def pytest_generate_tests(metafunc):
     argument is evaluated at conftest import, before any config exists.
 
     A CONTRACT MAY DECLARE THE CELLS IT IS ABOUT, by defining a module-level
-    :data:`_DOMAIN_HOOK` predicate over the ``ResolvedCell``. Two do today,
-    and they read different things:
+    :data:`_DOMAIN_HOOK` predicate over the ``ResolvedCell``. Two MODULES do
+    today, covering three of the six contracts, and they read different
+    things:
 
     - ``test_transfer_contract.py`` is about ``put``/``get``, and the three bed
       guests declaring ``filesystem: "none"`` have nowhere to put a file --
@@ -198,13 +203,14 @@ def pytest_generate_tests(metafunc):
     A CONTRACT MAY ALSO DECLARE A CELL A KNOWN FAILURE, by defining a
     module-level :data:`_XFAIL_HOOK` function returning a reason or ``None``.
     That becomes ``xfail(strict=True)`` on that cell's items -- see
-    :func:`_expected_failure_marks` for why the strictness is not optional.
-    One module uses it, for a root-caused defect in otto's own ``nc``
-    listener. The two hooks say DIFFERENT things and must not be confused: a
-    domain says the contract is not ABOUT this cell, so nothing is asserted
-    and nothing is claimed; an expected failure says the contract IS about it
-    and otto currently breaks it, so the failure is asserted and the fix is
-    what removes the declaration.
+    :func:`_expected_failure_marks` for why the strictness is not optional. No
+    module declares one today; one did until 2026-08-25, for a root-caused
+    defect in otto's own ``nc`` listener, and the fix removed the declaration
+    along with the defect. The two hooks say DIFFERENT things and must not be
+    confused: a domain says the contract is not ABOUT this cell, so nothing is
+    asserted and nothing is claimed; an expected failure says the contract IS
+    about it and otto currently breaks it, so the failure is asserted and the
+    fix is what removes the declaration.
 
     Declaring a domain is NOT skipping and NOT shrinking the space. A skip
     inside a drawn cell reports success for a contract nobody ran, which is

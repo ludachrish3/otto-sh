@@ -971,8 +971,10 @@ class TestNotConnectedFileTransfer:
         # The file-size stat succeeds; the nc send exec fails (not
         # connected) — get must surface that as an error, not raise.
         async def mock_exec(cmd: str, **kw) -> CommandResult:
-            if cmd.startswith("stat -c %s"):
-                return _cs(command=cmd, output="0", status=Status.Success, retcode=0)
+            if cmd.startswith("stat"):
+                return _cs(
+                    command=cmd, output="0 regular empty file", status=Status.Success, retcode=0
+                )
             raise RuntimeError("not connected")
 
         async def fake_start_server(cb, host, port):
@@ -1151,8 +1153,18 @@ class TestNcFileTransfer:
         # Control-plane ops (the file-size stat) and the nc send all route
         # through `exec` now — no dedicated monitor session.
         async def mock_exec(cmd: str, **kw) -> CommandResult:
-            if cmd.startswith("stat -c %s"):
-                return _cs(command=cmd, output="1024", status=Status.Success, retcode=0)
+            if cmd.startswith("stat"):
+                # The payload's real size, because the read loop terminates on
+                # it: an overstated stat is a short read now, not a cosmetic
+                # progress mismatch. The type rides along in the same answer --
+                # `stat -L -c '%s %F'` -- because only a regular file delivers
+                # `st_size` bytes down the pipe.
+                return _cs(
+                    command=cmd,
+                    output=f"{len(file_data)} regular file",
+                    status=Status.Success,
+                    retcode=0,
+                )
             return send_cs
 
         dest = tmp_path / "out"
@@ -1187,7 +1199,8 @@ class TestNcFileTransfer:
         assert (dest / "file.txt").read_bytes() == file_data
         # The file-size stat ran as a control-plane exec.
         assert any(
-            c.args and c.args[0] == "stat -c %s /remote/file.txt" for c in mock_os.await_args_list
+            c.args and c.args[0] == "stat -L -c '%s %F' /remote/file.txt"
+            for c in mock_os.await_args_list
         )
         await h.close()
 
@@ -1338,8 +1351,8 @@ class TestNcFileTransfer:
 
         async def exec_capturing_log(cmd: str, *_a, **_kw) -> CommandResult:
             log_states.append(h.log)
-            if cmd.startswith("stat -c %s"):
-                return _cs(command=cmd, output="11", status=Status.Success, retcode=0)
+            if cmd.startswith("stat"):
+                return _cs(command=cmd, output="11 regular file", status=Status.Success, retcode=0)
             return send_cs
 
         assert h.log is LogMode.NORMAL

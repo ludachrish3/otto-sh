@@ -106,11 +106,6 @@ _OTHER_DECLARED_CAPABILITIES = {
     "base64_flag": "-d",
     "stat_size": "stat",
     "checksum": "md5sum",
-    # `rejected` is what 1.35.0 measures, like the applet values below, and
-    # nothing in this module reads it: the guard that does
-    # (`refuse_if_nc_rejects_dash_n`) sits on the GET path, and every test here
-    # is about the listener PREFIX. Declared only so the round issues no probe.
-    "nc_dash_n": "rejected",
     **{
         applet_capability(a): ("absent" if a in {"scp", "shutdown"} else "present")
         for a in PROBED_APPLETS
@@ -349,9 +344,9 @@ def test_both_listener_spawns_carry_the_hard_cap():
 
     If otto is killed outright, or the SSH channel dies, no ``finally`` runs and
     nothing local can reap. The remote-side cap is the only thing left, so it
-    must be on BOTH spawn sites — the get direction (``-Nl``) is the one that
-    tends to be forgotten, and it is exactly the one the bed-hygiene probe was
-    also blind to.
+    must be on BOTH spawn sites — the get direction is the one that tends to be
+    forgotten, and its old ``-Nl`` spelling is exactly the one the bed-hygiene
+    probe was also blind to.
     """
     spawns = [
         line
@@ -371,12 +366,14 @@ def test_the_hard_cap_is_a_backstop_not_a_transfer_deadline():
 
     `timeout` bounds wall-clock lifetime, not idle time — there is no
     `--idle` — so this cap covers an ESTABLISHED transfer too. Set it near
-    `listener_timeout` (30s) and every transfer slower than that is severed:
-    on GET the reader then sees a clean EOF and the short read is deliberately
-    NOT failed, so the caller gets Status.Success and a truncated file. Nothing
-    else in the suite would go red. It must therefore stay far above both the
-    data-path bounds and any plausible transfer, while still beating "nobody
-    noticed for days" — the state this whole fix exists to end.
+    `listener_timeout` (30s) and every transfer slower than that is severed
+    mid-flight: on GET the reader sees a clean EOF, which is now a short read
+    against the size the prefetch measured and so an error naming got and
+    expected — a loud failure of every large transfer rather than the silent
+    truncation it used to be, and still a bound doing the opposite of its job.
+    It must therefore stay far above both the data-path bounds and any
+    plausible transfer, while still beating "nobody noticed for days" — the
+    state this whole fix exists to end.
     """
     from otto.host.options import NcOptions
     from otto.host.transfer.nc import (

@@ -2,13 +2,14 @@
 
 Registers ``nc`` into the shared transfer registry on import.
 
-**THE GET DIRECTION ASKS THE DEVICE FOR ONE OPTION FIRST.** Both GET paths make
-the device run ``nc -N`` -- the plain one to SEND, the tunnelled one to LISTEN
-as ``nc -Nl`` -- and ``-N`` is an OpenBSD netcat option that BusyBox's applet
-rejects outright. :func:`refuse_if_nc_rejects_dash_n` declines those up front on
-a device measured to reject it, rather than letting the failure arrive as a
-local server waiting for a peer that will never connect. The PUT direction is
-deliberately not gated on that answer; the guard's own docstring says why.
+**NO DIRECTION ASKS THE DEVICE FOR AN OPTION IT MAY NOT HAVE.** Both GET arms
+read exactly the size their ``stat`` prefetch measured and close to terminate a
+sender that has no ``-N`` to close itself -- see
+:meth:`NcFileTransfer._get_files_nc` -- and every listener, PUT's and the
+tunnelled GET's alike, is spelled ``nc -l -p PORT``, the one form every measured
+netcat accepts. So this module reads nothing from the gap registry: the
+``nc-transfer`` record and the refusal that read it are gone, closed 2026-08-25
+by these spellings (``docs/superpowers/specs/2026-08-25-nc-universal-spelling-design.md``).
 """
 
 import asyncio
@@ -29,7 +30,6 @@ from typing_extensions import override
 from ...result import CommandResult, Result
 from ...utils import Status, WaitTimeoutError, wait_for_async
 from ..errors import HostCommandError, HostUnreachableError
-from ..userland import NC_APPLET, NC_DASH_N_REJECTED, refuse_if_gapped
 from .base import (
     NcListenerCheck,
     NcPortStrategy,
@@ -317,127 +317,80 @@ async def _connect_with_retry(
     return cast("tuple[asyncio.StreamReader, asyncio.StreamWriter]", connection)
 
 
-NC_DASH_N_CAPABILITY = "nc_dash_n"
-"""The capability key this backend's refusal turns on.
+_NC_GET_STAT_FORMAT = "stat -L -c '%s %F'"
+"""The GET prefetch's remote stat: size AND file type, symlinks followed.
 
-Spelled once and read once, by
-:meth:`~otto.host.userland.Userland.is_settled`, which validates it against the
-capabilities that module resolves -- so a typo raises there rather than becoming
-a condition that quietly never fires. The VALUE is read through
-:attr:`~otto.host.userland.Userland.nc_dash_n`, a property, which cannot be
-misspelled at all.
+Measured 2026-08-25 on every pinned BusyBox applet (1.16.1, 1.21.1, 1.28.1,
+1.31.0, 1.35.0) and the system coreutils ``stat``::
+
+    stat -c %s          <symlink to a 12-byte file>  -> 23   (the LINK's length)
+    stat -L -c %s       <the same symlink>           -> 12
+    stat -L -c '%s %F'  regular file                 -> "12 regular file"
+    stat -L -c '%s %F'  empty regular file           -> "0 regular empty file"
+    stat -L -c '%s %F'  /proc/version                -> "0 regular empty file"
+    stat -L -c '%s %F'  /dev/null                    -> "0 character special file"
+
+``-L`` because the sender's ``< {src}`` follows the link and the unadorned
+spelling does not: a GET of a symlink used to vouch the link's own 23 bytes
+against a stream carrying the target's 12, which is a short read on the
+tunnelled arm and, before this wave's stall bound, a hang on the plain one.
+
+``%F`` because the size is the read loop's terminator, and only a regular
+file delivers ``st_size`` bytes down the pipe -- a directory or a device file
+delivers something else entirely. Those are refused by name in
+:func:`_nc_get_stat_verdict`, in the same call that would otherwise have
+measured them, before anything is bound or spawned.
+
+What ``%F`` CANNOT do is separate a procfs/sysfs pseudo-file from an empty
+regular file: ``/proc/version`` answers ``0 regular empty file``, exactly as a
+genuinely empty file does. Those are therefore DOCUMENTED as untransferable
+this way (:class:`~otto.host.options.NcOptions`, and the nc section of the
+host-options guide) rather than refused -- there is no answer to refuse them
+on.
 """
 
+_NC_GETTABLE_FILE_TYPES = ["regular file", "regular empty file"]
+"""``%F`` answers whose ``st_size`` IS the byte count ``< {src}`` will deliver."""
 
-async def refuse_if_nc_rejects_dash_n(
-    userland: "Userland | None", *, exec_name: str, host: str = "", attempted: str = ""
-) -> None:
-    """Refuse a netcat GET to a device whose ``nc`` was measured to reject ``-N``.
 
-    **The gap registry's sixth product call site**, and the first whose
-    predicate is an OPTION rather than a presence. Everything otto knows about
-    this failure lives in the ``nc-transfer`` record in
-    :data:`~otto.host.userland.GAPS`; this function supplies the only thing a
-    record cannot -- whether THIS device is one the measurement covers -- and
-    hands the raise back to :func:`~otto.host.userland.refuse_if_gapped` so the
-    message is the record's and not a second, drifting copy of it. Downgrading
-    that record to ``untested`` stops the refusal.
+def _nc_get_stat_verdict(src: Path, stat_result: CommandResult) -> Result:
+    """Read the prefetch's answer for *src* as a size or as a refusal.
 
-    **PRESENCE WAS NEVER THE QUESTION HERE, WHICH IS WHY THIS IS NOT THE
-    ``scp`` GUARD WITH A DIFFERENT NAME.** ``nc`` is present on all five matrix
-    artifacts; what BusyBox's applet does not have is the OPTION. So the
-    predicate is a SETTLED :attr:`~otto.host.userland.Userland.nc_dash_n` of
-    :data:`~otto.host.userland.NC_DASH_N_REJECTED` -- the device ran its own
-    ``nc`` and the option did not parse. Read
-    ``Userland._probe_nc_dash_n`` for how that is
-    measured without connecting anything.
-
-    **IT KEYS ON THE BINARY otto WILL ACTUALLY EXEC, WHICH IS WHY IT TAKES
-    *exec_name*.** :attr:`~otto.host.options.NcOptions.exec_name` lets an
-    operator point this backend at ``ncat``, ``netcat``, or an absolute path,
-    and the capability is an answer about the name
-    :data:`~otto.host.userland.NC_APPLET` (``nc``) alone. Measuring one binary
-    and refusing on behalf of another is exactly the false refusal the
-    ``nc-transfer`` record warns about -- a BusyBox device with a real OpenBSD
-    netcat installed alongside transfers perfectly well -- so when *exec_name*
-    is anything but that name this returns without refusing, whatever the
-    device answered. The cost is stated rather than hidden: such a host is
-    never protected by this guard, and gets the same timeout it got before the
-    guard existed. What the shared name buys, when they DO match, is that the
-    probe and the transfer resolve it through the same ``Host.exec`` and the
-    same ``PATH`` -- so a locally-installed ``/usr/local/bin/nc`` shadowing the
-    applet is measured, not assumed away.
-
-    **THE PUT PATH IS DELIBERATELY NOT REFUSED FROM THIS ANSWER**, and the
-    asymmetry is the honest one rather than an omission.
-    ``NcFileTransfer._put_files_nc`` spawns ``nc -l -w SECS PORT``, which
-    carries no ``-N`` at all: it is broken on BusyBox for a DIFFERENT reason
-    (the applet spells a listener ``-l -p PORT``), and nothing measured here
-    establishes that a netcat rejecting ``-N`` also rejects the OpenBSD
-    listener form. The two facts coincide on every matrix row and are still two
-    facts. Settling the second one would mean asking a device to LISTEN, which
-    binds a port -- a probe with a side effect on the host it is asking about,
-    and one that can leave a process behind on exactly the devices otto is
-    least able to clean up. So that path stays ``PATH_OPEN`` in the record,
-    which is what it already was.
-
-    **IT RESPECTS ``is_settled``**, like every refusing consumer here. The
-    cannot-ask default for this capability is
-    :data:`~otto.host.userland.NC_DASH_N_SUPPORTED`, so an unsettled host
-    currently reads as "the option parses" and never reaches the refusal --
-    but the gate is written anyway, because what makes it redundant is a VALUE
-    that can change, and because the alternative is that an sshd at its
-    ``MaxSessions`` ceiling (the very condition a bulk transfer creates) turns
-    a refused probe round into a verdict that this device cannot send files.
-    ``test_a_probe_round_that_never_arrived_is_not_refused`` holds it by
-    flipping exactly that default.
-
-    **A host with no resolver at all (``userland is None``) is likewise not
-    refused.** ``_userland()`` is an overridable hook whose base implementation
-    answers ``None``, and :class:`NcFileTransfer` accepts such a context rather
-    than rejecting it -- see its ``__init__``. Nothing has been measured about
-    such a host, so there is nothing to refuse from.
-
-    **IT COSTS NO ROUND TRIP THIS PATH DID NOT ALREADY PAY**, unlike
-    :func:`otto.host.transfer.scp.refuse_if_scp_is_absent`, which added a
-    resolution to a path that awaited none. :meth:`NcFileTransfer.prepare`
-    already resolves the userland as its FIRST statement on every transfer, and
-    :meth:`~otto.host.userland.Userland.resolve` is idempotent once settled, so
-    the ``await`` here is the same round the listener cap
-    (``NcFileTransfer._nc_listener_prefix``) was already awaiting. It is
-    awaited HERE rather than left to ``prepare`` because the guard runs before
-    ``_warmup_for_transfer`` -- refusing before the pool is warmed is the point.
-    What the CAPABILITY costs, on every host and not just this path, is two
-    probes in the resolution round; that is argued at
-    ``Userland._probe_nc_dash_n``.
-
-    Args:
-        userland: the host's capability resolver, from its ``_userland()``
-            hook, or ``None`` when the host has none.
-            :meth:`~otto.host.userland.Userland.resolve` is awaited here, so the
-            caller does not have to.
-        exec_name: the netcat this backend will exec --
-            :attr:`~otto.host.options.NcOptions.exec_name`. Not decoration: it
-            decides whether the measurement is about otto's binary at all.
-        host: the host's name. Decorates the message; changes no verdict.
-        attempted: what the caller was doing, in its own words.
-
-    Raises:
-        ~otto.host.errors.UnsupportedOnUserlandError: this device settled
-            ``nc_dash_n`` on ``rejected``, otto would exec that same ``nc``, and
-            the ``nc-transfer`` record is ``measured-broken``. Nothing is sent,
-            no listener is spawned, and no local server is bound.
+    Success carries the byte count the GET read loop terminates on as its
+    ``value``; Error is the per-file verdict to hand back with no transfer
+    attempted. Shared by both GET arms, which issue
+    :data:`_NC_GET_STAT_FORMAT` at their own call sites (each pinned by its
+    own test) and agree here on what the answer means.
     """
-    if userland is None:
-        return
-    if exec_name != NC_APPLET:
-        return
-    await userland.resolve()
-    if not userland.is_settled(NC_DASH_N_CAPABILITY):
-        return
-    if userland.nc_dash_n != NC_DASH_N_REJECTED:
-        return
-    refuse_if_gapped("nc-transfer", host=host, attempted=attempted)
+
+    def _could_not_stat(detail: str) -> Result:
+        return Result(
+            Status.Error,
+            msg=(
+                f"nc get of {src}: could not stat the remote file "
+                f"({_NC_GET_STAT_FORMAT} answered {detail}); a size is "
+                f"required to bound the transfer"
+            ),
+        )
+
+    if stat_result.retcode != 0:
+        return _could_not_stat(f"rc={stat_result.retcode}")
+    # First line only, and split on the FIRST space: `%F` is a phrase
+    # ("regular empty file", "character special file"), so everything after
+    # that space is the type.
+    answer = str(stat_result.value).strip().split("\n", 1)[0].strip()
+    size, _, file_type = answer.partition(" ")
+    if not size.isdigit() or not file_type:
+        return _could_not_stat(repr(answer))
+    if file_type not in _NC_GETTABLE_FILE_TYPES:
+        return Result(
+            Status.Error,
+            msg=(
+                f"nc get of {src}: not a regular file ({file_type}); the nc "
+                f"backend transfers regular files only -- use the shell backend"
+            ),
+        )
+    return Result(Status.Success, value=int(size))
 
 
 class NcFileTransfer(UnixFileTransfer):
@@ -581,11 +534,6 @@ class NcFileTransfer(UnixFileTransfer):
         return self._nc_options.listener_cmd
 
     @property
-    def _nc_listener_timeout(self) -> int:
-        """`nc -w` value — whole seconds, since nc takes an integer timeout."""
-        return max(1, int(self._nc_options.listener_timeout))
-
-    @property
     def _nc_listener_prefix(self) -> str:
         """Shell prefix giving the remote listener a hard lifetime cap.
 
@@ -694,11 +642,13 @@ class NcFileTransfer(UnixFileTransfer):
         saving and the fourth degradation case are the same trade seen from
         its two ends.
 
-        Note the host class this actually rescues is narrower than "BusyBox":
-        BusyBox's own ``nc`` applet wants ``-l -p PORT`` and has no ``-N``, so
-        otto cannot drive it regardless (see ``NcOptions.exec_name``). The
-        beneficiary is an old-BusyBox userland with an OpenBSD-style netcat
-        installed alongside — Alpine <= 3.8, OpenWrt <= 18.06.
+        The host class this rescues is no longer narrower than "BusyBox", and
+        it used to be: BusyBox's own ``nc`` applet wants ``-l -p PORT`` and has
+        no ``-N``, which is what otto emitted, so this cap covered a device otto
+        could not drive anyway and its only beneficiary was an old-BusyBox
+        userland with an OpenBSD-style netcat installed alongside (Alpine <=
+        3.8, OpenWrt <= 18.06). Since 2026-08-25 every listener here is spelled
+        the applet's own way, so the applet is in the class this covers.
         """
         if self._userland is None:
             return ""
@@ -1211,24 +1161,6 @@ class NcFileTransfer(UnixFileTransfer):
         dest_dir: Path,
         progress_factory: TransferProgressFactory | None = None,
     ) -> dict[Path, Result]:
-        # ABOVE THE TUNNEL DISPATCH, and that position is the whole reason there
-        # is one guard here and not two. Both arms make the device parse `-N` --
-        # this one to SEND (`nc -N <ip> <port>`), the tunnelled one to LISTEN
-        # (`nc -Nl <port>`) -- and `_get_files_nc_tunneled` has exactly one
-        # caller, the dispatch immediately below. A second call inside it would
-        # be a guard that could never be the one to fire, which is this repo's
-        # most common defect; the record states that path PROTECTED instead,
-        # naming this guard.
-        await refuse_if_nc_rejects_dash_n(
-            self._userland,
-            exec_name=self._nc_exec,
-            host=self._name,
-            attempted=(
-                f"get of {len(src_files)} file(s) over the `nc` backend, which asks the "
-                f"device to run `{self._nc_exec} -N` -- to send directly, or to serve a "
-                f"`-Nl` listener when the connection is tunnelled"
-            ),
-        )
         if self._connections.has_tunnel:
             return await self._get_files_nc_tunneled(src_files, dest_dir, progress_factory)
         await self._warmup_for_transfer(len(src_files))
@@ -1237,12 +1169,31 @@ class NcFileTransfer(UnixFileTransfer):
         # Pre-fetch remote file sizes through `_control_run` — same control-
         # plane path as the port/listener probes (telnet: serialized onto a
         # warm pooled session; ssh: direct exec).
+        #
+        # The size stopped being progress decoration when the read loop below
+        # started terminating on it, and the old degrade-to-0 went with that: a
+        # 0 would read no bytes, close, and report the empty file as a complete
+        # transfer. A file whose size could not be measured is refused instead,
+        # here, where nothing has been spawned and nothing has been bound.
+        #
+        # Which is also why the stat asks for the file TYPE and follows the
+        # symlink: a measurement that is not the number of bytes `< {src}`
+        # will deliver is no better than no measurement at all. See
+        # `_NC_GET_STAT_FORMAT` for the applet-by-applet numbers, and
+        # `_nc_get_stat_verdict` for the three refusals they buy.
         sizes: dict[Path, int] = {}
+        stat_failures: dict[Path, Result] = {}
         for src in src_files:
-            stat_result = await self._control_run(f"stat -c %s {src}")
-            sizes[src] = int(stat_result.value.strip()) if stat_result.retcode == 0 else 0
+            stat_result = await self._control_run(f"{_NC_GET_STAT_FORMAT} {src}")
+            verdict = _nc_get_stat_verdict(src, stat_result)
+            if verdict.is_ok:
+                sizes[src] = verdict.value
+            else:
+                stat_failures[src] = verdict
 
         async def _get_one(src: Path) -> Result:
+            if src in stat_failures:
+                return stat_failures[src]
             dst = dest_dir / src.name
             total = sizes[src]
             handler = progress_factory() if progress_factory is not None else None
@@ -1254,19 +1205,93 @@ class NcFileTransfer(UnixFileTransfer):
                 reader: asyncio.StreamReader, writer: asyncio.StreamWriter
             ) -> None:
                 try:
+                    # EXACTLY `total` bytes, and then the close -- because the
+                    # close is what terminates the sender. Without `-N` a
+                    # netcat that has reached EOF on its input keeps the socket
+                    # open: measured 2026-08-25 on all six userlands, every one
+                    # of them ends the sender on the RECEIVER's close and none
+                    # of them ends it on its own, so a loop waiting for EOF is
+                    # waiting for something nobody sends.
+                    #
+                    # Reading against a known N is also what makes an early EOF
+                    # legible. Read-to-EOF could not tell a completed transfer
+                    # from a killed sender or a link dropped mid-file: both
+                    # arrive as a clean FIN, and the short file was reported as
+                    # a success.
                     bytes_done = 0
                     with dst.open("wb") as f:
-                        while True:
-                            block = await reader.read(_NC_BLOCK_SIZE)
+                        while bytes_done < total:
+                            # Zero-progress bound, mirroring the tunnelled
+                            # arm's. It only became NECESSARY here with
+                            # size-termination: "when do we stop" moved from
+                            # the sender's FIN to OUR close, so a sender that
+                            # delivers fewer than `total` bytes and then waits
+                            # for that close -- what every netcat measured
+                            # 2026-08-25 does at stdin EOF -- parks this read
+                            # with no deadline of its own, never reaches the
+                            # close below, strands the remote sender, and
+                            # leaves `await send_task` (unbounded by design)
+                            # waiting on it. Any received block re-arms the
+                            # window.
+                            block = await asyncio.wait_for(
+                                reader.read(min(_NC_BLOCK_SIZE, total - bytes_done)),
+                                timeout=_NC_STALL_TIMEOUT,
+                            )
                             if not block:
                                 break
                             f.write(block)
                             bytes_done += len(block)
                             if handler is not None:
                                 handler(str(src), str(dst), bytes_done, total)
+                    # Above the verdict, not on the success arm: the sender is
+                    # waiting on this close whichever way the transfer went. A
+                    # `total` of 0 skips the loop and closes immediately, which
+                    # the same measurement shows ends the sender just as well.
                     writer.close()
+                    if bytes_done < total:
+                        done.set_result(
+                            Result(
+                                Status.Error,
+                                msg=(
+                                    f"nc get of {src}: short read -- remote reports {total} "
+                                    f"bytes, connection closed after {bytes_done}"
+                                ),
+                            )
+                        )
+                        return
                     done.set_result(Result(Status.Success, value=dst))
+                except (asyncio.TimeoutError, TimeoutError):
+                    # EXPLICITLY, and above the generic arm below: `str()` of a
+                    # TimeoutError is the empty string, so the generic arm
+                    # would resolve `done` with a verdict that names nothing.
+                    # The close belongs here as much as on every other arm --
+                    # it is what ends the sender.
+                    with suppress(Exception):
+                        writer.close()
+                    done.set_result(
+                        Result(
+                            Status.Error,
+                            msg=(
+                                f"nc get of {src}: no data for {_NC_STALL_TIMEOUT}s "
+                                f"with {bytes_done} bytes received"
+                            ),
+                        )
+                    )
                 except Exception as e:  # noqa: BLE001 — nc server callback; any transfer failure maps to Error result
+                    # The close belongs on THIS arm as much as on the others,
+                    # and only became load-bearing when `-N` left the spawn: a
+                    # sender that has written its bytes is now waiting on our
+                    # close and on nothing else, while `await send_task` below
+                    # is deliberately unbounded. Without this, a read that
+                    # raised mid-stream would reach the caller as a hang
+                    # instead of as this error.
+                    #
+                    # Suppressed because `done` is the ONLY thing that ends the
+                    # caller's `await done`: a close that raised here would
+                    # strand it, trading this named error for the hang the
+                    # close exists to prevent.
+                    with suppress(Exception):
+                        writer.close()
                     done.set_result(Result(Status.Error, msg=str(e)))
 
             # Port 0 lets the OS assign a free port — no collisions when
@@ -1275,9 +1300,16 @@ class NcFileTransfer(UnixFileTransfer):
             server = await asyncio.start_server(_on_connect, "0.0.0.0", 0)  # noqa: S104 — intentional all-interface bind
             port = server.sockets[0].getsockname()[1]
             try:
+                # No `-N`, which BusyBox's applet rejects outright -- and
+                # since this spawn sends the `unrecognized option` saying so to
+                # /dev/null, that rejection used to arrive here as a local
+                # server waiting for a peer that had already exited. What `-N`
+                # bought (half-close once stdin hits EOF) is bought instead by
+                # the receiver closing at `total` bytes, which ends the sender
+                # on every userland measured 2026-08-25.
                 send_task = asyncio.create_task(
                     self._exec_cmd(
-                        f"{self._nc_exec} -N {local_ip} {port} < {src} 2>/dev/null",
+                        f"{self._nc_exec} {local_ip} {port} < {src} 2>/dev/null",
                         # Unbounded on purpose: the command's duration *is* the
                         # transfer, which scales with file size.
                         timeout=float("inf"),
@@ -1309,29 +1341,47 @@ class NcFileTransfer(UnixFileTransfer):
     ) -> dict[Path, Result]:
         """Netcat GET through an SSH hop using a reversed-listener approach.
 
-        The remote host runs ``nc -l <port> < <file>`` as a listener that
+        The remote host runs ``nc -l -p <port> < <file>`` as a listener that
         sends file data.  Otto connects through an SSH port forward and
         reads the data — same tunnel mechanics as PUT, reversed data flow.
 
         Every data-phase step carries a zero-progress bound (see
-        ``_NC_STALL_TIMEOUT``) and an empty transfer against a known
-        non-empty size is rejected, so the LISTEN-vs-accept race surfaces
-        as a fast, attributable error on the attempt — and ``_get_one``
-        then retries once on a fresh port, mirroring ``_put_one``.
+        ``_NC_STALL_TIMEOUT``) and the read is terminated by the size the
+        prefetch measured, so a transfer that ends early — the LISTEN-vs-accept
+        race among them — surfaces as a fast, attributable short read on the
+        attempt, and ``_get_one`` then retries once on a fresh port, mirroring
+        ``_put_one``.
         """
         await self._warmup_for_transfer(len(src_files))
         # Pre-fetch remote file sizes through `_control_run` — see
-        # `_get_files_nc` for the rationale. None = the stat failed, so no
-        # size is known to vouch against. (A real empty file stats
-        # successfully as 0; both skip the empty-transfer check below, so
-        # the encoding distinguishes the WHY for the reader, not the
-        # behavior.)
-        sizes: dict[Path, int | None] = {}
+        # `_get_files_nc` for the rationale, which this path now shares
+        # whole: the size TERMINATES the read below, so a file whose size
+        # could not be measured has no transfer to bound and is refused here,
+        # before a port is reserved or a listener spawned.
+        #
+        # What that replaces is an `int | None`, a stat failure carried as
+        # "no size to vouch against" — an encoding that made sense only while
+        # the size was something to CHECK against afterwards. There is nothing
+        # to degrade to once it is the terminator. `_NC_GET_STAT_FORMAT`'s
+        # `-L` and `%F` are shared whole too: a symlink's own length and a
+        # directory's 4096 are both measurements of the wrong thing.
+        sizes: dict[Path, int] = {}
+        stat_failures: dict[Path, Result] = {}
         for src in src_files:
-            stat_result = await self._control_run(f"stat -c %s {src}")
-            sizes[src] = int(stat_result.value.strip()) if stat_result.retcode == 0 else None
+            stat_result = await self._control_run(f"{_NC_GET_STAT_FORMAT} {src}")
+            verdict = _nc_get_stat_verdict(src, stat_result)
+            if verdict.is_ok:
+                sizes[src] = verdict.value
+            else:
+                stat_failures[src] = verdict
 
         async def _attempt(src: Path, dst: Path) -> Result:
+            # Inside `_attempt` rather than above it, so the fresh-port retry
+            # re-enters the refusal rather than a transfer: a missing size is
+            # not the accept-window race that retry exists for, and nothing
+            # about a second port would change the answer.
+            if src in stat_failures:
+                return stat_failures[src]
             total = sizes[src]
             handler = progress_factory() if progress_factory is not None else None
 
@@ -1339,25 +1389,52 @@ class NcFileTransfer(UnixFileTransfer):
             listen_task: asyncio.Task[CommandResult] | None = None
             try:
                 # Remote listener sends file data to the first connecting
-                # client. `-w` is passed for netcat variants that honour it on
-                # a listener (GNU netcat, ncat) — but it CANNOT be relied on:
-                # OpenBSD nc, the default on most distros, documents "the -w
-                # flag has no effect on the -l option, i.e. nc will listen
-                # forever for a connection". Measured on the bed 2026-08-10:
+                # client.
+                #
+                # `-l -p PORT` is the ONE listener spelling every measured
+                # netcat accepts: OpenBSD 1.226 and all five BusyBox matrix
+                # rows (2026-08-25), plus traditional netcat and ncat, which
+                # document it. What stood here was `-Nl`, which stacked two
+                # rejections into a single option string — the applet has no
+                # `-N` at all, and reads the lone port of the OpenBSD `-l PORT`
+                # as the HOST — and the spawn sends both complaints to
+                # /dev/null, so they arrived as a forward onto a listener that
+                # had already exited.
+                #
+                # `-w` goes with it, and this comment used to argue FOR it: it
+                # read OpenBSD's "the -w flag has no effect on the -l option"
+                # as "such a listener waits forever" and passed `-w` anyway, a
+                # free bonus for the variants that honour it. Measured
+                # 2026-08-25: that sentence covers only the ACCEPT wait. Once a
+                # client HAS connected, an inter-chunk gap longer than `-w`
+                # kills the DATA connection on five of the six userlands —
+                # OpenBSD 1.226 among them — with rc 0 and a partial file.
+                # Continuous data never trips it, so `-w` punished exactly a
+                # stall; and on THIS direction otto is the receiver, so the kill
+                # arrived as a clean EOF that the leniency below the read loop
+                # used to hand back as Success.
+                #
+                # A listener nobody connects to is bounded by what always
+                # really bounded it: `_cancel_and_reap` on every path out of
+                # this block, and -- where the userland HAS a `timeout` (see
+                # `_nc_listener_prefix`, which degrades to `""` for the
+                # `absent` and untaught styles) -- the remote prefix at
+                # `_NC_LISTENER_HARD_CAP_S`. On a host without one the reap is
+                # the only bound there is. Measured on the bed 2026-08-10,
                 # listeners spawned with `-w 30` were still alive after three
-                # days. Every path out of this block must therefore reap the
-                # remote listener itself (`_cancel_and_reap`), and nothing here
-                # may assume a client that never arrives ends the process.
+                # days, so `-w` was never the mechanism here either. Both kill
+                # the process; neither can hand back a short file as success.
                 listen_task = asyncio.create_task(
                     self._exec_cmd(
-                        f"{self._nc_listener_prefix}{self._nc_exec} -Nl "
-                        f"-w {self._nc_listener_timeout} {port} < {src} 2>/dev/null",
+                        f"{self._nc_listener_prefix}{self._nc_exec} -l -p {port} "
+                        f"< {src} 2>/dev/null",
                         # No otto-side timeout: a healthy transfer of any size
                         # must not be cut off mid-flight, and this task is the
                         # only thing that observes the transfer finishing. The
                         # orphan case is bounded by `_cancel_and_reap` on every
-                        # error path instead — NOT by `-w`, which OpenBSD nc
-                        # ignores for listeners (see the spawn comment above).
+                        # error path instead, and — where the userland has a
+                        # `timeout` (see `_nc_listener_prefix`) — by the remote
+                        # prefix as well; never by an option in this command.
                         timeout=float("inf"),
                     )
                 )
@@ -1395,19 +1472,27 @@ class NcFileTransfer(UnixFileTransfer):
                 bytes_done = 0
                 try:
                     with dst.open("wb") as f:
-                        while True:
+                        # EXACTLY `total` bytes, then the close — which is what
+                        # ends the listener. Without `-N` a netcat that has
+                        # reached EOF on its input holds the socket open
+                        # (measured 2026-08-25 on all six userlands), so a loop
+                        # waiting for EOF is waiting for something nobody sends.
+                        # The close is in this block's `finally`, so it happens
+                        # whichever way the loop ends.
+                        while bytes_done < total:
                             # Zero-progress bound: an accepted-but-unserviced
                             # connection parks read() forever (probed live);
                             # any received block re-arms the window.
                             block = await asyncio.wait_for(
-                                reader.read(_NC_BLOCK_SIZE), timeout=_NC_STALL_TIMEOUT
+                                reader.read(min(_NC_BLOCK_SIZE, total - bytes_done)),
+                                timeout=_NC_STALL_TIMEOUT,
                             )
                             if not block:
                                 break
                             f.write(block)
                             bytes_done += len(block)
                             if handler is not None:
-                                handler(str(src), str(dst), bytes_done, total or 0)
+                                handler(str(src), str(dst), bytes_done, total)
                 except (asyncio.TimeoutError, TimeoutError):
                     return Result(
                         Status.Error,
@@ -1418,35 +1503,42 @@ class NcFileTransfer(UnixFileTransfer):
                         ),
                     )
                 finally:
+                    # On every way out of the read, and bounded: the close is
+                    # what ends the listener now, so skipping it on an error
+                    # arm would trade a named failure for a stranded process.
+                    # It cannot strand the CALLER either — this path resolves
+                    # no future, so a close that raised would still reach
+                    # `_gather_per_file` as this file's Error rather than as a
+                    # wait nobody ends.
                     await self._close_writer_bounded(writer)
 
-                # EOF at ZERO bytes when the remote file is known non-empty:
-                # the connection was dropped before the listener serviced it
-                # (a clean close from this side, indistinguishable from an
-                # empty send without the size). Deliberately narrow — a
-                # non-zero short read is NOT failed, because the stat is a
-                # pre-transfer snapshot and a growing/changing remote file
-                # legitimately delivers a different byte count; and an
-                # unknown size (stat failed → total is None) leaves nothing
-                # to vouch against, a residual accepted and pinned rather
-                # than guessed at. The narrowing also accepts a drop that
-                # delivered SOME bytes as Success (a re-stat-on-mismatch
-                # could split "file changed" from "dropped mid-transfer";
-                # deliberately not taken in this wave).
-                if total and bytes_done == 0:
+                # Reading against a known N is what makes an early EOF
+                # legible, and it subsumes the check that stood here: EOF at
+                # ZERO bytes was failed and every other short read accepted,
+                # because a pre-transfer stat cannot tell a file that GREW from
+                # a transfer that was severed, and the leniency was the honest
+                # answer while the size was only something to compare against
+                # afterwards. Terminating ON the size separates them: a grown
+                # file delivers the N bytes that were measured and the close
+                # discards the rest, so what remains below N is a transfer that
+                # ended early — a listener reaped, a hop that dropped, the `-w`
+                # idle-kill removed above — and each of those used to arrive as
+                # Success over a partial file.
+                if bytes_done < total:
                     return Result(
                         Status.Error,
                         msg=(
-                            f"nc get of {src}: empty transfer (remote reports "
-                            f"{total} bytes; received 0 before EOF)"
+                            f"nc get of {src}: short read -- remote reports {total} "
+                            f"bytes, connection closed after {bytes_done}"
                         ),
                     )
 
-                # Reader drained the socket to EOF; the remote nc should exit
-                # now. Bound the wait so an orphaned listener can't hang us.
-                # This is the ONLY bound: `-w` does not cap an OpenBSD listener
-                # (see the spawn comment above), so the timeout branch below
-                # must reap rather than merely report.
+                # The reader took its `total` bytes and closed, which is
+                # what ends the listener, so it should exit now. Bound the wait
+                # so one that does not cannot hang us. This is the only bound
+                # on that exit — the spawn carries nothing that ends a listener
+                # (see its comment above) — so the timeout branch below must
+                # reap rather than merely report.
                 try:
                     await asyncio.wait_for(
                         listen_task,
@@ -1465,8 +1557,13 @@ class NcFileTransfer(UnixFileTransfer):
             except asyncio.CancelledError:
                 # External cancellation mid-transfer skips listen_task's
                 # normal join points (the ConnectionError / timeout / success
-                # branches above). Cancel it and reap the remote `nc -l` so
-                # it doesn't linger until its `-w` timeout — mirrors the put
+                # branches above). Cancel it and reap the remote `nc -l`: the
+                # reap IS the bound here, since the spawn carries no option
+                # that ends a listener and the remote `timeout` prefix (where
+                # the userland has one; see `_nc_listener_prefix`) is only
+                # the backstop for otto dying outright, at
+                # `_NC_LISTENER_HARD_CAP_S` rather than at teardown speed —
+                # mirrors the put
                 # path's `_attempt` handler (todo/chaos-teardown-followups.md
                 # §1: pre-fix this listener outlived the 10s teardown
                 # deadline by up to 20s). compensate() holds any FURTHER
@@ -1532,10 +1629,15 @@ class NcFileTransfer(UnixFileTransfer):
 
         ``nc -l ... < /dev/null`` exits as soon as a TCP peer connects and
         then disconnects. When a transfer is cancelled before its real
-        sender ever connects, the listener would otherwise linger FOREVER on
-        an OpenBSD netcat, which ignores ``-w`` for listeners. A throwaway
-        connect-and-close reaps it now. This is not an optimisation over
-        waiting out ``-w`` — it is the only thing that ends the process.
+        sender ever connects, nothing in the spawn ends the listener: it
+        carries no ``-w`` at all, and an OpenBSD netcat ignored that option for
+        listeners even when otto did pass it. A throwaway connect-and-close
+        reaps it now. This is not an optimisation over waiting out a timeout —
+        it is the only thing that ends the process at teardown speed, the
+        remote ``timeout`` prefix (``_NC_LISTENER_HARD_CAP_S``, an hour, and
+        only where the userland has a ``timeout`` -- see
+        ``_nc_listener_prefix``) being a backstop for otto dying rather
+        than a bound anyone waits on.
 
         Fully best-effort: a cancellation can land while the listener is
         still launching, so ``_connect_with_retry`` is given a short budget
@@ -1619,20 +1721,47 @@ class NcFileTransfer(UnixFileTransfer):
             try:
                 # If a racing process bound the same port first, our sender's
                 # bytes go to *its* listener and ours never gets a connection.
-                # `-w` is passed for netcat variants that honour it on a
-                # listener, but OpenBSD nc — the distro default — documents
-                # that "-w has no effect on the -l option"; such a listener
-                # waits forever. `_cancel_and_reap` on every error path is what
-                # actually ends it.
+                #
+                # `-l -p PORT` is the ONE listener spelling every measured
+                # netcat accepts: OpenBSD 1.226 and all five BusyBox matrix
+                # rows (2026-08-25), plus traditional netcat and ncat, which
+                # document it. The bare `-l PORT` emitted before was an
+                # OpenBSD-ism — BusyBox reads the lone port as the HOST and
+                # dies with `bad address`, which is why every nc-transfer cell
+                # on the BusyBox profiles was measured-broken.
+                #
+                # `-w` is deliberately absent, and its removal is not a
+                # simplification. This comment used to read OpenBSD's "the -w
+                # flag has no effect on the -l option" as "such a listener
+                # waits forever" and pass `-w` anyway, free bonus for variants
+                # that honour it. Measured 2026-08-25: that sentence covers
+                # only the ACCEPT wait. Once a client HAS connected, an
+                # inter-chunk gap longer than `-w` kills the connection on five
+                # of the six userlands — OpenBSD 1.226 among them — with rc 0
+                # and a partial file, a truncation wearing a success code.
+                # Continuous data never trips it, so `-w` punishes exactly the
+                # stall and nothing else, the precise inverse of this module's
+                # rule that a healthy transfer of any size is never cut off
+                # mid-flight.
+                #
+                # A listener nobody connects to is bounded by what always
+                # really bounded it: `_cancel_and_reap` on every error path
+                # otto-side, and -- where the userland HAS a `timeout` (see
+                # `_nc_listener_prefix`, `""` for the `absent` and untaught
+                # styles) -- the remote prefix at `_NC_LISTENER_HARD_CAP_S`.
+                # Both kill the process; neither can hand back a short file as
+                # success.
                 listen_task = asyncio.create_task(
                     self._exec_cmd(
-                        f"{self._nc_listener_prefix}{self._nc_exec} -l "
-                        f"-w {self._nc_listener_timeout} {port} "
+                        f"{self._nc_listener_prefix}{self._nc_exec} -l -p {port} "
                         f"< /dev/null > {dst} 2>/dev/null",
                         # No otto-side timeout: a healthy transfer of any size
                         # must not be cut off mid-flight. The orphan case is
                         # bounded by `_cancel_and_reap` on every error path
-                        # instead — NOT by `-w` (see the spawn comment above).
+                        # instead, and — where the userland has a `timeout`
+                        # (see `_nc_listener_prefix`) — by the remote prefix as
+                        # well; never by a netcat option (see the spawn comment
+                        # above).
                         timeout=float("inf"),
                     )
                 )
@@ -1729,7 +1858,12 @@ class NcFileTransfer(UnixFileTransfer):
                 # External cancellation mid-transfer skips listen_task's
                 # normal join points (the success / ConnectionError / timeout
                 # branches below the create_task). Cancel it and reap the
-                # remote `nc -l` so it doesn't linger until its `-w` timeout.
+                # remote `nc -l`: the reap IS the bound here, since the spawn
+                # carries no option that ends a listener and the remote
+                # `timeout` prefix (where the userland has one; see
+                # `_nc_listener_prefix`) is only the backstop for otto dying
+                # outright, at `_NC_LISTENER_HARD_CAP_S` rather than at
+                # teardown speed.
                 # A writer opened in the send loop is already closed by that
                 # loop's own `finally` — which makes nc exit on its own — so
                 # this matters mainly for a cancel landing before the sender

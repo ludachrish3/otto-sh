@@ -519,58 +519,72 @@ What survives as the discriminator is `Results.first_failure.command`; what
 is lost is the aggregate `exit_code`'s ability to tell one contract's
 constant from the other's.
 
-**Ten items are strict xfails against a registered, deliberately-open gap
-path.** The five `bed-busybox` cells crossed with `nc` fail both transfer
-contracts, and `tests/conformance/test_transfer_contract.py`'s
-`expected_failure` declares them `xfail(strict=True)` — not a suppression, but
-an *assertion* of the failure, so the lane's green keeps meaning something.
+**Nothing in the venue is declared a known failure any more, and ten items
+were.** From 2026-08-21 to 2026-08-25 the five `bed-busybox` cells crossed
+with `nc` failed both transfer contracts — twenty items once the positive
+controls landed beside them — and
+`tests/conformance/test_transfer_contract.py`'s `expected_failure` declared
+them `xfail(strict=True)`: not a suppression but an *assertion* of the
+failure, so the lane's green kept meaning something and the day the product
+was fixed the strict marker reddened the lane until the declaration was
+repaid. That is what happened. The declaration and its pins are gone, the
+cells assert the contract outright, and the hook the conftest reads
+(`_XFAIL_HOOK`) is still wired for the next one.
 
-Be precise about what this is, because the tree's own prose got it wrong first
-and the correction is the more useful half: it is **not an undiscovered otto
-bug**. `src/otto/host/userland.py`'s `nc-transfer` gap already records
-`NcFileTransfer._put_files_nc` as a
-`GapPath` with `state=PATH_OPEN`, says in so many words that the listener is
-spelled `nc -l -w <secs> <port>` while the BusyBox applet wants `-l -p PORT`,
-predicts the exact failure ("a timeout rather than the refusal this record
-describes"), and explains why it stays open: settling it would need a probe
-that asks a device to *bind*, which has a side effect on the host being
-questioned. The queued fix is a whole BusyBox `nc` variant in
-`todo/busybox-parity-sweep-2026-08-11.md`.
+It was never an undiscovered otto bug. `src/otto/host/userland.py` carried a
+`nc-transfer` gap record whose `GapPath` for `NcFileTransfer._put_files_nc`
+was `PATH_OPEN` and said in so many words that the listener was spelled
+`nc -l -w <secs> <port>` while the BusyBox applet wants `-l -p PORT`, and
+predicted the exact failure ("a timeout rather than the refusal this record
+describes"). What kept it open was that settling it looked like it needed a
+probe asking a device to *bind*, which has a side effect on the host being
+questioned.
 
-What this lane contributes is narrower and still worth having: it is the first
-thing in the repo to drive that open path against real BusyBox hardware, and
-it exposes an **asymmetry inside one gap**. Measured on `bb1161:telnet:nc`,
-both directions from one host build — `get` raises
-`UnsupportedOnUserlandError` before touching the wire, naming the gap (that
-path is wired, and `tests/integration/busybox_bed/test_nc_refusal.py` pins it
-across all five guests); `put` returns `Status.Error` after five seconds with
-`Remote nc listener on port 9000 not ready within 5.0s`. So otto knows the
-backend cannot drive this applet and announces it loudly in one direction
-while the other falls into precisely the timeout the announcement exists to
-replace.
+**What closed it was measuring the applets instead of interrogating a live
+device.** `nc -l -p PORT` turned out to be the one listener spelling every
+*measured* netcat accepts — OpenBSD 1.226 and all five pinned BusyBox builds,
+which is the whole measured set; traditional netcat and ncat *document* the
+same form but are unmeasured here, neither being installed on any reachable
+host. So otto stopped asking the question and now always emits the universal
+form, in both directions, with no `-N` anywhere
+(the GET arms read exactly the size their `stat` prefetch measured and close
+to terminate a sender that cannot close itself). The per-build evidence is
+Tier-1 and hermetic: `tests/busybox/test_applet_contracts.py` binds a
+listener on each pinned build, sends a binary-hostile payload through it, and
+asserts it exits at the peer's close — plus the row-by-row proof that none of
+them parses the `-N` the backend once sent. The gap record, its refusal and
+the refusal's integration test are all deleted
+(`docs/superpowers/specs/2026-08-25-nc-universal-spelling-design.md`).
 
-**Only five of the ten can ever `XPASS`**, which matters to anyone treating
-the strict marker as the reminder. The `test_put_lands_the_documented_mode_on_the_host`
-items are a `put` alone, so wiring that path turns them green and the strict
-marker then reddens the lane until the declaration is deleted. The
-`test_put_get_roundtrip_preserves_content` items also do a `get`, and the
-`get` is refused *by design* on these guests — so they keep failing after any
-`put` fix, for a declared incapability rather than a defect, and will need
-their own disposition then. The natural one is an applicable-domain narrowing
-keyed on otto's own answer, the model `applicable_cell` already uses for
-`remote_scratch`.
+**What the bed venue owed this, it paid on 2026-08-26 UTC** (the `as_of`
+stamp in `schemas/support_matrix.json`): the five `bed-busybox[*:telnet:nc]`
+cells are where otto's `nc` backend meets a real BusyBox applet end to end,
+and that run was the first with the universal spelling in it. It came back
+565 passed, 0 failed, 0 xfailed; the ten BusyBox `nc` cells — the five
+`bed-busybox[*:telnet:nc]` GET/PUT pairs — flipped `measured-broken` →
+`measured-ok`; the directional gate reported 10 ALLOWED / 0 BLOCKING; and the
+census moved 41 ok / 10 broken / 3 not-observable to 51 / 0 / 3. None of that
+was predicted by the applet contracts above and none of it could be: the
+artifact is a record of a measurement, not a prediction, and it changed when
+the bed was re-run and not before.
 
 ### What the crossing found that nothing else could
 
 Two findings came out of the first bed runs, and neither was reachable from a
 per-backend suite:
 
-- **The `nc` × BusyBox asymmetry above.** The contract holds over `shell` and
-  breaks over `nc` on the *same host*, so a suite that asks each host one
-  transport cannot see the difference. What the crossing added was not the
+- **The `nc` × BusyBox asymmetry above.** The contract held over `shell` and
+  broke over `nc` on the *same host*, so a suite that asks each host one
+  transport could not see the difference. What the crossing added was not the
   discovery — otto's gap registry had measured the spelling on 2026-08-13,
   ten days before this venue first drove it — but the observation that one
-  registered gap refuses loudly in one direction and times out in the other.
+  registered gap refused loudly in one direction (`get` raised
+  `UnsupportedOnUserlandError` before the wire) and timed out in the other
+  (`put` returned `Status.Error` after 5s: `Remote nc listener on port 9000
+  not ready`), from one host build, measured on `bb1161:telnet:nc`. That is
+  the observation the 2026-08-25 fix was written against: both directions now
+  emit the universal spelling and neither refuses, so the finding is spent —
+  which is what a venue's findings are for.
 - **A coverage hole in the embedded matrix.** `tests/conftest.py`'s
   `_ZEPHYR_BACKEND_NE` maps five backend ids to five guests —
   `zephyr37_fat`, `zephyr37_lfs`, `zephyr37_nofs`, `zephyr27_fat`,

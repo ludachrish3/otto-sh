@@ -15,6 +15,7 @@ import asyncio
 import contextlib
 import dataclasses
 import fcntl
+import importlib
 import json
 import os
 import re
@@ -82,12 +83,7 @@ from tests.conformance._vocabulary import (
     vocabulary_for_userland,
 )
 from tests.conformance.test_timeout_contract import _BUDGET_S
-from tests.conformance.test_transfer_contract import (
-    _NC_ON_BUSYBOX,
-    _PAYLOAD_NAME,
-    applicable_cell,
-    expected_failure,
-)
+from tests.conformance.test_transfer_contract import _PAYLOAD_NAME, applicable_cell
 from tests.conftest import remote_name
 
 # THE RECORDED ORDER. Not derived, not sorted, not regenerated at import: a
@@ -1758,7 +1754,15 @@ def _module_declaring(applies, expected=None):
 
 
 def test_a_module_with_no_declared_domain_gets_every_drawn_cell(monkeypatch):
-    """The positive control: five of the six contracts declare nothing."""
+    """The positive control: three of the six contracts declare no domain.
+
+    Two MODULES declare one, covering the other three contracts --
+    `test_transfer_contract` (cells with a remote directory, for both of its)
+    and `test_timeout_contract` (cells whose vocabulary has a long-running
+    command, for its one). The three that declare nothing are the exec file's,
+    so a hook that narrowed unconditionally would still satisfy the declaring
+    modules and only this test would notice.
+    """
     drawn = bed_space()[:4]
     monkeypatch.setattr(_conformance_conftest, "_drawn_cells", lambda config: drawn)
     metafunc = _RecordingMetafunc(SimpleNamespace(__name__="no_domain"))
@@ -1802,68 +1806,97 @@ def test_a_domain_that_narrows_the_draw_to_nothing_raises_rather_than_skipping(m
     assert metafunc.parametrized is None
 
 
-# --- The KNOWN PRODUCT DEFECT declaration (otto's `nc` on a BusyBox guest) ---
+# --- The declared-failure hook: MECHANISM ONLY, no declaration to pin ---
 #
-# The decision itself, and every word of its reasoning, lives under
-# `tests/conformance/test_transfer_contract.py`'s KNOWN PRODUCT DEFECT banner.
-# What lives here is the pin that keeps it from moving in silence: exactly
-# which cells it claims, that the mark it produces is STRICT, and that the
-# hermetic venue -- the one CI runs nightly with no lab -- claims none at all.
+# There was one to pin until 2026-08-25: `tests/conformance/test_transfer_contract.py`
+# declared an `expected_failure` hook over the five `bed-busybox[*:telnet:nc]`
+# cells, and two tests here pinned WHICH cells it claimed and that the hermetic
+# venue -- the one CI runs nightly with no lab -- claimed none. The universal
+# `nc -l -p PORT` listener spelling closed otto's `nc-transfer` gap, the
+# declaration was repaid with it, and the pin naming those cells went with its
+# subject (see that module's note under `applicable_cell`, and
+# `docs/superpowers/specs/2026-08-25-nc-universal-spelling-design.md`).
+# RESTORE IT WITH THE NEXT DECLARATION: a hook nothing pins can widen to cells
+# that pass, and a strict xfail on a passing cell is a red lane for the wrong
+# reason. What it asserted -- which cells are claimed, by kind and by transfer
+# and by count, failing in BOTH directions -- is the shape to bring back, keyed
+# on the resolver's answer rather than on a guest's name.
+# The nightly's protection did NOT go with it: see
+# `test_no_hermetic_cell_is_declared_a_known_failure` below, which sweeps every
+# contract module and so covers the next declaration without being edited.
+#
+# WHAT STAYS is everything about the CONFTEST MECHANISM, and it stays because
+# the next declaration will be read by exactly this code: that a declared cell
+# gets a STRICT xfail and its neighbour gets nothing, that a module declaring
+# no hook is marked nowhere, and that an empty reason is not a reason. Each
+# INJECTS its own fabricated module rather than reading the tree's, so none of
+# them went vacuous when the last real declaration was deleted -- which is the
+# property that let the two pins be deleted honestly rather than left to pass
+# over an empty set.
+#
+# THE SWEEP BELOW IS NOT THAT KIND OF EMPTY SET, and the distinction is the
+# whole reason it survived while the pins did not. `_declared_failures(space)
+# == []` written as a bare assertion would be a claim about the tree that no
+# longer has a subject: nothing declares, so nothing is checked, and a broken
+# enumerator reads exactly like a clean tree. What
+# `test_no_hermetic_cell_is_declared_a_known_failure` asserts is the same
+# emptiness with the ENUMERATOR GUARDED -- it fails if it found no contract
+# modules at all -- so its silence is the tree's answer and not its own, and
+# it RE-ARMS on the next declaration with no edit here. A guard that cannot
+# fail is the defect; a guard whose subject is temporarily absent, that says
+# so and proves it looked, is not.
 
 
-def _declared_failures(space):
-    return [rc for rc in space if expected_failure(rc) is not None]
+def _contract_modules():
+    """Every conformance contract module, IMPORTED, from the tree's own enumerator.
 
-
-def test_the_expected_failure_covers_exactly_the_busybox_nc_cells():
-    """WHICH cells are declared, pinned by kind, by transfer and by count.
-
-    Fails in both directions, the same way the transfer domain's pin does. A
-    declaration that WIDENS -- to every `nc` cell, say, or to every BusyBox
-    cell -- would xfail cells that PASS today (all eight `bed-unix[test2:*]`
-    cells pass with `nc` included; all five `bed-busybox` `shell` cells pass),
-    and a strict xfail on a passing cell is a red lane for the wrong reason. A
-    declaration that NARROWS leaves a real failure unasserted and the lane red
-    by construction.
-
-    Five cells and TEN items: this contract has two tests, and both of them
-    fail on each of these cells (`put` never reaches a listener, so neither
-    the roundtrip nor the mode assertion can run). `NcFileTransfer` inherits
-    `supports_mode = True` from `UnixFileTransfer`, so the mode test does NOT
-    take its no-permission-model arm and cannot pass here by that route --
-    which is what makes ten the right number rather than five.
+    `discover_contracts` reads the tree by AST and answers nodeids; the conftest
+    reads its hook off the imported module. This is the one place the two meet,
+    and it derives the module list rather than restating it so a fourth
+    contract file is swept the day it lands -- there are three files today,
+    holding six contracts between them, and it is FILES this enumerates.
     """
-    space = bed_space()
-    declared = _declared_failures(space)
-
-    assert {rc.kind for rc in declared} == {BED_BUSYBOX}, (
-        f"the declaration reached beyond the BusyBox guests: "
-        f"{sorted(cell_label(rc) for rc in declared)}"
-    )
-    assert {rc.cell.transfer for rc in declared} == {"nc"}, (
-        f"the declaration reached beyond `nc`: {sorted(cell_label(rc) for rc in declared)}"
-    )
-    busybox_nc = [rc for rc in space if rc.kind == BED_BUSYBOX and rc.cell.transfer == "nc"]
-    assert len(declared) == len(busybox_nc) == 5, (
-        f"one cell per BusyBox guest, five guests -- got {len(declared)} declared "
-        f"against {len(busybox_nc)} BusyBox `nc` cells in the space"
-    )
-    assert all(expected_failure(rc) == _NC_ON_BUSYBOX for rc in declared)
+    stems = dict.fromkeys(Path(nodeid.split("::")[0]).stem for nodeid in discover_contracts())
+    return [importlib.import_module(f"tests.conformance.{stem}") for stem in stems]
 
 
 def test_no_hermetic_cell_is_declared_a_known_failure():
     """`make conformance` is the lane CI runs nightly, and it must not change.
 
-    A declaration that leaked into the hermetic venue would turn a passing
-    contract into a strict xfail there -- reported as XPASS, so the nightly
-    job would go red for a defect that is not in that venue at all. The
-    keying makes this structurally true (no hermetic cell has kind
-    `bed-busybox`), which is exactly why it is worth asserting: a structural
-    truth is the kind that stops being true without anyone noticing.
+    A declaration that reached a hermetic cell would turn a passing contract
+    into a strict xfail there -- reported as XPASS, so the nightly job goes red
+    for a defect that is not in that venue at all, and nobody with a lab is
+    watching. The bed lane can afford that conversation; the nightly cannot.
+
+    VACUOUS TODAY, AND IT SAYS SO. Since 2026-08-25 no contract module defines
+    `expected_failure` at all, so the inner loop asserts over nothing. That is
+    why the sweep is the SHAPE it is: it enumerates every contract module and
+    fails if it enumerated none, so the emptiness that makes it quiet today is
+    the tree's answer rather than a broken enumerator's. It RE-ARMS by itself
+    the day any module declares a hook -- no edit here, which is the property
+    the deleted per-cell pin did not have. Proved able to fail by injecting a
+    hook onto a real module and watching it red (recorded in the item's task
+    report; the injection is not left behind, because a permanent one would be
+    asserting against a fabricated module the conftest never reads).
     """
+    modules = _contract_modules()
+    assert len(modules) >= 3, (
+        f"the contract sweep found {len(modules)} modules, so its silence below "
+        f"is the enumerator's rather than the tree's"
+    )
     space = hermetic_space()
     assert len(space) == 8
-    assert _declared_failures(space) == []
+
+    for module in modules:
+        declare = getattr(module, _conformance_conftest._XFAIL_HOOK, None)
+        if declare is None:
+            continue
+        declared = [rc for rc in space if declare(rc)]
+        assert declared == [], (
+            f"{module.__name__} declares a known failure on hermetic cells "
+            f"{sorted(cell_label(rc) for rc in declared)} -- on the lane CI runs "
+            f"nightly with no lab, a strict xfail there is an XPASS and a red job"
+        )
 
 
 def test_a_declared_failure_becomes_a_strict_xfail_on_that_cell_alone(monkeypatch):
@@ -1902,7 +1935,7 @@ def test_a_declared_failure_becomes_a_strict_xfail_on_that_cell_alone(monkeypatc
 
 
 def test_a_module_declaring_no_expected_failure_marks_nothing(monkeypatch):
-    """The positive control: five of the six contracts declare nothing.
+    """The positive control: since 2026-08-25 all six contracts declare nothing.
 
     Without it, a hook that marked EVERY cell would satisfy the asymmetry
     assertion above only by accident of which list was checked first.

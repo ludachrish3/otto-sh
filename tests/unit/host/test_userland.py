@@ -83,20 +83,6 @@ _P_MD5SUM = "md5sum < /dev/null"
 # either, so the presence of $BASH_VERSION is the only thing that separates
 # the frame otto should use.
 _P_BASH = 'test -n "$BASH_VERSION"'
-# `nc_dash_n`, in two parts like `timeout_style`: is there one, and does the
-# thing that is there speak otto's spelling. The second is a CONTESTED
-# spelling in the Tier 1 sense -- every matrix row rejects `-N` -- so all
-# three copies exist for it too.
-#
-# A DIFFERENTIAL, and that is the part a reader must not "simplify": it
-# compares a destination-less `nc` against the same command plus `-N`, because
-# the rejection is spelled two different ways across the matrix
-# (`invalid option -- N`, `unrecognized option: N`) and a usage error exits 1
-# on an accepting netcat too. Equality of OUTPUT is the only thing that
-# separates them, and nothing is connected or bound to find it out.
-_P_NC = "command -v nc"
-_P_NC_DASH_N = '[ "$(nc 2>&1 </dev/null)" = "$(nc -N 2>&1 </dev/null)" ]'
-
 # The applet batch. THIS FILE'S OWN COPY of the spelling, like every other
 # constant above -- the product builds it in `_applet_probe_command` and the
 # live bed measures it against real binaries in
@@ -223,10 +209,6 @@ _FULLY_DEGRADED = {
     "shell_dialect": "ash",
     "stat_size": "absent",
     "timeout_style": "absent",
-    # `command -v nc` answered no, so there is nothing whose options to ask
-    # about -- the short-circuit arm, and NOT the same answer as a device whose
-    # `nc` rejected the option.
-    "nc_dash_n": "absent",
     # Every applet name reported `<name>=0` by a batch that RAN, control and
     # all: a measurement of a userland with none of them, not a batch that
     # failed. The two are different states and `_UNASKABLE` below is the other.
@@ -261,12 +243,7 @@ _FULLY_DEGRADED = {
 #                  (build_command_frame("ash") succeeds), but recording
 #                  "ash" for an unasked host would still claim a measurement
 #                  nobody took, not merely name a frame that can't be built.
-#   nc_dash_n      "supported", the same standard as stat_size: transfer/nc.py
-#                  has emitted `nc -N` unconditionally since it was written, so
-#                  that is what otto did before it asked. "rejected" would let a
-#                  refused probe round REFUSE a transfer, and this capability's
-#                  only consumer has no arm but a refusal.
-#   applet_*       `present`, uniformly, and it is the same rule the five
+#   applet_*       `present`, uniformly, and it is the same rule the six
 #                  above are instances of rather than a seventh argument:
 #                  otto reached for `shutdown`, `scp` and `base64` by name
 #                  before this probe existed, so "present" is what it did
@@ -279,20 +256,19 @@ _UNASKABLE = {
     "shell_dialect": "bash",
     "stat_size": "stat",
     "timeout_style": "absent",
-    "nc_dash_n": "supported",
     **dict.fromkeys(_APPLET_FIELDS, APPLET_PRESENT),
 }
 
 # Every probe otto issues, in order, on a host that answers `command -v
-# timeout` and `command -v nc` and nothing else — the one script that reaches
-# all fourteen arms, because an absent `timeout` short-circuits both spelling
-# probes and an absent `nc` short-circuits the option differential.
+# timeout` and nothing else — the one script that reaches all twelve arms,
+# because an absent `timeout` is the only short-circuit left and it costs the
+# two spelling probes.
 #
-# FOURTEEN COMMANDS FOR FOURTEEN CAPABILITIES, which is a coincidence of two
-# opposite facts rather than a one-to-one mapping: several capabilities cost
-# two or three commands, and the applet batch is ONE command whatever the
-# length of `PROBED_APPLETS`. The batch is LAST so the twelve before it keep
-# the order, the spellings and the count they had before applets existed.
+# TWELVE COMMANDS FOR THIRTEEN CAPABILITIES, and the two numbers are unrelated
+# rather than nearly equal: several capabilities cost two or three commands,
+# and the applet batch is ONE command whatever the length of `PROBED_APPLETS`.
+# The batch is LAST so the eleven before it keep the order, the spellings and
+# the count they had before applets existed.
 _EVERY_PROBE_IN_ORDER = [
     _P_SUDO,
     _P_SU,
@@ -305,29 +281,23 @@ _EVERY_PROBE_IN_ORDER = [
     _P_WC,
     _P_MD5SUM,
     _P_BASH,
-    _P_NC,
-    _P_NC_DASH_N,
     _P_APPLETS,
 ]
 
-# The device that reaches every arm: `timeout` and `nc` both resolve, so
-# neither short-circuit fires. Named rather than repeated, because three
-# separate guards need the same script and a fourth that quietly used a
-# different one would be asserting about a shorter probe list.
-_ANSWERS_BOTH_PRESENCE_PROBES = {_P_TIMEOUT, _P_NC}
+# The device that reaches every arm: `timeout` resolves, so the one remaining
+# short-circuit does not fire. Named rather than repeated, because two separate
+# guards need the same script and a third that quietly used a different one
+# would be asserting about a shorter probe list.
+_ANSWERS_THE_PRESENCE_PROBE = {_P_TIMEOUT}
 
 # The eleven that predate the applet capability, in the order and the spellings
 # they were issued in then. Read by the no-regression guard, which is the only
 # thing standing between "the applet batch was added" and "the applet batch
 # changed what every existing host is asked". Sliced at `_P_BASH` rather than
-# by dropping the tail: `nc_dash_n`'s two probes were added AFTER the batch and
-# sit between the two, so a negative index would silently fold them in here and
-# claim they predate it.
+# by dropping the tail, so a capability appended AFTER the batch -- as
+# `nc_dash_n` was until it was retired -- cannot be folded in here by a
+# negative index and claimed to predate it.
 _PROBES_BEFORE_APPLETS = _EVERY_PROBE_IN_ORDER[: _EVERY_PROBE_IN_ORDER.index(_P_BASH) + 1]
-
-# The two `nc_dash_n` costs, so the guards below can say which commands they
-# mean without re-slicing.
-_PROBES_FOR_NC_DASH_N = [_P_NC, _P_NC_DASH_N]
 
 
 class _FakeClock:
@@ -798,7 +768,7 @@ async def test_the_probe_spellings_and_their_order_are_the_measured_ones():
     The order is part of the pin: the elevation and stat arms are
     PREFERENCES, so reversing them changes the answer on a host that has both.
     """
-    runner = _Runner(_ANSWERS_BOTH_PRESENCE_PROBES)
+    runner = _Runner(_ANSWERS_THE_PRESENCE_PROBE)
 
     await Userland(UserlandOptions(), runner).resolve()
 
@@ -950,7 +920,7 @@ _DEVICES = [
     # `base64` on the same build.
     _Device(
         "busybox-1.16.1",
-        frozenset({_P_SU, _P_TIMEOUT, _P_TIMEOUT_DASH_T, _P_STAT, _P_WC, _P_MD5SUM, _P_NC}),
+        frozenset({_P_SU, _P_TIMEOUT, _P_TIMEOUT_DASH_T, _P_STAT, _P_WC, _P_MD5SUM}),
         {
             "elevation": "su",
             "timeout_style": "dash-t",
@@ -958,7 +928,6 @@ _DEVICES = [
             "stat_size": "stat",
             "checksum": "md5sum",
             "shell_dialect": "ash",
-            "nc_dash_n": "rejected",
         },
         # Measured 2026-08-14 in a BusyBox-only chroot: no `base64`, no `scp`, no
         # `shutdown`; `nc`, `poweroff` and both uu halves are there. The row
@@ -977,7 +946,6 @@ _DEVICES = [
                 _P_STAT,
                 _P_WC,
                 _P_MD5SUM,
-                _P_NC,
             }
         ),
         {
@@ -987,7 +955,6 @@ _DEVICES = [
             "stat_size": "stat",
             "checksum": "md5sum",
             "shell_dialect": "ash",
-            "nc_dash_n": "rejected",
         },
         # Measured 2026-08-14: `base64` has arrived; `scp` and `shutdown`
         # are still absent, as on every matrix row.
@@ -1005,7 +972,6 @@ _DEVICES = [
                 _P_STAT,
                 _P_WC,
                 _P_MD5SUM,
-                _P_NC,
             }
         ),
         {
@@ -1015,7 +981,6 @@ _DEVICES = [
             "stat_size": "stat",
             "checksum": "md5sum",
             "shell_dialect": "ash",
-            "nc_dash_n": "rejected",
         },
         # Measured 2026-08-14: identical applet set to 1.28.1 -- the applet
         # answers do not move across the `timeout` convention change.
@@ -1025,7 +990,7 @@ _DEVICES = [
     # the reason the fallback arm is not dead code.
     _Device(
         "busybox-stat-compiled-out",
-        frozenset({_P_SU, _P_TIMEOUT, _P_TIMEOUT_DASH_T, _P_BASE64_SHORT, _P_WC, _P_MD5SUM, _P_NC}),
+        frozenset({_P_SU, _P_TIMEOUT, _P_TIMEOUT_DASH_T, _P_BASE64_SHORT, _P_WC, _P_MD5SUM}),
         {
             "elevation": "su",
             "timeout_style": "dash-t",
@@ -1033,7 +998,6 @@ _DEVICES = [
             "stat_size": "wc",
             "checksum": "md5sum",
             "shell_dialect": "ash",
-            "nc_dash_n": "rejected",
         },
         applets=frozenset({"base64", "nc", "poweroff", "uudecode", "uuencode"}),
     ),
@@ -1053,8 +1017,6 @@ _DEVICES = [
                 _P_WC,
                 _P_MD5SUM,
                 _P_BASH,
-                _P_NC,
-                _P_NC_DASH_N,
             }
         ),
         {
@@ -1064,7 +1026,6 @@ _DEVICES = [
             "stat_size": "stat",
             "checksum": "md5sum",
             "shell_dialect": "bash",
-            "nc_dash_n": "supported",
         },
         # The row where `scp` and `shutdown` are PRESENT, so the table is not
         # uniform in the two names the `scp-transfer` and `shutdown-command`
@@ -1082,7 +1043,7 @@ _DEVICES = [
     # backstop into an outage.
     _Device(
         "timeout-present-but-unusable",
-        frozenset({_P_SU, _P_TIMEOUT, _P_BASE64_SHORT, _P_STAT, _P_WC, _P_MD5SUM, _P_NC}),
+        frozenset({_P_SU, _P_TIMEOUT, _P_BASE64_SHORT, _P_STAT, _P_WC, _P_MD5SUM}),
         {
             "elevation": "su",
             "timeout_style": "absent",
@@ -1090,7 +1051,6 @@ _DEVICES = [
             "stat_size": "stat",
             "checksum": "md5sum",
             "shell_dialect": "ash",
-            "nc_dash_n": "rejected",
         },
         applets=frozenset({"base64", "nc", "poweroff", "uudecode", "uuencode"}),
     ),
@@ -1112,7 +1072,6 @@ _DEVICES = [
                 _P_STAT,
                 _P_WC,
                 _P_MD5SUM,
-                _P_NC,
             }
         ),
         {
@@ -1122,7 +1081,6 @@ _DEVICES = [
             "stat_size": "stat",
             "checksum": "md5sum",
             "shell_dialect": "ash",
-            "nc_dash_n": "rejected",
         },
         applets=frozenset({"base64", "nc", "poweroff", "uudecode", "uuencode"}),
     ),
@@ -1248,7 +1206,7 @@ def test_every_probe_is_bounded_by_otto_and_not_by_the_callee():
     to establishing the SSH connection the command needs first.
     ``exec("true", timeout=2.0)`` against an unroutable address had still not
     returned after 120 seconds. Passing the grant down is therefore advice,
-    and the arithmetic in this module's budget comment — eleven probes reduced
+    and the arithmetic in this module's budget comment — twelve probes reduced
     to three, one resolution bounded at ``_RESOLVE_BUDGET_S`` — is only true if
     something up here actually stops waiting.
 
@@ -1370,10 +1328,19 @@ async def test_resolution_stops_once_the_whole_budget_is_spent(
 ):
     """One resolution is bounded in total, not just probe by probe.
 
-    Eleven probes at _PROBE_TIMEOUT_S each is 110s of lock held on a host that
+    TEN probes at _PROBE_TIMEOUT_S each is 100s of lock held on a host that
     swallows everything, and resolve() holds that lock across the lot — so a
     concurrent consumer's queued callers wait the whole span out before their
     own timeouts even start. The budget converts that into a stated bound.
+
+    Ten and not the twelve of `_EVERY_PROBE_IN_ORDER`, because a host that
+    swallows everything never answers `command -v timeout` either, and
+    `_probe_timeout` short-circuits on that (`if present is None: return None`)
+    rather than guessing a spelling -- so the two spelling probes are never
+    issued. That is the same ten `test_a_wedged_host_is_not_amplified_by_the_fan_out`
+    counts off its own captured call list, and it is why the twelve in
+    `test_every_probe_is_bounded_by_otto_and_not_by_the_callee` is a different
+    number about a different host rather than a contradiction of this one.
 
     Driven from a fake clock the runner advances by exactly the bound each
     probe was granted, so the guard is deterministic and reads no wall clock.
@@ -1591,10 +1558,10 @@ async def test_a_probe_that_raises_degrades_instead_of_escaping(caplog):
     # The degrade path logs too, and a broken host is exactly when someone is
     # tempted to promote it to warning — which would put it on the console.
     _assert_debug_only(caplog)
-    assert len(runner.calls) == len(_EVERY_PROBE_IN_ORDER) - 3, (
+    assert len(runner.calls) == len(_EVERY_PROBE_IN_ORDER) - 2, (
         "a raising probe stopped the others; every arm should still be tried -- minus "
-        "the THREE that are structurally unreachable once their own presence arm cannot "
-        "be asked: the two `timeout` spellings, and `nc_dash_n`'s option differential"
+        "the TWO that are structurally unreachable once their own presence arm cannot "
+        "be asked: the two `timeout` spellings"
     )
 
 
@@ -1626,12 +1593,7 @@ async def test_the_pasteable_summary_never_offers_a_value_otto_did_not_measure(c
         _Runner(
             device.works,
             applets=device.applets,
-            # `_P_NC` too, which takes `nc_dash_n` out of the payload by a
-            # THIRD route worth exercising here: its own presence arm could not
-            # be asked, so the differential is never issued and the capability
-            # settles nothing -- the short-circuit `_probe_timeout` has and
-            # `_probe_stat` deliberately does not.
-            unreachable={_P_STAT, _P_WC, _P_BASH, _P_APPLETS, _P_NC},
+            unreachable={_P_STAT, _P_WC, _P_BASH, _P_APPLETS},
         ),
     )
 
@@ -2036,18 +1998,19 @@ async def test_the_six_that_predate_applets_are_asked_exactly_as_before():
     third would keep every set-based assertion in this module green while
     changing which probes a budget-limited host reaches.
 
-    The tail is asserted too, and it is no longer just the batch: `nc_dash_n`
-    arrived after it and is issued after the eleven. What must stay true is the
-    PREFIX -- a host that reads neither an applet capability nor `nc_dash_n` is
-    asked exactly what it was asked before either existed.
+    The tail is the batch alone again: `nc_dash_n` arrived after the batch and
+    was issued after the eleven, and retiring it put the tail back where it
+    started. What must stay true either way is the PREFIX -- a host that reads
+    no applet capability is asked exactly what it was asked before the batch
+    existed.
     """
-    runner = _Runner(_ANSWERS_BOTH_PRESENCE_PROBES)
+    runner = _Runner(_ANSWERS_THE_PRESENCE_PROBE)
 
     await Userland(UserlandOptions(), runner).resolve()
 
     assert runner.calls[: len(_PROBES_BEFORE_APPLETS)] == _PROBES_BEFORE_APPLETS
-    assert runner.calls[len(_PROBES_BEFORE_APPLETS) :] == [*_PROBES_FOR_NC_DASH_N, _P_APPLETS], (
-        "only `nc_dash_n`'s two probes and the applet batch may follow the eleven"
+    assert runner.calls[len(_PROBES_BEFORE_APPLETS) :] == [_P_APPLETS], (
+        "only the applet batch may follow the eleven"
     )
 
 

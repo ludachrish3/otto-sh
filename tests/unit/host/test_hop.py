@@ -541,8 +541,9 @@ class TestNetcatGetThroughHop:
         # exec_cmd handles every control + transfer command: file-size stat,
         # port-find, and the nc listener.
         async def mock_exec(cmd: str, *a, **kw) -> CommandResult:
-            if cmd.startswith("stat -c %s"):
-                output = "9\n"
+            if cmd.startswith("stat"):
+                # `stat -L -c '%s %F'`: size AND type, the link followed.
+                output = "9 regular file\n"
             elif "nc " in cmd:
                 output = ""
             else:  # port-find
@@ -610,9 +611,11 @@ class TestNetcatGetThroughHop:
         mock_connections.term = "ssh"
         mock_connections._name = "test"
 
-        # exec_cmd handles the file-size stat and the nc -N send command.
+        # exec_cmd handles the file-size stat and the `nc <ip> <port> < src` send
+        # command. N-LESS since 2026-08-25: the sender no longer asks the device for
+        # `-N`, and this arm's local end closes on the stat's byte count instead.
         async def mock_exec(cmd: str, *a, **kw) -> CommandResult:
-            output = "9\n" if cmd.startswith("stat -c %s") else ""
+            output = "9 regular file\n" if cmd.startswith("stat") else ""
             return _cs(command=cmd, output=output, status=Status.Success, retcode=0)
 
         mock_exec = AsyncMock(side_effect=mock_exec)
@@ -644,7 +647,7 @@ class TestNetcatGetThroughHop:
             mock_server.wait_closed = AsyncMock()
             mock_start_server.return_value = mock_server
 
-            # The exec_cmd for nc -N triggers the _on_connect callback.
+            # The exec_cmd for the N-less `nc` sender triggers the _on_connect callback.
             # We need to capture the callback and invoke it manually.
             async def fake_start_server(callback, host, port):
                 # Simulate a connection by calling the callback.

@@ -3,11 +3,13 @@ listener beyond the teardown deadline and characterize partial-file state.
 Forces the nc backend (``--transfer nc``) so the GET-path reap (Task 7's
 product fix) is exercised on whichever host was leased.
 
-A THIRD ARM asks the same question of the BusyBox bed's guest, where the
-answer has a different shape: nc is refused there by a registered userland
-gap, ``shell`` is the transfer those devices actually get, and its remote
-state is a staged temp rather than a listener. The two premises do not
-substitute for each other -- see that test's own docstring.
+A THIRD ARM asks the same question of the BusyBox bed's guest over ``shell``,
+because the remote state an interrupt can strand there has a different SHAPE:
+``shell`` is the transfer those devices' lab entries resolve to, and what it
+leaves behind is a staged temp beside the destination rather than a listener
+holding a port. The two premises do not substitute for each other -- see that
+test's own docstring, which also carries why the guest gets no ``nc`` arm now
+that otto's ``nc`` works there.
 
 Self-match note: the nc-listener probe IS
 ``tests/_fixtures/bed_hygiene.py``'s ``_NC_LISTENER_PROBE`` (imported, not
@@ -299,14 +301,41 @@ def test_sigint_mid_shell_put_leaves_nothing_behind_on_the_busybox_guest(
     left on the device -- no truncated file at the real destination, no staged
     temp beside it -- and the console must still serve a shell afterwards.
 
-    WHY ``--transfer shell`` AND NOT ``nc``. The two nc arms above are this
-    module's premise on a unix host: an interrupted transfer must not
-    strand a remote ``nc -l``. That premise does not travel to the guest --
-    otto REFUSES nc transfers to these guests by the registered
-    ``nc_dash_n`` gap, so an nc arm here could only certify the refusal,
-    which ``tests/integration/busybox_bed/test_nc_refusal.py`` already pins
-    on all five guests. ``shell`` is the transfer the guests actually use,
-    and it has its own remote-state question, which is what this arm asks.
+    WHY ``--transfer shell`` AND NOT ``nc``, RE-DECIDED 2026-08-25. This
+    used to read "otto refuses nc to these guests", and that reason is gone:
+    the universal ``nc -l -p PORT`` listener spelling closed the
+    ``nc-transfer`` gap, so otto's nc backend round-trips to a BusyBox guest
+    like any other host, and the refusal test this docstring pointed at is
+    deleted. The arm stays ``shell`` anyway, for three reasons that are about
+    division of labour rather than incapability:
+
+    * WHAT THIS ARM ASKS IS THE GUESTS' OWN TRANSFER. ``shell`` is what those
+      devices' lab entries resolve to, and its interrupted state -- a staged
+      temp beside the destination, mid-``mv`` -- is asked nowhere else. An nc
+      arm would displace nothing, but it would also not answer this.
+    * ROUNDTRIP CORRECTNESS OVER ``nc`` ON THESE GUESTS HAS AN OWNER, and it
+      is not the chaos lane: the conformance bed venue draws
+      ``bed-busybox[bb1161|bb1211|bb1281|bb1310|bb1350:telnet:nc]`` and puts
+      the byte-tripwire payload and a mode through each of them
+      (``tests/conformance/test_transfer_contract.py``).
+    * THE REAP THE NC ARMS PIN IS USERLAND-INDEPENDENT. What
+      ``test_sigint_mid_put_no_orphan_listener`` exercises is otto-side --
+      ``NcFileTransfer._cancel_and_reap`` connecting to the port and closing
+      -- and it runs unconditionally on every chaos run. What IS
+      userland-specific is the listener's spelling, and that is settled where
+      a spelling question belongs: ``tests/busybox/test_applet_contracts.py``
+      ``test_the_listener_accepts_dash_l_dash_p_and_exits_on_the_peers_close``
+      binds one on each of the five pinned BusyBox builds.
+
+    THE RESIDUAL, STATED RATHER THAN PAPERED OVER: nothing interrupts an nc
+    transfer to a BusyBox guest, so the reap has never been MEASURED against a
+    listener wearing the applet's process shape (on BusyBox >= 1.30 the
+    ``timeout`` prefix execs in place and forks a detached watchdog, so one
+    listener is two pids). The leak DETECTOR for that shape is pinned
+    (``tests/_fixtures/bed_hygiene.py``'s ``_NC_LISTENER_PROBE``, and
+    ``tests/unit/test_bed_hygiene.py`` over both spellings); the reap on that
+    shape is unmeasured, not known-broken, and would be a fourth arm rather
+    than an edit to this one.
 
     THE INVARIANT IS THE STAGING SKELETON'S, and it is genuinely at risk
     here. ``ShellFileTransfer`` names a temp in the destination's own

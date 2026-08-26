@@ -250,6 +250,11 @@ per-codec fields covers it without making the operator choose the codec.
   `busybox` profile declares `valid_transfers: ["shell","scp","sftp","ftp","nc"]`
   **deliberately**, because a device with a real sftp-server or netcat installed
   works, so those refusals must be device-conditional rather than blanket.
+  **`nc-transfer` closed 2026-08-25 — by a different mechanism than the one
+  queued here.** No capability, no variant, no device-conditional refusal: the
+  backend now emits the one spelling every measured netcat accepts, so there
+  is no question left to probe. The gap record and its refusal are deleted;
+  see `docs/superpowers/specs/2026-08-25-nc-universal-spelling-design.md`.
 
 ## Still open after the sweep: the pty path
 

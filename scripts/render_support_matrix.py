@@ -1297,7 +1297,17 @@ def _guarantee_section() -> "list[str]":
 
 
 def _registered_gaps_section(matrix: dict) -> "list[str]":
-    """Say whose news the broken cells are, and the division of labour that follows."""
+    """Say whose news the broken cells are, and the division of labour that follows.
+
+    RENDERED AT ZERO BROKEN CELLS TOO, with a zero-state rather than by dropping
+    the heading. The section's real subject is not the cells: it is the RULE that
+    a red cell here is a re-measurement of something otto's own gap registry
+    already knows, and the division of labour that keeps this page and
+    {doc}`subsystems/busybox-support` from restating each other. A page that
+    stopped naming its registry the day everything passed would invite exactly
+    the drift that note exists to prevent, and it would take the rule out of the
+    reader's hands on the day the next red cell appears.
+    """
     broken = [
         cell
         for row in matrix["cells"].values()
@@ -1315,20 +1325,42 @@ def _registered_gaps_section(matrix: dict) -> "list[str]":
         )
         and any(entry["outcome"] == "xfailed" for entry in cell["observed_cells"])
     ]
+    if broken:
+        opening = [
+            f"{len(broken)} of these cells read `measured-broken`, and **{len(predicted)} of them",
+            "failed in a way the suite predicted** -- a strict `xfail`, which the lane treats as a",
+            "hard error if it ever *passes*. A predicted failure means otto already carries the",
+            "defect in its own registry ({data}`~otto.host.userland.GAPS`), already documents it,",
+            "and already refuses or adapts at the call sites that consult it.",
+            "",
+            "**So this page did not discover them.** It re-measures them, independently and",
+            "with a date, from the opposite end: the registry is what otto *knows*, and these",
+            "cells are what a run *saw*. A support matrix that quietly omitted a surface otto",
+            "knows is broken would be lying by omission, so they are published here too -- but",
+            "they are somebody else's news, and the row says so.",
+        ]
+    else:
+        opening = [
+            "**None of these cells reads `measured-broken`.** Every contract held on every",
+            "device the last run drew it on, so there is nothing in the grid below for this",
+            "section to attribute -- and the rule it states is what the day one of them turns",
+            "red will be read against, so it stays.",
+            "",
+            "**That day, this page will not have discovered the defect.** A red cell here is",
+            "normally a strict `xfail` -- a failure the suite predicted, which the lane treats",
+            "as a hard error if it ever *passes* -- and a prediction means otto already carries",
+            "the defect in its own registry ({data}`~otto.host.userland.GAPS`), already",
+            "documents it, and already refuses or adapts at the call sites that consult it. This",
+            "page would be re-measuring it, independently and with a date, from the opposite",
+            "end: the registry is what otto *knows*, a cell is what a run *saw*. A matrix that",
+            "quietly omitted a surface otto knows is broken would be lying by omission, so such",
+            "a cell is published here too -- but it is somebody else's news, and the row says",
+            "so.",
+        ]
     return [
         "## Known-broken surfaces, and whose news they are",
         "",
-        f"{len(broken)} of these cells read `measured-broken`, and **{len(predicted)} of them",
-        "failed in a way the suite predicted** -- a strict `xfail`, which the lane treats as a",
-        "hard error if it ever *passes*. A predicted failure means otto already carries the",
-        "defect in its own registry ({data}`~otto.host.userland.GAPS`), already documents it,",
-        "and already refuses or adapts at the call sites that consult it.",
-        "",
-        "**So this page did not discover them.** It re-measures them, independently and with a",
-        "date, from the opposite end: the registry is what otto *knows*, and these cells are",
-        "what a run *saw*. A support matrix that quietly omitted a surface otto knows is broken",
-        "would be lying by omission, so they are published here too -- but they are somebody",
-        "else's news, and the row says so.",
+        *opening,
         "",
         "```{note}",
         "**Division of labour with {doc}`subsystems/busybox-support`, so the two do not",

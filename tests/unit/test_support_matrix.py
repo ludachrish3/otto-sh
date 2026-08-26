@@ -164,12 +164,16 @@ _REGENERATE = (
 TRANSFER_X_ZEPHYR37 = ("transfer-roundtrip", "zephyr-3.7")
 TIMEOUT_X_ZEPHYR27 = ("timeout", "zephyr-2.7")
 
-#: The third real non-uniform cell, and the one the PER-TRANSPORT breakdown
-#: exists for. `bb1161` has exactly two bed cells and they disagree: the
-#: roundtrip passes over `shell` and xfails over `nc`, against otto's
-#: registered `nc-transfer` gap. The profile has one element, so `observed_on`
-#: and `not_observable` say nothing at all about the split -- only
-#: `observed_cells` can.
+#: The third non-uniform cell the fixtures below were designed around, and the
+#: one the PER-TRANSPORT breakdown exists for. `bb1161` has exactly two bed
+#: cells, and until 2026-08-26 they disagreed: the roundtrip passed over `shell`
+#: and xfailed over `nc`, against otto's then-open `nc-transfer` gap. The
+#: universal `nc -l -p PORT` listener spelling closed that gap and the re-measure
+#: flipped the cell to `measured-ok`, so THIS PAIR NO LONGER NAMES A LIVE SPLIT
+#: -- the fixtures keyed on it inject their own, which is what they always did.
+#: The profile has one element, so `observed_on` and `not_observable` would say
+#: nothing at all about a split; only `observed_cells` can, which is the reason
+#: the breakdown exists and is unchanged by the cell going green.
 TRANSFER_X_BUSYBOX1161 = ("transfer-roundtrip", "busybox-1.16.1")
 
 #: A cell carrying every field ``measured-ok`` demands, holding the split
@@ -3191,13 +3195,20 @@ def test_one_observable_seen_everywhere_carries_no_pointless_attribution(committ
 
 
 def test_one_failing_cell_makes_the_whole_element_broken(committed):
-    """otto's registered ``nc-transfer`` gap, in the artifact's own terms.
+    """otto's ``nc-transfer`` gap, in the artifact's own terms.
 
     ``bb1161`` transfers fine over ``shell`` and fails over ``nc``. An element
     is ``ok`` only if EVERY evidential record for it passed, so this cell is
     ``measured-broken`` -- a collator that took the passing half would publish
-    ``measured-ok`` for a profile whose transfer is measurably broken, which is
-    the gap otto has registered and open.
+    ``measured-ok`` for a profile whose transfer is measurably broken.
+
+    THE SCENARIO IS SYNTHETIC AND STAYS; only its provenance is dated. The
+    records are built here, not read, and the collator rule they prove -- one
+    failing route makes the element broken -- is timeless. The LIVE gap this
+    scenario was measured from closed 2026-08-25 (the universal ``nc -l -p
+    PORT`` listener spelling) and the 2026-08-26 re-measure flipped the cell to
+    ``measured-ok``, so the artifact no longer shows the split. That is a fact
+    about the bed, not about the rule.
     """
     records = []
     for transfer, outcome in (("shell", PASSED), ("nc", XFAILED)):
@@ -3248,13 +3259,21 @@ def test_the_collate_step_really_does_cut_at_the_cap_the_page_names(committed):
 def test_the_broken_busybox_cell_says_which_transport_broke_and_which_did_not(committed):
     """★ THE RULING OF 2026-08-24, and the row it was measured on.
 
-    ``busybox-1.16.1`` x transfer-roundtrip is honestly ``measured-broken``,
-    and a reader scanning that alone concludes otto cannot move files to a
-    BusyBox 1.16.1 device. It can: over ``shell`` the roundtrip passes, and
-    only ``nc`` fails, against a gap otto registered on 2026-08-13. Before
-    this field the split lived in the cell only as prose -- a pipe-joined
-    ``observable`` and an English ``failure_summary`` -- and a renderer that
-    recovers structure by parsing English is one that will silently stop.
+    In the ruling's own scenario ``busybox-1.16.1`` x transfer-roundtrip is
+    honestly ``measured-broken``, and a reader scanning that alone concludes
+    otto cannot move files to a BusyBox 1.16.1 device. It can: over ``shell``
+    the roundtrip passes, and only ``nc`` fails, against the gap otto
+    registered on 2026-08-13. Before this field the split lived in the cell
+    only as prose -- a pipe-joined ``observable`` and an English
+    ``failure_summary`` -- and a renderer that recovers structure by parsing
+    English is one that will silently stop.
+
+    THE SCENARIO IS SYNTHETIC AND STAYS; the live claim is dated. These records
+    are built here, and the rule -- a structured per-transport breakdown, not
+    English to be parsed back -- is what a mixed cell will be read by whenever
+    the next one appears. The gap this was measured from closed 2026-08-25 and
+    the 2026-08-26 re-measure flipped the cell to ``measured-ok``, so the
+    artifact holds no mixed cell today.
 
     Asserted as the PAIR, not as "an entry exists": the claim is that the two
     transports carry DIFFERENT outcomes, which is what a collator inferring an
@@ -3845,9 +3864,19 @@ def test_no_committed_verdict_contradicts_this_machine_s_records():
 # Every guard below either INJECTS its hostile condition into a copy of the real
 # artifact, or asserts a property over every cell that HAS it and refuses to run
 # vacuously when no such cell exists. The distinction matters here more than
-# usual: today's artifact happens to contain a transport split and a mixed
-# profile, and a guard that merely inherited them would go quietly vacuous the
-# next time the bed comes back all green.
+# usual, and 2026-08-26 is why: THE BED CAME BACK ALL GREEN. The artifact held a
+# transport split and a `measured-broken` cell until that re-measure, the
+# universal `nc -l -p PORT` listener spelling closed otto's `nc-transfer` gap,
+# and every guard that had merely INHERITED that split went red the moment the
+# product got better. EIGHT of them: six on their own vacuity assertions ("no
+# cell in the artifact has disagreeing drawn cells", "no measured-broken cell in
+# the artifact", "the base cell is no longer mixed", "no cell carries a failure
+# summary"), one on a row that stopped saying what it used to, and one on a
+# `StopIteration` hunting an `xfailed` entry that no longer exists. None of them
+# passed quietly, which is what those assertions were written for. What each
+# checks is a property of the RENDERER, which outlives the measurement, so they
+# now inject the split from :func:`_with_the_nc_split` below, and the sweeps
+# that can still re-arm keep reading the artifact as well.
 
 _RENDERED_ON = datetime.date(2026, 9, 30)
 """A fixed render date, so a page compared against another page differs only
@@ -3919,6 +3948,62 @@ def _cells(matrix: dict):
             )
 
 
+#: The evidence the collate step wrote for the split below, LIFTED VERBATIM from
+#: the artifact at commit ``e9cef75a`` -- the last one that held it. Quoted
+#: rather than invented for the reason the fixtures at the top of this file give
+#: for theirs: an injected cell should be the measured thing and not a
+#: plausible-looking stand-in, because the guards reading it are about how the
+#: page renders what a real collate step really wrote.
+_HISTORIC_NC_FAILURE = (
+    "bed-busybox[bb1161:telnet:nc]: call: expected failure -- otto's `nc-transfer` gap, PUT "
+    "direction: `NcFileTransfer._put_files_nc` is a GapPath with state PATH_OPEN in "
+    "`src/otto/host/userland.py` -- it spells the device-side listener `nc -l -w <secs> <port>`, "
+    "which the BusyBox applet does not accept (it wants `-l -p PORT`), and reads nothing from "
+    "that record, so the put fails into `Remote nc listener on port <port> not ready` instead of "
+    "the refusal the GET direction raises. A registered open path, not a test or lab-data "
+    "problem: `shell` transfer passes on these same five guests, and `nc` passes on every "
+    "`bed-unix` cell that uses it (test1-test4 over both ssh and telnet, 8 cells, 16/16 items, "
+    "measured on the first full `make conformance-bed` run). See this module's banner."
+)
+
+#: The default cell to put that split back into: the one it was measured on.
+_NC_SPLIT_AT = ("transfer-roundtrip", "busybox-1.16.1")
+
+
+def _with_the_nc_split(matrix: dict, *at: "tuple[str, str]") -> dict:
+    """*matrix* with the split the bed drew until 2026-08-26 put back into each cell in *at*.
+
+    THE STATE THE ARTIFACT HELD, field for field, from commit ``e9cef75a``: a
+    BusyBox guest whose transfer passed over ``shell`` and was a strict ``xfail``
+    over ``nc``, against otto's registered ``nc-transfer`` gap -- so the cell is
+    ``measured-broken``, the ``nc`` entry cites no control (its control xfailed
+    beside the contract), and the cell cites none either, because the cell-level
+    field needs every contributing route controlled.
+
+    A HELPER AND NOT A FIXTURE FILE, because the guards that use it are about the
+    RENDERER: the artifact is the real one in every other respect, so what they
+    prove is still about the document the page is built from. The universal
+    listener spelling closed that gap and the 2026-08-26 re-measure flipped all
+    ten cells to ``measured-ok``; the renderer's mixed-cell branches are no less
+    live for it -- ``schemas/support-matrix.schema.json`` still admits the shape,
+    the collate step still writes it the day a contract fails on one route, and
+    the renderer runs from ``docs/conf.py`` over whatever the artifact holds.
+    """
+    injected = copy.deepcopy(matrix)
+    for surface_id, profile_id in at or (_NC_SPLIT_AT,):
+        cell = injected["cells"][surface_id][profile_id]
+        assert {entry["outcome"] for entry in cell["observed_cells"]} == {"passed"}, (
+            f"{surface_id} x {profile_id} is not the uniform cell this injects into"
+        )
+        entry = next(e for e in cell["observed_cells"] if e["transfer"] == "nc")
+        entry["outcome"] = "xfailed"
+        entry.pop("positive_control")
+        cell.pop("positive_control")
+        cell["status"] = "measured-broken"
+        cell["failure_summary"] = _HISTORIC_NC_FAILURE
+    return injected
+
+
 def _distinguishing(group: "list[dict]", other: "list[dict]") -> "set[str]":
     """Axis values that belong to *group* and to no cell in *other*."""
     values: "set[str]" = set()
@@ -3937,61 +4022,75 @@ def test_the_renderer_agrees_with_the_committed_artifact():
     assert axes_mismatch(json.loads(MATRIX_PATH.read_text())) == []
 
 
-def test_a_cell_whose_drawn_cells_disagreed_never_renders_as_one_answer():
+def test_a_cell_whose_drawn_cells_disagreed_never_renders_as_one_answer(committed):
     """★ THE TRANSPORT SPLIT, which a scalar status cannot say and this page must.
 
-    `busybox-1.16.1` x `transfer-roundtrip` is `measured-broken` -- and the roundtrip
-    WORKS over `shell`; only `nc` fails, against a gap otto already has registered.
-    Rendered as a bare red row it tells a reader transfer is broken on a BusyBox 1.16.1
-    device, which is false, and it is false in the expensive direction: they would go
-    and build something else.
+    A `measured-broken` cell whose contract WORKS over `shell` and fails only over
+    `nc`, rendered as a bare red row, tells a reader transfer is broken on that device
+    -- which is false, and false in the expensive direction: they would go and build
+    something else. `busybox-1.16.1` x `transfer-roundtrip` was that cell until
+    2026-08-26, against a gap otto had registered.
 
     Asserted as a PROPERTY over every cell whose drawn cells disagreed, and the
     property is that the row names something UNIQUE to each outcome group -- so a
     renderer that printed only the winners, or only the losers, or a single word for
-    both, fails. `assert mixed` refuses to let it pass vacuously if the bed ever comes
-    back uniform.
+    both, fails.
+
+    RUN OVER BOTH MATRICES, which is the 2026-08-26 change. `assert mixed` used to
+    refuse to run vacuously "if the bed ever comes back uniform"; it came back uniform
+    and the assertion fired, exactly as intended. The sweep still reads the committed
+    artifact, so it RE-ARMS itself the day a run draws a real split without an edit
+    here -- and it also reads a copy with :func:`_with_the_nc_split`'s split put back,
+    so the renderer property is checked today rather than merely watched for.
     """
-    matrix = json.loads(MATRIX_PATH.read_text())
-    page = _page(matrix)
-    mixed = [
-        (surface_id, profile_id, cell)
-        for surface_id, profile_id, cell, _ in _cells(matrix)
-        if len({entry["outcome"] for entry in cell.get("observed_cells", [])}) > 1
-    ]
-    assert mixed, "no cell in the artifact has disagreeing drawn cells; this guard is vacuous"
-    grid = {
-        line.split("|")[1].strip(): line
-        for line in page[page.index("## At a glance") : page.index("## The profiles")].splitlines()
-        if line.startswith("| {ref}`")
-    }
-    for surface_id, profile_id, cell in mixed:
-        row = _row(page, surface_id, profile_id)
-        # THE GRID IS READ FIRST, so it is held to the same rule. A grid saying
-        # "broken" over a section saying "works over `shell`" misleads exactly the
-        # reader who was in a hurry.
-        grid_row = next(line for key, line in grid.items() if f"`{profile_id} <" in key)
-        column = 2 + [surface.id for surface in SURFACES].index(surface_id)
-        token = grid_row.split("|")[column].strip()
-        passing = [e for e in cell["observed_cells"] if e["outcome"] == "passed"]
-        others = [e for e in cell["observed_cells"] if e["outcome"] != "passed"]
-        if passing and others:
-            assert token not in ("broken", "works"), (
-                f"{surface_id} x {profile_id}: the grid says {token!r} for a cell whose "
-                f"drawn cells disagreed -- one word for two answers"
-            )
-        groups: "dict[str, list[dict]]" = {}
-        for entry in cell["observed_cells"]:
-            groups.setdefault(entry["outcome"], []).append(entry)
-        for outcome, group in groups.items():
-            others = [e for o, g in groups.items() if o != outcome for e in g]
-            unique = _distinguishing(group, others)
-            assert unique, f"{surface_id} x {profile_id}: {outcome} has no distinguishing axis"
-            assert any(f"`{value}`" in row for value in unique), (
-                f"{surface_id} x {profile_id}: the row does not name where {outcome!r} "
-                f"was seen (any of {sorted(unique)}) -- a reader takes the status as "
-                f"covering every route. Row was: {row}"
-            )
+    checked = 0
+    for matrix in (committed, _with_the_nc_split(committed)):
+        page = _page(matrix)
+        mixed = [
+            (surface_id, profile_id, cell)
+            for surface_id, profile_id, cell, _ in _cells(matrix)
+            if len({entry["outcome"] for entry in cell.get("observed_cells", [])}) > 1
+        ]
+        grid = {
+            line.split("|")[1].strip(): line
+            for line in page[
+                page.index("## At a glance") : page.index("## The profiles")
+            ].splitlines()
+            if line.startswith("| {ref}`")
+        }
+        for surface_id, profile_id, cell in mixed:
+            row = _row(page, surface_id, profile_id)
+            # THE GRID IS READ FIRST, so it is held to the same rule. A grid saying
+            # "broken" over a section saying "works over `shell`" misleads exactly the
+            # reader who was in a hurry.
+            grid_row = next(line for key, line in grid.items() if f"`{profile_id} <" in key)
+            column = 2 + [surface.id for surface in SURFACES].index(surface_id)
+            token = grid_row.split("|")[column].strip()
+            passing = [e for e in cell["observed_cells"] if e["outcome"] == "passed"]
+            others = [e for e in cell["observed_cells"] if e["outcome"] != "passed"]
+            if passing and others:
+                assert token not in ("broken", "works"), (
+                    f"{surface_id} x {profile_id}: the grid says {token!r} for a cell whose "
+                    f"drawn cells disagreed -- one word for two answers"
+                )
+            groups: "dict[str, list[dict]]" = {}
+            for entry in cell["observed_cells"]:
+                groups.setdefault(entry["outcome"], []).append(entry)
+            for outcome, group in groups.items():
+                others = [e for o, g in groups.items() if o != outcome for e in g]
+                unique = _distinguishing(group, others)
+                assert unique, f"{surface_id} x {profile_id}: {outcome} has no distinguishing axis"
+                assert any(f"`{value}`" in row for value in unique), (
+                    f"{surface_id} x {profile_id}: the row does not name where {outcome!r} "
+                    f"was seen (any of {sorted(unique)}) -- a reader takes the status as "
+                    f"covering every route. Row was: {row}"
+                )
+            checked += 1
+    # NO `assert checked` TRIPWIRE ANY MORE. It was the vacuity guard for a sweep that
+    # INHERITED its subject; the injected copy above now supplies a mixed cell
+    # unconditionally (`_with_the_nc_split` asserts its target is uniform, then splits
+    # it), so the tripwire could not fail -- the very shape every other guard in this
+    # file was just rewritten to avoid. The injection is the guarantee.
 
 
 def test_a_split_injected_where_there_was_none_is_still_named(committed):
@@ -4029,35 +4128,45 @@ def test_the_page_cites_the_control_behind_a_route_it_claims_positively(committe
     never is: the ``shell`` control had run and PASSED, its record was
     collected, and it was thrown away at citation time.
 
-    Asserted as a property over every mixed cell in the artifact, and
-    ``assert mixed`` refuses to let it pass vacuously if the bed ever comes
-    back uniform. Its injecting twin below makes the same claim on a surface
-    that has never had a split.
+    Asserted as a property over every mixed cell, and its injecting twin below
+    makes the same claim on a surface that has never had a split.
+
+    RUN OVER BOTH MATRICES since 2026-08-26, for the reason
+    :func:`test_a_cell_whose_drawn_cells_disagreed_never_renders_as_one_answer`
+    gives: ``assert mixed`` fired the day the bed came back uniform, so the
+    sweep keeps reading the committed artifact -- where it re-arms itself the
+    day a run draws a real split -- and also reads a copy carrying
+    :func:`_with_the_nc_split`'s split, which is the shape of the ten rows this
+    guard was written against.
     """
-    matrix = json.loads(MATRIX_PATH.read_text())
-    page = _page(matrix)
-    mixed = [
-        (surface_id, profile_id, cell)
-        for surface_id, profile_id, cell, _ in _cells(matrix)
-        if len({entry["outcome"] for entry in cell.get("observed_cells", [])}) > 1
-    ]
-    assert mixed, "no cell in the artifact has disagreeing drawn cells; this guard is vacuous"
-    for surface_id, profile_id, cell in mixed:
-        block = _evidence_block(page, surface_id, profile_id)
-        for entry in cell["observed_cells"]:
-            if entry["outcome"] != "passed":
-                continue
-            named = entry.get("positive_control")
-            assert named, (
-                f"{surface_id} x {profile_id}: the row claims {entry['transfer']!r} works "
-                f"and the artifact backs it with nothing"
-            )
-            assert f"`{named}`" in block, (
-                f"{surface_id} x {profile_id}: the page claims {entry['transfer']!r} works "
-                f"and never cites the control that proved the check could fail there. "
-                f"Evidence was: {block}"
-            )
-            assert f"`{entry['transfer']}`" in block
+    checked = 0
+    for matrix in (committed, _with_the_nc_split(committed)):
+        page = _page(matrix)
+        mixed = [
+            (surface_id, profile_id, cell)
+            for surface_id, profile_id, cell, _ in _cells(matrix)
+            if len({entry["outcome"] for entry in cell.get("observed_cells", [])}) > 1
+        ]
+        for surface_id, profile_id, cell in mixed:
+            block = _evidence_block(page, surface_id, profile_id)
+            for entry in cell["observed_cells"]:
+                if entry["outcome"] != "passed":
+                    continue
+                named = entry.get("positive_control")
+                assert named, (
+                    f"{surface_id} x {profile_id}: the row claims {entry['transfer']!r} works "
+                    f"and the artifact backs it with nothing"
+                )
+                assert f"`{named}`" in block, (
+                    f"{surface_id} x {profile_id}: the page claims {entry['transfer']!r} works "
+                    f"and never cites the control that proved the check could fail there. "
+                    f"Evidence was: {block}"
+                )
+                assert f"`{entry['transfer']}`" in block
+                checked += 1
+    # No `assert checked` here either, and for the reason given in the sweep above: the
+    # injected copy always carries a mixed cell with a cited passing route, so a
+    # tripwire on the count could not fail.
 
 
 def test_a_positive_route_claim_the_page_cannot_cite_is_not_made(committed):
@@ -4072,8 +4181,14 @@ def test_a_positive_route_claim_the_page_cannot_cite_is_not_made(committed):
 
     Both rows. Without the first, a renderer that never made the positive
     claim at all would satisfy the second.
+
+    THE SPLIT IS NOW INJECTED TOO. Until 2026-08-26 the base row came off the
+    committed artifact and only the missing citation was made; the re-measure
+    flipped that cell to ``measured-ok``, the route-level claim went with it,
+    and this guard fell over on the first row rather than on anything it is
+    about. Both halves of the hostile condition are made here now.
     """
-    matrix = json.loads(MATRIX_PATH.read_text())
+    matrix = _with_the_nc_split(committed)
     row = _row(_page(matrix), "transfer-roundtrip", "busybox-1.16.1")
     assert "**Only over `shell`.** You can put a file" in row, row
 
@@ -4411,18 +4526,27 @@ def test_a_device_no_run_has_drawn_is_not_rendered_as_one_that_cannot_be_measure
 def test_an_unexpected_failure_is_not_rendered_as_a_registered_gap(committed):
     """A strict `xfail` and a surprise are different news, and the page must not merge them.
 
-    Every `measured-broken` cell today failed the way the suite PREDICTED -- otto
-    already carries the defect. A cell that failed when nothing predicted it is a fresh
-    defect, and rendering it with the reassuring "otto already knows about this"
-    sentence would be the worst error this page could make. INJECTED, because the
-    artifact contains no such cell.
+    A cell that failed when nothing predicted it is a fresh defect, and rendering it
+    with the reassuring "otto already knows about this" sentence would be the worst
+    error this page could make. Every `measured-broken` cell the artifact ever held
+    failed the way the suite PREDICTED, so the surprise was always INJECTED.
+
+    ★ AND SO IS THE PREDICTED ROW, since 2026-08-26. It came off the committed artifact
+    until the re-measure took the last `measured-broken` cell away, and this guard then
+    raised `StopIteration` hunting an `xfailed` entry that no longer exists. What it
+    asserts is a CONTRAST, so both rows are now made from :func:`_with_the_nc_split`'s
+    split and differ by exactly one outcome -- which reads the renderer's branch more
+    sharply than half-inheriting one side did. It also inherits the per-row half of the
+    registry guard that went with the last broken cell: `registered gap` and the
+    pointer to the page that owns it are asserted right here.
     """
-    surprise = copy.deepcopy(committed)
+    predicted = _with_the_nc_split(committed)
+    surprise = copy.deepcopy(predicted)
     entries = surprise["cells"]["transfer-roundtrip"]["busybox-1.16.1"]["observed_cells"]
     xfailed = next(entry for entry in entries if entry["outcome"] == "xfailed")
     xfailed["outcome"] = "failed"
 
-    predicted_row = _row(_page(committed), "transfer-roundtrip", "busybox-1.16.1")
+    predicted_row = _row(_page(predicted), "transfer-roundtrip", "busybox-1.16.1")
     surprise_row = _row(_page(surprise), "transfer-roundtrip", "busybox-1.16.1")
 
     assert "registered gap" in predicted_row
@@ -4442,27 +4566,29 @@ def test_evidence_the_collate_step_cut_short_is_marked_as_cut(committed):
     meeting a reason that trails off mid-sentence cannot tell truncated evidence from
     careless writing -- the difference decides whether they go looking for the rest.
 
-    ★ IT INJECTS ITS OWN HOSTILE CONDITION. Task 5 wrote this guard against the ten
-    cells that WERE at the cap and asserted the list was non-empty, which made the whole
-    check inherited: raising the cap in Task 6 so the real reasons fit whole left it
-    with nothing to look at, and it failed on its own vacuity assertion rather than on
-    anything about the page. A cap that no longer bites is the good outcome, so the cut
-    is now made here.
+    ★ IT INJECTS ITS OWN HOSTILE CONDITION, AND HAS NOW HAD TO TWICE. Task 5 wrote this
+    guard against the ten cells that WERE at the cap and asserted the list was
+    non-empty, which made the whole check inherited: raising the cap in Task 6 so the
+    real reasons fit whole left it with nothing to look at, and it failed on its own
+    vacuity assertion rather than on anything about the page. The cut moved here. Then
+    the 2026-08-26 re-measure took the last `failure_summary` out of the artifact
+    altogether -- there are no broken cells to carry one -- and the SUBJECT had to move
+    here too: the base cell is :func:`_with_the_nc_split`'s, whose summary is the real
+    one the collate step wrote for that cell, lifted verbatim from the artifact that
+    held it. Both times the good outcome (a cap that stopped biting, then a gap that
+    closed) is what broke the inherited half.
 
     The marker is a LENGTH COMPARISON against the collate step's own constant, never a
     reading of the text -- the summary itself is reproduced verbatim, because it is
     evidence. Both directions are asserted: a shortened summary must NOT be marked, or
     the marker would be decoration rather than a fact about this cell.
     """
-    broken = [
-        (surface_id, profile_id)
-        for surface_id, profile_id, cell, _ in _cells(committed)
-        if "failure_summary" in cell
-    ]
-    assert broken, "no cell carries a failure summary, so there is nothing to mark"
-    surface_id, profile_id = broken[0]
+    # `_with_the_nc_split` writes the `failure_summary` this cuts, so there is no
+    # precondition to assert here -- that would be a check on the helper, not on the page.
+    base = _with_the_nc_split(committed)
+    surface_id, profile_id = _NC_SPLIT_AT
 
-    at_the_cap = copy.deepcopy(committed)
+    at_the_cap = copy.deepcopy(base)
     cell = at_the_cap["cells"][surface_id][profile_id]
     cell["failure_summary"] = (cell["failure_summary"] + " ")[:1] * FAILURE_SUMMARY_LIMIT
     block = _evidence_block(_page(at_the_cap), surface_id, profile_id)
@@ -4472,7 +4598,7 @@ def test_evidence_the_collate_step_cut_short_is_marked_as_cut(committed):
     )
     assert str(FAILURE_SUMMARY_LIMIT) in block, "the page does not say where it was cut"
 
-    intact = copy.deepcopy(committed)
+    intact = copy.deepcopy(base)
     intact["cells"][surface_id][profile_id]["failure_summary"] = "it fell over. That is all."
     assert "cut short" not in _evidence_block(_page(intact), surface_id, profile_id), (
         "a summary that ENDED is being reported as one that was CUT"
@@ -4493,6 +4619,23 @@ def test_a_record_can_never_be_clipped_below_the_cap_the_page_reports(committed)
     of the record's text, so a record clipped at the larger cap necessarily overflows
     the smaller one and the page announces it. Raising either constant without the
     other reopens the hole silently, which is why this is a guard and not a comment.
+
+    ★ THE WATCH BELOW WAS A TAUTOLOGY FOR ONE COMMIT, and it is the shape this same
+    change wrote a paragraph condemning in `tests/unit/test_conformance_bed.py`. After
+    the 2026-08-26 re-measure no cell is broken, so no cell carries a
+    `failure_summary`, `longest` fell to its `default=0`, and `0 < 2000` cannot fail --
+    while a `_cells()` that yielded NOTHING would read exactly like a clean artifact.
+    Both halves of that are fixed here, and they are the two halves the bed file's note
+    names:
+
+    - THE ENUMERATOR IS GUARDED. `_cells(committed)` must yield the whole grid before
+      the filtered set is allowed to be empty, so an empty result is the ARTIFACT's
+      answer about its evidence and never the enumerator's about itself.
+    - THE WATCH IS GIVEN A SUBJECT. `longest` is taken over the artifact AND over
+      :func:`_with_the_nc_split`'s copy, whose `failure_summary` is 780 characters of
+      REAL published evidence quoted verbatim from `e9cef75a`. That is not a length
+      this test made up -- it is the longest reason a run has ever published here -- so
+      `780 < 2000` is a live check that re-fires the day anybody lowers either cap.
     """
     assert RECORD_SUMMARY_LIMIT > FAILURE_SUMMARY_LIMIT, (
         f"a record clipped at {RECORD_SUMMARY_LIMIT} can join to under "
@@ -4505,49 +4648,88 @@ def test_a_record_can_never_be_clipped_below_the_cap_the_page_reports(committed)
     assert len(cut) == RECORD_SUMMARY_LIMIT, (
         "the record cap above is not applied, so the ordering it states pins nothing"
     )
+    published = [cell for _, _, cell, _ in _cells(committed)]
+    whole_grid = len(SURFACES) * len(committed["profiles"])
+    assert len(published) == whole_grid, (
+        f"the cell enumerator yielded {len(published)} of the artifact's {whole_grid} "
+        f"cells ({len(SURFACES)} surfaces x {len(committed['profiles'])} profiles), so "
+        f"an empty set of published evidence below would be ITS answer rather than the "
+        f"artifact's -- and a grid clipped to any non-empty prefix would read as clean"
+    )
+    historic = [cell for _, _, cell, _ in _cells(_with_the_nc_split(committed))]
     longest = max(
         (
             len(cell["failure_summary"])
-            for _, _, cell, _ in _cells(committed)
+            for cell in published + historic
             if "failure_summary" in cell
         ),
         default=0,
     )
+    # No `assert longest` tripwire: `_with_the_nc_split` always writes a summary, so a
+    # non-empty `longest` is the helper's guarantee and not a fact worth asserting. The
+    # enumerator guard above is what keeps the empty case honest.
     assert longest < FAILURE_SUMMARY_LIMIT, (
         f"the published evidence is truncated again ({longest} characters): either "
         f"raise both caps, keeping the ordering above, or accept the page's cut marker"
     )
 
 
-def test_every_measured_broken_cell_points_at_the_registry_that_owns_it():
-    """The ten broken cells are otto's `nc-transfer` gap, measured 2026-08-13, not news.
+def test_the_page_still_names_the_registry_and_the_division_of_labour(committed):
+    """★ THE HALF OF THE OLD BROKEN-ROW GUARD THAT SURVIVES ZERO BROKEN CELLS.
 
-    Republishing a known-broken surface is right -- a matrix that omitted one would lie
-    by omission -- but a row that did not name it as a REGISTERED gap would read as
-    though this page had discovered something otto has known for weeks.
+    This was `test_every_measured_broken_cell_points_at_the_registry_that_owns_it`, and
+    it opened `assert broken, "no measured-broken cell in the artifact; this guard is
+    vacuous"`. The 2026-08-26 re-measure emptied that list, and the per-row half went
+    with it rather than being kept as a loop over nothing: a guard that cannot fail is
+    this repo's recurring defect, and the property it checked is asserted, injected, in
+    `test_an_unexpected_failure_is_not_rendered_as_a_registered_gap` -- which makes a
+    predicted failure and asserts its row says `registered gap` and points at
+    {doc}`subsystems/busybox-support`. So nothing was lost by deleting the loop; what
+    would have been lost is the ability to tell.
+
+    THE TWO PAGE-LEVEL CLAIMS ARE NOT ABOUT ANY CELL, which is why they stay. They are
+    about the section that says WHOSE NEWS a red cell is, and the note that keeps this
+    page and the gap registry's page from restating each other -- and a page that
+    stopped saying either the day everything passed is a page that has quietly dropped
+    the frame its next red cell will be read in.
+
+    THE RENDERER WAS ADJUSTED RATHER THAN THE ASSERTS WEAKENED (the choice this
+    docstring is asked to record). `_registered_gaps_section` is called unconditionally
+    from the page builder, so at zero broken cells it still rendered -- but its opening
+    counted: *"0 of these cells read `measured-broken`, and 0 of them failed in a way
+    the suite predicted"*, then *"So this page did not discover them"* about nothing. It
+    now has an honest zero-state that keeps both claims and states the rule in the
+    future tense, so these two asserts read the same page a reader does instead of being
+    trimmed to whatever survived.
+
+    AND THE OPENING IS HELD TO THE CENSUS, as a rule read in BOTH worlds rather than as
+    today's wording: the committed artifact takes the zero branch now and the counted
+    one the day a run measures a red cell, and the injected copy always has a cell to
+    count. Without it a zero-state that said nothing at all would satisfy everything
+    above, because both claims live in the `{note}` below the opening.
     """
-    matrix = json.loads(MATRIX_PATH.read_text())
-    page = _page(matrix)
-    broken = [
-        (surface_id, profile_id, cell)
-        for surface_id, profile_id, cell, _ in _cells(matrix)
-        if cell["status"] == "measured-broken"
-    ]
-    assert broken, "no measured-broken cell in the artifact; this guard is vacuous"
-    for surface_id, profile_id, cell in broken:
-        if any(entry["outcome"] == "failed" for entry in cell["observed_cells"]):
-            continue
-        row = _row(page, surface_id, profile_id)
-        where = f"{surface_id} x {profile_id}"
-        assert "registered gap" in row, f"{where} reads as this page's own discovery: {row}"
-        assert "subsystems/busybox-support" in row, (
-            f"{where} never sends the reader to the page that owns the gap: {row}"
+    heading = "## Known-broken surfaces, and whose news they are"
+    for matrix in (committed, _with_the_nc_split(committed)):
+        page = _page(matrix)
+        assert "{data}`~otto.host.userland.GAPS`" in page, "the page never names the registry"
+        assert "Division of labour with {doc}`subsystems/busybox-support`" in page, (
+            "the two pages share `measured-broken` and `untested` with `otto.host.userland`'s "
+            "gap registry; without a division-of-labour note they drift into restating each other"
         )
-    assert "{data}`~otto.host.userland.GAPS`" in page, "the page never names the registry"
-    assert "Division of labour with {doc}`subsystems/busybox-support`" in page, (
-        "the two pages share `measured-broken` and `untested` with `otto.host.userland`'s "
-        "gap registry; without a division-of-labour note they drift into restating each other"
-    )
+        assert heading in page, (
+            "the section carrying both claims is gone from the page, and with zero broken "
+            "cells the two asserts above could yet be satisfied by prose somewhere else"
+        )
+        section = page[page.index(heading) : page.index("## At a glance")]
+        broken = [cell for _, _, cell, _ in _cells(matrix) if cell["status"] == "measured-broken"]
+        if broken:
+            assert f"{len(broken)} of these cells read `measured-broken`" in section, section
+        else:
+            assert "None of these cells reads `measured-broken`" in section, section
+            assert "failed in a way the suite predicted**" not in section, (
+                "the zero-state still counts, so the page announces how many of no cells "
+                f"failed as predicted: {section}"
+            )
 
 
 def test_the_page_dates_everything_in_utc_and_says_so_before_the_first_verdict():
@@ -5625,13 +5807,16 @@ def test_the_registered_gap_tally_counts_only_the_failures_the_suite_predicted(c
     sentence on the page that tells a reader none of this is news. Cardinality
     blindness: the count can only diverge in a state no guard injected, so this injects
     one.
+
+    THE BROKEN CELLS ARE INJECTED TOO SINCE 2026-08-26. They were the artifact's ten
+    until the re-measure, and the tally sentence they were counted in is not even
+    rendered now -- the section's zero-state says *"None of these cells reads
+    `measured-broken`"* instead. TWO cells are put back rather than one, so the divergence
+    this is about (2 against 1) is a real difference between two counts and not the
+    difference between one and nothing.
     """
-    broken = [
-        (surface_id, profile_id)
-        for surface_id, profile_id, cell, _ in _cells(committed)
-        if cell["status"] == "measured-broken"
-    ]
-    assert broken, "no measured-broken cell in the artifact; this guard is vacuous"
+    broken = [_NC_SPLIT_AT, ("transfer-mode", "busybox-1.16.1")]
+    base = _with_the_nc_split(committed, *broken)
 
     def _tally(matrix: dict) -> str:
         page = _page(matrix)
@@ -5639,11 +5824,11 @@ def test_the_registered_gap_tally_counts_only_the_failures_the_suite_predicted(c
             line for line in page.splitlines() if "of these cells read `measured-broken`" in line
         )
 
-    assert _tally(committed) == (
+    assert _tally(base) == (
         f"{len(broken)} of these cells read `measured-broken`, and **{len(broken)} of them"
-    ), "the control: every broken cell in the artifact today failed as the suite predicted"
+    ), "the control: every broken cell here is a strict xfail, so the two counts agree"
 
-    injected = copy.deepcopy(committed)
+    injected = copy.deepcopy(base)
     surprise = injected["cells"][broken[0][0]][broken[0][1]]
     entry = next(e for e in surprise["observed_cells"] if e["outcome"] == "xfailed")
     entry["outcome"] = "failed"
@@ -5746,14 +5931,18 @@ def test_a_refusal_cell_that_broke_still_reports_where_it_broke(committed):
 
     `busybox-1.16.1` x `transfer-mode` is the base because its drawn cells differ along
     ONE axis, so the row names transports rather than falling back to a list of labels.
+    The mix used to be the bed's own; since the 2026-08-26 re-measure it comes from
+    :func:`_with_the_nc_split`, which is the same split one commit earlier. Only the
+    provenance of the base changed -- the two shapes this is about were always injected,
+    because the collate step cannot write either.
     """
     refusal = committed["cells"]["transfer-mode"]["zephyr-2.7"]["observable"]
 
-    mixed = copy.deepcopy(committed)
+    # The `{passed, xfailed}` mix is what `_with_the_nc_split` builds, so it is not
+    # asserted here: the old check read it off the artifact, where it could stop being
+    # true, and now it would only be reading the helper back to itself.
+    mixed = _with_the_nc_split(committed, ("transfer-mode", "busybox-1.16.1"))
     cell = mixed["cells"]["transfer-mode"]["busybox-1.16.1"]
-    assert {e["outcome"] for e in cell["observed_cells"]} == {"passed", "xfailed"}, (
-        "the base cell is no longer mixed; this guard is vacuous"
-    )
     cell["observable"] = refusal
     row = _row(_page(mixed), "transfer-mode", "busybox-1.16.1")
     assert "it held over `shell`" in row, f"the row does not say where the refusal held: {row}"

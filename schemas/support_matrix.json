@@ -102,7 +102,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_exec_contract.py::test_exec_reports_the_documented_exit_code",
         "venue": "bed",
-        "as_of": "2026-08-25",
+        "as_of": "2026-08-26",
         "observed_on": [
           "bb1161"
         ],
@@ -132,7 +132,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_exec_contract.py::test_exec_reports_the_documented_exit_code",
         "venue": "bed",
-        "as_of": "2026-08-25",
+        "as_of": "2026-08-26",
         "observed_on": [
           "bb1211"
         ],
@@ -162,7 +162,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_exec_contract.py::test_exec_reports_the_documented_exit_code",
         "venue": "bed",
-        "as_of": "2026-08-25",
+        "as_of": "2026-08-26",
         "observed_on": [
           "bb1281"
         ],
@@ -192,7 +192,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_exec_contract.py::test_exec_reports_the_documented_exit_code",
         "venue": "bed",
-        "as_of": "2026-08-25",
+        "as_of": "2026-08-26",
         "observed_on": [
           "bb1310"
         ],
@@ -222,7 +222,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_exec_contract.py::test_exec_reports_the_documented_exit_code",
         "venue": "bed",
-        "as_of": "2026-08-25",
+        "as_of": "2026-08-26",
         "observed_on": [
           "bb1350"
         ],
@@ -252,7 +252,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_exec_contract.py::test_exec_reports_the_documented_exit_code",
         "venue": "bed",
-        "as_of": "2026-08-25",
+        "as_of": "2026-08-26",
         "observed_on": [
           "test1",
           "test2",
@@ -525,7 +525,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_exec_contract.py::test_exec_reports_the_documented_exit_code",
         "venue": "bed",
-        "as_of": "2026-08-25",
+        "as_of": "2026-08-26",
         "observed_on": [
           "zephyr27_fat"
         ],
@@ -547,7 +547,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_exec_contract.py::test_exec_reports_the_documented_exit_code",
         "venue": "bed",
-        "as_of": "2026-08-25",
+        "as_of": "2026-08-26",
         "observed_on": [
           "zephyr37_fat",
           "zephyr37_lfs",
@@ -596,7 +596,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_exec_contract.py::test_exec_reports_the_documented_exit_code",
         "venue": "bed",
-        "as_of": "2026-08-25",
+        "as_of": "2026-08-26",
         "observed_on": [
           "zephyr44_lfs",
           "zephyr44_llext"
@@ -629,7 +629,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_exec_contract.py::test_exec_frames_output_without_prompt_noise",
         "venue": "bed",
-        "as_of": "2026-08-25",
+        "as_of": "2026-08-26",
         "observed_on": [
           "bb1161"
         ],
@@ -659,7 +659,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_exec_contract.py::test_exec_frames_output_without_prompt_noise",
         "venue": "bed",
-        "as_of": "2026-08-25",
+        "as_of": "2026-08-26",
         "observed_on": [
           "bb1211"
         ],
@@ -689,7 +689,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_exec_contract.py::test_exec_frames_output_without_prompt_noise",
         "venue": "bed",
-        "as_of": "2026-08-25",
+        "as_of": "2026-08-26",
         "observed_on": [
           "bb1281"
         ],
@@ -719,7 +719,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_exec_contract.py::test_exec_frames_output_without_prompt_noise",
         "venue": "bed",
-        "as_of": "2026-08-25",
+        "as_of": "2026-08-26",
         "observed_on": [
           "bb1310"
         ],
@@ -749,7 +749,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_exec_contract.py::test_exec_frames_output_without_prompt_noise",
         "venue": "bed",
-        "as_of": "2026-08-25",
+        "as_of": "2026-08-26",
         "observed_on": [
           "bb1350"
         ],
@@ -779,7 +779,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_exec_contract.py::test_exec_frames_output_without_prompt_noise",
         "venue": "bed",
-        "as_of": "2026-08-25",
+        "as_of": "2026-08-26",
         "observed_on": [
           "test1",
           "test2",
@@ -1052,7 +1052,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_exec_contract.py::test_exec_frames_output_without_prompt_noise",
         "venue": "bed",
-        "as_of": "2026-08-25",
+        "as_of": "2026-08-26",
         "observed_on": [
           "zephyr27_fat"
         ],
@@ -1074,7 +1074,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_exec_contract.py::test_exec_frames_output_without_prompt_noise",
         "venue": "bed",
-        "as_of": "2026-08-25",
+        "as_of": "2026-08-26",
         "observed_on": [
           "zephyr37_fat",
           "zephyr37_lfs",
@@ -1123,7 +1123,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_exec_contract.py::test_exec_frames_output_without_prompt_noise",
         "venue": "bed",
-        "as_of": "2026-08-25",
+        "as_of": "2026-08-26",
         "observed_on": [
           "zephyr44_lfs",
           "zephyr44_llext"
@@ -1156,7 +1156,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_exec_contract.py::test_a_failing_command_is_not_reported_as_success",
         "venue": "bed",
-        "as_of": "2026-08-25",
+        "as_of": "2026-08-26",
         "observed_on": [
           "bb1161"
         ],
@@ -1186,7 +1186,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_exec_contract.py::test_a_failing_command_is_not_reported_as_success",
         "venue": "bed",
-        "as_of": "2026-08-25",
+        "as_of": "2026-08-26",
         "observed_on": [
           "bb1211"
         ],
@@ -1216,7 +1216,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_exec_contract.py::test_a_failing_command_is_not_reported_as_success",
         "venue": "bed",
-        "as_of": "2026-08-25",
+        "as_of": "2026-08-26",
         "observed_on": [
           "bb1281"
         ],
@@ -1246,7 +1246,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_exec_contract.py::test_a_failing_command_is_not_reported_as_success",
         "venue": "bed",
-        "as_of": "2026-08-25",
+        "as_of": "2026-08-26",
         "observed_on": [
           "bb1310"
         ],
@@ -1276,7 +1276,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_exec_contract.py::test_a_failing_command_is_not_reported_as_success",
         "venue": "bed",
-        "as_of": "2026-08-25",
+        "as_of": "2026-08-26",
         "observed_on": [
           "bb1350"
         ],
@@ -1306,7 +1306,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_exec_contract.py::test_a_failing_command_is_not_reported_as_success",
         "venue": "bed",
-        "as_of": "2026-08-25",
+        "as_of": "2026-08-26",
         "observed_on": [
           "test1",
           "test2",
@@ -1579,7 +1579,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_exec_contract.py::test_a_failing_command_is_not_reported_as_success",
         "venue": "bed",
-        "as_of": "2026-08-25",
+        "as_of": "2026-08-26",
         "observed_on": [
           "zephyr27_fat"
         ],
@@ -1601,7 +1601,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_exec_contract.py::test_a_failing_command_is_not_reported_as_success",
         "venue": "bed",
-        "as_of": "2026-08-25",
+        "as_of": "2026-08-26",
         "observed_on": [
           "zephyr37_fat",
           "zephyr37_lfs",
@@ -1650,7 +1650,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_exec_contract.py::test_a_failing_command_is_not_reported_as_success",
         "venue": "bed",
-        "as_of": "2026-08-25",
+        "as_of": "2026-08-26",
         "observed_on": [
           "zephyr44_lfs",
           "zephyr44_llext"
@@ -1680,10 +1680,10 @@
     },
     "transfer-roundtrip": {
       "busybox-1.16.1": {
-        "status": "measured-broken",
+        "status": "measured-ok",
         "nodeid": "tests/conformance/test_transfer_contract.py::test_put_get_roundtrip_preserves_content",
         "venue": "bed",
-        "as_of": "2026-08-25",
+        "as_of": "2026-08-26",
         "observed_on": [
           "bb1161"
         ],
@@ -1693,7 +1693,8 @@
             "element": "bb1161",
             "term": "telnet",
             "transfer": "nc",
-            "outcome": "xfailed"
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_roundtrip_comparison_rejects_a_corrupted_byte[bed-busybox[bb1161:telnet:nc]]"
           },
           {
             "cell_label": "bed-busybox[bb1161:telnet:shell]",
@@ -1706,13 +1707,13 @@
         ],
         "not_observable": [],
         "observable": "the bytes get() reads back over `nc` after put() of a known payload to this host's own scratch directory | the bytes get() reads back over `shell` after put() of a known payload to this host's own scratch directory",
-        "failure_summary": "bed-busybox[bb1161:telnet:nc]: call: expected failure -- otto's `nc-transfer` gap, PUT direction: `NcFileTransfer._put_files_nc` is a GapPath with state PATH_OPEN in `src/otto/host/userland.py` -- it spells the device-side listener `nc -l -w <secs> <port>`, which the BusyBox applet does not accept (it wants `-l -p PORT`), and reads nothing from that record, so the put fails into `Remote nc listener on port <port> not ready` instead of the refusal the GET direction raises. A registered open path, not a test or lab-data problem: `shell` transfer passes on these same five guests, and `nc` passes on every `bed-unix` cell that uses it (test1-test4 over both ssh and telnet, 8 cells, 16/16 items, measured on the first full `make conformance-bed` run). See this module's banner."
+        "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_roundtrip_comparison_rejects_a_corrupted_byte[bed-busybox[bb1161:telnet:nc]]"
       },
       "busybox-1.21.1": {
-        "status": "measured-broken",
+        "status": "measured-ok",
         "nodeid": "tests/conformance/test_transfer_contract.py::test_put_get_roundtrip_preserves_content",
         "venue": "bed",
-        "as_of": "2026-08-25",
+        "as_of": "2026-08-26",
         "observed_on": [
           "bb1211"
         ],
@@ -1722,7 +1723,8 @@
             "element": "bb1211",
             "term": "telnet",
             "transfer": "nc",
-            "outcome": "xfailed"
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_roundtrip_comparison_rejects_a_corrupted_byte[bed-busybox[bb1211:telnet:nc]]"
           },
           {
             "cell_label": "bed-busybox[bb1211:telnet:shell]",
@@ -1735,13 +1737,13 @@
         ],
         "not_observable": [],
         "observable": "the bytes get() reads back over `nc` after put() of a known payload to this host's own scratch directory | the bytes get() reads back over `shell` after put() of a known payload to this host's own scratch directory",
-        "failure_summary": "bed-busybox[bb1211:telnet:nc]: call: expected failure -- otto's `nc-transfer` gap, PUT direction: `NcFileTransfer._put_files_nc` is a GapPath with state PATH_OPEN in `src/otto/host/userland.py` -- it spells the device-side listener `nc -l -w <secs> <port>`, which the BusyBox applet does not accept (it wants `-l -p PORT`), and reads nothing from that record, so the put fails into `Remote nc listener on port <port> not ready` instead of the refusal the GET direction raises. A registered open path, not a test or lab-data problem: `shell` transfer passes on these same five guests, and `nc` passes on every `bed-unix` cell that uses it (test1-test4 over both ssh and telnet, 8 cells, 16/16 items, measured on the first full `make conformance-bed` run). See this module's banner."
+        "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_roundtrip_comparison_rejects_a_corrupted_byte[bed-busybox[bb1211:telnet:nc]]"
       },
       "busybox-1.28.1": {
-        "status": "measured-broken",
+        "status": "measured-ok",
         "nodeid": "tests/conformance/test_transfer_contract.py::test_put_get_roundtrip_preserves_content",
         "venue": "bed",
-        "as_of": "2026-08-25",
+        "as_of": "2026-08-26",
         "observed_on": [
           "bb1281"
         ],
@@ -1751,7 +1753,8 @@
             "element": "bb1281",
             "term": "telnet",
             "transfer": "nc",
-            "outcome": "xfailed"
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_roundtrip_comparison_rejects_a_corrupted_byte[bed-busybox[bb1281:telnet:nc]]"
           },
           {
             "cell_label": "bed-busybox[bb1281:telnet:shell]",
@@ -1764,13 +1767,13 @@
         ],
         "not_observable": [],
         "observable": "the bytes get() reads back over `nc` after put() of a known payload to this host's own scratch directory | the bytes get() reads back over `shell` after put() of a known payload to this host's own scratch directory",
-        "failure_summary": "bed-busybox[bb1281:telnet:nc]: call: expected failure -- otto's `nc-transfer` gap, PUT direction: `NcFileTransfer._put_files_nc` is a GapPath with state PATH_OPEN in `src/otto/host/userland.py` -- it spells the device-side listener `nc -l -w <secs> <port>`, which the BusyBox applet does not accept (it wants `-l -p PORT`), and reads nothing from that record, so the put fails into `Remote nc listener on port <port> not ready` instead of the refusal the GET direction raises. A registered open path, not a test or lab-data problem: `shell` transfer passes on these same five guests, and `nc` passes on every `bed-unix` cell that uses it (test1-test4 over both ssh and telnet, 8 cells, 16/16 items, measured on the first full `make conformance-bed` run). See this module's banner."
+        "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_roundtrip_comparison_rejects_a_corrupted_byte[bed-busybox[bb1281:telnet:nc]]"
       },
       "busybox-1.31.0": {
-        "status": "measured-broken",
+        "status": "measured-ok",
         "nodeid": "tests/conformance/test_transfer_contract.py::test_put_get_roundtrip_preserves_content",
         "venue": "bed",
-        "as_of": "2026-08-25",
+        "as_of": "2026-08-26",
         "observed_on": [
           "bb1310"
         ],
@@ -1780,7 +1783,8 @@
             "element": "bb1310",
             "term": "telnet",
             "transfer": "nc",
-            "outcome": "xfailed"
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_roundtrip_comparison_rejects_a_corrupted_byte[bed-busybox[bb1310:telnet:nc]]"
           },
           {
             "cell_label": "bed-busybox[bb1310:telnet:shell]",
@@ -1793,13 +1797,13 @@
         ],
         "not_observable": [],
         "observable": "the bytes get() reads back over `nc` after put() of a known payload to this host's own scratch directory | the bytes get() reads back over `shell` after put() of a known payload to this host's own scratch directory",
-        "failure_summary": "bed-busybox[bb1310:telnet:nc]: call: expected failure -- otto's `nc-transfer` gap, PUT direction: `NcFileTransfer._put_files_nc` is a GapPath with state PATH_OPEN in `src/otto/host/userland.py` -- it spells the device-side listener `nc -l -w <secs> <port>`, which the BusyBox applet does not accept (it wants `-l -p PORT`), and reads nothing from that record, so the put fails into `Remote nc listener on port <port> not ready` instead of the refusal the GET direction raises. A registered open path, not a test or lab-data problem: `shell` transfer passes on these same five guests, and `nc` passes on every `bed-unix` cell that uses it (test1-test4 over both ssh and telnet, 8 cells, 16/16 items, measured on the first full `make conformance-bed` run). See this module's banner."
+        "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_roundtrip_comparison_rejects_a_corrupted_byte[bed-busybox[bb1310:telnet:nc]]"
       },
       "busybox-1.35.0": {
-        "status": "measured-broken",
+        "status": "measured-ok",
         "nodeid": "tests/conformance/test_transfer_contract.py::test_put_get_roundtrip_preserves_content",
         "venue": "bed",
-        "as_of": "2026-08-25",
+        "as_of": "2026-08-26",
         "observed_on": [
           "bb1350"
         ],
@@ -1809,7 +1813,8 @@
             "element": "bb1350",
             "term": "telnet",
             "transfer": "nc",
-            "outcome": "xfailed"
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_roundtrip_comparison_rejects_a_corrupted_byte[bed-busybox[bb1350:telnet:nc]]"
           },
           {
             "cell_label": "bed-busybox[bb1350:telnet:shell]",
@@ -1822,13 +1827,13 @@
         ],
         "not_observable": [],
         "observable": "the bytes get() reads back over `nc` after put() of a known payload to this host's own scratch directory | the bytes get() reads back over `shell` after put() of a known payload to this host's own scratch directory",
-        "failure_summary": "bed-busybox[bb1350:telnet:nc]: call: expected failure -- otto's `nc-transfer` gap, PUT direction: `NcFileTransfer._put_files_nc` is a GapPath with state PATH_OPEN in `src/otto/host/userland.py` -- it spells the device-side listener `nc -l -w <secs> <port>`, which the BusyBox applet does not accept (it wants `-l -p PORT`), and reads nothing from that record, so the put fails into `Remote nc listener on port <port> not ready` instead of the refusal the GET direction raises. A registered open path, not a test or lab-data problem: `shell` transfer passes on these same five guests, and `nc` passes on every `bed-unix` cell that uses it (test1-test4 over both ssh and telnet, 8 cells, 16/16 items, measured on the first full `make conformance-bed` run). See this module's banner."
+        "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_roundtrip_comparison_rejects_a_corrupted_byte[bed-busybox[bb1350:telnet:nc]]"
       },
       "gnu": {
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_transfer_contract.py::test_put_get_roundtrip_preserves_content",
         "venue": "bed",
-        "as_of": "2026-08-25",
+        "as_of": "2026-08-26",
         "observed_on": [
           "test1",
           "test2",
@@ -2101,7 +2106,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_transfer_contract.py::test_put_get_roundtrip_preserves_content",
         "venue": "bed",
-        "as_of": "2026-08-25",
+        "as_of": "2026-08-26",
         "observed_on": [
           "zephyr27_fat"
         ],
@@ -2123,7 +2128,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_transfer_contract.py::test_put_get_roundtrip_preserves_content",
         "venue": "bed",
-        "as_of": "2026-08-25",
+        "as_of": "2026-08-26",
         "observed_on": [
           "zephyr37_fat",
           "zephyr37_lfs"
@@ -2165,7 +2170,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_transfer_contract.py::test_put_get_roundtrip_preserves_content",
         "venue": "bed",
-        "as_of": "2026-08-25",
+        "as_of": "2026-08-26",
         "observed_on": [
           "zephyr44_lfs"
         ],
@@ -2192,10 +2197,10 @@
     },
     "transfer-mode": {
       "busybox-1.16.1": {
-        "status": "measured-broken",
+        "status": "measured-ok",
         "nodeid": "tests/conformance/test_transfer_contract.py::test_put_lands_the_documented_mode_on_the_host",
         "venue": "bed",
-        "as_of": "2026-08-25",
+        "as_of": "2026-08-26",
         "observed_on": [
           "bb1161"
         ],
@@ -2205,7 +2210,8 @@
             "element": "bb1161",
             "term": "telnet",
             "transfer": "nc",
-            "outcome": "xfailed"
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_landed_mode_follows_the_mode_that_was_asked_for[bed-busybox[bb1161:telnet:nc]]"
           },
           {
             "cell_label": "bed-busybox[bb1161:telnet:shell]",
@@ -2218,13 +2224,13 @@
         ],
         "not_observable": [],
         "observable": "the mode `stat -c %a` reads back on the host after put(mode=0o615) over `nc` | the mode `stat -c %a` reads back on the host after put(mode=0o615) over `shell`",
-        "failure_summary": "bed-busybox[bb1161:telnet:nc]: call: expected failure -- otto's `nc-transfer` gap, PUT direction: `NcFileTransfer._put_files_nc` is a GapPath with state PATH_OPEN in `src/otto/host/userland.py` -- it spells the device-side listener `nc -l -w <secs> <port>`, which the BusyBox applet does not accept (it wants `-l -p PORT`), and reads nothing from that record, so the put fails into `Remote nc listener on port <port> not ready` instead of the refusal the GET direction raises. A registered open path, not a test or lab-data problem: `shell` transfer passes on these same five guests, and `nc` passes on every `bed-unix` cell that uses it (test1-test4 over both ssh and telnet, 8 cells, 16/16 items, measured on the first full `make conformance-bed` run). See this module's banner."
+        "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_landed_mode_follows_the_mode_that_was_asked_for[bed-busybox[bb1161:telnet:nc]]"
       },
       "busybox-1.21.1": {
-        "status": "measured-broken",
+        "status": "measured-ok",
         "nodeid": "tests/conformance/test_transfer_contract.py::test_put_lands_the_documented_mode_on_the_host",
         "venue": "bed",
-        "as_of": "2026-08-25",
+        "as_of": "2026-08-26",
         "observed_on": [
           "bb1211"
         ],
@@ -2234,7 +2240,8 @@
             "element": "bb1211",
             "term": "telnet",
             "transfer": "nc",
-            "outcome": "xfailed"
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_landed_mode_follows_the_mode_that_was_asked_for[bed-busybox[bb1211:telnet:nc]]"
           },
           {
             "cell_label": "bed-busybox[bb1211:telnet:shell]",
@@ -2247,13 +2254,13 @@
         ],
         "not_observable": [],
         "observable": "the mode `stat -c %a` reads back on the host after put(mode=0o615) over `nc` | the mode `stat -c %a` reads back on the host after put(mode=0o615) over `shell`",
-        "failure_summary": "bed-busybox[bb1211:telnet:nc]: call: expected failure -- otto's `nc-transfer` gap, PUT direction: `NcFileTransfer._put_files_nc` is a GapPath with state PATH_OPEN in `src/otto/host/userland.py` -- it spells the device-side listener `nc -l -w <secs> <port>`, which the BusyBox applet does not accept (it wants `-l -p PORT`), and reads nothing from that record, so the put fails into `Remote nc listener on port <port> not ready` instead of the refusal the GET direction raises. A registered open path, not a test or lab-data problem: `shell` transfer passes on these same five guests, and `nc` passes on every `bed-unix` cell that uses it (test1-test4 over both ssh and telnet, 8 cells, 16/16 items, measured on the first full `make conformance-bed` run). See this module's banner."
+        "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_landed_mode_follows_the_mode_that_was_asked_for[bed-busybox[bb1211:telnet:nc]]"
       },
       "busybox-1.28.1": {
-        "status": "measured-broken",
+        "status": "measured-ok",
         "nodeid": "tests/conformance/test_transfer_contract.py::test_put_lands_the_documented_mode_on_the_host",
         "venue": "bed",
-        "as_of": "2026-08-25",
+        "as_of": "2026-08-26",
         "observed_on": [
           "bb1281"
         ],
@@ -2263,7 +2270,8 @@
             "element": "bb1281",
             "term": "telnet",
             "transfer": "nc",
-            "outcome": "xfailed"
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_landed_mode_follows_the_mode_that_was_asked_for[bed-busybox[bb1281:telnet:nc]]"
           },
           {
             "cell_label": "bed-busybox[bb1281:telnet:shell]",
@@ -2276,13 +2284,13 @@
         ],
         "not_observable": [],
         "observable": "the mode `stat -c %a` reads back on the host after put(mode=0o615) over `nc` | the mode `stat -c %a` reads back on the host after put(mode=0o615) over `shell`",
-        "failure_summary": "bed-busybox[bb1281:telnet:nc]: call: expected failure -- otto's `nc-transfer` gap, PUT direction: `NcFileTransfer._put_files_nc` is a GapPath with state PATH_OPEN in `src/otto/host/userland.py` -- it spells the device-side listener `nc -l -w <secs> <port>`, which the BusyBox applet does not accept (it wants `-l -p PORT`), and reads nothing from that record, so the put fails into `Remote nc listener on port <port> not ready` instead of the refusal the GET direction raises. A registered open path, not a test or lab-data problem: `shell` transfer passes on these same five guests, and `nc` passes on every `bed-unix` cell that uses it (test1-test4 over both ssh and telnet, 8 cells, 16/16 items, measured on the first full `make conformance-bed` run). See this module's banner."
+        "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_landed_mode_follows_the_mode_that_was_asked_for[bed-busybox[bb1281:telnet:nc]]"
       },
       "busybox-1.31.0": {
-        "status": "measured-broken",
+        "status": "measured-ok",
         "nodeid": "tests/conformance/test_transfer_contract.py::test_put_lands_the_documented_mode_on_the_host",
         "venue": "bed",
-        "as_of": "2026-08-25",
+        "as_of": "2026-08-26",
         "observed_on": [
           "bb1310"
         ],
@@ -2292,7 +2300,8 @@
             "element": "bb1310",
             "term": "telnet",
             "transfer": "nc",
-            "outcome": "xfailed"
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_landed_mode_follows_the_mode_that_was_asked_for[bed-busybox[bb1310:telnet:nc]]"
           },
           {
             "cell_label": "bed-busybox[bb1310:telnet:shell]",
@@ -2305,13 +2314,13 @@
         ],
         "not_observable": [],
         "observable": "the mode `stat -c %a` reads back on the host after put(mode=0o615) over `nc` | the mode `stat -c %a` reads back on the host after put(mode=0o615) over `shell`",
-        "failure_summary": "bed-busybox[bb1310:telnet:nc]: call: expected failure -- otto's `nc-transfer` gap, PUT direction: `NcFileTransfer._put_files_nc` is a GapPath with state PATH_OPEN in `src/otto/host/userland.py` -- it spells the device-side listener `nc -l -w <secs> <port>`, which the BusyBox applet does not accept (it wants `-l -p PORT`), and reads nothing from that record, so the put fails into `Remote nc listener on port <port> not ready` instead of the refusal the GET direction raises. A registered open path, not a test or lab-data problem: `shell` transfer passes on these same five guests, and `nc` passes on every `bed-unix` cell that uses it (test1-test4 over both ssh and telnet, 8 cells, 16/16 items, measured on the first full `make conformance-bed` run). See this module's banner."
+        "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_landed_mode_follows_the_mode_that_was_asked_for[bed-busybox[bb1310:telnet:nc]]"
       },
       "busybox-1.35.0": {
-        "status": "measured-broken",
+        "status": "measured-ok",
         "nodeid": "tests/conformance/test_transfer_contract.py::test_put_lands_the_documented_mode_on_the_host",
         "venue": "bed",
-        "as_of": "2026-08-25",
+        "as_of": "2026-08-26",
         "observed_on": [
           "bb1350"
         ],
@@ -2321,7 +2330,8 @@
             "element": "bb1350",
             "term": "telnet",
             "transfer": "nc",
-            "outcome": "xfailed"
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_landed_mode_follows_the_mode_that_was_asked_for[bed-busybox[bb1350:telnet:nc]]"
           },
           {
             "cell_label": "bed-busybox[bb1350:telnet:shell]",
@@ -2334,13 +2344,13 @@
         ],
         "not_observable": [],
         "observable": "the mode `stat -c %a` reads back on the host after put(mode=0o615) over `nc` | the mode `stat -c %a` reads back on the host after put(mode=0o615) over `shell`",
-        "failure_summary": "bed-busybox[bb1350:telnet:nc]: call: expected failure -- otto's `nc-transfer` gap, PUT direction: `NcFileTransfer._put_files_nc` is a GapPath with state PATH_OPEN in `src/otto/host/userland.py` -- it spells the device-side listener `nc -l -w <secs> <port>`, which the BusyBox applet does not accept (it wants `-l -p PORT`), and reads nothing from that record, so the put fails into `Remote nc listener on port <port> not ready` instead of the refusal the GET direction raises. A registered open path, not a test or lab-data problem: `shell` transfer passes on these same five guests, and `nc` passes on every `bed-unix` cell that uses it (test1-test4 over both ssh and telnet, 8 cells, 16/16 items, measured on the first full `make conformance-bed` run). See this module's banner."
+        "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_landed_mode_follows_the_mode_that_was_asked_for[bed-busybox[bb1350:telnet:nc]]"
       },
       "gnu": {
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_transfer_contract.py::test_put_lands_the_documented_mode_on_the_host",
         "venue": "bed",
-        "as_of": "2026-08-25",
+        "as_of": "2026-08-26",
         "observed_on": [
           "test1",
           "test2",
@@ -2613,7 +2623,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_transfer_contract.py::test_put_lands_the_documented_mode_on_the_host",
         "venue": "bed",
-        "as_of": "2026-08-25",
+        "as_of": "2026-08-26",
         "observed_on": [
           "zephyr27_fat"
         ],
@@ -2635,7 +2645,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_transfer_contract.py::test_put_lands_the_documented_mode_on_the_host",
         "venue": "bed",
-        "as_of": "2026-08-25",
+        "as_of": "2026-08-26",
         "observed_on": [
           "zephyr37_fat",
           "zephyr37_lfs"
@@ -2677,7 +2687,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_transfer_contract.py::test_put_lands_the_documented_mode_on_the_host",
         "venue": "bed",
-        "as_of": "2026-08-25",
+        "as_of": "2026-08-26",
         "observed_on": [
           "zephyr44_lfs"
         ],
@@ -2707,7 +2717,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_timeout_contract.py::test_a_command_exceeding_its_budget_fails_the_documented_way",
         "venue": "bed",
-        "as_of": "2026-08-25",
+        "as_of": "2026-08-26",
         "observed_on": [
           "bb1161"
         ],
@@ -2737,7 +2747,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_timeout_contract.py::test_a_command_exceeding_its_budget_fails_the_documented_way",
         "venue": "bed",
-        "as_of": "2026-08-25",
+        "as_of": "2026-08-26",
         "observed_on": [
           "bb1211"
         ],
@@ -2767,7 +2777,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_timeout_contract.py::test_a_command_exceeding_its_budget_fails_the_documented_way",
         "venue": "bed",
-        "as_of": "2026-08-25",
+        "as_of": "2026-08-26",
         "observed_on": [
           "bb1281"
         ],
@@ -2797,7 +2807,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_timeout_contract.py::test_a_command_exceeding_its_budget_fails_the_documented_way",
         "venue": "bed",
-        "as_of": "2026-08-25",
+        "as_of": "2026-08-26",
         "observed_on": [
           "bb1310"
         ],
@@ -2827,7 +2837,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_timeout_contract.py::test_a_command_exceeding_its_budget_fails_the_documented_way",
         "venue": "bed",
-        "as_of": "2026-08-25",
+        "as_of": "2026-08-26",
         "observed_on": [
           "bb1350"
         ],
@@ -2857,7 +2867,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_timeout_contract.py::test_a_command_exceeding_its_budget_fails_the_documented_way",
         "venue": "bed",
-        "as_of": "2026-08-25",
+        "as_of": "2026-08-26",
         "observed_on": [
           "test1",
           "test2",
@@ -3129,7 +3139,7 @@
       "zephyr-2.7": {
         "status": "not-observable",
         "venue": "bed",
-        "as_of": "2026-08-25",
+        "as_of": "2026-08-26",
         "probed": "tests/conformance/test_timeout_contract.py::applicable_cell(bed-zephyr[zephyr27_fat:telnet:console])",
         "probe_result": "False -- the contract declares this drawn cell outside its applicable domain",
         "observed_on": [],
@@ -3145,7 +3155,7 @@
       "zephyr-3.7": {
         "status": "not-observable",
         "venue": "bed",
-        "as_of": "2026-08-25",
+        "as_of": "2026-08-26",
         "probed": "tests/conformance/test_timeout_contract.py::applicable_cell(bed-zephyr[zephyr37_fat:telnet:console]); tests/conformance/test_timeout_contract.py::applicable_cell(bed-zephyr[zephyr37_lfs:telnet:console]); tests/conformance/test_timeout_contract.py::applicable_cell(bed-zephyr[zephyr37_llext:telnet:console]); tests/conformance/test_timeout_contract.py::applicable_cell(bed-zephyr[zephyr37_nofs:telnet:console])",
         "probe_result": "False -- the contract declares this drawn cell outside its applicable domain",
         "observed_on": [],
@@ -3176,7 +3186,7 @@
       "zephyr-4.4": {
         "status": "not-observable",
         "venue": "bed",
-        "as_of": "2026-08-25",
+        "as_of": "2026-08-26",
         "probed": "tests/conformance/test_timeout_contract.py::applicable_cell(bed-zephyr[zephyr44_lfs:telnet:console]); tests/conformance/test_timeout_contract.py::applicable_cell(bed-zephyr[zephyr44_llext:telnet:console])",
         "probe_result": "False -- the contract declares this drawn cell outside its applicable domain",
         "observed_on": [],
