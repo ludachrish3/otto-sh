@@ -45,14 +45,15 @@ nox.options.default_venv_backend = "uv"
 # that the strict config (select=ALL minus the deny-list) is green.
 nox.options.sessions = ["lint", "tests_hostless", "typecheck", "docs"]
 
-# Coverage floors. tests_hostless gates at 90 — the Makefile's
+# Coverage floors. tests_hostless gates at 95 — the Makefile's
 # CI_COVERAGE_THRESHOLD, and the floor `make coverage-hostless` enforces on the
-# same test selection, so it's the same number. tests_all gates at 92, BELOW
-# `make coverage`'s 95 (COVERAGE_THRESHOLD): `make coverage` folds the
+# same test selection, so it's the same number; tests/unit/test_coverage_floors.py
+# holds the pair equal and both above their codified minimums (the Makefile
+# comment on COVERAGE_THRESHOLD has the measurements). tests_all gates at 92,
+# BELOW `make coverage`'s 96 (COVERAGE_THRESHOLD): `make coverage` folds the
 # dashboard browser process's Python coverage in via --cov-append, which these
 # browser-excluded nox sessions don't, so their achievable number is lower.
-# Keep tests_hostless in step with CI_COVERAGE_THRESHOLD; revisit tests_all if
-# COVERAGE_THRESHOLD or that fold-in changes.
+# Revisit tests_all if COVERAGE_THRESHOLD or that fold-in changes.
 
 # `not busybox and not conformance` rides every catch-all selector below, for
 # reasons unrelated to the bed and spelled out in full above the Makefile's
@@ -97,7 +98,7 @@ HOSTLESS_SERIAL_ARGS = (
     "serial_timing and not integration and not embedded and not stability and not browser",
     "-n0",
     "--cov-append",
-    "--cov-fail-under=90",
+    "--cov-fail-under=95",
 )
 
 # The per-push browser lane's marker expression. MUST match the Makefile's
@@ -367,7 +368,7 @@ def tests_all(session: nox.Session) -> None:
     (the SIGSTOP-wedge test stops test2's sshd; any other worker's fresh
     ssh to test2 then times out) — they own the bed only in the dedicated
     `make stability-tunnel` lane. Coverage threshold is 92% — below
-    ``make coverage``'s 95% because this browser-excluded session omits the
+    ``make coverage``'s 96% because this browser-excluded session omits the
     dashboard --cov-append fold-in (see the module-level coverage-floor
     note).
     """

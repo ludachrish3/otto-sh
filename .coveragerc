@@ -21,6 +21,13 @@ sigterm = true
 ; and ``coverage combine`` still finds all the fragments.
 data_file = reports/coverage/.coverage
 
+[report]
+; ``--cov-fail-under`` compares ``round(total, precision)``, and coverage's
+; default precision is 0 — so a nominal floor of 96 accepted 95.50, half a
+; point (~120 statements here) of slack the Makefile's COVERAGE_THRESHOLD
+; comment never mentioned. Two decimals make the floor mean its number.
+precision = 2
+
 [html]
 directory = reports/coverage/html
 

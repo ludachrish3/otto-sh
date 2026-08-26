@@ -28,7 +28,7 @@ on that side.
 | Scoped pattern rules | `ast-grep` against `.ast-grep/rules/` — sixteen Python rules | `ast-grep` — four rules (`no-plan-coordinates-ts`/`-tsx` over `web/src/**`, `no-bare-digit-textcontent-ts`/`-tsx` over web test files) |
 | Import cost | `scripts/import_budget.py` — module-count caps, snapshots, denylist | — (knip covers dependencies only) |
 | Tests | `pytest` (+ `xdist`, `repeat`, `hypothesis`) | `vitest` |
-| Coverage floor | `coverage.py` / `pytest-cov` — 95 for the full local run, 90 for the hostless CI slice | `@vitest/coverage-v8` for the unit floor; the browser leg is folded in by `monocart-coverage-reports` and the merged report gated by `nyc` |
+| Coverage floor | `coverage.py` / `pytest-cov` — 96 for the full local run, 95 for the hostless CI slice (both pinned as codified minimums by `tests/unit/test_coverage_floors.py`) | `@vitest/coverage-v8` for the unit floor; the browser leg is folded in by `monocart-coverage-reports` and the merged report gated by `nyc` |
 | Browser e2e | `pytest-playwright` — two suites (monitor dashboard, coverage report), three engines each (Chromium, Firefox, WebKit) | (same lane — `OTTO_TS_COVERAGE=1` arms CDP V8 collection under `make dashboard` only; the bundle-filter **drift guard** runs at configure time in every lane, armed or not — `tests/_fixtures/_ts_bundle_filter.py`) |
 | Cross-language contract | `tests/_fixtures/covapp_contract.json`, asserted from both sides; `types.gen.ts` **and** `export.gen.ts` codegen + `git diff --exit-code` | (same two mechanisms) |
 | Vendored source | — (nothing vendored) | `scripts/check_untitledui_hash.sh` — did *we* edit it; `scripts/check_untitledui_drift.sh` — did *upstream* |
@@ -189,26 +189,26 @@ job that enforces it on push.
 | browser e2e | `dashboard` (Chromium; `dashboard-all` for all three) | `dashboard` (all three, serially) | `dashboard` (one parallel job per engine) |
 | docs | `docs` | `docs` | `docs` |
 | vendored-UI upstream drift | — | — | `untitledui-drift.yml` (its own workflow) |
-| Python coverage floor (95) | `coverage`, `validate`, `all` | — | **not in CI** — local only; `release` runs a lower 92 floor via `nox -s tests_all` |
+| Python coverage floor (96) | `coverage`, `validate`, `all` | — | **not in CI** — local only; `release` runs a lower 92 floor via `nox -s tests_all` |
 | chaos / stability lanes | `chaos`, `chaos-embedded`, `stability*` | `chaos`, `chaos_embedded` | **not in `ci.yml`** — nightly runs the no-VM legs only |
 
 ### The last two rows are the point
 
 **`make coverage` is not in CI.** It is the per-task gate — the full pytest
-run at the 95 floor, plus the merged TypeScript floor — and no workflow runs
-it. CI gates the *hostless* slice at 90 (`coverage-hostless` / the `tests`
+run at the 96 floor, plus the merged TypeScript floor — and no workflow runs
+it. CI gates the *hostless* slice at 95 (`coverage-hostless` / the `tests`
 job), because the full run needs lab VMs. A contributor reading only
-`.github/workflows/ci.yml` would conclude the 95 floor is enforced on push.
+`.github/workflows/ci.yml` would conclude the 96 floor is enforced on push.
 
 `make release` does not reach it either — and the near miss is worth being
 precise about. Release runs `make nox`, whose `tests_all` session carries its
 own `--cov-fail-under=92`: a real coverage gate, but a lower one, because
 that session excludes the `browser` marker and so omits the dashboard
 `--cov-append` fold-in that `coverage-python` gets from its `dashboard`
-prerequisite. The 95 floor is reached only through `make coverage`, and
+prerequisite. The 96 floor is reached only through `make coverage`, and
 through `make validate` / `make all`, which invoke it via `COVERAGE_TARGET`
 (default `coverage-python`; `make ci` overrides it to `coverage-hostless`).
-So in practice the 95 floor is enforced by you, before you hand the work
+So in practice the 96 floor is enforced by you, before you hand the work
 over.
 
 **The chaos and stability lanes are not in CI either.** They are bed-hostile

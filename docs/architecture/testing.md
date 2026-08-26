@@ -672,10 +672,10 @@ and lab growth.
 
 ## Coverage: a floor, not a scorecard
 
-`make coverage` enforces `--cov-fail-under=95` over the whole default run
+`make coverage` enforces `--cov-fail-under=96` over the whole default run
 (the `dashboard` browser lane's Python-side coverage folds in via
 `--cov-append` first); the hostless CI gate (`make coverage-hostless`,
-`nox -s tests_hostless`) enforces a lower 90, because it deliberately
+`nox -s tests_hostless`) enforces a lower 95, because it deliberately
 exercises only the slice of otto that needs no VM at all and can't reach
 the full-run number. `nox -s tests_all`'s browser-excluded matrix sits at 92
 for the same reason — it never folds in the dashboard lane's coverage. The

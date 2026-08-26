@@ -234,7 +234,7 @@ bare umbrella that runs both:
 The umbrella targets `make validate`, `lint`, `format`, `typecheck`, and
 `check` each run **both** languages via their `-python` / `-ts` sub-targets
 (so `make validate` == `make validate-python` + `make validate-ts`). Bare
-`make coverage` is the same shape: `coverage-python` (full pytest, 95 floor)
+`make coverage` is the same shape: `coverage-python` (full pytest, 96 floor)
 + `coverage-ts` (merged vitest+e2e, its own floor). CI's browserless
 `check-ts` job runs the reduced slice `check-ts coverage-ts-unit` — the
 vitest-only floor, since it has no browsers to run the merged e2e leg.
