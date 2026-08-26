@@ -256,11 +256,19 @@ async def test_localhost_shutdown_raises():
 
 @pytest.mark.asyncio
 async def test_unix_shutdown_issues_shutdown_sudo():
+    """A GNU host gets `shutdown -h now` under sudo.
+
+    The host is built in its RESOLVED shape (`_busybox_host` +
+    `_userland_declaring`, below) because `shutdown()` resolves the userland
+    before the mocked `run`: built bare, the resolution dialed 10.0.0.1 for
+    real — three probes, each hanging to otto's own 10 s per-probe grant
+    inside `Userland`'s 30 s resolve budget, a unit test measuring the
+    network — and the root conftest's off-loopback guard now fails any test
+    that does.
+    """
     from otto.host.unix_host import UnixHost
 
-    host = UnixHost(
-        ip="10.0.0.1", element="box", creds=[Cred(login="u", password="p")], log=LogMode.QUIET
-    )
+    host = _busybox_host(await _userland_declaring(shutdown=APPLET_PRESENT))
     with patch.object(UnixHost, "run", new_callable=AsyncMock) as mock_run:
         mock_run.return_value = Results.collect([])
         result = await host.shutdown()

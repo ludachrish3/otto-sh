@@ -142,7 +142,9 @@ import asyncio
 import atexit
 import contextlib
 import dataclasses
+import errno
 import gc
+import ipaddress
 import logging
 import logging.handlers
 import sys
@@ -1506,6 +1508,93 @@ def neutralized_webassets(tmp_path: Path) -> Iterator[Path]:
         mp.setattr(module, attr, void / module_name.rpartition(".")[2])
     yield void
     mp.undo()
+
+
+_LOOPBACK_NAMES = frozenset({"localhost", "localhost.localdomain"})
+
+
+def _is_loopback_dial(host: object) -> bool:
+    """True for the targets a hostless test may dial: loopback, or no host at all.
+
+    ``host=None`` is the pre-connected ``sock=`` form (the caller already
+    owns a socket; nothing is dialed here). Literals are judged by
+    :mod:`ipaddress` — ``127.0.0.0/8``, ``::1``, ``::ffff:127.0.0.1``, and
+    the unspecified addresses (``0.0.0.0`` / ``::``, which Linux routes to
+    localhost on connect) — so ``127.0.0.1.evil.example`` is a name, not a
+    prefix match. Names: only the two spellings of localhost, case-folded.
+    asyncssh hands over the RAW host, so an /etc/hosts alias for loopback is
+    refused; a hostless test should say ``127.0.0.1``.
+    """
+    if host is None:
+        return True
+    text = (host.decode() if isinstance(host, bytes) else str(host)).strip("[]")
+    try:
+        address = ipaddress.ip_address(text)
+    except ValueError:
+        return text.lower() in _LOOPBACK_NAMES
+    return address.is_loopback or address.is_unspecified
+
+
+@pytest.fixture
+def refuse_off_loopback_dials() -> Iterator[list[str]]:
+    """An in-process asyncio dial off loopback fails at once, and its test fails at teardown.
+
+    Every asyncio client otto uses — asyncssh, telnetlib3, aioftp, httpx —
+    reaches the network through ``loop.create_connection`` (asyncssh's own
+    direct path is that call with ``host, port``; its ``sock=`` form only
+    wraps a socket the caller already connected), so this one seam covers
+    them all without importing any of them: they are runtime dependencies
+    loaded at connect time, and a conftest-level import would defeat that
+    laziness for every test process. The refusal is
+    ``OSError(errno.ECONNREFUSED, ...)``, which Python promotes to
+    ``ConnectionRefusedError``, so code under test takes exactly the branch
+    it takes against a dead host instead of waiting out a connect timeout.
+
+    SCOPE: in-process asyncio dials. A blocking ``urllib`` fetch, or a child
+    process (``test_support_matrix.py``'s inner conformance run, which does
+    fetch the BusyBox artifacts on a cold cache), is out of this seam's
+    reach — those are the artifact tier's concern, not this fixture's.
+
+    The refusal alone is NOT the guard, and the reason is the defect that
+    motivated it: ``test_power.py::test_unix_shutdown_issues_shutdown_sudo``
+    spent 30 s on three real SSH dials to 10.0.0.1 because ``shutdown()``
+    resolves its userland before the mocked ``run`` and ``Userland._send``
+    swallows the connect error and probes again. Under a bare refusal that
+    test passes, faster, with the defect intact. So every off-loopback dial
+    is recorded and the test fails at teardown by name: a hostless test that
+    reaches for a routable address is a red run, not a slow one.
+
+    Lives in the ROOT conftest per the #132 process-global-state rule (the
+    patched attribute is a class attribute of every event loop in the
+    process); ``tests/unit/conftest.py`` activates it for that tree only.
+    Uses a PRIVATE ``pytest.MonkeyPatch`` for the reason
+    ``neutralized_webassets`` spells out above.
+    """
+    dialed: list[str] = []
+    original = asyncio.BaseEventLoop.create_connection
+
+    async def guarded(self, protocol_factory, host=None, port=None, *args, **kwargs):  # type: ignore[no-untyped-def]
+        if not _is_loopback_dial(host):
+            dialed.append(f"{host}:{port}")
+            raise OSError(
+                errno.ECONNREFUSED,
+                f"hostless lane: refusing to dial {host}:{port} — a test that declares no "
+                f"host may reach loopback only (tests/conftest.py refuse_off_loopback_dials)",
+            )
+        return await original(self, protocol_factory, host, port, *args, **kwargs)
+
+    mp = pytest.MonkeyPatch()
+    mp.setattr(asyncio.BaseEventLoop, "create_connection", guarded)
+    try:
+        yield dialed
+    finally:
+        mp.undo()
+    assert not dialed, (
+        f"this hostless test dialed off loopback: {sorted(set(dialed))} "
+        f"({len(dialed)} attempt(s)). Mock the seam the code reaches the network "
+        f"through, or build the object in its resolved shape — a unit test that "
+        f"opens a socket to a routable address is measuring the network, not the code"
+    )
 
 
 @pytest.fixture

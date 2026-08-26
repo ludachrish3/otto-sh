@@ -68,6 +68,24 @@ def _no_ambient_webassets(neutralized_webassets: object) -> None:
     """
 
 
+@pytest.fixture(autouse=True)
+def _no_off_loopback_dials(refuse_off_loopback_dials: list[str]) -> None:
+    """Every tests/unit test refuses in-process asyncio dials off loopback (root fixture).
+
+    A hostless test that opens a socket to a routable address is measuring
+    the network, not the code:
+    ``test_power.py::test_unix_shutdown_issues_shutdown_sudo`` spent 30 s on
+    three real SSH dials to 10.0.0.1 because the code under test resolved
+    its userland before the mocked ``run`` — a fixed 30 s on every run, x2 in
+    unit-repeat, x5 per Python in nightly's unit-matrix, and (by inference
+    from a fixed cost, not measured) a tail that lands on whichever xdist
+    worker drew it. Activation is tree-local for the same reason
+    ``_no_ambient_webassets``'s is: ``tests/integration`` dials the lab by
+    design, and ``tests/e2e`` holds subprocess tests this in-process patch
+    cannot reach anyway. See the root fixture for the mechanism and scope.
+    """
+
+
 @pytest.fixture
 def purge_tmp_imports(tmp_path_factory):
     """Drop modules a test imported from its tmp dir, so they don't leak onward.
