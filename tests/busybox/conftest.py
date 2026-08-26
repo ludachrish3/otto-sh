@@ -59,7 +59,7 @@ from pathlib import Path
 
 import pytest
 
-from tests._fixtures.busybox import preflight, require_interpreter
+from tests._fixtures.busybox import require_interpreter
 
 _BUSYBOX_ROOT = Path(__file__).parent
 
@@ -116,17 +116,10 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker("busybox")
 
 
-def pytest_collection_finish(session):
-    """Prove the source is reachable ONCE, before the tier's first fetch.
-
-    Without this the tier pays the full per-artifact retry budget for EVERY
-    entry it is missing -- five sequential 60s stalls against a dead mirror,
-    each reported as its own failure, when one probe answers for all five. The
-    condition is a property of the SOURCE, not of any one artifact.
-
-    Guarded on ``session.items`` so a fully-deselected run (``-k`` that matches
-    nothing, ``--collect-only`` on a sibling tree) reaches no network, and
-    placed after collection for the same reason the conformance tree's copy is.
-    """
-    if session.items:
-        preflight()
+# No source-reachability hook here, on purpose. One lived at
+# ``pytest_collection_finish`` guarded on ``session.items`` — which is the whole
+# session's list, so a run with every busybox test deselected and 7,000 unit
+# tests remaining still probed the network, and ``--collect-only`` (which
+# collects items and executes none) fired it too (issue #264). The one-probe
+# bound now lives in ``tests._fixtures.busybox.busybox_binary``, the consumer,
+# where it fires exactly when an artifact is about to be fetched.

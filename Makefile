@@ -766,10 +766,12 @@ busybox: busybox-preflight ## Run the BusyBox artifact tier (`busybox`-marked; e
 # also puts the failure BEFORE pytest starts, so the reader gets the priming
 # instructions instead of them arriving under a collection banner.
 #
-# A prerequisite of `busybox` and of NOTHING ELSE. The pytest-side probe in
-# tests/conformance/conftest.py covers the hermetic conformance cells from
-# inside the run; wiring this target into a default lane would put a public
-# mirror on the gate's critical path, which is issue #261.
+# A prerequisite of `busybox` and of NOTHING ELSE. Inside a pytest run the
+# same probe fires from `busybox_binary` itself, at the first fetch a test
+# actually makes (tests/_fixtures/busybox.py), so the hermetic conformance
+# cells are covered from inside the run and a run that fetches nothing reaches
+# nothing (issue #264); wiring this target into a default lane would put a
+# public mirror on the gate's critical path, which is issue #261.
 busybox-preflight: ## Prove the BusyBox artifact source is reachable, or that the cache is already warm, before a lane commits to it. No-op (and no network) on a warm cache.
 	@uv run python -c "from tests._fixtures.busybox import preflight; preflight()"
 

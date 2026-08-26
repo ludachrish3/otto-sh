@@ -20,6 +20,7 @@ import os
 import re
 import stat
 import subprocess
+import sys
 import urllib.error
 from collections.abc import Iterator
 from pathlib import Path
@@ -31,7 +32,6 @@ try:
     import tomllib  # Python 3.11+
 except ModuleNotFoundError:  # pragma: no cover - 3.10 only, otto's floor
     import tomli as tomllib
-from types import SimpleNamespace
 
 from typing_extensions import Self  # `typing.Self` is 3.11+; otto's floor is 3.10
 
@@ -48,12 +48,6 @@ from tests._fixtures.busybox import (
     require_interpreter,
 )
 from tests._fixtures.paths import PROJECT_ROOT
-from tests._fixtures.profiles import Cell
-from tests.busybox import conftest as busybox_conftest
-from tests.conformance import conftest as conformance_conftest
-from tests.conformance._cells import BUSYBOX_ARTIFACT
-from tests.conformance._resolved import ResolvedCell
-from tests.conformance._vocabulary import POSIX
 
 # The repo root. Sourced from tests/_fixtures/paths.py rather than derived
 # with Path(__file__).parents[N] here, so a move of this file cannot
@@ -1129,7 +1123,8 @@ def _fresh_preflight(monkeypatch):
 def test_preflight_on_a_warm_cache_opens_no_socket(tmp_path, monkeypatch):
     """The precondition must be free when there is nothing to fetch.
 
-    This is what makes it safe to hang off a lane's collection at all. The
+    This is what makes it safe to run from `busybox_binary` on every call and
+    from `make busybox-preflight` before every tier run. The
     transport is replaced with something that RAISES rather than merely
     counted: a probe that slipped through would fail here by name instead of
     quietly succeeding against a stub. Read together with the cold-cache guard
@@ -1240,82 +1235,166 @@ def test_a_hash_mismatch_does_not_poison_the_preflight_verdict(tmp_path, monkeyp
     )
 
 
-def _conformance_item(cell):
-    """A stand-in for a collected item parametrized over *cell*.
+# ─── the precondition lives at the consumer, so nothing fires when nothing runs ─
+#
+# Issue #264. `preflight()` used to be hung off `pytest_collection_finish` in
+# both artifact trees' conftests, keyed on items surviving collection. That
+# keying reasoned correctly about DESELECTION and not at all about
+# `--collect-only`, which collects items, executes none of them, and fires the
+# hook regardless — so every child pytest that shells out to enumerate the
+# suite inherited a busybox.net dependency on a cold cache, and a raise from a
+# collection hook is INTERNALERROR (exit 3), burying the one message the probe
+# exists to deliver. `session.items` being non-empty proves items were
+# COLLECTED, never that they will EXECUTE (issue #196's shape).
+#
+# The precondition now lives in `busybox_binary`, the consumer. It fires at the
+# moment an artifact is about to be fetched — inside a running test — so a dead
+# source is a test failure carrying the priming instructions, and a run that
+# fetches nothing reaches nothing, by construction rather than by guard.
 
-    Shaped to what `_cell_under_test` actually reads — the CALLSPEC, not the
-    fixture — so this fake exercises the real predicate rather than a
-    paraphrase of it.
+_COLLECT_ONLY_ARGS = ("--collect-only", "-q", "--no-cov", "-p", "no:cacheprovider", "-n0")
+# Runaway guard, not a measurement: collecting the two trees is ~1s. Kept
+# UNDER pyproject's 180s per-test SIGALRM on purpose — a subprocess timeout
+# above that ceiling can never fire, and a wedged child would then surface as
+# a bare `Timeout >180.0s` instead of this call's own diagnosis.
+_COLLECT_ONLY_TIMEOUT_S = 120
+
+
+def test_a_collect_only_run_of_the_artifact_trees_fetches_no_artifact(tmp_path):
+    """Issue #264's reproducer as a guard: collect both trees, execute nothing, fetch nothing.
+
+    A REAL child pytest rather than a hook called with a fake session. The
+    defect was in what pytest does with a hook, and an in-process call could
+    only ever assert what the hook did with the session it was handed — which
+    is the reasoning that was already right. The cache is empty so any fetch
+    that lands is visible, and every proxy variable points at a closed local
+    port so a fetch that is attempted is refused in milliseconds instead of
+    reaching a public mirror (`_is_transient` still retries a refusal, so a
+    regression costs the 15s backoff, never a hang).
+
+    Be exact about which assertion carries the claim. Under a refused proxy no
+    bytes can arrive, and `_fetch` unlinks its `.part` in a `finally`, so a
+    restored collection hook leaves the cache EMPTY and dies as INTERNALERROR:
+    the exit code is the trace that moves (verified by restoring the hook —
+    exit 3, cache empty). The cache assertion is a backstop for a future fetch
+    path that reaches somewhere the proxy does not block, not a second
+    independent witness.
     """
-    return SimpleNamespace(callspec=SimpleNamespace(params={"resolved_cell": cell}))
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    # PYTEST_* dropped so the child is not steered by the parent's own run,
+    # the same recipe as `tests/unit/test_lane_invariants.py`'s collect children.
+    env = {key: value for key, value in os.environ.items() if not key.startswith("PYTEST_")}
+    env["OTTO_BUSYBOX_CACHE"] = str(cache)
+    # Declared opt-ins survive the ambient strip and would reach the child:
+    # a hand-exported OTTO_CONFORMANCE_BED would make it resolve the 49-cell
+    # bed space (lab-config dependent) instead of the hermetic one.
+    for name in ("OTTO_CONFORMANCE_BED", "OTTO_CONFORMANCE_CELLS", "no_proxy", "NO_PROXY"):
+        env.pop(name, None)
+    for name in ("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY"):
+        env[name] = "http://127.0.0.1:9"
 
+    completed = subprocess.run(
+        [sys.executable, "-m", "pytest", *_COLLECT_ONLY_ARGS, "tests/busybox", "tests/conformance"],
+        cwd=_REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=_COLLECT_ONLY_TIMEOUT_S,
+        check=False,
+    )
 
-def _busybox_resolved_cell(kind):
-    """A `ResolvedCell` of *kind*, built without asking what this machine can run.
-
-    `hermetic_space()` would be the natural source and is the wrong one here:
-    it filters on `can_run`, so on a host with no i686 handler the busybox
-    cells vanish and the guard below would pass vacuously — testing nothing on
-    exactly the machines where the arch story is interesting.
-    """
-    return ResolvedCell(
-        cell=Cell("busybox-1.16.1", "local", "local"),
-        kind=kind,
-        open_host=lambda: None,
-        remote_scratch=None,
-        vocabulary=POSIX,
+    assert completed.returncode == 0, (
+        f"a collect-only run over the artifact trees exited {completed.returncode}. A "
+        f"collection hook that reaches the network dies here as INTERNALERROR.\n"
+        f"stdout tail:\n{completed.stdout[-1500:]}\nstderr tail:\n{completed.stderr[-1500:]}"
+    )
+    # Premise before claim: an empty cache after a run that collected nothing
+    # would satisfy the assertion below without testing anything.
+    assert re.search(r"\b[1-9]\d* tests? collected\b", completed.stdout), (
+        f"the child collected nothing, so the empty cache proves nothing:\n"
+        f"{completed.stdout[-800:]}"
+    )
+    leftovers = sorted(p.name for p in cache.iterdir())
+    assert leftovers == [], (
+        f"a run that executed no test fetched {leftovers} — the artifact source is "
+        f"back on the critical path of every collect-only child (issue #264)"
     )
 
 
-def test_the_conformance_lane_probes_only_when_a_busybox_cell_survived_collection(monkeypatch):
-    """Issue #261's regression guard: the DEFAULT gate must reach no mirror.
+@pytest.mark.usefixtures("_fresh_preflight")
+def test_the_first_consumer_proves_the_source_and_later_ones_remember(tmp_path, monkeypatch):
+    """`busybox_binary` is where the one-probe bound lives now, and it must be ONE.
 
-    `tests/conformance/` is in `testpaths`, so `make coverage`'s two path-less
-    legs collect this tree and then deselect every item in it. A probe keyed on
-    the tree — or hung off `pytest_sessionstart` next door — would fire in both
-    of those legs and put busybox.net on the critical path of a lane that runs
-    no conformance test at all.
-
-    All three rows are asserted from ONE stubbed `preflight`, because the
-    claim is a discrimination and not a property: an empty selection and a
-    non-BusyBox cell must both leave the counter at zero while a BusyBox cell
-    moves it. A guard that only asserted the last row would pass against a
-    hook that probed unconditionally.
+    Five artifacts, each paying a full retry budget against a dead source, is
+    the arithmetic `preflight` exists to collapse (300s inside one test's 180s
+    SIGALRM — `_run_conformance` builds the whole hermetic space in one
+    subprocess). With the collection hooks gone, the consumer is the only
+    place left to pay it, so the claim is asserted there: the first consumer
+    spends the budget and raises the priming instructions; the second, asking
+    for a DIFFERENT artifact, re-raises that same verdict without a single
+    further attempt. The attempt log is checked before and after, which is
+    what tells "remembered" apart from "measured again and agreed".
     """
-    calls: "list[int]" = []
-    monkeypatch.setattr(conformance_conftest, "preflight", lambda *_a, **_kw: calls.append(1))
+    monkeypatch.setenv("OTTO_BUSYBOX_CACHE", str(tmp_path))
+    _record_sleeps(monkeypatch)
 
-    conformance_conftest.pytest_collection_finish(SimpleNamespace(items=[]))
-    assert calls == [], "a fully-deselected tree must not reach the network"
+    with _closing_http_errors(503, 503, 503) as errors:
+        attempts = _stub_attempts(monkeypatch, errors)
 
-    local_cell = _busybox_resolved_cell(kind="local")
-    conformance_conftest.pytest_collection_finish(
-        SimpleNamespace(items=[_conformance_item(local_cell)])
-    )
-    assert calls == [], "a venue that resolved no BusyBox cell must not wait on a mirror"
+        with pytest.raises(BusyBoxUnavailableError, match="make busybox-cache") as first:
+            busybox_binary(BUSYBOX_MATRIX[0])
+        assert attempts == [1, 2, 3], f"the first consumer spends the retry budget, saw {attempts}"
 
-    artifact_cell = _busybox_resolved_cell(kind=BUSYBOX_ARTIFACT)
-    conformance_conftest.pytest_collection_finish(
-        SimpleNamespace(items=[_conformance_item(local_cell), _conformance_item(artifact_cell)])
-    )
-    assert calls == [1], "but one surviving BusyBox cell must be preceded by the probe"
+        with pytest.raises(BusyBoxUnavailableError) as second:
+            busybox_binary(BUSYBOX_MATRIX[1])
+
+        assert attempts == [1, 2, 3], (
+            f"the verdict must be REMEMBERED by the next consumer, not re-measured; the "
+            f"attempt log grew to {attempts}"
+        )
+        assert second.value is first.value, "and it must re-raise the verdict it recorded"
 
 
-def test_the_busybox_lane_probes_only_when_something_survived_collection(monkeypatch):
-    """The tier's own half of the same rule, with the same discrimination.
+@pytest.mark.usefixtures("_fresh_preflight")
+def test_the_consumer_bound_holds_where_the_artifact_cannot_run(tmp_path, monkeypatch):
+    """A host that cannot EXECUTE an artifact can still FETCH it, and must still be bounded.
 
-    The empty row is not hypothetical: `--collect-only`, or a `-k` that matches
-    nothing, reaches this hook with an empty item list, and issue #196 is the
-    precedent for a run precondition firing when nothing runs.
+    `preflight()`'s matrix form filters on `can_run`, because the tier only
+    fetches what it will run. The consumer form must not: `make busybox-cache`
+    ("no interpreter needed, so it works on any arch") and
+    `scripts/build_busybox_guest_images.py` fetch every entry on a machine
+    that may run none of them. With the filter applied there, the probe list
+    is empty, the memo is marked done by a NO-OP, and every consumer in the
+    process — including ones asking for an arch the host can run — pays its
+    own full retry budget against a dead source: five budgets where one was
+    promised. Measured before the fix as 15 attempts across the matrix on an
+    aarch64 host with no i686 handler.
+
+    Two rows: the Makefile form asked first, which must neither probe nor
+    record anything it did not prove; then two consumers, of which only the
+    first may spend a budget.
     """
-    calls: "list[int]" = []
-    monkeypatch.setattr(busybox_conftest, "preflight", lambda *_a, **_kw: calls.append(1))
+    monkeypatch.setenv("OTTO_BUSYBOX_CACHE", str(tmp_path))
+    monkeypatch.setattr(busybox, "can_run", lambda *_a, **_kw: False)
+    _record_sleeps(monkeypatch)
 
-    busybox_conftest.pytest_collection_finish(SimpleNamespace(items=[]))
-    assert calls == [], "a run that selected nothing must not reach the network"
+    with _closing_http_errors(503, 503, 503) as errors:
+        attempts = _stub_attempts(monkeypatch, errors)
 
-    busybox_conftest.pytest_collection_finish(SimpleNamespace(items=[object()]))
-    assert calls == [1], "a run with work to do must prove the source answers first"
+        busybox.preflight()  # nothing runnable is missing: no probe, no verdict
+        assert attempts == [], f"the tier's form must not fetch what it cannot run, saw {attempts}"
+
+        with pytest.raises(BusyBoxUnavailableError) as first:
+            busybox_binary(BUSYBOX_MATRIX[0])
+        assert attempts == [1, 2, 3], f"the first consumer spends one budget, saw {attempts}"
+
+        with pytest.raises(BusyBoxUnavailableError) as second:
+            busybox_binary(BUSYBOX_MATRIX[1])
+        assert attempts == [1, 2, 3], (
+            f"a vacuous `done` let the second consumer re-measure: attempts {attempts}"
+        )
+        assert second.value is first.value
 
 
 def test_the_whole_matrix_in_one_test_is_why_the_precondition_exists():
@@ -1378,8 +1457,8 @@ def test_only_the_busybox_tier_depends_on_the_preflight_target():
     later is reported by name instead of slipping past an `in`.
 
     The conformance tree's own need is met from INSIDE the run, by
-    `pytest_collection_finish` in tests/conformance/conftest.py, which fires
-    only when a BusyBox cell actually survived collection.
+    `busybox_binary` itself, which probes at the first fetch a test actually
+    makes — so a run that fetches nothing reaches nothing (issue #264).
     """
     makefile = (_REPO_ROOT / "Makefile").read_text()
     dependents = sorted(

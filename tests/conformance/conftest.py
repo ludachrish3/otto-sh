@@ -48,8 +48,7 @@ from pathlib import Path
 
 import pytest
 
-from tests._fixtures.busybox import preflight
-from tests.conformance._cells import BUSYBOX_ARTIFACT, resolve_space
+from tests.conformance._cells import resolve_space
 from tests.conformance._console_safety import (
     console_lock_dir,
     opens_a_single_client_console,
@@ -323,30 +322,15 @@ def _cell_under_test(node) -> "ResolvedCell | None":
     return resolved if isinstance(resolved, ResolvedCell) else None
 
 
-def pytest_collection_finish(session):
-    """Prove busybox.net is reachable BEFORE the first drawn cell opens a host.
-
-    Here rather than in ``pytest_sessionstart`` next door, and the difference
-    is not stylistic. This tree is in ``testpaths``, so every path-less run in
-    the repo COLLECTS it -- and ``make coverage``'s two legs then deselect all
-    of it. A probe at session start would therefore run in lanes that go on to
-    execute no conformance item at all, putting busybox.net on the default
-    gate's critical path: the exact structural dependency issue #261 was filed
-    for. ``pytest_collection_finish`` runs after every
-    ``pytest_collection_modifyitems``, so ``session.items`` here is what will
-    actually RUN, and a fully-deselected tree probes nothing.
-
-    Conditioned on the CELL KIND rather than on this tree's path, because the
-    bed venue resolves no BusyBox cell and must not be made to wait on a
-    public mirror to run against the lab. :func:`preflight` is a no-op on a
-    warm cache, so the cost of being wrong in the permissive direction is five
-    ``stat`` calls.
-    """
-    if any(
-        (cell := _cell_under_test(item)) is not None and cell.kind == BUSYBOX_ARTIFACT
-        for item in session.items
-    ):
-        preflight()
+# No source-reachability hook here, on purpose. One lived at
+# ``pytest_collection_finish``, keyed on a BusyBox cell surviving collection —
+# reasoning that was right about deselection (``make coverage`` collects this
+# tree and deselects all of it) and silent about ``--collect-only``, which
+# collects the cells, executes none of them, and fires the hook regardless
+# (issue #264). ``session.items`` being non-empty proves items were COLLECTED,
+# never that they will EXECUTE. The one-probe bound now lives in
+# ``tests._fixtures.busybox.busybox_binary``, the consumer, which every
+# BusyBox cell's ``open_host`` reaches at the moment it needs the artifact.
 
 
 @pytest.fixture(autouse=True)

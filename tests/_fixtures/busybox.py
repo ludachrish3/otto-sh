@@ -114,8 +114,12 @@ _PINS = Path(__file__).with_name("busybox_pins.json")
 # session one against a LANE's, and a caller that needs the whole matrix
 # INSIDE ONE TEST falls between them at 300s vs 180s — which is what
 # `_run_conformance` does, and what CI run 32888520702 died of. `preflight`
-# closes that gap by making the source's reachability a lane precondition
-# proven ONCE, so no caller ever pays this budget more than a single time.
+# closes that gap for a source that is DEAD FROM THE START: the first consumer
+# in a process proves reachability once and every later one reuses the
+# verdict, so that case costs one budget, not one per artifact. A source that
+# dies MID-RUN, after an artifact has already landed, is not memoized and
+# costs each later consumer its own budget — the same exposure as before the
+# consumer-side probe existed, and one the per-test SIGALRM still bounds.
 _FETCH_TIMEOUT_S = 15
 # Long enough for an emulated start-up on a loaded VM, short enough that a
 # wedged binary fails the run instead of hanging it. Not a discriminator: no
@@ -355,8 +359,19 @@ class _PreflightVerdict:
 _PREFLIGHT = _PreflightVerdict()
 
 
-def preflight(releases: "list[BusyBoxRelease] | None" = None) -> None:
+def preflight(
+    releases: "list[BusyBoxRelease] | None" = None, *, runnable_only: bool = True
+) -> None:
     """Prove ONCE that this process can obtain the artifacts it is missing.
+
+    *runnable_only* (the default, and the tier's form) considers only entries
+    this host can execute, because the tier fetches nothing it will not run.
+    A consumer that fetches for its own reasons passes ``False``. What the
+    filter must never do is RECORD a verdict it did not measure: when it
+    empties the probe list, nothing was proven and ``done`` stays unset, or
+    the next consumer of a runnable arch would skip the probe on the strength
+    of a no-op — measured as five retry budgets across the matrix on an
+    aarch64 host with no i686 handler, where one was promised.
 
     A precondition, not a timeout. `_fetch` already passes `_FETCH_TIMEOUT_S`
     to `urlopen`, and the arithmetic above bounds ONE artifact at 60s against
@@ -383,13 +398,17 @@ def preflight(releases: "list[BusyBoxRelease] | None" = None) -> None:
     is what keeps this safe to call from a lane that may well have everything
     it needs already.
 
-    Call it AFTER COLLECTION, never at session start. `tests/conformance/` is
-    in `testpaths`, so every path-less run in the repo collects that tree and
-    `make coverage`'s two legs then deselect all of it; a session-start probe
-    would put busybox.net in the default gate's critical path, which is the
-    structural dependency issue #261 was filed for. The lane conftests call
-    this from `pytest_collection_finish`, where the deselect has already
-    happened.
+    Called from :func:`busybox_binary`, the consumer, at the moment an
+    artifact is about to be fetched — and from `make busybox-preflight`, the
+    tier's Makefile prerequisite. NEVER from a collection hook and never at
+    session start. `tests/conformance/` is in `testpaths`, so every path-less
+    run collects that tree and `make coverage`'s legs then deselect all of it
+    (issue #261 was a session-start probe in that lane); and `--collect-only`
+    collects everything and executes nothing, yet still fires
+    `pytest_collection_finish` (issue #264 was a probe hung off that hook).
+    Both placements put busybox.net on the critical path of a run that
+    fetches nothing. Firing at the fetch is what makes "nothing runs, nothing
+    is reached" true by construction.
 
     `_verify` is deliberately OUTSIDE the memo: a hash mismatch says the pin
     is stale, not that the source is unreachable, and poisoning the session
@@ -400,9 +419,15 @@ def preflight(releases: "list[BusyBoxRelease] | None" = None) -> None:
     if _PREFLIGHT.done:
         return
     matrix = BUSYBOX_MATRIX if releases is None else releases
-    missing = [r for r in matrix if can_run(r.arch) and not (cache_dir() / r.filename).exists()]
-    if not missing:
+    absent = [r for r in matrix if not (cache_dir() / r.filename).exists()]
+    if not absent:
+        # A warm cache is a measured fact about this process: it needs nothing.
         _PREFLIGHT.done = True
+        return
+    missing = [r for r in absent if can_run(r.arch)] if runnable_only else absent
+    if not missing:
+        # Emptied by the FILTER, not by the cache: nothing was proven, so
+        # nothing is recorded.
         return
     probe = missing[0]
     target = cache_dir() / probe.filename
@@ -416,8 +441,31 @@ def preflight(releases: "list[BusyBoxRelease] | None" = None) -> None:
 
 
 def busybox_binary(release: BusyBoxRelease) -> Path:
-    """Return a verified, executable artifact for *release*, fetching if needed."""
+    """Return a verified, executable artifact for *release*, fetching if needed.
+
+    The source precondition lives HERE, at the consumer, and nowhere earlier
+    (issue #264). It used to hang off ``pytest_collection_finish`` in the
+    artifact trees' conftests, keyed on items surviving collection — and
+    ``--collect-only`` collects items, executes none of them, and fires that
+    hook regardless, so every child pytest that enumerated the suite fetched
+    from busybox.net on a cold cache and died as INTERNALERROR when it could
+    not. Placed at the fetch, the probe fires exactly when an artifact is
+    about to be needed, inside a running test: a dead source is a test
+    failure carrying the priming instructions, and a run that fetches nothing
+    reaches nothing — by construction, not by a guard on the session.
+
+    :func:`preflight` is asked about THIS release, so on a live source the
+    probe IS the fetch (no artifact is downloaded on another's behalf), and on
+    a source that is dead from the start every later consumer in the process
+    re-raises the recorded verdict without spending a second retry budget.
+    ``runnable_only=False`` because a consumer has already decided what it
+    wants: `make busybox-cache` and the guest-image builder fetch every entry
+    on machines that may execute none of them, and filtering here would leave
+    those fetches unbounded (see :func:`preflight`).
+    """
     target = cache_dir() / release.filename
+    if not target.exists():
+        preflight([release], runnable_only=False)
     if not target.exists():
         _fetch(release, target)
     _verify(release, target)
