@@ -56,7 +56,35 @@ Prior reviews this continues: `todo/churn-and-design-review-2026-08-03.md`
 
 ## 1. Flakiness
 
-### 1.1 MUST FIX — the BusyBox network dependency in the default gate
+### 1.1 ✅ FIXED — the BusyBox network dependency in the default gate
+
+Fixed on the busybox-gate-fixes branch, all four defects plus the hosting
+decision (Chris chose option A, the GitHub release `ci-assets-busybox-1`):
+
+- **g1** — a fetch asks the release mirror first and busybox.net behind it
+  (`_SOURCE_ORDERS` in `tests/_fixtures/busybox.py`; one host per attempt on
+  the existing 3-attempt budget; a host that refused is never re-asked; every
+  fetch still verified against the pin whichever host answered). The cache
+  therefore seeds from the runner's own host, and busybox.net alone being
+  down reds nothing by default. The `busybox` CI job alone forces
+  `OTTO_BUSYBOX_SOURCE=upstream`, because it exists to notice upstream
+  rebuilding an artifact in place; pinned in both directions.
+- **g2** — the cache step is on `unit-repeat` and nightly's `unit-matrix`;
+  `test_busybox_artifacts.py` derives the consuming lanes from each job's
+  `run:` text against the allowlist, so a new lane that runs the unit tree
+  without the cache step is a failure, not a repeat of this.
+- **g3** — `preflight()` fires from `busybox_binary`, the consumer, at the
+  fetch (issue #264); `--collect-only` and a run that fetches nothing reach
+  nothing, by construction.
+- **g4** — both collection hooks are gone; the comment left in
+  `tests/busybox/conftest.py` says why.
+
+Also landed beside it: the unit lane refuses in-process asyncio dials off
+loopback (the 30 s `test_power` dial was most of the coverage leg's tail),
+the session cap is a stated runaway guard at 900 s with the CI job limits
+pinned above it, and every serial lane leg carries its parallel twin's
+`not busybox and not conformance`. The original analysis follows for the
+record.
 
 `tests/_fixtures/busybox.py:462` is the **only external-network call in the
 entire test tree** *(sweep, verified by grep: every other socket under
@@ -155,7 +183,7 @@ directions in the default lane. The 2026-08-16 ledger is deleted (complete).
 
 | item | status | user-visible | severity |
 | --- | --- | --- | --- |
-| dashboard SSE `chart_map` eviction | **OPEN** | yes | MEDIUM |
+| dashboard SSE `chart_map` eviction | ✅ FIXED — lapse + resync (§1.2) | — | — |
 | `SshHopTransport` forward-cache race (`close()` without a lock) | FIXED `edda27af` (generation counter) | — | low |
 | nc per-connection channel budget | FIXED `d33b3daf`; 4 of 5 residuals open by design | non-default sshd only | low-med |
 | `monitor_db_count10_flakes.md` | init race FIXED `15299154`; the two `--count=10` flakes OPEN (test-only) | no | low |
@@ -163,7 +191,7 @@ directions in the default lane. The 2026-08-16 ledger is deleted (complete).
 | `flaky-run-timeout-donation-2026-08-08.md` | FIXED `f2c05328` | no | none |
 | Zephyr console wedge + journald window | mitigation LANDED `4b48e891`; **the 2.7 net-buffer leak itself OPEN by choice**, while `schemas/support_matrix.json` says `zephyr-2.7` `measured-ok` on five surfaces; **#260 open** — a held console slot is reported as "unresponsive or bad credentials" on a device that has no login | **yes** | **MEDIUM-HIGH** |
 | `_dashboard_harness.run()` `.result(timeout=10)` | still present (`tests/_fixtures/_dashboard_harness.py:211`); runaway guard for 38/39 call sites, a *discriminator* for `test_replay_soak.py:143`; soak-only, outside every default gate | no | low |
-| BusyBox cache + preflight | **OPEN — actively red** (§1.1) | CI/release | **CRITICAL** |
+| BusyBox cache + preflight | ✅ FIXED on the busybox-gate-fixes branch (§1.1) | — | — |
 
 In-window flakes that were caught and closed: `dashboard-e2e (firefox)`
 `test_a_silent_hosts_drillin_shows_a_growing_unreachable_banner` ("Unreachable
@@ -201,7 +229,8 @@ occupants (all verified):
    justified by "sequential suite"; its conformance callers
    (`tests/conformance/_cells.py:202,247`) run under a lane that is
    explicitly not `-n0` *(sweep)*.
-7. `tests/unit/testing/test_conformance.py:168` `_NOW = datetime.now(tz=…)`
+7. ✅ FIXED (#265, a `_now()` seam read at call time, three guards) — was:
+   `tests/unit/testing/test_conformance.py:168` `_NOW = datetime.now(tz=…)`
    at **module import**, with `_window()` spanning `_NOW ± 1h` while the
    validator compares against a fresh `now()`. It reddened in run 262
    (`TestReservationWindowsConformance::test_conforming_backend_passes`)
@@ -570,16 +599,18 @@ disjoint downgrade gate); six root-caused `nc.py` fixes, zero reverts.
 
 **Tier 0 — this week, before any release**
 
-1. Un-red CI: the four hook fixes in §1.1 unconditionally (a parallel
+1. ✅ DONE (§1.1). Un-red CI: the four hook fixes in §1.1 unconditionally (a parallel
    session already owns the `--collect-only` half; g2 `unit-repeat` cache
    step and g4 the vacuous `session.items` guard are additional), plus
    Chris's call on hosting the artifacts (Release asset vs commit) so the
    default gate has no third-party mirror in it at all. The two commits that
    widened the blast radius came out of my own earlier session.
-2. §1.2 dashboard SSE lapse signal (+ the test that pins drop-oldest, + a
+2. ✅ DONE (§1.2). Dashboard SSE lapse signal (+ the test that pins drop-oldest, + a
    ledger entry so it stops being folklore).
-3. §1.3 scope the integration docker reaper to the tests that drive docker.
-4. P0 — replace `AGENTS.md:10`.
+3. ✅ DONE (§1.3). Scope the integration docker reaper to the tests that drive docker.
+4. P0 — replace `AGENTS.md:10`. **Chris's call, not done**: `todo/migration_plan.md`
+   records the decision that the no-backcompat stance stays until the contract
+   freeze; a drafted replacement (inline tier policy) is ready if he overrides it.
 
 **Tier 1 — before first users (all S)**
 
