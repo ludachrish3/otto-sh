@@ -1,6 +1,7 @@
 """Conformance helpers verified against otto's built-in backends + an error sample."""
 
 import json
+import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -165,7 +166,18 @@ class TestReservationBackendConformance:
         assert "ReservationBackend" in str(exc.value)
 
 
-_NOW = datetime.now(tz=timezone.utc)
+def _now() -> datetime:
+    """The clock the window helpers read, AT CALL TIME.
+
+    Issue #265: this used to be a module-level ``_NOW`` captured at import,
+    and ``_window()``'s default span was ``_NOW +/- 1h`` — valid only while
+    the test body ran within an hour of collection. The validator under test
+    compares against a fresh ``datetime.now()``, so any session longer than
+    that (unit-repeat during the 2026-08-25 outage: 64 min) reddened
+    ``test_conforming_backend_passes`` on its later repeat. A seam rather
+    than an inline ``datetime.now()`` so the guard below can move the clock.
+    """
+    return datetime.now(tz=timezone.utc)
 
 
 class _WindowedBackend:
@@ -188,13 +200,14 @@ class _WindowedBackend:
     def get_reserved_resources(self, username):
         if self._flat is not None:
             return set(self._flat)
+        now = _now()
         return {
             w.resource
             for w in self._windows
             if isinstance(w, ReservationWindow)
             and w.start.tzinfo is not None
             and w.end.tzinfo is not None
-            and w.start <= _NOW <= w.end
+            and w.start <= now <= w.end
         }
 
     def who_reserved(self, resource):
@@ -205,13 +218,61 @@ class _WindowedBackend:
 
 
 def _window(**overrides):
+    now = _now()
     base = {
         "resource": "r1",
-        "start": _NOW - timedelta(hours=1),
-        "end": _NOW + timedelta(hours=1),
+        "start": now - timedelta(hours=1),
+        "end": now + timedelta(hours=1),
     }
     base.update(overrides)
     return ReservationWindow(**base)
+
+
+class TestTheWindowHelpersFollowTheClock:
+    """Issue #265's shape, injected: the body runs long after the module was imported.
+
+    The validator reads a fresh ``datetime.now()``; a helper anchored to an
+    import-time snapshot drifts away from it as the session ages. Moving
+    ``_now`` two hours ahead stands in for a two-hour-old import.
+    """
+
+    def test_a_default_window_brackets_the_moment_it_is_built(self, monkeypatch):
+        # THIS module object, not a re-import: pytest's import mode can register
+        # the collected file under another name, and a second copy would take
+        # the patch while the helpers under test read the original.
+        later = datetime.now(tz=timezone.utc) + timedelta(hours=2)
+        monkeypatch.setattr(sys.modules[__name__], "_now", lambda: later)
+        window = _window()
+        assert window.start <= later <= window.end, (
+            f"_window() is anchored to something other than the clock it is built under: "
+            f"{window.start} .. {window.end} does not bracket {later}"
+        )
+        # The bracket alone is satisfied by ANY wide enough span, an import-time
+        # anchor with a hundred-year width included; the span is the claim.
+        assert window.end - window.start == timedelta(hours=2), (window.start, window.end)
+
+    def test_the_fake_derives_its_flat_view_from_the_same_clock(self, monkeypatch):
+        # THIS module object, not a re-import: pytest's import mode can register
+        # the collected file under another name, and a second copy would take
+        # the patch while the helpers under test read the original.
+        later = datetime.now(tz=timezone.utc) + timedelta(hours=2)
+        monkeypatch.setattr(sys.modules[__name__], "_now", lambda: later)
+        assert _WindowedBackend([_window()]).get_reserved_resources("alice") == {"r1"}, (
+            "the fake's flat view was derived from a different clock than its windows: "
+            "a window built under `later` is not active under it"
+        )
+
+    def test_the_seam_reads_the_live_clock(self):
+        # The two guards above patch `_now` wholesale, so they prove the helpers
+        # CALL the seam and nothing about what it returns. A seam that memoises
+        # (`_NOW = datetime.now(); def _now(): return _NOW`) reinstates issue
+        # #265 exactly and leaves both of them green; this is the guard that
+        # goes red for it. Bracketed, not equal: the seam must answer for the
+        # instant it is asked, and only a live read lands between two others.
+        before = datetime.now(tz=timezone.utc)
+        sampled = _now()
+        after = datetime.now(tz=timezone.utc)
+        assert before <= sampled <= after, f"_now() answered {sampled}, outside {before}..{after}"
 
 
 class TestReservationWindowsConformance:
@@ -243,7 +304,8 @@ class TestReservationWindowsConformance:
             assert_reservation_backend_conforms(_WindowedBackend([naive]))
 
     def test_inverted_range_fails(self):
-        inverted = _window(start=_NOW + timedelta(hours=2), end=_NOW)
+        now = _now()
+        inverted = _window(start=now + timedelta(hours=2), end=now)
         with pytest.raises(AssertionError, match="start <= end"):
             assert_reservation_backend_conforms(_WindowedBackend([inverted]))
 
