@@ -136,14 +136,47 @@ async def _reap_orphan_docker_stacks() -> None:
         await host.close()
 
 
-@pytest.fixture(scope="session", autouse=True)
-def reap_orphan_docker_stacks() -> None:
-    """Sweep orphaned docker test stacks before the integration session.
+_DOCKER_GROUP = "docker_e2e"
 
-    All tests in this directory drive docker on a shared host; a stack leaked
-    by an earlier interrupted run would otherwise compound until the daemon
-    runs out of network subnets. Best-effort — if the host is unreachable we
-    let the individual tests report that themselves.
+
+def _declares_docker(item: pytest.Item) -> bool:
+    """Whether *item* carries the docker modules' ``xdist_group("docker_e2e")`` mark.
+
+    Both of xdist's spellings, ``xdist_group("docker_e2e")`` and
+    ``xdist_group(name="docker_e2e")``: a keyword-form declaration that this
+    read as "not in the group" would trip the premise assertion below on a
+    module that is, in fact, correctly declared.
+    """
+    return any(
+        (mark.args[:1] or (mark.kwargs.get("name"),))[0] == _DOCKER_GROUP
+        for mark in item.iter_markers(name="xdist_group")
+    )
+
+
+@pytest.fixture(scope="session")
+def reap_orphan_docker_stacks(request: pytest.FixtureRequest) -> None:
+    """Sweep orphaned docker test stacks once, before the first test that DRIVES docker.
+
+    Requested by name from the four docker modules (their ``pytestmark``
+    carries ``usefixtures("reap_orphan_docker_stacks")`` next to
+    ``xdist_group("docker_e2e")``), never autouse. It was autouse at session
+    scope, keyed on directory membership: running ANY test under
+    ``tests/integration/`` — 27 of 31 files never mention docker — reaped
+    the shared host's ``-e2e-`` stacks, including a concurrent developer's
+    live ones (ledger 2026-08-16: a pure-git ``cov/`` module triggered it
+    twice). The blast radius is now keyed on need.
+
+    The premise is ASSERTED, not assumed, because a narrowed-but-unasserted
+    fixture drifts wrong again the moment the subtree grows: every collected
+    item that requests this fixture must be in the docker xdist group. An
+    offender errors this session before anything is reaped — a loud failure
+    naming the test, instead of a quiet reap on someone else's stacks.
+    ``tests/unit/test_docker_reaper_scope.py`` holds the same rule
+    statically in the default lane, where this tree never runs.
+
+    A stack leaked by an earlier interrupted run would otherwise compound
+    until the daemon runs out of network subnets. Best-effort — if the host
+    is unreachable we let the individual tests report that themselves.
 
     Hermetic venues (e.g. the GitHub ``chaos-tier2`` nightly job) have no
     route to the bed at all — unlike a reachable-but-docker-broken host,
@@ -155,6 +188,17 @@ def reap_orphan_docker_stacks() -> None:
     from "host up, something else went wrong" (still attempt the reap and
     suppress as before).
     """
+    offenders = [
+        item.nodeid
+        for item in request.session.items
+        if "reap_orphan_docker_stacks" in getattr(item, "fixturenames", ())
+        and not _declares_docker(item)
+    ]
+    assert not offenders, (
+        f"reap_orphan_docker_stacks was requested by {len(offenders)} test(s) that do not "
+        f"declare xdist_group({_DOCKER_GROUP!r}) — refusing to reap the shared docker host "
+        f"for a test that does not drive docker: {offenders[:5]}"
+    )
     try:
         with socket.create_connection((_DOCKER_HOST_IP, 22), timeout=2):
             pass

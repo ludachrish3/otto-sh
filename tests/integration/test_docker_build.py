@@ -26,7 +26,12 @@ REPO1_DIR = TESTS_ROOT / "repo1"
 # All docker integration tests share /tmp/otto-docker/repo1/ on test3
 # (build-context staging dir). Pin them to one xdist worker so concurrent
 # `rm -rf` calls during stage_image_context don't race.
-pytestmark = pytest.mark.xdist_group("docker_e2e")
+pytestmark = [
+    pytest.mark.xdist_group("docker_e2e"),
+    # This module drives docker on test3: it asks for the orphan-stack reap.
+    # The reap is requested, never ambient (tests/unit/test_docker_reaper_scope.py).
+    pytest.mark.usefixtures("reap_orphan_docker_stacks"),
+]
 
 
 @pytest.fixture(scope="module")

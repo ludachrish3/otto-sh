@@ -140,15 +140,16 @@ change that test. Fix fork (unchanged from 08-08): on overflow mark the
 subscriber lapsed and close/sentinel it so the existing `onerror → resync →
 reopen` path recovers. Raising the bound fixes nothing.
 
-### 1.3 MUST FIX — `tests/integration/conftest.py:139-165` reaps the lab's docker for every test under it
+### 1.3 ✅ FIXED — `tests/integration/conftest.py` reaped the lab's docker for every test under it
 
-Session-scoped autouse fixture SSHes to `10.10.200.13` and `docker rm -f`s
-every `-e2e-` container for **any** test under `tests/integration/`; its
-premise ("all tests in this directory drive docker") is false for 27 of 31
-files *(sweep)*. Ledgered 2026-08-16
-(`todo/integration-conftest-reaps-docker-for-every-test-2026-08-16.md`),
-unchanged. This destroys a concurrent developer's or lane's stacks — a
-flakiness *generator* for everyone else on the bed.
+Was: a session-scoped autouse fixture SSHed to `10.10.200.13` and `docker rm
+-f`'d every `-e2e-` container for **any** test under `tests/integration/`,
+though 27 of 31 files there never mention docker — a flakiness *generator*
+for everyone else on the bed. Fixed: the reaper is requested by name
+(`usefixtures`) from the four docker modules beside their
+`xdist_group("docker_e2e")`, asserts its own premise at runtime over
+`session.items`, and `tests/unit/test_docker_reaper_scope.py` pins both
+directions in the default lane. The 2026-08-16 ledger is deleted (complete).
 
 ### 1.4 Known-item status (was open as of mid-August)
 
