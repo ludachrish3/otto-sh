@@ -622,19 +622,19 @@ coverage-python: dashboard ## Run the full Python suite (all tiers, pinned Pytho
 	@$(SAY) "pytest: all tiers, pinned Python (browser lane folded in)"
 	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest -m "not stability and not browser and not busybox and not conformance and not serial_timing" --cov-append --cov-fail-under=0 $(call junitxml,coverage-python)
 	@$(SAY) "pytest: serial_timing discriminators, -n0 (gate: $(COVERAGE_THRESHOLD)% on the full fold)"
-	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest -m "serial_timing and not stability and not browser" -n0 --cov-append --cov-fail-under=$(COVERAGE_THRESHOLD) $(call junitxml,coverage-python-serial)
+	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest -m "serial_timing and not stability and not browser and not busybox and not conformance" -n0 --cov-append --cov-fail-under=$(COVERAGE_THRESHOLD) $(call junitxml,coverage-python-serial)
 
 coverage: coverage-python coverage-ts ## Run BOTH language coverage gates: coverage-python (full pytest, 96 floor) + coverage-ts (merged vitest+e2e floor). The dashboard browser lane runs exactly once — coverage-python triggers it, and coverage-ts's artifact stamp sees it fresh.
 
 coverage-unit: ## Run the unit level tier (tests/unit only; no testbed) with a coverage report (no gate — one tier can't meet the whole-repo floor). JUnit XML lands in reports/junit/coverage-unit/.
 	@$(SAY) "pytest: tests/unit (no gate)"
 	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest tests/unit -m "not stability and not busybox and not conformance and not serial_timing" $(call junitxml,coverage-unit)
-	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest tests/unit -m "serial_timing and not stability" -n0 --cov-append $(call junitxml,coverage-unit-serial)
+	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest tests/unit -m "serial_timing and not stability and not busybox and not conformance" -n0 --cov-append $(call junitxml,coverage-unit-serial)
 
 coverage-integration: ## Run the unit + integration level tiers (tests/unit + tests/integration) with a coverage report (no gate). Requires the full lab. JUnit XML in reports/junit/coverage-integration/.
 	@$(SAY) "pytest: tests/unit + tests/integration (no gate)"
 	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest tests/unit tests/integration -m "not stability and not busybox and not conformance and not serial_timing" $(call junitxml,coverage-integration)
-	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest tests/unit tests/integration -m "serial_timing and not stability" -n0 --cov-append $(call junitxml,coverage-integration-serial)
+	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest tests/unit tests/integration -m "serial_timing and not stability and not busybox and not conformance" -n0 --cov-append $(call junitxml,coverage-integration-serial)
 
 coverage-hostless: ## Run the no-testbed CI gate suite (tests/unit + no-VM e2e) and enforce the CI coverage gate. No VMs. JUnit XML lands in reports/junit/coverage-hostless/.
 	@$(SAY) "pytest: hostless CI slice, no VMs"
@@ -1076,7 +1076,7 @@ repeat: ## Run the full local suite (unit + integration + e2e) under pytest-repe
 	    $(call junitxml,repeat)
 	@$(SAY) "pytest soak: serial_timing discriminators, -n0 (x$(COUNT))"
 	@$(LEAK_DETECT) uv run pytest \
-	    -m "serial_timing and not browser and not chaos" \
+	    -m "serial_timing and not browser and not chaos and not busybox and not conformance" \
 	    -n0 \
 	    --count=$(COUNT) \
 	    -p no:cacheprovider \

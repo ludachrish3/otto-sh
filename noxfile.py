@@ -80,7 +80,11 @@ nox.options.sessions = ["lint", "tests_hostless", "typecheck", "docs"]
 # the SERIAL args (the last leg, folding in via --cov-append), so the
 # threshold judges the session's whole run. The two marker expressions are a
 # hand-kept pair like DASHBOARD_MARKER_EXPR: if the resource exclusions
-# change, change both (pinned by tests/unit/test_lane_invariants.py).
+# change, change both — the serial leg carries EVERY clause its parallel twin
+# does, `not busybox and not conformance` included, which is pinned for every
+# paired leg in this file and the Makefile by
+# tests/unit/test_lane_invariants.py (a serial leg that dropped them would
+# fetch artifacts in a lane whose parallel half excludes them).
 HOSTLESS_TEST_ARGS = (
     "tests/unit",
     "tests/e2e",
@@ -95,7 +99,10 @@ HOSTLESS_SERIAL_ARGS = (
     "tests/unit",
     "tests/e2e",
     "-m",
-    "serial_timing and not integration and not embedded and not stability and not browser",
+    (
+        "serial_timing and not integration and not embedded and not stability and not browser "
+        "and not busybox and not conformance"
+    ),
     "-n0",
     "--cov-append",
     "--cov-fail-under=95",
@@ -131,7 +138,7 @@ def tests_unit(session: nox.Session) -> None:
         "pytest",
         "tests/unit",
         "-m",
-        "serial_timing and not stability",
+        "serial_timing and not stability and not busybox and not conformance",
         "-n0",
         "--cov-append",
         _junitxml(session, "nox-unit-serial"),
@@ -161,7 +168,7 @@ def tests_integration(session: nox.Session) -> None:
         "tests/unit",
         "tests/integration",
         "-m",
-        "serial_timing and not stability",
+        "serial_timing and not stability and not busybox and not conformance",
         "-n0",
         "--cov-append",
         _junitxml(session, "nox-integration-serial"),
@@ -383,7 +390,7 @@ def tests_all(session: nox.Session) -> None:
     session.run(
         "pytest",
         "-m",
-        "serial_timing and not browser and not stability",
+        "serial_timing and not browser and not stability and not busybox and not conformance",
         "-n0",
         "--cov-append",
         "--cov-fail-under=92",

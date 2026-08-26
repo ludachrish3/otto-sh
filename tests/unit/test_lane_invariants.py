@@ -55,6 +55,7 @@ reasoning is in
 
 import ast
 import dataclasses
+import itertools
 import os
 import re
 import subprocess
@@ -912,3 +913,121 @@ def test_the_marker_expression_compiler_is_pytests_own() -> None:
         Expression.compile("serial_timing and (")
     with pytest.raises(pytest.UsageError, match="kwargs form"):
         Expression.compile("concurrency(count=1)").evaluate(carried)
+
+
+# ─── a serial leg re-appends its parallel twin's exclusions ─────────────────
+#
+# The serial_timing family above holds one direction of the pair: every
+# parallel leg that excludes the marker has a `-n0` twin that re-appends it.
+# What it never asked is whether the twin keeps the REST of the expression.
+# It did not, eight times: every hand-spelled serial leg whose parallel half
+# carried `not busybox and not conformance` had dropped them, so the day a
+# busybox- or conformance-marked test gains
+# `serial_timing` (a banner-timing assertion, say) the serial leg fetches
+# artifacts and stands up a loopback sshd inside a lane whose parallel half
+# was deliberately excluding both — and the two legs of ONE lane would
+# disagree about what the lane is. The one serial leg built from a Makefile
+# variable that carries those clauses (`serial_timing and $(M_HOSTLESS)`)
+# never drifted, which is the tell: restated text drifts, derived text does
+# not. Latent when pinned (no such test
+# exists — `-m "serial_timing and (busybox or conformance)"` collects
+# nothing anywhere), and pinned before it is live.
+#
+# The rule is symmetric on purpose: the serial leg's clauses, minus its
+# positive `serial_timing`, must EQUAL the parallel leg's, minus its
+# `not serial_timing`. "Missing" is the drift above; "extra" would be a
+# serial leg excluding something its twin runs, i.e. a test that runs in
+# neither leg of a lane that claims to run it.
+
+
+def _conjunction_clauses(expr: str) -> "frozenset[str]":
+    """The `[not] marker` clauses of a pure conjunction; loud on any other shape.
+
+    Every paired leg in the tree is a flat `and` chain. A pair that grows an
+    `or` or a parenthesis needs modelling, not a scanner that quietly
+    compares the wrong thing, so that shape is a refusal rather than a skip.
+    """
+    if "(" in expr or " or " in f" {expr} ":
+        raise pytest.UsageError(
+            f"not a pure conjunction — teach this pin the shape rather than dropping the pair: "
+            f"{expr!r}"
+        )
+    clauses = frozenset(" ".join(clause.split()) for clause in expr.split(" and "))
+    malformed = [c for c in clauses if not re.fullmatch(r"(not )?[A-Za-z_][A-Za-z0-9_]*", c)]
+    if malformed:
+        raise pytest.UsageError(f"unreadable clause(s) {malformed} in {expr!r}")
+    return clauses
+
+
+def serial_twin_offenders(legs: "list[_Leg]") -> "tuple[int, list[str]]":
+    """How many pairs were judged, and the serial legs that disagree with their twin.
+
+    Pairing is by ADJACENCY within a surface: the leg right after a
+    `not serial_timing` parallel leg, on the same roots, whose expression
+    begins `serial_timing and`. That is the shape every lane spells today
+    (the recipe's next line, the session's next `session.run`), and the count
+    is returned so the caller can hold it EQUAL to the number of parallel
+    legs that exclude the marker — a lane whose halves are not adjacent, or
+    whose serial leg is spelled another way, is otherwise silently unjudged.
+    """
+    offenders: "list[str]" = []
+    pairs = 0
+    for parallel, serial in itertools.pairwise(legs):
+        if parallel.surface != serial.surface or parallel.roots != serial.roots:
+            continue
+        if "not serial_timing" not in parallel.expr or not serial.expr.startswith(
+            "serial_timing and "
+        ):
+            continue
+        pairs += 1
+        expected = _conjunction_clauses(parallel.expr) - {"not serial_timing"}
+        actual = _conjunction_clauses(serial.expr) - {"serial_timing"}
+        missing, extra = sorted(expected - actual), sorted(actual - expected)
+        if missing or extra:
+            offenders.append(
+                f"{serial} — its parallel twin is `-m {parallel.expr}`; "
+                f"missing {missing}, extra {extra}"
+            )
+    return pairs, offenders
+
+
+def test_every_serial_leg_carries_its_parallel_twins_exclusions() -> None:
+    legs = lane_legs()
+    pairs, offenders = serial_twin_offenders(legs)
+    excluders = [leg for leg in legs if "not serial_timing" in leg.expr]
+    assert excluders, "premise: no parallel leg excludes serial_timing — the extractor is broken"
+    # Against the population, not a count: a lane whose halves are not
+    # adjacent would leave a fixed floor green and its serial leg unjudged.
+    assert pairs == len(excluders), (
+        f"{len(excluders)} parallel legs exclude serial_timing but only {pairs} were paired "
+        f"with an adjacent `serial_timing and ...` twin on the same roots — fix the pairing "
+        f"(or teach it the new shape), never the count"
+    )
+    assert not offenders, (
+        "a serial leg dropped (or added) an exclusion its parallel twin carries, so the two "
+        "legs of one lane disagree about what the lane is:\n  " + "\n  ".join(offenders)
+    )
+
+
+def test_the_serial_twin_scanner_reddens_on_a_dropped_exclusion() -> None:
+    """Positive control: the drift this pin was written against, in miniature."""
+    parallel = _Leg("x", "not stability and not busybox and not serial_timing", ("tests/unit",))
+    serial = _Leg("x", "serial_timing and not stability", ("tests/unit",))
+    pairs, offenders = serial_twin_offenders([parallel, serial])
+    assert pairs == 1
+    assert len(offenders) == 1
+    assert "missing ['not busybox']" in offenders[0], offenders
+
+    faithful = _Leg("x", "serial_timing and not busybox and not stability", ("tests/unit",))
+    assert serial_twin_offenders([parallel, faithful]) == (1, [])
+
+    # Different roots are not a pair, whatever the expressions say.
+    elsewhere = _Leg("x", "serial_timing and not stability", ("tests/e2e",))
+    assert serial_twin_offenders([parallel, elsewhere]) == (0, [])
+
+
+def test_the_serial_twin_scanner_refuses_a_shape_it_cannot_read() -> None:
+    parallel = _Leg("x", "not stability and not serial_timing", ())
+    serial = _Leg("x", "serial_timing and (stability or browser)", ())
+    with pytest.raises(pytest.UsageError, match="pure conjunction"):
+        serial_twin_offenders([parallel, serial])
