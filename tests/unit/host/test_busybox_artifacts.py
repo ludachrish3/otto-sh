@@ -1052,42 +1052,122 @@ def test_the_busybox_doc_is_reachable_from_the_architecture_toctree():
 # rests entirely on the other half still going to the network.
 # ---------------------------------------------------------------------------
 
-_CI = PROJECT_ROOT / ".github" / "workflows" / "ci.yml"
+_WORKFLOWS = PROJECT_ROOT / ".github" / "workflows"
 _ARTIFACT_CACHE_PATH = "~/.cache/otto/busybox"
+# The invocations that select `tests/unit/test_support_matrix.py`, whose
+# `_run_conformance` spawns a real hermetic conformance run with BusyBox cells
+# built from the artifacts. A job whose `run:` text carries one of these
+# CONSUMES the artifacts and must cache them. This is an ALLOWLIST of literal
+# spellings, not a model of what each Makefile target or nox session selects:
+# a job that reaches the tree by some other spelling (`make coverage-hostless`,
+# a bare `pytest tests/unit`) is NOT seen here and must be added as a
+# deliberate line. `make stability-unit` is deliberately absent — it is
+# `pytest -m concurrency`, four no-VM files that never touch the artifacts.
+_UNIT_TREE_ENTRYPOINTS = (
+    "nox -s tests_hostless-",
+    "nox -s tests_unit_repeat",
+)
 
 
-def _steps(job: str) -> "list[dict]":
-    ci = yaml.safe_load(_CI.read_text(encoding="utf-8"))
-    return ci["jobs"][job]["steps"]
+def _workflow_jobs() -> "dict[tuple[str, str], list[dict]]":
+    """Every job in every workflow file -> its steps, keyed by (workflow, job)."""
+    jobs: "dict[tuple[str, str], list[dict]]" = {}
+    for path in sorted(_WORKFLOWS.glob("*.yml")):
+        workflow = yaml.safe_load(path.read_text(encoding="utf-8"))
+        for job, spec in workflow["jobs"].items():
+            jobs[(path.name, job)] = spec.get("steps", [])
+    return jobs
 
 
-def _cache_steps(job: str) -> "list[dict]":
-    return [s for s in _steps(job) if "cache" in str(s.get("uses", ""))]
+def _runs(steps: "list[dict]") -> str:
+    return "\n".join(str(s.get("run", "")) for s in steps)
 
 
-def test_the_tests_lane_caches_the_busybox_artifacts_it_only_consumes():
-    """A default gate must not depend on busybox.net being reachable.
+def _cache_steps(steps: "list[dict]") -> "list[dict]":
+    # Any cache action, not just `actions/cache`: the negative guard below has
+    # to catch a `buildjet/cache` or similar landing in `busybox` as well.
+    return [s for s in steps if "cache" in str(s.get("uses", ""))]
+
+
+def _unit_tree_jobs() -> "list[tuple[str, str]]":
+    return sorted(
+        key
+        for key, steps in _workflow_jobs().items()
+        if any(entry in _runs(steps) for entry in _UNIT_TREE_ENTRYPOINTS)
+    )
+
+
+def test_every_entrypoint_spelling_still_names_a_live_job():
+    """Premise for the rule below, per entry: a spelling that matches no job
+    makes the rule quiet on the consumer it used to cover. Renaming
+    `tests_unit_repeat` would drop `unit-repeat` from the parametrization and
+    leave every remaining row green — the exact silent loss this file exists
+    to refuse — so each spelling must find at least one job, and the two
+    known consumers must be among them."""
+    jobs = _workflow_jobs()
+    for entry in _UNIT_TREE_ENTRYPOINTS:
+        matched = sorted(key for key, steps in jobs.items() if entry in _runs(steps))
+        assert matched, (
+            f"entrypoint {entry!r} matches no job in any workflow — the lane it covered "
+            f"was renamed or removed; update _UNIT_TREE_ENTRYPOINTS in the same diff"
+        )
+    consumers = _unit_tree_jobs()
+    assert ("ci.yml", "tests") in consumers, consumers
+    assert ("ci.yml", "unit-repeat") in consumers, consumers
+    assert ("nightly.yml", "unit-matrix") in consumers, consumers
+
+
+@pytest.mark.parametrize("workflow_job", _unit_tree_jobs(), ids="/".join)
+def test_every_lane_that_runs_the_unit_tree_caches_the_artifacts_it_only_consumes(workflow_job):
+    """A lane that only CONSUMES the artifacts must not depend on their source being up.
 
     Ten tests in `tests/unit/test_support_matrix.py` drive a real hermetic
-    conformance run whose cells are built from these artifacts, and that lane
-    runs on five Pythons. Issue #261 is what it costs when the fetch fails: an
-    SSL handshake timeout reddened a release-bump push that touched only the
-    version.
+    conformance run whose cells are built from these artifacts. Issue #261 is
+    what it costs when the fetch fails: an SSL handshake timeout reddened a
+    release-bump push that touched only the version. The first fix cached
+    the `tests` job alone; `unit-repeat` runs the same tree and failed for
+    the same reason on the next push (run 32897991866), and nightly's
+    `unit-matrix` repeats it `nox_count` times per Python. The lane that
+    VERIFIES the bytes (`busybox`) is the deliberate exception, guarded
+    below; nightly's `conformance-hermetic` primes cold as a named step by
+    choice and runs none of these spellings.
+
+    Consumers are derived from each job's `run:` text against
+    `_UNIT_TREE_ENTRYPOINTS` — so a job that spells one of those entrypoints
+    is reported here by name, and a job that reaches the tree by a spelling
+    the tuple does not carry is not (the tuple's comment says so).
     """
-    caches = _cache_steps("tests")
-    assert len(caches) == 1, f"expected exactly one cache step in `tests`, found {len(caches)}"
-    with_ = caches[0]["with"]
-    assert with_["path"] == _ARTIFACT_CACHE_PATH, (
-        f"the cache must cover the artifact dir `cache_dir()` resolves to; got {with_['path']!r}"
+    workflow, job = workflow_job
+    steps = _workflow_jobs()[workflow_job]
+    caches = _cache_steps(steps)
+    assert len(caches) == 1, (
+        f"{workflow} `{job}` runs the unit tree and must cache the BusyBox artifacts it "
+        f"consumes — found {len(caches)} cache step(s). A cold cache puts the artifact "
+        f"source on this lane's critical path (issue #261)"
     )
-    assert "busybox_pins.json" in with_["key"], (
-        f"the key must follow the pins, so a pin change misses; got {with_['key']!r}"
+    first_run = next(
+        i
+        for i, s in enumerate(steps)
+        if any(e in str(s.get("run", "")) for e in _UNIT_TREE_ENTRYPOINTS)
+    )
+    assert steps.index(caches[0]) < first_run, (
+        f"{workflow} `{job}`: the cache step sits AFTER the step that runs the tree, so "
+        f"it restores nothing in time"
+    )
+    with_ = caches[0].get("with") or {}
+    assert with_.get("path") == _ARTIFACT_CACHE_PATH, (
+        f"{workflow} `{job}`: the cache must cover the artifact dir `cache_dir()` resolves "
+        f"to; got {with_.get('path')!r}"
+    )
+    assert "busybox_pins.json" in str(with_.get("key", "")), (
+        f"{workflow} `{job}`: the key must follow the pins, so a pin change misses; "
+        f"got {with_.get('key')!r}"
     )
     assert "restore-keys" not in with_, (
-        "a prefix restore would bring back the OLD bytes under the SAME filename when a "
-        "pin changes because upstream rebuilt in place -- and busybox_binary only fetches "
-        "when the target is ABSENT, so the stale file would be kept and fail _verify "
-        "until the cache expired"
+        f"{workflow} `{job}`: a prefix restore would bring back the OLD bytes under the "
+        f"SAME filename when a pin changes because upstream rebuilt in place -- and "
+        f"busybox_binary only fetches when the target is ABSENT, so the stale file would "
+        f"be kept and fail _verify until the cache expired"
     )
 
 
@@ -1097,11 +1177,11 @@ def test_the_busybox_lane_never_caches_the_artifacts_it_verifies():
     That job re-fetches cold so an upstream in-place rebuild reddens on the
     push. A cache keyed on the pins would only ever miss when the pins change,
     i.e. it would skip the fetch in exactly the runs that could detect the
-    rebuild -- keeping the pin file and deleting its purpose. The `tests` lane
-    may cache precisely because this one does not, so this assertion is what
-    makes that one safe.
+    rebuild -- keeping the pin file and deleting its purpose. The consuming
+    lanes may cache precisely because this one does not, so this assertion is
+    what makes those safe.
     """
-    assert _cache_steps("busybox") == [], (
+    assert _cache_steps(_workflow_jobs()[("ci.yml", "busybox")]) == [], (
         "the busybox job caches its artifacts; it must re-fetch cold every run, because "
         "detection of an upstream in-place rebuild lives there and nowhere else"
     )

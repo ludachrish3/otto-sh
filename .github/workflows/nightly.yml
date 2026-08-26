@@ -75,6 +75,10 @@ jobs:
       - name: Install dependencies
         run: uv sync --all-extras --dev
 
+      # No BusyBox artifact cache here, on purpose: `make stability-unit` is
+      # `pytest -m concurrency`, four fast no-VM files, none of which reaches
+      # the artifacts. tests/unit/host/test_busybox_artifacts.py derives the
+      # caching lanes from what each job runs; this job is not one of them.
       - name: Run unit stability tests
         run: make stability-unit COUNT=${{ inputs.count || '100' }}
 
@@ -101,6 +105,18 @@ jobs:
 
       - name: Install dependencies
         run: uv sync --all-extras --dev
+
+      # Same tree as ci.yml's `tests` job, so the same artifact dependency:
+      # tests/unit/test_support_matrix.py spawns a hermetic conformance run
+      # whose BusyBox cells are built from the artifacts, and this job repeats
+      # that `nox_count` times (default 5) per Python. Same rule — exact key on
+      # the pins, no `restore-keys`, detection stays in ci.yml's `busybox` job,
+      # which is where the rationale is written.
+      - name: Cache the BusyBox artifacts this lane consumes (detection stays in `busybox`)
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/otto/busybox
+          key: busybox-artifacts-${{ hashFiles('tests/_fixtures/busybox_pins.json') }}
 
       - name: Run nox unit tests ${{ inputs.nox_count || '5' }}x
         run: >-

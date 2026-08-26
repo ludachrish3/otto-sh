@@ -101,6 +101,16 @@ jobs:
       - name: Set up Python 3.10
         run: uv python install 3.10
 
+      # Same tree as `tests`, same artifact dependency, same rule: exact key on
+      # the pins, no `restore-keys`, detection stays in `busybox`. The first
+      # cache covered `tests` alone and this job failed for the same cause on
+      # the next push (run 32897991866). The rationale is on the `tests` step.
+      - name: Cache the BusyBox artifacts this lane consumes (detection stays in `busybox`)
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/otto/busybox
+          key: busybox-artifacts-${{ hashFiles('tests/_fixtures/busybox_pins.json') }}
+
       - name: Repeat tests/unit in one process (test-isolation leak guard)
         run: uv run nox -s tests_unit_repeat
 
@@ -200,13 +210,15 @@ jobs:
   # cost accepted in exchange is real and worth naming: ~5 MB over five
   # requests per run, and a busybox.net outage reds this job.
   #
-  # THAT COST IS ACCEPTED FOR THIS JOB ONLY. The `tests` job consumes the same
-  # artifacts without verifying anything about them, and it DOES cache them —
-  # it is a default gate on five Pythons, so an outage there reds a push for a
-  # reason unrelated to it (issue #261). The reasoning above is about the job
-  # that checks the bytes, not every job that reads them, and
-  # `tests/unit/host/test_busybox_artifacts.py` pins the split in both
-  # directions so neither half can drift into the other.
+  # THAT COST IS ACCEPTED FOR THIS JOB ONLY. The lanes that merely CONSUME the
+  # artifacts — `tests` and `unit-repeat` here, `unit-matrix` in nightly.yml —
+  # verify nothing about them, and they DO cache: `tests` is a default gate on
+  # five Pythons, so an outage there reds a push for a reason unrelated to it
+  # (issue #261), and `unit-repeat` reddened the same way on the next push.
+  # The reasoning above is about the job that checks the bytes, not every job
+  # that reads them, and `tests/unit/host/test_busybox_artifacts.py` pins the
+  # split in both directions — every consuming lane caches, this one never
+  # does — so neither half can drift into the other.
   #
   # Invokes the Makefile lane rather than re-listing its pytest invocation,
   # for the same reason check-ts does (see that job): a CI job that copies a
