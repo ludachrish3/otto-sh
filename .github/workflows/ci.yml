@@ -209,12 +209,16 @@ jobs:
   # when the pins change, i.e. it would skip the fetch in exactly the runs
   # that could detect upstream having rebuilt an artifact in place. Caching
   # here would keep the pin file and delete the event it exists to check. The
-  # cost accepted in exchange is real and worth naming: ~5 MB over five
-  # requests per run, and a busybox.net outage reds this job — and ONLY this
-  # job, since it is the one lane that forces `OTTO_BUSYBOX_SOURCE=upstream`
-  # (see the job's `env` below) while every consumer fetches mirror-first.
+  # cost accepted in exchange is ~5 MB over five requests per run.
   #
-  # THAT COST IS ACCEPTED FOR THIS JOB ONLY. The lanes that merely CONSUME the
+  # That cold fetch now reads the MIRROR (see the note above the `strategy:`
+  # block): the same bytes, verified against the same pins, on the host that
+  # already has to be up for this workflow to run at all. So "cold every run"
+  # keeps its verification value while an upstream outage can no longer red a
+  # push. Reading upstream's own bytes — the only way to catch a
+  # rebuild-in-place — moved to nightly's `busybox-upstream-drift`.
+  #
+  # THE CACHING SPLIT IS UNCHANGED. The lanes that merely CONSUME the
   # artifacts — `tests` and `unit-repeat` here, `unit-matrix` in nightly.yml —
   # verify nothing about them, and they DO cache: `tests` is a default gate on
   # five Pythons, so an outage there reds a push for a reason unrelated to it
@@ -269,16 +273,29 @@ jobs:
     # attribution this lane exists to deliver on a busybox.net stall.
     # tests/unit/test_declared_harness_bounds.py pins the relation.
     timeout-minutes: 25
-    # THIS JOB READS UPSTREAM. Every consuming lane fetches mirror-first — the
-    # `ci-assets-busybox-1` release assets, bytes taken from upstream and
-    # verified against the same pins — so busybox.net being down no longer
-    # reds a default gate on a cold cache (issue #261). Here the mirror would
-    # defeat the job: a copy of yesterday's bytes says "still matches" about a
-    # build upstream has since replaced, which is the one event this job
-    # exists to notice. `tests/unit/host/test_busybox_artifacts.py` pins the
-    # variable here and its absence from every consuming lane.
-    env:
-      OTTO_BUSYBOX_SOURCE: upstream
+    # THIS JOB READS THE MIRROR, like every other lane. It pins no source.
+    #
+    # It used to force `OTTO_BUSYBOX_SOURCE=upstream`, to notice busybox.net
+    # rebuilding an artifact in place. That check is real, but it was in the
+    # wrong place, and 2026-08-26 showed the bill: busybox.net went down, this
+    # job reddened main, and nothing about the pushed change was wrong — the
+    # bytes it would have run were sitting in the mirror, matching the pins.
+    #
+    # The reasoning that moved it: upstream drift cannot affect a single byte
+    # this repo tests or ships. Every fetch verifies against
+    # `busybox_pins.json`, so the PIN is the trust root and the mirror is only
+    # a second host for the same bytes. Detecting drift is therefore
+    # monitoring, not gating — and monitoring enforced as a merge gate fails
+    # when a third party is down instead of when the change is bad, which is
+    # the definition of a flaky gate. It now runs in nightly.yml's
+    # `busybox-upstream-drift`, which opens an issue and blocks nobody.
+    #
+    # What stays here is the part that gates: the artifact tier itself, cold
+    # (see the no-cache note above), so every push still fetches the five
+    # binaries fresh, verifies them against the pins, and executes the applet
+    # contracts on two architectures. `tests/unit/host/test_busybox_artifacts.py`
+    # pins all three sides — no source pin on any push job, one in nightly, and
+    # none on a consuming lane.
     strategy:
       fail-fast: false
       matrix:

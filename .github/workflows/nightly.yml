@@ -362,9 +362,66 @@ jobs:
 
   # If any matrix cell fails, open (or update) a tracking issue so a flaky
   # nightly surfaces without anyone having to watch the Actions tab.
+  # UPSTREAM DRIFT DETECTION. The one place in this repo that reads
+  # busybox.net's own bytes rather than the `ci-assets-busybox-1` mirror.
+  #
+  # Reading upstream is the only way to notice a rebuild-in-place: the mirror
+  # holds bytes taken from upstream at a reviewed moment, so asking it whether
+  # upstream changed would always answer "still matches". `preflight()` fetches
+  # each artifact and verifies it against `busybox_pins.json`, so a mismatch
+  # here means the file at the upstream URL is no longer the file those pins
+  # were taken from — worth an issue and a look, never worth blocking a push.
+  #
+  # NIGHTLY AND NOT CI, deliberately. Upstream drift cannot affect a byte this
+  # repo tests or ships — every consumer fetches mirror-first and verifies
+  # against the same pins — so this is monitoring, not gating. It sat on the
+  # push gate as ci.yml's `busybox` job env until 2026-08-26, when a
+  # busybox.net outage reddened main for a change that had nothing to do with
+  # it. Here a failure opens an issue (this job is in `report-failure`'s
+  # `needs` below) and blocks nobody. `tests/unit/host/test_busybox_artifacts.py`
+  # pins that this job exists, forces upstream, and is reported.
+  #
+  # No cache, for ci.yml's reason: a cache keyed on the pins would skip the
+  # fetch in exactly the runs that could detect a rebuild.
+  busybox-upstream-drift:
+    name: BusyBox upstream drift (pins vs busybox.net)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      OTTO_BUSYBOX_SOURCE: upstream
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10.0.1
+        with:
+          enable-cache: true
+
+      - name: Set up Python 3.10
+        run: uv python install 3.10
+
+      - name: Install dependencies
+        run: uv sync --all-extras --dev
+
+      # A failure here is one of two things, and the log distinguishes them: a
+      # fetch error (busybox.net down — noise, close the issue) or a SHA-256
+      # mismatch (upstream replaced a published binary — investigate before
+      # anything re-mirrors it).
+      - name: Fetch from busybox.net and verify against the committed pins
+        run: make busybox-preflight
+
   report-failure:
     name: Open issue on failure
-    needs: [stability-matrix, unit-matrix, dashboard, chaos-tier2, chaos-docker, conformance-hermetic]
+    needs:
+      [
+        stability-matrix,
+        unit-matrix,
+        dashboard,
+        chaos-tier2,
+        chaos-docker,
+        conformance-hermetic,
+        busybox-upstream-drift,
+      ]
     if: failure()
     runs-on: ubuntu-latest
     permissions:

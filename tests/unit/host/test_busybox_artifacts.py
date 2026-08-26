@@ -924,10 +924,21 @@ def test_the_fetch_budget_fits_inside_both_timeouts():
 # mirror can serve a different byte and it is refused exactly as upstream's
 # would be — the pin, not the host, is what is trusted.
 #
-# The `busybox` job is the exception, by policy: it exists to notice upstream
-# rebuilding an artifact in place, and a mirror in front of it would report
-# "still matches" about bytes upstream no longer serves. It forces
-# `OTTO_BUSYBOX_SOURCE=upstream`, and that is pinned below in both directions.
+# Drift detection is the exception, by policy: reading upstream's own bytes is
+# the only way to notice upstream rebuilding an artifact in place, because a
+# mirror in front of it would report "still matches" about bytes upstream no
+# longer serves. It forces `OTTO_BUSYBOX_SOURCE=upstream`.
+#
+# It runs NIGHTLY, not on push, and that placement is the point. Upstream drift
+# cannot affect a single byte this repo tests or ships: every consumer fetches
+# mirror-first and `_verify`s against `busybox_pins.json`, so the pins — not the
+# host — decide what runs. Detection is therefore a MONITORING signal, and a
+# monitoring signal enforced as a merge gate fails when a third party is down
+# rather than when the change is bad. CI's `busybox` job carried that pin until
+# 2026-08-26, when a busybox.net outage reddened main for a push that had
+# nothing to do with it. Nightly still notices drift and opens an issue; it just
+# cannot block anyone. Pinned below in three directions: not on the push gate,
+# present in nightly, and never on a consuming lane.
 
 _SOURCE_ENV = "OTTO_BUSYBOX_SOURCE"
 
@@ -1128,15 +1139,51 @@ def test_the_source_policy_is_a_declared_harness_opt_in():
     assert _SOURCE_ENV in AMBIENT_OPT_INS
 
 
-def test_the_busybox_lane_forces_upstream_and_the_consuming_lanes_do_not():
-    """The detector reads upstream; everything else may read the mirror. Pinned both ways."""
+def test_upstream_drift_detection_is_a_nightly_job_and_never_a_push_gate():
+    """The detector reads upstream, nightly. No push gate may. Pinned three ways.
+
+    The three assertions are one rule seen from three sides: reading upstream's
+    bytes is the only way to see a rebuild-in-place, and it must never be able
+    to fail a push, because the pins — not the host — decide what this repo
+    runs. A busybox.net outage reddened main on 2026-08-26 for a push it had
+    nothing to do with; that is the regression this pins shut.
+
+    Asserted against `ci.yml` by NAME for the push half and by SEARCH for the
+    nightly half, deliberately. The push half names the one job that carried
+    the pin, so restoring it there reddens here. The nightly half asks only
+    that SOME nightly job forces upstream and reports its failure, so renaming
+    or restructuring that job moves the guard instead of breaking it.
+    """
     ci = yaml.safe_load((_WORKFLOWS / "ci.yml").read_text(encoding="utf-8"))
-    busybox_env = ci["jobs"]["busybox"].get("env", {})
-    assert busybox_env.get(_SOURCE_ENV) == "upstream", (
-        f"ci.yml `busybox` must set {_SOURCE_ENV}=upstream at job level: it exists to notice "
-        f"upstream rebuilding an artifact in place, and a mirror in front of it would report "
-        f"'still matches' about bytes upstream no longer serves; got {busybox_env!r}"
+    for name, job in ci["jobs"].items():
+        job_env = job.get("env", {}) or {}
+        assert _SOURCE_ENV not in job_env, (
+            f"ci.yml `{name}` sets {_SOURCE_ENV}={job_env[_SOURCE_ENV]!r}. NO job on the push "
+            f"gate may pin the source: upstream drift cannot affect a byte this repo tests or "
+            f"ships (every consumer verifies against busybox_pins.json), so pinning upstream "
+            f"here only lets a third-party outage fail a push. Drift detection belongs in "
+            f"nightly.yml, where it opens an issue instead of blocking main."
+        )
+
+    nightly = yaml.safe_load((_WORKFLOWS / "nightly.yml").read_text(encoding="utf-8"))
+    detectors = [
+        name
+        for name, job in nightly["jobs"].items()
+        if (job.get("env", {}) or {}).get(_SOURCE_ENV) == "upstream"
+    ]
+    assert detectors, (
+        f"no nightly.yml job sets {_SOURCE_ENV}=upstream, so nothing in this repo ever reads "
+        f"upstream's own bytes again — a rebuild-in-place at busybox.net would go unnoticed "
+        f"forever, since every other lane fetches the mirror and reports 'still matches'"
     )
+    reported = set(nightly["jobs"]["report-failure"]["needs"])
+    missing = [name for name in detectors if name not in reported]
+    assert not missing, (
+        f"{missing} detect upstream drift but are absent from nightly's report-failure "
+        f"`needs`, so the drift they find opens no issue and waits for someone to watch "
+        f"the Actions tab — which is the whole reason it was safe to move off the gate"
+    )
+
     for key in _unit_tree_jobs():
         workflow = yaml.safe_load((_WORKFLOWS / key[0]).read_text(encoding="utf-8"))
         job_env = workflow["jobs"][key[1]].get("env", {}) or {}
