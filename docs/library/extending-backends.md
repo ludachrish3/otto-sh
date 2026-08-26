@@ -72,6 +72,35 @@ with **empty** families can never validate on any host, so both
 registration time rather than letting it sit in the registry as a latent dead
 end.
 
+## `progress_granularity` — what the backend promises the bar
+
+`register_transfer_backend` refuses a class in the same way for a second
+missing declaration: {class}`~otto.host.transfer.BaseFileTransfer`'s
+`progress_granularity`, a {class}`~otto.host.transfer.base.ProgressGranularity`
+stating, per direction, the most `bytes_done` may advance between two
+consecutive progress events. A backend that reads its source in 8 KiB blocks
+and reports once per block declares `ProgressGranularity(put=8192, get=8192)`.
+
+A direction that emits exactly **one** event, at completion — a whole-file
+transfer with no intermediate observation, as `console`'s get is — declares
+that arm `None` and **must** explain itself in `note`; the dataclass refuses a
+`None` arm with an empty note, and refuses a stride that is not a positive
+byte count, so a bad declaration cannot even be constructed. The note is
+published beside the promise on the support-matrix page, so it is written for
+a user reading it there.
+
+A backend whose stride is configured per instance declares its DEFAULT on the
+class and overrides
+{meth}`~otto.host.transfer.BaseFileTransfer.effective_progress_granularity` to
+answer the configured value — `scp` does exactly this, reading the `block_size`
+that its options hand to `asyncssh.scp` (including one set through `extra`, which
+is applied last and therefore wins). Such a backend must read the INSTANCE
+wherever the promise has to hold for a live host, because its class attribute is
+only the default. A backend whose stride is FIXED has nothing to override and
+reads its own class attribute freely — `sftp` passes
+`self.progress_granularity.put` / `.get` straight to asyncssh as `block_size`,
+which is what makes its promise true by construction.
+
 ## The `create(ctx)` construction contract
 
 Both seams construct through a uniform classmethod. The host assembles a frozen
@@ -108,10 +137,11 @@ backend.
 ## A worked example
 
 A custom transfer backend subclasses
-{class}`~otto.host.transfer.BaseFileTransfer`, declares its `host_families`,
-overrides `create`, and implements the two abstract halves `_run_put` /
-`_run_get` (each must call `progress_factory()` once per source file so the
-transfer reports progress).
+{class}`~otto.host.transfer.BaseFileTransfer`, declares its `host_families`
+and its `progress_granularity`, overrides `create`, and implements the two
+abstract halves `_run_put` / `_run_get` (each must call `progress_factory()`
+once per source file so the transfer reports progress, in steps no larger than
+the granularity it declared).
 
 `_run_put`/`_run_get` return `dict[Path, Result]` — one entry per source
 file, keyed exactly as passed (no resolution). The public `put`/`get`
@@ -126,13 +156,15 @@ sequential backend never reached:
 from pathlib import Path
 
 from otto.host import register_transfer_backend
-from otto.host.transfer import BaseFileTransfer, TransferContext
+from otto.host.transfer import BaseFileTransfer, ProgressGranularity, TransferContext
 from otto.result import Result
 from otto.utils import Status
 
 
 class XmodemTransfer(BaseFileTransfer):
     host_families = frozenset({"unix", "embedded"})
+    # XMODEM moves 128-byte data blocks; this backend reports one per block.
+    progress_granularity = ProgressGranularity(put=128, get=128)
 
     @classmethod
     def create(cls, ctx: TransferContext) -> "XmodemTransfer":

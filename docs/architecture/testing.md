@@ -360,19 +360,24 @@ the guard has stopped discriminating instead of passing quietly.
 
 `tests/conformance/` asserts otto's *host contracts* — the promises that
 hold for every host, whatever userland it runs and whatever terminal and
-transfer backend reaches it. Six contracts today, across exec, transfer and
+transfer backend reaches it. Seven contracts today, across exec, transfer and
 timeout: an exit code reaches the caller unchanged, output carries nothing
 the shell added, a failing command in a sequence is not reported as success,
-put/get round-trips bytes, `put` lands the documented mode on the host, and
-a command over its budget comes back the documented way (a `CommandResult`
-with `timed_out=True`, not an exception) while its session stays usable.
+put/get round-trips bytes, `put` lands the documented mode on the host, a
+transfer's progress events track the bytes in both directions, and a command
+over its budget comes back the documented way (a `CommandResult` with
+`timed_out=True`, not an exception) while its session stays usable.
 
 Each contract runs against a **resolved cell** — a `(host, term, transfer)`
 triple the suite can actually stand up, the same cell vocabulary
-`tests/_fixtures/profiles.py` uses above. Six contracts times the cells a
-run draws is the lane's size, less whatever a contract's own applicable
-domain excludes: 48 tests in the hermetic venue at its default, and 284 on
-the bed with every cell selected.
+`tests/_fixtures/profiles.py` uses above. Every contract also ships a
+positive control, parametrized over the same cells and inheriting the same
+domain, so a drawn cell carries **fourteen items**: seven contracts and seven
+controls. Fourteen times the cells a run draws is the lane's size, less
+whatever a contract's own applicable domain excludes — 112 tests in the
+hermetic venue at its default, and 654 on the bed with every cell selected,
+plus the three bed-opener witness items, which name their own cells rather
+than taking the draw.
 
 **Not to be confused with `otto.testing.conformance`.** otto ships a second
 thing called conformance and it is unrelated: `src/otto/testing/conformance.py`
@@ -402,7 +407,7 @@ venue's cells:
   `bash --norc --noprofile` by name), so shell-*dialect* behaviour on a
   BusyBox userland is not measured here — that belongs to the bed venue's
   real guests. Its space is 8 cells and the default budget is 8, so the lane
-  is exhaustive by arithmetic: 48 tests. This is what `make conformance`
+  is exhaustive by arithmetic: 112 tests. This is what `make conformance`
   runs and what the nightly CI job runs.
 - **Bed (`OTTO_CONFORMANCE_BED=1`).** Real hardware, built from the bed's own
   lab data by `tests/conformance/_bed.py`: the Unix VMs across
@@ -433,6 +438,24 @@ filesystem, so `telnet` terms and `console` transfers are not in its space at
 all. A skip inside a drawn cell would report success for a contract nobody
 ran, which is the failure this suite exists to make impossible — so the
 space itself shrinks instead, and the run says so out loud.
+
+**A worked example of what that costs: which transfer backends each venue
+reaches.** The `transfer-progress` contract measures a real transfer's
+progress events against the stride the backend declares in code — a
+`ProgressGranularity`, rendered per backend on
+{ref}`the support-matrix page <matrix-progress-promises>` — in both
+directions. Which backends actually get measured is not what the cell labels
+suggest. Six of the hermetic venue's eight cells (`local` and the five
+`busybox-artifact` cells) are a `LocalHost`, whose transfer is
+`LocalFileTransfer` and is not a registered backend at all; only the two
+`loopback-ssh` cells move bytes through one, as `sftp` and `scp` over real
+`asyncssh` streams. So `shell`, `nc`, `ftp` and `console` are measured on the
+bed alone: `shell` on the five BusyBox guests, `nc` on those five and on the
+eight `bed-unix` cells that offer it, `ftp` on eight `bed-unix` cells, and
+`console` on the four Zephyr guests with a filesystem (the other three are
+outside the contract's domain). A change to `shell`'s progress loop therefore
+reds nothing hermetically; the equivalent hermetic observation has to be taken
+on `sftp` or `scp`.
 
 ### What the bed venue does not cover
 

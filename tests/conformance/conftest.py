@@ -158,10 +158,11 @@ def pytest_sessionstart(session):
 
 #: The name a contract module gives a one-argument predicate to DECLARE ITS
 #: APPLICABLE DOMAIN -- the drawn cells it is a contract about. Absent means
-#: "every drawn cell", which is what three of the six contracts here say -- the
-#: three in the exec file. The other three are covered by two declarations (the
-#: transfer file declares one for both of its, and the timeout file for its
-#: one), which is why the module count and the contract count differ.
+#: "every drawn cell", which is what three of the seven contracts here say --
+#: the three in the exec file. The other four are covered by three declarations
+#: (the transfer file declares one for both of its, the progress file the same
+#: predicate for its one, and the timeout file for its one), which is why the
+#: module count and the contract count differ.
 _DOMAIN_HOOK = "applicable_cell"
 
 #: The name a contract module gives a one-argument function to declare that a
@@ -186,14 +187,17 @@ def pytest_generate_tests(metafunc):
     argument is evaluated at conftest import, before any config exists.
 
     A CONTRACT MAY DECLARE THE CELLS IT IS ABOUT, by defining a module-level
-    :data:`_DOMAIN_HOOK` predicate over the ``ResolvedCell``. Two MODULES do
-    today, covering three of the six contracts, and they read different
+    :data:`_DOMAIN_HOOK` predicate over the ``ResolvedCell``. Three MODULES do
+    today, covering four of the seven contracts, and they read different
     things:
 
     - ``test_transfer_contract.py`` is about ``put``/``get``, and the three bed
       guests declaring ``filesystem: "none"`` have nowhere to put a file --
       OTTO'S own answer, not this suite's (see
       :attr:`~tests.conformance._resolved.ResolvedCell.remote_scratch`).
+    - ``test_progress_contract.py`` reads the SAME answer for the same reason:
+      a device with nowhere to put a file has no transfer whose progress bar
+      could be watched.
     - ``test_timeout_contract.py`` is about a command that outlives its budget,
       and the seven bed Zephyr cells have no such command -- THIS SUITE'S
       answer, because otto describes no host as "can be made to block". Its

@@ -85,7 +85,13 @@ from ...result import CommandResult, Result
 from ...utils import Status
 from ..errors import UnsupportedOnUserlandError
 from ..userland import APPLET_ABSENT, applet_capability
-from .base import TransferContext, TransferProgressFactory, TransferProgressHandler, mark_skipped
+from .base import (
+    ProgressGranularity,
+    TransferContext,
+    TransferProgressFactory,
+    TransferProgressHandler,
+    mark_skipped,
+)
 from .registry import register_transfer_backend
 from .unix_base import UnixFileTransfer
 
@@ -1154,6 +1160,14 @@ class ShellFileTransfer(UnixFileTransfer):
     """
 
     host_families = frozenset({"unix"})
+
+    # Both directions move `_SHELL_CHUNK_BYTES` at a time and report once
+    # per chunk: GET's codecs emit `dd bs=_SHELL_CHUNK_BYTES count=1` per chunk
+    # and report each decoded one, PUT reads the same size -- or LESS, where
+    # `_fitted_chunk_bytes` shrinks it to fit the host's exec line budget. A
+    # stride is an UPPER bound on the advance between two events, so the
+    # unfitted size is the honest declaration for both arms.
+    progress_granularity = ProgressGranularity(put=_SHELL_CHUNK_BYTES, get=_SHELL_CHUNK_BYTES)
 
     def __init__(
         self,

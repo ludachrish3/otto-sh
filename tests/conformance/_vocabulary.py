@@ -1,15 +1,15 @@
 """How each userland is ASKED the question every contract in this tree asserts.
 
 THE STIMULUS VARIES PER CELL; THE ASSERTED PROPERTY DOES NOT. That sentence is
-the whole design and it was arrived at by getting it wrong first. The six
-contracts were written against bash -- ``printf '%s\\n%s\\n' ...``, ``(exit
+the whole design and it was arrived at by getting it wrong first. The first
+six contracts were written against bash -- ``printf '%s\\n%s\\n' ...``, ``(exit
 42)``, ``sleep N`` -- and a Zephyr RTOS shell has none of those spellings, so
 the first reading of the bed venue's red was "Zephyr cannot express these
 contracts" and the first proposal was to narrow four of them. That was wrong.
 Zephyr returns an exit code (a signed errno: an unknown command answers ``-8``,
 ``-ENOEXEC``, and ``kernel version`` answers ``0``) and it frames its output (``help``
 is multi-line and exits 0). What is missing is bash's VOCABULARY, not the
-PROPERTY. A vocabulary layer that also varied the assertion would turn six
+PROPERTY. A vocabulary layer that also varied the assertion would turn seven
 contracts into a per-userland suite that can never disagree with the product --
 exactly the drift this suite exists to remove.
 
@@ -233,7 +233,7 @@ class Vocabulary:
     """
 
 
-#: Bash, ash and any other POSIX shell: the vocabulary the six contracts were
+#: Bash, ash and any other POSIX shell: the vocabulary the seven contracts were
 #: originally written in. Serves BOTH venues -- every hermetic cell is a GNU or
 #: BusyBox userland behind a POSIX shell, and the bed's ``gnu`` and
 #: ``busybox-*`` hosts are too.

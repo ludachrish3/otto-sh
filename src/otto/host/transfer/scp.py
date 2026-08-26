@@ -30,6 +30,7 @@ from ...result import CommandResult, Result
 from ...utils import Status
 from ..userland import APPLET_ABSENT, applet_capability, refuse_if_gapped
 from .base import (
+    ProgressGranularity,
     TransferContext,
     TransferProgressFactory,
 )
@@ -214,6 +215,22 @@ class ScpFileTransfer(UnixFileTransfer):
 
     host_families = frozenset({"unix"})
 
+    # The DEFAULT stride only. scp's real stride is whatever `block_size` reaches
+    # `asyncssh` -- the `ScpOptions.block_size` field, or an `extra` of the same
+    # name, which `_kwargs()` applies last and which therefore wins -- so the class
+    # attribute states only the default (pinned against `ScpOptions().block_size`
+    # in the unit tests so the two cannot drift) and
+    # `effective_progress_granularity` reads `_kwargs()` to answer for the instance.
+    progress_granularity = ProgressGranularity(
+        put=16384,
+        get=16384,
+        note=(
+            "the stride is whatever `block_size` reaches `asyncssh` (default 16384): the "
+            "`scp_options.block_size` field, or an `extra` of the same name, which is "
+            "applied last and wins"
+        ),
+    )
+
     def __init__(
         self,
         connections: "ConnectionManager",
@@ -268,6 +285,42 @@ class ScpFileTransfer(UnixFileTransfer):
             userland=ctx.userland,
             max_filename_len=ctx.max_filename_len,
         )
+
+    @override
+    def effective_progress_granularity(self) -> ProgressGranularity:
+        """Answer the CONFIGURED stride, which is what asyncssh will actually read in.
+
+        The class declaration is only the default. The stride is user-facing
+        (`[scp_options]` in lab data) and is handed straight to
+        ``asyncssh.scp``, so a host that raised it makes a different promise
+        than the class states and every reader of the promise -- the
+        conformance surface, the support-matrix page -- must ask the instance.
+
+        Read from ``_kwargs()`` rather than from ``block_size``, because THAT is
+        the dict asyncssh receives: ``_kwargs()`` ends ``kw.update(self.extra)``
+        and ``extra`` is user-settable ("Extra kwargs forwarded to
+        ``asyncssh.scp()``"), so ``extra = {"block_size": 65536}`` strides 65536
+        no matter what the dedicated field says. Reading the field alone would
+        make the promise and the reality two different numbers -- and this
+        method is what the ``transfer-progress`` conformance surface sizes its
+        payload from, so the gap would surface as a backend failure rather than
+        as the config choice it is.
+
+        A non-positive or non-int answer falls back to the class declaration.
+        ``block_size`` carries no positivity constraint at either boundary, so
+        ``0`` is reachable from lab data, and
+        :class:`~otto.host.transfer.base.ProgressGranularity` refuses it by
+        construction. asyncssh wedges on ``0`` independently (its
+        ``min(size - offset, self._block_size)`` never advances), so that
+        transfer fails either way -- but a method whose only job is to ANSWER A
+        QUESTION must not be the place a config error surfaces.
+        """
+        size = self._scp_options._kwargs().get(  # noqa: SLF001 — intra-package access to ScpOptions._kwargs
+            "block_size"
+        )
+        if not isinstance(size, int) or size <= 0:
+            return type(self).progress_granularity
+        return ProgressGranularity(put=size, get=size, note=self.progress_granularity.note)
 
     @override
     async def _run_get(

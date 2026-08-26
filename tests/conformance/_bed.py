@@ -403,7 +403,7 @@ def _opener_for(cell: "Cell") -> "Callable[[], AbstractAsyncContextManager[BaseH
     qemu-restart`` (issue #260). Worth repeating one measurement from there,
     because the hazard is not the obvious shape: a Zephyr host reports a single
     ``(telnet, console)`` pair, so there is ONE cell per guest and two cells can
-    never name the same one -- what collides is the six contract items of ONE
+    never name the same one -- what collides is the seven contract items of ONE
     cell, which this tree's default ``-n auto`` scatters across workers.
 
     Built per cell, never per session: a contract that leaves a host's

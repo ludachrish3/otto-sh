@@ -171,6 +171,7 @@ from otto.host.transfer.shell import (
 from otto.host.userland import APPLET_ABSENT, APPLET_PRESENT, PROBED_APPLETS, Userland
 from otto.result import CommandResult
 from otto.utils import Status
+from tests._fixtures.progress import ProgressEvent, assert_progress_invariants
 
 # ---------------------------------------------------------------------------
 # Shared fakes
@@ -1803,9 +1804,17 @@ class TestShellPutProgress:
         dest_dir.mkdir()
 
         seen: list[tuple[int, int]] = []
+        events: list[ProgressEvent] = []
 
-        def handler(_src: str, _dst: str, bytes_done: int, bytes_total: int) -> None:
+        def handler(
+            reported_src: str, reported_dst: str, bytes_done: int, bytes_total: int
+        ) -> None:
             seen.append((bytes_done, bytes_total))
+            events.append(
+                ProgressEvent(
+                    src=reported_src, dst=reported_dst, done=bytes_done, total=bytes_total
+                )
+            )
 
         # Answered so the transfer actually reaches Success -- confirming the
         # progress contract holds for a transfer integrity verification let
@@ -1819,6 +1828,12 @@ class TestShellPutProgress:
         assert result[src].status is Status.Success, result[src].msg
         assert seen, "progress handler was never invoked"
         assert seen[-1] == (len(payload), len(payload))
+        assert_progress_invariants(
+            events,
+            src=str(src),
+            total=len(payload),
+            granularity=ShellFileTransfer.progress_granularity.put,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -2272,10 +2287,18 @@ class TestShellGetStaging:
         total = _SHELL_CHUNK_BYTES * 2 + 123
 
         seen_calls = 0
+        events: list[ProgressEvent] = []
 
-        def handler(_src: str, _dst: str, _bytes_done: int, _bytes_total: int) -> None:
+        def handler(
+            reported_src: str, reported_dst: str, bytes_done: int, bytes_total: int
+        ) -> None:
             nonlocal seen_calls
             seen_calls += 1
+            events.append(
+                ProgressEvent(
+                    src=reported_src, dst=reported_dst, done=bytes_done, total=bytes_total
+                )
+            )
             assert not dst.exists(), (
                 f"the real destination existed before the final replace (call {seen_calls})"
             )
@@ -2287,6 +2310,12 @@ class TestShellGetStaging:
 
         assert per_file[src].status is Status.Success, per_file[src].msg
         assert seen_calls == 3, seen_calls
+        assert_progress_invariants(
+            events,
+            src=str(src),
+            total=total,
+            granularity=ShellFileTransfer.progress_granularity.get,
+        )
         assert dst.exists(), "the destination must exist once the transfer completes"
 
     @pytest.mark.asyncio
@@ -2850,9 +2879,17 @@ class TestShellGetProgress:
         dest_dir.mkdir()
 
         seen: list[tuple[int, int]] = []
+        events: list[ProgressEvent] = []
 
-        def handler(_src: str, _dst: str, bytes_done: int, bytes_total: int) -> None:
+        def handler(
+            reported_src: str, reported_dst: str, bytes_done: int, bytes_total: int
+        ) -> None:
             seen.append((bytes_done, bytes_total))
+            events.append(
+                ProgressEvent(
+                    src=reported_src, dst=reported_dst, done=bytes_done, total=bytes_total
+                )
+            )
 
         exec_cmd = _ShellExecutingExec(cwd=tmp_path)
         ft = _make_ft(exec_cmd)
@@ -2862,6 +2899,12 @@ class TestShellGetProgress:
         assert per_file[src].status is Status.Success, per_file[src].msg
         assert seen, "progress handler was never invoked"
         assert seen[-1] == (len(payload), len(payload))
+        assert_progress_invariants(
+            events,
+            src=str(src),
+            total=len(payload),
+            granularity=ShellFileTransfer.progress_granularity.get,
+        )
 
 
 # ---------------------------------------------------------------------------

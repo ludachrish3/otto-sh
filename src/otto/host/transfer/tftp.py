@@ -5,13 +5,19 @@ from pathlib import Path
 from typing_extensions import override
 
 from ...result import Result
-from .base import TransferContext, TransferProgressFactory
+from .base import ProgressGranularity, TransferContext, TransferProgressFactory
 from .embedded_base import EmbeddedFileTransfer
 from .registry import register_transfer_backend
 
 
 class TftpFileTransfer(EmbeddedFileTransfer):
     """Reserved: TFTP transfer for embedded hosts is not yet implemented."""
+
+    progress_granularity = ProgressGranularity(
+        put=None,
+        get=None,
+        note="not implemented; both directions raise NotImplementedError",
+    )
 
     @override
     @classmethod

@@ -42,7 +42,7 @@ from .session import (
     SessionManager,
 )
 from .toolchain import Toolchain
-from .transfer import BaseFileTransfer, TransferProgressFactory
+from .transfer import BaseFileTransfer, ProgressGranularity, TransferProgressFactory
 from .transfer.base import mark_skipped
 
 
@@ -61,6 +61,15 @@ class LocalFileTransfer(BaseFileTransfer):
     supports_mode = True
     """A local copy lands on the machine's own filesystem, so ``Path.chmod``
     applies the mode directly — no shell, no transport."""
+
+    progress_granularity = ProgressGranularity(
+        put=None,
+        get=None,
+        note=(
+            "`shutil.copy2` is one blocking C call with no progress hook -- the "
+            "one event arrives when the whole file has been copied"
+        ),
+    )
 
     async def _do_copy(
         self,

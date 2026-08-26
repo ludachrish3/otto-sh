@@ -40,6 +40,7 @@ from ...result import CommandResult, Result
 from ...utils import Status
 from ..userland import refuse_if_gapped
 from .base import (
+    ProgressGranularity,
     TransferContext,
     TransferProgressFactory,
 )
@@ -150,6 +151,14 @@ async def open_sftp_or_attribute(
         raise
 
 
+# The block size otto asks asyncssh to read and write in, and therefore the
+# stride of the progress events asyncssh reports back. asyncssh's own default
+# is `-1`, which lets the SERVER choose the maximum it will negotiate, so the
+# stride would be unknowable and no promise could be made about it. 16 KiB is
+# asyncssh's own historical default, and the bed measures what pinning it costs.
+_SFTP_BLOCK_SIZE = 16384
+
+
 class SftpFileTransfer(UnixFileTransfer):
     """SFTP file transfer backend for UnixHost.
 
@@ -161,6 +170,20 @@ class SftpFileTransfer(UnixFileTransfer):
     """
 
     host_families = frozenset({"unix"})
+
+    # True by CONSTRUCTION rather than by observation: this declaration and the
+    # two `block_size=` arguments `_get_files_sftp` / `_put_files_sftp` hand to
+    # asyncssh all read ONE module constant, so they cannot drift.
+    #
+    # The calls pass `_SFTP_BLOCK_SIZE` rather than reading this attribute back,
+    # and that is a TYPE constraint, not a style choice: a `ProgressGranularity`
+    # arm is `int | None` because a `None` arm is legal for backends that emit one
+    # event at completion, and asyncssh declares `block_size: int`. Reading the
+    # declaration at the call site hands it an `int | None` and fails typecheck.
+    # `test_sftp_passes_its_declared_block_size_to_asyncssh` is what keeps the
+    # kwarg and this declaration equal -- it asserts them against each other, so
+    # the agreement is measured rather than assumed.
+    progress_granularity = ProgressGranularity(put=_SFTP_BLOCK_SIZE, get=_SFTP_BLOCK_SIZE)
 
     def __init__(
         self,
@@ -245,6 +268,7 @@ class SftpFileTransfer(UnixFileTransfer):
                 str(src),
                 str(dest_dir / src.name),
                 progress_handler=_progress,
+                block_size=_SFTP_BLOCK_SIZE,
             )
             return Result(Status.Success, value=dest_dir / src.name)
 
@@ -275,6 +299,7 @@ class SftpFileTransfer(UnixFileTransfer):
                 str(src),
                 str(dest_dir / src.name),
                 progress_handler=_progress,
+                block_size=_SFTP_BLOCK_SIZE,
             )
             return Result(Status.Success, value=dest_dir / src.name)
 

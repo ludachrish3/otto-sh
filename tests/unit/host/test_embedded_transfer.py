@@ -27,6 +27,7 @@ from otto.host.transfer.console import (
 from otto.host.transfer.tftp import TftpFileTransfer
 from otto.result import CommandResult
 from otto.utils import Status
+from tests._fixtures.progress import ProgressEvent, assert_progress_invariants
 
 # A Zephyr filesystem mount path — the destination directory for `put`.
 RAM = Path("/RAM:")
@@ -379,6 +380,11 @@ def _spy_factory(calls):
     return factory
 
 
+def _events(calls) -> list[ProgressEvent]:
+    """The ``(src, dst, done, total)`` tuples the spy records, as ProgressEvents."""
+    return [ProgressEvent(src=s, dst=d, done=done, total=total) for s, d, done, total in calls]
+
+
 class TestPutProgress:
     """``EmbeddedFileTransfer`` emits per-32-byte-chunk progress events
     through the factory provided by ``BaseFileTransfer.put_files``."""
@@ -399,6 +405,12 @@ class TestPutProgress:
         bytes_done = [done for _src, _dst, done, _total in calls]
         assert bytes_done == [32, 64, 96, 100]
         assert all(total == 100 for *_, total in calls)
+        assert_progress_invariants(
+            _events(calls),
+            src=str(src),
+            total=100,
+            granularity=ConsoleFileTransfer.progress_granularity.put,
+        )
 
     @pytest.mark.asyncio
     async def test_final_emission_is_at_completion(self, tmp_path):
@@ -412,6 +424,12 @@ class TestPutProgress:
         calls: list = []
         await xfer._run_put([src], RAM, _spy_factory(calls))
         assert calls[-1][2] == calls[-1][3] == 50
+        assert_progress_invariants(
+            _events(calls),
+            src=str(src),
+            total=50,
+            granularity=ConsoleFileTransfer.progress_granularity.put,
+        )
 
     @pytest.mark.asyncio
     async def test_empty_file_emits_one_zero_event(self, tmp_path):
@@ -468,6 +486,22 @@ class TestGetProgress:
         # Each event reports bytes_done == bytes_total (file-complete signal).
         for _src, _dst, done, total in calls:
             assert done == total > 0
+        # One `_run_get`, two files: ONE list holding TWO streams. The
+        # invariant is per file -- clause 2 refuses a foreign src rather than
+        # filtering it -- so the events are split by src and each stream is
+        # checked against its own size.
+        by_src: dict[str, list[ProgressEvent]] = {}
+        for event in _events(calls):
+            by_src.setdefault(event.src, []).append(event)
+        sizes = {(RAM / "a.bin").as_posix(): 4, (RAM / "b.bin").as_posix(): 6}
+        assert sorted(by_src) == sorted(sizes), by_src
+        for one_src, size in sizes.items():
+            assert_progress_invariants(
+                by_src[one_src],
+                src=one_src,
+                total=size,
+                granularity=ConsoleFileTransfer.progress_granularity.get,
+            )
 
 
 class TestGet:

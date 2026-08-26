@@ -33,6 +33,7 @@ from ..errors import HostCommandError, HostUnreachableError
 from .base import (
     NcListenerCheck,
     NcPortStrategy,
+    ProgressGranularity,
     TransferContext,
     TransferProgressFactory,
     TransferProgressHandler,
@@ -406,6 +407,13 @@ class NcFileTransfer(UnixFileTransfer):
     """
 
     host_families = frozenset({"unix"})
+
+    # Both arms move one `_NC_BLOCK_SIZE` block per progress event: PUT's
+    # `_send_file_stall_bounded` reads `f.read(_NC_BLOCK_SIZE)` and calls the
+    # handler EVERY block (the `_NC_DRAIN_EVERY` batching bounds the DRAIN, not
+    # the report), and GET reads `min(_NC_BLOCK_SIZE, total - bytes_done)` and
+    # reports each block it writes.
+    progress_granularity = ProgressGranularity(put=_NC_BLOCK_SIZE, get=_NC_BLOCK_SIZE)
 
     def __init__(
         self,

@@ -9,7 +9,7 @@ a cross-family protocol is a single entry.
 """
 
 from ...registry import Registry, caller_module
-from .base import BaseFileTransfer
+from .base import BaseFileTransfer, ProgressGranularity
 
 # Unified registry of transfer-protocol name -> backend class, spanning BOTH
 # host families. ``EmbeddedFileTransfer`` registers ``console``/``tftp`` into
@@ -27,8 +27,11 @@ def register_transfer_backend(
     """Make a custom transfer backend available to lab data under *name*.
 
     Call from an init module listed in ``.otto/settings.toml``. The backend
-    must declare a non-empty :attr:`BaseFileTransfer.host_families`; otherwise
-    it could never validate against any host and is rejected here.
+    must declare a non-empty :attr:`BaseFileTransfer.host_families` -- otherwise
+    it could never validate against any host -- and a
+    :class:`~otto.host.transfer.base.ProgressGranularity` in
+    :attr:`BaseFileTransfer.progress_granularity`, so what it promises the
+    progress bar is stated rather than inferred. Both are rejected here.
 
     *overwrite* replaces an existing registration under *name* deliberately
     (e.g. a built-in); by default a duplicate name raises.
@@ -38,6 +41,16 @@ def register_transfer_backend(
             f"register_transfer_backend({name!r}): cls.host_families is empty; "
             f"a transfer backend must declare at least one host family "
             f"(e.g. frozenset({{'unix'}}))."
+        )
+    # isinstance, not hasattr: a subclass declaring a bare int (or inheriting
+    # only the ClassVar ANNOTATION, which creates no attribute) would satisfy a
+    # name check while promising nothing the matrix or the conformance surface
+    # can read.
+    if not isinstance(getattr(cls, "progress_granularity", None), ProgressGranularity):
+        raise ValueError(  # noqa: TRY004 — this registry refuses with ValueError uniformly (see host_families above)
+            f"register_transfer_backend({name!r}): cls.progress_granularity is missing; "
+            f"a transfer backend must declare what it promises the progress bar "
+            f"(e.g. ProgressGranularity(put=8192, get=8192))."
         )
     TRANSFER_BACKENDS.register(name, cls, overwrite=overwrite, origin=caller_module())
 

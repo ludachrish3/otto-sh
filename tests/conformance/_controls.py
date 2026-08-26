@@ -38,7 +38,7 @@ Both take ``resolved_cell``, so signature alone cannot tell them apart. The
 :data:`CONTROL_MARK` marker is what does, in three places that would otherwise
 each get it wrong:
 
-* ``tests/_fixtures/support_matrix.py`` would file a control as a seventh
+* ``tests/_fixtures/support_matrix.py`` would file a control as an eighth
   matrix ROW (it discovers contracts by their ``resolved_cell`` parameter);
 * ``tests/conformance/_observation.py`` would emit an observation record for
   it, with ``surface: null``, which the collator must refuse -- a control's

@@ -13,7 +13,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from ...result import CommandResult, Result
 from ...utils import Status
@@ -31,6 +31,38 @@ TransferProgressHandler = Callable[[str, str, int, int], None]
 # Factory that creates a fresh, isolated TransferProgressHandler per file.
 # Used for concurrent transfers so each coroutine has independent progress state.
 TransferProgressFactory = Callable[[], TransferProgressHandler]
+
+
+@dataclass(frozen=True)
+class ProgressGranularity:
+    """What a backend promises the progress bar, per direction.
+
+    ``put`` / ``get``: the most ``bytes_done`` may advance between two
+    consecutive progress events (the last event may advance less). ``None``
+    means the backend emits exactly ONE event, at completion -- a whole-file
+    transfer with no intermediate observation -- and MUST say why in ``note``,
+    because that note is rendered beside the promise on the support-matrix
+    page. The conformance surface ``transfer-progress`` sizes its payload from
+    these numbers and refuses a stream that breaks them; see
+    ``tests/_fixtures/progress.py``.
+    """
+
+    put: int | None
+    get: int | None
+    note: str = ""
+
+    def __post_init__(self) -> None:
+        for arm, value in (("put", self.put), ("get", self.get)):
+            if value is not None and value <= 0:
+                raise ValueError(
+                    f"ProgressGranularity.{arm} must be a positive byte count "
+                    f"or None, got {value!r}"
+                )
+        if (self.put is None or self.get is None) and not self.note.strip():
+            raise ValueError(
+                "ProgressGranularity: a None arm (one event at completion) must explain "
+                "itself in `note` -- the note is published beside the promise"
+            )
 
 
 @dataclass(frozen=True)
@@ -253,6 +285,27 @@ class BaseFileTransfer(ABC):
     ``False`` for embedded backends (``console``, ``tftp``): a Zephyr
     filesystem has no permission bits to set.
     """
+
+    progress_granularity: ClassVar[ProgressGranularity]
+    """
+    The stride this backend promises the progress bar, per direction. Declared on
+    every backend class; ``register_transfer_backend`` refuses a class without it.
+    A backend whose stride is configured per instance (scp's
+    ``ScpOptions.block_size``) declares its DEFAULT here and answers the
+    configured value from
+    :meth:`~otto.host.transfer.BaseFileTransfer.effective_progress_granularity`.
+
+    The role is FULLY QUALIFIED deliberately. This docstring is INHERITED by
+    every backend class and rendered once per class, so a bare ``:meth:`` role
+    is resolved against each SUBCLASS's module -- none of which documents the
+    method -- and every such rendering is an unresolved target that ``-W``
+    turns into a build failure. Measured 2026-08-26: eight of them, from the
+    bare form this replaces.
+    """
+
+    def effective_progress_granularity(self) -> ProgressGranularity:
+        """Answer the promise THIS instance makes -- the class declaration unless overridden."""
+        return type(self).progress_granularity
 
     @classmethod
     def create(cls, ctx: "TransferContext") -> "BaseFileTransfer":

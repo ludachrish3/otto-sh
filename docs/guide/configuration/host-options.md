@@ -172,6 +172,14 @@ dict that is forwarded verbatim to the underlying library (``asyncssh``,
 ``aioftp``) for any option not surfaced as a curated field.  ``NcOptions``
 has no ``extra`` — all netcat knobs are curated fields.
 
+Each of these backends reports transfer progress at a fixed stride — the most
+the bar may advance between two ticks: 16 KiB for ``sftp`` and ``scp``, 8 KiB
+for ``ftp`` and ``nc``.  Only ``scp``'s follows your configuration: whatever
+``block_size`` reaches ``asyncssh`` becomes the stride, whether you set it as
+the field above or through ``extra``, which is applied last and wins.
+{ref}`The support-matrix page <matrix-progress-promises>` lists every backend's
+promise and how a run measures it.
+
 **Notable SFTP fields** ({class}`~otto.host.options.SftpOptions`): ``env``
 sets remote environment variables; ``send_env`` forwards named local
 variables to the remote SFTP process.

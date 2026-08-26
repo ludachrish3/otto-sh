@@ -32,6 +32,7 @@ from otto.host.transfer import NcFileTransfer
 from otto.host.userland import Userland
 from otto.result import CommandResult, Result
 from otto.utils import Status
+from tests._fixtures.progress import ProgressEvent, assert_progress_invariants
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -317,10 +318,10 @@ class TestGetFilesNcNonTunnel:
         dst_dir = tmp_path / "dst"
         dst_dir.mkdir()
 
-        progress_calls: list[tuple[int, int]] = []
+        progress_calls: list[tuple[str, int, int]] = []
 
         def handler(src: str, dst: str, bytes_done: int, total: int) -> None:
-            progress_calls.append((bytes_done, total))
+            progress_calls.append((src, bytes_done, total))
 
         def factory():
             return handler
@@ -364,8 +365,14 @@ class TestGetFilesNcNonTunnel:
 
         assert status is Status.Success, msg
         assert len(progress_calls) == 2
-        assert progress_calls[0] == (5, 10)
-        assert progress_calls[1] == (10, 10)
+        assert progress_calls[0] == (str(src_remote), 5, 10)
+        assert progress_calls[1] == (str(src_remote), 10, 10)
+        assert_progress_invariants(
+            [ProgressEvent(src=s, dst="", done=d, total=t) for s, d, t in progress_calls],
+            src=str(src_remote),
+            total=10,
+            granularity=NcFileTransfer.progress_granularity.get,
+        )
 
     @pytest.mark.asyncio
     async def test_get_files_nc_dispatches_to_tunneled_when_has_tunnel(
@@ -1175,10 +1182,10 @@ class TestGetFilesNcTunneled:
         dst_dir = tmp_path / "dst"
         dst_dir.mkdir()
 
-        progress_calls: list[tuple[int, int]] = []
+        progress_calls: list[tuple[str, int, int]] = []
 
         def handler(src: str, dst: str, bytes_done: int, total: int) -> None:
-            progress_calls.append((bytes_done, total))
+            progress_calls.append((src, bytes_done, total))
 
         def factory():
             return handler
@@ -1215,8 +1222,14 @@ class TestGetFilesNcTunneled:
 
         assert status is Status.Success, msg
         assert len(progress_calls) == 2
-        assert progress_calls[0] == (5, 10)
-        assert progress_calls[1] == (10, 10)
+        assert progress_calls[0] == (str(src_remote), 5, 10)
+        assert progress_calls[1] == (str(src_remote), 10, 10)
+        assert_progress_invariants(
+            [ProgressEvent(src=s, dst="", done=d, total=t) for s, d, t in progress_calls],
+            src=str(src_remote),
+            total=10,
+            granularity=NcFileTransfer.progress_granularity.get,
+        )
 
 
 class TestTheTunneledGetIsSizeTerminated:

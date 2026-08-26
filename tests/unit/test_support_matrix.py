@@ -36,6 +36,11 @@ from pathlib import Path
 import pytest
 from jsonschema import Draft202012Validator
 
+from otto.host.transfer import (
+    TRANSFER_BACKENDS,
+    ProgressGranularity,
+    build_transfer_backend,
+)
 from otto.result import CommandResult, Result, Results
 from otto.utils import Status
 from scripts.check_matrix_downgrades import main as gate_main
@@ -78,6 +83,7 @@ from tests._fixtures.support_matrix import (
 )
 from tests.conformance import conftest as conformance_conftest
 from tests.conformance import test_exec_contract as _exec_contract
+from tests.conformance import test_progress_contract as _progress_contract
 from tests.conformance import test_timeout_contract as _timeout_contract
 from tests.conformance import test_transfer_contract as _transfer_contract
 from tests.conformance._controls import (
@@ -1675,10 +1681,10 @@ def test_a_positive_control_is_never_counted_as_a_contract():
     """The exclusion that keeps a control out of the matrix's ROWS.
 
     Both take ``resolved_cell``, so without the marker every control would
-    arrive as a new surface -- and the artifact would then grow six rows whose
-    "contract" is a test about an instrument. Asserted as a disjointness AND
-    as the unchanged contract set, because a discovery bug that dropped every
-    control by dropping every test would satisfy the first alone.
+    arrive as a new surface -- and the artifact would then grow seven rows
+    whose "contract" is a test about an instrument. Asserted as a disjointness
+    AND as the unchanged contract set, because a discovery bug that dropped
+    every control by dropping every test would satisfy the first alone.
     """
     contracts = set(discover_contracts())
     controls = {control.nodeid for control in discover_controls()}
@@ -2009,7 +2015,7 @@ def test_a_control_record_names_the_surface_its_own_marker_declares(tmp_path):
     wrong surface would let the framing control vouch for the exit-code row.
 
     The cell chosen is the one an inference gets WRONG. Three of this tree's
-    six controls live in ``test_exec_contract.py``, so any rule keyed on the
+    seven controls live in ``test_exec_contract.py``, so any rule keyed on the
     MODULE (or on ``"exec" in nodeid``) answers one surface for all three -- and
     a guard that ran only the exit-code control would agree with that rule by
     coincidence and prove nothing. This runs the FRAMING one and requires
@@ -2110,7 +2116,7 @@ def test_the_control_marker_is_registered(committed):
 #
 # NOT `tests/unit/test_conformance_bed.py`'s `_ScriptedHost`, and the
 # difference is the question rather than the machinery. That harness asks
-# *does this CONTRACT catch a LYING product?* and drives the six contracts
+# *does this CONTRACT catch a LYING product?* and drives the seven contracts
 # against nine lies. This one asks *does this CONTROL catch an IMMOVABLE
 # observable?*, which needs a host that also puts and gets files, and needs
 # each control's own particular kind of inertness. Two questions, two
@@ -2130,11 +2136,25 @@ def _printf(command: str) -> str:
     return "\n".join(parts[2:])
 
 
+#: The stride ``_FakeHost`` promises the progress bar. Small on purpose: the
+#: progress contract sizes its payload as ``3 * stride + 17``, so 16 keeps this
+#: harness's files at 65 bytes.
+_FAKE_STRIDE = 16
+
+
 class _FakeTransfer:
-    """Just enough of a transfer backend for ``_transfer_backend`` to read."""
+    """Just enough of a transfer backend for ``_transfer_backend`` to read.
+
+    Answers ``effective_progress_granularity`` as a real backend does -- from
+    the INSTANCE, which is what ``test_progress_contract`` asks and what
+    ``ScpFileTransfer`` overrides.
+    """
 
     def __init__(self, supports_mode: bool) -> None:
         self.supports_mode = supports_mode
+
+    def effective_progress_granularity(self) -> ProgressGranularity:
+        return ProgressGranularity(put=_FAKE_STRIDE, get=_FAKE_STRIDE)
 
 
 class _FakeHost:
@@ -2149,10 +2169,19 @@ class _FakeHost:
     Each *twist* freezes one observable, and each is named for the property it
     removes rather than for the control it defeats -- a twist is a claim about
     a HOST, and which control catches it is what the table below asserts.
+
+    *watches_progress* is NOT a twist and is deliberately spelled as its own
+    flag: it removes no observable and defeats no control, it says whether this
+    row's control looks at a progress bar at all. Off by default, so the rows
+    that do not (roundtrip, mode) build no Rich ``Progress`` -- see
+    :meth:`_report_progress`.
     """
 
-    def __init__(self, *twists: str, mode_support: bool = True) -> None:
+    def __init__(
+        self, *twists: str, mode_support: bool = True, watches_progress: bool = False
+    ) -> None:
         self._twists = frozenset(twists)
+        self._watches_progress = watches_progress
         self._files: "dict[str, bytes]" = {}
         self._modes: "dict[str, int]" = {}
         self._file_transfer = _FakeTransfer(mode_support)
@@ -2233,10 +2262,43 @@ class _FakeHost:
             )
             return Result(Status.Error, value={src: Result(Status.Error, msg=msg)}, msg=msg)
         landed = str(dest_dir / src.name)
-        self._files[landed] = src.read_bytes()
+        payload = src.read_bytes()
+        self._files[landed] = payload
         if mode is not None:
             self._modes[landed] = mode
+        self._report_progress(src, landed, len(payload))
         return Result(Status.Success, value={src: Result(Status.Success)})
+
+    def _report_progress(self, src: Path, landed: str, total: int) -> None:
+        """Drive the progress handler the way ``BaseFileTransfer.put_files`` does.
+
+        ONLY FOR THE ROWS THAT WATCH THE BAR. The real ``put_files`` decides
+        this on ``show_progress``; this fake's ``put`` carries no such argument,
+        so it takes the decision from its own ``watches_progress`` flag. Without
+        the gate the roundtrip and mode rows -- which never read a progress
+        event -- each built a real Rich ``Progress`` and a real handler on every
+        ``put``. Inert (an unstarted ``Progress`` no-ops in ``refresh``, so
+        nothing rendered and no ``Live`` opened) but paid for unconditionally.
+
+        The factory is read from :mod:`otto.host.transfer.progress` AT CALL
+        TIME, which is the seam ``test_progress_contract`` patches -- a factory
+        captured at import would hand this harness the real Rich handler and the
+        control would record nothing.
+        """
+        if not self._watches_progress or total == 0:
+            return
+        from otto.host.transfer import progress as _progress
+
+        handler = _progress.make_rich_progress_factory(_progress.make_transfer_progress(), "fake")()
+        if "progress-jumps-to-the-total" in self._twists:
+            # The bug the surface exists for: one 0 -> 100% event, whatever the
+            # backend promised.
+            handler(str(src), landed, total, total)
+            return
+        done = 0
+        while done < total:
+            done = min(done + _FAKE_STRIDE, total)
+            handler(str(src), landed, done, total)
 
     async def get(self, src: Path, dest_dir: Path):
         if "get-answers-the-contracts-payload" in self._twists:
@@ -2282,6 +2344,7 @@ CONTROLS = {
     "transfer-mode": (
         _transfer_contract.test_control_the_landed_mode_follows_the_mode_that_was_asked_for
     ),
+    "transfer-progress": (_progress_contract.test_control_the_instrument_refuses_a_bar_that_jumps),
     "timeout": (
         _timeout_contract.test_control_a_command_inside_its_budget_is_not_reported_as_timed_out
     ),
@@ -2327,6 +2390,14 @@ HOST_CASES = [
     ("mode never moves", "transfer-mode", ("the-landed-mode-never-moves",), True, False),
     ("refusal reads the mode", "transfer-mode", (), False, True),
     ("refusal is a constant", "transfer-mode", ("the-refusal-says-one-thing",), False, False),
+    ("the bar tracks the bytes", "transfer-progress", (), True, True),
+    (
+        "the bar jumps to 100%",
+        "transfer-progress",
+        ("progress-jumps-to-the-total",),
+        True,
+        False,
+    ),
     ("budget is respected", "timeout", (), True, True),
     ("everything times out", "timeout", ("always-times-out",), True, False),
 ]
@@ -2365,7 +2436,15 @@ async def test_a_control_passes_when_its_observable_moves_and_fails_when_it_cann
     remote = tmp_path / "remote"
     remote.mkdir()
     control = CONTROLS[surface]
-    resolved = _fake_cell(_FakeHost(*twists, mode_support=mode_support))
+    # `watches_progress` is read off the row's own surface rather than added as
+    # a sixth column: every `transfer-progress` row watches the bar and no
+    # other row does, so a column would be a restatement of `surface` that can
+    # drift from it. Same derivation as the `kwargs` branch below.
+    resolved = _fake_cell(
+        _FakeHost(
+            *twists, mode_support=mode_support, watches_progress=surface == "transfer-progress"
+        )
+    )
     kwargs = {"resolved_cell": resolved}
     if surface.startswith("transfer-"):
         kwargs |= {"remote_scratch": remote, "tmp_path": tmp_path, "worker_id": "master"}
@@ -2413,7 +2492,7 @@ def test_a_positive_control_declares_no_observable_of_its_own():
     """The declaration belongs to the CONTRACT; a control vouches for it.
 
     Without this, a control carrying the marker would arrive in
-    :func:`discover_observables` as a seventh declaration and the both-ways
+    :func:`discover_observables` as an eighth declaration and the both-ways
     check above would fail for a confusing reason. Stated as its own claim so
     the failure names the real mistake.
     """
@@ -4903,6 +4982,76 @@ def test_the_page_admits_the_limits_of_its_own_guarantee():
     assert "positive control" in page.lower()
 
 
+_PROGRESS_PROMISES_HEADING = "## Transfer progress: what each backend promises"
+
+
+def _progress_promise_rows(page: str) -> "dict[str, list[str]]":
+    """The rendered promise table, one entry per backend row, cells already split.
+
+    POSITIONAL and not a substring search over the whole row. ``16,384 bytes``
+    appearing *somewhere* in scp's line is true of a renderer that swapped the
+    two arms, or that printed the put stride into the get column -- the exact
+    drift a table derived from a per-direction dataclass exists to prevent. A
+    note carrying a literal ``|`` would break the table it is rendered into, so
+    a split on ``|`` failing here is the correct failure and not a false one.
+    """
+    parts = page.split(_PROGRESS_PROMISES_HEADING, 1)
+    assert len(parts) == 2, "the page carries no transfer-progress promises section"
+    body = parts[1].split("\n## ", 1)[0]
+    return {
+        cells[0].strip("`"): cells
+        for line in body.splitlines()
+        if line.startswith("| `")
+        for cells in [[cell.strip() for cell in line.strip().strip("|").split("|")]]
+    }
+
+
+def test_the_page_renders_every_backends_progress_promise_from_the_registry(committed):
+    """The "what each backend promises" table is DERIVED, not typed.
+
+    One row per REGISTERED backend and no row for anything else, each cell equal to
+    that backend's own :class:`~otto.host.transfer.base.ProgressGranularity` declaration,
+    and every ``None`` arm's note carried through to the reader -- because a ``None``
+    arm without its note is the one shape the dataclass refuses to be constructed in,
+    and publishing it unexplained would undo that refusal on the page.
+
+    THE CLASS DECLARATION, deliberately, and the page says so in prose beside the
+    table. ``build_transfer_backend`` returns the class; ``effective_progress_
+    granularity()`` needs an instance, which needs a host's options, which a page
+    rendered at documentation-build time does not have. So the published number is
+    the DEFAULT promise, and the one backend whose configuration replaces it (``scp``,
+    via the ``block_size`` its options hand ``asyncssh``) is named in that prose.
+
+    WHAT THIS DOES NOT PIN, stated because a derived guard is easy to over-read:
+    it is not a pin on the NUMBERS. Both sides read the same declarations, so
+    editing ``_SFTP_BLOCK_SIZE`` moves the page with the class and this stays green
+    (MEASURED: 16384 -> 32768, still passes). What it refuses is the page ceasing to
+    be derived -- a hand-typed row that DISAGREES with the declarations, a dropped or
+    invented backend, the two arms rendered into each other's column, a note left off.
+    A hand-typed row that happens to match today's values passes, which is the same
+    sentence as "not a pin on the NUMBERS" read from the other side: what is asserted
+    is the page's AGREEMENT with the registry, never the provenance of its characters.
+    Each of those was driven red before this was committed. The NUMBERS are pinned
+    where they are true: ``scp`` against ``ScpOptions().block_size`` and ``ftp``
+    against ``aioftp.DEFAULT_BLOCK_SIZE``, both in
+    ``tests/unit/host/test_transfer_registry.py``.
+    """
+    rows = _progress_promise_rows(_page(committed))
+    assert set(rows) == set(TRANSFER_BACKENDS.names()), (
+        f"the promise table and the registry disagree about which backends exist: "
+        f"page {sorted(rows)} vs registry {sorted(TRANSFER_BACKENDS.names())}"
+    )
+    for name in sorted(TRANSFER_BACKENDS.names()):
+        granularity = build_transfer_backend(name).progress_granularity
+        expected = [
+            "one event at completion" if arm is None else f"{arm:,} bytes"
+            for arm in (granularity.put, granularity.get)
+        ]
+        assert rows[name][1:] == [*expected, granularity.note], (
+            f"{name}'s row is not what it declares: {rows[name]}"
+        )
+
+
 def test_the_page_says_its_hand_written_reasons_are_checked_and_how_far(committed):
     """The narrowing reasons are the only hand-written claim on the page; it must say so.
 
@@ -5067,7 +5216,7 @@ def test_the_page_is_reachable_from_the_architecture_index():
 
     In the OVERVIEW toctree beside `testing` and `quality-gates`, and deliberately NOT
     under `subsystems/`: the spec says "alongside the busybox-support page", but this
-    matrix is cross-cutting -- six surfaces spanning hosts, execution and transfer over
+    matrix is cross-cutting -- seven surfaces spanning hosts, execution and transfer over
     nine profiles -- and filing a cross-cutting reference under one area makes it less
     findable than it deserves.
     """
@@ -5133,7 +5282,8 @@ def test_the_narrowing_pin_examines_a_real_mechanism_on_every_narrowing_surface(
         rule = _domain_rule(PROJECT_ROOT / surface.contract.split("::")[0])
         if rule is not None:
             with_rules[surface.id] = rule
-    assert set(with_rules) == {"transfer-roundtrip", "transfer-mode", "timeout"}, (
+    narrowing = {"transfer-roundtrip", "transfer-mode", "transfer-progress", "timeout"}
+    assert set(with_rules) == narrowing, (
         f"the set of narrowing surfaces moved: {sorted(with_rules)}. That is not a "
         f"failure by itself, but every clause below has to be re-read against its new "
         f"rule rather than inherited"
@@ -5496,14 +5646,14 @@ def test_a_cell_nothing_has_watched_yet_still_describes_the_promise(committed):
 
 
 def test_a_surface_with_one_observable_still_promises_it(committed):
-    """The accept-control for all of the above: five of the six surfaces are unbranched.
+    """The accept-control for all of the above: six of the seven surfaces are unbranched.
 
     Without it, a `promise_of` that answered "no promise" for everything would satisfy
     every refusal above and publish a page that promises nothing at all.
     """
     page = _page(committed)
     unbranched = [surface.id for surface in SURFACES if not VOICE[surface.id].branches]
-    assert len(unbranched) == 5, f"the tree's branching surfaces have changed: {unbranched}"
+    assert len(unbranched) == 6, f"the tree's branching surfaces have changed: {unbranched}"
     for surface_id in unbranched:
         cell = committed["cells"][surface_id]["gnu"]
         assert promise_of(surface_id, cell).capability == VOICE[surface_id].capability

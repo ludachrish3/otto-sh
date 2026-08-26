@@ -33,6 +33,7 @@ from otto.host.options import NcOptions
 from otto.host.transfer import NcFileTransfer
 from otto.result import CommandResult
 from otto.utils import Status
+from tests._fixtures.progress import ProgressEvent, assert_progress_invariants
 
 
 def _ok(output: str = "") -> CommandResult:
@@ -179,11 +180,13 @@ class TestNcPutDrain:
 
         fake_writer = _FakeWriter()
         handler_calls: list[tuple[int, int]] = []  # (bytes_done, drained_so_far)
+        events: list[ProgressEvent] = []
 
         def handler(s: str, d: str, bytes_done: int, total: int) -> None:
             handler_calls.append(
                 (bytes_done, fake_writer.drain_calls[-1] if fake_writer.drain_calls else 0)
             )
+            events.append(ProgressEvent(src=s, dst=d, done=bytes_done, total=total))
 
         async def fake_connect(host: str, port: int, timeout: float = 2.0):
             return None, fake_writer
@@ -215,6 +218,12 @@ class TestNcPutDrain:
         assert len(distinct_drain_snapshots) > 1, (
             f"handler always saw the same drained-byte count "
             f"({distinct_drain_snapshots}); drains aren't interleaved with writes"
+        )
+        assert_progress_invariants(
+            events,
+            src=str(src),
+            total=8192 * 128,
+            granularity=NcFileTransfer.progress_granularity.put,
         )
 
 

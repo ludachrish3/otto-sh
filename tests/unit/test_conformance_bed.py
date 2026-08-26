@@ -1038,13 +1038,13 @@ _HERMETIC_LOCAL_CELL = "local:local:local"
 #
 # DERIVED, and it used to be the literal `6`. That literal was correct when
 # there were six contracts and nothing else took the cell, and it went stale
-# the moment six controls joined them -- four guards below turned red on a
+# the moment their controls joined them -- four guards below turned red on a
 # COUNT rather than on the protection they are about, which is the least
 # useful place for a suite to fail. The two discovery functions are the same
 # ones `tests/_fixtures/support_matrix.py` builds the matrix's rows from, so
-# this cannot disagree with the tree about what a cell's items are. (12 today:
-# 6 contracts + 6 controls, and `make conformance` collects 96 over the
-# hermetic venue's 8 cells.)
+# this cannot disagree with the tree about what a cell's items are. (14 today:
+# 7 contracts + 7 controls, and `make conformance` collects 112 cell items over
+# the hermetic venue's 8 cells.)
 _ITEMS_PER_CELL = len(discover_contracts()) + len(discover_controls())
 
 # The plugin the subprocess runs load with `-p`. It INJECTS the hostile
@@ -1110,7 +1110,7 @@ def _run_conformance(tmp_path, *, shape: str, breakage: str):
     plugin/conftest registration and an ``flock`` held across xdist workers,
     and both are properties of a real session's process tree. Two workers, not
     ``-n auto``: enough to make the items land on different workers (measured
-    -- the six split gw0/gw1) without putting a full fan-out on a shared dev
+    -- one cell's items split gw0/gw1) without putting a full fan-out on a dev
     VM.
     """
     name = f"otto_injected_console_{breakage}"
@@ -1754,11 +1754,12 @@ def _module_declaring(applies, expected=None):
 
 
 def test_a_module_with_no_declared_domain_gets_every_drawn_cell(monkeypatch):
-    """The positive control: three of the six contracts declare no domain.
+    """The positive control: three of the seven contracts declare no domain.
 
-    Two MODULES declare one, covering the other three contracts --
-    `test_transfer_contract` (cells with a remote directory, for both of its)
-    and `test_timeout_contract` (cells whose vocabulary has a long-running
+    Three MODULES declare one, covering the other four contracts --
+    `test_transfer_contract` (cells with a remote directory, for both of its),
+    `test_progress_contract` (the same predicate, for its one) and
+    `test_timeout_contract` (cells whose vocabulary has a long-running
     command, for its one). The three that declare nothing are the exec file's,
     so a hook that narrowed unconditionally would still satisfy the declaring
     modules and only this test would notice.
@@ -1852,9 +1853,10 @@ def _contract_modules():
 
     `discover_contracts` reads the tree by AST and answers nodeids; the conftest
     reads its hook off the imported module. This is the one place the two meet,
-    and it derives the module list rather than restating it so a fourth
-    contract file is swept the day it lands -- there are three files today,
-    holding six contracts between them, and it is FILES this enumerates.
+    and it derives the module list rather than restating it so a fifth
+    contract file is swept the day it lands -- it swept the fourth,
+    `test_progress_contract.py`, with no edit here. There are four files today,
+    holding seven contracts between them, and it is FILES this enumerates.
     """
     stems = dict.fromkeys(Path(nodeid.split("::")[0]).stem for nodeid in discover_contracts())
     return [importlib.import_module(f"tests.conformance.{stem}") for stem in stems]
@@ -1935,7 +1937,7 @@ def test_a_declared_failure_becomes_a_strict_xfail_on_that_cell_alone(monkeypatc
 
 
 def test_a_module_declaring_no_expected_failure_marks_nothing(monkeypatch):
-    """The positive control: since 2026-08-25 all six contracts declare nothing.
+    """The positive control: since 2026-08-25 all seven contracts declare nothing.
 
     Without it, a hook that marked EVERY cell would satisfy the asymmetry
     assertion above only by accident of which list was checked first.
@@ -2301,7 +2303,7 @@ async def test_every_lie_is_caught_in_every_vocabulary_that_can_be_asked(
     """Half two: the SAME lies are caught whichever dialect the host is asked in.
 
     THIS IS THE GUARD THE VOCABULARY LAYER IS BUILT AROUND. Varying the
-    stimulus per cell is the point; varying the ASSERTION would turn six
+    stimulus per cell is the point; varying the ASSERTION would turn seven
     contracts into a per-userland suite that can never disagree with the
     product. A vocabulary that quietly narrowed what its cells are asked --
     an early return for a userland, an assertion moved behind an `if`, a

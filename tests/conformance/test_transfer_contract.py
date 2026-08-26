@@ -50,6 +50,7 @@ from otto.host.transfer import BaseFileTransfer
 from tests._fixtures.profiles import Cell
 from tests.conformance._controls import assert_bed_left_clean, remove_landed
 from tests.conformance._resolved import ResolvedCell
+from tests.conformance._transfer import transfer_backend_of
 from tests.conftest import remote_name
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.conformance]
@@ -181,25 +182,23 @@ def applicable_cell(resolved: ResolvedCell) -> bool:
 def _transfer_backend(host: BaseHost, cell: Cell) -> BaseFileTransfer:
     """The host's transfer backend, or a loud failure naming the cell.
 
-    Reached through the private attribute both host families happen to agree
-    on (``LocalHost`` and ``UnixHost`` each name it ``_file_transfer``), because
-    there is no public one: the registry lookup ``build_transfer_backend`` would
-    answer for ``sftp`` and ``scp`` but raises for the ``local`` cell, whose
-    transfer name deliberately records the ABSENCE of a registered backend
-    rather than naming one.
+    WHY THIS SURFACE NEEDS THE OBJECT AND NOT THE TRANSFER NAME:
+    ``supports_mode`` is what decides which observable a cell offers here --
+    both the mode contract and its control BRANCH on it, and the marker's
+    template cannot express that branch -- and only the backend the host
+    actually built can answer it.
 
-    Deliberately not ``getattr(host, "_file_transfer", None)`` with a lenient
-    default. A host this cannot read is a cell whose transfer contract has
-    never been measured, and the honest report of that is a named failure, not
-    a quietly skipped assertion.
+    How it is reached, and why a host that cannot be read is a named failure
+    rather than a lenient default, is
+    :func:`tests.conformance._transfer.transfer_backend_of`, shared with
+    ``test_progress_contract``, which asks this same object a different
+    question. The refusal below is this surface's own half of that failure.
     """
-    backend = getattr(host, "_file_transfer", None)
-    if backend is None:
-        raise AssertionError(
-            f"{cell}: {type(host).__name__} exposes no `_file_transfer`, so this "
-            f"cell's transfer backend cannot be asked whether it carries a mode"
-        )
-    return backend
+    return transfer_backend_of(
+        host,
+        cell,
+        refusal_tail="this cell's transfer backend cannot be asked whether it carries a mode",
+    )
 
 
 @pytest.mark.observable(

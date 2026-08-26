@@ -17,6 +17,7 @@ from ...result import CommandResult, Result
 from ...utils import Status
 from ..embedded_filesystem import EmbeddedFileSystem
 from .base import (
+    ProgressGranularity,
     TransferContext,
     TransferProgressFactory,
     TransferProgressHandler,
@@ -84,6 +85,15 @@ class ConsoleFileTransfer(EmbeddedFileTransfer):
     shell command runner is injected as ``exec_cmd`` so the class is
     testable against a fake shell with no real connection.
     """
+
+    progress_granularity = ProgressGranularity(
+        put=_WRITE_CHUNK,
+        get=None,
+        note=(
+            "get is one `fs read` command on the Zephyr shell -- the bytes arrive "
+            "in a single reply and the one event arrives when it completes"
+        ),
+    )
 
     # Narrow the inherited _exec_cmd type: console transfer always requires
     # a live exec callable, never None.

@@ -23,10 +23,10 @@ because it is not the shape the integration tree faces. The bed space is 49
 cells of which 7 are ``bed-zephyr`` -- ONE cell per guest, since a Zephyr host
 reports a single ``(telnet, console)`` pair. So two cells can never name the
 same guest. The collision is between the CONTRACT ITEMS of ONE cell: every
-drawn cell is parametrized into every contract in this tree (measured on the
-hermetic lane: 48 items over 8 cells, so six items per cell), and under
-``-n auto`` those six scatter across workers and open the same console at
-once.
+drawn cell is parametrized into every contract in this tree (re-measured on
+the hermetic lane 2026-08-26: 112 cell items over 8 cells, so fourteen items
+per cell), and under ``-n auto`` those fourteen scatter across workers and
+open the same console at once.
 
 THE MECHANISM: an EXCLUSIVE hold of the repo's writer-fair console lock
 (``tests/_fixtures/_console_lock.py``) around every console cell's item, taken

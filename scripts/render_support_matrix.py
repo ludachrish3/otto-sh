@@ -182,7 +182,7 @@ class Voice:
     branches: "tuple[Branch, ...]" = ()
     """The observables this surface can offer, when it offers more than one.
 
-    Empty for a surface with a single observable, which is five of the six today.
+    Empty for a surface with a single observable, which is six of the seven today.
     Non-empty means :attr:`capability` is never used for a MEASURED cell: the cell's
     own stored ``observable`` decides which arm ran, and an observable matching no arm
     -- or more than one -- publishes NO promise and fails the docs build.
@@ -264,6 +264,22 @@ VOICE: "dict[str, Voice]" = {
             "That is a property of the device rather than a defect, and it is otto's own "
             "answer rather than this suite's judgement: `remote_scratch` is `None` for "
             "exactly the hosts whose filesystem reports `supports_transfer` False."
+        ),
+    ),
+    "transfer-progress": Voice(
+        short="progress",
+        capability=(
+            "watch a transfer's progress bar and trust that it moves with the bytes -- "
+            "it never starts past one stride, never runs ahead of the total, and finishes"
+        ),
+        narrowed=(
+            "otto reports nowhere to put a file on such a device -- its filesystem "
+            "backend answers `supports_transfer` False -- so there is no transfer "
+            "whose progress could be watched"
+        ),
+        narrowed_detail=(
+            "The same narrowing as the two transfer surfaces above, read from the same "
+            "answer: `remote_scratch` is `None` for exactly those hosts."
         ),
     ),
     "timeout": Voice(
@@ -997,8 +1013,8 @@ def narrowing_mismatch(matrix: dict) -> "list[str]":
     2. **The clause (with its detail) must name at least one identifier the
        predicate's BODY reads.** Check 1 alone is satisfied by a clause that names
        nothing at all, which is this item's signature defect: a guard that a vacuous
-       input passes. Today that identifier is ``remote_scratch`` for both transfer
-       surfaces and ``long_running_command`` for timeout.
+       input passes. Today that identifier is ``remote_scratch`` for all three
+       transfer surfaces and ``long_running_command`` for timeout.
 
     A MODULE THAT DECLARES NO ``applicable_cell`` NARROWS NOTHING, so its surfaces can
     never render the clause at all. Those are held to the mirror of the same rule: the
@@ -1296,6 +1312,68 @@ def _guarantee_section() -> "list[str]":
     ]
 
 
+def _progress_promises_section() -> "list[str]":
+    """Render each backend's DEFAULT progress stride, read off the registry.
+
+    DERIVED, like every other verdict on this page: one row per registered
+    backend, both arms and the note read off the class's own
+    ``ProgressGranularity``. ``tests/unit/test_support_matrix.py``'s
+    ``test_the_page_renders_every_backends_progress_promise_from_the_registry``
+    pins the two against each other in both directions, so a declaration edited
+    without this page, or a row typed by hand, reds.
+
+    THE CLASS ATTRIBUTE AND NOT ``effective_progress_granularity()``, and the
+    prose below says so rather than leaving a reader to assume otherwise.
+    ``build_transfer_backend(name)`` returns the CLASS; the instance method
+    needs a built backend, which needs a host's option tables, which a page
+    rendered at documentation-build time has none of. The DEFAULT promise is
+    therefore the only thing this page can honestly publish -- and the one
+    backend a configuration moves (``scp``, whose stride is the ``block_size``
+    its ``ScpOptions`` hand ``asyncssh``) is named, so the reader is told where
+    the default stops being the answer.
+
+    The import is local for the reason the module docstring gives about
+    ``sys.path``: every other import here is stdlib, ``scripts`` or ``tests``,
+    and this is the only line in the file that reaches into the product.
+    """
+    from otto.host.transfer import TRANSFER_BACKENDS, build_transfer_backend
+
+    def cell(arm: "int | None") -> str:
+        return "one event at completion" if arm is None else f"{arm:,} bytes"
+
+    lines = [
+        "(matrix-progress-promises)=",
+        "",
+        "## Transfer progress: what each backend promises",
+        "",
+        "The `progress` column measures the bar against a promise each backend makes in",
+        "code (a `ProgressGranularity` on the backend class): the **stride**, the most the",
+        "bar may advance between two ticks, in each direction. A backend that promises a",
+        "stride moves `3 x stride + 17` bytes under the contract and must tick at least",
+        "four times, never beginning past one stride and always finishing on the total.",
+        "*One event at completion* means the bar goes straight to done when the transfer",
+        "does -- a whole-file transfer with nothing to observe in between -- and the note",
+        "beside it says why.",
+        "",
+        "**These are the defaults.** Each row is the declaration on the backend's own",
+        "class, which is all a page rendered with no host in hand can know. One of them",
+        "moves with your configuration: `scp` promises whatever `block_size` reaches",
+        "`asyncssh`, so a value set in `scp_options` -- as the field, or through `extra`,",
+        "which is applied last and wins -- replaces the default below, and it is that",
+        "configured value a run measures the bar against.",
+        "",
+        "| backend | put stride | get stride | note |",
+        "|---|---|---|---|",
+    ]
+    for name in sorted(TRANSFER_BACKENDS.names()):
+        granularity = build_transfer_backend(name).progress_granularity
+        lines.append(
+            f"| `{name}` | {cell(granularity.put)} | {cell(granularity.get)} | {granularity.note} |"
+        )
+    lines.append("")
+    return lines
+
+
 def _registered_gaps_section(matrix: dict) -> "list[str]":
     """Say whose news the broken cells are, and the division of labour that follows.
 
@@ -1507,7 +1585,7 @@ def _grid(matrix: dict) -> "list[str]":
 
 
 def _profile_section(matrix: dict, profile: dict) -> "list[str]":
-    """Render one profile: what the device is, the six answers, then the evidence."""
+    """Render one profile: what the device is, the seven answers, then the evidence."""
     profile_id = profile["id"]
     elements = list(profile["elements"])
     lines = [
@@ -1627,6 +1705,7 @@ def render(matrix: dict, *, rendered_on: "_datetime.date | None" = None) -> str:
     lines += _currency_section(matrix, rendered_on)
     lines += _states_section()
     lines += _guarantee_section()
+    lines += _progress_promises_section()
     lines += _registered_gaps_section(matrix)
     lines += _grid(matrix)
     lines += ["## The profiles", "", "One section per userland, in the artifact's own order.", ""]
