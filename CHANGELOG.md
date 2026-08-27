@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.8] - 2026-08-27
+
+### Added
+
+- **transfer**: every backend declares what it promises the progress bar
+- **nc**: one universal netcat spelling, size-terminated GETs, nc_dash_n removed
+- **release**: re-measure the support matrix during a release, refusing a downgrade
+
+
+### Documentation
+
+- **spec**: the transfer progress contract
+- **todo**: record what the must-fix series closed in the 2026-08-25 review
+- **spec**: nc universal spelling — one netcat spelling, size-terminated GETs
+- **todo**: periodic review 2026-08-25 — public API, churn, flakiness
+- **todo**: two release-time gaps — a stale matrix, and unexecuted air-gap steps
+
+
+### Fixed
+
+- **busybox**: fetch the artifacts from a release mirror first, busybox.net behind it
+- **monitor**: an overflowing SSE subscriber lapses and is told to resync, instead of losing frames
+- **busybox**: prove the artifact source at the fetch, not at collection
+- **busybox**: prove the artifact source is reachable before a lane needs it
+
+
+### Maintenance
+
+- **conformance**: updated to reflect progress bar support
+
+
 ## [0.8.7] - 2026-08-25
 
 ### Added
@@ -1424,7 +1455,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - added GitHub templates
 - set up release management
 
-[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.8.7...HEAD
+[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.8.8...HEAD
+[0.8.8]: https://github.com/ludachrish3/otto-sh/compare/v0.8.7...v0.8.8
 [0.8.7]: https://github.com/ludachrish3/otto-sh/compare/v0.8.6...v0.8.7
 [0.8.6]: https://github.com/ludachrish3/otto-sh/compare/v0.8.5...v0.8.6
 [0.8.5]: https://github.com/ludachrish3/otto-sh/compare/v0.8.4...v0.8.5
