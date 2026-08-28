@@ -169,6 +169,53 @@ class BusyBoxUnavailableError(RuntimeError):
     """
 
 
+class BusyBoxDriftError(BusyBoxUnavailableError):
+    """The source answered, and the bytes are not the ones the pin was taken from.
+
+    A SUBCLASS, so every ``except BusyBoxUnavailableError`` already written
+    keeps catching it: to a consumer this is still "no usable artifact", and
+    the refusal is the same refusal. What the subclass adds is a distinction
+    a MACHINE can act on, which prose could not.
+
+    The two failures mean opposite things and want opposite handling. "Could
+    not reach the source" is somebody else's outage: it says nothing about
+    any byte, and nightly's drift detector must not redden a run over it
+    (2026-08-27, issue #267, when a three-day busybox.net outage was on
+    course to file a fresh issue every night). "The source served a different
+    byte" is the one signal that detector exists to raise, and it must stop
+    everything until a person has looked.
+
+    Before this split both paths raised ``BusyBoxUnavailableError`` with the
+    same exit code, and the workflow comment claimed "the log distinguishes
+    them" — true for a human reading the message, false for every automated
+    consumer, so nothing could branch on it. See
+    ``scripts/check_busybox_upstream_drift.py``.
+    """
+
+
+class BusyBoxWithdrawnError(BusyBoxUnavailableError):
+    """Every host in the source order answered, and every one of them said no.
+
+    A SIBLING of :class:`BusyBoxDriftError`, not a flavour of the base class,
+    because the three conditions want three different responses and only two
+    of them were ever distinguishable. "Nothing answered" is an outage and
+    excusable. "The bytes changed" is drift. THIS is the third: the artifact
+    is no longer published where the pin says it is — 404, not silence.
+
+    Excusing it as an outage is how a detector goes quiet without going red.
+    A deterministic refusal is the source working correctly and telling us the
+    pinned file is gone, so no amount of waiting fixes it and priming a cache
+    cannot either. Under an upstream-only policy it is the strongest drift
+    signal there is: a pinned artifact withdrawn rather than merely rewritten.
+
+    Found in review of the 2026-08-27 sweep, which classified a 404 as
+    "unreachable", stopped on it, and exited 0 reporting that busybox.net
+    "could not be reached". ``BUSYBOX_MATRIX[0]`` is 1.16.1 — the oldest
+    artifact published anywhere and the likeliest to be pruned — so that path
+    would have checked ZERO pins, green, every night, forever.
+    """
+
+
 @dataclass(frozen=True, slots=True)
 class BusyBoxRelease:
     """One matrix entry: a version and the arch build published for it."""
@@ -505,6 +552,93 @@ def preflight(
     _PREFLIGHT.done = True
 
 
+DRIFT_VERIFIED = "verified"
+DRIFT_MISMATCH = "drifted"
+DRIFT_WITHDRAWN = "withdrawn"
+DRIFT_UNREACHABLE = "unreachable"
+
+
+@dataclass(frozen=True, slots=True)
+class DriftResult:
+    """What upstream answered when asked for one pinned artifact."""
+
+    release: BusyBoxRelease
+    kind: str
+    detail: str
+
+
+def reads_upstream_only() -> bool:
+    """True when EVERY fetch attempt would ask busybox.net and none would ask the mirror.
+
+    The precondition for any drift verdict. The mirror holds bytes taken FROM
+    upstream at a reviewed moment, so a source order containing it would answer
+    "still matches" about bytes upstream may no longer serve — a drift check
+    run mirror-first is not a weaker check, it is a vacuous one.
+
+    Asks what `_fetch` WOULD do rather than reading the variable, because the
+    policy reaches it through `_source_order`: a guard on the env var alone
+    would still pass if `tests/conftest.py`'s strip ever ate the opt-in.
+    """
+    return set(_source_order()) == {"upstream"}
+
+
+def upstream_drift_report(
+    workdir: Path, releases: "list[BusyBoxRelease] | None" = None
+) -> "list[DriftResult]":
+    """Fetch every pinned artifact from upstream into *workdir* and verify its pin.
+
+    THE WHOLE MATRIX, one :class:`DriftResult` per artifact ASKED — which is
+    every entry, unless the first was unreachable. That is the difference
+    between this and :func:`preflight`, and the reason it is a separate
+    function rather than a flag on that one.
+
+    :func:`preflight` fetches ``missing[0]`` and returns, which is correct for
+    the question IT answers: reachability is a property of the SOURCE, so if no
+    host answers for one artifact the remaining four will not disagree. Drift
+    is a property of each FILE. Nightly's detector was built on that shortcut
+    until 2026-08-27 and therefore hash-compared ``busybox-1.16.1-i686`` alone
+    while reporting success, leaving a rebuild-in-place of the other four
+    invisible for as long as it lasted.
+
+    The source-level shortcut is still taken, for the source-level question
+    only: an unreachable FIRST artifact ends the run rather than spending five
+    retry budgets to learn the same thing five times.
+
+    *workdir* is a caller-owned throwaway directory and never :func:`cache_dir`.
+    A drifted byte must not land where a later lane would find it cached and
+    skip its own fetch — and neither should an upstream byte, in a repo whose
+    consumers are supposed to prefer the mirror.
+
+    Consumes no memo and sets none: `_PREFLIGHT` records whether THIS process
+    can obtain artifacts, and a drift sweep is a different question asked of a
+    deliberately different source.
+    """
+    results: "list[DriftResult]" = []
+    for release in releases if releases is not None else BUSYBOX_MATRIX:
+        target = workdir / release.filename
+        try:
+            _fetch(release, target)
+            _verify(release, target)
+        except BusyBoxDriftError as e:
+            # THE SUBCLASSES FIRST. Ordered the other way, every mismatch and
+            # every withdrawal would be classified as an outage and the two
+            # signals this sweep exists to raise would be lost as noise.
+            results.append(DriftResult(release, DRIFT_MISMATCH, str(e)))
+        except BusyBoxWithdrawnError as e:
+            # No break: the host ANSWERED. One pruned artifact says nothing
+            # about the other four, and stopping here would let a withdrawal
+            # of BUSYBOX_MATRIX[0] — the oldest and likeliest-pruned entry —
+            # hide a rewrite of everything behind it.
+            results.append(DriftResult(release, DRIFT_WITHDRAWN, str(e)))
+        except BusyBoxUnavailableError as e:
+            results.append(DriftResult(release, DRIFT_UNREACHABLE, str(e)))
+            if len(results) == 1:
+                break
+        else:
+            results.append(DriftResult(release, DRIFT_VERIFIED, ""))
+    return results
+
+
 def busybox_binary(release: BusyBoxRelease) -> Path:
     """Return a verified, executable artifact for *release*, fetching if needed.
 
@@ -611,6 +745,19 @@ def _fetch(release: BusyBoxRelease, target: Path) -> None:
                     continue
                 if remaining and isinstance(e, urllib.error.HTTPError):
                     continue
+                if refused >= set(order):
+                    # Every distinct host in the order answered, and answered
+                    # no. Priming a cache cannot conjure a file nobody
+                    # publishes, so this does NOT carry the instructions
+                    # below — it carries the pin, which is the thing that has
+                    # to change (or be investigated) before anything works.
+                    raise BusyBoxWithdrawnError(
+                        f"BusyBox {release.version} ({release.arch}) is no longer published at "
+                        f"{' then '.join(dict.fromkeys(asked))} after {attempt} attempt(s): {e}. "
+                        f"Every source ANSWERED and refused, so this is not an outage and waiting "
+                        f"will not fix it. The pin in {_PINS.name} names bytes that no longer "
+                        f"exist at that address — INVESTIGATE before repointing it."
+                    ) from e
                 raise BusyBoxUnavailableError(
                     f"could not fetch BusyBox {release.version} ({release.arch}) from "
                     f"{' then '.join(dict.fromkeys(asked))} after {attempt} attempt(s): {e}. "
@@ -651,7 +798,7 @@ def _verify(release: BusyBoxRelease, target: Path) -> None:
     expected = pins.get(release.filename)
     actual = _sha256(target)
     if expected and expected != actual:
-        raise BusyBoxUnavailableError(
+        raise BusyBoxDriftError(
             f"BusyBox {release.version} ({release.arch}) hash mismatch.\n"
             f"  pinned: {expected}\n  actual: {actual}\n"
             f"Upstream publishes no signatures, so this pin is trust-on-first-use. "

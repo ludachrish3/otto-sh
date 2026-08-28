@@ -35,17 +35,26 @@ except ModuleNotFoundError:  # pragma: no cover - 3.10 only, otto's floor
 
 from typing_extensions import Self  # `typing.Self` is 3.11+; otto's floor is 3.10
 
+from scripts.check_busybox_upstream_drift import annotate as drift_annotate
+from scripts.check_busybox_upstream_drift import main as drift_main
 from tests._ambient_env import AMBIENT_OPT_INS
 from tests._fixtures import busybox
 from tests._fixtures.busybox import (
     BUSYBOX_MATRIX,
+    DRIFT_MISMATCH,
+    DRIFT_UNREACHABLE,
+    DRIFT_VERIFIED,
+    DRIFT_WITHDRAWN,
     QEMU_HANDLER,
+    BusyBoxDriftError,
     BusyBoxUnavailableError,
+    BusyBoxWithdrawnError,
     busybox_binary,
     cache_dir,
     can_run,
     probe_banner,
     require_interpreter,
+    upstream_drift_report,
 )
 from tests._fixtures.paths import PROJECT_ROOT
 
@@ -1192,6 +1201,360 @@ def test_upstream_drift_detection_is_a_nightly_job_and_never_a_push_gate():
             f"puts busybox.net back on a default lane's critical path"
         )
     assert _unit_tree_jobs(), "premise: the allowlist no longer names a live consuming lane"
+
+
+# ─── the drift sweep: every pin, and an outage is not a mismatch ───────────
+#
+# Added 2026-08-27 after the detector's FIRST nightly run (issue #267). Moving
+# it off the push gate the day before was right and left three holes, one of
+# which reported green: the job ran `make busybox-preflight`, and `preflight`
+# probes `missing[0]` and returns because reachability is a property of the
+# SOURCE. Drift is a property of each FILE, so four of the five pins were never
+# compared against upstream at all — and a rebuild-in-place of any of them
+# would have gone unnoticed while the job passed.
+
+
+def _stub_sweep(monkeypatch, outcomes):
+    """Drive `upstream_drift_report` over *outcomes* without touching the network.
+
+    *outcomes* is one entry per matrix position: ``None`` verifies, an
+    exception INSTANCE is raised for that artifact. Returns the list of
+    filenames actually asked about, which is what the enumeration guard reads
+    — a sweep that stops early records fewer than it was given.
+    """
+    asked = []
+
+    def fake_fetch(release, target):
+        asked.append(release.filename)
+        outcome = outcomes[len(asked) - 1]
+        if isinstance(outcome, BusyBoxUnavailableError) and not isinstance(
+            outcome, BusyBoxDriftError
+        ):
+            raise outcome  # covers BusyBoxWithdrawnError, which `_fetch` also raises
+
+    def fake_verify(release, target):
+        outcome = outcomes[len(asked) - 1]
+        if isinstance(outcome, BusyBoxDriftError):
+            raise outcome
+
+    monkeypatch.setattr(busybox, "_fetch", fake_fetch)
+    monkeypatch.setattr(busybox, "_verify", fake_verify)
+    return asked
+
+
+def test_a_hash_mismatch_and_an_outage_are_different_types():
+    """The distinction has to be machine-readable, because a machine acts on it.
+
+    Both failures raised `BusyBoxUnavailableError` until 2026-08-27, and the
+    workflow comment claimed "the log distinguishes them" — true for a human
+    reading the message, false for every automated consumer, so no step, issue
+    body or dedupe could branch on it. The subclass relation is the other half:
+    to a CONSUMER a drifted artifact is still no usable artifact, so every
+    `except BusyBoxUnavailableError` already written must keep catching it.
+    """
+    assert issubclass(BusyBoxDriftError, BusyBoxUnavailableError), (
+        "BusyBoxDriftError no longer subclasses BusyBoxUnavailableError, so every "
+        "`except BusyBoxUnavailableError` in the fixture and its consumers stopped catching "
+        "a drifted artifact — which is still, to a consumer, no usable artifact"
+    )
+    assert BusyBoxDriftError is not BusyBoxUnavailableError, (
+        "the two failures collapsed back into one type. A machine cannot branch on prose: "
+        "nightly must fail on a republished byte and stay green through somebody's outage"
+    )
+
+
+def test_a_hash_mismatch_raises_drift_and_a_dead_source_does_not(tmp_path, monkeypatch):
+    """Extracted from the code paths themselves, never restated.
+
+    Asserting the two types against real calls is what makes swapping either
+    `raise` back to the base class redden this — restating the class names
+    would only assert that this test agrees with itself.
+    """
+    release = BUSYBOX_MATRIX[0]
+    monkeypatch.setattr(busybox, "cache_dir", lambda: tmp_path)
+    target = tmp_path / release.filename
+    target.write_bytes(b"not the pinned bytes")
+
+    with pytest.raises(BusyBoxDriftError) as mismatch:
+        busybox._verify(release, target)
+    assert "hash mismatch" in str(mismatch.value)
+
+    def dead(url, timeout=None):
+        raise TimeoutError("timed out")
+
+    monkeypatch.setattr(busybox.urllib.request, "urlopen", dead)
+    monkeypatch.setattr(busybox.time, "sleep", lambda _s: None)
+    with pytest.raises(BusyBoxUnavailableError) as outage:
+        busybox._fetch(release, tmp_path / "fresh")
+    assert not isinstance(outage.value, BusyBoxDriftError), (
+        "an unreachable source was classified as DRIFT, so nightly would fail the run and "
+        "file an issue for somebody else's outage — the noise this split exists to end"
+    )
+
+
+def test_the_drift_sweep_asks_about_every_pin_rather_than_probing_one(tmp_path, monkeypatch):
+    """The regression guard for the defect issue #267 exposed.
+
+    `preflight`'s one-probe shortcut is correct for reachability and vacuous
+    for drift. Reverting the sweep to it — or to any other early return —
+    records fewer filenames here than the matrix holds, and this reds.
+    """
+    asked = _stub_sweep(monkeypatch, [None] * len(BUSYBOX_MATRIX))
+    results = upstream_drift_report(tmp_path)
+
+    assert asked == [r.filename for r in BUSYBOX_MATRIX], (
+        f"the sweep asked upstream about {len(asked)} of {len(BUSYBOX_MATRIX)} pins. Drift is "
+        f"a property of each FILE: every pin upstream is not asked about is a pin whose "
+        f"rebuild-in-place goes undetected while this job reports green"
+    )
+    assert [r.kind for r in results] == [DRIFT_VERIFIED] * len(BUSYBOX_MATRIX)
+
+
+def test_the_sweep_stops_only_when_the_source_was_dead_from_the_start(tmp_path, monkeypatch):
+    """The source-level shortcut, kept for the source-level question alone.
+
+    Nothing answered for the first artifact, so nothing will answer for the
+    rest and asking costs four more retry budgets to reach the same verdict.
+    That is `preflight`'s reasoning applied where it is valid.
+    """
+    outage = BusyBoxUnavailableError("could not fetch")
+    asked = _stub_sweep(monkeypatch, [outage] + [None] * (len(BUSYBOX_MATRIX) - 1))
+    results = upstream_drift_report(tmp_path)
+
+    assert asked == [BUSYBOX_MATRIX[0].filename]
+    assert [r.kind for r in results] == [DRIFT_UNREACHABLE]
+
+
+def test_an_outage_partway_through_never_hides_a_later_drift(tmp_path, monkeypatch):
+    """The shortcut is FIRST-artifact-only, and the difference is the whole signal.
+
+    Upstream answered, so it is up; one artifact failing after that is a blip,
+    not a verdict about the source. Broadening the early return to "stop on any
+    unreachable" would let a transient on artifact two conceal a genuine
+    rebuild-in-place on artifact three — a green job over the exact event this
+    sweep exists to catch.
+    """
+    outcomes = [None, BusyBoxUnavailableError("blip"), BusyBoxDriftError("hash mismatch")]
+    outcomes += [None] * (len(BUSYBOX_MATRIX) - len(outcomes))
+    asked = _stub_sweep(monkeypatch, outcomes)
+    results = upstream_drift_report(tmp_path)
+
+    assert asked == [r.filename for r in BUSYBOX_MATRIX]
+    assert [r.kind for r in results[:3]] == [DRIFT_VERIFIED, DRIFT_UNREACHABLE, DRIFT_MISMATCH]
+
+
+def test_a_deterministic_refusal_is_not_excused_as_an_outage(tmp_path, monkeypatch):
+    """A 404 is the host ANSWERING. Filed in the excused bucket, the detector goes silent.
+
+    The sweep classified every `BusyBoxUnavailableError` as an outage, and
+    `_fetch` raises that for a 404 exactly as for a timeout. So a pruned
+    artifact stopped the sweep on the first entry and exited 0 saying
+    busybox.net "could not be reached" — which it had not; it had replied.
+
+    `BUSYBOX_MATRIX[0]` is 1.16.1, the oldest artifact published anywhere and
+    the likeliest URL upstream ever prunes, so that path checked ZERO pins,
+    green, every night, forever — and it was a REGRESSION: the
+    `busybox-preflight` step this replaced reddened the job on a 404.
+    """
+    monkeypatch.setenv(_SOURCE_ENV, "upstream")
+    _record_sleeps(monkeypatch)
+
+    # Through `_closing_http_errors`, never a hand-built HTTPError: it is a
+    # file-like object carrying a temp-file closer, and an unclosed one reds a
+    # random unrelated test from 3.11 up while 3.10 — this machine — says
+    # nothing. `_stub_attempts` repeats its last outcome, so one 404 answers
+    # every artifact in the sweep.
+    with _closing_http_errors(404) as errors:
+        _stub_attempts(monkeypatch, errors)
+
+        with pytest.raises(BusyBoxWithdrawnError) as withdrawn:
+            busybox._fetch(BUSYBOX_MATRIX[0], tmp_path / "x")
+        assert "no longer published" in str(withdrawn.value)
+        assert "make busybox-cache" not in str(withdrawn.value), (
+            "a withdrawal carries the priming instructions, which cannot conjure a file "
+            "nobody publishes — the reader follows them and lands nowhere"
+        )
+
+        results = upstream_drift_report(tmp_path)
+
+    assert [r.kind for r in results] == [DRIFT_WITHDRAWN] * len(BUSYBOX_MATRIX), (
+        f"a 404 was classified as {[r.kind for r in results]}. Excused as an outage it also "
+        f"STOPS the sweep, so one pruned artifact hides a rewrite of every pin behind it"
+    )
+    assert len(results) == len(BUSYBOX_MATRIX), (
+        "the sweep stopped on a deterministic refusal. The host answered, so the remaining "
+        "pins are still worth asking about — the early return is for silence alone"
+    )
+
+
+def test_a_withdrawn_artifact_fails_the_job(monkeypatch, capsys):
+    """Ranked below a rewrite and well above an outage — but on the failing side of the line.
+
+    Nothing about a 404 is excusable as downtime, and exit 0 here would be the
+    detector reporting a clean sweep over an artifact it could not obtain.
+    """
+    monkeypatch.setenv(_SOURCE_ENV, "upstream")
+    _stub_sweep(monkeypatch, [BusyBoxWithdrawnError("gone")] * len(BUSYBOX_MATRIX))
+
+    assert drift_main([]) == 1, (
+        "a withdrawn artifact exited 0. busybox.net ANSWERED and refused, so there is no "
+        "outage to excuse and no reason for the nightly to stay green over it"
+    )
+    assert "no longer publishes" in capsys.readouterr().err
+
+
+def test_drift_fails_the_job_and_an_unreachable_upstream_does_not(tmp_path, monkeypatch, capsys):
+    """The exit codes ARE the policy: 1 is upstream's doing, 0 is upstream's absence.
+
+    Failing on an unreachable upstream is what filed a fresh issue every night
+    through the three-day outage behind #267, until the red nightly meant
+    nothing and a real regression could hide inside it.
+    """
+    monkeypatch.setenv(_SOURCE_ENV, "upstream")
+
+    _stub_sweep(monkeypatch, [BusyBoxDriftError("hash mismatch")] * len(BUSYBOX_MATRIX))
+    assert drift_main([]) == 1
+    assert "REPUBLISHED" in capsys.readouterr().err
+
+    _stub_sweep(monkeypatch, [BusyBoxUnavailableError("timed out")] * len(BUSYBOX_MATRIX))
+    assert drift_main([]) == 0, (
+        "an unreachable busybox.net failed the job. Upstream being down says nothing about "
+        "any byte — every consuming lane fetches the mirror and verifies against the same "
+        "pins — and failing on it turns a monitoring signal into a nightly issue nobody reads"
+    )
+    warned = capsys.readouterr().out
+    unsaid = "a run that CHECKED NOTHING exited 0 without saying so, which is "
+    unsaid += "indistinguishable from a run that checked every pin and found no drift"
+    assert "could not be reached" in warned, unsaid
+    assert "unchecked" in warned, unsaid
+
+    _stub_sweep(monkeypatch, [None] * len(BUSYBOX_MATRIX))
+    assert drift_main([]) == 0
+    assert "unchanged" in capsys.readouterr().out
+
+
+def test_the_drift_check_refuses_to_run_against_the_mirror(monkeypatch, capsys):
+    """A mirror-first drift check is not weaker, it is VACUOUS — so it is refused.
+
+    The mirror holds bytes taken from upstream at a reviewed moment, so it
+    would answer "still matches" about bytes upstream no longer serves. Exit 2
+    rather than 0: nothing was measured, and a policy error must never be
+    mistaken for a clean sweep.
+    """
+    monkeypatch.delenv(_SOURCE_ENV, raising=False)
+    assert not busybox.reads_upstream_only()
+    assert drift_main([]) == 2
+    assert "REFUSED" in capsys.readouterr().err
+
+    monkeypatch.setenv(_SOURCE_ENV, "upstream")
+    assert busybox.reads_upstream_only()
+
+    # The guard reads the ORDER, not the variable, and ONLY this discriminates:
+    # the policy is NAMED `upstream` and its order still contains a mirror
+    # slot. Every other case here is satisfied by a naive
+    # `ambient(_SOURCE_ENV) == "upstream"`, which would answer True to this one
+    # and sweep the mirror while reporting a clean pass. (Found by mutating the
+    # guard into exactly that string compare and watching this test stay green
+    # against a policy merely named something else.)
+    monkeypatch.setitem(busybox._SOURCE_ORDERS, "upstream", ("upstream", "mirror", "upstream"))
+    monkeypatch.setenv(_SOURCE_ENV, "upstream")
+    assert not busybox.reads_upstream_only(), (
+        "a source order containing a mirror slot was accepted as upstream-only. The mirror "
+        "would answer 'still matches' about bytes upstream may no longer serve, so the sweep "
+        "would report a clean pass having never asked the only host whose answer counts"
+    )
+    assert drift_main([]) == 2
+
+    # An UNPARSEABLE policy is exit 2 as well, never 1. `_source_order` reports
+    # it by raising, and uncaught that left the interpreter at 1 -- which this
+    # script's contract and the nightly issue body both read as "upstream
+    # republished a pinned artifact". A typo in a workflow env would have
+    # opened that ticket.
+    monkeypatch.setenv(_SOURCE_ENV, "upsteam")
+    assert drift_main([]) == 2, (
+        "a typo'd source policy did not exit 2. Any other code is a lie about what was "
+        "measured, and exit 1 in particular files the loudest ticket this repo can file"
+    )
+
+
+def test_an_unreachable_upstream_is_annotated_where_a_green_run_would_hide_it(monkeypatch, capsys):
+    """Exit 0 is the right verdict and a silent one, so the warning has to be VISIBLE.
+
+    The whole point of not failing on an outage is that the job goes green —
+    which is also how "we stopped checking" hides. On a runner the marker
+    promotes the line to the run summary; for a human at a terminal it is a
+    sentence. Same text either way, and the level is named in both.
+    """
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    assert drift_annotate("warning", "upstream is down") == "::warning::upstream is down"
+
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    assert drift_annotate("warning", "upstream is down") == "WARNING: upstream is down"
+
+    # Through `main`, not just the helper. Asserting the helper alone leaves
+    # the WIRING unguarded: swapping the `annotate(...)` call in `main` for a
+    # plain f-string keeps every other assertion here green while the marker
+    # -- the whole mechanism that surfaces this on a green run -- disappears.
+    monkeypatch.setenv(_SOURCE_ENV, "upstream")
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    _stub_sweep(monkeypatch, [BusyBoxUnavailableError("timed out")] * len(BUSYBOX_MATRIX))
+    assert drift_main([]) == 0
+    assert "::warning::" in capsys.readouterr().out, (
+        "the unreachable verdict reached stdout without an Actions annotation, so on a green "
+        "nightly it is a log line nobody scrolls to rather than a mark on the run summary"
+    )
+
+
+def test_the_drift_job_runs_the_sweep_and_not_the_reachability_probe():
+    """Pinned against the workflow, because that is where the defect actually lived.
+
+    The fixture can grow the most thorough sweep in the world and the job will
+    keep checking one artifact for as long as its step says
+    `make busybox-preflight`. Read from the step, not restated, so rewiring the
+    job to any other target reddens here.
+    """
+    nightly = yaml.safe_load((_WORKFLOWS / "nightly.yml").read_text(encoding="utf-8"))
+    steps = nightly["jobs"]["busybox-upstream-drift"]["steps"]
+    runs = " ".join(step.get("run", "") for step in steps)
+
+    assert "busybox-drift" in runs, (
+        "nightly's drift job no longer runs `make busybox-drift`. Whatever it runs instead "
+        "must sweep EVERY pin: `busybox-preflight` probes one and returns, which is right "
+        "for reachability and reports a green pass over four unchecked artifacts"
+    )
+    assert "busybox-preflight" not in runs, (
+        "the drift job is back on the reachability probe, which verifies BUSYBOX_MATRIX[0] "
+        "alone and returns — the exact defect issue #267 exposed"
+    )
+
+    makefile = (_REPO_ROOT / "Makefile").read_text(encoding="utf-8")
+    target = re.search(r"^busybox-drift:.*?\n((?:\t.*\n)+)", makefile, re.MULTILINE)
+    assert target, "the Makefile has no `busybox-drift` target for the job to run"
+    assert f"{_SOURCE_ENV}=upstream" in target.group(1), (
+        f"`make busybox-drift` does not force {_SOURCE_ENV}=upstream, so a human running it "
+        f"outside CI would sweep the mirror and be told 'still matches' about bytes upstream "
+        f"may no longer serve"
+    )
+
+
+def test_the_nightly_issue_body_names_every_job_it_reports_on():
+    """An auto-filed issue that omits the job that failed sends the reader to green logs.
+
+    Issue #267 listed six jobs to check and every one of them had passed;
+    `busybox-upstream-drift` had been added to `report-failure.needs` the day
+    before without touching the text. Derived from `needs` rather than a
+    hand-kept list, so the next job added to it either appears in the body or
+    reds here.
+    """
+    nightly = yaml.safe_load((_WORKFLOWS / "nightly.yml").read_text(encoding="utf-8"))
+    report = nightly["jobs"]["report-failure"]
+    body = " ".join(step.get("run", "") for step in report["steps"])
+
+    missing = [job for job in report["needs"] if job not in body]
+    assert not missing, (
+        f"{missing} can fail the nightly and open an issue, but the issue body never names "
+        f"them — so the ticket points the reader at a list of jobs that were all green"
+    )
 
 
 # ─── shipped error text must cite things that exist ────────────────────────

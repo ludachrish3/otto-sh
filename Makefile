@@ -9,7 +9,7 @@
 # on -j.
 .NOTPARALLEL:
 
-.PHONY: help all ci nox nox-full nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-python coverage-unit coverage-integration coverage-unix coverage-embedded coverage-hostless coverage-ts coverage-ts-unit docs docs-lint docs-html docs-inventories docs-media doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts lint-arch check check-python gate-fresh check-ts format format-python format-ts schema monitor-fixtures clean changelog release stability stability-unit stability-unix stability-tunnel stability-embedded chaos chaos-embedded repeat vm-health qemu-restart import-snapshot hyperfine profile browsers dashboard dashboard-all dashboard-soak busybox busybox-preflight busybox-cache conformance conformance-bed support-matrix web-install web web-dev test-ts web-clean wheel-check
+.PHONY: help all ci nox nox-full nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-python coverage-unit coverage-integration coverage-unix coverage-embedded coverage-hostless coverage-ts coverage-ts-unit docs docs-lint docs-html docs-inventories docs-media doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts lint-arch check check-python gate-fresh check-ts format format-python format-ts schema monitor-fixtures clean changelog release stability stability-unit stability-unix stability-tunnel stability-embedded chaos chaos-embedded repeat vm-health qemu-restart import-snapshot hyperfine profile browsers dashboard dashboard-all dashboard-soak busybox busybox-preflight busybox-cache busybox-drift conformance conformance-bed support-matrix web-install web web-dev test-ts web-clean wheel-check
 
 # Bump component for `make release`. Override on the command line:
 #   make release BUMP=minor
@@ -809,6 +809,21 @@ busybox-preflight: ## Prove the BusyBox artifact source is reachable, or that th
 busybox-cache: ## Fetch + verify the BusyBox test artifacts into the local cache (~/.cache/otto/busybox, or OTTO_BUSYBOX_CACHE). Network required; no interpreter needed, so it works on any arch.
 	@$(SAY) "priming the BusyBox artifact cache (release mirror first, busybox.net behind it)"
 	@uv run python -c "from tests._fixtures.busybox import BUSYBOX_MATRIX, busybox_binary; [print(busybox_binary(r)) for r in BUSYBOX_MATRIX]"
+
+# UPSTREAM DRIFT DETECTION, the one target that reads busybox.net's own bytes
+# rather than the ci-assets-busybox-1 mirror — because a mirror in front of it
+# would answer "still matches" about bytes upstream no longer serves. Forces
+# the source policy, sweeps EVERY pin (not one probe the way `busybox-preflight`
+# does — drift is a property of each FILE, reachability of the SOURCE), and
+# downloads to a throwaway dir so nothing it fetches can reach the cache.
+#
+# NIGHTLY, never a push gate: upstream drift cannot change a byte this repo
+# tests or ships, so it is monitoring, and monitoring enforced as a merge gate
+# fails when a third party is down rather than when the change is bad. Exits 0
+# on an unreachable upstream (a warning, not a failure) and non-zero only on a
+# pin mismatch. tests/unit/host/test_busybox_artifacts.py pins all of it.
+busybox-drift: ## Ask busybox.net whether it still serves the bytes busybox_pins.json was taken from. Network required; nightly's `busybox-upstream-drift` job runs this. Warns on an unreachable upstream, fails only on a pin mismatch.
+	@OTTO_BUSYBOX_SOURCE=upstream uv run python scripts/check_busybox_upstream_drift.py
 
 # The host-contract conformance suite's opt-in lane, and the only one CI runs
 # — every catch-all excludes `-m conformance` (see the note above M_HOSTLESS),

@@ -98,10 +98,14 @@ AMBIENT_OPT_INS: "dict[str, str]" = {
     "OTTO_BUSYBOX_SOURCE": (
         "which host each BusyBox artifact fetch attempt asks, `mirror-first` "
         "(default: the ci-assets-busybox-1 release assets, then busybox.net) or "
-        "`upstream` (tests/_fixtures/busybox.py); set ONLY by ci.yml's `busybox` "
-        "job, which exists to notice upstream rebuilding an artifact in place "
-        "and would read yesterday's bytes off the mirror. Stripped, that job "
-        "silently fetches mirror-first and verifies nothing about upstream"
+        "`upstream` (tests/_fixtures/busybox.py); set ONLY by nightly's "
+        "`busybox-upstream-drift` job and the `make busybox-drift` target behind "
+        "it, which exist to notice upstream rebuilding an artifact in place and "
+        "would read yesterday's bytes off the mirror. It sat on ci.yml's "
+        "`busybox` job until efe03bd1 moved drift detection off the push gate. "
+        "Stripped, the sweep asks the mirror and verifies nothing about "
+        "upstream — though it now refuses to run rather than reporting a "
+        "vacuous pass (scripts/check_busybox_upstream_drift.py)"
     ),
     "OTTO_TUNNEL_SOAK_CYCLES": (
         "internal soak depth per tunnel stability test "

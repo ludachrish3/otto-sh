@@ -367,10 +367,16 @@ jobs:
   #
   # Reading upstream is the only way to notice a rebuild-in-place: the mirror
   # holds bytes taken from upstream at a reviewed moment, so asking it whether
-  # upstream changed would always answer "still matches". `preflight()` fetches
-  # each artifact and verifies it against `busybox_pins.json`, so a mismatch
-  # here means the file at the upstream URL is no longer the file those pins
-  # were taken from — worth an issue and a look, never worth blocking a push.
+  # upstream changed would always answer "still matches". The sweep fetches
+  # EVERY pinned artifact and verifies each against `busybox_pins.json`, so a
+  # mismatch here means the file at the upstream URL is no longer the file
+  # those pins were taken from — worth an issue and a look, never worth
+  # blocking a push.
+  #
+  # It ran `make busybox-preflight` until 2026-08-27, and that was wrong in a
+  # way that reported green: `preflight()` probes `missing[0]` and returns,
+  # because reachability is a property of the SOURCE. Drift is a property of
+  # each FILE, so the job hash-compared one of five pins and called it a pass.
   #
   # NIGHTLY AND NOT CI, deliberately. Upstream drift cannot affect a byte this
   # repo tests or ships — every consumer fetches mirror-first and verifies
@@ -380,6 +386,12 @@ jobs:
   # it. Here a failure opens an issue (this job is in `report-failure`'s
   # `needs` below) and blocks nobody. `tests/unit/host/test_busybox_artifacts.py`
   # pins that this job exists, forces upstream, and is reported.
+  #
+  # AN UNREACHABLE UPSTREAM IS A WARNING, NOT A FAILURE. A third party being
+  # down says nothing about any byte, and failing on it opens a fresh issue
+  # every night for as long as the outage lasts — issue #267, three days of
+  # it — until the red nightly means nothing and a real regression hides
+  # inside it. Only a pin mismatch exits non-zero.
   #
   # No cache, for ci.yml's reason: a cache keyed on the pins would skip the
   # fetch in exactly the runs that could detect a rebuild.
@@ -403,12 +415,14 @@ jobs:
       - name: Install dependencies
         run: uv sync --all-extras --dev
 
-      # A failure here is one of two things, and the log distinguishes them: a
-      # fetch error (busybox.net down — noise, close the issue) or a SHA-256
-      # mismatch (upstream replaced a published binary — investigate before
-      # anything re-mirrors it).
-      - name: Fetch from busybox.net and verify against the committed pins
-        run: make busybox-preflight
+      # Only a SHA-256 mismatch fails this step — upstream replaced a
+      # published binary, investigate before anything re-mirrors it. A fetch
+      # error (busybox.net down) is annotated as a warning and exits 0. The
+      # two used to be told apart by reading the log, which no automated
+      # consumer could do: both raised `BusyBoxUnavailableError` with the same
+      # exit code. `BusyBoxDriftError` is now the machine-readable half.
+      - name: Verify every pin against busybox.net's current bytes
+        run: make busybox-drift
 
   report-failure:
     name: Open issue on failure
@@ -430,18 +444,30 @@ jobs:
       - name: Write issue body
         run: |
           {
-            echo "The nightly run failed (stability, unit matrix, dashboard browser e2e, the tier-2/tier-3 chaos suites, and/or host-contract conformance)."
+            echo "The nightly run failed (stability, unit matrix, dashboard browser e2e, the tier-2/tier-3 chaos suites, host-contract conformance, and/or BusyBox upstream drift)."
             echo
             echo "- Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
             echo "- Commit: ${{ github.sha }}"
             echo
-            echo "Check the matrix logs for the failing job (stability /"
+            echo "Check the matrix logs for the failing job (stability-matrix /"
             echo "unit-matrix / dashboard / chaos-tier2 / chaos-docker /"
-            echo "conformance-hermetic), the Python version or browser, and the"
-            echo "pytest-repeat iteration that tripped the failure. A"
-            echo "conformance-hermetic failure names the cell it drew in the"
-            echo "test id; reproduce it with the --randomly-seed=N printed in"
-            echo "that job's own pytest header."
+            echo "conformance-hermetic / busybox-upstream-drift), the Python"
+            echo "version or browser, and the pytest-repeat iteration that"
+            echo "tripped the failure. A conformance-hermetic failure names the"
+            echo "cell it drew in the test id; reproduce it with the"
+            echo "--randomly-seed=N printed in that job's own pytest header."
+            echo
+            echo "**busybox-upstream-drift is not a test failure.** It reads"
+            echo "busybox.net directly, and it fails ONLY when upstream has"
+            echo "republished a pinned artifact — the bytes at the URL are no"
+            echo "longer the bytes busybox_pins.json was taken from. Nothing"
+            echo "this repo tests or ships changed (every consuming lane"
+            echo "fetches the ci-assets-busybox-1 mirror and verifies against"
+            echo "those same pins), but investigate before anything re-mirrors"
+            echo "them: confirm the banner still reports the pinned version and"
+            echo "the applet set is unchanged, then update busybox_pins.json in"
+            echo "a reviewed commit. An unreachable busybox.net does NOT fail"
+            echo "this job; it is annotated as a warning on a green run."
           } > issue-body.md
 
       - name: Create issue from file
