@@ -14,8 +14,9 @@ starting a run.
   lab defines the required-resource list — and it does so lazily, through
   the same loud path the preamble uses. Neither contacts a remote host,
   which is also why the group opts out of per-invocation output directories.
-- **`check` is the preamble's gate, standalone.** It computes the union of
-  the lab's `resources` and every host's `resources`, asks the backend what
+- **`check` is the preamble's gate, standalone.** The required set is the
+  lab's *declared* `resources` — hosts carry none, and for `--lab a+b` it is
+  the union of the components' declarations. It asks the backend what
   the effective user holds, and reports what is missing and *who holds it*
   (backends answer `who_reserved` with a list — resources can have multiple
   concurrent holders). A one-second pre-flight before a twenty-minute

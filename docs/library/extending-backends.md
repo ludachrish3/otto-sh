@@ -197,10 +197,14 @@ assert result.is_ok
 assert result.value[Path("a.bin")].value == Path("/tmp/a.bin")
 ```
 
-A host then selects it with `"transfer": "xmodem"` in `lab.json`:
+A host then selects it with `"transfer": "xmodem"` on its `lab.json` entry,
+inside the element that holds it:
 
 ```json
-{ "element": "mote", "os_type": "embedded", "transfer": "xmodem" }
+{
+  "name": "mote", "labs": ["embedded"],
+  "hosts": [{ "ip": "192.0.2.7", "os_type": "embedded", "transfer": "xmodem" }]
+}
 ```
 
 Because the selector validator and `otto schema export` both read the **live

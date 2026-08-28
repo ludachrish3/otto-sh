@@ -32,6 +32,7 @@ otto.host.file_ops
 otto.host.host
 otto.host.interact
 otto.host.interface
+otto.host.lab_info
 otto.host.local_host
 otto.host.login_proxy
 otto.host.options
@@ -80,6 +81,7 @@ otto.logger.mode
 otto.models
 otto.models.base
 otto.models.host
+otto.models.lab
 otto.models.monitor
 otto.models.options
 otto.params

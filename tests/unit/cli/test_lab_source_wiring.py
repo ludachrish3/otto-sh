@@ -17,12 +17,12 @@ from otto.labs import (
     register_lab_repository,
 )
 from otto.labs.registry import LAB_REPOSITORIES
+from tests._fixtures.labdata import write_lab_json
 from tests._fixtures.sutrepo import make_sut_repo
 
 
 def _lab_json(path: Path, hosts: list[dict]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"hosts": hosts}))
+    write_lab_json(path, hosts)
 
 
 def _host(element: str, ip: str) -> dict:
@@ -42,7 +42,14 @@ def _repo(root: Path, name: str, sources_toml: str, labfiles: dict[str, list[dic
     return Repo(sut)
 
 
-def test_single_json_source_returns_bare_backend(tmp_path: Path) -> None:
+def test_single_json_source_still_goes_through_the_composite(tmp_path: Path) -> None:
+    """ONE source is a composite too (spec §14, Ruling R15).
+
+    The composite owns lab existence and the declared-but-memberless rule, so
+    returning the bare backend here — which is what this seam used to do —
+    silently exempted the commonest setup of all (one repo, one json source)
+    from both. The wrapped backend is still the registry's, unchanged.
+    """
     repo = _repo(
         tmp_path / "r1",
         "r1",
@@ -50,8 +57,33 @@ def test_single_json_source_returns_bare_backend(tmp_path: Path) -> None:
         {"lab/lab.json": [_host("alt1", "10.0.0.1")]},
     )
     repository = build_lab_sources([repo])
-    assert isinstance(repository, JsonFileLabRepository)
+    assert isinstance(repository, CompositeLabRepository)
+    assert [s.label for s in repository.sources] == ["r1/json#1"]
+    assert isinstance(repository.sources[0].repository, JsonFileLabRepository)
     assert set(load_lab("merged", repository=repository).hosts) == {"alt1", "local"}
+
+
+def test_one_source_gets_the_declared_but_memberless_rule(tmp_path: Path) -> None:
+    """The rule R15 exists for: it must fire through ``build_lab_sources``.
+
+    ``lab.json`` declares ``ghost`` and no element matches it. With the bare
+    backend this loaded an empty lab (the json source contributes its
+    declaration and no members, and nothing above it objected); through the
+    composite it is the loud definition mistake spec §9 requires.
+    """
+    repo = _repo(
+        tmp_path / "r1",
+        "r1",
+        '[[lab.sources]]\nbackend = "json"\npaths = ["lab"]\n',
+        {"lab/lab.json": [_host("alt1", "10.0.0.1")]},
+    )
+    lab_file = tmp_path / "r1" / "lab" / "lab.json"
+    doc = json.loads(lab_file.read_text())
+    doc["labs"]["ghost"] = {}
+    lab_file.write_text(json.dumps(doc))
+
+    with pytest.raises(LabRepositoryError, match=r"declared.*no element"):
+        build_lab_sources([repo]).load_lab("ghost")
 
 
 def test_two_repos_all_sources_live(tmp_path: Path) -> None:
@@ -88,8 +120,15 @@ def test_later_repo_overrides_earlier_with_warning(tmp_path: Path, caplog) -> No
     with caplog.at_level(logging.WARNING, logger="otto.labs.composite"):
         lab = build_lab_sources([r1, r2]).load_lab("merged")
     assert lab.hosts["alt1"].ip == "10.9.9.9"
+    # The ELEMENT warning specifically. Both repos also DECLARE `merged`, so a
+    # labs-entry warning naming the same two labels is emitted too — an
+    # assertion on the labels alone would be satisfied by that one, and
+    # deleting the element warning outright would still pass.
     assert any(
-        "r2/override" in r.getMessage() and "r1/global" in r.getMessage() for r in caplog.records
+        "('alt1', None)" in r.getMessage()
+        and "r2/override" in r.getMessage()
+        and "r1/global" in r.getMessage()
+        for r in caplog.records
     )
 
 
@@ -116,8 +155,11 @@ def test_custom_backend_source_kwargs_inline(tmp_path: Path) -> None:
             {},
         )
         repository = build_lab_sources([repo])
-        assert isinstance(repository, DictRepo)
-        assert repository.repo_dir == repo.sut_dir
+        # The composite wraps it (R15); the CONSTRUCTED backend is still the
+        # registered class, with the entry's kwargs passed verbatim.
+        built = repository.sources[0].repository
+        assert isinstance(built, DictRepo)
+        assert built.repo_dir == repo.sut_dir
         assert repository.list_labs() == ["from-custom"]
     finally:
         LAB_REPOSITORIES.unregister("dict-wiring-test")
@@ -151,8 +193,9 @@ def test_reregistering_json_takes_effect(tmp_path: Path) -> None:
     register_lab_repository("json", ReplacementJsonRepo, overwrite=True)
     try:
         repository = build_lab_sources([repo])
-        assert isinstance(repository, ReplacementJsonRepo)
-        assert repository.search_paths == [repo.sut_dir / "lab"]
+        built = repository.sources[0].repository  # the composite wraps it (R15)
+        assert isinstance(built, ReplacementJsonRepo)
+        assert built.search_paths == [repo.sut_dir / "lab"]
     finally:
         register_lab_repository("json", JsonFileLabRepository, overwrite=True)
 

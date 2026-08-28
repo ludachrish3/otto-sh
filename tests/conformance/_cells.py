@@ -71,6 +71,7 @@ from otto.host.factory import create_host_from_dict
 from otto.host.host import BaseHost
 from otto.host.local_host import LocalHost
 from tests._fixtures.busybox import BUSYBOX_MATRIX, BusyBoxRelease, busybox_binary, can_run
+from tests._fixtures.labdata import flatten_lab_doc
 from tests._fixtures.profiles import Cell
 from tests.conformance._bed import bed_space
 from tests.conformance._resolved import ResolvedCell
@@ -131,7 +132,7 @@ def _loopback_entry(root: Path) -> dict:
     hosts = [
         entry
         for path in sorted(root.rglob("lab.json"))
-        for entry in json.loads(path.read_text())["hosts"]
+        for entry in flatten_lab_doc(json.loads(path.read_text()))
     ]
     if len(hosts) != 1:
         raise RuntimeError(

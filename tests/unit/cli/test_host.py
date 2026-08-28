@@ -9,7 +9,6 @@ Covers:
 """
 
 import asyncio
-import json
 import re
 from pathlib import Path
 from types import SimpleNamespace
@@ -26,7 +25,7 @@ from otto.logger.mode import LogMode
 from otto.result import Result
 from otto.utils import Status
 from tests._fixtures.dispatch import DispatchRunner
-from tests._fixtures.labdata import json_lab_sources
+from tests._fixtures.labdata import json_lab_sources, write_lab_json
 
 # The dynamic verbs are plain ``async def`` leaves bridged by the leaf-invoke
 # wrapper, so host_app invocations go through the production dispatch seam;
@@ -482,9 +481,7 @@ class TestHostGet:
 
 def _write_hosts_json(path: Path, hosts: list[dict]) -> Path:
     path.mkdir(parents=True, exist_ok=True)
-    lab_file = path / "lab.json"
-    lab_file.write_text(json.dumps({"hosts": hosts}))
-    return lab_file
+    return write_lab_json(path / "lab.json", hosts)
 
 
 def _fake_repo(*lab_paths: Path) -> SimpleNamespace:

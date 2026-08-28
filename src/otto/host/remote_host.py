@@ -27,7 +27,7 @@ import asyncio
 import logging
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING, NoReturn, cast
+from typing import TYPE_CHECKING, Any, NoReturn, cast
 
 from typing_extensions import override
 
@@ -45,6 +45,7 @@ if TYPE_CHECKING:
     from .dev_tool import DevTool
     from .host import Expect
     from .interface import Interface
+    from .lab_info import LabInfo
     from .options import SnmpOptions
     from .power import PowerController
     from .product import Product
@@ -159,8 +160,14 @@ class RemoteHost(BaseHost):
     """Login credentials for this host — see
     :attr:`~otto.host.unix_host.UnixHost.creds`."""
 
-    resources: set[str]
-    """Names of resources required to use this host."""
+    metadata: dict[str, Any]
+    """Opaque per-host ``metadata`` table from lab data (spec §4); never read by otto."""
+
+    element_metadata: dict[str, Any]
+    """Opaque ``metadata`` of the element this host belongs to — a per-host copy."""
+
+    lab_info: "LabInfo"
+    """The resolved lab (see :class:`~otto.host.lab_info.LabInfo`), stamped by the loader."""
 
     debug_log_globs: list[str]
     """Remote paths/glob patterns ``get_debug_logs`` fetches (see

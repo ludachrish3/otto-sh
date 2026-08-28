@@ -12,10 +12,22 @@ runtime object that is never re-validated.
 Each kind of input has a `*Spec` model whose job ends at construction:
 
 ```text
-lab.json entry      → HostSpec.model_validate(...)  → spec.to_host(cls, ...)   → UnixHost
-settings.toml tables  → settings spec models          → spec.to_runtime()        → backend objects
-OTTO_* environment    → OttoEnvSettings               → typed fields (paths, …)
+lab.json labs entry   → LabEntrySpec.model_validate(…) → Lab.resources / .metadata
+lab.json element      → ElementSpec.model_validate(…)  → .flatten() → flat host dicts
+  its host entry      → HostSpec.model_validate(…)     → spec.to_host(cls, …)  → UnixHost
+settings.toml tables  → settings spec models           → spec.to_runtime()     → backend objects
+OTTO_* environment    → OttoEnvSettings                → typed fields (paths, …)
 ```
+
+`lab.json` has three nested boundaries, not one. The wrapper specs live in
+{mod}`otto.models.lab`: `LabEntrySpec` for a declared lab's `resources` and
+`metadata`, `ElementSpec` for one piece of equipment — identity, its
+fullmatch `labs` patterns, `metadata`, and the raw host entries it groups.
+`ElementSpec.flatten()` stamps the element's `name`/`id` onto copies of those
+entries as `element`/`element_id`, so the flat host-dict API downstream (the
+factory, `host_identity`, custom backends) is untouched by the file shape —
+and the same spec refuses those four hoisted keys (`element`, `element_id`,
+`labs`, `resources`) *inside* a host entry, naming the one it found.
 
 The split keeps validation errors where the *data* is (a bad `lab.json`
 field fails with a pydantic error naming the file and field, not a traceback
@@ -23,10 +35,13 @@ deep in connection code) and keeps runtime classes free of parsing concerns.
 Field names are `snake_case` end to end — JSON, TOML, models, and runtime
 attributes all agree, so there is no translation layer.
 
-One deliberate escape hatch: keys beginning with `_` are stripped from each
-`lab.json` entry before validation — the sanctioned way to keep comments
-in a format that has none (`"_comment": "…"`). Everything else unknown is
-still rejected loudly.
+One deliberate escape hatch: keys beginning with `_` are stripped before
+validation at *every* level of a `lab.json` — the document, the `labs` table,
+a `labs` entry, an element, a host entry, a link — the sanctioned way to keep
+comments in a format that has none (`"_comment": "…"`), alongside a top-level
+`$schema`. Everything else unknown is still rejected loudly, and a top-level
+`hosts` key (the pre-v2 shape) fails with a migration message rather than an
+unknown-section one.
 
 ## Host construction
 
@@ -80,10 +95,12 @@ reference implementation. See {doc}`../../guide/configuration/host-sources`.
 
 A process reads *every* source every repo declares:
 {func}`otto.labs.build_lab_sources` constructs each `[[lab.sources]]` entry
-and, past the first, wraps them in a `CompositeLabRepository` that consults
-them in order and lets a later source override an earlier one per host record,
-with a warning naming both. The composite satisfies the same protocol, so
-nothing downstream can tell how many sources there are.
+and wraps them — always, even a single one — in a `CompositeLabRepository`
+that consults them in order and lets a later source override an earlier one
+wholesale per record (an element, or a `labs` table entry), with a warning
+naming both. The composite satisfies the same protocol, so nothing downstream
+can tell how many sources there are; it is also where a lab's *existence* is
+decided, which is why one source goes through it too.
 
 Naming a host is a separate, cheaper query than loading one: tab completion
 and tunnel narrowing go through {func}`otto.labs.host_summaries`, which uses a
@@ -124,6 +141,8 @@ startup ({doc}`../utilities/logging`).
 
 ## Where the code lives
 
+- {mod}`otto.models.lab` — `LabEntrySpec`, `ElementSpec`, `ElementKey`: the
+  `lab.json` wrapper layers above the host entry
 - {mod}`otto.models.host` — `HostSpec`, `UnixHostSpec`, `EmbeddedHostSpec`:
   the spec half of the spec → runtime pattern
 - {mod}`otto.models.settings` — settings-table spec models, including

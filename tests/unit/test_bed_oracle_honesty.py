@@ -573,8 +573,14 @@ def test_no_unbracketed_pattern_kills_across_the_tests_tree():
 
 
 def _poisoned_lab_json(tmp_path, poison):
+    """tech1's lab data plus one extra element whose only host entry is *poison*.
+
+    An ELEMENT, because since lab.json v2 that is the only place a host entry
+    can live — there is no top-level ``hosts`` array to append to any more.
+    """
     data = json.loads(_bed.lab_data_path().read_text())
-    data["hosts"] = [*data["hosts"], poison]
+    ghost = {"name": "ghost", "labs": ["unix"], "hosts": [poison]}
+    data["elements"] = [*data["elements"], ghost]
     out = tmp_path / "lab.json"
     out.write_text(json.dumps(data))
     return out
@@ -584,18 +590,34 @@ def test_unix_link_id_skips_unresolvable_records(tmp_path, monkeypatch):
     """Positive control: a ValueError record (unknown os profile) is skipped —
     the documented zephyr27_fat/zephyr-inline case — and the link still resolves."""
     expected = unix_link_id()
-    poisoned = _poisoned_lab_json(
-        tmp_path, {"element": "ghost", "ip": "203.0.113.9", "os_type": "no-such-profile"}
-    )
+    poisoned = _poisoned_lab_json(tmp_path, {"ip": "203.0.113.9", "os_type": "no-such-profile"})
     monkeypatch.setattr(_bed, "lab_data_path", lambda: poisoned)
     assert unix_link_id() == expected
 
 
 def test_unix_link_id_propagates_non_validation_errors(tmp_path, monkeypatch):
-    """A record that breaks for a NON-validation reason (here: not a dict at
-    all) is a broken fixture file, not an unregistered profile — swallowing it
-    hides real corruption behind the skip meant for cross-repo records."""
-    poisoned = _poisoned_lab_json(tmp_path, "just-a-string")
+    """A record that breaks for a NON-validation reason is a broken fixture
+    file, not an unregistered profile — swallowing it hides real corruption
+    behind the skip meant for cross-repo records.
+
+    The poison differs from the control above in ONE character class: an
+    ``os_type`` that is not a string at all. A string naming an unknown
+    profile is the skippable cross-repo case; a number is corruption. Both
+    reach the SAME registry lookup, so the only thing separating them is the
+    branch this test exists to pin — ``build_os_profile`` misses, then raises
+    ``TypeError: 'int' object is not iterable`` composing its did-you-mean
+    hint (``registry.py``'s ``difflib.get_close_matches``).
+
+    It has to break INSIDE ``addressing_from_dict``, which is inside the
+    ``try``. A poison that is not a dict at all (this test's v1 shape) now
+    explodes in the element→host flattener BEFORE the loop's first iteration,
+    which would leave this test green even if the skip were widened to
+    ``except Exception`` — the guard would then be inheriting its hostile
+    condition instead of injecting it. ``interfaces`` was the other candidate
+    and is closed: every malformed value there is caught by the host spec and
+    arrives as a ``ValidationError``, i.e. a ``ValueError``.
+    """
+    poisoned = _poisoned_lab_json(tmp_path, {"ip": "203.0.113.9", "os_type": 42})
     monkeypatch.setattr(_bed, "lab_data_path", lambda: poisoned)
-    with pytest.raises(AttributeError):
+    with pytest.raises(TypeError):
         unix_link_id()

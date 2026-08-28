@@ -116,8 +116,9 @@ def test_my_backend_conforms():
   startup error with an `-R` hint — swallowing it means otto proceeds as if the
   user holds nothing, the opposite of fail-closed.
 - **String-match byte-for-byte.** The strings you return must match
-  `UnixHost.resources` and `Lab.resources` exactly. Normalize inside your
-  backend, not in otto.
+  `Lab.resources` exactly — the identifiers a lab declares in its `labs` table
+  entry, which is the only place resources live (hosts carry none). Normalize
+  inside your backend, not in otto.
 - **`backend_name()` should be stable.** It shows up in diagnostics and skip
   warnings; changing it between versions breaks log-history searches.
 - **`url` is optional on both sides.** Accept `url: str | None = None` and use

@@ -22,7 +22,7 @@ from otto.host.unix_host import UnixHost
 from otto.logger.mode import LogMode
 from otto.tunnel.discovery import DISCOVERY_PS_COMMAND, parse_process_discovery
 from otto.utils import wait_for_async
-from tests._fixtures.labdata import host_data, make_host
+from tests._fixtures.labdata import flat_hosts, host_data, lab_json_v2, make_host
 from tests._fixtures.sutrepo import make_sut_repo
 from tests.e2e._otto_subprocess import REPO1, run_otto
 
@@ -329,7 +329,19 @@ def cli_sut_dir(tmp_path: Path) -> Path:
     """
     sut = tmp_path / "cli_cycle_sut"
     lab_dir = sut / "lab_data"
-    hosts = [host_data(ne) for ne in ("test1", "test2")]
+    # ``with_labs``: the CLI below runs ``otto --lab unix``, and a lab exists
+    # only where a source DECLARES it — so the written document has to carry
+    # the elements' membership, which the plain flat dict no longer does.
+    by_element = {h["element"]: h for h in flat_hosts(with_labs=True)}
+    hosts = [by_element[ne] for ne in ("test1", "test2")]
+    doc = lab_json_v2(hosts)
+    # `flat_hosts` drops `resources` — a v2 host entry may not carry one — so
+    # each declared lab's reservable set is restated rather than hoisted, and
+    # DERIVED rather than spelled out: tech1 names every one of these hosts'
+    # reservation identifier after its element, so this reproduces the union
+    # the v1 document had without becoming a second copy of it that can drift.
+    for name, entry in doc["labs"].items():
+        entry["resources"] = [h["element"] for h in hosts if name in h["labs"]]
     return make_sut_repo(
         sut,
         name="repo1",
@@ -343,7 +355,7 @@ def cli_sut_dir(tmp_path: Path) -> Path:
             f'services = ["api"]\n'
             f'default_host = "test2"\n'
         ),
-        files={"lab_data/lab.json": json.dumps({"hosts": hosts, "links": []})},
+        files={"lab_data/lab.json": json.dumps(doc)},
     )
 
 

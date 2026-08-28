@@ -85,6 +85,9 @@ def test_epilogue_prints_next_steps(tmp_path: Path) -> None:
     result = _invoke(["--all", "--name", "widget", "--path", str(tmp_path)])
     assert f"export OTTO_SUT_DIRS={tmp_path}" in result.output.replace("\n", "")
     assert "otto --install-completion" in result.output
+    # Installing the completion script does not activate it in the current
+    # shell; the banner has to say so (see test_init_banner.py).
+    assert "source ~/.bash_completions/otto.sh" in result.output
     assert "otto test --list-suites" in result.output
 
 

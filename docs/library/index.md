@@ -162,7 +162,9 @@ walkthrough (including a complete, runnable example CLI to copy), see
 You do not need a `lab.json` on disk. Build a `Lab` from host dicts, install
 it as the active context, and the zero-argument selectors (`all_hosts`,
 `get_host`) operate on it directly — useful for tests and ad-hoc scripts.
-Selection touches no network, so this runs as-is:
+These are **flat** host dicts: the shape the loader hands the factory once an
+element's identity has been folded in, which is why `element` is a key here
+and never one in the file. Selection touches no network, so this runs as-is:
 
 ```{doctest}
 >>> import re
@@ -171,8 +173,8 @@ Selection touches no network, so this runs as-is:
 >>> from otto.context import OttoContext, set_context, reset_context
 >>> from otto.config import all_hosts, get_host
 >>> hosts = [create_host_from_dict(spec) for spec in [
-...     {"ip": "10.0.0.11", "element": "test1", "creds": [{"login": "admin", "password": "x"}], "labs": ["unix"]},
-...     {"ip": "10.0.0.12", "element": "test2", "creds": [{"login": "admin", "password": "x"}], "labs": ["unix"]},
+...     {"ip": "10.0.0.11", "element": "test1", "creds": [{"login": "admin", "password": "x"}]},
+...     {"ip": "10.0.0.12", "element": "test2", "creds": [{"login": "admin", "password": "x"}]},
 ... ]]
 >>> lab = Lab(name="unix", hosts={h.id: h for h in hosts})
 >>> token = set_context(OttoContext(lab=lab))

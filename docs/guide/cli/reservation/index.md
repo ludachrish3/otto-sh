@@ -53,11 +53,21 @@ The gate runs at the top of every live-lab subcommand:
 | `otto cov report ...` | no     | Offline; never touches hardware.                   |
 | `otto reservation ...`| no     | The whoami/check helpers only *report* on state.   |
 
-For each gated invocation, otto computes the **required set** as the
-union of the selected lab's `resources` plus every `UnixHost.resources`
-in that lab, then asks the configured backend which of those the
-effective user holds.  Anything missing raises an error and the command
-does not run.
+For each gated invocation, the **required set** is the selected lab's
+declared `resources` — its entry in the
+[`labs` table](../../configuration/lab-config.md#the-labs-table) of `lab.json`.
+For a combined `--lab a+b` it is the union of the components' declared sets.
+Hosts contribute nothing: the lab is the reservable unit and a host carries no
+resources of its own.  Otto then asks the configured backend which of the
+required identifiers the effective user holds; anything missing raises an
+error and the command does not run.
+
+One consequence is worth planning for: two labs that share elements contend
+with each other only if their declarations share a resource identifier.  The
+`otto init` doctor warns about any pair that shares an element, **both**
+reserve at least one resource, and reserve nothing in common.  A lab that
+declares `resources: []` reserves nothing at all, so it is never half of such
+a pair — there is no reservation for the shared element to protect.
 
 ## Fail-closed behavior
 

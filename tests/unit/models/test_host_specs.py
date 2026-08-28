@@ -86,27 +86,20 @@ def test_hostspec_requires_ip_and_element():
 
 
 def test_hostspec_forbids_unknown_field():
-    # Anchored loc line: the substring assert this used to carry could not
-    # discriminate — "lab" is a substring of the real field "labs" AND of
-    # element="lab"'s input_value echo; only the ^lab$ line pins the typo'd key.
+    # Anchored loc line: a bare substring assert could not discriminate — "lab"
+    # is a substring of element="lab"'s input_value echo; only the ^lab$ line
+    # pins the unknown key itself.
     with pytest.raises(ValidationError, match=r"(?m)^lab\n\s+Extra inputs are not permitted"):
-        HostSpec(ip="10.0.0.1", element="lab", lab=["x"])  # typo: lab vs labs
+        HostSpec(ip="10.0.0.1", element="lab", lab=["x"])
 
 
-def test_hostspec_accepts_labs_and_coerces_resources_to_set():
-    spec = HostSpec(ip="10.0.0.1", element="lab", labs=["a"], resources=["r1", "r1"])
-    assert spec.labs == ["a"]
-    assert spec.resources == {"r1"}
-
-
-def test_common_host_kwargs_omits_unset_and_excludes_labs():
-    spec = HostSpec(ip="10.0.0.1", element="lab", labs=["a"])
+def test_common_host_kwargs_omits_unset():
+    spec = HostSpec(ip="10.0.0.1", element="lab")
     kw = spec._common_host_kwargs()
-    assert "labs" not in kw  # membership, never a host field
     assert kw["ip"] == "10.0.0.1"
     assert kw["element"] == "lab"
     # unset common fields are omitted so the host class's own default applies
-    for absent in ("os_name", "resources", "telnet_options", "snmp", "toolchain"):
+    for absent in ("os_name", "metadata", "telnet_options", "snmp", "toolchain"):
         assert absent not in kw
 
 
@@ -114,12 +107,13 @@ def test_common_host_kwargs_builds_nested_when_set():
     spec = HostSpec(
         ip="10.0.0.1",
         element="lab",
-        resources=["r1"],
+        metadata={"owner": "infra"},
         telnet_options={"port": 99},
         toolchain={"sysroot": "/opt"},
     )
     kw = spec._common_host_kwargs()
-    assert kw["resources"] == {"r1"}
+    assert kw["metadata"] == {"owner": "infra"}
+    assert kw["metadata"] is not spec.metadata  # copied, never aliased
     assert isinstance(kw["telnet_options"], TelnetOptions)
     assert kw["telnet_options"].port == 99
     assert isinstance(kw["toolchain"], Toolchain)
@@ -149,14 +143,15 @@ def test_hostspec_log_default_is_normal_on_spec_and_runtime():
     assert spec.to_host().log is LogMode.NORMAL
 
 
-def test_hostspec_log_accepts_bool_and_coerces():
-    # Backward-compat: lab data may still declare log = true/false.
-    spec_false = UnixHostSpec.model_validate(_minimal_unix_kwargs() | {"log": False})
-    assert spec_false.log is LogMode.QUIET
-    spec_true = UnixHostSpec.model_validate(_minimal_unix_kwargs() | {"log": True})
-    assert spec_true.log is LogMode.NORMAL
-    # The coerced LogMode flows through to the built runtime host.
-    assert spec_false.to_host().log is LogMode.QUIET
+def test_hostspec_log_rejects_bool_and_names_the_modes():
+    # The v1 ``log = true/false`` back-compat coercion is gone (spec §10): a
+    # bool now errors, and the error teaches the vocabulary that replaced it.
+    for value in (False, True):
+        with pytest.raises(
+            ValidationError, match=r"Input should be 'normal', 'quiet' or 'never'"
+        ) as exc:
+            UnixHostSpec.model_validate(_minimal_unix_kwargs() | {"log": value})
+        assert "log" in str(exc.value)
 
 
 def test_hostspec_log_accepts_logmode_string():
@@ -171,15 +166,14 @@ def test_unix_spec_builds_nested_options_and_snmp():
         creds=[{"login": "u", "password": "p"}],
         ssh_options={"port": 2222, "extra": {"x": 1}},
         snmp={"oids": ["1.3.6.1.2.1.1.3.0"], "port": 16101},
-        resources=["r1"],
-        labs=["unix"],
+        metadata={"owner": "infra"},
     )
     host = spec.to_host()
     assert host.ssh_options.port == 2222
     assert host.ssh_options.extra == {"x": 1}
     assert host.snmp is not None
     assert host.snmp.oids == ("1.3.6.1.2.1.1.3.0",)
-    assert host.resources == {"r1"}
+    assert host.metadata == {"owner": "infra"}
 
 
 def test_unix_spec_rejects_embedded_only_field():
@@ -247,18 +241,20 @@ def test_embedded_spec_rejects_unix_only_field():
 # ``products`` is user product data, independent of lab data; it is attached to
 # hosts by repo logic, never declared in lab.json. ``dev_tools`` is the same
 # category for the same reason — repo-defined tooling attached by a registered
-# provider at ingest, deliberately not declarable in lab data.
-_NON_SPEC_RUNTIME_FIELDS = frozenset({"products", "dev_tools"})
+# provider at ingest, deliberately not declarable in lab data. ``element_metadata``
+# and ``lab_info`` are stamped by the element/lab layers above the host entry,
+# never declared on it.
+_NON_SPEC_RUNTIME_FIELDS = frozenset({"products", "dev_tools", "element_metadata", "lab_info"})
 
 
 @pytest.mark.parametrize(("spec_cls", "runtime_cls"), HOST_SPEC_RUNTIME_PAIRS)
 def test_host_spec_fields_match_runtime_init(spec_cls, runtime_cls):
     """Bidirectional: every spec field maps to a constructor param AND every
-    lab-data init field of the runtime class is exposed by the spec. ``labs`` is
-    spec-only (lab membership, not a host arg); ``_NON_SPEC_RUNTIME_FIELDS`` are
-    runtime-only (repo-logic-applied, not lab data).
+    lab-data init field of the runtime class is exposed by the spec.
+    ``_NON_SPEC_RUNTIME_FIELDS`` are runtime-only (applied by repo logic or by
+    the layers above the host entry, not lab-data host fields).
     """
-    spec_fields = set(spec_cls.model_fields) - {"labs"}
+    spec_fields = set(spec_cls.model_fields)
     init_fields = {
         f.name for f in dataclasses.fields(runtime_cls) if f.init and not f.name.startswith("_")
     } - _NON_SPEC_RUNTIME_FIELDS
@@ -308,8 +304,7 @@ def test_unix_to_host_matches_factory():
         "transfer": "scp",
         "is_virtual": True,
         "creds": [{"login": "vagrant", "password": "vagrant"}],
-        "resources": ["test1"],
-        "labs": ["unix"],
+        "metadata": {"owner": "infra"},
         "ssh_options": {"port": 2200},
     }
     spec_host = UnixHostSpec.model_validate(d).to_host()
@@ -325,7 +320,7 @@ def test_unix_to_host_matches_factory():
         "transfer",
         "is_virtual",
         "creds",
-        "resources",
+        "metadata",
         "name",
         "hop",
         "user",
@@ -419,7 +414,7 @@ def test_registered_pairs_drift_guard():
 
     for name, spec_cls in _HOST_SPECS.items():
         runtime_cls = HOST_CLASSES.get(name)
-        spec_fields = set(spec_cls.model_fields) - {"labs"}
+        spec_fields = set(spec_cls.model_fields)
         init_fields = {
             f.name for f in dataclasses.fields(runtime_cls) if f.init and not f.name.startswith("_")
         } - _NON_SPEC_RUNTIME_FIELDS

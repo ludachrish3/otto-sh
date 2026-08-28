@@ -15,8 +15,6 @@ host ids diverge:
   names a host that is not in ``lab.hosts`` — a phantom edge.
 """
 
-import json
-
 import pytest
 
 from otto.host.factory import host_identity
@@ -24,6 +22,7 @@ from otto.host.os_profile import OS_PROFILES, register_os_profile
 from otto.labs import LabRepositoryError
 from otto.labs.json_repository import JsonFileLabRepository
 from otto.link.derive import addressing_from_dict
+from tests._fixtures.labdata import write_lab_json
 
 _CREDS = [{"login": "u", "password": "p"}]
 
@@ -73,22 +72,19 @@ def test_a_link_authored_against_the_old_raw_id_now_fails_loudly(tmp_path):
     a host silently missed. It now fails the load instead, naming the near
     miss so the fix is obvious rather than archaeological.
     """
-    (tmp_path / "lab.json").write_text(
-        json.dumps(
+    write_lab_json(
+        tmp_path / "lab.json",
+        [
             {
-                "hosts": [
-                    {
-                        "ip": "10.0.0.3",
-                        "element": "dut",
-                        "element_id": 3.0,
-                        "labs": ["e"],
-                        "creds": _CREDS,
-                    },
-                    {"ip": "10.0.0.2", "element": "srv", "labs": ["e"], "creds": _CREDS},
-                ],
-                "links": [{"endpoints": [{"host": "dut3.0"}, {"host": "srv"}]}],
-            }
-        )
+                "ip": "10.0.0.3",
+                "element": "dut",
+                "element_id": 3.0,
+                "labs": ["e"],
+                "creds": _CREDS,
+            },
+            {"ip": "10.0.0.2", "element": "srv", "labs": ["e"], "creds": _CREDS},
+        ],
+        [{"endpoints": [{"host": "dut3.0"}, {"host": "srv"}]}],
     )
     repo = JsonFileLabRepository(search_paths=[tmp_path])
 
@@ -106,23 +102,20 @@ def test_a_record_naming_an_unregistered_profile_is_skipped_not_fatal(tmp_path):
     Exactly the shape of a lab file whose hosts use a profile or command frame
     registered by a SUT repo's init modules — absent in any other process.
     """
-    (tmp_path / "lab.json").write_text(
-        json.dumps(
+    write_lab_json(
+        tmp_path / "lab.json",
+        [
+            {"ip": "10.0.0.1", "element": "fine", "labs": ["e"], "creds": _CREDS},
+            {"ip": "10.0.0.2", "element": "srv", "labs": ["e"], "creds": _CREDS},
             {
-                "hosts": [
-                    {"ip": "10.0.0.1", "element": "fine", "labs": ["e"], "creds": _CREDS},
-                    {"ip": "10.0.0.2", "element": "srv", "labs": ["e"], "creds": _CREDS},
-                    {
-                        "ip": "10.0.0.9",
-                        "element": "exotic",
-                        "os_type": "_not_a_registered_profile",
-                        "labs": ["other"],
-                        "creds": _CREDS,
-                    },
-                ],
-                "links": [{"endpoints": [{"host": "fine"}, {"host": "srv"}]}],
-            }
-        )
+                "ip": "10.0.0.9",
+                "element": "exotic",
+                "os_type": "_not_a_registered_profile",
+                "labs": ["other"],
+                "creds": _CREDS,
+            },
+        ],
+        [{"endpoints": [{"host": "fine"}, {"host": "srv"}]}],
     )
     repo = JsonFileLabRepository(search_paths=[tmp_path])
 
@@ -139,23 +132,20 @@ def test_a_lab_declaring_a_link_by_the_advertised_id_loads(tmp_path, carded_prof
     ``dut1``, so resolution raised LabRepositoryError and the lab was
     unusable.
     """
-    (tmp_path / "lab.json").write_text(
-        json.dumps(
+    write_lab_json(
+        tmp_path / "lab.json",
+        [
             {
-                "hosts": [
-                    {
-                        "ip": "10.0.0.1",
-                        "element": "dut",
-                        "element_id": 1,
-                        "os_type": carded_profile,
-                        "labs": ["e"],
-                        "creds": _CREDS,
-                    },
-                    {"ip": "10.0.0.2", "element": "srv", "labs": ["e"], "creds": _CREDS},
-                ],
-                "links": [{"endpoints": [{"host": "dut1_lc2"}, {"host": "srv"}]}],
-            }
-        )
+                "ip": "10.0.0.1",
+                "element": "dut",
+                "element_id": 1,
+                "os_type": carded_profile,
+                "labs": ["e"],
+                "creds": _CREDS,
+            },
+            {"ip": "10.0.0.2", "element": "srv", "labs": ["e"], "creds": _CREDS},
+        ],
+        [{"endpoints": [{"host": "dut1_lc2"}, {"host": "srv"}]}],
     )
     repo = JsonFileLabRepository(search_paths=[tmp_path])
 

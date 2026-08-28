@@ -41,6 +41,7 @@ from otto.config.lab import Lab
 from otto.context import OttoContext, set_context
 from otto.host import product as product_mod
 from otto.host.host import BaseHost
+from otto.host.lab_info import LabInfo
 from otto.host.product import Product, apply_product_providers, register_product_provider
 from otto.host.toolchain import Toolchain
 from otto.logger.mode import LogMode
@@ -80,7 +81,7 @@ class _FleetHost(BaseHost):
         self.id = host_id
         self.name = host_id
         self.log = LogMode.NORMAL
-        self.resources = set()
+        self.lab_info = LabInfo()
         self.products = []
         self.dev_tools = []
         self.toolchain = Toolchain()

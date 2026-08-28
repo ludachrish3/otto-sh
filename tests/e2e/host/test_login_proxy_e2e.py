@@ -91,7 +91,7 @@ from otto.host.factory import create_host_from_dict
 from otto.utils import Status
 from tests._fixtures._host_pool import UNIX_POOL as _UNIX_POOL
 from tests._fixtures._host_pool import lease_unix_host
-from tests._fixtures.labdata import host_data
+from tests._fixtures.labdata import host_data, lab_json_v2
 from tests._fixtures.sutrepo import make_sut_repo
 from tests.e2e.host._pty_driver import InteractiveOttoSession
 
@@ -365,7 +365,7 @@ def _scaffold_sut_dir(sut_dir: Path, ip: str, element: str) -> str:
         ),
         files={
             "initlib/lp_e2e_init.py": _INIT_MODULE_SOURCE,
-            "lab_data/lab.json": json.dumps({"hosts": hosts}),
+            "lab_data/lab.json": json.dumps(lab_json_v2(hosts)),
         },
     )
 

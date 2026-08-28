@@ -114,8 +114,8 @@ Relative paths resolve against the repository root — see
 {doc}`guide/configuration/settings`.  The `init` list names Python modules that
 otto imports at startup — this is where you register your instructions and
 shared options.  `[[lab.sources]]` is an ordered list: declare several and
-otto combines them, later sources overriding earlier ones per host record
-(see {doc}`guide/configuration/host-sources`).
+otto combines them, later sources overriding earlier ones one element (or one
+`labs` table entry) at a time (see {doc}`guide/configuration/host-sources`).
 
 ### Instructions (`otto run`)
 

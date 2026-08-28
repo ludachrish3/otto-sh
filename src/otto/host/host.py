@@ -44,6 +44,7 @@ from ..utils import (
 if TYPE_CHECKING:
     from .app_shell import AppShell
     from .dev_tool import DevTool
+    from .lab_info import LabInfo
     from .power import PowerController
     from .product import Product
     from .session import HostSession
@@ -438,8 +439,8 @@ class Host(Protocol):
     name: str
     """Human-readable name for this host."""
 
-    resources: set[str]
-    """Resources required to reserve this host."""
+    lab_info: "LabInfo"
+    """The resolved lab this host came from (name, declared resources, metadata)."""
 
     products: list["Product"]
     """Software-under-test deployed to this host (default empty)."""
@@ -807,7 +808,7 @@ class BaseHost(ABC):
     id: str
     name: str
     log: LogMode
-    resources: set[str]
+    lab_info: "LabInfo"
     products: list["Product"]
     dev_tools: list["DevTool"]
     toolchain: "Toolchain"

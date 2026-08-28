@@ -33,7 +33,7 @@ class CompiledLabSource:
     # Napoleon reads that as a type annotation and the nitpicky docs build
     # fails on the phantom class ("json backend only").
     paths: list[Path] = field(default_factory=list)
-    """Anchored directory-or-``.json``-file entries (json backend only)."""
+    """Anchored directory, ``.json``-file or glob entries (json backend only)."""
 
     kwargs: dict[str, Any] = field(default_factory=dict)
     """Constructor kwargs passed verbatim (custom backends only)."""
@@ -41,13 +41,17 @@ class CompiledLabSource:
     def lab_files(self) -> list[Path]:
         """Return the lab files a json source reads (empty for custom backends).
 
-        The single home of the file-vs-directory rule on the CONFIG side —
-        completion's fingerprint and raw link reader both use it, so they can
-        never disagree with the backend about which files matter.
+        The reader on the CONFIG side — completion's fingerprint and raw link
+        reader both use it — of the ONE entry-to-files rule the backend applies
+        (:func:`~otto.labs.json_repository.expand_lab_paths`: a directory
+        contributes its ``lab.json``, a ``.json`` entry IS the file, a glob
+        expands to the sorted ``.json`` files it matches), so they can never
+        disagree with the backend about which files matter. Entries that
+        resolve to no existing file contribute nothing, exactly as at load.
         """
-        from .json_repository import LAB_FILENAME  # lazy: keep this module light
+        from .json_repository import expand_lab_paths  # lazy: keep this module light
 
-        return [p if p.suffix == ".json" else p / LAB_FILENAME for p in self.paths]
+        return expand_lab_paths(self.paths)
 
 
 def compile_lab_sources(
@@ -107,10 +111,15 @@ def build_lab_sources(repos: "Sequence[Repo]") -> "LabRepository":
     """Construct the process's host source from every repo's compiled list.
 
     Concatenates per-repo ``[[lab.sources]]`` lists in the given (OTTO_SUT_DIRS)
-    order — later sources override earlier ones inside the composite. Exactly
-    one source returns the bare backend (single-source setups run the same
-    code they always did); zero sources returns an empty composite whose
-    ``load_lab`` fails loud with configuration guidance.
+    order — later sources override earlier ones inside the composite.
+
+    ALWAYS a :class:`~otto.labs.composite.CompositeLabRepository`, whatever the
+    source count: lab existence and the declared-but-memberless rule live in
+    the composite and nowhere else (spec 2026-08-27 lab-definition-v2 §14), so
+    returning the bare backend for a single source — as this did before v2 —
+    exempted the commonest setup of all (one repo, one json source) from both
+    rules. Zero sources returns an empty composite whose ``load_lab`` fails
+    loud with configuration guidance.
 
     Raises
     ------
@@ -129,6 +138,4 @@ def build_lab_sources(repos: "Sequence[Repo]") -> "LabRepository":
             else:
                 built = cls(repo_dir=src.repo_dir, **src.kwargs)
             entries.append(LabSource(label=src.label, repository=built))
-    if len(entries) == 1:
-        return entries[0].repository
     return CompositeLabRepository(entries)

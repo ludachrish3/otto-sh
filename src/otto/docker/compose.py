@@ -17,6 +17,7 @@ import json
 import logging
 import shlex
 from collections.abc import AsyncIterator
+from dataclasses import replace
 from typing import Any
 
 from ..config.lab import Lab
@@ -431,7 +432,6 @@ async def _up_and_register(
             project=repo.name,
             service=service,
             compose_project=proj,
-            resources=set(parent.resources),
         )
         # A container's lab is its PARENT's lab, never the lab it is registered
         # INTO: in a multi-lab session that lab is the composite ("a+b"), a name
@@ -441,6 +441,13 @@ async def _up_and_register(
         # An unattributed parent leaves this empty and falls through to
         # ``Lab.add_host``'s backstop, which stays a pure backstop.
         host.source_lab = parent.source_lab
+        # ``replace`` rather than a plain assignment: LabInfo is frozen, but
+        # the dict behind its ``metadata`` is not. Sharing the parent's record
+        # would give every container of that parent one table, so a write on
+        # any of them would surface on all of them and on the parent — the
+        # aliasing LabInfo.__post_init__ exists to prevent. replace() re-runs
+        # __post_init__, which copies the dict.
+        host.lab_info = replace(parent.lab_info)
         # Register in the lab so otto host <id> finds it. compose_up is
         # idempotent and re-registers on every call — replacing a placeholder
         # from register_declared_container_hosts, or a prior compose_up's
@@ -715,12 +722,13 @@ def register_declared_container_hosts(lab: Lab, repos: list[Repo]) -> int:
                         project=repo.name,
                         service=service,
                         compose_project=get_user_compose_project(repo.name),
-                        resources=set(parent.resources),
                     )
                     # Same rule as compose_up's registration: the container
                     # belongs to its parent's lab, not to whatever composite the
                     # session assembled.
                     placeholder.source_lab = parent.source_lab
+                    # Copied, not aliased — same reason as compose_up's.
+                    placeholder.lab_info = replace(parent.lab_info)
                     if placeholder.id in lab.hosts:
                         continue
                     lab.add_host(placeholder)

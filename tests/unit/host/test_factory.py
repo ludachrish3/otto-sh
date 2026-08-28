@@ -42,7 +42,6 @@ class TestCreateHostFromDict:
             "element": "alt1",
             "board": "qemu",
             "creds": [{"login": "vagrant", "password": "vagrant"}],
-            "resources": ["alt1"],
         }
         host = create_host_from_dict(host_data)
 
@@ -51,33 +50,6 @@ class TestCreateHostFromDict:
         assert host.element == "alt1"
         assert host.board == "qemu"
         assert host.creds == [Cred(login="vagrant", password="vagrant")]
-        assert host.resources == {"alt1"}
-
-    def test_resources_list_converted_to_set(self):
-        """Test that resources list is converted to set."""
-        host_data = {
-            "ip": "10.10.200.11",
-            "element": "alt1",
-            "creds": [{"login": "vagrant", "password": "vagrant"}],
-            "resources": ["alt1", "test2"],
-        }
-        host = create_host_from_dict(host_data)
-
-        assert isinstance(host.resources, set)
-        assert host.resources == {"alt1", "test2"}
-
-    def test_resources_set_preserved(self):
-        """Test that resources set is preserved."""
-        host_data = {
-            "ip": "10.10.200.11",
-            "element": "alt1",
-            "creds": [{"login": "vagrant", "password": "vagrant"}],
-            "resources": {"alt1", "test2"},
-        }
-        host = create_host_from_dict(host_data)
-
-        assert isinstance(host.resources, set)
-        assert host.resources == {"alt1", "test2"}
 
     def test_missing_ip_raises_validationerror(self):
         """Missing required ``ip`` field is caught by the spec validator."""
@@ -409,18 +381,6 @@ class TestOsTypeDispatch:
         )
         assert host.os_name == "Zephyr"
         assert host.os_version == "3.7.0"
-
-    def test_embedded_resources_converted_to_set(self):
-        host = create_host_from_dict(
-            {
-                "ip": "192.0.2.1",
-                "element": "zephyr37_fat",
-                "os_type": "embedded",
-                "command_frame": "zephyr",
-                "resources": ["zephyr37_fat", "mote"],
-            }
-        )
-        assert host.resources == {"zephyr37_fat", "mote"}
 
     def test_embedded_hop_is_honored(self):
         host = create_host_from_dict(
@@ -920,8 +880,9 @@ class TestMergeAndValidation:
         assert host.os_type == "unix"  # absent os_type -> default selector stamped
 
     def test_validate_rejects_typo_with_pydantic_error(self):
-        # ``lab`` (not ``labs``) is the key that must be named; the trailing 's'
-        # matters, so the pattern anchors the whole location line.
+        # ``lab`` is the unknown key that must be NAMED, not merely reported;
+        # ``element="c"`` keeps the input echo from supplying the match, and the
+        # pattern anchors the whole location line.
         with pytest.raises(ValidationError, match=r"(?m)^lab\n\s+Extra inputs are not permitted"):
             validate_host_dict(
                 {
@@ -930,7 +891,7 @@ class TestMergeAndValidation:
                     "creds": [{"login": "u", "password": "p"}],
                     "lab": ["x"],
                 }
-            )  # 'lab' is a typo for 'labs'
+            )
 
     def test_validate_rejects_misplaced_ssh_options_on_embedded(self):
         # os_type must have dispatched to the *embedded* spec, and that spec must

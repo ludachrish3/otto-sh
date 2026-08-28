@@ -7,6 +7,7 @@ import pytest
 from otto.config.lab import Lab
 from otto.labs import LabNotFoundError, LabRepositoryError
 from otto.labs.json_repository import JsonFileLabRepository
+from tests._fixtures.labdata import write_lab_json
 
 HOST_ENTRY = {
     "ip": "192.0.2.1",
@@ -18,15 +19,17 @@ HOST_ENTRY = {
 
 
 def _hosts_file(path: Path, hosts: list[dict]) -> Path:
-    """Write a ``lab.json`` (object form) holding *hosts* and return its path."""
-    f = path / "lab.json"
-    f.write_text(json.dumps({"hosts": hosts}))
-    return f
+    """Write a v2 ``lab.json`` expressing *hosts* (flat dicts) and return its path.
+
+    The fixtures below stay flat — that is the shape the host factory takes —
+    while the FILE is v2: ``write_lab_json`` hoists each host's ``labs`` onto
+    its element and its ``resources`` into the ``labs`` table.
+    """
+    return write_lab_json(path / "lab.json", hosts)
 
 
 def _write_lab(tmp_path, hosts=(), links=(), name="lab.json"):
-    payload = {"hosts": list(hosts), "links": list(links)}
-    (tmp_path / name).write_text(json.dumps(payload))
+    write_lab_json(tmp_path / name, hosts, links)
 
 
 class TestJsonFileLabRepository:
@@ -194,10 +197,20 @@ class TestJsonFileLabRepository:
         with pytest.raises(LabRepositoryError) as exc_info:
             repo.load_lab("badlab")
 
-        assert "index 0" in str(exc_info.value)
+        # The element and the host's index WITHIN it — not a running count
+        # across the lab, which no longer exists as a flat array.
+        assert "element 'alt1' hosts[0]" in str(exc_info.value)
         assert "ip" in str(exc_info.value)
 
-    def test_load_lab_resource_aggregation(self, tmp_path):
+    def test_load_lab_resources_come_from_the_declaring_labs_entry(self, tmp_path):
+        """The lab is the reservable unit: ``resources`` are DECLARED per lab.
+
+        Replaces the v1 aggregation test (host resources unioned into the lab)
+        — hosts no longer carry ``resources`` at all. ``write_lab_json`` hoists
+        each flat host's into its own labs' table entries, so the fixture still
+        reads the same while pinning the new rule: the OTHER lab's declared
+        resources stay out of this one.
+        """
         _hosts_file(
             tmp_path,
             [
@@ -213,7 +226,7 @@ class TestJsonFileLabRepository:
                     "element": "test2",
                     "creds": [{"login": "vagrant", "password": "vagrant"}],
                     "resources": ["test2", "vegetable"],
-                    "labs": ["resourcelab"],
+                    "labs": ["otherlab"],
                 },
             ],
         )
@@ -221,10 +234,7 @@ class TestJsonFileLabRepository:
         repo = JsonFileLabRepository([tmp_path])
         lab = repo.load_lab("resourcelab")
 
-        assert "alt1" in lab.resources
-        assert "citrus" in lab.resources
-        assert "test2" in lab.resources
-        assert "vegetable" in lab.resources
+        assert lab.resources == {"alt1", "citrus"}
 
     def test_load_lab_host_ids_generated(self, tmp_path):
         _hosts_file(
@@ -322,7 +332,7 @@ class TestJsonFileLabRepository:
 
 
 class TestLabFileShape:
-    """The lab.json object contract: hosts/links sections, comment keys, hard cutover."""
+    """The lab.json object contract: labs/elements/links sections, comment keys, hard cutover."""
 
     def test_array_top_level_rejected(self, tmp_path):
         (tmp_path / "lab.json").write_text(json.dumps([{"ip": "192.0.2.1"}]))
@@ -331,7 +341,7 @@ class TestLabFileShape:
             repo.load_lab("unix")
 
     def test_unknown_section_rejected(self, tmp_path):
-        (tmp_path / "lab.json").write_text(json.dumps({"hosts": [], "routes": []}))
+        (tmp_path / "lab.json").write_text(json.dumps({"elements": [], "routes": []}))
         repo = JsonFileLabRepository(search_paths=[tmp_path])
         with pytest.raises(LabRepositoryError, match="unknown section"):
             repo.load_lab("unix")
@@ -347,13 +357,19 @@ class TestLabFileShape:
     def test_missing_sections_default_empty(self, tmp_path):
         (tmp_path / "lab.json").write_text(json.dumps({}))
         repo = JsonFileLabRepository(search_paths=[tmp_path])
-        with pytest.raises(LabNotFoundError):  # no hosts -> lab not found
+        with pytest.raises(LabNotFoundError):  # neither declared nor matched
             repo.load_lab("unix")
 
     def test_section_not_array_rejected(self, tmp_path):
-        (tmp_path / "lab.json").write_text(json.dumps({"hosts": {"not": "a list"}}))
+        (tmp_path / "lab.json").write_text(json.dumps({"elements": {"not": "a list"}}))
         repo = JsonFileLabRepository(search_paths=[tmp_path])
         with pytest.raises(LabRepositoryError, match="must be a JSON array"):
+            repo.load_lab("unix")
+
+    def test_labs_section_not_object_rejected(self, tmp_path):
+        (tmp_path / "lab.json").write_text(json.dumps({"labs": ["unix"]}))
+        repo = JsonFileLabRepository(search_paths=[tmp_path])
+        with pytest.raises(LabRepositoryError, match="'labs' must be a JSON object"):
             repo.load_lab("unix")
 
     def test_hosts_json_is_not_read(self, tmp_path):
@@ -543,11 +559,16 @@ class TestDeclaredLinks:
         assert "test1" in lab.hosts
 
     def test_duplicate_cross_lab_addressing_warns_and_keeps_first(self, tmp_path, caplog):
-        """Two lab files that each declare a host slugging to the same id, with
-        DIFFERING addressing (different ip), must not raise while building the
-        cross-lab addressing map: the FIRST file's addressing wins, a warning
-        is logged, and the requested lab still loads (cross-lab resilience —
-        distinct from ``Lab.__add__``'s same-lab merge, which fails loud).
+        """Two lab files whose hosts derive the same id, with DIFFERING addressing
+        (different ip), must not raise while building the cross-lab addressing
+        map: the FIRST file's addressing wins, a warning is logged, and the
+        requested lab still loads (cross-lab resilience — distinct from
+        ``Lab.__add__``'s same-lab merge, which fails loud).
+
+        The colliding records belong to DISTINCT elements — ``dup`` id 1 and
+        ``dup1``, both on board ``seed`` — which is the only way to reach this
+        path under v2 (spec §9): the same element ``(name, id)`` in two files of
+        one source is now a duplicate-element error, not an addressing clash.
         """
         path1 = tmp_path / "path1"
         path2 = tmp_path / "path2"
@@ -558,13 +579,14 @@ class TestDeclaredLinks:
         dup_first = {
             **HOST_ENTRY,
             "element": "dup",
+            "element_id": 1,
             "board": "seed",
             "ip": "192.0.2.50",
             "labs": ["other1"],
         }
         dup_second = {
             **HOST_ENTRY,
-            "element": "dup",
+            "element": "dup1",
             "board": "seed",
             "ip": "192.0.2.99",
             "labs": ["other2"],
@@ -574,7 +596,7 @@ class TestDeclaredLinks:
             hosts=[test1, dup_first],
             links=[
                 {
-                    "endpoints": [{"host": "test1"}, {"host": "dup_seed"}],
+                    "endpoints": [{"host": "test1"}, {"host": "dup1_seed"}],
                     "protocol": "tcp",
                 }
             ],
@@ -589,7 +611,7 @@ class TestDeclaredLinks:
         assert any("Duplicate host id" in r.message for r in caplog.records)
         assert "test1" in lab.hosts
         (link,) = lab.links
-        dup_ip = link.a.ip if link.a.host == "dup_seed" else link.b.ip
+        dup_ip = link.a.ip if link.a.host == "dup1_seed" else link.b.ip
         assert dup_ip == "192.0.2.50"  # first file's addressing kept
 
 

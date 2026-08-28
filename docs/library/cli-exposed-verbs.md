@@ -174,10 +174,24 @@ each host as it is ingested from lab data:
     register_product_provider(_provide)
 
 The provider runs once per lab-ingested host. Key on product-agnostic host
-attributes (`element`, `element_id`, `os_type`, `id`, `ip`, `resources`) to
-decide which hosts get which products; source any per-host parameters (versions,
-artifact paths) from your own product-repo config. Providers aggregate in
-registration order and dedupe by `Product.name`.
+attributes — `element`, `element_id`, `os_type`, `id`, `ip`, `source_lab` (the
+component lab the host came from), and the two opaque tables `metadata` (the
+host entry's) and `element_metadata` (its element's) — to decide which hosts
+get which products; source any per-host parameters (versions, artifact paths)
+from your own product-repo config. Providers aggregate in registration order
+and dedupe by `Product.name`.
+
+```{warning}
+**`host.lab_info` is not readable at provider time.** The factory stamps
+`source_lab` and `element_metadata` immediately before it runs the providers,
+precisely so a provider can gate on them. `lab_info` is different: it is
+stamped by an attribution sweep *after* the whole lab has loaded, because it
+carries the lab's declared `resources` and `metadata`, which are only known
+once every source has contributed. Inside a provider it still holds the
+default `LabInfo()` — so `host.lab_info.metadata.get("site")` returns `None`
+for every host, silently and forever. Gate on `source_lab` instead; read
+`lab_info` later, from a suite or instruction, where it is populated.
+```
 
 Code-constructed hosts (`UnixHost(..., products=[...])`) keep their explicit
 list; providers apply only to hosts built from lab data.

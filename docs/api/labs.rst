@@ -28,4 +28,6 @@ register a name via :func:`otto.labs.register_lab_repository` from an
 
 .. automodule:: otto.labs.registry
 
+.. automodule:: otto.labs.doctor
+
 .. automodule:: otto.labs.errors

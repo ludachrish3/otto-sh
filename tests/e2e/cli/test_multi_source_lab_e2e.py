@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from tests._fixtures.labdata import lab_json_v2, write_lab_json
 from tests._fixtures.sutrepo import make_sut_repo
 from tests.e2e._otto_subprocess import run_otto
 
@@ -34,13 +35,18 @@ def _host(element: str, ip: str) -> dict:
 
 
 def _make_repo(root: Path, tmp_path: Path, *, local_hosts: list[dict]) -> Path:
-    global_file = tmp_path / "global-hosts.json"
-    global_file.write_text(json.dumps({"hosts": [_host("alt1", "10.0.0.1")]}))
+    global_file = write_lab_json(tmp_path / "global-hosts.json", [_host("alt1", "10.0.0.1")])
     return make_sut_repo(
         root,
         name="multisrc",
         extra=SETTINGS.format(global_file=global_file),
-        files={"lab/lab.json": json.dumps({"hosts": local_hosts})},
+        # Only the global source DECLARES `site` (spec §2.1); the repo-local
+        # file contributes members only. Two declarations would be a second,
+        # independent override — the labs-entry one (spec §6, §9) — and it
+        # warns in the same words whether or not any element collides. That
+        # would make the control below unsatisfiable and would let the
+        # override test pass on a warning it is not about.
+        files={"lab/lab.json": json.dumps(lab_json_v2(local_hosts, declare_labs=False))},
     )
 
 

@@ -12,7 +12,8 @@ Every host can be configured with a dedicated options object per network
 protocol.  The default-constructed options reproduce otto's historical
 defaults exactly, so existing `lab.json` entries keep working without
 changes.  To tune a protocol, add the matching ``*_options`` object to
-the host entry:
+the host entry — one entry of its element's ``hosts`` array, which is
+what every JSON fragment on this page shows:
 
 | Object            | Protocol                       |
 |-------------------|--------------------------------|
@@ -61,7 +62,6 @@ connect timeout:
 ```json
 {
     "ip": "10.10.200.12",
-    "element": "target",
     "creds": [{ "login": "admin", "password": "secret" }],
     "ssh_options": {
         "port": 2222,
@@ -213,7 +213,6 @@ box where the history file is the record of what touched it):
 ```json
 {
     "ip": "10.10.200.12",
-    "element": "target",
     "creds": [{ "login": "admin", "password": "secret" }],
     "shell_history": true
 }
@@ -280,7 +279,6 @@ Add an optional ``toolchain`` object to the host entry in ``lab.json``:
 ```json
 {
     "ip": "10.10.200.12",
-    "element": "target",
     "board": "arm-board",
     "creds": [{ "login": "admin", "password": "secret" }],
     "toolchain": {

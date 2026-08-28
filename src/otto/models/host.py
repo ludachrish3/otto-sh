@@ -138,7 +138,7 @@ class InterfaceSpec(OttoModel):
 
 
 # Common fields passed straight through to the host constructor (no conversion).
-# Conversions for default_dest_dir/resources/telnet_options/snmp/toolchain are
+# Conversions for default_dest_dir/metadata/telnet_options/snmp/toolchain are
 # applied separately in _common_host_kwargs.
 _COMMON_PLAIN_FIELDS = (
     "ip",
@@ -277,8 +277,13 @@ class HostSpec(OttoModel):
     has_bash: bool = True
     default_dest_dir: Path = Path()
     max_filename_len: int = 255
-    resources: set[str] = Field(default_factory=set)
     debug_log_globs: list[str] = Field(default_factory=list)
+
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    """Opaque user data (spec §4). A JSON object; otto never reads it. The
+    sanctioned home for custom fields, so ``extra='forbid'`` never has to
+    give way: a key here can never collide with a field otto adds later."""
+
     interfaces: dict[str, InterfaceSpec] = Field(default_factory=dict)
     log: LogMode = LogMode.NORMAL
     log_stdout: bool = True  # common: both UnixHost and EmbeddedHost declare it
@@ -296,10 +301,6 @@ class HostSpec(OttoModel):
     # data, independent of lab data, attached to hosts by repo logic — the drift
     # guard's _NON_SPEC_RUNTIME_FIELDS excludes it.)
     power_control: dict[str, Any] | str | None = None
-
-    # Lab membership — validated (so a `lab`/`labs` typo errors) but NOT a host
-    # constructor argument; the repository uses it to filter hosts into a Lab.
-    labs: list[str] = Field(default_factory=list)
 
     @model_validator(mode="before")
     @classmethod
@@ -364,14 +365,6 @@ class HostSpec(OttoModel):
             raise ValueError(f"command_frame {v!r} is not a registered frame. Known: {known}")
         return v
 
-    @field_validator("log", mode="before")
-    @classmethod
-    def _coerce_log_bool(cls, v: object) -> object:
-        # Backward-compat: lab data may still declare log = true/false.
-        if isinstance(v, bool):
-            return LogMode.QUIET if v is False else LogMode.NORMAL
-        return v
-
     @model_validator(mode="after")
     def _validate_cred_entries(self) -> "HostSpec":
         logins = [c.login for c in self.creds]
@@ -405,7 +398,7 @@ class HostSpec(OttoModel):
         the host class's own default applies — including subclass overrides
         (``UnixHost.os_name='Linux'``, ``ZephyrHost.os_name='Zephyr'``). Passing
         every field unconditionally would clobber those defaults with the spec's
-        neutral ones. ``labs`` is never a constructor argument.
+        neutral ones.
         """
         s = self.model_fields_set
         kw: dict[str, Any] = {n: getattr(self, n) for n in _COMMON_PLAIN_FIELDS if n in s}
@@ -413,10 +406,10 @@ class HostSpec(OttoModel):
             kw["creds"] = [c.to_cred() for c in self.creds]
         if "default_dest_dir" in s:
             kw["default_dest_dir"] = Path(self.default_dest_dir)
-        if "resources" in s:
-            kw["resources"] = set(self.resources)
+        if "metadata" in s:
+            kw["metadata"] = dict(self.metadata)
         if "debug_log_globs" in s:
-            # Copied, like ``resources``: the host must not share a mutable
+            # Copied, like ``metadata``: the host must not share a mutable
             # container with the spec that built it.
             kw["debug_log_globs"] = list(self.debug_log_globs)
         if "interfaces" in s:

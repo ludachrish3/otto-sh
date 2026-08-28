@@ -101,7 +101,10 @@ register_command_frame("myshell", MyShellFrame)
 ```
 
 ```json
-{ "element": "mote", "os_type": "embedded", "command_frame": "myshell" }
+{
+  "name": "mote", "labs": ["embedded"],
+  "hosts": [{ "ip": "192.0.2.7", "os_type": "embedded", "command_frame": "myshell" }]
+}
 ```
 
 For a target that should carry the frame as its default (the way `ZephyrHost`
@@ -181,7 +184,10 @@ register_filesystem("nffs", NffsFileSystem)
 ```
 
 ```json
-{ "element": "mote_nffs", "os_type": "embedded", "ip": "192.0.2.7", "filesystem": "nffs" }
+{
+  "name": "mote_nffs", "labs": ["embedded"],
+  "hosts": [{ "ip": "192.0.2.7", "os_type": "embedded", "filesystem": "nffs" }]
+}
 ```
 
 That's the whole change. The host factory resolves `"nffs"` through the

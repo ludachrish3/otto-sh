@@ -1,11 +1,10 @@
 """Static, user-code-free collectors behind --lab / --tests completion."""
 
-import json
 from pathlib import Path
 from types import SimpleNamespace
 
 from otto.config.completion_cache import collect_lab_names, collect_test_names
-from tests._fixtures.labdata import json_lab_sources
+from tests._fixtures.labdata import json_lab_sources, write_lab_json
 
 _HOSTS = [
     {"ip": "10.0.0.1", "element": "r", "labs": ["tech1", "shared"]},
@@ -56,8 +55,8 @@ def _repo(
     )
 
 
-def test_collect_lab_names_reads_lab_tags(tmp_path: Path) -> None:
-    (tmp_path / "lab.json").write_text(json.dumps({"hosts": _HOSTS}))
+def test_collect_lab_names_reads_declared_labs(tmp_path: Path) -> None:
+    write_lab_json(tmp_path / "lab.json", _HOSTS)
     assert collect_lab_names([_repo(labs=[tmp_path])]) == ["shared", "tech1", "tech2"]
 
 

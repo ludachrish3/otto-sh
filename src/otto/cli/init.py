@@ -14,7 +14,7 @@ import os
 import re
 from collections.abc import Callable
 from pathlib import Path
-from typing import Annotated, Any, cast
+from typing import Annotated, Any
 
 import tomli
 import typer
@@ -98,16 +98,23 @@ def _settings_paths(root: Path) -> dict[str, list[Path]] | None:
     return resolved
 
 
-def _lab_files(root: Path) -> list[Path]:
-    """Every lab file this repo's json ``[[lab.sources]]`` entries name.
+def _lab_file_groups(root: Path) -> list[list[Path]]:
+    """Every lab file this repo's json ``[[lab.sources]]`` entries name, ONE LIST PER SOURCE.
 
     THE single reader of a repo's host-data declaration inside ``otto init``:
-    detection and validation both go through it, so the doctor can never
-    disagree with the runtime — or with itself — about which files hold this
-    repo's hosts. Compiles the entries with the SAME
+    detection and validation both go through it (via :func:`_lab_files`), so
+    the doctor can never disagree with the runtime — or with itself — about
+    which files hold this repo's hosts. Compiles the entries with the SAME
     :func:`otto.labs.sources.compile_lab_sources` ``Repo.parse_settings``
     uses, then asks each json source for its files (a directory entry
-    contributes its ``lab.json``; a ``.json`` entry IS the file).
+    contributes its ``lab.json``; a ``.json`` entry IS the file; a glob
+    contributes every match).
+
+    The grouping is load-bearing for the duplicate rules, which are per SOURCE:
+    two files of ONE source declaring the same lab is a typo, the same
+    declaration in two SOURCES is the documented override seam (spec §2.4).
+    Callers that only need "which files exist" flatten it through
+    :func:`_lab_files`.
 
     Falls back to the conventional ``lab_data/lab.json`` only when there is no
     readable ``settings.toml`` at all — init must work on a repo it has not
@@ -122,7 +129,7 @@ def _lab_files(root: Path) -> list[Path]:
 
     data = _settings_data(root)
     if data is None:
-        return [root / "lab_data" / LAB_FILENAME]
+        return [[root / "lab_data" / LAB_FILENAME]]
     lab = data.get("lab")
     if lab is None:
         return []
@@ -136,7 +143,17 @@ def _lab_files(root: Path) -> list[Path]:
         )
     except ValueError:
         return []
-    return [f for src in sources if src.backend == "json" for f in src.lab_files()]
+    return [src.lab_files() for src in sources if src.backend == "json"]
+
+
+def _lab_files(root: Path) -> list[Path]:
+    """Every lab file this repo's json sources name, flattened in source order.
+
+    The "does this repo have host data, and where" view, for detection and for
+    any caller that does not care which source a file came from. See
+    :func:`_lab_file_groups` for the per-source view the duplicate rules need.
+    """
+    return [lab_file for group in _lab_file_groups(root) for lab_file in group]
 
 
 def _ensure_options_module(root: Path, cfg: InitConfig) -> list[Path]:
@@ -175,7 +192,28 @@ def _scaffold_schemas(root: Path, cfg: InitConfig) -> list[Path]:  # noqa: ARG00
         target.write_text(json.dumps(doc, indent=2) + "\n")
         created.append(target)
     created.extend(_scaffold_editor_wiring(root))
+    created.extend(_scaffold_snippets(root))
     return created
+
+
+def _scaffold_snippets(root: Path) -> list[Path]:
+    """Write the generated VS Code snippets — otto-owned, so ALWAYS refreshed.
+
+    ``.vscode/*.code-snippets`` is auto-loaded by VS Code, so this file needs
+    no wiring in ``settings.json``. It is generated from the live models
+    (spec 2026-08-27 lab-definition-v2 §12), which makes it otto's to
+    overwrite — unlike the user-owned ``.vscode/settings.json``, which
+    :func:`_scaffold_editor_wiring` only ever creates when absent. It is
+    deliberately NOT checked by :func:`_validate_schemas`: an editor
+    convenience going stale is not a broken repo.
+    """
+    from ..models.snippets import build_snippets
+
+    vscode = root / ".vscode"
+    vscode.mkdir(parents=True, exist_ok=True)
+    target = vscode / "otto.code-snippets"
+    target.write_text(json.dumps(build_snippets(), indent=2) + "\n")
+    return [target]
 
 
 def _scaffold_editor_wiring(root: Path) -> list[Path]:
@@ -207,13 +245,36 @@ def _scaffold_editor_wiring(root: Path) -> list[Path]:
     return created
 
 
+def _drift_problem(path: Path, data: object, doc: dict[str, Any], remedy: str) -> str:
+    """Describe one on-disk schema that differs from the freshly generated one.
+
+    An otto upgrade is the overwhelmingly common cause — schemas are written
+    once, at ``otto init``, and then drift as otto moves on (spec 2026-08-27
+    lab-definition-v2 §12) — so when the ``x-otto-version`` stamps disagree the
+    problem names both versions rather than leaving the reader to wonder
+    whether their own edit or their upgrade caused it. A file with no stamp
+    (written by an otto from before the stamp existed) reads as
+    ``<unstamped>``. *data* is whatever the file parsed to and need not be a
+    JSON object at all, so it is probed defensively — a malformed-but-parsable
+    schema is still just a problem line, never a traceback.
+    """
+    stamped = data.get("x-otto-version") if isinstance(data, dict) else None
+    if stamped != doc["x-otto-version"]:
+        return (
+            f"{path}: generated by otto {stamped or '<unstamped>'}, "
+            f"installed otto is {doc['x-otto-version']} — {remedy}"
+        )
+    return f"{path}: stale (differs from installed otto's models) — {remedy}"
+
+
 def _validate_schemas(root: Path) -> list[str]:
     """Staleness doctor: regenerate in-memory and diff structurally against disk.
 
     Parsed-JSON comparison (never bytes) so a reformatted-but-equal file stays
     green. Missing, differing, orphaned, and unparsable ``*.schema.json`` files
-    each get a problem naming both remedies. Mirrors the docs' "regenerate
-    after upgrading otto" note, mechanically.
+    each get a problem naming both remedies; a differing file is split by its
+    ``x-otto-version`` stamp (see :func:`_drift_problem`). Mirrors the docs'
+    "regenerate after upgrading otto" note, mechanically.
     """
     from ..models.jsonschema import build_schemas
 
@@ -234,7 +295,7 @@ def _validate_schemas(root: Path) -> list[str]:
             problems.append(f"{path}: unparsable ({e}) — {remedy}")
             continue
         if data != doc:
-            problems.append(f"{path}: stale (differs from installed otto's models) — {remedy}")
+            problems.append(_drift_problem(path, data, doc, remedy))
     problems.extend(
         f"{path}: orphaned (installed otto emits no such schema) — {remedy}"
         for _, path in sorted(on_disk.items())
@@ -363,62 +424,129 @@ def _validate_settings(root: Path) -> list[str]:
     return []
 
 
+_ParsedLab = tuple[str, dict[str, Any], list[Any], list[Any]]
+"""One parsed lab file: ``(path, labs table, elements, raw links)``."""
+
+
+def _parse_lab_documents(root: Path) -> tuple[list[str], list[_ParsedLab]]:
+    """Parse every lab file the settings name: ``(problems, parsed documents)``.
+
+    The section shape, the ``labs`` table, the ``elements`` entries and the
+    in-source duplicate rules are all applied by the SAME code the runtime
+    loader uses (:func:`otto.labs.json_repository.parse_lab_sections`,
+    :func:`~otto.labs.json_repository.parse_lab_entries`,
+    :func:`~otto.labs.json_repository.parse_elements`,
+    :func:`~otto.labs.json_repository.check_in_source_duplicates`), so the
+    doctor cannot drift from what otto accepts: an unknown ``routes`` section,
+    a v1 top-level ``hosts`` array, a host entry carrying a hoisted key and a
+    lab declared twice within one source are all rejected here exactly as they
+    are at load. A file with a problem is reported and left out of the
+    documents the warnings pass sees — a half-parsed file would only produce
+    warnings about its own breakage.
+
+    The duplicate state is threaded per SOURCE (:func:`_lab_file_groups`), not
+    over the flat file list: two sources may each declare the same lab, which
+    is how ``[[lab.sources]]`` layering works, and rejecting that would fail
+    repos otto loads happily.
+    """
+    from ..labs.errors import LabRepositoryError
+    from ..labs.json_repository import (
+        check_in_source_duplicates,
+        parse_elements,
+        parse_lab_entries,
+        parse_lab_sections,
+    )
+
+    problems: list[str] = []
+    documents: list[_ParsedLab] = []
+    for group in _lab_file_groups(root):
+        # Reset per source: the duplicate rules are in-source rules.
+        seen_labs: dict[str, Path] = {}
+        seen_elements: dict[Any, Path] = {}
+        for lab_file in group:
+            if not lab_file.is_file():
+                continue
+            try:
+                data = json.loads(lab_file.read_text())
+            except (OSError, json.JSONDecodeError) as e:
+                problems.append(f"{lab_file}: {e}")
+                continue
+            try:
+                sections = parse_lab_sections(data, str(lab_file))
+                entries = parse_lab_entries(sections["labs"], str(lab_file))
+                elements = parse_elements(sections["elements"], str(lab_file))
+                check_in_source_duplicates(
+                    entries,
+                    elements,
+                    lab_file,
+                    seen_labs=seen_labs,
+                    seen_elements=seen_elements,
+                )
+            except LabRepositoryError as e:
+                problems.append(str(e))
+                continue
+            documents.append((str(lab_file), entries, elements, sections["links"]))
+    return problems, documents
+
+
+def _item_problem(validate: Callable[[Any], object], item: Any, prefix: str) -> list[str]:
+    """Return ``[f"{prefix} <error>"]`` when *validate* rejects *item*, else ``[]``.
+
+    A one-item helper rather than the loop body its callers would otherwise
+    write: a ``try``/``except`` inside a per-item loop is ``PERF203``, and the
+    repo's answer (``otto.labs.json_repository._parse_element``) is to move
+    the ``try`` into a function the loop calls. ``ValueError`` covers both
+    arms — pydantic's ``ValidationError`` is one.
+    """
+    try:
+        validate(item)
+    except ValueError as e:
+        return [f"{prefix} {e}"]
+    return []
+
+
 def _validate_lab(root: Path) -> list[str]:
     """Validate every lab file the settings' ``[[lab.sources]]`` name, via the real specs.
 
-    The top-level section shape (object guard, ``_``-comment allowance — also
-    tolerating a top-level ``$schema`` key, the editor-wiring idiom —
-    unknown-section rejection, per-section array check) is delegated to
-    :func:`otto.labs.json_repository.parse_lab_sections` — the SAME helper the
-    runtime loader uses — so the doctor cannot drift from what otto actually
-    accepts (e.g. an unknown ``routes`` section is rejected here exactly as it
-    is at load). Each ``hosts`` entry is then delegated to
-    :func:`otto.host.factory.validate_host_dict` (a bad ``os_type`` or field
-    name surfaces the same pydantic error the loader would raise), and each
-    ``links`` entry is validated structurally via
+    The file shape is :func:`_parse_lab_documents`' job; what is left is the
+    two payloads the wrapper models hold opaquely. Each element's host
+    entries are flattened the way the loader flattens them
+    (:meth:`otto.models.lab.ElementSpec.flatten` stamps the element identity
+    on) and handed to :func:`otto.host.factory.validate_host_dict`, so a bad
+    ``os_type`` or field name surfaces the same pydantic error the loader
+    would raise. Each ``links`` entry is validated structurally via
     :class:`~otto.models.link.LinkSpec`; endpoint cross-references (host ids,
     interface keys) are resolved at load time, not here.
     """
-    from pydantic import ValidationError
-
     from ..host.factory import validate_host_dict
-    from ..labs.errors import LabRepositoryError
-    from ..labs.json_repository import parse_lab_sections
     from ..models.link import LinkSpec
 
-    problems: list[str] = []
-    for lab_file in _lab_files(root):
-        if not lab_file.is_file():
-            continue
-        try:
-            data = json.loads(lab_file.read_text())
-        except (OSError, json.JSONDecodeError) as e:
-            problems.append(f"{lab_file}: {e}")
-            continue
-        try:
-            sections = parse_lab_sections(data, str(lab_file))
-        except LabRepositoryError as e:
-            problems.append(str(e))
-            continue
-        for idx, host_data in enumerate(sections["hosts"]):
-            if not isinstance(host_data, dict):
-                problems.append(
-                    f"{lab_file}: hosts[{idx}] must be a JSON object, "
-                    f"got {type(host_data).__name__}"
-                )
-                continue
-            try:
-                # JSON object keys are always str; the isinstance guard above
-                # is the runtime check ty cannot see through.
-                validate_host_dict(cast("dict[str, Any]", host_data))
-            except ValueError as e:
-                problems.append(f"{lab_file}: hosts[{idx}] {e}")
-        for idx, link_data in enumerate(sections["links"]):
-            try:
-                LinkSpec.model_validate(link_data)
-            except ValidationError as e:  # noqa: PERF203 — per-item resilience
-                problems.append(f"{lab_file}: links[{idx}] {e}")
+    problems, documents = _parse_lab_documents(root)
+    for lab_file, _, elements, links in documents:
+        for element in elements:
+            for idx, host_data in enumerate(element.flatten()):
+                prefix = f"{lab_file}: element {element.name!r} hosts[{idx}]"
+                problems.extend(_item_problem(validate_host_dict, host_data, prefix))
+        for idx, link_data in enumerate(links):
+            problems.extend(
+                _item_problem(LinkSpec.model_validate, link_data, f"{lab_file}: links[{idx}]")
+            )
     return problems
+
+
+def _lab_warnings(root: Path) -> list[str]:
+    """Advisory findings across every lab file (spec §8.3, §9) — never failing.
+
+    Separate from :func:`_validate_lab` because the two answer different
+    questions: a problem is "otto will not load this", a warning is "otto will
+    load this and it is probably not what you meant". Only the first sets the
+    exit code. Parsing runs again here rather than being threaded through the
+    ``Area`` protocol, which has one validate hook and no warning channel.
+    """
+    from ..labs.doctor import lab_warnings
+
+    _, documents = _parse_lab_documents(root)
+    return lab_warnings([(src, entries, elements) for src, entries, elements, _ in documents])
 
 
 def _validate_tests(root: Path) -> list[str]:
@@ -573,6 +701,7 @@ async def init_command(
         scaffolded.append(area.name)
 
     from rich import print as rprint
+    from rich.markup import escape
     from rich.table import Table
 
     from otto.config.env import SUT_DIRS_ENV_VAR
@@ -586,6 +715,10 @@ async def init_command(
     if str(root) not in current_dirs:
         steps.append(f"export {SUT_DIRS_ENV_VAR}={root}")
     steps.append("otto --install-completion")
+    # --install-completion WRITES the script; it does not activate it in the
+    # shell already running, so the pair has to be printed together or the
+    # user concludes completion is broken (spec §12).
+    steps.append("source ~/.bash_completions/otto.sh")
     steps.append("otto --lab example_lab --list-hosts")
     steps.append("otto test --list-suites")
     steps.append("otto test TestExample")
@@ -609,9 +742,24 @@ async def init_command(
             problems = area.validate(root)
             if problems:
                 failed = True
-                table.add_row(area.name, "[red]✗[/red]", "\n".join(problems))
+                # escape(): a problem quotes pydantic (`[type=extra_forbidden,
+                # …]`) and the author's own regexes — both tag-shaped, and both
+                # silently swallowed by rich markup if handed over raw.
+                table.add_row(area.name, "[red]✗[/red]", escape("\n".join(problems)))
             else:
                 table.add_row(area.name, "[green]✓[/green]", "")
     rprint(table)
+
+    # Advisory only — printed after the verdict table, never folded into it,
+    # and deliberately not part of `failed`.
+    warnings = _lab_warnings(root)
+    if warnings:
+        rprint("\n[bold yellow]Warnings[/bold yellow]")
+        for warning in warnings:
+            # escape(): a warning quotes the author's own regex, and a
+            # tag-shaped one (`[a-z]+`) would otherwise be swallowed as rich
+            # markup — the pattern is the whole point of the message.
+            rprint(f"  [yellow]•[/yellow] {escape(warning)}")
+
     if failed:
         raise typer.Exit(code=1)

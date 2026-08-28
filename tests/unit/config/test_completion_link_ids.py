@@ -9,7 +9,6 @@ Implicit links are deliberately absent even though ``find_link`` accepts
 them — see the negative test at the bottom for why.
 """
 
-import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -18,7 +17,7 @@ import pytest
 from otto.config.completion_cache import collect_link_ids
 from otto.labs import build_lab_sources
 from otto.link.placement import BOTH_DIRECTIONS, endpoint_placements, ensure_not_local_link
-from tests._fixtures.labdata import json_lab_sources
+from tests._fixtures.labdata import json_lab_sources, write_lab_json
 
 _TEST1 = {
     "ip": "1.1.1.1",
@@ -41,7 +40,7 @@ def _repo_with_lab(
     lab_dir = tmp_path / "lab"
     lab_dir.mkdir(parents=True, exist_ok=True)
     hosts = [{**h, "labs": h.get("labs", [lab])} for h in hosts]
-    (lab_dir / "lab.json").write_text(json.dumps({"hosts": hosts, "links": links}))
+    write_lab_json(lab_dir / "lab.json", hosts, links)
     return SimpleNamespace(
         lab_sources=json_lab_sources(tmp_path, [lab_dir]),
         sut_dir=tmp_path,

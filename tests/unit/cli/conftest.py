@@ -17,7 +17,6 @@ Litmus test: "If the function I am patching had a bug, would my test
 catch it?"  If no, move the mock boundary closer to I/O.
 """
 
-import json
 import logging
 import os
 from pathlib import Path
@@ -28,6 +27,7 @@ import pytest
 from otto.config.repo import Repo
 from otto.result import CommandResult, Results
 from otto.utils import Status
+from tests._fixtures.labdata import write_lab_json
 from tests._fixtures.sutrepo import make_sut_repo
 
 
@@ -136,7 +136,7 @@ def _make_lab_fs(tmp_path: Path) -> tuple[Path, Path]:
     """
     lab_data_dir = tmp_path / "lab_data"
     lab_data_dir.mkdir()
-    (lab_data_dir / "lab.json").write_text(json.dumps({"hosts": HOSTS_DATA}))
+    write_lab_json(lab_data_dir / "lab.json", HOSTS_DATA)
 
     sut_dir = make_sut_repo(
         tmp_path / "sut",

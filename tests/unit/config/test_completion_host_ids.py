@@ -1,6 +1,5 @@
 """collect_host_ids surfaces the built-in `local` host for tab completion."""
 
-import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -10,14 +9,14 @@ from otto.config.completion_cache import (
     collect_host_ids_by_lab,
 )
 from otto.host.builtin_hosts import BUILTIN_LOCAL_HOST_ID
-from tests._fixtures.labdata import json_lab_sources
+from tests._fixtures.labdata import json_lab_sources, write_lab_json
 
 
 def _repo_with_hosts(tmp_path: Path, hosts: list[dict]) -> SimpleNamespace:
     """A fake Repo whose single lab search path holds *hosts* in lab.json."""
     lab = tmp_path / "lab"
     lab.mkdir(parents=True, exist_ok=True)
-    (lab / "lab.json").write_text(json.dumps({"hosts": hosts}))
+    write_lab_json(lab / "lab.json", hosts)
     return SimpleNamespace(
         lab_sources=json_lab_sources(tmp_path, [lab]),
         sut_dir=tmp_path,

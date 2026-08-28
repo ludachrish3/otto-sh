@@ -52,6 +52,7 @@ from pathlib import Path
 from typing import (
     TYPE_CHECKING,
     Annotated,
+    Any,
     cast,
 )
 
@@ -89,6 +90,7 @@ from .host import (
 )
 from .interact import run_ssh_login, run_telnet_login
 from .interface import Interface
+from .lab_info import LabInfo
 from .login_proxy import Cred, LoginProxyError, cred_for, resolve_chain
 from .options import (
     FtpOptions,
@@ -415,8 +417,14 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     hop: str | None = None
     """Host ID of the intermediate hop used to reach this host, or None for direct connection."""
 
-    resources: set[str] = field(default_factory=set[str])
-    """Names of resources required to use this host."""
+    metadata: dict[str, Any] = field(default_factory=dict, repr=False)
+    """Opaque per-host ``metadata`` from lab data. Never interpreted by otto."""
+
+    element_metadata: dict[str, Any] = field(default_factory=dict, repr=False)
+    """Opaque ``metadata`` of this host's element; a per-host copy (loader-stamped)."""
+
+    lab_info: LabInfo = field(default_factory=LabInfo, repr=False)
+    """The resolved lab this host came from (loader-stamped, like ``source_lab``)."""
 
     debug_log_globs: list[str] = field(default_factory=list)
     """Remote paths/glob patterns ``get_debug_logs`` fetches. Default empty.

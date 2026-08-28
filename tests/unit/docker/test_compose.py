@@ -31,6 +31,7 @@ from otto.docker.compose import (
     register_declared_container_hosts,
 )
 from otto.host.docker_host import DockerContainerHost
+from otto.host.lab_info import LabInfo
 from otto.host.login_proxy import Cred
 from otto.host.unix_host import UnixHost
 from otto.result import CommandResult, Result
@@ -683,7 +684,6 @@ def test_placeholder_id_collision_with_different_host_is_rejected(tmp_path):
         project=repo.name,
         service="api",
         compose_project=get_user_compose_project(repo.name),
-        resources=set(parent.resources),
     )
 
     # A pre-existing, unrelated host occupying the exact id the placeholder
@@ -706,10 +706,15 @@ def _merged_lab_with_stamped_parent() -> Lab:
     is registered into no longer names any single component, so a container
     stamped from the lab (``Lab.add_host``'s backstop) says "a+b" — a name no
     ``lab_patterns`` entry fullmatches.
+
+    The parent's ``lab_info`` carries a non-empty ``metadata`` table on purpose:
+    it is the only way a container that ALIASES the parent's record can be told
+    apart from one that copies it.
     """
     lab_a = Lab(name="a")
     parent = _wire_parent_mock(_capable_host())
     parent.source_lab = "a"
+    parent.lab_info = LabInfo(name="a", metadata={"k": 1})
     lab_a.add_host(parent)
 
     merged = lab_a + Lab(name="b")
@@ -721,11 +726,18 @@ def test_declared_container_inherits_its_parents_lab_not_the_composite(tmp_path)
     """A placeholder container is attributed to its parent's lab, not the merge's name."""
     repo = _make_repo(tmp_path)
     lab = _merged_lab_with_stamped_parent()
+    parent = lab.hosts["test3"]
 
     assert register_declared_container_hosts(lab, [repo]) == 1
 
     (container,) = [h for h in lab.hosts.values() if isinstance(h, DockerContainerHost)]
     assert container.source_lab == "a"
+    assert container.lab_info.name == "a"
+    # ...and it must COPY that record, never alias it. ``LabInfo`` is frozen but
+    # the dict behind ``metadata`` is not, so a shared table would make one
+    # container's write visible on its parent and on every sibling container.
+    container.lab_info.metadata["k"] = 99
+    assert parent.lab_info.metadata == {"k": 1}
 
 
 @pytest.mark.asyncio
@@ -749,6 +761,11 @@ async def test_compose_up_container_inherits_its_parents_lab_not_the_composite(t
     hosts = await compose_up(repo, lab, build=False)
 
     assert hosts["api"].source_lab == "a"
+    assert hosts["api"].lab_info.name == "a"
+    # Same copy-not-alias rule on the live registration path (see the
+    # placeholder test): the parent's ``metadata`` table must stay its own.
+    hosts["api"].lab_info.metadata["k"] = 99
+    assert parent.lab_info.metadata == {"k": 1}
 
 
 def _make_bare_repo(tmp: Path, *, name: str = "bare1") -> Repo:

@@ -34,7 +34,7 @@ from otto.logger.mode import LogMode
 from otto.result import Result
 from tests._fixtures._host_pool import lease_unix_host
 from tests._fixtures.bed_hygiene import _PROBE_TIMEOUT, check_probe_result
-from tests._fixtures.labdata import host_data, lab_data_path
+from tests._fixtures.labdata import flatten_lab_doc, host_data, lab_data_path
 from tests._fixtures.tunnel_bed import assert_reachable, build_bed_host
 from tests.e2e._otto_subprocess import REPO_E2E
 from tests.integration.chaos._target import ChaosTarget, make_bed_target
@@ -130,7 +130,7 @@ def declared_link_id(host_a: str, host_b: str) -> str:
     # tech1/lab.json's `zephyr27_fat` declares `command_frame: zephyr-inline`, which
     # only a SUT repo's init modules register — never the pytest process.
     hosts = {}
-    for h in data["hosts"]:
+    for h in flatten_lab_doc(data):
         try:
             host_id, addressing = addressing_from_dict(h)
         except ValueError:

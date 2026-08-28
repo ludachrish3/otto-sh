@@ -1,11 +1,10 @@
 """The axis resolver must inherit otto's defaulting, never restate it."""
 
-import json
 import sys
 
 import pytest
 
-from tests._fixtures.labdata import lab_data_path
+from tests._fixtures.labdata import flat_hosts
 from tests._fixtures.profiles import Cell, _entries, _userland, axes_for, axis_space
 
 
@@ -291,18 +290,17 @@ def test_axis_space_rejects_a_lab_no_host_declares() -> None:
 def _all_hosts() -> list[tuple[str, str]]:
     """Every ``(tech, element)`` in the bed, read straight from the lab files.
 
-    Enumerated from the raw JSON rather than through ``_entries``: the
-    population under test must not be supplied by the module under test, or a
-    resolver that lost hosts would silently shrink its own guard instead of
-    failing it. The test below still calls ``_entries`` for the raw entry of
-    a host it was already given, which carries no such hazard -- a missing
-    host raises ``KeyError`` there rather than quietly going uncovered.
+    Enumerated through the shared lab-data flattener rather than through
+    ``_entries``: the population under test must not be supplied by the module
+    under test, or a resolver that lost hosts would silently shrink its own
+    guard instead of failing it. ``flat_hosts`` is still an independent route
+    -- it lives in ``tests/_fixtures/labdata.py`` and knows nothing about
+    ``profiles`` -- it just spells the v2 element walk once instead of here.
+    The test below still calls ``_entries`` for the raw entry of a host it was
+    already given, which carries no such hazard -- a missing host raises
+    ``KeyError`` there rather than quietly going uncovered.
     """
-    return [
-        (tech, host["element"])
-        for tech in ("tech1", "tech2")
-        for host in json.loads(lab_data_path(tech).read_text())["hosts"]
-    ]
+    return [(tech, host["element"]) for tech in ("tech1", "tech2") for host in flat_hosts(tech)]
 
 
 @pytest.mark.parametrize(("tech", "element"), _all_hosts())
@@ -349,7 +347,7 @@ def test_at_least_ten_hosts_still_omit_their_term_menu() -> None:
     undeclared = [
         host["element"]
         for tech in ("tech1", "tech2")
-        for host in json.loads(lab_data_path(tech).read_text())["hosts"]
+        for host in flat_hosts(tech)
         if "valid_terms" not in host
     ]
     assert len(undeclared) >= 10, (

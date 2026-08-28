@@ -80,9 +80,9 @@ class HostSummary:
     :meth:`~otto.labs.protocol.LabRepository.load_lab`, not for a second host
     model growing here.
 
-    ``frozen=True`` blocks attribute rebinding, not mutation of ``labs`` —
-    producers deliberately append to it while merging a host that appears in
-    several labs, before the summary is handed out. (A consequence: a summary
+    ``frozen=True`` blocks attribute rebinding, not mutation of ``labs`` (or
+    ``lab_patterns``) — producers deliberately append to them while merging a
+    host that appears in several labs, before the summary is handed out. (A consequence: a summary
     is not hashable. Key collections by ``.id``.)
     """
 
@@ -91,6 +91,12 @@ class HostSummary:
 
     labs: list[str] = field(default_factory=list)
     """Lab names this host belongs to."""
+
+    lab_patterns: list[str] = field(default_factory=list)
+    """Membership patterns of the element this host belongs to (json backend);
+    the composite re-resolves them against every source's declared labs so
+    ``labs`` is complete across sources. Empty for backends that return
+    concrete ``labs``."""
 
     ip: str = ""
     """Management address, or ``""`` when the backend does not expose one."""

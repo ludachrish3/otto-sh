@@ -25,7 +25,7 @@ from otto.config import completion_cache as cc
 from otto.config.repo import PYTEST_CONFIG_NAMES, configured_python_files
 from otto.labs.json_repository import LAB_FILENAME
 from otto.labs.sources import CompiledLabSource
-from tests._fixtures.labdata import json_lab_sources
+from tests._fixtures.labdata import json_lab_sources, write_lab_json
 from tests._fixtures.sutrepo import touch_settings
 
 
@@ -279,8 +279,7 @@ def test_fingerprint_moves_when_a_source_lab_file_is_edited(
     touch_settings(sut_dir)
     lab_dir = tmp_path / "lab"
     lab_dir.mkdir(parents=True)
-    lab_file = lab_dir / "lab.json"
-    lab_file.write_text(json.dumps({"hosts": [{"ip": "10.0.0.1", "element": "test1"}]}))
+    lab_file = write_lab_json(lab_dir / "lab.json", [{"ip": "10.0.0.1", "element": "test1"}])
 
     repo = MagicMock()
     repo.sut_dir = sut_dir
@@ -294,15 +293,12 @@ def test_fingerprint_moves_when_a_source_lab_file_is_edited(
     ]
 
     before = cc.compute_fingerprint([repo])
-    lab_file.write_text(
-        json.dumps(
-            {
-                "hosts": [
-                    {"ip": "10.0.0.1", "element": "test1"},
-                    {"ip": "10.0.0.2", "element": "test2"},
-                ]
-            }
-        )
+    write_lab_json(
+        lab_file,
+        [
+            {"ip": "10.0.0.1", "element": "test1"},
+            {"ip": "10.0.0.2", "element": "test2"},
+        ],
     )
 
     assert cc.compute_fingerprint([repo]) != before, (
@@ -912,13 +908,21 @@ def _make_fake_repo(tmp_path: Path) -> MagicMock:
 
 
 def test_collect_returns_only_capable_sorted(tmp_path: Path) -> None:
-    """Only docker_capable hosts are returned, sorted, and non-dict entries are skipped."""
+    """Only docker_capable hosts are returned, sorted, and bad entries are skipped."""
     lab_path = tmp_path / "lab"
     lab_path.mkdir(parents=True)
-    lab_file = lab_path / LAB_FILENAME
-    # docker_capable host "b_seed", non-docker host "a_seed", junk non-dict entry
-    lab_file.write_text(
-        json.dumps({"hosts": [_DOCKER_HOST, _NON_DOCKER_HOST, "junk-string-not-a-dict"]})
+    # docker_capable host "b_seed", non-docker host "a_seed", and a docker_capable
+    # entry whose identity cannot resolve. v2 keeps that skip per RECORD; a
+    # malformed ELEMENT takes its whole file out of enumeration instead (see
+    # tests/unit/labs/test_json_repository_v2.py), which is why the junk entry
+    # here is a bad host field rather than a non-dict.
+    write_lab_json(
+        lab_path / LAB_FILENAME,
+        [
+            _DOCKER_HOST,
+            _NON_DOCKER_HOST,
+            {**_DOCKER_HOST, "element": "junk", "slot": "not-an-int"},
+        ],
     )
     repo = _make_fake_repo(tmp_path)
 
@@ -937,11 +941,16 @@ def test_collect_skips_missing_file(tmp_path: Path) -> None:
     assert cc.collect_docker_capable_host_ids([repo]) == []
 
 
-def test_collect_skips_non_list_hosts_section(tmp_path: Path) -> None:
-    """A lab.json whose ``hosts`` section is not a JSON array is skipped."""
+def test_collect_skips_non_list_elements_section(tmp_path: Path) -> None:
+    """A lab.json whose ``elements`` section is not a JSON array is skipped.
+
+    ``elements``, not the v1 ``hosts``: a document carrying ``hosts`` at all
+    is now the migration error, so this test would go on passing on the WRONG
+    branch — never reaching the section-type check it exists to cover.
+    """
     lab_path = tmp_path / "lab"
     lab_path.mkdir(parents=True)
-    (lab_path / LAB_FILENAME).write_text(json.dumps({"hosts": {"not": "a list"}}))
+    (lab_path / LAB_FILENAME).write_text(json.dumps({"elements": {"not": "a list"}}))
     repo = _make_fake_repo(tmp_path)
 
     assert cc.collect_docker_capable_host_ids([repo]) == []
@@ -1058,12 +1067,22 @@ def test_collect_skips_corrupt_json(tmp_path: Path) -> None:
 
 
 def test_collect_skips_invalid_host_dict(tmp_path: Path) -> None:
-    """A docker_capable host dict that fails validate_host_dict is silently skipped."""
+    """A docker_capable host dict that fails validation is silently skipped.
+
+    The bad entry sits INSIDE an otherwise valid element, so the document
+    parses and the skip under test is the per-host one in
+    ``list_host_summaries`` — not a whole-file rejection, which would make the
+    empty result prove nothing about host-level resilience.
+    """
     lab_path = tmp_path / "lab"
     lab_path.mkdir(parents=True)
     # docker_capable=True but missing required fields (no 'ip', invalid os_type, etc.)
-    bad_host = {"docker_capable": True, "element": "x", "os_type": "nonexistent_profile"}
-    (lab_path / LAB_FILENAME).write_text(json.dumps({"hosts": [bad_host]}))
+    bad_host = {"docker_capable": True, "os_type": "nonexistent_profile"}
+    (lab_path / LAB_FILENAME).write_text(
+        json.dumps(
+            {"labs": {"x": {}}, "elements": [{"name": "x", "labs": ["x"], "hosts": [bad_host]}]}
+        )
+    )
     repo = _make_fake_repo(tmp_path)
 
     assert cc.collect_docker_capable_host_ids([repo]) == []

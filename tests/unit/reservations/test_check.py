@@ -36,21 +36,33 @@ class _FakeBackend:
 
 
 def _lab_with_resources() -> Lab:
-    """Build a lab whose total required resources are {rack1, test1, test2}."""
+    """Build a lab declaring {rack1} that also holds hosts.
+
+    The hosts are the point: ``required_resources`` must read the LAB's
+    declaration and nothing else. Since lab-definition v2 a host carries no
+    ``resources`` field to contribute from, so this guards the shape rather
+    than a filter.
+    """
     return Lab(
         name="test_lab",
         resources={"rack1"},
         hosts={
-            "test1": make_host("test1", resources={"test1"}),
-            "test2": make_host("test2", resources={"test2"}),
+            "test1": make_host("test1"),
+            "test2": make_host("test2"),
         },
     )
 
 
+def _lab_declaring(*resources: str) -> Lab:
+    """Build a host-less lab that declares exactly ``resources``."""
+    return Lab(name="test_lab", resources=set(resources))
+
+
 class TestRequiredResources:
-    def test_union_of_lab_and_hosts(self):
+    def test_declared_lab_resources_only(self):
+        """Hosts contribute nothing: the lab is the reservable unit (spec §8.1)."""
         lab = _lab_with_resources()
-        assert required_resources(lab) == {"rack1", "test1", "test2"}
+        assert required_resources(lab) == {"rack1"}
 
     def test_empty_lab(self):
         lab = Lab(name="empty")
@@ -59,7 +71,7 @@ class TestRequiredResources:
 
 class TestCheckReservations:
     def test_full_coverage_returns_silently(self):
-        lab = _lab_with_resources()
+        lab = _lab_declaring("rack1", "test1", "test2")
         backend = _FakeBackend(
             owners={
                 "rack1": "alice",
@@ -70,16 +82,14 @@ class TestCheckReservations:
         check_reservations(lab, "alice", backend)  # must not raise
 
     def test_partial_coverage_raises_with_holders(self):
-        lab = _lab_with_resources()
+        lab = _lab_declaring("rack1", "test1", "test2")
         backend = _FakeBackend(
             owners={
                 "rack1": "alice",
                 "test1": "bob",  # held by someone else
-                "test2": None,  # unreserved (not in dict, but model None explicitly)
+                # test2 is absent from the dict: unreserved
             }
         )
-        # Remove test2 so it reads as unreserved
-        del backend.owners["test2"]
         with pytest.raises(MissingReservationError) as exc_info:
             check_reservations(lab, "alice", backend)
         msg = str(exc_info.value)

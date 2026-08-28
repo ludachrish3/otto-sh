@@ -8,11 +8,14 @@ is trivially testable and importable.
 Emitted documents (default):
 
 - one self-contained file per *distinct* registered host spec
-  (``unix-host``, ``embedded-host``, …),
-- ``lab`` — the object schema for the whole ``lab.json`` file: a ``hosts``
-  array (assembled from the registry with ``anyOf`` + an ``os_type``
-  discriminator hint) and a ``links`` array, plus the ``^_`` comment-key
-  escape,
+  (``unix-host``, ``embedded-host``, …) — the FLAT host dict, element identity
+  and all, as ``ElementSpec.flatten()`` produces it for the host factory,
+- ``lab`` — the object schema for the whole v2 ``lab.json`` file: the ``labs``
+  table (one :class:`~otto.models.lab.LabEntrySpec` per declared lab), the
+  ``elements`` array (each :class:`~otto.models.lab.ElementSpec` wrapping its
+  own ``hosts`` array, assembled from the registry with ``anyOf`` + an
+  ``os_type`` discriminator hint), and a ``links`` array, plus the ``^_``
+  comment-key escape on every layer whose model strips one,
 - ``link`` — the schema for one ``lab.json`` ``links`` entry
   (:class:`~otto.models.link.LinkSpec`),
 - ``settings`` — for ``settings.toml``,
@@ -46,7 +49,10 @@ from pydantic.json_schema import models_json_schema
 from ..host.connections import TERM_BACKENDS
 from ..host.os_profile import registered_host_specs
 from ..host.transfer import TRANSFER_BACKENDS
+from ..link import IMPAIRERS
+from ..version import get_version
 from .host import HostSpec
+from .lab import HOISTED_HOST_KEYS, ElementSpec, LabEntrySpec
 from .link import LinkSpec
 from .monitor import (
     EventCreateBody,
@@ -74,17 +80,24 @@ def _stem(spec_cls: type) -> str:
 
 
 def _decorate(doc: dict[str, Any], stem: str, title: str) -> dict[str, Any]:
-    """Add the dialect / id / title metadata to a generated schema doc.
+    """Add the dialect / id / title / otto-version metadata to a generated schema doc.
 
     ``doc`` is spread first so the metadata wins — ``model_json_schema()``
     emits its own ``title`` (the class name), which we deliberately override
     with the friendly one.
+
+    ``x-otto-version`` stamps the otto that generated the document (spec §12).
+    Schemas are written once, at ``otto init``, and then drift as otto is
+    upgraded; the stamp is what lets ``otto init``'s doctor say *which* otto
+    wrote the file on disk instead of a bare "differs". ``x-`` prefixed, so
+    every JSON Schema dialect ignores it as an annotation.
     """
     return {
         **doc,
         "$schema": _SCHEMA_DIALECT,
         "$id": f"{_ID_BASE}/{stem}.schema.json",
         "title": title,
+        "x-otto-version": get_version(),
     }
 
 
@@ -117,15 +130,17 @@ def _scalar_or_list_with_enum(prop: dict[str, Any], names: list[str]) -> dict[st
 
 
 def _inject_selector_enums(schema: dict[str, Any], spec_cls: type[HostSpec]) -> None:
-    """Rewrite ``valid_terms`` / ``valid_transfers`` to a scalar-or-list ``anyOf`` schema, in place.
+    """Rewrite the ``valid_*`` menus to a scalar-or-list ``anyOf`` schema, in place.
 
     The schema is generated after init modules load, so the enum includes
     custom per-repo backends as well as the built-ins — strictly better than the
-    old static ``Literal``. Both axes are filtered to the spec's host family via
-    ``_host_family`` (terms through ``TERM_BACKENDS``, transfers through each
-    backend's ``host_families``). No-op for a spec that declares neither field.
-    The scalar ``term``/``transfer`` pins are nullable optional strings; their
-    schema is left as pydantic generates it.
+    old static ``Literal``. All three axes are filtered to the spec's host
+    family via ``_host_family`` (terms through ``TERM_BACKENDS``, transfers
+    through ``TRANSFER_BACKENDS``, impairers through ``IMPAIRERS``, each
+    backend declaring its own ``host_families``). No-op for a spec that
+    declares none of the fields. The scalar ``term``/``transfer``/``impairer``
+    pins are nullable optional strings; their schema is left as pydantic
+    generates it.
     """
     props = schema.get("properties")
     if not isinstance(props, dict):
@@ -143,6 +158,11 @@ def _inject_selector_enums(schema: dict[str, Any], spec_cls: type[HostSpec]) -> 
             n for n, c in TRANSFER_BACKENDS.items() if family is None or family in c.host_families
         )
         props["valid_transfers"] = _scalar_or_list_with_enum(props["valid_transfers"], names)
+    if "valid_impairers" in props:
+        names = sorted(
+            n for n, c in IMPAIRERS.items() if family is None or family in c.host_families
+        )
+        props["valid_impairers"] = _scalar_or_list_with_enum(props["valid_impairers"], names)
 
 
 def _inject_interface_shorthand(schema: dict[str, Any]) -> None:
@@ -165,10 +185,39 @@ def _inject_interface_shorthand(schema: dict[str, Any]) -> None:
     props["interfaces"]["additionalProperties"] = {"anyOf": [{"type": "string"}, ref]}
 
 
-def _hosts_array_schema(
+def _drop_hoisted_keys(schema: dict[str, Any]) -> None:
+    """Strip the element-level keys from a nested host-entry schema, in place.
+
+    :class:`~otto.models.lab.ElementSpec` rejects every
+    :data:`~otto.models.lab.HOISTED_HOST_KEYS` member found inside one of its
+    ``hosts`` entries — ``element``/``element_id`` belong to the element and
+    ``labs``/``resources`` to the element / the ``labs`` table now — so the
+    nested host sub-schemas must neither require nor permit them. With the
+    specs' ``additionalProperties: false`` that makes an unmigrated host entry
+    squiggle in the editor rather than validate.
+
+    The standalone per-spec documents keep these fields, deliberately: they
+    describe the FLAT host dict ``ElementSpec.flatten()`` builds, which the
+    host factory and ``host_identity`` still take.
+
+    Driven off ``HOISTED_HOST_KEYS`` rather than a local list, so the schema
+    cannot drift from the runtime rule: ``labs``/``resources`` are already gone
+    from :class:`~otto.models.host.HostSpec` (those two pops are no-ops today),
+    but if one ever came back the nested entry would still refuse it.
+    """
+    props = schema.get("properties")
+    if isinstance(props, dict):
+        for key in HOISTED_HOST_KEYS:
+            props.pop(key, None)
+    required = schema.get("required")
+    if isinstance(required, list):
+        schema["required"] = [k for k in required if k not in HOISTED_HOST_KEYS]
+
+
+def _host_entries_schema(
     distinct: list[type[HostSpec]], names: dict[str, type[HostSpec]]
 ) -> dict[str, Any]:
-    """Build the ``lab.json`` ``hosts`` array schema.
+    """Build the schema for one element's ``hosts`` array.
 
     Uses ``anyOf`` over the distinct specs with a shared ``$defs`` and an
     ``os_type`` discriminator mapping covering every registered name.
@@ -182,6 +231,7 @@ def _hosts_array_schema(
         if key in top["$defs"]:
             _inject_selector_enums(top["$defs"][key], s)
             _inject_interface_shorthand(top["$defs"][key])
+            _drop_hoisted_keys(top["$defs"][key])
             _allow_comment_keys(top["$defs"][key])
     return {
         "type": "array",
@@ -271,20 +321,47 @@ def _monitor_export_schema() -> dict[str, Any]:
     return doc
 
 
-def _lab_schema(hosts_array: dict[str, Any]) -> dict[str, Any]:
-    """Build the ``lab.json`` object schema.
+def _lab_schema(distinct: list[type[HostSpec]], names: dict[str, type[HostSpec]]) -> dict[str, Any]:
+    """Build the v2 ``lab.json`` object schema.
 
-    Assembles the ``hosts``/``links`` sections, a top-level ``$schema`` string
-    property (editor wiring), and the ``_`` comment-key escape.
+    Assembles the ``labs`` table (keyed by lab name, each value a
+    :class:`~otto.models.lab.LabEntrySpec`), the ``elements`` array (each
+    :class:`~otto.models.lab.ElementSpec`, its ``hosts`` property swapped for
+    the registry-assembled ``anyOf`` — the model itself types them as plain
+    ``dict``s and validates them later, through the specs), the ``links``
+    array, a top-level ``$schema`` string property (editor wiring), and the
+    ``_`` comment-key escape on every layer that strips one.
     """
+    host_items = _host_entries_schema(distinct, names)
+    element_doc = ElementSpec.model_json_schema(ref_template="#/$defs/{model}")
+    _allow_comment_keys(element_doc)
+    element_doc["properties"]["hosts"] = {
+        "type": "array",
+        "minItems": 1,
+        "items": host_items["items"],
+    }
+    entry_doc = LabEntrySpec.model_json_schema(ref_template="#/$defs/{model}")
+    _allow_comment_keys(entry_doc)
     link_doc = LinkSpec.model_json_schema(ref_template="#/$defs/{model}")
     _allow_comment_keys(link_doc)
-    defs = {**hosts_array.pop("$defs", {}), **link_doc.pop("$defs", {})}
+    defs = {
+        **host_items.pop("$defs", {}),
+        **element_doc.pop("$defs", {}),
+        **entry_doc.pop("$defs", {}),
+        **link_doc.pop("$defs", {}),
+    }
+    defs["ElementSpec"] = element_doc
+    defs["LabEntrySpec"] = entry_doc
     return {
         "type": "object",
         "properties": {
             "$schema": {"type": "string"},
-            "hosts": hosts_array,
+            "labs": {
+                "type": "object",
+                "additionalProperties": {"$ref": "#/$defs/LabEntrySpec"},
+                "patternProperties": {"^_": {}},
+            },
+            "elements": {"type": "array", "items": {"$ref": "#/$defs/ElementSpec"}},
             "links": {"type": "array", "items": link_doc},
         },
         "patternProperties": {"^_": {}},
@@ -312,9 +389,7 @@ def build_schemas(*, builtins_only: bool = False) -> dict[str, dict[str, Any]]:
         _allow_comment_keys(doc)
         docs[stem] = _decorate(doc, stem, f"otto {stem}")
 
-    docs["lab"] = _decorate(
-        _lab_schema(_hosts_array_schema(distinct, names)), "lab", "otto lab.json"
-    )
+    docs["lab"] = _decorate(_lab_schema(distinct, names), "lab", "otto lab.json")
     link_doc = LinkSpec.model_json_schema()
     _allow_comment_keys(link_doc)
     docs["link"] = _decorate(link_doc, "link", "otto link")

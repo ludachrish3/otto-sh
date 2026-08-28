@@ -40,6 +40,7 @@ from .connections import teardown_step
 from .dev_tool import DevTool
 from .file_ops import PosixFileOps
 from .host import BaseHost, Host, is_dry_run, refuse_declined_fact
+from .lab_info import LabInfo
 from .privilege import PosixPrivilege
 from .product import Product
 
@@ -114,10 +115,8 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
     log_stdout: bool = field(default=True, repr=False)
     """Whether output is mirrored to stdout in addition to log files."""
 
-    resources: set[str] = field(default_factory=set[str])
-    """Reservation tags. Containers participate in the same reservation
-    system as UnixHosts; the compose module typically copies the parent's
-    tags so concurrent test runs serialize through reservations."""
+    lab_info: LabInfo = field(default_factory=LabInfo, repr=False)
+    """The resolved lab this host was registered into (copied from the parent for containers)."""
 
     debug_log_globs: list[str] = field(default_factory=list, repr=False)
     """Container paths/glob patterns ``get_debug_logs`` fetches. Default empty.

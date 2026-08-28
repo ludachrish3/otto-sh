@@ -258,7 +258,6 @@ def _real_placeholder(running_cid: str = "", inspect_ip: str = "172.17.0.2"):
     parent.id = "test1"
     parent.name = "test1"
     parent.term = "ssh"
-    parent.resources = set()
 
     async def _exec(cmd: str, timeout: float | None = None, **_: object) -> CommandResult:
         if cmd.startswith("docker ps -q"):

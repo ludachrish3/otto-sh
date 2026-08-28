@@ -10,12 +10,11 @@ signals are only ever delivered to that local process.
 import asyncio
 import dataclasses
 import getpass
-import json
 from pathlib import Path
 
 from otto.host.remote_host import make_host_id
 from tests._ambient_env import ambient
-from tests._fixtures.labdata import lab_data_path
+from tests._fixtures.labdata import flat_hosts, write_lab_json
 from tests._fixtures.paths import TESTS_ROOT
 from tests._fixtures.sutrepo import make_sut_repo
 
@@ -39,29 +38,25 @@ def make_loopback_target(root: Path, *, port: int, client_key: Path) -> ChaosTar
     user = getpass.getuser()
     tech_dir = root / "labdata" / "chaostech"
     tech_dir.mkdir(parents=True)
-    (tech_dir / "lab.json").write_text(
-        json.dumps(
+    write_lab_json(
+        tech_dir / "lab.json",
+        [
             {
-                "hosts": [
-                    {
-                        "ip": "127.0.0.1",
-                        "element": "loopback",
-                        "os_type": "unix",
-                        "valid_terms": ["ssh"],
-                        "valid_transfers": ["sftp", "scp"],
-                        "is_virtual": True,
-                        "creds": [{"login": user, "password": "unused-pubkey-auth"}],
-                        "resources": ["loopback"],
-                        "labs": ["chaos"],
-                        "ssh_options": {
-                            "port": port,
-                            "client_keys": [str(client_key)],
-                        },
-                    }
-                ]
-            },
-            indent=2,
-        )
+                "ip": "127.0.0.1",
+                "element": "loopback",
+                "os_type": "unix",
+                "valid_terms": ["ssh"],
+                "valid_transfers": ["sftp", "scp"],
+                "is_virtual": True,
+                "creds": [{"login": user, "password": "unused-pubkey-auth"}],
+                "resources": ["loopback"],
+                "labs": ["chaos"],
+                "ssh_options": {
+                    "port": port,
+                    "client_keys": [str(client_key)],
+                },
+            }
+        ],
     )
     sut = make_sut_repo(
         root / "sut",
@@ -89,9 +84,7 @@ paths = [
 
 def make_bed_target(element: str) -> ChaosTarget:
     """Aim at a unix bed host via the existing repo_e2e SUT (lab leg only)."""
-    lab_json_path = lab_data_path("tech1")
-    lab_json = json.loads(lab_json_path.read_text())
-    host = next(h for h in lab_json["hosts"] if h["element"] == element)
+    host = next(h for h in flat_hosts("tech1") if h["element"] == element)
     cred = host["creds"][0]
     return ChaosTarget(
         sut_dir=_REPO_E2E,

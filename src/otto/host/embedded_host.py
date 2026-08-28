@@ -49,7 +49,7 @@ The interactive bridge (``_login``) currently raises
 
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, NoReturn, cast
+from typing import TYPE_CHECKING, Annotated, Any, NoReturn, cast
 
 from typing_extensions import override
 
@@ -75,6 +75,7 @@ from .host import (
     refuse_declined_fact,
 )
 from .interface import Interface
+from .lab_info import LabInfo
 from .login_proxy import Cred
 from .options import SnmpOptions, TelnetOptions
 from .power import PowerController, power_control_from_spec
@@ -249,8 +250,14 @@ class EmbeddedHost(RemoteHost):
     hop: str | None = None
     """Host ID of the intermediate SSH hop used to reach this host, or None."""
 
-    resources: set[str] = field(default_factory=set[str])
-    """Names of resources required to use this host."""
+    metadata: dict[str, Any] = field(default_factory=dict, repr=False)
+    """Opaque per-host ``metadata`` from lab data. Never interpreted by otto."""
+
+    element_metadata: dict[str, Any] = field(default_factory=dict, repr=False)
+    """Opaque ``metadata`` of this host's element; a per-host copy (loader-stamped)."""
+
+    lab_info: LabInfo = field(default_factory=LabInfo, repr=False)
+    """The resolved lab this host came from (loader-stamped, like ``source_lab``)."""
 
     debug_log_globs: list[str] = field(default_factory=list)
     """Remote paths ``get_debug_logs`` fetches. Default empty. Embedded hosts

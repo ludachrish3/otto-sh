@@ -35,13 +35,17 @@ def test_custom_dataset_overrides_demo():
                     "ip": "10.9.9.9",
                     "element": "node",
                     "creds": [{"login": "u", "password": "p"}],
-                    "resources": ["node"],
                 }
             ],
-        }
+        },
+        # Resources are declared per LAB since v2 (spec §8.1) — a host entry
+        # carrying them is now a validation error, not a second spelling.
+        resources={"only": {"node"}},
     )
     assert repo.list_labs() == ["only"]
-    assert "node" in repo.load_lab("only").hosts
+    lab = repo.load_lab("only")
+    assert "node" in lab.hosts
+    assert lab.resources == {"node"}
 
 
 def test_accepts_repo_dir_for_registry_compatibility(tmp_path):

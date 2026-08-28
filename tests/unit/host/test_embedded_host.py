@@ -68,7 +68,6 @@ class TestInit:
         assert host.element == "zephyr37_fat"
         assert host.creds == []
         assert host.hop is None
-        assert host.resources == set()
         assert host.is_virtual is False
 
     def test_is_a_remote_host(self, host: EmbeddedHost):

@@ -160,8 +160,9 @@ def _cli_sut_pinned_to_ssh(tmp_path: Path) -> Path:
     sut = cli_sut_dir(tmp_path)
     lab_json_path = sut / "lab_data" / "lab.json"
     lab_data = json.loads(lab_json_path.read_text())
-    for host in lab_data["hosts"]:
-        host["term"] = "ssh"
+    for element in lab_data["elements"]:
+        for host in element["hosts"]:
+            host["term"] = "ssh"
     lab_json_path.write_text(json.dumps(lab_data))
     return sut
 

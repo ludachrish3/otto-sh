@@ -45,13 +45,12 @@ The auto cascade order is: ss → netstat → python → proc.
 | ``proc``     | Scan ``/proc/net/tcp`` for LISTEN state (Linux-only, always available).                               |
 | ``custom``   | Run the command in ``nc_options.listener_cmd`` with ``{port}`` placeholder. Must exit 0 if listening. |
 
-Override the strategy under ``nc_options`` in ``lab.json`` when auto-detection
-isn't appropriate for a particular host:
+Override the strategy under ``nc_options`` on the host entry in ``lab.json``
+when auto-detection isn't appropriate for a particular host:
 
 ```json
 {
     "ip": "10.10.200.12",
-    "element": "target",
     "board": "seed",
     "transfer": "nc",
     "nc_options": {

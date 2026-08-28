@@ -31,14 +31,13 @@ the factory. This records what a host came out with.
 """
 
 import importlib
-import json
 import sys
 from dataclasses import dataclass
 
 from otto.host.command_frame import FRAME_CLASSES
 from otto.host.embedded_host import EmbeddedHost
 from otto.host.factory import create_host_from_dict
-from tests._fixtures.labdata import lab_data_path
+from tests._fixtures.labdata import flat_hosts
 from tests._fixtures.paths import ensure_custom_hosts_on_path
 
 
@@ -86,8 +85,24 @@ def _userland(data: dict) -> str:
 
 
 def _entries(tech: str) -> dict[str, dict]:
-    hosts = json.loads(lab_data_path(tech).read_text())["hosts"]
-    return {h["element"]: h for h in hosts}
+    """Element -> its FACTORY-READY flat host dict (no ``labs``/``resources``).
+
+    ``axes_for`` feeds these straight to ``create_host_from_dict``, and since
+    lab.json v2 a host spec REFUSES a ``labs`` key — see :func:`_memberships`
+    for the membership view.
+    """
+    return {h["element"]: h for h in flat_hosts(tech)}
+
+
+def _memberships(tech: str, lab: str) -> list[str]:
+    """The elements of *tech* that belong to *lab*, in lab-data order.
+
+    A separate read from :func:`_entries` rather than a ``labs`` key on those
+    entries: membership lives on the ELEMENT in v2 as a list of patterns, and
+    stamping the resolved names back onto the host dict would make every entry
+    unbuildable by the factory (``HostSpec`` forbids ``labs``).
+    """
+    return [h["element"] for h in flat_hosts(tech, with_labs=True) if lab in h["labs"]]
 
 
 def _hop_depth(element: str, entries: dict[str, dict]) -> int:
@@ -211,17 +226,15 @@ def axis_space(lab: str, tech: str = "tech1") -> list[Cell]:
     module inventing a value the host did not give. Callers that need a
     stable order must impose their own.
     """
-    entries = _entries(tech)
-    # Membership is the one axis with no host-side answer to defer to.
-    # Measured: `hasattr(host, "labs")` is False on a built host -- the spec
-    # declares `labs: list[str]` (default_factory=list) but never forwards it
-    # -- and `BaseHost.source_lab` is a different concept, the loader's
+    # Membership is the one axis with no host-side answer to defer to. Since
+    # lab.json v2 it is not even a host field: `HostSpec` forbids `labs`, and
+    # the ELEMENT carries membership PATTERNS resolved against the declared
+    # lab names. `BaseHost.source_lab` is a different concept, the loader's
     # `lab_name` argument (factory.py:177), which is `""` here because
-    # `axes_for` builds hosts without one. So the raw entry is the only
-    # source, and because the spec's default is an empty list, `or []`
-    # reproduces the factory's answer exactly; unlike the menus, there is no
-    # substantive defaulting here to lose by reading raw.
-    members = [e for e, d in entries.items() if lab in (d.get("labs") or [])]
+    # `axes_for` builds hosts without one. So the element's resolved list is
+    # the only source; unlike the menus, there is no defaulting here to lose
+    # by reading the file.
+    members = _memberships(tech, lab)
     if not members:
         # Raising beats returning `[]`: an empty space satisfies every
         # sampling assertion vacuously, so a typo'd lab name would read as

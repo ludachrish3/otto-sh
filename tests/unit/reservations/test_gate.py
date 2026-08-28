@@ -43,15 +43,25 @@ class _FakeBackend:
 
 
 def _lab_with_resources() -> Lab:
-    """Build a lab whose total required resources are {rack1, test1, test2}."""
+    """Build a lab declaring {rack1} that also holds hosts.
+
+    The hosts are the point: the gate must demand the LAB's declaration and
+    nothing else. Since lab-definition v2 a host carries no ``resources`` field
+    to contribute from, so this guards the shape rather than a filter.
+    """
     return Lab(
         name="test_lab",
         resources={"rack1"},
         hosts={
-            "test1": make_host("test1", resources={"test1"}),
-            "test2": make_host("test2", resources={"test2"}),
+            "test1": make_host("test1"),
+            "test2": make_host("test2"),
         },
     )
+
+
+def _lab_declaring(*resources: str) -> Lab:
+    """Build a host-less lab that declares exactly ``resources``."""
+    return Lab(name="test_lab", resources=set(resources))
 
 
 class TestReservationGateResultMatrix:
@@ -116,7 +126,7 @@ class TestReservationGateResultMatrix:
             gate.evaluate()
 
     def test_backend_fully_held_returns_checked(self):
-        lab = _lab_with_resources()
+        lab = _lab_declaring("rack1", "test1", "test2")
         backend = _FakeBackend(
             owners={
                 "rack1": "alice",

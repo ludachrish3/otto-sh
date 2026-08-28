@@ -33,6 +33,7 @@ otto.host.file_ops
 otto.host.host
 otto.host.interact
 otto.host.interface
+otto.host.lab_info
 otto.host.local_host
 otto.host.login_proxy
 otto.host.options
@@ -83,6 +84,7 @@ otto.models.base
 otto.models.color
 otto.models.dependencies
 otto.models.host
+otto.models.lab
 otto.models.monitor
 otto.models.options
 otto.models.settings

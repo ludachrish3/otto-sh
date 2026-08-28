@@ -95,9 +95,9 @@ reservation gate. Each first-party command declares what it needs on its
 | {doc}`schema <subsystems/data-boundary>` | no (`lab_free`) | no | no |
 | {doc}`init <subsystems/bootstrap>` | no (`lab_free`) | no | no |
 
-`--lab` itself tab-completes — the lab names are tags on hosts in the
-`lab.json` files, read data-only (no host construction, no user code), and
-the option is `+`-separated so each segment completes in turn:
+`--lab` itself tab-completes — the lab names come from the `labs` tables the
+`lab.json` files declare, read data-only (no host construction, no user code),
+and the option is `+`-separated so each segment completes in turn:
 
 ```{raw} html
 :file: ../_static/generated/termynal/complete-lab-names.html

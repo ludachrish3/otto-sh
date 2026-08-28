@@ -73,11 +73,15 @@ picks up `connect_timeout` from the product preference:
 
 ```json
 {
-    "ip": "10.10.200.20",
-    "element": "router",
-    "creds": [{ "login": "admin", "password": "secret" }],
+    "name": "router",
     "labs": ["wan"],
-    "ssh_options": { "port": 2222 }
+    "hosts": [
+        {
+            "ip": "10.10.200.20",
+            "creds": [{ "login": "admin", "password": "secret" }],
+            "ssh_options": { "port": 2222 }
+        }
+    ]
 }
 ```
 
@@ -106,14 +110,20 @@ repo a "base" for shared conventions and others its overlays.
 2222
 ```
 
-Equivalent `lab.json` entry:
+Equivalent `lab.json` element — the constructor's `element` is the element's
+`name`, and the rest is its one host entry:
 
 ```json
 {
-    "ip": "10.10.200.12",
-    "element": "lab",
-    "creds": [{ "login": "admin", "password": "secret" }],
-    "ssh_options": { "port": 2222 }
+    "name": "lab",
+    "labs": ["wan"],
+    "hosts": [
+        {
+            "ip": "10.10.200.12",
+            "creds": [{ "login": "admin", "password": "secret" }],
+            "ssh_options": { "port": 2222 }
+        }
+    ]
 }
 ```
 
@@ -159,14 +169,14 @@ connection is created:
 After any session on this host opens, `curl localhost:8080` on the
 local machine reaches `web.internal:80` through the host.
 
-The same forward expressed in `lab.json` — `local_forwards`,
-`remote_forwards`, and `socks_forwards` are lists of plain dicts whose
-keys mirror the dataclass fields:
+The same forward expressed on a `lab.json` host entry (one entry of its
+element's `hosts` array) — `local_forwards`, `remote_forwards`, and
+`socks_forwards` are lists of plain dicts whose keys mirror the dataclass
+fields:
 
 ```json
 {
     "ip": "10.10.200.12",
-    "element": "lab",
     "creds": [{ "login": "admin", "password": "secret" }],
     "ssh_options": {
         "local_forwards": [

@@ -92,16 +92,38 @@ class TestLabAddDedupesLinks:
 def test_load_lab_forwards_preferences(monkeypatch):
     import otto.config.lab as lab_mod
     from otto.config.lab import Lab
+    from otto.host.factory import create_host_from_dict
 
     captured: dict[str, object] = {}
 
     class FakeRepo:
+        """A json backend stand-in, wrapped by the composite ``load_lab`` builds.
+
+        It must DECLARE the lab and contribute a member: the composite owns
+        lab existence now, and a declared lab with no members is an error
+        (spec §9).
+        """
+
         def __init__(self, search_paths=None):
             pass
 
+        def list_labs(self):
+            return ["x"]
+
         def load_lab(self, name, preferences=None):
             captured["preferences"] = preferences
-            return Lab(name=name)
+            lab = Lab(name=name)
+            lab.add_host(
+                create_host_from_dict(
+                    {
+                        "ip": "10.0.0.1",
+                        "element": "fake",
+                        "creds": [{"login": "u", "password": "p"}],
+                    },
+                    lab_name=name,
+                )
+            )
+            return lab
 
     monkeypatch.setattr(lab_mod, "JsonFileLabRepository", FakeRepo)
     lab_mod.load_lab("x", [], preferences={".*": {"transfer": ["scp"]}})

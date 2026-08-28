@@ -7,6 +7,17 @@ from otto.models.host import HostSpec
 from otto.models.jsonschema import build_schemas
 
 
+def _element_host_discriminator_mapping(docs):
+    """The ``os_type`` discriminator mapping of an element's host entries.
+
+    In v2 the host ``anyOf`` lives under the ``elements`` wrapper, not at the
+    document root — one helper so the three tests that read it share one path.
+    """
+    return docs["lab"]["$defs"]["ElementSpec"]["properties"]["hosts"]["items"]["discriminator"][
+        "mapping"
+    ]
+
+
 def test_default_set_of_documents():
     docs = build_schemas()
     assert set(docs) >= {
@@ -46,16 +57,79 @@ def test_host_specs_forbid_unknown_keys():
     assert docs["embedded-host"]["additionalProperties"] is False
 
 
-def test_lab_schema_emitted():
-    docs = build_schemas(builtins_only=True)
-    assert "hosts" not in docs  # hard cutover: array-only schema retired
-    lab = docs["lab"]
+def test_lab_schema_v2_sections():
+    lab = build_schemas(builtins_only=True)["lab"]
     assert lab["type"] == "object"
-    assert set(lab["properties"]) == {"$schema", "hosts", "links"}
-    assert lab["properties"]["hosts"]["type"] == "array"
-    assert lab["properties"]["links"]["type"] == "array"
+    assert set(lab["properties"]) == {"$schema", "labs", "elements", "links"}
     assert lab["additionalProperties"] is False
-    assert "^_" in lab.get("patternProperties", {})  # top-level comment keys
+    assert "^_" in lab["patternProperties"]
+    labs = lab["properties"]["labs"]
+    assert labs["type"] == "object"
+    assert labs["additionalProperties"] == {"$ref": "#/$defs/LabEntrySpec"}
+    assert set(lab["$defs"]["LabEntrySpec"]["properties"]) == {"resources", "metadata"}
+    elements = lab["properties"]["elements"]
+    assert elements["type"] == "array"
+    el = lab["$defs"]["ElementSpec"]
+    assert set(el["properties"]) >= {"name", "id", "labs", "metadata", "hosts"}
+    hosts = el["properties"]["hosts"]
+    # anyOf, not oneOf — minimal hosts validate against >1 spec.
+    assert "anyOf" in hosts["items"]
+    assert "oneOf" not in hosts["items"]
+    assert {ref["$ref"] for ref in hosts["items"]["anyOf"]} == {
+        "#/$defs/UnixHostSpec",
+        "#/$defs/EmbeddedHostSpec",
+    }
+    assert hosts["items"]["discriminator"]["propertyName"] == "os_type"
+    # Every registered os_type name is mapped to its spec's $def — `zephyr` and
+    # `embedded` are two names for the one spec.
+    assert hosts["items"]["discriminator"]["mapping"] == {
+        "unix": "#/$defs/UnixHostSpec",
+        "embedded": "#/$defs/EmbeddedHostSpec",
+        "zephyr": "#/$defs/EmbeddedHostSpec",
+    }
+
+
+def test_host_specs_have_no_hoisted_fields_but_metadata():
+    docs = build_schemas(builtins_only=True)
+    for stem in ("unix-host", "embedded-host"):
+        props = docs[stem]["properties"]
+        assert "metadata" in props
+        assert not {"labs", "resources"} & set(props)
+
+
+def test_valid_impairers_enum_injected():
+    prop = build_schemas(builtins_only=True)["unix-host"]["properties"]["valid_impairers"]
+    enums = [b["enum"] if b["type"] == "string" else b["items"]["enum"] for b in prop["anyOf"]]
+    assert all("netem" in e for e in enums)
+
+
+def test_version_stamp_present():
+    from otto.version import get_version
+
+    for doc in build_schemas().values():
+        assert doc["x-otto-version"] == get_version()
+
+
+def test_element_host_entries_drop_the_hoisted_keys():
+    """A host entry nested in an element may not carry ``element``/``element_id``.
+
+    ``ElementSpec`` rejects every ``HOISTED_HOST_KEYS`` member inside a host
+    entry (they live on the element / the ``labs`` table now), so the nested
+    host sub-schemas must neither require nor permit them — while the
+    standalone per-spec documents, which describe the FLAT host dict the
+    factory still takes, keep them.
+    """
+    from otto.models.lab import HOISTED_HOST_KEYS
+
+    docs = build_schemas(builtins_only=True)
+    defs = docs["lab"]["$defs"]
+    for name in ("UnixHostSpec", "EmbeddedHostSpec"):
+        props = set(defs[name]["properties"])
+        assert not props & HOISTED_HOST_KEYS, name
+        assert not set(defs[name].get("required", [])) & HOISTED_HOST_KEYS, name
+        assert defs[name]["additionalProperties"] is False  # so they are REJECTED, not ignored
+    # The flat-dict documents are unchanged: element identity still belongs there.
+    assert "element" in docs["unix-host"]["properties"]
 
 
 def test_link_schema_emitted():
@@ -63,30 +137,6 @@ def test_link_schema_emitted():
     link = docs["link"]
     assert link["title"] == "otto link"
     assert "endpoints" in link["properties"]
-
-
-def test_lab_hosts_property_is_an_anyof_array_with_discriminator():
-    lab = build_schemas()["lab"]
-    hosts = lab["properties"]["hosts"]
-    assert hosts["type"] == "array"
-    items = hosts["items"]
-    # anyOf, not oneOf — minimal hosts validate against >1 spec.
-    assert "anyOf" in items
-    assert "oneOf" not in items
-    assert {ref["$ref"] for ref in items["anyOf"]} == {
-        "#/$defs/UnixHostSpec",
-        "#/$defs/EmbeddedHostSpec",
-    }
-    disc = items["discriminator"]
-    assert disc["propertyName"] == "os_type"
-    # Every registered os_type name is mapped to its spec's $def.
-    assert disc["mapping"] == {
-        "unix": "#/$defs/UnixHostSpec",
-        "embedded": "#/$defs/EmbeddedHostSpec",
-        "zephyr": "#/$defs/EmbeddedHostSpec",
-    }
-    assert "UnixHostSpec" in lab["$defs"]
-    assert "EmbeddedHostSpec" in lab["$defs"]
 
 
 def test_custom_registered_spec_appears(monkeypatch):
@@ -97,7 +147,7 @@ def test_custom_registered_spec_appears(monkeypatch):
 
     monkeypatch.setitem(op._HOST_SPECS, "acme", AcmeSpec)
     docs = build_schemas()
-    mapping = docs["lab"]["properties"]["hosts"]["items"]["discriminator"]["mapping"]
+    mapping = _element_host_discriminator_mapping(docs)
     assert "acme" in mapping
     assert mapping["acme"] == "#/$defs/AcmeSpec"
     assert "acme" in docs  # its own per-spec file (stem from the class name)
@@ -123,11 +173,11 @@ def test_builtins_only_excludes_custom_specs(monkeypatch):
 
     full = build_schemas()
     assert "acme" in full
-    assert "acme" in full["lab"]["properties"]["hosts"]["items"]["discriminator"]["mapping"]
+    assert "acme" in _element_host_discriminator_mapping(full)
 
     builtins = build_schemas(builtins_only=True)
     assert "acme" not in builtins
-    mapping = builtins["lab"]["properties"]["hosts"]["items"]["discriminator"]["mapping"]
+    mapping = _element_host_discriminator_mapping(builtins)
     assert "acme" not in mapping
     assert set(mapping) == {
         "unix",
@@ -165,7 +215,7 @@ class TestSelectorEnums:
         assert "term" in props
         assert "enum" not in props["term"]
 
-    def test_hosts_array_defs_carry_enums(self):
+    def test_element_host_defs_carry_enums(self):
         from otto.models.jsonschema import build_schemas
 
         defs = build_schemas()["lab"]["$defs"]

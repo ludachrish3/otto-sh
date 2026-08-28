@@ -14,7 +14,7 @@ from otto.host.factory import create_host_from_dict
 from otto.host.options import NcOptions, TelnetOptions
 from otto.host.unix_host import UnixHost
 from scripts.build_busybox_guest_images import GUEST_TABLE
-from tests._fixtures.labdata import lab_data_path
+from tests._fixtures.labdata import flat_hosts, flatten_lab_doc, lab_data_path
 from tests.conftest import BUSYBOX_GUEST_NES
 
 BUSYBOX_LINK_ELEMENT = "bb1350"
@@ -31,9 +31,19 @@ make and a live bed cannot feel."""
 
 
 def _guest_entries():
-    """The bed guests as committed, in lab-data order."""
-    hosts = json.loads(lab_data_path("tech1").read_text())["hosts"]
-    return [h for h in hosts if "busybox" in h.get("labs", []) and h.get("hop")]
+    """The bed guests as committed, in lab-data order.
+
+    SELECTED on the membership view and RETURNED factory-ready. Since v2
+    membership lives on the ELEMENT, and a host spec refuses a ``labs`` key —
+    so the entry the filter reads cannot be the one handed to
+    ``create_host_from_dict`` below.
+    """
+    members = {
+        h["element"]
+        for h in flat_hosts("tech1", with_labs=True)
+        if "busybox" in h["labs"] and h.get("hop")
+    }
+    return [h for h in flat_hosts("tech1") if h["element"] in members]
 
 
 def test_every_busybox_guest_entry_builds_a_telnet_shell_unix_host():
@@ -166,7 +176,7 @@ def test_the_declared_tap_link_names_both_ends_the_builder_provisions():
     """
     guest = next(g for g in GUEST_TABLE if g.element == BUSYBOX_LINK_ELEMENT)
     data = json.loads(lab_data_path("tech1").read_text())
-    hosts = {h["element"]: h for h in data["hosts"]}
+    hosts = {h["element"]: h for h in flatten_lab_doc(data)}
 
     assert hosts[guest.element]["interfaces"] == {
         "eth0": {"ip": guest.ip, "subnet": _BED_SUBNET}

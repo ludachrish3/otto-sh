@@ -135,6 +135,8 @@ def create_host_from_dict(
     host_data: dict[str, Any],
     preferences: dict[str, dict[str, Any]] | None = None,
     lab_name: str | None = None,
+    *,
+    element_metadata: dict[str, Any] | None = None,
 ) -> RemoteHost:
     """Create the appropriate :class:`~otto.host.remote_host.RemoteHost` subclass from a host dict.
 
@@ -150,6 +152,10 @@ def create_host_from_dict(
     stamp applied after it. It is a LOADER argument, deliberately separate from
     ``host_data``: the host specs forbid extras, so lab data cannot set it.
     Omitted, the host is left unattributed (``""``) rather than guessed at.
+
+    ``element_metadata`` is the element's opaque table — a LOADER argument like
+    ``lab_name`` (the file layer hoists it; the host spec forbids it on the
+    entry), copied per host and stamped before the providers run.
     """
     selector = host_data.get("os_type", "unix")
     profile = build_os_profile(selector)
@@ -175,6 +181,7 @@ def create_host_from_dict(
     # on which lab the host came from, and a stamp applied afterwards would be
     # invisible to exactly the code that needs it.
     host.source_lab = lab_name or ""
+    host.element_metadata = dict(element_metadata or {})
     apply_product_providers(host)
     apply_dev_tool_providers(host)
     return host

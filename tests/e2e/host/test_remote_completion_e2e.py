@@ -30,6 +30,7 @@ import pytest
 from otto.config.home import workspace_key
 from tests._fixtures._host_pool import UNIX_POOL as _UNIX_POOL
 from tests._fixtures._host_pool import lease_unix_host
+from tests._fixtures.labdata import lab_json_v2
 from tests._fixtures.sutrepo import make_sut_repo
 from tests.e2e._otto_subprocess import REPO1, run_otto
 
@@ -233,8 +234,8 @@ def _reservation_repo(root: Path, holder: str) -> Path:
         ),
         files={
             "lab_data/lab.json": json.dumps(
-                {
-                    "hosts": [
+                lab_json_v2(
+                    [
                         {
                             "ip": "10.10.200.11",
                             "element": "test1",
@@ -246,9 +247,8 @@ def _reservation_repo(root: Path, holder: str) -> Path:
                             "resources": ["test1"],
                             "labs": [_LAB],
                         }
-                    ],
-                    "links": [],
-                }
+                    ]
+                )
             )
         },
     )

@@ -16,7 +16,6 @@ import contextlib
 import dataclasses
 import fcntl
 import importlib
-import json
 import os
 import re
 import subprocess
@@ -36,7 +35,7 @@ from otto.host.embedded_host import EmbeddedHost
 from otto.host.remote_host import RemoteHost
 from otto.result import CommandResult, Results, Status
 from tests._fixtures._console_lock import RESOURCE_NAME
-from tests._fixtures.labdata import host_data, lab_data_path
+from tests._fixtures.labdata import flat_hosts, host_data, write_lab_json
 from tests._fixtures.paths import PROJECT_ROOT
 from tests._fixtures.profiles import (
     Cell,
@@ -196,7 +195,9 @@ def test_bed_labs_names_every_lab_the_bed_data_declares():
     the day a new lab appears this fails and names it instead of the venue
     quietly continuing to cross the old three.
     """
-    hosts = json.loads(lab_data_path(BED_TECH).read_text())["hosts"]
+    # ``with_labs``: since v2 the memberships live on the ELEMENT as patterns;
+    # this resolves them back against the declared lab names.
+    hosts = flat_hosts(BED_TECH, with_labs=True)
     declared = {lab for host in hosts for lab in (host.get("labs") or [])}
     assert declared == set(BED_LABS), (
         f"{BED_TECH} lab data declares labs {sorted(declared)} but the bed venue "
@@ -316,11 +317,7 @@ def test_bed_kind_is_not_read_off_os_type():
     A kind read off ``os_type`` files them as plain unix hosts, and the
     pinned-userland axis -- the entire reason those guests exist -- vanishes.
     """
-    entry = next(
-        host
-        for host in json.loads(lab_data_path(BED_TECH).read_text())["hosts"]
-        if host["element"] == "bb1161"
-    )
+    entry = next(host for host in flat_hosts(BED_TECH) if host["element"] == "bb1161")
     assert entry["os_type"] == "unix"
     assert bed_kind("bb1161") == BED_BUSYBOX
 
@@ -773,8 +770,7 @@ def _fabricate_lab_data(monkeypatch, tmp_path, entries: "list[dict]") -> None:
     one of them would have the derivation and the construction disagreeing
     about which lab they are in.
     """
-    path = tmp_path / "lab.json"
-    path.write_text(json.dumps({"hosts": entries, "links": []}))
+    path = write_lab_json(tmp_path / "lab.json", entries)
     monkeypatch.setattr(_lab_context, "lab_data_path", lambda tech="tech1": path)
     monkeypatch.setattr(
         _lab_context,
@@ -1553,9 +1549,7 @@ def test_the_excluded_guests_are_the_ones_otto_says_have_nowhere_to_put_a_file()
     different routes to the same answer, so this is a cross-check rather than
     a restatement of the implementation.
     """
-    entries = {
-        host["element"]: host for host in json.loads(lab_data_path(BED_TECH).read_text())["hosts"]
-    }
+    entries = {host["element"]: host for host in flat_hosts(BED_TECH)}
     for element in NO_FILESYSTEM_GUESTS:
         assert entries[element]["filesystem"] == "none"
         filesystem = build_filesystem("none")
@@ -1574,9 +1568,7 @@ def test_every_bed_cells_scratch_dir_is_ottos_own_answer():
     `build_filesystem` a second time, so this cannot pass by agreeing with
     `bed_scratch_dir`'s route through the host.
     """
-    entries = {
-        host["element"]: host for host in json.loads(lab_data_path(BED_TECH).read_text())["hosts"]
-    }
+    entries = {host["element"]: host for host in flat_hosts(BED_TECH)}
     seen: dict[str, str | None] = {}
     for rc in bed_space():
         element = rc.cell.element

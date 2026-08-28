@@ -13,10 +13,14 @@ two read-only methods:
 
 `load_lab(name, preferences=None) -> Lab`
 : Build and return the named lab. Raises
-  [`LabNotFoundError`](../api/labs.rst) if the name is unknown.
+  [`LabNotFoundError`](../api/labs.rst) if the name is unknown. Set
+  `Lab.resources` to what the lab reserves — the lab is the reservable unit,
+  and otto never reads resources back off its hosts.
 
 `list_labs() -> list[str]`
-: The lab names this source can provide.
+: The lab names this source **declares**. This is not a convenience listing:
+  otto decides a lab *exists* from it, so a name you omit here cannot be
+  loaded even if `load_lab` would happily build it.
 
 Configuration is supplied at construction time, so a backend is built once and
 then queried.
@@ -56,6 +60,14 @@ return a lab an earlier merge has already mutated.
     positional handles (`dut1`), `docker_capable` gates `otto docker --on`,
     and `ip` drives tunnel narrowing.
 
+  `lab_patterns` is the one field a backend may legitimately leave empty. A
+  backend whose membership is
+  *pattern*-based — the json one, where an element joins labs by regex — fills
+  it with the element's patterns and lets the composite re-resolve them
+  against every source's declared labs, so `labs` ends up complete across
+  sources rather than complete only within this one. A backend that already
+  knows its concrete lab names sets `labs` and leaves `lab_patterns` empty.
+
   Otto also bounds how long it will wait for your backend during completion
   (2 seconds by default). If yours is legitimately slower, raise
   `OTTO_COMPLETION_HOST_TIMEOUT`; otto logs a warning naming it rather than
@@ -70,7 +82,10 @@ dependency-free reference implementation —
 you can copy from `src/otto/examples/lab_repository.py` as a starting point. It
 holds a mapping of lab name to host dicts and builds real hosts with
 [`create_host_from_dict`](../api/host/factory.rst) so each becomes a `RemoteHost`
-keyed by its `id` — which is what the rest of otto expects.
+keyed by its `id` — which is what the rest of otto expects. Note where its
+resources live: a *second* mapping, lab name to resource set, mirroring
+`lab.json`'s `labs` table. No host dict in the sample carries a `resources`
+key, because a host has none to carry.
 
 The shipped sample works out of the box and demonstrates the contract:
 
@@ -83,6 +98,8 @@ The shipped sample works out of the box and demonstrates the contract:
 >>> lab.name
 'east'
 >>> sorted(lab.hosts)
+['router1']
+>>> sorted(lab.resources)
 ['router1']
 ```
 

@@ -25,7 +25,7 @@ tests = ["tests"]
 init  = ["my_instructions", "my_shared_options"]
 
 # Where otto's hosts come from, read in order — later sources override
-# earlier ones per host record.
+# earlier ones one element (or one labs table entry) at a time.
 [[lab.sources]]
 backend = "json"
 paths = ["../lab_data"]
@@ -94,10 +94,10 @@ version
   from.  Each entry names a registered `backend` (`"json"` ships with otto), an
   optional `name` labelling it in warnings and errors, and that backend's own
   keys inline — for `json` that is `paths`, a non-empty list of directories
-  (searched for `lab.json`) or `.json` files.  Every declared source is read,
-  in order, and a later one overrides an earlier one per host record.  A repo
-  may declare none; the `[lab]` table holds nothing but `sources`.  See
-  {doc}`host-sources` for the full treatment.
+  (searched for `lab.json`), `.json` files, or globs.  Every declared source is
+  read, in order, and a later one overrides an earlier one one element (or one
+  `labs` table entry) at a time.  A repo may declare none; the `[lab]` table
+  holds nothing but `sources`.  See {doc}`host-sources` for the full treatment.
 
 libs
 : List of Python package directories to add to `sys.path` at startup.
@@ -187,9 +187,10 @@ occurs:
 4. **Lab loading** -- Otto builds the host source via `build_lab_sources`,
    concatenating every repo's `[[lab.sources]]` entries in `OTTO_SUT_DIRS`
    order, and loads the lab(s) named by `--lab` or `OTTO_LAB`. Every declared
-   source is live: a later one overrides an earlier one per host record, with
-   a warning naming both. Multiple labs are merged, combining their hosts —
-   name them with `+` (`--lab lab_a+lab_b`). The sources are pluggable — see
+   source is live: a later one overrides an earlier one wholesale per record
+   (an element, or a `labs` table entry), with a warning naming both.
+   Multiple labs are merged, combining their hosts — name them with `+`
+   (`--lab lab_a+lab_b`). The sources are pluggable — see
    {doc}`host-sources`.
 
 5. **Context creation** -- The global `OttoContext` is created with the
@@ -322,8 +323,8 @@ otto for a team:
    entry on the built-in `json` backend (commit `lab.json` under `lab_data/`).
    Add an entry for a CMDB or inventory API if you have one, and mind the
    order: sources are read in order and a later one overrides an earlier one
-   per host record, which is how a repo layers its own hosts over a global
-   database. See {doc}`host-sources`.
+   one element (or one `labs` table entry) at a time, which is how a repo
+   layers its own equipment over a global database. See {doc}`host-sources`.
 3. **Decide on reservation gating** — leave it off (`backend = "none"`, the
    default) for sandbox labs, or wire `[reservations]` to your scheduler so otto
    refuses to clobber a held rack. Tell the team about the `--as-user` and

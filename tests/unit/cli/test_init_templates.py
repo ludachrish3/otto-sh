@@ -4,7 +4,12 @@ import re
 
 import tomli
 
-from otto.cli.init_templates import SETTINGS_TEMPLATE
+from otto.cli.init_templates import (
+    EXAMPLE_HOST_ENTRY,
+    LAB_JSON_TEMPLATE,
+    LAB_README_TEMPLATE,
+    SETTINGS_TEMPLATE,
+)
 from otto.models.settings import (
     CoverageSettingsSpec,
     DependenciesSpec,
@@ -74,3 +79,39 @@ def test_template_mentions_every_fixed_section_field() -> None:
     for section, (spec, omitted) in _SECTION_SPECS.items():
         assert set(spec.model_fields) - set(data[section]) == omitted, section
         assert set(data[section]) <= set(spec.model_fields), section
+
+
+def test_lab_template_parses_through_the_runtime_parsers() -> None:
+    """The scaffolded lab.json is accepted by the SAME parsers the loader uses.
+
+    Not a re-implemented shape check: a template that only satisfied a
+    hand-written assertion here could still be a file otto refuses to load.
+    """
+    from otto.labs.json_repository import parse_elements, parse_lab_entries, parse_lab_sections
+    from otto.models.host import UnixHostSpec
+
+    sections = parse_lab_sections(LAB_JSON_TEMPLATE, "lab.json")
+    entries = parse_lab_entries(sections["labs"], "lab.json")
+    (element,) = parse_elements(sections["elements"], "lab.json")
+    assert entries["example_lab"].resources == {"example-device"}
+    assert element.matches("example_lab")  # the lab it declares has a member
+    UnixHostSpec.model_validate(element.flatten()[0])
+
+
+def test_example_host_entry_carries_no_hoisted_key() -> None:
+    """`element`/`element_id`/`labs`/`resources` are element- or lab-level in v2."""
+    from otto.models.lab import HOISTED_HOST_KEYS
+
+    assert set(EXAMPLE_HOST_ENTRY) & HOISTED_HOST_KEYS == set()
+
+
+def test_lab_readme_documents_the_v2_shape_and_the_migration() -> None:
+    """The scaffolded README is the first lab-file reference a user reads."""
+    for section in ("## The `labs` table", "## Fields in the example element"):
+        assert section in LAB_README_TEMPLATE
+    for field in ("`resources`", "`metadata`", "`labs`", "`name`", "`id`", "`hosts`"):
+        assert field in LAB_README_TEMPLATE
+    # The hard cutover has to be named, not implied — a reader arriving from a
+    # v1 repo needs to be told where their `hosts` array went.
+    assert "Migrating from the hosts array" in LAB_README_TEMPLATE
+    assert "are NOT host fields" in LAB_README_TEMPLATE

@@ -228,6 +228,12 @@ depends_on = [
     # DEBT: models/__init__.py imports host.os_profile BEFORE .host as an
     # import-order hack (todo/registry_builtin_registration_symmetry.md).
     "otto.host",
+    # models/jsonschema.py stamps `x-otto-version` into every generated schema
+    # document (spec 2026-08-27 lab-definition-v2 §12), so `otto init`'s doctor
+    # can name the otto that wrote a stale file. otto.version is a
+    # dependency-free leaf (importlib.metadata only): no cycle, no new member
+    # in any component.
+    "otto.version",
 ]
 
 [[modules]]

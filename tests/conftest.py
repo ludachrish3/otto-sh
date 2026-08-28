@@ -977,7 +977,15 @@ def real_sync_phase():
 # ---------------------------------------------------------------------------
 
 from tests._fixtures._host_pool import lease_unix_host
-from tests._fixtures.labdata import host_data, lab_data_path, make_host  # noqa: F401
+from tests._fixtures.labdata import (  # noqa: F401
+    flat_hosts,
+    flatten_lab_doc,
+    host_data,
+    lab_data_path,
+    lab_json_v2,
+    make_host,
+    write_lab_json,
+)
 
 # ---------------------------------------------------------------------------
 # Parameterized host fixtures (driven by @pytest.mark.parametrize + indirect)

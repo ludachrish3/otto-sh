@@ -29,6 +29,8 @@ Direct usage:
 'east'
 >>> len(lab.hosts)
 1
+>>> sorted(lab.resources)
+['router1']
 >>> [s.id for s in repo.list_host_summaries()]
 ['router1', 'router2']
 """
@@ -43,14 +45,15 @@ from ..labs import HostSummary, LabNotFoundError
 # A tiny built-in dataset so the sample works out of the box (doctests +
 # conformance). Each value is a list of host dicts as they'd appear in a
 # lab.json entry; the mapping key supplies lab membership here, so the
-# host-level "labs" field is unnecessary.
+# host-level "labs" field is unnecessary. Resources are declared PER LAB in
+# ``_DEMO_RESOURCES`` below, never on a host — the lab is the reservable unit
+# (spec §8.1), which is why no host entry here carries a "resources" key.
 _DEMO_LABS: dict[str, list[dict[str, Any]]] = {
     "east": [
         {
             "ip": "10.0.0.1",
             "element": "router1",
             "creds": [{"login": "admin", "password": "admin"}],
-            "resources": ["router1"],
         },
     ],
     "west": [
@@ -58,10 +61,12 @@ _DEMO_LABS: dict[str, list[dict[str, Any]]] = {
             "ip": "10.0.1.1",
             "element": "router2",
             "creds": [{"login": "admin", "password": "admin"}],
-            "resources": ["router2"],
         },
     ],
 }
+
+_DEMO_RESOURCES: dict[str, set[str]] = {"east": {"router1"}, "west": {"router2"}}
+"""What each demo lab reserves — the ``labs`` table's ``resources``, in miniature."""
 
 
 class ExampleLabRepository:
@@ -76,6 +81,10 @@ class ExampleLabRepository:
     labs : dict[str, list[dict]] | None
         Optional mapping of lab name to host dicts. Defaults to a small built-in
         demo dataset.
+    resources : dict[str, set[str]] | None
+        Optional mapping of lab name to the resources that lab reserves — the
+        ``labs`` table's ``resources``, which is where they live in v2 (hosts
+        carry none). Defaults to the demo dataset's own table.
     """
 
     def __init__(
@@ -83,10 +92,14 @@ class ExampleLabRepository:
         *,
         repo_dir: Path | None = None,  # noqa: ARG002 — required by registry-seam constructor signature (build_lab_sources passes repo_dir= to all backends)
         labs: dict[str, list[dict[str, Any]]] | None = None,
+        resources: dict[str, set[str]] | None = None,
     ) -> None:
         self._labs: dict[str, list[dict[str, Any]]] = (
             {k: list(v) for k, v in _DEMO_LABS.items()} if labs is None else labs
         )
+        self._resources: dict[str, set[str]] = {
+            k: set(v) for k, v in (_DEMO_RESOURCES if resources is None else resources).items()
+        }
 
     def load_lab(
         self,
@@ -107,7 +120,10 @@ class ExampleLabRepository:
         for host_data in self._labs[name]:
             host = create_host_from_dict(host_data, preferences=preferences, lab_name=name)
             lab.add_host(host)
-            lab.resources.update(host.resources)
+        # Declared, never derived: the lab is the reservable unit and carries
+        # its own set (spec §8.1). Reading it back off the hosts is exactly
+        # what v2 removed — a copy so a caller cannot mutate the table.
+        lab.resources = set(self._resources.get(name, set()))
         return lab
 
     def list_labs(self) -> list[str]:

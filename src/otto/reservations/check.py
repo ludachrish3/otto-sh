@@ -131,14 +131,12 @@ class MissingReservationError(OttoError):
 def required_resources(lab: "Lab") -> set[str]:
     """Return every resource identifier the lab needs.
 
-    The union of the lab's own ``resources`` set and each host's
-    ``resources`` set.  Any of these resources that are not held by the
-    effective user will cause :func:`check_reservations` to raise.
+    The lab's *declared* ``resources`` set — the lab is the reservable unit
+    and hosts are portions of it (lab-definition v2 spec §8.1), so hosts
+    contribute nothing here. For an ``a+b`` composite lab this is the union
+    of the components' declared sets (``Lab.__add__`` unions them).
     """
-    needed: set[str] = set(lab.resources)
-    for host in lab.hosts.values():
-        needed.update(host.resources)
-    return needed
+    return set(lab.resources)
 
 
 def check_reservations(

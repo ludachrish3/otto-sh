@@ -255,7 +255,23 @@ else:
 
 
 def _load_hosts(path: Path) -> list[dict]:
-    return json.loads(path.read_text())["hosts"]
+    """Flatten a lab.json's ``elements`` into the flat host dicts this script reads.
+
+    Since lab.json v2 a host entry lives under its element and no longer
+    carries ``element``/``element_id`` itself — they are stamped back on here,
+    which is exactly what otto's own loader does before host validation.
+    Restated rather than imported, like :func:`_host_id`: this script
+    deliberately runs with no otto on the path.
+    """
+    doc = json.loads(path.read_text())
+    hosts: list[dict] = []
+    for element in doc.get("elements", []):
+        for host in element["hosts"]:
+            flat = {**host, "element": element["name"]}
+            if element.get("id") is not None:
+                flat["element_id"] = element["id"]
+            hosts.append(flat)
+    return hosts
 
 
 def _ssh_user_pass(creds: list[dict]) -> tuple[str, str]:

@@ -38,7 +38,6 @@ def _mock_parent(parent_id: str = "test3", *, term: str = "ssh"):
     parent.id = parent_id
     parent.name = parent_id
     parent.term = term
-    parent.resources = set()
     parent.exec = AsyncMock(return_value=_ok())
     parent.put = AsyncMock(return_value=Result(Status.Success, value={}))
     parent.get = AsyncMock(return_value=Result(Status.Success, value={}))

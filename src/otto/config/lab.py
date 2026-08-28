@@ -3,6 +3,7 @@
 from dataclasses import (
     dataclass,
     field,
+    replace,
 )
 from logging import getLogger
 from pathlib import Path
@@ -91,6 +92,18 @@ class Lab:
 
     Declared last so positional construction (``Lab("name", resources, hosts,
     links)``) keeps working; leave it unset and ``__post_init__`` seeds it.
+    """
+
+    metadata: dict[str, dict[str, Any]] = field(default_factory=dict)
+    """Opaque user data from each lab's ``labs`` table entry, keyed by LAB NAME.
+
+    Keyed rather than flat because a merged lab (``a + b``) carries both labs'
+    tables and a host must be able to read its OWN lab's data; otto never
+    interprets the values. A lab loaded from a source that does not declare it
+    contributes no key — an absent key means "not declared here", never "empty".
+
+    Declared after ``component_names`` for the same reason that one is declared
+    last: positional construction must keep working.
     """
 
     def __post_init__(self) -> None:
@@ -235,6 +248,10 @@ class Lab:
         # ``Host.source_lab``, stamped before the hosts ever reach this method.
         self.component_names = [*self.component_names, *other.component_names]
         self.resources = self.resources.union(other.resources)
+        # Key-disjoint by construction (each key is a COMPONENT lab name, and a
+        # lab is merged into itself nowhere), so a plain union is the whole
+        # rule: no field-level blend of two labs' tables, ever.
+        self.metadata = {**self.metadata, **other.metadata}
         for host in other.hosts.values():
             if isinstance(host, RemoteHost):
                 host._lab = self
@@ -318,7 +335,8 @@ def logical_indices(hosts: "Iterable[Any]") -> dict[str, int]:
 # Imported here (after Lab is fully defined) rather than at the top of the
 # module to avoid a circular-import bootstrap: json_repository imports Lab
 # from this module, so this import must wait until Lab is defined.
-from ..labs.json_repository import JsonFileLabRepository  # noqa: E402, I001 — import after Lab class definition to avoid circular-import bootstrap
+from ..labs.composite import CompositeLabRepository, LabSource  # noqa: E402, I001 — import after Lab class definition to avoid circular-import bootstrap
+from ..labs.json_repository import JsonFileLabRepository  # noqa: E402 — import after Lab class definition to avoid circular-import bootstrap
 
 
 def load_lab(
@@ -344,16 +362,19 @@ def load_lab(
         ``None`` reproduces today's behavior.
     repository : LabRepository | None
         A pre-built host-source backend (e.g. from
-        :func:`otto.labs.build_lab_sources`). When ``None``, a built-in
-        json backend over ``search_paths`` is used — preserving library/script
-        behavior.
+        :func:`otto.labs.build_lab_sources`). When ``None``, a built-in json
+        backend over ``search_paths`` is used — wrapped in a one-source
+        :class:`~otto.labs.composite.CompositeLabRepository`, which is where
+        lab existence and the declared-but-memberless rule live.
 
     Returns
     -------
     Lab
         Fully defined lab instance. Every host carries a non-empty
         ``source_lab`` naming the COMPONENT lab it came from (never the
-        composite), and ``component_names`` lists those components in order.
+        composite) and a :class:`~otto.host.lab_info.LabInfo` in ``lab_info``
+        describing that same component, and ``component_names`` lists those
+        components in order.
 
     Notes
     -----
@@ -371,9 +392,20 @@ def load_lab(
             lab_names = labnames
 
     if repository is None:
-        repository = JsonFileLabRepository(search_paths=search_paths or [])
+        # One json source still goes through the composite: lab existence and
+        # the declared-but-memberless rule live there and nowhere else. A
+        # caller-supplied repository is used as given.
+        repository = CompositeLabRepository(
+            [
+                LabSource(
+                    label="json", repository=JsonFileLabRepository(search_paths=search_paths or [])
+                )
+            ]
+        )
 
     labs = [repository.load_lab(name, preferences=preferences) for name in lab_names]
+
+    from ..host.lab_info import LabInfo  # lazy: this module is imported by host modules
 
     # Attribution sweep, BEFORE the merge. After ``+`` every host lives in a lab
     # named "a+b", so a sweep run one line later would answer "which lab is this
@@ -381,9 +413,32 @@ def load_lab(
     # ``source_lab`` exists to prevent. Running it per component also covers
     # backends that build hosts without the factory's ``lab_name`` or drop them
     # straight into ``Lab.hosts`` (bypassing ``add_host``'s own backstop).
+    # ``lab_info`` is stamped in the same sweep and for the same reason: it
+    # names the COMPONENT lab (spec §4), which only exists before the merge.
     for component in labs:
+        resources = frozenset(component.resources)
+        declared_metadata = component.metadata.get(component.name, {})
         for component_host in component.hosts.values():
             component_host.source_lab = component_host.source_lab or component.name
+            # A per-host COPY of the metadata table (mutation isolation, like
+            # element_metadata): ``LabInfo`` copies it in ``__post_init__``, so
+            # one host's write into it can never reach the lab's table or a
+            # sibling host's.
+            component_host.lab_info = LabInfo(
+                name=component.name,
+                resources=resources,
+                metadata=declared_metadata,
+            )
+
+    # Captured BEFORE the merge, for the built-in `local` host injected after
+    # it: ``+`` mutates ``labs[0]`` in place, so afterwards its ``name`` is the
+    # composite ("a+b") and its ``resources`` the union — neither of which
+    # describes the first COMPONENT any more.
+    first_component_info = LabInfo(
+        name=labs[0].name,
+        resources=frozenset(labs[0].resources),
+        metadata=labs[0].metadata.get(labs[0].name, {}),
+    )
 
     lab = labs[0]
     for additional_lab in labs[1:]:
@@ -401,7 +456,16 @@ def load_lab(
         # will ever match. Attribute it to the first component instead (see the
         # docstring); the explicit stamp also pre-empts ``add_host``'s
         # composite-name backstop.
+        #
+        # BOTH attribution channels, from the SAME component: the sweep above
+        # runs pre-merge and never sees this host, so leaving ``lab_info`` at
+        # its empty default would have the one host present in every lab
+        # disagreeing with itself about which lab it is in.
         local_host.source_lab = lab.component_names[0]
+        # ``replace`` rather than the object itself: it re-runs
+        # ``LabInfo.__post_init__``, so `local` gets its own metadata dict
+        # instead of aliasing the one every host of that component holds.
+        local_host.lab_info = replace(first_component_info)
         lab.add_host(local_host)
     else:
         getLogger(__name__).debug(

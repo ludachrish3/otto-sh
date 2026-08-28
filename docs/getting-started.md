@@ -88,13 +88,15 @@ settings
 
 schemas
 : `.otto/schemas/*.schema.json` — generated editor schemas for `lab.json`,
-  `settings.toml`, and each host type — plus `.vscode` wiring. Otto-owned
-  and kept fresh by a staleness doctor; `otto init --schemas` regenerates
-  it even when already present.
+  `settings.toml`, and each host type — plus `.vscode` wiring and generated
+  `lab.json` snippets. Otto-owned and kept fresh by a staleness doctor;
+  `otto init --schemas` regenerates it even when already present. See
+  {doc}`guide/cli/schema/editors`.
 
 lab
-: `lab_data/lab.json` with one example host (`example-device`, in lab
-  `example_lab`) plus `lab_data/README.md` explaining the schema.
+: `lab_data/lab.json` declaring lab `example_lab` and one example element
+  (`example-device`) that joins it, plus `lab_data/README.md` explaining the
+  three sections.
 
 tests
 : `tests/test_example.py` (a decorator-less `TestExample` suite plus a plain
@@ -112,11 +114,12 @@ skipped if your repo is already listed there):
 Next steps
   1. export OTTO_SUT_DIRS=/path/to/my_project
   2. otto --install-completion
-  3. otto --lab example_lab --list-hosts
-  4. otto test --list-suites
-  5. otto test TestExample
-  6. otto test --tests test_example_function
-  7. otto run smoke
+  3. source ~/.bash_completions/otto.sh
+  4. otto --lab example_lab --list-hosts
+  5. otto test --list-suites
+  6. otto test TestExample
+  7. otto test --tests test_example_function
+  8. otto run smoke
 ```
 
 See {doc}`guide/cli/init` for the full `otto init` flag reference, and
@@ -171,7 +174,7 @@ directory.  See {doc}`guide/configuration/settings` for the full rule.
 | ----- | ------- |
 | `name` | Product or repo name (shown in CLI output) |
 | `version` | Semantic version string |
-| `[[lab.sources]]` | Ordered host-data sources. Each entry names a registered `backend`; the built-in `json` one takes `paths` — directories holding a `lab.json`, or `.json` files. Later sources override earlier ones per host record ([details](guide/configuration/host-sources.md)) |
+| `[[lab.sources]]` | Ordered host-data sources. Each entry names a registered `backend`; the built-in `json` one takes `paths` — directories holding a `lab.json`, `.json` files, or globs. Later sources override earlier ones one element (or one `labs` entry) at a time ([details](guide/configuration/host-sources.md)) |
 | `libs` | Python package directories added to `PYTHONPATH` at startup |
 | `tests` | Where test discovery happens. Each directory's **top-level** `test_*.py` files are imported at startup, registering their `Test*` `OttoSuite` subclasses; pytest itself recurses normally when tests are run ([details](library/writing-suites.md#suite-registration)) |
 | `init` | Python modules imported at startup (registers instructions and shared options) |
@@ -204,52 +207,70 @@ Other useful environment variables:
 ## Lab files
 
 `otto init --lab` (or `--all`) scaffolds `lab_data/lab.json` with one
-example host for you, plus a `lab_data/README.md` walking through its
-fields — see {doc}`guide/configuration/lab-config` for the full per-field schema. This
-section explains the format so you can add real hosts by hand.
+declared lab and one example element for you, plus a `lab_data/README.md`
+walking through the format — see {doc}`guide/configuration/lab-config` for the
+full field reference. This section explains the shape so you can add real
+equipment by hand.
 
-A lab file is a JSON object with a `hosts` array (and an optional `links`
-array declaring data-plane routes between hosts — see {doc}`guide/configuration/lab-config`).
-Place lab files in one of the directories a json source's `paths` lists (or
-point `paths` straight at a `.json` file); each host joins one or more labs
-through its `labs` field, and `--lab <name>` selects the matching hosts:
+A lab file is a JSON object with three sections, all optional: `labs`, the
+table of labs the file **declares** (a lab exists only once some file declares
+it); `elements`, the pieces of equipment — a box, a chassis, a VM — each
+grouping the host entries that address it; and `links`, declared data-plane
+routes between hosts. Place lab files in one of the directories a json
+source's `paths` lists (or point `paths` straight at a `.json` file or a
+glob). Each element joins one or more labs through its `labs` patterns, and
+`--lab <name>` loads every host of every element whose patterns match:
 
 ```json
 {
-    "hosts": [
+    "labs": {
+        "my_lab": { "resources": ["bench-1"] }
+    },
+    "elements": [
         {
-            "ip": "192.168.1.1",
-            "element": "router1",
-            "os_type": "unix",
-            "valid_terms": ["ssh"],
-            "creds": [{ "login": "admin", "password": "secret" }],
-            "labs": ["my_lab"]
+            "name": "router1",
+            "labs": ["my_lab"],
+            "hosts": [
+                {
+                    "ip": "192.168.1.1",
+                    "os_type": "unix",
+                    "valid_terms": ["ssh"],
+                    "creds": [{ "login": "admin", "password": "secret" }]
+                }
+            ]
         },
         {
-            "ip": "192.168.1.2",
-            "element": "switch1",
-            "os_type": "unix",
-            "valid_terms": ["telnet"],
-            "creds": [{ "login": "admin", "password": "secret" }],
-            "labs": ["my_lab"]
+            "name": "switch1",
+            "labs": ["my_lab"],
+            "hosts": [
+                {
+                    "ip": "192.168.1.2",
+                    "os_type": "unix",
+                    "valid_terms": ["telnet"],
+                    "creds": [{ "login": "admin", "password": "secret" }]
+                }
+            ]
         }
     ],
     "links": []
 }
 ```
 
-otto loads each entry into a host object — the same dicts build the
-`router1` and `switch1` hosts:
+`resources` is what reserving `my_lab` holds — declared on the lab, never on a
+host. A `labs` entry that reserves nothing is written `{}`.
+
+otto builds a host object from each host entry, with its element's `name` (and
+`id`) folded in. That flattened, per-host dict is also otto's Python-level
+host API, so the same two hosts can be built directly — note that `element`
+belongs to the *flat* dict here, never to a host entry in the file:
 
 ```{doctest}
 >>> from otto.host.factory import create_host_from_dict
 >>> hosts = [create_host_from_dict(h) for h in [
 ...     {"ip": "192.168.1.1", "element": "router1", "os_type": "unix",
-...      "valid_terms": ["ssh"], "creds": [{"login": "admin", "password": "secret"}],
-...      "labs": ["my_lab"]},
+...      "valid_terms": ["ssh"], "creds": [{"login": "admin", "password": "secret"}]},
 ...     {"ip": "192.168.1.2", "element": "switch1", "os_type": "unix",
-...      "valid_terms": ["telnet"], "creds": [{"login": "admin", "password": "secret"}],
-...      "labs": ["my_lab"]}]]
+...      "valid_terms": ["telnet"], "creds": [{"login": "admin", "password": "secret"}]}]]
 >>> [h.element for h in hosts]
 ['router1', 'switch1']
 ```

@@ -15,7 +15,7 @@ from otto.config.repo import Repo
 from otto.host.unix_host import UnixHost
 from otto.result import CommandResult
 from otto.utils import Status
-from tests._fixtures.labdata import json_lab_sources
+from tests._fixtures.labdata import json_lab_sources, write_lab_json
 from tests._fixtures.sutrepo import make_sut_repo
 
 _DOCKER_FILES = {"docker/Dockerfile": "FROM alpine\n", "docker/compose.yml": "services: {}\n"}
@@ -775,32 +775,27 @@ def test_completer_cache_hit_filters_by_selected_lab():
 
 def test_completer_cache_miss_filters_by_selected_lab(tmp_path):
     """Cache miss + lab selected: the live scan is restricted to the lab."""
-    import json
-
     lab = tmp_path / "lab"
     lab.mkdir()
     creds = [{"login": "u", "password": "p"}]
-    (lab / "lab.json").write_text(
-        json.dumps(
+    write_lab_json(
+        lab / "lab.json",
+        [
             {
-                "hosts": [
-                    {
-                        "ip": "1.1.1.1",
-                        "element": "test1",
-                        "creds": creds,
-                        "docker_capable": True,
-                        "labs": ["unix"],
-                    },
-                    {
-                        "ip": "1.1.1.2",
-                        "element": "alt2",
-                        "creds": creds,
-                        "docker_capable": True,
-                        "labs": ["unix_alt"],
-                    },
-                ]
-            }
-        )
+                "ip": "1.1.1.1",
+                "element": "test1",
+                "creds": creds,
+                "docker_capable": True,
+                "labs": ["unix"],
+            },
+            {
+                "ip": "1.1.1.2",
+                "element": "alt2",
+                "creds": creds,
+                "docker_capable": True,
+                "labs": ["unix_alt"],
+            },
+        ],
     )
     repo = SimpleNamespace(
         lab_sources=json_lab_sources(tmp_path, [lab]),

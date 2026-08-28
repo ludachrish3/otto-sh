@@ -78,7 +78,7 @@ from contextlib import contextmanager
 from otto.config.lab import Lab
 from otto.context import OttoContext, reset_context, set_context
 from otto.host.factory import create_host_from_dict
-from tests._fixtures.labdata import host_data, lab_data_path
+from tests._fixtures.labdata import flatten_lab_doc, host_data, lab_data_path
 
 # The name the venue's lab answers to. It reaches a reader in two places: the
 # ``hop 'x' not in lab 'conformance_bed'`` KeyError otto raises when a hop
@@ -118,7 +118,7 @@ def hop_targets(tech: str) -> "list[str]":
     than at open time, where it would arrive as an otto ``KeyError`` about a
     lab this tree assembled.
     """
-    entries = json.loads(lab_data_path(tech).read_text())["hosts"]
+    entries = flatten_lab_doc(json.loads(lab_data_path(tech).read_text()))
     declared = {entry["element"] for entry in entries}
     targets: "list[str]" = []
     for entry in entries:

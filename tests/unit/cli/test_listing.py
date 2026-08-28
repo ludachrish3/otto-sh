@@ -20,6 +20,7 @@ from typer.testing import CliRunner
 
 from otto.cli.test import suite_app
 from otto.config.repo import CollectedTest, Repo, _test_run_syntax
+from tests._fixtures.labdata import write_lab_json
 from tests._fixtures.paths import PROJECT_ROOT
 from tests._fixtures.sutrepo import make_sut_repo
 
@@ -177,7 +178,10 @@ class TestGetLabPanel:
         )
         labdata = sut_dir / "labdata"
         labdata.mkdir()
-        (labdata / "lab.json").write_text('{"hosts": [{"labs": ["alpha", "beta"]}]}')
+        write_lab_json(
+            labdata / "lab.json",
+            [{"ip": "10.0.0.1", "element": "a", "labs": ["alpha", "beta"]}],
+        )
         repo = Repo(sut_dir=sut_dir)
         text = _render(repo.get_lab_panel())
         assert "alpha" in text

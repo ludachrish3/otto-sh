@@ -7,6 +7,7 @@ import pytest
 
 from otto.config.lab import Lab
 from otto.examples.lab_repository import ExampleLabRepository
+from otto.host.factory import create_host_from_dict
 from otto.labs import (
     CompositeLabRepository,
     LabNotFoundError,
@@ -16,18 +17,26 @@ from otto.labs import (
 from otto.testing import assert_lab_repository_conforms
 
 
-def _host(element: str, ip: str, resources: list[str] | None = None) -> dict:
-    return {
-        "ip": ip,
-        "element": element,
-        "creds": [{"login": "u", "password": "p"}],
-        "resources": resources if resources is not None else [element],
-    }
+def _host(element: str, ip: str) -> dict:
+    return {"ip": ip, "element": element, "creds": [{"login": "u", "password": "p"}]}
 
 
-def _composite(*labeled: tuple[str, dict]) -> CompositeLabRepository:
+def _composite(*labeled: tuple) -> CompositeLabRepository:
+    """Build a composite from ``(label, labs)`` or ``(label, labs, resources)`` entries.
+
+    Resources are per LAB since v2 (spec §8.1), so they are a source-level
+    table here, not a host field; omitting them declares none.
+    """
     return CompositeLabRepository(
-        [LabSource(label=lbl, repository=ExampleLabRepository(labs=data)) for lbl, data in labeled]
+        [
+            LabSource(
+                label=item[0],
+                repository=ExampleLabRepository(
+                    labs=item[1], resources=item[2] if len(item) > 2 else {}
+                ),
+            )
+            for item in labeled
+        ]
     )
 
 
@@ -44,66 +53,55 @@ def test_union_of_disjoint_sources() -> None:
 
 def test_later_source_overrides_wholesale_and_warns(caplog) -> None:
     comp = _composite(
-        ("r/global", {"site": [_host("alt1", "10.0.0.1", resources=["r-old"])]}),
-        ("r/virtual", {"site": [_host("alt1", "10.9.9.9", resources=["r-new"])]}),
+        ("r/global", {"site": [_host("alt1", "10.0.0.1")]}),
+        ("r/virtual", {"site": [_host("alt1", "10.9.9.9")]}),
     )
     with caplog.at_level(logging.WARNING, logger="otto.labs.composite"):
         lab = comp.load_lab("site")
     assert lab.hosts["alt1"].ip == "10.9.9.9"
     msgs = [r.getMessage() for r in caplog.records]
+    # The warning names the ELEMENT, not the host id: the element is the unit
+    # that was replaced (spec §6), and restating the id would hide that its
+    # siblings went with it.
     assert any(
-        "'alt1'" in m and "'site'" in m and "r/virtual" in m and "r/global" in m for m in msgs
+        "('alt1', None)" in m and "'site'" in m and "r/virtual" in m and "r/global" in m
+        for m in msgs
     )
     assert any("overrides" in m for m in msgs)
 
 
-def test_no_warning_without_collision(caplog) -> None:
+def test_no_element_warning_without_collision(caplog) -> None:
+    """Disjoint elements merge silently — the only warning is the labs-entry one.
+
+    Both sources DECLARE ``site`` here (this sample backend's dataset key IS
+    its declaration), and two declarations of one lab are a labs-entry
+    collision, which warns by design (spec §9). So the silence pinned here is
+    the ELEMENT merge's, and the hosts assertion proves both contributions
+    really did land in one lab rather than one source being skipped.
+    """
     comp = _composite(
         ("r/global", {"site": [_host("alt1", "10.0.0.1")]}),
         ("r/virtual", {"site": [_host("test2", "10.0.0.2")]}),
     )
     with caplog.at_level(logging.WARNING, logger="otto.labs.composite"):
-        comp.load_lab("site")
-    assert not caplog.records
+        lab = comp.load_lab("site")
+    assert set(lab.hosts) == {"alt1", "test2"}
+    assert not [r for r in caplog.records if "element" in r.getMessage()]
 
 
-def test_resources_recomputed_not_unioned() -> None:
+def test_declared_resources_come_from_the_declaring_source() -> None:
+    """Spec §8.2: declared per lab, replaced wholesale — never recomputed or unioned.
+
+    Both sources declare ``site``, so the later one's ``labs`` entry replaces
+    the earlier one's entirely; a union would keep ``r-old``, which the
+    override deliberately dropped, and the reservation gate would then demand
+    a resource nobody declares.
+    """
     comp = _composite(
-        (
-            "r/global",
-            {
-                "site": [
-                    _host("alt1", "10.0.0.1", resources=["r-old"]),
-                    _host("test4", "10.0.0.3", resources=["shared"]),
-                ]
-            },
-        ),
-        ("r/virtual", {"site": [_host("alt1", "10.9.9.9", resources=["r-new"])]}),
+        ("r/global", {"site": [_host("alt1", "10.0.0.1")]}, {"site": {"r-old"}}),
+        ("r/virtual", {"site": [_host("test4", "10.0.0.3")]}, {"site": {"r-new"}}),
     )
-    lab = comp.load_lab("site")
-    assert lab.resources == {"r-new", "shared"}  # r-old dropped with its record
-
-
-def test_backend_level_extra_resources_survive() -> None:
-    class ExtraResourceSource:
-        def load_lab(self, name, preferences=None):
-            lab = Lab(name=name)
-            lab.resources.add("site-license")  # lab-level, no host owns it
-            return lab
-
-        def list_labs(self):
-            return ["site"]
-
-    comp = CompositeLabRepository(
-        [
-            LabSource(label="r/db", repository=ExtraResourceSource()),
-            LabSource(
-                label="r/virtual",
-                repository=ExampleLabRepository(labs={"site": [_host("alt1", "10.0.0.1")]}),
-            ),
-        ]
-    )
-    assert comp.load_lab("site").resources == {"site-license", "alt1"}
+    assert comp.load_lab("site").resources == {"r-new"}
 
 
 def test_lab_backlink_repaired_on_override() -> None:
@@ -122,11 +120,15 @@ def test_links_merge_keyed_by_id_later_wins() -> None:
         tag: str
 
     class LinkSource:
-        def __init__(self, links):
+        def __init__(self, element, links):
+            self._element = element
             self._links = links
 
         def load_lab(self, name, preferences=None):
             lab = Lab(name=name)
+            # A member, because a declared lab that no element matches is an
+            # error (spec §9): even a link-only source must carry a host.
+            lab.add_host(create_host_from_dict(_host(self._element, "10.0.0.1"), lab_name=name))
             lab.links = list(self._links)
             return lab
 
@@ -135,8 +137,10 @@ def test_links_merge_keyed_by_id_later_wins() -> None:
 
     comp = CompositeLabRepository(
         [
-            LabSource("r/a", LinkSource([FakeLink("l1", "from-a"), FakeLink("l2", "from-a")])),
-            LabSource("r/b", LinkSource([FakeLink("l1", "from-b")])),
+            LabSource(
+                "r/a", LinkSource("la", [FakeLink("l1", "from-a"), FakeLink("l2", "from-a")])
+            ),
+            LabSource("r/b", LinkSource("lb", [FakeLink("l1", "from-b")])),
         ]
     )
     links = {link.id: link.tag for link in comp.load_lab("site").links}
@@ -147,17 +151,23 @@ def test_preferences_forwarded_verbatim_to_every_source() -> None:
     seen: list[object] = []
 
     class Recorder:
+        def __init__(self, element):
+            self._element = element
+
         def load_lab(self, name, preferences=None):
             seen.append(preferences)
-            return Lab(name=name)
+            lab = Lab(name=name)
+            # A member, for the same reason as the link source above.
+            lab.add_host(create_host_from_dict(_host(self._element, "10.0.0.1"), lab_name=name))
+            return lab
 
         def list_labs(self):
             return ["site"]
 
     prefs = {".*": {"term": ["ssh"]}}
-    CompositeLabRepository([LabSource("r/a", Recorder()), LabSource("r/b", Recorder())]).load_lab(
-        "site", preferences=prefs
-    )
+    CompositeLabRepository(
+        [LabSource("r/a", Recorder("ra")), LabSource("r/b", Recorder("rb"))]
+    ).load_lab("site", preferences=prefs)
     assert seen == [prefs, prefs]
     assert seen[0] is prefs
     assert seen[1] is prefs

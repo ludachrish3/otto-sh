@@ -76,7 +76,7 @@ from pathlib import Path
 
 import pytest
 
-from tests._fixtures.labdata import lab_data_path
+from tests._fixtures.labdata import flat_hosts, lab_json_v2
 from tests._fixtures.sutrepo import make_sut_repo
 from tests.integration.chaos._driver import spawn_otto
 from tests.integration.chaos._target import ChaosTarget
@@ -125,7 +125,7 @@ def _make_console_target(root: Path) -> ChaosTarget:
     """
     tech_dir = root / "labdata" / "tech1"
     tech_dir.mkdir(parents=True)
-    all_hosts = json.loads(lab_data_path().read_text())["hosts"]
+    all_hosts = flat_hosts()
     hosts = []
     test4 = None
     for raw in all_hosts:
@@ -137,7 +137,15 @@ def _make_console_target(root: Path) -> ChaosTarget:
         if host["element"] == "test4":
             test4 = host
     assert test4 is not None, "tech1/lab.json missing 'test4' -- fixture shape changed"
-    (tech_dir / "lab.json").write_text(json.dumps({"hosts": hosts, "links": []}, indent=2))
+    doc = lab_json_v2(hosts)
+    # `flat_hosts` drops `resources` -- a v2 host entry may not carry one -- so
+    # the private lab's reservable set is restated rather than hoisted, and
+    # DERIVED rather than spelled out: tech1 names both of these hosts'
+    # reservation identifier after their element, so this reproduces the union
+    # the v1 document had without becoming a second copy that can drift.
+    for name, entry in doc["labs"].items():
+        entry["resources"] = [h["element"] for h in hosts if name in h["labs"]]
+    (tech_dir / "lab.json").write_text(json.dumps(doc, indent=2))
 
     sut = make_sut_repo(
         root / "sut",

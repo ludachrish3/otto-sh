@@ -20,7 +20,7 @@ import pytest_asyncio
 from otto.config.env import SUT_DIRS_ENV_VAR
 from otto.host.login_proxy import Cred
 from otto.host.unix_host import UnixHost
-from tests._fixtures.labdata import lab_data_path
+from tests._fixtures.labdata import flatten_lab_doc, lab_data_path
 from tests._fixtures.paths import default_sut_dir
 from tests.conftest import BUSYBOX_BED_GROUP, BUSYBOX_PARAM_TOKENS
 
@@ -209,8 +209,7 @@ def reap_orphan_docker_stacks(request: pytest.FixtureRequest) -> None:
 
 
 def _host_data(ne: str) -> dict[str, Any]:
-    hosts = json.loads(_LAB_DATA.read_text())["hosts"]
-    for host in hosts:
+    for host in flatten_lab_doc(json.loads(_LAB_DATA.read_text())):
         if host["element"] == ne:
             return host
     raise KeyError(f"NE {ne!r} not found in {_LAB_DATA}")

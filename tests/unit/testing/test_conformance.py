@@ -18,30 +18,28 @@ from otto.testing import (
     assert_lab_repository_conforms,
     assert_reservation_backend_conforms,
 )
+from tests._fixtures.labdata import write_lab_json
 
 
 def _hosts_file(path: Path) -> None:
-    (path / "lab.json").write_text(
-        json.dumps(
+    write_lab_json(
+        path / "lab.json",
+        [
             {
-                "hosts": [
-                    {
-                        "ip": "10.0.0.1",
-                        "element": "a",
-                        "creds": [{"login": "u", "password": "p"}],
-                        "resources": ["a"],
-                        "labs": ["alpha"],
-                    },
-                    {
-                        "ip": "10.0.0.2",
-                        "element": "b",
-                        "creds": [{"login": "u", "password": "p"}],
-                        "resources": ["b"],
-                        "labs": ["beta"],
-                    },
-                ]
-            }
-        )
+                "ip": "10.0.0.1",
+                "element": "a",
+                "creds": [{"login": "u", "password": "p"}],
+                "resources": ["a"],
+                "labs": ["alpha"],
+            },
+            {
+                "ip": "10.0.0.2",
+                "element": "b",
+                "creds": [{"login": "u", "password": "p"}],
+                "resources": ["b"],
+                "labs": ["beta"],
+            },
+        ],
     )
 
 

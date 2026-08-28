@@ -11,7 +11,6 @@ suites (Tasks 5-6). Bed-down policy: FAIL naming the guest and the
 recovery command. Never skip.
 """
 
-import json
 import shlex
 from pathlib import Path
 
@@ -25,15 +24,17 @@ from otto.host.login_proxy import Cred
 from otto.host.unix_host import UnixHost
 from otto.logger.mode import LogMode
 from scripts.lab_health import _run_ssh, _ssh_user_pass
-from tests._fixtures.labdata import host_data, lab_data_path
+from tests._fixtures.labdata import flat_hosts, host_data
 from tests.conftest import BUSYBOX_BED_GROUP
 
 _BED_ROOT = Path(__file__).parent
 
 
 def _guest_elements() -> list[str]:
-    hosts = json.loads(lab_data_path("tech1").read_text())["hosts"]
-    return [h["element"] for h in hosts if "busybox" in h.get("labs", []) and h.get("hop")]
+    # ``with_labs``: since lab.json v2 the membership is the ELEMENT's, carried
+    # as patterns and resolved here against the declared lab names.
+    hosts = flat_hosts("tech1", with_labs=True)
+    return [h["element"] for h in hosts if "busybox" in h["labs"] and h.get("hop")]
 
 
 GUESTS = _guest_elements()

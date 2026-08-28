@@ -220,7 +220,6 @@ def _container_placeholder(ps_out: str, exec_ps_text: str = ""):
     parent.id = "test1"
     parent.name = "test1"
     parent.term = "ssh"
-    parent.resources = set()
     calls: list[tuple[str, object]] = []
 
     async def _exec(cmd: str, timeout: float | None = None, **kw: object) -> CommandResult:

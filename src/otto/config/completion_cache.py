@@ -164,7 +164,10 @@ CACHE_FILENAME = "completion_cache.json"
 # v10: added "hosts_by_lab" (lab-scoped `otto host <TAB>` fast path).
 # v11: host-ID sources now hash lab.json (renamed from hosts.json), so cached
 #      fingerprints reference a different filename.
-SCHEMA_VERSION = 11
+# v12: lab.json v2 — membership by element pattern, labs declared in the labs
+#      table; hosts_by_lab buckets built by the old per-host rule must not be
+#      served.
+SCHEMA_VERSION = 12
 
 # One home, two readers: `collect_test_names` decides which files to PARSE for
 # names, and `compute_fingerprint` decides which files to STAT for
@@ -1347,8 +1350,9 @@ def collect_link_ids(
 def collect_lab_names(repos: list["Repo"]) -> list[str]:
     """Enumerate every lab name each repo's host source can provide.
 
-    A lab is a *tag* on hosts (each host's ``labs`` array), not a directory,
-    so the names come from every repo's configured backend via the required
+    A lab is a *declared name* (a ``labs`` table entry, spec §2.1), not a
+    directory and not a tag on hosts, so the names come from every repo's
+    configured backend via the required
     :meth:`~otto.labs.protocol.LabRepository.list_labs` — not from reading
     ``lab.json``, which would leave a custom host source with no ``--lab``
     completion and, worse, empty ``hosts_by_lab`` buckets on the warm path

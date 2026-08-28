@@ -17,14 +17,13 @@ Deliberately NOT a check that the examples run: it asks only the question the
 examples silently assume an answer to.
 """
 
-import json
 import re
 from pathlib import Path
 
 import pytest
 
 from otto.host.remote_host import make_host_id
-from tests._fixtures.labdata import lab_data_path
+from tests._fixtures.labdata import flat_hosts
 from tests._fixtures.paths import PROJECT_ROOT
 
 DOCS = PROJECT_ROOT / "docs" / "guide"
@@ -39,7 +38,7 @@ _NOT_A_PLAIN_HOST = (".compose.", "<", ">", "[", "]", "{", "}")
 
 def _interface_counts() -> dict[str, int]:
     """host id -> how many interfaces its lab entry declares."""
-    hosts = json.loads(lab_data_path("tech1").read_text())["hosts"]
+    hosts = flat_hosts("tech1")
     counts = {}
     for h in hosts:
         # Host ids are built from element/board by otto's own composer, so

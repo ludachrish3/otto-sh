@@ -89,7 +89,6 @@ not part of the asserted contract.
 """
 
 import dataclasses
-import json
 import re
 import time
 
@@ -98,7 +97,7 @@ import pytest
 from otto.link.placement import parse_ip_addr
 from otto.logger.mode import LogMode
 from tests._fixtures.bed_hygiene import argv_pattern
-from tests._fixtures.labdata import host_data
+from tests._fixtures.labdata import host_data, write_lab_json
 from tests._fixtures.sutrepo import make_sut_repo
 from tests.e2e.chaos._bed import (
     BUSYBOX_CHAOS_HOST_ID,
@@ -168,41 +167,37 @@ def _make_hop_target(tmp_path) -> ChaosTarget:
     test2 = host_data("test2")
     tech_dir = tmp_path / "hop_labdata" / "chaosdrop"
     tech_dir.mkdir(parents=True)
-    (tech_dir / "lab.json").write_text(
-        json.dumps(
+    write_lab_json(
+        tech_dir / "lab.json",
+        [
             {
-                "hosts": [
-                    {
-                        "ip": test1["ip"],
-                        "element": "test1",
-                        "os_type": "unix",
-                        "valid_terms": ["ssh"],
-                        "valid_transfers": ["scp", "sftp"],
-                        "is_virtual": True,
-                        "creds": test1["creds"],
-                        "resources": ["test1"],
-                        "labs": ["chaosdrop"],
-                    },
-                    {
-                        "ip": test2["interfaces"]["eth2"]["ip"],
-                        "element": "test2",
-                        "os_type": "unix",
-                        "valid_terms": ["ssh"],
-                        "valid_transfers": ["scp", "sftp"],
-                        "is_virtual": True,
-                        "creds": test2["creds"],
-                        "resources": ["test2"],
-                        "hop": "test1",
-                        "ssh_options": {
-                            "keepalive_interval": _KEEPALIVE_INTERVAL,
-                            "keepalive_count_max": _KEEPALIVE_COUNT_MAX,
-                        },
-                        "labs": ["chaosdrop"],
-                    },
-                ],
-                "links": [],
-            }
-        )
+                "ip": test1["ip"],
+                "element": "test1",
+                "os_type": "unix",
+                "valid_terms": ["ssh"],
+                "valid_transfers": ["scp", "sftp"],
+                "is_virtual": True,
+                "creds": test1["creds"],
+                "resources": ["test1"],
+                "labs": ["chaosdrop"],
+            },
+            {
+                "ip": test2["interfaces"]["eth2"]["ip"],
+                "element": "test2",
+                "os_type": "unix",
+                "valid_terms": ["ssh"],
+                "valid_transfers": ["scp", "sftp"],
+                "is_virtual": True,
+                "creds": test2["creds"],
+                "resources": ["test2"],
+                "hop": "test1",
+                "ssh_options": {
+                    "keepalive_interval": _KEEPALIVE_INTERVAL,
+                    "keepalive_count_max": _KEEPALIVE_COUNT_MAX,
+                },
+                "labs": ["chaosdrop"],
+            },
+        ],
     )
     sut = make_sut_repo(
         tmp_path / "hop_sut",

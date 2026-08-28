@@ -43,8 +43,8 @@ The top-level object has two required fields:
 
   * `user` *(string, required)* — the reservation-system username.
   * `resources` *(list of strings, required)* — resource identifiers
-    the user holds.  Must match byte-for-byte the strings in
-    `UnixHost.resources` and `Lab.resources`.
+    the user holds.  Must match byte-for-byte the strings a lab declares
+    in its `labs` table entry (`Lab.resources`); hosts declare none.
   * `expires` *(string, optional)* — ISO-8601 timestamp.  Past-dated
     entries are silently ignored.  Omit for "no expiry".
 

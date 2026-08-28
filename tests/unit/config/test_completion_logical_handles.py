@@ -1,11 +1,10 @@
 """Completion enumerates canonical ids AND positional logical handles."""
 
-import json
 from pathlib import Path
 from types import SimpleNamespace
 
 from otto.config.completion_cache import collect_host_ids, collect_host_ids_by_lab
-from tests._fixtures.labdata import json_lab_sources
+from tests._fixtures.labdata import json_lab_sources, write_lab_json
 
 
 def _repo(tmp_path: Path) -> SimpleNamespace:
@@ -14,27 +13,24 @@ def _repo(tmp_path: Path) -> SimpleNamespace:
     labs_dir = tmp_path / "labs"
     labs_dir.mkdir()
     creds = [{"login": "u", "password": "p"}]
-    (labs_dir / "lab.json").write_text(
-        json.dumps(
+    write_lab_json(
+        labs_dir / "lab.json",
+        [
             {
-                "hosts": [
-                    {
-                        "ip": "10.0.0.1",
-                        "element": "server",
-                        "element_id": 47,
-                        "labs": ["east"],
-                        "creds": creds,
-                    },
-                    {
-                        "ip": "10.0.0.2",
-                        "element": "server",
-                        "element_id": 103,
-                        "labs": ["east"],
-                        "creds": creds,
-                    },
-                ]
-            }
-        )
+                "ip": "10.0.0.1",
+                "element": "server",
+                "element_id": 47,
+                "labs": ["east"],
+                "creds": creds,
+            },
+            {
+                "ip": "10.0.0.2",
+                "element": "server",
+                "element_id": 103,
+                "labs": ["east"],
+                "creds": creds,
+            },
+        ],
     )
     return SimpleNamespace(
         lab_sources=json_lab_sources(labs_dir.parent, [labs_dir]),

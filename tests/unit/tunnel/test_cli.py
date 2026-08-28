@@ -5,7 +5,6 @@ so app-level tests drive ``tunnel_app`` through the production dispatch seam
 (``DispatchRunner``); direct-call tests ``await`` the command functions.
 """
 
-import json
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -33,7 +32,7 @@ from otto.tunnel import (
     TunnelHop,
 )
 from tests._fixtures.dispatch import DispatchRunner
-from tests._fixtures.labdata import json_lab_sources
+from tests._fixtures.labdata import json_lab_sources, write_lab_json
 from tests.conftest import active_context
 
 runner = DispatchRunner()
@@ -92,7 +91,7 @@ def _repo_with_hosts(tmp_path: Path, hosts: list[dict]) -> SimpleNamespace:
     """A fake Repo whose single lab search path holds *hosts* in lab.json."""
     lab = tmp_path / "lab"
     lab.mkdir(parents=True, exist_ok=True)
-    (lab / "lab.json").write_text(json.dumps({"hosts": hosts}))
+    write_lab_json(lab / "lab.json", hosts)
     return SimpleNamespace(
         lab_sources=json_lab_sources(tmp_path, [lab]),
         sut_dir=tmp_path,

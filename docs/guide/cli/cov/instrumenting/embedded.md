@@ -214,16 +214,24 @@ one `printk` character at a time and can take several seconds for large binaries
 ## Toolchain for embedded coverage
 
 Embedded hosts that need a cross-`gcov` binary for the report step can declare
-a `toolchain` block in `lab.json` pointing to the cross toolchain's `gcov`:
+a `toolchain` block on their `lab.json` host entry, pointing to the cross
+toolchain's `gcov`:
 
 ```json
 {
-    "element": "board_cov",
-    "toolchain": {
-        "sysroot": "/home/vagrant/zephyr-sdk-0.16.8/arm-zephyr-eabi",
-        "gcov": "bin/arm-zephyr-eabi-gcov",
-        "lcov": "/usr/bin/lcov"
-    }
+    "name": "board_cov",
+    "labs": ["embedded"],
+    "hosts": [
+        {
+            "ip": "192.0.2.1",
+            "os_type": "zephyr",
+            "toolchain": {
+                "sysroot": "/home/vagrant/zephyr-sdk-0.16.8/arm-zephyr-eabi",
+                "gcov": "bin/arm-zephyr-eabi-gcov",
+                "lcov": "/usr/bin/lcov"
+            }
+        }
+    ]
 }
 ```
 

@@ -1,456 +1,449 @@
 {
-    "hosts": [
-        {
-            "ip": "10.10.200.11",
-            "element": "test1",
-            "os_type": "unix",
-            "valid_terms": ["ssh", "telnet"],
-            "valid_transfers": ["scp", "sftp", "ftp", "nc"],
-            "is_virtual": true,
-            "docker_capable": true,
-            "creds": [
-                {"login": "vagrant", "password": "vagrant"},
-                {"login": "test", "password": "Password1"}
-            ],
-            "resources": [
-                "test1"
-            ],
-            "interfaces": {
-                "eth2": {"ip": "192.168.1.11", "subnet": "192.168.1.0/24"},
-                "bbeth-1350": {"ip": "198.51.100.18", "subnet": "198.51.100.16/30"}
-            },
-            "labs": [
-                "unix",
-                "busybox"
-            ]
+    "labs": {
+        "unix": {
+            "resources": ["test1", "test2", "test3"],
+            "metadata": {"description": "unix regression bed"}
         },
-        {
-            "ip": "10.10.200.12",
-            "element": "test2",
-            "os_type": "unix",
-            "valid_terms": ["telnet", "ssh"],
-            "valid_transfers": ["nc", "scp", "sftp", "ftp"],
-            "is_virtual": true,
-            "docker_capable": true,
-            "creds": [
-                {"login": "vagrant", "password": "vagrant"},
-                {"login": "test", "password": "Password1"}
-            ],
-            "resources": [
-                "test2"
-            ],
-            "interfaces": {
-                "eth2": {"ip": "192.168.1.12", "subnet": "192.168.1.0/24"}
-            },
-            "labs": [
-                "unix"
-            ]
+        "busybox": {
+            "resources": ["test1", "bb1161", "bb1211", "bb1281", "bb1310", "bb1350"]
         },
-        {
-            "ip": "10.10.200.13",
-            "element": "test3",
-            "os_type": "unix",
-            "valid_terms": ["ssh", "telnet"],
-            "valid_transfers": ["scp", "sftp", "ftp", "nc"],
-            "is_virtual": true,
-            "docker_capable": true,
-            "creds": [
-                {"login": "vagrant", "password": "vagrant"},
-                {"login": "test", "password": "Password1"}
-            ],
+        "embedded": {
             "resources": [
-                "test3"
-            ],
-            "interfaces": {
-                "eth2": {"ip": "192.168.1.13", "subnet": "192.168.1.0/24"}
-            },
-            "labs": [
-                "unix"
-            ]
-        },
-        {
-            "ip": "10.10.200.14",
-            "element": "test4",
-            "os_type": "unix",
-            "valid_terms": ["ssh", "telnet"],
-            "valid_transfers": ["scp", "sftp", "ftp", "nc"],
-            "is_virtual": true,
-            "creds": [
-                {"login": "vagrant", "password": "vagrant"},
-                {"login": "test", "password": "Password1"}
-            ],
-            "resources": [
-                "test4"
-            ],
-            "interfaces": {
-                "eth2": {"ip": "192.168.1.14", "subnet": "192.168.1.0/24"}
-            },
-            "labs": [
-                "embedded"
-            ]
-        },
-        {
-            "ip": "192.0.2.1",
-            "element": "zephyr37_fat",
-            "os_type": "zephyr",
-            "os_version": "3.7",
-            "valid_transfers": ["console"],
-            "filesystem": "fat-ram",
-            "max_filename_len": 32,
-            "is_virtual": true,
-            "hop": "test4",
-            "snmp": {
-                "address": "10.10.200.14",
-                "port": 16101,
-                "community": "public",
-                "oids": [
-                    "1.3.6.1.2.1.1.3.0",
-                    "1.3.6.1.4.1.63245.1.1.0",
-                    "1.3.6.1.4.1.63245.1.2.0",
-                    "1.3.6.1.4.1.63245.1.3.0",
-                    "1.3.6.1.4.1.63245.1.4.0"
-                ]
-            },
-            "resources": [
-                "zephyr37_fat"
-            ],
-            "labs": [
-                "embedded"
-            ]
-        },
-        {
-            "ip": "192.0.2.5",
-            "element": "zephyr37_lfs",
-            "os_type": "zephyr",
-            "os_version": "3.7",
-            "valid_transfers": ["console"],
-            "filesystem": "littlefs",
-            "max_filename_len": 32,
-            "is_virtual": true,
-            "hop": "test4",
-            "snmp": {
-                "address": "10.10.200.14",
-                "port": 16102,
-                "community": "public",
-                "oids": [
-                    "1.3.6.1.2.1.1.3.0",
-                    "1.3.6.1.4.1.63245.1.1.0",
-                    "1.3.6.1.4.1.63245.1.2.0",
-                    "1.3.6.1.4.1.63245.1.3.0",
-                    "1.3.6.1.4.1.63245.1.4.0"
-                ]
-            },
-            "resources": [
-                "zephyr37_lfs"
-            ],
-            "labs": [
-                "embedded"
-            ]
-        },
-        {
-            "ip": "192.0.2.37",
-            "element": "zephyr37_nofs",
-            "os_type": "zephyr",
-            "os_version": "3.7",
-            "command_frame": "zephyr-serial",
-            "valid_transfers": ["console"],
-            "filesystem": "none",
-            "max_filename_len": 32,
-            "is_virtual": true,
-            "telnet_options": {
-                "port": 2325,
-                "write_chunk_size": 64,
-                "write_chunk_delay": 0.015
-            },
-            "hop": "test4",
-            "resources": [
-                "zephyr37_nofs"
-            ],
-            "labs": [
-                "embedded"
-            ]
-        },
-        {
-            "ip": "192.0.2.13",
-            "element": "zephyr27_fat",
-            "os_type": "zephyr",
-            "os_version": "2.7",
-            "command_frame": "zephyr-inline",
-            "valid_transfers": ["console"],
-            "filesystem": "fat-ram",
-            "max_filename_len": 32,
-            "is_virtual": true,
-            "hop": "test4",
-            "resources": [
-                "zephyr27_fat"
-            ],
-            "labs": [
-                "embedded"
-            ]
-        },
-        {
-            "ip": "192.0.2.29",
-            "element": "zephyr44_lfs",
-            "os_type": "zephyr",
-            "os_version": "4.4",
-            "valid_transfers": ["console"],
-            "filesystem": "littlefs",
-            "max_filename_len": 32,
-            "is_virtual": true,
-            "hop": "test4",
-            "snmp": {
-                "address": "10.10.200.14",
-                "port": 16108,
-                "community": "public",
-                "oids": [
-                    "1.3.6.1.2.1.1.3.0",
-                    "1.3.6.1.4.1.63245.1.1.0",
-                    "1.3.6.1.4.1.63245.1.2.0",
-                    "1.3.6.1.4.1.63245.1.3.0",
-                    "1.3.6.1.4.1.63245.1.4.0"
-                ]
-            },
-            "resources": [
-                "zephyr44_lfs"
-            ],
-            "labs": [
-                "embedded"
-            ]
-        },
-        {
-            "ip": "192.0.2.33",
-            "element": "zephyr37_llext",
-            "os_type": "zephyr",
-            "os_version": "3.7",
-            "command_frame": "zephyr-serial",
-            "valid_transfers": ["console"],
-            "filesystem": "none",
-            "loader": "llext-hex",
-            "max_filename_len": 32,
-            "is_virtual": true,
-            "telnet_options": {
-                "port": 2323,
-                "write_chunk_size": 64,
-                "write_chunk_delay": 0.015
-            },
-            "toolchain": {
-                "sysroot": "/home/vagrant/zephyr-sdk-0.16.8/arm-zephyr-eabi",
-                "gcov": "bin/arm-zephyr-eabi-gcov",
-                "lcov": "/usr/bin/lcov"
-            },
-            "hop": "test4",
-            "resources": [
-                "zephyr37_llext"
-            ],
-            "labs": [
-                "embedded"
-            ]
-        },
-        {
-            "ip": "192.0.2.34",
-            "element": "zephyr44_llext",
-            "os_type": "zephyr",
-            "os_version": "4.4",
-            "command_frame": "zephyr-serial",
-            "valid_transfers": ["console"],
-            "filesystem": "none",
-            "loader": "llext-hex",
-            "max_filename_len": 32,
-            "is_virtual": true,
-            "telnet_options": {
-                "port": 2324,
-                "write_chunk_size": 64,
-                "write_chunk_delay": 0.015
-            },
-            "toolchain": {
-                "sysroot": "/home/vagrant/zephyr-sdk-1.0.1/gnu/arm-zephyr-eabi",
-                "gcov": "bin/arm-zephyr-eabi-gcov",
-                "lcov": "/usr/bin/lcov"
-            },
-            "hop": "test4",
-            "resources": [
+                "test4",
+                "zephyr37_fat",
+                "zephyr37_lfs",
+                "zephyr37_nofs",
+                "zephyr27_fat",
+                "zephyr44_lfs",
+                "zephyr37_llext",
                 "zephyr44_llext"
-            ],
-            "labs": [
-                "embedded"
+            ]
+        }
+    },
+    "elements": [
+        {
+            "name": "test1",
+            "labs": ["unix", "busybox"],
+            "metadata": {"role": "hub"},
+            "hosts": [
+                {
+                    "ip": "10.10.200.11",
+                    "os_type": "unix",
+                    "valid_terms": ["ssh", "telnet"],
+                    "valid_transfers": ["scp", "sftp", "ftp", "nc"],
+                    "is_virtual": true,
+                    "docker_capable": true,
+                    "creds": [
+                        {"login": "vagrant", "password": "vagrant"},
+                        {"login": "test", "password": "Password1"}
+                    ],
+                    "interfaces": {
+                        "eth2": {"ip": "192.168.1.11", "subnet": "192.168.1.0/24"},
+                        "bbeth-1350": {"ip": "198.51.100.18", "subnet": "198.51.100.16/30"}
+                    }
+                }
             ]
         },
         {
-            "ip": "198.51.100.1",
-            "element": "bb1161",
-            "os_type": "unix",
-            "board": "qemu",
-            "sw_version": "1.16.1",
-            "valid_terms": ["telnet"],
-            "valid_transfers": ["shell", "nc"],
-            "is_virtual": true,
-            "hop": "test1",
-            "creds": [
-                {"login": "root", "password": "otto"}
-            ],
-            "userland_options": {
-                "applet_base64": "absent",
-                "applet_nc": "present",
-                "applet_poweroff": "present",
-                "applet_scp": "absent",
-                "applet_shutdown": "absent",
-                "applet_uudecode": "present",
-                "applet_uuencode": "present",
-                "base64_flag": "absent",
-                "checksum": "md5sum",
-                "elevation": "su",
-                "shell_dialect": "ash",
-                "stat_size": "stat",
-                "timeout_style": "dash-t"
-            },
-            "resources": [
-                "bb1161"
-            ],
-            "labs": [
-                "busybox"
+            "name": "test2",
+            "labs": ["unix"],
+            "hosts": [
+                {
+                    "ip": "10.10.200.12",
+                    "os_type": "unix",
+                    "valid_terms": ["telnet", "ssh"],
+                    "valid_transfers": ["nc", "scp", "sftp", "ftp"],
+                    "is_virtual": true,
+                    "docker_capable": true,
+                    "creds": [
+                        {"login": "vagrant", "password": "vagrant"},
+                        {"login": "test", "password": "Password1"}
+                    ],
+                    "interfaces": {
+                        "eth2": {"ip": "192.168.1.12", "subnet": "192.168.1.0/24"}
+                    }
+                }
             ]
         },
         {
-            "ip": "198.51.100.5",
-            "element": "bb1211",
-            "os_type": "unix",
-            "board": "qemu",
-            "sw_version": "1.21.1",
-            "valid_terms": ["telnet"],
-            "valid_transfers": ["shell", "nc"],
-            "is_virtual": true,
-            "hop": "test1",
-            "creds": [
-                {"login": "root", "password": "otto"}
-            ],
-            "userland_options": {
-                "applet_base64": "present",
-                "applet_nc": "present",
-                "applet_poweroff": "present",
-                "applet_scp": "absent",
-                "applet_shutdown": "absent",
-                "applet_uudecode": "present",
-                "applet_uuencode": "present",
-                "base64_flag": "-d",
-                "checksum": "md5sum",
-                "elevation": "su",
-                "shell_dialect": "ash",
-                "stat_size": "stat",
-                "timeout_style": "dash-t"
-            },
-            "resources": [
-                "bb1211"
-            ],
-            "labs": [
-                "busybox"
+            "name": "test3",
+            "labs": ["unix"],
+            "hosts": [
+                {
+                    "ip": "10.10.200.13",
+                    "os_type": "unix",
+                    "valid_terms": ["ssh", "telnet"],
+                    "valid_transfers": ["scp", "sftp", "ftp", "nc"],
+                    "is_virtual": true,
+                    "docker_capable": true,
+                    "creds": [
+                        {"login": "vagrant", "password": "vagrant"},
+                        {"login": "test", "password": "Password1"}
+                    ],
+                    "interfaces": {
+                        "eth2": {"ip": "192.168.1.13", "subnet": "192.168.1.0/24"}
+                    }
+                }
             ]
         },
         {
-            "ip": "198.51.100.9",
-            "element": "bb1281",
-            "os_type": "unix",
-            "board": "qemu",
-            "sw_version": "1.28.1",
-            "valid_terms": ["telnet"],
-            "valid_transfers": ["shell", "nc"],
-            "is_virtual": true,
-            "hop": "test1",
-            "creds": [
-                {"login": "root", "password": "otto"}
-            ],
-            "userland_options": {
-                "applet_base64": "present",
-                "applet_nc": "present",
-                "applet_poweroff": "present",
-                "applet_scp": "absent",
-                "applet_shutdown": "absent",
-                "applet_uudecode": "present",
-                "applet_uuencode": "present",
-                "base64_flag": "-d",
-                "checksum": "md5sum",
-                "elevation": "su",
-                "shell_dialect": "ash",
-                "stat_size": "stat",
-                "timeout_style": "dash-t"
-            },
-            "resources": [
-                "bb1281"
-            ],
-            "labs": [
-                "busybox"
+            "name": "test4",
+            "labs": ["embedded"],
+            "hosts": [
+                {
+                    "ip": "10.10.200.14",
+                    "os_type": "unix",
+                    "valid_terms": ["ssh", "telnet"],
+                    "valid_transfers": ["scp", "sftp", "ftp", "nc"],
+                    "is_virtual": true,
+                    "creds": [
+                        {"login": "vagrant", "password": "vagrant"},
+                        {"login": "test", "password": "Password1"}
+                    ],
+                    "interfaces": {
+                        "eth2": {"ip": "192.168.1.14", "subnet": "192.168.1.0/24"}
+                    }
+                }
             ]
         },
         {
-            "ip": "198.51.100.13",
-            "element": "bb1310",
-            "os_type": "unix",
-            "board": "qemu",
-            "sw_version": "1.31.0",
-            "valid_terms": ["telnet"],
-            "valid_transfers": ["shell", "nc"],
-            "is_virtual": true,
-            "hop": "test1",
-            "creds": [
-                {"login": "root", "password": "otto"}
-            ],
-            "userland_options": {
-                "applet_base64": "present",
-                "applet_nc": "present",
-                "applet_poweroff": "present",
-                "applet_scp": "absent",
-                "applet_shutdown": "absent",
-                "applet_uudecode": "present",
-                "applet_uuencode": "present",
-                "base64_flag": "-d",
-                "checksum": "md5sum",
-                "elevation": "su",
-                "shell_dialect": "ash",
-                "stat_size": "stat",
-                "timeout_style": "coreutils"
-            },
-            "resources": [
-                "bb1310"
-            ],
-            "labs": [
-                "busybox"
+            "name": "zephyr37_fat",
+            "labs": ["embedded"],
+            "hosts": [
+                {
+                    "ip": "192.0.2.1",
+                    "os_type": "zephyr",
+                    "os_version": "3.7",
+                    "valid_transfers": ["console"],
+                    "filesystem": "fat-ram",
+                    "max_filename_len": 32,
+                    "is_virtual": true,
+                    "hop": "test4",
+                    "snmp": {
+                        "address": "10.10.200.14",
+                        "port": 16101,
+                        "community": "public",
+                        "oids": [
+                            "1.3.6.1.2.1.1.3.0",
+                            "1.3.6.1.4.1.63245.1.1.0",
+                            "1.3.6.1.4.1.63245.1.2.0",
+                            "1.3.6.1.4.1.63245.1.3.0",
+                            "1.3.6.1.4.1.63245.1.4.0"
+                        ]
+                    }
+                }
             ]
         },
         {
-            "ip": "198.51.100.17",
-            "element": "bb1350",
-            "os_type": "unix",
-            "board": "qemu",
-            "sw_version": "1.35.0",
-            "valid_terms": ["telnet"],
-            "valid_transfers": ["shell", "nc"],
-            "is_virtual": true,
-            "hop": "test1",
-            "creds": [
-                {"login": "root", "password": "otto"}
-            ],
-            "userland_options": {
-                "applet_base64": "present",
-                "applet_nc": "present",
-                "applet_poweroff": "present",
-                "applet_scp": "absent",
-                "applet_shutdown": "absent",
-                "applet_uudecode": "present",
-                "applet_uuencode": "present",
-                "base64_flag": "-d",
-                "checksum": "md5sum",
-                "elevation": "su",
-                "shell_dialect": "ash",
-                "stat_size": "stat",
-                "timeout_style": "coreutils"
-            },
-            "resources": [
-                "bb1350"
-            ],
-            "interfaces": {
-                "eth0": {"ip": "198.51.100.17", "subnet": "198.51.100.16/30"}
-            },
-            "labs": [
-                "busybox"
+            "name": "zephyr37_lfs",
+            "labs": ["embedded"],
+            "hosts": [
+                {
+                    "ip": "192.0.2.5",
+                    "os_type": "zephyr",
+                    "os_version": "3.7",
+                    "valid_transfers": ["console"],
+                    "filesystem": "littlefs",
+                    "max_filename_len": 32,
+                    "is_virtual": true,
+                    "hop": "test4",
+                    "snmp": {
+                        "address": "10.10.200.14",
+                        "port": 16102,
+                        "community": "public",
+                        "oids": [
+                            "1.3.6.1.2.1.1.3.0",
+                            "1.3.6.1.4.1.63245.1.1.0",
+                            "1.3.6.1.4.1.63245.1.2.0",
+                            "1.3.6.1.4.1.63245.1.3.0",
+                            "1.3.6.1.4.1.63245.1.4.0"
+                        ]
+                    }
+                }
+            ]
+        },
+        {
+            "name": "zephyr37_nofs",
+            "labs": ["embedded"],
+            "hosts": [
+                {
+                    "ip": "192.0.2.37",
+                    "os_type": "zephyr",
+                    "os_version": "3.7",
+                    "command_frame": "zephyr-serial",
+                    "valid_transfers": ["console"],
+                    "filesystem": "none",
+                    "max_filename_len": 32,
+                    "is_virtual": true,
+                    "telnet_options": {"port": 2325, "write_chunk_size": 64, "write_chunk_delay": 0.015},
+                    "hop": "test4"
+                }
+            ]
+        },
+        {
+            "name": "zephyr27_fat",
+            "labs": ["embedded"],
+            "hosts": [
+                {
+                    "ip": "192.0.2.13",
+                    "os_type": "zephyr",
+                    "os_version": "2.7",
+                    "command_frame": "zephyr-inline",
+                    "valid_transfers": ["console"],
+                    "filesystem": "fat-ram",
+                    "max_filename_len": 32,
+                    "is_virtual": true,
+                    "hop": "test4"
+                }
+            ]
+        },
+        {
+            "name": "zephyr44_lfs",
+            "labs": ["embedded"],
+            "hosts": [
+                {
+                    "ip": "192.0.2.29",
+                    "os_type": "zephyr",
+                    "os_version": "4.4",
+                    "valid_transfers": ["console"],
+                    "filesystem": "littlefs",
+                    "max_filename_len": 32,
+                    "is_virtual": true,
+                    "hop": "test4",
+                    "snmp": {
+                        "address": "10.10.200.14",
+                        "port": 16108,
+                        "community": "public",
+                        "oids": [
+                            "1.3.6.1.2.1.1.3.0",
+                            "1.3.6.1.4.1.63245.1.1.0",
+                            "1.3.6.1.4.1.63245.1.2.0",
+                            "1.3.6.1.4.1.63245.1.3.0",
+                            "1.3.6.1.4.1.63245.1.4.0"
+                        ]
+                    }
+                }
+            ]
+        },
+        {
+            "name": "zephyr37_llext",
+            "labs": ["embedded"],
+            "hosts": [
+                {
+                    "ip": "192.0.2.33",
+                    "os_type": "zephyr",
+                    "os_version": "3.7",
+                    "command_frame": "zephyr-serial",
+                    "valid_transfers": ["console"],
+                    "filesystem": "none",
+                    "loader": "llext-hex",
+                    "max_filename_len": 32,
+                    "is_virtual": true,
+                    "telnet_options": {"port": 2323, "write_chunk_size": 64, "write_chunk_delay": 0.015},
+                    "toolchain": {
+                        "sysroot": "/home/vagrant/zephyr-sdk-0.16.8/arm-zephyr-eabi",
+                        "gcov": "bin/arm-zephyr-eabi-gcov",
+                        "lcov": "/usr/bin/lcov"
+                    },
+                    "hop": "test4"
+                }
+            ]
+        },
+        {
+            "name": "zephyr44_llext",
+            "labs": ["embedded"],
+            "hosts": [
+                {
+                    "ip": "192.0.2.34",
+                    "os_type": "zephyr",
+                    "os_version": "4.4",
+                    "command_frame": "zephyr-serial",
+                    "valid_transfers": ["console"],
+                    "filesystem": "none",
+                    "loader": "llext-hex",
+                    "max_filename_len": 32,
+                    "is_virtual": true,
+                    "telnet_options": {"port": 2324, "write_chunk_size": 64, "write_chunk_delay": 0.015},
+                    "toolchain": {
+                        "sysroot": "/home/vagrant/zephyr-sdk-1.0.1/gnu/arm-zephyr-eabi",
+                        "gcov": "bin/arm-zephyr-eabi-gcov",
+                        "lcov": "/usr/bin/lcov"
+                    },
+                    "hop": "test4"
+                }
+            ]
+        },
+        {
+            "name": "bb1161",
+            "labs": ["busybox"],
+            "hosts": [
+                {
+                    "ip": "198.51.100.1",
+                    "os_type": "unix",
+                    "board": "qemu",
+                    "sw_version": "1.16.1",
+                    "valid_terms": ["telnet"],
+                    "valid_transfers": ["shell", "nc"],
+                    "is_virtual": true,
+                    "hop": "test1",
+                    "creds": [
+                        {"login": "root", "password": "otto"}
+                    ],
+                    "userland_options": {
+                        "applet_base64": "absent",
+                        "applet_nc": "present",
+                        "applet_poweroff": "present",
+                        "applet_scp": "absent",
+                        "applet_shutdown": "absent",
+                        "applet_uudecode": "present",
+                        "applet_uuencode": "present",
+                        "base64_flag": "absent",
+                        "checksum": "md5sum",
+                        "elevation": "su",
+                        "shell_dialect": "ash",
+                        "stat_size": "stat",
+                        "timeout_style": "dash-t"
+                    }
+                }
+            ]
+        },
+        {
+            "name": "bb1211",
+            "labs": ["busybox"],
+            "hosts": [
+                {
+                    "ip": "198.51.100.5",
+                    "os_type": "unix",
+                    "board": "qemu",
+                    "sw_version": "1.21.1",
+                    "valid_terms": ["telnet"],
+                    "valid_transfers": ["shell", "nc"],
+                    "is_virtual": true,
+                    "hop": "test1",
+                    "creds": [
+                        {"login": "root", "password": "otto"}
+                    ],
+                    "userland_options": {
+                        "applet_base64": "present",
+                        "applet_nc": "present",
+                        "applet_poweroff": "present",
+                        "applet_scp": "absent",
+                        "applet_shutdown": "absent",
+                        "applet_uudecode": "present",
+                        "applet_uuencode": "present",
+                        "base64_flag": "-d",
+                        "checksum": "md5sum",
+                        "elevation": "su",
+                        "shell_dialect": "ash",
+                        "stat_size": "stat",
+                        "timeout_style": "dash-t"
+                    }
+                }
+            ]
+        },
+        {
+            "name": "bb1281",
+            "labs": ["busybox"],
+            "hosts": [
+                {
+                    "ip": "198.51.100.9",
+                    "os_type": "unix",
+                    "board": "qemu",
+                    "sw_version": "1.28.1",
+                    "valid_terms": ["telnet"],
+                    "valid_transfers": ["shell", "nc"],
+                    "is_virtual": true,
+                    "hop": "test1",
+                    "creds": [
+                        {"login": "root", "password": "otto"}
+                    ],
+                    "userland_options": {
+                        "applet_base64": "present",
+                        "applet_nc": "present",
+                        "applet_poweroff": "present",
+                        "applet_scp": "absent",
+                        "applet_shutdown": "absent",
+                        "applet_uudecode": "present",
+                        "applet_uuencode": "present",
+                        "base64_flag": "-d",
+                        "checksum": "md5sum",
+                        "elevation": "su",
+                        "shell_dialect": "ash",
+                        "stat_size": "stat",
+                        "timeout_style": "dash-t"
+                    }
+                }
+            ]
+        },
+        {
+            "name": "bb1310",
+            "labs": ["busybox"],
+            "hosts": [
+                {
+                    "ip": "198.51.100.13",
+                    "os_type": "unix",
+                    "board": "qemu",
+                    "sw_version": "1.31.0",
+                    "valid_terms": ["telnet"],
+                    "valid_transfers": ["shell", "nc"],
+                    "is_virtual": true,
+                    "hop": "test1",
+                    "creds": [
+                        {"login": "root", "password": "otto"}
+                    ],
+                    "userland_options": {
+                        "applet_base64": "present",
+                        "applet_nc": "present",
+                        "applet_poweroff": "present",
+                        "applet_scp": "absent",
+                        "applet_shutdown": "absent",
+                        "applet_uudecode": "present",
+                        "applet_uuencode": "present",
+                        "base64_flag": "-d",
+                        "checksum": "md5sum",
+                        "elevation": "su",
+                        "shell_dialect": "ash",
+                        "stat_size": "stat",
+                        "timeout_style": "coreutils"
+                    }
+                }
+            ]
+        },
+        {
+            "name": "bb1350",
+            "labs": ["busybox"],
+            "hosts": [
+                {
+                    "ip": "198.51.100.17",
+                    "os_type": "unix",
+                    "board": "qemu",
+                    "sw_version": "1.35.0",
+                    "valid_terms": ["telnet"],
+                    "valid_transfers": ["shell", "nc"],
+                    "is_virtual": true,
+                    "hop": "test1",
+                    "creds": [
+                        {"login": "root", "password": "otto"}
+                    ],
+                    "userland_options": {
+                        "applet_base64": "present",
+                        "applet_nc": "present",
+                        "applet_poweroff": "present",
+                        "applet_scp": "absent",
+                        "applet_shutdown": "absent",
+                        "applet_uudecode": "present",
+                        "applet_uuencode": "present",
+                        "base64_flag": "-d",
+                        "checksum": "md5sum",
+                        "elevation": "su",
+                        "shell_dialect": "ash",
+                        "stat_size": "stat",
+                        "timeout_style": "coreutils"
+                    },
+                    "interfaces": {
+                        "eth0": {"ip": "198.51.100.17", "subnet": "198.51.100.16/30"}
+                    }
+                }
             ]
         }
     ],

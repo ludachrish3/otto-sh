@@ -71,7 +71,6 @@ class TestInit:
         assert host.nc_options.port == 9000
         assert host.is_virtual is False
         assert host.hop is None
-        assert host.resources == set()
         assert host._connections._ssh_conn is None
         assert host._connections._sftp_conn is None
         assert host._connections._ftp_conn is None

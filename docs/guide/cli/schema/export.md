@@ -17,12 +17,16 @@ This defaults to `.otto/schemas/` (pass `--out` to write elsewhere) and writes:
 
 | File | Describes |
 | --- | --- |
-| `lab.schema.json` | the whole `lab.json` object — its `hosts` array (any registered `os_type`) and its `links` array |
+| `lab.schema.json` | the whole `lab.json` object — its `labs` table, its `elements` array (each element's `hosts` accepting any registered `os_type`) and its `links` array |
 | `link.schema.json` | a single entry in the `links` array |
 | `unix-host.schema.json`, `embedded-host.schema.json` | a single host of one type |
 | `settings.schema.json` | `settings.toml` |
 | `reservations.schema.json` | the reservations JSON file |
 | `monitor-meta.schema.json` | the monitor dashboard's internal chart/tab-layout model — not a file you edit, and not served at any endpoint; it drives the generated TypeScript types the web dashboard builds against (`scripts/gen_web_types.sh`) |
+
+Every document carries an `x-otto-version` stamp naming the otto that
+generated it, which is how the `otto init` doctor tells an upgrade apart from
+a local edit — see {doc}`editors`.
 
 Run it again after upgrading otto to pick up new fields. Custom host classes
 registered via an init module in `.otto/settings.toml` are included

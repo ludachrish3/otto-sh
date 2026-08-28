@@ -5,7 +5,8 @@ list of **host sources**. Each repo declares its own list as `[[lab.sources]]`
 entries in `.otto/settings.toml`: the built-in `json` backend reading
 `lab.json` files, a CMDB or inventory API you plug in by implementing one
 small interface, or several of them at once. Otto reads every declared source
-and combines them, later sources overriding earlier ones per host record.
+and combines them, later sources overriding earlier ones one **element** (or
+one `labs` table entry) at a time.
 
 ```{note}
 Choosing a host source is a one-time, team-level decision — part of setting otto
@@ -48,13 +49,15 @@ Every remaining key belongs to the backend the entry selected.
 A repo with no `[lab]` table declares no sources — normal for a repo that
 ships only libs and tests. The table itself may hold nothing but `sources`.
 
-### json sources: `paths` are directories or files
+### json sources: `paths` are directories, files, or globs
 
-For `backend = "json"`, `paths` is required and non-empty. Each entry is
-either:
+For `backend = "json"`, `paths` is required and non-empty. Each entry is one
+of three forms:
 
-- a **directory**, searched for a `lab.json` inside it, or
-- a path ending in **`.json`**, read directly as the lab file.
+- a **directory**, searched for a `lab.json` inside it;
+- a path ending in **`.json`**, read directly as the lab file; or
+- a **glob** — any entry containing `*`, `?` or `[` — expanded relative to its
+  non-glob prefix, contributing the `.json` files it matches in sorted order.
 
 Entries resolve like every other settings path: `~` expands, a relative path
 anchors to the **repo root** (never the directory you ran `otto` from), and an
@@ -67,47 +70,91 @@ backend = "json"
 paths = ["lab_data", "/srv/lab/global-hosts.json"]
 ```
 
-A path that does not resolve to an existing file is skipped rather than
-failing, so an optional-by-design location costs nothing. `paths` is the
-*only* key the json backend accepts; anything else is a typo and fails loud at
-startup.
+An entry that resolves to no existing file is skipped rather than failing —
+an absent `lab.json`, or a glob that matches nothing — so an optional-by-design
+location costs nothing. `paths` is the *only* key the json backend accepts;
+anything else is a typo and fails loud at startup.
 
-The per-host `lab.json` schema — every field, and how labs merge — lives in
-{doc}`lab-config`.
+(one-source-several-files)=
+
+#### One source, several files
+
+A source is not one file. Every file its `paths` names is a complete lab
+document that may carry **any subset** of the three `lab.json` sections, and a
+source composes all of its files by **union**: the `labs` tables merge, the
+`elements` arrays concatenate, and so do the `links`. An element in one file
+joins a lab declared in another, so the declarations can live apart from the
+equipment:
+
+```toml
+[[lab.sources]]
+backend = "json"
+paths = ["lab_data/labs.json", "lab_data/elements/*.json"]
+```
+
+```text
+lab_data/
+├── labs.json          # the labs table: every lab, its resources, its metadata
+└── elements/
+    ├── rack-b4.json   # elements only
+    └── bench1.json    # elements only
+```
+
+Within **one** source a duplicate is a typo, never an override: the same lab
+declared by two of the source's files, or the same element `(name, id)`
+carried by two of them, fails the load naming both files. Overriding is the
+opt-in of a *second* `[[lab.sources]]` entry — see [Ordering and
+overrides](#ordering-and-overrides) below.
+
+The `lab.json` schema itself — the `labs` table, the element entry, every host
+field, and the link entry — lives in {doc}`lab-config`.
 
 ```{tip}
 Running `otto init` (or `otto init --lab`) scaffolds a `lab.json` with one
-example entry and a `lab_data/README.md` walking through its fields — a
-faster way to see a valid entry than building one from scratch. See
-{doc}`../../getting-started`.
+declared lab and one example element, plus a `lab_data/README.md` walking
+through the three sections — a faster way to see a valid file than building
+one from scratch. See {doc}`../../getting-started`.
 ```
 
 ### Annotating entries with `_`-prefixed keys
 
 `lab.json` is plain JSON, which has no comment syntax. Any key beginning
-with `_` (e.g. `_comment`) on a host or link entry is stripped before
-validation, so it is otto's sanctioned way to leave a note inline without
-tripping the schema's `extra="forbid"` check:
+with `_` (e.g. `_comment`) is stripped before validation, so it is otto's
+sanctioned way to leave a note inline without tripping the schema's
+`extra="forbid"` check. It works at **every** level of the file — the
+document, the `labs` table, a `labs` entry, an element, a host entry, a link —
+so a note can sit next to whatever it explains:
 
 ```json
 {
-    "hosts": [
+    "$schema": "../.otto/schemas/lab.schema.json",
+    "_comment": "Bench 1's own equipment; racked devices live in the global source.",
+    "labs": {
+        "example_lab": { "resources": ["example-device"] }
+    },
+    "elements": [
         {
-            "_comment": "Replace before connecting to a real host.",
-            "ip": "192.0.2.1",
-            "element": "example-device",
-            "os_type": "unix",
-            "valid_terms": ["ssh"],
-            "creds": [{ "login": "admin", "password": "CHANGE_ME" }],
-            "labs": ["example_lab"]
+            "_comment": "Replace before connecting to a real device.",
+            "name": "example-device",
+            "labs": ["example_lab"],
+            "hosts": [
+                {
+                    "ip": "192.0.2.1",
+                    "os_type": "unix",
+                    "valid_terms": ["ssh"],
+                    "creds": [{ "login": "admin", "password": "CHANGE_ME" }]
+                }
+            ]
         }
     ],
     "links": []
 }
 ```
 
-This idiom is scoped to host and link entries only — it is not a general
-convention elsewhere in otto's JSON/TOML configuration.
+A top-level `$schema` is comment space too — that is the key wiring the file
+to the generated schema in your editor (see {doc}`../cli/schema/editors`).
+The `_` idiom is scoped to `lab.json`; it is not a general convention
+elsewhere in otto's JSON/TOML configuration.
 
 ## Combining sources
 
@@ -116,22 +163,46 @@ live — otto never drops one because another already answered.
 
 ### Ordering and overrides
 
-When two sources define the same host id in the same lab, the **later**
-source's record replaces the earlier one *wholesale* — there is no field-level
-merge — and otto logs a warning naming both labels:
+The unit of override is the **element**, keyed by its `(name, id)` — not the
+host. When two sources carry the same element in the same lab, the **later**
+source's element replaces the earlier one *wholesale* — its hosts, its
+`metadata`, and the membership it states — and otto logs a warning naming both
+labels:
 
 ```text
-host 'alt1' in lab 'site': my_project/virtual overrides my_project/global
+element ('alt1', None) in lab 'site': my_project/virtual overrides my_project/global
 ```
 
 That warning is the whole transparency story: an override is a deliberate act,
 and otto says so, in ordinary command output, every time one takes effect. An
-override that repoints the host at a different `ip` is allowed — pointing the
+override that repoints a host at a different `ip` is allowed — pointing the
 lab at a re-imaged VM is exactly the use this serves.
 
-Inside a *single* source a duplicate host id is still an error, not an
-override: there it is a typo. Splitting the records across two
-`[[lab.sources]]` entries is the opt-in to override semantics.
+Because replacement is wholesale, overriding one board of a four-board chassis
+means restating the whole element. In exchange, a hybrid element — this
+source's hosts with that source's metadata — cannot exist.
+
+Replacement happens per lab load, so it covers exactly the labs *both*
+elements match. An override that **drops** a membership pattern therefore does
+not take the element out of a lab the earlier source's element still matches —
+that lab keeps loading the earlier element; to remove an element from a lab,
+change it at the source that declares it.
+
+A `labs` table entry overrides the same way. A later source that *declares*
+the lab replaces the earlier declaration's `resources` and `metadata` together
+— never half of one — with its own warning:
+
+```text
+labs entry 'site': my_project/virtual overrides my_project/global
+```
+
+A source that holds elements for a lab but declares no `labs` entry for it
+contributes members only, and leaves the earlier declaration standing.
+
+Inside a *single* source a duplicate is still an error, not an override: there
+it is a typo (see {ref}`one-source-several-files` above). Splitting the
+records across two `[[lab.sources]]` entries is the opt-in to override
+semantics.
 
 Overriding is per-lab and has nothing to do with combining labs: `--lab a+b`
 still merges two *different* labs by otto's cross-lab rules (see
@@ -154,21 +225,22 @@ server = "cmdb.example.com"  # remaining keys = constructor kwargs for that back
 [[lab.sources]]
 name = "virtual"
 backend = "json"
-paths = ["lab"]              # json-specific; entries are directories or .json files
+paths = ["lab"]              # json-specific; directories, .json files, or globs
 ```
 
 The same layering is how you **try a data change before it lands in the global
-database**: paste the record into the repo's json source with your edit
+database**: paste the element into the repo's json source with your edit
 applied, run against it, and the override warning tells you — and anyone
-reading the log afterwards — that a local record beat the global one. Because
-the override is whole-record, paste the *whole* record: fields you leave out
-are dropped, not inherited from the source below.
+reading the log afterwards — that a local element beat the global one. Because
+the override is whole-element, paste the *whole* element — its `labs`
+patterns and every one of its host entries: what you leave out is dropped, not
+inherited from the source below.
 
 ### Multiple repos
 
 With several repos on `OTTO_SUT_DIRS`, the process-wide list is every repo's
 list concatenated in `OTTO_SUT_DIRS` order, and all of it is live. A later
-repo's source overrides an earlier repo's on a colliding host id, with the
+repo's source overrides an earlier repo's on a colliding element, with the
 same warning — the labels are repo-qualified precisely so that reads
 unambiguously.
 
@@ -298,18 +370,36 @@ registry machinery behind this and every other seam otto can be extended at.
   name against the registered list the message prints, and confirm the `init`
   module that calls `register_lab_repository(...)` is listed in `init = [...]`.
 
-`"host 'X' in lab 'Y': A overrides B"`
-: Sources `A` and `B` both define host `X` in lab `Y`, and `A` — the later
-  entry — won the whole record. Expected when you are deliberately layering a
-  repo source over a global one. A *surprise* means two sources own the same
-  record: drop it from one of them, or reorder the entries so the one you want
-  wins last.
+`"element ('X', None) in lab 'Y': A overrides B"` / `"labs entry 'Y': A overrides B"`
+: Sources `A` and `B` both carry element `X` (or both declare lab `Y`), and
+  `A` — the later entry — won it whole. Expected when you are deliberately
+  layering a repo source over a global one. A *surprise* means two sources own
+  the same element: drop it from one of them, or reorder the entries so the one
+  you want wins last.
+
+`LabRepositoryError: host id 'X' in lab 'Y': element ... collides with element ...`
+: Two *different* elements — surviving the merge, so not an override — produce
+  the same host id. The message names both elements and the source each came
+  from; give one a distinct `name`, an element `id`, or a `board`/`slot`.
+
+`LabNotFoundError: Lab '...' is not declared by any configured source (...)`
+: No source's `labs` table (or backend `list_labs`) declares that name. A lab
+  exists only once it is declared — elements matching it by pattern are not
+  enough, and the message says so explicitly when that is the case. Add the
+  `labs` entry, or check `--lab` / `OTTO_LAB` against `otto --list-labs`. Labs
+  are combined with `+`, not `,` — `--lab a,b` asks for one lab literally
+  named `a,b`.
+
+`LabRepositoryError: Lab '...' is declared by ... but no element in any source matches it`
+: The declaration is there and nothing joins it. Add a `labs` pattern to an
+  element, or drop the declaration — an empty lab is refused rather than
+  loaded.
 
 `LabNotFoundError: Lab '...' not found in any configured source: ...`
-: No source knows that lab; the message lists every source label consulted, so
-  a missing label there means the source you expected never got declared.
-  Check `--lab` / `OTTO_LAB` against `otto --list-labs`. Labs are combined with
-  `+`, not `,` — `--lab a,b` asks for one lab literally named `a,b`.
+: A source declares the name but none could actually build it — the message
+  lists every source label consulted. On a custom backend this means
+  `list_labs()` and `load_lab()` disagree; check the name against
+  `otto --list-labs`.
 
 `LabNotFoundError: Lab '...' cannot be loaded: no repo declares a [[lab.sources]] entry`
 : No repo on `OTTO_SUT_DIRS` declares any source at all. Add an entry (`otto

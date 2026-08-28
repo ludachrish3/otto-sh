@@ -73,13 +73,15 @@ frame's dialect.
 | `bash` | `BashFrame` | POSIX bash; used internally by SSH/telnet Unix sessions. |
 | `ash` | `AshFrame` | BusyBox `ash`.  Inherits `BashFrame`'s framing unchanged, no override — every rendered payload measured matching across the BusyBox artifact matrix. Not the same as "nothing differs": ash rejects `set +o history` outright, survivably, by design (see `AshFrame`'s docstring). |
 
-Declare a frame by name in lab data:
+Declare a frame by name on the host entry, inside its element:
 
 ```json
 {
-    "element": "zephyr37_nofs",
-    "os_type": "zephyr",
-    "command_frame": "zephyr-serial"
+    "name": "zephyr37_nofs",
+    "labs": ["embedded"],
+    "hosts": [
+        { "ip": "192.0.2.1", "os_type": "zephyr", "command_frame": "zephyr-serial" }
+    ]
 }
 ```
 
@@ -119,42 +121,46 @@ are unavailable on embedded hosts — they require a POSIX shell.
 
 ## Example
 
-A `zephyr37_fat` entry from the test fixture, annotated:
+The `zephyr37_fat` element from the test fixture, annotated — one element, one
+host entry inside it:
 
 ```json
 {
-    "ip": "192.0.2.1",
-    "element": "zephyr37_fat",
-    "os_type": "zephyr",
-    "os_version": "3.7",
-    "transfer": "console",
-    "filesystem": "fat-ram",
-    "max_filename_len": 32,
-    "is_virtual": true,
-    "hop": "test4",
-    "snmp": {
-        "address": "10.10.200.14",
-        "port": 16101,
-        "community": "public",
-        "oids": [
-            "1.3.6.1.2.1.1.3.0",
-            "1.3.6.1.4.1.63245.1.1.0",
-            "1.3.6.1.4.1.63245.1.2.0",
-            "1.3.6.1.4.1.63245.1.3.0",
-            "1.3.6.1.4.1.63245.1.4.0"
-        ]
-    },
-    "resources": [
-        "zephyr37_fat"
-    ],
-    "labs": [
-        "embedded"
+    "name": "zephyr37_fat",
+    "labs": ["embedded"],
+    "hosts": [
+        {
+            "ip": "192.0.2.1",
+            "os_type": "zephyr",
+            "os_version": "3.7",
+            "transfer": "console",
+            "filesystem": "fat-ram",
+            "max_filename_len": 32,
+            "is_virtual": true,
+            "hop": "test4",
+            "snmp": {
+                "address": "10.10.200.14",
+                "port": 16101,
+                "community": "public",
+                "oids": [
+                    "1.3.6.1.2.1.1.3.0",
+                    "1.3.6.1.4.1.63245.1.1.0",
+                    "1.3.6.1.4.1.63245.1.2.0",
+                    "1.3.6.1.4.1.63245.1.3.0",
+                    "1.3.6.1.4.1.63245.1.4.0"
+                ]
+            }
+        }
     ]
 }
 ```
 
 Key fields:
 
+- `labs: ["embedded"]` — membership belongs to the *element*, so every host it
+  holds joins the same labs.  What lab `embedded` reserves is declared in the
+  file's `labs` table, not here; see
+  {doc}`../../configuration/lab-config`.
 - `os_type: "zephyr"` — builds `ZephyrHost` with the `zephyr` command frame and
   `os_name: "Zephyr"`.
 - `os_version: "3.7"` — recorded on the host; selects the correct test paths

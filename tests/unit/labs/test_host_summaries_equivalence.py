@@ -12,7 +12,6 @@ identity field (``r`` vs ``r_cpu0``), because the raw dict cannot see the
 profile merge or pydantic's coercion.
 """
 
-import json
 from pathlib import Path
 
 import pytest
@@ -20,6 +19,7 @@ import pytest
 from otto.host.builtin_hosts import builtin_host_ids
 from otto.host.os_profile import OS_PROFILES, register_os_profile
 from otto.labs.json_repository import JsonFileLabRepository
+from tests._fixtures.labdata import write_lab_json
 
 _CREDS = [{"login": "u", "password": "p"}]
 
@@ -72,7 +72,8 @@ def profile_defaulting_ip():
 
 
 def _write_lab(tmp_path: Path, hosts: list[dict]) -> JsonFileLabRepository:
-    (tmp_path / "lab.json").write_text(json.dumps({"hosts": hosts}))
+    """Write *hosts* (flat v1-style dicts) as a v2 document and open it."""
+    write_lab_json(tmp_path / "lab.json", hosts)
     return JsonFileLabRepository(search_paths=[tmp_path])
 
 
@@ -126,28 +127,41 @@ def test_multi_lab_host_merges_into_one_summary(tmp_path):
 
 
 def test_duplicate_id_across_lab_files_keeps_the_first_record(tmp_path):
-    """Two files declaring the same id merge labs, first record's fields win.
+    """Two files whose records derive the same id merge labs, first fields win.
 
     Degenerate config, but pinned: ``load_lab`` also keeps-first for
     addressing, so enumeration must not silently prefer the later file.
+
+    The two records are DISTINCT elements — ``('dup', 1)`` with board ``seed``
+    and ``('dup1', None)`` with board ``seed``, both ``dup1_seed`` — because
+    that is the only v2 route to one id from two files of one source: the same
+    element in two files is a duplicate-element error before enumeration ever
+    reaches the ids (spec §2.4).
     """
     a, b = tmp_path / "a", tmp_path / "b"
     for d in (a, b):
         d.mkdir()
-    (a / "lab.json").write_text(
-        json.dumps(
-            {"hosts": [{"ip": "10.0.0.1", "element": "dup", "labs": ["e"], "creds": _CREDS}]}
-        )
+    write_lab_json(
+        a / "lab.json",
+        [
+            {
+                "ip": "10.0.0.1",
+                "element": "dup",
+                "element_id": 1,
+                "board": "seed",
+                "labs": ["e"],
+                "creds": _CREDS,
+            }
+        ],
     )
-    (b / "lab.json").write_text(
-        json.dumps(
-            {"hosts": [{"ip": "10.0.0.2", "element": "dup", "labs": ["w"], "creds": _CREDS}]}
-        )
+    write_lab_json(
+        b / "lab.json",
+        [{"ip": "10.0.0.2", "element": "dup1", "board": "seed", "labs": ["w"], "creds": _CREDS}],
     )
     repo = JsonFileLabRepository(search_paths=[a, b])
 
     (summary,) = repo.list_host_summaries()
-    assert summary.id == "dup"
+    assert summary.id == "dup1_seed"
     assert summary.ip == "10.0.0.1", "first record wins"
     assert sorted(summary.labs) == ["e", "w"], "membership unions"
 
@@ -163,13 +177,18 @@ def test_ip_comes_from_the_validated_spec_not_the_raw_dict(tmp_path, profile_def
 
 
 def test_malformed_entries_are_skipped_not_raised(tmp_path):
-    """Enumeration is best-effort: completion must never crash on bad data."""
+    """Enumeration is best-effort: completion must never crash on bad data.
+
+    A bad HOST entry, which is what stays per-record in v2: a malformed
+    ELEMENT (or a non-object entry) fails ``ElementSpec`` at parse and takes
+    its whole file out of the enumeration — see
+    ``test_json_repository_v2.py`` for that layer.
+    """
     repo = _write_lab(
         tmp_path,
         [
             _HOSTS[0],
-            {"element": "no-ip-required-but-bad-type", "element_id": "not-an-int"},
-            "not-even-a-dict",
+            {"element": "bad", "slot": "not-an-int", "labs": ["e"], "creds": _CREDS},
         ],
     )
     ids = [s.id for s in repo.list_host_summaries()]

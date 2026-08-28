@@ -102,7 +102,8 @@ def register_dev_tool_provider(provider: DevToolProvider) -> None:
     Call from an init module listed in ``.otto/settings.toml`` — the same
     extension hook the other host strategies use. The provider runs once per
     lab-ingested host; inspect the host's tooling-agnostic attributes
-    (``element``, ``element_id``, ``os_type``, ``id``, ``ip``, ``resources``)
+    (``element``, ``element_id``, ``os_type``, ``id``, ``ip``, ``source_lab``,
+    ``metadata``, ``element_metadata``)
     and return the dev tools that host should carry (or ``None``/``[]`` for
     none). Behavior lives in code; lab data stays tooling-agnostic.
 

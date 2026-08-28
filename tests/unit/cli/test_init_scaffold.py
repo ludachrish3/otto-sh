@@ -69,13 +69,22 @@ def test_lab_scaffold_passes_hostspec_ingest(tmp_path: Path) -> None:
     lab_file = tmp_path / "lab_data" / "lab.json"
     data = json.loads(lab_file.read_text())
     from otto.models.host import UnixHostSpec
+    from otto.models.lab import ElementSpec
 
     assert data["links"] == []  # links section present, empty by default
-    hosts = data["hosts"]
-    spec = UnixHostSpec.model_validate(hosts[0])
+    # The lab is DECLARED, with the reservable resource on the lab and not on
+    # any host — v2's whole point (spec §8.1).
+    assert data["labs"] == {"example_lab": {"resources": ["example-device"]}}
+    entry = data["elements"][0]
+    assert "_comment" in entry  # the docs pointer rides on the element now
+    element = ElementSpec.model_validate(entry)
+    assert element.name == "example-device"
+    assert element.labs == ["example_lab"]
+    # A v2 host entry is only a host dict once its element stamps identity on
+    # it: `element` is a hoisted key, so the raw entry alone is deliberately
+    # NOT a valid host, and `flatten()` is the ingest path the loader uses.
+    spec = UnixHostSpec.model_validate(element.flatten()[0])
     assert spec.element == "example-device"
-    assert spec.labs == ["example_lab"]
-    assert "_comment" in hosts[0]  # the docs pointer rides in the host entry
     assert (tmp_path / "lab_data" / "README.md").exists()
     assert data["$schema"] == "../.otto/schemas/lab.schema.json"
 
@@ -179,6 +188,37 @@ def test_schemas_scaffold_writes_vscode_wiring_when_absent(tmp_path: Path) -> No
     assert "tamasfe.even-better-toml" in json.loads(extensions.read_text())["recommendations"]
 
 
+def test_schemas_scaffold_writes_generated_snippets(tmp_path: Path) -> None:
+    """`.vscode/otto.code-snippets` rides with the schemas and is generated."""
+    created = BY_NAME["schemas"].scaffold(tmp_path, CFG)
+    snippets = tmp_path / ".vscode" / "otto.code-snippets"
+    assert snippets in created
+    doc = json.loads(snippets.read_text())
+    assert doc["otto unix host"]["prefix"] == "otto-unix-host"
+    assert doc["otto element"]["prefix"] == "otto-element"
+
+
+def test_snippets_are_refreshed_not_preserved(tmp_path: Path) -> None:
+    """Unlike the user-owned .vscode/settings.json, a generated file is rewritten.
+
+    The snippets are a product of the live models, so a stale copy from an
+    older otto must not survive a refresh — the same rule the schemas follow.
+    """
+    BY_NAME["schemas"].scaffold(tmp_path, CFG)
+    snippets = tmp_path / ".vscode" / "otto.code-snippets"
+    snippets.write_text("{}")  # simulate a stale file from an older otto
+    created = BY_NAME["schemas"].scaffold(tmp_path, CFG)
+    assert snippets in created
+    assert json.loads(snippets.read_text()) != {}
+
+
+def test_snippets_file_is_not_a_validated_artifact(tmp_path: Path) -> None:
+    """The doctor must not fail a repo over an editor convenience file."""
+    BY_NAME["schemas"].scaffold(tmp_path, CFG)
+    (tmp_path / ".vscode" / "otto.code-snippets").write_text("{not json")
+    assert BY_NAME["schemas"].validate(tmp_path) == []
+
+
 def test_existing_vscode_settings_left_byte_for_byte_untouched(tmp_path: Path) -> None:
     vscode = tmp_path / ".vscode"
     vscode.mkdir()
@@ -237,16 +277,38 @@ def test_lab_files_anchor_relative_expand_tilde_and_pass_absolutes_through(
 
     Same three cases the runtime compiler pins (repo-relative, ``~``-rooted,
     absolute), asserted through init's own reader so the doctor can never
-    drift from what otto would actually load.
+    drift from what otto would actually load. Each file is CREATED because
+    ``lab_files()`` lists the files a source reads: since ``paths`` entries may
+    be globs (spec §2.4), an entry resolving to no file contributes nothing.
     """
     from otto.cli.init import _lab_files
 
-    repo, home = _anchoring_repo(tmp_path, monkeypatch)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    absolute = tmp_path / "elsewhere" / "global.json"
+    make_sut_repo(
+        repo,
+        name="test",
+        tests=["tests"],
+        extra=(
+            'libs = ["pylib"]\n'
+            "\n"
+            "[[lab.sources]]\n"
+            'backend = "json"\n'
+            f'paths = ["lab_data", "~/custom_labs", "{absolute}"]\n'
+        ),
+    )
+    for lab_file in (repo / "lab_data" / "lab.json", home / "custom_labs" / "lab.json", absolute):
+        lab_file.parent.mkdir(parents=True, exist_ok=True)
+        lab_file.write_text("{}")
 
     assert _lab_files(repo) == [
         repo / "lab_data" / "lab.json",  # relative -> anchored to the repo root
         home / "custom_labs" / "lab.json",  # ~ -> home, never the repo
-        Path("/abs/global.json"),  # absolute .json entry IS the lab file
+        absolute,  # absolute .json entry IS the lab file
     ]
 
 

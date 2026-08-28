@@ -20,11 +20,9 @@ Note: hosts with no ``os_type`` key default to ``"unix"`` per the HostSpec
 model, so the guard treats missing ``os_type`` as ``"unix"``.
 """
 
-import json
-
 import pytest
 
-from tests._fixtures.labdata import lab_data_path
+from tests._fixtures.labdata import flat_hosts
 
 _TECHS = ("tech1", "tech2")
 # Which techs are EXPECTED to carry embedded hosts. tech2's lab is all-unix by
@@ -44,13 +42,18 @@ _BUSYBOX_HOP = "test1"
 
 
 def _is_bed_guest(host: dict) -> bool:
-    """A BusyBox bed guest: Unix-family, but reachable only through its hop."""
+    """A BusyBox bed guest: Unix-family, but reachable only through its hop.
+
+    ``labs`` is the element's resolved membership, stamped back onto the flat
+    entry by ``flat_hosts(..., with_labs=True)`` — since lab.json v2 it is not
+    a host field at all.
+    """
     return "busybox" in host.get("labs", [])
 
 
 @pytest.mark.parametrize("tech", _TECHS)
 def test_no_unix_host_defines_a_hop(tech: str) -> None:
-    hosts = json.loads(lab_data_path(tech).read_text())["hosts"]
+    hosts = flat_hosts(tech, with_labs=True)
     offenders = [
         h["element"]
         for h in hosts
@@ -68,7 +71,7 @@ def test_no_unix_host_defines_a_hop(tech: str) -> None:
 def test_busybox_bed_guests_hop_through_test1(tech: str) -> None:
     """The carve-out above is only as honest as this pin: the Unix hosts that
     hop must be exactly the five bed guests, each through test1."""
-    hosts = json.loads(lab_data_path(tech).read_text())["hosts"]
+    hosts = flat_hosts(tech, with_labs=True)
     guests = [h for h in hosts if _is_bed_guest(h) and "hop" in h]
     expected = _BUSYBOX_GUESTS if tech in _BUSYBOX_TECHS else ()
     assert tuple(h["element"] for h in guests) == expected, (
@@ -80,7 +83,7 @@ def test_busybox_bed_guests_hop_through_test1(tech: str) -> None:
 
 @pytest.mark.parametrize("tech", _TECHS)
 def test_embedded_hops_are_preserved(tech: str) -> None:
-    hosts = json.loads(lab_data_path(tech).read_text())["hosts"]
+    hosts = flat_hosts(tech, with_labs=True)
     embedded = [h for h in hosts if h.get("os_type", "unix") != "unix"]
     expectation = (
         "missing — the over-eager-sweep accident this guard exists to catch"

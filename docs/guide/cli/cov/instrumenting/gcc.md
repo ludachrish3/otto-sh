@@ -42,16 +42,23 @@ page.
 ## Cross-compiled products
 
 A cross-GCC's `gcov` cannot be discovered from the `.gcno` alone —
-configure it per host in `lab.json`:
+configure it per host entry in `lab.json`:
 
 ```json
 {
-    "element": "target1",
-    "toolchain": {
-        "sysroot": "/opt/toolchains/arm-none-eabi",
-        "gcov": "bin/arm-none-eabi-gcov",
-        "lcov": "/usr/bin/lcov"
-    }
+    "name": "target1",
+    "labs": ["unix"],
+    "hosts": [
+        {
+            "ip": "10.10.200.12",
+            "creds": [{ "login": "admin", "password": "secret" }],
+            "toolchain": {
+                "sysroot": "/opt/toolchains/arm-none-eabi",
+                "gcov": "bin/arm-none-eabi-gcov",
+                "lcov": "/usr/bin/lcov"
+            }
+        }
+    ]
 }
 ```
 

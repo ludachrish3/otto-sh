@@ -27,7 +27,7 @@ def test_check_reservations_is_noop_with_null_backend():
     lab = Lab(
         name="test_lab",
         resources={"rack1"},
-        hosts={"test1": make_host("test1", resources={"test1"})},
+        hosts={"test1": make_host("test1")},
     )
     # Should not raise — the null backend short-circuits the check.
     check_reservations(lab, username="alice", backend=NullReservationBackend())

@@ -66,9 +66,9 @@ class ReservationBackend(Protocol):
         set[str]
             Resource identifiers the user currently holds.  Empty set if the
             user has no active reservations.  Resource strings must match
-            byte-for-byte the values in ``UnixHost.resources`` and
-            ``Lab.resources`` — any necessary normalization is the backend's
-            job.
+            byte-for-byte the values in ``Lab.resources`` (the lab's declared
+            reservation identifiers) — any necessary normalization is the
+            backend's job.
 
         Raises
         ------

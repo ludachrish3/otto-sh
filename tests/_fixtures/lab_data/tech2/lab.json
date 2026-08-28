@@ -1,46 +1,48 @@
 {
-    "hosts": [
+    "labs": {
+        "unix_alt": {
+            "resources": ["alt1", "alt2", "alt3"]
+        }
+    },
+    "elements": [
         {
-            "ip": "10.10.200.11",
-            "element": "alt1",
-            "creds": [
-                {"login": "vagrant", "password": "vagrant"},
-                {"login": "test", "password": "Password1"}
-            ],
-            "resources": [
-                "alt1"
-            ],
-            "labs": [
-                "unix_alt"
+            "name": "alt1",
+            "labs": ["unix_alt"],
+            "hosts": [
+                {
+                    "ip": "10.10.200.11",
+                    "creds": [
+                        {"login": "vagrant", "password": "vagrant"},
+                        {"login": "test", "password": "Password1"}
+                    ]
+                }
             ]
         },
         {
-            "ip": "10.10.200.12",
-            "element": "alt2",
-            "creds": [
-                {"login": "vagrant", "password": "vagrant"},
-                {"login": "test", "password": "Password1"}
-            ],
-            "resources": [
-                "alt2"
-            ],
-            "labs": [
-                "unix_alt"
+            "name": "alt2",
+            "labs": ["unix_alt"],
+            "hosts": [
+                {
+                    "ip": "10.10.200.12",
+                    "creds": [
+                        {"login": "vagrant", "password": "vagrant"},
+                        {"login": "test", "password": "Password1"}
+                    ]
+                }
             ]
         },
         {
-            "ip": "10.10.200.13",
-            "element": "alt3",
-            "docker_capable": true,
-            "creds": [
-                {"login": "vagrant", "password": "vagrant"},
-                {"login": "test", "password": "Password1"}
-            ],
-            "resources": [
-                "alt3"
-            ],
-            "labs": [
-                "unix_alt"
+            "name": "alt3",
+            "labs": ["unix_alt"],
+            "hosts": [
+                {
+                    "ip": "10.10.200.13",
+                    "docker_capable": true,
+                    "creds": [
+                        {"login": "vagrant", "password": "vagrant"},
+                        {"login": "test", "password": "Password1"}
+                    ]
+                }
             ]
         }
     ]

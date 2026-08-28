@@ -49,6 +49,7 @@ import pytest
 
 from otto.host.file_ops import PosixFileOps
 from otto.host.host import BaseHost, is_dry_run, refuse_declined_elevation
+from otto.host.lab_info import LabInfo
 from otto.host.toolchain import Toolchain
 from otto.logger.mode import LogMode
 from otto.result import CommandResult, Result
@@ -147,7 +148,7 @@ class RecordingHost(BaseHost):
         self.id = "h1"
         self.name = "h1"
         self.log = LogMode.NORMAL
-        self.resources: set[str] = set()
+        self.lab_info = LabInfo()
         self.products: list = []
         self.dev_tools: list = []
         self.power_control = None

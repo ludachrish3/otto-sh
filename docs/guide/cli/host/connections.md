@@ -30,13 +30,12 @@ otto --lab my_lab host --hop jumpbox target_seed put firmware.bin /tmp/
 otto --lab my_lab host --hop jumpbox target_seed get /var/log/syslog ./logs/
 ```
 
-For persistent hop configuration, set the `hop` field in `lab.json`
-(see {doc}`../../configuration/lab-config` for the full host schema):
+For persistent hop configuration, set the `hop` field on the host entry in
+`lab.json` (see {doc}`../../configuration/lab-config` for the full schema):
 
 ```json
 {
     "ip": "10.10.200.12",
-    "element": "target",
     "board": "seed",
     "hop": "jumpbox_seed",
     "creds": [{ "login": "admin", "password": "secret" }]

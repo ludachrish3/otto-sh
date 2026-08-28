@@ -7,13 +7,12 @@ import pytest
 
 from otto.config.lab import Lab, load_lab
 from otto.labs.json_repository import JsonFileLabRepository
-from tests._fixtures.labdata import lab_data_dir
+from tests._fixtures.labdata import lab_data_dir, write_lab_json
 
 
 def _hosts_file(path: Path, hosts: list[dict]) -> Path:
-    f = path / "lab.json"
-    f.write_text(json.dumps({"hosts": hosts}))
-    return f
+    """Write *hosts* (flat v1-style dicts) as a v2 ``lab.json`` under *path*."""
+    return write_lab_json(path / "lab.json", hosts)
 
 
 def test_load_lab_default_repository_uses_search_paths(tmp_path):
@@ -55,6 +54,26 @@ def test_load_lab_uses_injected_repository(tmp_path):
     lab = load_lab("injected", repository=repo)
     assert lab.name == "injected"
     assert set(lab.hosts) == {"alt1", "local"}  # `local` = built-in injection
+
+
+def test_missing_search_path_still_names_the_paths_it_searched(tmp_path):
+    """The composite keeps each source's not-found reason, not just its own verdict.
+
+    R15 routes EVERY load through the composite, so the json backend's "no lab
+    data found in any search path: ..." — the only message that names the paths
+    actually consulted — reaches the user solely because the composite carries
+    it forward. Without that, a typo'd ``paths`` entry (the commonest first-run
+    mistake) is answered with "add a 'labs' table", pointing at a file otto
+    never found.
+    """
+    from otto.labs.errors import LabNotFoundError
+
+    with pytest.raises(LabNotFoundError) as err:
+        load_lab("unix", search_paths=[tmp_path / "nowhere"])
+
+    message = str(err.value)
+    assert "not declared" in message  # the composite's own verdict survives
+    assert "nowhere" in message, f"the searched path is missing from: {message}"
 
 
 def test_load_lab_merges_multiple_names(tmp_path):
@@ -179,3 +198,81 @@ def test_loading_one_lab_also_loads_a_link_reaching_out_of_it():
     pairs = {frozenset({link.a.host, link.b.host}) for link in lab.links}
     assert frozenset({"test1", "bb1350_qemu"}) in pairs, pairs
     assert "bb1350_qemu" not in lab.hosts, "the guest is not a unix host, only its link is"
+
+
+def test_lab_info_stamped_per_component(tmp_path) -> None:
+    """Two labs in one file, loaded as a+b: each host names ITS component."""
+    creds = [{"login": "u", "password": "p"}]
+    write_lab_json(
+        tmp_path / "lab.json",
+        [
+            {
+                "ip": "10.10.200.11",
+                "element": "alt1",
+                "creds": creds,
+                "resources": ["ra"],
+                "labs": ["lab_a"],
+            },
+            {
+                "ip": "10.10.200.12",
+                "element": "test2",
+                "creds": creds,
+                "resources": ["rb"],
+                "labs": ["lab_b"],
+            },
+        ],
+    )
+    doc = json.loads((tmp_path / "lab.json").read_text())
+    doc["labs"]["lab_a"]["metadata"] = {"m": 1}
+    (tmp_path / "lab.json").write_text(json.dumps(doc))
+
+    lab = load_lab("lab_a+lab_b", search_paths=[tmp_path])
+
+    assert lab.hosts["alt1"].lab_info.name == "lab_a"
+    assert lab.hosts["alt1"].lab_info.resources == frozenset({"ra"})
+    assert lab.hosts["alt1"].lab_info.metadata == {"m": 1}
+    assert lab.hosts["test2"].lab_info.name == "lab_b"
+    assert lab.metadata == {"lab_a": {"m": 1}, "lab_b": {}}
+    assert lab.resources == {"ra", "rb"}
+    lab.hosts["alt1"].lab_info.metadata["m"] = 2  # a per-host copy
+    assert lab.metadata["lab_a"] == {"m": 1}
+
+
+def test_builtin_local_carries_the_first_components_lab_info(tmp_path) -> None:
+    """``local`` is attributed to the FIRST component, on BOTH channels (R16).
+
+    It is injected after the merge, so the pre-merge sweep never sees it —
+    leaving ``lab_info`` at its empty default while ``source_lab`` named a real
+    component, i.e. the one host present in every lab disagreeing with itself
+    about which lab it is in.
+    """
+    creds = [{"login": "u", "password": "p"}]
+    write_lab_json(
+        tmp_path / "lab.json",
+        [
+            {
+                "ip": "10.10.200.11",
+                "element": "alt1",
+                "creds": creds,
+                "resources": ["ra"],
+                "labs": ["lab_a"],
+            },
+            {
+                "ip": "10.10.200.12",
+                "element": "test2",
+                "creds": creds,
+                "resources": ["rb"],
+                "labs": ["lab_b"],
+            },
+        ],
+    )
+    doc = json.loads((tmp_path / "lab.json").read_text())
+    doc["labs"]["lab_a"]["metadata"] = {"m": 1}
+    (tmp_path / "lab.json").write_text(json.dumps(doc))
+
+    local = load_lab("lab_a+lab_b", search_paths=[tmp_path]).hosts["local"]
+
+    assert local.source_lab == "lab_a"
+    assert local.lab_info.name == "lab_a", "the two attribution channels must agree"
+    assert local.lab_info.resources == frozenset({"ra"})
+    assert local.lab_info.metadata == {"m": 1}

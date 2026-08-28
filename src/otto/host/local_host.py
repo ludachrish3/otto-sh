@@ -32,6 +32,7 @@ from ..utils import Arg, Exclude, Opt, Status, cli_exposed
 from .dev_tool import DevTool
 from .file_ops import PosixFileOps
 from .host import _EXEC_REAP_TIMEOUT, BaseHost, is_dry_run
+from .lab_info import LabInfo
 from .power import PowerController
 from .privilege import PosixPrivilege
 from .product import Product
@@ -169,8 +170,8 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
     I/O in ``verbose.log`` but off the console; ``NEVER`` redacts it everywhere
     (warnings/errors are unaffected)."""
 
-    resources: set[str] = field(default_factory=set, repr=False)
-    """Resources required to reserve this host — always empty for LocalHost."""
+    lab_info: LabInfo = field(default_factory=LabInfo, repr=False)
+    """The resolved lab this host was registered into (empty unless a loader stamped it)."""
 
     debug_log_globs: list[str] = field(default_factory=list, repr=False)
     """Paths/glob patterns ``get_debug_logs`` fetches. Default empty. See

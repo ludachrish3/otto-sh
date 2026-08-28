@@ -2,14 +2,18 @@
 
 import json
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+from pydantic import ValidationError
 
 from ..host.factory import (
     create_host_from_dict,
     host_identity,
     validate_host_dict,
 )
+from ..models.lab import ElementKey, ElementSpec, LabEntrySpec
 from .errors import (
     LabNotFoundError,
     LabRepositoryError,
@@ -17,6 +21,8 @@ from .errors import (
 from .protocol import HostSummary
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+
     # Deferred: otto.config.lab imports this module (for the built-in "json"
     # backend), so a module-level import here would cycle when otto.labs is
     # the first thing imported. load_lab() below imports Lab locally at call
@@ -27,14 +33,71 @@ logger = logging.getLogger(__name__)
 
 LAB_FILENAME = "lab.json"
 
-# Known top-level sections of a lab.json object. ``hosts`` is the array of host
-# entries (schema unchanged from the old bare-array file); ``links`` is the
-# array of declared data-plane routes. Adding a future section (e.g.
-# ``elements``) is a one-line change here plus handling in ``_load_lab_file``.
-_LAB_SECTIONS = frozenset({"hosts", "links"})
+# Known top-level sections of a lab.json object (v2): ``labs`` is the table of
+# declared labs keyed by name, ``elements`` the array of element entries (each
+# grouping host entries), ``links`` the array of declared data-plane routes.
+_LAB_SECTIONS = frozenset({"labs", "elements", "links"})
+
+_MIGRATION_HINT = (
+    "top-level 'hosts' has moved: hosts are grouped under 'elements' (each with "
+    "'name', optional 'id', 'labs' membership patterns, optional 'metadata', and "
+    "'hosts'), and per-host 'labs'/'resources' moved to the element and the "
+    "top-level 'labs' table. See docs/guide/configuration/lab-config.md, "
+    '"Migrating from the hosts array".'
+)
+
+_GLOB_CHARS = frozenset("*?[")
 
 
-def parse_lab_sections(data: object, source: str) -> dict[str, list[Any]]:
+def expand_lab_paths(paths: "Iterable[Path]") -> list[Path]:
+    """Every lab file a list of ``paths`` entries names (spec §2.4).
+
+    THE single home of the entry-to-files rule, read by the json backend, the
+    completion-cache fingerprint and the ``otto init`` doctor: a directory
+    contributes its ``lab.json``; a ``.json`` path is the file; an entry with
+    a glob metacharacter is expanded relative to its non-glob prefix (sorted,
+    files only, ``.json`` only). Entries that resolve to nothing are skipped —
+    the composite's existence rule reports the consequence.
+
+    Each FILE appears once, at its first-seen position, however many entries
+    name it: ``paths = [d, d/"*.json"]`` — the main file by directory plus the
+    split files by glob — is the documented layout written the natural way, and
+    listing ``d/lab.json`` twice would trip the in-source duplicate rule
+    (:func:`check_in_source_duplicates`) against the file itself. Identity is
+    the RESOLVED path, so two spellings of one file collapse.
+    """
+    found: list[Path] = []
+    seen: set[Path] = set()
+
+    def add(candidate: Path) -> None:
+        """Append *candidate* unless some earlier entry already named that file."""
+        key = candidate.resolve()
+        if key in seen:
+            logger.debug(f"lab path {candidate} already contributed by an earlier entry")
+            return
+        seen.add(key)
+        found.append(candidate)
+
+    for entry in paths:
+        text = str(entry)
+        if any(c in text for c in _GLOB_CHARS):
+            parts = entry.parts
+            first_glob = next(i for i, p in enumerate(parts) if any(c in p for c in _GLOB_CHARS))
+            root = Path(*parts[:first_glob]) if first_glob else Path()
+            pattern = str(Path(*parts[first_glob:]))
+            matches = sorted(p for p in root.glob(pattern) if p.is_file() and p.suffix == ".json")
+            if not matches:
+                logger.debug(f"lab path glob {text!r} matched no .json file")
+            for match in matches:
+                add(match)
+            continue
+        candidate = entry if entry.suffix == ".json" else entry / LAB_FILENAME
+        if candidate.is_file():
+            add(candidate)
+    return found
+
+
+def parse_lab_sections(data: object, source: str) -> dict[str, Any]:
     """Validate a parsed ``lab.json`` object's section shape; return its sections.
 
     The single source of truth for the ``lab.json`` object contract — shared by
@@ -44,37 +107,46 @@ def parse_lab_sections(data: object, source: str) -> dict[str, list[Any]]:
     to drift). *data* is the already-parsed JSON value; *source* names its
     origin (a file path) for error messages.
 
-    Top-level ``_``-prefixed keys and the ``$schema`` key (standard
-    editor-wiring idiom for VS Code / jsonls) are treated as comment space;
-    unknown sections fail loud. Returns a dict carrying every known section as
-    a (possibly empty) list.
+    Returns ``{"labs": dict, "elements": list, "links": list}`` (absent
+    sections empty). ``$schema`` and ``_``-prefixed keys are comment space.
+    A top-level ``hosts`` key is the v1 shape and fails with the migration
+    hint; any other unknown section fails naming it.
 
     Raises
     ------
     LabRepositoryError
-        If *data* is not a JSON object, carries an unknown top-level section,
-        or a section's value is not a JSON array.
+        If *data* is not a JSON object, carries the v1 ``hosts`` section or an
+        unknown one, or a section's value has the wrong JSON type.
     """
     if not isinstance(data, dict):
         raise LabRepositoryError(
             f"Lab file '{source}' must contain a JSON object with "
-            f"'hosts'/'links' sections, got {type(data).__name__}"
+            f"'labs'/'elements'/'links' sections, got {type(data).__name__}"
         )
     # `$schema` is the standard editor-wiring key (VS Code / jsonls) — treated
     # as comment space alongside `_`-prefixed keys.
     # str(k) so a non-string key (possible: *data* is typed ``object``, and the
     # doctor hands us any parsed value) still sorts into the error message
     # instead of raising TypeError out of ``sorted`` below.
-    unknown = {
+    keys = {
         str(k) for k in data if not (isinstance(k, str) and (k.startswith("_") or k == "$schema"))
-    } - _LAB_SECTIONS
+    }
+    if "hosts" in keys:
+        raise LabRepositoryError(f"Lab file '{source}': {_MIGRATION_HINT}")
+    unknown = keys - _LAB_SECTIONS
     if unknown:
         raise LabRepositoryError(
             f"Lab file '{source}' has unknown section(s) {sorted(unknown)}; "
             f"known sections: {sorted(_LAB_SECTIONS)}"
         )
-    out: dict[str, list[Any]] = {}
-    for section in _LAB_SECTIONS:
+    labs = data.get("labs", {})
+    if not isinstance(labs, dict):
+        raise LabRepositoryError(
+            f"Lab file '{source}': section 'labs' must be a JSON object keyed by lab name, "
+            f"got {type(labs).__name__}"
+        )
+    out: dict[str, Any] = {"labs": labs}
+    for section in ("elements", "links"):
         value = data.get(section, [])
         if not isinstance(value, list):
             raise LabRepositoryError(
@@ -85,31 +157,111 @@ def parse_lab_sections(data: object, source: str) -> dict[str, list[Any]]:
     return out
 
 
+def parse_lab_entries(raw: dict[str, Any], source: str) -> dict[str, LabEntrySpec]:
+    """Validate the ``labs`` table; keys are lab names, values ``LabEntrySpec``."""
+    out: dict[str, LabEntrySpec] = {}
+    for name, value in raw.items():
+        if not isinstance(name, str) or not name.strip():
+            raise LabRepositoryError(f"Lab file '{source}': 'labs' key {name!r} is not a lab name")
+        if name.startswith("_"):
+            continue  # comment key inside the table
+        try:
+            out[name] = LabEntrySpec.model_validate(value)
+        except ValidationError as e:
+            raise LabRepositoryError(f"Lab file '{source}': labs[{name!r}] {e}") from e
+    return out
+
+
+def parse_elements(raw: list[Any], source: str) -> list[ElementSpec]:
+    """Validate every ``elements`` entry; duplicate ``(name, id)`` is an error."""
+    seen: dict[ElementKey, int] = {}
+    out: list[ElementSpec] = []
+    for idx, entry in enumerate(raw):
+        spec = _parse_element(entry, idx, source)
+        if spec.key in seen:
+            raise LabRepositoryError(
+                f"Lab file '{source}': duplicate element {spec.key} at elements[{seen[spec.key]}] "
+                f"and elements[{idx}] — one element, one entry"
+            )
+        seen[spec.key] = idx
+        out.append(spec)
+    return out
+
+
+def _parse_element(entry: object, idx: int, source: str) -> ElementSpec:
+    """Validate one ``elements`` entry, naming *source* and its index on failure.
+
+    A free function rather than the loop body it is called from: the
+    ``try``/``except`` belongs outside the loop (``PERF203``).
+    """
+    if not isinstance(entry, dict):
+        raise LabRepositoryError(
+            f"Lab file '{source}': elements[{idx}] must be a JSON object, "
+            f"got {type(entry).__name__}"
+        )
+    try:
+        return ElementSpec.model_validate(entry)
+    except ValidationError as e:
+        raise LabRepositoryError(f"Lab file '{source}': elements[{idx}] {e}") from e
+
+
+@dataclass(frozen=True)
+class _Document:
+    """One parsed lab file of a source: its labs table, elements and raw links."""
+
+    path: Path
+    """The file these sections came from — what an error message names."""
+
+    entries: dict[str, LabEntrySpec]
+    """The file's ``labs`` table, keyed by lab name."""
+
+    elements: list[ElementSpec]
+    """The file's ``elements``, in declaration order."""
+
+    links: list[Any]
+    """The file's raw ``links`` entries, resolved later against loaded ids."""
+
+
 class JsonFileLabRepository:
     """Load labs from ``lab.json`` files across a fixed set of search paths.
 
-    A search path takes one of two forms: a **directory**, which is searched
-    for a ``lab.json``, or a path ending in **``.json``**, which *is* the lab
-    file and is read directly. Either form is skipped silently when it does not
-    resolve to an existing file, so a repository may draw on several sources
+    A search path takes one of three forms: a **directory**, which is searched
+    for a ``lab.json``; a path ending in **``.json``**, which *is* the lab
+    file; or a **glob** (an entry containing ``*``, ``?`` or ``[``), which
+    expands to the sorted ``.json`` files it matches. Any form that resolves to
+    nothing is skipped silently, so a repository may draw on several sources
     and tolerate absent ones.
 
-    Each lab file is a JSON object with array sections —
-    ``{"hosts": [...], "links": [...]}``. The search paths are supplied once at
-    construction — this is the built-in ``"json"`` backend, and
-    :func:`otto.labs.build_lab_sources` feeds it the ``paths`` of the
-    ``[[lab.sources]]`` entry that selected it. The ``hosts`` section holds all
-    known hosts; a host's ``labs`` field lists the labs it belongs to, mirroring
-    a row-with-membership database design. Top-level ``_``-prefixed keys are
-    comment space; unknown sections fail loud.
+    Each lab file is a v2 JSON object with three optional sections — ``labs``
+    (the table of declared labs, keyed by name, each with ``resources`` and
+    ``metadata``), ``elements`` (entries carrying identity, ``labs``
+    membership patterns, ``metadata`` and their host entries) and ``links``.
+    A top-level ``hosts`` key is the v1 shape and fails with a migration
+    message; top-level ``_``-prefixed keys are comment space and unknown
+    sections fail loud.
+
+    The files of ONE source compose by union (spec §2.4): an element in one
+    file may join a lab declared in another, and a duplicate within the source
+    — the same element ``(name, id)``, or the same lab declared twice — is a
+    typo, not an override, and fails naming both files. The search paths are
+    supplied once at construction — this is the built-in ``"json"`` backend,
+    and :func:`otto.labs.build_lab_sources` feeds it the ``paths`` of the
+    ``[[lab.sources]]`` entry that selected it.
+
+    :meth:`load_lab` returns THIS source's contribution to a lab: the members
+    whose element patterns :func:`re.fullmatch` the requested name, plus the
+    lab's ``resources``/``metadata`` if this source declares it. The composite
+    (:class:`otto.labs.composite.CompositeLabRepository`) merges contributions
+    across sources.
     """
 
     def __init__(self, search_paths: list[Path] | None = None) -> None:
         """Configure the paths this repository draws lab data from.
 
-        Each entry of *search_paths* is either a directory (searched for a
-        ``lab.json``) or a path ending in ``.json`` (read directly as the lab
-        file). Entries that do not resolve to an existing file are skipped.
+        Each entry of *search_paths* is a directory (searched for a
+        ``lab.json``), a path ending in ``.json`` (read directly as the lab
+        file), or a glob (expanded to the ``.json`` files it matches).
+        Entries that do not resolve to an existing file are skipped.
         """
         self.search_paths: list[Path] = list(search_paths or [])
 
@@ -118,60 +270,58 @@ class JsonFileLabRepository:
         name: str,
         preferences: dict[str, dict[str, Any]] | None = None,
     ) -> "Lab":
-        """Load a lab by filtering hosts from the configured lab.json files.
+        """Load this source's contribution to the lab called *name*.
+
+        Members are the hosts of every element whose ``labs`` patterns
+        fullmatch *name*; ``resources`` and ``metadata[name]`` are filled only
+        when this source's ``labs`` table declares *name*.
 
         Raises
         ------
         LabNotFoundError
-            If no lab file exists in any search path, or no host belongs to
-            the requested lab.
+            If no lab file exists in any search path, or this source neither
+            declares *name* nor holds an element matching it.
         LabRepositoryError
             If a lab.json is malformed or a host's data is invalid.
         """
         from ..config.lab import Lab
 
         try:
-            lab_files = self._find_lab_files()
+            docs = self._load_documents()
         except FileNotFoundError as e:
             raise LabNotFoundError(str(e)) from None
 
-        all_hosts_data: list[dict[str, Any]] = []
-        all_links_data: list[dict[str, Any]] = []
-        for lab_file in lab_files:
-            sections = self._load_lab_file(lab_file)
-            all_hosts_data.extend(sections["hosts"])
-            all_links_data.extend(sections["links"])
-        # ``all_links_data`` spans ALL lab files (like ``all_hosts_data``) so
-        # declared links can resolve dangling (cross-lab) endpoints below.
+        declared: LabEntrySpec | None = None
+        members: list[tuple[ElementSpec, Path]] = []  # (element, source file)
+        all_elements: list[ElementSpec] = []
+        all_links: list[Any] = []
+        for doc in docs:
+            if name in doc.entries:
+                # Unique per source: _load_documents errors on a repeat.
+                declared = doc.entries[name]
+            members.extend((el, doc.path) for el in doc.elements if el.matches(name))
+            all_elements.extend(doc.elements)
+            all_links.extend(doc.links)
+        # ``all_elements`` and ``all_links`` span ALL lab files so declared links
+        # can resolve dangling (cross-lab) endpoints below.
 
-        matching = [h for h in all_hosts_data if name in h.get("labs", [])]
-
-        if not matching:
+        if declared is None and not members:
             searched = "\n  ".join(str(p) for p in self.search_paths)
             raise LabNotFoundError(
-                f"Lab '{name}' not found in any search path:\n  {searched}"
+                f"Lab '{name}' is neither declared in a 'labs' table nor matched by any "
+                f"element's 'labs' patterns in:\n  {searched}"
             ) from None
 
-        for idx, host_data in enumerate(matching):
-            try:
-                validate_host_dict(host_data)
-            except ValueError as e:  # noqa: PERF203 — per-item resilience
-                raise LabRepositoryError(
-                    f"Invalid host data at index {idx} in lab '{name}': {e}"
-                ) from e
-
         lab = Lab(name=name)
+        if declared is not None:
+            # The lab is the reservable unit (spec §8.1): its resources are
+            # DECLARED here, never read back off its hosts.
+            lab.resources = set(declared.resources)
+            lab.metadata[name] = dict(declared.metadata)
 
-        for idx, host_data in enumerate(matching):
-            try:
-                host = create_host_from_dict(host_data, preferences=preferences, lab_name=name)
-                lab.add_host(host)
-                lab.resources.update(host.resources)
-            except Exception as e:  # noqa: PERF203 — per-item resilience
-                logger.exception(f"Failed to create host at index {idx} in lab '{name}'")
-                raise LabRepositoryError(
-                    f"Failed to create host at index {idx} in lab '{name}': {e}"
-                ) from e
+        for element, path in members:
+            for idx, host_data in enumerate(element.flatten()):
+                _add_host(lab, host_data, element, idx, path, preferences)
 
         from ..link.derive import addressing_from_dict, resolve_declared_links
 
@@ -181,20 +331,17 @@ class JsonFileLabRepository:
         # common case) skips the walk entirely rather than paying for a map
         # nothing reads.
         #
-        # Guard: all_hosts_data spans ALL lab files, including entries never
-        # validated (they belong to other labs) — skip shapes that can't
+        # Guard: the flattened records span ALL lab files, including entries
+        # never validated (they belong to other labs) — skip shapes that can't
         # produce an id rather than crash link resolution on someone else's typo.
         # The requested lab's own hosts were already validated above, so any
-        # exception here belongs to an unrelated lab's malformed record.
+        # exception here belongs to an unrelated lab's malformed record. No
+        # `element` guard: a record whose element comes from its os_profile DOES
+        # load, so skipping it would fail a link naming a host that plainly
+        # exists — the except below covers the genuinely element-less record.
         addressing: dict[str, Any] = {}
-        for h in all_hosts_data if all_links_data else ():
-            # Only the dict check: an `element` guard would ALSO skip a record
-            # whose element comes from its os_profile, and that record's host
-            # does load — so a link naming it would fail against a host that
-            # plainly exists. The except below covers a genuinely element-less
-            # record, which now raises rather than KeyError-ing.
-            if not isinstance(h, dict):
-                continue
+        all_flat = [f for el in all_elements for f in el.flatten()] if all_links else []
+        for h in all_flat:
             try:
                 host_id, host_addressing = addressing_from_dict(h)
             except Exception as e:  # noqa: BLE001 — per-item resilience, see guard above
@@ -213,21 +360,23 @@ class JsonFileLabRepository:
                 continue
             addressing[host_id] = host_addressing
         loaded_ids = set(lab.hosts)
-        # ``all_links_data`` spans ALL lab files (like ``all_hosts_data``), so a
+        # ``all_links`` spans ALL lab files (like ``all_elements``), so a
         # typo'd link between two hosts of an UNRELATED lab must not break this
         # lab's load: ``resolve_declared_links`` skips entries touching no loaded
         # host, symmetric with the cross-lab host-record containment above. Links
         # touching this lab still fail loud with their original file index.
         try:
-            declared = resolve_declared_links(
-                all_links_data, addressing, source=LAB_FILENAME, loaded_ids=loaded_ids
+            declared_links = resolve_declared_links(
+                all_links, addressing, source=LAB_FILENAME, loaded_ids=loaded_ids
             )
         except ValueError as e:
             raise LabRepositoryError(str(e)) from e
         # Membership: only links with >= 1 endpoint in this lab (guaranteed by
         # the skip above, restated here so the invariant is visible at the call site).
         lab.links = [
-            link for link in declared if link.a.host in loaded_ids or link.b.host in loaded_ids
+            link
+            for link in declared_links
+            if link.a.host in loaded_ids or link.b.host in loaded_ids
         ]
 
         logger.debug(f"Loaded lab '{name}' with {len(lab.hosts)} hosts")
@@ -244,6 +393,10 @@ class JsonFileLabRepository:
         formatting the raw JSON instead would silently diverge (a float
         ``element_id``, or a profile that defaults ``board``/``slot``).
 
+        ``labs`` is each element's patterns resolved against the labs THIS
+        source declares; ``lab_patterns`` carries the patterns themselves, so
+        the composite can re-resolve them against every source's declarations.
+
         Best-effort, like :meth:`list_labs`: a malformed file or host entry
         is skipped rather than raised — these feed completion, which must
         never crash the shell. Hosts listed in several lab files merge by
@@ -252,67 +405,92 @@ class JsonFileLabRepository:
         by_id: dict[str, HostSummary] = {}
 
         try:
-            lab_files = self._find_lab_files()
+            docs = self._load_documents(best_effort=True)
         except FileNotFoundError:
             return []
 
-        for lab_file in lab_files:
-            try:
-                hosts_data = self._load_lab_file(lab_file)["hosts"]
-            except LabRepositoryError:
-                continue
-            for host_data in hosts_data:
-                if not isinstance(host_data, dict):
-                    continue
-                try:
-                    identity = host_identity(host_data)
-                except (ValueError, TypeError):
-                    continue
-                labs = [lab for lab in host_data.get("labs", []) if isinstance(lab, str)]
-                existing = by_id.get(identity.id)
-                if existing is not None:
-                    existing.labs.extend(lab for lab in labs if lab not in existing.labs)
-                    continue
-                by_id[identity.id] = HostSummary(
-                    id=identity.id,
-                    labs=labs,
-                    ip=identity.ip,
-                    element=identity.element,
-                    element_id=identity.element_id,
-                    docker_capable=identity.docker_capable,
-                )
+        declared = sorted({n for doc in docs for n in doc.entries})
+        for doc in docs:
+            for element in doc.elements:
+                labs = [n for n in declared if element.matches(n)]
+                for flat in element.flatten():
+                    try:
+                        identity = host_identity(flat)
+                    except (ValueError, TypeError):
+                        continue
+                    existing = by_id.get(identity.id)
+                    if existing is not None:
+                        existing.labs.extend(n for n in labs if n not in existing.labs)
+                        existing.lab_patterns.extend(
+                            p for p in element.labs if p not in existing.lab_patterns
+                        )
+                        continue
+                    by_id[identity.id] = HostSummary(
+                        id=identity.id,
+                        labs=list(labs),
+                        lab_patterns=list(element.labs),
+                        ip=identity.ip,
+                        element=identity.element,
+                        element_id=identity.element_id,
+                        docker_capable=identity.docker_capable,
+                    )
 
         return sorted(by_id.values(), key=lambda s: s.id)
 
     def list_labs(self) -> list[str]:
-        """List all lab names referenced by hosts across the configured paths.
+        """List the lab names DECLARED across the configured paths.
 
-        Returns an empty list when no lab.json exists. A malformed lab.json is
-        skipped rather than raised, so listing stays best-effort.
+        The declared set, not the elements' membership patterns: a pattern is
+        a regex, not a name (one with a quantifier or a group names nothing),
+        and an undeclared lab does not exist (spec §2.1). Returns an empty list
+        when no lab file exists. A malformed lab.json is skipped rather than
+        raised, so listing stays best-effort.
         """
-        lab_names: set[str] = set()
-
         try:
-            lab_files = self._find_lab_files()
+            docs = self._load_documents(best_effort=True)
         except FileNotFoundError:
             return []
+        return sorted({n for doc in docs for n in doc.entries})
 
-        for lab_file in lab_files:
+    def _load_documents(self, *, best_effort: bool = False) -> list[_Document]:
+        """Parse every lab file: its path, labs table, elements and raw links.
+
+        Within ONE source a duplicate is a typo, never an override: the same
+        element ``(name, id)`` or the same lab declaration in two files fails
+        naming both. *best_effort* (completion paths) skips a malformed or
+        duplicating file with a debug log instead of raising.
+        """
+        docs: list[_Document] = []
+        seen_elements: dict[ElementKey, Path] = {}
+        seen_labs: dict[str, Path] = {}
+        for lab_file in self._find_lab_files():
             try:
-                hosts_data = self._load_lab_file(lab_file)["hosts"]
+                sections = self._load_lab_file(lab_file)
+                entries = parse_lab_entries(sections["labs"], str(lab_file))
+                elements = parse_elements(sections["elements"], str(lab_file))
+                check_in_source_duplicates(
+                    entries,
+                    elements,
+                    lab_file,
+                    seen_labs=seen_labs,
+                    seen_elements=seen_elements,
+                )
             except LabRepositoryError:
+                if not best_effort:
+                    raise
+                logger.debug(
+                    f"skipping lab file {lab_file} while enumerating (malformed or duplicating)"
+                )
                 continue
-            for host in hosts_data:
-                for lab in host.get("labs", []):
-                    lab_names.add(lab)
-
-        return sorted(lab_names)
+            docs.append(_Document(lab_file, entries, elements, sections["links"]))
+        return docs
 
     def _find_lab_files(self) -> list[Path]:
         """Find all lab files across the configured search paths.
 
-        A directory entry contributes its ``lab.json``; a ``.json`` entry is
-        itself the lab file. Entries that resolve to nothing are skipped.
+        Delegates the entry-to-files rule to :func:`expand_lab_paths` — the
+        same helper ``CompiledLabSource.lab_files()`` reads, so the backend and
+        the config side can never disagree about which files a source holds.
 
         Raises
         ------
@@ -320,39 +498,33 @@ class JsonFileLabRepository:
             Internal signal (translated to LabNotFoundError by ``load_lab`` and
             swallowed by ``list_labs``) when no lab file is found.
         """
-        found: list[Path] = []
-        for search_path in self.search_paths:
-            # A path ending in .json IS the lab file; anything else is a
-            # directory searched for lab.json (spec 2026-08-19 §4).
-            candidate = search_path if search_path.suffix == ".json" else search_path / LAB_FILENAME
-            if candidate.exists() and candidate.is_file():
-                found.append(candidate)
+        found = expand_lab_paths(self.search_paths)
 
         if not found:
             searched = "\n  ".join(str(p) for p in self.search_paths)
             raise FileNotFoundError(
                 f"No lab data found in any search path (directories are searched "
-                f"for {LAB_FILENAME}; .json entries are read directly):\n  {searched}"
+                f"for {LAB_FILENAME}; .json entries are read directly; globs are "
+                f"expanded):\n  {searched}"
             ) from None
 
         return found
 
-    def _load_lab_file(self, lab_file: Path) -> dict[str, list[Any]]:
-        """Load one ``lab.json``: an object with ``hosts`` / ``links`` array sections.
+    def _load_lab_file(self, lab_file: Path) -> dict[str, Any]:
+        """Load one ``lab.json``: an object with ``labs``/``elements``/``links`` sections.
 
         Reads the file, then delegates the section-shape contract (object guard,
         ``_``-comment allowance — also tolerating a top-level ``$schema`` key,
-        the editor-wiring idiom — unknown-section rejection, per-section array
-        check) to :func:`parse_lab_sections` — the same helper the ``otto init``
-        doctor uses, so the two can never diverge. Adding a future section (e.g.
-        ``elements``) means extending ``_LAB_SECTIONS``.
+        the editor-wiring idiom — v1 ``hosts`` rejection, unknown-section
+        rejection, per-section type check) to :func:`parse_lab_sections` — the
+        same helper the ``otto init`` doctor uses, so the two can never diverge.
 
         Raises
         ------
         LabRepositoryError
             If the file contains malformed JSON, its top-level value is not a
-            JSON object, it carries an unknown section, or a section's value is
-            not a JSON array.
+            JSON object, it carries the v1 ``hosts`` section or an unknown one,
+            or a section's value has the wrong JSON type.
         """
         try:
             with lab_file.open() as f:
@@ -360,3 +532,107 @@ class JsonFileLabRepository:
         except json.JSONDecodeError as e:
             raise LabRepositoryError(f"Lab file '{lab_file}' contains malformed JSON: {e}") from e
         return parse_lab_sections(data, str(lab_file))
+
+
+def _add_host(
+    lab: "Lab",
+    host_data: dict[str, Any],
+    element: ElementSpec,
+    idx: int,
+    path: Path,
+    preferences: dict[str, dict[str, Any]] | None,
+) -> None:
+    """Build one flattened host entry and add it to *lab*.
+
+    A free function rather than the loop body it is called from: the
+    ``try``/``except`` belongs outside the loop (``PERF203``), and the error
+    text is the point — spec §9 wants the file, the element and the index of
+    the host entry that failed, not a running count across elements.
+
+    EVERY failure becomes a :class:`~otto.labs.errors.LabRepositoryError`
+    carrying that context, with the original chained as ``__cause__``.
+    """
+    try:
+        validate_host_dict(host_data)
+        host = create_host_from_dict(
+            host_data,
+            preferences=preferences,
+            lab_name=lab.name,
+            element_metadata=element.metadata,
+        )
+        lab.add_host(host)
+    except Exception as e:
+        # ``Exception``, not the validation errors alone: past the specs, the
+        # factory runs SUT-REPO code — ``to_host`` plus the product and
+        # dev-tool providers — which may raise anything at all. The composite
+        # absorbs only LabNotFoundError, so a provider bug caught narrowly here
+        # would surface as a raw traceback naming none of the hundred entries
+        # it could have come from. Nothing is swallowed: the original is
+        # chained and its text is quoted.
+        raise LabRepositoryError(
+            f"Lab file '{path}': element {element.name!r} hosts[{idx}] in lab {lab.name!r}: {e}"
+        ) from e
+
+
+def check_in_source_duplicates(
+    entries: dict[str, LabEntrySpec],
+    elements: list[ElementSpec],
+    lab_file: Path,
+    *,
+    seen_labs: dict[str, Path],
+    seen_elements: dict[ElementKey, Path],
+) -> None:
+    """Reject, then record, one file's declarations against its SOURCE's running state.
+
+    Within one source a duplicate is a typo, never an override (spec §2.4): the
+    same lab declared, or the same element ``(name, id)`` carried, by two of a
+    source's files fails naming both. Across sources the same re-declaration is
+    legal — that is the ``[[lab.sources]]`` override seam — so *seen_labs* and
+    *seen_elements* must be reset per source and threaded across only that
+    source's files.
+
+    Checking and recording are one call deliberately: a caller that checked but
+    forgot to record would silently accept every duplicate after the first.
+    The recording happens only once both checks pass, so a rejected file never
+    poisons the state for the files after it.
+
+    Callers are ``JsonFileLabRepository._load_documents`` and the
+    ``otto init`` doctor (``otto.cli.init._parse_lab_documents``), which is the
+    whole point of it being public: the doctor must refuse exactly what the
+    loader refuses, and it can only do that by running this code rather than a
+    second copy of it.
+
+    Raises
+    ------
+    LabRepositoryError
+        Naming both files, on a duplicate lab declaration or element key.
+    """
+    _reject_duplicate_labs(entries, seen_labs, lab_file)
+    _reject_duplicate_elements(elements, seen_elements, lab_file)
+    seen_labs.update(dict.fromkeys(entries, lab_file))
+    seen_elements.update({el.key: lab_file for el in elements})
+
+
+def _reject_duplicate_labs(
+    entries: dict[str, LabEntrySpec], seen: dict[str, Path], lab_file: Path
+) -> None:
+    """Raise when a lab *entries* declares was already declared by another file."""
+    for name in entries:
+        if name in seen:
+            raise LabRepositoryError(
+                f"lab {name!r} declared in both {seen[name]} and {lab_file} — "
+                f"one source, one declaration (a second [[lab.sources]] entry is "
+                f"the override seam)"
+            )
+
+
+def _reject_duplicate_elements(
+    elements: list[ElementSpec], seen: dict[ElementKey, Path], lab_file: Path
+) -> None:
+    """Raise when an element of *elements* was already carried by another file."""
+    for element in elements:
+        if element.key in seen:
+            raise LabRepositoryError(
+                f"duplicate element {element.key} in {seen[element.key]} and "
+                f"{lab_file} — one element, one entry"
+            )

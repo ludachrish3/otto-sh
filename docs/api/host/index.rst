@@ -26,6 +26,7 @@ local and remote machines.
    telnet
    os_profile
    factory
+   lab_info
    command_frame
    daemon
    toolchain

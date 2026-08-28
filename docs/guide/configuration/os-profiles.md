@@ -44,11 +44,15 @@ With this profile in place, a host entry only needs to name the profile:
 
 ```json
 {
-    "ip": "192.0.2.1",
-    "element": "zephyr37_fat",
-    "os_type": "zephyr-3.7-fat32",
-    "hop": "test4",
-    "labs": ["embedded"]
+    "name": "zephyr37_fat",
+    "labs": ["embedded"],
+    "hosts": [
+        {
+            "ip": "192.0.2.1",
+            "os_type": "zephyr-3.7-fat32",
+            "hop": "test4"
+        }
+    ]
 }
 ```
 
