@@ -20,6 +20,8 @@ Emitted documents (default):
   (:class:`~otto.models.link.LinkSpec`),
 - ``settings`` — for ``settings.toml``,
 - ``reservations`` — for the reservations JSON file,
+- ``inventory`` — for the json inventory backend's file
+  (:class:`~otto.models.inventory.InventoryRecord` per key),
 - ``monitor-meta`` — the monitor dashboard's internal chart/tab-layout model
   (:class:`~otto.models.monitor.MonitorMeta`); not user-edited and not served
   at any endpoint (it is reshaped into each session's ``SessionMeta`` for the
@@ -52,6 +54,7 @@ from ..host.transfer import TRANSFER_BACKENDS
 from ..link import IMPAIRERS
 from ..version import get_version
 from .host import HostSpec
+from .inventory import FILLABLE_INVENTORY_FIELDS, InventoryRecord
 from .lab import HOISTED_HOST_KEYS, ElementSpec, LabEntrySpec
 from .link import LinkSpec
 from .monitor import (
@@ -214,6 +217,56 @@ def _drop_hoisted_keys(schema: dict[str, Any]) -> None:
         schema["required"] = [k for k in required if k not in HOISTED_HOST_KEYS]
 
 
+def _allow_inventory_reference(doc: dict[str, Any]) -> None:
+    """Let a referenced entry state ``inventory`` INSTEAD of the fields a record fills (spec §5).
+
+    ``lab.json`` is a SUPERSET of what a host spec validates: an entry with
+    ``"inventory": "<key>"`` carries no ``ip`` — nor, under a ``creds_file``,
+    any ``creds`` — because those arrive from the inventory record, and the
+    loader joins the two (:func:`otto.inventory.resolve_host_entry`) before
+    the spec ever sees the dict. Without this, the schema an editor validates
+    ``lab.json`` against would red-underline every referenced entry in a file
+    otto loads perfectly.
+
+    Expressed as a CHOICE, not by dropping the requirement: the fields leave
+    the top-level ``required`` list but come back as one arm of an
+    ``anyOf`` whose other arm is ``inventory``. An entry with neither an
+    address nor a reference is still an error, and an inline entry still
+    needs everything it always needed — which is the whole value of the
+    schema in an editor.
+    """
+    required = doc.get("required")
+    if not isinstance(required, list) or "inventory" not in doc.get("properties", {}):
+        return
+    inline_only = [name for name in required if name not in FILLABLE_INVENTORY_FIELDS]
+    if inline_only == required:
+        return  # nothing here the inventory could fill; a reference changes nothing
+    doc["required"] = inline_only
+    # `allOf`-wrapped and appended rather than assigned to `anyOf`: the
+    # per-spec transforms above are free to introduce one of their own, and
+    # a sibling `anyOf` would silently replace it.
+    #
+    # The reference arm constrains the VALUE, not just the key, because JSON
+    # Schema's `required` means PRESENT — not present and useful. Without the
+    # `properties` clause, `{"inventory": null}` and `{"inventory": ""}` both
+    # satisfy it and validate a document otto REFUSES at load: ``null`` is
+    # "references nothing" (R7), so the entry is inline and still owes an
+    # ``ip``, and the empty string is an ``InventoryError``. Both failed this
+    # schema on the missing ``ip`` before the relaxation, so omitting this
+    # would widen a hole rather than open the intended one.
+    doc.setdefault("allOf", []).append(
+        {
+            "anyOf": [
+                {"required": list(required)},
+                {
+                    "required": ["inventory"],
+                    "properties": {"inventory": {"type": "string", "minLength": 1}},
+                },
+            ]
+        }
+    )
+
+
 def _host_entries_schema(
     distinct: list[type[HostSpec]], names: dict[str, type[HostSpec]]
 ) -> dict[str, Any]:
@@ -232,6 +285,7 @@ def _host_entries_schema(
             _inject_selector_enums(top["$defs"][key], s)
             _inject_interface_shorthand(top["$defs"][key])
             _drop_hoisted_keys(top["$defs"][key])
+            _allow_inventory_reference(top["$defs"][key])
             _allow_comment_keys(top["$defs"][key])
     return {
         "type": "array",
@@ -321,6 +375,27 @@ def _monitor_export_schema() -> dict[str, Any]:
     return doc
 
 
+def _inventory_schema() -> dict[str, Any]:
+    """Build the json inventory backend's file schema: ``{key: InventoryRecord}`` (spec §9.1, §11).
+
+    ``$schema`` is the editor-wiring string; ``_``-prefixed top-level keys and
+    record keys are comment space, mirroring what ``parse_inventory_document``
+    skips and ``InventoryRecord._strip`` drops.
+    """
+    record = InventoryRecord.model_json_schema(ref_template="#/$defs/{model}")
+    _inject_interface_shorthand(record)
+    _allow_comment_keys(record)
+    defs = record.pop("$defs", {})
+    defs["InventoryRecord"] = record
+    return {
+        "type": "object",
+        "properties": {"$schema": {"type": "string"}},
+        "patternProperties": {"^_": {}},
+        "additionalProperties": {"$ref": "#/$defs/InventoryRecord"},
+        "$defs": defs,
+    }
+
+
 def _lab_schema(distinct: list[type[HostSpec]], names: dict[str, type[HostSpec]]) -> dict[str, Any]:
     """Build the v2 ``lab.json`` object schema.
 
@@ -399,6 +474,7 @@ def build_schemas(*, builtins_only: bool = False) -> dict[str, dict[str, Any]]:
     docs["reservations"] = _decorate(
         ReservationFile.model_json_schema(), "reservations", "otto reservations"
     )
+    docs["inventory"] = _decorate(_inventory_schema(), "inventory", "otto inventory.json")
     docs["monitor-meta"] = _decorate(
         MonitorMeta.model_json_schema(),
         "monitor-meta",

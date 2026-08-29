@@ -1,8 +1,8 @@
 # Editor setup
 
 otto can generate [JSON Schema](https://json-schema.org/) for the files you edit
-by hand — `lab.json`, `settings.toml`, and the reservations JSON — so your
-editor offers field autocomplete and flags typos. The schemas are generated from
+by hand — `lab.json`, `settings.toml`, the reservations JSON, and a `json`
+inventory file — so your editor offers field autocomplete and flags typos. The schemas are generated from
 the pydantic models inside the otto you have installed, so they always match your
 version. There is nothing to download and nothing that can go stale.
 
@@ -18,17 +18,24 @@ files first with {doc}`export`.
 
 ## VS Code
 
-`lab.json` and the reservations JSON are covered by the built-in JSON
-language server. Add to your workspace `.vscode/settings.json`:
+`lab.json`, the reservations JSON and a `json` inventory file are covered by
+the built-in JSON language server. Add to your workspace
+`.vscode/settings.json`:
 
 ```json
 {
   "json.schemas": [
     { "fileMatch": ["**/lab.json"], "url": "./.otto/schemas/lab.schema.json" },
-    { "fileMatch": ["**/reservations.json"], "url": "./.otto/schemas/reservations.schema.json" }
+    { "fileMatch": ["**/reservations.json"], "url": "./.otto/schemas/reservations.schema.json" },
+    { "fileMatch": ["**/inventory*.json"], "url": "./.otto/schemas/inventory.schema.json" }
   ]
 }
 ```
+
+The inventory association covers a file kept inside the workspace. An
+inventory shared across projects usually lives outside every repo (see
+{doc}`../../configuration/inventory`), so add the same entry to whatever
+workspace you edit it in.
 
 For `settings.toml`, install the
 [Even Better TOML](https://marketplace.visualstudio.com/items?itemName=tamasfe.even-better-toml)

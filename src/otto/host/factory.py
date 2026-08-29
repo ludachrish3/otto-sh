@@ -6,6 +6,7 @@ from typing import Any
 from ..models.host import HostSpec
 from .capability import select_option_defaults, select_preferences
 from .dev_tool import apply_dev_tool_providers
+from .inventory_ref import InventoryRef
 from .os_profile import (
     build_host_class,
     build_host_spec,
@@ -99,6 +100,26 @@ class HostIdentity:
     """Whether the host declares (or its profile defaults) docker capability."""
 
 
+def reject_unresolved_reference(host_data: dict[str, Any]) -> None:
+    """Refuse a host dict that still carries a non-null ``inventory`` key.
+
+    ``None`` (the field's default) references nothing — a host entry that
+    never mentioned the inventory validates as ``{"inventory": None, ...}``
+    under schema-legal round-tripping, and that is not a reference (R7). A
+    referenced entry has no address of its own; validating it here would
+    fail on ``ip`` with a message that points at the wrong thing. The lab
+    loader resolves every entry (:func:`otto.inventory.resolve_host_entry`)
+    before it reaches any factory function — this guard is for callers that
+    hand-build dicts.
+    """
+    if host_data.get("inventory") is not None:
+        raise ValueError(
+            f"host entry references inventory key {host_data['inventory']!r} but was not "
+            "resolved; call otto.inventory.resolve_host_entry(entry, inventory) first "
+            "(the lab loader does this for every entry it builds)"
+        )
+
+
 def host_identity(host_data: dict[str, Any]) -> HostIdentity:
     """Resolve a raw host dict's identity WITHOUT building the host.
 
@@ -116,6 +137,7 @@ def host_identity(host_data: dict[str, Any]) -> HostIdentity:
     including ``pydantic.ValidationError``) — callers enumerating a whole
     fleet are expected to skip entries that fail.
     """
+    reject_unresolved_reference(host_data)
     selector = host_data.get("os_type", "unix")
     profile = build_os_profile(selector)
     spec_cls = build_host_spec(profile.base)
@@ -137,6 +159,7 @@ def create_host_from_dict(
     lab_name: str | None = None,
     *,
     element_metadata: dict[str, Any] | None = None,
+    inventory_ref: InventoryRef | None = None,
 ) -> RemoteHost:
     """Create the appropriate :class:`~otto.host.remote_host.RemoteHost` subclass from a host dict.
 
@@ -156,7 +179,12 @@ def create_host_from_dict(
     ``element_metadata`` is the element's opaque table — a LOADER argument like
     ``lab_name`` (the file layer hoists it; the host spec forbids it on the
     entry), copied per host and stamped before the providers run.
+
+    ``inventory_ref`` is the provenance of an entry the loader resolved from an
+    inventory record — a LOADER argument like ``element_metadata``; the host
+    spec's own ``inventory`` field is the key and never reaches the factory.
     """
+    reject_unresolved_reference(host_data)
     selector = host_data.get("os_type", "unix")
     profile = build_os_profile(selector)
     cls = build_host_class(profile.base)
@@ -182,6 +210,7 @@ def create_host_from_dict(
     # invisible to exactly the code that needs it.
     host.source_lab = lab_name or ""
     host.element_metadata = dict(element_metadata or {})
+    host.inventory_ref = inventory_ref if inventory_ref is not None else InventoryRef()
     apply_product_providers(host)
     apply_dev_tool_providers(host)
     return host
@@ -202,6 +231,7 @@ def validate_host_dict(host_data: dict[str, Any]) -> None:
     pydantic.ValidationError
         On any structural problem (subclass of ``ValueError``).
     """
+    reject_unresolved_reference(host_data)
     selector = host_data.get("os_type", "unix")
     profile = get_os_profile(selector)
     if profile is None:

@@ -9,6 +9,7 @@ from otto.host.host import (
     SuppressCommandOutput,
     get_logging_command_output_enabled,
 )
+from otto.host.inventory_ref import InventoryRef
 from otto.host.local_host import LocalHost
 from otto.logger.mode import LogMode
 from otto.utils import Status
@@ -22,6 +23,11 @@ from tests.conftest import active_context
 def test_localhost_name():
     host = LocalHost()
     assert host.name == "localhost"
+
+
+def test_localhost_carries_an_empty_inventory_ref():
+    """The builtin ``local`` host is never resolved from an inventory record."""
+    assert LocalHost().inventory_ref == InventoryRef()
 
 
 # ---------------------------------------------------------------------------

@@ -1,0 +1,8 @@
+# The `~/.otto/settings.toml` half of the worked example (spec §20): the
+# inventory this tree's lab.json references. Relative paths anchor to the
+# directory this file lives in, so the fixture is checkout-independent.
+[inventory]
+backend = "json"
+path = "inventory.json"
+creds_file = "creds.json"
+supplies = ["ip", "interfaces", "is_virtual", "site", "rack", "shelf", "board", "os_name"]

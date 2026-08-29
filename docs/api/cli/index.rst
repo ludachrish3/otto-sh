@@ -15,3 +15,4 @@ The cli package implements otto's Typer-based command-line interface.
    cov
    docker
    reservation
+   inventory

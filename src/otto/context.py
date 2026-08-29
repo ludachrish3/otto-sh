@@ -796,11 +796,24 @@ async def open_context(
     """
     from .bootstrap import bootstrap
 
-    bootstrap()  # composition root — idempotent; registers user init-module components
+    result = bootstrap()  # composition root — idempotent; registers user init components
     from .config import load_lab
     from .config.lab import Lab
 
-    resolved_lab = lab if isinstance(lab, Lab) else load_lab(lab, search_paths or [])
+    if isinstance(lab, Lab):
+        resolved_lab = lab
+    else:
+        # Function-local, like every other `otto.inventory` import on a
+        # budgeted surface — and guarded by the `isinstance` above too:
+        # importing it even at function scope but unconditionally still pulls
+        # ~77 otto modules onto every `Lab`-object caller, who never resolves
+        # an inventory at all. The process inventory is resolved from the
+        # SAME repos bootstrap just composed, so a library caller's
+        # referenced entry joins exactly as the CLI's does (spec §6 —
+        # `cli/invoke.py` is the other caller).
+        from .inventory.config import build_inventory
+
+        resolved_lab = load_lab(lab, search_paths or [], inventory=build_inventory(result.repos))
     ctx = OttoContext(lab=resolved_lab, dry_run=dry_run, log_command_output=log_command_output)
     token = set_context(ctx)
     try:

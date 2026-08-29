@@ -90,6 +90,7 @@ from .host import (
 )
 from .interact import run_ssh_login, run_telnet_login
 from .interface import Interface
+from .inventory_ref import InventoryRef
 from .lab_info import LabInfo
 from .login_proxy import Cred, LoginProxyError, cred_for, resolve_chain
 from .options import (
@@ -295,6 +296,15 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     slot: int | None = field(default=None, repr=False)
     """Phyiscal slot number of the board to which this host belongs."""
 
+    site: int | str | None = field(default=None, repr=False)
+    """Site the host is installed at (a name or a number)."""
+
+    rack: int | str | None = field(default=None, repr=False)
+    """Rack within the site (a name or a number)."""
+
+    shelf: int | None = field(default=None, repr=False)
+    """Shelf / rack position."""
+
     hw_version: str | None = None
     """Hardware version description."""
 
@@ -425,6 +435,9 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
 
     lab_info: LabInfo = field(default_factory=LabInfo, repr=False)
     """The resolved lab this host came from (loader-stamped, like ``source_lab``)."""
+
+    inventory_ref: InventoryRef = field(default_factory=InventoryRef, repr=False)
+    """Inventory provenance; empty unless this host was resolved from a record."""
 
     debug_log_globs: list[str] = field(default_factory=list)
     """Remote paths/glob patterns ``get_debug_logs`` fetches. Default empty.

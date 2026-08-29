@@ -182,7 +182,7 @@ def test_malformed_entries_are_skipped_not_raised(tmp_path):
     A bad HOST entry, which is what stays per-record in v2: a malformed
     ELEMENT (or a non-object entry) fails ``ElementSpec`` at parse and takes
     its whole file out of the enumeration — see
-    ``test_json_repository_v2.py`` for that layer.
+    ``test_json_repository.py`` for that layer.
     """
     repo = _write_lab(
         tmp_path,

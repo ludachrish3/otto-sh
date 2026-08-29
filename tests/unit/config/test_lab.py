@@ -110,7 +110,7 @@ def test_load_lab_forwards_preferences(monkeypatch):
         def list_labs(self):
             return ["x"]
 
-        def load_lab(self, name, preferences=None):
+        def load_lab(self, name, preferences=None, inventory=None):
             captured["preferences"] = preferences
             lab = Lab(name=name)
             lab.add_host(

@@ -141,6 +141,7 @@ import os
 import tempfile
 import time
 import types
+from dataclasses import dataclass
 from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, Union, get_args, get_origin
@@ -167,7 +168,9 @@ CACHE_FILENAME = "completion_cache.json"
 # v12: lab.json v2 — membership by element pattern, labs declared in the labs
 #      table; hosts_by_lab buckets built by the old per-host rule must not be
 #      served.
-SCHEMA_VERSION = 12
+# v13: host summaries may carry an inventory-supplied ip (spec 2026-08-28
+#      host-inventory §11); the digest now includes the inventory fingerprint.
+SCHEMA_VERSION = 13
 
 # One home, two readers: `collect_test_names` decides which files to PARSE for
 # names, and `compute_fingerprint` decides which files to STAT for
@@ -519,7 +522,91 @@ def compute_fingerprint(repos: list["Repo"]) -> str:
             for lab_file in src.lab_files():
                 _hash_file(h, lab_file)
 
+    # Outside the per-repo loop: a process has exactly ONE inventory (spec §8),
+    # resolved across every active repo plus the user file, so mixing it in
+    # per repo would hash the same answer N times and still miss the case
+    # where the resolution itself is what changed.
+    h.update(f"inventory:{_inventory_fingerprint(repos).text}\n".encode())
+
     return h.hexdigest()
+
+
+@dataclass(frozen=True)
+class _InventoryDigest:
+    """The inventory's contribution to the fingerprint, and whether it may be STORED."""
+
+    text: str
+    """What :func:`compute_fingerprint` mixes in."""
+
+    cacheable: bool
+    """``False`` when *text* is a one-shot value no later read can ever match."""
+
+
+def _inventory_fingerprint(repos: list["Repo"]) -> "_InventoryDigest":
+    """Return the process inventory's freshness signal (spec 2026-08-28 host-inventory §11).
+
+    ``none`` without an inventory; the backend's ``fingerprint()`` (file
+    path/mtime/size, or a snapshot hash) when it has one. A backend that
+    returns ``None`` is not cacheable: mix in the clock so the entry never
+    matches — completion stays correct, by loading (documented) — and report
+    ``cacheable=False`` so no writer stores an entry under it
+    (:func:`_fingerprint_is_ephemeral`).
+
+    ``except Exception``, and ``fingerprint()`` INSIDE the guard, for the
+    reason :func:`_enumerate_host_summaries` gives: completion never crashes
+    the shell. ``construct_inventory`` wraps only ``TypeError``/``ValueError``
+    from a third-party constructor, so a networked backend's freshness probe
+    (§11's own example) can raise anything at all — an HTTP timeout, say — and
+    this runs inside ``write_cache``, past ``otto.cli.main``'s
+    ``suppress(OSError)``, which would traceback an otherwise-successful
+    command AFTER its real work was done.
+
+    A FAILURE IS EPHEMERAL TOO (R18), for the same reason a missing
+    fingerprint is: an inventory whose freshness probe failed has no stable
+    identity to key an entry on. The text still moves the digest — so a
+    broken declaration is never served the working one's entry, and the fix
+    moves it back — but nothing is STORED under it. Assuming the text stable
+    would have staked the cache's boundedness on a third party's error
+    strings: a message carrying a timestamp, a request id or a resolved IP is
+    ordinary, and every one of them would append a dead entry per invocation,
+    which is the growth :func:`_fingerprint_is_ephemeral` exists to stop.
+    """
+    from ..inventory import build_inventory
+
+    try:
+        inventory = build_inventory(repos)
+        if inventory is None:
+            return _InventoryDigest(text="none", cacheable=True)
+        fp = inventory.fingerprint()
+    except Exception as e:  # noqa: BLE001 — completion never crashes the shell
+        return _InventoryDigest(text=f"error:{type(e).__name__}:{e}", cacheable=False)
+    if fp is None:
+        return _InventoryDigest(text=f"uncacheable:{time.time_ns()}", cacheable=False)
+    return _InventoryDigest(text=fp, cacheable=True)
+
+
+def _fingerprint_is_ephemeral(repos: list["Repo"]) -> bool:
+    """Whether an entry written NOW could never be RELIABLY read back (spec §11).
+
+    Two cases, both from :func:`_inventory_fingerprint`: an inventory that
+    cannot report freshness gets a clock-stamped digest, which is a miss the
+    instant it is written; and one whose freshness probe RAISED has no stable
+    identity at all, so whether its digest repeats is a third party's error
+    string to decide. Storing under either appends one dead entry per otto
+    invocation, forever, into a file every TAB parses and every writer
+    rewrites whole — an unbounded cache that never serves a hit, which is
+    strictly worse than no cache at all.
+
+    Checked by EVERY writer keyed by :func:`compute_fingerprint` (the main
+    entry, the collected test names, the tunnel ids), not just the largest:
+    the payloads differ, the unbounded growth does not.
+
+    Costs one extra inventory resolution per write. Writers are slow-path
+    (once per command) and construction does no I/O, so the price is the
+    backend's own ``fingerprint()`` — which the digest was going to call
+    anyway.
+    """
+    return not _inventory_fingerprint(repos).cacheable
 
 
 # ---------------------------------------------------------------------------
@@ -765,11 +852,15 @@ def write_cache(  # noqa: PLR0913 — one keyword arg per cached name-set, by de
     empty-string sha256, which any shell without ``OTTO_SUT_DIRS`` would
     also compute, and that would wrongly override a real entry's meaning.
 
+    Also skipped when the process inventory cannot report freshness — see
+    :func:`_fingerprint_is_ephemeral`; this is the entry with the largest
+    payload, so it is where the unbounded growth would have hurt most.
+
     Atomic via ``tempfile`` + :func:`os.replace` so a concurrent otto
     invocation can't observe a half-written file. Stale entries from past
     SUT_DIRS combinations are left in place and ignored.
     """
-    if not repos:
+    if not repos or _fingerprint_is_ephemeral(repos):
         return
 
     cache_path = _cache_path()
@@ -1143,11 +1234,12 @@ _SUMMARY_MEMO: dict[str, list["HostSummary"]] = {}
 def _enumerate_host_summaries(
     repo: "Repo", abandoned: "threading.Event | None" = None
 ) -> list["HostSummary"]:
+    from ..inventory import build_inventory
     from ..labs import build_lab_sources, host_summaries
 
     try:
         repository = build_lab_sources([repo])
-        return host_summaries(repository)
+        return host_summaries(repository, inventory=build_inventory([repo]))
     except Exception as e:  # noqa: BLE001 — completion never crashes the shell
         if abandoned is None or not abandoned.is_set():
             logging.getLogger(__name__).warning(
@@ -1582,8 +1674,11 @@ def _record_collected_tests(repos: list["Repo"], names: list[str] | None) -> Non
     tab-time retry cooldown. Only the reserved :data:`COLLECTED_TESTS_KEY`
     namespace is touched — every main fingerprint entry is preserved — so this
     warmer and the slow-path writer never clobber each other.
+
+    Skipped, like every fingerprint-keyed writer, when the digest is ephemeral
+    (:func:`_fingerprint_is_ephemeral`).
     """
-    if not repos:
+    if not repos or _fingerprint_is_ephemeral(repos):
         return
     cache_path = _cache_path()
     if cache_path is None:
@@ -1747,8 +1842,12 @@ DYNAMIC_TUNNELS_TTL_SECONDS = 120  # tunnel state is volatile; short TTL (spec �
 
 
 def record_tunnel_ids(repos: list["Repo"], ids: list[str]) -> None:
-    """Cache the freshly-discovered tunnel ids for ``remove <id>`` completion."""
-    if not repos:
+    """Cache the freshly-discovered tunnel ids for ``remove <id>`` completion.
+
+    Skipped, like every fingerprint-keyed writer, when the digest is ephemeral
+    (:func:`_fingerprint_is_ephemeral`).
+    """
+    if not repos or _fingerprint_is_ephemeral(repos):
         return
     cache_path = _cache_path()
     if cache_path is None:

@@ -487,12 +487,14 @@ def _write_hosts_json(path: Path, hosts: list[dict]) -> Path:
 def _fake_repo(*lab_paths: Path) -> SimpleNamespace:
     """Stand-in for :class:`Repo` exposing what the completer reads.
 
-    ``lab_sources`` is the whole of it: the compiled ``[[lab.sources]]`` list
-    the host source is built from."""
+    ``lab_sources`` is the compiled ``[[lab.sources]]`` list the host source is
+    built from; ``inventory_settings`` is what ``build_inventory`` reads on the
+    same path (an omitted one makes the enumeration return no hosts at all)."""
     sut_dir = lab_paths[0].parent if lab_paths else Path()
     return SimpleNamespace(
         lab_sources=json_lab_sources(sut_dir, list(lab_paths)),
         sut_dir=sut_dir,
+        inventory_settings={},
     )
 
 

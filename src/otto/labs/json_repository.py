@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     # the first thing imported. load_lab() below imports Lab locally at call
     # time instead, by which point both modules are fully initialized.
     from ..config.lab import Lab
+    from ..inventory import Inventory
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +48,14 @@ _MIGRATION_HINT = (
 )
 
 _GLOB_CHARS = frozenset("*?[")
+
+# WHY `from ..inventory import ...` is function-local at every use site below
+# (three of them): this module is reached from every budgeted CLI surface
+# (scripts/import_budget.py), and a module-scope import would put
+# otto.inventory's nine modules on all ten of them for the overwhelmingly
+# common process that never resolves a single reference. The edge is real and
+# declared in tach.toml; only the timing is deferred, and the cost per call is
+# a sys.modules lookup beside a pydantic validation.
 
 
 def expand_lab_paths(paths: "Iterable[Path]") -> list[Path]:
@@ -269,6 +278,7 @@ class JsonFileLabRepository:
         self,
         name: str,
         preferences: dict[str, dict[str, Any]] | None = None,
+        inventory: "Inventory | None" = None,
     ) -> "Lab":
         """Load this source's contribution to the lab called *name*.
 
@@ -276,15 +286,23 @@ class JsonFileLabRepository:
         fullmatch *name*; ``resources`` and ``metadata[name]`` are filled only
         when this source's ``labs`` table declares *name*.
 
+        *inventory* is the process inventory referenced entries resolve
+        against (spec 2026-08-28 host-inventory §6). The join happens HERE,
+        once per entry, before the factory ever sees the dict; ``None`` means
+        a referenced entry is an error naming the file, the element and the
+        index.
+
         Raises
         ------
         LabNotFoundError
             If no lab file exists in any search path, or this source neither
             declares *name* nor holds an element matching it.
         LabRepositoryError
-            If a lab.json is malformed or a host's data is invalid.
+            If a lab.json is malformed, a host's data is invalid, or an entry
+            references an inventory key that cannot be resolved.
         """
         from ..config.lab import Lab
+        from ..inventory import resolve_host_entry  # lazy: see the note above
 
         try:
             docs = self._load_documents()
@@ -321,7 +339,7 @@ class JsonFileLabRepository:
 
         for element, path in members:
             for idx, host_data in enumerate(element.flatten()):
-                _add_host(lab, host_data, element, idx, path, preferences)
+                _add_host(lab, host_data, element, idx, path, preferences, inventory)
 
         from ..link.derive import addressing_from_dict, resolve_declared_links
 
@@ -343,7 +361,15 @@ class JsonFileLabRepository:
         all_flat = [f for el in all_elements for f in el.flatten()] if all_links else []
         for h in all_flat:
             try:
-                host_id, host_addressing = addressing_from_dict(h)
+                # Resolved inside the per-item try: a referenced entry has no
+                # address of its own, so a link naming one is only derivable
+                # once the record is joined on — and an entry belonging to
+                # ANOTHER lab (whose key this process's inventory may not
+                # hold) is skipped here exactly like any other unresolvable
+                # record, rather than failing this lab's load.
+                host_id, host_addressing = addressing_from_dict(
+                    resolve_host_entry(h, inventory).host_data
+                )
             except Exception as e:  # noqa: BLE001 — per-item resilience, see guard above
                 # Log the reason: this now also fires for a WELL-FORMED record
                 # whose os_profile / command_frame is registered by init modules
@@ -382,7 +408,7 @@ class JsonFileLabRepository:
         logger.debug(f"Loaded lab '{name}' with {len(lab.hosts)} hosts")
         return lab
 
-    def list_host_summaries(self) -> list[HostSummary]:
+    def list_host_summaries(self, inventory: "Inventory | None" = None) -> list[HostSummary]:
         """Every host across the configured lab files, without building hosts.
 
         The :class:`~otto.labs.protocol.SupportsHostSummaries` fast path.
@@ -397,11 +423,17 @@ class JsonFileLabRepository:
         source declares; ``lab_patterns`` carries the patterns themselves, so
         the composite can re-resolve them against every source's declarations.
 
+        A referenced entry is identified through its record, so a summary may
+        carry an inventory-supplied ``ip``; without the inventory such an
+        entry is skipped, like any other unresolvable record.
+
         Best-effort, like :meth:`list_labs`: a malformed file or host entry
         is skipped rather than raised — these feed completion, which must
         never crash the shell. Hosts listed in several lab files merge by
         id, unioning their ``labs``.
         """
+        from ..inventory import InventoryError, resolve_host_entry  # lazy: see the note above
+
         by_id: dict[str, HostSummary] = {}
 
         try:
@@ -415,8 +447,8 @@ class JsonFileLabRepository:
                 labs = [n for n in declared if element.matches(n)]
                 for flat in element.flatten():
                     try:
-                        identity = host_identity(flat)
-                    except (ValueError, TypeError):
+                        identity = host_identity(resolve_host_entry(flat, inventory).host_data)
+                    except (ValueError, TypeError, InventoryError):
                         continue
                     existing = by_id.get(identity.id)
                     if existing is not None:
@@ -541,6 +573,7 @@ def _add_host(
     idx: int,
     path: Path,
     preferences: dict[str, dict[str, Any]] | None,
+    inventory: "Inventory | None",
 ) -> None:
     """Build one flattened host entry and add it to *lab*.
 
@@ -549,16 +582,30 @@ def _add_host(
     text is the point — spec §9 wants the file, the element and the index of
     the host entry that failed, not a running count across elements.
 
+    THE join site (spec §6): every entry passes through
+    :func:`~otto.inventory.resolve_host_entry` here, so the factory only ever
+    sees a resolved dict (it REFUSES an unresolved one) and no other layer
+    has to know the inventory exists. *inventory* is REQUIRED, like its five
+    siblings — a default would let a future call site drop it silently, which
+    is the exact mistake the conformance suite's signature rule exists to
+    catch in third-party backends.
+
     EVERY failure becomes a :class:`~otto.labs.errors.LabRepositoryError`
-    carrying that context, with the original chained as ``__cause__``.
+    carrying that context, with the original chained as ``__cause__`` — an
+    :class:`~otto.inventory.errors.InventoryError` included, which is what
+    puts the file, the element and the index in front of "key not found".
     """
+    from ..inventory import resolve_host_entry  # lazy: see the note at the top of this module
+
     try:
-        validate_host_dict(host_data)
+        entry = resolve_host_entry(host_data, inventory)
+        validate_host_dict(entry.host_data)
         host = create_host_from_dict(
-            host_data,
+            entry.host_data,
             preferences=preferences,
             lab_name=lab.name,
             element_metadata=element.metadata,
+            inventory_ref=entry.ref,
         )
         lab.add_host(host)
     except Exception as e:

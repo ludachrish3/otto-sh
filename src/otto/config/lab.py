@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterable
 
     from ..host.host import Host
+    from ..inventory import Inventory
     from ..labs.protocol import LabRepository
     from ..link.model import Link
 
@@ -344,6 +345,7 @@ def load_lab(
     search_paths: list[Path] | None = None,
     preferences: dict[str, dict[str, Any]] | None = None,
     repository: "LabRepository | None" = None,
+    inventory: "Inventory | None" = None,
 ) -> Lab:
     """
     Build a Lab object from one or more lab names.
@@ -366,6 +368,12 @@ def load_lab(
         backend over ``search_paths`` is used — wrapped in a one-source
         :class:`~otto.labs.composite.CompositeLabRepository`, which is where
         lab existence and the declared-but-memberless rule live.
+    inventory : Inventory | None
+        The process inventory (:func:`otto.inventory.build_inventory`), passed
+        straight through to every component load so entries carrying an
+        ``inventory`` key resolve against it (spec 2026-08-28 host-inventory
+        §6). ``None`` — the default — makes a referenced entry an error, which
+        is exactly what a process with no ``[inventory]`` table should say.
 
     Returns
     -------
@@ -403,7 +411,10 @@ def load_lab(
             ]
         )
 
-    labs = [repository.load_lab(name, preferences=preferences) for name in lab_names]
+    labs = [
+        repository.load_lab(name, preferences=preferences, inventory=inventory)
+        for name in lab_names
+    ]
 
     from ..host.lab_info import LabInfo  # lazy: this module is imported by host modules
 

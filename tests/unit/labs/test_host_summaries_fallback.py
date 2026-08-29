@@ -28,6 +28,7 @@ class _MinimalRepo:
         self,
         name: str,
         preferences: dict[str, dict[str, Any]] | None = None,
+        inventory: object = None,
     ) -> Lab:
         if name not in self._labs:
             raise LabNotFoundError(name)
@@ -101,7 +102,7 @@ def test_a_failing_lab_is_skipped_not_raised():
     """One unloadable lab must not deny completion for the rest."""
 
     class _HalfBroken(_MinimalRepo):
-        def load_lab(self, name, preferences=None):
+        def load_lab(self, name, preferences=None, inventory=None):
             if name == "broken":
                 raise RuntimeError("backend exploded")
             return super().load_lab(name, preferences)

@@ -83,6 +83,19 @@ paths = ["lab_data"]
 #backend = "none"
 #url = ""
 
+# --- [inventory] — per-project inventory OVERRIDE; the usual home is ----------
+# ~/.otto/settings.toml (declared once per user; see docs/guide/configuration/inventory.md).
+# Backend kwargs sit in the same table: json takes `path` (+ optional
+# `supplies`); netbox takes `url`, `token_env`, `filter`, `custom_fields`.
+#   backend = "netbox"
+#   url = "https://netbox.example"
+#   filter = {{ site = "lab-a", status = "active" }}
+#[inventory]
+#backend = "json"
+#creds_file = "~/.otto/creds.json"
+#cache_ttl = "24h"
+# path = "~/lab/inventory.json"
+
 # --- [coverage] — coverage tiers + remote gcov collection --------------------
 # Embedded build settings live in [coverage.embedded] (see the coverage docs).
 #[coverage]
@@ -421,7 +434,8 @@ async def smoke(opts: _Options) -> None:
 VSCODE_SETTINGS_TEMPLATE = r"""{
   "json.schemas": [
     { "fileMatch": ["**/lab.json"], "url": "./.otto/schemas/lab.schema.json" },
-    { "fileMatch": ["**/reservations.json"], "url": "./.otto/schemas/reservations.schema.json" }
+    { "fileMatch": ["**/reservations.json"], "url": "./.otto/schemas/reservations.schema.json" },
+    { "fileMatch": ["**/inventory*.json"], "url": "./.otto/schemas/inventory.schema.json" }
   ],
   "evenBetterToml.schema.associations": {
     ".*/settings\\.toml$": "./.otto/schemas/settings.schema.json"

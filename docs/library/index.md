@@ -461,6 +461,7 @@ extending-backends
 extending-embedded
 lab-source-backends
 reservation-backends
+inventory-backends
 custom-parsers
 ```
 

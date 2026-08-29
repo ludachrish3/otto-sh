@@ -22,12 +22,20 @@ Usage::
         assert_reservation_backend_conforms(MyBackend(), known_user="alice", known_resources=["r1"])
 """
 
+import inspect
 from datetime import datetime, timezone
 from typing import Any
 
 from ..config.lab import Lab
 from ..host.remote_host import RemoteHost
+from ..inventory import Inventory, InventoryKeyError
 from ..labs import HostSummary, LabNotFoundError, LabRepository, SupportsHostSummaries
+from ..models.inventory import (
+    FILLABLE_INVENTORY_FIELDS,
+    INVENTORY_KEY_FIELDS,
+    SUPPLIES_EXEMPT_FIELDS,
+    InventoryRecord,
+)
 from ..reservations import (
     ReservationBackend,
     ReservationWindow,
@@ -55,6 +63,11 @@ def assert_lab_repository_conforms(
     is given, also asserts each appears in ``list_labs()`` and loads. Raises a
     single :class:`AssertionError` aggregating every violated rule.
 
+    ``load_lab`` must also accept an ``inventory=`` keyword (spec 2026-08-28
+    host-inventory §6): checked on the SIGNATURE, because a backend with no
+    referenced entry in its data would pass every behavioural rule while
+    silently dropping the argument the moment one appears.
+
     Parameters
     ----------
     repo : LabRepository
@@ -76,6 +89,13 @@ def assert_lab_repository_conforms(
         callable(getattr(repo, "list_labs", None)),
         "LabRepository: list_labs must be callable",
     )
+    if callable(getattr(repo, "load_lab", None)):
+        params = inspect.signature(repo.load_lab).parameters
+        c.expect(
+            "inventory" in params,
+            "LabRepository: load_lab must accept an inventory= keyword "
+            "(spec 2026-08-28 host-inventory §6)",
+        )
 
     names = repo.list_labs() if callable(getattr(repo, "list_labs", None)) else []
     names_ok = isinstance(names, list)
@@ -518,4 +538,134 @@ def assert_reservation_backend_conforms(
                     f"str, got {type(u).__name__}",
                 )
 
+    c.raise_if_failures()
+
+
+def assert_inventory_conforms(
+    inventory: Inventory,
+    *,
+    expected_keys: list[str] | None = None,
+    repository: "LabRepository | None" = None,
+    lab: str | None = None,
+) -> None:
+    """Assert *inventory* satisfies the :class:`~otto.inventory.protocol.Inventory` contract.
+
+    (spec §14.) Structural rules always run: protocol satisfied, ``label`` a
+    string, ``supplies`` a subset of the record fields containing ``"ip"``,
+    ``list_keys()`` a list of strings each of which resolves, ``lookup``
+    idempotent (an equal record on a second call) and never returning a field
+    outside ``supplies`` (keys and ``extra`` excepted), an unknown key raising
+    :class:`~otto.inventory.errors.InventoryKeyError`, ``fingerprint()`` ``str | None``.
+    With *expected_keys*, each must resolve AND appear in ``list_keys()``. With
+    *repository* AND *lab*, the positive control: *lab* must FAIL to load
+    without the inventory and LOAD with it, and at least one host must carry
+    ``inventory_ref.referenced`` — a backend that ignores ``inventory=`` fails
+    here.
+    """
+    c = ExpectCollector()
+    c.expect(
+        isinstance(inventory, Inventory),
+        "Inventory: must satisfy the runtime_checkable Inventory protocol",
+    )
+    label = getattr(inventory, "label", None)
+    c.expect(
+        isinstance(label, str) and bool(label),
+        f"Inventory: label must be a non-empty str, got {label!r}",
+    )
+    supplies = getattr(inventory, "supplies", None)
+    supplies_ok = isinstance(supplies, frozenset)
+    c.expect(supplies_ok, f"Inventory: supplies must be a frozenset, got {type(supplies).__name__}")
+    allowed = FILLABLE_INVENTORY_FIELDS | INVENTORY_KEY_FIELDS
+    if supplies_ok:
+        c.expect("ip" in supplies, "Inventory: supplies must contain 'ip'")
+        c.expect(
+            supplies <= allowed,
+            f"Inventory: supplies names non-record fields: {sorted(supplies - allowed)}",
+        )
+    try:
+        keys = inventory.list_keys() if callable(getattr(inventory, "list_keys", None)) else None
+    except Exception as e:  # noqa: BLE001 — conformance check
+        c.expect(False, f"Inventory: list_keys() raised {type(e).__name__}: {e}")
+        keys = None
+    keys_ok = isinstance(keys, list) and all(isinstance(k, str) for k in keys)
+    c.expect(keys_ok, f"Inventory: list_keys() must return list[str], got {keys!r}")
+    if expected_keys is not None:
+        listed = set(keys) if keys_ok else set()
+        for key in expected_keys:
+            c.expect(
+                key in listed,
+                f"Inventory: expected key {key!r} to appear in list_keys()",
+            )
+    probe = "__otto_conformance_no_such_key__"
+    try:
+        inventory.lookup(probe)
+        c.expect(
+            False,
+            "Inventory: lookup(unknown key) must raise InventoryKeyError, returned a record",
+        )
+    except InventoryKeyError:
+        pass
+    except Exception as e:  # noqa: BLE001 — conformance check, report the wrong type
+        c.expect(
+            False,
+            f"Inventory: lookup(unknown key) must raise InventoryKeyError, "
+            f"raised {type(e).__name__}",
+        )
+    for key in [*(keys if keys_ok else []), *(expected_keys or [])]:
+        try:
+            first = inventory.lookup(key)
+            second = inventory.lookup(key)
+        except Exception as e:  # noqa: BLE001 — conformance check
+            c.expect(
+                False, f"Inventory: expected key {key!r} did not resolve: {type(e).__name__}: {e}"
+            )
+            continue
+        c.expect(
+            isinstance(first, InventoryRecord),
+            f"Inventory: lookup({key!r}) must return an InventoryRecord",
+        )
+        c.expect(
+            first == second,
+            f"Inventory: lookup({key!r}) must be idempotent (equal record on a second call)",
+        )
+        if isinstance(first, InventoryRecord) and supplies_ok:
+            stated = set(first.model_fields_set) - SUPPLIES_EXEMPT_FIELDS
+            leaked = sorted(stated - supplies)
+            c.expect(
+                not leaked,
+                f"Inventory: lookup({key!r}) returned fields outside supplies: {leaked}",
+            )
+    fp = inventory.fingerprint() if callable(getattr(inventory, "fingerprint", None)) else 0
+    c.expect(
+        fp is None or isinstance(fp, str),
+        f"Inventory: fingerprint() must be str | None, got {type(fp).__name__}",
+    )
+    if repository is not None and lab is not None:
+        try:
+            repository.load_lab(lab)
+            c.expect(
+                False,
+                f"Inventory: lab {lab!r} loaded WITHOUT the inventory — its entries do not "
+                "reference it, or the backend ignores inventory=",
+            )
+        except Exception:  # noqa: BLE001, S110 — the failure is the expected outcome
+            pass
+        try:
+            loaded = repository.load_lab(lab, inventory=inventory)
+            referenced = [
+                h
+                for h in loaded.hosts.values()
+                if getattr(h, "inventory_ref", None) is not None and h.inventory_ref.referenced
+            ]
+            c.expect(
+                bool(referenced),
+                f"Inventory: lab {lab!r} loaded with the inventory but no host carries a "
+                "referenced inventory_ref",
+            )
+        except Exception as e:  # noqa: BLE001 — conformance check
+            c.expect(
+                False,
+                f"Inventory: lab {lab!r} failed to load WITH the inventory: "
+                f"{type(e).__name__}: {e}",
+            )
     c.raise_if_failures()

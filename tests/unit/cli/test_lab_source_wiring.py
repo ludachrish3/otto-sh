@@ -138,7 +138,7 @@ def test_custom_backend_source_kwargs_inline(tmp_path: Path) -> None:
             self.repo_dir = repo_dir
             self._names = names or []
 
-        def load_lab(self, name, preferences=None):
+        def load_lab(self, name, preferences=None, inventory=None):
             from otto.config.lab import Lab
 
             return Lab(name=name)
@@ -178,7 +178,7 @@ def test_reregistering_json_takes_effect(tmp_path: Path) -> None:
         def __init__(self, search_paths=None):
             self.search_paths = list(search_paths or [])
 
-        def load_lab(self, name, preferences=None):
+        def load_lab(self, name, preferences=None, inventory=None):
             raise NotImplementedError
 
         def list_labs(self):
@@ -212,3 +212,64 @@ def test_no_sources_anywhere_fails_loud_on_demand(tmp_path: Path) -> None:
     assert repository.list_labs() == []
     with pytest.raises(LabNotFoundError, match=r"\[\[lab\.sources\]\]"):
         repository.load_lab("anything")
+
+
+# ── The process inventory reaches the load (spec 2026-08-28 host-inventory §8) ──
+#
+# `OTTO_HOME` is relocated in both tests below: `build_inventory` reads
+# `~/.otto/settings.toml` on EVERY call, even when a repo declares its own
+# table, so a dev machine with a broken user file would otherwise decide these.
+
+_REFERENCED = {
+    "inventory": "dut-1",
+    "element": "dut",
+    "creds": [{"login": "u", "password": "p"}],
+    "labs": ["merged"],
+    "resources": ["dut"],
+}
+
+
+def _inventory_repo(root: Path, table: str) -> Repo:
+    """A repo whose one lab entry is REFERENCED, plus the given ``[inventory]`` table."""
+    repo = _repo(
+        root,
+        "r1",
+        f'[[lab.sources]]\nbackend = "json"\npaths = ["lab"]\n\n{table}',
+        {"lab/lab.json": [_REFERENCED]},
+    )
+    (root / "inv.json").write_text(json.dumps({"dut-1": {"ip": "10.0.0.7"}}))
+    return repo
+
+
+def test_build_lab_from_repos_resolves_referenced_entries(tmp_path, monkeypatch) -> None:
+    """The composition root builds the inventory and hands it to the load.
+
+    A referenced entry has no address of its own, so this lab does not load
+    at all unless `build_lab_from_repos` both BUILDS the inventory and passes
+    it down — dropping either half turns this red rather than merely
+    un-stamping the provenance.
+    """
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
+    from otto.cli.invoke import build_lab_from_repos
+
+    repo = _inventory_repo(
+        tmp_path / "r1", '[inventory]\nbackend = "json"\npath = "inv.json"\nsupplies = ["ip"]\n'
+    )
+    lab = build_lab_from_repos([repo], "merged")
+    assert lab.hosts["dut"].ip == "10.0.0.7"
+    assert lab.hosts["dut"].inventory_ref.key == "dut-1"
+
+
+def test_a_broken_inventory_declaration_is_a_lab_context_error(tmp_path, monkeypatch) -> None:
+    """Loud at the composition root, naming the inventory — not "no inventory" much later.
+
+    Anchored on the banner text: an unanchored match would also be satisfied
+    by the "no inventory is configured" message the LOADER raises for a
+    referenced entry, which is a different failure at a different layer.
+    """
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
+    from otto.cli.invoke import LabContextError, build_lab_from_repos
+
+    repo = _inventory_repo(tmp_path / "r1", '[inventory]\nbackend = "no-such-backend"\n')
+    with pytest.raises(LabContextError, match=r"Inventory unavailable"):
+        build_lab_from_repos([repo], "merged")

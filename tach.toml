@@ -20,6 +20,18 @@
 #   config<->labs, config<->lifecycle, config<->models, config<->reservations,
 #   config<->suite, context<->host, docker<->host, host<->models, link<->models
 #
+# THAT ENUMERATION IS A 2026-08-17 SNAPSHOT AND ONE PAIR POST-DATES IT.
+# 2026-08-28 (host-inventory §6/§8/§11) added config<->inventory: otto.inventory
+# already read otto.config for the user settings file, and otto.config.
+# completion_cache now resolves the inventory for the digest and the host
+# enumeration. So the component is SEVENTEEN modules (the sixteen above plus
+# inventory) and FOURTEEN mutually-importing pairs. Both ends of the new pair
+# import lazily, which changes nothing here: tach counts function-scope
+# imports as edges (see the note at the end of this header), and so does the
+# SCC. NOT re-measured with the flag — the two figures above are arithmetic on
+# the snapshot, not a fresh `tach check --forbid-circular` run; re-measure
+# before quoting the "cut both cli edges" numbers below, which were.
+#
 # THOSE PAIRS ARE NOT THE WHOLE FORMATION — they account for only TWELVE of the
 # sixteen. The other four join through longer loops that contain no mutual pair
 # of their own:
@@ -88,7 +100,10 @@ depends_on = [
 
 [[modules]]
 path = "otto.cli"
-depends_on = ["otto.instructions", "otto.registry", "otto.logger", "otto.link", "otto.reservations", "otto.coverage", "otto.tunnel", "otto.utils", "otto.models", "otto.bootstrap", "otto.suite", "otto.monitor", "otto.host", "otto.docker", "otto.config", "otto.params", "otto.version", "otto.labs", "otto.result", "otto.lifecycle", "otto.context", "otto.errors"]
+# otto.inventory: invoke.py's `build_lab_from_repos` resolves the process
+# inventory once and hands it to the load (spec 2026-08-28 host-inventory §8).
+# Function-local, because this module is on the budgeted import surfaces.
+depends_on = ["otto.instructions", "otto.registry", "otto.logger", "otto.link", "otto.reservations", "otto.coverage", "otto.tunnel", "otto.utils", "otto.models", "otto.bootstrap", "otto.suite", "otto.monitor", "otto.host", "otto.docker", "otto.config", "otto.inventory", "otto.params", "otto.version", "otto.labs", "otto.result", "otto.lifecycle", "otto.context", "otto.errors"]
 
 [[modules]]
 path = "otto.config"
@@ -113,6 +128,18 @@ depends_on = [
     # retiring repo.py's backward import and the sys.modules dodge.)
     "otto.cli",
     "otto.labs",
+    # completion_cache resolves the process inventory function-locally, twice:
+    # `_inventory_fingerprint` mixes its freshness signal into the digest and
+    # `_enumerate_host_summaries` passes it to the enumeration, so a referenced
+    # host completes (spec 2026-08-28 host-inventory §11). This edge CLOSES A
+    # NEW CYCLE — otto.inventory imports otto.config for the user settings
+    # file — so it is the FOURTEENTH mutually-importing pair and it brings
+    # otto.inventory into the strongly connected component as its SEVENTEENTH
+    # member. The header's enumeration is the 2026-08-17 snapshot and does not
+    # list either; see the correction there. Lazy at both ends, which buys
+    # import cost and nothing else: tach and the SCC both count a
+    # function-scope import as an edge.
+    "otto.inventory",
     # DEBT: survives on fleet.py's DEFAULT_COMMAND_TIMEOUT (Tier 1.7),
     # lab.py's RemoteHost/slug/builtin_hosts, and repo.py's os_profile
     # registration. completion_cache's host-CONSTRUCTION import is gone —
@@ -136,7 +163,17 @@ path = "otto.context"
 # NOTE: context<->config and context<->host are known cycles held apart by
 # lazy imports (context.py:178-184). Dropping `timeout` from run_on_all_hosts
 # (Tier 1.7) removes the host edge's worst justification.
-depends_on = ["otto.config", "otto.host", "otto.bootstrap"]
+#
+# otto.inventory: `open_context` resolves the process inventory and hands it
+# to `load_lab`, exactly as `cli/invoke.py` does for the CLI — spec 2026-08-28
+# host-inventory §6 names this module among the callers that must (a library
+# user with a referenced entry otherwise gets "no inventory is configured"
+# against a settings file they filled in correctly). Function-scope, like
+# every other otto.inventory edge, because otto.inventory pulls ~77 otto
+# modules and this file sits on the budgeted surfaces; tach counts it either
+# way. otto.inventory already sits inside the same strongly connected
+# component (see otto.config's note above), so this adds no new cycle.
+depends_on = ["otto.config", "otto.host", "otto.bootstrap", "otto.inventory"]
 
 [[modules]]
 path = "otto.coverage"
@@ -151,7 +188,10 @@ path = "otto.errors"
 
 [[modules]]
 path = "otto.examples"
-depends_on = ["otto.reservations", "otto.host", "otto.monitor", "otto.labs", "otto.config", "otto.context"]
+# otto.inventory: the reference LabRepository resolves each record through
+# `resolve_host_entry` — the sample IS the documentation of how a backend
+# honours `inventory=` (spec 2026-08-28 host-inventory §6).
+depends_on = ["otto.reservations", "otto.host", "otto.monitor", "otto.labs", "otto.config", "otto.context", "otto.inventory"]
 
 [[modules]]
 path = "otto.filesystem"
@@ -181,14 +221,50 @@ depends_on = [
 ]
 
 [[modules]]
+path = "otto.inventory"
+# otto.host: InventoryRef lives beside LabInfo on the host so the host package
+# does not import upward into this one. This list is what the package imports
+# TODAY, per this file's ratchet contract. The snapshot cache (2026-08-28,
+# §9.5) added NO edge: it reaches otto.config.home for the cache directory —
+# an edge already declared below — and logs through the stdlib `logging`
+# module, not otto.logger, because it is a library warning on a load path and
+# not console output otto formats.
+# otto.config: config.py reads ~/.otto/settings.toml through
+# otto.config.user_settings (one owner for the user file). This was one-way
+# until 2026-08-28: `Repo.inventory_settings` is a plain dict accessor, so
+# nothing in otto.config HAD to import back. Threading the inventory through
+# the loaders changed that — otto.config.completion_cache now calls
+# `build_inventory` for the completion digest and the host enumeration (§11),
+# making config<->inventory a mutually-importing pair. Both directions are
+# function-local imports, so neither module pays the other's import cost, but
+# the CYCLE IS REAL and is declared on otto.config's side too. Do not restore
+# the "one-way by construction" claim without first removing that call.
+# otto.utils: compile_inventory anchors [inventory] paths through the same
+# `anchor_path` every other settings path goes through — one authority for the
+# rule, not a copy.
+depends_on = [
+    "otto.config",
+    "otto.errors",
+    "otto.host",
+    "otto.models",
+    "otto.registry",
+    "otto.utils",
+]
+
+[[modules]]
 path = "otto.labs"
 # otto.utils: sources.py anchors `[[lab.sources]]` json paths through the same
 # `anchor_path` every other settings path goes through — one authority for the
 # rule, not a copy. A zero-import leaf, so the edge cannot cycle.
+# otto.inventory: json_repository.py joins each host entry to its inventory
+# record (`resolve_host_entry`) BEFORE the factory sees it — the loader is the
+# single join site (spec 2026-08-28 host-inventory §6). One-way: otto.inventory
+# does not import otto.labs.
 depends_on = [
     "otto.registry",
     "otto.link",
     "otto.config",
+    "otto.inventory",
     "otto.models",
     "otto.host",
     "otto.errors",
@@ -372,7 +448,10 @@ depends_on = ["otto.context", "otto.config", "otto.lifecycle", "otto.registry", 
 
 [[modules]]
 path = "otto.testing"
-depends_on = ["otto.config", "otto.labs", "otto.reservations", "otto.host", "otto.suite"]
+# otto.inventory / otto.models: assert_inventory_conforms (spec §14, added
+# alongside the json backend) checks a candidate against the Inventory
+# protocol and its InventoryRecord fields.
+depends_on = ["otto.config", "otto.inventory", "otto.labs", "otto.models", "otto.reservations", "otto.host", "otto.suite"]
 
 [[modules]]
 path = "otto.tunnel"

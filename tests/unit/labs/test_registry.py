@@ -19,7 +19,7 @@ def test_json_builtin_registered():
 
 def test_register_and_lookup():
     class MyRepo:
-        def load_lab(self, name, preferences=None):
+        def load_lab(self, name, preferences=None, inventory=None):
             raise NotImplementedError
 
         def list_labs(self):

@@ -25,6 +25,13 @@ def _fake_repo(tmp_path: Path):
     repo.init = []
     repo.libs = []
     repo.tests = []
+    # A MagicMock auto-attribute is TRUTHY and `dict()`s to `{}`, which reads
+    # as a present-but-empty [inventory] — a shape no real Repo produces
+    # (`Repo.inventory_settings` is `{}` when the section is absent), and one
+    # `build_inventory` rejects. An unresolvable inventory is EPHEMERAL, so
+    # every fingerprint-keyed WRITE would stand down and these round-trips
+    # would read back nothing.
+    repo.inventory_settings = {}
     return repo
 
 

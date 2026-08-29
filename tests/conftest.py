@@ -773,6 +773,31 @@ def _reset_tunnel_add_locks():
         manage._ADD_LOCKS.clear()
 
 
+@pytest.fixture(autouse=True)
+def _reset_inventory_stale_warnings():
+    """Clear ``otto.inventory.cache._warned_snapshots`` between tests.
+
+    A ``SnapshotCache`` serving a snapshot because its backend is unreachable
+    warns ONCE PER PROCESS, memoized by snapshot path in a module-global set
+    (host-inventory spec §9.5) — one otto command resolves the inventory
+    several times over, and the operator should be told once, not once per
+    resolution. Left uncleared, the first test to warn for a given path
+    silences every later one, and a test asserting the warning would pass or
+    fail on collection ORDER.
+
+    Lives in the ROOT conftest per the process-global-state rule: the set is
+    module-global in ``otto.inventory.cache``, not local to any one test tree.
+    Uses a lazy ``sys.modules.get`` check so tests that never import the
+    inventory package don't pay for (or trigger) the import, and the module's
+    own public ``reset_stale_warnings()`` rather than reaching into the
+    private set, so the module keeps owning what "reset" means.
+    """
+    yield
+    cache = sys.modules.get("otto.inventory.cache")
+    if cache is not None:
+        cache.reset_stale_warnings()
+
+
 # The provider seams, as ``(module, attribute)``. Plain lists rather than
 # ``otto.registry.Registry`` singletons, which is exactly why ``_isolate_registries``
 # cannot see them: its discovery scans for ``Registry`` instances.

@@ -27,6 +27,7 @@ def test_default_set_of_documents():
         "link",
         "settings",
         "reservations",
+        "inventory",
         "monitor-meta",
         "monitor-export",
     }
@@ -316,3 +317,17 @@ def test_monitor_export_schema_chart_map_is_deduped_to_one_shared_def():
     assert defs["ChartMap"]["additionalProperties"] == {"type": "string"}
     assert defs["SessionRecord"]["properties"]["chart_map"] == {"$ref": "#/$defs/ChartMap"}
     assert defs["MonitorSessionFragment"]["properties"]["chart_map"] == {"$ref": "#/$defs/ChartMap"}
+
+
+def test_inventory_schema_is_the_record_keyed_by_inventory_key():
+    doc = build_schemas()["inventory"]
+    assert doc["$id"].endswith("/inventory.schema.json")
+    assert doc["x-otto-version"]
+    assert doc["additionalProperties"] == {"$ref": "#/$defs/InventoryRecord"}
+    assert doc["properties"]["$schema"] == {"type": "string"}
+    assert doc["patternProperties"]["^_"] == {}
+    record = doc["$defs"]["InventoryRecord"]
+    assert record["patternProperties"]["^_"] == {}
+    assert "ip" in record["required"]
+    # the interface shorthand ("eth0": "10.0.0.5") is accepted, as on host entries
+    assert {"type": "string"} in record["properties"]["interfaces"]["additionalProperties"]["anyOf"]

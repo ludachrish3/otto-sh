@@ -36,11 +36,15 @@ Direct usage:
 """
 
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ..config.lab import Lab
 from ..host.factory import create_host_from_dict, host_identity
+from ..inventory import InventoryError, resolve_host_entry
 from ..labs import HostSummary, LabNotFoundError
+
+if TYPE_CHECKING:
+    from ..inventory import Inventory
 
 # A tiny built-in dataset so the sample works out of the box (doctests +
 # conformance). Each value is a list of host dicts as they'd appear in a
@@ -105,8 +109,16 @@ class ExampleLabRepository:
         self,
         name: str,
         preferences: dict[str, dict[str, Any]] | None = None,
+        inventory: "Inventory | None" = None,
     ) -> Lab:
         """Build and return a ``Lab`` from the in-memory dataset.
+
+        Records here are complete, so resolution is a pass-through; a backend
+        whose records reference the inventory resolves them exactly like this
+        — one :func:`~otto.inventory.resolve_host_entry` call per entry,
+        before the factory, with the returned ``ref`` handed to it as
+        ``inventory_ref``. Doing it here rather than in the factory is what
+        keeps the join in ONE place per backend (spec §6).
 
         Raises
         ------
@@ -118,7 +130,13 @@ class ExampleLabRepository:
             raise LabNotFoundError(f"Lab {name!r} not found. Known labs: {known}")
         lab = Lab(name=name)
         for host_data in self._labs[name]:
-            host = create_host_from_dict(host_data, preferences=preferences, lab_name=name)
+            entry = resolve_host_entry(host_data, inventory)
+            host = create_host_from_dict(
+                entry.host_data,
+                preferences=preferences,
+                lab_name=name,
+                inventory_ref=entry.ref,
+            )
             lab.add_host(host)
         # Declared, never derived: the lab is the reservable unit and carries
         # its own set (spec §8.1). Reading it back off the hosts is exactly
@@ -130,7 +148,7 @@ class ExampleLabRepository:
         """Return a sorted list of all lab names in this backend's dataset."""
         return sorted(self._labs)
 
-    def list_host_summaries(self) -> list[HostSummary]:
+    def list_host_summaries(self, inventory: "Inventory | None" = None) -> list[HostSummary]:
         """Enumerate hosts without building them — the optional fast path.
 
         Implementing :class:`~otto.labs.protocol.SupportsHostSummaries` is
@@ -142,14 +160,15 @@ class ExampleLabRepository:
         from formatting the record by hand — that is what guarantees an id
         offered by completion is one ``load_lab`` will actually produce. And
         note the per-record ``try``: enumeration feeds tab completion, so one
-        bad record must be skipped, never raised.
+        bad record must be skipped, never raised — an entry this process's
+        *inventory* cannot resolve included.
         """
         by_id: dict[str, HostSummary] = {}
         for name, hosts in self._labs.items():
             for host_data in hosts:
                 try:
-                    identity = host_identity(host_data)
-                except (ValueError, TypeError):
+                    identity = host_identity(resolve_host_entry(host_data, inventory).host_data)
+                except (ValueError, TypeError, InventoryError):
                     continue
                 existing = by_id.get(identity.id)
                 if existing is not None:

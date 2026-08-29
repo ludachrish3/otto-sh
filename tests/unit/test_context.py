@@ -348,6 +348,69 @@ async def test_open_context_sets_and_tears_down():
 
 
 @pytest.mark.asyncio
+async def test_open_context_with_a_lab_object_never_imports_or_calls_build_inventory(
+    monkeypatch,
+):
+    """A `Lab` object skips inventory resolution entirely — the `else` arm never runs.
+
+    Patched to EXPLODE rather than merely counting calls: a spy only proves
+    our own test writes the call, not that ``open_context`` makes it. If
+    ``build_inventory`` ran on the ``Lab``-object path, this fixture would
+    already know it (this module is imported well after ``otto.inventory``
+    elsewhere in the suite, so a plain ``sys.modules`` check would be
+    unreliable here).
+    """
+    import otto
+    import otto.inventory.config as inventory_config
+
+    def _must_not_run(*args, **kwargs):
+        raise AssertionError("build_inventory must not run for a Lab object")
+
+    monkeypatch.setattr(inventory_config, "build_inventory", _must_not_run)
+
+    lab = _lab_with("test1")
+    async with otto.open_context(lab=lab) as ctx:
+        assert ctx.lab is lab
+
+
+@pytest.mark.asyncio
+async def test_open_context_loads_the_lab_with_the_process_inventory(tmp_path, monkeypatch):
+    """``open_context`` is the library entry point, so it resolves ``[inventory]`` too.
+
+    Spec §6 names ``context.py`` among the callers that must hand the process
+    inventory to the load. Without it a library user with a correct
+    ``[inventory]`` table and a referenced host entry is told "no inventory is
+    configured; declare [inventory] in ~/.otto/settings.toml" — an instruction
+    they have already followed.
+
+    Driven through the REAL resolution: ``OTTO_HOME`` (otto's own variable)
+    points at a user settings file naming the worked-example fixture, so
+    ``build_inventory`` reads a real file and the json backend a real
+    inventory, rather than a patched seam that would pass with the threading
+    still missing.
+    """
+    import otto
+    from tests._fixtures.labdata import lab_data_dir
+
+    fixture = lab_data_dir() / "tech1-inventory"
+    home = tmp_path / "home"
+    home.mkdir()
+    settings = home / "settings.toml"
+    settings.write_text(  # sutrepo-exempt: the user-level ~/.otto file, not a SUT repo
+        '[inventory]\nbackend = "json"\n'
+        f'path = "{fixture / "inventory.json"}"\n'
+        f'creds_file = "{fixture / "creds.json"}"\n'
+        'supplies = ["ip", "interfaces", "is_virtual", "site", "rack", '
+        '"shelf", "board", "os_name"]\n'
+    )
+    monkeypatch.setenv("OTTO_HOME", str(home))
+    async with otto.open_context(lab="unix", search_paths=[fixture]) as ctx:
+        host = ctx.lab.hosts["test1"]
+        assert host.inventory_ref.key == "test1"
+        assert host.ip == "10.10.200.11"  # the record's address, not the lab file's
+
+
+@pytest.mark.asyncio
 async def test_run_on_all_hosts_accepts_option_overrides():
     """ctx.run_on_all_hosts/do_for_all_hosts accept *_options kwargs without error."""
     from otto.config.lab import Lab

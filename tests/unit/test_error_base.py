@@ -61,6 +61,7 @@ from otto.host.errors import (
 )
 from otto.host.login_proxy import LoginProxyError
 from otto.host.transport import HopTransportTornDownError
+from otto.inventory import InventoryError, InventoryKeyError
 from otto.labs.errors import LabNotFoundError, LabRepositoryError
 from otto.lifecycle import SyncPhaseInterrupt
 from otto.link.manage import (
@@ -115,6 +116,8 @@ CASES: list[tuple[type[BaseException], type[BaseException]]] = [
     (LoginProxyError, ConnectionError),
     (LabRepositoryError, Exception),
     (LabNotFoundError, Exception),
+    (InventoryError, Exception),
+    (InventoryKeyError, Exception),
     (ArchiveLockedError, RuntimeError),
     (UnsupportedDBError, RuntimeError),
     (EventValidationError, ValueError),
@@ -153,6 +156,14 @@ DELIBERATELY_ROOTLESS: frozenset[type[BaseException]] = frozenset(
         LabContextError,
         LabRepositoryError,
         LabNotFoundError,
+        # "the inventory backend could not answer" and "it does not hold that
+        # key" sit beside the lab-repository pair above for the same reason:
+        # a data SOURCE otto only reads is otto's own concept. KeyError was
+        # considered and rejected for InventoryKeyError — an inventory key is
+        # not a mapping subscript, and KeyError's repr-quoting str() would
+        # mangle every message this class exists to carry.
+        InventoryError,
+        InventoryKeyError,
         ReservationBackendError,
         MissingReservationError,
     }

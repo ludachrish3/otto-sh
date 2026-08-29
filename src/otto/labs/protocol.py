@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     # constructs a Lab from this module, so the string annotation below is
     # never resolved outside of static type-checking.
     from ..config.lab import Lab
+    from ..inventory import Inventory
 
 
 @runtime_checkable
@@ -32,6 +33,7 @@ class LabRepository(Protocol):
         self,
         name: str,
         preferences: dict[str, dict[str, Any]] | None = None,
+        inventory: "Inventory | None" = None,
     ) -> "Lab":
         """Load a lab by name.
 
@@ -44,6 +46,10 @@ class LabRepository(Protocol):
             product-preference table forwarded to the factory, which matches each
             host's ``id`` and applies the result. ``None`` reproduces today's
             behavior.
+        inventory : Inventory | None
+            The process inventory referenced entries resolve against (spec
+            2026-08-28 host-inventory §6); ``None`` means a referenced entry
+            is an error.
 
         Returns
         -------
@@ -138,6 +144,12 @@ class SupportsHostSummaries(Protocol):
     profile merge and validation the host factory applies.
     """
 
-    def list_host_summaries(self) -> list[HostSummary]:
-        """Every host this backend knows, across every lab."""
+    def list_host_summaries(self, inventory: "Inventory | None" = None) -> list[HostSummary]:
+        """Every host this backend knows, across every lab.
+
+        *inventory* is the process inventory referenced entries resolve
+        against (spec 2026-08-28 host-inventory §6); ``None`` means a
+        referenced entry cannot be identified and is skipped, like any other
+        unresolvable record.
+        """
         ...

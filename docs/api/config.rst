@@ -18,4 +18,8 @@ settings parsing, and lab loading.
 
 .. automodule:: otto.config.repo
 
+.. automodule:: otto.config.user_settings
+
+.. automodule:: otto.config.home
+
 .. automodule:: otto.config.version

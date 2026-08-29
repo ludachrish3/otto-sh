@@ -39,3 +39,10 @@ def test_negative_element_id_rejected():
 def test_negative_slot_rejected():
     with pytest.raises(ValidationError, match=r"slot\s+Value error, must be >= 0"):
         _spec(board="blade", slot=-2)
+
+
+def test_empty_inventory_key_rejected():
+    with pytest.raises(
+        ValidationError, match=r"inventory\s+Value error, 'inventory' must name a key"
+    ):
+        _spec(inventory="")

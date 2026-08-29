@@ -1,6 +1,7 @@
 """Labs module for DB-agnostic lab/host repository pattern."""
 
 import logging
+from typing import TYPE_CHECKING
 
 from .composite import (
     CompositeLabRepository as CompositeLabRepository,
@@ -33,10 +34,15 @@ from .sources import (
     build_lab_sources as build_lab_sources,
 )
 
+if TYPE_CHECKING:
+    from ..inventory import Inventory
+
 logger = logging.getLogger(__name__)
 
 
-def host_summaries(repository: LabRepository) -> list[HostSummary]:
+def host_summaries(
+    repository: LabRepository, inventory: "Inventory | None" = None
+) -> list[HostSummary]:
     """Every host *repository* knows — cheaply when it can, correctly always.
 
     Uses :class:`~otto.labs.protocol.SupportsHostSummaries` when the backend
@@ -45,12 +51,17 @@ def host_summaries(repository: LabRepository) -> list[HostSummary]:
     loading it, which is slower but works for ANY backend — so a custom
     host source gets tab completion and tunnel narrowing with no extra code.
 
+    *inventory* reaches BOTH routes (spec 2026-08-28 host-inventory §6): a
+    referenced entry is identified through its record, so without it the fast
+    path skips such an entry and the fallback's ``load_lab`` fails for the
+    whole lab. ``None`` is the no-inventory process, unchanged.
+
     Best-effort by contract: a lab that fails to load is skipped, because
     every caller is a completion or discovery path that must never crash the
     shell over one bad record.
     """
     if isinstance(repository, SupportsHostSummaries):
-        return repository.list_host_summaries()
+        return repository.list_host_summaries(inventory=inventory)
 
     # No built-in filtering here: a backend's ``load_lab`` returns exactly its
     # own hosts (otto's ``local`` is injected later, by ``config.lab.load_lab``,
@@ -60,7 +71,7 @@ def host_summaries(repository: LabRepository) -> list[HostSummary]:
     by_id: dict[str, HostSummary] = {}
     for name in repository.list_labs():
         try:
-            lab = repository.load_lab(name)
+            lab = repository.load_lab(name, inventory=inventory)
         except Exception as e:  # noqa: BLE001 — enumeration is best-effort
             logger.debug(f"skipping lab {name!r} while summarizing hosts: {e}")
             continue

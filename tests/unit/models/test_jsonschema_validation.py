@@ -128,3 +128,83 @@ def test_standalone_host_and_link_schemas_accept_comment_keys():
     docs = build_schemas()
     Draft202012Validator(docs["unix-host"]).validate({**_VALID_HOST, "_note": "x"})
     Draft202012Validator(docs["link"]).validate({**_VALID_LINK, "_note": "x"})
+
+
+# ── A referenced host entry (spec 2026-08-28 host-inventory §5) ──────────────
+#
+# Every entry below carries ``sw_version``, which ONLY ``UnixHostSpec``
+# declares. That pins which arm of the host ``anyOf`` decides the verdict:
+# ``os_type`` carries no enum in the generated schema (the ``discriminator``
+# keyword is OpenAPI, and Draft 2020-12 ignores it), so a bare
+# ``"os_type": "unix"`` entry is ALSO checked against ``EmbeddedHostSpec``,
+# whose looser ``required`` would answer for it. A test written that way
+# would pass with the unix arm broken.
+
+
+def test_referenced_entry_needs_neither_ip_nor_creds(lab_validator):
+    """``"inventory": "<key>"`` replaces the fields the record fills.
+
+    ``lab.json`` is a superset of what ``UnixHostSpec`` validates: the loader
+    joins the record on before the spec sees the dict, so an editor must not
+    red-underline an entry otto loads perfectly.
+    """
+    lab = lab_json_v2([{"inventory": "test1", "element": "test1", "sw_version": "1.0"}])
+    errors = list(lab_validator.iter_errors(lab))
+    assert errors == [], [e.message for e in errors]
+
+
+def test_an_entry_with_neither_an_address_nor_a_reference_is_still_rejected(lab_validator):
+    """The relaxation is a CHOICE, not a dropped requirement.
+
+    Dropping ``ip``/``creds`` from ``required`` without restoring them as an
+    ``anyOf`` arm would make this document validate — the failure mode the
+    arm exists to prevent.
+    """
+    lab = lab_json_v2([{"element": "test1", "sw_version": "1.0"}])
+    assert list(lab_validator.iter_errors(lab)), (
+        "an entry with neither 'ip' nor 'inventory' must fail"
+    )
+
+
+def test_an_inline_entry_still_needs_every_field_it_always_needed(lab_validator):
+    """The restored arm is the FULL original ``required`` list, not just ``ip``.
+
+    ``UnixHostSpec`` requires ``ip`` AND ``creds``; an arm naming only ``ip``
+    would let this credential-less inline entry through.
+    """
+    lab = lab_json_v2([{"ip": "10.0.0.1", "element": "test1", "sw_version": "1.0"}])
+    assert list(lab_validator.iter_errors(lab)), "an inline entry without creds must fail"
+
+
+def test_the_reference_arm_constrains_the_value_not_just_the_key(lab_validator):
+    """``required`` means PRESENT — the arm must also demand a non-empty string.
+
+    Both rejected documents are ones otto REFUSES at load, and both FAILED
+    this schema (on the missing ``ip``) before the relaxation existed, so an
+    arm keyed on presence alone would widen a hole rather than open the
+    intended one. ``null`` is "references nothing" (R7), which makes the
+    entry inline and still owing an ``ip``; ``""`` is an ``InventoryError``.
+    """
+    creds = [{"login": "u", "password": "p"}]
+    null_no_ip = lab_json_v2([{"inventory": None, "element": "test1", "sw_version": "1.0"}])
+    assert list(lab_validator.iter_errors(null_no_ip)), "'inventory': null is not a reference"
+
+    empty_key = lab_json_v2([{"inventory": "", "element": "test1", "sw_version": "1.0"}])
+    assert list(lab_validator.iter_errors(empty_key)), "'inventory': '' is not a key"
+
+    # ...and the other direction, so the constraint cannot be satisfied by
+    # simply banning `null`: a NULL reference on a fully inline entry is the
+    # schema-legal round-trip R7 exists for, and must still validate.
+    null_inline = lab_json_v2(
+        [
+            {
+                "inventory": None,
+                "ip": "10.0.0.1",
+                "creds": creds,
+                "element": "test1",
+                "sw_version": "1.0",
+            }
+        ]
+    )
+    errors = list(lab_validator.iter_errors(null_inline))
+    assert errors == [], [e.message for e in errors]

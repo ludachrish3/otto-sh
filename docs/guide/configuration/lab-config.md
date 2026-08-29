@@ -249,7 +249,11 @@ carrying any of them fails the load naming the key.
 | `valid_transfers` | array of strings | Ordered list of transfer backends that may be selected for this host (gates `--transfer` and `[host_preferences]`).  Defaults to `["scp", "sftp", "ftp", "nc"]` for Unix hosts and `["console"]` for embedded hosts.  Custom backends registered via `register_transfer_backend` also appear. |
 | `valid_impairers` | array of strings | Ordered list of impairer backends that may be selected for this host (gates `impairer` and `[host_preferences]`).  Unix hosts only; defaults to `["netem"]`.  Custom impairers registered via `register_impairer` are valid entries too. |
 | `slot` | integer | Physical slot number of the board to which this host belongs.  Appended to the host id, but only when `board` is also set — see {ref}`host-identity` below. |
+| `site` | integer or string | Site the host is installed at — a name or a number (a digit-only string like `"3"` reads as `3`).  Not part of the host id. |
+| `rack` | integer or string | Rack within the site — a name or a number, coerced the same way as `site`.  Not part of the host id. |
+| `shelf` | integer | Shelf / rack position.  Not part of the host id. |
 | `hop` | string | Host id of an intermediate SSH jump host.  Otto opens an SSH tunnel through it and routes all subsequent connections automatically.  Hops can chain. |
+| `inventory` | string | Key of the inventory record this host is resolved from — see [Referencing the inventory](#referencing-the-inventory) below and {doc}`inventory`.  Inventory-owned fields must then be absent here. |
 | `default_dest_dir` | string | Directory an empty or relative `put`/`get` destination resolves against.  Defaults to empty — SCP/SFTP then land in the login user's home directory, and an embedded host with a mounted filesystem falls back to its mount point. |
 | `max_filename_len` | integer | Longest basename the host's filesystem accepts.  Defaults to `255` (the Linux `NAME_MAX`, and the typical LittleFS ceiling); lower it where the firmware enforces a tighter limit — e.g. `32` on a Zephyr build with a short-name FAT. |
 | `debug_log_globs` | array of strings | Remote log paths `get_debug_logs` fetches off this host.  A pattern (`*`, `?`, `[`) is expanded on the device itself, so embedded hosts — which have no shell to expand with — declare concrete paths.  See {doc}`../cli/host/capabilities/index`. |
@@ -259,6 +263,29 @@ carrying any of them fails the load naming the key.
 | `docker_capable` | boolean | `true` when this host can run Docker containers (Unix hosts only). |
 | `has_bash` | boolean | `true` when the host has a working `bash` to `exec -a`-tag processes through. Gates which hosts can host or be scanned for `otto tunnel` tunnels — see {doc}`../cli/tunnel/index`. Defaults to `true` for Unix hosts (including `local` and Docker containers), `false` for embedded hosts. |
 | `shell_history` | boolean | Whether otto's own commands are recorded in this host's shell history (Unix hosts only). Defaults to `false` — otto neutralizes `HISTFILE` on each shell it opens so automation traffic doesn't bury a human's history. Set `true` where otto's commands should stay visible in the history file. See {ref}`per-host-shell-history`. |
+
+### Referencing the inventory
+
+A host entry may name an **inventory key** instead of carrying the machine's
+own facts:
+
+```json
+{ "inventory": "carrot-b1", "os_type": "unix", "hop": "gw" }
+```
+
+Otto then fills in the fields the configured inventory declares it supplies —
+typically `ip`, `interfaces`, `creds` and the location fields — and every one
+of those must be **absent** from the entry, or the load fails naming the field
+and the key.  Fields the inventory does not supply stay here exactly as for an
+inline host, and an entry with no `inventory` key is unaffected: the two forms
+sit side by side in one file.
+
+`"inventory": null` means the same as no `inventory` key at all — the entry is
+inline.  The empty string is an error.
+
+Which fields the inventory owns is a per-deployment decision, not a per-host
+one, and it is made in `[inventory]` — see {doc}`inventory` for the settings
+table, the backends, and what happens at load.
 
 (host-identity)=
 

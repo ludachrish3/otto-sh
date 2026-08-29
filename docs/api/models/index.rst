@@ -9,6 +9,7 @@ Pydantic data models for hosts, settings, and monitor records.
    color
    dependencies
    host
+   inventory
    lab
    options
    settings

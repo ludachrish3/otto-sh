@@ -40,6 +40,7 @@ from .connections import teardown_step
 from .dev_tool import DevTool
 from .file_ops import PosixFileOps
 from .host import BaseHost, Host, is_dry_run, refuse_declined_fact
+from .inventory_ref import InventoryRef
 from .lab_info import LabInfo
 from .privilege import PosixPrivilege
 from .product import Product
@@ -117,6 +118,9 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
 
     lab_info: LabInfo = field(default_factory=LabInfo, repr=False)
     """The resolved lab this host was registered into (copied from the parent for containers)."""
+
+    inventory_ref: InventoryRef = field(default_factory=InventoryRef, repr=False)
+    """Inventory provenance; empty unless this host was resolved from a record."""
 
     debug_log_globs: list[str] = field(default_factory=list, repr=False)
     """Container paths/glob patterns ``get_debug_logs`` fetches. Default empty.

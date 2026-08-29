@@ -35,6 +35,7 @@ from ..utils import anchor_path
 from .base import OttoModel
 from .color import validate_color
 from .dependencies import clauses_satisfiable, normalize_name, parse_dependency_entry
+from .inventory import parse_cache_ttl
 from .options import (
     FtpOptionsSpec,
     NcOptionsSpec,
@@ -213,6 +214,28 @@ class ReservationConfigSpec(OttoModel):
 
     backend: str = "none"
     url: str | None = None
+
+
+class InventoryConfigSpec(OttoModel):
+    """The otto-owned ``[inventory]`` envelope (spec 2026-08-28 host-inventory §8).
+
+    ``backend`` selects a registered inventory backend; ``creds_file`` and
+    ``cache_ttl`` are core, backend-independent (§9.4, §9.5). ``extra='allow'``
+    keeps the backend's own kwargs (``path``, ``url``, ``filter``…) open here —
+    :func:`otto.inventory.compile_inventory` validates them knowing the backend.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    backend: str
+    creds_file: str | None = None
+    cache_ttl: str = "24h"
+
+    @field_validator("cache_ttl")
+    @classmethod
+    def _cache_ttl_grammar(cls, v: str) -> str:
+        parse_cache_ttl(v)  # raises ValueError with the grammar
+        return v
 
 
 class LoggingConfigSpec(OttoModel):
@@ -643,6 +666,12 @@ class SettingsModel(OttoModel):
     lab: LabConfigSpec | None = None
     logging: LoggingConfigSpec = LoggingConfigSpec()
     reservations: ReservationConfigSpec = ReservationConfigSpec()
+    inventory: InventoryConfigSpec | None = None
+    """Per-project inventory override (spec 2026-08-28 host-inventory §8).
+
+    ``~/.otto/settings.toml`` is the usual home — an inventory is a per-user
+    fact; this key exists for the fractured phase where one repo needs its own.
+    """
     dependencies: DependenciesSpec = DependenciesSpec()
     env: EnvSettingsSpec = EnvSettingsSpec()
     project: ProjectScopeSpec | None = None
@@ -739,6 +768,19 @@ class SettingsModel(OttoModel):
         if normalize_name(self.name) in req | opt:
             raise ValueError(f"project {self.name!r} cannot depend on itself")
         return self
+
+
+class UserSettingsModel(OttoModel):
+    """Boundary model for the user-level ``~/.otto/settings.toml``.
+
+    Spec 2026-08-28 host-inventory §8. A general per-user file —
+    ``[inventory]`` is its first table, not its purpose. ``extra='forbid'``
+    (inherited from :class:`~otto.models.base.OttoModel`) so a repo-only table
+    pasted here (``[lab]``, ``[reservations]``) errors naming the key instead
+    of being silently ignored.
+    """
+
+    inventory: InventoryConfigSpec | None = None
 
 
 # ---------------------------------------------------------------------------

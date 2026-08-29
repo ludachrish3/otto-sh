@@ -42,7 +42,7 @@ STAMP = OUT_DIR / ".stamp"
 # scaffold templates in cli/init.py), so the stamp covers all of src/otto.
 _STAMP_INPUTS = [Path(__file__).resolve(), REPO_ROOT / "src" / "otto"]
 
-# The eleven first-party commands, in the order `otto --help` lists them;
+# The thirteen first-party commands, in the order `otto --help` lists them;
 # each command page embeds its own --help.
 COMMANDS = [
     "init",
@@ -56,6 +56,7 @@ COMMANDS = [
     "monitor",
     "cov",
     "reservation",
+    "inventory",
     "schema",
 ]
 

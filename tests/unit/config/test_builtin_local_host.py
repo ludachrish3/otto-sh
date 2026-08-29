@@ -11,7 +11,7 @@ class _StubRepo:
     def __init__(self, hosts: list[BaseHost]) -> None:
         self._hosts = hosts
 
-    def load_lab(self, name: str, preferences: object = None) -> Lab:
+    def load_lab(self, name: str, preferences: object = None, inventory: object = None) -> Lab:
         lab = Lab(name=name)
         for h in self._hosts:
             lab.add_host(h)

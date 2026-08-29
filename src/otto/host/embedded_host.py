@@ -75,6 +75,7 @@ from .host import (
     refuse_declined_fact,
 )
 from .interface import Interface
+from .inventory_ref import InventoryRef
 from .lab_info import LabInfo
 from .login_proxy import Cred
 from .options import SnmpOptions, TelnetOptions
@@ -151,6 +152,15 @@ class EmbeddedHost(RemoteHost):
 
     slot: int | None = field(default=None, repr=False)
     """Physical slot number of the board to which this host belongs."""
+
+    site: int | str | None = field(default=None, repr=False)
+    """Site the host is installed at (a name or a number)."""
+
+    rack: int | str | None = field(default=None, repr=False)
+    """Rack within the site (a name or a number)."""
+
+    shelf: int | None = field(default=None, repr=False)
+    """Shelf / rack position."""
 
     is_virtual: bool = False
     """Determines whether a host is a VM/emulator (e.g. QEMU) or not."""
@@ -258,6 +268,9 @@ class EmbeddedHost(RemoteHost):
 
     lab_info: LabInfo = field(default_factory=LabInfo, repr=False)
     """The resolved lab this host came from (loader-stamped, like ``source_lab``)."""
+
+    inventory_ref: InventoryRef = field(default_factory=InventoryRef, repr=False)
+    """Inventory provenance; empty unless this host was resolved from a record."""
 
     debug_log_globs: list[str] = field(default_factory=list)
     """Remote paths ``get_debug_logs`` fetches. Default empty. Embedded hosts

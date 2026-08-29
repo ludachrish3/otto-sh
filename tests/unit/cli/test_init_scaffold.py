@@ -166,7 +166,7 @@ def test_module_names_are_sanitized_identifiers(tmp_path: Path) -> None:
 def test_schemas_scaffold_writes_schema_files(tmp_path: Path) -> None:
     created = BY_NAME["schemas"].scaffold(tmp_path, CFG)
     out = tmp_path / ".otto" / "schemas"
-    for stem in ("settings", "lab", "link", "reservations"):
+    for stem in ("settings", "lab", "link", "reservations", "inventory"):
         assert out / f"{stem}.schema.json" in created
     data = json.loads((out / "lab.schema.json").read_text())
     assert data["title"] == "otto lab.json"
@@ -182,6 +182,9 @@ def test_schemas_scaffold_writes_vscode_wiring_when_absent(tmp_path: Path) -> No
     urls = [entry["url"] for entry in wiring["json.schemas"]]
     assert "./.otto/schemas/lab.schema.json" in urls
     assert "./.otto/schemas/reservations.schema.json" in urls
+    assert "./.otto/schemas/inventory.schema.json" in urls
+    matches = {entry["url"]: entry["fileMatch"] for entry in wiring["json.schemas"]}
+    assert matches["./.otto/schemas/inventory.schema.json"] == ["**/inventory*.json"]
     assert "evenBetterToml.schema.associations" in wiring
     toml_associations = wiring["evenBetterToml.schema.associations"]
     assert toml_associations[r".*/settings\.toml$"] == "./.otto/schemas/settings.schema.json"

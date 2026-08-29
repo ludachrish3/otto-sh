@@ -45,6 +45,7 @@ if TYPE_CHECKING:
     from .dev_tool import DevTool
     from .host import Expect
     from .interface import Interface
+    from .inventory_ref import InventoryRef
     from .lab_info import LabInfo
     from .options import SnmpOptions
     from .power import PowerController
@@ -169,6 +170,10 @@ class RemoteHost(BaseHost):
     lab_info: "LabInfo"
     """The resolved lab (see :class:`~otto.host.lab_info.LabInfo`), stamped by the loader."""
 
+    inventory_ref: "InventoryRef"
+    """Inventory provenance (see :class:`~otto.host.inventory_ref.InventoryRef`); empty for an
+    inline host."""
+
     debug_log_globs: list[str]
     """Remote paths/glob patterns ``get_debug_logs`` fetches (see
     :attr:`~otto.host.host.BaseHost.debug_log_globs`)."""
@@ -188,6 +193,15 @@ class RemoteHost(BaseHost):
 
     slot: int | None
     """Physical slot number of the board, or None."""
+
+    site: int | str | None
+    """Site the host is installed at (a name or a number), or None."""
+
+    rack: int | str | None
+    """Rack within the site (a name or a number), or None."""
+
+    shelf: int | None
+    """Shelf / rack position, or None."""
 
     hop: str | None
     """Host ID of the intermediate hop used to reach this host, or None."""

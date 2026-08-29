@@ -34,7 +34,7 @@ class _Backend:
     def list_labs(self) -> list[str]:
         return ["unix", "unix_alt"]
 
-    def load_lab(self, name: str, preferences: dict | None = None) -> Lab:
+    def load_lab(self, name: str, preferences: dict | None = None, inventory: object = None) -> Lab:
         if name not in ("unix", "unix_alt"):
             # The contract's own probe asks for a lab that cannot exist, and
             # requires this exact type — a KeyError reads as a backend bug.
@@ -46,7 +46,7 @@ class _Backend:
             lab.hosts.update(self._hosts)
         return lab
 
-    def list_host_summaries(self) -> list[HostSummary]:
+    def list_host_summaries(self, inventory: object = None) -> list[HostSummary]:
         if self._summaries is not None:
             return self._summaries
         return [

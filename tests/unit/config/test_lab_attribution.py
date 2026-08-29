@@ -44,6 +44,7 @@ class _UnstampedRepo:
         self,
         name: str,
         preferences: dict[str, dict[str, Any]] | None = None,
+        inventory: object = None,
     ) -> Lab:
         lab = Lab(name=name)
         host = _host(f"{name}-box", f"10.0.0.{self._octet}")

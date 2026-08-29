@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from otto.host.docker_host import DockerContainerHost
+from otto.host.inventory_ref import InventoryRef
 from otto.host.login_proxy import Cred
 from otto.result import CommandNotRunError, CommandResult, Result
 from otto.utils import Status
@@ -108,6 +109,11 @@ def test_id_lowercased():
 
 def test_is_virtual_default():
     assert _make_container().is_virtual is True
+
+
+def test_container_carries_an_empty_inventory_ref():
+    """A container is never an inventory host — not resolved from a record."""
+    assert _make_container().inventory_ref == InventoryRef()
 
 
 # ---------------------------------------------------------------------------

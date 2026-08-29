@@ -36,6 +36,9 @@ _SLUG_CHARS = 40
 name that breaks ``ls``. The hash carries correctness, so truncating the slug
 costs legibility only."""
 
+SNAPSHOT_CACHE_DIRNAME = "inventory-cache"
+"""Directory holding the inventory snapshot cache (host-inventory spec §9.5)."""
+
 
 def otto_home() -> Path:
     """Return otto's user-level home: ``$OTTO_HOME`` if set, else ``~/.otto``.
@@ -48,6 +51,26 @@ def otto_home() -> Path:
 
     home = OttoEnvSettings().home
     return home.expanduser() if home is not None else Path.home() / ".otto"
+
+
+def snapshot_cache_dir() -> Path:
+    """Return ``<otto home>/inventory-cache`` — where inventory snapshots live (§9.5).
+
+    Lives here, not in :mod:`otto.inventory.cache`, because this module is the
+    one owner of every path under the home; a second deriver is how the two
+    completion caches drifted apart before the relocation.
+
+    Deliberately NOT under a workspace key, which is the one place this differs
+    from :func:`workspace_home`. A snapshot is identified by the inventory's own
+    configuration (backend, normalized URL, filter), and §8 gives a process
+    exactly one inventory however many repos it spans, so two workspaces
+    pointing at one NetBox SHOULD share one snapshot and one refresh schedule.
+    Sharding by workspace would give them one file each, refreshing
+    independently and neither ever seeing the other's fetch.
+
+    PURE -- never creates the directory, same as :func:`otto_home`.
+    """
+    return otto_home() / SNAPSHOT_CACHE_DIRNAME
 
 
 def _normalized(sut_dirs: "list[Path]") -> "list[Path]":

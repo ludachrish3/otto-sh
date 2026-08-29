@@ -10,9 +10,9 @@ host registries at build time.
 
 from ipaddress import ip_address, ip_network
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Annotated, Any, ClassVar
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import BeforeValidator, Field, field_validator, model_validator
 from typing_extensions import override
 
 from ..host.binary_loader import build_binary_loader
@@ -40,6 +40,38 @@ from .options import (
     TelnetOptionsSpec,
     UserlandOptionsSpec,
 )
+
+
+def coerce_digit_string(v: object) -> object:
+    """``"3"`` → ``3``; anything else unchanged (spec 2026-08-28 host-inventory §12).
+
+    ``site`` / ``rack`` are ``int | str``: NetBox names racks, some labs number
+    them. Under pydantic's smart union ``"3"`` would stay a string while ``3``
+    is an int — two spellings of one value, which the inventory cross-checks
+    and every equality would then get wrong. ASCII digits only: ``isdigit()``
+    is true for fullwidth and other Unicode digits ``int()`` also accepts, but
+    a rack labelled that way is a label, not a number.
+    """
+    if isinstance(v, str) and v.isascii() and v.isdigit():
+        return int(v)
+    return v
+
+
+# ``json_schema_input_type`` is stated rather than left at its default, and the
+# reason is documentation rather than schema: autodoc renders an ``Annotated``
+# alias by expanding it, so ``BeforeValidator``'s dataclass repr lands verbatim
+# in every published signature that uses this type — and the default it would
+# otherwise show, ``PydanticUndefined``, is a pydantic-internal SENTINEL VALUE
+# with no documentable target in any inventory, which a nitpicky ``-W`` build
+# then fails on. (``AfterValidator`` has no such field, which is why
+# ``models.settings.RepoPath`` never hit this.) Naming the input type here is
+# the same statement pydantic's default makes implicitly — the JSON schema is
+# byte-identical in both validation and serialization mode, and validation
+# behaviour is unchanged — but it renders as ``int | str``, which resolves.
+IntOrStr = Annotated[
+    int | str, BeforeValidator(coerce_digit_string, json_schema_input_type=int | str)
+]
+"""``int | str`` that reads a digit-only string as the int it spells."""
 
 
 class ToolchainToolSpec(OttoModel):
@@ -151,6 +183,9 @@ _COMMON_PLAIN_FIELDS = (
     "element_id",
     "board",
     "slot",
+    "site",
+    "rack",
+    "shelf",
     "hop",
     "is_virtual",
     "has_bash",
@@ -272,7 +307,15 @@ class HostSpec(OttoModel):
     element_id: int | None = None
     board: str | None = None
     slot: int | None = None
+    site: IntOrStr | None = None
+    rack: IntOrStr | None = None
+    shelf: int | None = None
     hop: str | None = None
+
+    inventory: str | None = None
+    """Inventory key this entry is resolved from (spec 2026-08-28 host-inventory §5).
+    Spec-only: the loader consumes it and never forwards it to the host."""
+
     is_virtual: bool = False
     has_bash: bool = True
     default_dest_dir: Path = Path()
@@ -350,11 +393,18 @@ class HostSpec(OttoModel):
             raise ValueError(f"{v!r} slugs to an empty id (needs at least one letter or digit)")
         return v
 
-    @field_validator("element_id", "slot")
+    @field_validator("element_id", "slot", "shelf")
     @classmethod
     def _validate_nonnegative(cls, v: int | None) -> int | None:
         if v is not None and v < 0:
             raise ValueError(f"must be >= 0, got {v}")
+        return v
+
+    @field_validator("inventory")
+    @classmethod
+    def _inventory_key_nonempty(cls, v: str | None) -> str | None:
+        if v is not None and not v:
+            raise ValueError("'inventory' must name a key (a non-empty string)")
         return v
 
     @field_validator("command_frame")

@@ -20,6 +20,10 @@ def _repo_with_hosts(tmp_path: Path, hosts: list[dict]) -> SimpleNamespace:
     return SimpleNamespace(
         lab_sources=json_lab_sources(tmp_path, [lab]),
         sut_dir=tmp_path,
+        # Read by `build_inventory` on the enumeration path: a Repo stand-in
+        # that omits it models a Repo that no longer exists, and the
+        # enumeration silently returns no hosts at all.
+        inventory_settings={},
     )
 
 

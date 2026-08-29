@@ -12,4 +12,5 @@ lab-config
 host-options
 os-profiles
 host-sources
+inventory
 ```

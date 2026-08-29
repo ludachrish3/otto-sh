@@ -32,6 +32,9 @@
                     "valid_terms": ["ssh", "telnet"],
                     "valid_transfers": ["scp", "sftp", "ftp", "nc"],
                     "is_virtual": true,
+                    "site": "lab-a",
+                    "rack": 1,
+                    "shelf": 3,
                     "docker_capable": true,
                     "creds": [
                         {"login": "vagrant", "password": "vagrant"},
@@ -54,6 +57,9 @@
                     "valid_terms": ["telnet", "ssh"],
                     "valid_transfers": ["nc", "scp", "sftp", "ftp"],
                     "is_virtual": true,
+                    "site": "lab-a",
+                    "rack": 1,
+                    "shelf": 3,
                     "docker_capable": true,
                     "creds": [
                         {"login": "vagrant", "password": "vagrant"},
@@ -75,6 +81,9 @@
                     "valid_terms": ["ssh", "telnet"],
                     "valid_transfers": ["scp", "sftp", "ftp", "nc"],
                     "is_virtual": true,
+                    "site": "lab-a",
+                    "rack": 1,
+                    "shelf": 4,
                     "docker_capable": true,
                     "creds": [
                         {"login": "vagrant", "password": "vagrant"},

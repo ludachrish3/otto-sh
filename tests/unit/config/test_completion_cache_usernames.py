@@ -9,7 +9,11 @@ def test_usernames_round_trip(tmp_path, monkeypatch):
     cache_file = tmp_path / "cache.json"
     monkeypatch.setattr(cc, "_cache_path", lambda: cache_file)
     monkeypatch.setattr(cc, "compute_fingerprint", lambda repos: "fp")
-    repos = [object()]  # truthy; not inspected (fingerprint patched)
+    # A bare `object()` no longer does: patching `compute_fingerprint` does not
+    # patch `_fingerprint_is_ephemeral`, which `write_cache` also consults and
+    # which reads `inventory_settings`. Absent, that raises, the digest is
+    # treated as ephemeral, and the write silently stands down.
+    repos = [types.SimpleNamespace(inventory_settings={})]
 
     cc.write_cache(repos, [], [], [], usernames=["alice", "bob"])
     result = cc.read_cache(repos)

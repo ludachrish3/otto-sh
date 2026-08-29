@@ -352,6 +352,10 @@ def test_read_cache_rejects_schema_mismatch(tmp_path: Path, monkeypatch) -> None
     fake_repo.init = []
     fake_repo.libs = []
     fake_repo.tests = []
+    # A MagicMock auto-attribute is TRUTHY and `dict()`s to `{}`, which reads
+    # as a present-but-empty [inventory] — a shape no real Repo produces, and
+    # one `build_inventory` rejects, taking the cache write down with it.
+    fake_repo.inventory_settings = {}
 
     monkeypatch.setenv("OTTO_HOME", str(tmp_path))
     cache_file = cc._cache_path()
@@ -586,6 +590,10 @@ def test_write_read_cache_round_trips_backend_names(tmp_path: Path, monkeypatch)
     fake_repo.init = []
     fake_repo.libs = []
     fake_repo.tests = []
+    # A MagicMock auto-attribute is TRUTHY and `dict()`s to `{}`, which reads
+    # as a present-but-empty [inventory] — a shape no real Repo produces, and
+    # one `build_inventory` rejects, taking the cache write down with it.
+    fake_repo.inventory_settings = {}
 
     cc.write_cache(
         [fake_repo],
@@ -796,6 +804,10 @@ def test_write_read_cache_round_trips_commands(tmp_path: Path, monkeypatch) -> N
     fake_repo.init = []
     fake_repo.libs = []
     fake_repo.tests = []
+    # A MagicMock auto-attribute is TRUTHY and `dict()`s to `{}`, which reads
+    # as a present-but-empty [inventory] — a shape no real Repo produces, and
+    # one `build_inventory` rejects, taking the cache write down with it.
+    fake_repo.inventory_settings = {}
 
     cc.write_cache(
         [fake_repo],
@@ -819,6 +831,10 @@ def test_read_cache_defaults_commands_to_empty_list(tmp_path: Path, monkeypatch)
     fake_repo.init = []
     fake_repo.libs = []
     fake_repo.tests = []
+    # A MagicMock auto-attribute is TRUTHY and `dict()`s to `{}`, which reads
+    # as a present-but-empty [inventory] — a shape no real Repo produces, and
+    # one `build_inventory` rejects, taking the cache write down with it.
+    fake_repo.inventory_settings = {}
 
     cc.write_cache([fake_repo], instructions=[], suites=[], hosts=[])
     out = cc.read_cache([fake_repo])
@@ -836,6 +852,10 @@ def test_write_read_cache_round_trips_hosts_by_lab(tmp_path: Path, monkeypatch) 
     fake_repo.init = []
     fake_repo.libs = []
     fake_repo.tests = []
+    # A MagicMock auto-attribute is TRUTHY and `dict()`s to `{}`, which reads
+    # as a present-but-empty [inventory] — a shape no real Repo produces, and
+    # one `build_inventory` rejects, taking the cache write down with it.
+    fake_repo.inventory_settings = {}
 
     cc.write_cache(
         [fake_repo],
@@ -859,6 +879,10 @@ def test_read_cache_defaults_hosts_by_lab_to_empty_dict(tmp_path: Path, monkeypa
     fake_repo.init = []
     fake_repo.libs = []
     fake_repo.tests = []
+    # A MagicMock auto-attribute is TRUTHY and `dict()`s to `{}`, which reads
+    # as a present-but-empty [inventory] — a shape no real Repo produces, and
+    # one `build_inventory` rejects, taking the cache write down with it.
+    fake_repo.inventory_settings = {}
 
     cc.write_cache([fake_repo], instructions=[], suites=[], hosts=[])
     out = cc.read_cache([fake_repo])
@@ -901,6 +925,11 @@ def _make_fake_repo(tmp_path: Path) -> MagicMock:
     fake_repo.init = []
     fake_repo.libs = []
     fake_repo.tests = []
+    # Pinned rather than left to the auto-attribute: `build_inventory` reads
+    # it, and a MagicMock's is TRUTHY and converts to `{}`, which validates as
+    # a broken [inventory] table — that takes out both the host enumeration
+    # and (since a broken declaration is ephemeral) every cache WRITE.
+    fake_repo.inventory_settings = {}
     # One json source over tmp_path/lab — the built-in backend, which is what
     # these tests exercise.
     fake_repo.lab_sources = json_lab_sources(fake_repo.sut_dir, [tmp_path / "lab"])
@@ -914,7 +943,7 @@ def test_collect_returns_only_capable_sorted(tmp_path: Path) -> None:
     # docker_capable host "b_seed", non-docker host "a_seed", and a docker_capable
     # entry whose identity cannot resolve. v2 keeps that skip per RECORD; a
     # malformed ELEMENT takes its whole file out of enumeration instead (see
-    # tests/unit/labs/test_json_repository_v2.py), which is why the junk entry
+    # tests/unit/labs/test_json_repository.py), which is why the junk entry
     # here is a bad host field rather than a non-dict.
     write_lab_json(
         lab_path / LAB_FILENAME,
@@ -976,6 +1005,10 @@ def _make_fingerprint_repo(
     fake_repo.init = init
     fake_repo.libs = libs
     fake_repo.tests = []
+    # A MagicMock auto-attribute is TRUTHY and `dict()`s to `{}`, which reads
+    # as a present-but-empty [inventory] — a shape no real Repo produces, and
+    # one `build_inventory` rejects, taking the cache write down with it.
+    fake_repo.inventory_settings = {}
     fake_repo.lab_sources = json_lab_sources(fake_repo.sut_dir, labs) if labs else []
     return fake_repo
 

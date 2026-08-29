@@ -1,0 +1,54 @@
+{
+    "_note": "every machine fact comes from inventory.json; every otto fact stays here. Declared inline, these three hosts come out identical.",
+    "labs": {
+        "unix": {
+            "resources": ["test1", "test2", "test3"],
+            "metadata": {"description": "unix regression bed"}
+        },
+        "busybox": {
+            "resources": ["test1", "bb1161", "bb1211", "bb1281", "bb1310", "bb1350"]
+        }
+    },
+    "elements": [
+        {
+            "name": "test1",
+            "labs": ["unix", "busybox"],
+            "metadata": {"role": "hub"},
+            "hosts": [
+                {
+                    "inventory": "test1",
+                    "os_type": "unix",
+                    "docker_capable": true,
+                    "valid_terms": ["ssh", "telnet"],
+                    "valid_transfers": ["scp", "sftp", "ftp", "nc"]
+                }
+            ]
+        },
+        {
+            "name": "test2",
+            "labs": ["unix"],
+            "hosts": [
+                {
+                    "inventory": "test2",
+                    "os_type": "unix",
+                    "docker_capable": true,
+                    "valid_terms": ["telnet", "ssh"],
+                    "valid_transfers": ["nc", "scp", "sftp", "ftp"]
+                }
+            ]
+        },
+        {
+            "name": "test3",
+            "labs": ["unix"],
+            "hosts": [
+                {
+                    "inventory": "test3",
+                    "os_type": "unix",
+                    "docker_capable": true,
+                    "valid_terms": ["ssh", "telnet"],
+                    "valid_transfers": ["scp", "sftp", "ftp", "nc"]
+                }
+            ]
+        }
+    ]
+}

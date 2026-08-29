@@ -491,10 +491,12 @@ Otto's direct runtime dependencies (declared in `pyproject.toml` under
 | `packaging` | 24.0 | Requirement/marker/specifier evaluation for the dependency preflight |
 | `pydantic` | 2.6 | Boundary validation models for lab JSON, host records, and settings |
 | `pydantic-settings` | 2.2 | Environment-variable settings (`OTTO_*`) |
+| `pynetbox` | 7.4.0 | NetBox REST client for the `netbox` inventory backend |
 | `pysnmp` | 7.1.0 | Async SNMP manager for separate-channel host monitoring |
 | `pytest` | 9.1.1 | Test runner; otto imports user test files at runtime |
 | `pytest-asyncio` | 1.4.0 | Async test support for pytest |
 | `pytest-timeout` | 2.3.1 | Per-test timeouts for `otto test` (`@pytest.mark.timeout`) |
+| `requests` | 2.20.0 | HTTP adapter mounted directly by the `netbox` inventory backend to bound each request |
 | `rich` | 15.0.0 | Terminal formatting, panels, and tables |
 | `sse-starlette` | 3.3.3 | Server-sent events for live dashboard updates |
 | `starlette` | 0.52.1 | ASGI request types used directly by the monitor server |
@@ -508,15 +510,16 @@ Otto's direct runtime dependencies (declared in `pyproject.toml` under
 
 ### Native-extension dependencies
 
-The direct dependencies above pull in further packages of their own — about 42 in a
+The direct dependencies above pull in further packages of their own — about 50 in a
 complete Linux runtime install. Most are pure Python and ship a single
-`py3-none-any` wheel that works everywhere. These four do not: they carry **native
+`py3-none-any` wheel that works everywhere. These five do not: they carry **native
 (C/Rust) extensions**, so their wheels are platform-specific, and the "Wheel matrix"
 column says whether they are *also* Python-version-specific.
 
 | Package | Pulled in by | Wheel matrix | Notes |
 | ------- | ------------ | ------------ | ----- |
 | `cffi` | cryptography | per-version | C FFI bindings |
+| `charset-normalizer` | requests (direct) | per-version + pure fallback | HTTP body charset detection |
 | `cryptography` | asyncssh | abi3 | SSH encryption; links against OpenSSL |
 | `pydantic-core` | pydantic | per-version | Rust-based data validation |
 | `tomli` | otto (direct) | per-version + pure fallback | TOML parsing |

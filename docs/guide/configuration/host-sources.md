@@ -49,6 +49,14 @@ Every remaining key belongs to the backend the entry selected.
 A repo with no `[lab]` table declares no sources — normal for a repo that
 ships only libs and tests. The table itself may hold nothing but `sources`.
 
+Sources are not the host **inventory**, and the two never overlap. Sources
+compose *records*: several of them contribute elements, and a later one
+replaces an earlier one wholesale, one element (or one `labs` table entry) at a
+time. The inventory supplies *fields* **within** a record — the machine facts
+of a host entry that references it — and there is exactly one per process, so
+no precedence question arises there at all. A lab file can come from any
+source and still reference the inventory; see {doc}`inventory`.
+
 ### json sources: `paths` are directories, files, or globs
 
 For `backend = "json"`, `paths` is required and non-empty. Each entry is one

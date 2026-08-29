@@ -46,6 +46,10 @@ dependencies = [
     "packaging>=24.0",
     "pydantic>=2.6,<3",
     "pydantic-settings>=2.2,<3",
+    # NetBox client for the `netbox` inventory backend (spec 2026-08-28
+    # host-inventory §9.2). A plain runtime dependency — otto ships as ONE
+    # package with no extras — imported lazily inside otto.inventory.netbox.
+    "pynetbox>=7.4.0",
     # SNMP manager for embedded / separate-channel performance monitoring.
     "pysnmp>=7.1.0",
     # pytest + pytest-asyncio + pytest-timeout are runtime deps because otto
@@ -55,6 +59,14 @@ dependencies = [
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
     "pytest-timeout>=2.3.1",
+    # `otto.inventory.netbox` imports `requests.adapters.HTTPAdapter` BY NAME to
+    # mount the per-request timeout on pynetbox's session (pynetbox owns the
+    # calls and offers no seam to pass one through). A package otto imports is a
+    # package otto declares, even when a direct dependency already resolves it:
+    # the floor is pynetbox's own (`requests<3.0,>=2.20.0`), so this adds the
+    # edge and moves no version. Imported lazily, inside the fetch, like
+    # pynetbox itself.
+    "requests>=2.20.0",
     "rich>=15.0.0",
     "sse-starlette>=3.3.3",
     # Imported directly in monitor/server.py (starlette.requests.Request);
@@ -152,6 +164,14 @@ dev = [
     "sphinx>=8.0",
     "doc8>=1.1",
     "ty==0.0.73",
+    # Stub-only package for `requests`, which ships no py.typed and no
+    # annotations at all: without it a checker reads `Session.verify`'s type
+    # off the bare `self.verify = True` in requests/sessions.py and concludes
+    # `bool`, while the accepted contract is `bool | str | None` (a CA bundle
+    # path). `otto.inventory.netbox` assigns exactly that union. The STUB
+    # package is what lives here: `requests` itself is a direct runtime
+    # dependency above, but nothing at runtime imports these stubs.
+    "types-requests>=2.32",
     "pyyaml>=6.0.3",
     "pytest-randomly>=4.1.0",
 ]

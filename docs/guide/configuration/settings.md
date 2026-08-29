@@ -167,6 +167,46 @@ init
   gate; `"json"` reads a reservation file). See {doc}`../cli/reservation/index` for backends,
   the file format, and the `--as-user` / `-R` break-glass overrides.
 
+\[inventory\]
+: Optional table selecting the **host inventory** — the tool-agnostic layer a
+  host entry reads its machine facts from.  Its usual home is the user-level
+  file described below; a table here is a per-project **override**, and when
+  more than one active repo declares one, the tables must be identical or
+  bootstrap fails naming both.  Three keys are otto's own: `backend` (a
+  registered name — `"json"` and `"netbox"` ship with otto), `creds_file` (a
+  JSON file of credentials keyed by inventory key, read by otto rather than by
+  the backend) and `cache_ttl` (`"0"`, or `<n>m` / `<n>h` / `<n>d`; default
+  `"24h"`).  Every other key belongs to the selected backend: `path`
+  (required) and `supplies` for `json`; `url`, `token_env`, `verify`,
+  `filter`, `ip_source`, `custom_fields`, `extra_custom_fields` and `timeout`
+  (seconds per request, default `30`) for
+  `netbox`.  A relative `path` or `creds_file` anchors to the repo root, like
+  every other settings path.  See {doc}`inventory` for the full treatment.
+
+### User-level settings
+
+One file sits outside every repo: `~/.otto/settings.toml`, otto's **user-level**
+settings.  It holds what is true of the person and the machine rather than of a
+project — today that is exactly one table, `[inventory]`, because a machine is a
+machine regardless of which repo you are working in:
+
+```toml
+[inventory]
+backend = "json"
+path = "~/lab/inventory.json"
+creds_file = "~/.otto/creds.json"
+```
+
+Otto neither creates nor scaffolds this file; write it by hand when you adopt
+an inventory.  It lives under otto's home, so `OTTO_HOME` relocates it along
+with everything else there, and a relative path inside it anchors to that
+directory (`~/.otto`) rather than to any repo.  A repo-only table pasted into
+it is an error naming the key — this file is not a second `settings.toml`.
+
+A project's own `[inventory]` table overrides it, which is the seam for a repo
+that has moved to a different inventory ahead of the rest.  See
+{doc}`inventory`.
+
 ## What happens at startup
 
 When you run any `otto` command, the following initialization sequence

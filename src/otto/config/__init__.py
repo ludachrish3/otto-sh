@@ -5,6 +5,8 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from ..models.settings import OttoEnvSettings
     from .dependencies import ResolvedDependency as ResolvedDependency
+    from .user_settings import load_user_settings as load_user_settings
+    from .user_settings import user_settings_path as user_settings_path
 
 from .env import (
     load_otto_env as load_otto_env,
@@ -49,9 +51,14 @@ from .version import (
 # name -> (source module, attribute) resolved on first access by __getattr__.
 # Kept lazy (PEP 562) because .dependencies imports ..bootstrap and
 # ..models.dependencies at module level, which would otherwise widen every
-# surface's import graph just to expose one dataclass type.
+# surface's import graph just to expose one dataclass type. The user-settings
+# pair is here for the same reason and was MEASURED: exporting it eagerly put
+# otto.models.settings (and .color/.dependencies/.inventory/.home) on every CLI
+# surface and broke ten import-budget caps at once.
 _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     "ResolvedDependency": ("otto.config.dependencies", "ResolvedDependency"),
+    "load_user_settings": ("otto.config.user_settings", "load_user_settings"),
+    "user_settings_path": ("otto.config.user_settings", "user_settings_path"),
 }
 
 

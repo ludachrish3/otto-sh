@@ -14,7 +14,7 @@ import os
 import re
 from collections.abc import Callable
 from pathlib import Path
-from typing import Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any
 
 import tomli
 import typer
@@ -30,6 +30,13 @@ from .init_templates import (
     VSCODE_EXTENSIONS_TEMPLATE,
     VSCODE_SETTINGS_TEMPLATE,
 )
+
+if TYPE_CHECKING:
+    # Annotation-only: importing ``otto.inventory`` for real pulls ~77 otto
+    # modules (see ``otto/inventory/config.py``'s module docstring), and
+    # ``init.py`` sits on a budgeted CLI surface (scripts/import_budget.py).
+    # Every real use below is a function-local import.
+    from ..inventory import Inventory
 
 
 @dataclasses.dataclass(frozen=True)
@@ -424,6 +431,78 @@ def _validate_settings(root: Path) -> list[str]:
     return []
 
 
+def _inventory_for(
+    root: Path, cache: "dict[Path, Inventory | Exception | None] | None" = None
+) -> "Inventory | None":
+    """Return the inventory bootstrap would build for *root*: its own override, else the user file.
+
+    Raises ``InventoryError`` / ``ValueError`` for a broken declaration — the
+    caller reports that as a problem naming the file; the doctor must never
+    traceback on a broken ``[inventory]`` table or user settings file.
+
+    *cache* memoises the result (inventory, ``None``, or the raised
+    exception) per *root* — one ``otto init`` run asks this up to three times
+    (the "lab" area's own validation, the warnings pass, the label line), and
+    while today's construction is I/O-free, a real backend (the netbox one,
+    still to land) would otherwise pay a whole-set fetch three times over. A
+    plain dict an owning caller creates and threads through by hand — never a
+    module global, which would outlive one invocation and leak across
+    processes or tests that import this module.
+    """
+    if cache is not None and root in cache:
+        cached = cache[root]
+        if isinstance(cached, Exception):
+            raise cached
+        return cached
+
+    from ..config.user_settings import load_user_settings
+    from ..inventory import InventoryDeclaration, InventoryError, build_inventory_from_declarations
+
+    data = _settings_data(root) or {}
+    table = data.get("inventory") or {}
+    declarations = (
+        [
+            InventoryDeclaration(
+                origin=str(root / ".otto" / "settings.toml"), anchor_dir=root, table=dict(table)
+            )
+        ]
+        if isinstance(table, dict) and table
+        else []
+    )
+    try:
+        result = build_inventory_from_declarations(declarations, user_settings=load_user_settings())
+    except (InventoryError, ValueError) as e:
+        if cache is not None:
+            cache[root] = e
+        raise
+    if cache is not None:
+        cache[root] = result
+    return result
+
+
+def _print_inventory_label(
+    root: Path, cache: "dict[Path, Inventory | Exception | None] | None" = None
+) -> None:
+    """Print ``inventory: <label>`` when one resolves for *root*; silent otherwise.
+
+    A separate function (rather than inline in :func:`init_command`) so the
+    try/except does not count against that function's own cyclomatic budget.
+    A broken declaration prints nothing here — it is already a problem in the
+    verdict table via :func:`_validate_lab`, and repeating it would be noise.
+    """
+    from rich import print as rprint
+    from rich.markup import escape
+
+    from ..inventory import InventoryError
+
+    try:
+        inventory = _inventory_for(root, cache)
+    except (InventoryError, ValueError):
+        return
+    if inventory is not None:
+        rprint(f"inventory: {escape(inventory.label)}")
+
+
 _ParsedLab = tuple[str, dict[str, Any], list[Any], list[Any]]
 """One parsed lab file: ``(path, labs table, elements, raw links)``."""
 
@@ -496,37 +575,71 @@ def _item_problem(validate: Callable[[Any], object], item: Any, prefix: str) -> 
     write: a ``try``/``except`` inside a per-item loop is ``PERF203``, and the
     repo's answer (``otto.labs.json_repository._parse_element``) is to move
     the ``try`` into a function the loop calls. ``ValueError`` covers both
-    arms — pydantic's ``ValidationError`` is one.
+    arms — pydantic's ``ValidationError`` is one; ``InventoryError`` covers a
+    third — a host entry's :func:`~otto.inventory.resolve_host_entry` call
+    hitting a dead key or an inventory-owned field declared inline.
     """
+    from ..inventory import InventoryError
+
     try:
         validate(item)
-    except ValueError as e:
+    except (ValueError, InventoryError) as e:
         return [f"{prefix} {e}"]
     return []
 
 
-def _validate_lab(root: Path) -> list[str]:
+def _validate_lab(
+    root: Path, cache: "dict[Path, Inventory | Exception | None] | None" = None
+) -> list[str]:
     """Validate every lab file the settings' ``[[lab.sources]]`` name, via the real specs.
 
     The file shape is :func:`_parse_lab_documents`' job; what is left is the
     two payloads the wrapper models hold opaquely. Each element's host
     entries are flattened the way the loader flattens them
     (:meth:`otto.models.lab.ElementSpec.flatten` stamps the element identity
-    on) and handed to :func:`otto.host.factory.validate_host_dict`, so a bad
-    ``os_type`` or field name surfaces the same pydantic error the loader
-    would raise. Each ``links`` entry is validated structurally via
-    :class:`~otto.models.link.LinkSpec`; endpoint cross-references (host ids,
-    interface keys) are resolved at load time, not here.
+    on), resolved against this repo's inventory the way the loader resolves
+    them (:func:`otto.inventory.resolve_host_entry`, spec §6), and handed to
+    :func:`otto.host.factory.validate_host_dict`, so a bad ``os_type`` or
+    field name, a dead inventory key, or an inventory-owned field declared
+    inline all surface the same error the loader would raise. Each ``links``
+    entry is validated structurally via :class:`~otto.models.link.LinkSpec`;
+    endpoint cross-references (host ids, interface keys) are resolved at load
+    time, not here.
+
+    A broken ``[inventory]`` declaration (or user settings file) is reported
+    ONCE, as its own problem, rather than once per referencing host entry —
+    those entries are skipped for this pass and resolve once the declaration
+    is fixed. "Those entries" means
+    :func:`~otto.inventory.doctor.references_inventory` (R7): a ``None`` or
+    absent key references nothing and is validated as always regardless of
+    the broken declaration, and a malformed key (the empty string, a
+    non-string) is its own problem independent of the declaration — skipping
+    on mere key PRESENCE would swallow both.
     """
     from ..host.factory import validate_host_dict
+    from ..inventory import InventoryError, resolve_host_entry
+    from ..inventory.doctor import references_inventory
     from ..models.link import LinkSpec
 
     problems, documents = _parse_lab_documents(root)
+    inventory: "Inventory | None" = None
+    inventory_broken = False
+    try:
+        inventory = _inventory_for(root, cache)
+    except (InventoryError, ValueError) as e:
+        problems.append(f"inventory: {e}")
+        inventory_broken = True
+
+    def _validate_entry(host_data: dict[str, Any]) -> None:
+        validate_host_dict(resolve_host_entry(host_data, inventory).host_data)
+
     for lab_file, _, elements, links in documents:
         for element in elements:
             for idx, host_data in enumerate(element.flatten()):
+                if inventory_broken and references_inventory(host_data):
+                    continue  # reported once above; these resolve once it is fixed
                 prefix = f"{lab_file}: element {element.name!r} hosts[{idx}]"
-                problems.extend(_item_problem(validate_host_dict, host_data, prefix))
+                problems.extend(_item_problem(_validate_entry, host_data, prefix))
         for idx, link_data in enumerate(links):
             problems.extend(
                 _item_problem(LinkSpec.model_validate, link_data, f"{lab_file}: links[{idx}]")
@@ -534,19 +647,57 @@ def _validate_lab(root: Path) -> list[str]:
     return problems
 
 
-def _lab_warnings(root: Path) -> list[str]:
-    """Advisory findings across every lab file (spec §8.3, §9) — never failing.
+def _lab_warnings(
+    root: Path, cache: "dict[Path, Inventory | Exception | None] | None" = None
+) -> list[str]:
+    """Advisory findings across every lab file (spec §8.3, §9, §11) — never failing.
 
     Separate from :func:`_validate_lab` because the two answer different
     questions: a problem is "otto will not load this", a warning is "otto will
     load this and it is probably not what you meant". Only the first sets the
     exit code. Parsing runs again here rather than being threaded through the
     ``Area`` protocol, which has one validate hook and no warning channel.
+
+    When an inventory resolves, its own advisory findings — a snapshot served
+    because the backend was unreachable, orphan records
+    (:func:`~otto.inventory.doctor.orphan_warning`) and a world-readable
+    ``creds_file`` (:func:`~otto.inventory.doctor.creds_mode_warning`) — are
+    appended. A broken inventory declaration contributes nothing here: it is
+    already a problem in the verdict table via :func:`_validate_lab`, and
+    repeating it as a warning would be noise.
+
+    The stale-snapshot notice is REPORTED rather than logged because this
+    command is ``lab_free``: ``init_cli_logging`` never runs for such a group
+    and otto's ``NullHandler`` defeats ``logging.lastResort``, so the cache's
+    own ``logger.warning`` reaches nobody here. Spec §19.2 pitches
+    ``otto init`` as the dead-reference gate to run in CI, and a green table
+    against a days-old snapshot is exactly what that gate must not print.
     """
+    from ..inventory import InventoryError, snapshot_cache_of
+    from ..inventory.doctor import creds_mode_warning, orphan_warning, referenced_keys
     from ..labs.doctor import lab_warnings
 
     _, documents = _parse_lab_documents(root)
-    return lab_warnings([(src, entries, elements) for src, entries, elements, _ in documents])
+    warnings = lab_warnings([(src, entries, elements) for src, entries, elements, _ in documents])
+    try:
+        inventory = _inventory_for(root, cache)
+    except (InventoryError, ValueError):
+        return warnings  # the problem is already in the verdict table
+    if inventory is not None:
+        try:
+            orphan = orphan_warning(
+                inventory, referenced=referenced_keys(elements for _, _, elements, _ in documents)
+            )
+        except InventoryError as e:
+            orphan = f"inventory '{inventory.label}': could not list records: {e}"
+        # Read AFTER the orphan check, never before: the notice is set by the
+        # resolution that check performs, and construction touches nothing.
+        snapshot = snapshot_cache_of(inventory)
+        stale = snapshot.stale_notice if snapshot is not None else None
+        # Staleness first — it is the fact that qualifies every finding under
+        # it, orphan list included.
+        warnings.extend(w for w in (stale, orphan, creds_mode_warning(inventory)) if w)
+    return warnings
 
 
 def _validate_tests(root: Path) -> list[str]:
@@ -728,6 +879,12 @@ async def init_command(
     for i, step in enumerate(steps, 1):
         rprint(f"  {i}. {step}")
 
+    # One inventory per invocation, not per asker: _validate_lab (below),
+    # _print_inventory_label and _lab_warnings each ask _inventory_for the
+    # same question about the same root. A plain dict, owned here and threaded
+    # through by hand — never a module global (see _inventory_for).
+    inventory_cache: "dict[Path, Inventory | Exception | None]" = {}
+
     table = Table(title=f"otto init — {root}", show_header=True)
     table.add_column("area")
     table.add_column("status")
@@ -739,7 +896,13 @@ async def init_command(
         elif not area.detect(root):
             table.add_row(area.name, "[yellow]skipped[/yellow]", "not requested")
         else:
-            problems = area.validate(root)
+            # The "lab" area's validate hook is _validate_lab, specifically —
+            # it is the one area whose problems come from asking
+            # _inventory_for, so it is the one call routed through the shared
+            # cache rather than the uniform Area.validate(root) the others use.
+            problems = (
+                _validate_lab(root, inventory_cache) if area.name == "lab" else area.validate(root)
+            )
             if problems:
                 failed = True
                 # escape(): a problem quotes pydantic (`[type=extra_forbidden,
@@ -750,9 +913,11 @@ async def init_command(
                 table.add_row(area.name, "[green]✓[/green]", "")
     rprint(table)
 
+    _print_inventory_label(root, inventory_cache)
+
     # Advisory only — printed after the verdict table, never folded into it,
     # and deliberately not part of `failed`.
-    warnings = _lab_warnings(root)
+    warnings = _lab_warnings(root, inventory_cache)
     if warnings:
         rprint("\n[bold yellow]Warnings[/bold yellow]")
         for warning in warnings:

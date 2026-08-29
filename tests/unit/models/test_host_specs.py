@@ -93,6 +93,42 @@ def test_hostspec_forbids_unknown_field():
         HostSpec(ip="10.0.0.1", element="lab", lab=["x"])
 
 
+@pytest.mark.parametrize(("raw", "expected"), [(3, 3), ("3", 3), ("R3", "R3")])
+def test_hostspec_site_and_rack_coerce_digit_strings(raw, expected):
+    spec = UnixHostSpec(
+        ip="10.0.0.1",
+        element="lab",
+        creds=[{"login": "u", "password": "p"}],
+        site=raw,
+        rack=raw,
+        shelf=2,
+    )
+    assert spec.site == expected
+    assert spec.rack == expected
+    host = spec.to_host()
+    assert (host.site, host.rack, host.shelf) == (expected, expected, 2)
+
+
+def test_location_fields_default_none_and_stay_out_of_the_id():
+    spec = UnixHostSpec(
+        ip="10.0.0.1",
+        element="lab",
+        creds=[{"login": "u", "password": "p"}],
+        board="cx",
+        slot=1,
+    )
+    host = spec.to_host()
+    assert (host.site, host.rack, host.shelf) == (None, None, None)
+    assert host.id == "lab_cx1"
+
+
+def test_hostspec_shelf_rejects_negative():
+    with pytest.raises(ValidationError, match="shelf"):
+        UnixHostSpec(
+            ip="10.0.0.1", element="lab", creds=[{"login": "u", "password": "p"}], shelf=-1
+        )
+
+
 def test_common_host_kwargs_omits_unset():
     spec = HostSpec(ip="10.0.0.1", element="lab")
     kw = spec._common_host_kwargs()
@@ -243,8 +279,16 @@ def test_embedded_spec_rejects_unix_only_field():
 # category for the same reason — repo-defined tooling attached by a registered
 # provider at ingest, deliberately not declarable in lab data. ``element_metadata``
 # and ``lab_info`` are stamped by the element/lab layers above the host entry,
-# never declared on it.
-_NON_SPEC_RUNTIME_FIELDS = frozenset({"products", "dev_tools", "element_metadata", "lab_info"})
+# never declared on it. ``inventory_ref`` is the loader-stamped provenance of a
+# referenced entry (spec §7) — never declared on the entry itself.
+_NON_SPEC_RUNTIME_FIELDS = frozenset(
+    {"products", "dev_tools", "element_metadata", "lab_info", "inventory_ref"}
+)
+# Spec-only fields: on the lab-data entry but deliberately NOT a constructor
+# argument. ``inventory`` is the key of the record a referenced entry was
+# resolved from; the loader consumes it (otto.inventory.resolve_host_entry)
+# and hands the factory an ``InventoryRef`` instead.
+_SPEC_ONLY_FIELDS = frozenset({"inventory"})
 
 
 @pytest.mark.parametrize(("spec_cls", "runtime_cls"), HOST_SPEC_RUNTIME_PAIRS)
@@ -254,7 +298,7 @@ def test_host_spec_fields_match_runtime_init(spec_cls, runtime_cls):
     ``_NON_SPEC_RUNTIME_FIELDS`` are runtime-only (applied by repo logic or by
     the layers above the host entry, not lab-data host fields).
     """
-    spec_fields = set(spec_cls.model_fields)
+    spec_fields = set(spec_cls.model_fields) - _SPEC_ONLY_FIELDS
     init_fields = {
         f.name for f in dataclasses.fields(runtime_cls) if f.init and not f.name.startswith("_")
     } - _NON_SPEC_RUNTIME_FIELDS
@@ -263,6 +307,18 @@ def test_host_spec_fields_match_runtime_init(spec_cls, runtime_cls):
         f"spec-only={sorted(spec_fields - init_fields)}, "
         f"runtime-only (spec forgot)={sorted(init_fields - spec_fields)}"
     )
+
+
+def test_spec_inventory_key_never_reaches_the_host():
+    """``inventory`` is spec-only (the loader's join key, §5) — subtracting it in
+    ``_SPEC_ONLY_FIELDS`` above removes it from the drift guard's coverage, so this
+    pins the property that matters directly: it must never become a host attribute.
+    """
+    spec = UnixHostSpec(
+        ip="10.0.0.1", element="lab", creds=[{"login": "u", "password": "p"}], inventory="k"
+    )
+    host = spec.to_host()
+    assert not hasattr(host, "inventory")
 
 
 def test_hostspec_interfaces_default_empty_and_passes_to_host():
@@ -414,7 +470,7 @@ def test_registered_pairs_drift_guard():
 
     for name, spec_cls in _HOST_SPECS.items():
         runtime_cls = HOST_CLASSES.get(name)
-        spec_fields = set(spec_cls.model_fields)
+        spec_fields = set(spec_cls.model_fields) - _SPEC_ONLY_FIELDS
         init_fields = {
             f.name for f in dataclasses.fields(runtime_cls) if f.init and not f.name.startswith("_")
         } - _NON_SPEC_RUNTIME_FIELDS

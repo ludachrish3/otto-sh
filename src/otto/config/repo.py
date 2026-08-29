@@ -851,6 +851,18 @@ class Repo:
         """
         return self.settings.get("reservations", {}) or {}
 
+    @property
+    def inventory_settings(self) -> dict[str, Any]:
+        """Return the raw ``[inventory]`` sub-dict — the per-project override.
+
+        Spec 2026-08-28 host-inventory §8. Empty when the section is absent.
+        Literal parsed TOML, exactly like ``reservation_settings``: a plain
+        dict, so this module never has to import :mod:`otto.inventory` (which
+        would invert the layering). Anchoring and backend-kwarg validation
+        happen in :func:`otto.inventory.config.compile_inventory`.
+        """
+        return self.settings.get("inventory", {}) or {}
+
     def add_libs_to_pythonpath(self) -> None:
         """Add configured library directories to the PYTHONPATH."""
         for lib in self.libs:

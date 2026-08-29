@@ -8,7 +8,17 @@ from tests._fixtures.sutrepo import touch_settings
 def _repos(tmp_path):
     # one repo whose fingerprint sources exist under tmp_path/.otto
     touch_settings(tmp_path)
-    return [SimpleNamespace(sut_dir=tmp_path, init=[], libs=[], tests=[], labs=[], lab_sources=[])]
+    return [
+        SimpleNamespace(
+            sut_dir=tmp_path,
+            init=[],
+            libs=[],
+            tests=[],
+            labs=[],
+            lab_sources=[],
+            inventory_settings={},
+        )
+    ]
 
 
 def test_record_and_read_roundtrip(tmp_path, monkeypatch):

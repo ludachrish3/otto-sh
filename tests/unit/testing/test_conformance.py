@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from otto.labs import JsonFileLabRepository
+from otto.labs import JsonFileLabRepository, LabNotFoundError
 from otto.reservations import (
     JsonReservationBackend,
     NullReservationBackend,
@@ -68,7 +68,7 @@ class TestLabRepositoryConformance:
 
     def test_non_conforming_repo_raises_with_aggregate(self):
         class Broken:
-            def load_lab(self, name, preferences=None):
+            def load_lab(self, name, preferences=None, inventory=None):
                 return "not a lab"  # wrong type
 
             def list_labs(self):
@@ -78,12 +78,35 @@ class TestLabRepositoryConformance:
             assert_lab_repository_conforms(Broken())
         assert "LabRepository" in str(exc.value)
 
+    def test_load_lab_without_an_inventory_keyword_is_a_violation(self):
+        """Spec §6: every backend takes ``inventory=``, checked on the SIGNATURE.
+
+        A backend whose own data holds no referenced entry satisfies every
+        BEHAVIOURAL rule here while silently dropping the argument — until
+        someone points it at an inventory. So the rule reads the signature,
+        and this backend is otherwise perfectly conforming: the aggregate
+        must name the missing keyword and nothing else.
+        """
+        from otto.config.lab import Lab
+
+        class NoInventoryKeyword:
+            def load_lab(self, name, preferences=None):
+                if name != "mylab":
+                    raise LabNotFoundError(name)
+                return Lab(name=name)
+
+            def list_labs(self):
+                return ["mylab"]
+
+        with pytest.raises(AssertionError, match=r"must accept an inventory= keyword"):
+            assert_lab_repository_conforms(NoInventoryKeyword())
+
     def test_missing_list_labs_raises_assertion_not_attribute_error(self):
         """A repo with no list_labs at all must aggregate an AssertionError,
         not propagate an AttributeError before raise_if_failures()."""
 
         class NoListLabs:
-            def load_lab(self, name, preferences=None):
+            def load_lab(self, name, preferences=None, inventory=None):
                 raise KeyError(name)
 
         with pytest.raises(AssertionError) as exc:
@@ -99,7 +122,7 @@ class TestLabRepositoryConformance:
             def __init__(self):
                 self._call_count = 0
 
-            def load_lab(self, name, preferences=None):
+            def load_lab(self, name, preferences=None, inventory=None):
                 self._call_count += 1
                 if self._call_count == 1:
                     return Lab(name=name)

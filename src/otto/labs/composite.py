@@ -32,6 +32,7 @@ from .protocol import HostSummary
 
 if TYPE_CHECKING:
     from ..config.lab import Lab
+    from ..inventory import Inventory
     from .protocol import LabRepository
 
 logger = logging.getLogger(__name__)
@@ -68,6 +69,7 @@ class CompositeLabRepository:
         self,
         name: str,
         preferences: dict[str, dict[str, Any]] | None = None,
+        inventory: "Inventory | None" = None,
     ) -> "Lab":
         """Merge *name* across every source that knows it (spec §6).
 
@@ -75,6 +77,10 @@ class CompositeLabRepository:
         ``list_labs()``. Then each source's contribution is merged in order —
         elements replaced wholesale by ``(element, element_id)``, the ``labs``
         entry replaced wholesale by the last declaring source.
+
+        *inventory* is forwarded to EVERY source: a process has exactly one
+        inventory (spec §8), and two sources resolving the same key against
+        different records is the drift this layer exists to prevent.
 
         Raises
         ------
@@ -105,7 +111,7 @@ class CompositeLabRepository:
         reasons: list[str] = []
         for source in self.sources:
             try:
-                lab = source.repository.load_lab(name, preferences=preferences)
+                lab = source.repository.load_lab(name, preferences=preferences, inventory=inventory)
             except LabNotFoundError as e:  # a per-source protocol signal, not a failure
                 reasons.append(f"{source.label}: {e}")
                 continue
@@ -195,7 +201,7 @@ class CompositeLabRepository:
             names.update(source.repository.list_labs())
         return sorted(names)
 
-    def list_host_summaries(self) -> list[HostSummary]:
+    def list_host_summaries(self, inventory: "Inventory | None" = None) -> list[HostSummary]:
         """Union by host id, later source wins, memberships unioned (spec §6.3).
 
         Memberships are also RE-RESOLVED: a summary carries the membership
@@ -219,7 +225,7 @@ class CompositeLabRepository:
         by_id: dict[str, HostSummary] = {}
         for source in self.sources:
             try:
-                summaries = host_summaries(source.repository)
+                summaries = host_summaries(source.repository, inventory=inventory)
             except Exception as e:  # noqa: BLE001 — completion path, best-effort by contract
                 logger.debug(f"skipping source {source.label} while summarizing hosts: {e}")
                 continue

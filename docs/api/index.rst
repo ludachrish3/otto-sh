@@ -21,6 +21,7 @@ API Reference
    registry
    reservations
    labs
+   inventory
    testing
    examples
    result

@@ -1,4 +1,5 @@
-"""The v2 fixtures build the same hosts the v1 fixtures did (spec §13 'Flattening').
+"""The fixtures build the hosts their pre-v2 baseline built (spec
+2026-08-27 lab-definition-v2 §13 'Flattening').
 
 Pinned literals recorded from the v1 world before the switch — a v1 file
 cannot be loaded after the break, so equivalence is pinned, not computed.

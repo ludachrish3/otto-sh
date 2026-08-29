@@ -1,5 +1,6 @@
 """Root-group lazy resolution against the CLI command registry."""
 
+import re
 import sys
 from typing import Annotated
 
@@ -16,7 +17,17 @@ def test_root_help_lists_all_builtins_without_importing_them(monkeypatch):
         monkeypatch.delitem(sys.modules, mod, raising=False)
     result = runner.invoke(app, ["--help"])
     assert result.exit_code == 0
-    for name in ("run", "test", "monitor", "cov", "host", "docker", "reservation", "schema"):
+    for name in (
+        "run",
+        "test",
+        "monitor",
+        "cov",
+        "host",
+        "docker",
+        "reservation",
+        "inventory",
+        "schema",
+    ):
         assert name in result.output
     assert "otto.cli.cov" not in sys.modules
     assert "otto.cli.monitor" not in sys.modules
@@ -27,6 +38,108 @@ def test_dispatch_resolves_only_the_target(monkeypatch):
     result = runner.invoke(app, ["schema", "--help"])
     assert result.exit_code == 0
     assert "otto.cli.cov" not in sys.modules
+
+
+# ── The hand-maintained "how many groups are there" counters ─────────────────
+
+_NUMBER_WORDS = {
+    10: "ten",
+    11: "eleven",
+    12: "twelve",
+    13: "thirteen",
+    14: "fourteen",
+    15: "fifteen",
+    16: "sixteen",
+}
+"""Enough of the range to outlive a few more groups; a count outside it fails loudly."""
+
+
+def _builtin_command_names() -> list[str]:
+    """The groups ``register_builtin_commands`` itself registered, by ORIGIN.
+
+    Not every name in the registry: a third-party plugin — or a test that
+    registered one and is running in the same process — is not a first-party
+    group, and counting those would make this assertion drift with whatever
+    else the worker had done.
+    """
+    from otto.cli.builtin_commands import register_builtin_commands
+    from otto.cli.registry import CLI_COMMANDS
+
+    register_builtin_commands()  # idempotent
+    return [
+        name
+        for name in CLI_COMMANDS.names()
+        if CLI_COMMANDS.get(name).origin == "otto.cli.builtin_commands"
+    ]
+
+
+def _one_match(pattern: str, text: str, what: str) -> str:
+    """The single capture group of *pattern* in *text*, failing loudly when absent.
+
+    A regex that quietly finds nothing turns every assertion below green — the
+    exact vacuity these counters already suffered from, since "twelve" sat in
+    two files while the real number was thirteen and nothing noticed.
+    """
+    found = re.findall(pattern, text)
+    assert len(found) == 1, f"expected exactly one {what} (pattern {pattern!r}), found {found}"
+    return found[0]
+
+
+def test_the_hand_maintained_group_counts_track_the_registry():
+    """Three counters spell the number of first-party groups in prose. Pin all three.
+
+    ``docs/guide/cli/index.md``'s opening sentence, the ``builtin_commands``
+    module docstring, and ``scripts/capture_docs_termynal.py``'s ``COMMANDS``
+    list (both its length and the comment above it) each restate a number no
+    test could previously read. Two of them were already stale — the docs said
+    "twelve" and the capture script "eleven" — for as long as it took someone
+    to notice by eye. This is what makes the next one fail a test instead.
+    """
+    import importlib.util
+
+    from tests._fixtures.paths import PROJECT_ROOT
+
+    names = _builtin_command_names()
+    count = len(names)
+    assert count in _NUMBER_WORDS, f"extend _NUMBER_WORDS: {count} groups registered ({names})"
+    word = _NUMBER_WORDS[count]
+
+    guide = (PROJECT_ROOT / "docs" / "guide" / "cli" / "index.md").read_text()
+    assert (
+        _one_match(r"`otto` is one command with (\w+) subcommand groups", guide, "count sentence")
+        == word
+    )
+
+    from otto.cli import builtin_commands
+
+    assert (
+        _one_match(r"otto's (\w+) subcommand groups", builtin_commands.__doc__ or "", "docstring")
+        == word
+    )
+
+    script = PROJECT_ROOT / "scripts" / "capture_docs_termynal.py"
+    assert _one_match(r"# The (\w+) first-party commands", script.read_text(), "comment") == word
+    spec = importlib.util.spec_from_file_location("capture_docs_termynal", script)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert sorted(module.COMMANDS) == sorted(names)
+
+
+def test_the_cli_guide_lists_every_group_in_its_table_and_toctree():
+    """A group with a page nobody links to is a page nobody reads."""
+    from tests._fixtures.paths import PROJECT_ROOT
+
+    names = _builtin_command_names()
+    guide = (PROJECT_ROOT / "docs" / "guide" / "cli" / "index.md").read_text()
+
+    rows = re.findall(r"^\| \[`otto (\S+)`\]", guide, re.MULTILINE)
+    assert sorted(rows) == sorted(names), "the Commands table and the registry disagree"
+
+    block = _one_match(
+        r":caption: Commands\n:hidden:\n\n((?:[\w./-]+\n)+)", guide, "Commands toctree"
+    )
+    entries = [line.split("/")[0] for line in block.split()]
+    assert sorted(entries) == sorted(names), "the Commands toctree and the registry disagree"
 
 
 # ── Issue #140: banner shows on help screens only ────────────────────────────

@@ -22,6 +22,7 @@ def test_export_writes_all_documents(tmp_path):
         "link.schema.json",
         "settings.schema.json",
         "reservations.schema.json",
+        "inventory.schema.json",
     } <= written
 
     # Every emitted file is valid JSON carrying the schema dialect.

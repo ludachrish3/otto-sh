@@ -35,6 +35,9 @@ def _repo(tmp_path: Path) -> SimpleNamespace:
     return SimpleNamespace(
         lab_sources=json_lab_sources(labs_dir.parent, [labs_dir]),
         sut_dir=labs_dir.parent,
+        # `build_inventory` reads it on the enumeration path; without it the
+        # enumeration is contained and offers no hosts at all.
+        inventory_settings={},
     )
 
 

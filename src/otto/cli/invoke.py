@@ -407,6 +407,14 @@ def build_lab_from_repos(repos: "list[Repo]", labnames: "str | list[str]") -> "L
     order, into one composite: ALL declared sources are live, and a later
     source's host record overrides an earlier one's. No repo's declaration
     shadows another's.
+
+    THE one place the process inventory is resolved (spec 2026-08-28
+    host-inventory §8): built here, once, and handed to the load so every
+    source sees the same one. Building it does no I/O, so a lab with no
+    referenced entry never touches the inventory — but a BROKEN declaration
+    is loud here rather than silently "no inventory", which is how a typo'd
+    ``[inventory]`` would otherwise surface as an unexplained
+    "no inventory is configured" against the first referencing host.
     """
     from ..config import load_lab
 
@@ -433,7 +441,24 @@ def build_lab_from_repos(repos: "list[Repo]", labnames: "str | list[str]") -> "L
             exit_code=1,
         ) from e
 
-    return load_lab(labnames, preferences=merged_host_preferences, repository=lab_repository)
+    # Function-local: `otto.inventory` pulls ~77 otto modules, and this module
+    # is on the budgeted CLI surfaces (scripts/import_budget.py). The edge is
+    # real and declared in tach.toml; only the timing is deferred.
+    from ..inventory import InventoryError, build_inventory
+
+    try:
+        inventory = build_inventory(repos)
+    except InventoryError as e:
+        raise LabContextError(
+            f"[bold red]Inventory unavailable:[/bold red] {escape(str(e))}", exit_code=1
+        ) from e
+
+    return load_lab(
+        labnames,
+        preferences=merged_host_preferences,
+        repository=lab_repository,
+        inventory=inventory,
+    )
 
 
 def ensure_lab_context(ctx: typer.Context) -> "OttoContext":

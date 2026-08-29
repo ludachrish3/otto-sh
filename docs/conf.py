@@ -274,6 +274,13 @@ _INTERNAL_ALIASES = {
     # re-dispatch through resolve_any_xref, which matches across object types
     # (same trick as ``asyncssh.connect`` in _SHORT_TYPE_ALIASES).
     "otto.models.settings.anchor_to_repo": "otto.models.settings.anchor_to_repo",
+    # models/host.py's IntOrStr is the same shape one alias down —
+    # ``Annotated[int | str, BeforeValidator(coerce_digit_string)]``, carried by
+    # HostSpec.site/.rack and InventoryRecord.site/.rack — so the validator
+    # function needs the identical re-dispatch. (The other half of that repr,
+    # BeforeValidator's ``json_schema_input_type``, is fixed at the source: see
+    # the comment on IntOrStr for why a sentinel default cannot be mapped here.)
+    "otto.models.host.coerce_digit_string": "otto.models.host.coerce_digit_string",
 }
 
 

@@ -44,6 +44,7 @@ from ..utils import (
 if TYPE_CHECKING:
     from .app_shell import AppShell
     from .dev_tool import DevTool
+    from .inventory_ref import InventoryRef
     from .lab_info import LabInfo
     from .power import PowerController
     from .product import Product
@@ -442,6 +443,10 @@ class Host(Protocol):
     lab_info: "LabInfo"
     """The resolved lab this host came from (name, declared resources, metadata)."""
 
+    inventory_ref: "InventoryRef"
+    """Inventory provenance (see :class:`~otto.host.inventory_ref.InventoryRef`); empty for an
+    inline host."""
+
     products: list["Product"]
     """Software-under-test deployed to this host (default empty)."""
 
@@ -809,6 +814,7 @@ class BaseHost(ABC):
     name: str
     log: LogMode
     lab_info: "LabInfo"
+    inventory_ref: "InventoryRef"
     products: list["Product"]
     dev_tools: list["DevTool"]
     toolchain: "Toolchain"

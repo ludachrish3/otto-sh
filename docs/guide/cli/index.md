@@ -1,6 +1,6 @@
 # The otto CLI
 
-`otto` is one command with twelve subcommand groups. This page covers what is
+`otto` is one command with thirteen subcommand groups. This page covers what is
 true of all of them — how an invocation is shaped, the options the top-level
 command owns, the environment variables that back them, and where each run
 writes its output. Each group then has its own page, and every subcommand of
@@ -187,10 +187,10 @@ written there, and the path is printed at the end of the run
   `write_file`).
 
 Read-only commands create no directory: `otto cov`, `otto reservation`,
-`otto schema`, and `otto init` opt out entirely, as do read-only host verbs
-such as `ls`, `exists`, `read-file`, `is-installed`, and `is-uninstalled`.
-Third-party commands control this with the `output_dir=` flag at
-registration — see {doc}`../../library/extending-cli`.
+`otto inventory`, `otto schema`, and `otto init` opt out entirely, as do
+read-only host verbs such as `ls`, `exists`, `read-file`, `is-installed`, and
+`is-uninstalled`.  Third-party commands control this with the `output_dir=`
+flag at registration — see {doc}`../../library/extending-cli`.
 
 ## The workspace home
 
@@ -269,7 +269,8 @@ connection failed.
 | [`otto monitor`](monitor/index.md) | Launch an interactive performance dashboard |
 | [`otto cov`](cov/index.md) | Collect coverage from the lab and render reports |
 | [`otto reservation`](reservation/index.md) | Inspect and verify lab reservations |
-| [`otto schema`](schema/index.md) | Export JSON Schema for `lab.json`, `settings.toml` and reservations |
+| [`otto inventory`](inventory/index.md) | Inspect, export and diff the configured host inventory |
+| [`otto schema`](schema/index.md) | Export JSON Schema for `lab.json`, `settings.toml`, reservations and the inventory file |
 
 Reach for `otto link` to shape a path that already exists, and `otto tunnel`
 when you need one that does not.
@@ -297,5 +298,6 @@ tunnel/index
 monitor/index
 cov/index
 reservation/index
+inventory/index
 schema/index
 ```
