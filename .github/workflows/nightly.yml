@@ -113,7 +113,7 @@ jobs:
       # the pins, no `restore-keys`, detection stays in ci.yml's `busybox` job,
       # which is where the rationale is written.
       - name: Cache the BusyBox artifacts this lane consumes (detection stays in `busybox`)
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/otto/busybox
           key: busybox-artifacts-${{ hashFiles('tests/_fixtures/busybox_pins.json') }}

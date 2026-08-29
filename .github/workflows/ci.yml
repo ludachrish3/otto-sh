@@ -71,7 +71,7 @@ jobs:
       # A HIT DOES NOT SKIP VALIDATION: `_verify` runs on every artifact whether it
       # was fetched or restored, so a corrupted cache still fails loudly here.
       - name: Cache the BusyBox artifacts this lane consumes (detection stays in `busybox`)
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/otto/busybox
           key: busybox-artifacts-${{ hashFiles('tests/_fixtures/busybox_pins.json') }}
@@ -108,7 +108,7 @@ jobs:
       # cache covered `tests` alone and this job failed for the same cause on
       # the next push (run 32897991866). The rationale is on the `tests` step.
       - name: Cache the BusyBox artifacts this lane consumes (detection stays in `busybox`)
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/otto/busybox
           key: busybox-artifacts-${{ hashFiles('tests/_fixtures/busybox_pins.json') }}
